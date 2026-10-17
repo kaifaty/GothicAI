@@ -1,0 +1,2405 @@
+{
+  "format_version": 1,
+  "episodes": 62,
+  "decisions": 132929,
+  "record_bytes": 173838,
+  "uncompressed_bytes": 23108113486,
+  "compressed_samples_bytes": 2120462732,
+  "dataset_bytes": 2165102622,
+  "dataset_gb": 2.165102622,
+  "key_counts": {
+    "forward": 25813,
+    "back": 0,
+    "walk": 25813,
+    "run": 0,
+    "turn": 126506,
+    "turn_left": 68850,
+    "turn_right": 57656,
+    "strafe": 0,
+    "jump": 0,
+    "climb": 0,
+    "idle": 0,
+    "body_in_air": 25,
+    "body_falling": 0,
+    "body_sliding": 15,
+    "body_climbing": 0,
+    "body_swimming": 0
+  },
+  "key_fractions": {
+    "forward": 0.19418637016753304,
+    "back": 0.0,
+    "walk": 0.19418637016753304,
+    "run": 0.0,
+    "turn": 0.9516809725492557,
+    "turn_left": 0.517945670245018,
+    "turn_right": 0.4337353023042376,
+    "strafe": 0.0,
+    "jump": 0.0,
+    "climb": 0.0,
+    "idle": 0.0,
+    "body_in_air": 0.00018807032325527162,
+    "body_falling": 0.0,
+    "body_sliding": 0.00011284219395316297,
+    "body_climbing": 0.0,
+    "body_swimming": 0.0
+  },
+  "validated": true,
+  "episode_details": [
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/control/000",
+      "decisions": 2400,
+      "first_ms": 16794,
+      "last_ms": 256694,
+      "compressed_bytes": 50647800,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          12875.9541015625,
+          1645.7025146484375,
+          -15869.4384765625
+        ],
+        "path_cm": 798.3955078125
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        13538.4013671875,
+        1711.1707763671875,
+        -15428.6298828125
+      ],
+      "body_yaw_deg": -126.0
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/000",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 52914693,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          620.6854858398438,
+          -185.9405517578125,
+          -2168.7939453125
+        ],
+        "path_cm": 1670.42041015625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": -1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        443.79730224609375,
+        -192.2010955810547,
+        -2393.775146484375
+      ],
+      "body_yaw_deg": -7170.21826171875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/001",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 47853239,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          -1365.0693359375,
+          -164.89268493652344,
+          -5036.9521484375
+        ],
+        "path_cm": 1534.4013671875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        -2235.7119140625,
+        -181.1577606201172,
+        -3774.63232421875
+      ],
+      "body_yaw_deg": -119.51206970214844
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/002",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 44622248,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          2500.68603515625,
+          -155.94024658203125,
+          -2388.7939453125
+        ],
+        "path_cm": 7772.68994140625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        2791.101806640625,
+        -131.55841064453125,
+        -3553.07470703125
+      ],
+      "body_yaw_deg": -11022.0498046875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/003",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 18369942,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          500.6853942871094,
+          -175.93994140625,
+          -3048.7939453125
+        ],
+        "path_cm": 2953.610595703125
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        1011.2676391601562,
+        -182.55613708496094,
+        -2934.343017578125
+      ],
+      "body_yaw_deg": -297.3098449707031
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/004",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 19318976,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          2060.685546875,
+          -175.93994140625,
+          -1208.7938232421875
+        ],
+        "path_cm": 2259.39892578125
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        1551.7481689453125,
+        -185.79335021972656,
+        -1166.5010986328125
+      ],
+      "body_yaw_deg": -641.8677368164062
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/005",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 48780581,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          12044.1689453125,
+          1401.917236328125,
+          -11933.7099609375
+        ],
+        "path_cm": 203.9020233154297
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        12167.2138671875,
+        1370.33056640625,
+        -12093.2041015625
+      ],
+      "body_yaw_deg": 154.7411651611328
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/006",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 56198940,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          12200.6884765625,
+          1474.06005859375,
+          -15148.794921875
+        ],
+        "path_cm": 2172.580322265625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        12599.443359375,
+        1585.35888671875,
+        -15037.15234375
+      ],
+      "body_yaw_deg": -1678.541748046875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/007",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 52053028,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          7880.68408203125,
+          274.06005859375,
+          -6248.7890625
+        ],
+        "path_cm": 2969.04248046875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        7706.453125,
+        312.5166320800781,
+        -8008.25048828125
+      ],
+      "body_yaw_deg": -21099.32421875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/008",
+      "decisions": 499,
+      "first_ms": 15794,
+      "last_ms": 65594,
+      "compressed_bytes": 10242210,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          10836.388671875,
+          1590.281982421875,
+          -21299.431640625
+        ],
+        "path_cm": 1073.5997314453125
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        11757.2490234375,
+        1657.99462890625,
+        -21847.197265625
+      ],
+      "body_yaw_deg": -180.14862060546875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/009",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 59181141,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          12000.6884765625,
+          1394.059814453125,
+          -15688.7939453125
+        ],
+        "path_cm": 1945.508544921875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        11264.7744140625,
+        1266.7799072265625,
+        -16240.52734375
+      ],
+      "body_yaw_deg": -18683.2109375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/010",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 52549736,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          7260.68359375,
+          134.05914306640625,
+          -88.79022216796875
+        ],
+        "path_cm": 9312.05859375
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        6740.9775390625,
+        253.48744201660156,
+        2483.31884765625
+      ],
+      "body_yaw_deg": -6991.91064453125
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/011",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 41486639,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          5880.68359375,
+          274.06005859375,
+          -2788.7939453125
+        ],
+        "path_cm": 2441.2744140625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": -1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        4525.06103515625,
+        135.46961975097656,
+        -2572.32763671875
+      ],
+      "body_yaw_deg": -362.985107421875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/012",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 40516336,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          7420.68408203125,
+          134.05914306640625,
+          -68.79024505615234
+        ],
+        "path_cm": 7306.4111328125
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        7369.98974609375,
+        128.19427490234375,
+        276.069580078125
+      ],
+      "body_yaw_deg": -12803.94921875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/013",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 48788303,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          8628.78125,
+          277.3993835449219,
+          5177.50244140625
+        ],
+        "path_cm": 367.90625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        8592.900390625,
+        270.0304870605469,
+        4811.42431640625
+      ],
+      "body_yaw_deg": -12586.7890625
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/014",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 45359882,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          6560.68359375,
+          254.058837890625,
+          2171.207275390625
+        ],
+        "path_cm": 11262.5859375
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        5421.2021484375,
+        298.655517578125,
+        1172.8016357421875
+      ],
+      "body_yaw_deg": -164.58973693847656
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/015",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 13613955,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          76300.6796875,
+          3834.05908203125,
+          -12708.791015625
+        ],
+        "path_cm": 4255.2841796875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        76170.703125,
+        3833.690185546875,
+        -12912.697265625
+      ],
+      "body_yaw_deg": 97.14630126953125
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/016",
+      "decisions": 1139,
+      "first_ms": 15794,
+      "last_ms": 129594,
+      "compressed_bytes": 27024159,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          68065.578125,
+          2433.37646484375,
+          -12275.404296875
+        ],
+        "path_cm": 110.00459289550781
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        68167.390625,
+        2409.424560546875,
+        -12309.625
+      ],
+      "body_yaw_deg": -914.266845703125
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/017",
+      "decisions": 808,
+      "first_ms": 15794,
+      "last_ms": 96494,
+      "compressed_bytes": 18886860,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          72594.1953125,
+          3196.243408203125,
+          -11786.69921875
+        ],
+        "path_cm": 103.31126403808594
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        72556.375,
+        3176.705810546875,
+        -11880.8310546875
+      ],
+      "body_yaw_deg": -719.6239624023438
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/018",
+      "decisions": 1394,
+      "first_ms": 15794,
+      "last_ms": 155094,
+      "compressed_bytes": 28641073,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          73216.9140625,
+          3192.044921875,
+          -11020.8095703125
+        ],
+        "path_cm": 103.8180923461914
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        73129.171875,
+        3165.394775390625,
+        -10972.1376953125
+      ],
+      "body_yaw_deg": -1811.4007568359375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/019",
+      "decisions": 573,
+      "first_ms": 15794,
+      "last_ms": 72994,
+      "compressed_bytes": 6600375,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          73153.03125,
+          3206.2919921875,
+          -11211.0234375
+        ],
+        "path_cm": 105.25830841064453
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        73120.09375,
+        3196.510009765625,
+        -11310.5166015625
+      ],
+      "body_yaw_deg": -286.05615234375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/020",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 46086887,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          2500.68603515625,
+          -155.94024658203125,
+          -2388.7939453125
+        ],
+        "path_cm": 2814.472412109375
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        2993.73291015625,
+        -163.3553466796875,
+        -4578.7529296875
+      ],
+      "body_yaw_deg": -13893.8603515625
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/021",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 39451871,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          2440.68603515625,
+          -185.9405517578125,
+          -4068.791259765625
+        ],
+        "path_cm": 4268.30908203125
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        1714.52880859375,
+        -185.85089111328125,
+        -4228.001953125
+      ],
+      "body_yaw_deg": -17422.814453125
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/022",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 13819178,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          4340.68603515625,
+          -115.94085693359375,
+          -3788.791748046875
+        ],
+        "path_cm": 4633.45703125
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": -1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        4183.57568359375,
+        -116.22064208984375,
+        -3659.623291015625
+      ],
+      "body_yaw_deg": 120.74365234375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/023",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 46518900,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          925.4718017578125,
+          -178.64869689941406,
+          -4515.435546875
+        ],
+        "path_cm": 1009.8931274414062
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        231.39254760742188,
+        -188.38453674316406,
+        -3781.92138671875
+      ],
+      "body_yaw_deg": -2677.217041015625
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/024",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 44820165,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          4100.68603515625,
+          -5.94024658203125,
+          -1328.7939453125
+        ],
+        "path_cm": 3217.21484375
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        4413.94287109375,
+        112.70699310302734,
+        -1261.6796875
+      ],
+      "body_yaw_deg": -11743.92578125
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/025",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 19600341,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          10640.6875,
+          1274.06005859375,
+          1891.207275390625
+        ],
+        "path_cm": 3158.972900390625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": -1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        10840.2607421875,
+        1304.4263916015625,
+        1709.9947509765625
+      ],
+      "body_yaw_deg": -8259.3232421875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/026",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 34755446,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          11420.6875,
+          904.058837890625,
+          991.2097778320312
+        ],
+        "path_cm": 14314.9521484375
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        11389.10546875,
+        900.042724609375,
+        1370.3951416015625
+      ],
+      "body_yaw_deg": -11603.1875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/027",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 17968916,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          10440.6875,
+          1144.059814453125,
+          2011.2071533203125
+        ],
+        "path_cm": 13647.978515625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": -1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        10473.498046875,
+        1139.3282470703125,
+        1970.2264404296875
+      ],
+      "body_yaw_deg": -11851.76953125
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/028",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 28669437,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          11240.6875,
+          904.058837890625,
+          -808.790283203125
+        ],
+        "path_cm": 3007.140869140625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        11343.0986328125,
+        900.0498046875,
+        -617.3419189453125
+      ],
+      "body_yaw_deg": -13131.244140625
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/train/029",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 40875317,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          11240.6875,
+          904.058837890625,
+          -808.790283203125
+        ],
+        "path_cm": 7727.00341796875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        12829.986328125,
+        907.4194946289062,
+        921.3667602539062
+      ],
+      "body_yaw_deg": -16758.568359375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/000",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 31428934,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          5626.70068359375,
+          -175.93994140625,
+          502.2993469238281
+        ],
+        "path_cm": 766.2463989257812
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        4860.599609375,
+        -182.0432586669922,
+        515.9161376953125
+      ],
+      "body_yaw_deg": -4448.9111328125
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/001",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 12322980,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          3160.68603515625,
+          -105.94024658203125,
+          -2028.7939453125
+        ],
+        "path_cm": 5613.068359375
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": -1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        3298.917724609375,
+        -112.34681701660156,
+        -2827.263916015625
+      ],
+      "body_yaw_deg": -1134.387451171875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/002",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 12888967,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          3160.68603515625,
+          -105.94024658203125,
+          -2028.7939453125
+        ],
+        "path_cm": 4839.650390625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        3230.92041015625,
+        -113.90249633789062,
+        -2831.865966796875
+      ],
+      "body_yaw_deg": -751.3724975585938
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/003",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 35025941,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          3420.68603515625,
+          -115.94085693359375,
+          -4428.79150390625
+        ],
+        "path_cm": 1654.271728515625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        3259.77294921875,
+        -125.98815155029297,
+        -4580.7119140625
+      ],
+      "body_yaw_deg": -8880.0849609375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/004",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 39894350,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          2280.68603515625,
+          -185.9405517578125,
+          -2228.7939453125
+        ],
+        "path_cm": 3435.546142578125
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        1134.519775390625,
+        -191.39503479003906,
+        -2255.8359375
+      ],
+      "body_yaw_deg": -98.28909301757812
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/005",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 50393503,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          248.19175720214844,
+          -141.2325439453125,
+          221.45326232910156
+        ],
+        "path_cm": 601.438232421875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": -1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        172.27877807617188,
+        -148.26182556152344,
+        818.0401000976562
+      ],
+      "body_yaw_deg": -835.1514892578125
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/006",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 56355611,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          12391.5419921875,
+          1525.3876953125,
+          -14767.2392578125
+        ],
+        "path_cm": 1122.34912109375
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": -1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        13134.78515625,
+        1551.7222900390625,
+        -13926.666015625
+      ],
+      "body_yaw_deg": -491.4529724121094
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/007",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 51192126,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          12200.6884765625,
+          1474.06005859375,
+          -15148.794921875
+        ],
+        "path_cm": 2111.522216796875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        13352.6337890625,
+        1729.291748046875,
+        -15631.5380859375
+      ],
+      "body_yaw_deg": -7593.46630859375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/008",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 49656786,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          14240.685546875,
+          1694.059814453125,
+          -15708.7939453125
+        ],
+        "path_cm": 2116.344482421875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": -1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        14976.0234375,
+        1687.0426025390625,
+        -15614.9169921875
+      ],
+      "body_yaw_deg": -477.36004638671875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/009",
+      "decisions": 191,
+      "first_ms": 15794,
+      "last_ms": 34794,
+      "compressed_bytes": 3340040,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          7392.7177734375,
+          544.145751953125,
+          -11405.7724609375
+        ],
+        "path_cm": 99.2467269897461
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        7293.57666015625,
+        548.1358032226562,
+        -11408.0244140625
+      ],
+      "body_yaw_deg": 55.97312545776367
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/010",
+      "decisions": 445,
+      "first_ms": 15794,
+      "last_ms": 60194,
+      "compressed_bytes": 9275251,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          11010.890625,
+          1629.7254638671875,
+          -20888.00390625
+        ],
+        "path_cm": 387.91510009765625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        11188.78125,
+        1651.1014404296875,
+        -20543.9453125
+      ],
+      "body_yaw_deg": -547.9050903320312
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/011",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 58275431,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          11740.6875,
+          1624.06005859375,
+          -18208.79296875
+        ],
+        "path_cm": 888.3399047851562
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        11674.8095703125,
+        1585.71630859375,
+        -17897.330078125
+      ],
+      "body_yaw_deg": -10927.4521484375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/012",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 35949450,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          7000.68359375,
+          274.06005859375,
+          3391.20703125
+        ],
+        "path_cm": 2788.64794921875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": -1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        6909.18505859375,
+        281.6181640625,
+        3046.741455078125
+      ],
+      "body_yaw_deg": 17611.255859375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/013",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 40619511,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          7360.68359375,
+          134.05914306640625,
+          -148.79026794433594
+        ],
+        "path_cm": 2207.6923828125
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        9110.6533203125,
+        128.35142517089844,
+        -823.9338989257812
+      ],
+      "body_yaw_deg": 78.68489837646484
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/014",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 50710636,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          5706.01025390625,
+          307.335693359375,
+          3007.638671875
+        ],
+        "path_cm": 418.3028259277344
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        6106.8154296875,
+        294.598876953125,
+        3126.677001953125
+      ],
+      "body_yaw_deg": -11445.4716796875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/015",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 44927331,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          6560.68359375,
+          254.058837890625,
+          2171.207275390625
+        ],
+        "path_cm": 13229.72265625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        4874.630859375,
+        396.5895080566406,
+        1280.0927734375
+      ],
+      "body_yaw_deg": -147.16293334960938
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/016",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 41183771,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          7180.68408203125,
+          134.05914306640625,
+          2091.207275390625
+        ],
+        "path_cm": 3290.458740234375
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        7614.443359375,
+        128.16751098632812,
+        2154.124755859375
+      ],
+      "body_yaw_deg": -16217.5126953125
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/017",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 29783812,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          73760.6796875,
+          3274.05859375,
+          -6908.7890625
+        ],
+        "path_cm": 3990.302734375
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        72780.9296875,
+        3264.7353515625,
+        -6548.671875
+      ],
+      "body_yaw_deg": -448.98297119140625
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/018",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 18037653,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          75380.6796875,
+          3834.05908203125,
+          -12928.7900390625
+        ],
+        "path_cm": 3418.65087890625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        74766.0703125,
+        3833.801513671875,
+        -12858.9541015625
+      ],
+      "body_yaw_deg": -3196.82275390625
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/019",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 38059425,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          72720.6796875,
+          3164.06103515625,
+          -12508.791015625
+        ],
+        "path_cm": 2202.48291015625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        71803.71875,
+        3196.143798828125,
+        -11207.90625
+      ],
+      "body_yaw_deg": -150.797119140625
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/020",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 65482371,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          70833.6875,
+          3105.823974609375,
+          -10745.62109375
+        ],
+        "path_cm": 5562.75
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        68731.984375,
+        2590.55859375,
+        -5622.6357421875
+      ],
+      "body_yaw_deg": -13370.2294921875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/021",
+      "decisions": 465,
+      "first_ms": 15794,
+      "last_ms": 62194,
+      "compressed_bytes": 10040662,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          73216.9140625,
+          3192.044921875,
+          -11020.8095703125
+        ],
+        "path_cm": 103.22756958007812
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        73133.578125,
+        3175.85546875,
+        -11079.53515625
+      ],
+      "body_yaw_deg": -2160.132568359375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/022",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 22571623,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          72760.6796875,
+          3164.06103515625,
+          -12568.7900390625
+        ],
+        "path_cm": 2453.04541015625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        72633.71875,
+        3158.866943359375,
+        -13125.6787109375
+      ],
+      "body_yaw_deg": 268.4324951171875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/023",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 12641767,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          1800.685546875,
+          -145.941162109375,
+          -4708.79150390625
+        ],
+        "path_cm": 4596.216796875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        1709.9176025390625,
+        -183.80734252929688,
+        -4907.537109375
+      ],
+      "body_yaw_deg": -55.4760627746582
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/024",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 18567105,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          4280.68603515625,
+          -105.94024658203125,
+          -4268.791015625
+        ],
+        "path_cm": 5084.13232421875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        4232.12841796875,
+        -114.34771728515625,
+        -4056.74755859375
+      ],
+      "body_yaw_deg": -505.68109130859375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/025",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 42631606,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          1280.6854248046875,
+          -185.9405517578125,
+          -4428.79150390625
+        ],
+        "path_cm": 1013.5445556640625
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        1927.3309326171875,
+        -184.67359924316406,
+        -4383.28369140625
+      ],
+      "body_yaw_deg": -6974.20654296875
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/026",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 14958011,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          3160.68603515625,
+          -105.94024658203125,
+          -3368.7939453125
+        ],
+        "path_cm": 6252.880859375
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": -1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        3852.455078125,
+        -116.22064971923828,
+        -3525.697265625
+      ],
+      "body_yaw_deg": -1390.1663818359375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/027",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 44596913,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          2680.68603515625,
+          -155.94024658203125,
+          -1628.7939453125
+        ],
+        "path_cm": 2547.528076171875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        4002.5234375,
+        -182.7967071533203,
+        -530.8685913085938
+      ],
+      "body_yaw_deg": -13975.7509765625
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/028",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 45102377,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          2800.853271484375,
+          -158.71652221679688,
+          -4375.61376953125
+        ],
+        "path_cm": 275.14739990234375
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        2635.5048828125,
+        -174.2095947265625,
+        -4156.6611328125
+      ],
+      "body_yaw_deg": -130.7333221435547
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/029",
+      "decisions": 2400,
+      "first_ms": 15794,
+      "last_ms": 255694,
+      "compressed_bytes": 15653106,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          10660.6884765625,
+          914.0594482421875,
+          2131.207275390625
+        ],
+        "path_cm": 14664.857421875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 0.0,
+        "strafe": 0.0,
+        "turn": 1.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        10500.8388671875,
+        1013.6298828125,
+        2120.521728515625
+      ],
+      "body_yaw_deg": -2528.501708984375
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-dagger/round-1/dagger/validation/030",
+      "decisions": 215,
+      "first_ms": 15794,
+      "last_ms": 37194,
+      "compressed_bytes": 2679108,
+      "last_teacher_hint": {
+        "next_corner_cm": [
+          11688.3662109375,
+          938.6137084960938,
+          1843.0955810546875
+        ],
+        "path_cm": 104.690185546875
+      },
+      "last_body_flags": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "last_keys": {
+        "forward": 1.0,
+        "strafe": 0.0,
+        "turn": 0.0,
+        "head_yaw_deg": 0.0,
+        "head_pitch_deg": 0.0,
+        "walk": 1,
+        "jump": 0,
+        "climb": 0
+      },
+      "last_position_cm": [
+        11749.2265625,
+        948.1526489257812,
+        1927.7421875
+      ],
+      "body_yaw_deg": -460.8961181640625
+    }
+  ]
+}

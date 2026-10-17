@@ -262,7 +262,7 @@ void decide(World& w) {
     // the teacher's label, while previous keeps the action that the student actually held.
     const bool measure=ep.decisions>=PolicyWarmupDecisions;
     const auto populationStart=std::chrono::steady_clock::now();
-    const auto features=NavPolicy::encode(sample);
+    const auto features=ep.policy->encode(sample);
     if(measure)ep.encodeUs.push_back(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-populationStart).count());
     for(size_t i=0;i<ep.policyStates.size();++i) {
       const auto began=std::chrono::steady_clock::now();

@@ -12,7 +12,8 @@
 class NavPolicy final {
   public:
     static constexpr size_t nearSize = 9*32*32, farSize = 9*25*25;
-    static constexpr size_t vectorSize = NavDemoWriter::rayCount*9+32, headCount = 6;
+    static constexpr size_t vectorSize = NavDemoWriter::rayCount*9+24, legacyVectorSize = vectorSize+8;
+    static constexpr size_t headCount = 6;
     inline static constexpr std::array<const char*,headCount> headNames = {
       "forward","strafe","turn","walk","jump","climb"
       };
@@ -20,7 +21,7 @@ class NavPolicy final {
     struct Features final {
       std::array<float,nearSize> near = {};
       std::array<float,farSize> far = {};
-      std::array<float,vectorSize> vector = {};
+      std::vector<float> vector;
       };
 
     struct State final {
@@ -38,10 +39,13 @@ class NavPolicy final {
     // the writer's per-cell uint8 quantization. Position, yaw and teacher hints are
     // deliberately absent from this path. Training-cache float16 packing is not
     // part of encode_features and is not applied here.
-    static Features encode(const NavDemoWriter::Snapshot& observation);
+    // The weight header selects eye/roads/body, optionally followed by the
+    // previous keys for legacy policies. New policies do not read those keys.
+    Features encode(const NavDemoWriter::Snapshot& observation) const;
     Result step(const Features& features, State& state) const;
     Result step(const NavDemoWriter::Snapshot& observation, State& state) const;
     size_t hiddenSize() const { return hidden; }
+    size_t vectorInputSize() const { return vectorEncoder.inputs; }
 
   private:
     struct Linear final {

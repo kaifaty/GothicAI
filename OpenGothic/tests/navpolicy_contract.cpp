@@ -140,8 +140,11 @@ struct Fixture final {
         };
       steps=number("steps");hidden=number("hidden_size");
       require(steps>0 && steps<=100000 && hidden>0 && hidden<=4096,"fixture dimensions out of bounds");
-      require(number("record_bytes")==NavDemoWriter::recordBytes && number("vector_size")==NavPolicy::vectorSize,
+      const auto vectorSize=number("vector_size");
+      require(number("record_bytes")==NavDemoWriter::recordBytes &&
+              (vectorSize==NavPolicy::vectorSize || vectorSize==NavPolicy::legacyVectorSize),
               "fixture input dimensions differ from NAVDEMO");
+      expected.vector.resize(vectorSize);
       require(header.HasMember("carry_hidden") && header["carry_hidden"].IsTrue(),"fixture must carry GRU state");
       require(header.HasMember("heads") && header["heads"].IsArray() && header["heads"].Size()==heads.size(),
               "fixture head count mismatch");
@@ -212,12 +215,13 @@ void parity(const std::string& weights,const std::string& path) {
   const NavPolicy policy(weights);
   Fixture fixture(path);
   require(policy.hiddenSize()==fixture.hidden,"weight/fixture hidden size mismatch");
+  require(policy.vectorInputSize()==fixture.expected.vector.size(),"weight/fixture vector size mismatch");
   NavPolicy::State state;
   Observation observation;
   double featureError=0,logitError=0,hiddenError=0;
   while(fixture.next()) {
     observation.decode(fixture.raw,fixture.layout);
-    const auto actual=NavPolicy::encode(observation.snapshot);
+    const auto actual=policy.encode(observation.snapshot);
     const double localFeature=std::max({difference(actual.near,fixture.expected.near),
         difference(actual.far,fixture.expected.far),difference(actual.vector,fixture.expected.vector)});
     featureError=std::max(featureError,localFeature);
@@ -241,12 +245,20 @@ void parity(const std::string& weights,const std::string& path) {
       observation.snapshot.keys.walk=!observation.snapshot.keys.walk;
       observation.snapshot.keys.jump=!observation.snapshot.keys.jump;
       observation.snapshot.keys.climb=!observation.snapshot.keys.climb;
+      if(policy.vectorInputSize()==NavPolicy::vectorSize) {
+        observation.snapshot.previous.forward=std::numeric_limits<float>::quiet_NaN();
+        observation.snapshot.previous.strafe=12345;observation.snapshot.previous.turn=-12345;
+        observation.snapshot.previous.headYaw=999;observation.snapshot.previous.headPitch=-999;
+        observation.snapshot.previous.walk=!observation.snapshot.previous.walk;
+        observation.snapshot.previous.jump=!observation.snapshot.previous.jump;
+        observation.snapshot.previous.climb=!observation.snapshot.previous.climb;
+        }
       observation.memory.pose.position={12345,-54321,99999};
       observation.memory.pose.forward={0,0,-1};observation.memory.pose.gameMs+=5432;
       observation.memory.traveledCm=987654;
       observation.snapshot.teacherCorner={-99,88,77};
       observation.snapshot.teacherPathCm=88888;
-      const auto other=NavPolicy::encode(observation.snapshot);
+      const auto other=policy.encode(observation.snapshot);
       require(difference(actual.near,other.near)==0 && difference(actual.far,other.far)==0 &&
               difference(actual.vector,other.vector)==0,"privileged annotation leaked into features");
       NavPolicy::State fresh;
@@ -278,7 +290,7 @@ void benchmark(const std::string& weights,const std::string& path,size_t npcs,si
   Observation observation;
   for(size_t i=0;i<16 && fixture.next();++i) {
     observation.decode(fixture.raw,fixture.layout);
-    features.push_back(NavPolicy::encode(observation.snapshot));
+    features.push_back(policy.encode(observation.snapshot));
     records.push_back(fixture.raw);
     }
   require(!features.empty(),"empty benchmark fixture");
@@ -310,7 +322,7 @@ void benchmark(const std::string& weights,const std::string& path,size_t npcs,si
   for(size_t i=0;i<decisions;++i) {
     observation.decode(records[i%records.size()],fixture.layout);
     const auto before=Clock::now();
-    const auto encoded=NavPolicy::encode(observation.snapshot);
+    const auto encoded=policy.encode(observation.snapshot);
     const auto after=Clock::now();
     encodeUs.push_back(micros(before,after));
     checksum+=encoded.vector[i%encoded.vector.size()];

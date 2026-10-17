@@ -178,6 +178,9 @@ def main() -> None:
     if args.weights is None:
         synthetic_weights(weights)
     policy = NumpyPolicy(weights)
+    if (policy.vector_size != data.VECTOR_SIZE or
+            policy.header.get("preprocessing", {}).get("vector_order") != data.PREPROCESSING["vector_order"]):
+        raise ValueError("weights must declare sensor-only vector_order: eye, roads, body")
     if args.source:
         source, layout, records = recorded_steps(args.source, args.steps)
         source_name = str(source)

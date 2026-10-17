@@ -75,13 +75,25 @@ bool uniqueKeys(const Json& value) {
   return true;
   }
 
-void validateArchitecture(const Json& architecture, size_t& hidden) {
+size_t parseVectorInputSize(const Json& preprocessing) {
+  const auto& order = field(preprocessing,"vector_order");
+  if(!order.IsArray() || (order.Size()!=3 && order.Size()!=4))
+    fail("unsupported preprocessing vector_order");
+  if(order.Size()==3) {
+    expectStrings(order,{"eye","roads","body"});
+    return NavPolicy::vectorSize;
+    }
+  expectStrings(order,{"eye","roads","body","previous_keys"});
+  return NavPolicy::legacyVectorSize;
+  }
+
+void validateArchitecture(const Json& architecture, size_t& hidden, size_t vectorSize) {
   expectString(field(architecture,"name"),"map-cnn-vector-gru");
   expectInt(field(architecture,"version"),1);
   const auto& inputs = field(architecture,"inputs");
   expectShape(field(inputs,"near"),{9,32,32});
   expectShape(field(inputs,"far"),{9,25,25});
-  expectShape(field(inputs,"vector"),{NavPolicy::vectorSize});
+  expectShape(field(inputs,"vector"),{vectorSize});
   expectString(field(inputs,"dtype"),"float32");
   expectString(field(inputs,"map_layout"),"CHW");
   const auto& encoders = field(architecture,"map_encoders");
@@ -107,7 +119,7 @@ void validateArchitecture(const Json& architecture, size_t& hidden) {
   expectString(field(layers[3],"order"),"CHW");
   expectInt(field(layers[3],"output"),64);
   const auto& vector = field(architecture,"vector_encoder");
-  expectInt(field(vector,"in"),NavPolicy::vectorSize);
+  expectInt(field(vector,"in"),vectorSize);
   expectInt(field(vector,"out"),128);
   expectString(field(vector,"activation"),"relu");
   const auto& fusion = field(architecture,"fusion");
@@ -247,7 +259,8 @@ NavPolicy::NavPolicy(const std::string& path) {
   expectInt(field(header,"version"),1);
   expectString(field(header,"byte_order"),"little");
   expectString(field(header,"offset_origin"),"first byte after JSON header newline");
-  validateArchitecture(field(header,"architecture"),hidden);
+  const size_t vectorInputs = parseVectorInputSize(field(header,"preprocessing"));
+  validateArchitecture(field(header,"architecture"),hidden,vectorInputs);
   const auto& length = field(header,"data_nbytes");
   if(!length.IsUint64() || length.GetUint64()>64*1024*1024)
     fail("invalid weight payload size");
@@ -337,7 +350,7 @@ NavPolicy::NavPolicy(const std::string& path) {
     };
   loadMap(nearEncoder,"near_encoder");
   loadMap(farEncoder,"far_encoder");
-  loadLinear(vectorEncoder,"vector_encoder.0",vectorSize,128);
+  loadLinear(vectorEncoder,"vector_encoder.0",vectorInputs,128);
   loadLinear(fusion,"fusion.0",256,128);
   gruInput.inputs = 128;
   gruInput.outputs = hidden*3;
@@ -353,7 +366,7 @@ NavPolicy::NavPolicy(const std::string& path) {
     fail("unknown weight tensors");
   }
 
-NavPolicy::Features NavPolicy::encode(const NavDemoWriter::Snapshot& observation) {
+NavPolicy::Features NavPolicy::encode(const NavDemoWriter::Snapshot& observation) const {
   if(observation.eye==nullptr || observation.eye->size()!=NavDemoWriter::rayCount || observation.memory==nullptr)
     fail("missing eye or memory observation");
   const auto& near = observation.memory->near;
@@ -365,6 +378,7 @@ NavPolicy::Features NavPolicy::encode(const NavDemoWriter::Snapshot& observation
   nearestHeight(far,farReference);
   const float reference = nearKnown ? nearReference : farReference;
   Features features;
+  features.vector.resize(vectorInputSize());
   poolMemory(near,2,reference,features.near.data());
   poolMemory(far,4,reference,features.far.data());
   size_t cursor = 0;
@@ -400,15 +414,17 @@ NavPolicy::Features NavPolicy::encode(const NavDemoWriter::Snapshot& observation
   vector[cursor++] = observation.body.groundSlopeDeg/90.f;
   vector[cursor++] = observation.body.headYawDeg/180.f;
   vector[cursor++] = observation.body.headPitchDeg/90.f;
-  vector[cursor++] = observation.previous.forward;
-  vector[cursor++] = observation.previous.strafe;
-  vector[cursor++] = observation.previous.turn;
-  vector[cursor++] = observation.previous.headYaw/180.f;
-  vector[cursor++] = observation.previous.headPitch/90.f;
-  vector[cursor++] = observation.previous.walk ? 1.f : 0.f;
-  vector[cursor++] = observation.previous.jump ? 1.f : 0.f;
-  vector[cursor++] = observation.previous.climb ? 1.f : 0.f;
-  if(cursor!=vectorSize)
+  if(vectorInputSize()==legacyVectorSize) {
+    vector[cursor++] = observation.previous.forward;
+    vector[cursor++] = observation.previous.strafe;
+    vector[cursor++] = observation.previous.turn;
+    vector[cursor++] = observation.previous.headYaw/180.f;
+    vector[cursor++] = observation.previous.headPitch/90.f;
+    vector[cursor++] = observation.previous.walk ? 1.f : 0.f;
+    vector[cursor++] = observation.previous.jump ? 1.f : 0.f;
+    vector[cursor++] = observation.previous.climb ? 1.f : 0.f;
+    }
+  if(cursor!=vectorInputSize())
     fail("internal feature size mismatch");
   for(float value:vector)
     if(!std::isfinite(value))
@@ -474,6 +490,8 @@ std::array<float,64> NavPolicy::map(const float* input, size_t size, const MapEn
   }
 
 NavPolicy::Result NavPolicy::step(const Features& features, State& state) const {
+  if(features.vector.size()!=vectorInputSize())
+    fail("incorrect vector feature size");
   for(float value:features.near)
     if(!std::isfinite(value)) fail("non-finite near map feature");
   for(float value:features.far)

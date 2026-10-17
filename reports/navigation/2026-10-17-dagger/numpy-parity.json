@@ -1,0 +1,51 @@
+{
+  "steps": 1000,
+  "episodes": [
+    {
+      "id": "episodes__033",
+      "steps": 1000
+    }
+  ],
+  "max_logit_error": 5.7220458984375e-06,
+  "max_hidden_error": 3.930181264877319e-06,
+  "tolerance": 0.0001,
+  "macs": {
+    "total": 1014344,
+    "components": {
+      "near_conv1": 165888,
+      "near_conv2": 73728,
+      "far_conv1": 109512,
+      "far_conv2": 56448,
+      "vector_linear": 277248,
+      "fusion_linear": 32768,
+      "gru_input": 98304,
+      "gru_hidden": 196608,
+      "heads": 3840
+    },
+    "convention": "One multiply plus accumulate per convolution/linear/GRU matrix weight; includes padded zero taps.",
+    "other_operations": {
+      "gru_elementwise_multiplies": 768,
+      "pool_output_means": 128,
+      "pool_input_values_summed": 2048,
+      "excluded": "bias additions, ReLU, sigmoid, tanh, pooling reductions, scalar gate additions"
+    }
+  },
+  "parameters": 614223,
+  "numpy_cpu": {
+    "median_us": 521.9625,
+    "p95_us": 587.3495,
+    "mean_us": 531.3390949999999,
+    "iterations": 1000
+  },
+  "torch_cpu": {
+    "median_us": 349.568,
+    "p95_us": 364.00804999999997,
+    "mean_us": 352.357173,
+    "iterations": 1000
+  },
+  "threads": 1,
+  "numpy": "2.5.4",
+  "torch": "2.11.0+cu128",
+  "cpu": "AMD Ryzen 9 3950X 16-Core Processor",
+  "best_epoch": 17
+}

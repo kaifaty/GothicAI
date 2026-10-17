@@ -274,25 +274,51 @@ def trajectory(path):
     return rows
 
 
+def discrete_actions(values):
+    """Use the same six categorical decisions as the policy's output heads."""
+    import numpy as np
+    values = np.asarray(values)
+    return np.column_stack((np.sign(values[:, :3]), values[:, 3:6] != 0))
+
+
 def episode_metrics(directory, demos):
     import numpy as np
     episode = read_json(directory / "episode.json")
     actions = np.loadtxt(directory / "actions.txt", ndmin=2)
+    applied = discrete_actions(actions[:-1, 1:7])
     counts = Counter()
+    change_correct = Counter()
+    teacher_change_steps = 0
     steps = 0
     last = None
     for data in demos.iter_chunks(directory):
-        actual = actions[steps:steps + len(data)]
-        disagreements = []
-        for column, head in enumerate(HEADS, 1):
-            mismatch = actual[:, column] != data["keys"][head]
-            counts[head] += int(mismatch.sum())
-            disagreements.append(mismatch)
-        counts["any"] += int(np.logical_or.reduce(disagreements).sum())
+        actual = applied[steps:steps + len(data)]
+        teacher = discrete_actions(np.column_stack([data["keys"][head] for head in HEADS]))
+        previous = discrete_actions(np.column_stack([data["previous_keys"][head] for head in HEADS]))
+        disagreements = actual != teacher
+        teacher_changes = (teacher != previous).any(axis=1)
+        teacher_change_steps += int(teacher_changes.sum())
+        for column, head in enumerate(HEADS):
+            counts[head] += int(disagreements[:, column].sum())
+            change_correct[head] += int((~disagreements[teacher_changes, column]).sum())
+        counts["any"] += int(disagreements.any(axis=1).sum())
+        change_correct["all_heads"] += int((~disagreements[teacher_changes].any(axis=1)).sum())
         steps += len(data)
         last = data[-1].copy()
     if steps != episode["decisions"] or len(actions) != steps + 1:
         raise ValueError(f"Decision/action mismatch in {directory}")
+    action_masks = dict(forward=applied[:, 0] > 0, backward=applied[:, 0] < 0,
+                        strafe_left=applied[:, 1] < 0, strafe_right=applied[:, 1] > 0,
+                        turn_left=applied[:, 2] < 0, turn_right=applied[:, 2] > 0,
+                        walk=applied[:, 3] != 0, jump=applied[:, 4] != 0, climb=applied[:, 5] != 0,
+                        idle=~applied[:, [0, 1, 2, 4, 5]].any(axis=1),
+                        turn_only=(applied[:, :2] == 0).all(axis=1) & (applied[:, 2] != 0))
+    action_counts = {key: int(mask.sum()) for key, mask in action_masks.items()}
+    changes = applied[1:] != applied[:-1]
+    action_changes = {head: int(changes[:, column].sum()) for column, head in enumerate(HEADS)}
+    action_changes["any"] = int(changes.any(axis=1).sum())
+    run_bounds = np.r_[0, np.flatnonzero(changes.any(axis=1)) + 1, steps]
+    run_lengths = np.diff(run_bounds)
     path = trajectory(directory)
     xz = path[:, [1, 3]]
     travelled = float(np.linalg.norm(np.diff(xz, axis=0), axis=1).sum())
@@ -325,7 +351,16 @@ def episode_metrics(directory, demos):
     result.update(episode=str(directory), elapsed_s=episode["elapsed_ms"] / 1000, observed_reason=reason,
                   travelled_xz_cm=travelled, last_10s_span_cm=tail_span, last_10s_path_cm=tail_path,
                   last_10s_displacement_cm=tail_displacement, stationary_spells_3s=stationary_spells,
-                  disagreement_counts=dict(counts), disagreement_fraction={key: counts[key] / steps for key in (*HEADS, "any")})
+                  disagreement_counts=dict(counts), disagreement_fraction={key: counts[key] / steps for key in (*HEADS, "any")},
+                  action_change_steps=teacher_change_steps, action_change_correct_counts=dict(change_correct),
+                  action_change_accuracy={key: change_correct[key] / teacher_change_steps if teacher_change_steps else None
+                                          for key in (*HEADS, "all_heads")},
+                  action_counts=action_counts, action_fraction={key: value / steps for key, value in action_counts.items()},
+                  action_changes=action_changes,
+                  action_repeat_fraction=1 - action_changes["any"] / (steps - 1) if steps > 1 else None,
+                  action_runs=len(run_lengths), longest_action_run_steps=int(run_lengths.max()),
+                  final_action_run_steps=int(run_lengths[-1]),
+                  final_action={head: int(applied[-1, column]) for column, head in enumerate(HEADS)})
     if last is not None:
         result["last_body_flags"] = last["body"]["flags"].tolist()
         result["last_teacher_path_cm"] = float(last["teacher_hint"]["path_cm"])
@@ -336,6 +371,12 @@ def group_metrics(episodes):
     success = [ep for ep in episodes if ep["success"]]
     steps = sum(ep["decisions"] for ep in episodes)
     counts = {key: sum(ep["disagreement_counts"].get(key, 0) for ep in episodes) for key in (*HEADS, "any")}
+    teacher_change_steps = sum(ep["action_change_steps"] for ep in episodes)
+    change_correct = {key: sum(ep["action_change_correct_counts"].get(key, 0) for ep in episodes)
+                      for key in (*HEADS, "all_heads")}
+    action_counts = {key: sum(ep["action_counts"][key] for ep in episodes) for key in episodes[0]["action_counts"]}
+    action_changes = {key: sum(ep["action_changes"][key] for ep in episodes) for key in (*HEADS, "any")}
+    transitions = sum(max(0, ep["decisions"] - 1) for ep in episodes)
     return dict(n=len(episodes), arrived=len(success), arrival_fraction=len(success) / len(episodes),
                 median_elapsed_s=statistics.median(ep["elapsed_s"] for ep in episodes),
                 median_arrival_s=statistics.median(ep["elapsed_s"] for ep in success) if success else None,
@@ -349,7 +390,16 @@ def group_metrics(episodes):
                 stationary_episodes=sum(ep["stationary_spells_3s"] > 0 for ep in episodes),
                 failures=dict(Counter(ep["observed_reason"] for ep in episodes if not ep["success"])),
                 decisions=steps, disagreement_counts=counts,
-                disagreement_fraction={key: counts[key] / steps for key in counts})
+                disagreement_fraction={key: counts[key] / steps for key in counts},
+                action_change_steps=teacher_change_steps, action_change_correct_counts=change_correct,
+                action_change_accuracy={key: value / teacher_change_steps if teacher_change_steps else None
+                                        for key, value in change_correct.items()},
+                action_counts=action_counts, action_fraction={key: value / steps for key, value in action_counts.items()},
+                action_changes=action_changes,
+                action_repeat_fraction=1 - action_changes["any"] / transitions if transitions else None,
+                action_runs=sum(ep["action_runs"] for ep in episodes),
+                longest_action_run_steps=max(ep["longest_action_run_steps"] for ep in episodes),
+                median_final_action_run_steps=statistics.median(ep["final_action_run_steps"] for ep in episodes))
 
 
 def analyze(args):
@@ -366,6 +416,8 @@ def analyze(args):
                           for region in sorted({ep["region"] for ep in group})}
     result = dict(stationary_definition="Consecutive 3 s 3D endpoint-displacement windows <=25 cm, merged into spells",
                   failure_definition="no_path first; early stop actor_down; last <=10 s 3D path <=50 cm no_motion; path >50 cm and 3D endpoint displacement <=50 cm local_motion; otherwise moving_at_timeout",
+                  action_change_definition="Teacher's six categorical heads differ from recorded previous learner keys; axes use sign, flags use nonzero; accuracy compares applied learner and teacher heads",
+                  action_repeat_definition="Identical consecutive applied six-head decisions, excluding the first decision and terminal reset; turn_only means turn with neither forward nor strafe",
                   groups=groups, by_region=regions, all=group_metrics(episodes), episodes=episodes)
     destination = args.metrics or args.output / "metrics.json"
     write_json(destination, result)

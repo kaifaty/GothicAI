@@ -5,8 +5,9 @@
         --output /absolute/nav-bc/cache
 
 Only numpy is required. Preparation streams the recordings one episode at a time.
-The cache contains successful episodes only; the split groups exact (start, goal)
-pairs, including all recorded variants of the same pair.
+The cache contains successful teacher episodes and all DAgger episodes from
+training pairs. A saved split keeps exact (start, goal) pairs in their original
+partition across rounds.
 """
 
 from __future__ import annotations
@@ -27,8 +28,8 @@ import nav_demos
 HEADS = ("forward", "strafe", "turn", "walk", "jump", "climb")
 CLASSES = (3, 3, 3, 2, 2, 2)
 SITUATIONS = ("wall", "turn", "beginning")
-VECTOR_SIZE = nav_demos.RAY_COUNT * 9 + 10 + 14 + 8
-CACHE_VERSION = 1
+VECTOR_SIZE = nav_demos.RAY_COUNT * 9 + 10 + 14
+CACHE_VERSION = 2
 INPUT_NAMES = frozenset(("body", "roads", "previous_keys", "eye", "memory_near", "memory_far"))
 
 PREPROCESSING = {
@@ -38,8 +39,7 @@ PREPROCESSING = {
     "height_reference": "nearest to body origin in sensor map, no world position/yaw or teacher_hint access",
     "roads": "next_direction[3], next_distance/1000, goal_direction[3], goal_distance/1000, remaining_visual/1000, goal_in_known; distances clipped [0,50]",
     "body": "velocity[3]/500 clipped [-4,4], flags[5], ground_normal[3], slope/90, head_yaw/180, head_pitch/90",
-    "previous_keys": "forward,strafe,turn,head_yaw/180,head_pitch/90,walk,jump,climb",
-    "vector_order": ["eye", "roads", "body", "previous_keys"],
+    "vector_order": ["eye", "roads", "body"],
     "map_order": [*nav_demos.CHANNELS, "relative_ground_height", "height_valid_fraction"],
     "cache_quantization": "vector/height float16, map probabilities/validity round(255*x) uint8, labels uint8",
     "road_baseline": "always forward and walk, turn=-sign(atan2(next_direction.x,next_direction.z)) outside 5deg",
@@ -84,7 +84,9 @@ def encode_features(inputs: dict[str, np.ndarray], layout: np.ndarray) -> dict[s
     """Encode only nav_demos.learner_input(), returning float32 NCHW maps/vector.
 
     The exact allowed-key check catches accidental use of full records or privileged
-    annotations at the model boundary. Unknown ground contributes zero height.
+    annotations at the model boundary. The recorder's previous_keys field is
+    accepted but never encoded: only the GRU carries action history. Unknown
+    ground contributes zero height.
     """
     if frozenset(inputs) != INPUT_NAMES:
         raise ValueError("encode_features accepts only nav_demos.learner_input() fields")
@@ -116,11 +118,7 @@ def encode_features(inputs: dict[str, np.ndarray], layout: np.ndarray) -> dict[s
                                     body["ground_normal"], body["ground_slope_deg"][:, None] / 90,
                                     body["head_yaw_deg"][:, None] / 180,
                                     body["head_pitch_deg"][:, None] / 90), axis=1)
-    previous = inputs["previous_keys"]
-    previous_features = np.column_stack((previous["forward"], previous["strafe"], previous["turn"],
-                                         previous["head_yaw_deg"] / 180, previous["head_pitch_deg"] / 90,
-                                         previous["walk"], previous["jump"], previous["climb"]))
-    vector = np.ascontiguousarray(np.concatenate((rays, road_features, body_features, previous_features), axis=1), dtype=np.float32)
+    vector = np.ascontiguousarray(np.concatenate((rays, road_features, body_features), axis=1), dtype=np.float32)
     if vector.shape != (count, VECTOR_SIZE):
         raise ValueError(f"unexpected vector dimensions: {vector.shape}")
     if not all(np.isfinite(value).all() for value in (near, far, vector)):
@@ -133,6 +131,16 @@ def encode_labels(keys: np.ndarray) -> np.ndarray:
     for index, name in enumerate(HEADS):
         labels[:, index] = np.sign(keys[name]).astype(np.int8) + 1 if index < 3 else keys[name] != 0
     return labels
+
+
+def action_change_mask(records: np.ndarray) -> np.ndarray:
+    """Teacher's six action heads differ from the actor's preceding command.
+
+    In DAgger recordings the actor is the learner; head yaw/pitch are not policy
+    outputs and therefore do not define an action change.
+    """
+    return np.any(encode_labels(records["keys"]) !=
+                  encode_labels(records["previous_keys"]), axis=1).astype(np.uint8)
 
 
 def road_baseline(inputs: dict[str, np.ndarray], threshold_deg: float = 5) -> np.ndarray:
@@ -200,13 +208,32 @@ def _pack(features: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     return packed
 
 
+def read_pair_split(path: Path) -> dict[tuple[str, str], str]:
+    """Reuse an earlier cache's pair assignment without adding any new pairs."""
+    index = json.loads(path.read_text(encoding="utf-8"))
+    result = {}
+    for episode in index["episodes"]:
+        pair, part = tuple(episode["pair"]), episode["split"]
+        if len(pair) != 2 or not all(isinstance(value, str) and value for value in pair):
+            raise ValueError(f"invalid pair in split index: {pair}")
+        if part not in ("train", "validation"):
+            raise ValueError(f"invalid partition in split index: {part}")
+        if pair in result and result[pair] != part:
+            raise ValueError(f"pair occurs in both partitions: {pair}")
+        result[pair] = part
+    if not result:
+        raise ValueError("split index contains no pairs")
+    return result
+
+
 def load_cached(path: str | Path) -> dict[str, np.ndarray]:
     """Read one compressed episode; callers can bound memory with an episode LRU."""
     with np.load(path, allow_pickle=False) as source:
         result = {"vector": source["vector"].astype(np.float32),
                   "labels": source["labels"].astype(np.int64),
                   "baseline": source["baseline"].astype(np.int64),
-                  "situations": source["situations"].astype(np.uint8)}
+                  "situations": source["situations"].astype(np.uint8),
+                  "action_change": source["action_change"].astype(np.uint8)}
         for name in ("near", "far"):
             result[name] = np.concatenate((source[f"{name}_channels"].astype(np.float32) / 255,
                                            source[f"{name}_height"].astype(np.float32),
@@ -215,12 +242,19 @@ def load_cached(path: str | Path) -> dict[str, np.ndarray]:
 
 
 def prepare(source: Path, output: Path, seed: int = 17, validation_fraction: float = .2,
-            chunk_records: int = 32) -> dict[str, Any]:
-    if not source.is_absolute() or not output.is_absolute():
-        raise ValueError("source and output paths must be absolute")
-    if source == output or source in output.parents:
-        raise ValueError("cache must be outside the source recordings")
-    episodes, failed = [], 0
+            chunk_records: int = 32, split_index: Path | None = None,
+            dagger_sources: list[Path] | None = None) -> dict[str, Any]:
+    dagger_sources = dagger_sources or []
+    paths = [source, output, *dagger_sources, *([split_index] if split_index else [])]
+    if any(not path.is_absolute() for path in paths):
+        raise ValueError("source, output and split-index paths must be absolute")
+    for recordings in (source, *dagger_sources):
+        if recordings == output or recordings in output.parents:
+            raise ValueError("cache must be outside the source recordings")
+    if dagger_sources and split_index is None:
+        raise ValueError("DAgger preparation requires --split-index")
+    episodes, failed, unsplit_teacher, excluded_dagger = [], 0, 0, 0
+    split = read_pair_split(split_index) if split_index else None
     for samples in nav_demos.episode_paths(source):
         metadata = json.loads((samples.parent / "episode.json").read_text(encoding="utf-8"))
         if metadata.get("success") is not True:
@@ -229,17 +263,41 @@ def prepare(source: Path, output: Path, seed: int = 17, validation_fraction: flo
         for key in ("start", "goal", "region"):
             if not isinstance(metadata.get(key), str) or not metadata[key]:
                 raise ValueError(f"missing {key} in {samples.parent / 'episode.json'}")
-        episodes.append({"samples": samples, **metadata})
+        if split is not None and (metadata["start"], metadata["goal"]) not in split:
+            unsplit_teacher += 1
+            continue
+        episodes.append({**metadata, "samples": samples, "source": source, "source_kind": "teacher"})
     if not episodes:
         raise ValueError(f"no successful episodes in {source}")
-    split = split_pairs(episodes, validation_fraction, seed)
+    if split is None:
+        split = split_pairs(episodes, validation_fraction, seed)
+    seen_samples = {episode["samples"].resolve() for episode in episodes}
+    for source_number, dagger_source in enumerate(dagger_sources, start=1):
+        for samples in nav_demos.episode_paths(dagger_source):
+            metadata = json.loads((samples.parent / "episode.json").read_text(encoding="utf-8"))
+            pair = (metadata.get("start"), metadata.get("goal"))
+            # The original split is authoritative, including for failed drives.
+            # Control drives and new pairs cannot become training examples.
+            if metadata.get("split") == "control" or split.get(pair) != "train":
+                excluded_dagger += 1
+                continue
+            if samples.resolve() in seen_samples:
+                raise ValueError(f"duplicate recording source: {samples}")
+            seen_samples.add(samples.resolve())
+            if not isinstance(metadata.get("region"), str) or not metadata["region"]:
+                raise ValueError(f"missing region in {samples.parent / 'episode.json'}")
+            episodes.append({**metadata, "samples": samples, "source": dagger_source,
+                             "source_kind": "dagger", "source_number": source_number})
     (output / "episodes").mkdir(parents=True, exist_ok=True)
     index: dict[str, Any] = {
         "cache_version": CACHE_VERSION, "seed": seed, "validation_fraction": validation_fraction,
         "heads": list(HEADS), "classes": list(CLASSES), "vector_size": VECTOR_SIZE,
         "near_shape": [9, 32, 32], "far_shape": [9, 25, 25],
         "situations": list(SITUATIONS), "preprocessing": PREPROCESSING,
-        "excluded_unsuccessful_episodes": failed, "episodes": [],
+        "excluded_unsuccessful_episodes": failed,
+        "excluded_unsplit_teacher_episodes": unsplit_teacher,
+        "excluded_dagger_episodes": excluded_dagger,
+        "split_index": str(split_index) if split_index else None, "episodes": [],
         "class_counts": {part: {head: [0] * classes for head, classes in zip(HEADS, CLASSES)}
                          for part in ("train", "validation")},
     }
@@ -247,9 +305,11 @@ def prepare(source: Path, output: Path, seed: int = 17, validation_fraction: flo
     ids = set()
     for number, episode in enumerate(episodes, start=1):
         samples = episode["samples"]
-        identity = samples.parent.relative_to(source).as_posix().replace("/", "__")
+        identity = samples.parent.relative_to(episode["source"]).as_posix().replace("/", "__")
         if not identity or identity == ".":
             identity = samples.parent.name
+        if episode["source_kind"] == "dagger":
+            identity = f"dagger{episode['source_number']}__{identity}"
         if identity in ids:
             raise ValueError(f"duplicate cache identity: {identity}")
         ids.add(identity)
@@ -266,7 +326,8 @@ def prepare(source: Path, output: Path, seed: int = 17, validation_fraction: flo
             features = _pack(encode_features(inputs, layout))
             labels = encode_labels(records["keys"])
             features.update(labels=labels, baseline=road_baseline(inputs),
-                            situations=situation_masks(inputs, layout, labels, steps))
+                            situations=situation_masks(inputs, layout, labels, steps),
+                            action_change=action_change_mask(records))
             for name, values in features.items():
                 parts.setdefault(name, []).append(values)
             steps += len(records)
@@ -288,6 +349,7 @@ def prepare(source: Path, output: Path, seed: int = 17, validation_fraction: flo
             "id": identity, "pair": [episode["start"], episode["goal"]],
             "start": episode["start"], "goal": episode["goal"], "region": episode["region"],
             "split": part, "steps": steps, "file": relative_file.as_posix(),
+            "source_kind": episode["source_kind"], "success": episode.get("success") is True,
         })
         del arrays
         print(f"cache {number}/{len(episodes)} {identity}: {steps} steps ({part})", flush=True)
@@ -319,8 +381,13 @@ def main() -> None:
     prepare_command.add_argument("--seed", type=int, default=17)
     prepare_command.add_argument("--validation-fraction", type=float, default=.2)
     prepare_command.add_argument("--chunk-records", type=int, default=32)
+    prepare_command.add_argument("--split-index", type=Path,
+                                 help="preserve train/validation pairs from an earlier cache index")
+    prepare_command.add_argument("--dagger-source", type=Path, action="append", default=[],
+                                 help="add all labelled learner drives from original training pairs; repeat per round")
     args = parser.parse_args()
-    prepare(args.source, args.output, args.seed, args.validation_fraction, args.chunk_records)
+    prepare(args.source, args.output, args.seed, args.validation_fraction, args.chunk_records,
+            args.split_index, args.dagger_source)
 
 
 if __name__ == "__main__":

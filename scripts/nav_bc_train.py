@@ -19,7 +19,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from nav_bc_data import HEADS, CLASSES, load_cached
+from nav_bc_data import CACHE_VERSION, HEADS, CLASSES, PREPROCESSING, VECTOR_SIZE, load_cached
 from nav_bc_model import NavPolicy, export_weights
 
 
@@ -29,6 +29,9 @@ def write_json(path, value):
 
 def read_index(cache):
     index = json.loads((cache / "index.json").read_text())
+    if (index.get("cache_version") != CACHE_VERSION or index.get("vector_size") != VECTOR_SIZE or
+            index.get("preprocessing", {}).get("vector_order") != PREPROCESSING["vector_order"]):
+        raise ValueError("rebuild cache for sensor-only inputs without previous_keys")
     train = {tuple(ep["pair"]) for ep in index["episodes"] if ep["split"] == "train"}
     valid = {tuple(ep["pair"]) for ep in index["episodes"] if ep["split"] != "train"}
     if train & valid:
@@ -88,7 +91,7 @@ def predict_episode(model, ep, device, segment=128):
 
 def evaluate(model, cache, entries, device, details=False):
     model.eval()
-    truth, predictions, baselines, regions, situations = [], [], [], [], []
+    truth, predictions, baselines, regions, situations, changes = [], [], [], [], [], []
     for meta in entries:
         ep = load(cache, meta)
         truth.append(ep["labels"])
@@ -96,10 +99,20 @@ def evaluate(model, cache, entries, device, details=False):
         baselines.append(ep["baseline"])
         regions.extend([meta["region"]] * len(ep["labels"]))
         situations.append(ep["situations"])
+        changes.append(ep["action_change"])
     y, p, road = map(np.concatenate, (truth, predictions, baselines))
     always = np.tile(np.array([2, 1, 1, 1, 0, 0]), (len(y), 1))
     result = {"steps": len(y), "model": metrics(y, p), "always_forward": metrics(y, always),
               "road_forward": metrics(y, road)}
+    change_mask = np.concatenate(changes).astype(bool)
+    result["action_change"] = {
+        "steps": int(change_mask.sum()),
+        "all_heads_accuracy": float((y[change_mask] == p[change_mask]).all(axis=1).mean())
+                              if change_mask.any() else None,
+        "model": metrics(y[change_mask], p[change_mask]),
+        "always_forward": metrics(y[change_mask], always[change_mask]),
+        "road_forward": metrics(y[change_mask], road[change_mask]),
+    }
     if details:
         r = np.array(regions)
         s = np.concatenate(situations)
@@ -187,7 +200,10 @@ def train(args):
         print(json.dumps({k: v for k, v in record.items() if k != "validation"} |
               {"turn_f1": validation["model"]["turn"]["macro_f1"],
                "forward_accuracy": validation["model"]["forward"]["accuracy"],
-               "forward_balanced": validation["model"]["forward"]["balanced_accuracy"], "best": is_best}), flush=True)
+               "forward_balanced": validation["model"]["forward"]["balanced_accuracy"],
+               "action_change_steps": validation["action_change"]["steps"],
+               "action_change_all_heads": validation["action_change"]["all_heads_accuracy"],
+               "best": is_best}), flush=True)
 
 
 def timed_step(step, iterations):
