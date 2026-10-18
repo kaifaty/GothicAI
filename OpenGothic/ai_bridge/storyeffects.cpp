@@ -252,9 +252,14 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
   else if(kind=="calm") {
     // the npc calls off its fight with the hero (v20, talked down: "Воу, ты чего, спокуха") and keeps to it:
     // its attitude to him as the scripts set it (B_SetAttitude), so their B_AssessEnemy sees no enemy in
-    // him any more; and a fight with him ends now, the npc back to its routine
+    // him any more; and a fight with him or his party ends now, the npc back to its routine
     call("B_SETATTITUDE",{Value::instance(npc.handlePtr()),Value::integer(constant(attitude,2))});
-    if(npc.target()==&player && !npc.isDown()) {
+    auto* party = vm.find_symbol_by_name("AIV_PARTYMEMBER");
+    const int32_t aiv = party!=nullptr && party->type()==DaedalusDataType::INT ? party->get_int(0) : -1;
+    const Npc* target = npc.target();
+    const bool companion = target!=nullptr && aiv>=0 && uint32_t(aiv)<zenkit::INpc::aivar_count &&
+                           target->handlePtr()->aivar[size_t(aiv)]!=0;
+    if((target==&player || companion) && !npc.isDown()) {
       npc.clearAiQueue();
       npc.clearState(true);
       npc.setTarget(nullptr);
