@@ -7,7 +7,7 @@ from typing import Any
 
 from .. import triggers
 from ..bodies import Bodies
-from ..bodypilot import BodyPilot
+from ..bodypilot import TARGET_IS_HERO, BodyPilot
 from ..dialogue import DialogueManager
 from ..executor import Intent
 from ..game import GameError, GameLink
@@ -35,7 +35,12 @@ def _targets(who: str) -> list[Any]:
 async def _prepare(link: GameLink) -> None:
     """Unique swordsmen on the neural arena, with enough health to survive the observation window."""
     await link.debug("player_goto", waypoint="NW_XARDAS_TOWER_VALLEY_01")
-    await link.own_npc(BANDIT, like="BDT_1002_BANDIT_L", waypoint=ARENA)
+    await link.story_npc(NpcSpec(
+        npc=BANDIT, like="BDT_1002_BANDIT_L", at=ARENA, name="Бандит",
+        routine=[RoutineEntry(
+            start="00:00", end="23:59", state="ZS_STAND_ARMSCROSSED", waypoint=ARENA,
+        )],
+    ))
     await link.story_npc(NpcSpec(
         npc=COMPANION, like="BDT_1002_BANDIT_L", at=ARENA,
         name="Спутник-мечник", guild="GIL_VLK",
@@ -78,7 +83,9 @@ async def _prepare(link: GameLink) -> None:
     await link.debug("player_equip", item="ITAR_PAL_H")
     await link.debug("npc_goto", npc=BANDIT, waypoint=ARENA, face="PC_HERO")
     await link.debug("teleport", near=BANDIT, distance=300)
-    await link.debug("npc_goto", npc=COMPANION, to="PLAYER", distance=350, face=BANDIT)
+    # Behind the hero: placing it in front puts it almost on top of the bandit,
+    # which retargets before both sides' original combat targets can be sampled.
+    await link.debug("npc_goto", npc=COMPANION, to="PC_HERO", distance=-650, face=BANDIT)
 
 
 async def calm_companion_scenario(
@@ -100,9 +107,28 @@ async def calm_companion_scenario(
 
     await _prepare(link)
     entries: list[tuple[float, dict[str, Any]]] = []
+    attack_seen: list[Any] = []
     attacks_after: list[str] = []
     monitoring = False
     sink, llm = dialogue.journal.sink, dialogue.llm
+    effect = link.story_effect
+
+    async def observed_effect(
+        who: str, effects: list[dict[str, Any]], timeout: float = 5.0, *, check: bool = False,
+    ) -> None:
+        await effect(who, effects, timeout, check=check)
+        if who == BANDIT and any(e.get("do") == "attack" for e in effects):
+            # Sample the original victim before the ACK wakes Orders.attacked and the
+            # companion's defence can make native AI legitimately retarget the attacker.
+            # ZS_ATTACK can be queued before its init has installed a live target.
+            async def sample() -> list[Any]:
+                attack_seen[:] = await link.story_eval(BANDIT, [
+                    _attacking("SELF"), TARGET_IS_HERO, _targets(COMPANION),
+                    ["call", "NPC_GETTARGET", ["inst", "SELF"]],
+                ])
+                return attack_seen
+
+            await _until_async(sample, lambda v: v[:2] == [1, 1], 2)
 
     def keep(entry: dict[str, Any]) -> None:
         entries.append((time.monotonic(), entry))
@@ -126,6 +152,7 @@ async def calm_companion_scenario(
         ("спокуха", FakeStep("Ладно. Живи.", [ToolCall("set_intent", calm)])),
     ], FakeStep("Хм."))}, FakeBackend("Хм.", delay=0))
     dialogue.journal.sink = keep
+    link.story_effect = observed_effect  # type: ignore[method-assign]
     link.listeners.append(observe)
     try:
         if not await _until(lambda: BANDIT in talk.people and COMPANION in talk.people, 15):
@@ -142,14 +169,18 @@ async def calm_companion_scenario(
 
         async def combat() -> list[Any]:
             return [
-                *await link.story_eval(BANDIT, [_attacking("SELF"), _targets("PC_HERO")]),
+                *await link.story_eval(BANDIT, [_attacking("SELF"), TARGET_IS_HERO]),
                 *await link.story_eval(COMPANION, [_attacking("SELF"), _targets(BANDIT)]),
             ]
 
-        fought = await _until_async(combat, lambda v: all(v) and bool(journal("attack")), 20)
+        fought = await _until_async(
+            combat,
+            lambda v: attack_seen[:2] == [1, 1] and v[0] and all(v[2:]) and bool(journal("attack")), 20,
+        )
         live = await combat()
         check("fight", fought and orders.companion(COMPANION),
-              f"bandit attack/hero target, companion attack/bandit target={live}; "
+              f"initial bandit attack/hero target/companion target/any target={attack_seen}; "
+              f"current bandit attack/hero target, companion attack/bandit target={live}; "
               f"server_companion={orders.companion(COMPANION)}, "
               f"defence={getattr(orders.fights.get(COMPANION), 'target', None)}")
         if not fought:
@@ -253,4 +284,5 @@ async def calm_companion_scenario(
         return _logged(results)
     finally:
         dialogue.journal.sink, dialogue.llm = sink, llm
+        link.story_effect = effect  # type: ignore[method-assign]
         link.listeners.remove(observe)
