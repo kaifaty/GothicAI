@@ -43,7 +43,9 @@ async def _prepare(link: GameLink) -> None:
     ))
     await link.story_npc(NpcSpec(
         npc=COMPANION, like="BDT_1002_BANDIT_L", at=ARENA,
-        name="Спутник-мечник", guild="GIL_VLK",
+        # Same guild as the attacker: no independent guild feud survives a truce
+        # with the hero. Orders/party, rather than a guild, make it his companion.
+        name="Спутник-мечник",
         routine=[RoutineEntry(
             start="00:00", end="23:59", state="ZS_STAND_ARMSCROSSED", waypoint=ARENA,
         )],
@@ -81,6 +83,7 @@ async def _prepare(link: GameLink) -> None:
         await link.patch_graph([{"op": "trigger", "id": trigger, "steps": None}])
     await link.debug("player_hp", hp=5000)
     await link.debug("player_equip", item="ITAR_PAL_H")
+    await link.story_effect(COMPANION, [{"do": "calm", "attitude": "ATT_FRIENDLY"}])
     await link.debug("npc_goto", npc=BANDIT, waypoint=ARENA, face="PC_HERO")
     await link.debug("teleport", near=BANDIT, distance=300)
     # Behind the hero: placing it in front puts it almost on top of the bandit,
@@ -165,6 +168,13 @@ async def calm_companion_scenario(
         )
         if not following:
             raise GameError("calm_companion preparation: companion did not follow")
+        attitudes = await link.story_eval(BANDIT, [
+            ["call", "NPC_GETATTITUDE", ["inst", BANDIT], ["inst", COMPANION]],
+            ["call", "NPC_GETATTITUDE", ["inst", COMPANION], ["inst", BANDIT]],
+            ["var", "ATT_HOSTILE"],
+        ])
+        if any(value is None or value == attitudes[2] for value in attitudes[:2]):
+            raise GameError(f"calm_companion preparation: independent guild feud {attitudes}")
         talk.hear("Эй, ты! А ну отойди с дороги.", BANDIT, {"via": "scenario"})
 
         async def combat() -> list[Any]:
@@ -181,6 +191,7 @@ async def calm_companion_scenario(
         check("fight", fought and orders.companion(COMPANION),
               f"initial bandit attack/hero target/companion target/any target={attack_seen}; "
               f"current bandit attack/hero target, companion attack/bandit target={live}; "
+              f"guild attitudes/hostile={attitudes}; "
               f"server_companion={orders.companion(COMPANION)}, "
               f"defence={getattr(orders.fights.get(COMPANION), 'target', None)}")
         if not fought:
@@ -280,7 +291,8 @@ async def calm_companion_scenario(
             await asyncio.sleep(0.25)
         check("stays_calm", not attacks_after and alive and None not in hp and list(hp) == minimum,
               f"seconds={time.monotonic() - started:.2f}, samples={samples}, "
-              f"attacks={attacks_after}, hero/companion hp={hp}, minimum={minimum}, bandit_alive={alive}")
+              f"attacks={len(attacks_after)}, examples={attacks_after[:6]}, "
+              f"hero/companion hp={hp}, minimum={minimum}, bandit_alive={alive}")
         return _logged(results)
     finally:
         dialogue.journal.sink, dialogue.llm = sink, llm
