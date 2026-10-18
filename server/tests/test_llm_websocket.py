@@ -10,6 +10,7 @@ from websockets.asyncio.server import ServerConnection, serve
 
 from gothic_ai.llm import Done, LLMError, Message, TextDelta, ToolCall, ToolResult
 from gothic_ai.llm.openai_responses import PLAN_LIMIT, WS_IDLE_S, OpenAIResponsesBackend
+from gothic_ai.scenarios.responses_server import ResponsesServer, reply
 from tests.test_dialogue import _until
 
 
@@ -250,6 +251,36 @@ async def test_no_websocket_the_request_goes_over_http():
         await backend.aclose()
     assert out[-1].text == "По HTTP." and sent["prompt_cache_key"] == "NONE_100_XARDAS"
     assert not backend._ws_on()  # HTTP for a while, not a failed connect each time
+
+
+@pytest.mark.parametrize("websocket,refuse", [(True, False), (True, True), (False, True)])
+async def test_scenario_server_serves_the_real_sdk_over_ws_and_http(websocket, refuse, caplog):
+    """SSE reaches the SDK both after a refused handshake and with WebSocket explicitly disabled."""
+    async def token() -> str:
+        return "fake-token"
+
+    async with ResponsesServer(lambda request, n: reply(f"response_{n}", f"Реплика {n}.")) as server:
+        server.refuse_websocket = refuse
+        backend = OpenAIResponsesBackend("fake-model", token, base_url=server.base_url, websocket=websocket)
+        try:
+            out = await _ask(backend, [Message("user", "Привет")])
+            again = await _ask(backend, [Message("user", "Ещё")])
+            assert out[-1].text == "Реплика 1." and again[-1].text == "Реплика 2."
+            assert out[-1].usage.input_tokens == 10
+        finally:
+            await backend.aclose()
+
+    assert server.handshakes == int(websocket)
+    assert server.refused == int(websocket and refuse)
+    if websocket and not refuse:
+        assert len(server.connections) == 1 and len(server.requests) == 2
+        assert all(request["type"] == "response.create" for request in server.requests)
+        assert not server.http_requests
+    else:
+        assert not server.connections and len(server.http_requests) == 2
+        assert all(request["prompt_cache_key"] == "NONE_100_XARDAS" for request in server.http_requests)
+    warnings = [record for record in caplog.records if "over HTTP for" in record.message]
+    assert len(warnings) == int(websocket and refuse)
 
 
 async def test_a_kept_key_stays_open_while_unused():

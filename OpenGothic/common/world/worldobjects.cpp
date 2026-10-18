@@ -22,6 +22,7 @@
 #include "utils/dbgpainter.h"
 #include "gothic.h"
 #include "frameprofile.h"
+#include "navdemos.h"
 
 #include <Tempest/Painter>
 #include <Tempest/Application>
@@ -310,7 +311,8 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   auto plPos = pl!=nullptr ? pl->position() : cpos;
   for(auto& i:npcArr) {
     float dist = (i->position()-plPos).quadLength();
-    if(dist<nearDist){
+    // Training actors keep native AI/perception and animation at every distance.
+    if(dist<nearDist || NavDemos::fullSimulation(*i)){
       npcNear.push_back(i.get());
       if(i.get()!=pl)
         i->setProcessPolicy(NpcProcessPolicy::AiNormal);

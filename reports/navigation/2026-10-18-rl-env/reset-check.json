@@ -1,0 +1,1147 @@
+{
+  "episodes": 60,
+  "decisions": 600,
+  "max_log_prob_error": 7.57854157207305e-09,
+  "results": [
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/0",
+      "decisions": 10,
+      "max_log_prob_error": 5.386939783136313e-09,
+      "reward_sums": {
+        "progress_cm": -45.082092290000006,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 11219.7166,
+      "final_path_cm": 11264.7987,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/1",
+      "decisions": 10,
+      "max_log_prob_error": 5.639840816584751e-09,
+      "reward_sums": {
+        "progress_cm": -24.56054688,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 6297.06497,
+      "final_path_cm": 6321.62552,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/10",
+      "decisions": 10,
+      "max_log_prob_error": 3.701597584004901e-09,
+      "reward_sums": {
+        "progress_cm": -48.482131960000004,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3698.57101,
+      "final_path_cm": 3747.05315,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/11",
+      "decisions": 10,
+      "max_log_prob_error": 4.267912911970484e-09,
+      "reward_sums": {
+        "progress_cm": -24.218750002,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 4698.0072,
+      "final_path_cm": 4722.22595,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/12",
+      "decisions": 10,
+      "max_log_prob_error": 4.417958887614759e-09,
+      "reward_sums": {
+        "progress_cm": 39.8456573453,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3932.72514,
+      "final_path_cm": 3892.87949,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/13",
+      "decisions": 10,
+      "max_log_prob_error": 5.635069300069517e-09,
+      "reward_sums": {
+        "progress_cm": 55.3527832026,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 1819.95907,
+      "final_path_cm": 1764.60629,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/14",
+      "decisions": 10,
+      "max_log_prob_error": 4.241039519570222e-09,
+      "reward_sums": {
+        "progress_cm": 4.41207886,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 5524.086,
+      "final_path_cm": 5519.67392,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/15",
+      "decisions": 10,
+      "max_log_prob_error": 3.041352947263931e-09,
+      "reward_sums": {
+        "progress_cm": 12.02583312781,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3496.10901,
+      "final_path_cm": 3484.08318,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/16",
+      "decisions": 10,
+      "max_log_prob_error": 6.350720838099733e-09,
+      "reward_sums": {
+        "progress_cm": 21.534728993999998,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3280.8506,
+      "final_path_cm": 3259.31587,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/17",
+      "decisions": 10,
+      "max_log_prob_error": 6.499276672400356e-09,
+      "reward_sums": {
+        "progress_cm": 19.944763180000002,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3383.67996,
+      "final_path_cm": 3363.7352,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/18",
+      "decisions": 10,
+      "max_log_prob_error": 7.501647747432116e-09,
+      "reward_sums": {
+        "progress_cm": 42.271041882,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3480.5336,
+      "final_path_cm": 3438.26256,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/19",
+      "decisions": 10,
+      "max_log_prob_error": 5.284226167745487e-09,
+      "reward_sums": {
+        "progress_cm": -52.21786499000001,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 6838.17215,
+      "final_path_cm": 6890.39001,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/2",
+      "decisions": 10,
+      "max_log_prob_error": 6.7072158937975246e-09,
+      "reward_sums": {
+        "progress_cm": -2.2552490300000003,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 10562.6106,
+      "final_path_cm": 10564.8659,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/20",
+      "decisions": 10,
+      "max_log_prob_error": 4.499798311741188e-09,
+      "reward_sums": {
+        "progress_cm": 0,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3972.57996,
+      "final_path_cm": 3972.57996,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/21",
+      "decisions": 10,
+      "max_log_prob_error": 4.74673300665529e-09,
+      "reward_sums": {
+        "progress_cm": 61.16104127,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3331.69861,
+      "final_path_cm": 3270.53757,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/22",
+      "decisions": 10,
+      "max_log_prob_error": 2.1240098568853227e-09,
+      "reward_sums": {
+        "progress_cm": -41.25862122,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 5173.07625,
+      "final_path_cm": 5214.33487,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/23",
+      "decisions": 10,
+      "max_log_prob_error": 2.0625525731787775e-09,
+      "reward_sums": {
+        "progress_cm": 43.11637878,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 4903.53622,
+      "final_path_cm": 4860.41985,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/24",
+      "decisions": 10,
+      "max_log_prob_error": 2.785021546714006e-09,
+      "reward_sums": {
+        "progress_cm": 59.8739624075,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 2955.64213,
+      "final_path_cm": 2895.76817,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/25",
+      "decisions": 10,
+      "max_log_prob_error": 4.9527280054917355e-09,
+      "reward_sums": {
+        "progress_cm": 63.394832614600006,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 1417.53702,
+      "final_path_cm": 1354.14219,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/26",
+      "decisions": 10,
+      "max_log_prob_error": 4.218805527145264e-09,
+      "reward_sums": {
+        "progress_cm": 49.000358590000005,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 2179.97494,
+      "final_path_cm": 2130.97458,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/27",
+      "decisions": 10,
+      "max_log_prob_error": 4.448883483831878e-09,
+      "reward_sums": {
+        "progress_cm": -11.93695069,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 5370.94574,
+      "final_path_cm": 5382.88269,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/28",
+      "decisions": 10,
+      "max_log_prob_error": 6.503452887329786e-09,
+      "reward_sums": {
+        "progress_cm": -50.703811650000006,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3274.81918,
+      "final_path_cm": 3325.52299,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/29",
+      "decisions": 10,
+      "max_log_prob_error": 5.455165208445578e-09,
+      "reward_sums": {
+        "progress_cm": 5.4100036685470005,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3654.24309,
+      "final_path_cm": 3648.83308,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/3",
+      "decisions": 10,
+      "max_log_prob_error": 6.605581637231239e-09,
+      "reward_sums": {
+        "progress_cm": 0,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 1638.92498,
+      "final_path_cm": 1638.92498,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/30",
+      "decisions": 10,
+      "max_log_prob_error": 4.039984347059544e-09,
+      "reward_sums": {
+        "progress_cm": 8.589839935999999,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 1041.03575,
+      "final_path_cm": 1032.44591,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/31",
+      "decisions": 10,
+      "max_log_prob_error": 6.483644177102121e-10,
+      "reward_sums": {
+        "progress_cm": -0.604343414,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 1282.62806,
+      "final_path_cm": 1283.2324,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/32",
+      "decisions": 10,
+      "max_log_prob_error": 2.9155176051176568e-09,
+      "reward_sums": {
+        "progress_cm": -0.0255584717,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3594.05212,
+      "final_path_cm": 3594.07768,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/33",
+      "decisions": 10,
+      "max_log_prob_error": 6.214933900849928e-09,
+      "reward_sums": {
+        "progress_cm": 57.64656067,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3166.56094,
+      "final_path_cm": 3108.91438,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/34",
+      "decisions": 10,
+      "max_log_prob_error": 4.796653740868351e-09,
+      "reward_sums": {
+        "progress_cm": 52.291679380000005,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 2396.13113,
+      "final_path_cm": 2343.83945,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/35",
+      "decisions": 10,
+      "max_log_prob_error": 6.51925802230835e-09,
+      "reward_sums": {
+        "progress_cm": -20.297241226,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3706.84013,
+      "final_path_cm": 3727.13737,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/36",
+      "decisions": 10,
+      "max_log_prob_error": 2.278818023171425e-09,
+      "reward_sums": {
+        "progress_cm": 21.781158441400002,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 2599.47548,
+      "final_path_cm": 2577.69432,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/37",
+      "decisions": 10,
+      "max_log_prob_error": 3.1626687935215614e-09,
+      "reward_sums": {
+        "progress_cm": 34.042549126000004,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 1842.76409,
+      "final_path_cm": 1808.72154,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/38",
+      "decisions": 10,
+      "max_log_prob_error": 4.272645348635251e-09,
+      "reward_sums": {
+        "progress_cm": 13.0744934052,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3442.62276,
+      "final_path_cm": 3429.54826,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/39",
+      "decisions": 10,
+      "max_log_prob_error": 6.576033051430841e-09,
+      "reward_sums": {
+        "progress_cm": 55.8158874589,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3876.16997,
+      "final_path_cm": 3820.35408,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/4",
+      "decisions": 10,
+      "max_log_prob_error": 6.811137431839143e-09,
+      "reward_sums": {
+        "progress_cm": 42.2542571976,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 2318.91251,
+      "final_path_cm": 2276.65825,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/40",
+      "decisions": 10,
+      "max_log_prob_error": 7.57854157207305e-09,
+      "reward_sums": {
+        "progress_cm": 25.881195059999996,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 4454.02336,
+      "final_path_cm": 4428.14217,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/41",
+      "decisions": 10,
+      "max_log_prob_error": 6.7651488855347e-09,
+      "reward_sums": {
+        "progress_cm": 34.980010985199996,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3744.04945,
+      "final_path_cm": 3709.06944,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/42",
+      "decisions": 10,
+      "max_log_prob_error": 4.013046117634644e-09,
+      "reward_sums": {
+        "progress_cm": 51.033020029999996,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 1953.01933,
+      "final_path_cm": 1901.98631,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/43",
+      "decisions": 10,
+      "max_log_prob_error": 4.6489699867535705e-09,
+      "reward_sums": {
+        "progress_cm": 50.44517517,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 1137.65879,
+      "final_path_cm": 1087.21361,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/44",
+      "decisions": 10,
+      "max_log_prob_error": 2.8138824603729518e-09,
+      "reward_sums": {
+        "progress_cm": 63.184356689999994,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 8254.18091,
+      "final_path_cm": 8190.99655,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/45",
+      "decisions": 10,
+      "max_log_prob_error": 8.294493980542939e-10,
+      "reward_sums": {
+        "progress_cm": 4.04663086,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 4803.00751,
+      "final_path_cm": 4798.96088,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/46",
+      "decisions": 10,
+      "max_log_prob_error": 3.6075680220903905e-09,
+      "reward_sums": {
+        "progress_cm": -1.90010071,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3338.90457,
+      "final_path_cm": 3340.80467,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/47",
+      "decisions": 10,
+      "max_log_prob_error": 6.216731990305036e-10,
+      "reward_sums": {
+        "progress_cm": 0,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 6802.06146,
+      "final_path_cm": 6802.06146,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/48",
+      "decisions": 10,
+      "max_log_prob_error": 2.659524045434125e-09,
+      "reward_sums": {
+        "progress_cm": 0.107192993,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 4664.07509,
+      "final_path_cm": 4663.9679,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/49",
+      "decisions": 10,
+      "max_log_prob_error": 3.8372907074091245e-09,
+      "reward_sums": {
+        "progress_cm": 36.972045889,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 3868.62259,
+      "final_path_cm": 3831.65054,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/5",
+      "decisions": 10,
+      "max_log_prob_error": 2.4417854405101025e-09,
+      "reward_sums": {
+        "progress_cm": -0.0473022461,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 5696.99402,
+      "final_path_cm": 5697.04132,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/50",
+      "decisions": 10,
+      "max_log_prob_error": 6.447190337155462e-09,
+      "reward_sums": {
+        "progress_cm": 34.29965972,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 2535.66551,
+      "final_path_cm": 2501.36585,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/51",
+      "decisions": 10,
+      "max_log_prob_error": 5.91134208249855e-09,
+      "reward_sums": {
+        "progress_cm": 21.450805662,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 14965.8859,
+      "final_path_cm": 14944.4351,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/52",
+      "decisions": 10,
+      "max_log_prob_error": 1.8030646420363894e-09,
+      "reward_sums": {
+        "progress_cm": 9.6328735362,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 20453.7994,
+      "final_path_cm": 20444.1666,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/53",
+      "decisions": 10,
+      "max_log_prob_error": 6.464856650012507e-09,
+      "reward_sums": {
+        "progress_cm": 10.3210449193,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 19708.2672,
+      "final_path_cm": 19697.9462,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/54",
+      "decisions": 10,
+      "max_log_prob_error": 4.94753216173649e-09,
+      "reward_sums": {
+        "progress_cm": 47.05114364,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 1481.57187,
+      "final_path_cm": 1434.52072,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/55",
+      "decisions": 10,
+      "max_log_prob_error": 4.271833553559645e-09,
+      "reward_sums": {
+        "progress_cm": 47.60150909,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 2987.24346,
+      "final_path_cm": 2939.64195,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/56",
+      "decisions": 10,
+      "max_log_prob_error": 5.061992602861665e-09,
+      "reward_sums": {
+        "progress_cm": -32.34252931,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 25522.2855,
+      "final_path_cm": 25554.628,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/57",
+      "decisions": 10,
+      "max_log_prob_error": 6.84504253278817e-09,
+      "reward_sums": {
+        "progress_cm": -33.9630127,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 19443.6768,
+      "final_path_cm": 19477.6398,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/58",
+      "decisions": 10,
+      "max_log_prob_error": 6.566462706913967e-09,
+      "reward_sums": {
+        "progress_cm": -35.980224590000006,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 15376.7517,
+      "final_path_cm": 15412.7319,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/59",
+      "decisions": 10,
+      "max_log_prob_error": 7.547529712326195e-09,
+      "reward_sums": {
+        "progress_cm": 0,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 11497.5449,
+      "final_path_cm": 11497.5449,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/6",
+      "decisions": 10,
+      "max_log_prob_error": 4.2370844610672975e-09,
+      "reward_sums": {
+        "progress_cm": -117.988204472,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 5638.10844,
+      "final_path_cm": 5756.09665,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/7",
+      "decisions": 10,
+      "max_log_prob_error": 4.2905687891448e-09,
+      "reward_sums": {
+        "progress_cm": 0,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 6030.44205,
+      "final_path_cm": 6030.44205,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/8",
+      "decisions": 10,
+      "max_log_prob_error": 3.617923738374884e-09,
+      "reward_sums": {
+        "progress_cm": 0,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 5444.24973,
+      "final_path_cm": 5444.24973,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/reset-smoke/population/n20-r1-w0/episodes/9",
+      "decisions": 10,
+      "max_log_prob_error": 6.2943990020158935e-09,
+      "reward_sums": {
+        "progress_cm": 40.20595551,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 2405.44338,
+      "final_path_cm": 2365.23743,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    }
+  ]
+}

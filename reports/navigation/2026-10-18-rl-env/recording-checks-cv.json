@@ -1,0 +1,429 @@
+{
+  "episodes": 20,
+  "decisions": 34458,
+  "max_log_prob_error": 7.769190846218521e-09,
+  "sampling_and_alignment_passed": true,
+  "successful_progress_5pct_passed": false,
+  "results": [
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-near/00000/episodes/0",
+      "decisions": 2400,
+      "max_log_prob_error": 5.74633629568666e-09,
+      "reward_sums": {
+        "progress_cm": 10280.712222457152,
+        "arrived": 0,
+        "blocked": 334,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 240000
+      },
+      "start_path_cm": 11219.7166,
+      "final_path_cm": 939.004421,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null,
+      "mode": "pop-near",
+      "successful_progress_within_5pct": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-near/00001/episodes/0",
+      "decisions": 2400,
+      "max_log_prob_error": 4.680156262537594e-09,
+      "reward_sums": {
+        "progress_cm": -1591.1064147941006,
+        "arrived": 0,
+        "blocked": 2007,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 240000
+      },
+      "start_path_cm": 6297.06497,
+      "final_path_cm": 7888.17139,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null,
+      "mode": "pop-near",
+      "successful_progress_within_5pct": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-near/00002/episodes/0",
+      "decisions": 1433,
+      "max_log_prob_error": 4.928460306530269e-09,
+      "reward_sums": {
+        "progress_cm": 10464.618271636988,
+        "arrived": 1,
+        "blocked": 54,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 143233
+      },
+      "start_path_cm": 10562.6106,
+      "final_path_cm": 97.9923546,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": 0.009277283057562716,
+      "mode": "pop-near",
+      "successful_progress_within_5pct": true
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-near/00003/episodes/0",
+      "decisions": 1498,
+      "max_log_prob_error": 5.60683588446409e-09,
+      "reward_sums": {
+        "progress_cm": 1540.0977828699984,
+        "arrived": 1,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 149800
+      },
+      "start_path_cm": 1638.92498,
+      "final_path_cm": 98.8272011,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": 0.060300012713212565,
+      "mode": "pop-near",
+      "successful_progress_within_5pct": false
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-near/00004/episodes/0",
+      "decisions": 313,
+      "max_log_prob_error": 4.14004108773014e-09,
+      "reward_sums": {
+        "progress_cm": 2219.1812993085996,
+        "arrived": 1,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 31300
+      },
+      "start_path_cm": 2318.91251,
+      "final_path_cm": 99.7312069,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": 0.04300775051293355,
+      "mode": "pop-near",
+      "successful_progress_within_5pct": true
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-near/00005/episodes/0",
+      "decisions": 1573,
+      "max_log_prob_error": 4.0908942899875456e-09,
+      "reward_sums": {
+        "progress_cm": 5599.321711097744,
+        "arrived": 1,
+        "blocked": 169,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 157267
+      },
+      "start_path_cm": 5696.99402,
+      "final_path_cm": 97.6723075,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": 0.01714453421565224,
+      "mode": "pop-near",
+      "successful_progress_within_5pct": true
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-near/00006/episodes/0",
+      "decisions": 2400,
+      "max_log_prob_error": 4.2490591045662995e-09,
+      "reward_sums": {
+        "progress_cm": 1031.1664584202185,
+        "arrived": 0,
+        "blocked": 1615,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 240000
+      },
+      "start_path_cm": 5638.10844,
+      "final_path_cm": 4606.94199,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null,
+      "mode": "pop-near",
+      "successful_progress_within_5pct": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-near/00007/episodes/0",
+      "decisions": 2400,
+      "max_log_prob_error": 5.919240653184943e-09,
+      "reward_sums": {
+        "progress_cm": 634.6397407829305,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 240000
+      },
+      "start_path_cm": 6030.44205,
+      "final_path_cm": 5395.80231,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null,
+      "mode": "pop-near",
+      "successful_progress_within_5pct": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-near/00008/episodes/0",
+      "decisions": 2400,
+      "max_log_prob_error": 6.1712992494022956e-09,
+      "reward_sums": {
+        "progress_cm": 4945.992183280795,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 240000
+      },
+      "start_path_cm": 5444.24973,
+      "final_path_cm": 498.257542,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null,
+      "mode": "pop-near",
+      "successful_progress_within_5pct": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-near/00009/episodes/0",
+      "decisions": 332,
+      "max_log_prob_error": 4.312682655438493e-09,
+      "reward_sums": {
+        "progress_cm": 2307.4471712299996,
+        "arrived": 1,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 33133
+      },
+      "start_path_cm": 2405.44338,
+      "final_path_cm": 97.9962111,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": 0.040739353744423,
+      "mode": "pop-near",
+      "successful_progress_within_5pct": true
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-far/00000/episodes/0",
+      "decisions": 1872,
+      "max_log_prob_error": 6.696549093021531e-09,
+      "reward_sums": {
+        "progress_cm": 11122.076719547404,
+        "arrived": 1,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 187133
+      },
+      "start_path_cm": 11219.7166,
+      "final_path_cm": 97.6399243,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": 0.008702526448181064,
+      "mode": "pop-far",
+      "successful_progress_within_5pct": true
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-far/00001/episodes/0",
+      "decisions": 2400,
+      "max_log_prob_error": 5.6479736443293405e-09,
+      "reward_sums": {
+        "progress_cm": -1591.1064148051007,
+        "arrived": 0,
+        "blocked": 2010,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 240000
+      },
+      "start_path_cm": 6297.06497,
+      "final_path_cm": 7888.17139,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null,
+      "mode": "pop-far",
+      "successful_progress_within_5pct": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-far/00002/episodes/0",
+      "decisions": 1307,
+      "max_log_prob_error": 4.928460306530269e-09,
+      "reward_sums": {
+        "progress_cm": 10463.580619984994,
+        "arrived": 1,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 130667
+      },
+      "start_path_cm": 10562.6106,
+      "final_path_cm": 99.0300059,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": 0.009375521238566345,
+      "mode": "pop-far",
+      "successful_progress_within_5pct": true
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-far/00003/episodes/0",
+      "decisions": 1493,
+      "max_log_prob_error": 4.852688362255719e-09,
+      "reward_sums": {
+        "progress_cm": 1539.1764984547021,
+        "arrived": 1,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 149267
+      },
+      "start_path_cm": 1638.92498,
+      "final_path_cm": 99.7484803,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": 0.060862139977449034,
+      "mode": "pop-far",
+      "successful_progress_within_5pct": false
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-far/00004/episodes/0",
+      "decisions": 301,
+      "max_log_prob_error": 3.769950907006603e-09,
+      "reward_sums": {
+        "progress_cm": 2219.095688963599,
+        "arrived": 1,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 30100
+      },
+      "start_path_cm": 2318.91251,
+      "final_path_cm": 99.816817,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": 0.043044668829011166,
+      "mode": "pop-far",
+      "successful_progress_within_5pct": true
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-far/00005/episodes/0",
+      "decisions": 2400,
+      "max_log_prob_error": 4.899928240931217e-09,
+      "reward_sums": {
+        "progress_cm": 5500.210309032901,
+        "arrived": 0,
+        "blocked": 989,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 240000
+      },
+      "start_path_cm": 5696.99402,
+      "final_path_cm": 196.78371,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null,
+      "mode": "pop-far",
+      "successful_progress_within_5pct": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-far/00006/episodes/0",
+      "decisions": 2400,
+      "max_log_prob_error": 6.381438932834271e-09,
+      "reward_sums": {
+        "progress_cm": 3985.2996823535773,
+        "arrived": 0,
+        "blocked": 340,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 240000
+      },
+      "start_path_cm": 5638.10844,
+      "final_path_cm": 1652.80876,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null,
+      "mode": "pop-far",
+      "successful_progress_within_5pct": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-far/00007/episodes/0",
+      "decisions": 2400,
+      "max_log_prob_error": 5.919240653184943e-09,
+      "reward_sums": {
+        "progress_cm": 634.6397407829305,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 240000
+      },
+      "start_path_cm": 6030.44205,
+      "final_path_cm": 5395.80231,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null,
+      "mode": "pop-far",
+      "successful_progress_within_5pct": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-far/00008/episodes/0",
+      "decisions": 2400,
+      "max_log_prob_error": 7.769190846218521e-09,
+      "reward_sums": {
+        "progress_cm": 3265.139007086099,
+        "arrived": 0,
+        "blocked": 779,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 240000
+      },
+      "start_path_cm": 5444.24973,
+      "final_path_cm": 2179.11072,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null,
+      "mode": "pop-far",
+      "successful_progress_within_5pct": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-equivalence/pop-far/00009/episodes/0",
+      "decisions": 336,
+      "max_log_prob_error": 4.932479980013227e-09,
+      "reward_sums": {
+        "progress_cm": 2305.7603121700004,
+        "arrived": 1,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 33533
+      },
+      "start_path_cm": 2405.44338,
+      "final_path_cm": 99.6830702,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": 0.041440621158998055,
+      "mode": "pop-far",
+      "successful_progress_within_5pct": true
+    }
+  ]
+}

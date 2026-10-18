@@ -9,6 +9,7 @@
 #include "gothic.h"
 #include "serialize.h"
 #include "testbench.h"
+#include "navdemos.h"
 
 #include <cstdio>
 #include <algorithm>
@@ -671,6 +672,8 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
 bool MoveAlgo::useCharacterVirtual() {
   if(npc.isPlayer())
     return Gothic::physicsFlags().characterVirtual;
+  if(NavDemos::forceCharacterVirtual(npc) && npc.isHuman() && !npc.isDown())
+    return true;
   const auto* hero = npc.world().player();
   if(!Gothic::physicsFlags().npcCharacterVirtual || !npc.isHuman() || npc.isDown() || hero==nullptr) {
     npcVirtualInRange = false;

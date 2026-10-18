@@ -1,0 +1,2453 @@
+{
+  "passed": true,
+  "strict_passed": false,
+  "preparation_passed": true,
+  "n": 10,
+  "physics": "cv",
+  "time_tolerance": 0.05,
+  "max_tolerated_outlier_routes": 2,
+  "outlier_routes": [
+    {
+      "start": "NW_CITY_MERCHANT_PATH_12",
+      "goal": "FP_ROAM_CITY_SHEEP_02",
+      "comparisons": [
+        "drive_near_vs_far",
+        "population_near_vs_far"
+      ]
+    }
+  ],
+  "selection": "first_count_routes_in_supplied_order_before_policy_results",
+  "world_reset": "same_save_and_seed_before_every_episode_in_each_of_four_modes",
+  "far_waypoint": "NW_FARM1_ENTRANCE_01",
+  "min_required_hero_distance_cm": 10000,
+  "comparisons": {
+    "drive_vs_population_near": {
+      "passed": true,
+      "n": 10,
+      "tolerance": 0.05,
+      "reference_arrived": 5,
+      "repeated_arrived": 5,
+      "median_reference_ms": 198633.5,
+      "median_repeated_ms": 198633.5,
+      "pairs": [
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+          "goal": "FP_ROAM_CITY_SHEEP_03",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATCH_45",
+          "goal": "FP_ITEM_HERB_06",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATCH_45_C",
+          "goal": "FP_ROAM_CITY_TO_FOREST_14",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 143233,
+          "repeated_elapsed_ms": 143233,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1434,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+          "goal": "FP_SMALLTALK_BEER_02",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 149800,
+          "repeated_elapsed_ms": 149800,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1499,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_21",
+          "goal": "FP_SMALLTALK_BLUBBER_02",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 31300,
+          "repeated_elapsed_ms": 31300,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 314,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_12",
+          "goal": "FP_ROAM_CITY_SHEEP_02",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 157267,
+          "repeated_elapsed_ms": 157267,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1574,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_36",
+          "goal": "FP_STAND_CITY_TAVERN_02",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_05",
+          "goal": "FP_SMALLTALK_CITYKNEIPE_01",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_TAVERN01_IN_01",
+          "goal": "FP_SIT_CAMPFIRE_JOE",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_14_B",
+          "goal": "FP_PRAY_VATRAS",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 33133,
+          "repeated_elapsed_ms": 33133,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 333,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        }
+      ],
+      "timing_evidence_routes": 5
+    },
+    "drive_vs_population_far": {
+      "passed": true,
+      "n": 10,
+      "tolerance": 0.05,
+      "reference_arrived": 5,
+      "repeated_arrived": 5,
+      "median_reference_ms": 213566.5,
+      "median_repeated_ms": 213566.5,
+      "pairs": [
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+          "goal": "FP_ROAM_CITY_SHEEP_03",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 187133,
+          "repeated_elapsed_ms": 187133,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1873,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATCH_45",
+          "goal": "FP_ITEM_HERB_06",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATCH_45_C",
+          "goal": "FP_ROAM_CITY_TO_FOREST_14",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 130667,
+          "repeated_elapsed_ms": 130667,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1308,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+          "goal": "FP_SMALLTALK_BEER_02",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 149267,
+          "repeated_elapsed_ms": 149267,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1494,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_21",
+          "goal": "FP_SMALLTALK_BLUBBER_02",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 30100,
+          "repeated_elapsed_ms": 30100,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 302,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_12",
+          "goal": "FP_ROAM_CITY_SHEEP_02",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_36",
+          "goal": "FP_STAND_CITY_TAVERN_02",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_05",
+          "goal": "FP_SMALLTALK_CITYKNEIPE_01",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_TAVERN01_IN_01",
+          "goal": "FP_SIT_CAMPFIRE_JOE",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_14_B",
+          "goal": "FP_PRAY_VATRAS",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 33533,
+          "repeated_elapsed_ms": 33533,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 337,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        }
+      ],
+      "timing_evidence_routes": 5
+    },
+    "drive_near_vs_far": {
+      "passed": false,
+      "n": 10,
+      "tolerance": 0.05,
+      "reference_arrived": 5,
+      "repeated_arrived": 5,
+      "median_reference_ms": 198633.5,
+      "median_repeated_ms": 213566.5,
+      "pairs": [
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+          "goal": "FP_ROAM_CITY_SHEEP_03",
+          "reference_success": false,
+          "repeated_success": true,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 187133,
+          "elapsed_relative_error": 0.22027916666666666,
+          "passed": false,
+          "timing_compared": false,
+          "same_outcome": false,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1872,
+            "max_position_error_cm": 2306.386137328303,
+            "rms_position_error_cm": 1856.136740935385,
+            "first_over_0.1_cm": {
+              "time_ms": 1400.0,
+              "error_cm": 5.194684462814149,
+              "reference_position_cm": [
+                7653.72021,
+                275.434814,
+                3349.06763
+              ],
+              "repeated_position_cm": [
+                7648.5293,
+                275.434814,
+                3349.26562
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 1400.0,
+              "error_cm": 5.194684462814149,
+              "reference_position_cm": [
+                7653.72021,
+                275.434814,
+                3349.06763
+              ],
+              "repeated_position_cm": [
+                7648.5293,
+                275.434814,
+                3349.26562
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 1700.0,
+              "error_cm": 28.028043966316826,
+              "reference_position_cm": [
+                7676.02783,
+                275.434814,
+                3354.68799
+              ],
+              "repeated_position_cm": [
+                7648.5293,
+                275.434814,
+                3349.26562
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 1300.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                0.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATCH_45",
+          "goal": "FP_ITEM_HERB_06",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 24.469701348962296,
+            "rms_position_error_cm": 1.5515244394280492,
+            "first_over_0.1_cm": {
+              "time_ms": 34800.0,
+              "error_cm": 0.25425182732839485,
+              "reference_position_cm": [
+                8322.25391,
+                270.10498,
+                7015.47949
+              ],
+              "repeated_position_cm": [
+                8322.13477,
+                270.10498,
+                7015.7041
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 35000.0,
+              "error_cm": 1.7385696109167226,
+              "reference_position_cm": [
+                8327.68848,
+                270.105469,
+                7001.67383
+              ],
+              "repeated_position_cm": [
+                8325.9707,
+                270.105469,
+                7001.94189
+              ]
+            },
+            "first_over_25_cm": null,
+            "first_action_difference": {
+              "time_ms": 34700.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATCH_45_C",
+          "goal": "FP_ROAM_CITY_TO_FOREST_14",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 143233,
+          "repeated_elapsed_ms": 130667,
+          "elapsed_relative_error": 0.08773117926734761,
+          "passed": false,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1307,
+            "max_position_error_cm": 1167.280170753116,
+            "rms_position_error_cm": 654.9205465227781,
+            "first_over_0.1_cm": {
+              "time_ms": 20300.0,
+              "error_cm": 0.47321650034664786,
+              "reference_position_cm": [
+                9831.08691,
+                270.115967,
+                5897.61182
+              ],
+              "repeated_position_cm": [
+                9830.8418,
+                270.115967,
+                5897.20703
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 20400.0,
+              "error_cm": 1.7149026656944455,
+              "reference_position_cm": [
+                9837.9043,
+                270.115234,
+                5893.58496
+              ],
+              "repeated_position_cm": [
+                9836.94629,
+                270.115082,
+                5892.1626
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 33000.0,
+              "error_cm": 25.156315911732907,
+              "reference_position_cm": [
+                10800.4551,
+                280.498596,
+                6149.58252
+              ],
+              "repeated_position_cm": [
+                10798.3945,
+                280.496246,
+                6124.51074
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 20200.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+          "goal": "FP_SMALLTALK_BEER_02",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 149800,
+          "repeated_elapsed_ms": 149267,
+          "elapsed_relative_error": 0.0035580774365821096,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1493,
+            "max_position_error_cm": 92.05623507306794,
+            "rms_position_error_cm": 53.08623872075334,
+            "first_over_0.1_cm": {
+              "time_ms": 2400.0,
+              "error_cm": 5.195126164758883,
+              "reference_position_cm": [
+                7415.52051,
+                270.011749,
+                3810.45947
+              ],
+              "repeated_position_cm": [
+                7419.33594,
+                270.011841,
+                3813.98535
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 2400.0,
+              "error_cm": 5.195126164758883,
+              "reference_position_cm": [
+                7415.52051,
+                270.011749,
+                3810.45947
+              ],
+              "repeated_position_cm": [
+                7419.33594,
+                270.011841,
+                3813.98535
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 4100.0,
+              "error_cm": 25.330237747210873,
+              "reference_position_cm": [
+                7452.55518,
+                270.011841,
+                3940.97095
+              ],
+              "repeated_position_cm": [
+                7477.87646,
+                270.011902,
+                3940.29736
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 2300.0,
+              "reference_keys": [
+                0.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_21",
+          "goal": "FP_SMALLTALK_BLUBBER_02",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 31300,
+          "repeated_elapsed_ms": 30100,
+          "elapsed_relative_error": 0.038338658146964855,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 302,
+            "max_position_error_cm": 105.93200952765544,
+            "rms_position_error_cm": 56.36900148813851,
+            "first_over_0.1_cm": {
+              "time_ms": 3700.0,
+              "error_cm": 0.41773303792714894,
+              "reference_position_cm": [
+                7067.30811,
+                138.567215,
+                1448.13599
+              ],
+              "repeated_position_cm": [
+                7066.92871,
+                138.548691,
+                1448.30981
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 3800.0,
+              "error_cm": 1.5489972409300181,
+              "reference_position_cm": [
+                7070.16357,
+                138.282043,
+                1454.89746
+              ],
+              "repeated_position_cm": [
+                7068.71631,
+                138.21759,
+                1455.4458
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 12100.0,
+              "error_cm": 26.03941907630978,
+              "reference_position_cm": [
+                6957.49756,
+                164.86348,
+                2113.01318
+              ],
+              "repeated_position_cm": [
+                6933.06201,
+                167.516739,
+                2104.41577
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 3600.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_12",
+          "goal": "FP_ROAM_CITY_SHEEP_02",
+          "reference_success": true,
+          "repeated_success": false,
+          "reference_elapsed_ms": 157267,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.5260671342366803,
+          "passed": false,
+          "timing_compared": false,
+          "same_outcome": false,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1573,
+            "max_position_error_cm": 381.2994697002982,
+            "rms_position_error_cm": 121.71141859944619,
+            "first_over_0.1_cm": {
+              "time_ms": 132600.0,
+              "error_cm": 0.5143883221706517,
+              "reference_position_cm": [
+                5142.00488,
+                -182.173599,
+                662.092285
+              ],
+              "repeated_position_cm": [
+                5141.63477,
+                -182.16745,
+                661.735107
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 132700.0,
+              "error_cm": 2.06403427837728,
+              "reference_position_cm": [
+                5149.90186,
+                -182.056854,
+                656.210999
+              ],
+              "repeated_position_cm": [
+                5148.50537,
+                -182.030304,
+                654.691345
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 133500.0,
+              "error_cm": 27.87944333003795,
+              "reference_position_cm": [
+                5156.60205,
+                -182.082336,
+                658.35498
+              ],
+              "repeated_position_cm": [
+                5171.40869,
+                -182.043274,
+                634.732422
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 132500.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_36",
+          "goal": "FP_STAND_CITY_TAVERN_02",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 2185.8233687722527,
+            "rms_position_error_cm": 1222.2392646105254,
+            "first_over_0.1_cm": {
+              "time_ms": 700.0,
+              "error_cm": 5.19590333927014,
+              "reference_position_cm": [
+                8768.64941,
+                270.054291,
+                5020.98633
+              ],
+              "repeated_position_cm": [
+                8764.83789,
+                270.054779,
+                5024.51758
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 700.0,
+              "error_cm": 5.19590333927014,
+              "reference_position_cm": [
+                8768.64941,
+                270.054291,
+                5020.98633
+              ],
+              "repeated_position_cm": [
+                8764.83789,
+                270.054779,
+                5024.51758
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 7300.0,
+              "error_cm": 60.8531661532704,
+              "reference_position_cm": [
+                9176.7959,
+                270.021301,
+                4680.11377
+              ],
+              "repeated_position_cm": [
+                9186.54883,
+                330.001556,
+                4683.33203
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 600.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                0.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_05",
+          "goal": "FP_SMALLTALK_CITYKNEIPE_01",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_TAVERN01_IN_01",
+          "goal": "FP_SIT_CAMPFIRE_JOE",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 1204.3722775924655,
+            "rms_position_error_cm": 632.733998286803,
+            "first_over_0.1_cm": {
+              "time_ms": 17400.0,
+              "error_cm": 0.5139324496190439,
+              "reference_position_cm": [
+                8891.03809,
+                128.276917,
+                81.76091
+              ],
+              "repeated_position_cm": [
+                8891.50781,
+                128.276962,
+                81.5523682
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 17500.0,
+              "error_cm": 2.064612386827064,
+              "reference_position_cm": [
+                8885.9668,
+                128.277206,
+                73.276123
+              ],
+              "repeated_position_cm": [
+                8887.82617,
+                128.277298,
+                72.3787003
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 19200.0,
+              "error_cm": 25.02443197515956,
+              "reference_position_cm": [
+                8802.0498,
+                128.279144,
+                -46.6045189
+              ],
+              "repeated_position_cm": [
+                8823.7002,
+                128.277542,
+                -59.153717
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 17300.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_14_B",
+          "goal": "FP_PRAY_VATRAS",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 33133,
+          "repeated_elapsed_ms": 33533,
+          "elapsed_relative_error": 0.012072556061932213,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 332,
+            "max_position_error_cm": 122.70618004636384,
+            "rms_position_error_cm": 63.734371606540854,
+            "first_over_0.1_cm": {
+              "time_ms": 11600.0,
+              "error_cm": 0.3692401522938496,
+              "reference_position_cm": [
+                8723.14648,
+                128.254623,
+                -293.709229
+              ],
+              "repeated_position_cm": [
+                8723.21582,
+                128.254608,
+                -293.346558
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 11700.0,
+              "error_cm": 1.8547970801980034,
+              "reference_position_cm": [
+                8729.86426,
+                128.254395,
+                -295.998291
+              ],
+              "repeated_position_cm": [
+                8730.26465,
+                128.254379,
+                -294.187225
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 13200.0,
+              "error_cm": 26.598190974462852,
+              "reference_position_cm": [
+                8843.05762,
+                128.252869,
+                -346.377991
+              ],
+              "repeated_position_cm": [
+                8821.4541,
+                128.253174,
+                -330.861816
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 11500.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        }
+      ],
+      "timing_evidence_routes": 4
+    },
+    "population_near_vs_far": {
+      "passed": false,
+      "n": 10,
+      "tolerance": 0.05,
+      "reference_arrived": 5,
+      "repeated_arrived": 5,
+      "median_reference_ms": 198633.5,
+      "median_repeated_ms": 213566.5,
+      "pairs": [
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+          "goal": "FP_ROAM_CITY_SHEEP_03",
+          "reference_success": false,
+          "repeated_success": true,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 187133,
+          "elapsed_relative_error": 0.22027916666666666,
+          "passed": false,
+          "timing_compared": false,
+          "same_outcome": false,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1872,
+            "max_position_error_cm": 2306.386137328303,
+            "rms_position_error_cm": 1856.136740935385,
+            "first_over_0.1_cm": {
+              "time_ms": 1400.0,
+              "error_cm": 5.194684462814149,
+              "reference_position_cm": [
+                7653.72021,
+                275.434814,
+                3349.06763
+              ],
+              "repeated_position_cm": [
+                7648.5293,
+                275.434814,
+                3349.26562
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 1400.0,
+              "error_cm": 5.194684462814149,
+              "reference_position_cm": [
+                7653.72021,
+                275.434814,
+                3349.06763
+              ],
+              "repeated_position_cm": [
+                7648.5293,
+                275.434814,
+                3349.26562
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 1700.0,
+              "error_cm": 28.028043966316826,
+              "reference_position_cm": [
+                7676.02783,
+                275.434814,
+                3354.68799
+              ],
+              "repeated_position_cm": [
+                7648.5293,
+                275.434814,
+                3349.26562
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 1300.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                0.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATCH_45",
+          "goal": "FP_ITEM_HERB_06",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 24.469701348962296,
+            "rms_position_error_cm": 1.5515244394280492,
+            "first_over_0.1_cm": {
+              "time_ms": 34800.0,
+              "error_cm": 0.25425182732839485,
+              "reference_position_cm": [
+                8322.25391,
+                270.10498,
+                7015.47949
+              ],
+              "repeated_position_cm": [
+                8322.13477,
+                270.10498,
+                7015.7041
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 35000.0,
+              "error_cm": 1.7385696109167226,
+              "reference_position_cm": [
+                8327.68848,
+                270.105469,
+                7001.67383
+              ],
+              "repeated_position_cm": [
+                8325.9707,
+                270.105469,
+                7001.94189
+              ]
+            },
+            "first_over_25_cm": null,
+            "first_action_difference": {
+              "time_ms": 34700.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATCH_45_C",
+          "goal": "FP_ROAM_CITY_TO_FOREST_14",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 143233,
+          "repeated_elapsed_ms": 130667,
+          "elapsed_relative_error": 0.08773117926734761,
+          "passed": false,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1307,
+            "max_position_error_cm": 1167.280170753116,
+            "rms_position_error_cm": 654.9205465227781,
+            "first_over_0.1_cm": {
+              "time_ms": 20300.0,
+              "error_cm": 0.47321650034664786,
+              "reference_position_cm": [
+                9831.08691,
+                270.115967,
+                5897.61182
+              ],
+              "repeated_position_cm": [
+                9830.8418,
+                270.115967,
+                5897.20703
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 20400.0,
+              "error_cm": 1.7149026656944455,
+              "reference_position_cm": [
+                9837.9043,
+                270.115234,
+                5893.58496
+              ],
+              "repeated_position_cm": [
+                9836.94629,
+                270.115082,
+                5892.1626
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 33000.0,
+              "error_cm": 25.156315911732907,
+              "reference_position_cm": [
+                10800.4551,
+                280.498596,
+                6149.58252
+              ],
+              "repeated_position_cm": [
+                10798.3945,
+                280.496246,
+                6124.51074
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 20200.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+          "goal": "FP_SMALLTALK_BEER_02",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 149800,
+          "repeated_elapsed_ms": 149267,
+          "elapsed_relative_error": 0.0035580774365821096,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1493,
+            "max_position_error_cm": 92.05623507306794,
+            "rms_position_error_cm": 53.08623872075334,
+            "first_over_0.1_cm": {
+              "time_ms": 2400.0,
+              "error_cm": 5.195126164758883,
+              "reference_position_cm": [
+                7415.52051,
+                270.011749,
+                3810.45947
+              ],
+              "repeated_position_cm": [
+                7419.33594,
+                270.011841,
+                3813.98535
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 2400.0,
+              "error_cm": 5.195126164758883,
+              "reference_position_cm": [
+                7415.52051,
+                270.011749,
+                3810.45947
+              ],
+              "repeated_position_cm": [
+                7419.33594,
+                270.011841,
+                3813.98535
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 4100.0,
+              "error_cm": 25.330237747210873,
+              "reference_position_cm": [
+                7452.55518,
+                270.011841,
+                3940.97095
+              ],
+              "repeated_position_cm": [
+                7477.87646,
+                270.011902,
+                3940.29736
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 2300.0,
+              "reference_keys": [
+                0.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_21",
+          "goal": "FP_SMALLTALK_BLUBBER_02",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 31300,
+          "repeated_elapsed_ms": 30100,
+          "elapsed_relative_error": 0.038338658146964855,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 302,
+            "max_position_error_cm": 105.93200952765544,
+            "rms_position_error_cm": 56.36900148813851,
+            "first_over_0.1_cm": {
+              "time_ms": 3700.0,
+              "error_cm": 0.41773303792714894,
+              "reference_position_cm": [
+                7067.30811,
+                138.567215,
+                1448.13599
+              ],
+              "repeated_position_cm": [
+                7066.92871,
+                138.548691,
+                1448.30981
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 3800.0,
+              "error_cm": 1.5489972409300181,
+              "reference_position_cm": [
+                7070.16357,
+                138.282043,
+                1454.89746
+              ],
+              "repeated_position_cm": [
+                7068.71631,
+                138.21759,
+                1455.4458
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 12100.0,
+              "error_cm": 26.03941907630978,
+              "reference_position_cm": [
+                6957.49756,
+                164.86348,
+                2113.01318
+              ],
+              "repeated_position_cm": [
+                6933.06201,
+                167.516739,
+                2104.41577
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 3600.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_12",
+          "goal": "FP_ROAM_CITY_SHEEP_02",
+          "reference_success": true,
+          "repeated_success": false,
+          "reference_elapsed_ms": 157267,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.5260671342366803,
+          "passed": false,
+          "timing_compared": false,
+          "same_outcome": false,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 1573,
+            "max_position_error_cm": 381.2994697002982,
+            "rms_position_error_cm": 121.71141859944619,
+            "first_over_0.1_cm": {
+              "time_ms": 132600.0,
+              "error_cm": 0.5143883221706517,
+              "reference_position_cm": [
+                5142.00488,
+                -182.173599,
+                662.092285
+              ],
+              "repeated_position_cm": [
+                5141.63477,
+                -182.16745,
+                661.735107
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 132700.0,
+              "error_cm": 2.06403427837728,
+              "reference_position_cm": [
+                5149.90186,
+                -182.056854,
+                656.210999
+              ],
+              "repeated_position_cm": [
+                5148.50537,
+                -182.030304,
+                654.691345
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 133500.0,
+              "error_cm": 27.87944333003795,
+              "reference_position_cm": [
+                5156.60205,
+                -182.082336,
+                658.35498
+              ],
+              "repeated_position_cm": [
+                5171.40869,
+                -182.043274,
+                634.732422
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 132500.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_36",
+          "goal": "FP_STAND_CITY_TAVERN_02",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 2185.8233687722527,
+            "rms_position_error_cm": 1222.2392646105254,
+            "first_over_0.1_cm": {
+              "time_ms": 700.0,
+              "error_cm": 5.19590333927014,
+              "reference_position_cm": [
+                8768.64941,
+                270.054291,
+                5020.98633
+              ],
+              "repeated_position_cm": [
+                8764.83789,
+                270.054779,
+                5024.51758
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 700.0,
+              "error_cm": 5.19590333927014,
+              "reference_position_cm": [
+                8768.64941,
+                270.054291,
+                5020.98633
+              ],
+              "repeated_position_cm": [
+                8764.83789,
+                270.054779,
+                5024.51758
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 7300.0,
+              "error_cm": 60.8531661532704,
+              "reference_position_cm": [
+                9176.7959,
+                270.021301,
+                4680.11377
+              ],
+              "repeated_position_cm": [
+                9186.54883,
+                330.001556,
+                4683.33203
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 600.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                0.0,
+                0.0,
+                -1.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_05",
+          "goal": "FP_SMALLTALK_CITYKNEIPE_01",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 0.0,
+            "rms_position_error_cm": 0.0,
+            "first_over_0.1_cm": null,
+            "first_over_1_cm": null,
+            "first_over_25_cm": null,
+            "first_action_difference": null
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_TAVERN01_IN_01",
+          "goal": "FP_SIT_CAMPFIRE_JOE",
+          "reference_success": false,
+          "repeated_success": false,
+          "reference_elapsed_ms": 240000,
+          "repeated_elapsed_ms": 240000,
+          "elapsed_relative_error": 0.0,
+          "passed": true,
+          "timing_compared": false,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 2401,
+            "max_position_error_cm": 1204.3722775924655,
+            "rms_position_error_cm": 632.733998286803,
+            "first_over_0.1_cm": {
+              "time_ms": 17400.0,
+              "error_cm": 0.5139324496190439,
+              "reference_position_cm": [
+                8891.03809,
+                128.276917,
+                81.76091
+              ],
+              "repeated_position_cm": [
+                8891.50781,
+                128.276962,
+                81.5523682
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 17500.0,
+              "error_cm": 2.064612386827064,
+              "reference_position_cm": [
+                8885.9668,
+                128.277206,
+                73.276123
+              ],
+              "repeated_position_cm": [
+                8887.82617,
+                128.277298,
+                72.3787003
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 19200.0,
+              "error_cm": 25.02443197515956,
+              "reference_position_cm": [
+                8802.0498,
+                128.279144,
+                -46.6045189
+              ],
+              "repeated_position_cm": [
+                8823.7002,
+                128.277542,
+                -59.153717
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 17300.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_14_B",
+          "goal": "FP_PRAY_VATRAS",
+          "reference_success": true,
+          "repeated_success": true,
+          "reference_elapsed_ms": 33133,
+          "repeated_elapsed_ms": 33533,
+          "elapsed_relative_error": 0.012072556061932213,
+          "passed": true,
+          "timing_compared": true,
+          "same_outcome": true,
+          "trajectory": {
+            "available": true,
+            "compared_rows": 332,
+            "max_position_error_cm": 122.70618004636384,
+            "rms_position_error_cm": 63.734371606540854,
+            "first_over_0.1_cm": {
+              "time_ms": 11600.0,
+              "error_cm": 0.3692401522938496,
+              "reference_position_cm": [
+                8723.14648,
+                128.254623,
+                -293.709229
+              ],
+              "repeated_position_cm": [
+                8723.21582,
+                128.254608,
+                -293.346558
+              ]
+            },
+            "first_over_1_cm": {
+              "time_ms": 11700.0,
+              "error_cm": 1.8547970801980034,
+              "reference_position_cm": [
+                8729.86426,
+                128.254395,
+                -295.998291
+              ],
+              "repeated_position_cm": [
+                8730.26465,
+                128.254379,
+                -294.187225
+              ]
+            },
+            "first_over_25_cm": {
+              "time_ms": 13200.0,
+              "error_cm": 26.598190974462852,
+              "reference_position_cm": [
+                8843.05762,
+                128.252869,
+                -346.377991
+              ],
+              "repeated_position_cm": [
+                8821.4541,
+                128.253174,
+                -330.861816
+              ]
+            },
+            "first_action_difference": {
+              "time_ms": 11500.0,
+              "reference_keys": [
+                1.0,
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                0.0
+              ],
+              "repeated_keys": [
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        }
+      ],
+      "timing_evidence_routes": 4
+    }
+  },
+  "distance_noninferiority": {
+    "drive": {
+      "passed": false,
+      "criterion": "no_lost_near_success_and_no_more_than_5pct_slower_on_each_common_success",
+      "time_tolerance": 0.05,
+      "reachability_passed": true,
+      "near_arrived": 5,
+      "far_arrived": 5,
+      "lost_success_routes": [
+        {
+          "start": "NW_CITY_MERCHANT_PATH_12",
+          "goal": "FP_ROAM_CITY_SHEEP_02"
+        }
+      ],
+      "common_successes": [
+        {
+          "start": "NW_CITY_MERCHANT_PATCH_45_C",
+          "goal": "FP_ROAM_CITY_TO_FOREST_14",
+          "near_elapsed_ms": 143233,
+          "far_elapsed_ms": 130667,
+          "passed": true
+        },
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+          "goal": "FP_SMALLTALK_BEER_02",
+          "near_elapsed_ms": 149800,
+          "far_elapsed_ms": 149267,
+          "passed": true
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_21",
+          "goal": "FP_SMALLTALK_BLUBBER_02",
+          "near_elapsed_ms": 31300,
+          "far_elapsed_ms": 30100,
+          "passed": true
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_14_B",
+          "goal": "FP_PRAY_VATRAS",
+          "near_elapsed_ms": 33133,
+          "far_elapsed_ms": 33533,
+          "passed": true
+        }
+      ],
+      "symmetric_diagnostic": {
+        "passed": false,
+        "n": 10,
+        "tolerance": 0.05,
+        "reference_arrived": 5,
+        "repeated_arrived": 5,
+        "median_reference_ms": 198633.5,
+        "median_repeated_ms": 213566.5,
+        "pairs": [
+          {
+            "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+            "goal": "FP_ROAM_CITY_SHEEP_03",
+            "reference_success": false,
+            "repeated_success": true,
+            "reference_elapsed_ms": 240000,
+            "repeated_elapsed_ms": 187133,
+            "elapsed_relative_error": 0.22027916666666666,
+            "passed": false
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATCH_45",
+            "goal": "FP_ITEM_HERB_06",
+            "reference_success": false,
+            "repeated_success": false,
+            "reference_elapsed_ms": 240000,
+            "repeated_elapsed_ms": 240000,
+            "elapsed_relative_error": 0.0,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATCH_45_C",
+            "goal": "FP_ROAM_CITY_TO_FOREST_14",
+            "reference_success": true,
+            "repeated_success": true,
+            "reference_elapsed_ms": 143233,
+            "repeated_elapsed_ms": 130667,
+            "elapsed_relative_error": 0.08773117926734761,
+            "passed": false
+          },
+          {
+            "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+            "goal": "FP_SMALLTALK_BEER_02",
+            "reference_success": true,
+            "repeated_success": true,
+            "reference_elapsed_ms": 149800,
+            "repeated_elapsed_ms": 149267,
+            "elapsed_relative_error": 0.0035580774365821096,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATH_21",
+            "goal": "FP_SMALLTALK_BLUBBER_02",
+            "reference_success": true,
+            "repeated_success": true,
+            "reference_elapsed_ms": 31300,
+            "repeated_elapsed_ms": 30100,
+            "elapsed_relative_error": 0.038338658146964855,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATH_12",
+            "goal": "FP_ROAM_CITY_SHEEP_02",
+            "reference_success": true,
+            "repeated_success": false,
+            "reference_elapsed_ms": 157267,
+            "repeated_elapsed_ms": 240000,
+            "elapsed_relative_error": 0.5260671342366803,
+            "passed": false
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATH_36",
+            "goal": "FP_STAND_CITY_TAVERN_02",
+            "reference_success": false,
+            "repeated_success": false,
+            "reference_elapsed_ms": 240000,
+            "repeated_elapsed_ms": 240000,
+            "elapsed_relative_error": 0.0,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_SHOP03_IN_05",
+            "goal": "FP_SMALLTALK_CITYKNEIPE_01",
+            "reference_success": false,
+            "repeated_success": false,
+            "reference_elapsed_ms": 240000,
+            "repeated_elapsed_ms": 240000,
+            "elapsed_relative_error": 0.0,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_TAVERN01_IN_01",
+            "goal": "FP_SIT_CAMPFIRE_JOE",
+            "reference_success": false,
+            "repeated_success": false,
+            "reference_elapsed_ms": 240000,
+            "repeated_elapsed_ms": 240000,
+            "elapsed_relative_error": 0.0,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATH_14_B",
+            "goal": "FP_PRAY_VATRAS",
+            "reference_success": true,
+            "repeated_success": true,
+            "reference_elapsed_ms": 33133,
+            "repeated_elapsed_ms": 33533,
+            "elapsed_relative_error": 0.012072556061932213,
+            "passed": true
+          }
+        ]
+      }
+    },
+    "population": {
+      "passed": false,
+      "criterion": "no_lost_near_success_and_no_more_than_5pct_slower_on_each_common_success",
+      "time_tolerance": 0.05,
+      "reachability_passed": true,
+      "near_arrived": 5,
+      "far_arrived": 5,
+      "lost_success_routes": [
+        {
+          "start": "NW_CITY_MERCHANT_PATH_12",
+          "goal": "FP_ROAM_CITY_SHEEP_02"
+        }
+      ],
+      "common_successes": [
+        {
+          "start": "NW_CITY_MERCHANT_PATCH_45_C",
+          "goal": "FP_ROAM_CITY_TO_FOREST_14",
+          "near_elapsed_ms": 143233,
+          "far_elapsed_ms": 130667,
+          "passed": true
+        },
+        {
+          "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+          "goal": "FP_SMALLTALK_BEER_02",
+          "near_elapsed_ms": 149800,
+          "far_elapsed_ms": 149267,
+          "passed": true
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_21",
+          "goal": "FP_SMALLTALK_BLUBBER_02",
+          "near_elapsed_ms": 31300,
+          "far_elapsed_ms": 30100,
+          "passed": true
+        },
+        {
+          "start": "NW_CITY_MERCHANT_PATH_14_B",
+          "goal": "FP_PRAY_VATRAS",
+          "near_elapsed_ms": 33133,
+          "far_elapsed_ms": 33533,
+          "passed": true
+        }
+      ],
+      "symmetric_diagnostic": {
+        "passed": false,
+        "n": 10,
+        "tolerance": 0.05,
+        "reference_arrived": 5,
+        "repeated_arrived": 5,
+        "median_reference_ms": 198633.5,
+        "median_repeated_ms": 213566.5,
+        "pairs": [
+          {
+            "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+            "goal": "FP_ROAM_CITY_SHEEP_03",
+            "reference_success": false,
+            "repeated_success": true,
+            "reference_elapsed_ms": 240000,
+            "repeated_elapsed_ms": 187133,
+            "elapsed_relative_error": 0.22027916666666666,
+            "passed": false
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATCH_45",
+            "goal": "FP_ITEM_HERB_06",
+            "reference_success": false,
+            "repeated_success": false,
+            "reference_elapsed_ms": 240000,
+            "repeated_elapsed_ms": 240000,
+            "elapsed_relative_error": 0.0,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATCH_45_C",
+            "goal": "FP_ROAM_CITY_TO_FOREST_14",
+            "reference_success": true,
+            "repeated_success": true,
+            "reference_elapsed_ms": 143233,
+            "repeated_elapsed_ms": 130667,
+            "elapsed_relative_error": 0.08773117926734761,
+            "passed": false
+          },
+          {
+            "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+            "goal": "FP_SMALLTALK_BEER_02",
+            "reference_success": true,
+            "repeated_success": true,
+            "reference_elapsed_ms": 149800,
+            "repeated_elapsed_ms": 149267,
+            "elapsed_relative_error": 0.0035580774365821096,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATH_21",
+            "goal": "FP_SMALLTALK_BLUBBER_02",
+            "reference_success": true,
+            "repeated_success": true,
+            "reference_elapsed_ms": 31300,
+            "repeated_elapsed_ms": 30100,
+            "elapsed_relative_error": 0.038338658146964855,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATH_12",
+            "goal": "FP_ROAM_CITY_SHEEP_02",
+            "reference_success": true,
+            "repeated_success": false,
+            "reference_elapsed_ms": 157267,
+            "repeated_elapsed_ms": 240000,
+            "elapsed_relative_error": 0.5260671342366803,
+            "passed": false
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATH_36",
+            "goal": "FP_STAND_CITY_TAVERN_02",
+            "reference_success": false,
+            "repeated_success": false,
+            "reference_elapsed_ms": 240000,
+            "repeated_elapsed_ms": 240000,
+            "elapsed_relative_error": 0.0,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_SHOP03_IN_05",
+            "goal": "FP_SMALLTALK_CITYKNEIPE_01",
+            "reference_success": false,
+            "repeated_success": false,
+            "reference_elapsed_ms": 240000,
+            "repeated_elapsed_ms": 240000,
+            "elapsed_relative_error": 0.0,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_TAVERN01_IN_01",
+            "goal": "FP_SIT_CAMPFIRE_JOE",
+            "reference_success": false,
+            "repeated_success": false,
+            "reference_elapsed_ms": 240000,
+            "repeated_elapsed_ms": 240000,
+            "elapsed_relative_error": 0.0,
+            "passed": true
+          },
+          {
+            "start": "NW_CITY_MERCHANT_PATH_14_B",
+            "goal": "FP_PRAY_VATRAS",
+            "reference_success": true,
+            "repeated_success": true,
+            "reference_elapsed_ms": 33133,
+            "repeated_elapsed_ms": 33533,
+            "elapsed_relative_error": 0.012072556061932213,
+            "passed": true
+          }
+        ]
+      }
+    }
+  },
+  "raw_symmetric_outlier_routes": [
+    {
+      "start": "NW_CITY_MERCHANT_PATCH_45_C",
+      "goal": "FP_ROAM_CITY_TO_FOREST_14",
+      "comparisons": [
+        "drive_near_vs_far",
+        "population_near_vs_far"
+      ]
+    },
+    {
+      "start": "NW_CITY_MERCHANT_PATH_12",
+      "goal": "FP_ROAM_CITY_SHEEP_02",
+      "comparisons": [
+        "drive_near_vs_far",
+        "population_near_vs_far"
+      ]
+    },
+    {
+      "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+      "goal": "FP_ROAM_CITY_SHEEP_03",
+      "comparisons": [
+        "drive_near_vs_far",
+        "population_near_vs_far"
+      ]
+    }
+  ],
+  "far_distances": [
+    {
+      "mode": "drive-far",
+      "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+      "goal": "FP_ROAM_CITY_SHEEP_03",
+      "min_hero_distance_cm": 15594.3262,
+      "max_hero_distance_cm": 19590.4316,
+      "far_enough": true
+    },
+    {
+      "mode": "drive-far",
+      "start": "NW_CITY_MERCHANT_PATCH_45",
+      "goal": "FP_ITEM_HERB_06",
+      "min_hero_distance_cm": 21334.791,
+      "max_hero_distance_cm": 22807.3887,
+      "far_enough": true
+    },
+    {
+      "mode": "drive-far",
+      "start": "NW_CITY_MERCHANT_PATCH_45_C",
+      "goal": "FP_ROAM_CITY_TO_FOREST_14",
+      "min_hero_distance_cm": 20885.9648,
+      "max_hero_distance_cm": 27980.3984,
+      "far_enough": true
+    },
+    {
+      "mode": "drive-far",
+      "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+      "goal": "FP_SMALLTALK_BEER_02",
+      "min_hero_distance_cm": 15843.3203,
+      "max_hero_distance_cm": 20382.7988,
+      "far_enough": true
+    },
+    {
+      "mode": "drive-far",
+      "start": "NW_CITY_MERCHANT_PATH_21",
+      "goal": "FP_SMALLTALK_BLUBBER_02",
+      "min_hero_distance_cm": 17570.8633,
+      "max_hero_distance_cm": 19742.084,
+      "far_enough": true
+    },
+    {
+      "mode": "drive-far",
+      "start": "NW_CITY_MERCHANT_PATH_12",
+      "goal": "FP_ROAM_CITY_SHEEP_02",
+      "min_hero_distance_cm": 15522.166,
+      "max_hero_distance_cm": 20688.1602,
+      "far_enough": true
+    },
+    {
+      "mode": "drive-far",
+      "start": "NW_CITY_MERCHANT_PATH_36",
+      "goal": "FP_STAND_CITY_TAVERN_02",
+      "min_hero_distance_cm": 15852.8154,
+      "max_hero_distance_cm": 20461.9043,
+      "far_enough": true
+    },
+    {
+      "mode": "drive-far",
+      "start": "NW_CITY_MERCHANT_SHOP03_IN_05",
+      "goal": "FP_SMALLTALK_CITYKNEIPE_01",
+      "min_hero_distance_cm": 18538.3145,
+      "max_hero_distance_cm": 19205.2754,
+      "far_enough": true
+    },
+    {
+      "mode": "drive-far",
+      "start": "NW_CITY_MERCHANT_TAVERN01_IN_01",
+      "goal": "FP_SIT_CAMPFIRE_JOE",
+      "min_hero_distance_cm": 13914.5732,
+      "max_hero_distance_cm": 16835.4004,
+      "far_enough": true
+    },
+    {
+      "mode": "drive-far",
+      "start": "NW_CITY_MERCHANT_PATH_14_B",
+      "goal": "FP_PRAY_VATRAS",
+      "min_hero_distance_cm": 14631.1191,
+      "max_hero_distance_cm": 15873.333,
+      "far_enough": true
+    },
+    {
+      "mode": "pop-far",
+      "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+      "goal": "FP_ROAM_CITY_SHEEP_03",
+      "min_hero_distance_cm": 15594.3262,
+      "max_hero_distance_cm": 19590.4316,
+      "far_enough": true
+    },
+    {
+      "mode": "pop-far",
+      "start": "NW_CITY_MERCHANT_PATCH_45",
+      "goal": "FP_ITEM_HERB_06",
+      "min_hero_distance_cm": 21334.791,
+      "max_hero_distance_cm": 22807.3887,
+      "far_enough": true
+    },
+    {
+      "mode": "pop-far",
+      "start": "NW_CITY_MERCHANT_PATCH_45_C",
+      "goal": "FP_ROAM_CITY_TO_FOREST_14",
+      "min_hero_distance_cm": 20885.9648,
+      "max_hero_distance_cm": 27980.3984,
+      "far_enough": true
+    },
+    {
+      "mode": "pop-far",
+      "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+      "goal": "FP_SMALLTALK_BEER_02",
+      "min_hero_distance_cm": 15843.3203,
+      "max_hero_distance_cm": 20382.7988,
+      "far_enough": true
+    },
+    {
+      "mode": "pop-far",
+      "start": "NW_CITY_MERCHANT_PATH_21",
+      "goal": "FP_SMALLTALK_BLUBBER_02",
+      "min_hero_distance_cm": 17570.8633,
+      "max_hero_distance_cm": 19742.084,
+      "far_enough": true
+    },
+    {
+      "mode": "pop-far",
+      "start": "NW_CITY_MERCHANT_PATH_12",
+      "goal": "FP_ROAM_CITY_SHEEP_02",
+      "min_hero_distance_cm": 15522.166,
+      "max_hero_distance_cm": 20688.1602,
+      "far_enough": true
+    },
+    {
+      "mode": "pop-far",
+      "start": "NW_CITY_MERCHANT_PATH_36",
+      "goal": "FP_STAND_CITY_TAVERN_02",
+      "min_hero_distance_cm": 15852.8154,
+      "max_hero_distance_cm": 20461.9043,
+      "far_enough": true
+    },
+    {
+      "mode": "pop-far",
+      "start": "NW_CITY_MERCHANT_SHOP03_IN_05",
+      "goal": "FP_SMALLTALK_CITYKNEIPE_01",
+      "min_hero_distance_cm": 18538.3145,
+      "max_hero_distance_cm": 19205.2754,
+      "far_enough": true
+    },
+    {
+      "mode": "pop-far",
+      "start": "NW_CITY_MERCHANT_TAVERN01_IN_01",
+      "goal": "FP_SIT_CAMPFIRE_JOE",
+      "min_hero_distance_cm": 13914.5732,
+      "max_hero_distance_cm": 16835.4004,
+      "far_enough": true
+    },
+    {
+      "mode": "pop-far",
+      "start": "NW_CITY_MERCHANT_PATH_14_B",
+      "goal": "FP_PRAY_VATRAS",
+      "min_hero_distance_cm": 14631.1191,
+      "max_hero_distance_cm": 15873.333,
+      "far_enough": true
+    }
+  ]
+}

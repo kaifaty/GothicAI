@@ -98,7 +98,7 @@ PR, который добавляет фичу или выключатель, д
 | Фича | Как выключить | Модуль | Проверка | Документ |
 |---|---|---|---|---|
 | Мост к ИИ-серверу | `GOTHIC_AI=0` | `ai_bridge/aibridge.cpp` | все e2e | [protocol.md](protocol.md) |
-| Диалоговые функции скриптов как программы без VM | `GOTHIC_AI_STORYEXEC=0`; на скриптах с Ikarus выключается само | `ai_bridge/dialoggraph.cpp` | e2e `graph`, `programs` | [story-graph.md](story-graph.md) |
+| Диалоговые функции скриптов как программы без VM | `GOTHIC_AI_STORYEXEC=0` | `ai_bridge/dialoggraph.cpp` | e2e `graph`, `programs` | [story-graph.md](story-graph.md) |
 
 ## Движок: физика Jolt
 
@@ -156,7 +156,11 @@ PR, который добавляет фичу или выключатель, д
 - `OPENGOTHIC_BENCH*`, `OPENGOTHIC_*_LOG`, `OPENGOTHIC_*_TRACE` — стенд, журналы и трассы.
 - Обложки шортсов шаблона B: поле `cover` плана сравнения, `gothic-shorts cover`, `upload --thumbnail` и `thumbnail`; модули `shorts/src/gothic_shorts/{cover,compare,youtube,cli}.py`, проверки `shorts/tests/test_{cut,cover,youtube}.py`, [команды и шаблон](../shorts/README.md#covers). Без поля или команды обложки нет.
 
-Вне реестра: обучаемая навигация ([navigation.md](navigation.md)) — пока исследование, в игру не включена.
+| Фича стенда | Как включить / выключить | Модуль | Проверка | Документ |
+|---|---|---|---|---|
+| Популяция навигации: N NPC, независимые состояния, выборка softmax и награды Detour без перезагрузки мира | `navdemos population … sample\|argmax … RECORD`; `navdemos physics cv\|native`, в `nav_rl.py` CV по умолчанию; `RECORD=0` выключает записи; `hero near\|keep`, `kill-slot SLOT AFTER_MS` — проверки стенда | `common/navdemos.*`, минимальные вставки в `worldobjects.cpp`, `npc.cpp`, `MoveAlgo::useCharacterVirtual`; `scripts/nav_rl.py` | `test_nav_rl.py`, `nav_rl.py check/equivalence/population/death-smoke` | [navigation.md](navigation.md) |
+
+Остальная обучаемая навигация ([navigation.md](navigation.md)) — пока исследование, в игру не включена.
 
 ## Пробелы покрытия
 

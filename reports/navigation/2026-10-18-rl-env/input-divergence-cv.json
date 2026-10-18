@@ -1,0 +1,45 @@
+[
+  {
+    "index": 2,
+    "start": "NW_CITY_MERCHANT_PATCH_45_C",
+    "goal": "FP_ROAM_CITY_TO_FOREST_14",
+    "first_learner_input_difference": {
+      "time_ms": 3000,
+      "fields": [
+        "eye",
+        "memory_far"
+      ],
+      "near_npc_rays": 1,
+      "far_npc_rays": 0
+    }
+  },
+  {
+    "index": 5,
+    "start": "NW_CITY_MERCHANT_PATH_12",
+    "goal": "FP_ROAM_CITY_SHEEP_02",
+    "first_learner_input_difference": {
+      "time_ms": 5500,
+      "fields": [
+        "eye",
+        "memory_far"
+      ],
+      "near_npc_rays": 1,
+      "far_npc_rays": 0
+    }
+  },
+  {
+    "index": 0,
+    "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+    "goal": "FP_ROAM_CITY_SHEEP_03",
+    "first_learner_input_difference": {
+      "time_ms": 100,
+      "fields": [
+        "eye",
+        "memory_near",
+        "memory_far"
+      ],
+      "near_npc_rays": 2,
+      "far_npc_rays": 0
+    }
+  }
+]

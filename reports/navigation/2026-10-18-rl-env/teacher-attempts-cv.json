@@ -1,0 +1,731 @@
+[
+  {
+    "candidate": 0,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_PATH_07",
+    "goal": "FP_ROAM_CITY_SHEEP_04",
+    "success": true,
+    "elapsed_ms": 147500,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00000"
+  },
+  {
+    "candidate": 1,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_PATH_36",
+    "goal": "FP_ITEM_HERB_05",
+    "success": true,
+    "elapsed_ms": 110700,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00001"
+  },
+  {
+    "candidate": 2,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_PATCH_45_C",
+    "goal": "FP_STAND_GUARDING_ZURIS",
+    "success": true,
+    "elapsed_ms": 41267,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00002"
+  },
+  {
+    "candidate": 3,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_HUT_01_FRONT",
+    "goal": "FP_SMALLTALK_CITYKNEIPE_03",
+    "success": true,
+    "elapsed_ms": 69467,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00003"
+  },
+  {
+    "candidate": 4,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+    "goal": "FP_STAND_WEAPON_05",
+    "success": true,
+    "elapsed_ms": 15000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00004"
+  },
+  {
+    "candidate": 5,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_PATH_12",
+    "goal": "FP_STAND_CITY_13",
+    "success": true,
+    "elapsed_ms": 20200,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00005"
+  },
+  {
+    "candidate": 6,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_PATH_38",
+    "goal": "FP_ROAM_CITY_TO_FOREST_18",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00006"
+  },
+  {
+    "candidate": 7,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_HUT_02_IN",
+    "goal": "FP_SMALLTALK_CITY_38",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00007"
+  },
+  {
+    "candidate": 8,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_PATH_23",
+    "goal": "FP_SWEEP_ALTE_02",
+    "success": true,
+    "elapsed_ms": 128967,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00008"
+  },
+  {
+    "candidate": 9,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_TEMPLE_IN",
+    "goal": "FP_SWEEP_GRITTA",
+    "success": true,
+    "elapsed_ms": 48433,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00009"
+  },
+  {
+    "candidate": 10,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_PATH_30",
+    "goal": "FP_STAND_DARON",
+    "success": true,
+    "elapsed_ms": 20100,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00010"
+  },
+  {
+    "candidate": 11,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02_B",
+    "goal": "FP_STAND_GUARDING_HANNA",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00011"
+  },
+  {
+    "candidate": 12,
+    "region": "market",
+    "start": "NW_CITY_MERCHANT_PATH_43",
+    "goal": "FP_ITEM_HERB_03",
+    "success": true,
+    "elapsed_ms": 75533,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00012"
+  },
+  {
+    "candidate": 50,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_STOMPER_02",
+    "goal": "FP_SMALLTALK_PECK_02",
+    "success": true,
+    "elapsed_ms": 195333,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00050"
+  },
+  {
+    "candidate": 51,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_REPAIR_04",
+    "goal": "FP_SMALLTALK_HAFEN_01",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00051"
+  },
+  {
+    "candidate": 52,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_POOR_AREA_HUT_01_IN",
+    "goal": "FP_STAND_PUFF_COUNTER",
+    "success": true,
+    "elapsed_ms": 93133,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00052"
+  },
+  {
+    "candidate": 53,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_PUFF_ENTRANCE",
+    "goal": "FP_SMALLTALK_TAVERN01_01",
+    "success": true,
+    "elapsed_ms": 192667,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00053"
+  },
+  {
+    "candidate": 54,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_PUFF_IN_01",
+    "goal": "FP_SMALLTALK_CITY_20",
+    "success": true,
+    "elapsed_ms": 99733,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00054"
+  },
+  {
+    "candidate": 55,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_KASERN_07",
+    "goal": "FP_ITEM_LAGERHAUS_01",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00055"
+  },
+  {
+    "candidate": 56,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_TAVERN01_SMALLTALK_01",
+    "goal": "FP_ROAM_CITY_SHEEP_06",
+    "success": true,
+    "elapsed_ms": 126500,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00056"
+  },
+  {
+    "candidate": 57,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_HUT_01",
+    "goal": "FP_SMALLTALK_CITY_26",
+    "success": true,
+    "elapsed_ms": 103567,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00057"
+  },
+  {
+    "candidate": 58,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_02_B",
+    "goal": "FP_STAND_CITY_020",
+    "success": true,
+    "elapsed_ms": 34233,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00058"
+  },
+  {
+    "candidate": 59,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_HUT_08_IN",
+    "goal": "FP_PICK_CITY_02",
+    "success": true,
+    "elapsed_ms": 128467,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00059"
+  },
+  {
+    "candidate": 60,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_KASERN_09",
+    "goal": "FP_STAND_GUARDING_ANDRE_GUARD",
+    "success": true,
+    "elapsed_ms": 70467,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00060"
+  },
+  {
+    "candidate": 61,
+    "region": "harbour",
+    "start": "NW_CITY_HABOUR_07",
+    "goal": "FP_STAND_TAVERN01_01",
+    "success": true,
+    "elapsed_ms": 42833,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00061"
+  },
+  {
+    "candidate": 100,
+    "region": "onar",
+    "start": "NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_01",
+    "goal": "FP_ROAM_NW_BIGFARM_FELDREUBER13",
+    "success": true,
+    "elapsed_ms": 37133,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00100"
+  },
+  {
+    "candidate": 101,
+    "region": "onar",
+    "start": "NW_BIGFARM_SHEEP2_02",
+    "goal": "FP_STAND_PATRICK",
+    "success": true,
+    "elapsed_ms": 31067,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00101"
+  },
+  {
+    "candidate": 102,
+    "region": "onar",
+    "start": "NW_BIGFARM_KITCHEN_DAR",
+    "goal": "FP_STAND_NW_BIGFARM_STABLE_OUT_01",
+    "success": true,
+    "elapsed_ms": 40067,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00102"
+  },
+  {
+    "candidate": 103,
+    "region": "onar",
+    "start": "NW_BIGFARM_SMITH_01",
+    "goal": "FP_SMALLTALK_NW_BIGFARM_STABLE_01_01",
+    "success": true,
+    "elapsed_ms": 31200,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00103"
+  },
+  {
+    "candidate": 104,
+    "region": "onar",
+    "start": "NW_BIGFARM_HOUSE_UP1_COOK",
+    "goal": "FP_SMALLTALK_NW_BIGFARM_SMITH_01",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00104"
+  },
+  {
+    "candidate": 105,
+    "region": "onar",
+    "start": "NW_BIGFARM_HOUSE_10",
+    "goal": "FP_SMALLTALK_NW_BIGFARM_SMITH_02",
+    "success": true,
+    "elapsed_ms": 38367,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00105"
+  },
+  {
+    "candidate": 106,
+    "region": "onar",
+    "start": "NW_BIGFARM_STABLE_03",
+    "goal": "FP_CAMPFIRE_HODGES_01",
+    "success": true,
+    "elapsed_ms": 67700,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00106"
+  },
+  {
+    "candidate": 107,
+    "region": "onar",
+    "start": "NW_BIGFARM_KITCHEN_OUT_01",
+    "goal": "FP_STAND_NW_BIGFARM_STABLE_OUT_01",
+    "success": true,
+    "elapsed_ms": 18100,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00107"
+  },
+  {
+    "candidate": 108,
+    "region": "onar",
+    "start": "NW_BIGFARM_HOUSE_UP1_03",
+    "goal": "FP_SMALLTALK_NW_BIGFARM_KITCHEN_02",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00108"
+  },
+  {
+    "candidate": 109,
+    "region": "onar",
+    "start": "NW_BIGFARM_FOREST_03",
+    "goal": "FP_ROAM_NW_BIGFARMFORESTCAVE_08",
+    "success": true,
+    "elapsed_ms": 43500,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00109"
+  },
+  {
+    "candidate": 110,
+    "region": "onar",
+    "start": "NW_BIGFARM_FOREST_03_NAVIGATION1",
+    "goal": "FP_ROAM_NW_BIGFARM_FOREST_03_NAVIGATION3",
+    "success": false,
+    "elapsed_ms": 23700,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00110"
+  },
+  {
+    "candidate": 111,
+    "region": "onar",
+    "start": "NW_BIGFARM_ALLEE_RIGHTFIELD03",
+    "goal": "FP_ROAM_NW_BIGFARM_FELDREUBER13",
+    "success": true,
+    "elapsed_ms": 38267,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00111"
+  },
+  {
+    "candidate": 112,
+    "region": "onar",
+    "start": "NW_BIGFARM_HOUSE_OUT_03",
+    "goal": "FP_STAND_NW_BIGFARM_HOUSE_ONAR_01",
+    "success": true,
+    "elapsed_ms": 28767,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00112"
+  },
+  {
+    "candidate": 150,
+    "region": "lobart",
+    "start": "NW_FARM1_FIELD_01_01",
+    "goal": "FP_ROAM_NW_FARM1_PATH_SPAWN_05_02",
+    "success": true,
+    "elapsed_ms": 32867,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00150"
+  },
+  {
+    "candidate": 151,
+    "region": "lobart",
+    "start": "NW_FARM1_OUT_11",
+    "goal": "FP_ROAM_NW_FARM1_OUT_13_01",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00151"
+  },
+  {
+    "candidate": 152,
+    "region": "lobart",
+    "start": "NW_FARM1_FIELD_07",
+    "goal": "FP_ROAM_FARM1_SHEEP_10",
+    "success": true,
+    "elapsed_ms": 72367,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00152"
+  },
+  {
+    "candidate": 153,
+    "region": "lobart",
+    "start": "NW_FARM1_OUT_07",
+    "goal": "FP_EVENT_SPAWN_STONEGUARDIAN_ORNAMENT_FARM_01",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00153"
+  },
+  {
+    "candidate": 154,
+    "region": "lobart",
+    "start": "NW_FARM1_INSTABLE_BED_02",
+    "goal": "FP_STAND_NW_FARM1_LOBART",
+    "success": true,
+    "elapsed_ms": 27567,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00154"
+  },
+  {
+    "candidate": 155,
+    "region": "lobart",
+    "start": "NW_FARM1_PATH_CITY_SHEEP_01",
+    "goal": "FP_ROAM_FARM1_SHEEP_13",
+    "success": true,
+    "elapsed_ms": 56733,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00155"
+  },
+  {
+    "candidate": 156,
+    "region": "lobart",
+    "start": "NW_FARM1_PATH_CITY_02",
+    "goal": "FP_PEE_CITY_02",
+    "success": true,
+    "elapsed_ms": 58700,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00156"
+  },
+  {
+    "candidate": 157,
+    "region": "lobart",
+    "start": "NW_FARM1_INHOUSE_BED_02",
+    "goal": "FP_PICK_FARM1_FIELD_06_03",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00157"
+  },
+  {
+    "candidate": 158,
+    "region": "lobart",
+    "start": "NW_FARM1_OUT_02",
+    "goal": "FP_ROAM_NW_FARM1_MILL_01_04",
+    "success": true,
+    "elapsed_ms": 79500,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00158"
+  },
+  {
+    "candidate": 159,
+    "region": "lobart",
+    "start": "NW_FARM1_PATH_CITY_02",
+    "goal": "FP_CITY_WEAPON_01",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00159"
+  },
+  {
+    "candidate": 160,
+    "region": "lobart",
+    "start": "NW_FARM1_ENTRANCE_03",
+    "goal": "FP_CAMPFIRE_NW_FARM1_MILL_01",
+    "success": true,
+    "elapsed_ms": 70833,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00160"
+  },
+  {
+    "candidate": 161,
+    "region": "lobart",
+    "start": "NW_FARM1_OUT_07",
+    "goal": "FP_CAMPFIRE_NW_FARM1_MILL_01",
+    "success": true,
+    "elapsed_ms": 47700,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00161"
+  },
+  {
+    "candidate": 162,
+    "region": "lobart",
+    "start": "NW_FARM1_PATH_CITY_09",
+    "goal": "FP_ROAM_FARM1_WOLF_04",
+    "success": true,
+    "elapsed_ms": 52200,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00162"
+  },
+  {
+    "candidate": 163,
+    "region": "lobart",
+    "start": "NW_FARM1_FIELD_08",
+    "goal": "FP_ROAM_FARM1_SHEEP_18",
+    "success": true,
+    "elapsed_ms": 24933,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00163"
+  },
+  {
+    "candidate": 200,
+    "region": "port_streets",
+    "start": "NW_CITY_HABOUR_POOR_AREA_PATH_17",
+    "goal": "FP_SWEEP_ALTE_01",
+    "success": true,
+    "elapsed_ms": 35800,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00200"
+  },
+  {
+    "candidate": 201,
+    "region": "port_streets",
+    "start": "NW_CITY_HABOUR_POOR_AREA_PATH_16",
+    "goal": "FP_SWEEP_ALTE_01",
+    "success": true,
+    "elapsed_ms": 45467,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00201"
+  },
+  {
+    "candidate": 202,
+    "region": "port_streets",
+    "start": "NW_CITY_HABOUR_POOR_AREA_HUT_01",
+    "goal": "FP_STAND_EATING_01",
+    "success": true,
+    "elapsed_ms": 34300,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00202"
+  },
+  {
+    "candidate": 203,
+    "region": "port_streets",
+    "start": "NW_CITY_HABOUR_POOR_AREA_HUT_05_IN",
+    "goal": "FP_STAND_CITY_10",
+    "success": true,
+    "elapsed_ms": 29033,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00203"
+  },
+  {
+    "candidate": 204,
+    "region": "port_streets",
+    "start": "NW_CITY_HABOUR_POOR_AREA_PATH_06",
+    "goal": "FP_STAND_EATING_01",
+    "success": true,
+    "elapsed_ms": 25967,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00204"
+  },
+  {
+    "candidate": 205,
+    "region": "port_streets",
+    "start": "NW_CITY_HABOUR_POOR_AREA_BACK_ALLEY_02",
+    "goal": "FP_SMALLTALK_CITY_PALCAMP_12",
+    "success": true,
+    "elapsed_ms": 54567,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00205"
+  },
+  {
+    "candidate": 206,
+    "region": "port_streets",
+    "start": "NW_CITY_HABOUR_POOR_AREA_BACK_ALLEY_02",
+    "goal": "FP_STAND_CITY_05",
+    "success": true,
+    "elapsed_ms": 97667,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00206"
+  },
+  {
+    "candidate": 207,
+    "region": "port_streets",
+    "start": "NW_CITY_HABOUR_POOR_AREA_PATH_06_B",
+    "goal": "FP_STAND_TAVERN01_02_B",
+    "success": true,
+    "elapsed_ms": 155200,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00207"
+  },
+  {
+    "candidate": 208,
+    "region": "port_streets",
+    "start": "NW_CITY_HABOUR_POOR_AREA_PATH_14",
+    "goal": "FP_SMALLTALK_CITY_06",
+    "success": true,
+    "elapsed_ms": 39100,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00208"
+  },
+  {
+    "candidate": 209,
+    "region": "port_streets",
+    "start": "NW_CITY_HABOUR_POOR_AREA_01",
+    "goal": "FP_SMALLTALK_CITY_PALCAMP_12",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00209"
+  },
+  {
+    "candidate": 210,
+    "region": "port_streets",
+    "start": "NW_CITY_HABOUR_POOR_AREA_HUT_01_IN",
+    "goal": "FP_STAND_HAFEN_01",
+    "success": true,
+    "elapsed_ms": 70700,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00210"
+  },
+  {
+    "candidate": 250,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_HUT_05_ENTRY",
+    "goal": "FP_SMALLTALK_NW_CITY_MERCHANT_02",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00250"
+  },
+  {
+    "candidate": 251,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_PATH_06",
+    "goal": "FP_SMALLTALK_CITY_31",
+    "success": true,
+    "elapsed_ms": 19767,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00251"
+  },
+  {
+    "candidate": 252,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_HUT_04_COOK",
+    "goal": "FP_STAND_CITY_TAVERN_02",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00252"
+  },
+  {
+    "candidate": 253,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_PATH_05_B",
+    "goal": "FP_SWEEP_CITY_OV_02",
+    "success": true,
+    "elapsed_ms": 40367,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00253"
+  },
+  {
+    "candidate": 254,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_HUT_04_01",
+    "goal": "FP_STAND_HAKON",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00254"
+  },
+  {
+    "candidate": 255,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_HUT_05_BED_01",
+    "goal": "FP_ROAM_NW_CITY_TO_FOREST_04_01",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00255"
+  },
+  {
+    "candidate": 256,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_HUT_04_05",
+    "goal": "FP_SWEEP_OV_03",
+    "success": true,
+    "elapsed_ms": 51900,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00256"
+  },
+  {
+    "candidate": 257,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_HUT_06_ENTRY",
+    "goal": "FP_SMALLTALK_CITY_33",
+    "success": true,
+    "elapsed_ms": 23767,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00257"
+  },
+  {
+    "candidate": 258,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_HUT_04_03",
+    "goal": "FP_SMALLTALK_CITY_35",
+    "success": true,
+    "elapsed_ms": 38700,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00258"
+  },
+  {
+    "candidate": 259,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_PATH_12",
+    "goal": "FP_PRAY_VATRAS",
+    "success": true,
+    "elapsed_ms": 163867,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00259"
+  },
+  {
+    "candidate": 260,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_HUT_04_ENTRY",
+    "goal": "FP_STAND_ZURIS",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00260"
+  },
+  {
+    "candidate": 261,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_PATH_05_B",
+    "goal": "FP_SMALLTALK_PALADIN_03",
+    "success": true,
+    "elapsed_ms": 164100,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00261"
+  },
+  {
+    "candidate": 262,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_HUT_04_02",
+    "goal": "FP_STAND_CITY_TAVERN_01",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00262"
+  },
+  {
+    "candidate": 263,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_PATH_11",
+    "goal": "FP_STAND_GUARDING_MARKT_01",
+    "success": true,
+    "elapsed_ms": 199333,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00263"
+  },
+  {
+    "candidate": 264,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_HUT_04_IN",
+    "goal": "FP_SMALLTALK_CITYKNEIPE_02",
+    "success": true,
+    "elapsed_ms": 199567,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00264"
+  },
+  {
+    "candidate": 265,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_PATH_07",
+    "goal": "FP_ITEM_OV_02",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00265"
+  },
+  {
+    "candidate": 266,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWN_HUT_05_ENTRY_B",
+    "goal": "FP_STAND_DARON",
+    "success": false,
+    "elapsed_ms": 240000,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00266"
+  },
+  {
+    "candidate": 267,
+    "region": "upper_streets",
+    "start": "NW_CITY_UPTOWNPARADE_HAGEN",
+    "goal": "FP_SMALLTALK_CITY_39",
+    "success": true,
+    "elapsed_ms": 16333,
+    "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-test/teacher/00267"
+  }
+]

@@ -675,7 +675,7 @@ while IFS= read -r name; do
       ENV_ARGS+=("$name=${!name}") ;;
   esac
 done < <(compgen -e)
-if [[ "$ACTION" == e2e && "${SCENARIO:-m0}" == broken ]]; then
+if [[ "$ACTION" == e2e && ( "${SCENARIO:-m0}" == broken || "${SCENARIO:-m0}" == trace_crime ) ]]; then
   FRACTURE_CACHE="${OPENGOTHIC_FRACTURE-$HOME/.local/share/gothic-ai/fracture}"
   if [[ -n "$FRACTURE_CACHE" && -d "$FRACTURE_CACHE" ]]; then
     remote mkdir -p "$STATE/fracture"

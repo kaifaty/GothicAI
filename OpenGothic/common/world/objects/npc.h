@@ -122,6 +122,8 @@ class Npc final {
     void       stopDlgAnim();
     void       clearSpeed();
     bool       resetPositionToTA();
+    // Stand-only reuse after death or an airborne/climbing episode timeout.
+    void       resetNavigationEpisode();
 
     void       setProcessPolicy(NpcProcessPolicy t);
     auto       processPolicy() const -> NpcProcessPolicy { return aiPolicy; }
@@ -767,6 +769,7 @@ class Npc final {
     void      tickRoutine();
     int       invokeRoutine(ScriptFn function);
     void      nextAiAction(AiQueue& queue, uint64_t dt);
+    bool      startQueuedState(const AiQueue::AiAction& act);
     void      commitDamage();
     Npc*      updateNearestEnemy();
     Npc*      updateNearestBody();

@@ -9,6 +9,7 @@ from .basics import m5c_free_npc as m5c_free_npc
 from .basics import m5e_talk as m5e_talk
 from .basics import m6_knows as m6_knows
 from .basics import tts_lines as tts_lines
+from .basics import websocket as websocket
 from .companions import calm_scenario as calm_scenario
 from .companions import companion_scenario as companion_scenario
 from .companions import neural_companion_scenario as neural_companion_scenario
@@ -41,6 +42,7 @@ from .npc_life import errand_scenario as errand_scenario
 from .npc_life import initiative_scenario as initiative_scenario
 from .npc_life import lead_scenario as lead_scenario
 from .npc_life import meet_scenario as meet_scenario
+from .npc_life import noise_scenario as noise_scenario
 from .perception import cave_scenario as cave_scenario
 from .perception import ground_scenario as ground_scenario
 from .perception import hearing_scenario as hearing_scenario
@@ -63,3 +65,4 @@ from .story import own_repair as own_repair
 from .story import own_symbols as own_symbols
 from .story import repair_after_death as repair_after_death
 from .story import story_triggers as story_triggers
+from .trace_crime import trace_crime as trace_crime

@@ -23,6 +23,7 @@ void AiQueue::load(Serialize& fin) {
   aiActions.resize(size);
   for(auto& i:aiActions){
     i.nativeCombatTarget = nullptr;
+    i.physicsNoiseState = false;
     fin.read(reinterpret_cast<uint32_t&>(i.act));
     fin.read(i.target,i.victim);
     fin.read(i.point,i.func,i.i0,i.i1,i.s0);
@@ -57,6 +58,17 @@ AiQueue::AiAction AiQueue::pop() {
   auto act = std::move(aiActions.front());
   aiActions.pop_front();
   return act;
+  }
+
+AiQueue::AiAction AiQueue::popPhysicsNoiseState() {
+  for(auto i=aiActions.begin(); i!=aiActions.end(); ++i) {
+    if(i->act!=AI_StartState || !i->physicsNoiseState)
+      continue;
+    auto act = std::move(*i);
+    aiActions.erase(i);
+    return act;
+    }
+  return {};
   }
 
 int AiQueue::aiOutputOrderId() const {

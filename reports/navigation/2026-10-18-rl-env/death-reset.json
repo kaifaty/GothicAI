@@ -1,0 +1,93 @@
+{
+  "passed": true,
+  "checks": {
+    "actual_death": true,
+    "actual_ragdoll": true,
+    "death_state_ran": true,
+    "single_injection": true,
+    "reset_from_actual_death": true,
+    "recurrent_state_exercised": true,
+    "health_restored": true,
+    "live_pose": true,
+    "start_pose_restored": true,
+    "recurrent_state_cleared": true,
+    "memory_cleared": true,
+    "guidance_cleared": true,
+    "eye_cleared": true,
+    "keys_released": true
+  },
+  "reset_position_error_cm": 0.0,
+  "initial_state": {
+    "hp": 280,
+    "hp_max": 280,
+    "down": false,
+    "dead": false,
+    "ragdoll": false,
+    "body_state": 98304,
+    "in_air": false,
+    "climbing": false,
+    "gru_hidden_size": 0,
+    "gru_l2": 0,
+    "memory_traveled_cm": 0,
+    "guidance_points": 0,
+    "eye_observed": 0,
+    "held_keys": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "position_cm": [
+      9567.72168,
+      270.131317,
+      6143.24609
+    ],
+    "body_yaw_deg": 126.096863
+  },
+  "first_final_hp": 0,
+  "first_kill_at_ms": 400,
+  "physics": "cv",
+  "recording_checks": [
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-death-reset/death-population/episodes/0",
+      "decisions": 5,
+      "max_log_prob_error": 3.9098652093727537e-10,
+      "reward_sums": {
+        "progress_cm": 0.0221252441,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 1,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 433
+      },
+      "start_path_cm": 11219.7166,
+      "final_path_cm": 11219.6945,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    },
+    {
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/cv-death-reset/death-population/episodes/1",
+      "decisions": 10,
+      "max_log_prob_error": 3.854360608457341e-09,
+      "reward_sums": {
+        "progress_cm": -50.767517090000005,
+        "arrived": 0,
+        "blocked": 0,
+        "fall_damage": 0,
+        "death": 0,
+        "jump": 0,
+        "climb": 0,
+        "time_ms": 1000
+      },
+      "start_path_cm": 6297.06497,
+      "final_path_cm": 6347.83249,
+      "invalid_reward_paths": 0,
+      "successful_progress_relative_error": null
+    }
+  ],
+  "death_reward": 1
+}

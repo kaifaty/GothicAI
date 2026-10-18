@@ -225,13 +225,15 @@ def collect(args):
             if not completed(directory):
                 raise RuntimeError(f"Incomplete drive: {directory}")
             episode = read_json(directory / "episode.json")
+            if episode.get("physics_mode", "native") != getattr(args, "physics", "native"):
+                raise ValueError(f"Drive physics differs from requested mode: {directory}")
             if episode.get("demo_version") != 2 or episode.get("teacher_version") != 2:
                 raise ValueError(f"Drive must use NAVDEMO v2 policy/teacher: {directory}")
             if episode.get("teacher_beta") != args.teacher_beta or episode.get("mixing_seed") != mixing_seed:
                 raise ValueError(f"Runner did not apply the requested mixing settings: {directory}")
             episode.update(pair, drive=True, weights=str(args.weights), limit_ms=args.limit_ms,
                            collector_wall_s=wall, selection_seed=args.selection_seed,
-                           dagger_collection=args.dagger_collection)
+                           dagger_collection=args.dagger_collection, requested_physics=getattr(args, "physics", "native"))
             write_json(directory / "episode.json", episode)
             print(f"{name}: success={episode['success']} elapsed_ms={episode['elapsed_ms']} "
                   f"distance_cm={episode.get('distance_cm')} wall_s={wall:.2f}", flush=True)
@@ -588,6 +590,7 @@ def main():
                         help="Mixed-control RNG seed, offset by the pair index")
     parser.add_argument("--dagger-collection", action="store_true", help="Mark this run as DAgger collection")
     parser.add_argument("--plot-count", type=int, default=6)
+    parser.add_argument("--physics", choices=("native", "cv"), default="native")
     args = parser.parse_args()
     if args.limit_ms is None:
         args.limit_ms = 13000 if args.command == "speed" else 240000

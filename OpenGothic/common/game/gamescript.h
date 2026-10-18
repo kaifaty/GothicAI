@@ -22,7 +22,6 @@
 
 class GameSession;
 class World;
-class DirectMemory;
 class Npc;
 class Item;
 class VisualFx;
@@ -193,8 +192,6 @@ class GameScript final {
 
     void      onWldItemRemoved(const Item& itm);
     void      fixNpcPosition(Npc& npc, float angle0, float distBias);
-
-    void      eventPlayAni(Npc& npc, std::string_view ani);
 
   private:
     template<typename T>
@@ -484,8 +481,6 @@ class GameScript final {
     std::mt19937                                                randGen;
     std::unordered_map<const Npc*,std::mt19937>                 isolatedRandom;
     NpcProcessPolicy                                            aiProcessPolicy = NpcProcessPolicy::AiNormal;
-
-    std::unique_ptr<DirectMemory>                               dma;
 
     std::unique_ptr<SpellDefinitions>                           spells;
     std::unique_ptr<SvmDefinitions>                             svm;

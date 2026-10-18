@@ -1,0 +1,18 @@
+{
+  "pairs": "/home/kaifaty/gothic-ai/nav-rl/cv-test/holdout.jsonl",
+  "n": 60,
+  "regions": {
+    "market": 10,
+    "harbour": 10,
+    "onar": 10,
+    "lobart": 10,
+    "port_streets": 10,
+    "upper_streets": 10
+  },
+  "requested_per_region": 10,
+  "max_candidates_per_region": 50,
+  "shortages": {},
+  "physics": "cv",
+  "attempts": 81,
+  "workers": 6
+}

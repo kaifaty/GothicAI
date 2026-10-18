@@ -29,10 +29,12 @@
 #include "gothic.h"
 #include "resources.h"
 #include "frameprofile.h"
+#include "navdemos.h"
 
 #include <chrono>
 #include <iomanip>
 #include <locale>
+#include <memory>
 #include <sstream>
 
 using namespace Tempest;
@@ -727,6 +729,45 @@ void Npc::clearSpeed() {
   mvAlgo.clearSpeed();
   }
 
+void Npc::resetNavigationEpisode() {
+  if(!NavDemos::fullSimulation(*this))
+    return;
+  setInteraction(nullptr,true);
+  clearAiQueue();
+  clearState(true);
+  hnpc->attribute[ATR_HITPOINTS] = hnpc->attribute[ATR_HITPOINTSMAX];
+  releaseRagdoll(false);
+  ragdollDormant.reset();
+  ragdollLegacyDown = ragdollRecovering = ragdollHasLastPosition = false;
+  ragdollLastVelocity = {};
+  ragdollQuestReturn = {};
+  ragdollQuestSpellThrow = false;
+  ragdollQuestSampleTick = 0;
+  living.reset();
+  livingRetryTick = 0;
+  livingNeedsRebuild = livingWasFrozen = livingWasInteracting = false;
+  arrowImpacts.clear();
+  pendingSpellImpulse = {};
+  spellImpulseCulprit.reset();
+  visual.clearPhysicalPose();
+  visual.pose().stopAllAnim();
+  // Called between world ticks: reconstruct transient state (including bounce,
+  // cached ground, speed multipliers and controller hysteresis) for a fresh episode.
+  mvAlgo.resetCharacterVirtual();
+  std::destroy_at(&mvAlgo);
+  std::construct_at(&mvAlgo,*this);
+  currentTarget = nearestEnemy = currentOther = currentVictim = lastHit = nullptr;
+  outWaitTime = aiOutputBarrier = physicsNoiseUntil = 0;
+  castLevel = CS_NoCast;
+  currentSpellCast = size_t(-1);
+  castNextTime = 0;
+  lastEventTime = owner.tickCount();
+  resetCharacterVisualHeight();
+  angleY = runAng = 0;
+  stopWalking();
+  physic.setEnable(true);
+  }
+
 void Npc::setProcessPolicy(NpcProcessPolicy t) {
   if(aiPolicy==t)
     return;
@@ -1224,8 +1265,10 @@ void Npc::prepareLivingBody() {
     arrowImpacts.clear();
     }
   const auto* hero = owner.player();
-  const bool outside = hero!=nullptr && (living ? qDistTo(*hero)>leaveRadius*leaveRadius
-                                               : qDistTo(*hero)>=enterRadius*enterRadius);
+  // Population actors retain the same contact rig as actors near the hero.
+  const bool outside = !NavDemos::fullSimulation(*this) && hero!=nullptr &&
+                       (living ? qDistTo(*hero)>leaveRadius*leaveRadius
+                               : qDistTo(*hero)>=enterRadius*enterRadius);
   if(isDown() || ragdoll || interacting || (!frozen && (isPlayer() || hero==nullptr ||
      !Gothic::physicsFlags().livingBodies || outside))) {
     living.reset();
@@ -3981,15 +4024,9 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         }
       break;
     case AI_StartState:
-      // NOTE: a new state can be stater within a daly routiine, such as TA_Sleep, with: ZS_GotoBed -> ZS_Sleep.
-      // In such cases it's important to preserve aiState.eTime.
-      if(startState(act.func,act.s0,aiState.eTime,act.i0==0)) {
-        setOther(act.target);
-        setVictim(act.victim);
-        }
+      startQueuedState(act);
       break;
     case AI_PlayAnim:{
-      owner.script().eventPlayAni(*this, act.s0);
       if(auto sq = playAnimByName(act.s0,BS_NONE)) {
         implAniWait(uint64_t(sq->totalTime()));
         implFaiWait(uint64_t(sq->totalTime()));
@@ -4372,6 +4409,15 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       break;
       }
     }
+  }
+
+bool Npc::startQueuedState(const AiQueue::AiAction& act) {
+  // Preserve the routine end time for transitions such as ZS_GotoBed -> ZS_Sleep.
+  if(!startState(act.func,act.s0,aiState.eTime,act.i0==0))
+    return false;
+  setOther(act.target);
+  setVictim(act.victim);
+  return true;
   }
 
 bool Npc::startState(ScriptFn id, std::string_view wp) {
@@ -4933,6 +4979,7 @@ void Npc::aiPush(AiQueue::AiAction&& a) {
   // collision, and OTHER may be null or a distant culprit, so native turning owns it.
   if(physicsNoiseCallback && (a.act==AI_TurnToNpc || a.act==AI_LookAtNpc))
     return;
+  a.physicsNoiseState = physicsNoiseCallback && a.act==AI_StartState;
   a.nativeCombatTarget=nativeCombatQueueTarget;
   if(BodyController::owns(*this) && a.act!=AI_OutputSvmOverlay)
     BodyController::takeover(*this,"native_script_queue");
@@ -6245,6 +6292,12 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
     physicsNoiseCallback = true;
     owner.script().invokeState(this,noise.culprit,nullptr,perception[PERC_ASSESSQUIETSOUND].func);
     physicsNoiseCallback = false;
+    // B_AssessQuietSound clears perceptions before queuing its state. Run only
+    // that transition and its initializer now; its queued actions still wait
+    // for the native turn, rather than leaving perceptions disabled for 2 s.
+    auto state = aiQueue.popPhysicsNoiseState();
+    if(state.act==AI_StartState && startQueuedState(state) && !aiState.started)
+      tickRoutine();
     }
   TestBench::physicsNoiseHeard(*this,noise,callbackDispatched);
   return true;

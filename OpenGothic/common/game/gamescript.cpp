@@ -7,7 +7,6 @@
 #include <optional>
 #include <sstream>
 
-#include "game/compatibility/directmemory.h"
 #include "game/definitions/spelldefinitions.h"
 #include "game/serialize.h"
 #include "game/herodeed.h"
@@ -433,8 +432,8 @@ void GameScript::initCommon() {
       }
     }
 
-  if(DirectMemory::isRequired(vm))
-    dma.reset(new DirectMemory(*this, vm));
+  if(vm.find_symbol_by_name("Ikarus_Version")!=nullptr || vm.find_symbol_by_name("LeGo_Version")!=nullptr)
+    Log::e("Ikarus/LeGo scripts are not supported by this build");
   }
 
 void GameScript::initSettings() {
@@ -815,11 +814,6 @@ void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias) {
     }
 
   // npc.setPosition(pos0);
-  }
-
-void GameScript::eventPlayAni(Npc& npc, std::string_view ani) {
-  if(dma!=nullptr)
-    dma->eventPlayAni(ani);
   }
 
 const World &GameScript::world() const {
@@ -1557,9 +1551,6 @@ zenkit::DaedalusVm GameScript::createVm(Gothic& gothic) {
   auto lang   = gothic.settingsGetI("GAME", "language");
   auto script = gothic.loadScript(gothic.defaultGameDatFile(), ScriptLang(lang));
   auto exef   = zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS;
-  if(DirectMemory::isRequired(script)) {
-    exef |= zenkit::DaedalusVmExecutionFlag::IGNORE_CONST_SPECIFIER;
-    }
   return zenkit::DaedalusVm(std::move(script), exef);
   }
 
@@ -1571,9 +1562,7 @@ uint64_t GameScript::tickCount() const {
   return owner.tickCount();
   }
 
-void GameScript::tick(uint64_t dt) {
-  if(dma!=nullptr)
-    dma->tick(dt);
+void GameScript::tick(uint64_t) {
   }
 
 uint32_t GameScript::rand(uint32_t max, const Npc* actor) {
@@ -1734,8 +1723,6 @@ uint32_t GameScript::lockPickId() const {
   }
 
 std::string_view GameScript::menuMain() const {
-  if(dma!=nullptr)
-    return dma->menuMain();
   return ::menuMain;
   }
 

@@ -1,0 +1,255 @@
+{
+  "attempts": [
+    {
+      "controller": "forced_cv",
+      "completed_comparison_pairs": 1,
+      "cases": {
+        "reference": {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+          "goal": "FP_ROAM_CITY_SHEEP_03",
+          "success": true,
+          "elapsed_ms": 214933,
+          "frames": 6448,
+          "cv_frames": 2565,
+          "blocked_spans": 1,
+          "blocked_ms": 3200,
+          "failure": "",
+          "directory": "/home/kaifaty/gothic-ai/nav-rl/equivalence-attempt1/reference/00000"
+        },
+        "near": {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+          "goal": "FP_ROAM_CITY_SHEEP_03",
+          "success": false,
+          "elapsed_ms": 240000,
+          "frames": 7200,
+          "cv_frames": 7197,
+          "start_path_cm": 11219.7166,
+          "remaining_path_cm": 939.004421,
+          "progress_cm": 10280.7122,
+          "invalid_reward_paths": 0,
+          "min_hero_distance_cm": 327.863159,
+          "max_hero_distance_cm": 6398.07715,
+          "blocked_spans": 2,
+          "blocked_ms": 39300,
+          "failure": "body_blocked",
+          "directory": "/home/kaifaty/gothic-ai/nav-rl/equivalence-attempt1/near/00000/episodes/0",
+          "sample_records": 2400,
+          "summed_progress_cm": 10280.712222457176,
+          "progress_start_relative_error": 0.08369234366782705
+        },
+        "far": {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+          "goal": "FP_ROAM_CITY_SHEEP_03",
+          "success": true,
+          "elapsed_ms": 187133,
+          "frames": 5614,
+          "cv_frames": 5614,
+          "start_path_cm": 11219.7166,
+          "remaining_path_cm": 97.6399243,
+          "progress_cm": 11122.0767,
+          "invalid_reward_paths": 0,
+          "min_hero_distance_cm": 15594.3262,
+          "max_hero_distance_cm": 19590.4316,
+          "blocked_spans": 0,
+          "blocked_ms": 0,
+          "failure": "",
+          "directory": "/home/kaifaty/gothic-ai/nav-rl/equivalence-attempt1/far/00000/episodes/0",
+          "sample_records": 1872,
+          "summed_progress_cm": 11122.0767195474,
+          "progress_start_relative_error": 0.008702526448181388
+        }
+      }
+    },
+    {
+      "controller": "native_cv_radius",
+      "completed_comparison_pairs": 1,
+      "cases": {
+        "reference": {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+          "goal": "FP_ROAM_CITY_SHEEP_03",
+          "success": true,
+          "elapsed_ms": 214933,
+          "frames": 6448,
+          "cv_frames": 2565,
+          "blocked_spans": 1,
+          "blocked_ms": 3200,
+          "failure": "",
+          "directory": "/home/kaifaty/gothic-ai/nav-rl/equivalence/reference/00000"
+        },
+        "near": {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+          "goal": "FP_ROAM_CITY_SHEEP_03",
+          "success": true,
+          "elapsed_ms": 214933,
+          "frames": 6448,
+          "cv_frames": 2565,
+          "start_path_cm": 11219.7166,
+          "remaining_path_cm": 99.9316335,
+          "progress_cm": 11119.785,
+          "invalid_reward_paths": 0,
+          "min_hero_distance_cm": 327.863159,
+          "max_hero_distance_cm": 6390.7876,
+          "blocked_spans": 1,
+          "blocked_ms": 3200,
+          "failure": "",
+          "directory": "/home/kaifaty/gothic-ai/nav-rl/equivalence/near/00000/episodes/0",
+          "sample_records": 2150,
+          "summed_progress_cm": 11119.78501083786,
+          "progress_start_relative_error": 0.008906783720556637
+        },
+        "far": {
+          "start": "NW_CITY_MERCHANT_SHOP03_IN_01",
+          "goal": "FP_ROAM_CITY_SHEEP_03",
+          "success": false,
+          "elapsed_ms": 240000,
+          "frames": 7200,
+          "cv_frames": 0,
+          "start_path_cm": 11219.7166,
+          "remaining_path_cm": 10309.6695,
+          "progress_cm": 910.04715,
+          "invalid_reward_paths": 0,
+          "min_hero_distance_cm": 19226.8047,
+          "max_hero_distance_cm": 19624.5801,
+          "blocked_spans": 1,
+          "blocked_ms": 220400,
+          "failure": "body_blocked",
+          "directory": "/home/kaifaty/gothic-ai/nav-rl/equivalence/far/00000/episodes/0",
+          "sample_records": 2400,
+          "summed_progress_cm": 910.047149743,
+          "progress_start_relative_error": 0.9188885796150145
+        }
+      }
+    }
+  ],
+  "teacher_attempts": [
+    {
+      "candidate": 0,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_PATH_07",
+      "goal": "FP_ROAM_CITY_SHEEP_04",
+      "success": true,
+      "elapsed_ms": 147767,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00000"
+    },
+    {
+      "candidate": 1,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_PATH_36",
+      "goal": "FP_ITEM_HERB_05",
+      "success": false,
+      "elapsed_ms": 240000,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00001"
+    },
+    {
+      "candidate": 2,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_PATCH_45_C",
+      "goal": "FP_STAND_GUARDING_ZURIS",
+      "success": true,
+      "elapsed_ms": 41267,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00002"
+    },
+    {
+      "candidate": 3,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_HUT_01_FRONT",
+      "goal": "FP_SMALLTALK_CITYKNEIPE_03",
+      "success": true,
+      "elapsed_ms": 69467,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00003"
+    },
+    {
+      "candidate": 4,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02",
+      "goal": "FP_STAND_WEAPON_05",
+      "success": true,
+      "elapsed_ms": 15000,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00004"
+    },
+    {
+      "candidate": 5,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_PATH_12",
+      "goal": "FP_STAND_CITY_13",
+      "success": true,
+      "elapsed_ms": 20200,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00005"
+    },
+    {
+      "candidate": 6,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_PATH_38",
+      "goal": "FP_ROAM_CITY_TO_FOREST_18",
+      "success": false,
+      "elapsed_ms": 240000,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00006"
+    },
+    {
+      "candidate": 7,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_HUT_02_IN",
+      "goal": "FP_SMALLTALK_CITY_38",
+      "success": false,
+      "elapsed_ms": 240000,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00007"
+    },
+    {
+      "candidate": 8,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_PATH_23",
+      "goal": "FP_SWEEP_ALTE_02",
+      "success": false,
+      "elapsed_ms": 240000,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00008"
+    },
+    {
+      "candidate": 9,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_TEMPLE_IN",
+      "goal": "FP_SWEEP_GRITTA",
+      "success": true,
+      "elapsed_ms": 48733,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00009"
+    },
+    {
+      "candidate": 10,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_PATH_30",
+      "goal": "FP_STAND_DARON",
+      "success": true,
+      "elapsed_ms": 20100,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00010"
+    },
+    {
+      "candidate": 11,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_SHOP03_FRONT_02_B",
+      "goal": "FP_STAND_GUARDING_HANNA",
+      "success": false,
+      "elapsed_ms": 240000,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00011"
+    },
+    {
+      "candidate": 12,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_PATH_43",
+      "goal": "FP_ITEM_HERB_03",
+      "success": false,
+      "elapsed_ms": 240000,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00012"
+    },
+    {
+      "candidate": 13,
+      "region": "market",
+      "start": "NW_CITY_MERCHANT_PATH_31",
+      "goal": "FP_SMALLTALK_BEER_01",
+      "success": false,
+      "elapsed_ms": 240000,
+      "episode": "/home/kaifaty/gothic-ai/nav-rl/test/teacher/00013"
+    }
+  ],
+  "stopped_after_two_failed_stand_checks": true,
+  "final_test_frozen": false,
+  "final_test_learner_drives": 0
+}
