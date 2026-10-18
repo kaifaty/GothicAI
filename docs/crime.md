@@ -15,6 +15,8 @@
 
 Проверки: `crimes`, `crime_talk`, `crime_law`, `crime_director` в [scripts/e2e.sh](../scripts/e2e.sh); последний — [scenarios/crime_director.py](../server/src/gothic_ai/scenarios/crime_director.py). Тесты: [test_crimes.py](../server/tests/test_crimes.py), [test_crime_law.py](../server/tests/test_crime_law.py), [test_amends.py](../server/tests/test_amends.py).
 
+Стык закона и книги проверяет [quest_law](../server/src/gothic_ai/scenarios/quest_law.py): квест принимает краденую у Маттео вещь и платит награду до штрафа, а Андре по сроку узнаёт о краже и требует оплату. Сохранение и загрузка сохраняют оба состояния; сдача квеста не снимает штраф и память Маттео, оплата штрафа не повторяет награду.
+
 Ограничения: телесные реакции на преступления остаются скриптам; охотников за наградой нет. У бандитов нет законника, `GIL_OUT=12` не входит в общины. Режиссёр может не создавать линию; возмещение ограничено 100 золотыми.
 
 ## План и журнал

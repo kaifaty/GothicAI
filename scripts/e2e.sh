@@ -101,6 +101,10 @@
 #       Matteo witnesses a native theft; Andre stays locked until the next day, charges 50 through
 #       his native voiced dialog and accepts payment. Matteo still remembers. A second theft with
 #       an accepted silence deal never reaches Andre. Native theft perceptions stay enabled.
+#   quest_law: a book quest advances on Matteo's stolen item while city law keeps its own case;
+#       LLM=fake, SAVE=save_slot_1.sav, TIMEOUT=600. Save/load keeps the quest and law; the giver
+#       pays before Andre's fine, completing the quest never forgives the theft, and paying the fine
+#       never repeats the quest reward. Native theft perceptions stay enabled.
 #   requires: a book quest depending on vanilla (docs/director.md, stage 5, layer 2), no model: Hilda's
 #       offer stays absent while Lobart's turnip quest is open or running, opens after its success, and
 #       the book's second stage waits for "Сковорода для Хильды" to become running. A save and a load
