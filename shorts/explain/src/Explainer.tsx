@@ -19,6 +19,7 @@ import {DiceChart} from './parts/DiceChart';
 import {Sight} from './parts/Sight';
 import {Tags} from './parts/Tags';
 import {Hook, Texts} from './parts/Texts';
+import {SealSafeArea, SealSafeText} from './parts/SealSafeText';
 import type {Beat, Plan} from './schema';
 import {COLOR, FONT, H, OUTLINE, W} from './theme';
 
@@ -71,7 +72,7 @@ const Picture: React.FC<{
 };
 
 const HalfLabel: React.FC<{text: string; top: number; color: string}> = ({text, top, color}) => (
-  <div
+  <SealSafeText
     style={{
       position: 'absolute',
       top,
@@ -87,7 +88,7 @@ const HalfLabel: React.FC<{text: string; top: number; color: string}> = ({text, 
     }}
   >
     {text}
-  </div>
+  </SealSafeText>
 );
 
 const BeatView: React.FC<{beat: Beat; start: number; spans: Spans; duck: number; game: number; stem?: Plan['stem']}> = ({
@@ -167,7 +168,7 @@ export const Explainer: React.FC<Plan> = (plan) => {
   const spans: Spans = plan.lines.filter((l) => l.length > 0).map((l) => [l[0].start, l[l.length - 1].end]);
   let t = 0;
   return (
-    <AbsoluteFill style={{background: '#000'}}>
+    <SealSafeArea enabled={plan.brand}>
       <Sequence durationInFrames={contentFrames} layout="none" name="beats">
         {plan.beats.map((beat) => {
           const from = Math.round(t * fps);
@@ -197,6 +198,6 @@ export const Explainer: React.FC<Plan> = (plan) => {
           <BrandSting volume={plan.stem ? (plan.stem === 'game' ? 1 : 0) : plan.brandVolume} />
         </Sequence>
       )}
-    </AbsoluteFill>
+    </SealSafeArea>
   );
 };

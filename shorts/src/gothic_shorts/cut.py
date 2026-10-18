@@ -33,7 +33,9 @@ NPC_COLOR = (255, 255, 255)
 NAME_COLOR = (230, 190, 120)
 BRAND_FONT = "/System/Library/Fonts/Supplemental/PTSerif.ttc"
 BRAND = Path.home() / ".local/share/gothic-ai/brand/sting"
-SEAL = (W - 140, 110)
+SEAL = (W - 220, 110)
+SEAL_SIZE = 110
+SEAL_GAP = 16
 OUTLINE = (20, 12, 8)
 # The Shorts interface covers these edges (shorts/explain/src/theme.ts).
 SAFE = (60, 150, W - 150, H - 380)  # left, top, right, bottom
@@ -324,6 +326,11 @@ def _overlays(on_screen: list[Shown], work: Path, *, brand: bool = True) -> list
             h = _brand_text_png(s.text, png, size, color, max_chars=chars, stroke=stroke, name=s.name)
             center = 1290 if s.kind == "line" else 300
             y = max(SAFE[1], min(center - h // 2, SAFE[3] - h))
+            if _touches_seal(png, y):
+                y = max(SAFE[1], SEAL[1] + SEAL_SIZE + SEAL_GAP)
+                if y + h > SAFE[3]:
+                    h = _brand_text_png(s.text, png, size, color, max_chars=chars, stroke=stroke,
+                                        name=s.name, max_height=SAFE[3] - y)
             out.append(Overlay(png, s.start, s.end, y))
             continue
         if s.kind == "hook":
@@ -340,12 +347,25 @@ def _overlays(on_screen: list[Shown], work: Path, *, brand: bool = True) -> list
     return out
 
 
+def _touches_seal(png: Path, y: int) -> bool:
+    """Check the painted pixels, including their outline, before moving an overlay."""
+    with Image.open(png) as image:
+        left = max(0, SEAL[0])
+        top = max(0, SEAL[1] - y)
+        right = min(image.width, SEAL[0] + SEAL_SIZE)
+        bottom = min(image.height, SEAL[1] + SEAL_SIZE - y)
+        return (left < right and top < bottom
+                and image.getchannel("A").crop((left, top, right, bottom)).getbbox() is not None)
+
+
 def _brand_text_png(
     text: str, path: Path, size: int, color: tuple[int, int, int], *,
-    max_chars: int, stroke: int, name: str,
+    max_chars: int, stroke: int, name: str, max_height: int | None = None,
 ) -> int:
-    """Fit the stroked text inside Shorts' safe area, to the left of the fixed corner seal."""
+    """Fit the stroked text inside Shorts' safe area."""
     width = SAFE[2] - SAFE[0]
+    if max_height is None:
+        max_height = SAFE[3] - SAFE[1]
     while True:
         font = ImageFont.truetype(BRAND_FONT, size, index=3)
         name_font = ImageFont.truetype(BRAND_FONT, int(size * 0.62), index=3)
@@ -363,7 +383,7 @@ def _brand_text_png(
             rows.extend((r, face, fill, box) for r, box in zip(wrapped, boxes, strict=True))
         gap = int(size * 0.18)
         height = sum(b[3] - b[1] for _, _, _, b in rows) + gap * max(0, len(rows) - 1)
-        if height <= SAFE[3] - SAFE[1]:
+        if height <= max_height:
             break
         size -= 2
         if size < 12:

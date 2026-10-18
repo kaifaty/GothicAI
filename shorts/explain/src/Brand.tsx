@@ -1,13 +1,13 @@
 import React from 'react';
 import {Img, OffthreadVideo, staticFile} from 'remotion';
-import {FPS, H, W} from './theme';
+import {FPS, H, SEAL, W} from './theme';
 
 export const STING_FRAMES = Math.round(2.2 * FPS);
 
 export const BrandSeal: React.FC = () => (
   <Img
     src={staticFile('brand/seal-corner.png')}
-    style={{position: 'absolute', left: 940, top: 110, width: 110, height: 110}}
+    style={{position: 'absolute', ...SEAL}}
   />
 );
 

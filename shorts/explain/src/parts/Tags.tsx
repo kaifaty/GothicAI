@@ -4,6 +4,7 @@ import type {TagT} from '../schema';
 import {chance} from '../dice';
 import {COLOR, FONT, OUTLINE} from '../theme';
 import {rise, shown} from './anim';
+import {SealSafeText} from './SealSafeText';
 
 // `{chance:exe:40:14.7}`: the chance by that rule for that talent and distance, as the game counts it
 const withChances = (text: string) =>
@@ -40,7 +41,7 @@ export const Tags: React.FC<{tags: TagT[]}> = ({tags}) => {
                 boxShadow: '0 0 8px #000',
               }}
             />
-            <div
+            <SealSafeText
               style={{
                 position: 'absolute',
                 bottom: 30,
@@ -85,7 +86,7 @@ export const Tags: React.FC<{tags: TagT[]}> = ({tags}) => {
                   </div>
                 );
               })}
-            </div>
+            </SealSafeText>
           </div>
         );
       })}

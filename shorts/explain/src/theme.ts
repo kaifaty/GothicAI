@@ -6,6 +6,8 @@ export const FPS = 30;
 
 // the Shorts interface covers these: no text under them
 export const SAFE = {top: 150, bottom: 380, right: 150, left: 60};
+export const SEAL = {left: W - 220, top: 110, width: 110, height: 110};
+export const SEAL_TEXT_GAP = 16; // leave room for outlines and shadows after moving a label
 
 export const COLOR = {
   before: '#D8D8D8', // the old rule (the dice, the auto aim)

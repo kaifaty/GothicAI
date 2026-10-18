@@ -62,7 +62,7 @@ the original plan gains and ducking for Studio and drafts; they do not run the p
 `src/schema.ts` is the format; a missing or misspelt field stops the render with its path. In short:
 
 - `hook`: the big text over the first seconds;
-- `brand`: boolean, defaults to `true`. A 110 × 110 G seal stays at (940, 110) over every beat, then the
+- `brand`: boolean, defaults to `true`. A 110 × 110 G seal stays at (860, 110) over every beat, then the
   2.2-second letter sting plays after the last beat (1080 × 1920, 30 fps, its own −14 LUFS source audio).
   Publication calibrates the sting separately from the body effects through `levels`. In drafts it uses
   `brandVolume`. The voice and footage sound stop before it; the music fades out by its start. The render's duration
@@ -101,6 +101,9 @@ safe area of the Shorts interface (no text in the top 150, bottom 380, right 150
 Montserrat, with full Cyrillic, shipped in `src/fonts/` under the SIL Open Font License. With `brand: true`,
 all voice captions use PT Serif Bold, including words with digits. Chart labels, tags and counters keep
 Montserrat; all colours stay the same. With `brand: false`, captions retain their original Montserrat.
+The seal has 110 px of clearance from both the top and right edges. While it is visible, a text block,
+tag or split label that touches its corner moves just below it with a 16 px gap for outlines and shadows;
+other text keeps its position. Hooks, voice captions and chart cards already start below the seal.
 
 Remotion is under the [Remotion License](https://www.remotion.pro/license): free for individuals and companies of
 up to three people. The versions are pinned in `package.json`.

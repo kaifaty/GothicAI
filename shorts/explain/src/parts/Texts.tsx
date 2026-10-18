@@ -3,6 +3,7 @@ import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {TextT} from '../schema';
 import {COLOR, FONT, OUTLINE, SAFE, W} from '../theme';
 import {rise, shown} from './anim';
+import {SealSafeText} from './SealSafeText';
 
 // short texts on screen (not captions): a dark band under each, inside the safe area
 export const Texts: React.FC<{texts: TextT[]}> = ({texts}) => {
@@ -27,7 +28,7 @@ export const Texts: React.FC<{texts: TextT[]}> = ({texts}) => {
               opacity: o,
             }}
           >
-            <span
+            <SealSafeText
               style={{
                 fontFamily: FONT.body,
                 fontWeight: 800,
@@ -43,7 +44,7 @@ export const Texts: React.FC<{texts: TextT[]}> = ({texts}) => {
               }}
             >
               {x.text}
-            </span>
+            </SealSafeText>
           </div>
         );
       })}

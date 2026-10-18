@@ -317,7 +317,7 @@ def test_brand_pngs_use_pt_serif_bold_warm_outline_and_shorts_safe_area(tmp_path
     for item, overlay in zip(shown, overlays, strict=True):
         with Image.open(overlay.png) as image:
             left, top, right, bottom = image.getchannel("A").getbbox()
-            assert 60 <= left < right <= 930  # to the left of both Shorts UI and the fixed seal
+            assert 60 <= left < right <= 930  # inside the Shorts safe area
             assert 150 <= overlay.y + top < overlay.y + bottom <= 1540
             colors = {rgba for count, rgba in image.getcolors(image.width * image.height)}
         assert (20, 12, 8, 255) in colors
@@ -326,3 +326,54 @@ def test_brand_pngs_use_pt_serif_bold_warm_outline_and_shorts_safe_area(tmp_path
         assert (*expected, 255) in colors
         if item.name:
             assert (230, 190, 120, 255) in colors
+
+
+def _overlay_alpha(overlay):
+    frame = Image.new("L", (cut.W, cut.H))
+    with Image.open(overlay.png) as image:
+        frame.paste(image.getchannel("A"), (0, overlay.y))
+    return frame
+
+
+@pytest.mark.skipif(not Path(cut.BRAND_FONT).is_file(), reason="macOS PT Serif collection is unavailable")
+@pytest.mark.parametrize(("kind", "word", "rows", "collides"), [
+    ("hook", "W" * 9, 2, True),
+    ("hook", "W" * 9, 3, True),
+    ("caption", "Ж" * 12, 2, False),
+    ("caption", "Ж" * 12, 3, True),
+])
+def test_wide_multiline_brand_text_clears_seal(tmp_path, kind, word, rows, collides):
+    assert cut.SEAL == (860, 110)
+    seal = (860, 110, 970, 220)
+    text = " ".join([word] * rows)
+    size, chars, stroke = (84, 18, 7) if kind == "hook" else (64, 22, 6)
+    original = tmp_path / "original.png"
+    h = cut._brand_text_png(text, original, size, cut.NPC_COLOR,
+                            max_chars=chars, stroke=stroke, name="")
+    with Image.open(original) as image:
+        alpha = image.getchannel("A")
+        painted = [alpha.crop((0, y, cut.W, y + 1)).getbbox() is not None for y in range(h)]
+    assert sum(on and (y == 0 or not painted[y - 1]) for y, on in enumerate(painted)) == rows
+    old_y = max(150, min(300 - h // 2, 1540 - h))
+    before = cut.Overlay(original, 0, 2.8, old_y)
+    assert (_overlay_alpha(before).crop(seal).getbbox() is not None) is collides
+
+    overlay, = cut._overlays([cut.Shown(kind, text, 0, 2.8)], tmp_path)
+    frame = _overlay_alpha(overlay)
+    assert frame.crop(seal).getbbox() is None
+    left, top, right, bottom = frame.getbbox()
+    assert 60 <= left < right <= 930
+    assert 150 <= top < bottom <= 1540
+    if collides:
+        assert top >= 236  # 16 px of space below the seal, including the outline
+    else:
+        assert overlay.y == old_y
+
+
+@pytest.mark.skipif(not Path(cut.BRAND_FONT).is_file(), reason="macOS PT Serif collection is unavailable")
+@pytest.mark.parametrize("text", ["Я соврал NPC", "iii iii iii iii iii"])
+def test_brand_hook_that_misses_seal_keeps_its_position(tmp_path, text):
+    overlay, = cut._overlays([cut.Shown("hook", text, 0, 2.8)], tmp_path)
+    with Image.open(overlay.png) as image:
+        assert overlay.y == 300 - image.height // 2
+    assert _overlay_alpha(overlay).crop((860, 110, 970, 220)).getbbox() is None
