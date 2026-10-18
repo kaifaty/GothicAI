@@ -203,7 +203,8 @@ async def quest_law(
             give=talk_line("Тебе что-нибудь нужно?", "Принеси серебряный кубок. Заплачу десять золотых."),
             stages=[
                 questbook.Stage(
-                    "Надо раздобыть серебряный кубок для Абуина.", [questbook.Goal("have", item=ITEM)]
+                    "Надо раздобыть серебряный кубок для Абуина.",
+                    [questbook.Goal("have", npc=CITY_OWNER, item=ITEM)],
                 ),
                 questbook.Stage(
                     "Кубок у меня. Надо отнести его Абуину.",
