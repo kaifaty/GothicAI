@@ -111,6 +111,9 @@ async def calm_companion_scenario(
     await _prepare(link)
     entries: list[tuple[float, dict[str, Any]]] = []
     attack_seen: list[Any] = []
+    calm_views: list[list[Any]] = []
+    calm_ack: float | None = None
+    [party_aiv] = await link.story_eval(BANDIT, [["var", "AIV_PARTYMEMBER"]])
     attacks_after: list[str] = []
     monitoring = False
     sink, llm = dialogue.journal.sink, dialogue.llm
@@ -119,7 +122,22 @@ async def calm_companion_scenario(
     async def observed_effect(
         who: str, effects: list[dict[str, Any]], timeout: float = 5.0, *, check: bool = False,
     ) -> None:
+        nonlocal calm_ack
+        calming = who == BANDIT and any(e.get("do") == "calm" for e in effects)
+
+        async def calm_view() -> list[Any]:
+            return await link.story_eval(BANDIT, [
+                _attacking("SELF"), _attacking(BANDIT), TARGET_IS_HERO, _targets(COMPANION),
+                ["call", "NPC_GETTARGET", ["inst", "SELF"]],
+                ["field", ["inst", COMPANION], "AIVAR", party_aiv],
+            ])
+
+        if calming:
+            calm_views.append(await calm_view())
         await effect(who, effects, timeout, check=check)
+        if calming:
+            calm_ack = time.monotonic()
+            calm_views.append(await calm_view())
         if who == BANDIT and any(e.get("do") == "attack" for e in effects):
             # Sample the original victim before the ACK wakes Orders.attacked and the
             # companion's defence can make native AI legitimately retarget the attacker.
@@ -225,9 +243,10 @@ async def calm_companion_scenario(
         talk.hear("Воу, воу, ты чего? Спокуха!", BANDIT, {"via": "scenario"})
         to = talk.last[0] if talk.last else None
         calmed = await _until(lambda: bool(journal("calm")), 20)
-        calm_at = journal("calm")[0] if calmed else time.monotonic()
+        calm_at = calm_ack if calm_ack is not None else time.monotonic()
         check("calm", calmed and to is not None and to.id == BANDIT,
-              f"addressee={to}, acknowledged calm={calmed}, after_words_s={calm_at - words_at:.3f}")
+              f"addressee={to}, acknowledged calm={calmed}, after_words_s={calm_at - words_at:.3f}; "
+              f"before/after self/named attack, hero/companion/any target, party={calm_views}")
 
         # All deadlines use the same acknowledged calm, not three consecutive five-second waits.
         deadline = calm_at + 5
