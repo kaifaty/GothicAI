@@ -108,14 +108,27 @@ async def quest_law(
         start = len(chosen)
         await link.debug("skip_important", near=ANDRE)
         await link.debug("player_goto", to=ANDRE, distance=250)
+        # A nearest waypoint can be across the barracks wall. Put the hero beside Andre's actual
+        # feet, with no bystander blocking their native turn/output queues.
+        for person in await link.story_nearby(ANDRE, 1000):
+            if person["npc"] in people and person["npc"] != ANDRE:
+                await stand(person["npc"], parked)
+        keeper = await link.snapshot(ANDRE, fresh=True)
+        x, y, z = keeper.npc.pos
+        await link.debug("player_goto", pos=[x + 200, y, z])
+        await asyncio.sleep(0.5)
         await link.start_talk(ANDRE)
         payment = law.graph.node(PAYNOW).description
-        ready = await _until_async(link.dialog_menu, lambda menu: bool(payment) and payment in menu, 90)
+        ready = await _until_async(link.dialog_menu, lambda menu: bool(payment) and payment in menu, 120)
+        keeper = await link.snapshot(ANDRE, fresh=True)
         return {
             "ready": ready,
             "native": any(m.node == node and not m.made for m in chosen[start:]),
             "debt": (await values("ANDRE_SCHULDEN")).get("ANDRE_SCHULDEN"),
             "menu": await link.dialog_menu(),
+            "dialog": (await link.story_state()).get("dialog"),
+            "keeper": keeper.npc.model_dump(exclude={"inventory"}),
+            "hero": keeper.player.model_dump() if keeper.player is not None else None,
         }
 
     def talk_line(said: str, answer: str, remember: str = "") -> questbook.Talk:
@@ -273,8 +286,52 @@ async def quest_law(
         if not await _until_async(drop, bool, 10):
             check(current, False, "Matteo could not drop the native silver cup")
             return _logged(results)
-        await asyncio.sleep(1)
-        await link.npc_act(CITY_OWNER, "turn_to", npc="PLAYER")
+        # Sharing a waypoint can put the hero inside Matteo's collision capsule. Give his native
+        # sight a real direction and wait for the drop/turn animations before taking the cup.
+        witness_view: dict[str, Any] = {}
+        for dx, dz in ((200, 0), (-200, 0), (0, 200), (0, -200)):
+            await link.debug("player_goto", pos=[origin["x"] + dx, origin["y"], origin["z"] + dz])
+            await link.npc_act(CITY_OWNER, "turn_to", npc="PLAYER")
+
+            async def sees_hero() -> bool:
+                nonlocal witness_view
+                views = await link.npc_view([CITY_OWNER])
+                if not views:
+                    return False
+                view = views[0]
+                snapshot = await link.snapshot(CITY_OWNER, fresh=True)
+                settled = await link.snapshot(CITY_OWNER, fresh=True)
+                state_seconds = await link.evaluate(
+                    ["call", "NPC_GETSTATETIME", ["inst", "SELF"]], npc=CITY_OWNER
+                )
+                witness_view = {
+                    "indoors": view.indoors,
+                    "state": view.state,
+                    "body": view.body,
+                    "busy": snapshot.npc.busy,
+                    "idle_ticks": [snapshot.t, settled.t],
+                    "state_seconds": state_seconds,
+                    "hero": view.hero.model_dump() if view.hero is not None else None,
+                }
+                return (
+                    view.indoors
+                    and view.body == "stand"
+                    and not snapshot.npc.busy
+                    and not settled.npc.busy
+                    and settled.t > snapshot.t
+                    and state_seconds >= 2
+                    and view.hero is not None
+                    and view.hero.seen
+                    and 100 <= view.hero.distance <= 600
+                )
+
+            if await _until_async(sees_hero, bool, 6):
+                break
+        else:
+            check(
+                current, False, {"preparation": "Matteo must see the hero before the theft", **witness_view}
+            )
+            return _logged(results)
         before_crimes = {f["id"] for f in facts("crime")}
         await link.debug("player_take", item=ITEM, distance=800)
         await _until(lambda: any(f["id"] not in before_crimes for f in facts("crime")), 10)
@@ -290,7 +347,7 @@ async def quest_law(
             and crime.get("community") == "city"
             and set(crime.get("witnesses", ())) == {CITY_OWNER}
             and remembers(cid),
-            crime,
+            {"crime": crime, "witness_before": witness_view},
         ):
             return _logged(results)
 
