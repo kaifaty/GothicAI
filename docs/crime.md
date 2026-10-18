@@ -13,7 +13,7 @@
 
 Выключение: `gothic-ai serve --no-crimes` отключает учёт дел, закон и создание новых откликов на преступления. Уже записанные поручения и требования возмещения остаются; флаг не удаляет их из сохранения.
 
-Проверки: `crimes`, `crime_talk`, `crime_law`, `crime_director` в [scripts/e2e.sh](../scripts/e2e.sh); последний — [scenarios/crime_director.py](../server/src/gothic_ai/scenarios/crime_director.py). Тесты: [test_crimes.py](../server/tests/test_crimes.py), [test_crime_law.py](../server/tests/test_crime_law.py), [test_amends.py](../server/tests/test_amends.py).
+Проверки: `crimes`, `crime_talk`, `crime_law`, `crime_director` в [scripts/e2e.sh](../scripts/e2e.sh); последний — [scenarios/crime_director.py](../server/src/gothic_ai/scenarios/crime_director.py). Все четыре идут только на сохранении 1 (`SAVE=save_slot_1.sav`, ферма Лобарта), без него `e2e.sh` отказывает: на новой игре Хильда не видит кражу в доме. Тесты: [test_crimes.py](../server/tests/test_crimes.py), [test_crime_law.py](../server/tests/test_crime_law.py), [test_amends.py](../server/tests/test_amends.py).
 
 Ограничения: телесные реакции на преступления остаются скриптам; охотников за наградой нет. У бандитов нет законника, `GIL_OUT=12` не входит в общины. Режиссёр может не создавать линию; возмещение ограничено 100 золотыми.
 
@@ -502,6 +502,14 @@
   3 пропущены**, 316,70 с. Пропуски — проверки исходных ZenGin-сейвов, которых нет
   на Ryzen. Ruff сервера и тестов — чисто. Успешные e2e и живой прогон не повторялись;
   полная регрессия e2e не запускалась.
+
+**Ложный провал `crimes` 2026-10-18.** `SCENARIO=crimes scripts/ryzen.sh e2e` без `SAVE`
+запускал новую игру, и `house_theft` падал: свидетелем кражи был только Лобарт, Хильды не было.
+На чистом `main` с `SAVE=save_slot_1.sav TIMEOUT=420` — **27 проверок, 0 ошибок**. Теперь
+`e2e.sh` отказывает четырём сценариям преступлений без `SAVE`. Поле `room` у кражи в доме
+Лобарта (`S:XARTOWER042_…`) — устаревшая комната героя после телепорта из башни Ксардаса:
+`MoveAlgo` меняет комнату, только когда герой движется и луч вниз попадает в сетку мира. На
+классификацию она не влияет, гильдия комнаты 0; так же было и в успешном прогоне.
 
 ## Не входит
 

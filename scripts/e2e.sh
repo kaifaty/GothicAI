@@ -277,6 +277,11 @@ if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion ]]; then
   [ -n "${GOTHIC_BODY_URL:-}" ] || { echo "scenario $SCENARIO requires GOTHIC_BODY_URL=tcp://host:port" >&2; exit 2; }
   [ -z "${SAVE:-}" ] || { echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2; exit 2; }
 fi
+# Crime scenarios are written for save 1. On a new game Hilda misses the house theft: a false failure.
+case "$SCENARIO" in
+  crimes|crime_talk|crime_director|crime_law)
+    [ -n "${SAVE:-}" ] || { echo "scenario $SCENARIO requires SAVE=save_slot_1.sav (Lobart's farm save)" >&2; exit 2; } ;;
+esac
 LLM="${LLM:-fake}"
 ASR="${ASR:-fake}"
 # own ports, so a server / ASR service running for a play session is left alone
