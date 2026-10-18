@@ -1251,6 +1251,12 @@ async def serve(args: argparse.Namespace) -> int:
             elif args.scenario == "m1":
                 lines = await scenarios.m1_chat(link, state.dialogue, args.npc)
                 log.info("scenario m1: npc spoke %d line(s)", len(lines))
+            elif args.scenario == "websocket":
+                assert state.dialogue
+                results = await scenarios.websocket(link, state.dialogue)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario websocket: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
             elif args.scenario == "m4":
                 results = await scenarios.m4_planner_bridge(link, args.npc, state.brain)
                 expected_rejects = ("unknown_npc", "attached_soft_act")
@@ -1336,6 +1342,26 @@ async def serve(args: argparse.Namespace) -> int:
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario crime_talk: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "trace_crime":
+                assert state.crimes is not None and state.dialogue is not None and state.talk is not None
+                assert (
+                    state.rumors is not None and state.witnesses is not None and state.sightings is not None
+                )
+                assert state.trust is not None and args.trace_dir is not None
+                results = await scenarios.trace_crime(
+                    link,
+                    state.crimes,
+                    state.dialogue,
+                    state.talk,
+                    state.rumors,
+                    state.witnesses,
+                    state.sightings,
+                    state.trust,
+                    str(Path(args.trace_dir).parent),
+                )
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario trace_crime: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "crime_director":
                 assert state.crimes is not None and state.showrunner is not None
@@ -2302,6 +2328,7 @@ def main() -> None:
         choices=[
             "m0",
             "m1",
+            "websocket",
             "m2",
             "m3",
             "m4",
@@ -2349,6 +2376,7 @@ def main() -> None:
             "questlog",
             "crimes",
             "crime_talk",
+            "trace_crime",
             "crime_director",
             "crime_law",
             "showrunner",

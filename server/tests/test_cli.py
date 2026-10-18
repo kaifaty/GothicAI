@@ -9,6 +9,25 @@ import pytest
 from gothic_ai import cli
 
 
+@pytest.mark.parametrize(("flags", "websocket"), [([], True), (["--no-websocket"], False)])
+def test_serve_arguments_select_responses_transport(monkeypatch, flags, websocket):
+    monkeypatch.setenv("OPENAI_API_KEY", "e2e-placeholder")
+
+    async def serve(args):
+        backend = cli._backend(args)
+        try:
+            assert backend._websocket is websocket
+        finally:
+            await backend.aclose()
+        return 0
+
+    monkeypatch.setattr(cli, "serve", serve)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--llm", "openai", *flags])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+
+
 @pytest.mark.parametrize(
     ("flags", "running"),
     [

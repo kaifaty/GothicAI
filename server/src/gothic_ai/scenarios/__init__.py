@@ -9,6 +9,7 @@ from .basics import m5c_free_npc as m5c_free_npc
 from .basics import m5e_talk as m5e_talk
 from .basics import m6_knows as m6_knows
 from .basics import tts_lines as tts_lines
+from .basics import websocket as websocket
 from .calm_companion import calm_companion_scenario as calm_companion_scenario
 from .companions import calm_scenario as calm_scenario
 from .companions import companion_scenario as companion_scenario
@@ -63,3 +64,4 @@ from .story import own_repair as own_repair
 from .story import own_symbols as own_symbols
 from .story import repair_after_death as repair_after_death
 from .story import story_triggers as story_triggers
+from .trace_crime import trace_crime as trace_crime

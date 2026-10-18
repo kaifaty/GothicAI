@@ -1,0 +1,20 @@
+# Native farm fence, staged by the server after Hilda's real theft testimony.
+seed 73013
+cheat god
+movable on
+living on
+noise on
+destruction on
+overlay off
+view full
+mark trace_crime_ready
+waitai broken setup 180000
+destruction2 farm 19355
+wait 600
+mark fence_ready
+waitai broken hero_attack 120000
+destruction2 attack
+wait 1200
+mark hero_broken
+# KEEP=1 leaves the game running; finish the fixture before the server loads a new world.
+quit

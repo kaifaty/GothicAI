@@ -7,7 +7,6 @@
 #include <cstdlib>
 
 #include "commandline.h"
-#include "game/compatibility/directmemory.h"
 #include "gothic.h"
 #include "world/aiqueue.h"
 #include "world/objects/npc.h"
@@ -525,12 +524,6 @@ storygraph::Interpreter& DialogGraph::interpreter(zenkit::DaedalusVm& v) {
     return interp;
   programs.clear();
   programsFor = &v;
-  // Ikarus loops move the VM's program counter from engine functions (DirectMemory): a program has none. The
-  // director's programs still run: what they call runs in the VM
-  if(running && DirectMemory::isRequired(v)) {
-    Log::i("[story] Ikarus scripts: dialogs run in the VM");
-    running = false;
-    }
   return interp;
   }
 

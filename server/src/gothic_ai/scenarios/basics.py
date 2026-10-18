@@ -17,6 +17,7 @@ from ..journal import Journal
 from ..knowledge import Knowledge, Topic
 from ..llm import LLMBackend, Message, ToolCall, ToolResult
 from ..llm.fake import FakeBackend, FakeStep
+from ..llm.openai_responses import OpenAIResponsesBackend
 from ..npc_tools import GESTURES as NPC_GESTURES
 from ..perception import BEASTS
 from ..persona import PersonaProvider, habits_of
@@ -24,6 +25,7 @@ from ..protocol import (
     ActionResult,
     Detached,
     FollowEnded,
+    GameMessage,
     LineStarted,
     NpcActResult,
     NpcActType,
@@ -43,6 +45,7 @@ from ..trace import TraceWriter
 from ..trace import read as read_trace
 from ..voice import VoiceInput
 from .common import (
+    HILDA,
     LOBART,
     FixedDecider,
     Step,
@@ -53,6 +56,7 @@ from .common import (
     attach_when_free,
     wait_message,
 )
+from .responses_server import ResponsesServer, reply
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -123,6 +127,198 @@ async def m1_chat(
     if not lines or missing:
         raise RuntimeError(f"npc did not speak lines: {missing or 'no lines generated'}")
     return lines
+
+
+async def websocket(link: GameLink, dialogue: DialogueManager) -> dict[str, str]:
+    """Responses transports without a live model: farm conversations reach the game's line_started.
+
+    Lobart speaks twice with Hilda's turn between his; his second turn reads the offered recall tool.
+    Fresh backends then exercise a refused handshake (including the HTTP cooldown) and HTTP only.
+    """
+    await link.wait_world()
+    original = dialogue.llm
+    started: set[tuple[str, str]] = set()
+    results: dict[str, str] = {}
+
+    def on_message(msg: GameMessage) -> None:
+        if isinstance(msg, LineStarted):
+            started.add((msg.npc, msg.line))
+
+    def check(name: str, ok: bool, detail: str) -> None:
+        results[name] = f"{'done' if ok else 'failed'} ({detail})"
+
+    async def token() -> str:
+        return "e2e-placeholder"
+
+    async def say(npc: str, text: str) -> list[str]:
+        await link.debug("player_goto", to=npc, distance=250)
+        snap = await link.snapshot(npc, fresh=True)
+        conv = dialogue.open(npc, snap.npc.name)
+        await dialogue.say_as_player(npc, text)
+        lines = list(conv.last_lines)
+        if lines:
+            await _until(lambda: all((npc, line) in started for line in lines), 20)
+            await _until(lambda: not dialogue.speaking(npc), 15)
+        return lines
+
+    def heard(npc: str, lines: list[str]) -> int:
+        return sum((npc, line) in started for line in lines)
+
+    link.listeners.append(on_message)
+    try:
+        for npc in (LOBART, HILDA):
+            await link.debug("skip_important", near=npc)
+            await attach_when_free(link, npc)
+
+        turns = {LOBART: 0, HILDA: 0}
+        call_id = "e2e_recall"
+        call_request: dict[str, Any] = {}
+        call_response = ""
+
+        def answer(request: dict[str, Any], n: int) -> list[dict[str, Any]]:
+            nonlocal call_response
+            key = request.get("prompt_cache_key")
+            if any(i.get("call_id") == call_id for i in request["input"]):
+                return reply(f"ws_{n}", "Вспомнил, работа найдётся.")
+            if key in turns:
+                turns[key] += 1
+            if key == LOBART and turns[LOBART] == 2:
+                call_request.update(request)
+                call_response = f"ws_{n}"
+                return reply(
+                    call_response,
+                    "",
+                    call={
+                        "type": "function_call",
+                        "id": "fc_e2e",
+                        "call_id": call_id,
+                        "name": "recall",
+                        "arguments": '{"query":"ферма"}',
+                    },
+                )
+            return reply(f"ws_{n}", "На ферме всё спокойно." if key == HILDA else "Здравствуй, путник.")
+
+        async with ResponsesServer(answer) as server:
+            backend = OpenAIResponsesBackend("e2e", token, base_url=server.base_url, websocket=True)
+            dialogue.llm = backend
+            try:
+                first = await say(LOBART, "Здравствуй, Лобарт.")
+                hilda = await say(HILDA, "Здравствуй, Хильда.")
+                second = await say(LOBART, "Вспомни, какая работа есть на ферме?")
+                lobart = [r for c in server.connections for r in c if r.get("prompt_cache_key") == LOBART]
+                lines = [*first, *second]
+                spoken = heard(LOBART, lines)
+                check(
+                    "ws_said",
+                    bool(first and second) and spoken == len(lines) and len(lobart) == 3
+                    and all(r.get("type") == "response.create" for r in lobart)
+                    and not server.http_requests,
+                    f"Lobart line_started={spoken}/{len(lines)}, response.create={len(lobart)}/3, "
+                    f"cache_keys={sum(r.get('prompt_cache_key') == LOBART for r in lobart)}, "
+                    f"HTTP={len(server.http_requests)}",
+                )
+                own = {
+                    npc: {i for i, c in enumerate(server.connections)
+                          if any(r.get("prompt_cache_key") == npc for r in c)}
+                    for npc in (LOBART, HILDA)
+                }
+                check(
+                    "ws_own",
+                    len(server.connections) == 2 and len(own[LOBART]) == len(own[HILDA]) == 1
+                    and own[LOBART].isdisjoint(own[HILDA]) and turns == {LOBART: 2, HILDA: 1}
+                    and bool(hilda) and heard(HILDA, hilda) == len(hilda),
+                    f"connections={len(server.connections)}/2, Lobart={len(own[LOBART])} "
+                    f"for {turns[LOBART]} turns, Hilda={len(own[HILDA])} for {turns[HILDA]} turn, "
+                    f"Hilda line_started={heard(HILDA, hilda)}/{len(hilda)}",
+                )
+                continued = [r for r in lobart if r.get("previous_response_id") == call_response]
+                added = continued[0]["input"] if len(continued) == 1 else []
+                choice = call_request.get("tool_choice")
+                offered = any(t.get("name") == "recall" for t in call_request.get("tools", []))
+                if isinstance(choice, dict):
+                    offered = offered and any(t.get("name") == "recall" for t in choice.get("tools", []))
+                else:
+                    offered = offered and choice != "none"
+                same = any(
+                    any(r is continued[0] for r in c)
+                    and any(r.get("input") == call_request.get("input") for r in c)
+                    for c in server.connections
+                ) if continued else False
+                check(
+                    "ws_continued",
+                    bool(call_response) and offered and same and len(continued) == len(added) == 1
+                    and added[0].get("type") == "function_call_output"
+                    and added[0].get("call_id") == call_id and bool(added[0].get("output"))
+                    and not added[0]["output"].startswith("Отклонено"),
+                    f"offered_recall={int(offered)}, matching_previous_response_id={len(continued)}/1, "
+                    f"same_connection={int(same)}, added_items={len(added)}/1 "
+                    f"vs first_input={len(call_request.get('input', []))}",
+                )
+            finally:
+                dialogue.llm = original
+                await backend.aclose()
+
+        class Warnings(logging.Handler):
+            def __init__(self) -> None:
+                super().__init__(logging.WARNING)
+                self.count = 0
+
+            def emit(self, record: logging.LogRecord) -> None:
+                if "no websocket" in record.getMessage() and "over HTTP" in record.getMessage():
+                    self.count += 1
+
+        warnings = Warnings()
+        transport_log = logging.getLogger("gothic_ai.llm.openai_responses")
+        fallback = ResponsesServer(lambda r, n: reply(f"fallback_{n}", "И по старой дороге дойдём."))
+        async with fallback as server:
+            server.refuse_websocket = True
+            backend = OpenAIResponsesBackend("e2e", token, base_url=server.base_url, websocket=True)
+            dialogue.llm = backend
+            transport_log.addHandler(warnings)
+            try:
+                first = await say(LOBART, "Лобарт, ты меня слышишь?")
+                handshakes = server.handshakes
+                second = await say(LOBART, "И ещё раз здравствуй.")
+                lines = [*first, *second]
+                spoken = heard(LOBART, lines)
+                check(
+                    "ws_refused",
+                    bool(first and second) and spoken == len(lines) and server.refused >= 1
+                    and not server.connections and len(server.http_requests) == 2 and warnings.count == 1
+                    and server.handshakes == handshakes
+                    and all(r.get("prompt_cache_key") == LOBART for r in server.http_requests),
+                    f"refused={server.refused}, HTTP={len(server.http_requests)}/2, "
+                    f"line_started={spoken}/{len(lines)}, warnings={warnings.count}/1, "
+                    f"cooldown_handshakes={server.handshakes - handshakes}/0",
+                )
+            finally:
+                transport_log.removeHandler(warnings)
+                dialogue.llm = original
+                await backend.aclose()
+
+        async with ResponsesServer(lambda r, n: reply(f"http_{n}", "Да, слышу тебя.")) as server:
+            backend = OpenAIResponsesBackend("e2e", token, base_url=server.base_url, websocket=False)
+            dialogue.llm = backend
+            try:
+                lines = await say(LOBART, "Лобарт, ответь без сокета.")
+                spoken = heard(LOBART, lines)
+                check(
+                    "http_only",
+                    bool(lines) and spoken == len(lines) and server.handshakes == 0
+                    and len(server.http_requests) == 1
+                    and server.http_requests[0].get("prompt_cache_key") == LOBART,
+                    f"handshakes={server.handshakes}/0, HTTP={len(server.http_requests)}/1, "
+                    f"line_started={spoken}/{len(lines)}",
+                )
+            finally:
+                dialogue.llm = original
+                await backend.aclose()
+    finally:
+        dialogue.llm = original
+        link.listeners.remove(on_message)
+        for npc in (LOBART, HILDA):
+            await link.act(npc, "return_to_routine")
+    return _logged(results)
 
 
 async def m2_actions(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, str]:

@@ -35,7 +35,7 @@ namespace storygraph {
 // and differences are logged: the check of stage 2, on the live game.
 // The script functions of dialogs (conditions, information, choices) run as their programs (program.h), by
 // the Interpreter of the StoryRuntime, not by the VM; script functions they call still run in the VM. GOTHIC_AI_STORYEXEC=0 turns
-// it off; so do scripts with Ikarus, whose loops jump from engine functions. A patch may put a program of the
+// it off. A patch may put a program of the
 // director in place of a dialog's own (op "program"), and a dialog of the director may have one: those run
 // in any case.
 class DialogGraph final {

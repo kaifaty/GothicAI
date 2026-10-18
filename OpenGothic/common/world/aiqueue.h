@@ -31,6 +31,8 @@ class AiQueue {
       // Transient provenance, deliberately absent from saves. Only the actor's own
       // ZS_ATTACK callback may mark actions as replaceable by body authority.
       Npc*              nativeCombatTarget=nullptr;
+      // Transient: only state changes queued by the physical-noise callback.
+      bool              physicsNoiseState=false;
       };
 
     void     save(Serialize& fout) const;
@@ -42,6 +44,7 @@ class AiQueue {
     void     pushBack (AiAction&& a);
     void     pushFront(AiAction&& a);
     AiAction pop();
+    AiAction popPhysicsNoiseState();
     int      aiOutputOrderId() const;
     bool     nativeCombatOnly(const Npc* target) const;
 

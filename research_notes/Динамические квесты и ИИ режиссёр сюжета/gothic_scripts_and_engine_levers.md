@@ -155,7 +155,7 @@ Persistence is uneven:
 - **Overriding script functions.**
   - `override_function(name, callback)` redirects calls of a Daedalus function to C++. — [DaedalusVm.hh#L490-L563](https://github.com/GothicKit/ZenKit/blob/083cc5f5592726aed435f8e863a6e09e92748a4d/include/zenkit/DaedalusVm.hh#L490-L563)
   - The override is checked only at the `BL` opcode, i.e. on script-to-script calls. C++ `call_function` → `unsafe_call` jumps to the function body directly. — [DaedalusVm.cc#L106-L114](https://github.com/GothicKit/ZenKit/blob/083cc5f5592726aed435f8e863a6e09e92748a4d/src/DaedalusVm.cc#L106-L114); [DaedalusVm.cc#L233-L249](https://github.com/GothicKit/ZenKit/blob/083cc5f5592726aed435f8e863a6e09e92748a4d/src/DaedalusVm.cc#L233-L249)
-  - OpenGothic already uses `override_function` heavily for Ikarus/LeGo emulation (`MEM_ReplaceFunc`, `ASMINT_*` and others). — [directmemory.cpp#L103-L141](../../OpenGothic/common/game/compatibility/directmemory.cpp)
+  - OpenGothic already uses `override_function` heavily for Ikarus/LeGo emulation (`MEM_ReplaceFunc`, `ASMINT_*` and others). — [directmemory.cpp#L103-L141](https://github.com/Try/OpenGothic/blob/master/common/game/compatibility/directmemory.cpp#L103-L141)
 - **Inserting NPCs and items.**
   - `World::addNpc(name|instance, waypoint)`, `addNpc(instance, Vec3)` and `addItem(instance, waypoint|Vec3)` are public. — [world.h#L154-L160](../../OpenGothic/common/world/world.h)
   - `Wld_InsertNpc` wraps `world().addNpc(...)` + `fixNpcPosition`; `Wld_InsertItem` wraps `world().addItem(...)`. — [gamescript.cpp#L2001-L2020](../../OpenGothic/common/game/gamescript.cpp)

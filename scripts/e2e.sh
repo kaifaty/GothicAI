@@ -2,6 +2,8 @@
 # End-to-end check: starts the AI server with a scenario, then a new game in OpenGothic.
 #   m0: takes Xardas over, walks him around and returns him to his routine
 #   m1: Xardas answers a player question line by line (LLM backend: LLM=fake|chatgpt|local)
+#   websocket: Lobart and Hilda speak through Responses against an in-process fake server: per-npc
+#       WebSocket reuse, tool continuation, HTTP fallback and --no-websocket; SAVE=save_slot_1.sav; LLM=fake
 #   m2: npc actions (give_item, follow/stop, gestures)
 #   m3: memory survives save/load and follows the save; push-to-talk from a wav file (streamed at
 #       speaking pace) through the ASR service (ASR=fake|voxtral|chatgpt)
@@ -95,6 +97,9 @@
 #       LLM=fake: Hilda's theft rumor, testimony/catch_lie, accepted silence, chest suspicion/concern.
 #       LLM=chatgpt: only the first scene; records Lobart's actual prompt, reply and catch_lie outcome.
 #       TIMEOUT=600. Native theft perceptions stay enabled; Hilda's fight is reset after her sighting.
+#   trace_crime: one reply catches lies by fresh fence debris and Hilda's theft testimony, then save/load.
+#       LLM=fake; SAVE=save_slot_1.sav. Native theft perceptions stay enabled; checks mixed evidence,
+#       both accepted catch_lie calls, crime knowledge and trust without treating debris as authorship proof.
 #   crime_director: deeds and story responses (docs/crime.md, layer 5), SAVE=save_slot_1.sav.
 #       LLM=fake: unseen chest theft and its return quest, Hilda's initiative and paid silence,
 #       Lobart's learned grievance and Amends payment. LLM=chatgpt: witnessed theft goes to the
@@ -360,11 +365,11 @@ if [ "$(uname -s)" = Darwin ]; then
   until ! LC_ALL=C pgrep -f '^[^ ]*python[0-9.]* [^ ]*bin/pytest|^[^ ]*Gothic2Notr -g' >/dev/null; do sleep 5; done
 fi
 GAME_ENV=("GOTHIC_AI_URL=ws://127.0.0.1:$PORT")
-if [ "$SCENARIO" = "trace" ] || [ "$SCENARIO" = "broken" ]; then
+if [ "$SCENARIO" = "trace" ] || [ "$SCENARIO" = "broken" ] || [ "$SCENARIO" = "trace_crime" ]; then
   GAME_ENV+=("OPENGOTHIC_BENCH=$ROOT/scripts/bench/$SCENARIO-e2e.bench" "OPENGOTHIC_BENCH_OUT=$LOG_DIR"
     "OPENGOTHIC_BENCH_REALTIME=1" "OPENGOTHIC_BENCH_KEEP=1" "TEMPEST_BACKGROUND=1")
 fi
-if [ "$SCENARIO" = "broken" ] && [[ -z "${OPENGOTHIC_FRACTURE+set}" ]]; then
+if { [ "$SCENARIO" = "broken" ] || [ "$SCENARIO" = "trace_crime" ]; } && [[ -z "${OPENGOTHIC_FRACTURE+set}" ]]; then
   GAME_ENV+=("OPENGOTHIC_FRACTURE=$HOME/.local/share/gothic-ai/fracture")
 fi
 if [[ "${GOTHIC_TTS_RECORD:-0}" == 1 ]]; then

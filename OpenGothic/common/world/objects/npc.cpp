@@ -3981,15 +3981,9 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         }
       break;
     case AI_StartState:
-      // NOTE: a new state can be stater within a daly routiine, such as TA_Sleep, with: ZS_GotoBed -> ZS_Sleep.
-      // In such cases it's important to preserve aiState.eTime.
-      if(startState(act.func,act.s0,aiState.eTime,act.i0==0)) {
-        setOther(act.target);
-        setVictim(act.victim);
-        }
+      startQueuedState(act);
       break;
     case AI_PlayAnim:{
-      owner.script().eventPlayAni(*this, act.s0);
       if(auto sq = playAnimByName(act.s0,BS_NONE)) {
         implAniWait(uint64_t(sq->totalTime()));
         implFaiWait(uint64_t(sq->totalTime()));
@@ -4372,6 +4366,15 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       break;
       }
     }
+  }
+
+bool Npc::startQueuedState(const AiQueue::AiAction& act) {
+  // Preserve the routine end time for transitions such as ZS_GotoBed -> ZS_Sleep.
+  if(!startState(act.func,act.s0,aiState.eTime,act.i0==0))
+    return false;
+  setOther(act.target);
+  setVictim(act.victim);
+  return true;
   }
 
 bool Npc::startState(ScriptFn id, std::string_view wp) {
@@ -4933,6 +4936,7 @@ void Npc::aiPush(AiQueue::AiAction&& a) {
   // collision, and OTHER may be null or a distant culprit, so native turning owns it.
   if(physicsNoiseCallback && (a.act==AI_TurnToNpc || a.act==AI_LookAtNpc))
     return;
+  a.physicsNoiseState = physicsNoiseCallback && a.act==AI_StartState;
   a.nativeCombatTarget=nativeCombatQueueTarget;
   if(BodyController::owns(*this) && a.act!=AI_OutputSvmOverlay)
     BodyController::takeover(*this,"native_script_queue");
@@ -6245,6 +6249,12 @@ bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
     physicsNoiseCallback = true;
     owner.script().invokeState(this,noise.culprit,nullptr,perception[PERC_ASSESSQUIETSOUND].func);
     physicsNoiseCallback = false;
+    // B_AssessQuietSound clears perceptions before queuing its state. Run only
+    // that transition and its initializer now; its queued actions still wait
+    // for the native turn, rather than leaving perceptions disabled for 2 s.
+    auto state = aiQueue.popPhysicsNoiseState();
+    if(state.act==AI_StartState && startQueuedState(state) && !aiState.started)
+      tickRoutine();
     }
   TestBench::physicsNoiseHeard(*this,noise,callbackDispatched);
   return true;

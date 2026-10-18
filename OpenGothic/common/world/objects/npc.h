@@ -767,6 +767,7 @@ class Npc final {
     void      tickRoutine();
     int       invokeRoutine(ScriptFn function);
     void      nextAiAction(AiQueue& queue, uint64_t dt);
+    bool      startQueuedState(const AiQueue::AiAction& act);
     void      commitDamage();
     Npc*      updateNearestEnemy();
     Npc*      updateNearestBody();
