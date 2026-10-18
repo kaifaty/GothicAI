@@ -1492,6 +1492,12 @@ async def serve(args: argparse.Namespace) -> int:
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario calm: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
+            elif args.scenario == "calm_companion":
+                assert state.dialogue is not None and state.talk is not None
+                results = await scenarios.calm_companion_scenario(link, state.dialogue, state.talk, bodypilot)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario calm_companion: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
             elif args.scenario == "m6":
                 dialogue, talk, knowledge = state.dialogue, state.talk, state.knowledge
                 assert dialogue is not None and talk is not None and knowledge is not None
@@ -2309,6 +2315,7 @@ def main() -> None:
             "companion",
             "wolf",
             "calm",
+            "calm_companion",
             "ground",
             "hearing",
             "cave",

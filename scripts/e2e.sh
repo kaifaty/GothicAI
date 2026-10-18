@@ -14,6 +14,8 @@
 #       requires GOTHIC_BODY_URL, a new game, >=10 decisions, no fallback, service p95 <=20 ms
 #   neural-companion: the bandit attacks the hero's swordsman companion, >=6 decisions, no fallback,
 #       a companion target in the fight summary, natural fight end and confirmed release
+#   calm_companion: a bandit attacks the hero, his companion joins, then words calm both fighters;
+#       new game, LLM=fake; native combat or P30 with GOTHIC_BODY_URL, confirmed release and 15 s peace
 #   rescue: the hero next to the shepherd Maleth, a wolf attacks him: the body reacts (a call for help
 #       runs from the wolf), words follow on the move; the hero kills the wolf (monster_killed): the shepherd
 #       reacts and speaks again (the live models with DECIDER_URL and LLM, or a fixed stand-in and scripted
@@ -276,6 +278,10 @@ fi
 if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion ]]; then
   [ -n "${GOTHIC_BODY_URL:-}" ] || { echo "scenario $SCENARIO requires GOTHIC_BODY_URL=tcp://host:port" >&2; exit 2; }
   [ -z "${SAVE:-}" ] || { echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2; exit 2; }
+fi
+if [[ "$SCENARIO" = calm_companion ]]; then
+  [ -z "${SAVE:-}" ] || { echo 'scenario calm_companion requires a new game (unset SAVE)' >&2; exit 2; }
+  [ "${LLM:-fake}" = fake ] || { echo 'scenario calm_companion requires LLM=fake' >&2; exit 2; }
 fi
 LLM="${LLM:-fake}"
 ASR="${ASR:-fake}"
