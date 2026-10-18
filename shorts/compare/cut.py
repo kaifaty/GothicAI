@@ -42,7 +42,9 @@ STYLES = {True: ((SUP + "PTSerif.ttc", 3), (SUP + "PTSerif.ttc", 3), (23, 17, 13
 LABEL_FONT, HOOK_FONT, BAND, OUTLINE = STYLES[True]
 # the brand's seal and its end sting (shorts/brand/sting.py): generated art and a sound of the game, not in git
 BRAND = Path.home() / ".local/share/gothic-ai/brand/sting"
-SEAL = (110, W - 140, 110)  # the corner seal: size, x, y (under the slow-motion mark of the top half)
+# the corner seal: size, x, y; as far from the right edge as from the top (under the slow-motion mark of the top
+# half and the Shorts player's icons)
+SEAL = (110, W - 220, 110)
 GRADE = "eq=gamma=1.18:saturation=1.08"  # the game's noon is dark on a phone; the same for both takes
 WHITE, ACCENT = (255, 255, 255, 255), (255, 214, 120, 255)  # a caption's words, the one being said
 PAGE_WORDS = 3  # a caption page: at most this many words, a new one after a comma or a full stop
