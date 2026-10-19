@@ -59,6 +59,31 @@ def test_post_hit_strike_must_target_companion_at_the_time_of_its_animation():
     assert trace.strike_after("bandit", "companion", 200) == 350
 
 
+def test_counter_isolation_allows_only_the_confirmed_contact_at_hit_time():
+    trace = CombatTrace({10: "bandit", 11: "companion"})
+    contact = {
+        "event_id": 1, "source_entity_id": 111, "source_game_ms": 200,
+        "perspective": "self", "code": 3,
+    }
+    packet = {"observations": [row(symbol=11, t=250, events=[contact])]}
+    trace.body(packet)
+    trace.body(packet)
+    assert trace.counter_interference("companion", 200, 3200) == {"attacks": [], "contacts": []}
+    # An attack that began before H can still land after H: the edge alone is insufficient.
+    trace.body({"observations": [row(symbol=11, t=350, events=[
+        {**contact, "event_id": 2, "source_game_ms": 300},
+    ])]})
+    assert trace.counter_interference("companion", 200, 3200) == {"attacks": [], "contacts": [300]}
+
+
+def test_counter_isolation_also_rejects_a_new_attack_without_contact():
+    trace = CombatTrace({11: "companion"})
+    trace.body({"observations": [row(symbol=11, t=200, attack=True)]})
+    trace.body({"observations": [row(symbol=11, t=250)]})
+    trace.body({"observations": [row(symbol=11, t=3201, attack=True)]})
+    assert trace.counter_interference("companion", 200, 3200) == {"attacks": [200], "contacts": []}
+
+
 def test_native_voice_requires_successful_audio_playback(tmp_path):
     game_log = tmp_path / "game.log"
     game_log.write_text(

@@ -74,6 +74,7 @@ class CombatTrace:
     interruptible: dict[str, bool] = field(default_factory=dict)
     latest: dict[str, dict[str, Any]] = field(default_factory=dict)
     latest_rows: dict[str, dict[str, Any]] = field(default_factory=dict)
+    combat_states: dict[str, deque[dict[str, Any]]] = field(default_factory=dict)
     game_ms: dict[str, int] = field(default_factory=dict)
     attacking: dict[str, bool] = field(default_factory=dict)
     events: list[tuple[float, GameMessage]] = field(default_factory=list)
@@ -105,6 +106,14 @@ class CombatTrace:
             self.latest[who] = own
             self.latest_rows[who] = row
             self.game_ms[who] = now
+            state = {
+                "body": own.get("body_state_base"), "attack": own["attack_anim"],
+                "defence": own.get("defence_active"), "queued": own.get("queued_primitive"),
+                "hp": own["hp"], "target": self.target[who],
+            }
+            history = self.combat_states.setdefault(who, deque(maxlen=256))
+            if not history or history[-1]["state"] != state:
+                history.append({"game_ms": now, "state": state})
             if own["weapon_state"] >= 2:
                 self.armed.setdefault(who, now)
             attacking = bool(own["attack_anim"])
@@ -183,6 +192,13 @@ class CombatTrace:
 
     def first_received_contact(self, npc: str) -> int | None:
         return min((t for t, _ in self.received_contacts.get(npc, [])), default=None)
+
+    def counter_interference(self, attacker: str, hit: int, end: int) -> dict[str, list[int]]:
+        """The injected contact at H is allowed; further attacks would change the measured response."""
+        return {
+            "attacks": [t for t in self.strikes.get(attacker, ()) if hit <= t <= end],
+            "contacts": [t for t, _ in self.contacts.get(attacker, ()) if hit < t <= end],
+        }
 
 
 def combat_shouts(log_file: Path, npc: str) -> list[int]:
@@ -882,7 +898,9 @@ async def fight_reactions(
                     return results
 
                 async def stop_companion() -> None:
-                    await link.act(CAVALORN, "stop")
+                    stopped = await link.act(CAVALORN, "stop")
+                    if stopped.status != "done":
+                        raise GameError(f"fight_reactions setup: companion stop {stopped}")
                     if not await _until(lambda: CAVALORN not in talk.orders.fights, 3):
                         raise GameError("fight_reactions setup: prior companion duel did not stop")
 
@@ -925,6 +943,33 @@ async def fight_reactions(
                     )
                     if not close:
                         raise GameError("fight_reactions setup: companion did not reach the defender")
+                    # A second native blow can restart hit recovery or make the defender block.
+                    # Stop BEFORE H: stop clears the fight queue, but an animation already in
+                    # progress can still land. Require a fresh, neutral, armed body before H.
+                    preparing.add(CAVALORN)
+                    planner.allow = setup_allow
+                    await stop_companion()
+                    stopped_at = trace.game_ms[CAVALORN]
+                    quiet = await _until(
+                        lambda: (
+                            trace.game_ms[CAVALORN] > stopped_at
+                            and not trace.attacking.get(CAVALORN)
+                            and trace.interruptible.get(CAVALORN)
+                            and trace.weapons.get(CAVALORN) in (2, 3)
+                            and trace.latest[CAVALORN].get("body_state_base") in (0, 1, 2, 3)
+                            and trace.latest[CAVALORN].get("queued_primitive") == 0
+                            and not any(trace.latest[CAVALORN].get("gates", {}).values())
+                        ), 5,
+                    )
+                    distance = trace.distance(CAVALORN, bandit)
+                    log.info(
+                        "fight_reactions counter attacker quiet=%s stopped_game_ms=%s "
+                        "ready_game_ms=%s distance_cm=%s body=%s defender_body_owned=%s",
+                        quiet, stopped_at, trace.game_ms[CAVALORN], distance,
+                        trace.latest[CAVALORN], link.body_owned(bandit),
+                    )
+                    if not quiet or distance is None or distance > 300:
+                        raise GameError("fight_reactions setup: counter attacker is not quiet and in range")
                     response = await link._request(
                         DebugCmd(req=link._next_id("r"), cmd="npc_hit", npc=bandit, by=CAVALORN), 5,
                     )
@@ -976,44 +1021,49 @@ async def fight_reactions(
                         ]
                         if not points:
                             raise GameError("fight_reactions setup: no authored return point 13–22 m away")
-                        return_point = min(
+                        return_points = sorted(
                             points,
                             key=lambda p: abs(math.dist(companion_pos, (p["x"], p["y"], p["z"])) - 1800),
                         )
-                        log.info("fight_reactions authored return point=%s", return_point)
                         await link.detach(bandit)
                         parked.remove(bandit)
-                        await place_idle(bandit, return_point["name"])
-                        await link.attach(bandit)
-                        parked.add(bandit)
-                        await grounded(bandit, "returned", parked_hp, 1200, 2500)
-                        await finish_preparation()
-                        # Facing the previous duel can leave the returned defender behind
-                        # Cavalorn, sending an ordinary fight order to its remembered place.
-                        turned = await link.act(CAVALORN, "turn_to", npc=bandit)
-                        if turned.status != "done":
-                            raise GameError(
-                                f"fight_reactions setup: face defender {turned.status}: {turned.detail}"
+                        for return_point in return_points:
+                            # Cavalorn's previous duel can end beside a tree or a fence.
+                            # Distance to an authored point alone does not prove a clear lane.
+                            log.info("fight_reactions authored return point=%s", return_point)
+                            await place_idle(bandit, return_point["name"])
+                            await link.attach(bandit)
+                            parked.add(bandit)
+                            await grounded(bandit, "returned", parked_hp, 1200, 2500)
+                            turned = await link.act(CAVALORN, "turn_to", npc=bandit)
+                            if turned.status != "done":
+                                raise GameError(
+                                    f"fight_reactions setup: face defender {turned.status}: {turned.detail}"
+                                )
+                            views = await link.npc_view([CAVALORN])
+                            seen = any(n.id.upper() == bandit for view in views for n in view.sees)
+                            response = await link._request(
+                                DebugCmd(req=link._next_id("r"), cmd="npc_los", npc=CAVALORN, to=bandit), 5,
                             )
-                        views = await link.npc_view([CAVALORN])
-                        seen = any(n.id.upper() == bandit for view in views for n in view.sees)
-                        response = await link._request(
-                            DebugCmd(req=link._next_id("r"), cmd="npc_los", npc=CAVALORN, to=bandit), 5,
-                        )
-                        ray = response.value or {}
-                        distance = ray.get("distance_cm", 0)
-                        log.info(
-                            "fight_reactions returned defender npc=%s seen=%s distance_cm=%s "
-                            "native_ray=%s view=%s",
-                            bandit, seen, distance, ray, [view.model_dump() for view in views],
-                        )
-                        if not (
-                            seen and 1200 <= distance <= 2500
-                            and (ray.get("center_clear") or ray.get("head_clear"))
-                        ):
+                            ray = response.value or {}
+                            distance = ray.get("distance_cm", 0)
+                            log.info(
+                                "fight_reactions returned defender npc=%s seen=%s distance_cm=%s "
+                                "native_ray=%s view=%s",
+                                bandit, seen, distance, ray, [view.model_dump() for view in views],
+                            )
+                            if (
+                                seen and 1200 <= distance <= 2500
+                                and (ray.get("center_clear") or ray.get("head_clear"))
+                            ):
+                                break
+                            await link.detach(bandit)
+                            parked.remove(bandit)
+                        else:
                             raise GameError(
                                 "fight_reactions setup: returned defender is not visibly in range"
                             )
+                        await finish_preparation()
                         await link.detach(bandit)
                         parked.remove(bandit)
                     talk.orders.fight_intent(CAVALORN, bandit)
@@ -1031,6 +1081,15 @@ async def fight_reactions(
                                 f"npc={bandit}, hit={hit}, last_game_ms={trace.game_ms.get(bandit)}"
                             )
                     first = trace.strike_after(bandit, CAVALORN, hit) if hit is not None else None
+                    interference = trace.counter_interference(CAVALORN, hit, first or hit + 3000)
+                    log.info(
+                        "fight_reactions counter timeline npc=%s hit=%s first=%s states=%s contacts=%s",
+                        bandit, hit, first,
+                        {n: [s for s in trace.combat_states.get(n, ()) if s["game_ms"] >= hit]
+                         for n in (bandit, CAVALORN)},
+                        {n: [c for c in trace.contacts.get(n, ()) if c[0] >= hit]
+                         for n in (bandit, CAVALORN)},
+                    )
                     threat = next(
                         (
                             t
@@ -1073,9 +1132,11 @@ async def fight_reactions(
                     )
                     check(
                         f"{bandit}_fights_3s",
-                        hit is not None and first is not None and first <= hit + 3000,
+                        hit is not None and first is not None and first <= hit + 3000
+                        and not any(interference.values()),
                         f"first_hit_game_ms={hit}, first_return_strike_game_ms={first}, "
-                        f"delay_ms={first - hit if first is not None and hit is not None else None}",
+                        f"delay_ms={first - hit if first is not None and hit is not None else None}, "
+                        f"companion_interference={interference}",
                     )
                     if hit is not None and (first is None or first - hit > 3000):
                         rows = {n: trace.latest_rows.get(n) for n in (bandit, CAVALORN)}
@@ -1094,6 +1155,7 @@ async def fight_reactions(
                             native_events, [c for c in trace.commands if c[1] in {bandit, CAVALORN}][-20:],
                             snapshot.model_dump(),
                         )
+                    await finish_preparation()
                     # Its metrics are complete. Remove it without a player blow, then stage the
                     # other still-living defender; no damage/voice/strike history is reset.
                     if bandit == BANDITS[0]:
