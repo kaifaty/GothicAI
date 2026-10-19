@@ -97,6 +97,47 @@ def test_counter_isolation_also_rejects_a_new_attack_without_contact():
     assert trace.counter_interference("companion", 200, 3200) == {"attacks": [200], "contacts": []}
 
 
+def test_a_defender_swing_after_return_invalidates_preparation_even_without_damage():
+    trace = CombatTrace({10: "bandit", 11: "companion"})
+    trace.body({"observations": [row(symbol=11), row(t=150, attack=True, target=111)]})
+    trace.body({"observations": [row(t=200)]})
+    assert trace.counter_preparation_clean("bandit", "companion", 201)
+    trace.body({"observations": [row(t=250, attack=True, target=111)]})
+    trace.body({"observations": [row(t=300)]})
+    assert not trace.damage
+    assert not trace.counter_preparation_clean("bandit", "companion", 201)
+    # A new attempt may use a new boundary, but must preserve the previous swing's history.
+    assert trace.counter_preparation_clean("bandit", "companion", 301)
+    assert trace.strikes["bandit"] == [150, 250]
+
+
+@pytest.mark.parametrize("perspective,code", [(10, 3), (11, 9), (11, 10)])
+def test_a_pre_hit_contact_invalidates_preparation_without_a_visible_attack_edge(perspective, code):
+    trace = CombatTrace({10: "bandit", 11: "companion"})
+    trace.body({"observations": [row(), row(symbol=11)]})
+    assert trace.counter_preparation_clean("bandit", "companion", 200)
+    trace.body({"observations": [row(symbol=perspective, t=400, events=[{
+        "event_id": 1, "source_entity_id": perspective + 100,
+        "source_game_ms": 250, "perspective": "self", "code": code,
+    }])]})
+    assert not trace.strikes
+    assert not trace.damage
+    assert not trace.counter_preparation_clean("bandit", "companion", 200)
+
+
+def test_delayed_pre_hit_history_rejects_setup_but_a_real_response_cannot_retry_it():
+    trace = CombatTrace({10: "bandit", 11: "companion"})
+    trace.body({"observations": [row(symbol=11), row(t=300, attack=True, target=111)]})
+    # H=300: an attack at/after H is the result, even if already active when history arrives.
+    assert trace.counter_preparation_clean("bandit", "companion", 200, before=300)
+    trace.body({"observations": [row(symbol=11, t=400, events=[{
+        "event_id": 1, "source_entity_id": 111,
+        "source_game_ms": 250, "perspective": "self", "code": 10,
+    }])]})
+    assert not trace.counter_preparation_clean("bandit", "companion", 200, before=300)
+    assert trace.strike_after("bandit", "companion", 300) == 300
+
+
 @pytest.mark.parametrize("missing", [
     "visible", "current_valid", "in_w_range", "focus_30", "melee_line_clear",
 ])
@@ -195,7 +236,7 @@ async def test_counter_retreat_uses_orders_policy_and_restores_the_previous_orde
 
 
 @pytest.mark.parametrize("preemptions", [2, 3])
-async def test_counter_preparation_retries_only_before_hit_and_at_most_twice(preemptions):
+async def test_counter_preparation_retries_only_invalid_setup_and_at_most_twice(preemptions):
     attempts = 0
 
     async def prepare():
@@ -203,12 +244,13 @@ async def test_counter_preparation_retries_only_before_hit_and_at_most_twice(pre
         attempts += 1
         if attempts <= preemptions:
             raise CounterPreparationPreempted("neutral pose cancelled by automatic fight")
+        return 171
 
     if preemptions == 3:
         with pytest.raises(GameError, match="preempted after 3 attempts"):
             await prepare_counter(prepare, "bandit")
     else:
-        await prepare_counter(prepare, "bandit")
+        assert await prepare_counter(prepare, "bandit") == 171
     assert attempts == 3
 
 

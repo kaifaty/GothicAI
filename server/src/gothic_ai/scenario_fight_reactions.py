@@ -118,11 +118,11 @@ async def counter_retreat(orders: Orders, npc: str) -> AsyncIterator[CounterRetr
         log.info("fight_reactions counter retreat npc=%s active=False", npc)
 
 
-async def prepare_counter(prepare: Callable[[], Awaitable[None]], bandit: str) -> None:
-    """One preparation plus at most two retries; this never includes the measured hit."""
+async def prepare_counter[T](prepare: Callable[[], Awaitable[T]], bandit: str) -> T:
+    """At most two retries of invalid preparation; an accepted H/window is never retried."""
     for attempt in range(1, 4):
         try:
-            await prepare()
+            result = await prepare()
         except CounterPreparationPreempted as err:
             log.warning(
                 "fight_reactions counter preparation preempted npc=%s attempt=%d/3 detail=%s",
@@ -134,7 +134,7 @@ async def prepare_counter(prepare: Callable[[], Awaitable[None]], bandit: str) -
                 ) from err
         else:
             log.info("fight_reactions counter preparation ready npc=%s attempt=%d/3", bandit, attempt)
-            return
+            return result
 
 
 @dataclass
@@ -285,6 +285,20 @@ class CombatTrace:
             "attacks": [t for t in self.strikes.get(attacker, ()) if hit <= t <= end],
             "contacts": [t for t, _ in self.contacts.get(attacker, ()) if hit < t <= end],
         }
+
+    def counter_preparation_clean(
+        self, defender: str, attacker: str, after: int, *, before: int | None = None,
+    ) -> bool:
+        """A swing/contact after returning the defender invalidates setup, never supplies its answer."""
+        def during(t: int) -> bool:
+            return t >= after and (before is None or t < before)
+
+        return (
+            (before is not None or not self.latest.get(defender, {}).get("attack_anim", True))
+            and not any(during(t) for t in self.strikes.get(defender, ()))
+            and not any(during(t) for t, _ in self.contacts.get(defender, ()))
+            and not any(during(t) for t, _ in self.received_contacts.get(attacker, ()))
+        )
 
     def counter_ready(self, defender: str, attacker: str, after: int) -> bool:
         """A fresh native melee opportunity, rather than proximity to an unseen former target."""
@@ -1054,10 +1068,25 @@ async def fight_reactions(
                         link.listeners.remove(heard)
                     # Physical completion is proved by grounded(), not by leaving a long idle state.
 
-                async def prepare_counter_attempt(bandit: str) -> None:
-                    # A second native blow can restart hit recovery or make the defender block.
-                    # Stop BEFORE H: stop clears the fight queue, but an animation already in
-                    # progress can still land. Require a fresh, neutral, armed body before H.
+                async def prepare_counter_attempt(bandit: str) -> int:
+                    # Retreat suppresses helping others, but intentionally permits self-defence.
+                    # Give stop/S_RUN room to finish without the defender hitting Cavalorn.
+                    await link.debug("npc_goto", npc=bandit, to=CAVALORN, distance=2000, face=CAVALORN)
+                    withdrawn_at = trace.game_ms[bandit]
+
+                    def withdrawn() -> bool:
+                        distance = trace.distance(CAVALORN, bandit)
+                        return (
+                            trace.game_ms[bandit] > withdrawn_at
+                            and distance is not None and distance >= 1000
+                        )
+
+                    if not await _until(withdrawn, 3):
+                        raise GameError("fight_reactions setup: defender did not withdraw beyond melee")
+                    log.info(
+                        "fight_reactions counter withdrawn npc=%s game_ms=%s distance_cm=%s",
+                        bandit, trace.game_ms[bandit], trace.distance(CAVALORN, bandit),
+                    )
                     await stop_companion()
                     neutral = await link.act(CAVALORN, "play_ani", name="S_RUN")
                     if neutral.status == "cancelled":
@@ -1065,9 +1094,18 @@ async def fight_reactions(
                     if neutral.status != "done":
                         raise GameError(f"fight_reactions setup: counter neutral pose {neutral}")
                     stopped_at = trace.game_ms[CAVALORN]
-                    quiet = await _until(
-                        lambda: trace.counter_attacker_ready(CAVALORN, stopped_at), 5,
-                    )
+
+                    def quiet_beyond_melee() -> bool:
+                        distance = trace.distance(CAVALORN, bandit)
+                        if distance is None or distance < 800:
+                            raise CounterPreparationPreempted("defender returned during stop/S_RUN")
+                        return (
+                            trace.counter_attacker_ready(CAVALORN, stopped_at)
+                            and trace.game_ms[bandit] > stopped_at
+                            and not trace.attacking.get(bandit, True)
+                        )
+
+                    quiet = await _until(quiet_beyond_melee, 5)
                     distance = trace.distance(CAVALORN, bandit)
                     log.info(
                         "fight_reactions counter attacker quiet=%s stopped_game_ms=%s "
@@ -1081,15 +1119,21 @@ async def fight_reactions(
                     # Proximity during a moving duel is not a melee opportunity: the defender
                     # may face away or pursue an old unseen position. Stage the contact before H,
                     # without attaching/commanding its fight, then prove native visibility/range.
-                    await link.debug("npc_goto", npc=bandit, to=CAVALORN, distance=140, face=CAVALORN)
                     placed_at = trace.game_ms[bandit]
-                    ready = await _until(
-                        lambda: (
+                    await link.debug("npc_goto", npc=bandit, to=CAVALORN, distance=140, face=CAVALORN)
+
+                    def ready_to_hit() -> bool:
+                        if not trace.counter_preparation_clean(bandit, CAVALORN, placed_at):
+                            raise CounterPreparationPreempted(
+                                "defender attacked between return and confirmed hit"
+                            )
+                        return (
                             trace.counter_ready(bandit, CAVALORN, placed_at)
                             and trace.counter_attacker_ready(CAVALORN, stopped_at)
                             and CAVALORN not in talk.orders.fights
-                        ), 5,
-                    )
+                        )
+
+                    ready = await _until(ready_to_hit, 5)
                     log.info(
                         "fight_reactions counter defender ready=%s npc=%s placed_game_ms=%s "
                         "row=%s body_owned=%s attacker_ready=%s companion_fighting=%s",
@@ -1102,6 +1146,45 @@ async def fight_reactions(
                             "fight_reactions setup: defender has no fresh native melee opportunity"
                         )
                     await counter_guard.check()
+                    # The snapshot above yields: recheck after the last await before sending H.
+                    if not ready_to_hit():
+                        raise CounterPreparationPreempted("counter readiness changed before hit")
+
+                    # Only a proven pre-H setup violation can invalidate this candidate H.
+                    response = await link._request(
+                        DebugCmd(req=link._next_id("r"), cmd="npc_hit", npc=bandit, by=CAVALORN), 5,
+                    )
+                    proof = response.value or {}
+                    hit = proof.get("game_ms")
+                    log.info("fight_reactions guaranteed hit evidence=%s", proof)
+                    if not (
+                        type(hit) is int
+                        and proof.get("attacker") == CAVALORN and proof.get("victim") == bandit
+                        and proof.get("hp_before", 0) > proof.get("hp_after", 0) > 0
+                    ):
+                        raise GameError("fight_reactions setup: native hit evidence is invalid")
+                    observed = await _until(
+                        lambda: (
+                            trace.game_ms.get(CAVALORN, 0) >= hit
+                            and trace.game_ms.get(bandit, 0) >= hit
+                            and any(t == hit for t, _ in trace.contacts.get(CAVALORN, ()))
+                            and (hit, 9) in trace.received_contacts.get(bandit, ())
+                            and trace.hp.get(bandit, proof["hp_before"]) <= proof["hp_after"]
+                        ), 5,
+                    )
+                    if not observed:
+                        raise GameError("fight_reactions setup: native hit is absent from body history")
+                    if not trace.counter_preparation_clean(bandit, CAVALORN, placed_at, before=hit):
+                        log.warning(
+                            "fight_reactions invalid preH npc=%s returned_game_ms=%s hit=%s "
+                            "strikes=%s contacts=%s received=%s",
+                            bandit, placed_at, hit, trace.strikes.get(bandit, [])[-10:],
+                            trace.contacts.get(bandit, [])[-10:],
+                            trace.received_contacts.get(CAVALORN, [])[-10:],
+                        )
+                        raise CounterPreparationPreempted("delayed history proves a defender strike before H")
+                    # A clean H is final: no post-H readiness/attack/result can cause a retry.
+                    return hit
 
                 async def hit_from_companion(bandit: str) -> int:
                     # Test the defender's response to a confirmed contact, independently of
@@ -1117,37 +1200,13 @@ async def fight_reactions(
                         raise GameError("fight_reactions setup: companion did not reach the defender")
                     preparing.add(CAVALORN)
                     planner.allow = setup_allow
-                    await prepare_counter(lambda: prepare_counter_attempt(bandit), bandit)
-                    # H and the complete measured window are outside the retry budget.
-                    response = await link._request(
-                        DebugCmd(req=link._next_id("r"), cmd="npc_hit", npc=bandit, by=CAVALORN), 5,
-                    )
-                    proof = response.value or {}
-                    hit = proof.get("game_ms")
-                    log.info("fight_reactions guaranteed hit evidence=%s", proof)
-                    if not (
-                        type(hit) is int
-                        and proof.get("attacker") == CAVALORN and proof.get("victim") == bandit
-                        and proof.get("hp_before", 0) > proof.get("hp_after", 0) > 0
-                    ):
-                        raise GameError("fight_reactions setup: native hit evidence is invalid")
-                    observed = await _until(
-                        lambda: (
-                            any(t == hit for t, _ in trace.contacts.get(CAVALORN, ()))
-                            and (hit, 9) in trace.received_contacts.get(bandit, ())
-                            and trace.hp.get(bandit, proof["hp_before"]) <= proof["hp_after"]
-                        ), 5,
-                    )
-                    if not observed:
-                        raise GameError("fight_reactions setup: native hit is absent from body history")
-                    return hit
+                    return await prepare_counter(lambda: prepare_counter_attempt(bandit), bandit)
 
                 # Both defenders have reacted. Isolate their post-hit measurements so a native
                 # target switch or two opponents pinning Cavalorn cannot prevent the first hit.
                 counter_guard = await counter_guards.enter_async_context(
                     counter_retreat(talk.orders, CAVALORN)
                 )
-                await prepare_counter(stop_companion, BANDITS[0])
                 parked_hp = (await link.snapshot(BANDITS[1], fresh=True)).npc.hp
                 preparing.add(BANDITS[1])
                 planner.allow = setup_allow
@@ -1159,7 +1218,7 @@ async def fight_reactions(
                 await finish_preparation()
                 for bandit in BANDITS:
                     if bandit in parked:
-                        await prepare_counter(stop_companion, bandit)
+                        await stop_companion()
                         await grounded(bandit, "before_return", parked_hp, 4000, 50000)
                         preparing.add(bandit)
                         planner.allow = setup_allow
