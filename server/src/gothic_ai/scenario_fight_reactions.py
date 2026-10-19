@@ -200,6 +200,25 @@ class CombatTrace:
             "contacts": [t for t, _ in self.contacts.get(attacker, ()) if hit < t <= end],
         }
 
+    def counter_ready(self, defender: str, attacker: str, after: int) -> bool:
+        """A fresh native melee opportunity, rather than proximity to an unseen former target."""
+        row = self.latest_rows.get(defender)
+        if row is None or row["t_game_ms"] <= after:
+            return False
+        own, target = row["self"], row["target"]
+        velocity = own.get("linear_velocity_cm_s")
+        distance = self.distance(defender, attacker)
+        return (
+            target["entity_id"] == self.entities.get(attacker)
+            and all(target.get(k) for k in (
+                "visible", "current_valid", "in_w_range", "focus_30", "melee_line_clear",
+            ))
+            and distance is not None and distance <= 300
+            and own["weapon_state"] in (2, 3)
+            and not own.get("in_air", True) and not own.get("down", True)
+            and velocity is not None and abs(velocity[1]) <= 20
+        )
+
 
 def combat_shouts(log_file: Path, npc: str) -> list[int]:
     """Only successful native audio playback logs count; a queued or suppressed SVM is insufficient."""
@@ -968,8 +987,23 @@ async def fight_reactions(
                         quiet, stopped_at, trace.game_ms[CAVALORN], distance,
                         trace.latest[CAVALORN], link.body_owned(bandit),
                     )
-                    if not quiet or distance is None or distance > 300:
-                        raise GameError("fight_reactions setup: counter attacker is not quiet and in range")
+                    if not quiet:
+                        raise GameError("fight_reactions setup: counter attacker is not quiet")
+                    # Proximity during a moving duel is not a melee opportunity: the defender
+                    # may face away or pursue an old unseen position. Stage the contact before H,
+                    # without attaching/commanding its fight, then prove native visibility/range.
+                    await link.debug("npc_goto", npc=bandit, to=CAVALORN, distance=180, face=CAVALORN)
+                    placed_at = trace.game_ms[bandit]
+                    ready = await _until(lambda: trace.counter_ready(bandit, CAVALORN, placed_at), 5)
+                    log.info(
+                        "fight_reactions counter defender ready=%s npc=%s placed_game_ms=%s "
+                        "row=%s body_owned=%s",
+                        ready, bandit, placed_at, trace.latest_rows[bandit], link.body_owned(bandit),
+                    )
+                    if not ready:
+                        raise GameError(
+                            "fight_reactions setup: defender has no fresh native melee opportunity"
+                        )
                     response = await link._request(
                         DebugCmd(req=link._next_id("r"), cmd="npc_hit", npc=bandit, by=CAVALORN), 5,
                     )

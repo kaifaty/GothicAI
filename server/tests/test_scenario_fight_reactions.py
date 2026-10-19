@@ -1,3 +1,5 @@
+import pytest
+
 from gothic_ai.scenario_fight_reactions import CombatTrace, combat_shouts
 
 
@@ -82,6 +84,25 @@ def test_counter_isolation_also_rejects_a_new_attack_without_contact():
     trace.body({"observations": [row(symbol=11, t=250)]})
     trace.body({"observations": [row(symbol=11, t=3201, attack=True)]})
     assert trace.counter_interference("companion", 200, 3200) == {"attacks": [200], "contacts": []}
+
+
+@pytest.mark.parametrize("missing", [
+    "visible", "current_valid", "in_w_range", "focus_30", "melee_line_clear",
+])
+def test_counter_setup_requires_a_fresh_visible_melee_target_even_when_bodies_are_close(missing):
+    trace = CombatTrace({10: "bandit", 11: "companion"})
+    defender = row(t=250, weapon=2, target=111)
+    defender["self"].update(in_air=False, down=False, linear_velocity_cm_s=[0, 0, 0])
+    defender["target"].update(
+        visible=True, current_valid=True, in_w_range=True, focus_30=True, melee_line_clear=True,
+    )
+    trace.body({"observations": [row(symbol=11, pos=(181.0, 2.0, 3.0)), defender]})
+    assert trace.counter_ready("bandit", "companion", 200)
+    assert not trace.counter_ready("bandit", "companion", 250)
+    defender["target"][missing] = False
+    trace.body({"observations": [defender]})
+    assert trace.distance("bandit", "companion") == 180.0
+    assert not trace.counter_ready("bandit", "companion", 200)
 
 
 def test_native_voice_requires_successful_audio_playback(tmp_path):
