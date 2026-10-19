@@ -13,7 +13,8 @@ import math
 import re
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ from .dialogue import DialogueManager
 from .executor import Intent
 from .game import GameError, GameLink
 from .incidents import IncidentDesk
+from .orders import Orders, Standing
 from .protocol import (
     ActionCmd,
     Beasts,
@@ -49,6 +51,90 @@ BANDITS = ("BDT_1014_BANDIT_L", "BDT_1015_BANDIT_L")
 ARENA = "NW_FARM1_FIELD_06"
 PARKING = "NW_FARM1_PATH_CITY_16"
 IDLE = "ZS_STAND_ARMSCROSSED"
+
+
+class CounterPreparationPreempted(GameError):
+    """A body action was replaced before H; only this preparation may be retried."""
+
+
+@dataclass
+class CounterRetreat:
+    orders: Orders
+    npc: str
+    standing: Standing
+
+    def owns(self) -> bool:
+        return self.orders.standing.get(self.npc) is self.standing
+
+    def renew(self) -> None:
+        current = self.orders.standing.get(self.npc)
+        if current is not None and not self.owns():
+            raise GameError("fight_reactions setup: another companion order replaced counter retreat")
+        # A completed self-defence fight may consume its standing. A new identity also prevents
+        # an older fight's pending _resume from removing the next preparation's retreat.
+        log.info("fight_reactions counter retreat npc=%s renew=True consumed=%s", self.npc, current is None)
+        self.standing = Standing("retreat", at=self.orders.clock())
+        self.orders.standing[self.npc] = self.standing
+
+    async def check(self) -> None:
+        # An older _resume may already be awaiting stop, then send follow after renew().
+        snapshot = await self.orders.link.snapshot(self.npc, fresh=True)
+        log.info(
+            "fight_reactions counter retreat npc=%s owned=%s following=%s fighting=%s",
+            self.npc, self.owns(), snapshot.npc.following, self.npc in self.orders.fights,
+        )
+        if not self.owns() or snapshot.npc.following or self.npc in self.orders.fights:
+            raise CounterPreparationPreempted("companion resumed following or fighting during preparation")
+
+
+@asynccontextmanager
+async def counter_retreat(orders: Orders, npc: str) -> AsyncIterator[CounterRetreat]:
+    """Use orders' retreat policy, without issuing follow/ack actions that can preempt setup.
+
+    A real blow to the companion still permits self-defence. Keep the temporary standing
+    fresh while arranging and measuring the fight, then restore only our own state.
+    """
+    previous = orders.standing.get(npc)
+    guard = CounterRetreat(orders, npc, Standing("retreat", at=orders.clock()))
+    orders.standing[npc] = guard.standing
+    log.info("fight_reactions counter retreat npc=%s active=True", npc)
+
+    async def refresh() -> None:
+        while True:
+            guard.standing.at = orders.clock()
+            await asyncio.sleep(1)
+
+    refresh_task = asyncio.create_task(refresh())
+    try:
+        yield guard
+    finally:
+        refresh_task.cancel()
+        await asyncio.gather(refresh_task, return_exceptions=True)
+        if guard.owns():
+            if previous is None:
+                orders.standing.pop(npc)
+            else:
+                orders.standing[npc] = previous
+        log.info("fight_reactions counter retreat npc=%s active=False", npc)
+
+
+async def prepare_counter(prepare: Callable[[], Awaitable[None]], bandit: str) -> None:
+    """One preparation plus at most two retries; this never includes the measured hit."""
+    for attempt in range(1, 4):
+        try:
+            await prepare()
+        except CounterPreparationPreempted as err:
+            log.warning(
+                "fight_reactions counter preparation preempted npc=%s attempt=%d/3 detail=%s",
+                bandit, attempt, err,
+            )
+            if attempt == 3:
+                raise GameError(
+                    f"fight_reactions setup: counter preparation preempted after 3 attempts: {err}"
+                ) from err
+        else:
+            log.info("fight_reactions counter preparation ready npc=%s attempt=%d/3", bandit, attempt)
+            return
 
 
 @dataclass
@@ -321,6 +407,7 @@ async def fight_reactions(
         planner.allow = old_allow
 
     trace = CombatTrace({})
+    counter_guards = AsyncExitStack()
     parked: set[str] = set()
     link.listeners.append(trace.message)
     link.raw_body_listeners.append(trace.body)
@@ -931,11 +1018,14 @@ async def fight_reactions(
                     return results
 
                 async def stop_companion() -> None:
+                    counter_guard.renew()
                     stopped = await link.act(CAVALORN, "stop")
+                    if stopped.status == "cancelled":
+                        raise CounterPreparationPreempted(f"companion stop {stopped}")
                     if stopped.status != "done":
                         raise GameError(f"fight_reactions setup: companion stop {stopped}")
                     if not await _until(lambda: CAVALORN not in talk.orders.fights, 3):
-                        raise GameError("fight_reactions setup: prior companion duel did not stop")
+                        raise CounterPreparationPreempted("prior companion duel did not stop")
 
                 async def place_idle(npc: str, waypoint: str) -> None:
                     receipts: dict[str, NpcActResult] = {}
@@ -964,25 +1054,14 @@ async def fight_reactions(
                         link.listeners.remove(heard)
                     # Physical completion is proved by grounded(), not by leaving a long idle state.
 
-                async def hit_from_companion(bandit: str) -> int:
-                    # Test the defender's response to a confirmed contact, independently of
-                    # whether Cavalorn's native tactics choose or land an attack animation.
-                    close = await _until(
-                        lambda: (
-                            (distance := trace.distance(CAVALORN, bandit)) is not None
-                            and distance <= 300
-                            and trace.target.get(CAVALORN) == trace.entities.get(bandit)
-                        ), 15,
-                    )
-                    if not close:
-                        raise GameError("fight_reactions setup: companion did not reach the defender")
+                async def prepare_counter_attempt(bandit: str) -> None:
                     # A second native blow can restart hit recovery or make the defender block.
                     # Stop BEFORE H: stop clears the fight queue, but an animation already in
                     # progress can still land. Require a fresh, neutral, armed body before H.
-                    preparing.add(CAVALORN)
-                    planner.allow = setup_allow
                     await stop_companion()
                     neutral = await link.act(CAVALORN, "play_ani", name="S_RUN")
+                    if neutral.status == "cancelled":
+                        raise CounterPreparationPreempted(f"counter neutral pose {neutral}")
                     if neutral.status != "done":
                         raise GameError(f"fight_reactions setup: counter neutral pose {neutral}")
                     stopped_at = trace.game_ms[CAVALORN]
@@ -997,6 +1076,7 @@ async def fight_reactions(
                         trace.latest[CAVALORN], link.body_owned(bandit),
                     )
                     if not quiet:
+                        await counter_guard.check()
                         raise GameError("fight_reactions setup: counter attacker is not quiet")
                     # Proximity during a moving duel is not a melee opportunity: the defender
                     # may face away or pursue an old unseen position. Stage the contact before H,
@@ -1017,9 +1097,28 @@ async def fight_reactions(
                         trace.counter_attacker_ready(CAVALORN, stopped_at), CAVALORN in talk.orders.fights,
                     )
                     if not ready:
+                        await counter_guard.check()
                         raise GameError(
                             "fight_reactions setup: defender has no fresh native melee opportunity"
                         )
+                    await counter_guard.check()
+
+                async def hit_from_companion(bandit: str) -> int:
+                    # Test the defender's response to a confirmed contact, independently of
+                    # whether Cavalorn's native tactics choose or land an attack animation.
+                    close = await _until(
+                        lambda: (
+                            (distance := trace.distance(CAVALORN, bandit)) is not None
+                            and distance <= 300
+                            and trace.target.get(CAVALORN) == trace.entities.get(bandit)
+                        ), 15,
+                    )
+                    if not close:
+                        raise GameError("fight_reactions setup: companion did not reach the defender")
+                    preparing.add(CAVALORN)
+                    planner.allow = setup_allow
+                    await prepare_counter(lambda: prepare_counter_attempt(bandit), bandit)
+                    # H and the complete measured window are outside the retry budget.
                     response = await link._request(
                         DebugCmd(req=link._next_id("r"), cmd="npc_hit", npc=bandit, by=CAVALORN), 5,
                     )
@@ -1045,7 +1144,10 @@ async def fight_reactions(
 
                 # Both defenders have reacted. Isolate their post-hit measurements so a native
                 # target switch or two opponents pinning Cavalorn cannot prevent the first hit.
-                await stop_companion()
+                counter_guard = await counter_guards.enter_async_context(
+                    counter_retreat(talk.orders, CAVALORN)
+                )
+                await prepare_counter(stop_companion, BANDITS[0])
                 parked_hp = (await link.snapshot(BANDITS[1], fresh=True)).npc.hp
                 preparing.add(BANDITS[1])
                 planner.allow = setup_allow
@@ -1057,7 +1159,7 @@ async def fight_reactions(
                 await finish_preparation()
                 for bandit in BANDITS:
                     if bandit in parked:
-                        await stop_companion()
+                        await prepare_counter(stop_companion, bandit)
                         await grounded(bandit, "before_return", parked_hp, 4000, 50000)
                         preparing.add(bandit)
                         planner.allow = setup_allow
@@ -1205,11 +1307,13 @@ async def fight_reactions(
                             native_events, [c for c in trace.commands if c[1] in {bandit, CAVALORN}][-20:],
                             snapshot.model_dump(),
                         )
+                    counter_guard.renew()
                     await finish_preparation()
                     # Its metrics are complete. Remove it without a player blow, then stage the
                     # other still-living defender; no damage/voice/strike history is reset.
                     if bandit == BANDITS[0]:
                         await link.debug("kill", npc=bandit)
+                await counter_guards.aclose()
                 check(
                     "hero_passive",
                     not trace.strikes.get("PLAYER") and not trace.damage.get("PLAYER"),
@@ -1217,6 +1321,7 @@ async def fight_reactions(
                     f"hero_damage={trace.damage.get('PLAYER', [])}",
                 )
     finally:
+        await counter_guards.aclose()
         link.body_watch = body_watch  # type: ignore[method-assign]
         for npc in parked:
             await link.detach(npc)

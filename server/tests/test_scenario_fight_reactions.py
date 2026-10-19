@@ -1,6 +1,17 @@
+import asyncio
+
 import pytest
 
-from gothic_ai.scenario_fight_reactions import CombatTrace, combat_shouts
+from gothic_ai.game import GameError
+from gothic_ai.orders import Standing
+from gothic_ai.scenario_fight_reactions import (
+    CAVALORN,
+    CombatTrace,
+    CounterPreparationPreempted,
+    combat_shouts,
+    counter_retreat,
+    prepare_counter,
+)
 
 
 def row(symbol=10, *, t=100, hp=100, attack=False, weapon=0, pos=(1.0, 2.0, 3.0), target=20, events=()):
@@ -121,6 +132,84 @@ def test_counter_attacker_must_stop_running_and_drifting_before_the_hit():
     trace.body({"observations": [companion]})
     assert trace.counter_attacker_ready("companion", 200)
     assert not trace.counter_attacker_ready("companion", 250)
+
+
+@pytest.mark.parametrize("fight_completes", [False, True])
+async def test_counter_retreat_uses_orders_policy_and_restores_the_previous_order(fight_completes):
+    from gothic_ai.llm import FakeBackend
+    from tests.fake_game import FakeGame
+    from tests.test_orders import BANDIT, _desk, acts, companion
+    from tests.test_talk import person
+
+    class FollowingGame(FakeGame):
+        def snapshot(self, npc):
+            snapshot = super().snapshot(npc)
+            last = next((action for who, action in reversed(acts(self)) if who == npc), None)
+            snapshot["npc"]["following"] = last == "follow"
+            return snapshot
+
+    fake = FollowingGame()
+    if not fight_completes:
+        fake.slow_actions.add("fight")
+    cm, dialogue, talk = await _desk(fake, FakeBackend("-", delay=0))
+    orders = talk.orders
+    previous = orders.standing[CAVALORN] = Standing("attack")
+    try:
+        await fake.roster(person(CAVALORN, "Кавалорн", 4), person(BANDIT, "Бандит", 6))
+        companion(dialogue, CAVALORN, "Кавалорн")
+        assert await talk.hold(CAVALORN, "follow")
+        async with counter_retreat(orders, CAVALORN) as guard:
+            assert orders.standing[CAVALORN].kind == "retreat"
+            await fake.perception(CAVALORN, "ASSESSOTHERSDAMAGE", BANDIT, victim="PLAYER")
+            await asyncio.sleep(0.1)
+            assert (CAVALORN, "fight") not in acts(fake)
+            # The fixture must not erase orders' genuine self-defence exception.
+            await fake.perception(CAVALORN, "ASSESSDAMAGE", BANDIT)
+            for _ in range(100):
+                if (CAVALORN, "fight") in acts(fake):
+                    break
+                await asyncio.sleep(0.01)
+            assert (CAVALORN, "fight") in acts(fake)
+            if fight_completes:
+                for _ in range(100):
+                    if CAVALORN not in orders.standing and (CAVALORN, "follow") in acts(fake):
+                        break
+                    await asyncio.sleep(0.01)
+                assert CAVALORN not in orders.standing
+                assert (CAVALORN, "follow") in acts(fake)
+                # Natural completion consumes retreat: renew it before the next defender's setup.
+                guard.renew()
+                with pytest.raises(CounterPreparationPreempted, match="resumed following"):
+                    await guard.check()
+                await orders.link.act(CAVALORN, "stop")
+                await guard.check()
+                fights = acts(fake).count((CAVALORN, "fight"))
+                await fake.perception(CAVALORN, "ASSESSOTHERSDAMAGE", BANDIT, victim="PLAYER")
+                await asyncio.sleep(0.1)
+                assert guard.owns()
+                assert acts(fake).count((CAVALORN, "fight")) == fights
+        assert orders.standing[CAVALORN] is previous
+        await orders.link.act(CAVALORN, "stop")
+    finally:
+        await cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("preemptions", [2, 3])
+async def test_counter_preparation_retries_only_before_hit_and_at_most_twice(preemptions):
+    attempts = 0
+
+    async def prepare():
+        nonlocal attempts
+        attempts += 1
+        if attempts <= preemptions:
+            raise CounterPreparationPreempted("neutral pose cancelled by automatic fight")
+
+    if preemptions == 3:
+        with pytest.raises(GameError, match="preempted after 3 attempts"):
+            await prepare_counter(prepare, "bandit")
+    else:
+        await prepare_counter(prepare, "bandit")
+    assert attempts == 3
 
 
 def test_native_voice_requires_successful_audio_playback(tmp_path):
