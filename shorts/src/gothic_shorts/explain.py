@@ -47,6 +47,10 @@ def render(ws: Path, plan: dict, directory: Path, *,
     """Render selected raw WAVs; None selects the muted H.264 picture."""
     if any(stem not in (None, "voice", "game", "music") for stem in stems):
         raise ExplainError("unknown Remotion stem")
+    format = plan.get("format", "tall")
+    if format not in ("tall", "wide"):
+        raise ExplainError("The plan's format must be tall or wide")
+    width, height = (1920, 1080) if format == "wide" else (1080, 1920)
     for stem in stems:
         props = dict(plan)
         props.pop("stem", None)
@@ -56,7 +60,7 @@ def render(ws: Path, plan: dict, directory: Path, *,
         props_file.write_text(json.dumps(props, allow_nan=False))
         output = directory / (f"{stem}.wav" if stem else "picture.mp4")
         command = ["npx", "remotion", "render", "Explainer", "--public-dir", str(ws),
-                   "--props", str(props_file)]
+                   "--props", str(props_file), "--width", str(width), "--height", str(height)]
         command += ["--codec", "wav"] if stem else ["--codec", "h264", "--crf", "18", "--muted"]
         print(f"Remotion: {output.name}", flush=True)
         _run([*command, str(output)], cwd=PROJECT)

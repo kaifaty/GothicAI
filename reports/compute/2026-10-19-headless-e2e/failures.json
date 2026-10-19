@@ -1,0 +1,12 @@
+[
+  {
+    "label": "fight_reactions_bandits-2",
+    "failure": "BDT_1014_BANDIT_L_fights_3s failed (first_hit_game_ms=10900, first_return_strike_game_ms=None, delay_ms=None)",
+    "source": "server.log; requested scenario unchanged"
+  },
+  {
+    "label": "fight_reactions_bandits-1",
+    "failure": "BDT_1015_BANDIT_L_fights_3s failed (first_hit_game_ms=17618, first_return_strike_game_ms=None, delay_ms=None)",
+    "source": "server.log; requested scenario unchanged"
+  }
+]

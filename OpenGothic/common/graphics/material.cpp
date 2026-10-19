@@ -11,7 +11,24 @@ static Tempest::Color toColor(zenkit::Color v) {
   }
 
 Material::Material(const zenkit::Material& m, bool enableAlphaTest) {
-  tex = Resources::loadTexture(m.texture);
+  loadFrames(m);
+
+  Resources::MaterialMaps maps;
+  if(m.group!=zenkit::MaterialGroup::WATER && !hasFrameAnimation() &&
+     m.wave_mode==zenkit::WaveMode::NONE &&
+     (m.texture_anim_map_mode==zenkit::AnimationMapping::NONE ||
+      (m.texture_anim_map_dir.x==0.f && m.texture_anim_map_dir.y==0.f))) {
+    maps = Resources::loadMaterialMaps(m.texture);
+    // Our colour also determines alpha classification; consulting the original
+    // texture format here would open an asset that this record replaces.
+    if(maps.hasAlbedo) {
+      tex = maps.albedo!=nullptr ? maps.albedo : &Resources::fallbackTexture();
+      if(maps.albedo!=nullptr)
+        Resources::materialAlbedoReplaced(m.texture);
+      }
+    }
+  if(tex==nullptr)
+    tex = Resources::loadTexture(m.texture);
   if(tex==nullptr) {
     if(!m.texture.empty()) {
       tex = Resources::loadTexture("DEFAULT.TGA");
@@ -20,8 +37,6 @@ Material::Material(const zenkit::Material& m, bool enableAlphaTest) {
       enableAlphaTest &= (m.color.a!=255);
       }
     }
-
-  loadFrames(m);
 
   alpha = loadAlphaFunc(m.alpha_func,m.group,m.color.a,tex,enableAlphaTest);
   if(alpha==Water && m.name=="OWODWFALL_WATERFALL_01") {
@@ -45,12 +60,12 @@ Material::Material(const zenkit::Material& m, bool enableAlphaTest) {
 
   if(isSolid() && m.group!=zenkit::MaterialGroup::WATER &&
      !hasFrameAnimation() && !hasUvAnimation() && m.wave_mode==zenkit::WaveMode::NONE) {
-    auto maps = Resources::loadMaterialMaps(m.texture);
-    if(maps.albedo!=nullptr)
-      tex = maps.albedo;
+    if(!maps.present)
+      maps = Resources::loadMaterialMaps(m.texture);
     normal  = maps.normal;
     orm     = maps.orm;
     uvScale = maps.scale;
+    materialMaps = maps.present;
     }
   }
 
@@ -77,6 +92,7 @@ bool Material::operator ==(const Material& other) const {
          normal==other.normal &&
          orm==other.orm &&
          uvScale==other.uvScale &&
+         materialMaps==other.materialMaps &&
          frames==other.frames &&
          alpha==other.alpha &&
          alphaWeight==other.alphaWeight &&

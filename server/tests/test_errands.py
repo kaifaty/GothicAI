@@ -159,7 +159,9 @@ async def test_what_an_errand_may_be():
     assert (await other.plan(LOBART, "Лобарт", {**DAWN, "day": 3, "hour": 6}, snap))[1].startswith(
         "это время уже"
     )
-    assert (await other.plan(HILDA, "Хильда", DAWN, snap))[1] == "Андре уже знает всё, что ты знаешь о герое"
+    assert (await other.plan(HILDA, "Хильда", DAWN, snap))[1] == (
+        "Андре уже знает все новости, которые ты можешь рассказать"
+    )
     plot = (await other.plan("NONE_100_XARDAS", "Ксардас", DAWN, snap))[1]
     assert plot == "тебе нельзя уходить отсюда (сюжетный: только слова)"
 

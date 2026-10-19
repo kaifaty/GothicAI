@@ -46,6 +46,7 @@ from .game import GameError, GameLink
 from .journal import Journal
 from .knowledge import roots
 from .llm import Tool, ToolCall
+from .people_knowledge import PeopleKnowledge
 from .protocol import GameMessage, Loading, Session, Snapshot
 from .sightings import Sighting, Sightings, Told, heard
 from .storyguard import StoryGuard
@@ -196,6 +197,7 @@ class Witnesses:
         crimes: Crimes | None = None,
         cover: bool = True,
         cards: Mapping[str, Card] | None = None,
+        people_knowledge: PeopleKnowledge | None = None,
     ) -> None:
         self.link = link
         self.dialogue = dialogue
@@ -214,6 +216,7 @@ class Witnesses:
         self.crimes = crimes if crimes is not None else sightings.crimes
         self.cover_enabled = cover
         self.cards = cards if cards is not None else {}
+        self.people_knowledge = people_knowledge or PeopleKnowledge(chronicle)
         self.on_change: list[Callable[[str], None]] = []  # an asker whose concerns changed with time
         self.now = 0  # the game's clock as the latest story_state had it (minutes); 0: not known
         self.inquiries: dict[str, Inquiry] = {}  # far questions not asked yet
@@ -310,7 +313,9 @@ class Witnesses:
         parts = []
         near = self._near.get(npc, [])
         if near:
-            lines = [f"- {c.name} — {self._where(c)}" for c in near]
+            lines = [
+                f"- {c.name} — {self._where(c)}{self._warning(npc, c.npc)}" for c in near
+            ]
             parts.append("Кого из знакомых можно расспросить о герое (ask_witness):\n" + "\n".join(lines))
         waiting = [q for q in self.inquiries.values() if q.npc == npc]
         if waiting:
@@ -338,11 +343,17 @@ class Witnesses:
                 )
         self._shown[npc] = shown
         if shown:
-            lines = [f"- {sid}: {t.words}." for sid, t in shown.items()]
+            lines = [
+                f"- {sid}: {t.words}.{self._warning(npc, t.witness)}" for sid, t in shown.items()
+            ]
             parts.append(
                 "Что тебе рассказали о герое другие (с их слов, сам ты этого не видел):\n" + "\n".join(lines)
             )
         return "\n".join(parts) or None
+
+    def _warning(self, npc: str, witness: str) -> str:
+        warning = self.people_knowledge.warning(npc, witness)
+        return f" {warning}" if warning else ""
 
     all_tools: tuple[Tool, ...] = (ASK_TOOL,)
 
@@ -690,9 +701,11 @@ class Witnesses:
                 for e in self.chronicle.facts("exposed")
             ):
                 continue
+            now = self._now()
             self.chronicle.record({
                 "fact": "exposed", "npc": npc, "liar": t.witness, "testimony": t.id,
-                "by": by, "cover": t.cover,
+                "by": by, "cover": t.cover, "name": t.name, "subject_name": t.witness_name,
+                "day": now // DAY, "at": now,
             })
             what = (
                 f"{t.witness_name} побоялся(ась) сказать правду"

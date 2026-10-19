@@ -194,6 +194,8 @@ class FightSummary:
     policy_timeouts_consecutive: int
     policy_timeout_wait_p95_ms: float | None
     policy_response_silence_ms: float | None
+    ownership_poll_timeouts: int
+    ownership_poll_max_gap_ms: float
     target_invisible_seconds: float
     target_invisible_game_ms: int
     target_invisible_last_seconds: float
@@ -471,8 +473,9 @@ class BodyPilot:
             self._remember_retarget(updated)
             log.info(
                 "neural-body end npc=%s reason=%s end_trigger=%s release_late_seconds=%.3f "
-                "release_confirmed=True",
+                "release_confirmed=True ownership_poll_timeouts=%d ownership_poll_max_gap_ms=%.1f",
                 npc, updated.reason, updated.end_trigger, late_seconds,
+                updated.ownership_poll_timeouts, updated.ownership_poll_max_gap_ms,
             )
         self._remember_lost_fight(
             updated if confirmed else pending.summary, orphan_expired=not confirmed,
@@ -730,6 +733,9 @@ class BodyFight:
         self._policy_watchdog_task: asyncio.Task[None] | None = None
         self._policy_watchdog_at: float | None = None
         self._last_events_poll = 0.0
+        self._last_events_success_at: float | None = None
+        self._ownership_poll_timeouts = 0
+        self._ownership_poll_max_gap_ms = 0.0
         self._acquiring = False
         self._acquire_cancel = asyncio.Event()
         self._pending_acquire: BodyObservation | None = None
@@ -929,6 +935,13 @@ class BodyFight:
             except TimeoutError:
                 pass
 
+    def _ownership_poll_gap_ms(self) -> float:
+        if self._last_events_success_at is None:
+            return 0.0
+        gap_ms = (asyncio.get_running_loop().time() - self._last_events_success_at) * 1000
+        self._ownership_poll_max_gap_ms = max(self._ownership_poll_max_gap_ms, gap_ms)
+        return gap_ms
+
     async def _tick(self) -> None:
         self.pilot._drain_events()
         if self._reason:
@@ -987,7 +1000,10 @@ class BodyFight:
                 return
             self._watch_ready = True
         if self.lease is not None:
-            if self.link.body_leases.get(self.lease.entity_id) != self.lease:
+            if (
+                self.link.body_leases.get(self.lease.entity_id) != self.lease
+                or self._ownership_poll_gap_ms() > LEASE_TIMEOUT_MS
+            ):
                 await self._finish("lease_lost")
                 return
             if now - self._fight_at >= MAX_FIGHT_SECONDS or (
@@ -997,9 +1013,23 @@ class BodyFight:
                 return
             loop = asyncio.get_running_loop()
             if loop.time() - self._last_events_poll >= EVENTS_INTERVAL:
+                poll_timed_out = False
                 try:
                     self._last_events_poll = loop.time()
                     self.pilot.on_message(await self.link.body_events(timeout=BRIDGE_TIMEOUT))
+                except TimeoutError as error:
+                    poll_timed_out = True
+                    self._ownership_poll_timeouts += 1
+                    # Wait the usual interval after a timeout instead of immediately
+                    # retrying an RPC that already took longer than EVENTS_INTERVAL.
+                    self._last_events_poll = loop.time()
+                    poll_log = log.info if self._reason in {"loading", "world_changed"} else log.warning
+                    poll_log(
+                        "neural-body ownership poll timeout npc=%s rpc=body_events "
+                        "error_type=%s error=%r ownership_poll_timeouts=%d ownership_poll_gap_ms=%.1f",
+                        self.npc, type(error).__name__, error, self._ownership_poll_timeouts,
+                        self._ownership_poll_gap_ms(),
+                    )
                 except BRIDGE_ERRORS as error:
                     log.warning(
                         "neural-body ownership poll failed npc=%s rpc=body_events error_type=%s error=%r",
@@ -1007,9 +1037,15 @@ class BodyFight:
                     )
                     await self._finish("lease_lost")
                     return
-                if self._reason or self.link.body_leases.get(self.lease.entity_id) != self.lease:
+                if (
+                    self._reason or self.link.body_leases.get(self.lease.entity_id) != self.lease
+                    or self._ownership_poll_gap_ms() > LEASE_TIMEOUT_MS
+                ):
                     await self._finish(self._reason or "lease_lost")
                     return
+                if poll_timed_out:
+                    return
+                self._last_events_success_at = loop.time()
         while self._rows and self.npc is not None:
             row, received_at = self._rows.popleft()
             await self._row(row, received_at)
@@ -1205,6 +1241,8 @@ class BodyFight:
                 self._observed_down = None
                 self._fight_at = self.clock()
                 self._last_events_poll = float("-inf")
+                # Acquisition starts the initial grace period before the first poll.
+                self._last_events_success_at = asyncio.get_running_loop().time()
                 self._heartbeat_task = asyncio.create_task(self._heartbeats(self.lease))
                 log.info(
                     "neural-body start npc=%s target_kind=%s target_name=%s lease=%s acquire_refusals=%s",
@@ -1441,6 +1479,7 @@ class BodyFight:
         npc, client = self.npc, self.client
         if npc is None and self.lease is None and client is None:
             return
+        self._ownership_poll_gap_ms()
         native_reasons = {"native_restored", "lease_lost"}
         if (
             reason == "body_action_rejected" and self._policy_decisions
@@ -1641,6 +1680,8 @@ class BodyFight:
             policy_response_silence_ms=(
                 policy_response_age * 1000 if policy_response_age is not None else None
             ),
+            ownership_poll_timeouts=self._ownership_poll_timeouts,
+            ownership_poll_max_gap_ms=self._ownership_poll_max_gap_ms,
             target_invisible_seconds=self._invisible_seconds_max,
             target_invisible_game_ms=self._invisible_game_ms_max,
             target_invisible_last_seconds=self._invisible_last_seconds,
@@ -1667,7 +1708,8 @@ class BodyFight:
             "acquire_wait_p50_ms=%s acquire_wait_max_ms=%s "
             "action_rejections=%s transient_rejections_consecutive=%d "
             "policy_timeouts=%d policy_timeouts_consecutive=%d policy_timeout_wait_p95_ms=%s "
-            "policy_response_silence_ms=%s unconfirmed=%s",
+            "policy_response_silence_ms=%s ownership_poll_timeouts=%d "
+            "ownership_poll_max_gap_ms=%.1f unconfirmed=%s",
             npc,
             summary.target_kind,
             summary.target_name,
@@ -1702,6 +1744,8 @@ class BodyFight:
             summary.policy_timeouts_consecutive,
             summary.policy_timeout_wait_p95_ms,
             summary.policy_response_silence_ms,
+            summary.ownership_poll_timeouts,
+            summary.ownership_poll_max_gap_ms,
             unconfirmed if reason == "finish_deadline" else None,
         )
         log.info(
@@ -1745,6 +1789,9 @@ class BodyFight:
         self._transient_rejections_consecutive = 0
         self._policy_timeouts = self._policy_timeouts_consecutive = 0
         self._policy_timeout_waits.clear()
+        self._last_events_success_at = None
+        self._ownership_poll_timeouts = 0
+        self._ownership_poll_max_gap_ms = 0.0
         self._target_absent_game_ms = self._invisible_at = self._invisible_game_ms = None
         self._invisible_seconds_max = 0.0
         self._invisible_game_ms_max = 0

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import re
 from collections.abc import AsyncIterator, Collection, Sequence
@@ -1009,24 +1010,89 @@ async def witness_check(
     seen = sightings.hero_trail(witness)[0]
     check("witness_saw", True, f"{wname}: {sightings.words(seen)}")
 
-    # 2. an hour and a half later: the witness about its day, near Lobart or a walk away; the hero comes up
-    # to Lobart only to say it (standing before him a while would give the lie away to his own eyes)
+    # 2. An hour and a half later, both stand at nearby outdoor waypoints. Each keeps its own activity
+    # target, within call but far enough that the witness still has to come up to Lobart.
     await asyncio.sleep(12)  # the sighting ends unseen
     hour, minute = divmod(seen.end % 1440 + 90, 60)
     await link.debug("time", hour=hour, minute=minute)
     await asyncio.sleep(2)
-    await link.debug("skip_important", near=farmer)
-    await witnesses.prepare(farmer)
-    tier = next((c.tier for c in witnesses._near.get(farmer, []) if c.npc == witness), "none")
-    if tier != "near":
-        # the scene of the plan: the witness within call (it is let go at once and walks back to its day)
-        await talk.hold(witness, "scenario")
-        await link.act(witness, "go_to_npc", npc=farmer, radius=900)
-        talk.free(witness, "scenario")
-    await link.debug("teleport", near=farmer, distance=300)
-    await _until(lambda: farmer in talk.people and talk.people[farmer].distance < 800, 10)
-    await asyncio.sleep(1)
-    name = talk.people[farmer].name if farmer in talk.people else "Лобарт"
+    points = [
+        p for p in await link.waypoints()
+        if p["name"].startswith("NW_FARM1_") and not p.get("fp") and not p.get("room")
+    ]
+    pairs = []
+    for places in ([p for p in points if p["name"].startswith("NW_FARM1_FIELD")], points):
+        pairs = [
+            (
+                not 650 <= cm <= 900,
+                b["name"] not in a.get("conn", []),
+                abs(cm - 750),
+                a["name"], b["name"], cm,
+            )
+            for i, a in enumerate(places) for b in places[i + 1:]
+            if 500 < (cm := math.dist((a["x"], a["y"], a["z"]), (b["x"], b["y"], b["z"]))) < 1000
+        ]
+        if pairs:
+            break
+    if not pairs:
+        check("near_points", False, "no outdoor farm waypoints 5–10 m apart")
+        return _logged(results)
+    _, _, _, farmer_point, witness_point, gap = min(pairs)
+    preparation: dict[str, Any] = {"farmer": farmer_point, "witness": witness_point, "gap": gap}
+    check("near_points", True, preparation)
+    for who, point in ((farmer, farmer_point), (witness, witness_point)):
+        await link.debug("skip_important", near=who)
+        await link.npc_act(
+            who, "start_activity", state="ZS_STAND_WP", waypoint=point, minutes=120, place=True,
+        )
+    async def standing() -> bool:
+        views = {view.npc: view for view in await link.npc_view([farmer, witness])}
+        preparation["views"] = [view.model_dump() for view in views.values()]
+        return all(
+            who in views and views[who].state == "ZS_STAND_WP" and views[who].body == "stand"
+            for who in (farmer, witness)
+        )
+
+    initialized = await _until_async(standing, bool, 10)
+    check("near_standing", initialized, preparation)
+    if not initialized:
+        return _logged(results)
+    positions = {p["name"]: p for p in points}
+    await link.debug(
+        "player_goto",
+        pos=tuple(
+            (positions[farmer_point][axis] + positions[witness_point][axis]) / 2 for axis in ("x", "y", "z")
+        ),
+    )
+    name = social.names.get(farmer, "Лобарт")
+
+    async def within_call() -> bool:
+        state = await link.story_state(npcs=[witness], near=farmer)
+        cm = (state.get("npcs", {}).get(witness) or {}).get("distance")
+        preparation["distance"] = cm
+        preparation["roster"] = {
+            who: entry.model_dump()
+            for who in (farmer, witness) if (entry := talk.people.get(who)) is not None
+        }
+        await witnesses.prepare(farmer)
+        candidate = next((c for c in witnesses._near.get(farmer, []) if c.npc == witness), None)
+        preparation["candidate"] = vars(candidate) if candidate is not None else None
+        return (
+            cm is not None and 500 < float(cm) <= 1000
+            and await standing()
+            and all(
+                (entry := talk.people.get(who)) is not None
+                and entry.name == expected and entry.distance <= 1000 and entry.earshot <= 1000
+                for who, expected in ((farmer, name), (witness, wname))
+            )
+            and candidate is not None and candidate.tier == "near" and candidate.moves
+        )
+
+    ready = await _until_async(within_call, bool, 15)
+    check("near_ready", ready, preparation)
+    if not ready:
+        return _logged(results)
+    tier = "near"
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     script = None
     if isinstance(dialogue.llm, FakeBackend):

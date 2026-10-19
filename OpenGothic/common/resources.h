@@ -114,8 +114,11 @@ class Resources final {
       const Tempest::Texture2d* normal = nullptr;
       const Tempest::Texture2d* orm    = nullptr;
       float                    scale  = 1.f;
+      bool                     present = false;
+      bool                     hasAlbedo = false;
       };
     static MaterialMaps              loadMaterialMaps(std::string_view name);
+    static void                      materialAlbedoReplaced(std::string_view name);
     static bool                      materialMapsEnabled();
 
     static const AttachBinder*       bindMesh       (const ProtoMesh& anim, const Skeleton& s);
@@ -274,6 +277,7 @@ class Resources final {
     std::unordered_map<std::string,std::string>                       hdTextures;
     struct MaterialMapFiles {
       std::string albedo, normal, orm;
+      std::string albedoReplacement;
       float       scale = 1.f;
       };
     std::unordered_map<std::string,MaterialMapFiles>                  materialMaps;

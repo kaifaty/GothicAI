@@ -63,6 +63,7 @@ from .game import GameError, GameLink
 from .gossip import PROTOCOL as SAY_TO
 from .gossip import WORDS_CM, GossipDesk
 from .journal import Journal
+from .people_knowledge import rumor_subject
 from .places import PlaceBook
 from .protocol import GameMessage, Loading, NpcView, RoutineEntry, Session
 from .social import DAY, OUTLAWS, Rumor, Rumors, Social, Spot
@@ -236,7 +237,8 @@ def _chat_trip(npc: str, state: str, here: Spot, world: DayWorld) -> tuple[float
         return None
     cm, r, b, there = best
     minutes = trip_minutes(cm)
-    news = news_short(r.kind, r.about_name, about_you=r.about == npc)
+    news = (news_short(r.kind, r.about_name, about_you=r.about == npc)
+            if r.is_player else r.description())
     text = chat_text(social.names.get(b, b), world.where(there.waypoint), news, minutes)
     stand = CHAT_STATES[1] if state == CHAT_STATES[0] else CHAT_STATES[0]
     args = {"state": stand, "waypoint": there.waypoint, "minutes": minutes}
@@ -577,6 +579,7 @@ class DayDesk:
         """A rumor fact of `r` from a to b among the facts after the first `since`."""
         return any(
             f.get("from") == a
+            and rumor_subject(f) == r.subject
             and f.get("to") == b
             and f.get("quest") == r.quest
             and f.get("about") == r.about

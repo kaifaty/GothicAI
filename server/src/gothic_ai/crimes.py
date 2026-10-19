@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from .chronicle import Chronicle, Fact
 from .game import GameError, GameLink
 from .gamedata.storygraph import StoryGraph
+from .people_knowledge import rumor_subject
 from .protocol import DeedItem, GameMessage, HeroDeed, Session
 
 if TYPE_CHECKING:
@@ -171,6 +172,8 @@ class Crimes:
         out: dict[tuple[str, str], CrimeKnowledge] = {}
         rank = {"suspects": 0, "heard": 1, "seen": 2}
         for f in facts:
+            if f.get("fact") == "rumor" and rumor_subject(f) != "PLAYER":
+                continue
             entries: list[tuple[str, str, str, int, str]] = []
             if f.get("fact") == "crime_seen" and f.get("npc") == npc:
                 entries.append((f["crime"], "seen", npc, 0, "PLAYER"))
@@ -354,6 +357,8 @@ class Crimes:
             )
 
     def _on_fact(self, fact: Fact) -> None:
+        if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+            return
         if fact.get("fact") in {"crime_seen", "rumor", "testimony"}:
             npc = fact.get("npc") or fact.get("to")
             crimes = set(fact.get("crime_told", []))

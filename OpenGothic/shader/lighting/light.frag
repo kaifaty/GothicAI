@@ -10,6 +10,9 @@
 #include "lighting/tonemapping.glsl"
 #include "scene.glsl"
 #include "common.glsl"
+#if defined(MATERIAL_MAPS)
+#include "lighting/material_brdf.glsl"
+#endif
 
 layout(early_fragment_tests) in;
 
@@ -113,6 +116,9 @@ void main() {
     discard;
 
   const float NormalBias = 2.0;
+#if defined(MATERIAL_MAPS)
+  const vec3 surfacePos = pos.xyz;
+#endif
   pos.xyz = pos.xyz + NormalBias*normal; //bias
   if(isShadow(pos.xyz, pos.xyz-cenPosition.xyz, cenPosition.w))
     discard;
@@ -126,7 +132,12 @@ void main() {
 
   vec3 ret = linear * (color * light) * max(1.0, scene.exposure) * Fd_Lambert * 0.25;
 #if defined(MATERIAL_MAPS)
-  ret *= texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0).r;
+  const vec4 orm = texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0);
+  if(orm.a>0.5) {
+    const vec3 view = normalize(scene.camPos - surfacePos);
+    ret = materialBrdf(linear, normal, view, -normalize(ldir), orm.rgb) *
+          (color * light) * max(1.0, scene.exposure) * 0.25;
+    }
 #endif
 
   outColor = vec4(ret, 0.0);

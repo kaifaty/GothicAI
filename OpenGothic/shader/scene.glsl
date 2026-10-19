@@ -84,6 +84,7 @@ const uint BK_MORPH = 0x4;
 const uint BK_WATER = 0x8;
 const uint BK_NORMAL = 0x10;
 const uint BK_ORM    = 0x20;
+const uint BK_MATERIAL_MAPS = 0x40;
 
 struct Bucket {
   vec4  bbox[2];

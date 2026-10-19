@@ -11,6 +11,9 @@
 #include "lighting/purkinje_shift.glsl"
 #include "scene.glsl"
 #include "common.glsl"
+#if defined(MATERIAL_MAPS)
+#include "lighting/material_brdf.glsl"
+#endif
 
 #define SSAO 1
 
@@ -24,11 +27,19 @@ layout(binding  = 4) uniform sampler2D  depth;
 layout(binding  = 5, std430) readonly buffer Hbo0 { uint hashTable[]; };
 layout(binding  = 6, std430) readonly buffer Pbo  { ProbesHeader probeHeader; Probe probe[]; };
 layout(binding  = 7) uniform sampler2D  probesLighting;
+#if defined(MATERIAL_MAPS)
+layout(binding = 12) uniform sampler2D gbufOrm;
+layout(binding = 13) uniform sampler2D skyViewLut;
+#endif
 
 layout(location = 0) out vec4 outColor;
 
 vec4 colorSum  = vec4(0);
 bool err       = false;
+#if defined(MATERIAL_MAPS)
+bool ownMaterial = false;
+float skyVisibilitySum = 0.0;
+#endif
 
 vec3 unprojectDepth(const float z) {
   const ivec2 fragCoord  = ivec2(gl_FragCoord.xy);
@@ -128,6 +139,10 @@ void processProbe(ivec3 gridPos, vec3 wpos, int lod, vec3 pixelPos, vec3 pixelNo
 
   colorSum.rgb += probeReadAmbient(probesLighting, probeId, pixelNorm, p.normal) * weight;
   colorSum.w   += weight;
+#if defined(MATERIAL_MAPS)
+  if(ownMaterial)
+    skyVisibilitySum += probeReadSkyVisibility(p.bits, pixelNorm) * weight;
+#endif
   }
 
 void gather(vec3 basePos, vec3 pos, vec3 norm, int lod) {
@@ -161,6 +176,10 @@ void main() {
 
   const vec3  diff    = texelFetch(gbufDiffuse, ivec2(gl_FragCoord.xy), 0).rgb;
   const vec3  norm    = normalFetch(gbufNormal, ivec2(gl_FragCoord.xy));
+#if defined(MATERIAL_MAPS)
+  const vec4 orm = texelFetch(gbufOrm, ivec2(gl_FragCoord.xy), 0);
+  ownMaterial = orm.a>0.5;
+#endif
 
   const int   lod     = probeGridComputeLod();
   const vec3  basePos = unprojectDepth(z);
@@ -173,8 +192,14 @@ void main() {
     // colorSum = vec4(vec3(1,0,0)*scene.GSunIntensity,1);
     colorSum.rgb = probeReadAmbient(probesLighting, 0, norm, vec3(0,1,0));
     colorSum.w   = 1;  // * Fd_Lambert is accounted in integration
+#if defined(MATERIAL_MAPS)
+    skyVisibilitySum = 1.0;
+#endif
     } else {
     colorSum.rgb = colorSum.rgb/max(colorSum.w, minW);
+#if defined(MATERIAL_MAPS)
+    skyVisibilitySum /= max(colorSum.w, minW);
+#endif
     }
 
   // const vec3  linear = vec3(1);
@@ -187,6 +212,19 @@ void main() {
 
   vec3 color = linear;
   color *= luminance;
+#if defined(MATERIAL_MAPS)
+  if(ownMaterial) {
+    color *= orm.r * (1.0 - orm.b);
+    const vec3 view = normalize(scene.camPos - basePos);
+    const float noV = max(dot(norm, view), 0.0);
+    const vec3 reflection = reflect(-view, norm);
+    const vec3 sharpSky = textureSkyLUT(skyViewLut, vec3(0,RPlanet,0), reflection, scene.sunDir) * scene.GSunIntensity;
+    // Probe zero contains unoccluded sky only, unlike the local GI radiance.
+    const vec3 sky = probeReadAmbient(probesLighting, 0, norm, vec3(0,1,0));
+    const vec3 reflectedSky = mix(sharpSky, sky, orm.g*orm.g);
+    color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV) * clamp(skyVisibilitySum, 0.0, 1.0);
+    }
+#endif
   color *= ao;
   color *= scene.exposure;
   outColor = vec4(color, 1);

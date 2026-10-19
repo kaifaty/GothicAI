@@ -15,12 +15,13 @@ import './fonts';
 import {BrandSting, STING_FRAMES} from './Brand';
 import {Captions} from './parts/Captions';
 import {BarsView, DotsView, FormulaView, StatsView} from './parts/Cards';
+import {BigView, CellsView, LineView, TableView} from './parts/WideCards';
 import {DiceChart} from './parts/DiceChart';
 import {Sight} from './parts/Sight';
 import {Tags} from './parts/Tags';
 import {Hook, Texts} from './parts/Texts';
 import type {Beat, Plan} from './schema';
-import {COLOR, FONT, H, OUTLINE, W} from './theme';
+import {COLOR, FONT, OUTLINE, WIDE_SAFE} from './theme';
 
 // the voice speaks in these spans (seconds of the short): the game ducks under them
 type Spans = [number, number][];
@@ -70,12 +71,15 @@ const Picture: React.FC<{
   return video;
 };
 
-const HalfLabel: React.FC<{text: string; top: number; color: string}> = ({text, top, color}) => (
+const HalfLabel: React.FC<{text: string; top: number; color: string; left?: number; maxWidth?: number}> = ({text, top, color, left = 40, maxWidth}) => (
   <div
     style={{
       position: 'absolute',
       top,
-      left: 40,
+      left,
+      maxWidth,
+      boxSizing: maxWidth ? 'border-box' : undefined,
+      overflowWrap: maxWidth ? 'anywhere' : undefined,
       fontFamily: FONT.body,
       fontWeight: 800,
       fontSize: 40,
@@ -98,7 +102,8 @@ const BeatView: React.FC<{beat: Beat; start: number; spans: Spans; duck: number;
   game,
   stem,
 }) => {
-  const {fps} = useVideoConfig();
+  const {fps, width, height} = useVideoConfig();
+  const wide = width > height;
   const volume = (f: number) =>
     stem ? (stem === 'game' ? beat.game : 0) : game * beat.game * ducked(start + f / fps, spans, duck);
   let body: React.ReactNode = null;
@@ -108,18 +113,36 @@ const BeatView: React.FC<{beat: Beat; start: number; spans: Spans; duck: number;
     else if (card.type === 'formula') body = <FormulaView spec={card} />;
     else if (card.type === 'bars') body = <BarsView spec={card} />;
     else if (card.type === 'dots') body = <DotsView spec={card} />;
-    else body = <StatsView spec={card} />;
+    else if (card.type === 'stats') body = <StatsView spec={card} />;
+    else if (card.type === 'line') body = <LineView spec={card} />;
+    else if (card.type === 'big') body = <BigView spec={card} />;
+    else if (card.type === 'table') body = <TableView spec={card} />;
+    else if (card.type === 'cells') body = <CellsView spec={card} />;
   } else if (beat.kind === 'split' && beat.src && beat.srcBottom) {
-    const half = H / 2;
-    body = (
+    const half = height / 2;
+    body = wide ? (
       <>
-        <div style={{position: 'absolute', top: 0, width: W, height: half, overflow: 'hidden'}}>
-          <Picture src={beat.src} from={beat.from} beat={beat} width={W} height={half} volume={() => 0} />
+        <div style={{position: 'absolute', left: 0, width: width / 2, height, overflow: 'hidden'}}>
+          <Picture src={beat.src} from={beat.from} beat={beat} width={width / 2} height={height} volume={() => 0} />
         </div>
-        <div style={{position: 'absolute', top: half, width: W, height: half, overflow: 'hidden'}}>
-          <Picture src={beat.srcBottom} from={beat.fromBottom} beat={beat} width={W} height={half} volume={volume} />
+        <div style={{position: 'absolute', left: width / 2, width: width / 2, height, overflow: 'hidden'}}>
+          <Picture src={beat.srcBottom} from={beat.fromBottom} beat={beat} width={width / 2} height={height} volume={volume} />
         </div>
-        <div style={{position: 'absolute', top: half - 2, width: W, height: 4, background: '#000'}} />
+        <div style={{position: 'absolute', left: width / 2 - 2, width: 4, height, background: '#000'}} />
+        {beat.labels && beat.labels.map((label, i) => (
+          <HalfLabel key={i} text={label} top={WIDE_SAFE.top} left={i * width / 2 + WIDE_SAFE.left}
+            maxWidth={width / 2 - 2 * WIDE_SAFE.left} color={beat.labelColors?.[i] ?? (i === 0 ? COLOR.before : COLOR.now)} />
+        ))}
+      </>
+    ) : (
+      <>
+        <div style={{position: 'absolute', top: 0, width, height: half, overflow: 'hidden'}}>
+          <Picture src={beat.src} from={beat.from} beat={beat} width={width} height={half} volume={() => 0} />
+        </div>
+        <div style={{position: 'absolute', top: half, width, height: half, overflow: 'hidden'}}>
+          <Picture src={beat.srcBottom} from={beat.fromBottom} beat={beat} width={width} height={half} volume={volume} />
+        </div>
+        <div style={{position: 'absolute', top: half - 2, width, height: 4, background: '#000'}} />
         {beat.labels && (
           <>
             <HalfLabel text={beat.labels[0]} top={170} color={beat.labelColors?.[0] ?? COLOR.before} />
@@ -129,7 +152,7 @@ const BeatView: React.FC<{beat: Beat; start: number; spans: Spans; duck: number;
       </>
     );
   } else if (beat.src) {
-    body = <Picture src={beat.src} from={beat.from} beat={beat} width={W} height={H} volume={volume} />;
+    body = <Picture src={beat.src} from={beat.from} beat={beat} width={width} height={height} volume={volume} />;
   }
   return (
     <AbsoluteFill style={{background: '#000', overflow: 'hidden'}}>

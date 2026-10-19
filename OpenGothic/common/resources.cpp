@@ -566,7 +566,7 @@ void Resources::indexMaterialMaps() {
       continue;
       }
     MaterialMapFiles maps;
-    auto path = [&](const char* field, std::string& out) {
+    auto path = [&](const char* field, std::string& out, std::string* replacement = nullptr) {
       const auto it = entry.value.FindMember(field);
       if(it==entry.value.MemberEnd())
         return true;
@@ -580,9 +580,11 @@ void Resources::indexMaterialMaps() {
         if(component=="..")
           return false;
       out = (root/relative).lexically_normal().string();
+      if(replacement!=nullptr)
+        *replacement = (std::filesystem::path("materials")/relative).lexically_normal().generic_string();
       return true;
       };
-    bool valid = path("albedo", maps.albedo) && path("normal", maps.normal) && path("orm", maps.orm);
+    bool valid = path("albedo", maps.albedo, &maps.albedoReplacement) && path("normal", maps.normal) && path("orm", maps.orm);
     if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
       if(!scale->value.IsNumber()) {
         valid = false;
@@ -603,13 +605,7 @@ void Resources::indexMaterialMaps() {
       c = char(std::toupper(uint8_t(c)));
     materialMaps[std::move(key)] = std::move(maps);
     }
-  for(const auto& entry:materialMaps) {
-    const auto& maps = entry.second;
-    if(!maps.normal.empty() || !maps.orm.empty() || maps.scale!=1.f) {
-      materialMapsPresent = true;
-      break;
-      }
-    }
+  materialMapsPresent = !materialMaps.empty();
   Log::i("materials: ",materialMaps.size()," entries from \"",root.string(),"\"");
   }
 
@@ -1221,7 +1217,21 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.normal = inst->implLoadMaterialTexture(files.normal,true);
   ret.orm    = inst->implLoadMaterialTexture(files.orm,false);
   ret.scale  = files.scale;
+  ret.present = true;
+  ret.hasAlbedo = !files.albedo.empty();
   return ret;
+  }
+
+void Resources::materialAlbedoReplaced(std::string_view name) {
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  if(!inst->census)
+    return;
+  std::string key(name);
+  for(auto& c:key)
+    c = char(std::toupper(uint8_t(c)));
+  const auto it = inst->materialMaps.find(key);
+  if(it!=inst->materialMaps.end() && !it->second.albedoReplacement.empty())
+    inst->census->replaced(name,it->second.albedoReplacement);
   }
 
 bool Resources::materialMapsEnabled() {

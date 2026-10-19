@@ -153,6 +153,8 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
           bx.flags |= BK_NORMAL;
         if(i.mat.orm!=nullptr)
           bx.flags |= BK_ORM;
+        if(i.mat.hasMaterialMaps())
+          bx.flags |= BK_MATERIAL_MAPS;
         }
       }
     else if(i.animMesh!=nullptr) {

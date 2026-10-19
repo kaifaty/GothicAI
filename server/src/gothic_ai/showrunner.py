@@ -27,6 +27,7 @@ from .game import GameError
 from .gamedata.storygraph import QUEST_STATES
 from .llm import LLMBackend, LLMError, Message, Tool, ToolCall, open_ahead
 from .occasions import DEEDS, NEAREST, OccasionFailed, Occasions
+from .people_knowledge import rumor_subject
 from .protocol import GameMessage, Loading, Session
 from .questbook import Ground, _vanilla
 
@@ -540,6 +541,8 @@ class Showrunner:
             witnesses = set(crime.get("witnesses", []))
             people = {victim, *witnesses} - {""}
             for fact in facts:
+                if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+                    continue
                 if fact.get("crime") == cid:
                     people.update(n for n in (fact.get("npc"), fact.get("to")) if n)
                 elif cid in self.crimes.testimony_crimes(fact):

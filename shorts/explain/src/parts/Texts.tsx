@@ -1,12 +1,15 @@
 import React from 'react';
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {TextT} from '../schema';
-import {COLOR, FONT, OUTLINE, SAFE, W} from '../theme';
+import {COLOR, FONT, OUTLINE, SAFE, WIDE_SAFE} from '../theme';
 import {rise, shown} from './anim';
 
 // short texts on screen (not captions): a dark band under each, inside the safe area
 export const Texts: React.FC<{texts: TextT[]}> = ({texts}) => {
-  const t = useCurrentFrame() / useVideoConfig().fps;
+  const {fps, width, height} = useVideoConfig();
+  const wide = width > height;
+  const safe = wide ? WIDE_SAFE : SAFE;
+  const t = useCurrentFrame() / fps;
   return (
     <AbsoluteFill>
       {texts.map((x, i) => {
@@ -19,9 +22,9 @@ export const Texts: React.FC<{texts: TextT[]}> = ({texts}) => {
             key={i}
             style={{
               position: 'absolute',
-              top: x.y + rise(t, x.at),
-              left: SAFE.left,
-              width: W - SAFE.left - SAFE.right,
+              top: (x.y ?? (wide ? 140 : 260)) + rise(t, x.at),
+              left: safe.left,
+              width: width - safe.left - safe.right,
               display: 'flex',
               justifyContent: 'center',
               opacity: o,
@@ -40,6 +43,7 @@ export const Texts: React.FC<{texts: TextT[]}> = ({texts}) => {
                 textAlign: 'center',
                 textShadow: OUTLINE,
                 fontVariantNumeric: 'tabular-nums',
+                ...(wide ? {maxWidth: '100%', boxSizing: 'border-box', overflowWrap: 'anywhere'} as const : {}),
               }}
             >
               {x.text}
@@ -53,23 +57,27 @@ export const Texts: React.FC<{texts: TextT[]}> = ({texts}) => {
 
 // the hook: big, over the first seconds
 export const Hook: React.FC<{text: string; until: number}> = ({text, until}) => {
-  const t = useCurrentFrame() / useVideoConfig().fps;
+  const {fps, width, height} = useVideoConfig();
+  const wide = width > height;
+  const safe = wide ? WIDE_SAFE : SAFE;
+  const t = useCurrentFrame() / fps;
   const o = shown(t, 0, until, 0.01, 0.3);
   if (o <= 0) {
     return null;
   }
   return (
-    <AbsoluteFill style={{alignItems: 'center', paddingTop: 300, opacity: o}}>
+    <AbsoluteFill style={{alignItems: 'center', paddingTop: wide ? safe.top : 300, opacity: o}}>
       <div
         style={{
           fontFamily: FONT.title,
           fontWeight: 700,
-          fontSize: 104,
+          fontSize: wide ? 80 : 104,
           lineHeight: 1.08,
           color: COLOR.text,
           textAlign: 'center',
-          width: W - SAFE.left - SAFE.right - 40,
-          marginRight: SAFE.right - SAFE.left,
+          width: width - safe.left - safe.right - (wide ? 0 : 40),
+          marginRight: safe.right - safe.left,
+          ...(wide ? {overflowWrap: 'anywhere'} as const : {}),
           textShadow: OUTLINE + ', 0 6px 24px rgba(0,0,0,0.8)',
         }}
       >

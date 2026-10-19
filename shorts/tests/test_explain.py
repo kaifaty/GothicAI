@@ -120,13 +120,51 @@ def _run_cli(monkeypatch, *arguments):
     return exit_info.value.code
 
 
-@pytest.mark.parametrize("music", [True, False], ids=["music-defaults", "no-music-custom-paths"])
+@pytest.mark.parametrize("format,width,height", [
+    (None, 1080, 1920), ("tall", 1080, 1920), ("wide", 1920, 1080),
+], ids=["default-tall", "tall", "wide"])
+def test_render_passes_plan_dimensions_and_preserves_stems(tmp_path, monkeypatch, format, width, height):
+    plan = _plan()
+    if format is not None:
+        plan["format"] = format
+    original = copy.deepcopy(plan)
+    commands = []
+    monkeypatch.setattr(explain, "_run", lambda command, **kwargs: commands.append((command, kwargs)))
+
+    explain.render(tmp_path, plan, tmp_path)
+
+    assert len(commands) == 4
+    for (command, kwargs), stem in zip(commands, (None, "voice", "game", "music"), strict=True):
+        assert command[:4] == ["npx", "remotion", "render", "Explainer"]
+        assert command[command.index("--width") + 1] == str(width)
+        assert command[command.index("--height") + 1] == str(height)
+        assert kwargs == {"cwd": explain.PROJECT}
+        props = json.loads((tmp_path / f"{stem or 'picture'}.json").read_text())
+        expected = {**plan, "stem": stem} if stem else plan
+        assert props == expected
+    assert plan == original
+
+
+def test_render_rejects_unknown_format_before_starting_remotion(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(explain, "_run", lambda *args, **kwargs: commands.append(args))
+
+    with pytest.raises(explain.ExplainError, match="format must be tall or wide"):
+        explain.render(tmp_path, {**_plan(), "format": "square"}, tmp_path)
+
+    assert commands == []
+
+
+@pytest.mark.parametrize("music,format", [(True, None), (False, None), (True, "wide")],
+                         ids=["music-defaults", "no-music-custom-paths", "wide-shared-levels"])
 def test_cli_publishes_synthetic_stems_with_shared_levels(
-    tmp_path, synthetic_stems, monkeypatch, capsys, music,
+    tmp_path, synthetic_stems, monkeypatch, capsys, music, format,
 ):
     ws = tmp_path / "explainers" / "synthetic"
     ws.mkdir(parents=True)
     plan = _plan(music=music)
+    if format is not None:
+        plan["format"] = format
     plan_file = "plan.json" if music else "plan.other.json"
     (ws / plan_file).write_text(json.dumps(plan))
     calls = _prepared_render(monkeypatch, synthetic_stems)

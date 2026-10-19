@@ -2709,8 +2709,11 @@ void Renderer::drawAmbient(Encoder<CommandBuffer>& cmd, const WorldView& view) {
   cmd.setBinding(0, view.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
   cmd.setBinding(2, gbufNormal,  Sampler::nearest());
-  if(Shaders::options().doMaterialMaps)
+  if(Shaders::options().doMaterialMaps) {
     cmd.setBinding(12, gbufOrm, Sampler::nearest());
+    cmd.setBinding(13, sky.viewLut, sky.sampler);
+    cmd.setBinding(14, zbuffer, Sampler::nearest());
+    }
   if(settings.giMethod==GiMethod::IrrC && settings.zCloudShadowScale) {
     cmd.setBinding(3, surf.irrImage, Sampler::nearest(ClampMode::ClampToEdge));
     cmd.setBinding(4, ssao.ssaoBlur, Sampler::nearest(ClampMode::ClampToEdge)); //TODO: remove once splatting is working

@@ -1362,6 +1362,195 @@ async def test_delayed_heartbeat_and_event_replies_do_not_accumulate_into_lease_
         assert not rig.policy.commands("end_episode")
 
 
+async def test_one_ownership_poll_timeout_keeps_lease_and_recovers_at_regular_interval(caplog):
+    caplog.set_level("INFO", logger="gothic_ai.bodypilot")
+    async with running() as rig:
+        await rig.active()
+        fight, lease = rig.fight, rig.fight.lease
+        last_success = fight._last_events_success_at
+        polls = len(rig.bridge.commands("body_events"))
+        rig.bridge.response_delays["body_events"] = bodypilot.BRIDGE_TIMEOUT + 0.100
+        fight._last_events_poll = float("-inf")
+        fight._wake.set()
+        await eventually(lambda: len(rig.bridge.commands("body_events")) == polls + 1)
+        # Only this reply is delayed. It still arrives after the RPC timed out,
+        # so recovery must come from a fresh poll rather than its stale result.
+        rig.bridge.response_delays.clear()
+        await eventually(lambda: fight._ownership_poll_timeouts == 1)
+        assert fight._last_events_success_at == last_success
+        assert rig.pilot.handles("NPC") and rig.link.body_leases == {lease.entity_id: lease}
+        assert fight._reason is None and rig.bridge.lease_expirations == 0
+        assert not rig.bridge.commands("body_release") and not rig.policy.commands("end_episode")
+        await eventually(lambda: fight._last_events_success_at > last_success)
+        first_poll, next_poll = rig.bridge.command_times("body_events")[polls:polls + 2]
+        assert next_poll - first_poll >= bodypilot.BRIDGE_TIMEOUT + bodypilot.EVENTS_INTERVAL - 0.010
+        assert any(first_poll <= when <= next_poll for when in rig.bridge.command_times("body_heartbeat"))
+        assert fight._ownership_poll_timeouts == 1
+        rig.bridge.emit(fighter(4, owned=True))
+        await eventually(lambda: len(rig.bridge.commands("body_action")) == 2)
+        await rig.pilot.aclose()
+        summary = rig.pilot.last_summary
+        assert summary.ownership_poll_timeouts == 1
+        assert summary.ownership_poll_max_gap_ms >= (next_poll - first_poll) * 1000
+        end = [record.message for record in caplog.records if "neural-body end " in record.message]
+        assert len(end) == 1 and "ownership_poll_timeouts=1" in end[0]
+        assert f"ownership_poll_max_gap_ms={summary.ownership_poll_max_gap_ms:.1f}" in end[0]
+
+
+async def test_shared_ownership_poll_timeout_preserves_three_fights(monkeypatch):
+    async with running(multi=True) as rig:
+        npcs = ("NPC_1", "NPC_2", "NPC_3")
+        await start_fights(rig, *npcs)
+        fights = {npc: rig.pilot.fights[npc] for npc in npcs}
+        leases = dict(rig.link.body_leases)
+        successes = {npc: fight._last_events_success_at for npc, fight in fights.items()}
+        original_dispatch = rig.link._dispatch
+        held = []
+        paused = True
+
+        def dispatch(result, **kwargs):
+            if paused and isinstance(result, Result) and any(
+                command["type"] == "body_events" and command["req"] == result.req
+                for command in rig.bridge.sent
+            ):
+                held.append(result)
+                return
+            original_dispatch(result, **kwargs)
+
+        monkeypatch.setattr(rig.link, "_dispatch", dispatch)
+        for fight in fights.values():
+            fight._last_events_poll = float("-inf")
+            fight._wake.set()
+        await eventually(lambda: len(held) == 3)
+        await eventually(lambda: all(fight._ownership_poll_timeouts == 1 for fight in fights.values()))
+        assert rig.pilot.active_count == 3 and rig.link.body_leases == leases
+        assert all(rig.pilot.fights[npc] is fights[npc] and fights[npc]._reason is None for npc in npcs)
+        assert not rig.bridge.commands("body_release") and not rig.policy.commands("end_episode")
+        paused = False
+        for result in held:
+            original_dispatch(result)
+        await eventually(lambda: all(
+            fight._last_events_success_at > successes[npc] for npc, fight in fights.items()
+        ))
+        assert rig.pilot.active_count == 3 and rig.link.body_leases == leases
+        rig.bridge.emit(*(multi_fighter(npc, 4, owned=True) for npc in npcs))
+        await eventually(lambda: len(rig.bridge.commands("body_action")) == 6)
+        await rig.pilot.aclose()
+        assert len(rig.pilot.summaries) == 3
+        assert all(summary.ownership_poll_timeouts == 1 for summary in rig.pilot.summaries)
+
+
+async def test_ownership_poll_silence_expires_after_two_wall_seconds_with_game_time_stopped(monkeypatch):
+    # Keep the independent policy-silence watchdog out of this ownership test.
+    monkeypatch.setattr(bodypilot, "POLICY_RESPONSE_TIMEOUT", 5.0)
+    async with running() as rig:
+        await rig.active()
+        fight, lease = rig.fight, rig.fight.lease
+        last_success = fight._last_events_success_at
+        clock = rig.clock()
+        steps, actions = len(rig.policy.commands("step")), len(rig.bridge.commands("body_action"))
+        rig.bridge.response_delays["body_events"] = 5.0
+        fight._last_events_poll = float("-inf")
+        fight._wake.set()
+        await eventually(lambda: rig.bridge.commands("body_release"), timeout=3.0)
+        release_at = rig.bridge.command_times("body_release")[0]
+        rig.bridge.response_delays.clear()
+        await eventually(lambda: rig.pilot.last_summary is not None)
+        summary = rig.pilot.last_summary
+        assert release_at - last_success > 2.0
+        assert summary.reason == "lease_lost" and summary.end_trigger == "lease_lost"
+        assert summary.ownership_poll_timeouts >= 2
+        assert summary.ownership_poll_max_gap_ms > 2000
+        assert rig.clock() == clock and summary.fight_seconds == 0
+        assert len(rig.policy.commands("step")) == steps
+        assert len(rig.bridge.commands("body_action")) == actions
+        beats = [when for when in rig.bridge.command_times("body_heartbeat") if when < release_at]
+        assert len(beats) >= 7 and rig.bridge.lease_expirations == 0
+        assert summary.lease == lease and summary.release_confirmed and summary.watch_removed
+
+
+async def test_successful_ownership_poll_arriving_after_lease_deadline_cannot_revive_fight(monkeypatch):
+    monkeypatch.setattr(bodypilot, "BRIDGE_TIMEOUT", 2.5)
+    monkeypatch.setattr(bodypilot, "POLICY_RESPONSE_TIMEOUT", 5.0)
+    async with running() as rig:
+        await rig.active()
+        fight = rig.fight
+        polls = len(rig.bridge.commands("body_events"))
+        rig.bridge.response_delays["body_events"] = 2.1
+        fight._last_events_poll = float("-inf")
+        fight._wake.set()
+        await eventually(lambda: len(rig.bridge.commands("body_events")) == polls + 1)
+        rig.bridge.response_delays.clear()
+        await eventually(lambda: rig.bridge.commands("body_release"), timeout=3.0)
+        await eventually(lambda: rig.pilot.last_summary is not None, timeout=3.0)
+        summary = rig.pilot.last_summary
+        assert summary.reason == "lease_lost"
+        assert summary.ownership_poll_timeouts == 0 and summary.ownership_poll_max_gap_ms > 2000
+        assert rig.bridge.lease_expirations == 0
+
+
+async def test_ownership_poll_bridge_error_still_ends_fight_immediately(caplog):
+    caplog.set_level("WARNING", logger="gothic_ai.bodypilot")
+    async with running() as rig:
+        await rig.active()
+        fight = rig.fight
+        polls = len(rig.bridge.commands("body_events"))
+        rig.bridge.request_rejections["body_events"] = deque(["fake ownership poll rejected"])
+        fight._last_events_poll = float("-inf")
+        fight._wake.set()
+        await eventually(lambda: rig.pilot.last_summary is not None)
+        summary = rig.pilot.last_summary
+        poll_at = rig.bridge.command_times("body_events")[polls]
+        assert rig.bridge.command_times("body_release")[0] - poll_at < bodypilot.BRIDGE_TIMEOUT
+        assert summary.reason == "lease_lost" and summary.ownership_poll_timeouts == 0
+        assert summary.release_confirmed and summary.watch_removed
+        failures = [record for record in caplog.records if "ownership poll failed " in record.message]
+        assert len(failures) == 1 and failures[0].levelname == "WARNING"
+        assert "error_type=GameError" in failures[0].message
+
+
+async def test_missing_lease_during_ownership_poll_timeout_ends_fight():
+    async with running() as rig:
+        await rig.active()
+        fight, lease = rig.fight, rig.fight.lease
+        polls = len(rig.bridge.commands("body_events"))
+        rig.bridge.response_delays["body_events"] = bodypilot.BRIDGE_TIMEOUT + 0.100
+        fight._last_events_poll = float("-inf")
+        fight._wake.set()
+        await eventually(lambda: len(rig.bridge.commands("body_events")) == polls + 1)
+        rig.bridge.response_delays.clear()
+        rig.link.body_leases.pop(lease.entity_id)
+        await eventually(lambda: rig.pilot.last_summary is not None)
+        assert rig.pilot.last_summary.reason == "lease_lost"
+        assert rig.pilot.last_summary.ownership_poll_timeouts == 1
+        assert rig.pilot.last_summary.release_confirmed and rig.pilot.last_summary.watch_removed
+
+
+@pytest.mark.parametrize("transition", ["loading", "world_changed"])
+async def test_world_transition_ownership_poll_timeout_is_info_and_preserves_reason(transition, caplog):
+    caplog.set_level("INFO", logger="gothic_ai.bodypilot")
+    async with running() as rig:
+        await rig.active()
+        fight = rig.fight
+        polls = len(rig.bridge.commands("body_events"))
+        rig.bridge.response_delays["body_events"] = bodypilot.BRIDGE_TIMEOUT + 0.100
+        fight._last_events_poll = float("-inf")
+        fight._wake.set()
+        await eventually(lambda: len(rig.bridge.commands("body_events")) == polls + 1)
+        rig.bridge.response_delays.clear()
+        if transition == "loading":
+            rig.link._dispatch(Loading(type="loading"))
+        else:
+            rig.bridge.emit(fighter(4, owned=True, generation=2, world_epoch=2), generation=2)
+        await eventually(lambda: rig.pilot.last_summary is not None)
+        summary = rig.pilot.last_summary
+        assert summary.reason == transition and summary.ownership_poll_timeouts == 1
+        polls = [record for record in caplog.records if "ownership poll " in record.message]
+        assert len(polls) == 1 and polls[0].levelname == "INFO"
+        assert "error_type=TimeoutError" in polls[0].message
+        assert not any(record.levelname == "WARNING" for record in polls)
+
+
 async def test_heartbeat_and_event_requests_overlap_with_acknowledgement_gates():
     async with running() as rig:
         original_dispatch = rig.link._dispatch

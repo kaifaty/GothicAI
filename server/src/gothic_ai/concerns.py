@@ -26,6 +26,7 @@ from .crime_law import CrimeLaw
 from .crimes import Crimes
 from .deals import GOLD, Deals, Debt
 from .game import GameLink
+from .people_knowledge import rumor_subject
 from .protocol import GameMessage, Loading, Session
 
 RANK = {"debt_broken": 0, "lied": 1, "witness": 1, "crime_witness": 1, "debt_due": 2, "errand": 2}
@@ -166,6 +167,8 @@ class Concerns:
         return out
 
     def _on_fact(self, f: Fact) -> None:
+        if f.get("fact") == "rumor" and rumor_subject(f) != "PLAYER":
+            return
         if f.get("fact") not in FACTS:
             return
         affected = [f.get("npc"), f.get("to")]
@@ -227,6 +230,7 @@ def _debt_en(d: Debt) -> str:
 def _delivers_crime(f: Fact, crime: str, victim: str | None, crimes: Crimes) -> bool:
     """Personal delivery to the victim also ends the witness's chance to keep this secret."""
     return bool(victim) and (
-        (f.get("fact") == "rumor" and f.get("crime") == crime and f.get("to") == victim)
+        (f.get("fact") == "rumor" and rumor_subject(f) == "PLAYER"
+         and f.get("crime") == crime and f.get("to") == victim)
         or (f.get("fact") == "testimony" and f.get("npc") == victim and crime in crimes.testimony_crimes(f))
     )

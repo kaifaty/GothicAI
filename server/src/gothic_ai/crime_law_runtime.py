@@ -26,6 +26,7 @@ from .crime_memory import memory_value
 from .crimes import COMMUNITIES, Crimes
 from .game import GameError, GameLink
 from .gamedata.storygraph import StoryGraph
+from .people_knowledge import rumor_subject
 from .protocol import DialogChosen, GameMessage, Loading, Session
 from .story import StoryPatches
 from .validator import Story, WorldState, names_in
@@ -57,6 +58,8 @@ class CrimeLawRuntime:
         self.link.listeners.append(self._on_message)
 
     def _on_fact(self, fact: Fact) -> None:
+        if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+            return
         if fact.get("fact") in {
             "crime", "crime_seen", "rumor", "testimony", "died", "forgiven", "silenced", "absolved"
         }:
@@ -150,7 +153,9 @@ class CrimeLawRuntime:
         evidence = [*self.chronicle.facts("crime_seen"), *self.chronicle.facts("rumor"),
                     *self.chronicle.facts("testimony")]
         for fact in evidence:
-            if fact.get("fact") == "rumor" and not fact.get("crime"):
+            if fact.get("fact") == "rumor" and (
+                not fact.get("crime") or rumor_subject(fact) != "PLAYER"
+            ):
                 continue
             npc = str(fact.get("to") or fact.get("npc") or "").upper()
             if not npc:
@@ -182,6 +187,7 @@ class CrimeLawRuntime:
             str(f.get("to") or f.get("npc"))
             for f in self.chronicle.facts()
             if f.get("fact") in {"crime_seen", "rumor", "testimony"} and (f.get("to") or f.get("npc"))
+            and (f.get("fact") != "rumor" or rumor_subject(f) == "PLAYER")
         }
         return {
             npc: level

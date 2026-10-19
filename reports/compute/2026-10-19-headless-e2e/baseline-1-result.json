@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "loaded": true,
+  "done": true,
+  "simulated_ms": 60033,
+  "reset_wall_ms": 4324,
+  "elapsed_wall_ms": 60020,
+  "max_realtime_lag_ms": 234,
+  "graphics_device_created": false,
+  "window_created": false,
+  "audio_device_created": false,
+  "worker_execution": {
+    "serial": false,
+    "mode": "default_parallel",
+    "worker_pool_created": true,
+    "native_task_parallelism_cap": null
+  },
+  "pid": 3418584,
+  "started_mono_s": 263990.175109563,
+  "loaded_mono_s": 263994.649053506,
+  "process_to_loaded_s": 4.473943942983169,
+  "first_reset_wall_ms": 4324,
+  "exit_code": 0
+}

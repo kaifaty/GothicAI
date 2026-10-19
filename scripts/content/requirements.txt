@@ -1,0 +1,14 @@
+# Install in ~/gothic-ai/materials/.venv on dev-ubuntu only.
+# uv pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124
+# Then uv pip install -r requirements.txt; UV_CACHE_DIR and HF_HOME stay in materials/.
+diffusers==0.35.2
+transformers==4.57.1
+accelerate==1.11.0
+huggingface-hub==0.36.0
+safetensors==0.6.2
+numpy==2.2.6
+Pillow==12.0.0
+scipy==1.16.2
+sentencepiece==0.2.1
+protobuf==5.29.5
+bitsandbytes==0.48.1

@@ -7,6 +7,9 @@
 #include "lighting/purkinje_shift.glsl"
 #include "scene.glsl"
 #include "common.glsl"
+#if defined(MATERIAL_MAPS) && !defined(SURFEL_GI)
+#include "lighting/material_brdf.glsl"
+#endif
 
 layout(binding  = 0, std140) uniform UboScene {
   SceneDesc scene;
@@ -15,6 +18,10 @@ layout(binding  = 1) uniform texture2D  gbufDiffuse;
 layout(binding  = 2) uniform usampler2D gbufNormal;
 #if defined(MATERIAL_MAPS)
 layout(binding = 12) uniform texture2D gbufOrm;
+#if !defined(SURFEL_GI)
+layout(binding = 13) uniform sampler2D skyViewLut;
+layout(binding = 14) uniform texture2D gbufferDepth;
+#endif
 #endif
 #if defined(SURFEL_GI)
 layout(binding  = 3) uniform sampler2D  surfGi;
@@ -84,12 +91,39 @@ void main() {
   // const vec3  linear = vec3(1);
   const vec3  linear = textureAlbedo(diff);
   float ao = textureSsao();
-#if defined(MATERIAL_MAPS)
-  ao *= texelFetch(gbufOrm, fragCoord, 0).r;
-#endif
 
-  vec3 color = linear;
-  color *= luminance(norm);
+  vec3 color;
+#if defined(MATERIAL_MAPS) && !defined(SURFEL_GI)
+  const vec4 orm = texelFetch(gbufOrm, fragCoord, 0);
+  if(orm.a>0.5) {
+    // Map AO occludes only diffuse sky light. Screen-space visibility below
+    // remains shared with the old ambient path, including inside buildings.
+    const vec3 sky = skyIrradiance(norm);
+    const vec3 diffuseLight = scene.ambient + sky*0.8*orm.r +
+                              (norm.y*0.25+0.75) * NightAmbient * Fd_Lambert;
+    color = linear * diffuseLight * (1.0 - orm.b);
+
+    const float z = texelFetch(gbufferDepth, fragCoord, 0).r;
+    const vec4 pos = scene.viewProjectInv * vec4(uv*2.0 - 1.0, z, 1.0);
+    const vec3 view = normalize(scene.camPos - pos.xyz/pos.w);
+    const float noV = max(dot(norm, view), 0.0);
+    const vec3 reflection = reflect(-view, norm);
+    const vec3 sharpSky = textureSkyLUT(skyViewLut, vec3(0,RPlanet,0), reflection, scene.sunDir) * scene.GSunIntensity;
+    // The existing sky LUT has no roughness mips. Its diffuse convolution
+    // supplies the broad lobe without another pass; split-sum attenuates it.
+    const vec3 reflectedSky = mix(sharpSky, sky, orm.g*orm.g);
+    color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV);
+    } else
+#endif
+    {
+    color = linear;
+    color *= luminance(norm);
+#if defined(MATERIAL_MAPS) && defined(SURFEL_GI)
+    const vec4 orm = texelFetch(gbufOrm, fragCoord, 0);
+    if(orm.a>0.5)
+      color *= orm.r * (1.0 - orm.b);
+#endif
+    }
 #if defined(SURFEL_GI)
   //NOTE: pre-exposed already
   color *= ao;

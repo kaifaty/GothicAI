@@ -67,6 +67,7 @@ class DrawBuckets {
       BK_WATER = 0x8,
       BK_NORMAL = 0x10,
       BK_ORM    = 0x20,
+      BK_MATERIAL_MAPS = 0x40,
       };
 
     struct BucketGpu final {

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from .chronicle import Chronicle, Fact
 from .llm import Tool, ToolCall
+from .people_knowledge import rumor_subject
 from .protocol import Snapshot
 from .turn import ToolOutcome
 
@@ -63,7 +64,10 @@ class Trust:
 
     def of(self, npc: str) -> Record:
         npc = npc.upper()
-        facts = self.chronicle.facts()
+        facts = [
+            f for f in self.chronicle.facts()
+            if f.get("fact") != "rumor" or rumor_subject(f) == "PLAYER"
+        ]
         titles = _titles(facts)
         r = Record()
         amended = {

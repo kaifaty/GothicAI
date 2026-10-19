@@ -20,6 +20,7 @@ from .crime_memory import CrimeMemoryRuntime
 from .crime_react import CrimeReact, Role
 from .crimes import HERO, Crimes
 from .game import GameError, GameLink
+from .people_knowledge import rumor_subject
 from .protocol import (
     GameMessage,
     HoldVerdictCmd,
@@ -190,6 +191,8 @@ class CrimeMeet:
             self._wake.set()
 
     def _on_fact(self, fact: Fact) -> None:
+        if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+            return
         if fact.get("fact") in {
             "crime", "crime_seen", "rumor", "testimony", "crime_known", "forgiven", "silenced",
             "absolved", "died",

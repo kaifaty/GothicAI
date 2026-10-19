@@ -18,6 +18,7 @@ from .chronicle import Fact
 from .crime_law import CrimeLaw
 from .crimes import Crimes
 from .game import GameError, GameLink
+from .people_knowledge import rumor_subject
 from .protocol import GameMessage, Loading, Session
 
 log = logging.getLogger(__name__)
@@ -84,6 +85,8 @@ class CrimeMemoryRuntime:
             self._wake.set()
 
     def _on_fact(self, fact: Fact) -> None:
+        if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+            return
         if fact.get("fact") in {
             "crime", "crime_seen", "rumor", "testimony", "silenced", "forgiven", "absolved", "died"
         }:
@@ -134,7 +137,7 @@ class CrimeMemoryRuntime:
             for f in self.chronicle.facts()
             if f.get("fact") in {"crime_seen", "rumor", "testimony"}
             and (f.get("npc") or f.get("to"))
-            and (f.get("fact") != "rumor" or f.get("crime"))
+            and (f.get("fact") != "rumor" or (f.get("crime") and rumor_subject(f) == "PLAYER"))
         }
         for npc in sorted(recipients | self._projection.keys()):
             try:

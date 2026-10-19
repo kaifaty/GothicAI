@@ -116,6 +116,10 @@
 #       catch the hero; Vino's real sighting exposes her. Save/load keeps the cover and one exposed fact.
 #       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt runs only the one cover request to Hilda,
 #       logs her exact reply and proposal/refusal, then exits. Fear is checked by the server unit tests.
+#   cover_subject: the same native cover/exposure, then Lobart's cover rumor reaches an acquaintance
+#       shared with Hilda (prefer Vatras). Its model reads the people block and both witness warnings;
+#       hero trust is unchanged by the rumor. Save/load restores knowledge and the rumor once.
+#       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720.
 #   crime_director: deeds and story responses (docs/crime.md, layer 5), SAVE=save_slot_1.sav.
 #       LLM=fake: unseen chest theft and its return quest, Hilda's initiative and paid silence,
 #       Lobart's learned grievance and Amends payment. LLM=chatgpt: witnessed theft goes to the

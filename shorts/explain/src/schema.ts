@@ -7,7 +7,7 @@ const Text = z.object({
   text: z.string(),
   at: z.number().default(0),
   until: z.number().optional(),
-  y: z.number().default(260), // the top of the text, px
+  y: z.number().optional(), // top in frame pixels; defaults to 260 tall / 140 wide
   size: z.number().default(64),
   color: z.string().optional(),
 });
@@ -19,7 +19,7 @@ const TagLine = z.object({
   count: z.object({to: z.number(), dur: z.number().default(0.8)}).optional(), // a roll that runs and stops
 });
 
-// a label over a thing in the picture; x, y: where the thing is (px of the 1080x1920 frame), from the bench's data
+// a label over a thing in the picture; x, y: pixels of the selected frame, from the bench's data
 const Tag = z.object({
   x: z.number(),
   y: z.number(),
@@ -29,7 +29,7 @@ const Tag = z.object({
   side: z.enum(['center', 'right', 'left']).default('center'), // where the box opens from the pin
 });
 
-const Point = z.tuple([z.number(), z.number()]); // px of the 1080x1920 frame, from the bench's data
+const Point = z.tuple([z.number(), z.number()]); // pixels of the selected frame, from the bench's data
 
 // a line over the picture (a line of sight from the bench's `sight`): it draws itself from `from` toward `to`; with
 // `cut` it stops there (a wall in the way): solid up to it, `cutColor` and dashed past it from `cutAt`, a cross on it
@@ -98,8 +98,13 @@ const BarsCard = z.object({
   type: z.literal('bars'),
   title: z.string(),
   series: z.array(z.object({name: z.string(), color: z.string()})),
-  groups: z.array(z.object({label: z.string(), values: z.array(z.number()), at: z.number()})),
+  groups: z.array(z.object({
+    label: z.string(), values: z.array(z.number()), at: z.number(),
+    color: z.string().optional(), // overrides the series colour within this group
+    note: z.string().optional(), // small print below the group label
+  })),
   max: z.number(),
+  log: z.boolean().default(false), // logarithmic height; zero stays on the baseline
   format: z.string().default('×{v}'), // how a value is written over its bar
   decimal: z.string().default(','),
   source: z.string(),
@@ -125,7 +130,62 @@ const StatsCard = z.object({
   question: z.object({text: z.string(), at: z.number()}),
 });
 
-const Chart = z.discriminatedUnion('type', [DiceChart, FormulaCard, BarsCard, DotsCard, StatsCard]);
+const NumberValue = z.number().finite();
+const At = NumberValue.nonnegative();
+const Axis = z.object({
+  min: NumberValue,
+  max: NumberValue,
+  ticks: z.array(NumberValue).min(1),
+  label: z.string(),
+});
+
+const LineCard = z.object({
+  type: z.literal('line'),
+  title: z.string(),
+  axisX: Axis,
+  axisY: Axis,
+  series: z.array(z.object({
+    name: z.string(), color: z.string(),
+    points: z.array(z.tuple([NumberValue, NumberValue])).min(2),
+    draw: z.tuple([At, NumberValue.positive()]), // [at, duration], revealed from left to right
+  })).min(1),
+  marks: z.array(z.object({x: NumberValue, text: z.string(), at: At})).default([]),
+  labels: z.array(z.object({x: NumberValue, y: NumberValue, text: z.string(), at: At})).default([]),
+  source: z.string(),
+});
+
+const BigCard = z.object({
+  type: z.literal('big'),
+  title: z.string().optional(),
+  items: z.array(z.object({
+    value: z.union([z.string(), NumberValue]), label: z.string(), at: At, color: z.string().optional(),
+    count: z.object({
+      from: NumberValue, to: NumberValue, dur: NumberValue.positive(),
+      format: z.string().regex(/\{v(?::[1-6])?\}/, 'format должен содержать {v} или {v:1}…{v:6}'),
+    }).optional(),
+  })).min(1).max(3),
+  source: z.string(),
+});
+
+const TableCard = z.object({
+  type: z.literal('table'),
+  title: z.string().optional(),
+  columns: z.array(z.string()).min(1),
+  rows: z.array(z.object({cells: z.array(z.union([z.string(), NumberValue])), at: At})).min(1),
+  highlight: z.number().int().nonnegative().optional(), // zero-based column index
+  source: z.string(),
+});
+
+const CellsCard = z.object({
+  type: z.literal('cells'),
+  title: z.string().optional(),
+  cells: z.array(z.object({label: z.string(), state: z.enum(['fail', 'pass', 'skip']), at: At})).min(1),
+  spans: z.array(z.object({from: z.number().int().nonnegative(), to: z.number().int().nonnegative(), text: z.string()})).default([]),
+  notes: z.array(z.object({text: z.string(), at: At, color: z.string().optional()})).default([]),
+  source: z.string(),
+});
+
+const Chart = z.discriminatedUnion('type', [DiceChart, FormulaCard, BarsCard, DotsCard, StatsCard, LineCard, BigCard, TableCard, CellsCard]);
 
 const Beat = z.object({
   id: z.string(),
@@ -133,9 +193,9 @@ const Beat = z.object({
   dur: z.number().positive(),
   src: z.string().optional(), // footage mp4 or a still png in the workspace (the public dir)
   from: z.number().default(0), // where the footage starts
-  srcBottom: z.string().optional(), // split: the lower half
+  srcBottom: z.string().optional(), // split: bottom in tall, right in wide
   fromBottom: z.number().default(0),
-  labels: z.tuple([z.string(), z.string()]).optional(), // split: top, bottom
+  labels: z.tuple([z.string(), z.string()]).optional(), // split: top/bottom in tall, left/right in wide
   labelColors: z.tuple([z.string(), z.string()]).optional(), // default: the old rule's grey, the new one's gold
   freeze: z.number().optional(), // footage stops here (seconds into the beat)
   zoom: z.object({at: z.number(), dur: z.number(), scale: z.number(), x: z.number(), y: z.number()}).optional(),
@@ -150,6 +210,7 @@ const Beat = z.object({
 const Word = z.object({text: z.string(), start: z.number(), end: z.number()});
 
 export const Plan = z.object({
+  format: z.enum(['tall', 'wide']).default('tall'),
   stem: z.enum(['voice', 'game', 'music']).optional(), // uncalibrated sources for publication through gothic_shorts.levels
   brand: z.boolean().default(true),
   brandVolume: z.number().nonnegative().default(0.355), // draft mix only; levels sets the published sting level
@@ -170,6 +231,44 @@ export const Plan = z.object({
       fadeOut: z.number().default(1.5),
     })
     .optional(),
+}).superRefine((plan, ctx) => {
+  plan.beats.forEach((beat, bi) => {
+    const chart = beat.chart;
+    if (!chart) return;
+    const issue = (path: (string | number)[], message: string) =>
+      ctx.addIssue({code: z.ZodIssueCode.custom, path: ['beats', bi, 'chart', ...path], message});
+    if (['line', 'big', 'table', 'cells'].includes(chart.type) && plan.format !== 'wide') {
+      issue(['type'], `${chart.type}: только wide`);
+    }
+    if (chart.type === 'line') {
+      for (const axis of ['axisX', 'axisY'] as const) {
+        const a = chart[axis];
+        if (a.max <= a.min) issue([axis, 'max'], 'max должен быть больше min');
+        a.ticks.forEach((v, i) => {
+          if (v < a.min || v > a.max) issue([axis, 'ticks', i], 'деление вне диапазона оси');
+        });
+      }
+      chart.series.forEach((s, si) => s.points.forEach(([x, y], pi) => {
+        if (pi > 0 && x <= s.points[pi - 1][0]) issue(['series', si, 'points', pi, 0], 'x должны строго возрастать');
+        if (x < chart.axisX.min || x > chart.axisX.max) issue(['series', si, 'points', pi, 0], 'точка вне диапазона X');
+        if (y < chart.axisY.min || y > chart.axisY.max) issue(['series', si, 'points', pi, 1], 'точка вне диапазона Y');
+      }));
+    } else if (chart.type === 'table') {
+      if (chart.highlight !== undefined && chart.highlight >= chart.columns.length) issue(['highlight'], 'индекс вне columns');
+      chart.rows.forEach((row, i) => {
+        if (row.cells.length !== chart.columns.length) issue(['rows', i, 'cells'], 'число ячеек должно совпадать с columns');
+      });
+    } else if (chart.type === 'cells') {
+      chart.spans.forEach((span, i) => {
+        if (span.to < span.from || span.to >= chart.cells.length) issue(['spans', i, 'to'], 'диапазон вне cells: from ≤ to < cells.length');
+      });
+    } else if (chart.type === 'bars' && chart.log) {
+      if (!Number.isFinite(chart.max) || chart.max <= 0) issue(['max'], 'для log нужен max > 0');
+      chart.groups.forEach((g, gi) => g.values.forEach((v, vi) => {
+        if (!Number.isFinite(v) || v < 0 || v > chart.max) issue(['groups', gi, 'values', vi], 'для log нужно 0 ≤ value ≤ max');
+      }));
+    }
+  });
 });
 
 export type Plan = z.infer<typeof Plan>;
@@ -179,6 +278,10 @@ export type FormulaCard = z.infer<typeof FormulaCard>;
 export type BarsCard = z.infer<typeof BarsCard>;
 export type DotsCard = z.infer<typeof DotsCard>;
 export type StatsCard = z.infer<typeof StatsCard>;
+export type LineCard = z.infer<typeof LineCard>;
+export type BigCard = z.infer<typeof BigCard>;
+export type TableCard = z.infer<typeof TableCard>;
+export type CellsCard = z.infer<typeof CellsCard>;
 export type TagT = z.infer<typeof Tag>;
 export type StrokeT = z.infer<typeof Stroke>;
 export type FanT = z.infer<typeof Fan>;

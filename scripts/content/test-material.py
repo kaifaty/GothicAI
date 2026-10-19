@@ -7,6 +7,7 @@
 
 The defaults replace the pavement beside the lamp in rf.bench's city view and
 one city stone wall. --textures accepts other original Gothic texture names.
+Roughness sweeps from polished to matte, with a warm metallic band between them.
 Albedo is optional: without --albedo the original Gothic colour is retained.
 For separate normal/AO comparisons generate otherwise identical directories
 with --flat-normal or --no-ao. Removing the directory, or OPENGOTHIC_CONTENT=,
@@ -55,8 +56,13 @@ def tile(size: int, strength: float) -> tuple[np.ndarray, np.ndarray, np.ndarray
     tone = 0.67 + 0.035 * grain
     albedo = np.stack((tone * 0.96, tone * 0.90, tone * 0.80), axis=2)
     ao = 0.22 + 0.78 * smoothstep((edge - 0.025) / 0.19)
-    roughness = 0.78 + 0.20 * (1 - np.clip(height, 0, 1))
-    orm = np.stack((ao, roughness, np.zeros_like(ao)), axis=2)
+    # Both ends of the UV tile are matte; its centre is polished. The broad
+    # sweep survives mipmaps and gives sun, lamp and sky reflections room.
+    matte = smoothstep((0.5 + 0.5 * np.cos(2 * np.pi * u) - 0.2) / 0.6)
+    roughness = 0.10 + 0.88 * matte
+    metal = smoothstep((0.07 - np.abs(u - 0.375)) / 0.012)
+    albedo = albedo * (1 - metal[:, :, None]) + np.array((0.83, 0.59, 0.28)) * metal[:, :, None]
+    orm = np.stack((ao, roughness, metal), axis=2)
     return albedo, normal, orm
 
 

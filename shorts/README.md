@@ -5,6 +5,9 @@ scene with the hero's lines, the hero says them with a TTS voice through the tal
 through speech recognition and answer with the language model, the test bench films it with the game's
 effects and separate AI npc voices, and the cut makes a 1080x1920 short with subtitles.
 
+The [explainer renderer](explain/README.md) also makes long 1920×1080 videos: set `format: "wide"` in its
+JSON plan and publish with `gothic-shorts explain`. Omitted `format` keeps the vertical 1080×1920 layout.
+
 Game music is not recorded: `film` always writes `musicVolume=0` in the take's `Gothic.ini`, including
 for old shots with a nonzero `music` value, and `worldSounds=0`: the map's looping place sounds
 (zCVobSound: wind and birds, surf, torches) would be a second tune under the bed. The cut adds one music bed for the whole short, starting

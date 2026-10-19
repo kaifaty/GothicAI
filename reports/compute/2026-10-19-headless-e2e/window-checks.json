@@ -1,0 +1,23 @@
+{
+  "run": "20261019T052353Z-24716",
+  "pid": 3452641,
+  "source": "read-only xwininfo and xprop on Ryzen",
+  "observations": [
+    {
+      "time_msk": "2026-10-19T08:28:16+03:00",
+      "client_id": "0x2400004",
+      "width": 640,
+      "height": 360,
+      "x": 100,
+      "y": 137
+    },
+    {
+      "time_msk": "2026-10-19T08:28:25+03:00",
+      "client_id": "0x2400004",
+      "wm_state": "Normal",
+      "net_wm_state": "FOCUSED",
+      "desktop": 0,
+      "net_active_window": "0x2400004"
+    }
+  ]
+}

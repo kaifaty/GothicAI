@@ -25,6 +25,7 @@ from .conversation import group_scenario as group_scenario
 from .conversation import interject_scenario as interject_scenario
 from .conversation import write_cards as write_cards
 from .cover import cover_scenario as cover_scenario
+from .cover import cover_subject_scenario as cover_subject_scenario
 from .crime_meet import crime_meet as crime_meet
 from .crime_react import crime_react as crime_react
 from .deals import contract as contract

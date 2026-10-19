@@ -1403,48 +1403,96 @@ async def _companion_attack_words(
     snap = await link.snapshot(npc, fresh=True)
     if snap.player is None:
         return {**results, "wolf_ready": "failed (no hero in Cavalorn's snapshot)"}
-    toward = (snap.player.pos[0] - snap.npc.pos[0], snap.player.pos[2] - snap.npc.pos[2])
-    toward_len = math.hypot(*toward) or 1
-    dx, dz = toward[0] / toward_len, toward[1] / toward_len
-    hp = snap.player.hp if snap.player is not None else None
-    talk.hear("Кавалорн, отступай!", None, {"via": "scenario"})
-    await _until(lambda: getattr(talk.orders.standing.get(npc), "kind", "") == "retreat", 5)
-    await link.act(npc, "turn_to", npc="PLAYER")
-    before = set(beasts.wolves)
-    await link.story_spawn("WOLF", tag="companion_attack_words", near=npc, distance=1400)
-    ready = await _until(
-        lambda: any(w.id not in before and w.state == "threaten" for w in beasts.wolves.values()), 15
-    )
-    wolf_id = next((w.id for w in beasts.wolves.values() if w.id not in before), "")
-    check("wolf_ready", ready, f"{wolf_id} spawned 14 m from Cavalorn, before its first attack")
-    if not ready:
-        return results
-
-    # The wolf has growled, as this check requires. Now keep the hero away from
-    # both the attacker's reach and Cavalorn's projectile lane before giving the order.
     await link.act(npc, "stop")
     origin = (await link.snapshot(npc, fresh=True)).npc.pos
-    await link.debug(
-        "player_goto", pos=[origin[0] - 400 * dx - 500 * dz, origin[1], origin[2] - 400 * dz + 500 * dx]
-    )
-    await link.act(npc, "turn_to", npc="WOLF")
-    views = await link.npc_view([npc])
-    wolf = next(
-        (other for view in views for other in view.sees
-         if other.id == "WOLF" and other.kind == "monster" and other.body != "dead"),
-        None,
-    )
-    response = await link._request(
-        DebugCmd(req=link._next_id("r"), cmd="npc_los", npc=npc, to="WOLF"), 5,
-    )
-    ray = response.value or {}
-    automatic = npc in talk.orders.fights
-    log.info("orders Cavalorn attack preparation: wolf=%s native_ray=%s automatic=%s", wolf, ray, automatic)
-    if (
-        wolf is None or wolf.distance <= 1000 or wolf.hero_cm is None or wolf.hero_cm <= 1500
-        or not (ray.get("center_clear") or ray.get("head_clear")) or automatic
-    ):
-        raise GameError(f"orders Cavalorn attack preparation: wolf={wolf}; ray={ray}; automatic={automatic}")
+    # Native waypoints provide ground support and preserve the tagged death used below.
+    # debug spawn checks support too, but story_tag("WOLF") would tag an older instance.
+    lanes: dict[int, tuple[float, dict[str, Any]]] = {}
+    for point in await link.waypoints():
+        dx, dz = point["x"] - origin[0], point["z"] - origin[2]
+        distance = math.hypot(dx, dz)
+        if point["fp"] or not 1300 <= distance <= 1600 or abs(point["y"] - origin[1]) > 100:
+            continue
+        lane = round(math.atan2(dz, dx) / (math.pi / 4)) % 8
+        score = abs(distance - 1400)
+        if lane not in lanes or score < lanes[lane][0]:
+            lanes[lane] = (score, point)
+    wolf, ray, wolf_id = None, {}, ""
+    hp = snap.player.hp
+    for lane, (_, point) in sorted(lanes.items()):
+        dx, dz = point["x"] - origin[0], point["z"] - origin[2]
+        distance = math.hypot(dx, dz)
+        dx, dz = dx / distance, dz / distance
+        await link.debug(
+            "player_goto", pos=[origin[0] + 500 * dx, origin[1], origin[2] + 500 * dz],
+        )
+        # Refresh retreat on every attempt; its automatic-defence suppression expires.
+        standing = talk.orders.standing.get(npc)
+        talk.hear("Кавалорн, отступай!", None, {"via": "scenario"})
+        if not await _until(
+            lambda standing=standing: talk.orders.standing.get(npc) is not standing
+            and getattr(talk.orders.standing.get(npc), "kind", "") == "retreat", 5,
+        ):
+            raise GameError("orders Cavalorn attack preparation: cannot retreat")
+        if not await _until_async(
+            lambda: link.snapshot(npc, fresh=True), lambda snap: snap.npc.following, 5,
+        ):
+            raise GameError("orders Cavalorn attack preparation: retreat did not start following")
+        await link.act(npc, "stop")
+        await link.act(npc, "turn_to", npc="PLAYER")
+        await asyncio.sleep(1)  # let the beast roster catch up with the hero's new position
+        before = set(beasts.wolves)
+        await link.story_spawn("WOLF", tag="companion_attack_words", waypoint=point["name"])
+        await _until(
+            lambda before=before: any(w.id not in before and w.id.startswith("WOLF#")
+                                     and w.distance < 1300 for w in beasts.wolves.values()), 5,
+        )
+        wolf_id = next(
+            (w.id for w in beasts.wolves.values()
+             if w.id not in before and w.id.startswith("WOLF#") and w.distance < 1300), "",
+        )
+        ready = await _until(
+            lambda wolf_id=wolf_id: wolf_id in beasts.wolves
+            and beasts.wolves[wolf_id].state == "threaten", 15,
+        )
+        # Only a fresh wolf that has growled may reach the actual attack checks.
+        await link.debug(
+            "player_goto",
+            pos=[origin[0] - 400 * dx - 500 * dz, origin[1], origin[2] - 400 * dz + 500 * dx],
+        )
+        await link.act(npc, "turn_to", npc="WOLF")
+        await asyncio.sleep(1)
+        views = await link.npc_view([npc])
+        wolf = next(
+            (other for view in views for other in view.sees
+             if other.id == "WOLF" and other.kind == "monster" and other.body != "dead"),
+            None,
+        )
+        response = await link._request(
+            DebugCmd(req=link._next_id("r"), cmd="npc_los", npc=npc, to="WOLF"), 5,
+        )
+        ray = response.value or {}
+        automatic = npc in talk.orders.fights
+        snap = await link.snapshot(npc, fresh=True)
+        log.info(
+            "orders Cavalorn attack preparation lane=%d waypoint=%s wolf_id=%s wolf_spawn_pos=%s "
+            "Cavalorn_pos=%s ready=%s wolf=%s native_ray=%s automatic=%s",
+            lane, point["name"], wolf_id, [point["x"], point["y"], point["z"]],
+            snap.npc.pos, ready, wolf, ray, automatic,
+        )
+        if automatic:
+            raise GameError("orders Cavalorn attack preparation: automatic defence before the order")
+        if (
+            ready and wolf is not None and wolf.distance > 1000
+            and wolf.hero_cm is not None and wolf.hero_cm > 1500
+            and (ray.get("center_clear") or ray.get("head_clear"))
+        ):
+            check("wolf_ready", True, f"{wolf_id} spawned at {point['name']}, before its first attack")
+            break
+        await link.debug("kill", instance="WOLF", near=npc, by="PLAYER")
+        await _until(lambda wolf_id=wolf_id: wolf_id not in beasts.wolves, 5)
+    else:
+        raise GameError(f"orders Cavalorn attack preparation: no clear lane; wolf={wolf}; ray={ray}")
 
     actions: list[tuple[float, str, str]] = []  # dispatch time, target, wolf state at dispatch
     finished: list[str] = []

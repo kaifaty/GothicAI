@@ -7,6 +7,30 @@ const uint REUSE_BIT  = 0x4;
 const uint BAD_BIT    = 0x8;
 const uint NEW_BIT    = 0x10; //for debug view
 
+#if defined(MATERIAL_MAPS)
+uint probePackSkyVisibility(uint bits, vec3 negativeVisibility, vec3 positiveVisibility) {
+  // The low byte belongs to the existing probe lifecycle flags. Six 4-bit
+  // coefficients share its upper bytes without changing the probe layout.
+  uint ret = bits & 0xFFu;
+  for(int axis=0; axis<3; ++axis) {
+    const uint negative = uint(clamp(negativeVisibility[axis], 0.0, 1.0)*15.0 + 0.5);
+    const uint positive = uint(clamp(positiveVisibility[axis], 0.0, 1.0)*15.0 + 0.5);
+    ret |= negative << (8u + 8u*uint(axis));
+    ret |= positive << (12u + 8u*uint(axis));
+    }
+  return ret;
+  }
+
+float probeReadSkyVisibility(uint bits, vec3 norm) {
+  float ret = 0.0;
+  for(int axis=0; axis<3; ++axis) {
+    const uint shift = 8u + 8u*uint(axis) + (norm[axis]>=0.0 ? 4u : 0u);
+    ret += float((bits >> shift) & 0xFu) * (1.0/15.0) * norm[axis]*norm[axis];
+    }
+  return ret;
+  }
+#endif
+
 struct ProbesHeader { // 64 bytes
   uint count;
   uint iterator;

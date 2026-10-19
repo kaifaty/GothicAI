@@ -36,6 +36,7 @@ from .game import GameError, GameLink
 from .gamedata.storygraph import Node, StoryGraph
 from .journal import Journal
 from .llm import LLMBackend, LLMError, Message, Tool, ToolCall, open_ahead
+from .people_knowledge import rumor_subject
 from .protocol import DialogChosen, GameMessage, Loading, Session, Snapshot
 from .story import StoryPatches
 from .turn import ToolOutcome
@@ -347,6 +348,8 @@ class Amends:
     # --- watching -----------------------------------------------------------------------------
 
     def _on_fact(self, f: Fact) -> None:
+        if f.get("fact") == "rumor" and rumor_subject(f) != "PLAYER":
+            return
         match f.get("fact"):
             case "found_out" | "caught":
                 lie = Lie(

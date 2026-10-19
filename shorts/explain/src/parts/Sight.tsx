@@ -1,7 +1,6 @@
 import React from 'react';
 import {AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {FanT, StrokeT} from '../schema';
-import {H, W} from '../theme';
 import {shown} from './anim';
 
 const grow = (t: number, at: number, dur: number) =>
@@ -98,13 +97,14 @@ const FanView: React.FC<{f: FanT; t: number}> = ({f, t}) => {
 
 // lines of sight and the focus fan over the picture, from the bench's `sight` export
 export const Sight: React.FC<{strokes: StrokeT[]; fans: FanT[]}> = ({strokes, fans}) => {
-  const t = useCurrentFrame() / useVideoConfig().fps;
+  const {fps, width, height} = useVideoConfig();
+  const t = useCurrentFrame() / fps;
   if (strokes.length === 0 && fans.length === 0) {
     return null;
   }
   return (
     <AbsoluteFill>
-      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
         {fans.map((f, i) => (
           <FanView key={`f${i}`} f={f} t={t} />
         ))}

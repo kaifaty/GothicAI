@@ -1,0 +1,92 @@
+{"run": "baseline-1", "log": "runner.log", "mono_s": 263994.655666369, "line": "headless_measure_loaded"}
+{"run": "20261019T044436Z-22170", "log": "game.log", "mono_s": 264405.89568104, "line": "[ai] bridge started, server: ws://loopback"}
+{"run": "20261019T044436Z-22170", "log": "server.log", "mono_s": 264408.194282873, "line": "08:09:37 I gothic_ai.game: game connected from ('127.0.0.1', 51140)"}
+{"run": "20261019T044436Z-22170", "log": "game.log", "mono_s": 264410.304263907, "line": "[ai] session BRANCH (load from BRANCH@0)"}
+{"run": "20261019T044436Z-22170", "log": "game.log", "mono_s": 264410.354642001, "line": "[ai] connected to ws://loopback"}
+{"run": "20261019T044436Z-22170", "log": "game.log", "mono_s": 264414.59706764, "line": "[ai] session BRANCH (load from BRANCH@16)"}
+{"run": "20261019T044436Z-22170", "log": "game.log", "mono_s": 264416.075571037, "line": "[app-cadence] mean_fps=71.59 frames=716 elapsed_s=10.001"}
+{"run": "20261019T044436Z-22170", "log": "server.log", "mono_s": 264418.906472382, "line": "08:09:47 I gothic_ai: scenario stages: 7 checks, 0 failed"}
+{"run": "20261019T050953Z-49250", "log": "server.log", "mono_s": 264477.429300767, "line": "08:10:46 I gothic_ai.game: game connected from ('127.0.0.1', 49002)"}
+{"run": "20261019T050953Z-49250", "log": "game.log", "mono_s": 264477.429379616, "line": "[ai] bridge started, server: ws://loopback"}
+{"run": "20261019T050953Z-49250", "log": "game.log", "mono_s": 264481.772494044, "line": "[ai] session BRANCH (load from BRANCH@0)"}
+{"run": "20261019T050953Z-49250", "log": "game.log", "mono_s": 264481.822907464, "line": "[ai] connected to ws://loopback"}
+{"run": "20261019T050953Z-49250", "log": "game.log", "mono_s": 264486.188302116, "line": "[ai] session BRANCH (load from BRANCH@16)"}
+{"run": "20261019T050953Z-49250", "log": "game.log", "mono_s": 264487.56895005, "line": "[app-cadence] mean_fps=71.46 frames=715 elapsed_s=10.005"}
+{"run": "20261019T050953Z-49250", "log": "server.log", "mono_s": 264490.74894684, "line": "08:10:59 I gothic_ai: scenario stages: 7 checks, 0 failed"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265148.648060482, "line": "[ai] bridge started, server: ws://loopback"}
+{"run": "20261019T051106Z-53629", "log": "server.log", "mono_s": 265148.648199083, "line": "08:21:57 I gothic_ai.game: game connected from ('127.0.0.1', 44782)"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265152.997809559, "line": "[ai] session BRANCH (load from BRANCH@0)"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265153.048195254, "line": "[ai] connected to ws://loopback"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265158.845289943, "line": "[app-cadence] mean_fps=56.72 frames=568 elapsed_s=10.015"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265159.096846956, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265164.63986287, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265168.838233836, "line": "[app-cadence] mean_fps=67.83 frames=679 elapsed_s=10.010"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265169.039771225, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265173.237610089, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265177.389650801, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265178.869349962, "line": "[app-cadence] mean_fps=70.41 frames=705 elapsed_s=10.013"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265180.984818596, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265188.954470432, "line": "[app-cadence] mean_fps=19.49 frames=197 elapsed_s=10.108"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265199.076155454, "line": "[app-cadence] mean_fps=0.99 frames=10 elapsed_s=10.118"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265209.34790352, "line": "[app-cadence] mean_fps=0.97 frames=10 elapsed_s=10.281"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265210.370495397, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265219.893364534, "line": "[app-cadence] mean_fps=0.95 frames=10 elapsed_s=10.548"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265230.004438875, "line": "[app-cadence] mean_fps=0.99 frames=10 elapsed_s=10.121"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265240.133598831, "line": "[app-cadence] mean_fps=0.99 frames=10 elapsed_s=10.119"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265250.46266813, "line": "[app-cadence] mean_fps=0.97 frames=10 elapsed_s=10.339"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265252.507223992, "line": "[ai] session BRANCH (load from BRANCH@10)"}
+{"run": "20261019T051106Z-53629", "log": "game.log", "mono_s": 265258.189175402, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T051106Z-53629", "log": "server.log", "mono_s": 265258.708246586, "line": "08:23:47 I gothic_ai: scenario crimes: 28 checks, 0 failed"}
+{"run": "20261019T052353Z-24716", "log": "server.log", "mono_s": 265497.950390366, "line": "08:27:46 I gothic_ai.game: game connected from ('127.0.0.1', 53484)"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265497.950499392, "line": "[ai] bridge started, server: ws://loopback"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265502.246493956, "line": "[ai] session BRANCH (load from BRANCH@0)"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265502.347256429, "line": "[ai] connected to ws://loopback"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265508.094756854, "line": "[app-cadence] mean_fps=56.63 frames=567 elapsed_s=10.013"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265508.397023133, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265513.947074643, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265518.093379218, "line": "[app-cadence] mean_fps=67.96 frames=680 elapsed_s=10.005"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265518.244516084, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265522.546529649, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265526.699966823, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265528.147741814, "line": "[app-cadence] mean_fps=70.53 frames=706 elapsed_s=10.010"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265530.246176392, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265535.00738259, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265538.139550368, "line": "[app-cadence] mean_fps=78.63 frames=787 elapsed_s=10.009"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265540.390120735, "line": "[ai] session BRANCH (load from BRANCH@7)"}
+{"run": "20261019T052353Z-24716", "log": "game.log", "mono_s": 265543.58192102, "line": "[ai] session BRANCH (load from BRANCH@2)"}
+{"run": "20261019T052353Z-24716", "log": "server.log", "mono_s": 265544.237331358, "line": "08:28:33 I gothic_ai: scenario crimes: 28 checks, 0 failed"}
+{"run": "20261019T052840Z-68378", "log": "server.log", "mono_s": 266886.131724048, "line": "08:50:55 I gothic_ai.game: game connected from ('127.0.0.1', 54722)"}
+{"run": "20261019T052840Z-68378", "log": "game.log", "mono_s": 266886.131826921, "line": "[ai] bridge started, server: ws://loopback"}
+{"run": "20261019T052840Z-68378", "log": "game.log", "mono_s": 266891.568398541, "line": "[ai] session BRANCH (new_game)"}
+{"run": "20261019T052840Z-68378", "log": "game.log", "mono_s": 266891.619015325, "line": "[ai] connected to ws://loopback"}
+{"run": "20261019T052840Z-68378", "log": "game.log", "mono_s": 266896.296990259, "line": "[app-cadence] mean_fps=78.28 frames=783 elapsed_s=10.002"}
+{"run": "20261019T052840Z-68378", "log": "game.log", "mono_s": 266906.305236756, "line": "[app-cadence] mean_fps=122.97 frames=1230 elapsed_s=10.003"}
+{"run": "20261019T052840Z-68378", "log": "server.log", "mono_s": 266912.639088531, "line": "08:51:21 I gothic_ai: scenario fight_reactions_bandits: 6 checks, 1 failed"}
+{"run": "20261019T055128Z-64408", "log": "game.log", "mono_s": 267150.217841586, "line": "[ai] bridge started, server: ws://loopback"}
+{"run": "20261019T055128Z-64408", "log": "server.log", "mono_s": 267150.217931245, "line": "08:55:19 I gothic_ai.game: game connected from ('127.0.0.1', 35364)"}
+{"run": "20261019T055128Z-64408", "log": "game.log", "mono_s": 267155.617198737, "line": "[ai] session BRANCH (new_game)"}
+{"run": "20261019T055128Z-64408", "log": "game.log", "mono_s": 267155.667689515, "line": "[ai] connected to ws://loopback"}
+{"run": "20261019T055128Z-64408", "log": "game.log", "mono_s": 267160.419591589, "line": "[app-cadence] mean_fps=77.95 frames=780 elapsed_s=10.006"}
+{"run": "20261019T055128Z-64408", "log": "game.log", "mono_s": 267170.400278592, "line": "[app-cadence] mean_fps=127.02 frames=1271 elapsed_s=10.006"}
+{"run": "20261019T055128Z-64408", "log": "server.log", "mono_s": 267176.710876818, "line": "08:55:45 I gothic_ai: scenario fight_reactions_bandits: 6 checks, 1 failed"}
+{"run": "20261019T061801Z-11553", "log": "game.log", "mono_s": 268819.236125958, "line": "[ai] bridge started, server: ws://loopback"}
+{"run": "20261019T061801Z-11553", "log": "server.log", "mono_s": 268819.236218602, "line": "09:23:08 I gothic_ai.game: game connected from ('127.0.0.1', 51730)"}
+{"run": "20261019T061801Z-11553", "log": "game.log", "mono_s": 268823.585896775, "line": "[ai] session BRANCH (load from BRANCH@0)"}
+{"run": "20261019T061801Z-11553", "log": "game.log", "mono_s": 268823.686643629, "line": "[ai] connected to ws://loopback"}
+{"run": "20261019T061801Z-11553", "log": "game.log", "mono_s": 268828.040887381, "line": "[ai] session BRANCH (load from BRANCH@16)"}
+{"run": "20261019T061801Z-11553", "log": "game.log", "mono_s": 268829.437201649, "line": "[app-cadence] mean_fps=68.08 frames=681 elapsed_s=10.003"}
+{"run": "20261019T061801Z-11553", "log": "server.log", "mono_s": 268832.62172752, "line": "09:23:21 I gothic_ai: scenario stages: 7 checks, 0 failed"}
+{"run": "20261019T062329Z-19152", "log": "server.log", "mono_s": 268990.000166121, "line": "09:25:58 I gothic_ai.game: game connected from ('127.0.0.1', 60954)"}
+{"run": "20261019T062329Z-19152", "log": "game.log", "mono_s": 268990.000373802, "line": "[ai] bridge started, server: ws://loopback"}
+{"run": "20261019T062329Z-19152", "log": "game.log", "mono_s": 268994.766990842, "line": "[ai] session BRANCH (load from BRANCH@0)"}
+{"run": "20261019T062329Z-19152", "log": "game.log", "mono_s": 268994.817446388, "line": "[ai] connected to ws://loopback"}
+{"run": "20261019T062329Z-19152", "log": "game.log", "mono_s": 268999.222729668, "line": "[ai] session BRANCH (load from BRANCH@18)"}
+{"run": "20261019T062329Z-19152", "log": "game.log", "mono_s": 269000.197650476, "line": "[app-cadence] mean_fps=66.70 frames=667 elapsed_s=10.000"}
+{"run": "20261019T062329Z-19152", "log": "server.log", "mono_s": 269003.811642183, "line": "09:26:12 I gothic_ai: scenario stages: 7 checks, 0 failed"}
+{"run": "20261019T062621Z-24198", "log": "server.log", "mono_s": 269609.590487673, "line": "09:36:18 I gothic_ai.game: game connected from ('127.0.0.1', 53630)"}
+{"run": "20261019T062621Z-24198", "log": "game.log", "mono_s": 269609.590580428, "line": "[ai] bridge started, server: ws://loopback"}
+{"run": "20261019T062621Z-24198", "log": "game.log", "mono_s": 269614.253405307, "line": "[ai] session BRANCH (load from BRANCH@0)"}
+{"run": "20261019T062621Z-24198", "log": "game.log", "mono_s": 269614.303897132, "line": "[ai] connected to ws://loopback"}
+{"run": "20261019T062621Z-24198", "log": "game.log", "mono_s": 269619.226059634, "line": "[ai] session BRANCH (load from BRANCH@16)"}
+{"run": "20261019T062621Z-24198", "log": "game.log", "mono_s": 269619.746633026, "line": "[app-cadence] mean_fps=26.59 frames=266 elapsed_s=10.003"}
+{"run": "20261019T062621Z-24198", "log": "server.log", "mono_s": 269624.152064615, "line": "09:36:33 I gothic_ai: scenario stages: 7 checks, 0 failed"}

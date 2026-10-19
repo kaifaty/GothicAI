@@ -18,6 +18,7 @@ from .authoring import Brief as AuthorBrief
 from .casting import KINDS, Casting
 from .game import GameError
 from .llm import LLMBackend, LLMError, Message, Tool, ToolCall, open_ahead
+from .people_knowledge import rumor_subject
 from .places import Place
 from .protocol import NpcSpec
 
@@ -352,6 +353,8 @@ class ChainAuthor:
         if victim:
             candidates.add(victim)
         for fact in self.chronicle.facts():
+            if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+                continue
             if fact.get("crime") == crime or crime in self.crimes.testimony_crimes(fact):
                 candidates.update(npc for key in ("npc", "to") if (npc := fact.get(key)))
         for npc in sorted(candidates):

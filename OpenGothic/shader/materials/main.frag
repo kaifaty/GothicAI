@@ -213,6 +213,9 @@ void mainGBuffer(vec4 t) {
 #if defined(MATERIAL_MAPS)
   outOrm = vec4(1,1,0,0);
 #if (MESH_TYPE!=T_PFX)
+  // The record bit distinguishes own materials even if their ORM equals the
+  // defaults, or if the record only replaces albedo. Legacy pixels stay zero.
+  outOrm.a = (bucket[bucketId].flags & BK_MATERIAL_MAPS)!=0 ? 1.0 : 0.0;
   const vec2 uv = shInp.uv * bucket[bucketId].uvScale;
   // Derivatives must precede nonuniform material branches and alpha discard.
   vec3 dpdx = dFdx(shInp.pos), dpdy = dFdy(shInp.pos);

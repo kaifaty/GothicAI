@@ -10,6 +10,9 @@
 #include "lighting/purkinje_shift.glsl"
 #include "scene.glsl"
 #include "common.glsl"
+#if defined(MATERIAL_MAPS)
+#include "lighting/material_brdf.glsl"
+#endif
 
 layout(location = 0) out vec4 outColor;
 
@@ -155,7 +158,12 @@ void main(void) {
   const vec3 illuminance = scene.sunColor * light;
   vec3 luminance = linear * illuminance * Fd_Lambert;
 #if defined(MATERIAL_MAPS)
-  luminance *= texelFetch(gbufOrm, fragCoord, 0).r;
+  const vec4 orm = texelFetch(gbufOrm, fragCoord, 0);
+  if(orm.a>0.5 && light>0.0) {
+    const vec4 pos = worldPos(d);
+    const vec3 view = normalize(scene.camPos - pos.xyz/pos.w);
+    luminance = materialBrdf(linear, normal, view, scene.sunDir, orm.rgb) * illuminance;
+    }
 #endif
 
   outColor = vec4(luminance * scene.exposure, 0.0);

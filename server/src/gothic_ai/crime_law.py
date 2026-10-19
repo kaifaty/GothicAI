@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from .chronicle import Fact
 from .crimes import COMMUNITIES, Crimes
+from .people_knowledge import rumor_subject
 
 DAY_MINUTES = 24 * 60
 REPORT_DELAYS = {"theft": DAY_MINUTES, "sheep": DAY_MINUTES, "attack": DAY_MINUTES // 2, "murder": 120}
@@ -177,6 +178,8 @@ class CrimeLaw:
         facts = self.chronicle.facts()
         times = self._times(facts)
         for index, fact in enumerate(facts):
+            if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+                continue
             if fact.get("fact") in _TIMED_FACTS and index not in times:
                 self.chronicle.record({"fact": "crime_law_time", "event": index, "at": now})
         out = []
@@ -202,6 +205,8 @@ class CrimeLaw:
         reports: list[LawDelivery] = []
         routes: set[tuple[str, str, str, int]] = set()
         for index, fact in enumerate(facts):
+            if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+                continue
             entries: list[tuple[str, str]] = []
             kind = fact.get("fact")
             if kind == "crime_seen":

@@ -181,7 +181,7 @@ void Shaders::compileShaders() noexcept {
     lightsRq = device.pipeline(Triangles, state, vsLight, fsLight);
     }
   if(Shaders::isVsmSupported()) {
-    sh      = GothicShader::get("light_vsm.frag.sprv");
+    sh      = GothicShader::get(string_frm("light_vsm", materialMaps, ".frag.sprv"));
     fsLight = device.shader(sh.data,sh.len);
     lightsVsm = device.pipeline(Triangles, state, vsLight, fsLight);
     }
@@ -274,7 +274,7 @@ void Shaders::compileShaders() noexcept {
     probePrune     = computeShader("probe_prune.comp.sprv");
     probeAlocation = computeShader("probe_allocation.comp.sprv");
     probeTrace     = computeShader("probe_trace.comp.sprv");
-    probeLighting  = computeShader("probe_lighting.comp.sprv");
+    probeLighting  = computeShader(string_frm("probe_lighting", materialMaps, ".comp.sprv"));
 
     state.setBlendSource  (RenderState::BlendMode::One);
     state.setBlendDest    (RenderState::BlendMode::SrcAlpha);  // for debugging
@@ -282,7 +282,7 @@ void Shaders::compileShaders() noexcept {
     state.setZWriteEnabled(false);
     sh = GothicShader::get("probe_ambient.vert.sprv");
     vs = device.shader(sh.data,sh.len);
-    sh = GothicShader::get("probe_ambient.frag.sprv");
+    sh = GothicShader::get(string_frm("probe_ambient", materialMaps, ".frag.sprv"));
     fs = device.shader(sh.data,sh.len);
     probeAmbient = device.pipeline(Triangles,state,vs,fs);
     }

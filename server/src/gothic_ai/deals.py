@@ -62,6 +62,7 @@ from .contracts import (
 from .game import GameError, GameLink
 from .journal import Journal
 from .llm import Tool, ToolCall
+from .people_knowledge import rumor_subject
 from .protocol import (
     ChatStatusCmd,
     DealAccept,
@@ -789,6 +790,8 @@ class Deals:
         forgiven: set[str] = set()
         silent: set[str] = set()
         for f in self.chronicle.facts():
+            if f.get("fact") == "rumor" and rumor_subject(f) != "PLAYER":
+                continue
             match f.get("fact"):
                 case "found_out" | "caught" if f.get("npc") == npc:
                     key = f"{f['fact']}:{npc}:{f.get('quest', '')}"
