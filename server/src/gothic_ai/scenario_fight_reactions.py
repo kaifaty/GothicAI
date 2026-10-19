@@ -219,6 +219,20 @@ class CombatTrace:
             and velocity is not None and abs(velocity[1]) <= 20
         )
 
+    def counter_attacker_ready(self, attacker: str, after: int) -> bool:
+        """Cleared queues alone do not stop the root motion of a running animation."""
+        own = self.latest.get(attacker, {})
+        velocity = own.get("linear_velocity_cm_s")
+        return (
+            self.game_ms.get(attacker, 0) > after
+            and own.get("body_state_base") == 0
+            and not own.get("attack_anim", True) and own.get("interruptible", False)
+            and own.get("weapon_state") in (2, 3) and own.get("queued_primitive") == 0
+            and not own.get("in_air", True) and not own.get("down", True)
+            and not any(own.get("gates", {}).values())
+            and velocity is not None and all(abs(v) <= 20 for v in velocity)
+        )
+
 
 def combat_shouts(log_file: Path, npc: str) -> list[int]:
     """Only successful native audio playback logs count; a queued or suppressed SVM is insufficient."""
@@ -968,17 +982,12 @@ async def fight_reactions(
                     preparing.add(CAVALORN)
                     planner.allow = setup_allow
                     await stop_companion()
+                    neutral = await link.act(CAVALORN, "play_ani", name="S_RUN")
+                    if neutral.status != "done":
+                        raise GameError(f"fight_reactions setup: counter neutral pose {neutral}")
                     stopped_at = trace.game_ms[CAVALORN]
                     quiet = await _until(
-                        lambda: (
-                            trace.game_ms[CAVALORN] > stopped_at
-                            and not trace.attacking.get(CAVALORN)
-                            and trace.interruptible.get(CAVALORN)
-                            and trace.weapons.get(CAVALORN) in (2, 3)
-                            and trace.latest[CAVALORN].get("body_state_base") in (0, 1, 2, 3)
-                            and trace.latest[CAVALORN].get("queued_primitive") == 0
-                            and not any(trace.latest[CAVALORN].get("gates", {}).values())
-                        ), 5,
+                        lambda: trace.counter_attacker_ready(CAVALORN, stopped_at), 5,
                     )
                     distance = trace.distance(CAVALORN, bandit)
                     log.info(
@@ -992,13 +1001,20 @@ async def fight_reactions(
                     # Proximity during a moving duel is not a melee opportunity: the defender
                     # may face away or pursue an old unseen position. Stage the contact before H,
                     # without attaching/commanding its fight, then prove native visibility/range.
-                    await link.debug("npc_goto", npc=bandit, to=CAVALORN, distance=180, face=CAVALORN)
+                    await link.debug("npc_goto", npc=bandit, to=CAVALORN, distance=140, face=CAVALORN)
                     placed_at = trace.game_ms[bandit]
-                    ready = await _until(lambda: trace.counter_ready(bandit, CAVALORN, placed_at), 5)
+                    ready = await _until(
+                        lambda: (
+                            trace.counter_ready(bandit, CAVALORN, placed_at)
+                            and trace.counter_attacker_ready(CAVALORN, stopped_at)
+                            and CAVALORN not in talk.orders.fights
+                        ), 5,
+                    )
                     log.info(
                         "fight_reactions counter defender ready=%s npc=%s placed_game_ms=%s "
-                        "row=%s body_owned=%s",
+                        "row=%s body_owned=%s attacker_ready=%s companion_fighting=%s",
                         ready, bandit, placed_at, trace.latest_rows[bandit], link.body_owned(bandit),
+                        trace.counter_attacker_ready(CAVALORN, stopped_at), CAVALORN in talk.orders.fights,
                     )
                     if not ready:
                         raise GameError(

@@ -105,6 +105,24 @@ def test_counter_setup_requires_a_fresh_visible_melee_target_even_when_bodies_ar
     assert not trace.counter_ready("bandit", "companion", 200)
 
 
+def test_counter_attacker_must_stop_running_and_drifting_before_the_hit():
+    trace = CombatTrace({11: "companion"})
+    companion = row(symbol=11, t=250, weapon=2)
+    companion["self"].update(
+        body_state_base=3, queued_primitive=0, in_air=False, down=False,
+        linear_velocity_cm_s=[0, 0, 360], gates={},
+    )
+    trace.body({"observations": [companion]})
+    assert not trace.counter_attacker_ready("companion", 200)
+    companion["self"]["body_state_base"] = 0
+    trace.body({"observations": [companion]})
+    assert not trace.counter_attacker_ready("companion", 200)
+    companion["self"]["linear_velocity_cm_s"] = [0, 0, 0]
+    trace.body({"observations": [companion]})
+    assert trace.counter_attacker_ready("companion", 200)
+    assert not trace.counter_attacker_ready("companion", 250)
+
+
 def test_native_voice_requires_successful_audio_playback(tmp_path):
     game_log = tmp_path / "game.log"
     game_log.write_text(
