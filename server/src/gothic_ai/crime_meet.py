@@ -55,6 +55,8 @@ def reaction_for(
     kind: str, role: Role, *, courage: int = 3, law_known: bool = False
 ) -> ReactionKind | None:
     """Knowing a theft never licenses an encounter fight; murder requires a narrow reason."""
+    if role == "ally":
+        return None
     if kind in {"theft", "attack"}:
         return "demand" if role == "owner" and courage >= OWNER_COURAGE else None
     if kind != "murder":
@@ -252,6 +254,7 @@ class CrimeMeet:
         return (
             not self._closed and not self._loading and active.generation == self._generation
             and active.branch == self.chronicle.branch
+            and self.reactions.role(npc, active.encounter.crime) != "ally"
             and any(crime["id"] == active.encounter.crime["id"] for crime, _ in self._cases(npc))
         )
 
@@ -665,18 +668,24 @@ class CrimeMeet:
             for fact in self.chronicle.facts("crime_meet") if crime is None or fact.get("crime") == crime
         )
 
-    def refuses(self, npc: str) -> bool:
-        """The microphone and native TALK share the same current, canonical refusal rule."""
+    def refusal(self, npc: str) -> Encounter | None:
+        """Return the current case that blocks speech, for both voice and native TALK."""
         if self._closed or self._loading or self.chronicle.branch is None:
-            return False
+            return None
         npc = npc.upper()
         courage = self.cards[npc].courage if npc in self.cards else 3
-        return any(
-            reaction_for(crime.get("kind", ""), role, courage=courage, law_known=source == "law")
-            in {"refuse", "flee"}
-            for crime, source in self._cases(npc)
-            if (role := self.reactions.role(npc, crime)) is not None
-        )
+        for crime, source in self._cases(npc):
+            role = self.reactions.role(npc, crime)
+            if role is None:
+                continue
+            reaction = reaction_for(crime.get("kind", ""), role, courage=courage, law_known=source == "law")
+            if reaction in {"refuse", "flee"}:
+                return Encounter(crime, role, reaction, source)
+        return None
+
+    def refuses(self, npc: str) -> bool:
+        """Keep the predicate used by native TALK and callers that do not need the reason."""
+        return self.refusal(npc) is not None
 
     async def run(self) -> None:
         while not self.link.closed.is_set():

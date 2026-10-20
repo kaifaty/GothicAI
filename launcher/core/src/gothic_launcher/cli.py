@@ -54,6 +54,12 @@ def up(args: argparse.Namespace) -> int:
 
 def _up(args: argparse.Namespace, session: SessionFile) -> int:
     config = _config()
+    if args.smoke:
+        _smoke_settings(config)
+    if args.no_voice:
+        config.settings.voice.enabled = False
+    if sys.platform == "linux":
+        _require_credentials(config)
     layout = find_layout(config)
     ports = DEFAULT_PORTS if args.no_game else Ports.free()
     log_dir = new_log_dir()
@@ -64,6 +70,8 @@ def _up(args: argparse.Namespace, session: SessionFile) -> int:
             print(f"no saves in {layout.game_home} yet: starting with the menu")
     _warn_login(config)
     print(f"logs: {log_dir}")
+    if sys.platform == "linux":
+        print(f"server health: http://127.0.0.1:{ports.server}/health", flush=True)
     if args.no_game:
         print(f"the game connects to ws://127.0.0.1:{ports.server} (its default)")
     sup = Supervisor(
@@ -211,6 +219,34 @@ def _warn_login(config: Config) -> None:
         print("not signed in to ChatGPT: run `gothic-launcher login` first", file=sys.stderr)
 
 
+def _require_credentials(config: Config) -> None:
+    """Fail before spawning Linux services, whose provider constructors need these credentials."""
+    s = config.settings
+    providers = {s.llm.backend}
+    if s.voice.enabled:
+        providers.update(p.partition(":")[0] for p in (s.voice.provider, s.voice.fallback))
+    if s.tts.enabled:
+        providers.update(p.partition(":")[0] for p in (s.tts.provider, s.tts.fallback))
+    missing = []
+    if "chatgpt" in providers and not CHATGPT_TOKENS.is_file():
+        missing.append("not signed in to ChatGPT: run `gothic-launcher login` on this computer")
+    if "openai" in providers and not config.secrets.openai_api_key:
+        missing.append("OpenAI API key is missing: run `gothic-launcher config set secrets.openai_api_key`")
+    if "inworld" in providers and not config.secrets.inworld_api_key:
+        missing.append("Inworld API key is missing: run `gothic-launcher config set secrets.inworld_api_key`")
+    if missing:
+        raise LaunchError("\n".join(missing))
+
+
+def _smoke_settings(config: Config) -> None:
+    """A single quota-free run; never write these overrides to settings.toml."""
+    llm = config.settings.llm
+    llm.backend, llm.model, llm.base_url = "fake", None, None
+    llm.decider_url, llm.quick_url, llm.body_url, llm.quick = None, None, None, False
+    config.settings.voice.enabled = False
+    config.settings.tts.enabled = False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="gothic-launcher")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -222,6 +258,10 @@ def main() -> None:
     which.add_argument("--new", action="store_true", help="start a new game at once (no menu)")
     which.add_argument("--no-game", action="store_true", help="only the services, on their default ports")
     p.add_argument("-v", "--verbose", action="store_true", help="show the output of every process")
+    p.add_argument("--no-voice", action="store_true", help="disable microphone input for this run")
+    p.add_argument(
+        "--smoke", action="store_true", help="test with fake LLM, without voice, TTS or remote models"
+    )
 
     sub.add_parser("login", help="sign in to ChatGPT")
     sub.add_parser("control", help="serve the launcher window: JSON lines on stdin and stdout")

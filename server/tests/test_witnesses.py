@@ -1,18 +1,26 @@
 from dataclasses import dataclass, field
+from types import SimpleNamespace
+
+import pytest
 
 from gothic_ai.amends import Lie as AmendsLie
 from gothic_ai.budget import Budget
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.concerns import Concerns
+from gothic_ai.crime_law import CrimeLaw
+from gothic_ai.crime_memory import memory_value
+from gothic_ai.crime_react import CrimeReact
 from gothic_ai.crimes import Crimes
 from gothic_ai.deals import Deals, LieRef
 from gothic_ai.dialogue import DialogueManager
+from gothic_ai.fear import knows_violence
 from gothic_ai.llm import Message, ToolCall
 from gothic_ai.llm.fake import FakeStep
 from gothic_ai.memory import MemoryStore
 from gothic_ai.perception import PerceptionDesk
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import NpcView
+from gothic_ai.questbook import Goal, Progress, Quest, Stage, Talk
 from gothic_ai.scenarios.common import ClaimScript
 from gothic_ai.sightings import Sightings
 from gothic_ai.social import Tie
@@ -20,6 +28,7 @@ from gothic_ai.storyguard import StoryGuard
 from gothic_ai.trust import Trust
 from gothic_ai.witnesses import ASK_TOOL, Inquiry, Witnesses
 from tests.fake_game import FakeGame, connected
+from tests.test_crimes import deed
 from tests.test_dialogue import _until
 from tests.test_perception import HILDA, LOBART, MALETH, look
 from tests.test_sightings import BOOK, record_theft
@@ -192,6 +201,94 @@ async def test_crime_testimony_uses_only_what_witness_saw_before_the_claim_with_
         assert first is not None and second is not None
         assert {first.crime, second.crime} == {"before", "earlier"}
         assert len(w.witnesses.concerns(LOBART)) == 1  # even without an ordinary hero sighting
+
+
+@pytest.mark.parametrize("why", ["hostile", "quest"])
+@pytest.mark.parametrize("asker,guild", [(LOBART, 8), (ANDRE, 2)])
+async def test_testimony_records_askers_own_side_before_knowledge_and_guard_reporting(why, asker, guild):
+    fake = FakeGame(branch="A")
+    async with connected(fake) as link:
+        w = World(link, fake, lobart())
+        crimes = Crimes(link, w.chronicle)
+        w.witnesses.crimes = crimes
+        crimes.people.update({
+            asker: {"guild": guild, "npctype": 0},
+            HILDA: {"guild": 12, "npctype": 0},
+            MALETH: {"guild": 3, "npctype": 0},
+        })
+        if why == "hostile":
+            crimes.sides.hostile_guilds = {(guild, 3)}
+        else:
+            quest = Quest("DIR_Q1", asker, "Убить врага", Talk("Возьмусь", []), [
+                Stage("Убить", [Goal(kind="kill", npcs=[MALETH])]),
+            ], "Готово")
+            crimes.sides.book = SimpleNamespace(
+                all=lambda: {quest.id: quest}, progress=lambda _: Progress("given", 1),
+            )
+        case = crimes.record(deed(
+            kind="murder", victim=MALETH, victim_guild=3, day=1, hour=8,
+            witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 12}],
+        ))
+        assert case is not None and crimes.side(HILDA, case["id"]) is None
+        law = CrimeLaw(crimes)
+        react = CrimeReact(link, crimes, law)
+        observed = []
+        w.chronicle.on_fact.append(lambda f: observed.append((
+            f["fact"], crimes.side(asker, case["id"]), crimes.attitude(asker),
+        )))
+        t = await w.witnesses._testify(
+            None, asker, asker, HILDA, "Хильда", "никого не убивал", "far", 0,
+        )
+        assert t is not None and t.crime_told == [case["id"]]
+        assert [kind for kind, _, _ in observed] == ["crime_side", "testimony"]
+        assert all(side is not None and side["why"] == why for _, side, _ in observed)
+        assert all(attitude is None for _, _, attitude in observed)
+        assert react.role(asker, case) == "ally"
+        assert not knows_violence(asker, crimes)
+        assert memory_value(crimes, asker) == (0, 0)
+        assert law.deliveries() == []
+        assert law.tick(DAY + 12 * 60) == []
+        assert w.chronicle.facts("crime_known") == []
+        assert w.chronicle.facts("crime_attitude") == []
+        await react.close()
+
+
+async def test_testimony_preserves_witness_justification_for_only_its_exact_crime():
+    fake = FakeGame(branch="A")
+    async with connected(fake) as link:
+        w = World(link, fake, lobart())
+        crimes = Crimes(link, w.chronicle)
+        w.witnesses.crimes = crimes
+        crimes.people.update({
+            LOBART: {"guild": 8, "npctype": 0},
+            HILDA: {"guild": 12, "npctype": 0},
+            MALETH: {"guild": 3, "npctype": 0},
+            STRANGER: {"guild": 9, "npctype": 0},
+        })
+        crimes.sides.note_fight(MALETH, HILDA)
+        justified = crimes.record(deed(
+            id="justified", kind="murder", victim=MALETH, victim_guild=3, day=1, hour=8,
+            witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 12}],
+        ))
+        ordinary = crimes.record(deed(
+            id="ordinary", kind="murder", victim=STRANGER, victim_guild=9, day=1, hour=8,
+            witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 12}],
+        ))
+        assert justified is not None and ordinary is not None
+        t = await w.witnesses._testify(
+            None, LOBART, "Лобарт", HILDA, "Хильда", "никого не убивал", "far", 0,
+        )
+        assert t is not None and set(t.crime_told) == {"justified", "ordinary"}
+        (fact,) = w.chronicle.facts("testimony")
+        assert fact["crime_excuses"] == {"justified": {
+            "excuse": "fought", "excuse_by": HILDA, "excuse_by_name": "Хильда",
+        }}
+        known = {k.crime["id"]: k for k in crimes.known(LOBART)}
+        assert known["justified"].degree == "heard"
+        assert known["justified"].excuse == "fought"
+        assert known["justified"].excuse_by == HILDA
+        assert not known["ordinary"].excuse
+        assert crimes.side(LOBART, "justified") is None
 
 
 async def test_a_witness_called_over_tells_what_it_saw_and_the_lie_is_caught_by_its_word():

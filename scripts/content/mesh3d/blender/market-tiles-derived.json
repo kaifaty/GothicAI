@@ -1,0 +1,17 @@
+{
+ "output": "~/.local/share/gothic-ai/content-staging/market-set/tiles",
+ "tiles": {
+  "own_prop_wood_haft": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_leather"
+  },
+  "own_prop_cloth": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_sacking"
+  },
+  "own_prop_eye": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_glass"
+  },
+  "own_prop_nose": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_leather"
+  }
+ }
+}

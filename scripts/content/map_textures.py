@@ -32,9 +32,13 @@ LEGACY_FIELDS = (
     "object", "role", "depicts", "colour", "weathering", "orientation",
     "layout", "layout_share", "anti_repeat", "target_luminance", "target_coverage",
 )
+DETAIL_FIELDS = (
+    "target_log_spread", "target_detail_k3", "target_detail_k9", "target_detail_k27",
+)
 MEASUREMENT_FIELDS = (
     "target_period_u_uv", "target_period_v_uv", "target_period_u_m", "target_period_v_m",
     "target_direction", "target_direction_confidence", "target_oklab_l", "target_oklab_a", "target_oklab_b",
+    *DETAIL_FIELDS,
 )
 MEASURED_FIELDS = (*LEGACY_FIELDS[:-2], *MEASUREMENT_FIELDS, *LEGACY_FIELDS[-2:])
 COUNT_FIELDS = (
@@ -42,9 +46,13 @@ COUNT_FIELDS = (
     "element_cm_u", "element_cm_v",
 )
 FIELDS = (*MEASURED_FIELDS[:-2], *COUNT_FIELDS, *MEASURED_FIELDS[-2:])
+PREVIOUS_FIELDS = tuple(field for field in FIELDS if field not in DETAIL_FIELDS)
+PREVIOUS_MEASURED_FIELDS = tuple(field for field in MEASURED_FIELDS if field not in DETAIL_FIELDS)
 MAPPING_HEADERS = (
     FIELDS, FIELDS[:-1], FIELDS[:-2],
+    PREVIOUS_FIELDS, PREVIOUS_FIELDS[:-1], PREVIOUS_FIELDS[:-2],
     MEASURED_FIELDS, MEASURED_FIELDS[:-1], MEASURED_FIELDS[:-2],
+    PREVIOUS_MEASURED_FIELDS, PREVIOUS_MEASURED_FIELDS[:-1], PREVIOUS_MEASURED_FIELDS[:-2],
     LEGACY_FIELDS, LEGACY_FIELDS[:-1], LEGACY_FIELDS[:-2],
 )
 ALPHA_TEXTURES = frozenset({
@@ -138,6 +146,8 @@ def _number(value: str, field: str, *, positive: bool = False) -> Decimal:
 
 
 def _check_measurements(row: dict[str, str], where: str) -> None:
+    for field in DETAIL_FIELDS:
+        _number(row.get(field, ""), f"{where}: {field}")
     for axis in ("u", "v"):
         period = _number(row.get(f"target_period_{axis}_uv", ""), f"{where}: target_period_{axis}_uv")
         meters = _number(row.get(f"target_period_{axis}_m", ""), f"{where}: target_period_{axis}_m")

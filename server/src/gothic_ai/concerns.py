@@ -46,6 +46,7 @@ FACTS = frozenset(
         "meet_raised",
         "crime_suspected",
         "crime_seen",
+        "crime_side",
         "rumor",
         "forgiven",
         "silenced",
@@ -150,6 +151,7 @@ class Concerns:
                 or knowledge.suspect != "PLAYER"
                 or knowledge.silenced
                 or knowledge.forgiven
+                or crimes.side(npc, crime["id"]) is not None
                 or victim == npc
                 or law.is_guard(npc, community, metadata)
                 or crime["id"] in delivered

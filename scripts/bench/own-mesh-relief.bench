@@ -1,0 +1,188 @@
+# Close-ups of prop textures, stage 2: the tile relief of the atlases (wood, cloth, iron) seen up close in daylight.
+# Run with the props' content root and with the root of the earlier bake; OPENGOTHIC_CENSUS=<absolute out>/census.json.
+# Spots of own-mesh-{barrel,crate,table,mob,chest} and of the market set; the hero is parked below the world.
+# A shot is written at the end of its frame: wait after it before the camera moves on.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view nopfx
+cam lift off
+# barrel view
+goto pos 5391 -1680 -5822
+clear 3000
+cam look 2000
+cam cut
+cam world 280 2120 0
+wait 34
+cam hold
+wait 4000
+shot barrel_view
+wait 300
+# barrel near
+goto pos 5391 -1680 -5822
+clear 3000
+cam look 2000
+cam cut
+cam world 160 2080 30
+wait 34
+cam hold
+wait 1500
+shot barrel_near
+wait 300
+# crate view
+goto pos 5249 -1696 -5985
+clear 3000
+cam look 2000
+cam cut
+cam world 330 2160 0
+wait 34
+cam hold
+wait 4000
+shot crate_view
+wait 300
+# crate near
+goto pos 5249 -1696 -5985
+clear 3000
+cam look 2000
+cam cut
+cam world 190 2110 20
+wait 34
+cam hold
+wait 1500
+shot crate_near
+wait 300
+# table view
+goto pos 3924 -2073 -6663
+clear 3000
+cam look 2000
+cam cut
+cam world 400 2190 270
+wait 34
+cam hold
+wait 4000
+shot table_view
+wait 300
+# table near
+goto pos 3924 -2073 -6663
+clear 3000
+cam look 2000
+cam cut
+cam world 230 2150 250
+wait 34
+cam hold
+wait 1500
+shot table_near
+wait 300
+# bench view
+goto pos 2982 -2121 -5631
+clear 3000
+cam look 2030
+cam cut
+cam world 330 2180 145
+wait 34
+cam hold
+wait 4000
+shot bench_view
+wait 300
+# bench near
+goto pos 2982 -2121 -5631
+clear 3000
+cam look 2030
+cam cut
+cam world 190 2120 160
+wait 34
+cam hold
+wait 1500
+shot bench_near
+wait 300
+# chest view
+goto pos 7654 -1874 1238
+clear 3000
+cam look 2060
+cam cut
+cam world 280 2160 -20
+wait 34
+cam hold
+wait 4000
+shot chest_view
+wait 300
+# chest near
+goto pos 7654 -1874 1238
+clear 3000
+cam look 2060
+cam cut
+cam world 160 2120 -20
+wait 34
+cam hold
+wait 1500
+shot chest_near
+wait 300
+# cart view
+goto pos 8545 -1673 5521
+clear 3000
+cam look 2030
+cam cut
+cam world 230 2130 100
+wait 34
+cam hold
+wait 4000
+shot cart_view
+wait 300
+# sign view
+goto pos 7604 -1748 -74
+clear 3000
+cam look 2090
+cam cut
+cam world 160 2110 115
+wait 34
+cam hold
+wait 4000
+shot sign_view
+wait 300
+# stall_roof view
+goto pos 10409 -1609 4708
+clear 3000
+cam look 2060
+cam cut
+cam world 420 2170 211
+wait 34
+cam hold
+wait 4000
+shot stall_roof_view
+wait 300
+# stall_roof near
+goto pos 10409 -1609 4708
+clear 3000
+cam look 2060
+cam cut
+cam world 260 2120 190
+wait 34
+cam hold
+wait 1500
+shot stall_roof_near
+wait 300
+# window_in view
+goto pos 8328 -1575 -3540
+clear 3000
+cam look 2000
+cam cut
+cam world 260 2000 121
+wait 34
+cam hold
+wait 4000
+shot window_in_view
+wait 300
+# cupboard view
+goto pos 8502 -1606 -3156
+clear 3000
+cam look 1938
+cam cut
+cam world 260 1980 210
+wait 34
+cam hold
+wait 4000
+shot cupboard_view
+wait 300
+census

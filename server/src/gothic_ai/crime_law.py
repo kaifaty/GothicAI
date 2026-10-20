@@ -111,6 +111,8 @@ class CrimeLaw:
         deed = self.crimes.crime(crime)
         if deed is None or (community := deed.get("community")) not in LAW_COMMUNITIES:
             return None
+        if self.crimes.side(via, crime) is not None:
+            return None
         if any(f.get("id") == crime for f in self.known(community)):
             return None
         fact: Fact = {
@@ -131,13 +133,17 @@ class CrimeLaw:
         deed = self.crimes.crime(crime)
         if deed is None or deed.get("community") not in LAW_COMMUNITIES:
             return []
+        if self.crimes.side(via, crime) is not None:
+            return []
         when = at if at is not None else self.now
         if when is None:
             when = game_minutes(deed)
         if when is None:
             return []
         via = via.upper()
-        listeners = sorted({npc.upper() for npc in guards})
+        listeners = sorted({
+            npc.upper() for npc in guards if self.crimes.side(npc, crime) is None
+        })
         source = next(
             (f["npc"] for f in self.chronicle.facts("crime_seen")
              if f.get("crime") == crime and f.get("npc")),
@@ -226,6 +232,8 @@ class CrimeLaw:
                 if crime is None or (community := crime.get("community")) not in LAW_COMMUNITIES:
                     continue
                 npc = npc.upper()
+                if self.crimes.side(npc, crime_id) is not None:
+                    continue
                 guard = self.is_guard(npc, community, fact)
                 if kind == "crime_seen":
                     if not guard and self.community_of(npc, fact) != community:

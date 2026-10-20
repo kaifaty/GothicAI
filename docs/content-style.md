@@ -102,6 +102,7 @@ Subject: <substance and functional parts of the surface>.
 Medium: calibrated photographic material scan strictly from above, camera perpendicular, surface filling the image edge to edge.
 Lighting: even shadowless diffuse illumination, identical exposure from corner to corner.
 Weathering: <rain / footsteps / soot / coastal moisture causes fine wear and pigment>, small details evenly spread across the entire tile.
+Tonal variation: neighbouring elements differ in value; small pigment marks and wear traces are evenly spread across the tile, without one broad dark or bright patch.
 Colour and value: <medium-dark colour in words>, average sRGB <#hex converted from target_oklab>.
 Layout: <count across U and V from scale-plan.csv, long-axis direction, physical tile size; fixed parts of modules>.
 Constraints: seamless on <measured repeat axes>, no text, frame, loose objects or perspective.
@@ -114,6 +115,8 @@ Hex — sRGB-кодирование обратного преобразован�
 Layout берёт **обе оси и scale** из [плана шага 1](../reports/content/2026-10-pilot-measures/scale-plan.csv): например, две доски поперёк V, длинные доски идут слева направо; для мощения — 5×5 камней; для ступеней — шесть горизонтальных рядов. Нулевой измеренный период не превращается в обязательное число деталей. Для `ROOF_INSIDE_01` один квадратный исходный модуль стыкуется в три квадратных модуля с перекрытием на холсте **1536×681**; исходная композиция сохраняет пропорции (растяжение 1,0, предел 1,25), затем один ресемпл переводит её в квадратное UV-хранение. Камера, число деталей, направление и результат измерителя проверяются независимо от текста запроса.
 
 Вывод [итерации 2](../reports/content/2026-10-quality-pilot-2/README.md): при scale 1 ведущий задаёт число деталей по виду оригинала, а генератор получает только текст и размеры в сантиметрах по каждой оси; проверяется видимый счёт нашей картинки с допуском ±20%. Спектр остаётся справкой: у внутренней кровли он даёт 10 вместо видимых 19 рядов. Семь материалов проходят счёт и цвет; Marigold только по флагу после цвета, 50/50 в линейном RGB и повторная поправка цвета сохраняют ступени, но не снимают четыре флага. Шаблон выше остаётся экспериментальным.
+
+Вывод [итерации 3](../reports/content/2026-10-quality-pilot-3/README.md): строка `Tonal variation:` задаёт различия соседних элементов и распределённую мелкую пигментацию. Смесь 50/50 заменена низкочастотной поправкой IID; затем контраст и три масштаба детали подгоняются к числам оригинала при сохранении среднего цвета. Плечо по max(R,G,B) с общим множителем устранило обрезку у 14/14 пилотных материалов. Счёт и цвет проходят 7/7 у обоих наборов, все четыре текстурные цели одновременно — 2/7 и 4/7. На прежних исходниках 3a новая обработка уже подняла игровую деталь фасада с 0,7444 до 0,9873 и ступеней с 0,8093 до 0,9480; новые исходники 3b дали 0,9951 и 0,9788. Оба набора проходят порог 0,90, но метрика полного кадра и флаг детектора не заменяют просмотр отдельного альбедо. Шаблон остаётся экспериментальным.
 
 ## Материалы с альфой
 

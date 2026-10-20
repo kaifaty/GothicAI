@@ -46,6 +46,7 @@ def dataset(tmp_path):
         "target_period_u_m": "0.62625", "target_period_v_m": "1.2525",
         "target_direction": "none", "target_direction_confidence": "0.1",
         "target_oklab_l": "0.5", "target_oklab_a": "-0.02", "target_oklab_b": "0.03",
+        **dict.fromkeys(mapping.DETAIL_FIELDS, "0.2"),
         **dict.fromkeys(mapping.COUNT_FIELDS, ""),
     } for row in source]
     rows[-4].update(decision="module", **{"class": "timber_frame_tile", "scale": "1", "anti_repeat": "off"})
@@ -81,6 +82,17 @@ def test_scale_uses_uv_divided_by_tile_and_decimal_rounding():
 def test_check_requires_valid_original_material_measurements(dataset, field, value):
     source, rows, census_path, mapping_path, save = dataset
     rows[0][field] = value
+    save()
+    with pytest.raises(mapping.MappingError, match=field):
+        mapping.check_mapping(mapping_path, census_path)
+
+
+@pytest.mark.parametrize("field", mapping.DETAIL_FIELDS)
+@pytest.mark.parametrize("value", ["", "NaN", "Infinity", "-0.1"])
+@pytest.mark.parametrize("index", [0, -1])
+def test_all_rows_require_finite_nonnegative_detail_targets(dataset, field, value, index):
+    _, rows, census_path, mapping_path, save = dataset
+    rows[index][field] = value
     save()
     with pytest.raises(mapping.MappingError, match=field):
         mapping.check_mapping(mapping_path, census_path)
@@ -454,6 +466,20 @@ def test_legacy_header_without_visual_counts_remains_readable(dataset, header):
     legacy = [{field: row[field] for field in header} for row in rows]
     write_csv(mapping_path, header, legacy)
     assert mapping.check_mapping(mapping_path, census_path) == rows
+
+
+@pytest.mark.parametrize("header", [header for header in mapping.MAPPING_HEADERS
+                                   if not set(mapping.DETAIL_FIELDS) <= set(header)])
+def test_previous_headers_read_but_check_requires_detail_targets(dataset, header):
+    _, rows, census_path, mapping_path, _ = dataset
+    legacy = [{field: row[field] for field in header} for row in rows]
+    write_csv(mapping_path, header, legacy)
+    loaded = mapping._read_csv(mapping_path, mapping=True)
+    assert [{field: row[field] for field in header} for row in loaded] == legacy
+    assert all(row[field] == "" for row in loaded for field in mapping.DETAIL_FIELDS)
+    missing_field = "target_log_spread" if "target_luminance" in header else "target_luminance"
+    with pytest.raises(mapping.MappingError, match=missing_field):
+        mapping.check_mapping(mapping_path, census_path)
 
 
 @pytest.mark.parametrize("index", [-4, -3, -2, -1])

@@ -1,0 +1,22 @@
+{
+  "glb": "market-set/build/cart/model.glb",
+  "maps_dir": "market-set/tiles",
+  "scales": {"OWN_PROP_WOOD_PLANK": 2.6315789, "OWN_PROP_WOOD_FRAME": 2.6315789, "OWN_PROP_IRON_BAND": 5.0},
+  "targets": {
+    "OWN_PROP_WOOD_PLANK": [0.0351, 0.0258, 0.0142],
+    "OWN_PROP_WOOD_FRAME": [0.0351, 0.0258, 0.0142],
+    "OWN_PROP_IRON_BAND": [0.0282, 0.0269, 0.0168]
+  },
+  "slots": {
+    "OWN_PROP_WOOD_PLANK": ["OWN_CART_MARKET_WOOD", "WOOD"],
+    "OWN_PROP_WOOD_FRAME": ["OWN_CART_MARKET_WOOD", "WOOD"],
+    "OWN_PROP_IRON_BAND": ["OWN_CART_MARKET_IRON", "METAL"]
+  },
+  "metal": ["OWN_PROP_IRON_BAND"],
+  "size": 2048,
+  "seed": 1,
+  "wet_height": 0.1,
+  "algae": 0.0,
+  "planks_per_tile": {"OWN_PROP_WOOD_PLANK": 4, "OWN_PROP_WOOD_FRAME": 4},
+  "contrast": {"OWN_PROP_WOOD_PLANK": 1.3, "OWN_PROP_WOOD_FRAME": 1.3, "OWN_PROP_IRON_BAND": 1.2}
+}

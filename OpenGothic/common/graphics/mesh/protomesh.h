@@ -24,9 +24,9 @@ class ProtoMesh {
 
     ProtoMesh(PackedMesh&&  pm, std::string_view fname);
     ProtoMesh(PackedMesh&&  pm, const std::vector<zenkit::MorphAnimation>& aniList, std::string_view fname);
-    ProtoMesh(const zenkit::Model& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname);
+    ProtoMesh(const zenkit::Model& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest = false);
     ProtoMesh(const zenkit::ModelHierarchy& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname);
-    ProtoMesh(const zenkit::ModelMesh& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname);
+    ProtoMesh(const zenkit::ModelMesh& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest = false);
     ProtoMesh(const Material& mat, std::vector<Resources::Vertex> vbo, std::vector<uint32_t> ibo); //decals
     ProtoMesh(ProtoMesh&&)=delete;
     ProtoMesh& operator=(ProtoMesh&&)=delete;

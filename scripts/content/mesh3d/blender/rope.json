@@ -1,0 +1,18 @@
+{
+  "id": "rope",
+  "target": "data/content/mesh3d-market.json",
+  "seed": 1,
+  "thick": 0.065,
+  "sides": 5,
+  "coil": 0.74,
+  "hole": 0.07,
+  "layers": 3,
+  "outer_turns": 1,
+  "overlap": 0.08,
+  "tail": [
+    0.26,
+    0.1
+  ],
+  "tile_m": 0.15,
+  "segment": 0.18
+}

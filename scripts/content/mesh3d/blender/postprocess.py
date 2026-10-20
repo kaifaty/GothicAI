@@ -482,7 +482,7 @@ def process_arrays(vertices, faces, color, metallic, target, output_dir, meta, c
     uv, continuity = unwrap(obj, projection)
     # Hulls use physical connectivity, before normal seams duplicate vertices.
     hull_count = collision(obj, output, target["id"])
-    # Blender 4.5 smooth-by-angle, plus actual split vertices for Gothic importers.
+    # Blender smooth-by-angle, plus actual split vertices for Gothic importers.
     for p in obj.data.polygons:
         p.use_smooth = True
     obj.data.set_sharp_from_angle(angle=math.radians(30))

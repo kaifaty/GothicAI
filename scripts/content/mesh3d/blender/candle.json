@@ -1,0 +1,46 @@
+{
+  "id": "candle",
+  "target": "data/content/mesh3d-market.json",
+  "seed": 1,
+  "segments": 20,
+  "dish": [
+    0.18,
+    0.032,
+    0.006
+  ],
+  "feet": [
+    3,
+    0.025,
+    0.03
+  ],
+  "handle": [
+    0.05,
+    0.012,
+    0.008
+  ],
+  "candle": [
+    0.06,
+    0.2,
+    4.0
+  ],
+  "drips": 0,
+  "puddle": [
+    0.11,
+    0.009
+  ],
+  "iron_tile": 0.2,
+  "wax_tile": 0.15,
+  "candle_grid": [
+    24,
+    10
+  ],
+  "drip": 0.0,
+  "drip_width": [
+    0.085,
+    0.04
+  ],
+  "drip_rods": [
+    8,
+    14
+  ]
+}

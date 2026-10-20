@@ -55,7 +55,7 @@ def test_cylinder_rejects_six_percent_v_error():
     vertices, faces, uv = cylinder_profile()
     uv[:, :, 1] /= 1.06
     stats = uv_quality(vertices, faces, uv, "cylinder")
-    with pytest.raises(AssertionError, match="V .*outside 1m"):
+    with pytest.raises(AssertionError, match="V mean .*outside 1m"):
         assert_uv_quality(stats)
 
 

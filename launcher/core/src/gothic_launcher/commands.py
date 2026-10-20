@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import socket
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,10 +21,24 @@ from pathlib import Path
 from .settings import CONFIG_DIR, Config
 
 GAME_HOME = Path.home() / ".local" / "share" / "gothic-ai" / "game"
+
+
+def default_hd_textures() -> Path:
+    if sys.platform == "linux":
+        return Path.home() / "gothic-ai" / "hd-textures" / "textures"
+    return Path.home() / ".local" / "share" / "gothic-ai" / "hd-textures" / "textures"
+
+
+def default_log_root() -> Path:
+    if sys.platform == "linux":
+        return Path.home() / ".local" / "state" / "gothic-ai" / "logs"
+    return Path.home() / "Library" / "Logs" / "GothicAI"
+
+
 # sharper textures of the characters, made from the game's own by scripts/hd-textures.sh (never in git)
-HD_TEXTURES = Path.home() / ".local" / "share" / "gothic-ai" / "hd-textures" / "textures"
+HD_TEXTURES = default_hd_textures()
 FRACTURE_CACHE = Path.home() / ".local" / "share" / "gothic-ai" / "fracture"
-LOG_ROOT = Path.home() / "Library" / "Logs" / "GothicAI"
+LOG_ROOT = default_log_root()
 KEEP_LOGS = 20
 UV_CANDIDATES = ("~/.local/bin/uv", "/opt/homebrew/bin/uv", "/usr/local/bin/uv", "~/.cargo/bin/uv")
 MANAGED_ENV = ("OPENAI_API_KEY", "INWORLD_API_KEY")
@@ -188,7 +203,7 @@ def default_game_bin(repo: Path) -> Path:
     exists, so the game has its own name and icon in the Dock."""
     build = repo / "OpenGothic" / "build" / "opengothic"
     bundled = build / "OpenGothic Dev.app" / "Contents" / "MacOS" / "Gothic2Notr"
-    return bundled if os.access(bundled, os.X_OK) else build / "Gothic2Notr"
+    return bundled if sys.platform == "darwin" and os.access(bundled, os.X_OK) else build / "Gothic2Notr"
 
 
 def services(config: Config, layout: Layout, ports: Ports, cwd: Path) -> list[Proc]:

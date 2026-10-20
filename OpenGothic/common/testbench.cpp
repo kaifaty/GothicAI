@@ -807,6 +807,13 @@ struct Bench {
     std::deque<std::string> supportHistory;
     bool active=false,reached=false,stalled=false,sat=false,standing=false;
   } npcCharacterRoute;
+  struct OwnMeshChest {
+    Interactive* chest=nullptr;
+    size_t lid=size_t(-1);
+    bool opened=false,sawTransition=false,taken=false;
+    std::string lastAnimation;
+    std::map<size_t,size_t> contents,heroBefore;
+  } ownMeshChest;
   struct CharacterMoveFrame {
     Vec3 requested,acceptedDelta,steepNormal;
     uint64_t sequence=0,dt=0;
@@ -8354,6 +8361,126 @@ void npcCharacterPlaceHero(World& world,Npc& player,const Vec3& start,const Vec3
   player.stopWalking();player.clearAiQueue();player.setPosition(hero);player.setDirection(start-hero);player.updateTransform();
   }
 
+std::string ownMeshChestInventory(World& world,const Npc& player) {
+  const auto& fixture=bench.ownMeshChest;
+  std::string rows="[";
+  for(const auto& [id,count]:fixture.contents) {
+    if(rows.size()>1)rows+=',';
+    rows+="{\"class\":"+jsonStr(world.script().findSymbol(id)->name())+
+      ",\"chest_before\":"+std::to_string(count)+",\"chest_now\":"+
+      std::to_string(fixture.chest->inventory().itemCount(id))+
+      ",\"hero_before\":"+std::to_string(fixture.heroBefore.at(id))+
+      ",\"hero_now\":"+std::to_string(player.inventory().itemCount(id))+"}";
+    }
+  return rows+"]";
+  }
+
+void ownMeshChestSnapshot(World& world,const Npc& player,std::string_view label) {
+  const auto& fixture=bench.ownMeshChest;
+  if(!fixture.chest) {arenaAbort("own-mesh-chest snapshot needs setup");return;}
+  const auto& visual=fixture.chest->objVisual();
+  const auto& lid=visual.bone(fixture.lid);
+  // Midpoint of the original lid's upper front bounding-box edge, in the
+  // lid node's local centimetres. Both models measure the same fixed point.
+  Vec3 front(0,27.36672f,-58.41916f);
+  lid.project(front);
+  event("own_mesh_chest_snapshot","\"label\":"+jsonStr(label)+
+    ",\"zen_id\":"+std::to_string(fixture.chest->zenId())+
+    ",\"mob_id\":"+std::to_string(world.mobsiId(fixture.chest))+
+    ",\"mob_cm\":"+ragdollVector(fixture.chest->position())+
+    ",\"state\":"+std::to_string(fixture.chest->stateId())+
+    ",\"animation\":"+jsonStr(visual.animNames())+
+    ",\"lid_node\":\"BIP01 CHEST_BIG_1\",\"lid_world\":"+ragdollMatrix(lid)+
+    ",\"front_probe_local_cm\":[0,27.36672,-58.41916],\"front_probe_world_cm\":"+ragdollVector(front)+
+    ",\"hero_cm\":"+ragdollVector(player.position())+
+    ",\"hero_attached\":"+(player.interactive()==fixture.chest?"true":"false")+
+    ",\"hero_gold\":"+std::to_string(player.inventory().itemCount(world.script().goldId()->index()))+
+    ",\"hero_inventory\":"+ragdollInventory(player,world)+
+    ",\"chest_empty\":"+(fixture.chest->inventory().isEmpty()?"true":"false")+
+    ",\"items\":"+ownMeshChestInventory(world,player));
+  }
+
+void ownMeshChestFields(World& world,const Npc& player) {
+  auto& fixture=bench.ownMeshChest;
+  if(!fixture.chest || !fixture.opened)return;
+  const auto animation=fixture.chest->objVisual().animNames();
+  if(animation.find("T_S0_2_S1")!=std::string::npos)fixture.sawTransition=true;
+  if(animation==fixture.lastAnimation)return;
+  fixture.lastAnimation=animation;
+  ownMeshChestSnapshot(world,player,"animation");
+  }
+
+void ownMeshChestSetup(World& world,Npc& player,const Vec3& near,uint32_t zenId,bool reload) {
+  auto& fixture=bench.ownMeshChest;
+  fixture=Bench::OwnMeshChest{};
+  for(uint32_t id=0;auto* mob=world.mobsiById(id);++id) {
+    if(mob->zenId()!=zenId || (mob->position()-near).length()>5.f)continue;
+    const auto* mesh=mob->objVisual().protoMesh();
+    if(!mob->isContainer() || !mesh || !mesh->fname.starts_with("CHESTBIG_NW_NORMAL_OPEN") ||
+       mesh->findNode("BIP01 CHEST_BIG_1")==size_t(-1) || mesh->findNode("ZS_POS0")==size_t(-1))continue;
+    fixture.chest=mob;fixture.lid=mesh->findNode("BIP01 CHEST_BIG_1");break;
+    }
+  if(!fixture.chest) {arenaAbort("own-mesh-chest could not find the exact authored CHESTBIG_NW_NORMAL_OPEN");return;}
+  auto& chest=*fixture.chest;
+  if(reload) {
+    // Observe the complete loaded session before moving its hero or changing
+    // container contents. The caller compares this snapshot with the save.
+    ownMeshChestSnapshot(world,player,"loaded");
+    const bool pass=chest.stateId()==1 && chest.inventory().isEmpty() &&
+      chest.objVisual().animNames().find("S_S1")!=std::string::npos;
+    event("own_mesh_chest_loaded","\"pass\":"+std::string(pass?"true":"false"));
+    if(!pass)arenaAbort("own-mesh-chest loaded session lost open state or taken contents");
+    return;
+    }
+  if(chest.isLocked() || !chest.isAvailable()) {arenaAbort("own-mesh-chest needs the free unlocked authored chest");return;}
+  const bool seeded=chest.inventory().isEmpty();
+  if(seeded)chest.inventory().addItem("ITMI_GOLD",1,world);
+  for(auto item=chest.inventory().iterator(Inventory::T_Inventory);item.isValid();++item)
+    fixture.contents[item->clsId()]+=item.count();
+  if(fixture.contents.empty()) {arenaAbort("own-mesh-chest has no transferable contents");return;}
+  for(const auto& [id,count]:fixture.contents)fixture.heroBefore[id]=player.inventory().itemCount(id);
+  player.setInteraction(nullptr,true);player.clearAiQueue();player.clearState(false);player.stopWalking();player.closeWeapon(true);
+  const auto socket=chest.nearestPoint(player);
+  auto away=socket-chest.position();away.y=0;
+  if(away.length()<1.f) {arenaAbort("own-mesh-chest has no horizontal use socket");return;}
+  away=Vec3::normalize(away);
+  characterFreezeNear(world,player,socket,socket);
+  Vec3 start;bool prepared=false;
+  for(float distance:{65.f,90.f,35.f,0.f}) {
+    auto at=socket+away*distance;
+    const auto floor=world.physic()->landRay(Vec3(at.x,socket.y+80.f,at.z),250.f);
+    const bool supported=floor.hasCol && floor.n.y>=.8f && std::abs(floor.v.y-chest.position().y)<=80.f;
+    if(!supported) {
+      event("own_mesh_chest_approach","\"socket_cm\":"+ragdollVector(socket)+
+        ",\"distance_cm\":"+ragdollNumber(distance)+",\"floor_cm\":"+ragdollVector(floor.v)+
+        ",\"supported\":false");
+      continue;
+      }
+    player.setPosition(floor.v);player.setDirection(chest.position()-floor.v);player.updateTransform();
+    const bool collision=player.hasCollision();
+    const float useDistance=(player.centerPosition()-socket).length();
+    const bool clear=!world.physic()->ray(floor.v+Vec3(0,100,0),socket+Vec3(0,100,0)).hasCol;
+    event("own_mesh_chest_approach","\"socket_cm\":"+ragdollVector(socket)+
+      ",\"distance_cm\":"+ragdollNumber(distance)+",\"floor_cm\":"+ragdollVector(floor.v)+
+      ",\"supported\":true,\"collision\":"+(collision?"true":"false")+
+      ",\"use_distance_cm\":"+ragdollNumber(useDistance)+",\"clear\":"+(clear?"true":"false"));
+    if(collision || useDistance>155.f || !clear)continue;
+    start=floor.v;prepared=true;break;
+    }
+  if(!prepared) {arenaAbort("own-mesh-chest has no supported collision-free ordinary interaction approach");return;}
+  const Vec3 side(-away.z,0,away.x),target=chest.position()+Vec3(0,65,0);
+  const auto camera=target+away*150.f+side*100.f+Vec3(0,100,0);
+  bench.cam=C_Hold;bench.camAuto=false;lookFrom(camera,target);
+  event("own_mesh_chest_setup","\"zen_id\":"+std::to_string(zenId)+
+    ",\"mob_id\":"+std::to_string(world.mobsiId(&chest))+
+    ",\"visual\":"+jsonStr(chest.objVisual().protoMesh()->fname)+
+    ",\"world\":"+jsonStr(world.name())+",\"mob_cm\":"+ragdollVector(chest.position())+
+    ",\"socket_cm\":"+ragdollVector(socket)+",\"hero_start_cm\":"+ragdollVector(start)+
+    ",\"camera_cm\":"+ragdollVector(camera)+",\"camera_target_cm\":"+ragdollVector(target)+
+    ",\"seeded_gold\":"+(seeded?"true":"false")+",\"items\":"+ownMeshChestInventory(world,player));
+  ownMeshChestSnapshot(world,player,"closed");
+  }
+
 void characterIdleSlopeSample(World& world,Npc& player,std::string_view label) {
   auto& fixture=bench.characterIdleSlope;
   auto* actor=fixture.npc?bench.npcCharacterRoute.npc:&player;
@@ -10986,6 +11113,63 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     noiseDropItems(w,1);
     }
   else if(c=="noise" && a.size()==2 && a[1]=="checkpoint") noiseCheckpoint(w);
+  else if(c=="own-mesh-chest" && a.size()==6 && (a[1]=="setup" || a[1]=="reload"))
+    ownMeshChestSetup(w,pl,Vec3(num(a,2,0),num(a,3,0),num(a,4,0)),uint32_t(std::stoul(a[5])),a[1]=="reload");
+  else if(c=="own-mesh-chest" && a.size()==2 && a[1]=="open") {
+    auto& fixture=bench.ownMeshChest;
+    if(!fixture.chest) {arenaAbort("own-mesh-chest open needs setup");return;}
+    ctrl.clearInput();ctrl.clearFocus();ctrl.tickFocus();
+    const bool selected=ctrl.focus().interactive==fixture.chest;
+    event("own_mesh_chest_focus","\"pass\":"+std::string(selected?"true":"false")+
+      ",\"selected_mob_id\":"+std::to_string(w.mobsiId(ctrl.focus().interactive))+
+      ",\"expected_mob_id\":"+std::to_string(w.mobsiId(fixture.chest))+
+      ",\"hero_cm\":"+ragdollVector(pl.position()));
+    if(!selected) {arenaAbort("own-mesh-chest ordinary focus did not select the exact authored chest");return;}
+    fixture.opened=ctrl.interact(*fixture.chest) && pl.interactive()==fixture.chest;
+    event("own_mesh_chest_open","\"pass\":"+std::string(fixture.opened?"true":"false")+
+      ",\"native_path\":\"PlayerControl::interact/InventoryMenu::open/Npc::setInteraction\"");
+    if(!fixture.opened)arenaAbort("own-mesh-chest native player interaction did not attach");
+    }
+  else if(c=="own-mesh-chest" && a.size()==3 && a[1]=="snapshot")ownMeshChestSnapshot(w,pl,a[2]);
+  else if(c=="own-mesh-chest" && a.size()==2 && a[1]=="take") {
+    auto& fixture=bench.ownMeshChest;
+    if(!fixture.chest || !fixture.opened || fixture.chest->stateId()!=1 ||
+       fixture.chest->objVisual().animNames().find("S_S1")==std::string::npos || !fixture.sawTransition) {
+      arenaAbort("own-mesh-chest take needs native T_S0_2_S1 followed by S_S1");return;
+      }
+    // Exactly the transfer called by InventoryMenu::onTakeStuff for a chest;
+    // this preserves native inventory removal and the player's taking deed.
+    for(const auto& [id,count]:fixture.contents)pl.addItem(id,*fixture.chest,count);
+    fixture.taken=true;
+    ownMeshChestSnapshot(w,pl,"taken");
+    }
+  else if(c=="own-mesh-chest" && a.size()==2 && a[1]=="check") {
+    const auto& fixture=bench.ownMeshChest;
+    bool pass=fixture.chest && fixture.opened && fixture.sawTransition && fixture.taken &&
+      fixture.chest->stateId()==1 && fixture.chest->inventory().isEmpty() &&
+      fixture.chest->objVisual().animNames().find("S_S1")!=std::string::npos;
+    for(const auto& [id,count]:fixture.contents)
+      pass=pass && pl.inventory().itemCount(id)==fixture.heroBefore.at(id)+count;
+    event("own_mesh_chest_check","\"pass\":"+std::string(pass?"true":"false")+
+      ",\"saw_transition\":"+(fixture.sawTransition?"true":"false")+
+      ",\"items\":"+ownMeshChestInventory(w,pl));
+    if(!pass)arenaAbort("own-mesh-chest did not preserve native open state and exact item gain");
+    }
+  else if(c=="own-mesh-chest" && a.size()==3 && a[1]=="save") {
+    if(!bench.ownMeshChest.chest || a[2].empty() ||
+       a[2].find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos) {
+      arenaAbort("own-mesh-chest save needs a chest fixture and a simple label");return;
+      }
+    try {
+      ownMeshChestSnapshot(w,pl,"saved");std::vector<uint8_t> bytes;
+      {MemWriter writer(bytes);Serialize out(writer);Pixmap preview(1,1,TextureFormat::RGBA8);std::memset(preview.data(),0,4);
+      Gothic::inst().gameSession()->save(out,"own mesh chest "+a[2],preview);}
+      std::ofstream file(outDir+"/session-"+a[2]+".sav",std::ios::binary);
+      file.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
+      if(!file)throw std::runtime_error("cannot write complete own-mesh-chest session save");
+      event("own_mesh_chest_save","\"archive\":"+jsonStr("session-"+a[2]+".sav")+",\"bytes\":"+std::to_string(bytes.size()));
+      } catch(const std::exception& error) {arenaAbort(error.what());}
+    }
   else if(c=="own-mesh" && a.size()==5 && a[1]=="setup")
     ownMeshSetup(w,pl,uint32_t(std::stoul(a[2])),Vec3(num(a,3,0),0,num(a,4,0)));
   else if(c=="own-mesh" && a.size()==2 && a[1]=="arrow")ownMeshArrow(w,pl);
@@ -16349,6 +16533,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     }
   movableFields(*world);
   ownMeshFields(*world,*player);
+  ownMeshChestFields(*world,*player);
   waterFields(*world);
   waterFilmTick(*world);
   clothFields(*world);

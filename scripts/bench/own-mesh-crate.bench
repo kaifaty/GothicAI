@@ -1,0 +1,30 @@
+# Fresh NEWWORLD.ZEN, noon. OPENGOTHIC_CENSUS=<absolute output>/census.json.
+# Authored harbour crate NW_HARBOUR_CRATE_01 next to the bench barrel, vob 18714 in
+# prop-survey order: origin (5249, 304, -5985) cm.
+# The camera is held independently of the hero; no fixture prop is inserted.
+# Run the same scene with OPENGOTHIC_CONTENT= for original-mesh screenshots/FPS.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view nopfx
+cam lift off
+# Park the hero below the world so he neither enters the frame nor touches the
+# authored props. Marvin's goto pos takes integer centimetres.
+goto pos 5249 -1696 -5985
+clear 5000
+cam look 2000
+cam world 330 2160 0
+wait 34
+cam hold
+wait 5000
+shot own-mesh-crate
+census
+# Completed application frames, normal game clock, no video capture.
+# character measure only arms the shared cadence window; no character fixture.
+cadence normal
+wait 34
+character measure off
+cadence wait
+character report

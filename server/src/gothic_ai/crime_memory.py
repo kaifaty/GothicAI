@@ -43,6 +43,7 @@ def _memory_cases(crimes: Crimes, npc: str, *, law: CrimeLaw | None = None) -> l
         and k.suspect == "PLAYER"
         and not k.forgiven
         and not k.silenced
+        and not crimes.does_not_blame(npc, k.crime)
         and not (
             k.crime["id"] in absolved if law is None else (
                 law.is_guard(npc, k.crime.get("community"))
@@ -88,7 +89,8 @@ class CrimeMemoryRuntime:
         if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
             return
         if fact.get("fact") in {
-            "crime", "crime_seen", "rumor", "testimony", "silenced", "forgiven", "absolved", "died"
+            "crime", "crime_side", "crime_seen", "rumor", "testimony", "silenced", "forgiven",
+            "absolved", "died"
         }:
             self._wake.set()
 

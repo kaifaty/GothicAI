@@ -2,9 +2,59 @@
 
 Ручной офлайн-конвейер для [пилота генераторов](../../../../reports/content/2026-10-3d-generators/README.md). Игра его сама не запускает. Концепты и генерация — отдельные шаги.
 
+## Модель по концепту
+
+Основной путь этапа 2 с 2026-10-20: модель строится по своему концепту `image_gen`, генераторы 3D не используются ([бочка](../../../../reports/content/2026-10-barrel-from-concept/README.md)).
+
+```sh
+B=/Applications/Blender.app/Contents/MacOS/Blender
+$B -b --factory-startup -P scripts/content/mesh3d/blender/barrel.py -- \
+  scripts/content/mesh3d/blender/barrel.json /absolute/output/barrel
+$B -b --factory-startup -P scripts/content/mesh3d/blender/compare.py -- /absolute/compare.json
+uv run --with numpy --with pillow python scripts/content/mesh3d/iron_material.py \
+  /absolute/maps/own_prop_iron_band --target R G B
+```
+
+Своя текстура на предмет:
+
+```sh
+$B -b --factory-startup -P scripts/content/mesh3d/blender/bake_atlas.py -- \
+  scripts/content/mesh3d/blender/barrel-atlas.json /absolute/output/barrel-atlas
+uv run --no-project --with numpy --with pillow python scripts/content/mesh3d/pack_prop.py \
+  --bake /absolute/output/barrel-atlas --visual NW_HARBOUR_BARREL_01 --name mesh3d-barrel-atlas \
+  --output ~/.local/share/gothic-ai/content-staging/mesh3d-barrel-atlas
+```
+
+`bake_atlas.py` даёт модели новую развёртку-атлас и запекает в неё плиточные материалы этапа 1. Сверху добавляются тон каждой детали, тёмные щели по краям досок, светлые стёртые кромки, выгоревший верх, мокрый низ и AO. Затем каждая зона растягивается по контрасту и возвращается к своему замеренному среднему цвету. Пути `glb` и `maps_dir` в настройках — внутри `content-staging`. В GLB остаётся одна UV, атлас, и материалы атласа с группами звука. `pack_prop.py` упаковывает атлас в DDS один раз и даёт каждому материалу GLB свой ключ `materials.json` на эти файлы.
+
+Рельеф плитки запекается ослабленным: фильтр этапа 1 (`bakeoff.filtered_maps`) растягивает рельеф любой плитки на полный диапазон, и в игре дерево выглядело выдавленной имитацией, а ткань — твёрдой и искрящейся. Сила карты нормалей плитки — по материалу зоны: ткань, ковёр и мешковина ×0,12, свои процедурные стекло, воск и кость ×1, всё остальное ×0,25; `tile_normal` в настройках задаёт её для зоны. У ткани, верёвки и меха нет светлых стёртых кромок (`edge_wear`, по умолчанию 0,7 маски кромок). Обе величины пишутся в `metrics.json` по зонам. [Замеры и игровое сравнение](../../../../reports/content/2026-10-prop-relief/README.md).
+
+Ящик и замер оригинала:
+
+```sh
+$B -b --factory-startup -P scripts/content/mesh3d/blender/crate.py -- \
+  scripts/content/mesh3d/blender/crate.json /absolute/output/crate
+$B -b --factory-startup -P scripts/content/mesh3d/blender/bake_atlas.py -- \
+  scripts/content/mesh3d/blender/crate-atlas.json /absolute/output/crate-atlas
+# C++20 против ZenKit, как target-measures.cpp: позиции в NEWWORLD.ZEN и средний цвет текселей меша
+c++ -std=c++20 -O2 -DZKNO_REM=1 -D_ZK_WITH_MMAP=1 -IOpenGothic/lib/ZenKit/include -I<zenkit build>/include \
+  scripts/content/mesh3d/prop-survey.cpp <zenkit build>/libzenkit.a <zenkit build>/vendor/libsquish/libsquish.a -o prop-survey
+./prop-survey "<Gothic II>" NW_HARBOUR_CRATE_01.MRM
+```
+
+Стол и лавка строятся так же: `table.py` + `table.json`, `bench.py` + `bench.json`, атласы — `table-atlas.json` и `bench-atlas.json`. Общие детали лежат в `parts.py`: доска, брусок-ножка с сужением, камень, Г-уголок, полоса, гвоздь и экспорт с номерами деталей. Ящик собран тем же модулем, GLB от этого не изменился. Зоны цели можно переопределить в настройках (`zones`): у лавки опоры каменные, как у оригинала, с группой `STONE`.
+
+Сундук — модель MOB с двумя вложениями: `chest.py` + `chest.json`, атлас — `chest-atlas.json`. Цель записана в настройках (`goal`), потому что этого сундука нет в наборе пилота. `finish_nodes` из `parts.py` пишет каждый набор деталей отдельным узлом GLB с именем вложения (`BIP01 CHEST_BIG_0` — корпус, `BIP01 CHEST_BIG_1` — крышка); `finish` — тот же путь с одним узлом. Крышка строится целиком перед осью петли (`hinge` — начало узла крышки в bind pose) и выше неё, поэтому при повороте не входит в корпус; запас скрипт пишет в `metrics.json`. Грани внутри закрытого сундука получают свою зону `INNER` со своей целью цвета. С настройкой `nodes` `bake_atlas.py` запекает узлы в общий атлас и снова делит их по именам. [Отчёт](../../../../reports/content/2026-10-chest-from-concept/README.md).
+
+`../barrel-material-measures.cpp` — зональный замер бочки по её текстуре `NW_CITY_BARREL_01` (бок, днища, строки обручей). Собирается так же, как `prop-survey.cpp`, и даёт цели `barrel-atlas.json`. Плитки дерева всех четырёх предметов — материалы `mesh3d-barrel-wood-stave` и `mesh3d-barrel-wood-head` в реестре.
+
+`crate.py` собирает ящик по частям: рамка из брусков на каждой грани, доски с щелями внутри, тёмный короб за щелями, Г-образные уголки и гвозди. Внешние точки (шляпки гвоздей) касаются bbox цели. На общем ребре грани не перекрываются: ребро забирает грань с высшим приоритетом (верх, затем торцы, затем длинные грани). Каждая деталь пишет свой номер в атрибут `_part`, и `bake_atlas.py` тонирует по нему. Шляпки гвоздей трёхгранные и утоплены в дерево на 1 мм, без основания; это единственные открытые рёбра, их число — в `metrics.json`. `prop-survey.cpp` выводит только числа: где стоят копии визуала (для кадра стенда) и средний цвет текселей, которые использует меш, с делением на «дерево» и «серое» по R/G.
+
+`barrel.py` снимает профиль с альфы вида спереди (`front` — путь внутри `content-sources`), остальные части берёт из `barrel.json`: число клёпок, положение и высоту обручей, стык, венец, доски крышки. Пишет `model.glb` и `metrics.json`. `compare.py` рендерит GLB с одним светом и камерой по списку видов, материалы `ours` берёт из `maps_dir/<ключ>/`. `iron_material.py` делает бесшовное кованое железо со средним цветом замера.
+
 ## Установка и запуск
 
-Blender **4.5.3 LTS** устанавливается официальным портативным архивом с закреплённым SHA-256 в `~/gothic-ai/mesh3d/blender` на Ryzen. Установщик сначала показывает `df -h ~` и требует 23 ГиБ до распаковки, чтобы сохранить порог очереди 20 ГиБ. `run-ryzen.sh` копирует только Python-файлы этого модуля в свою папку и запускает `blender -b -P` через `gq batch`: 6 потоков, 8 ГиБ RAM, без GPU. Workbench использует Mesa llvmpipe без окна.
+Blender **5.2.2 LTS** (та же линейка 5.2, что на Mac) устанавливается официальным портативным архивом с закреплённым SHA-256 в `~/gothic-ai/mesh3d/blender` на Ryzen. Установщик сначала показывает `df -h ~` и требует 23 ГиБ до распаковки, чтобы сохранить порог очереди 20 ГиБ. `run-ryzen.sh` копирует только Python-файлы этого модуля в свою папку и запускает `blender -b -P` через `gq batch`: 6 потоков, 8 ГиБ RAM, без GPU. Workbench использует Mesa llvmpipe без окна.
 
 ```sh
 ssh ryzen bash < scripts/content/mesh3d/blender/install.sh

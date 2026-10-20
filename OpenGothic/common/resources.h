@@ -28,6 +28,10 @@ class PfxEmitterMesh;
 class GthFont;
 class ContentCensus;
 
+namespace zenkit {
+class ModelMesh;
+}
+
 namespace Dx8 {
 class DirectMusic;
 class PatternList;
@@ -228,6 +232,8 @@ class Resources final {
     Tempest::Texture2d    implLoadTextureUncached(std::string_view name, zenkit::Read& data, bool forceMips);
     ProtoMesh*            implLoadMesh(std::string_view name);
     std::unique_ptr<ProtoMesh> implLoadMeshMain(std::string name);
+    bool                  replaceModelMesh(zenkit::ModelMesh& mesh, std::unique_ptr<Skeleton>& skeleton,
+                                           std::string_view visual, std::string_view meshFile);
     std::unique_ptr<Animation> implLoadAnimation(std::string name);
     ProtoMesh*            implDecalMesh(const zenkit::VisualDecal& decal);
     Tempest::Sound        implLoadSoundBuffer(std::string_view name);

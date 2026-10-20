@@ -1,0 +1,20 @@
+{
+  "glb": "market-set/build/oil-lamp/model.glb",
+  "maps_dir": "market-set/tiles",
+  "scales": {"OWN_PROP_BRASS": 1.0, "OWN_PROP_GLASS": 1.0, "OWN_PROP_WOOD_FRAME": 2.6315789},
+  "targets": {"OWN_PROP_BRASS": [0.0696, 0.03, 0.0092], "OWN_PROP_GLASS": [0.225, 0.204, 0.1701], "OWN_PROP_WOOD_FRAME": [0.0936, 0.0417, 0.0129]},
+  "slots": {"OWN_PROP_BRASS": ["OWN_OILLAMP_MARKET_BRASS", "METAL"], "OWN_PROP_GLASS": ["OWN_OILLAMP_MARKET_GLASS", "UNDEF"],
+            "OWN_PROP_WOOD_FRAME": ["OWN_OILLAMP_MARKET_WOOD", "WOOD"]},
+  "metal": ["OWN_PROP_BRASS"],
+  "size": 1024,
+  "seed": 1,
+  "angle_limit": 60,
+  "margin": 0.004,
+  "tone_spread": 0.05,
+  "wet_height": 0.0,
+  "algae": 0.0,
+  "bleach": 0.0,
+  "edge_radius": 0.003,
+  "planks_per_tile": {"OWN_PROP_WOOD_FRAME": 4},
+  "contrast": {"OWN_PROP_BRASS": 1.2, "OWN_PROP_GLASS": 1.0, "OWN_PROP_WOOD_FRAME": 1.3}
+}

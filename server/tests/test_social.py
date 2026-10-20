@@ -10,8 +10,11 @@ import pytest
 
 from gothic_ai import social
 from gothic_ai.chronicle import Chronicle
+from gothic_ai.crime_react import CrimeReact
+from gothic_ai.crimes import Crimes
 from gothic_ai.deals import Deals
 from gothic_ai.dialogue import DialogueManager
+from gothic_ai.game import GameError
 from gothic_ai.gamedata.storygraph import StoryGraph, load
 from gothic_ai.llm.fake import FakeBackend
 from gothic_ai.memory import MemoryStore
@@ -365,7 +368,11 @@ def _crime_rumors(s: Social, kind: str = "theft", witness: str = HILDA) -> tuple
     r.chronicle.facts = lambda kind=None: [f for f in facts if kind is None or f.get("fact") == kind]
     r.crimes = SimpleNamespace(
         facts=lambda: r.chronicle.facts("crime"),
+        crime=lambda crime_id: next((f for f in r.chronicle.facts("crime") if f["id"] == crime_id), None),
         describe=lambda f: f"герой совершил {f['kind']} (день {f['day']})",
+        learn_side=lambda npc, crime: None,
+        excuse=lambda npc, crime: {},
+        react=None,
         cover=True,
         testimony_crimes=lambda f: f.get("crime_told", []),
     )
@@ -421,6 +428,74 @@ def test_crime_witnesses_share_one_rumor_and_keep_the_speaker(graph, monkeypatch
         1,
     )
     assert rumor.told("Хильда") == "Слух (со слов: Хильда): герой совершил theft (день 1)"
+
+
+def test_justified_murder_upgrades_known_news_and_keeps_its_source_on_reload(graph):
+    r, rumor, facts = _crime_rumors(Social(PEOPLE, graph), "murder")
+    facts[0]["victim"] = BANDIT
+    facts.extend([
+        {"fact": "crime_seen", "npc": VINO, "crime": "c1"},
+        {"fact": "crime_side", "npc": HILDA, "crime": "c1", "why": "fought"},
+    ])
+    r.chronicle.on_fact = []
+    r.crimes = Crimes(SimpleNamespace(listeners=[]), r.chronicle)
+    r.crimes.people = {p["npc"]: {"guild": p["guild"], "npctype": 0} for p in PEOPLE}
+    CrimeReact(r.crimes.link, r.crimes)
+    r._load()
+    [rumor] = r.rumors.values()
+    notes = []
+    r.dialogue = SimpleNamespace(remember=lambda *args: notes.append(args[-1]))
+    r.clock = DAY + _h(10)
+    assert r.tell(rumor, VINO, VATRAS) == "told"
+    assert r.tell(rumor, VATRAS, LOBART) == "told"
+    assert not [f for f in facts if f.get("fact") == "rumor"][-1].get("excuse")
+    assert rumor.known[LOBART] == 2
+    r.gate = lambda *args: True
+    assert r.offer_status(rumor, HILDA, LOBART) == "told"
+    upgraded = [f for f in facts if f.get("fact") == "rumor"][-1]
+    assert (upgraded["excuse"], upgraded["excuse_by"], upgraded["excuse_by_name"]) == (
+        "fought", HILDA, "Хильда",
+    )
+    assert "Хильда говорит:" in notes[-1] and "дрался с ним" in notes[-1]
+    assert rumor.known[LOBART] == 1
+    assert r.tell(rumor, HILDA, LOBART) == "no"
+    assert r.tell(rumor, LOBART, ANDRE) == "told"
+    retold = [f for f in facts if f.get("fact") == "rumor"][-1]
+    assert (retold["excuse"], retold["excuse_by"], retold["hops"]) == ("fought", HILDA, 2)
+    tells, known = dict(r.tells), dict(rumor.known)
+    r._load()
+    [restored] = r.rumors.values()
+    assert restored.known == known and dict(r.tells) == tells
+    assert r.crimes.excuse(ANDRE, "c1")["excuse_by"] == HILDA
+
+
+@pytest.mark.parametrize("error", [None, GameError("guilds unavailable"), TimeoutError("guilds timeout")])
+async def test_rumor_tick_prepares_guilds_and_still_spreads_on_read_failure(
+    graph, monkeypatch, caplog, error,
+):
+    monkeypatch.setattr(social, "P_MEET", 1.0)
+    monkeypatch.setattr(social, "P_DEAL", 0.0)
+    r, rumor, facts = _crime_rumors(Social(PEOPLE, graph), "murder")
+    calls = []
+
+    async def prepare():
+        calls.append("prepare")
+        if error is not None:
+            raise error
+
+    async def state():
+        calls.append("state")
+        return {"day": 1, "hour": 10, "minute": 0}
+
+    r.crimes.sides = SimpleNamespace(prepare=prepare)
+    r.link = SimpleNamespace(story_state=state)
+    r.clock = DAY + _h(9)
+    with caplog.at_level("INFO", logger="gothic_ai.social"):
+        await r.tick()
+    assert calls == ["prepare", "state"]
+    assert LOBART in rumor.known and len([f for f in facts if f.get("fact") == "rumor"]) == 1
+    if error is not None:
+        assert str(error) in caplog.text
 
 
 @pytest.mark.parametrize("kind,hops", [("theft", 2), ("sheep", 2), ("attack", 3), ("murder", 4)])

@@ -15,6 +15,8 @@ from gothic_ai.bodies import Bodies
 from gothic_ai.brain.planner import NpcRecord
 from gothic_ai.budget import Budget
 from gothic_ai.chronicle import Chronicle
+from gothic_ai.crime_react import CrimeReact
+from gothic_ai.crimes import Crimes
 from gothic_ai.dialogue import DialogueManager, SceneLine
 from gothic_ai.gossip import INSTRUCTIONS, GossipDesk
 from gothic_ai.journal import Journal
@@ -312,6 +314,90 @@ async def test_scene_instead_of_a_silent_pass(tmp_path):
     # one call for two: one token of each one's bucket
     assert g.budget.allow(LOBART) and not g.budget.allow(LOBART)
     assert g.budget.allow(HILDA) and not g.budget.allow(HILDA)
+
+
+@pytest.mark.parametrize("retold", [False, True])
+@pytest.mark.parametrize("why,reason", [
+    ("fought", "Браго дрался с ним"),
+    ("companion", "Браго напал на героя и его спутников"),
+    ("hostile", "Браго был его врагом"),
+    ("quest", "сам хотел, чтобы Браго умер"),
+])
+async def test_crime_scene_brief_keeps_the_excuse_and_asks_teller_to_voice_it(tmp_path, retold, why, reason):
+    async with _gossip(tmp_path) as g:
+        crimes = Crimes(g.desk.link, g.chronicle, names=lambda npc: "Браго" if npc == "BRAGO" else npc)
+        g.rumors.crimes = crimes
+        g.chronicle.record({"fact": "crime", "id": "c1", "kind": "murder", "victim": "BRAGO", "day": 1})
+        source = HILDA if retold else LOBART
+        g.chronicle.record({"fact": "crime_side", "npc": source, "crime": "c1", "why": why})
+        if retold:
+            g.chronicle.record({
+                "fact": "rumor", "crime": "c1", "kind": "murder", "from": HILDA, "to": LOBART,
+                "excuse": why, "excuse_by": HILDA, "excuse_by_name": HILDA,
+            })
+        rumor = Rumor("crime:c1", "murder", source, source, "герой убил человека: Браго", crime="c1")
+        rumor.known[LOBART] = int(retold)
+        scene = gossip.Scene("scene", LOBART, HILDA, "Лобарт", "Хильда", rumor.key, "words")
+        scene.news = rumor.description()
+        brief = g.desk._brief(scene, rumor)
+        name = "Хильда" if retold else "Лобарт"
+        assert f"Оправдание: {name} говорит: {reason}" in brief
+        assert "Рассказчик должен озвучить эту причину вместе с новостью." in brief
+        assert crimes.excuse(LOBART, "c1")["excuse_by_name"] == source
+
+
+@pytest.mark.parametrize("degree,role,with_react,expected", [
+    ("heard", "stranger", True, True),
+    ("seen", "stranger", True, False),
+    ("heard", "member", True, False),
+    ("heard", "guard", True, False),
+    ("heard", "stranger", False, False),
+])
+async def test_view_can_offer_the_justified_version_to_a_knowing_listener(
+    tmp_path, monkeypatch, degree, role, with_react, expected,
+):
+    async with _gossip(tmp_path) as g:
+        crimes = Crimes(g.desk.link, g.chronicle)
+        reactions = CrimeReact(g.desk.link, crimes) if with_react else None
+        crimes.people.update({
+            LOBART: {"guild": 8, "npctype": 0},
+            HILDA: {"guild": {"stranger": 8, "member": 3, "guard": 2}[role], "npctype": 0},
+            "BRAGO": {"guild": 3, "npctype": 0},
+        })
+        g.rumors.crimes = crimes
+        crime = {
+            "fact": "crime", "id": "c1", "kind": "murder", "victim": "BRAGO",
+            "community": "city", "day": 1,
+        }
+        g.chronicle.record(crime)
+        g.chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "c1"})
+        g.chronicle.record({"fact": "crime_side", "npc": LOBART, "crime": "c1", "why": "fought"})
+        g.chronicle.record({
+            "fact": "rumor", "crime": "c1", "kind": "murder", "quest": "crime:c1",
+            "about": LOBART, "from": VINO, "to": HILDA, "hops": 1, "day": 1,
+        })
+        if degree == "seen":
+            g.chronicle.record({"fact": "crime_seen", "npc": HILDA, "crime": "c1"})
+        [knowledge] = crimes.known(HILDA)
+        assert knowledge.degree == degree and not knowledge.excuse
+        if reactions is not None:
+            assert reactions.base_role(HILDA, crime) == role
+        rumor = next(r for r in g.rumors.rumors.values() if r.crime == "c1")
+        assert rumor.known == {LOBART: 0, HILDA: int(degree == "heard")}
+        g.rumors.rumors = {rumor.key: rumor}
+        g.rumors.clock = AT
+        offers = []
+
+        async def offer(r, a, b, gap, name):
+            offers.append((r, a, b))
+
+        monkeypatch.setattr(g.desk, "_offer", offer)
+        g.desk._on_view(NpcView.model_validate(_view(LOBART, "Лобарт", _look(HILDA, "Хильда", 4))))
+        await _until(lambda: not g.desk._background)
+        assert offers == ([(rumor, LOBART, HILDA)] if expected else [])
+        assert g.desk.scene is None
+        if reactions is not None:
+            await reactions.close()
 
 
 async def test_one_fact_per_pass_and_witnesses(tmp_path):

@@ -37,13 +37,14 @@ log = logging.getLogger(__name__)
 HOLD_SECONDS = 0.5  # the bridge releases after 0.6 s; leave a frame for our verdict
 SHOUT_RANGE_CM = 2500
 RECLAIM_SECONDS = 180.0
+GUILD_RETRY_SECONDS = 5.0
 OWNER_FIGHT_COURAGE = 3
 HELP_COURAGE = 4
 COWARD_COURAGE = 2
 REPORT_HONESTY = 4
 SILENT_HONESTY = 2
 
-Role = Literal["owner", "guard", "member", "stranger"]
+Role = Literal["owner", "ally", "guard", "member", "stranger"]
 ReactionKind = Literal["fight", "call_guards", "shout", "demand", "flee", "silent", "ignore"]
 
 
@@ -63,6 +64,8 @@ def reaction_for(
     guards: bool = False,
 ) -> Reaction | None:
     """The first, deliberately explicit table. None means that vanilla must decide."""
+    if role == "ally":
+        return Reaction("ignore")
     if kind == "theft":
         if role == "guard" or (role == "owner" and courage >= OWNER_FIGHT_COURAGE):
             return Reaction("fight", "DIRTYTHIEF", "AR_THEFT")
@@ -114,6 +117,7 @@ class CrimeReact:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.link, self.crimes = link, crimes
+        crimes.react = self
         self.law = law or CrimeLaw(crimes)
         self.cards = cards if cards is not None else {}
         self.project = project
@@ -128,6 +132,7 @@ class CrimeReact:
         self._fact_wake = asyncio.Event()
         self._generation = 0
         self._prepared = False
+        self._guild_retry_at = 0.0
         self._closed = False
         self._reclaiming: set[tuple[int, str, str]] = set()
         self._restitution_started: set[tuple[int, str]] = set()
@@ -137,24 +142,31 @@ class CrimeReact:
 
     async def prepare(self) -> None:
         """Read actual homes once per world; no routine-prefix guesses for stateless households."""
-        generation = self._generation
-        people = await self.link.story_people()
-        if generation != self._generation:
+        if not self._prepared:
+            generation = self._generation
+            people = await self.link.story_people()
+            if generation != self._generation:
+                return
+            for person in people:
+                npc = str(person.get("npc", "")).upper()
+                if npc:
+                    self.crimes.people[npc] = {**self.crimes.people.get(npc, {}), **person}
+            self._prepared = True
+        if self.clock() < self._guild_retry_at:
             return
-        for person in people:
-            npc = str(person.get("npc", "")).upper()
-            if npc:
-                self.crimes.people[npc] = {**self.crimes.people.get(npc, {}), **person}
-        self._prepared = True
+        self._guild_retry_at = self.clock() + GUILD_RETRY_SECONDS
+        try:
+            await self.crimes.sides.prepare()
+        except (GameError, TimeoutError) as error:
+            log.debug("crime reactions: guilds unavailable: %s", error)
 
     async def run(self) -> None:
         while not self.link.closed.is_set():
             await self.link.wait_world()
-            if not self._prepared:
-                try:
-                    await self.prepare()
-                except (GameError, TimeoutError) as error:
-                    log.debug("crime reactions: people unavailable: %s", error)
+            try:
+                await self.prepare()
+            except (GameError, TimeoutError) as error:
+                log.debug("crime reactions: people unavailable: %s", error)
             # Session resets the cache; a short poll only loads metadata, never makes decisions.
             try:
                 await asyncio.wait_for(self.link.closed.wait(), 1.0)
@@ -163,6 +175,8 @@ class CrimeReact:
 
     async def close(self) -> None:
         self._closed = True
+        if self.crimes.react is self:
+            self.crimes.react = None
         if self._on_message in self.link.listeners:
             self.link.listeners.remove(self._on_message)
         if self._on_fact in self.crimes.chronicle.on_fact:
@@ -198,6 +212,17 @@ class CrimeReact:
         return "room:" + room if room else None
 
     def role(self, npc: str, crime: Fact) -> Role | None:
+        role = self.base_role(npc, crime)
+        if role == "owner":
+            return role
+        if self.crimes.side(npc, crime["id"]) is not None:
+            return "ally"
+        if role == "stranger" and self.crimes.does_not_blame(npc, crime):
+            return "ally"
+        return role
+
+    def base_role(self, npc: str, crime: Fact) -> Role | None:
+        """Connection to the victim before a personal side or a heard justification."""
         npc = npc.upper()
         deed = self._deeds.get(crime["id"])
         owners = {str(crime.get("owner", "")).upper(), str(crime.get("victim", "")).upper()}
@@ -255,6 +280,7 @@ class CrimeReact:
             self._reclaiming.clear()
             self._restitution_started.clear()
             self._prepared = False
+            self._guild_retry_at = 0.0
             for task in tuple(self._tasks):
                 task.cancel()
         elif isinstance(message, HeroDeed):
@@ -325,6 +351,8 @@ class CrimeReact:
             guard = str(person.get("npc", "")).upper()
             if not guard or person.get("distance", SHOUT_RANGE_CM + 1) > SHOUT_RANGE_CM:
                 continue
+            if self.crimes.side(guard, crime["id"]) is not None:
+                continue
             # Only possible guards need a VM read to distinguish city from OldCamp membership.
             metadata = {**self.crimes.people.get(guard, {}), **person}
             if not self.law.is_guard(guard, crime.get("community"), metadata):
@@ -369,10 +397,12 @@ class CrimeReact:
                     await self._fact_wake.wait()
                 if held.other.upper() not in HERO or crime.get("method") == "pickpocket":
                     raise _Fallback("unsupported_deed")
-                if not self._free(npc):
-                    raise _Fallback("busy")
-                await self._person(npc)
                 role = self.role(npc, crime)
+                if role != "ally":
+                    if not self._free(npc):
+                        raise _Fallback("busy")
+                    await self._person(npc)
+                    role = self.role(npc, crime)
                 if role is None:
                     raise _Fallback("unknown_role")
                 card = self.cards.get(npc)
@@ -388,7 +418,7 @@ class CrimeReact:
                 )
                 if reaction is None:
                     raise _Fallback("no_rule")
-                if self.project is not None:
+                if self.project is not None and role != "ally":
                     await self.project(npc)
                 if reaction.svm and reaction.kind not in {"fight", "flee"}:
                     await self._act(npc, "say_svm", svm=reaction.svm, overlay=True)
@@ -406,7 +436,7 @@ class CrimeReact:
                     if guard:
                         await self._act(guard, "fight", npc="PLAYER", reason="AR_GUARDCALLEDTOTHIEF")
                         fighter = guard
-                if not self._free(npc) and reaction.kind not in {"fight", "flee"}:
+                if role != "ally" and not self._free(npc) and reaction.kind not in {"fight", "flee"}:
                     raise _Fallback("busy")
                 verdict, reason = "server", f"{crime['kind']}:{role}"
         except _Fallback as error:

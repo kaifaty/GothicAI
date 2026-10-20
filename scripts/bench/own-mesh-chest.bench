@@ -1,0 +1,35 @@
+# Fresh NEWWORLD.ZEN, noon. Repeat with indexed GLB and OPENGOTHIC_CONTENT=.
+# CHESTBIG_NW_NORMAL_OPEN.MDS: prop-survey preorder 20369, ZEN vob.id 23109.
+# Authored origin (7654.307129, 126.205124, 1238.297241) cm, yaw 65.997707 deg.
+# Unlocked native contents: ItMi_Gold:32. No item or prop is inserted.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view nopfx
+cam lift off
+# Hold a close view independently of the hero's native approach/interaction.
+goto pos 7654 -1874 1238
+clear 5000
+cam look 2060
+cam world 280 2160 -20
+wait 34
+cam hold
+wait 5000
+own-mesh-chest setup 7654 126 1238 23109
+wait 1000
+own-mesh-chest snapshot closed
+shot own-mesh-chest-closed
+wait 34
+rec own-mesh-chest novideo
+own-mesh-chest open
+wait 6000
+own-mesh-chest snapshot opened
+shot own-mesh-chest-opened
+wait 34
+own-mesh-chest take
+own-mesh-chest check
+own-mesh-chest save opened
+stop
+census

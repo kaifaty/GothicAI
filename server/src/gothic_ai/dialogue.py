@@ -619,6 +619,7 @@ class DialogueManager:
         self.budget = budget  # calls nobody asked for (summaries); the player's turns are only counted
         # the npc's intent changed (e.g. for the planner: what it wants from the hero after the chat)
         self.on_intent: Callable[[str, Intent], None] | None = None
+        self.on_fight: Callable[[str, str], None] | None = None
         # the hero said something to the npc (npc, words): the gesture its body makes in the pause before
         # the answer (incidents.py asks the behavioral model)
         self.first_reaction: Callable[[str, str], Awaitable[FirstReaction]] | None = None
@@ -2298,6 +2299,8 @@ class DialogueManager:
         """Game actions for an intent; only what did not work is noted."""
         failed = []
         for action, args in acts:
+            if action == "fight" and self.on_fight is not None:
+                self.on_fight(conv.npc, args["npc"])
             try:
                 res = await self.link.act(conv.npc, action, **args)  # type: ignore[arg-type]
             except (GameError, TimeoutError) as err:

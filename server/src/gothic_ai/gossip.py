@@ -690,6 +690,16 @@ class GossipDesk:
             f"Новость (знает {an}, не знает {bn}): {s.news}",
             f"{an} {self._source(r, a, an)}.",
         ]
+        crimes = self.rumors.crimes
+        crime = crimes.crime(r.crime) if crimes is not None and r.is_player and r.crime else None
+        if crime is not None and (excuse := crimes.excuse(a, r.crime)):
+            excuse = dict(excuse)
+            if social is not None and excuse.get("excuse_by_name") in {None, "", excuse["excuse_by"]}:
+                excuse["excuse_by_name"] = social.names.get(excuse["excuse_by"], excuse["excuse_by"])
+            parts.append(
+                f"Оправдание: {crimes.excuse_text(crime, excuse)}. "
+                "Рассказчик должен озвучить эту причину вместе с новостью."
+            )
         honesty = self.trust.situation(a) if self.trust is not None else None
         if honesty is not None and "\n" in honesty:
             honesty = honesty.split("\n", 1)[1]  # its own header is in the second person
@@ -957,7 +967,7 @@ class GossipDesk:
             if o.kind != "human" or o.distance > WALK_CM or social.ties.get(a, {}).get(b) is None:
                 continue
             for r in list(rumors.rumors.values()):
-                if a not in r.known or b in r.known or not r.tells(a, day):
+                if a not in r.known or not rumors._new_to(r, a, b) or not r.tells(a, day):
                     continue
                 key = (r.key, a, b)
                 if (again := self._checked.get(key)) is not None and clock < again:

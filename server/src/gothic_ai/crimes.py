@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from .chronicle import Chronicle, Fact
+from .crime_sides import CrimeSides
 from .game import GameError, GameLink
 from .gamedata.storygraph import StoryGraph
 from .people_knowledge import rumor_subject
@@ -24,6 +25,7 @@ from .protocol import DeedItem, DeedSnapshot, GameMessage, HeroDeed, Session
 if TYPE_CHECKING:
     from .blame import Blame
     from .concerns import Concern
+    from .crime_react import CrimeReact
     from .dialogue import DialogueManager
     from .places import PlaceBook
     from .sightings import Sightings
@@ -40,6 +42,9 @@ class CrimeKnowledge:
     suspect: str = "PLAYER"
     forgiven: bool = False
     silenced: bool = False
+    excuse: str = ""
+    excuse_by: str = ""
+    excuse_by_name: str = ""
 
 
 HERO = {"PLAYER", "HERO", "PC_HERO"}
@@ -118,7 +123,9 @@ class Crimes:
         self.cover = cover
         self.sightings: Sightings | None = None
         self.blame: Blame | None = None
+        self.react: CrimeReact | None = None
         self.people: dict[str, dict[str, Any]] = {}  # static world metadata, never beliefs
+        self.sides = CrimeSides(self)
         self._noncrimes: set[str] = set()  # completed negative classifications, only in this world
         self.on_noncrime: list[Callable[[str], None]] = []
         chronicle.on_fact.append(self._on_fact)
@@ -136,6 +143,88 @@ class Crimes:
 
     def crime(self, crime: str) -> Fact | None:
         return next((f for f in self.facts() if f.get("id") == crime), None)
+
+    def side(self, npc: str, crime: str) -> Fact | None:
+        """A witness's recorded side, inherited with the save branch like the deed itself."""
+        return next((
+            fact for fact in self.chronicle.facts("crime_side")
+            if fact.get("npc") == npc.upper() and fact.get("crime") == crime
+        ), None)
+
+    def learn_side(self, npc: str, crime: Fact) -> Fact | None:
+        """Record a listener's own side before its knowledge can trigger consequences."""
+        npc = npc.upper()
+        side = self.side(npc, crime["id"])
+        if side is not None or crime.get("kind") != "murder":
+            return side
+        why = self.sides.heard_reason(npc, crime)
+        if why is None:
+            return None
+        side = {"fact": "crime_side", "npc": npc, "crime": crime["id"], "why": why}
+        self.chronicle.record(side)
+        return side
+
+    def _side_excuse(self, npc: str, crime: str) -> dict[str, str]:
+        side = self.side(npc, crime)
+        if side is None:
+            return {}
+        return {
+            "excuse": side["why"],
+            "excuse_by": side["npc"],
+            "excuse_by_name": self.names(side["npc"]),
+        }
+
+    def _testimony_excuse(self, testimony: Fact, crime: str) -> dict[str, str]:
+        return testimony.get("crime_excuses", {}).get(crime) or self._side_excuse(
+            testimony.get("witness", ""), crime
+        )
+
+    def excuse(self, npc: str, crime: str) -> dict[str, str]:
+        """The teller's own side wins; otherwise preserve its first justified source."""
+        npc = npc.upper()
+        if side := self._side_excuse(npc, crime):
+            return side
+        for fact in self.chronicle.facts():
+            if (
+                fact.get("fact") == "rumor" and fact.get("to") == npc
+                and fact.get("crime") == crime and rumor_subject(fact) == "PLAYER"
+                and fact.get("excuse")
+            ):
+                return {key: fact.get(key, "") for key in ("excuse", "excuse_by", "excuse_by_name")}
+            if (
+                fact.get("fact") == "testimony" and fact.get("npc") == npc
+                and crime in self.testimony_crimes(fact)
+            ):
+                if excuse := self._testimony_excuse(fact, crime):
+                    return excuse
+        return {}
+
+    def excuse_text(self, crime: Fact, excuse: Mapping[str, str]) -> str:
+        by = excuse.get("excuse_by_name") or self.names(excuse.get("excuse_by", ""))
+        victim = self.names(crime.get("victim", ""))
+        reasons = {
+            "fought": f"{victim} дрался с ним",
+            "companion": f"{victim} напал на героя и его спутников",
+            "hostile": f"{victim} был его врагом",
+            "quest": f"сам хотел, чтобы {victim} умер",
+        }
+        reason = reasons.get(excuse.get("excuse", ""))
+        return f"{by} говорит: {reason}" if reason else ""
+
+    def does_not_blame(self, npc: str, crime: Fact) -> bool:
+        """A personal side, or an unrelated listener accepting a justified account."""
+        if self.side(npc, crime["id"]) is not None:
+            return True
+        if (
+            crime.get("kind") != "murder" or self.react is None
+            or self.react.base_role(npc, crime) != "stranger"
+        ):
+            return False
+        return any(
+            k.crime["id"] == crime["id"] and k.suspect == "PLAYER"
+            and k.degree == "heard" and k.excuse
+            for k in self.known(npc)
+        )
 
     def blamed(self, npc: str, crime: str) -> bool:
         """An active belief in another culprit suspends this victim's demand against the hero."""
@@ -202,14 +291,25 @@ class Crimes:
                     continue
                 key = (crime, suspect)
                 previous = out.get(key)
-                if previous is None or rank[degree] > rank[previous.degree]:
+                excuse = {}
+                if degree == "heard":
+                    excuse = (
+                        self._testimony_excuse(f, crime) if f.get("fact") == "testimony"
+                        else {key: f.get(key, "") for key in ("excuse", "excuse_by", "excuse_by_name")}
+                    )
+                if (
+                    previous is None or rank[degree] > rank[previous.degree]
+                    or (degree == previous.degree == "heard" and excuse.get("excuse") and not previous.excuse)
+                ):
                     forgiven = any(
                         s.get("fact") == "forgiven" and s.get("npc") == npc and s.get("crime") == crime
                         for s in facts
                     )
                     silenced = (npc, crime) in silences
                     out[key] = CrimeKnowledge(
-                        crimes[crime], degree, source, hops, suspect, forgiven, silenced
+                        crimes[crime], degree, source, hops, suspect, forgiven, silenced,
+                        excuse.get("excuse", ""), excuse.get("excuse_by", ""),
+                        excuse.get("excuse_by_name", ""),
                     )
         return list(out.values())
 
@@ -251,8 +351,16 @@ class Crimes:
                 line = f"Ты видел сам: {what}."
             elif k.degree == "heard":
                 line = f"Ты слышал (со слов: {self.names(k.source)}): {what}; переходов: {k.hops}."
+                if k.excuse:
+                    line += " " + self.excuse_text(k.crime, {
+                        "excuse": k.excuse, "excuse_by": k.excuse_by, "excuse_by_name": k.excuse_by_name,
+                    }) + "."
             else:
                 line = f"Ты подозреваешь: {what}. Ты видел героя рядом, самого дела не видел; это догадка."
+            if self.side(npc, k.crime["id"]) is not None:
+                line += " Жертва была твоим врагом: ты не винишь героя."
+            elif self.does_not_blame(npc, k.crime):
+                line += " Ты не винишь героя."
             if k.forgiven:
                 line += " Ты простил это дело."
             if k.silenced:
@@ -269,6 +377,7 @@ class Crimes:
             if k.suspect == "PLAYER"
             and k.degree != "suspects"
             and not k.forgiven
+            and not self.does_not_blame(npc, k.crime)
             and (
                 k.degree == "seen"
                 or k.crime.get("victim") == npc.upper()
@@ -283,6 +392,8 @@ class Crimes:
 
     def _attitude_of(self, npc: str, knowledge: CrimeKnowledge) -> str | None:
         if knowledge.suspect != "PLAYER" or knowledge.degree == "suspects" or knowledge.forgiven:
+            return None
+        if self.does_not_blame(npc, knowledge.crime):
             return None
         community = self._person_community(npc)
         crime = knowledge.crime
@@ -544,6 +655,7 @@ class Crimes:
         return None
 
     def _on_message(self, msg: GameMessage) -> None:
+        self.sides.on_message(msg)
         if isinstance(msg, HeroDeed):
             self.record(msg)
         elif isinstance(msg, Session):
@@ -615,6 +727,8 @@ class Crimes:
                 else:
                     kind = "murder"
                     community = self.community(deed.victim_guild, deed.victim_npctype)
+                    if deed.victim_guild >= 0:
+                        extra["victim_guild"] = deed.victim_guild
             case "pickpocket":
                 outcome = pickpocket_outcome(
                     deed.inventory_before,
@@ -663,6 +777,14 @@ class Crimes:
         self._noncrimes.discard(deed.id)
         self.chronicle.record(fact)
         metadata = {self._npc(p.npc): p for p in deed.witnesses_metadata}
+        if kind == "murder":
+            # These facts must precede every crime_seen: listeners immediately change attitudes
+            # and deliver news to the law when knowledge is recorded.
+            for npc in witnesses:
+                if why := self.sides.reason(npc, deed):
+                    self.chronicle.record(
+                        {"fact": "crime_side", "npc": npc, "crime": deed.id, "why": why}
+                    )
         for npc in witnesses:
             person = metadata.get(npc)
             self.chronicle.record(

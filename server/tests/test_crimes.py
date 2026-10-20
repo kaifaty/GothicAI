@@ -6,11 +6,20 @@ from typing import Any
 
 import pytest
 
+from gothic_ai.characters import Card
 from gothic_ai.chronicle import Chronicle
+from gothic_ai.commands import Order
 from gothic_ai.crimes import COMMUNITIES, Crimes, pickpocket_outcome
+from gothic_ai.dialogue import DialogueManager
+from gothic_ai.executor import Intent
+from gothic_ai.fear import afraid
 from gothic_ai.gamedata.storygraph import Node, StoryGraph
+from gothic_ai.llm.fake import FakeBackend
 from gothic_ai.memory import MemoryStore
-from gothic_ai.protocol import HeroDeed, Session
+from gothic_ai.orders import Orders
+from gothic_ai.persona import PersonaProvider
+from gothic_ai.protocol import HeroDeed, Loading, NpcEvent, NpcViews, Perception, Session
+from gothic_ai.questbook import Goal, Progress, Quest, Stage, Talk
 
 LOBART = "BAU_950_LOBART"
 HILDA = "BAU_951_HILDA"
@@ -483,3 +492,390 @@ async def test_noncrime_signal_follows_classification_and_is_cleared_on_session(
     assert system.crimes.classified_noncrime("deed-1")
     system.link.receive(Session(type="session", branch="B"))
     assert not system.crimes.classified_noncrime("deed-1")
+
+
+def murder(system, **fields):
+    return system.crimes.record(
+        deed(kind="murder", victim=LOBART, victim_guild=8, witnesses=[HILDA], **fields)
+    )
+
+
+def side(system, why):
+    assert system.crimes.side(HILDA.lower(), "deed-1") == {
+        "fact": "crime_side", "npc": HILDA, "crime": "deed-1", "why": why,
+    }
+    assert system.crimes.facts()[0]["kind"] == "murder"
+    assert system.crimes.facts()[0]["witnesses"] == [HILDA]
+    assert [fact["npc"] for fact in system.chronicle.facts("crime_seen")] == [HILDA]
+
+
+async def test_enemy_witness_fears_only_other_violence_and_understands_its_side(system):
+    cards = {
+        npc: Card(npc, npc, "", "", greed=3, honesty=3, courage=2, talk=3, pushy=3, strangers=3)
+        for npc in (HILDA, LEE)
+    }
+    system.crimes.sides.note_fight(LOBART, HILDA)
+    system.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=8, witnesses=[HILDA, LEE]))
+    assert system.crimes.side(HILDA, "deed-1") is not None
+    assert not afraid(HILDA, cards, system.crimes, courage=2)
+    assert afraid(LEE, cards, system.crimes, courage=2)
+    ally_situation = system.crimes.situation(HILDA)
+    outsider_situation = system.crimes.situation(LEE)
+    assert "Ты видел сам" in ally_situation
+    assert " Жертва была твоим врагом: ты не винишь героя." in ally_situation
+    assert "Ты видел сам" in outsider_situation
+    assert "ты не винишь героя" not in outsider_situation
+
+    system.crimes.record(deed(
+        id="other-murder", kind="murder", victim="OTHER_VICTIM", victim_guild=8, witnesses=[HILDA],
+    ))
+    assert system.crimes.side(HILDA, "other-murder") is None
+    assert afraid(HILDA, cards, system.crimes, courage=2)
+
+
+@pytest.mark.parametrize("attacker,target", [(HILDA, LOBART), (LOBART, HILDA)])
+async def test_fight_intent_survives_reset_before_the_execution(system, attacker, target):
+    system.crimes.sides.note_intent(attacker, Intent(goal="fight", target=target))
+    # The real Brago incident: knocked down at 18:42:15, executed at 18:42:36. At death neither
+    # current intent nor the bridge's victim_* combat flags identifies that earlier fight.
+    system.crimes.sides.note_intent(attacker, Intent())
+    system.crimes.dialogue = SimpleNamespace(conversations={attacker: SimpleNamespace(intent=Intent())})
+    assert murder(system) is not None
+    side(system, "fought")
+
+
+@pytest.mark.parametrize("kind", ["npc_attack", "npc_threat"])
+async def test_native_attack_or_threat_makes_its_target_a_side(system, kind):
+    system.link.receive(NpcEvent(type="npc_event", npc=HILDA, kind=kind, other=LOBART))
+    murder(system)
+    side(system, "fought")
+
+
+async def test_controlled_witness_damage_perception_remembers_the_attacker(system):
+    system.link.receive(
+        Perception(type="perception", npc=HILDA, perc="ASSESSDAMAGE", other=LOBART, distance=20)
+    )
+    murder(system)
+    side(system, "fought")
+
+
+@pytest.mark.parametrize("actor,target", [(HILDA, LOBART), (LOBART, HILDA)])
+async def test_native_combat_target_in_a_view_remembers_both_directions(system, actor, target):
+    system.link.receive(NpcViews.model_validate({"type": "npc_views", "t": 1, "views": [{
+        "npc": "OBSERVER", "name": "Наблюдатель", "sees": [
+            {"id": actor, "name": actor, "distance": 100, "combat_target": target},
+        ],
+    }]}))
+    murder(system)
+    side(system, "fought")
+
+
+@pytest.mark.parametrize("following", ["order", "intent", "friend"])
+@pytest.mark.parametrize("signal", ["hero_attacked", "intent", "enemy"])
+async def test_companion_sides_with_hero_against_his_attacker(system, following, signal):
+    fields = {}
+    if following == "order":
+        system.crimes.sides.orders = SimpleNamespace(
+            standing={HILDA: SimpleNamespace(kind="follow")}, fights={},
+        )
+    elif following == "intent":
+        system.crimes.dialogue = SimpleNamespace(conversations={
+            HILDA: SimpleNamespace(intent=Intent(goal="follow_hero")),
+        })
+    else:
+        fields["witnesses_metadata"] = [{"npc": HILDA, "guild": 8, "npctype": 2}]
+    if signal == "hero_attacked":
+        system.link.receive(NpcEvent(type="npc_event", npc="OBSERVER", kind="hero_attacked", other=LOBART))
+    elif signal == "intent":
+        system.crimes.sides.note_intent(LOBART, Intent(goal="fight", target="PC_HERO"))
+    else:
+        fields["victim_enemy"] = True
+    murder(system, **fields)
+    side(system, "companion")
+
+
+@pytest.mark.parametrize("kind", ["npc_attack", "npc_threat"])
+async def test_attack_on_another_companion_puts_witness_on_the_heros_side(system, kind):
+    system.crimes.sides.orders = SimpleNamespace(standing={
+        HILDA: SimpleNamespace(kind="follow"), LEE: SimpleNamespace(kind="follow"),
+    }, fights={})
+    system.link.receive(NpcEvent(type="npc_event", npc=LEE, kind=kind, other=LOBART))
+    murder(system)
+    side(system, "companion")
+
+
+async def test_group_attack_survives_the_targets_follow_intent_reset(system):
+    system.crimes.dialogue = SimpleNamespace(conversations={
+        HILDA: SimpleNamespace(intent=Intent(goal="follow_hero")),
+        LEE: SimpleNamespace(intent=Intent(goal="follow_hero")),
+    })
+    system.crimes.sides.note_fight(LOBART, LEE)
+    system.crimes.dialogue.conversations[LEE].intent = Intent()
+    murder(system)
+    side(system, "companion")
+
+
+async def test_attack_on_the_group_expires_with_combat_memory(system):
+    system.crimes.sides.clock = lambda: 0.0
+    system.crimes.sides.note_fight(LOBART, "HERO")
+    system.crimes.sides.clock = lambda: 601.0
+    murder(system, witnesses_metadata=[{"npc": HILDA, "guild": 8, "npctype": 2}])
+    assert system.crimes.side(HILDA, "deed-1") is None
+    assert system.crimes.sides.group_threats == {}
+
+
+@pytest.mark.parametrize("source", ["intent", "executor", "order", "orders_start", "orders_executor"])
+async def test_real_intent_and_fight_callbacks_keep_the_conflict_after_the_body_stops(system, source):
+    system.link.snapshots = {}
+
+    async def act(npc, action, /, **args):
+        return SimpleNamespace(status="done")
+
+    system.link.act = act
+    dialogue = DialogueManager(system.link, FakeBackend(), PersonaProvider(None), memory=system.memory)
+    system.crimes.dialogue = dialogue
+    dialogue.on_intent = system.crimes.sides.note_intent
+    dialogue.on_fight = system.crimes.sides.note_fight
+    talk = SimpleNamespace(people={
+        HILDA: SimpleNamespace(id=HILDA, name="Хильда", activity="routine", earshot=100),
+    })
+    orders = Orders(system.link, talk, dialogue)
+    orders.on_fight = system.crimes.sides.note_fight
+    # The callbacks are synchronous, before an action starts. The body itself is irrelevant here.
+    orders._spawn = lambda coroutine: coroutine.close()
+    conv = dialogue.open(HILDA, "Хильда")
+    if source == "intent":
+        dialogue.change_intent(HILDA, "Хильда", body=False, goal="fight", target=LOBART)
+        dialogue.change_intent(HILDA, "Хильда", body=False, goal="none", target=None)
+    elif source == "executor":
+        await dialogue._body(conv, [("fight", {"npc": LOBART})])
+    elif source == "orders_executor":
+        assert await orders._act(HILDA, "fight", npc=LOBART) == "done"
+    elif source == "orders_start":
+        orders._start(HILDA, LOBART, None)
+        orders.fights.clear()
+    else:
+        conv.intent = Intent(goal="follow_hero")
+        assert orders.take(Order("attack", "бей", "Бей его!"), LOBART, None) == [(HILDA, "Хильда")]
+        conv.intent = Intent()
+    murder(system)
+    side(system, "fought")
+    if dialogue._background:
+        await asyncio.gather(*dialogue._background)
+
+
+async def test_current_executor_and_order_fights_are_also_evidence(system):
+    system.crimes.sides.orders = SimpleNamespace(standing={}, fights={HILDA: SimpleNamespace(target=LOBART)})
+    murder(system)
+    side(system, "fought")
+
+
+async def test_current_unreported_fight_intent_is_evidence(system):
+    system.crimes.dialogue = SimpleNamespace(conversations={
+        LOBART: SimpleNamespace(intent=Intent(goal="fight", target=HILDA)),
+    })
+    murder(system)
+    side(system, "fought")
+
+
+@pytest.mark.parametrize("hero", ["PLAYER", "HERO", "PC_HERO"])
+async def test_attacking_a_victim_does_not_make_it_the_companions_enemy(system, hero):
+    system.crimes.sides.orders = SimpleNamespace(standing={HILDA: SimpleNamespace(kind="follow")}, fights={})
+    system.crimes.sides.note_fight(hero, LOBART)
+    murder(system)
+    assert system.crimes.side(HILDA, "deed-1") is None
+
+
+@pytest.mark.parametrize("unrelated", ["hero_attacked", "different_foe", "halt_order", "expired"])
+async def test_outsiders_and_unrelated_or_expired_conflict_still_judge_the_killing(system, unrelated):
+    if unrelated == "hero_attacked":
+        system.crimes.sides.note_fight(LOBART, "HERO")
+    elif unrelated == "different_foe":
+        system.crimes.sides.note_fight("SOMEONE_ELSE", HILDA)
+    elif unrelated == "halt_order":
+        system.crimes.sides.orders = SimpleNamespace(
+            standing={HILDA: SimpleNamespace(kind="halt")}, fights={},
+        )
+    else:
+        system.crimes.sides.clock = lambda: 0.0
+        system.crimes.sides.note_fight(LOBART, HILDA)
+        system.crimes.sides.clock = lambda: 601.0
+    murder(system, victim_enemy=True)
+    assert system.crimes.side(HILDA, "deed-1") is None
+    assert system.crimes.attitude(HILDA) == "wary"
+
+
+@pytest.mark.parametrize("reset", [Loading(type="loading"), Session(type="session", branch="B")])
+async def test_world_reset_clears_short_combat_memory_and_keeps_guild_cache(system, reset):
+    system.crimes.sides.note_fight(HILDA, LOBART)
+    system.crimes.sides.note_fight(LOBART, "PLAYER")
+    system.crimes.sides.hostile_guilds.add((8, 8))
+    system.link.receive(reset)
+    murder(system)
+    assert system.crimes.sides.fights == {}
+    assert system.crimes.sides.group_threats == {}
+    assert system.crimes.sides.hostile_guilds == {(8, 8)}
+    assert system.crimes.side(HILDA, "deed-1") is None
+
+
+async def test_guild_hostility_is_read_once_per_world_and_uses_witness_to_victim_direction(system):
+    calls = []
+
+    async def evaluate(npc, exprs):
+        assert npc == "PC_HERO"
+        calls.append((npc, exprs))
+        if exprs == [["var", "GIL_MAX"], ["var", "ATT_HOSTILE"]]:
+            return [3, 0]
+        return [0 if (expr[2][1], expr[3][1]) == (1, 2) else 2 for expr in exprs]
+
+    system.link.story_eval = evaluate
+    await system.crimes.sides.prepare()
+    await system.crimes.sides.prepare()
+    assert len(calls) == 2 and len(calls[1][1]) == 9
+    result = system.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=2, witnesses=[HILDA],
+                                      witnesses_metadata=[{"npc": HILDA, "guild": 1, "npctype": 0}]))
+    assert result is not None
+    side(system, "hostile")
+    system.crimes.record(deed(id="reverse", kind="murder", victim=LEE, victim_guild=1, witnesses=[HILDA],
+                             witnesses_metadata=[{"npc": HILDA, "guild": 2, "npctype": 0}]))
+    assert system.crimes.side(HILDA, "reverse") is None
+    system.link.receive(Loading(type="loading"))
+    await system.crimes.sides.prepare()
+    assert len(calls) == 4
+
+
+async def test_old_world_guild_query_cannot_fill_the_new_world_cache(system):
+    requested, ready = asyncio.Event(), asyncio.Event()
+
+    async def evaluate(npc, exprs):
+        requested.set()
+        await ready.wait()
+        return [3, 0]
+
+    system.link.story_eval = evaluate
+    pending = asyncio.create_task(system.crimes.sides.prepare())
+    await requested.wait()
+    system.link.receive(Session(type="session", branch="B"))
+    ready.set()
+    await pending
+    assert system.crimes.sides.hostile_guilds == set()
+    assert not system.crimes.sides._prepared
+
+
+async def test_last_guild_matrix_classifies_a_killing_while_new_world_refresh_is_pending(system):
+    requested, ready = asyncio.Event(), asyncio.Event()
+    refreshing = False
+
+    async def evaluate(npc, exprs):
+        if exprs == [["var", "GIL_MAX"], ["var", "ATT_HOSTILE"]]:
+            return [3, 0]
+        if refreshing:
+            requested.set()
+            await ready.wait()
+            return [2] * len(exprs)
+        return [0 if (expr[2][1], expr[3][1]) == (1, 2) else 2 for expr in exprs]
+
+    system.link.story_eval = evaluate
+    await system.crimes.sides.prepare()
+    assert system.crimes.sides.hostile_guilds == {(1, 2)}
+    system.link.receive(Session(type="session", branch="B"))
+    refreshing = True
+    pending = asyncio.create_task(system.crimes.sides.prepare())
+    await requested.wait()
+    try:
+        assert not pending.done()
+        assert system.crimes.sides.hostile_guilds == {(1, 2)}
+        system.crimes.record(deed(
+            kind="murder", victim=LOBART, victim_guild=2, witnesses=[HILDA],
+            witnesses_metadata=[{"npc": HILDA, "guild": 1, "npctype": 0}],
+        ))
+        side(system, "hostile")
+    finally:
+        ready.set()
+        await pending
+    assert system.crimes.sides.hostile_guilds == set()
+    assert system.crimes.sides._prepared
+
+
+@pytest.mark.parametrize("state,stage,giver,expected", [
+    ("given", 1, HILDA, "quest"), ("given", 2, HILDA, "quest"),
+    ("given", 3, HILDA, "quest"), ("open", 0, HILDA, None), ("done", 3, HILDA, None),
+    ("failed", 2, HILDA, None), ("obsolete", 2, HILDA, None), ("given", 1, LEE, None),
+])
+async def test_only_issued_open_kill_quest_from_this_witness_counts(system, state, stage, giver, expected):
+    quest = Quest("DIR_Q1", giver, "Поручение", Talk("Возьмусь", []), [
+        Stage("Начало", [Goal(kind="talk", npc=LEE)]),
+        Stage("Победить врага", [Goal(kind="kill", npcs=[LOBART])]),
+        Stage("Вернуться", [Goal(kind="talk", npc=giver)]),
+    ], "Готово")
+    system.crimes.sides.book = SimpleNamespace(
+        all=lambda: {quest.id: quest}, progress=lambda _: Progress(state, stage),
+    )
+    murder(system)
+    if expected:
+        side(system, expected)
+    else:
+        assert system.crimes.side(HILDA, "deed-1") is None
+
+
+async def test_sides_precede_all_seen_facts_and_survive_chronicle_reload(system):
+    system.crimes.sides.note_fight(LOBART, HILDA)
+    observed = []
+    system.chronicle.on_fact.append(
+        lambda fact: observed.append((fact["fact"], system.crimes.side(HILDA, "deed-1")))
+    )
+    murder(system)
+    assert [kind for kind, _ in observed] == ["crime", "crime_side", "crime_seen"]
+    assert observed[-1][1] is not None
+    saved = system.memory.head("A")
+    system.crimes.record(deed(id="unsaved", kind="murder", victim=LEE, victim_guild=7, witnesses=[HILDA]))
+    loaded = Session(type="session", branch="B", parent="A", parent_seq=saved, reason="load")
+    system.link.session = loaded
+    system.link.receive(loaded)
+    reloaded = Chronicle(system.link, system.memory)
+    loaded_crimes = Crimes(system.link, reloaded)
+    assert [fact["id"] for fact in loaded_crimes.facts()] == ["deed-1"]
+    side(SimpleNamespace(crimes=loaded_crimes, chronicle=reloaded), "fought")
+    assert loaded_crimes.sides.fights == {}
+    assert loaded_crimes.known(HILDA)[0].degree == "seen"
+    await loaded_crimes.close()
+
+
+@pytest.mark.parametrize("why", ["fought", "companion", "hostile", "quest"])
+async def test_listener_uses_the_same_side_reasons_without_witness_metadata(system, why):
+    system.crimes.people.update({HILDA: {"guild": 1, "npctype": 0}, LOBART: {"guild": 8}})
+    if why == "fought":
+        system.crimes.sides.note_fight(LOBART, HILDA)
+    elif why == "companion":
+        system.crimes.people[HILDA]["npctype"] = 2
+        system.crimes.sides.note_fight(LOBART, "PLAYER")
+    elif why == "hostile":
+        system.crimes.sides.hostile_guilds.add((1, 8))
+    else:
+        quest = Quest("DIR_KILL", HILDA, "Поручение", Talk("Возьмусь", []), [
+            Stage("Убить врага", [Goal(kind="kill", npcs=[LOBART])]),
+        ], "Готово")
+        system.crimes.sides.book = SimpleNamespace(
+            all=lambda: {quest.id: quest}, progress=lambda _: Progress("given", 1),
+        )
+    crime = system.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=8))
+    assert crime["victim_guild"] == 8
+    first = system.crimes.learn_side(HILDA.lower(), crime)
+    assert first == {"fact": "crime_side", "npc": HILDA, "crime": crime["id"], "why": why}
+    assert system.crimes.learn_side(HILDA, crime) == first
+    assert len(system.chronicle.facts("crime_side")) == 1
+
+
+@pytest.mark.parametrize("saved,person,expected", [
+    (8, 9, "hostile"), (None, 8, "hostile"), (-1, 8, "hostile"), (None, None, None),
+])
+async def test_listener_hostility_needs_known_victim_guild_and_prefers_saved(system, saved, person, expected):
+    system.crimes.people[HILDA] = {"guild": 1, "npctype": 0}
+    if person is not None:
+        system.crimes.people[LOBART] = {"guild": person}
+    system.crimes.sides.hostile_guilds.update({(1, 8), (1, -1)})
+    crime = {"id": "old-murder", "kind": "murder", "victim": LOBART}
+    if saved is not None:
+        crime["victim_guild"] = saved
+    side = system.crimes.learn_side(HILDA, crime)
+    assert (side["why"] if side else None) == expected

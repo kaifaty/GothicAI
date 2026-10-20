@@ -18,6 +18,7 @@ struct Result {
   int direction=0; // 0:none, 1:along U, 2:along V; direction of the long details
   double directionConfidence=0, angle=0;
   std::array<double,3> oklab{}, meanRgb{};
+  double logSpread=0, detailK3=0, detailK9=0, detailK27=0;
 };
 
 inline std::pair<double,double> period(const std::vector<double>& image,int w,int h,bool u) {
@@ -115,6 +116,76 @@ inline Result measure(const uint8_t* rgba,int width,int height) {
     if(coherence>=0.20 && result.directionConfidence>=0.20)
       result.direction=yy>xx?1:2;
   }
+  // Independent, fixed UV grid for log contrast/detail. Keep the legacy
+  // 128-sample period/direction calculation above unchanged.
+  constexpr int side=256;
+  const auto bounds=[](int cell,int size) {
+    if(size<side) {
+      const int pixel=int((int64_t(2*cell+1)*size)/(2*side));
+      return std::pair<int,int>{pixel,pixel+1};
+    }
+    // Pixel centres in [cell/256, (cell+1)/256).
+    return std::pair<int,int>{int((int64_t(2*cell)*size+side-1)/(2*side)),
+                             int((int64_t(2*(cell+1))*size+side-1)/(2*side))};
+  };
+  std::vector<double> logs(side*side,0), visible;
+  std::vector<bool> included(side*side,false);
+  double cellMean=0;
+  for(int cy=0;cy<side;++cy) for(int cx=0;cx<side;++cx) {
+    const auto [x0,x1]=bounds(cx,width);
+    const auto [y0,y1]=bounds(cy,height);
+    double sum=0;
+    int samples=0;
+    for(int y=y0;y<y1;++y) for(int x=x0;x<x1;++x) {
+      const auto* pixel=rgba+4*(size_t(y)*width+x);
+      if(pixel[3]<128) continue;
+      sum+=0.2126*linear(pixel[0])+0.7152*linear(pixel[1])+0.0722*linear(pixel[2]);
+      ++samples;
+    }
+    if(samples) {
+      const int i=cy*side+cx;
+      logs[i]=sum/samples;
+      cellMean+=logs[i];
+      included[i]=true;
+      visible.push_back(logs[i]);
+    }
+  }
+  cellMean/=visible.size();
+  visible.clear();
+  for(int i=0;i<side*side;++i) {
+    logs[i]=std::log((included[i]?logs[i]:cellMean)+0.001);
+    if(included[i]) visible.push_back(logs[i]);
+  }
+  std::sort(visible.begin(),visible.end());
+  const auto percentile=[&](double fraction) {
+    const double index=fraction*(visible.size()-1);
+    const size_t lower=size_t(index),upper=std::min(lower+1,visible.size()-1);
+    return visible[lower]+(visible[upper]-visible[lower])*(index-lower);
+  };
+  result.logSpread=percentile(0.9)-percentile(0.1);
+  const auto detail=[&](int kernel) {
+    std::vector<double> horizontal(side*side);
+    const int radius=kernel/2;
+    for(int y=0;y<side;++y) for(int x=0;x<side;++x) {
+      const int i=y*side+x;
+      double delta=0;
+      for(int dx=-radius;dx<=radius;++dx)
+        delta+=logs[y*side+(x+dx+side)%side]-logs[i];
+      horizontal[i]=logs[i]+delta/kernel;
+    }
+    double total=0;
+    for(int y=0;y<side;++y) for(int x=0;x<side;++x) {
+      const int i=y*side+x;
+      if(!included[i]) continue;
+      double delta=0;
+      for(int dy=-radius;dy<=radius;++dy)
+        delta+=horizontal[((y+dy+side)%side)*side+x]-horizontal[i];
+      const double box=horizontal[i]+delta/kernel;
+      total+=std::abs(logs[i]-box);
+    }
+    return total/visible.size();
+  };
+  result.detailK3=detail(3); result.detailK9=detail(9); result.detailK27=detail(27);
   return result;
 }
 }

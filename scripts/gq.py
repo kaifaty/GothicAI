@@ -204,7 +204,7 @@ class Queue:
         # Called only within a transaction: journal lines from different processes never interleave.
         record = {k: job.get(k) for k in ("id", "owner", "class", "name", "threads", "mem",
                                         "gpu_mem", "display", "display_shared", "display_exclusive", "display_slot",
-                                        "cpu_quota", "max", "submitted", "start")}
+                                        "cpu_quota", "interactive", "max", "submitted", "start")}
         record.update(event=event, time=self.now(), **extra)
         with (self.home / "journal.jsonl").open("a", encoding="utf-8") as output:
             os.chmod(output.name, 0o600)
@@ -264,6 +264,11 @@ class Queue:
             raise QueueError("видеопамять заявки превышает ёмкость хоста")
         if spec["class"] == "batch" and spec["max"] > 7200:
             raise QueueError("--max для batch не больше 2h")
+        if spec.get("interactive"):
+            if self.profile_name != "ryzen" or spec["class"] != "quick" or not spec["display_exclusive"]:
+                raise QueueError("--interactive требует quick --display-exclusive на Ryzen")
+            if spec["max"] > 6 * 3600:
+                raise QueueError("--max для --interactive не больше 6h")
         if not spec["command"]:
             raise QueueError("после -- нужна команда")
 
@@ -463,15 +468,24 @@ class Queue:
         with self.transaction() as state:
             jobs = state["jobs"]
             active = [j for j in jobs if j["status"] in ACTIVE]
-            queued = [j for j in jobs if j["status"] == "queued"]
+            queued = sorted((j for j in jobs if j["status"] == "queued"),
+                            key=lambda j: not j.get("interactive", False))
             quiet_waiting = legacy_waiting or any(j["class"] == "quiet" for j in queued)
             exclusive_waiting = next((index for index, j in enumerate(queued)
                                       if exclusive_display(j)), None)
-            if free < self.profile["min_disk"] or any(j["class"] == "quiet" for j in active):
+            interactive_waiting = any(j.get("interactive") for j in queued)
+            if free < self.profile["min_disk"]:
                 return
             batch_blocked = False
             skipped_owners = set()
             for index, job in enumerate(queued):
+                interactive = job.get("interactive", False)
+                # A person at the desktop waits only for windows already in use.
+                # Background quiet/training jobs keep running, without admitting
+                # another window while the player's exclusive request drains it.
+                if not interactive and (any(j["class"] == "quiet" for j in active)
+                                        or (interactive_waiting and job["display"])):
+                    continue
                 if job.get("retry_pending"):
                     if job["class"] == "batch":
                         batch_blocked = True
@@ -495,13 +509,14 @@ class Queue:
                         continue
                 if kind == "quiet" and (active or legacy_waiting):
                     continue
-                if kind == "quick" and quiet_waiting:
+                if kind == "quick" and quiet_waiting and not interactive:
                     last_batch = max(((j["start"] or j.get("reserved", self.now())) + j["max"]
                                       for j in active if j["class"] == "batch"), default=0)
                     if self.now() + job["max"] >= last_batch:
                         continue
-                if any(sum(j[resource] for j in active) + job[resource] > self.profile[resource]
-                       for resource in ("mem", "gpu_mem")):
+                if not interactive and any(
+                        sum(j[resource] for j in active) + job[resource] > self.profile[resource]
+                        for resource in ("mem", "gpu_mem")):
                     if kind == "batch":
                         batch_blocked = True
                     continue
@@ -510,7 +525,7 @@ class Queue:
                     # Drain games ahead of the oldest exclusive, then admit no
                     # later games. Earlier batches retain FIFO; quiet retains its
                     # class priority, otherwise the two admission gates can cycle.
-                    if (exclusive_waiting is not None and index > exclusive_waiting
+                    if (not interactive and exclusive_waiting is not None and index > exclusive_waiting
                             and kind != "quiet"):
                         if kind == "batch":
                             batch_blocked = True
@@ -529,7 +544,7 @@ class Queue:
                             batch_blocked = True
                         continue
                     slot = min(available)
-                with self.legacy_probe(kind == "quiet") as available:
+                with (contextlib.nullcontext(True) if interactive else self.legacy_probe(kind == "quiet")) as available:
                     if not available:
                         break
                 job.update(status="starting", reserved=self.now(), attempt=uuid.uuid4().hex,
@@ -561,9 +576,10 @@ class Queue:
             "GQ_HOME", "GQ_LEGACY_LOCK", "GQ_PROFILE")), *internal, "_finish", job["id"]])
         props = {
             "CPUAffinity": self.profile["cpus"].replace(",", " "),
-            "CPUWeight": 10 if job["class"] == "batch" else 100,
+            "CPUWeight": 1000 if job.get("interactive") else 10 if job["class"] == "batch" else 100,
             "Nice": 19 if job["class"] == "batch" else 0,
-            "MemoryMax": job["mem"], "RuntimeMaxSec": f"{job['max'] * 1.25:g}s",
+            "MemoryMax": job["mem"],
+            "RuntimeMaxSec": f"{job['max'] * (1 if job.get('interactive') else 1.25):g}s",
             "TimeoutStopSec": 60, "KillMode": "control-group", "ExecStopPost": post,
             "CollectMode": "inactive-or-failed",
             "WorkingDirectory": job["cwd"],
@@ -662,9 +678,22 @@ def command_gate(fd, command):
 
 def execute(queue, job_id):
     job = queue.get(job_id)
+    deadline = None
+    if job.get("interactive"):
+        # An older, still-running pump may have launched this newly submitted
+        # request with ordinary quick properties. The helper loads current code
+        # from disk: fix only its own unit before allowing the command to start.
+        result = systemctl("set-property", "--runtime", f"gq-{job_id}.service", "CPUWeight=1000")
+        if result.returncode:
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise QueueError(f"не удалось задать приоритет игры: {detail}")
+        # RuntimeMaxSec cannot be changed on a running service. Keep the six-hour
+        # ceiling here too, including when an old pump supplied max * 1.25.
+        deadline = time.monotonic() + job["max"]
     # A legacy EX can win the race between reservation and unit start. Never wait here:
     # retry admission instead, so RuntimeMaxSec measures work, not lock waiting.
-    with queue.legacy_probe(job["class"] == "quiet") as acquired:
+    with (contextlib.nullcontext(True) if job.get("interactive")
+          else queue.legacy_probe(job["class"] == "quiet")) as acquired:
         if not acquired:
             with queue.transaction() as state:
                 for current in state["jobs"]:
@@ -677,6 +706,7 @@ def execute(queue, job_id):
         # exists and forward later stops, including the gap inside Popen itself.
         child = None
         interrupted = 0
+        timed_out = False
         read_fd = write_fd = None
 
         def stop(signum, _frame):
@@ -685,6 +715,15 @@ def execute(queue, job_id):
             if child is not None and child.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
                     os.kill(child.pid, signum)
+
+        def monitor():
+            nonlocal timed_out
+            if deadline is not None and time.monotonic() >= deadline:
+                if not timed_out:
+                    queue.cancel(job_id, job["owner"], reason="timeout")
+                    timed_out = True
+            elif not alive(job.get("waiter")):
+                queue.retry_cancel(job_id, job["owner"])
 
         previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)}
         try:
@@ -717,12 +756,10 @@ def execute(queue, job_id):
             os.close(write_fd)
             write_fd = None
             while child.poll() is None:
-                if not alive(job.get("waiter")):
-                    queue.retry_cancel(job_id, job["owner"])
+                monitor()
                 time.sleep(POLL)
             while unit_has_children(job_id):
-                if not alive(job.get("waiter")):
-                    queue.retry_cancel(job_id, job["owner"])
+                monitor()
                 time.sleep(POLL)
             if interrupted:
                 return 128 + interrupted
@@ -848,11 +885,17 @@ def wait_job(queue, job_id, run=False, wait_max=None, follow=True):
                     return 75
                 continue  # Admission/completion won the race: return its actual result.
             if job["status"] == "queued" and queue.now() >= next_report:
-                waiting = [j["id"] for j in jobs if j["status"] == "queued"]
-                estimate = queue.estimate(job_id)
-                typical = f", медиана имени {estimate['typical']:.0f}s" if estimate["typical"] is not None else ""
-                print(f"gq {job_id}: место {waiting.index(job_id) + 1}, старт ≤ {estimate['upper']:.0f}s{typical}",
-                      file=sys.stderr, flush=True)
+                if job.get("interactive"):
+                    windows = [f"{j['id']} ({j['owner']}, {j['name']})"
+                               for j in jobs if j["status"] in ACTIVE and j["display"]]
+                    detail = "ждём игры: " + ", ".join(windows) if windows else "ожидаем допуска"
+                    print(f"gq {job_id}: {detail}", file=sys.stderr, flush=True)
+                else:
+                    waiting = [j["id"] for j in jobs if j["status"] == "queued"]
+                    estimate = queue.estimate(job_id)
+                    typical = f", медиана имени {estimate['typical']:.0f}s" if estimate["typical"] is not None else ""
+                    print(f"gq {job_id}: место {waiting.index(job_id) + 1}, старт ≤ {estimate['upper']:.0f}s{typical}",
+                          file=sys.stderr, flush=True)
                 next_report = queue.now() + 60
             time.sleep(QUEUED_POLL if job["status"] == "queued" else POLL)
     finally:
@@ -920,6 +963,8 @@ def parser():
         r.add_argument("--display-shared", action="store_true",
                        help="делить слоты окна с другими совместимыми заявками --display")
         r.add_argument("--display-exclusive", action="store_true")
+        r.add_argument("--interactive", action="store_true",
+                       help="игра пользователя: quick --display-exclusive, ждёт только занятые окна")
         r.add_argument("--cpu-quota", type=cpu_quota)
         r.add_argument("--max", type=duration, required=True)
         r.add_argument("--name", required=True)
@@ -966,6 +1011,7 @@ def main(argv=None):
                 "class": args.class_, "threads": args.threads, "mem": args.mem, "gpu_mem": args.gpu_mem,
                 "display": args.display, "display_shared": args.display_shared,
                 "display_exclusive": args.display_exclusive,
+                "interactive": args.interactive,
                 "cpu_quota": args.cpu_quota, "max": args.max,
                 "name": args.name, "owner": owner(), "command": command}
             if args.action == "submit":

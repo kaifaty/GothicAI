@@ -56,6 +56,8 @@ class Interactive : public Vob {
     auto                bBox() const -> const Tempest::Vec3*;
 
     int32_t             stateId() const { return state; }
+    uint32_t            zenId() const { return vobObjectID; }
+    const ObjVisual&    objVisual() const { return visual; }
     int32_t             stateCount() const { return stateNum; }
     bool                setMobState(std::string_view scheme,int32_t st) override;
     void                emitTriggerEvent(TriggerEvent::Type type) const;

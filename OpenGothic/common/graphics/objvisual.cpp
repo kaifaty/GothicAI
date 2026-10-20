@@ -451,6 +451,10 @@ const ProtoMesh* ObjVisual::protoMesh() const {
   return nullptr;
   }
 
+std::string ObjVisual::animNames() const {
+  return type==M_Mdl ? mdl.view.pose().animNames() : std::string();
+  }
+
 const Tempest::Matrix4x4& ObjVisual::bone(size_t i) const {
   if(type==M_Mdl)
     return mdl.view.pose().bone(i);

@@ -1,0 +1,11 @@
+{
+  "id": "carpet",
+  "target": "data/content/mesh3d-market.json",
+  "seed": 1,
+  "grid": [14, 10],
+  "thickness": 0.012,
+  "bumps": 0.003,
+  "fringe": [0.08, 0.014, 26],
+  "curl": [0.45, 0.035],
+  "fringe_uv": [0.477, 0.5]
+}

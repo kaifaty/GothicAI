@@ -49,7 +49,7 @@ def _core():
 
 
 def measure_material(image, *, uv_m_per_unit=None):
-    """Return scalar periods, axial direction and mean visible-pixel OKLab.
+    """Return scalar periods, direction, mean OKLab and log contrast/detail.
 
     Input is our PIL image, PNG path or uint8 RGB(A) array. U is image x, V image
     y. Period zero means no dominant spectral peak. Direction describes the
@@ -67,14 +67,16 @@ def measure_material(image, *, uv_m_per_unit=None):
         if array.shape[2] == 3:
             array = np.concatenate((array, np.full((*array.shape[:2], 1), 255, dtype=np.uint8)), axis=2)
     array = np.ascontiguousarray(array)
-    values = (ctypes.c_double * 13)()
+    values = (ctypes.c_double * 17)()
     if _core().material_measure_rgba(array.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)),
                                      array.shape[1], array.shape[0], values):
         raise ValueError("material has no pixels surviving alpha cutoff or invalid dimensions")
     result = dict(period_u_uv=values[0], period_v_uv=values[1], period_u_confidence=values[2],
                   period_v_confidence=values[3], direction=("none", "U", "V")[int(values[4])],
                   direction_confidence=values[5], direction_angle_deg=values[6],
-                  oklab=list(values[7:10]), mean_linear_rgb=list(values[10:13]))
+                  oklab=list(values[7:10]), mean_linear_rgb=list(values[10:13]),
+                  log_spread=values[13], detail_k3=values[14],
+                  detail_k9=values[15], detail_k27=values[16])
     if uv_m_per_unit is not None:
         if not np.isfinite(uv_m_per_unit) or uv_m_per_unit <= 0:
             raise ValueError("uv_m_per_unit must be finite and positive")

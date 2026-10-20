@@ -1,0 +1,18 @@
+{
+  "glb": "market-set/build/sacks/model.glb",
+  "maps_dir": "market-set/tiles",
+  "scales": {"OWN_PROP_CLOTH": 1.0, "OWN_PROP_ROPE": 1.0},
+  "targets": {"OWN_PROP_CLOTH": [0.1411, 0.0876, 0.0341], "OWN_PROP_ROPE": [0.16, 0.09, 0.026]},
+  "slots": {"OWN_PROP_CLOTH": ["OWN_SACKS_MARKET_JUTE", "UNDEF"], "OWN_PROP_ROPE": ["OWN_SACKS_MARKET_JUTE", "UNDEF"]},
+  "metal": [],
+  "size": 2048,
+  "seed": 1,
+  "angle_limit": 66,
+  "margin": 0.003,
+  "tone_spread": 0.2,
+  "wet_height": 0.1,
+  "algae": 0.1,
+  "bleach": 0.25,
+  "edge_radius": 0.01,
+  "contrast": {"OWN_PROP_CLOTH": 1.1, "OWN_PROP_ROPE": 1.2}
+}

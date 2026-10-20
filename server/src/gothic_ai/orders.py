@@ -176,6 +176,7 @@ class Orders:
         self.foes: dict[str, float] = {}  # who struck the hero or a companion, and when
         self._monster_gaps: dict[str, dict[str, float]] = {}  # viewer -> visible monster's distance to hero
         self.fights: dict[str, Fight] = {}  # companion -> its fight now
+        self.on_fight: Callable[[str, str], None] | None = None
         # those marked the scripts' party members here (`party`), with the mark's number (GameLink.party):
         # only these are unmarked here, and only if nobody marked them since
         self.party: dict[str, int] = {}
@@ -322,6 +323,8 @@ class Orders:
         if not squad or (order.kind == "attack" and target is None):
             return []
         for npc, name in squad:
+            if order.kind == "attack" and target is not None and self.on_fight is not None:
+                self.on_fight(npc, target)
             before = self.standing.get(npc)
             if order.kind in WEAPONS:
                 standing = before  # the weapon changes no standing order: it waits, follows... as before
@@ -415,6 +418,8 @@ class Orders:
         return err
 
     def _start(self, npc: str, target: str, standing: Standing | None, *, seek: bool = True) -> None:
+        if self.on_fight is not None:
+            self.on_fight(npc, target)
         fight = self.fights[npc] = Fight(target, seek)  # at once: the next perception finds it fighting
         self._spawn(self._fight(npc, fight, standing))
 
@@ -867,6 +872,8 @@ class Orders:
 
     async def _act(self, npc: str, action: str, /, *, timeout: float = 10, **args: Any) -> str:
         """ "done", "cancelled" (a later order took over) or what went wrong."""
+        if action == "fight" and self.on_fight is not None:
+            self.on_fight(npc, args["npc"])
         try:
             res = await self.link.act(npc, action, timeout=timeout, **args)  # type: ignore[arg-type]
         except (GameError, TimeoutError) as err:

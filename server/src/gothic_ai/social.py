@@ -385,6 +385,11 @@ class Rumors:
             if self.crimes is not None:
                 self.crimes.people = {p["npc"]: p for p in people}
             log.info("rumors: %d people, %d ties", len(self.social.names), _count(self.social))
+        if self.crimes is not None:
+            try:
+                await self.crimes.sides.prepare()
+            except (GameError, TimeoutError) as err:
+                log.info("rumors: crime sides: %s", err or type(err).__name__)
         state = await self.link.story_state()
         now = int(state.get("day", 0)) * DAY + int(state.get("hour", 0)) * 60 + int(state.get("minute", 0))
         if self.clock is not None and now > self.clock:
@@ -456,7 +461,7 @@ class Rumors:
         clock = self.clock
         if clock is None or self.social is None or a in self.dead or b in self.dead:
             return "no"
-        if a not in r.known or b in r.known or a in r.silent or a == r.subject:
+        if a not in r.known or not self._new_to(r, a, b) or a in r.silent or a == r.subject:
             return "no"
         if r.crime and (
             not r.tells(a, clock // DAY)
@@ -473,12 +478,24 @@ class Rumors:
         """offer_status of a meeting: True if it passed (busy now: the view trigger asks again later)."""
         return self.offer_status(r, a, b) == "told"
 
+    def _new_to(self, r: Rumor, teller: str, listener: str) -> bool:
+        """A first telling, or the justified version of a killing heard without its reason."""
+        return listener not in r.known or bool(
+            self.crimes is not None and r.is_player and r.crime
+            and (crime := self.crimes.crime(r.crime)) is not None and crime.get("kind") == "murder"
+            and self.crimes.react is not None
+            and self.crimes.react.base_role(listener, crime) == "stranger"
+            and any(k.crime["id"] == r.crime and k.degree == "heard" for k in self.crimes.known(listener))
+            and not self.crimes.excuse(listener, r.crime)
+            and self.crimes.excuse(teller, r.crime)
+        )
+
     def _passes(self, r: Rumor, a: str, b: str, t: int, meet: bool) -> bool:
         """a tells b the rumor at minute t: the living, what each knows, a's tells that day and the lot."""
         day = t // DAY
         if a in self.dead or b in self.dead:
             return False
-        if a not in r.known or b in r.known or not r.tells(a, day):
+        if a not in r.known or not self._new_to(r, a, b) or not r.tells(a, day):
             return False
         forced = self.gate(r, a, b) if self.gate is not None else None
         if forced is not None:
@@ -528,8 +545,9 @@ class Rumors:
         self, r: Rumor, listener: str, teller: str, at: int, how: str, extra: dict[str, Any] | None = None
     ) -> Fact:
         assert self.social is not None
-        r.known[listener] = r.known[teller] + 1
-        r.since[listener] = at // DAY
+        hops = r.known[teller] + 1
+        r.known[listener] = min(r.known.get(listener, hops), hops)
+        r.since.setdefault(listener, at // DAY)
         self.tells[(r.key, teller, at // DAY)] += 1
         teller_name = self.social.names.get(teller, teller)
         name = self.social.names.get(listener, listener)
@@ -537,6 +555,14 @@ class Rumors:
             r.about_name = self.social.names.get(r.about, r.about)
         if not r.is_player and (not r.subject_name or r.subject_name in {r.subject, "герой"}):
             r.subject_name = self.social.names.get(r.subject, r.subject)
+        crime = self.crimes.crime(r.crime) if self.crimes is not None and r.is_player and r.crime else None
+        excuse = {}
+        if crime is not None:
+            self.crimes.learn_side(listener, crime)
+            excuse = dict(self.crimes.excuse(teller, r.crime))
+            if excuse and excuse.get("excuse_by_name") in {None, "", excuse["excuse_by"]}:
+                origin = excuse["excuse_by"]
+                excuse["excuse_by_name"] = self.social.names.get(origin, origin)
         fact: Fact = {
             "fact": "rumor",
             "quest": r.quest,
@@ -554,6 +580,7 @@ class Rumors:
             "day": at // DAY,
             **({"said": True} if r.said else {}),
             **({"crime": r.crime, "at": at} if r.crime else {}),
+            **excuse,
             **(extra or {}),
         }
         self.chronicle.record(fact)
@@ -563,7 +590,10 @@ class Rumors:
                 cover=self.crimes is not None and self.crimes.cover, at=at,
             ):
                 betrayed(self.chronicle, teller, str(promise.get("deal", "")), "told", listener)
-        self.dialogue.remember(listener, name, r.told(teller_name))
+        remembered = r.told(teller_name)
+        if crime is not None and excuse:
+            remembered += f". {self.crimes.excuse_text(crime, excuse)}"
+        self.dialogue.remember(listener, name, remembered)
         return fact
 
     # --- the save branch --------------------------------------------------------------------
@@ -574,9 +604,9 @@ class Rumors:
         self.tells.clear()
         self.waiting = None
         for f in self.chronicle.facts():
-            self._on_fact(f)
+            self._on_fact(f, loading=True)
 
-    def _on_fact(self, f: Fact) -> None:
+    def _on_fact(self, f: Fact, *, loading: bool = False) -> None:
         if f.get("fact") in SOURCES:
             for event in source_events(f, self.chronicle.facts()):
                 r = Rumor(
@@ -645,9 +675,10 @@ class Rumors:
                         r.quest == f.get("quest") and r.about == about
                         and f.get("kind", r.kind) == r.kind and r.subject == rumor_subject(f)
                     ):
-                        if f.get("to", "") not in r.known and "day" in f:
+                        if "day" in f and (loading or f.get("to", "") not in r.known):
                             self.tells[(r.key, f.get("from", ""), int(f["day"]))] += 1
-                        r.known.setdefault(f.get("to", ""), int(f.get("hops", 1)))
+                        listener, hops = f.get("to", ""), int(f.get("hops", 1))
+                        r.known[listener] = min(r.known.get(listener, hops), hops)
                         if "day" in f:
                             r.since.setdefault(f.get("to", ""), int(f["day"]))
                         if not r.about_name or r.about_name == about:

@@ -2,11 +2,50 @@
 
 Статус: этапы L1–L3 сделаны 2026-10-11, лаунчером пользуются: приложение `Gothic AI.app` запускает ядро [`launcher/core`](../launcher/core/) (`gothic-launcher up`, `control`), а оно — сервисы и игру. После 11.10 ядро научилось передавать серверу адреса быстрых моделей и боевого тела (`llm.decider_url`, `llm.quick_url`, `llm.body_url` → `--decider-url`, `--quick-url`, `--body-url`), игре — HD-текстуры и кэш разрушений (`OPENGOTHIC_TEXTURES`, `OPENGOTHIC_FRACTURE`), а проверка Inworld смотрит и остаток кредитов. Пункты «Не проверено» в этапах ниже с 11.10 не перепроверяли. Тесты ядра — `cd launcher/core && uv run pytest -q`.
 
+## Как работает сейчас
+
+На Mac приложение `Gothic AI.app` запускает Python-ядро, а оно — ASR, TTS, ИИ-сервер и игру. Ядро выбирает свободные порты, ждёт `/health` сервисов и останавливает свои процессы после выхода из игры или лаунчера. Настройки — `~/.config/gothic-ai/settings.toml`, ключи — отдельный `secrets.toml`, вход ChatGPT — отдельный `chatgpt.json`. Логи Mac остаются в `~/Library/Logs/GothicAI/`. Устройство окна и кнопок описано ниже; Linux использует то же ядро без приложения Tauri.
+
+### Ryzen (Linux)
+
+Установка и обновление запускаются с Mac через SSH-алиас `ryzen`:
+
+```sh
+scripts/ryzen-play.sh install
+scripts/ryzen-play.sh update
+```
+
+Общая очередь устанавливается отдельно явной командой `scripts/gq install ryzen` с Mac. Личный установщик не меняет `~/gothic-ai/bin/gq` и `gq.profile`: перед изменением клона он проверяет поддержку `--interactive` и при её отсутствии печатает эту команду.
+
+`install` повторяемый. В `~/gothic-ai/play/` создаётся git-клон `main` с тем же GitHub `origin`, что у репозитория на Mac; оба действия обновляют его через `git pull --ff-only`. Локальные изменения в клоне останавливают обновление с объяснением. Исходники игры берутся из этого клона. Сборка `RelWithDebInfo` в `OpenGothic/build` использует Vulkan SDK `~/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0`; Ninja пересобирает изменившиеся файлы. Также собирается существующая утилита `OpenGothic/ai_bridge/storygraph/build/storygraph`: без неё на свежей машине сервер отключает знания NPC и режиссёра. Обе сборки и `uv sync --locked` для `server`, `asr-service`, `tts-service`, `launcher/core` идут одной заявкой `gq quick`: 12 потоков, 12 ГБ RAM, до 30 минут, без окна. Системные пакеты установщик не ставит.
+
+Если на Ryzen ещё нет `~/.config/gothic-ai/settings.toml`, установщик переносит из одноимённого файла Mac настройки провайдеров, `reasoning_effort` и адреса сервисов, включая `decider_url`, `body_url`, `voxtral_url`, `voxcpm_url`. Пути заменяются на `~/gothic-ai/game`, `~/gothic-ai/play` и `~/.local/bin/uv`; `voice.mic_device` не переносится, используется системный микрофон Ryzen. Существующий файл настроек сохраняется. `secrets.toml` и `chatgpt.json` не читаются и не копируются.
+
+Сеанс игры и установщик используют общий `~/gothic-ai/play.install.lock`: во время ожидания окна и игры `install/update` завершается с просьбой закрыть сеанс, до `git pull`, сборки и изменения окружений. Пока идёт установка или обновление, запуск игры тоже отклоняется с объяснением.
+
+На Ryzen пользователь сам входит в ChatGPT и вводит ключи выбранных провайдеров:
+
+```sh
+cd ~/gothic-ai/play/launcher/core
+~/.local/bin/uv run gothic-launcher login
+~/.local/bin/uv run gothic-launcher config set secrets.inworld_api_key
+# Если выбран OpenAI API:
+~/.local/bin/uv run gothic-launcher config set secrets.openai_api_key
+```
+
+Ключ команда спрашивает скрытым вводом. Без нужного входа или ключа Linux-ядро перечисляет команды настройки и завершает запуск без трассы исключения. Для микрофона через `sounddevice` нужна системная библиотека, которую пользователь устанавливает сам на Ryzen: `sudo apt install libportaudio2`. Пока её нет, обёртка печатает эту команду и отключает только голосовой ввод на текущий запуск; звук игры остаётся включённым.
+
+Значок **Gothic AI** с иконкой игры регистрируется в `~/.local/share/applications/gothic-ai.desktop` и доступен в приложениях GNOME. Он открывает Ptyxis с [`scripts/ryzen-play-session.sh`](../scripts/ryzen-play-session.sh) из клона. Обёртка работает в текущей GNOME-сессии Wayland/Xwayland с её `DISPLAY`, выбирает NVIDIA Vulkan ICD и запускает `gothic-launcher up --continue`. Игра полноэкранная, звук идёт в вывод PipeWire по умолчанию, последнее сохранение загружается автоматически; если сохранений ещё нет, открывается меню. Данные игры — `~/gothic-ai/game`, HD-текстуры — `~/gothic-ai/hd-textures/textures`, бинарник — `~/gothic-ai/play/OpenGothic/build/opengothic/Gothic2Notr`. Настройки игры и сохранения остаются в `~/.local/share/gothic-ai/game/`, логи Linux — в `~/.local/state/gothic-ai/logs/<время>/`.
+
+Пока идёт игра, заявка `gq quick --interactive --display-exclusive` держит все слоты окна (`окно=все`): 8 потоков, 8 ГБ RAM, 3 ГБ VRAM, до 6 часов. Она ждёт завершения текущих игр и пишет в терминал, кого ждёт; фоновые `batch`, обучение и `quiet` без окна не задерживают старт. `CPUWeight=1000` даёт игре и её сервисам приоритет над обычными заявками, ядра live-сервисов `0,1,16,17` остаются свободными. Подробнее об исключении допуска — [очередь gq](compute.md#очередь-gq). Закрытие игры или терминала останавливает только процессы сеанса и освобождает заявку.
+
+Проверка без запросов к моделям: на рабочем столе Ryzen запустить `~/gothic-ai/play/scripts/ryzen-play-session.sh --smoke`. Она передаёт ядру `up --smoke --new`: fake LLM, новая игра, без ASR/TTS, decider, быстрой модели и тела. Сохранённые настройки не меняются. Ядро печатает адрес `/health`; после соединения игры ответ содержит `"game": true`. Дополнительно проверяются `scripts/gq status` с Mac и звуковой поток игры в `pw-dump` на Ryzen. Автотесты: `cd scripts/tests && python3 -m unittest -q test_ryzen_play test_ryzen` и `cd launcher/core && uv run pytest -q`.
+
 ## Цель
 
 Игра с ИИ запускается одной кнопкой, как обычное приложение. Не нужны терминалы, сборочные команды и правка `.env`. Настройки и ключи вводятся в окне, и там же видно, какие сервисы работают.
 
-Сейчас для игры нужны четыре терминала: `gothic-asr serve`, `gothic-tts serve`, `gothic-ai serve` и `Gothic2Notr -g …`.
+Ядро берёт на себя запуск `gothic-asr serve`, `gothic-tts serve`, `gothic-ai serve` и `Gothic2Notr -g …`.
 
 ## Принятые решения
 
@@ -108,7 +147,13 @@ Gothic AI.app (Tauri, launcher/app)
 
 **Оформление.** Тёмный камень и пергамент. Шрифт с кириллицей и лицензией OFL (Cormorant, Old Standard TT) лежит в приложении. Фон можно брать из своей копии игры: текстуры меню из `Textures.vdf`.
 
-## Этапы
+## План и журнал
+
+20 октября 2026: на Linux удержание клавиши (T для голоса) больше не превращается в поток коротких нажатий. X11 по умолчанию шлёт перед каждым автоповтором ложный KeyRelease, и игра печатала букву T вместо записи; Tempest включает `XkbSetDetectableAutoRepeat`, а без его поддержки отбрасывает пару KeyRelease/KeyPress с одним временем. Повтор приходит как KeyRepeat, как на macOS.
+
+20 октября 2026, ревью личной установки: убрана запись общей очереди и её профиля, добавлены проверка `--interactive` и взаимное исключение обновления с игровым сеансом через существующий замок. Mac-микрофон не переносится в настройки Ryzen.
+
+20 октября 2026: добавлены установка и обновление личной игры на Ryzen с Mac, значок GNOME с терминалом Ptyxis, Linux-пути ядра и проверка наличия входа/ключей. Сеанс держит интерактивную эксклюзивную заявку `gq`, играет со звуком и продолжает последнее сохранение. Для проверки без моделей добавлен `up --smoke`; при отсутствии PortAudio голос отключается на один запуск.
 
 - **L1 «Одна команда».** 🟡 2026-10-11, работает с настоящей игрой, `launcher/core`. Осталась одна проверка (ниже).
   - Сделать:

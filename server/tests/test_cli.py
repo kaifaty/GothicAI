@@ -158,7 +158,9 @@ def test_npc_crimes_switch_and_scenario(monkeypatch, flags):
 
 
 async def test_encounter_worker_starts_without_a_behavioral_planner(monkeypatch):
-    meeting = Mock(return_value=SimpleNamespace(run=AsyncMock(), refuses=Mock(return_value=False)))
+    meeting = Mock(return_value=SimpleNamespace(
+        run=AsyncMock(), refuses=Mock(return_value=False), refusal=Mock(return_value=None)
+    ))
     monkeypatch.setattr(cli, "CrimeMeet", meeting)
     monkeypatch.setattr(cli, "ImportantApproach", Mock())
     state = cli.ServerState()
@@ -170,6 +172,7 @@ async def test_encounter_worker_starts_without_a_behavioral_planner(monkeypatch)
     await task
     assert state.crime_meet is meeting.return_value
     assert state.talk.refuses is state.crime_meet.refuses
+    assert state.talk.refusal is state.crime_meet.refusal
     state.crime_meet.run.assert_awaited_once()
 
 

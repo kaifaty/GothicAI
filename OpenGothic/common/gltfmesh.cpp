@@ -86,7 +86,7 @@ std::vector<uint8_t> readGlb(const std::filesystem::path& path) {
 std::string decodedString(std::string value) {
   value.resize(cgltf_decode_string(value.data()));
   if(value.find('\0')!=std::string::npos)
-    reject("NUL in a material string");
+    reject("NUL in a glTF string");
   return value;
   }
 
@@ -309,6 +309,8 @@ class Converter {
   public:
     zenkit::MultiResolutionMesh mesh;
 
+    Converter() { mesh.alpha_test = false; }
+
     void addNode(const cgltf_node& node) {
       if(node.mesh==nullptr)
         return;
@@ -435,9 +437,7 @@ class Converter {
       }
   };
 
-}
-
-zenkit::MultiResolutionMesh loadGltfMesh(const std::filesystem::path& path, std::vector<uint8_t>* source) {
+std::vector<GltfMeshNode> loadScene(const std::filesystem::path& path, std::vector<uint8_t>* source, bool splitNodes) {
   auto bytes = readGlb(path);
   cgltf_options options = {};
   options.type = cgltf_file_type_glb;
@@ -448,7 +448,7 @@ zenkit::MultiResolutionMesh loadGltfMesh(const std::filesystem::path& path, std:
   const std::unique_ptr<cgltf_data,decltype(&cgltf_free)> data(parsed,cgltf_free);
   validateSubset(*data);
   Converter converter;
-  converter.mesh.alpha_test = false;
+  std::vector<GltfMeshNode> meshes;
   std::vector<const cgltf_node*> pending;
   std::vector<bool> visited(data->nodes_count,false);
   for(size_t i=0; i<data->scene->nodes_count; ++i)
@@ -460,12 +460,35 @@ zenkit::MultiResolutionMesh loadGltfMesh(const std::filesystem::path& path, std:
     if(visited[index])
       reject("a scene node is referenced more than once");
     visited[index] = true;
-    converter.addNode(*node);
+    if(splitNodes && node->mesh!=nullptr) {
+      Converter part;
+      part.addNode(*node);
+      part.finish();
+      meshes.push_back({node->name==nullptr ? "" : decodedString(node->name),std::move(part.mesh)});
+      }
+    else if(!splitNodes)
+      converter.addNode(*node);
     for(size_t i=0; i<node->children_count; ++i)
       pending.push_back(node->children[i]);
     }
-  converter.finish();
+  if(!splitNodes) {
+    converter.finish();
+    meshes.push_back({{},std::move(converter.mesh)});
+    }
+  if(meshes.empty())
+    reject("default scene contains no mesh triangles");
   if(source!=nullptr)
     *source = std::move(bytes);
-  return std::move(converter.mesh);
+  return meshes;
+  }
+
+}
+
+zenkit::MultiResolutionMesh loadGltfMesh(const std::filesystem::path& path, std::vector<uint8_t>* source) {
+  auto meshes = loadScene(path,source,false);
+  return std::move(meshes.front().mesh);
+  }
+
+std::vector<GltfMeshNode> loadGltfMeshNodes(const std::filesystem::path& path, std::vector<uint8_t>* source) {
+  return loadScene(path,source,true);
   }

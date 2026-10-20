@@ -39,6 +39,7 @@ class ObjVisual {
 
     const ProtoMesh* protoMesh() const;
     const Tempest::Matrix4x4& bone(size_t i) const;
+    std::string animNames() const;
 
   private:
     enum Type : uint8_t {

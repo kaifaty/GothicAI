@@ -557,7 +557,13 @@ async def crime_meet(
             return _logged(results)
         check(
             "victim_meeting",
-            any(f.get("reaction") == "demand" and f.get("source") == "personal" for f in meet_rows(cid)),
+            await _until(
+                lambda: any(
+                    f.get("reaction") == "demand" and f.get("source") == "personal"
+                    for f in meet_rows(cid)
+                ),
+                10,
+            ),
             meet_rows(cid),
         )
         key = f"crime:{cid}"

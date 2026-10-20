@@ -1,0 +1,44 @@
+{
+  "glb": "mesh3d-chest-concept/meshes/mesh3d-chest-concept/chest.glb",
+  "maps_dir": "mesh3d-chest-concept/tiles",
+  "nodes": ["BIP01 CHEST_BIG_0", "BIP01 CHEST_BIG_1"],
+  "scales": {
+    "OWN_PROP_WOOD_BODY": 2.6315789,
+    "OWN_PROP_WOOD_LID": 2.6315789,
+    "OWN_PROP_WOOD_INNER": 2.6315789,
+    "OWN_PROP_IRON_BAND": 5.0,
+    "OWN_PROP_IRON_LOCK": 5.0
+  },
+  "targets": {
+    "OWN_PROP_WOOD_BODY": [0.0471, 0.0273, 0.0124],
+    "OWN_PROP_WOOD_LID": [0.0471, 0.0273, 0.0124],
+    "OWN_PROP_WOOD_INNER": [0.0236, 0.0137, 0.0062],
+    "OWN_PROP_IRON_BAND": [0.0164, 0.0161, 0.0121],
+    "OWN_PROP_IRON_LOCK": [0.0164, 0.0161, 0.0121]
+  },
+  "slots": {
+    "OWN_PROP_WOOD_BODY": ["OWN_CHEST_NORMAL_WOOD", "WOOD"],
+    "OWN_PROP_WOOD_LID": ["OWN_CHEST_NORMAL_WOOD", "WOOD"],
+    "OWN_PROP_WOOD_INNER": ["OWN_CHEST_NORMAL_WOOD", "WOOD"],
+    "OWN_PROP_IRON_BAND": ["OWN_CHEST_NORMAL_IRON", "METAL"],
+    "OWN_PROP_IRON_LOCK": ["OWN_CHEST_NORMAL_IRON", "METAL"]
+  },
+  "metal": ["OWN_PROP_IRON_BAND", "OWN_PROP_IRON_LOCK"],
+  "size": 2048,
+  "seed": 1,
+  "light_part": [21, 1.35],
+  "wet_height": 0.1,
+  "algae": 0.0,
+  "planks_per_tile": {
+    "OWN_PROP_WOOD_BODY": 4,
+    "OWN_PROP_WOOD_LID": 4,
+    "OWN_PROP_WOOD_INNER": 4
+  },
+  "contrast": {
+    "OWN_PROP_WOOD_BODY": 1.3,
+    "OWN_PROP_WOOD_LID": 1.3,
+    "OWN_PROP_WOOD_INNER": 1.3,
+    "OWN_PROP_IRON_BAND": 1.2,
+    "OWN_PROP_IRON_LOCK": 1.2
+  }
+}

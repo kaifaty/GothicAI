@@ -115,11 +115,11 @@ ProtoMesh::ProtoMesh(PackedMesh&& pm, const std::vector<zenkit::MorphAnimation>&
     }
   }
 
-ProtoMesh::ProtoMesh(const zenkit::Model& library, std::unique_ptr<Skeleton>&& sk, std::string_view fname)
+ProtoMesh::ProtoMesh(const zenkit::Model& library, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest)
   :skeleton(std::move(sk)), fname(fname) {
   std::vector<std::vector<Tempest::Vec3>> attachPoints;
   for(auto& m:library.mesh.attachments) {
-    PackedMesh pack(m.second,PackedMesh::PK_Visual);
+    PackedMesh pack(m.second,PackedMesh::PK_Visual,explicitAlphaTest);
     attachPoints.push_back(pointsOf(pack));
     attach.emplace_back(pack);
     auto& att = attach.back();
@@ -236,11 +236,11 @@ ProtoMesh::ProtoMesh(const zenkit::ModelHierarchy& library, std::unique_ptr<Skel
   setupScheme(fname);
   }
 
-ProtoMesh::ProtoMesh(const zenkit::ModelMesh& library, std::unique_ptr<Skeleton>&& sk, std::string_view fname)
+ProtoMesh::ProtoMesh(const zenkit::ModelMesh& library, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest)
   :skeleton(std::move(sk)), fname(fname){
   std::vector<std::vector<Tempest::Vec3>> attachPoints;
   for(auto& m:library.attachments) {
-    PackedMesh pack(m.second,PackedMesh::PK_Visual);
+    PackedMesh pack(m.second,PackedMesh::PK_Visual,explicitAlphaTest);
     attachPoints.push_back(pointsOf(pack));
     attach.emplace_back(pack);
     auto& att = attach.back();

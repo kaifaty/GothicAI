@@ -5,6 +5,8 @@
 #       MEMPROBE_PHASES=wave,save,load,spawn,teleport, MEMPROBE_CYCLES=8; LLM=fake, no body URL
 #   crime_meet: save 1, native home eviction and a brave victim's Amends approach/payment;
 #       LLM=chatgpt runs only the short compensation scene with the real model
+#   crime_ally: new game, no SAVE, LLM=fake; Brago attacks the following Cavalorn, the hero knocks him
+#       down and finishes him; murder and crime_side remain in the chronicle and Cavalorn answers
 #   m0: takes Xardas over, walks him around and returns him to his routine
 #   m1: Xardas answers a player question line by line (LLM backend: LLM=fake|chatgpt|local)
 #   websocket: Lobart and Hilda speak through Responses against an in-process fake server: per-npc

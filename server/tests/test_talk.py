@@ -1,6 +1,10 @@
 import asyncio
+from dataclasses import replace
+
+import pytest
 
 from gothic_ai.brain.reflex import Reflexes
+from gothic_ai.crime_meet import Encounter
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.journal import Journal
 from gothic_ai.llm import FakeBackend, ToolCall
@@ -9,6 +13,7 @@ from gothic_ai.protocol import RosterEntry
 from gothic_ai.talk import TalkDesk, addressee, default_posture
 from tests.fake_game import FakeGame, connected
 from tests.fakes import FakeDecider
+from tests.test_crime_react import card
 from tests.test_dialogue import HILDA, LOBART, XARDAS, _until
 
 
@@ -510,5 +515,45 @@ async def test_rule_refusal_blocks_voice_model_and_ends_existing_partner_until_r
         await fake.send(type="player_text", text="Ты слышал?", focus=XARDAS)
         await _until(lambda: talk.partner is None)
         assert len(llm.calls) == calls
+    finally:
+        await cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("reaction", ["refuse", "flee"])
+@pytest.mark.parametrize("victim_name", ["Браго", None])
+async def test_crime_refusal_logs_its_reason_and_shows_notice(caplog, reaction, victim_name):
+    npc, victim = "BAU_4300_ADDON_CAVALORN", "BDT_1014_BANDIT_L"
+    fake = FakeGame()
+    llm = FakeBackend("Я здесь.", delay=0)
+    cm, link, dialogue, talk = await _desk(fake, llm)
+    dialogue.personas.cards = {
+        victim: replace(card(victim), name=victim_name),
+    } if victim_name else {}
+    reason = Encounter(
+        {"fact": "crime", "id": "brago-murder", "kind": "murder", "victim": victim},
+        "stranger", reaction,
+    )
+    talk.refusal = lambda who: reason if who == npc else None
+    caplog.set_level("INFO", logger="gothic_ai.talk")
+    try:
+        await fake.roster(person(npc, "Кавалорн", 3, True))
+        await _until(lambda: npc in talk.people)
+        await fake.send(type="player_text", text="Кавалорн, всё хорошо?", focus=npc)
+        await _until(lambda: any(
+            message["type"] == "chat_status" and message["status"] == "notice"
+            for message in fake.received
+        ))
+        notice = next(message for message in fake.received if message["type"] == "chat_status")
+        assert notice["status"] == "notice"
+        assert notice["npc"] == npc
+        assert notice["detail"] == (
+            f"Кавалорн не хочет говорить: знает об убийстве. Жертва: {victim_name or victim}"
+        )
+        assert (
+            f"talk refused npc={npc} (Кавалорн) crime=brago-murder kind=murder "
+            f"victim={victim} role=stranger reaction={reaction}"
+        ) in caplog.messages
+        assert not llm.calls
+        assert talk.partner is None
     finally:
         await cm.__aexit__(None, None, None)

@@ -689,6 +689,16 @@ class Witnesses:
             self._npc_evidence(t)
         elif self.cover_enabled:
             self._cover(t)
+        crime_excuses = {}
+        if self.crimes is not None and about == HERO:
+            for crime_id in t.crime_told:
+                if crime := self.crimes.crime(crime_id):
+                    # Recording knowledge synchronously changes attitudes and informs the law.
+                    self.crimes.learn_side(npc, crime)
+                if self.crimes.side(witness, crime_id) is not None:
+                    crime_excuses[crime_id] = {
+                        **self.crimes.excuse(witness, crime_id), "excuse_by_name": wname,
+                    }
         self.chronicle.record(
             {
                 "fact": "testimony",
@@ -704,6 +714,7 @@ class Witnesses:
                 "saw": [s.record() for s in t.saw],
                 "told": [s.record() for s in t.told],
                 **({"crime_saw": t.crime_saw, "crime_told": t.crime_told} if t.crime_saw else {}),
+                **({"crime_excuses": crime_excuses} if crime_excuses else {}),
                 **({"cover": t.cover, "vouch": t.vouch} if t.cover else {}),
                 "minute": now,
                 **({"day": int(state["day"])} if "day" in state else {}),

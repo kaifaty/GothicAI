@@ -9,6 +9,7 @@ import pytest
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.crime_memory import CrimeMemoryRuntime, memory_value
 from gothic_ai.crimes import Crimes
+from gothic_ai.fear import knows_violence
 from gothic_ai.game import GameError
 from gothic_ai.memory import MemoryStore
 from gothic_ai.protocol import Loading, Session
@@ -64,6 +65,23 @@ async def test_proven_knowledge_projects_native_level_and_day(system, kind, valu
     # news still receives the original level through memory_value().
     assert system.link.effects == [(NPC, [{"do": "crime_memory", "value": min(value, 3), "day": 3}])]
     assert memory_value(system.crimes, NPC.lower()) == (value, 3)
+
+
+async def test_without_react_only_recorded_side_removes_fear_and_native_guilt(system):
+    case(system, kind="murder", degree="heard")
+    system.chronicle.record({
+        "fact": "rumor", "to": NPC, "crime": "theft-1", "from": "ALLY",
+        "excuse": "fought", "excuse_by": "ALLY",
+    })
+    assert knows_violence(NPC, system.crimes)
+    assert memory_value(system.crimes, NPC) == (4, 3)
+    system.chronicle.record({
+        "fact": "crime_side", "npc": NPC, "crime": "theft-1", "why": "fought",
+    })
+    assert not knows_violence(NPC, system.crimes)
+    assert memory_value(system.crimes, NPC) == (0, 0)
+    await system.runtime.project(NPC)
+    assert system.link.effects[-1] == (NPC, [{"do": "crime_memory", "value": 0, "day": 0}])
 
 
 async def test_maximum_severity_wins_then_latest_day_without_transferring_suspicion(system):

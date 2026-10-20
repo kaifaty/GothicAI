@@ -1,0 +1,24 @@
+{
+  "id": "bench",
+  "seed": 1,
+  "zones": [
+    {"key": "OWN_PROP_WOOD_SEAT", "group": "WOOD", "role": "two thick seat planks"},
+    {"key": "OWN_PROP_STONE_PIER", "group": "STONE", "role": "dressed stone piers in mortar"},
+    {"key": "OWN_PROP_IRON_BRACKET", "group": "METAL", "role": "forged cramps and nails"}
+  ],
+  "planks": 2,
+  "plank": 0.09,
+  "gap": 0.008,
+  "seat_width": 0.608,
+  "pier": [0.35, 0.756],
+  "pier_inset": 0.25,
+  "courses": 3,
+  "joint": 0.01,
+  "stone_jitter": 0.006,
+  "cramp": [0.05, 0.004, 0.11],
+  "nail": 0.004,
+  "nail_radius": 0.008,
+  "stave_tile": 0.38,
+  "stone_tile": 2.5,
+  "planks_per_tile": 4
+}

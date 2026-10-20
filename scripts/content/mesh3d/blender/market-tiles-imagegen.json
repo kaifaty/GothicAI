@@ -1,0 +1,63 @@
+{
+ "output": "~/.local/share/gothic-ai/content-staging/market-set/tiles",
+ "tiles": {
+  "own_prop_sacking": {
+   "png": "~/.local/share/gothic-ai/content-sources/mesh3d-market/tile-sacking.png",
+   "axes": "uv",
+   "roughness": 0.92,
+   "metallic": 0.0
+  },
+  "own_prop_canvas": {
+   "png": "~/.local/share/gothic-ai/content-sources/mesh3d-market/tile-canvas.png",
+   "axes": "uv",
+   "roughness": 0.9,
+   "metallic": 0.0
+  },
+  "own_prop_rope": {
+   "png": "~/.local/share/gothic-ai/content-sources/mesh3d-market/tile-rope.png",
+   "axes": "uv",
+   "roughness": 0.88,
+   "metallic": 0.0
+  },
+  "own_prop_fur": {
+   "png": "~/.local/share/gothic-ai/content-sources/mesh3d-market/tile-fur.png",
+   "axes": "uv",
+   "roughness": 0.95,
+   "metallic": 0.0
+  },
+  "own_prop_bark": {
+   "png": "~/.local/share/gothic-ai/content-sources/mesh3d-market/tile-bark.png",
+   "axes": "uv",
+   "roughness": 0.92,
+   "metallic": 0.0
+  },
+  "own_prop_wood_end": {
+   "png": "~/.local/share/gothic-ai/content-sources/mesh3d-market/tile-wood-end.png",
+   "axes": "",
+   "roughness": 0.85,
+   "metallic": 0.0
+  },
+  "own_prop_leather": {
+   "png": "~/.local/share/gothic-ai/content-sources/mesh3d-market/tile-leather.png",
+   "axes": "uv",
+   "roughness": 0.7,
+   "metallic": 0.0
+  },
+  "own_prop_carpet": {
+   "png": "~/.local/share/gothic-ai/content-sources/mesh3d-market/tile-carpet.png",
+   "axes": "",
+   "roughness": 0.9,
+   "metallic": 0.0,
+   "crop": [
+    83,
+    97,
+    1408,
+    932
+   ],
+   "size": [
+    2048,
+    1463
+   ]
+  }
+ }
+}

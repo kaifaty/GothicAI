@@ -1,0 +1,800 @@
+[
+  {
+    "id": "weapon-barrel",
+    "visual": "NW_CITY_WEAPON_BARREL_01.MRM",
+    "budget_tris": 3000,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_STAVE",
+        "group": "WOOD",
+        "role": "barrel staves and head"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged iron straps, hoops, brackets and nails"
+      },
+      {
+        "key": "OWN_PROP_STEEL_BLADE",
+        "group": "METAL",
+        "role": "polished steel blades and heads"
+      },
+      {
+        "key": "OWN_PROP_WOOD_HAFT",
+        "group": "WOOD",
+        "role": "hilts, grips and hafts"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_WEAPON_BARREL_01.MRM",
+    "bbox_min": [
+      -0.319384307861,
+      -0.450327262878,
+      -0.376575813293
+    ],
+    "bbox_max": [
+      0.319364318848,
+      1.0218221283,
+      0.319384307861
+    ],
+    "origin_in_bbox": [
+      0.500015647011,
+      0.305897801933,
+      0.541088205842
+    ],
+    "source_tris": 1048,
+    "source_pose": "static",
+    "newworld_instances": 36
+  },
+  {
+    "id": "sign",
+    "visual": "NW_MISC_SIGN_01.MRM",
+    "budget_tris": 1000,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_FRAME",
+        "group": "WOOD",
+        "role": "posts, rails and frames"
+      },
+      {
+        "key": "OWN_PROP_WOOD_PLANK",
+        "group": "WOOD",
+        "role": "sawn boards and planks"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged iron straps, hoops, brackets and nails"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_MISC_SIGN_01.MRM",
+    "bbox_min": [
+      -0.050009999275,
+      -1.24999000549,
+      -0.426560668945
+    ],
+    "bbox_max": [
+      0.049990000725,
+      1.25000999451,
+      0.426580657959
+    ],
+    "origin_in_bbox": [
+      0.500099992752,
+      0.499996002196,
+      0.499988285051
+    ],
+    "source_tris": 36,
+    "source_pose": "static",
+    "newworld_instances": 54
+  },
+  {
+    "id": "oil-lamp",
+    "visual": "NW_CITY_OILLAMP_01.MRM",
+    "budget_tris": 1000,
+    "zones": [
+      {
+        "key": "OWN_PROP_BRASS",
+        "group": "METAL",
+        "role": "lamp body, collar and bracket"
+      },
+      {
+        "key": "OWN_PROP_GLASS",
+        "group": "UNDEF",
+        "role": "glass chimney"
+      },
+      {
+        "key": "OWN_PROP_WOOD_FRAME",
+        "group": "WOOD",
+        "role": "posts, rails and frames"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_OILLAMP_01.MRM",
+    "bbox_min": [
+      -0.145280265808,
+      -0.255092773438,
+      -0.204979248047
+    ],
+    "bbox_max": [
+      0.145260257721,
+      0.230237884521,
+      0.204999237061
+    ],
+    "origin_in_bbox": [
+      0.500034432524,
+      0.52560613935,
+      0.499975621874
+    ],
+    "source_tris": 138,
+    "source_pose": "static",
+    "newworld_instances": 223
+  },
+  {
+    "id": "barrel-group",
+    "visual": "NW_HARBOUR_BARRELGROUP_01.MRM",
+    "budget_tris": 6000,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_STAVE",
+        "group": "WOOD",
+        "role": "barrel staves and head"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged iron straps, hoops, brackets and nails"
+      },
+      {
+        "key": "OWN_PROP_WOOD_FRAME",
+        "group": "WOOD",
+        "role": "posts, rails and frames"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_HARBOUR_BARRELGROUP_01.MRM",
+    "bbox_min": [
+      -1.99485656738,
+      -0.981977005005,
+      -0.691561431885
+    ],
+    "bbox_max": [
+      1.99483642578,
+      0.981996994019,
+      0.691581420898
+    ],
+    "origin_in_bbox": [
+      0.500002524204,
+      0.49999491108,
+      0.499992774061
+    ],
+    "source_tris": 660,
+    "source_pose": "static",
+    "newworld_instances": 55
+  },
+  {
+    "id": "rope",
+    "visual": "NW_HARBOUR_ROPE_01.MRM",
+    "budget_tris": 4000,
+    "zones": [
+      {
+        "key": "OWN_PROP_ROPE",
+        "group": "UNDEF",
+        "role": "twisted hemp rope"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_HARBOUR_ROPE_01.MRM",
+    "bbox_min": [
+      -0.891243972778,
+      -0.234050140381,
+      -1.46108093262
+    ],
+    "bbox_max": [
+      0.891223983765,
+      0.234070129395,
+      1.46110107422
+    ],
+    "origin_in_bbox": [
+      0.500005607117,
+      0.499978649703,
+      0.499996553671
+    ],
+    "source_tris": 177,
+    "source_pose": "static",
+    "newworld_instances": 47
+  },
+  {
+    "id": "candle",
+    "visual": "NW_CITY_CANDLE_01.MRM",
+    "budget_tris": 2700,
+    "zones": [
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged iron straps, hoops, brackets and nails"
+      },
+      {
+        "key": "OWN_PROP_WAX",
+        "group": "UNDEF",
+        "role": "candle wax and drips"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_CANDLE_01.MRM",
+    "bbox_min": [
+      -0.200009994507,
+      -0.161115608215,
+      -0.245171546936
+    ],
+    "bbox_max": [
+      0.199990005493,
+      0.161135578156,
+      0.24519153595
+    ],
+    "origin_in_bbox": [
+      0.500024986267,
+      0.499969014946,
+      0.49997961815
+    ],
+    "source_tris": 124,
+    "source_pose": "static",
+    "newworld_instances": 157
+  },
+  {
+    "id": "weapon-bag",
+    "visual": "NW_CITY_WEAPON_BAG_01.MRM",
+    "budget_tris": 1500,
+    "zones": [
+      {
+        "key": "OWN_PROP_LEATHER",
+        "group": "UNDEF",
+        "role": "leather and cloth wrapping"
+      },
+      {
+        "key": "OWN_PROP_STEEL_BLADE",
+        "group": "METAL",
+        "role": "polished steel blades and heads"
+      },
+      {
+        "key": "OWN_PROP_WOOD_HAFT",
+        "group": "WOOD",
+        "role": "hilts, grips and hafts"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_WEAPON_BAG_01.MRM",
+    "bbox_min": [
+      -0.5955909729,
+      -0.037471265793,
+      -0.197278995514
+    ],
+    "bbox_max": [
+      0.596161422729,
+      0.03441287756,
+      0.197299003601
+    ],
+    "origin_in_bbox": [
+      0.499760667639,
+      0.521273038048,
+      0.499974646221
+    ],
+    "source_tris": 366,
+    "source_pose": "static",
+    "newworld_instances": 27
+  },
+  {
+    "id": "crate-pile",
+    "visual": "NW_HARBOUR_CRATEPILE_01.MRM",
+    "budget_tris": 6000,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_PLANK",
+        "group": "WOOD",
+        "role": "sawn boards and planks"
+      },
+      {
+        "key": "OWN_PROP_WOOD_BRACE",
+        "group": "WOOD",
+        "role": "crate frame battens"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged iron straps, hoops, brackets and nails"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_HARBOUR_CRATEPILE_01.MRM",
+    "bbox_min": [
+      -1.53408782959,
+      -1.05102226257,
+      -1.43483337402
+    ],
+    "bbox_max": [
+      1.53406768799,
+      1.05104225159,
+      1.43485351562
+    ],
+    "origin_in_bbox": [
+      0.500003282363,
+      0.499995245384,
+      0.499996490628
+    ],
+    "source_tris": 135,
+    "source_pose": "static",
+    "newworld_instances": 132
+  },
+  {
+    "id": "deco-shield",
+    "visual": "NW_CITY_DECO_SHIELD_01.MRM",
+    "budget_tris": 1500,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_PAINTED",
+        "group": "WOOD",
+        "role": "shield boards painted dull red"
+      },
+      {
+        "key": "OWN_PROP_WOOD_PAINTED_LIGHT",
+        "group": "WOOD",
+        "role": "shield boards painted off-white"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged iron straps, hoops, brackets and nails"
+      },
+      {
+        "key": "OWN_PROP_STEEL_BLADE",
+        "group": "METAL",
+        "role": "polished steel blades and heads"
+      },
+      {
+        "key": "OWN_PROP_WOOD_HAFT",
+        "group": "WOOD",
+        "role": "hilts and grips"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_DECO_SHIELD_01.MRM",
+    "bbox_min": [
+      -0.615733146667,
+      -0.531597595215,
+      -0.049966611862
+    ],
+    "bbox_max": [
+      0.615713157654,
+      0.531617584229,
+      0.049986615181
+    ],
+    "origin_in_bbox": [
+      0.500008116072,
+      0.499990599733,
+      0.499899936603
+    ],
+    "source_tris": 326,
+    "source_pose": "static",
+    "newworld_instances": 46
+  },
+  {
+    "id": "window-in",
+    "visual": "NW_CITY_WINDOW_WOOD_IN_01.MRM",
+    "budget_tris": 2000,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_FRAME",
+        "group": "WOOD",
+        "role": "posts, rails and frames"
+      },
+      {
+        "key": "OWN_PROP_GLASS",
+        "group": "UNDEF",
+        "role": "leaded glass panes"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged iron straps, hoops, brackets and nails"
+      },
+      {
+        "key": "OWN_PROP_CLOTH",
+        "group": "UNDEF",
+        "role": "woven cloth: canvas, sacking, curtains"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_WINDOW_WOOD_IN_01.MRM",
+    "bbox_min": [
+      -1.09506835938,
+      -0.899980010986,
+      -0.227358398438
+    ],
+    "bbox_max": [
+      1.09502845764,
+      0.847512664795,
+      0.150193443298
+    ],
+    "origin_in_bbox": [
+      0.500009109584,
+      0.51501217914,
+      0.60219120477
+    ],
+    "source_tris": 176,
+    "source_pose": "static",
+    "newworld_instances": 63
+  },
+  {
+    "id": "window-out",
+    "visual": "NW_CITY_WINDOW_WOOD_OUT_01.MRM",
+    "budget_tris": 1200,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_FRAME",
+        "group": "WOOD",
+        "role": "posts, rails and frames"
+      },
+      {
+        "key": "OWN_PROP_GLASS",
+        "group": "UNDEF",
+        "role": "leaded glass panes"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged iron straps, hoops, brackets and nails"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_WINDOW_WOOD_OUT_01.MRM",
+    "bbox_min": [
+      -0.900019989014,
+      -0.849979782104,
+      -0.112490291595
+    ],
+    "bbox_max": [
+      0.899980010986,
+      0.850019760132,
+      0.11253030777
+    ],
+    "origin_in_bbox": [
+      0.500011105008,
+      0.499988241753,
+      0.499911083307
+    ],
+    "source_tris": 70,
+    "source_pose": "static",
+    "newworld_instances": 43
+  },
+  {
+    "id": "cupboard",
+    "visual": "NW_CITY_CUPBOARD_POOR_02.MRM",
+    "budget_tris": 2000,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_PLANK",
+        "group": "WOOD",
+        "role": "sawn boards and planks"
+      },
+      {
+        "key": "OWN_PROP_WOOD_FRAME",
+        "group": "WOOD",
+        "role": "posts, rails and frames"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged iron straps, hoops, brackets and nails"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_CUPBOARD_POOR_02.MRM",
+    "bbox_min": [
+      -0.900009994507,
+      -1.23538108826,
+      -0.424990005493
+    ],
+    "bbox_max": [
+      0.899990005493,
+      0.014841123819,
+      0.425009918213
+    ],
+    "origin_in_bbox": [
+      0.500005552504,
+      0.988129211211,
+      0.499988286634
+    ],
+    "source_tris": 112,
+    "source_pose": "static",
+    "newworld_instances": 89
+  },
+  {
+    "id": "wolf-head",
+    "visual": "NW_CITY_DECO_WOLFHEAD_01.MRM",
+    "budget_tris": 2500,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_PLANK",
+        "group": "WOOD",
+        "role": "sawn boards and planks"
+      },
+      {
+        "key": "OWN_PROP_FUR",
+        "group": "UNDEF",
+        "role": "wolf fur"
+      },
+      {
+        "key": "OWN_PROP_BONE",
+        "group": "UNDEF",
+        "role": "teeth"
+      },
+      {
+        "key": "OWN_PROP_EYE",
+        "group": "UNDEF",
+        "role": "amber glass eyes"
+      },
+      {
+        "key": "OWN_PROP_NOSE",
+        "group": "UNDEF",
+        "role": "black nose"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_DECO_WOLFHEAD_01.MRM",
+    "bbox_min": [
+      -0.413664932251,
+      -0.517066192627,
+      -0.179772415161
+    ],
+    "bbox_max": [
+      0.413664894104,
+      0.518177185059,
+      0.358089790344
+    ],
+    "origin_in_bbox": [
+      0.500000023054,
+      0.499463414857,
+      0.334235076049
+    ],
+    "source_tris": 174,
+    "source_pose": "static",
+    "newworld_instances": 31
+  },
+  {
+    "id": "stall-roof",
+    "visual": "NW_CITY_MARKETSTALL_ROOF_01.MRM",
+    "budget_tris": 2500,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_FRAME",
+        "group": "WOOD",
+        "role": "posts, rails and frames"
+      },
+      {
+        "key": "OWN_PROP_CLOTH",
+        "group": "UNDEF",
+        "role": "woven cloth: canvas, sacking, curtains"
+      },
+      {
+        "key": "OWN_PROP_ROPE",
+        "group": "UNDEF",
+        "role": "twisted hemp rope"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_MARKETSTALL_ROOF_01.MRM",
+    "bbox_min": [
+      -2.63150543213,
+      -0.39537727356,
+      -0.486176071167
+    ],
+    "bbox_max": [
+      2.63150543213,
+      1.06630073547,
+      0.782571334839
+    ],
+    "origin_in_bbox": [
+      0.5,
+      0.270495465566,
+      0.383193745946
+    ],
+    "source_tris": 278,
+    "source_pose": "static",
+    "newworld_instances": 7
+  },
+  {
+    "id": "firewood",
+    "visual": "OC_FIREWOOD_V3.MRM",
+    "budget_tris": 3000,
+    "zones": [
+      {
+        "key": "OWN_PROP_BARK",
+        "group": "WOOD",
+        "role": "log bark"
+      },
+      {
+        "key": "OWN_PROP_WOOD_END",
+        "group": "WOOD",
+        "role": "sawn log ends"
+      },
+      {
+        "key": "OWN_PROP_WOOD_SPLIT",
+        "group": "WOOD",
+        "role": "split faces along the grain"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "OC_FIREWOOD_V3.MRM",
+    "bbox_min": [
+      -1.85986419678,
+      -0.003448486328,
+      -0.475392684937
+    ],
+    "bbox_max": [
+      1.52722381592,
+      1.68707214355,
+      0.4664686203
+    ],
+    "origin_in_bbox": [
+      0.549104183241,
+      0.002039896034,
+      0.504737462187
+    ],
+    "source_tris": 438,
+    "source_pose": "static",
+    "newworld_instances": 12
+  },
+  {
+    "id": "sacks",
+    "visual": "OC_SAECKE_01.MRM",
+    "budget_tris": 2500,
+    "zones": [
+      {
+        "key": "OWN_PROP_CLOTH",
+        "group": "UNDEF",
+        "role": "woven cloth: canvas, sacking, curtains"
+      },
+      {
+        "key": "OWN_PROP_ROPE",
+        "group": "UNDEF",
+        "role": "twisted hemp rope"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "OC_SAECKE_01.MRM",
+    "bbox_min": [
+      -0.235034694672,
+      -0.467435264587,
+      -1.11803153992
+    ],
+    "bbox_max": [
+      1.72138061523,
+      0.441042900085,
+      0.471439933777
+    ],
+    "origin_in_bbox": [
+      0.120135378967,
+      0.514525590998,
+      0.70339830467
+    ],
+    "source_tris": 252,
+    "source_pose": "static",
+    "newworld_instances": 98
+  },
+  {
+    "id": "carpet",
+    "visual": "NW_CITY_CARPET_03.MRM",
+    "budget_tris": 600,
+    "zones": [
+      {
+        "key": "OWN_PROP_CARPET",
+        "group": "UNDEF",
+        "role": "woven carpet with its own pattern"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_CARPET_03.MRM",
+    "bbox_min": [
+      -1.74997695923,
+      -0.024990143776,
+      -1.25007400513
+    ],
+    "bbox_max": [
+      1.74995681763,
+      0.025010106564,
+      1.25009399414
+    ],
+    "origin_in_bbox": [
+      0.500002877426,
+      0.499800373122,
+      0.499996002467
+    ],
+    "source_tris": 50,
+    "source_pose": "static",
+    "newworld_instances": 32
+  },
+  {
+    "id": "cart",
+    "visual": "NW_CITY_CART_01.MRM",
+    "budget_tris": 3000,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_PLANK",
+        "group": "WOOD",
+        "role": "sawn boards and planks"
+      },
+      {
+        "key": "OWN_PROP_WOOD_FRAME",
+        "group": "WOOD",
+        "role": "posts, rails and frames"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged iron straps, hoops, brackets and nails"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_CART_01.MRM",
+    "bbox_min": [
+      -0.918890380859,
+      -0.48579372406,
+      -1.96476333618
+    ],
+    "bbox_max": [
+      0.918850402832,
+      0.973252029419,
+      1.02956893921
+    ],
+    "origin_in_bbox": [
+      0.500010876949,
+      0.332953043386,
+      0.656160758219
+    ],
+    "source_tris": 760,
+    "source_pose": "static",
+    "newworld_instances": 40
+  },
+  {
+    "id": "counter",
+    "visual": "NW_CITY_COUNTER_01.MRM",
+    "budget_tris": 2500,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_PLANK",
+        "group": "WOOD",
+        "role": "sawn boards and planks"
+      },
+      {
+        "key": "OWN_PROP_WOOD_FRAME",
+        "group": "WOOD",
+        "role": "posts, rails and frames"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged iron straps, hoops, brackets and nails"
+      }
+    ],
+    "kind": "static_mrm",
+    "resolved_visual": "NW_CITY_COUNTER_01.MRM",
+    "bbox_min": [
+      -2.76418640137,
+      -0.500230026245,
+      -0.696969146729
+    ],
+    "bbox_max": [
+      2.76414611816,
+      0.500269966125,
+      0.697009124756
+    ],
+    "origin_in_bbox": [
+      0.500003643342,
+      0.49998004004,
+      0.499985660455
+    ],
+    "source_tris": 199,
+    "source_pose": "static",
+    "newworld_instances": 10
+  }
+]

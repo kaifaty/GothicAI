@@ -1,0 +1,36 @@
+{
+  "id": "deco-shield",
+  "target": "data/content/mesh3d-market.json",
+  "seed": 1,
+  "shield": [
+    0.56,
+    0.78,
+    0.022,
+    0.02
+  ],
+  "boards": 4,
+  "rim": [
+    0.02,
+    0.006
+  ],
+  "boss": [
+    0.07,
+    0.03
+  ],
+  "blade": [
+    0.05,
+    0.009
+  ],
+  "guard": [
+    0.24,
+    0.03,
+    0.022
+  ],
+  "grip": [
+    0.15,
+    0.036
+  ],
+  "pommel": 0.045,
+  "wood_tile": 0.38,
+  "steel_tile": 0.3
+}

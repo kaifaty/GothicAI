@@ -10,6 +10,8 @@
 
 Свои короткие правила есть у [`server/`](server/AGENTS.md), [`OpenGothic/ai_bridge/`](OpenGothic/ai_bridge/AGENTS.md) и [`shorts/`](shorts/AGENTS.md): тесты после правки и частые грабли.
 
+**3D-модели** строит Claude сам в Blender по концепту `image_gen` и скиллу [`blender-3d`](.claude/skills/blender-3d/SKILL.md). Нейросети-генераторы 3D не используются, моделирование не отдаётся Codex и `codex-worker`.
+
 ## Где считаются модели
 
 - **Локальные модели на MacBook не запускаем.** Ни как сервисы, ни для экспериментов и замеров: ASR, LLM, TTS, эмбеддинги — ничего. Ресурсы макбука (CPU, GPU, память, диск под веса) остаются игре и разработке.

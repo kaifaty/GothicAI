@@ -1,0 +1,28 @@
+{
+  "glb": "market-set/build/weapon-barrel/model.glb",
+  "maps_dir": "market-set/tiles",
+  "scales": {"OWN_PROP_WOOD_STAVE": 2.6315789, "OWN_PROP_IRON_BAND": 5.0, "OWN_PROP_STEEL_BLADE": 1.0, "OWN_PROP_WOOD_HAFT": 1.0},
+  "targets": {
+    "OWN_PROP_WOOD_STAVE": [0.0266, 0.0204, 0.0131],
+    "OWN_PROP_IRON_BAND": [0.0282, 0.0269, 0.0168],
+    "OWN_PROP_STEEL_BLADE": [0.2507, 0.2695, 0.2757],
+    "OWN_PROP_WOOD_HAFT": [0.09, 0.06, 0.04]
+  },
+  "slots": {
+    "OWN_PROP_WOOD_STAVE": ["OWN_WEAPONBARREL_MARKET_WOOD", "WOOD"],
+    "OWN_PROP_IRON_BAND": ["OWN_WEAPONBARREL_MARKET_METAL", "METAL"],
+    "OWN_PROP_STEEL_BLADE": ["OWN_WEAPONBARREL_MARKET_METAL", "METAL"],
+    "OWN_PROP_WOOD_HAFT": ["OWN_WEAPONBARREL_MARKET_WOOD", "WOOD"]
+  },
+  "metal": ["OWN_PROP_IRON_BAND", "OWN_PROP_STEEL_BLADE"],
+  "size": 1024,
+  "seed": 1,
+  "angle_limit": 70,
+  "margin": 0.004,
+  "tone_spread": 0.25,
+  "wet_height": 0.1,
+  "algae": 0.2,
+  "bleach": 0.2,
+  "planks_per_tile": {"OWN_PROP_WOOD_STAVE": 4},
+  "contrast": {"OWN_PROP_WOOD_STAVE": 1.6, "OWN_PROP_IRON_BAND": 1.3, "OWN_PROP_STEEL_BLADE": 1.1, "OWN_PROP_WOOD_HAFT": 1.2}
+}

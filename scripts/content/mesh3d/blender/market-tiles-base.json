@@ -1,0 +1,35 @@
+{
+ "output": "~/.local/share/gothic-ai/content-staging/market-set/tiles",
+ "tiles": {
+  "own_prop_wood_plank": {
+   "copy": "~/.local/share/gothic-ai/content-staging/mesh3d-crate-concept/tiles/own_prop_wood_plank"
+  },
+  "own_prop_wood_frame": {
+   "copy": "~/.local/share/gothic-ai/content-staging/mesh3d-table-concept/tiles/own_prop_wood_frame"
+  },
+  "own_prop_wood_stave": {
+   "copy": "~/.local/share/gothic-ai/content-staging/mesh3d-barrel-concept/tiles/own_prop_wood_stave"
+  },
+  "own_prop_wood_split": {
+   "copy": "~/.local/share/gothic-ai/content-staging/mesh3d-barrel-concept/tiles/own_prop_wood_stave"
+  },
+  "own_prop_wood_brace": {
+   "copy": "~/.local/share/gothic-ai/content-staging/mesh3d-crate-concept/tiles/own_prop_wood_brace"
+  },
+  "own_prop_iron_band": {
+   "copy": "~/.local/share/gothic-ai/content-staging/mesh3d-barrel-concept/tiles/own_prop_iron_band"
+  },
+  "own_prop_wood_painted": {
+   "copy": "~/.local/share/gothic-ai/content-staging/mesh3d-crate-concept/tiles/own_prop_wood_plank"
+  },
+  "own_prop_wood_painted_light": {
+   "copy": "~/.local/share/gothic-ai/content-staging/mesh3d-crate-concept/tiles/own_prop_wood_plank"
+  },
+  "own_prop_steel_blade": {
+   "copy": "~/.local/share/gothic-ai/content-staging/mesh3d-barrel-concept/tiles/own_prop_iron_band"
+  },
+  "own_prop_brass": {
+   "copy": "~/.local/share/gothic-ai/content-staging/mesh3d-barrel-concept/tiles/own_prop_iron_band"
+  }
+ }
+}

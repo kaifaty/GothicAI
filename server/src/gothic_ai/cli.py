@@ -745,6 +745,7 @@ def _start_crime_meet(state: ServerState, link: GameLink, cards: Any) -> asyncio
         cards=cards,
     )
     state.talk.refuses = state.crime_meet.refuses
+    state.talk.refusal = state.crime_meet.refusal
     return asyncio.create_task(state.crime_meet.run())
 
 
@@ -1344,6 +1345,21 @@ async def serve(args: argparse.Namespace) -> int:
             if state.errands is not None:  # an npc on an errand
                 state.errands.attach_planner(planner)
             brain = asyncio.create_task(planner.run())
+        if state.crimes is not None:
+            sides = state.crimes.sides
+            sides.orders, sides.book = state.talk.orders, state.book
+            previous_intent = state.dialogue.on_intent
+
+            def remember_fight(npc: str, intent: Intent) -> None:
+                sides.note_intent(npc, intent)
+                if previous_intent is not None:
+                    previous_intent(npc, intent)
+
+            state.dialogue.on_intent = remember_fight
+            state.dialogue.on_fight = sides.note_fight
+            state.dialogue.on_attack.append(lambda npc: sides.note_fight(npc, "PLAYER"))
+            assert state.talk.orders is not None
+            state.talk.orders.on_fight = sides.note_fight
         if (crime_meet_task := _start_crime_meet(state, link, personas.cards)) is not None:
             directing.append(crime_meet_task)
         await link.send(_perception_control(args, planner=decider is not None))
@@ -1529,6 +1545,14 @@ async def serve(args: argparse.Namespace) -> int:
                 results = await crimes_scenario(link, state.crimes)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario crimes: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "crime_ally":
+                assert state.dialogue is not None and state.talk is not None and state.crimes is not None
+                results = await scenarios.crime_ally(
+                    link, state.dialogue, state.talk, state.crimes, perception=state.perception
+                )
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario crime_ally: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "crime_react":
                 assert state.crimes is not None and state.crime_react is not None
@@ -2707,6 +2731,7 @@ def main() -> None:
             "npc_far",
             "frame",
             "crime_meet",
+            "crime_ally",
             "crime_talk",
             "trace_crime",
             "cover",

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Capture original / city-3 / pilot-b / pilot-c or pilot-2 on Ryzen.
+# Capture original / city-3 / pilot-b / pilot-c / pilot-2 / pilot-3a / pilot-3b on Ryzen.
 # --prepare builds this worktree's unchanged engine through gq.
 # --capture VARIANT OUTPUT copies only the requested staging set and captures it.
 # --compose CAPTURES OUTPUT writes seven original / city-3 / B / C boards.
 # --compose-2 CAPTURES OUTPUT writes seven original / city-3 / B / pilot-2 boards.
+# --compose-3 CAPTURES OUTPUT writes seven original / pilot-2 / pilot-3a / pilot-3b boards.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HOST="${RYZEN_HOST:-ryzen}"
@@ -26,7 +27,7 @@ fi
 
 if [[ "${1:-}" == --remote-capture ]]; then
   variant="${2:?variant}"
-  [[ "$variant" == original || "$variant" == city-3 || "$variant" == pilot-b || "$variant" == pilot-c || "$variant" == pilot-2 ]] || exit 2
+  [[ "$variant" == original || "$variant" == city-3 || "$variant" == pilot-b || "$variant" == pilot-c || "$variant" == pilot-2 || "$variant" == pilot-3a || "$variant" == pilot-3b ]] || exit 2
   task="$HOME/$TASK"
   out="$task/runs/$variant"
   mkdir -p "$out/run"
@@ -66,11 +67,13 @@ INI
     -g "$HOME/gothic-ai/game" -g2 -window -devmode -save 1) >"$out/game.log" 2>&1 || rc=$?
   printf '%s\n' "$rc" >"$out/exit.txt"
   [[ "$rc" == 0 ]] || { tail -30 "$out/game.log"; exit "$rc"; }
-  python3 "$task/scripts/capture-quality-pilot.py" check "$out" "$task/scripts/quality-pilot.bench" "$task/content/$variant/materials/materials.json"
+  check_args=()
+  [[ "$TASK" != gothic-ai/quality-pilot-3 ]] || check_args+=(--iteration-3)
+  python3 "$task/scripts/capture-quality-pilot.py" check "$out" "$task/scripts/quality-pilot.bench" "$task/content/$variant/materials/materials.json" "${check_args[@]}"
   exit 0
 fi
 
-if [[ "${1:-}" == --compose || "${1:-}" == --compose-2 ]]; then
+if [[ "${1:-}" == --compose || "${1:-}" == --compose-2 || "${1:-}" == --compose-3 ]]; then
   exec uv run --no-project --with pillow python "$ROOT/scripts/content/capture-quality-pilot.py" "${1#--}" "${2:?captures}" "${3:?output}"
 fi
 
@@ -90,7 +93,7 @@ fi
 
 if [[ "${1:-}" == --capture ]]; then
   variant="${2:?variant}"; out="${3:?output}"
-  [[ "$variant" == original || "$variant" == city-3 || "$variant" == pilot-b || "$variant" == pilot-c || "$variant" == pilot-2 ]] || exit 2
+  [[ "$variant" == original || "$variant" == city-3 || "$variant" == pilot-b || "$variant" == pilot-c || "$variant" == pilot-2 || "$variant" == pilot-3a || "$variant" == pilot-3b ]] || exit 2
   mkdir -p "$out/$variant"
   if [[ "$variant" != original ]]; then
     source_root="${CONTENT_STAGING_ROOT:-$HOME/.local/share/gothic-ai/content-staging}/$variant"
@@ -110,5 +113,5 @@ if [[ "${1:-}" == --capture ]]; then
   rsync -a "$HOST:$TASK/runs/$variant/" "$out/$variant/"
   exit "$rc"
 fi
-echo 'usage: capture-quality-pilot.sh --prepare | --capture original|city-3|pilot-b|pilot-c|pilot-2 OUTPUT | --compose|--compose-2 CAPTURES OUTPUT' >&2
+echo 'usage: capture-quality-pilot.sh --prepare | --capture original|city-3|pilot-b|pilot-c|pilot-2|pilot-3a|pilot-3b OUTPUT | --compose|--compose-2|--compose-3 CAPTURES OUTPUT' >&2
 exit 2

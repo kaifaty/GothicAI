@@ -1014,7 +1014,7 @@ e2e_display_exclusive() {
     # and calm did on 19.10: orders 4/4 mixed rounds at 88-108 FPS once #258
     # placed its wolf on visible ground (6/6 more as three copies), calm 4/4 at
     # 79-81 FPS (4/4 more earlier that day), both also passing alone.
-    fight_reactions_*|calm_*|neural*|wolf|rescue*|companion) return 0 ;;
+    fight_reactions_*|calm_*|neural*|wolf|rescue*|companion|crime_ally) return 0 ;;
     *) return 1 ;;
   esac
 }

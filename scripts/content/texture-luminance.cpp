@@ -102,7 +102,9 @@ void selfTest() {
   const std::vector<uint8_t> split={0,0,0,255,0,0,0,0,0,0,0,128,0,0,0,127};
   require(halfCoverage(split,2,2,0)==1 && halfCoverage(split,2,2,1)==0);
   require(halfCoverage(split,2,2,2)==0.5 && halfCoverage(split,2,2,3)==0.5);
-  std::cout << "self-test: 15 checks passed\n";
+  const auto flat=material_measures::measure(split.data(),2,2);
+  require(flat.logSpread==0 && flat.detailK3==0 && flat.detailK9==0 && flat.detailK27==0);
+  std::cout << "self-test: 16 checks passed\n";
 }
 }
 
@@ -148,7 +150,7 @@ int main(int argc,char** argv) {
     }
     std::cout << "texture,target_luminance";
     if(properties) std::cout << ",nonopaque_fraction,opaque,width,height,target_coverage,coverage_left_half,coverage_right_half,coverage_top_half,coverage_bottom_half";
-    if(measurements) std::cout << ",target_period_u_uv,target_period_v_uv,target_direction,target_direction_confidence,target_oklab_l,target_oklab_a,target_oklab_b";
+    if(measurements) std::cout << ",target_period_u_uv,target_period_v_uv,target_direction,target_direction_confidence,target_oklab_l,target_oklab_a,target_oklab_b,target_log_spread,target_detail_k3,target_detail_k9,target_detail_k27";
     std::cout << '\n' << std::setprecision(12);
     for(const auto& result:results) {
       std::cout << result.name << ',' << result.luminance;
@@ -158,7 +160,8 @@ int main(int argc,char** argv) {
       if(measurements) {
         const auto& m=result.measurements;
         std::cout << ',' << m.periodU << ',' << m.periodV << ',' << (m.direction==1?"U":m.direction==2?"V":"none")
-                  << ',' << m.directionConfidence << ',' << m.oklab[0] << ',' << m.oklab[1] << ',' << m.oklab[2];
+                  << ',' << m.directionConfidence << ',' << m.oklab[0] << ',' << m.oklab[1] << ',' << m.oklab[2]
+                  << ',' << m.logSpread << ',' << m.detailK3 << ',' << m.detailK9 << ',' << m.detailK27;
       }
       std::cout << '\n';
     }

@@ -1,0 +1,55 @@
+{
+  "glb": "mesh3d-bench-concept/meshes/mesh3d-bench-concept/bench.glb",
+  "maps_dir": "mesh3d-bench-concept/tiles",
+  "scales": {
+    "OWN_PROP_WOOD_SEAT": 2.6315789,
+    "OWN_PROP_STONE_PIER": 0.15,
+    "OWN_PROP_IRON_BRACKET": 5.0
+  },
+  "targets": {
+    "OWN_PROP_WOOD_SEAT": [
+      0.0611,
+      0.0578,
+      0.0321
+    ],
+    "OWN_PROP_STONE_PIER": [
+      0.1012,
+      0.0694,
+      0.033
+    ],
+    "OWN_PROP_IRON_BRACKET": [
+      0.0282,
+      0.0269,
+      0.0168
+    ]
+  },
+  "slots": {
+    "OWN_PROP_WOOD_SEAT": [
+      "OWN_BENCH_CITY_WOOD",
+      "WOOD"
+    ],
+    "OWN_PROP_STONE_PIER": [
+      "OWN_BENCH_CITY_STONE",
+      "STONE"
+    ],
+    "OWN_PROP_IRON_BRACKET": [
+      "OWN_BENCH_CITY_IRON",
+      "METAL"
+    ]
+  },
+  "metal": [
+    "OWN_PROP_IRON_BRACKET"
+  ],
+  "size": 2048,
+  "seed": 1,
+  "wet_height": 0.12,
+  "algae": 0.5,
+  "planks_per_tile": {
+    "OWN_PROP_WOOD_SEAT": 4
+  },
+  "contrast": {
+    "OWN_PROP_WOOD_SEAT": 1.3,
+    "OWN_PROP_STONE_PIER": 1.2,
+    "OWN_PROP_IRON_BRACKET": 1.2
+  }
+}

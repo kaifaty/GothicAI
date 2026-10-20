@@ -621,6 +621,10 @@ void Gothic::cancelLoading() {
   if(loadingFlag.load()!=LoadState::Idle){
     loaderTh.join();
     loadingFlag.store(LoadState::Idle);
+    // the loader may have finished a session: hand it over, so the caller unloads it
+    // while Gothic::inst() is valid, not ~Gothic after the instance is gone
+    if(pendingGame!=nullptr)
+      game = std::move(pendingGame);
     }
   }
 

@@ -1,0 +1,39 @@
+{
+  "id": "cart",
+  "target": "data/content/mesh3d-market.json",
+  "seed": 1,
+  "bed_width": 1.28,
+  "bed_length": 1.7,
+  "beam": [
+    0.08,
+    0.1
+  ],
+  "post": 0.08,
+  "rails": [
+    0.2,
+    0.43
+  ],
+  "rail": [
+    0.12,
+    0.04
+  ],
+  "planks": 7,
+  "plank": 0.03,
+  "gap": 0.008,
+  "width_jitter": 0.12,
+  "posts": 3,
+  "wheel_width": 0.08,
+  "felloe": 0.09,
+  "tyre": 0.026,
+  "spokes": 8,
+  "segments": 24,
+  "hub": [
+    0.085,
+    0.24
+  ],
+  "cross_bar": 1.25,
+  "nail": 0.004,
+  "nail_radius": 0.008,
+  "stave_tile": 0.38,
+  "planks_per_tile": 4
+}

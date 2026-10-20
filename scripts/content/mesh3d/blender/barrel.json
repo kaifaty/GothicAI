@@ -1,0 +1,36 @@
+{
+  "id": "barrel",
+  "front": "mesh3d-pilot/barrel-v3-front.png",
+  "sides": 20,
+  "seed": 1,
+  "hoops": [
+    [
+      0.078,
+      0.063
+    ],
+    [
+      0.27,
+      0.063
+    ],
+    [
+      0.66,
+      0.063
+    ],
+    [
+      0.895,
+      0.063
+    ]
+  ],
+  "hoop_thickness": 0.008,
+  "hoop_slope": 0.02,
+  "seam_stave": 13,
+  "rim": 0.025,
+  "chime_depth": 0.03,
+  "gap": 0.0015,
+  "rim_drop": 0.006,
+  "lid_planks": 4,
+  "jitter": 0.12,
+  "stave_tile": 0.38,
+  "planks_per_tile": 4,
+  "ring_step": 0.09
+}

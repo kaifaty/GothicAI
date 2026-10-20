@@ -232,13 +232,22 @@ def assert_uv_quality(stats):
             f"{stats['projection']} UV {direction.upper()} {limits['min']:.6f}.."
             f"{limits['max']:.6f} m outside 1m +/-{tolerance:.0%}")
 
-    within(stats, "v", .05)
     if stats["projection"] == "box":
+        within(stats, "v", .05)
         within(stats, "u", .05)
     else:
+        within(stats["planar"], "v", .05)
         within(stats["planar"], "u", .05)
         side = stats["cylindrical"]
+        # Accepted limitation (PR #313): the meridian of a dense noisy barrel
+        # stretches V on single faces by up to ~14%, invisible on tiled wood;
+        # the area-weighted mean still has to keep the 1 m scale.
+        within(side, "v", .15)
         within(side, "u", .15)
+        if side["triangles"]:
+            mean_v = side["v_meters_per_uv"]["mean"]
+            assert .95 <= mean_v <= 1.05, (
+                f"cylinder UV V mean {mean_v:.6f} m outside 1m +/-5%")
         if side["triangles"]:
             reference = side["u_at_mean_section_meters_per_uv"]
             assert reference["min"] >= .95 and reference["max"] <= 1.05, (

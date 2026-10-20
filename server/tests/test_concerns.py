@@ -262,6 +262,30 @@ async def test_a_crime_witness_has_a_choice_without_a_forced_quest():
         await link_cm.__aexit__(None, None, None)
 
 
+async def test_recorded_side_clears_only_the_allied_witness_concern():
+    ally = "BAU_4300_ADDON_CAVALORN"
+    link_cm, chronicle, deals, concerns = await _setup(FakeGame(branch="A"), with_crimes=True)
+    try:
+        chronicle.record({"fact": "crime", "id": "C1", "kind": "murder", "victim": XARDAS})
+        chronicle.record({"fact": "crime_seen", "npc": ally, "crime": "C1", "guild": 8, "npctype": 0})
+        chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "C1", "guild": 8, "npctype": 0})
+        assert concerns.agenda(ally) == CRIME_WITNESS_EN
+        outsider = concerns.of(LOBART)
+        assert [c.key for c in outsider] == ["crime_witness:C1"]
+        changed = []
+        concerns.on_change.append(changed.append)
+
+        chronicle.record({"fact": "crime_side", "npc": ally, "crime": "C1", "why": "fought"})
+
+        assert changed == [ally]
+        assert concerns.of(ally) == []
+        assert concerns.current(ally, CRIME_WITNESS_EN) is None
+        assert concerns.of(LOBART) is outsider
+        assert concerns.agenda(LOBART) == CRIME_WITNESS_EN
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
 @pytest.mark.parametrize(
     ("npc", "victim", "metadata"),
     [

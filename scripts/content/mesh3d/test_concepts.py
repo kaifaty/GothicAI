@@ -154,10 +154,35 @@ def test_source_symlink_cannot_escape_permanent_store(tmp_path):
     assert list(outside.iterdir()) == []
 
 
-@pytest.mark.parametrize("variant", [0, 3, True])
-def test_only_two_requested_variants_are_imported(tmp_path, variant):
-    with pytest.raises(ValueError, match="variant must be 1 or 2"):
+@pytest.mark.parametrize("variant", [0, 10, True])
+def test_variant_must_be_a_small_integer(tmp_path, variant):
+    with pytest.raises(ValueError, match="variant must be an integer 1..9"):
         concepts.import_concept(TARGET, tmp_path / "unused", variant, "A barrel.", UTC)
+
+
+def test_views_and_edits_of_our_own_concept(tmp_path):
+    source_root = tmp_path / "sources"
+    registry = tmp_path / "registry.jsonl"
+    first = concepts.import_concept(TARGET, png(tmp_path / "a.png"), 3, "A barrel.", UTC, registry, source_root,
+                                    view="34")
+    front = concepts.import_concept(TARGET, png(tmp_path / "b.png", (90, 60, 40, 255)), 3, "Front of it.", UTC,
+                                    registry, source_root, view="front", edit_of=first["id"])
+    assert first["id"].endswith("-v3-34") and front["id"].endswith("-v3-front")
+    assert front["parameters"]["edit_of"] == first["id"]
+    assert (source_root / front["source_png"]).exists()
+    with pytest.raises(ValueError, match="edit_of"):
+        concepts.import_concept(TARGET, png(tmp_path / "c.png"), 3, "Top.", UTC, registry, source_root,
+                                view="34", edit_of=first["id"])
+    wide = tmp_path / "wide.png"  # an orthographic face: 19% transparent, free border
+    image = Image.new("RGBA", (100, 100))
+    image.paste((120, 80, 35, 255), (5, 5, 95, 95))
+    image.save(wide)
+    top = concepts.import_concept(TARGET, wide, 3, "Top.", UTC, registry, source_root, view="top", edit_of=first["id"])
+    assert top["generation"]["alpha"]["transparent_fraction"] < 0.30
+    with pytest.raises(ValueError, match="more than 30%"):
+        concepts.import_concept(TARGET, wide, 4, "Wide.", UTC, registry, source_root, view="34")
+    with pytest.raises(ValueError, match="view must be"):
+        concepts.import_concept(TARGET, png(tmp_path / "d.png"), 3, "Back.", UTC, registry, source_root, view="back")
 
 
 def test_contact_sheet_has_five_columns_two_rows_and_preserves_sources(tmp_path):

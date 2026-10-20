@@ -1,0 +1,15 @@
+{
+  "id": "sign",
+  "target": "data/content/mesh3d-market.json",
+  "seed": 1,
+  "post_sides": 10,
+  "post_radius": [0.05, 0.046],
+  "point": 0.03,
+  "boards": [[0.06, 0.17, 1.0], [0.53, 0.15, 0.8]],
+  "board_t": 0.036,
+  "arrow": 0.11,
+  "nail": 0.004,
+  "nail_radius": 0.009,
+  "stave_tile": 0.38,
+  "planks_per_tile": 4
+}

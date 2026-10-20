@@ -2,10 +2,10 @@
 # Run on Ryzen: ssh ryzen bash < scripts/content/mesh3d/blender/install.sh
 set -eu
 
-version=4.5.3
+version=5.2.2
 archive="blender-${version}-linux-x64.tar.xz"
-sha256=975c58fcb244273838534bba771e64ad87739216b0f9b39a888531a49a72d845
-release_url=https://download.blender.org/release/Blender4.5
+sha256=84098912789dc450e95697c4184fb8a90acbe5111c2ba4aede3fecb57806a168
+release_url=https://download.blender.org/release/Blender5.2
 install_root="$HOME/gothic-ai/mesh3d/blender"
 version_dir="$install_root/blender-${version}-linux-x64"
 

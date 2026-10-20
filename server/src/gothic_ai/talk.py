@@ -62,6 +62,7 @@ from .trace import TraceWriter
 
 if TYPE_CHECKING:
     from .beasts import BeastDesk
+    from .crime_meet import Encounter
     from .orders import Orders
 
 log = logging.getLogger(__name__)
@@ -349,6 +350,7 @@ class TalkDesk:
         # what an npc perceives now, for the behavioral model (perception.py)
         self.view_of: Callable[[str], tuple[str, ...]] = lambda npc: ()
         self.refuses: Callable[[str], bool] = lambda npc: False
+        self.refusal: Callable[[str], Encounter | None] = lambda npc: None
         self.end_silence_s = end_silence_s
         self.people: dict[str, RosterEntry] = {}  # the roster: people around the hero
         self.game_time: tuple[int, int] | None = None
@@ -663,10 +665,30 @@ class TalkDesk:
 
     def _refused(self, npc: str) -> bool:
         """A rule's current refusal applies to voice and typed speech as well as native dialogs."""
-        if not self.refuses(npc):
+        reason = self.refusal(npc)
+        if reason is None and not self.refuses(npc):
             return False
         if self.partner is not None and self.partner.npc == npc:
             self._end("refused")
+
+        def name(who: str) -> str:
+            entry = self.people.get(who.upper())
+            card = self.dialogue.personas.cards.get(who.upper())
+            return (entry.name if entry is not None else "") or (card.name if card else "") or who
+
+        npc_name = name(npc)
+        detail = f"{npc_name} не хочет говорить"
+        if reason is not None:
+            crime = reason.crime
+            victim = str(crime.get("victim") or crime.get("owner") or "неизвестно")
+            log.info(
+                "talk refused npc=%s (%s) crime=%s kind=%s victim=%s role=%s reaction=%s",
+                npc, npc_name, crime["id"], crime.get("kind"), victim, reason.role, reason.reaction,
+            )
+            detail += f": знает об убийстве. Жертва: {name(victim)}"
+        else:
+            log.info("talk refused npc=%s (%s)", npc, npc_name)
+        self._spawn(self.link.send(ChatStatusCmd(npc=npc, status="notice", detail=detail)))
         self._spawn(self._soft(npc, "say_svm", svm="NOTNOW", overlay=True))
         return True
 

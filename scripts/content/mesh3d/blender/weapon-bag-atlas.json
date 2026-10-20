@@ -1,0 +1,26 @@
+{
+  "glb": "market-set/build/weapon-bag/model.glb",
+  "maps_dir": "market-set/tiles",
+  "scales": {"OWN_PROP_LEATHER": 1.0, "OWN_PROP_STEEL_BLADE": 1.0, "OWN_PROP_WOOD_HAFT": 1.0},
+  "targets": {
+    "OWN_PROP_LEATHER": [0.0309, 0.0228, 0.0182],
+    "OWN_PROP_STEEL_BLADE": [0.2567, 0.2654, 0.2719],
+    "OWN_PROP_WOOD_HAFT": [0.09, 0.06, 0.04]
+  },
+  "slots": {
+    "OWN_PROP_LEATHER": ["OWN_WEAPONBAG_MARKET_LEATHER", "UNDEF"],
+    "OWN_PROP_STEEL_BLADE": ["OWN_WEAPONBAG_MARKET_METAL", "METAL"],
+    "OWN_PROP_WOOD_HAFT": ["OWN_WEAPONBAG_MARKET_LEATHER", "UNDEF"]
+  },
+  "metal": ["OWN_PROP_STEEL_BLADE"],
+  "size": 1024,
+  "seed": 1,
+  "angle_limit": 66,
+  "margin": 0.004,
+  "tone_spread": 0.15,
+  "wet_height": 0.0,
+  "algae": 0.0,
+  "bleach": 0.05,
+  "edge_radius": 0.003,
+  "contrast": {"OWN_PROP_LEATHER": 1.2, "OWN_PROP_STEEL_BLADE": 1.1, "OWN_PROP_WOOD_HAFT": 1.2}
+}

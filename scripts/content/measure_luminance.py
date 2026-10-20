@@ -9,8 +9,9 @@ path. City-3 uses the engine's alpha>=0.5 cutoff for coverage and visible-pixel
 mean linear Rec.709 luminance. Earlier sets keep their alpha-weighted scalar.
 Original pixels are never exported or passed to material generation.
 
-``--materials`` measures periods, direction and mean color for the entire
-mapping. It preserves the existing luminance and alpha-coverage targets.
+``--materials`` measures periods, direction, mean color, contrast and detail for
+the entire mapping. It refreshes every scalar material target, preserving the
+other mapping fields, including luminance and alpha coverage.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ import subprocess
 import sys
 import tempfile
 
-from map_textures import ALPHA_TEXTURES, DEFAULT_MAPPING, FIELDS, MAPPING_HEADERS, MEASUREMENT_FIELDS, _check_measurements
+from map_textures import ALPHA_TEXTURES, DEFAULT_MAPPING, DETAIL_FIELDS, FIELDS, MAPPING_HEADERS, MEASUREMENT_FIELDS, _check_measurements
 from pilot import selected_rows
 
 
@@ -65,7 +66,7 @@ PROPERTIES_FIELDS = (
 )
 EXTRACTED_MEASUREMENT_FIELDS = (
     "target_period_u_uv", "target_period_v_uv", "target_direction", "target_direction_confidence",
-    "target_oklab_l", "target_oklab_a", "target_oklab_b",
+    "target_oklab_l", "target_oklab_a", "target_oklab_b", *DETAIL_FIELDS,
 )
 
 
@@ -202,7 +203,7 @@ def main(argv=None):
     parser.add_argument("--set", dest="set_name", choices=("city-2", "city-3"), default="city-2",
                         help="material scope to measure (default: city-2)")
     parser.add_argument("--write", action="store_true", help="atomically update target_luminance and city-3 alpha target_coverage")
-    parser.add_argument("--materials", action="store_true", help="measure scalar periods, direction and OKLab for all mapping rows")
+    parser.add_argument("--materials", action="store_true", help="measure scalar periods, direction, OKLab, contrast and detail for all mapping rows")
     args = parser.parse_args(argv)
     try:
         rows = read_mapping(args.mapping)

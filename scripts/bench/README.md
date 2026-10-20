@@ -28,6 +28,29 @@ seconds of normal app cadence without video. Use a fresh `WORLD=NEWWORLD.ZEN`, `
 for the GLB replacement; `OPENGOTHIC_CONTENT=` gives the original-mesh comparison.
 For FPS comparisons use `RYZEN_BENCH_CLASS=quiet`; [the barrel report](../../reports/content/2026-10-own-meshes/README.md)
 records the replacement, original-mesh screenshots and alternating branch/main runs.
+`own-mesh-crate` is the same take two metres away, framed on the `NW_HARBOUR_CRATE_01`
+row next to that barrel (`own-mesh-crate.png`); the barrels stay in its frame.
+`own-mesh-table` frames the `NW_CITY_TABLE_PEASANT_01` in a harbour house (candle-lit room,
+candle and books stay on it) and writes `own-mesh-table.png`.
+`own-mesh-market` frames one copy of each of the 21 market-set visuals (`NW_CITY_MERCHANT`, see
+[the market report](../../reports/content/2026-10-market-set/README.md)), writes `<visual>.png` per frame,
+then the census, an overview `market-overview.png` and thirty seconds of app cadence. Run it twice on the
+same host with `WORLD=NEWWORLD.ZEN`, `OPENGOTHIC_CENSUS=<absolute output>/census.json` and either
+`OPENGOTHIC_CONTENT=` (originals) or the set root `~/.local/share/gothic-ai/content-staging/market-set/content`.
+A `shot` is written at the end of its frame, so the scenario waits after each one before moving the camera.
+`own-mesh-relief` takes daylight and indoor close-ups of the props' textures (barrel, crate, table, bench,
+chest, cart, signpost, stall roof, inner window, cupboard; `<prop>_view.png` and `<prop>_near.png`), then the census.
+It checks the tile relief of the atlases ([report](../../reports/content/2026-10-prop-relief/README.md)): run it with
+the props' root and with a root of the earlier bake, `OPENGOTHIC_CENSUS=<absolute output>/census.json`, `TIMEOUT=900`.
+`own-mesh-mob` frames the harbour `BENCH_NW_CITY_01.ASC` beside the wooden wall
+(prop-survey 20649, ZEN vob.id 23479), then uses the native `AI_UseMob` seat/stand
+fixture at `NW_CITY_HABOUR_BENCH_01`. It writes empty, seated and standing screenshots,
+NPC motion traces and a final census. Run with `WORLD=NEWWORLD.ZEN`, `BENCH_HOST=ryzen`,
+`GOTHIC_AI=0`, `OPENGOTHIC_TEXTURES=`, an explicit `OPENGOTHIC_CONTENT=<test content>`
+and `OPENGOTHIC_CENSUS=<absolute output>/census.json`; pass an absolute output directory
+to `scripts/bench.sh own-mesh-mob`. Repeat with `OPENGOTHIC_CONTENT=` for the original.
+[The paired Ryzen check](../../reports/content/2026-10-own-meshes-mob/README.md)
+records matching seated positions/yaw, native standing and mesh census entries.
 
 `own-mesh-fracture` breaks `NW_HARBOUR_BARREL_01` with the real one-handed
 attack animation from `destruction-step2-melee`. It takes before/after screenshots,

@@ -5,17 +5,22 @@ from pathlib import Path
 
 import pytest
 
+from gothic_launcher import cli, commands
 from gothic_launcher.commands import (
     LaunchError,
     Layout,
     Ports,
     child_env,
+    default_game_bin,
+    default_hd_textures,
+    default_log_root,
     find_layout,
     game,
     latest_save,
     services,
 )
 from gothic_launcher.settings import Config
+from gothic_launcher.state import SessionFile
 
 PORTS = Ports(server=50001, asr=50002, tts=50003)
 LAYOUT = Layout(
@@ -142,7 +147,7 @@ def test_the_inherited_environment_cannot_override_the_settings(monkeypatch):
     assert env["PYTHONUNBUFFERED"] == "1"
 
 
-def test_find_layout_lists_everything_missing(config, tmp_path):
+def test_find_layout_lists_everything_missing(config, tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     (repo / "server").mkdir(parents=True)
     (repo / "server" / "pyproject.toml").write_text("")
@@ -165,7 +170,65 @@ def test_find_layout_lists_everything_missing(config, tmp_path):
     bundled = binary.parent / "OpenGothic Dev.app" / "Contents" / "MacOS" / "Gothic2Notr"
     bundled.parent.mkdir(parents=True)
     bundled.symlink_to("../../../Gothic2Notr")  # as scripts/make-dev-app.sh makes it
+    monkeypatch.setattr(commands.sys, "platform", "darwin")
     assert find_layout(config).game_bin == bundled  # the game gets its own name and icon in the Dock
+    monkeypatch.setattr(commands.sys, "platform", "linux")
+    assert default_game_bin(repo) == binary  # Linux never chooses a stray macOS bundle
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_platform_log_and_texture_paths(monkeypatch, platform):
+    monkeypatch.setattr(commands.sys, "platform", platform)
+    home = Path.home()
+    if platform == "linux":
+        assert default_log_root() == home / ".local/state/gothic-ai/logs"
+        assert default_hd_textures() == home / "gothic-ai/hd-textures/textures"
+    else:
+        assert default_log_root() == home / "Library/Logs/GothicAI"
+        assert default_hd_textures() == home / ".local/share/gothic-ai/hd-textures/textures"
+
+
+def test_linux_missing_credentials_is_a_short_cli_error(config, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    monkeypatch.setattr(cli.sys, "argv", ["gothic-launcher", "up", "--continue"])
+    monkeypatch.setattr(cli, "_config", lambda: config)
+    monkeypatch.setattr(cli, "CHATGPT_TOKENS", tmp_path / "chatgpt.json")
+    monkeypatch.setattr(cli, "SessionFile", lambda: SessionFile(tmp_path / "launcher.json"))
+    with pytest.raises(SystemExit) as err:
+        cli.main()
+    assert err.value.code == 2
+    error = capsys.readouterr().err
+    assert "gothic-launcher login" in error
+    assert "gothic-launcher config set secrets.inworld_api_key" in error
+    assert "Traceback" not in error
+
+
+def test_openai_credentials_are_checked_only_when_selected(config, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "CHATGPT_TOKENS", tmp_path / "chatgpt.json")
+    config.set("llm.backend", "openai")
+    config.set("voice.enabled", False)
+    config.set("tts.enabled", False)
+    with pytest.raises(LaunchError, match="config set secrets.openai_api_key"):
+        cli._require_credentials(config)
+    config.set("secrets.openai_api_key", "test-key")
+    cli._require_credentials(config)
+
+
+def test_smoke_overrides_never_spend_model_quota_or_change_saved_settings(config, tmp_path, monkeypatch):
+    config.set("llm.decider_url", "ws://gpu:47832")
+    config.set("llm.quick_url", "http://gpu:47834/v1")
+    config.set("llm.body_url", "tcp://gpu:47835")
+    config.save()
+    saved = config.settings_path.read_text()
+    cli._smoke_settings(config)
+    monkeypatch.setattr(cli, "CHATGPT_TOKENS", tmp_path / "chatgpt.json")
+    cli._require_credentials(config)
+    [server] = services(config, LAYOUT, PORTS, tmp_path)
+    assert server.name == "server"
+    assert server.argv[server.argv.index("--llm") + 1] == "fake"
+    assert {"--no-quick", "--no-voice", "--no-tts"}.issubset(server.argv)
+    assert not {"--decider-url", "--quick-url", "--body-url"}.intersection(server.argv)
+    assert config.settings_path.read_text() == saved
 
 
 def test_free_ports_differ():

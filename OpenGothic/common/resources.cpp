@@ -866,6 +866,135 @@ ProtoMesh* Resources::implLoadMesh(std::string_view name) {
   return ret;
   }
 
+bool Resources::replaceModelMesh(zenkit::ModelMesh& model, std::unique_ptr<Skeleton>& skeleton,
+                                 std::string_view visual, std::string_view meshFile) {
+  auto key = std::string(visual.substr(0,visual.find_last_of('.')));
+  for(auto& c:key)
+    c = char(std::toupper(uint8_t(c)));
+  const auto it = meshOverrides.find(key);
+  if(it==meshOverrides.end())
+    return false;
+
+  it->second.loaded = false;
+  try {
+    if(model.attachments.empty())
+      throw std::runtime_error("model has no rigid attachments");
+    if(!model.meshes.empty())
+      throw std::runtime_error("model has soft-skin meshes");
+
+    // Stage every attachment before touching the original geometry. A model
+    // with one attachment retains the whole-scene, name-independent path.
+    std::vector<uint8_t> bytes;
+    decltype(model.attachments) replacements;
+    if(model.attachments.size()==1)
+      replacements.emplace(model.attachments.begin()->first,loadGltfMesh(it->second.file,&bytes));
+    else {
+      auto nodes = loadGltfMeshNodes(it->second.file,&bytes);
+      for(auto& node:nodes) {
+        if(node.name.empty())
+          throw std::runtime_error("mesh node has an empty attachment name");
+        if(model.attachments.find(node.name)==model.attachments.end())
+          throw std::runtime_error("unknown mesh node attachment name: " + node.name);
+        if(!replacements.emplace(node.name,std::move(node.mesh)).second)
+          throw std::runtime_error("duplicate mesh node attachment name: " + node.name);
+        }
+      for(const auto& attachment:model.attachments)
+        if(replacements.find(attachment.first)==replacements.end())
+          throw std::runtime_error("missing mesh node for attachment: " + attachment.first);
+      }
+
+    // Direct MDM/ASC loading historically has no skeleton. Read its paired
+    // hierarchy only for an indexed replacement, and retain it only on success.
+    std::unique_ptr<Skeleton> paired;
+    if(skeleton==nullptr) {
+      auto mdhName = std::string(meshFile);
+      FileExt::assignExt(mdhName,"MDH");
+      const auto* entry = vdfsIndex().find(mdhName);
+      if(entry==nullptr)
+        throw std::runtime_error("model has no bind hierarchy");
+      zenkit::ModelHierarchy mdh;
+      auto reader = entry->open_read();
+      mdh.load(reader.get());
+      paired.reset(new Skeleton(mdh,nullptr,visual));
+      }
+    const auto& sk = skeleton==nullptr ? *paired : *skeleton;
+    for(auto& attachment:replacements) {
+      const auto node = sk.findNode(attachment.first);
+      if(node==size_t(-1))
+        throw std::runtime_error("attachment node is missing from bind hierarchy");
+      const auto& bind = sk.tr[node];
+      for(size_t col=0;col<4;++col)
+        for(size_t row=0;row<4;++row)
+          if(!std::isfinite(bind[col][row]))
+            throw std::runtime_error("non-finite attachment bind transform");
+      if(bind[0][3]!=0 || bind[1][3]!=0 || bind[2][3]!=0 || bind[3][3]!=1)
+        throw std::runtime_error("attachment bind transform must be affine");
+      const double determinant =
+          double(bind[0][0])*(double(bind[1][1])*bind[2][2]-double(bind[2][1])*bind[1][2]) -
+          double(bind[1][0])*(double(bind[0][1])*bind[2][2]-double(bind[2][1])*bind[0][2]) +
+          double(bind[2][0])*(double(bind[0][1])*bind[1][2]-double(bind[1][1])*bind[0][2]);
+      if(!std::isfinite(determinant) || determinant==0)
+        throw std::runtime_error("singular attachment bind transform");
+      auto inverse = bind;
+      inverse.inverse();
+
+      auto& mesh = attachment.second;
+      for(auto& p:mesh.positions) {
+        inverse.project(p.x,p.y,p.z);
+        if(!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+          throw std::runtime_error("non-finite local attachment position");
+        }
+      // Inverse-transpose of the model-to-local transform is bind^T.
+      auto normal = [&bind](zenkit::Vec3& n) {
+        const double x = double(bind[0][0])*n.x + double(bind[0][1])*n.y + double(bind[0][2])*n.z;
+        const double y = double(bind[1][0])*n.x + double(bind[1][1])*n.y + double(bind[1][2])*n.z;
+        const double z = double(bind[2][0])*n.x + double(bind[2][1])*n.y + double(bind[2][2])*n.z;
+        const double length = std::hypot(x,y,z);
+        if(!std::isfinite(length) || length==0)
+          throw std::runtime_error("non-finite or zero local attachment normal");
+        n = {float(x/length),float(y/length),float(z/length)};
+        };
+      for(auto& n:mesh.normals)
+        normal(n);
+      for(auto& sub:mesh.sub_meshes) {
+        for(auto& wedge:sub.wedges)
+          normal(wedge.normal);
+        if(determinant<0)
+          for(auto& triangle:sub.triangles)
+            std::swap(triangle.wedges[1],triangle.wedges[2]);
+        }
+      mesh.bbox.min = mesh.bbox.max = mesh.positions.front();
+      for(const auto& p:mesh.positions)
+        for(unsigned axis=0;axis<3;++axis) {
+          mesh.bbox.min[axis] = std::min(mesh.bbox.min[axis],p[axis]);
+          mesh.bbox.max[axis] = std::max(mesh.bbox.max[axis],p[axis]);
+          }
+      for(unsigned axis=0;axis<3;++axis) {
+        mesh.obbox.center[axis] = float((double(mesh.bbox.min[axis])+mesh.bbox.max[axis])*0.5);
+        mesh.obbox.half_width[axis] = float((double(mesh.bbox.max[axis])-mesh.bbox.min[axis])*0.5);
+        }
+      mesh.obbox.axes[0] = {1,0,0};
+      mesh.obbox.axes[1] = {0,1,0};
+      mesh.obbox.axes[2] = {0,0,1};
+      }
+
+    for(auto& attachment:model.attachments)
+      attachment.second = std::move(replacements.at(attachment.first));
+    if(paired!=nullptr)
+      skeleton = std::move(paired);
+    if(census)
+      census->replaced(meshFile,it->second.replacement);
+    it->second.sourceSize = bytes.size();
+    it->second.sourceCrc32 = uint32_t(mz_crc32(0,bytes.data(),bytes.size()));
+    it->second.loaded = true;
+    return true;
+    }
+  catch(const std::exception& error) {
+    Log::e("meshes: unable to replace \"",meshFile,"\" with \"",it->second.file.string(),"\": ",error.what());
+    return false;
+    }
+  }
+
 std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
   if(FileExt::hasExt(name,"3DS")) {
     FileExt::exchangeExt(name,"3DS","MRM");
@@ -947,7 +1076,8 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
 
         zenkit::ModelMesh mdm {};
         mdm.load(reader.get());
-        t.reset(new ProtoMesh(mdm,std::move(sk),name));
+        const bool replaced = replaceModelMesh(mdm,sk,name,mesh);
+        t.reset(new ProtoMesh(mdm,std::move(sk),name,replaced));
         }
       else
         t.reset(new ProtoMesh(mdh,std::move(sk),name));
@@ -966,7 +1096,8 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
       mdm.load(reader.get());
 
       std::unique_ptr<Skeleton> sk{new Skeleton(mdm.hierarchy,anim,name)};
-      std::unique_ptr<ProtoMesh> t{new ProtoMesh(mdm,std::move(sk),name)};
+      const bool replaced = replaceModelMesh(mdm.mesh,sk,name,mdhName);
+      std::unique_ptr<ProtoMesh> t{new ProtoMesh(mdm,std::move(sk),name,replaced)};
       return t;
       }
     }
@@ -985,7 +1116,9 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
     auto reader = entry->open_read();
     mdm.load(reader.get());
 
-    std::unique_ptr<ProtoMesh> t{new ProtoMesh(std::move(mdm),nullptr,name)};
+    std::unique_ptr<Skeleton> sk;
+    const bool replaced = replaceModelMesh(mdm,sk,name,name);
+    std::unique_ptr<ProtoMesh> t{new ProtoMesh(mdm,std::move(sk),name,replaced)};
     return t;
     }
 
@@ -1001,7 +1134,8 @@ std::unique_ptr<ProtoMesh> Resources::implLoadMeshMain(std::string name) {
     mdm.load(reader.get());
 
     std::unique_ptr<Skeleton> sk{new Skeleton(mdm.hierarchy,nullptr,name)};
-    std::unique_ptr<ProtoMesh> t{new ProtoMesh(mdm,std::move(sk),name)};
+    const bool replaced = replaceModelMesh(mdm.mesh,sk,name,name);
+    std::unique_ptr<ProtoMesh> t{new ProtoMesh(mdm,std::move(sk),name,replaced)};
     return t;
     }
 

@@ -1,0 +1,47 @@
+{
+  "id": "weapon-bag",
+  "target": "data/content/mesh3d-market.json",
+  "seed": 1,
+  "wrap": [
+    1.08,
+    0.37,
+    0.006,
+    0.015
+  ],
+  "blades": [
+    {
+      "length": 1.16,
+      "width": 0.046,
+      "at": 0.07,
+      "fan": 1.5,
+      "shift": 0.0
+    },
+    {
+      "length": 1.12,
+      "width": 0.044,
+      "at": 0.15,
+      "fan": -0.5,
+      "shift": 0.03
+    },
+    {
+      "length": 0.8,
+      "width": 0.04,
+      "at": 0.235,
+      "fan": -2.0,
+      "shift": 0.16
+    },
+    {
+      "length": 0.42,
+      "width": 0.032,
+      "at": 0.305,
+      "fan": -3.5,
+      "shift": 0.42
+    }
+  ],
+  "straps": [
+    0.3,
+    0.72
+  ],
+  "leather_tile": 0.3,
+  "steel_tile": 0.3
+}

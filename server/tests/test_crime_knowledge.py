@@ -8,6 +8,7 @@ import pytest
 
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.concerns import Concerns
+from gothic_ai.crime_memory import memory_value
 from gothic_ai.crimes import Crimes
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.llm.fake import FakeBackend
@@ -133,6 +134,47 @@ async def test_direct_evidence_wins_over_later_rumor_and_suspicion(knowledge):
     assert (known.degree, known.source, known.hops) == ("seen", LOBART, 0)
 
 
+@pytest.mark.parametrize("justified_first", [False, True])
+async def test_justification_wins_over_plain_hearsay_but_never_direct_evidence(knowledge, justified_first):
+    crime = knowledge.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=8))
+    excuse = {"excuse": "fought", "excuse_by": HILDA, "excuse_by_name": "Хильда"}
+    versions = [excuse, {}] if justified_first else [{}, excuse]
+    for fields in versions:
+        learn(knowledge, MALETH, crime["id"], "heard", **fields)
+    (known,) = knowledge.crimes.known(MALETH)
+    assert (known.degree, known.excuse, known.excuse_by, known.excuse_by_name) == (
+        "heard", "fought", HILDA, "Хильда",
+    )
+    assert knowledge.crimes.excuse(MALETH, crime["id"]) == excuse
+    assert "Хильда говорит: Лобарт дрался с ним" in knowledge.crimes.situation(MALETH)
+    # Without CrimeReact only a recorded personal side suppresses consequences.
+    assert not knowledge.crimes.does_not_blame(MALETH, crime)
+    learn(knowledge, MALETH, crime["id"], "seen")
+    learn(knowledge, MALETH, crime["id"], "heard", **excuse)
+    (known,) = knowledge.crimes.known(MALETH)
+    assert (known.degree, known.excuse, known.excuse_by) == ("seen", "", "")
+
+
+@pytest.mark.parametrize("snapshot", [False, True])
+async def test_ally_testimony_justification_is_knowledge_and_can_be_retold(knowledge, snapshot):
+    knowledge.crimes.sides.note_fight(LOBART, HILDA)
+    crime = knowledge.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=8, witnesses=[HILDA]))
+    excuse = {"excuse": "fought", "excuse_by": HILDA, "excuse_by_name": "Хильда"}
+    fields = {"crime_excuses": {crime["id"]: excuse}} if snapshot else {}
+    knowledge.chronicle.record({
+        "fact": "testimony", "npc": MALETH, "witness": HILDA, "crime_told": [crime["id"]], **fields,
+    })
+    (known,) = knowledge.crimes.known(MALETH)
+    assert (known.degree, known.excuse, known.excuse_by) == ("heard", "fought", HILDA)
+    assert knowledge.crimes.excuse(MALETH, crime["id"]) == excuse
+    # A later source does not replace the original source; a personal side does.
+    learn(knowledge, MALETH, crime["id"], "heard", excuse="quest", excuse_by=LOBART)
+    assert knowledge.crimes.excuse(MALETH, crime["id"]) == excuse
+    knowledge.crimes.sides.note_fight(LOBART, MALETH)
+    knowledge.crimes.learn_side(MALETH, crime)
+    assert knowledge.crimes.excuse(MALETH, crime["id"])["excuse_by"] == MALETH
+
+
 async def test_missing_crime_references_cannot_invent_knowledge(knowledge):
     for degree in ("seen", "heard", "suspects"):
         learn(knowledge, LOBART, "not-in-this-branch", degree)
@@ -235,6 +277,45 @@ async def test_learning_a_crime_reacts_once_and_preserves_the_models_decision_af
     knowledge.link.receive(Session(type="session", branch="A", reason="connect"))
     await knowledge.crimes.prepare(LOBART)
     assert attitude_dialogue.open(LOBART, "Лобарт").intent.attitude == "friendly"
+
+
+async def test_enemy_witness_keeps_truth_without_attitude_change_before_or_after_load(
+    knowledge, attitude_dialogue,
+):
+    knowledge.crimes.people[HILDA] = {"guild": 8, "npctype": 0}
+    knowledge.crimes.people[MALETH] = {"guild": 8, "npctype": 0}
+    knowledge.crimes.sides.note_fight(LOBART, HILDA)
+    crime = knowledge.crimes.record(deed(
+        kind="murder", victim=LOBART, victim_guild=8, witnesses=[HILDA, MALETH],
+        witnesses_metadata=[{"npc": HILDA, "guild": 8}, {"npc": MALETH, "guild": 8}],
+    ))
+    assert crime is not None and crime["witnesses"] == [HILDA, MALETH]
+    assert knowledge.crimes.side(HILDA, crime["id"])["why"] == "fought"
+    assert knowledge.crimes.known(HILDA)[0].degree == "seen"
+    assert "Ты видел сам" in knowledge.crimes.situation(HILDA)
+    assert knowledge.crimes.attitude(HILDA) is None
+    assert knowledge.crimes.distrust(HILDA) == []
+    assert knowledge.crimes.distrust(MALETH)
+    assert attitude_dialogue.open(HILDA, "Хильда").intent.attitude == "neutral"
+    assert [fact["npc"] for fact in knowledge.chronicle.facts("crime_attitude")] == [MALETH]
+    assert attitude_dialogue.open(MALETH, "Малет").intent.attitude == "hostile"
+    assert memory_value(knowledge.crimes, HILDA) == (0, 0)
+    assert memory_value(knowledge.crimes, MALETH) == (4, 3)
+
+    saved = knowledge.memory.head("A")
+    knowledge.link.receive(
+        Session(type="session", branch="loaded", parent="A", parent_seq=saved, reason="load")
+    )
+    assert knowledge.crimes.sides.fights == {}
+    await knowledge.crimes.prepare(HILDA)
+    assert knowledge.crimes.side(HILDA, crime["id"]) is not None
+    assert knowledge.crimes.attitude(HILDA) is None
+    assert knowledge.crimes.distrust(HILDA) == []
+    assert knowledge.crimes.distrust(MALETH)
+    assert attitude_dialogue.open(HILDA, "Хильда").intent.attitude == "neutral"
+    assert [fact["npc"] for fact in knowledge.chronicle.facts("crime_attitude")] == [MALETH]
+    assert memory_value(knowledge.crimes, HILDA) == (0, 0)
+    assert memory_value(knowledge.crimes, MALETH) == (4, 3)
 
 
 async def test_an_older_branch_can_react_to_the_same_crime_independently(knowledge, attitude_dialogue):

@@ -73,7 +73,14 @@ state = json.loads(path.read_text()) if path.exists() else {
     "ActiveState": "inactive", "SubState": "dead", "Result": "success",
     "ExecMainCode": "1", "ExecMainStatus": "0", "LoadState": "not-found"}
 command = next((value for value in args if value in
-                ("show", "stop", "is-active", "reset-failed", "status")), "show")
+                ("show", "stop", "is-active", "reset-failed", "status", "set-property")), "show")
+if command == "set-property":
+    if os.environ.get("FAKE_SYSTEMD_SET_PROPERTY_FAIL"):
+        print("fake property update failed", file=sys.stderr)
+        sys.exit(1)
+    state.update(dict(value.split("=", 1) for value in args if "=" in value))
+    path.write_text(json.dumps(state))
+    sys.exit(0)
 if command in ("stop", "reset-failed"):
     state.update(ActiveState="inactive", SubState="dead")
     path.write_text(json.dumps(state))
@@ -133,10 +140,11 @@ def queue(gq, host, monkeypatch):
 
 def spec(kind="quick", *, owner="session-a", threads=4, mem=GIB,
          gpu_mem=0, display=False, display_shared=False, display_exclusive=False,
-         maximum=60, name="test", command=None):
+         interactive=False, maximum=60, name="test", command=None):
     return {"class": kind, "threads": threads, "mem": mem,
             "gpu_mem": gpu_mem, "display": display, "display_shared": display_shared,
             "display_exclusive": display_exclusive,
+            "interactive": interactive,
             "max": maximum,
             "name": name, "command": command or ["true"], "owner": owner}
 
@@ -156,6 +164,62 @@ def test_quick_runs_with_batch_even_when_all_batch_threads_are_claimed(queue):
     batch = start(queue, "batch", threads=28, mem=16 * GIB)
     quick = start(queue, threads=4, mem=4 * GIB)
     assert queue.get(batch)["status"] == queue.get(quick)["status"] == "running"
+
+
+def test_interactive_does_not_wait_for_background_memory_or_gpu(queue):
+    batch = start(queue, "batch", threads=28, mem=20 * GIB, gpu_mem=10 * GIB)
+    player = start(queue, threads=8, mem=8 * GIB, gpu_mem=3 * GIB,
+                   display_exclusive=True, interactive=True, maximum=6 * 3600)
+    assert queue.get(batch)["status"] == queue.get(player)["status"] == "running"
+    ordinary = enqueue(queue)
+    queue.tick()
+    assert queue.get(ordinary)["status"] == "queued"
+
+
+@pytest.mark.parametrize("quiet_active", [False, True])
+def test_interactive_bypasses_quiet_and_legacy_without_admitting_other_games(
+        queue, monkeypatch, quiet_active):
+    quiet = start(queue, "quiet") if quiet_active else enqueue(queue, "quiet")
+    earlier_game = enqueue(queue, display_shared=True, display=True)
+    player = enqueue(queue, display_exclusive=True, interactive=True)
+
+    @contextmanager
+    def unavailable_legacy(*_args):
+        yield False
+
+    monkeypatch.setattr(queue, "legacy_probe", unavailable_legacy)
+    monkeypatch.setattr(queue, "legacy_waiting", lambda: True)
+    queue.tick()
+    assert queue.get(player)["status"] == "running"
+    assert queue.get(earlier_game)["status"] == "queued"
+    assert queue.get(quiet)["status"] == ("running" if quiet_active else "queued")
+
+
+def test_interactive_waits_for_active_games_and_blocks_all_new_windows(queue):
+    active = start(queue, display_shared=True, display=True)
+    earlier_game = enqueue(queue, "quiet", display_shared=True, display=True)
+    player = enqueue(queue, display_exclusive=True, interactive=True)
+    later_game = enqueue(queue, display_shared=True, display=True)
+    queue.tick()
+    assert all(queue.get(ident)["status"] == "queued"
+               for ident in (earlier_game, player, later_game))
+    queue.finish(active, "success")
+    queue.tick()
+    assert queue.get(player)["status"] == "running"
+    assert all(queue.get(ident)["status"] == "queued" for ident in (earlier_game, later_game))
+    queue.finish(player, "success")
+    queue.tick()
+    assert queue.get(earlier_game)["status"] == "running"
+
+
+@pytest.mark.parametrize("overrides", [
+    {"display_exclusive": False}, {"kind": "batch"}, {"kind": "quiet"},
+    {"maximum": 6 * 3600 + 1},
+])
+def test_interactive_rejects_other_classes_shared_windows_and_long_runtime(queue, gq, overrides):
+    request = {"display_exclusive": True, "interactive": True, **overrides}
+    with pytest.raises(gq.QueueError, match="interactive"):
+        queue.submit(spec(**request))
 
 
 @pytest.mark.parametrize("resource", ["mem", "gpu_mem"])
@@ -776,6 +840,129 @@ def test_systemd_launch_sets_affinity_limits_runtime_and_stop_callback(gq, host,
     assert "_execute" in arguments and arguments[-1] == ident
 
 
+def test_cli_interactive_uses_live_cpu_weight_and_exact_six_hour_limit(gq, host, monkeypatch):
+    q = make_queue(gq, host, monkeypatch)
+    monkeypatch.setattr(gq, "Queue", lambda: q)
+    monkeypatch.setattr(gq, "wait_job", lambda *_args, **_kwargs: 0)
+    assert gq.main(["run", "--class", "quick", "--threads", "8", "--mem", "8G",
+                    "--gpu-mem", "3G", "--display-exclusive", "--interactive", "--max", "6h",
+                    "--name", "Gothic AI", "--", "true"]) == 0
+    q.tick()
+    player, = q.jobs()
+    assert player["interactive"] and player["display"] and player["display_exclusive"]
+    properties = dict(value.removeprefix("--property=").split("=", 1)
+                      for value in calls(host, "systemd-run")[0] if value.startswith("--property="))
+    assert properties["CPUWeight"] == "1000"
+    assert properties["CPUAffinity"] == "2-15 18-31"
+    assert properties["MemoryMax"] == str(8 * GIB)
+    assert properties["RuntimeMaxSec"] == "21600s"
+
+
+def test_interactive_execute_starts_with_background_exclusive_legacy_lock(gq, host, monkeypatch):
+    q = make_queue(gq, host, monkeypatch)
+    marker = host["home"].parent / "interactive-started"
+    ident = q.submit(spec(display_exclusive=True, interactive=True, command=[
+        sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).touch()", str(marker)]))
+    with host["legacy"].open("a+") as background:
+        fcntl.flock(background, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        q.tick()
+        assert q.get(ident)["status"] == "starting"
+        systemd_state(host, ident, CPUWeight="100", RuntimeMaxUSec="27000000000")
+        assert gq.execute(q, ident) == 0
+        assert marker.exists()
+        properties = json.loads((host["systemd"] / f"gq-{ident}.json").read_text())
+        assert properties["CPUWeight"] == "1000"
+        assert ["--user", "set-property", "--runtime", f"gq-{ident}.service", "CPUWeight=1000"] in calls(host, "systemctl")
+
+
+def test_interactive_property_failure_prevents_command_start(gq, host, monkeypatch, capsys):
+    q = make_queue(gq, host, monkeypatch)
+    marker = host["home"].parent / "must-not-start"
+    ident = q.submit(spec(display_exclusive=True, interactive=True, command=[
+        sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).touch()", str(marker)]))
+    q.tick()
+    monkeypatch.setenv("FAKE_SYSTEMD_SET_PROPERTY_FAIL", "1")
+    monkeypatch.setattr(gq, "Queue", lambda: q)
+    assert gq.main(["_execute", ident]) == 2
+    assert q.get(ident)["status"] == "starting"
+    assert not marker.exists()
+    report = capsys.readouterr().err
+    assert "приоритет игры" in report and "fake property update failed" in report
+    assert "Traceback" not in report
+
+
+@pytest.mark.parametrize("phase", ["command", "orphan"])
+def test_interactive_helper_timeout_stops_children_without_systemd_timer(gq, host, monkeypatch, phase):
+    q = make_queue(gq, host, monkeypatch)
+    marker = host["home"].parent / "started"
+    source = ("from pathlib import Path; import sys,time; Path(sys.argv[1]).touch(); time.sleep(5)"
+              if phase == "command" else
+              "from pathlib import Path; import subprocess,sys; "
+              "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(5)']); "
+              "Path(sys.argv[1]).write_text(str(child.pid))")
+    ident = q.submit(spec(display_exclusive=True, interactive=True, maximum=1,
+                         command=[sys.executable, "-c", source, str(marker)]))
+    q.tick()
+    systemd_state(host, ident, RuntimeMaxUSec="infinity")
+    command = None
+    stopped = False
+    checking_orphans = False
+    original_popen, original_systemctl = gq.subprocess.Popen, gq.systemctl
+
+    def spawn(argv, *args, **kwargs):
+        nonlocal command
+        process = original_popen(argv, *args, **kwargs)
+        if "_command" in argv:
+            command = process
+        return process
+
+    def stop_unit(*args):
+        nonlocal stopped
+        result = original_systemctl(*args)
+        if args[0] == "stop":
+            stopped = True
+            os.kill(command.pid if phase == "command" else int(marker.read_text()), signal.SIGTERM)
+        return result
+
+    def has_orphans(_job_id):
+        nonlocal checking_orphans
+        checking_orphans = True
+        return phase == "orphan" and not stopped
+
+    monkeypatch.setattr(gq.subprocess, "Popen", spawn)
+    monkeypatch.setattr(gq, "systemctl", stop_unit)
+    monkeypatch.setattr(gq, "unit_has_children", has_orphans)
+    monkeypatch.setattr(gq.time, "monotonic", lambda: (
+        1002 if (marker.exists() if phase == "command" else checking_orphans) else 1000))
+    try:
+        gq.execute(q, ident)
+        assert marker.exists() and stopped
+        assert q.get(ident)["cancel_reason"] == "timeout"
+        q.finish(ident, "success")
+        assert q.get(ident)["status"] == "timeout" and q.get(ident)["code"] == 124
+    finally:
+        if command is not None and command.poll() is None:
+            command.terminate()
+            command.wait()
+        if phase == "orphan" and marker.exists() and not stopped:
+            try:
+                os.kill(int(marker.read_text()), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+
+def test_interactive_wait_reports_current_window_owners(queue, gq, monkeypatch, capsys):
+    game = start(queue, name="e2e stage", owner="other-session", display=True)
+    start(queue, "batch", name="background-training")
+    player = enqueue(queue, interactive=True, display_exclusive=True)
+    monkeypatch.setattr(gq.time, "sleep", lambda _seconds: queue.cancel(player, "session-a"))
+    assert gq.wait_job(queue, player) == 143
+    report = capsys.readouterr().err
+    assert "ждём игры" in report
+    assert game in report and "other-session" in report and "e2e stage" in report
+    assert "background-training" not in report
+
+
 def test_starting_units_reserve_slots_and_receive_their_slot_environment(gq, host, monkeypatch):
     q = make_queue(gq, host, monkeypatch)
     monkeypatch.setenv("GQ_DISPLAY_SLOT", "99")
@@ -1315,6 +1502,7 @@ def test_execute_keeps_the_user_commands_nonzero_exit_code(gq, host, monkeypatch
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
         assert gq.execute(q, ident) == 7
+        assert not any("set-property" in args for args in calls(host, "systemctl"))
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
