@@ -29,6 +29,7 @@ data/
 !/data/content/quality-pilot-2.jsonl
 !/data/content/city-4.jsonl
 !/data/content/city-4-generated.jsonl
+!/data/content/city-4-counts.json
 !/data/content/quality-pilot-3.jsonl
 !/data/content/city-materials.csv
 !OpenGothic/data/
