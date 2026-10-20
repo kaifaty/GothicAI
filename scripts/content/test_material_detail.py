@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from material_colour import _linear, _srgb
+from material_colour import _linear, _srgb, linear_to_oklab
 from material_detail import FIELDS, fit_material_detail, low_frequency_iid
 from material_measures import measure_material
 
@@ -118,3 +118,84 @@ def test_low_frequency_iid_keeps_four_pixel_log_band_within_two_percent():
     assert not np.array_equal(result, source)
     assert metadata["gaussian_sigma_px"] == 32
     assert metadata["boundary"] == "wrap"
+
+
+@pytest.mark.parametrize("amplitude", [.5, 1.5])
+def test_ceiling_measures_recoloured_quantized_pixels_without_any_overshoot(amplitude):
+    source = bands_image(amplitude, size=256)
+    before = measure_material(source)
+    targets = {field: before[field]*.35 for field in FIELDS}
+    target_colour = linear_to_oklab(np.array(before["mean_linear_rgb"])*[1.15, .8, 1.1])
+
+    result, metadata = fit_material_detail(source/255, targets,
+        target_oklab=target_colour, ceiling=True)
+    measured = measure_material(result)
+
+    assert result.dtype == np.uint8
+    assert metadata["ceiling"]["feasible"]
+    assert min(metadata["gains"].values()) < .5
+    for field in FIELDS:
+        assert measured[field] <= targets[field]
+        assert metadata["measured"][field] == measured[field]
+        assert metadata["ceiling"]["before"][field] == before[field]
+        assert metadata["ceiling"]["after"][field] == measured[field]
+        assert metadata["ratios"][field] <= 1
+    assert metadata["colour"]["attainable"]
+    assert metadata["colour"]["linear_rgb_max_error"] <= .005
+
+
+def test_ceiling_uses_visible_rgba_measure_and_ignores_hidden_rgb():
+    source = bands_image(1, size=256)
+    mask = np.zeros(source.shape[:2], dtype=bool)
+    mask[32:224, 48:208] = True
+    alpha = mask.astype(np.uint8)*255
+    before = measure_material(np.dstack((source, alpha)))
+    targets = {field: before[field]*.7 for field in FIELDS}
+    hidden_variants = []
+    for hidden in (0, 255):
+        variant = source.copy()
+        variant[~mask] = hidden
+        result, metadata = fit_material_detail(variant/255, targets,
+            target_oklab=before["oklab"], ceiling=True, mask=mask)
+        measured = measure_material(np.dstack((result, alpha)))
+        assert metadata["ceiling"]["feasible"]
+        assert metadata["ceiling"]["visible_pixels"] == mask.sum()
+        for field in FIELDS:
+            assert measured[field] <= targets[field]
+            assert metadata["measured"][field] == measured[field]
+        np.testing.assert_allclose(measured["mean_linear_rgb"], before["mean_linear_rgb"], atol=.005)
+        hidden_variants.append(result[mask])
+    np.testing.assert_array_equal(*hidden_variants)
+
+
+def test_ceiling_reports_unreachable_lower_detail_and_black_mean_colour():
+    source = np.zeros((32, 32, 3))
+    targets = {field: .1 for field in FIELDS}
+    result, metadata = fit_material_detail(source, targets,
+        target_oklab=linear_to_oklab([.2, .1, .05]), ceiling=True)
+
+    assert not result.any()
+    assert metadata["ceiling"]["feasible"]
+    assert not metadata["converged"]
+    assert not metadata["colour"]["attainable"]
+    assert metadata["ceiling"]["lower_gaps"] == dict.fromkeys(FIELDS, 1.)
+
+
+def test_ceiling_reports_infeasible_zero_target_with_retained_chromatic_variation():
+    source = np.empty((64, 64, 3))
+    source[:, :32] = [.8, .1, .2]
+    source[:, 32:] = [.1, .7, .3]
+    before = measure_material(np.rint(source*255).astype(np.uint8))
+    _, metadata = fit_material_detail(source, dict.fromkeys(FIELDS, 0.),
+        target_oklab=before["oklab"], ceiling=True)
+
+    assert not metadata["ceiling"]["feasible"]
+    assert not metadata["converged"]
+    assert metadata["ceiling"]["infeasibility"]
+
+
+@pytest.mark.parametrize("mask", [np.zeros((16, 16)), np.ones((15, 16)), np.full((16, 16), -.1)])
+def test_ceiling_rejects_invalid_visibility_masks(mask):
+    with pytest.raises(ValueError, match="mask"):
+        fit_material_detail(np.full((16, 16, 3), .5), dict.fromkeys(FIELDS, 0.),
+                            target_oklab=[.5, 0, 0], ceiling=True, mask=mask)

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Import explicit city-4 batches using text-only pilot-2 counts and gated IID.
+"""Process all 65 city materials from retained text-only image_gen sources.
 
 ``prompt`` prints CSV-only prompts. ``prepare`` freezes corrected IID inputs;
-``build`` verifies these bytes, admits visual counts and merges the batch into
-the separate city-4 registry. Packaging remains a separate final step.
+``build`` verifies these bytes, applies low-frequency IID where flagged, fits
+detail under the four measured CSV ceilings, and merges the city-4 registry.
+The seven pilot-2 materials reuse their selected raw PNGs. Packaging is separate.
 """
 from __future__ import annotations
 
@@ -23,15 +24,17 @@ import numpy as np
 from PIL import Image
 
 import alpha_material
+import bakeoff
 import city_set
 import generate
 from import_imagegen import MODEL, _write_immutable
 from material_colour import _srgb, colour_target, oklab_to_linear
-from material_lighting import measure_file as measure_light
+from material_detail import FIELDS, fit_material_detail, low_frequency_iid
+from material_lighting import detect_baked_lighting, lighting_risk, measure_file as measure_light
+from material_measures import measure_material
 import marigold_iid
 import pack_materials
 import quality_pilot as pilot
-import quality_pilot_2 as pilot2
 import registry
 from seam_fix import seamless
 
@@ -48,7 +51,7 @@ def rows(mapping):
             and row['uv_m_u'] and row['uv_m_v']]
     if len(selected) != 65 or len({row['texture'] for row in selected}) != 65:
         raise ValueError('city-4 requires exactly 65 distinct measured city materials')
-    return [row for row in selected if row['texture'] not in pilot.TEXTURES]
+    return selected
 
 
 def number(row, key):
@@ -82,6 +85,9 @@ def recipe(row, classes, mapping, bible):
     target = colour_target(row)
     if target is None:
         raise ValueError(f'{name}: target_oklab is required')
+    detail_targets = {field: float(row['target_' + field]) for field in FIELDS}
+    if any(not math.isfinite(value) or value < 0 for value in detail_targets.values()):
+        raise ValueError(f'{name}: detail targets must be finite and nonnegative')
     encoded = np.rint(np.clip(_srgb(oklab_to_linear(target)), 0, 1) * 255).astype(np.uint8)
     hex_colour = '#' + ''.join(f'{value:02x}' for value in encoded)
     module = row['decision'] != 'include'
@@ -136,6 +142,8 @@ def recipe(row, classes, mapping, bible):
         state=row['state'], scale=1., tile_m=style['tile_m'],
         physical_uv_metres=metres, source_aspect=metres[0]/metres[1],
         detail_count_target=counts, detail_centimetres=centimetres,
+        detail_targets=detail_targets, detail_ceiling=True,
+        detail_policy='final quantized detail metrics never exceed CSV targets when feasible; bounded gains, shoulder and mean-colour correction included in fit',
         count_direction=row['count_direction'], tiling_axes=axes, tileable=bool(axes),
         antitile=city_set.antitile_mode(row), antitile_cell=1., metallic=0,
         luminance_range=style['luminance'], roughness_range=style['roughness'],
@@ -164,7 +172,7 @@ def recipes(mapping=ROOT/'data/content/city-materials.csv', bible=ROOT/'docs/con
     names = {row['texture'] for row in selected}
     chosen = names if textures is None else {pilot.texture_name(name) for name in textures}
     if not chosen or chosen - names:
-        raise ValueError('requested texture is outside the 58 new city-4 materials')
+        raise ValueError('requested texture is outside the 65 city-4 materials')
     classes, _ = generate.read_style(Path(bible))
     return [recipe(row, classes, mapping, bible) for row in selected if row['texture'] in chosen]
 
@@ -219,7 +227,26 @@ def read_sources(directory, names, source_root):
 
 def prepare(args, records):
     names = [record['replaces'][0] for record in records]
-    attempts = read_sources(args.input_dir, names, args.source_root)
+    fresh = [name for name in names if name not in pilot.TEXTURES]
+    attempts = read_sources(args.input_dir, fresh, args.source_root) if fresh else {}
+    reused = {}
+    if any(name in pilot.TEXTURES for name in names):
+        for line in args.pilot2_registry.read_text().splitlines():
+            if line.strip():
+                previous = json.loads(line)
+                name = previous['replaces'][0]
+                if name in names and name in pilot.TEXTURES:
+                    if name in reused:
+                        raise ValueError(f'{name}: duplicate pilot-2 source record')
+                    reused[name] = previous
+        for name in names:
+            if name not in pilot.TEXTURES:
+                continue
+            previous = reused[name]
+            attempts[name] = deepcopy(previous['generation']['attempts'])
+            if any(not item['source_png'].startswith('quality-pilot-2/') for item in attempts[name]):
+                raise ValueError(f'{name}: reused pilot source must remain in quality-pilot-2')
+            registry.verify_sources(attempts[name], args.source_root)
     selected = pilot.selections(args.select, names)
     args.prepared_dir.mkdir(parents=True, exist_ok=True)
     flagged_dir = args.prepared_dir / 'flagged'
@@ -231,18 +258,26 @@ def prepare(args, records):
             stale.unlink()
     for record in records:
         name = record['replaces'][0]
-        number = selected.get(name, attempts[name][-1]['attempt'])
+        previous = reused.get(name)
+        retained = previous['generation']['selected_attempt'] if previous else attempts[name][-1]['attempt']
+        number = selected.get(name, retained)
+        if previous and number != retained:
+            raise ValueError(f'{name}: reuse requires the selected pilot-2 raw attempt {retained}')
         chosen = next((item for item in attempts[name] if item['attempt'] == number), None)
         if chosen is None:
             raise ValueError(f'{name}: selected attempt {number} does not exist')
         record['prompt'] = chosen['prompt']
         record['parameters']['source_attempt'] = number
         alpha = name in alpha_material.ALPHA_TEXTURES
+        geometry = None
         with Image.open(args.source_root / chosen['source_png']) as opened:
             if alpha:
                 image = alpha_material.resize_rgba(np.asarray(opened.convert('RGBA')))
             else:
-                image = opened.convert('RGB').resize((1024, 1024), Image.Resampling.LANCZOS)
+                image = opened.convert('RGB')
+                if name == pilot.ROOF_INSIDE:
+                    image, geometry = pilot.roof_canvas(image)
+                image = image.resize((1024, 1024), Image.Resampling.LANCZOS)
         if alpha:
             maps, correction, rejection = alpha_material.corrected_maps(image, record)
             seam = dict(axes='', applied=False, reason='bounded alpha panel; silhouette retained')
@@ -262,10 +297,16 @@ def prepare(args, records):
                 shutil.copyfile(target, flagged)
         record['generation'] = dict(outcome='complete', attempts=attempts[name],
             selected_attempt=number, attempt_limit=2, colour_correction=correction,
-            numeric_rejection=rejection, seam=seam, prepared_sha256=digest,
+            numeric_rejection=rejection, geometry=geometry, seam=seam, prepared_sha256=digest,
             detector_before=lighting,
             source_policy='text-only image_gen; original generator PNG and metadata bytes retained and checksummed',
             model_identity='image_gen.imagegen; underlying model/version not exposed; no seed exposed')
+        if previous:
+            record['models'] = [deepcopy(previous['models'][0])]
+            record['generation'].update(
+                source_policy='selected pilot-2 raw image_gen PNG reused without regeneration; immutable quality-pilot-2 references and generation attempts retained',
+                source_registry_id=previous['id'], source_set='pilot-2',
+                model_identity=previous['generation']['model_identity'])
         record['_maps'] = maps
     return records
 
@@ -288,13 +329,19 @@ def visual_measurement(record, observed):
 
 
 def apply_iid(record, args, iid_records):
-    """Use the pilot-2 gate and blend while retaining IID bytes under city-4."""
+    """Return prepared RGB with only the gated low-frequency IID correction."""
     name, generation = record['replaces'][0], record['generation']
     generation['marigold_applied'] = False
-    if not generation['detector_before']['lighting_risk']:
-        return
-    if name in alpha_material.ALPHA_TEXTURES:
+    flagged = generation['detector_before']['lighting_risk']
+    if flagged and name in alpha_material.ALPHA_TEXTURES:
         raise ValueError(f'{name}: Marigold is excluded for alpha materials')
+    prepared = args.prepared_dir / (Path(name).stem + '.png')
+    if pilot.file_digest(prepared) != generation['prepared_sha256']:
+        raise ValueError(f'{name}: prepared PNG no longer matches its frozen SHA')
+    with Image.open(prepared) as corrected:
+        pixels = np.asarray(corrected.convert('RGB')).copy()
+    if not flagged:
+        return pixels
     if args.marigold_dir is None or args.marigold_log is None:
         raise ValueError(f'{name}: flagged input requires --marigold-dir and --marigold-log')
     source = args.marigold_dir / (Path(name).stem + '-albedo.png')
@@ -305,19 +352,46 @@ def apply_iid(record, args, iid_records):
         raise ValueError(f'{name}: IID log does not match prepared input and output PNG bytes')
     relative = Path(SET) / 'marigold' / generation['prepared_sha256'] / source.name
     _write_immutable(args.source_root / relative, raw)
-    with Image.open(args.prepared_dir / (Path(name).stem + '.png')) as corrected:
-        with Image.open(BytesIO(raw)) as output:
-            blended = pilot2.blend_linear_half(corrected, output)
-    maps, correction, rejection = generate.target_corrected_maps(blended, record)
-    record['_maps'] = maps
+    with Image.open(BytesIO(raw)) as output:
+        iid_pixels = np.asarray(output.convert('RGB'), dtype=np.float64) / 255
+    pixels, correction = low_frequency_iid(pixels.astype(np.float64) / 255, iid_pixels)
     record['models'].append(dict(id=marigold_iid.MODEL_ID,
         revision=marigold_iid.MODEL_REVISION, license=marigold_iid.MODEL_LICENSE))
     record['parameters'].update(iid_model=marigold_iid.MODEL_ID,
-        iid_revision=marigold_iid.MODEL_REVISION, iid_linear_weight=.5)
-    generation.update(marigold_applied=True, colour_correction_after_iid=correction,
-        numeric_rejection_after_iid=rejection,
+        iid_revision=marigold_iid.MODEL_REVISION, iid_gaussian_sigma_px=32, iid_power=.5)
+    generation.update(marigold_applied=True, iid_low_frequency=correction,
         iid_source=dict(source_png=relative.as_posix(), source_sha256=digest),
         iid_seconds=iid.get('seconds'))
+    return pixels
+
+
+def fit_detail(record, pixels):
+    """Fit final pixels once, preserving alpha and recording actual measurements."""
+    params, generation = record['parameters'], record['generation']
+    alpha = record['replaces'][0] in alpha_material.ALPHA_TEXTURES
+    alpha_bytes = (np.rint(record['_maps']['albedo'][..., 3] * 255).astype(np.uint8)
+        if alpha else None)
+    mask = alpha_material.visible_mask(alpha_bytes) if alpha else None
+    before = np.dstack((pixels, alpha_bytes)) if alpha else pixels
+    generation['detail_measures_before'] = measure_material(before)
+    if alpha:
+        generation['detector_after_iid'] = dict(lighting_risk=False, applicable=False,
+            reason='alpha cutout; IID excluded')
+    else:
+        lighting = detect_baked_lighting(Image.fromarray(pixels))
+        generation['detector_after_iid'] = dict(lighting, lighting_risk=lighting_risk(lighting))
+    fitted, fit = fit_material_detail(pixels.astype(np.float64) / 255,
+        params['detail_targets'], target_oklab=params['target_oklab'], ceiling=True, mask=mask)
+    output = (alpha_material.harden_and_dilate(np.dstack((fitted, alpha_bytes)))
+        if alpha else fitted)
+    maps = bakeoff.filtered_maps(Image.fromarray(output[..., :3]), record)
+    maps['albedo'] = output.astype(np.float32) / 255
+    rlo, rhi = params['roughness_range']
+    maps['roughness'] = np.clip(maps['roughness'], np.ceil(rlo * 255) / 255, np.floor(rhi * 255) / 255)
+    record['_maps'] = maps
+    generation.update(detail_fit=fit, detail_measures_after=measure_material(output),
+        colour_correction_before_fit=generation['colour_correction'],
+        colour_correction=fit['colour'], numeric_rejection_after_fit=generate.numeric_rejection(record, fit['colour']))
 
 
 def build(args, records):
@@ -337,14 +411,22 @@ def build(args, records):
     for record in records:
         name, generation = record['replaces'][0], record['generation']
         visual = visual_measurement(record, counts[name])
-        if not visual['visual_count_pass'] and generation['selected_attempt'] != 2:
+        if (not visual['visual_count_pass'] and generation['selected_attempt'] != 2
+                and name not in pilot.TEXTURES):
             raise ValueError(f'{name}: visual count differs by more than 20%; second attempt required')
         generation['visual_inspection'] = visual
-        defects = [] if visual['visual_count_pass'] else ['visual detail count outside ±20% after second attempt']
-        apply_iid(record, args, iid_records)
-        rejection = generation.get('numeric_rejection_after_iid', generation['numeric_rejection'])
+        defects = [] if visual['visual_count_pass'] else ['visual detail count outside ±20% in selected retained source']
+        pixels = apply_iid(record, args, iid_records)
+        fit_detail(record, pixels)
+        rejection = generation['numeric_rejection_after_fit']
         if rejection:
             defects.append(rejection)
+        if name in alpha_material.ALPHA_TEXTURES:
+            coverage = alpha_material.coverage(record['_maps']['albedo'][..., 3])
+            if abs(coverage - record['parameters']['target_coverage']) > record['parameters']['coverage_tolerance'] + 1e-12:
+                defects.append('visible alpha coverage differs from target by more than tolerance')
+        if not generation['detail_fit']['converged']:
+            defects.append('detail target tolerance not reached within capped gain bounds')
         generation['defects'] = defects
     existing = registry.check_registry(args.registry_output, source_root=args.source_root) if args.registry_output.exists() else []
     previous = {record['id']: record for record in existing}
@@ -356,8 +438,6 @@ def build(args, records):
         name, generation = record['replaces'][0], record['generation']
         pilot.save_maps(record, args.derived_root)
         albedo = args.derived_root / record['files']['albedo']
-        if not generation['marigold_applied']:
-            shutil.copyfile(args.prepared_dir / (Path(name).stem + '.png'), albedo)
         generation['detector_after'] = (dict(lighting_risk=False, applicable=False,
             reason='alpha cutout; IID excluded') if name in alpha_material.ALPHA_TEXTURES else measure_light(albedo))
         registry.validate_entry(record, content_root=args.derived_root, source_root=args.source_root)
@@ -368,6 +448,8 @@ def build(args, records):
     city_set.write_registry(args.registry_output, output, args.source_root)
     return dict(batch=len(records), total=len(output),
         calls=sum(len(record['generation']['attempts']) for record in output),
+        new_material_calls=sum(len(record['generation']['attempts']) for record in output
+            if record['replaces'][0] not in pilot.TEXTURES),
         marigold_applied=sum(record['generation']['marigold_applied'] for record in records),
         defects=sum(bool(record['generation']['defects']) for record in records))
 
@@ -375,13 +457,16 @@ def build(args, records):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('prompt', 'prepare', 'build'))
-    parser.add_argument('--texture', action='append', default=[])
+    batch = parser.add_mutually_exclusive_group()
+    batch.add_argument('--texture', action='append', default=[])
+    batch.add_argument('--all', action='store_true', help='explicitly process all 65 materials')
     parser.add_argument('--select', action='append', default=[])
     parser.add_argument('--input-dir', type=Path, default=registry.DEFAULT_SOURCE_ROOT / SET)
-    parser.add_argument('--prepared-dir', type=Path, default=BASE / SET / 'prepared')
+    parser.add_argument('--prepared-dir', type=Path, default=BASE / SET / 'prepared-detail')
     parser.add_argument('--source-root', type=Path, default=registry.DEFAULT_SOURCE_ROOT)
     parser.add_argument('--derived-root', type=Path, default=BASE / 'content-staging/city-4-sources')
     parser.add_argument('--registry-output', type=Path, default=ROOT / 'data/content/city-4.jsonl')
+    parser.add_argument('--pilot2-registry', type=Path, default=ROOT / 'data/content/quality-pilot-2.jsonl')
     parser.add_argument('--mapping', type=Path, default=ROOT / 'data/content/city-materials.csv')
     parser.add_argument('--bible', type=Path, default=ROOT / 'docs/content-style.md')
     parser.add_argument('--visual-counts', type=Path)
@@ -395,15 +480,17 @@ def main(argv=None):
                 print(json.dumps(dict(texture=record['replaces'][0], prompt=record['prompt'],
                     transparent_background=record['replaces'][0] in alpha_material.ALPHA_TEXTURES), ensure_ascii=False))
             return 0
-        if not args.texture:
-            raise ValueError('prepare/build require an explicit --texture batch')
+        if not args.texture and not args.all:
+            raise ValueError('prepare/build require an explicit --texture batch or --all')
         if args.registry_output.resolve() in {path.resolve() for path in (
                 registry.DEFAULT_REGISTRY, ROOT / 'data/content/quality-pilot.jsonl',
-                ROOT / 'data/content/quality-pilot-2.jsonl')}:
+                ROOT / 'data/content/quality-pilot-2.jsonl', ROOT / 'data/content/quality-pilot-3.jsonl',
+                args.pilot2_registry)}:
             raise ValueError('city-4 registry must not replace an existing set registry')
         for path in (args.prepared_dir, args.source_root / SET, args.derived_root, args.registry_output):
             output = pack_materials.staging_output(path)
-            for protected in ('city-3', 'pilot-b', 'pilot-c', 'pilot-2', 'quality-pilot-sources', 'quality-pilot-2-sources'):
+            for protected in ('city-3', 'pilot-b', 'pilot-c', 'pilot-2', 'pilot-3a', 'pilot-3b',
+                    'quality-pilot-sources', 'quality-pilot-2-sources', 'quality-pilot-3-sources'):
                 base = (BASE / 'content-staging' / protected).resolve()
                 if output == base or output.is_relative_to(base) or base.is_relative_to(output):
                     raise ValueError(f'output overlaps protected set: {path}')
