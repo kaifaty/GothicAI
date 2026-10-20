@@ -35,8 +35,8 @@ if [ -n "$path_flag" ]; then
     exit 2
 fi
 
-remote_root=$(ssh -T -o BatchMode=yes -o ConnectTimeout=10 ryzen \
-    'printf "%s" "$HOME/gothic-ai/mesh3d"')
+remote_root=${MESH3D_REMOTE_ROOT:-$(ssh -T -o BatchMode=yes -o ConnectTimeout=10 ryzen \
+    'printf "%s" "$HOME/gothic-ai/mesh3d"')}
 case "$remote_root" in
     /*) ;;
     *) echo 'Could not resolve an absolute mesh3d directory on Ryzen.' >&2; exit 1 ;;

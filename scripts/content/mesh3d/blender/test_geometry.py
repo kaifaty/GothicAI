@@ -71,6 +71,20 @@ def test_fallback_recognises_dark_neutral_iron_and_keeps_brown_wood():
     np.testing.assert_array_equal(classify_zones(*inputs, ZONES), [1, 0, 0])
 
 
+def test_barrel_head_and_staves_follow_geometry_instead_of_coloured_patches():
+    vertices, faces = cuboid()
+    zones = [{"key": "OWN_PROP_WOOD_STAVE", "group": "WOOD", "role": "staves"},
+             {"key": "OWN_PROP_WOOD_HEAD", "group": "WOOD", "role": "head"},
+             {"key": "OWN_PROP_IRON_BAND", "group": "METAL", "role": "bands"}]
+    # Colour varies over every face, but cannot turn a stave into a head board.
+    color = np.array([[.1 + .05 * i, .025 + .012 * i, .008] for i in range(len(vertices))])
+    labels = classify_zones(vertices, faces, color, np.zeros(len(vertices)), zones)
+    np.testing.assert_array_equal(labels, [0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0])
+    metallic = np.ones(len(vertices))
+    np.testing.assert_array_equal(classify_zones(vertices, faces, color, metallic, zones),
+                                  np.full(len(faces), 2))
+
+
 @pytest.mark.parametrize("target_id", ["crate", "chest"])
 @pytest.mark.parametrize("explicit_metallic", [True, False])
 def test_real_pilot_targets_accept_multiple_metal_zones(target_id, explicit_metallic):

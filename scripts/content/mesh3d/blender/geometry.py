@@ -95,7 +95,8 @@ def triangle_areas(vertices, faces):
 def classify_zones(vertices, faces, color, metallic, zones):
     """Return face material-slot indices. Explicit metallic takes precedence.
 
-    WOOD zones are assigned from dark to light OKLab clusters, in target order.
+    The barrel's named stave/head zones follow side/cap geometry; other WOOD
+    zones are assigned from dark to light OKLab clusters, in target order.
     Without metallic the darkest neutral cluster (L < .55, chroma < .06) is iron.
     Metal uses the first METAL zone; metallic and color do not identify its role.
     A single other nonmetal zone is supported for targets with no WOOD slot.
@@ -135,8 +136,17 @@ def classify_zones(vertices, faces, color, metallic, zones):
         labels[is_metal] = metal_slots[0]
     wood = ~is_metal
     if wood.any():
-        clusters, _ = choose_clusters(lab[wood], min(3, len(wood_slots)), areas[wood])
-        labels[wood] = np.asarray(wood_slots)[clusters]
+        keys = [zone["key"] for zone in zones]
+        if "OWN_PROP_WOOD_STAVE" in keys and "OWN_PROP_WOOD_HEAD" in keys:
+            triangles = np.asarray(vertices)[faces]
+            normals = np.cross(triangles[:, 1] - triangles[:, 0],
+                               triangles[:, 2] - triangles[:, 0])
+            cap = abs(normals[:, 1]) > np.linalg.norm(normals, axis=1) * 0.65
+            labels[wood] = keys.index("OWN_PROP_WOOD_STAVE")
+            labels[wood & cap] = keys.index("OWN_PROP_WOOD_HEAD")
+        else:
+            clusters, _ = choose_clusters(lab[wood], min(3, len(wood_slots)), areas[wood])
+            labels[wood] = np.asarray(wood_slots)[clusters]
     return labels
 
 
