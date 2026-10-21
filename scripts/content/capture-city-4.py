@@ -61,12 +61,11 @@ def check(directory, scenario, index, variant):
     packed = json.loads(index.read_text())
     if len(packed) != expected:
         raise SystemExit(f"{variant}: expected packed index with {expected} materials")
-    if variant == "city-3":
-        tour = scenario.read_text().partition("# Census-only surface tour:")[2]
-        targets = {name for name in re.findall(r"^# ([A-Z0-9_]+\.TGA)$", tour, re.MULTILINE)
-                   if not name.startswith("NW_MISC_")}
-        if len(targets) != 58 or set(packed) != targets:
-            raise SystemExit("city-3: packed index must match all 58 city census targets")
+    tour = scenario.read_text().partition("# Census-only surface tour:")[2]
+    targets = {name for name in re.findall(r"^# ([A-Z0-9_]+\.TGA)$", tour, re.MULTILINE)
+               if variant != "city-3" or not name.startswith("NW_MISC_")}
+    if len(targets) != expected or set(packed) != targets:
+        raise SystemExit(f"{variant}: packed index must match all {expected} city census targets")
     subprocess.run(["bash", str(HERE / "capture-city.sh"), "--check", str(directory),
                     str(scenario), str(index), "before" if variant == "original" else "after"], check=True)
     if variant == "original":

@@ -64,11 +64,11 @@ def census_capture(tmp_path, variant="city-4"):
     count = {"city-4": 65, "city-3": 58, "original": 0}[variant]
     (directory / "game.log").write_text(f"materials: {count} entries from fixture\n"
                                        "[bench] goto MARKT\n[bench] shot market\n[bench] done\n")
-    names = [f"TEST_{i}.TGA" for i in range(58 if variant == "city-3" else 65)]
-    if variant == "city-3":
-        scenario.write_text(scenario.read_text() + "# Census-only surface tour:\n"
-                            + "\n".join("# " + name for name in names)
-                            + "\n# NW_MISC_TEST_0.TGA\n")
+    city = [f"NW_CITY_TEST_{i}.TGA" for i in range(58)]
+    misc = [f"NW_MISC_TEST_{i}.TGA" for i in range(7)]
+    names = city if variant == "city-3" else city + misc
+    scenario.write_text(scenario.read_text() + "# Census-only surface tour:\n"
+                        + "\n".join("# " + name for name in city + misc) + "\n")
     index = tmp_path / "materials.json"
     index.write_text(json.dumps({name: {"albedo": f"tile-{i}/albedo.dds"} for i, name in enumerate(names)}))
     originals = [{"name": name[:-4] + "-C.TEX", "kind": "texture", "opens": 1, "source": "fixture.vdf"}
@@ -108,26 +108,29 @@ def test_replacement_variants_require_complete_census(tmp_path, variant, failure
 
 
 @pytest.mark.parametrize("replaced", (False, True))
-def test_city3_rejects_58_unrelated_materials(tmp_path, replaced):
-    directory, scenario, index, census, _ = census_capture(tmp_path, "city-3")
-    names = [f"UNRELATED_{i}.TGA" for i in range(58)]
+@pytest.mark.parametrize("variant", ("original", "city-3", "city-4"))
+def test_capture_rejects_unrelated_materials(tmp_path, replaced, variant):
+    directory, scenario, index, census, originals = census_capture(tmp_path, variant)
+    count = 58 if variant == "city-3" else 65
+    names = [f"UNRELATED_{i}.TGA" for i in range(count)]
     index.write_text(json.dumps({name: {"albedo": f"unrelated-{i}/albedo.dds"}
                                  for i, name in enumerate(names)}))
-    census["files"] = [{"name": "NW_CITY_ROOF_01-C.TEX", "kind": "texture", "opens": 1,
-                        "source": "fixture.vdf"}]
+    census["files"] = originals
     census["replacements"] = ([{"name": name, "kind": "texture", "opens": 1,
                                 "replacement": f"materials/unrelated-{i}/albedo.dds"}
                                for i, name in enumerate(names)] if replaced else [])
     (directory / "census.json").write_text(json.dumps(census))
-    with pytest.raises(SystemExit, match="58 city census targets"):
-        CAPTURE.check(directory, scenario, index, "city-3")
+    with pytest.raises(SystemExit, match=f"{count} city census targets"):
+        CAPTURE.check(directory, scenario, index, variant)
 
 
-def test_city3_requires_census_target_list_in_scenario(tmp_path):
-    directory, scenario, index, _, _ = census_capture(tmp_path, "city-3")
+@pytest.mark.parametrize("variant", ("original", "city-3", "city-4"))
+def test_capture_requires_census_target_list_in_scenario(tmp_path, variant):
+    directory, scenario, index, _, _ = census_capture(tmp_path, variant)
     scenario.write_text("goto MARKT\nshot market\n")
-    with pytest.raises(SystemExit, match="58 city census targets"):
-        CAPTURE.check(directory, scenario, index, "city-3")
+    count = 58 if variant == "city-3" else 65
+    with pytest.raises(SystemExit, match=f"{count} city census targets"):
+        CAPTURE.check(directory, scenario, index, variant)
 
 
 def test_original_baseline_rejects_even_an_unrelated_replacement(tmp_path):
