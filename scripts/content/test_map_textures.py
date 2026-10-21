@@ -46,6 +46,7 @@ def dataset(tmp_path):
         "target_period_u_m": "0.62625", "target_period_v_m": "1.2525",
         "target_direction": "none", "target_direction_confidence": "0.1",
         "target_oklab_l": "0.5", "target_oklab_a": "-0.02", "target_oklab_b": "0.03",
+        "target_highlight_y": "0.4",
         **dict.fromkeys(mapping.DETAIL_FIELDS, "0.2"),
         **dict.fromkeys(mapping.COUNT_FIELDS, ""),
     } for row in source]
@@ -95,6 +96,26 @@ def test_all_rows_require_finite_nonnegative_detail_targets(dataset, field, valu
     rows[index][field] = value
     save()
     with pytest.raises(mapping.MappingError, match=field):
+        mapping.check_mapping(mapping_path, census_path)
+
+
+@pytest.mark.parametrize("value", ["", "NaN", "Infinity", "-0.1", "1.01", "unknown"])
+@pytest.mark.parametrize("index", [0, -1])
+def test_all_rows_require_finite_unit_interval_highlight(dataset, value, index):
+    _, rows, census_path, mapping_path, save = dataset
+    rows[index]["target_highlight_y"] = value
+    save()
+    with pytest.raises(mapping.MappingError, match="target_highlight_y"):
+        mapping.check_mapping(mapping_path, census_path)
+
+
+def test_pre_highlight_header_remains_readable_but_needs_new_measurement(dataset):
+    _, rows, census_path, mapping_path, _ = dataset
+    header = tuple(field for field in mapping.FIELDS if field != "target_highlight_y")
+    legacy = [{field: row[field] for field in header} for row in rows]
+    write_csv(mapping_path, header, legacy)
+    assert all(row["target_highlight_y"] == "" for row in mapping._read_csv(mapping_path, mapping=True))
+    with pytest.raises(mapping.MappingError, match="target_highlight_y"):
         mapping.check_mapping(mapping_path, census_path)
 
 

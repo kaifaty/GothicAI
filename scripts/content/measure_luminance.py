@@ -11,7 +11,8 @@ Original pixels are never exported or passed to material generation.
 
 ``--materials`` measures periods, direction, mean color, contrast and detail for
 the entire mapping. It refreshes every scalar material target, preserving the
-other mapping fields, including luminance and alpha coverage.
+other mapping fields, including luminance and alpha coverage. ``--highlights``
+refreshes only the native-resolution visible-pixel p99 linear luminance target.
 """
 from __future__ import annotations
 
@@ -40,10 +41,10 @@ def read_mapping(path):
     return rows
 
 
-def parse_measurements(value, expected, set_name="city-2"):
+def parse_measurements(value, expected, set_name="city-2", *, field="target_luminance"):
     reader = csv.DictReader(io.StringIO(value), strict=True)
-    if reader.fieldnames != ["texture", "target_luminance"]:
-        raise ValueError("extractor must return only texture,target_luminance")
+    if reader.fieldnames != ["texture", field]:
+        raise ValueError(f"extractor must return only texture,{field}")
     result = {}
     for row in reader:
         if None in row or any(item is None for item in row.values()):
@@ -51,9 +52,9 @@ def parse_measurements(value, expected, set_name="city-2"):
         texture = row["texture"]
         if texture in result:
             raise ValueError(f"extractor repeats texture {texture}")
-        luminance = float(row["target_luminance"])
+        luminance = float(row[field])
         if not math.isfinite(luminance) or not 0 <= luminance <= 1:
-            raise ValueError(f"{texture}: target_luminance must be finite and in [0, 1]")
+            raise ValueError(f"{texture}: {field} must be finite and in [0, 1]")
         result[texture] = luminance
     if set(result) != set(expected):
         raise ValueError(f"extractor texture set differs from {set_name}")
@@ -66,7 +67,7 @@ PROPERTIES_FIELDS = (
 )
 EXTRACTED_MEASUREMENT_FIELDS = (
     "target_period_u_uv", "target_period_v_uv", "target_direction", "target_direction_confidence",
-    "target_oklab_l", "target_oklab_a", "target_oklab_b", *DETAIL_FIELDS,
+    "target_oklab_l", "target_oklab_a", "target_oklab_b", *DETAIL_FIELDS, "target_highlight_y",
 )
 
 
@@ -95,7 +96,7 @@ def parse_properties(value, expected, set_name="city-3"):
 
 
 def parse_material_measurements(value, rows):
-    """Accept scalar-only rows for the complete 71-material mapping."""
+    """Accept scalar-only rows for the complete material mapping."""
     reader = csv.DictReader(io.StringIO(value), strict=True)
     if reader.fieldnames != [*PROPERTIES_FIELDS, *EXTRACTED_MEASUREMENT_FIELDS]:
         raise ValueError("extractor must return only the scalar material measurements columns")
@@ -137,6 +138,25 @@ def update_material_measurements(path, rows, values):
         merged.update(values[row["texture"]])
         _check_measurements(merged, row["texture"])
         updated.append(merged)
+    _write_mapping(path, updated)
+    return updated
+
+
+def measure_highlights(extractor, game, rows):
+    names = [row["texture"] for row in rows]
+    result = subprocess.run([str(extractor), "--highlights", str(game), *names],
+                            check=True, capture_output=True, text=True)
+    return parse_measurements(result.stdout, names, "the complete mapping", field="target_highlight_y")
+
+
+def update_highlights(path, rows, values):
+    if set(values) != {row["texture"] for row in rows}:
+        raise ValueError("highlight texture set differs from the complete mapping")
+    if any(isinstance(value, bool) or not isinstance(value, (int, float))
+           or not math.isfinite(value) or not 0 <= value <= 1 for value in values.values()):
+        raise ValueError("target_highlight_y must be finite and in [0, 1]")
+    updated = [{**{field: row.get(field, "") for field in FIELDS},
+                "target_highlight_y": format(values[row["texture"]], ".12g")} for row in rows]
     _write_mapping(path, updated)
     return updated
 
@@ -203,10 +223,20 @@ def main(argv=None):
     parser.add_argument("--set", dest="set_name", choices=("city-2", "city-3"), default="city-2",
                         help="material scope to measure (default: city-2)")
     parser.add_argument("--write", action="store_true", help="atomically update target_luminance and city-3 alpha target_coverage")
-    parser.add_argument("--materials", action="store_true", help="measure scalar periods, direction, OKLab, contrast and detail for all mapping rows")
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--materials", action="store_true", help="measure scalar periods, direction, OKLab, contrast and detail for all mapping rows")
+    scope.add_argument("--highlights", action="store_true", help="measure only visible-pixel p99 linear luminance for all mapping rows")
     args = parser.parse_args(argv)
     try:
         rows = read_mapping(args.mapping)
+        if args.highlights:
+            values = measure_highlights(args.extractor, args.game, rows)
+            if args.write:
+                update_highlights(args.mapping, rows, values)
+            writer = csv.writer(sys.stdout, lineterminator="\n")
+            writer.writerow(("texture", "target_highlight_y"))
+            writer.writerows((name, format(value, ".12g")) for name, value in values.items())
+            return 0
         if args.materials:
             values = measure_all(args.extractor, args.game, rows)
             if args.write:

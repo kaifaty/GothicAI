@@ -1,0 +1,254 @@
+{
+  "NW_CITY_HAFENKAI_MAUER_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "5db1e78b17cf09bb389372ec23ce23adba89a2941ad7bc32f084ac8d8998f521",
+    "u": 6.0,
+    "v": 13.0
+  },
+  "NW_CITY_INSIDEWALL_11.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "ecda437376bd35814c34bd9966e1236e1aa74ba84f6a0a137f33dfbd09312c05",
+    "u": 10.0,
+    "v": 18.0
+  },
+  "NW_CITY_RICH_BLACKWOOD_01.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "eec5ea41f523ded3f7a29e5bdbb7c6247e4dd46bc7c271aa83eb0e6185d231fa",
+    "u": null,
+    "v": null
+  },
+  "NW_CITY_STONEWALL_02.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "770d4b20b4fc418ba7a84477c3617d09ea4fdd3d8ae0b571e1aab43f48447307",
+    "u": 5.0,
+    "v": 18.0
+  },
+  "NW_CITY_WOODBEAM_01.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "dbd62b952fc9f3e407b5689ab120ee88b0555bad3e4db06e0078df418923e370",
+    "u": null,
+    "v": null
+  },
+  "NW_CITY_WOOD_ORNAMENT_02.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "a2ec40b1aeb634237ec6ff846a27b19791f6852059345686771a25097e657c30",
+    "u": null,
+    "v": null
+  },
+  "NW_MISC_OLDSTONEPATH_WAY_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "acccb8c12a427ce6171cbc885a6b36008107f1052f68d07400c427a38d67d552",
+    "u": 6.2,
+    "v": 9.3
+  },
+  "NW_CITY_HAFENRANDSTEIN_01.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "42f92ac7431e00b9dc22e8f52a28fa97e0b1cfc6d49de7bcc1535f5bf3355b2e",
+    "u": 8,
+    "v": null
+  },
+  "NW_CITY_INSIDEWALL_12.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "d8aa5fc35bdfb8ced6f87d9590d66dbe32fa37338c7df0e7bf98b76cf16e10af",
+    "u": 3.0,
+    "v": 9.0
+  },
+  "NW_CITY_RICH_WALL_01.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "d2db5fd655090cd73fd92fd2503dbe6d01a449857e020d289371df3910030157",
+    "u": null,
+    "v": null
+  },
+  "NW_CITY_SHRINEFLOOR_01.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "9dd1f2ad6885ba8ed1963dbeeb14972f52afa58d848f73aa72dc96cf8b8ee134",
+    "u": null,
+    "v": null
+  },
+  "NW_CITY_WOODBEAM_02.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "a542a4965e2d2779331778f738fa2bbbdd80fd1e91aa38839037b36c54a1ae2c",
+    "u": null,
+    "v": null
+  },
+  "NW_HARBOUR_STAIRS_03.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "789e2c71bb7bdb74b747e6f82ba6d795c7f6b57223c5810945175a6083bd33f9",
+    "u": 3,
+    "v": 6
+  },
+  "NW_MISC_STRONG_STONEWALL_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "eeac7edaebb9472a92e23c7600b14bc37ca9767b73f91e0f5c96aaccdbac35f1",
+    "u": 8,
+    "v": 16
+  },
+  "NW_CITY_HAFEN_GIEBEL_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "4206fd2c6204a574893b5c25d2e3cabc3f5308c0aa5cad421e32ce05065ac589",
+    "u": 1.5,
+    "v": 8
+  },
+  "NW_CITY_INSIDEWALL_13.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "a37d02b1c64bbebd90d7885363df39634c905fe31489ae0a00d236f06ec10fa8",
+    "u": 2.0,
+    "v": null
+  },
+  "NW_CITY_RICH_WALL_HALF_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "82f84a0122efebacddf375385b821a913bfc778c9aa0179261257b126f65dde6",
+    "u": 2,
+    "v": null
+  },
+  "NW_CITY_WALL_04.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "0c7884536107e79725223b99baed9c6511152885108435ce584907ef2933baba",
+    "u": 2.0,
+    "v": null
+  },
+  "NW_CITY_WOODBEAM_03.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "2879d6b9cda1c4f5a3ebe475d7800acf27e43acb775ac222d78c17176637cd86",
+    "u": null,
+    "v": null
+  },
+  "NW_HARBOUR_WOODCRATE_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "d6dc38690dcd612dead56bd94e09afe5c943800a10913e3becc5ac27ce133299",
+    "u": null,
+    "v": 4
+  },
+  "NW_MISC_STRONG_STONEWALL_SIDE_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "d1071bba0673e73d43e0d6f00b11eb36c3e8192fe4b882500db5e9be0cc0a73b",
+    "u": 8,
+    "v": 19.3
+  },
+  "NW_CITY_HAFEN_HOLZWAND_01.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "4b84d466a27a96e06251b00f3654cfd7b6f85dfc0696851bba3c70f835bc498a",
+    "u": 10.0,
+    "v": null
+  },
+  "NW_CITY_IVY_BORDER_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "b4c377566391f9f3cee1db7bec5356b01768cc0ecddf99ec9889ec83ec67daec",
+    "u": 22,
+    "v": 22
+  },
+  "NW_CITY_RICH_WINDOW_01.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "dd35707c2db7a0c7e33f7b951d55b96fb6e5805ce965f7f4060ec694d6435b31",
+    "u": null,
+    "v": null
+  },
+  "NW_CITY_WALL_05.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "154aa0a38c784160f142909e6b25e517f3351b6ceecb6372d06a1b8433c9e892",
+    "u": 2.0,
+    "v": null
+  },
+  "NW_CITY_WOOD_01.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "9bc29c47dbbfbfb27eb47b4b4286b0ee95fcfb23ed25a6890ff727d41dcde488",
+    "u": null,
+    "v": 3.0
+  },
+  "NW_HARBOUR_WOODCRATE_02.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "2e185e312ca1d4e782c9775f36ae6053b3acd324796244fdacb4f5492c4b89c7",
+    "u": null,
+    "v": 6.0
+  },
+  "NW_MISC_STRONG_STONEWALL_ENTRANCE_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "a3d67c5b80ba5bf42ce4b169d1882dd81fc78470b643efd43a7239385f738787",
+    "u": null,
+    "v": null
+  },
+  "NW_CITY_HAFEN_HOLZWAND_02.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "093c953e0c4bdaf2462f99cdb22a3ffece51acf73ac03b4a6ba0e95faa772eb8",
+    "u": 11.0,
+    "v": null
+  },
+  "NW_CITY_IVY_FULL_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "e4119cf4be2d78a7025ec0c05bbef6ce9ddd9a2f9c0efb477062526762dba83d",
+    "u": 23.0,
+    "v": 24.0
+  },
+  "NW_CITY_ROOF_04.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "8715b2f0c74555d28950980c292f84440c8d2bf5df95ea18835b38e3f58fbaaf",
+    "u": 15.5,
+    "v": 17.5
+  },
+  "NW_CITY_WINDOW_03.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "911b73955e3ce1cb7085b2766718dcc4ec41667e8d82e9560b800d8cd4bb77a2",
+    "u": null,
+    "v": null
+  },
+  "NW_HARBOUR_ROPEWALL_01.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "6b9fe2cc4daf7e400a07be9726be0df4801c3851d470d930914078eb09317913",
+    "u": null,
+    "v": 15.5
+  },
+  "NW_HARBOUR_WOOD_IRON_01.TGA": {
+    "selected_attempt": 1,
+    "source_sha256": "7307a310fb6132b00717e7243c6eeee0cd3a14aaad79679494268cec6d614dee",
+    "u": 4.0,
+    "v": 3.0
+  },
+  "NW_MISC_STRONG_STONEWALL_BLOCKBORDER_01.TGA": {
+    "selected_attempt": 3,
+    "source_sha256": "f4abe46f53cd0447e961abcf575d6cb9d1d92617225bac65e01ca48195dc18a3",
+    "u": 4,
+    "v": 7
+  },
+  "NW_CITY_INSIDEFLOOR_11.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "14266813f366d5bbe92e4cac40f18b1948caf4aaedab7fb3104e2fa169ab0213",
+    "u": null,
+    "v": 8.0
+  },
+  "NW_CITY_PFLASTERSTEIN_BORDER_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "f7e2b1e872a60af34fd4d1219a3c24d8e5894531b3d42d945bcf8623ab298c60",
+    "u": 19.0,
+    "v": 19.0
+  },
+  "NW_CITY_ROPE_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "05e4381fde9aa6a78d7207f7aed8d2095ec8f1ba4cd01789c279bdb3621368ae",
+    "u": null,
+    "v": 9.0
+  },
+  "NW_CITY_WOOD_ORNAMENT_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "c1d5a76863da8a2d4dafaefabaa522182a16ba1978558466d256d8c29a9a57f2",
+    "u": null,
+    "v": 4.0
+  },
+  "NW_HARBOUR_ROPEWALL_02.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "4549ece2abb4861d3ac25d402d2e89622332dcc6b036e8d3640d4cd56349e2e6",
+    "u": null,
+    "v": 14.0
+  },
+  "NW_MISC_OLDSTONEPATH_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "a1beb1f4c67036c5714b58489940409aff0e6618b893cafd3b2f44b105d21f40",
+    "u": 5.5,
+    "v": 10.0
+  },
+  "NW_MISC_STRONG_STONEWALL_ROUNDBORDER_01.TGA": {
+    "selected_attempt": 2,
+    "source_sha256": "43cae89ade14dfb4691bf6c508c22125db83a773b3cafee6853ac5d7a959d1b7",
+    "u": 4,
+    "v": null
+  }
+}

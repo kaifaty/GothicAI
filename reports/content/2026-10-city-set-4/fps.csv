@@ -1,0 +1,3 @@
+variant,FPS,frames,wall_ms,game_ms,overflow,exit,replaced,original_opened
+before,48.23259123764954,289,5991.799167,19967,0,0,0,65
+after,55.64310486145554,285,5121.928417,19967,0,0,65,0

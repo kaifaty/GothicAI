@@ -27,6 +27,9 @@ data/
 !/data/content/mesh3d-market.json
 !/data/content/quality-pilot.jsonl
 !/data/content/quality-pilot-2.jsonl
+!/data/content/city-4.jsonl
+!/data/content/city-4-generated.jsonl
+!/data/content/city-4-counts.json
 !/data/content/quality-pilot-3.jsonl
 !/data/content/market-house.jsonl
 !/data/content/city-materials.csv

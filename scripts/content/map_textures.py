@@ -38,7 +38,7 @@ DETAIL_FIELDS = (
 MEASUREMENT_FIELDS = (
     "target_period_u_uv", "target_period_v_uv", "target_period_u_m", "target_period_v_m",
     "target_direction", "target_direction_confidence", "target_oklab_l", "target_oklab_a", "target_oklab_b",
-    *DETAIL_FIELDS,
+    *DETAIL_FIELDS, "target_highlight_y",
 )
 MEASURED_FIELDS = (*LEGACY_FIELDS[:-2], *MEASUREMENT_FIELDS, *LEGACY_FIELDS[-2:])
 COUNT_FIELDS = (
@@ -55,6 +55,8 @@ MAPPING_HEADERS = (
     PREVIOUS_MEASURED_FIELDS, PREVIOUS_MEASURED_FIELDS[:-1], PREVIOUS_MEASURED_FIELDS[:-2],
     LEGACY_FIELDS, LEGACY_FIELDS[:-1], LEGACY_FIELDS[:-2],
 )
+MAPPING_HEADERS += tuple(tuple(field for field in header if field != "target_highlight_y")
+                         for header in MAPPING_HEADERS if "target_highlight_y" in header)
 ALPHA_TEXTURES = frozenset({
     "NW_CITY_FLAG_01.TGA", "NW_CITY_IVY_BORDER_01.TGA", "NW_CITY_IVY_FULL_01.TGA",
 })
@@ -148,6 +150,9 @@ def _number(value: str, field: str, *, positive: bool = False) -> Decimal:
 def _check_measurements(row: dict[str, str], where: str) -> None:
     for field in DETAIL_FIELDS:
         _number(row.get(field, ""), f"{where}: {field}")
+    highlight = _number(row.get("target_highlight_y", ""), f"{where}: target_highlight_y")
+    if highlight > 1:
+        raise MappingError(f"{where}: target_highlight_y must be at most 1")
     for axis in ("u", "v"):
         period = _number(row.get(f"target_period_{axis}_uv", ""), f"{where}: target_period_{axis}_uv")
         meters = _number(row.get(f"target_period_{axis}_m", ""), f"{where}: target_period_{axis}_m")
