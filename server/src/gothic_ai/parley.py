@@ -97,6 +97,7 @@ class Parley:
         self._background: set[asyncio.Task[Any]] = set()
         self._pending_hails: dict[str, asyncio.Task[Any]] = {}
         self._hails: dict[str, asyncio.Task[Any]] = {}
+        self._far_since: dict[str, int] = {}
         self._attacking: set[str] = set()
         dialogue.fight_reason = self.fight_reason
         dialogue.on_player_said.append(self.hero_said)
@@ -138,6 +139,8 @@ class Parley:
             updated = {**encounter, "members": sorted(members)}
             if any(f.get("hailed") for f in encounters):
                 updated["hailed"] = True
+            if any(f.get("hail_attempted") for f in encounters):
+                updated["hail_attempted"] = True
             if updated != encounter:
                 self.chronicle.record(updated)
             return updated
@@ -179,12 +182,9 @@ class Parley:
         truce = self.truce(npc)
         reason = self.fight_reason(npc)
         members = self.members(npc)
-        talking = (
-            self.talk is not None and self.talk.partner is not None and self.talk.partner.npc in members
-            and any((threat := self.ultimatum(who)) and threat["status"] == "active" for who in members)
-        )
+        active = any((threat := self.ultimatum(who)) and threat["status"] == "active" for who in members)
         # Answering a demand permits the model to fight; it must still be able to negotiate a payment.
-        negotiating = self._replying(members) or talking or any(self.offer_pending(who) for who in members)
+        negotiating = self._replying(members) or active or any(self.offer_pending(who) for who in members)
         quiet = reason is not None or negotiating and not self._provoked(members)
         if message.kind == "party_enemy":
             await self.link.send(HoldVerdictCmd(
@@ -223,13 +223,16 @@ class Parley:
     async def _hail(self, npc: str, generation: int) -> None:
         if self.bodies is None or self.talk is None:
             return
+        encounter = self._encounter(npc)
+        if encounter["hailed"] or encounter.get("hail_attempted") or encounter["id"] in self._hails:
+            return
         # Snapshots work for free NPCs too and give the local band even before pushed views arrive.
         await self.link.snapshot(npc, timeout=1)
         if generation != self._generation:
             return
         encounter = self._encounter(npc)
         key, members = encounter["id"], encounter["members"]
-        if encounter["hailed"] or key in self._hails:
+        if encounter["hailed"] or encounter.get("hail_attempted") or key in self._hails:
             return
         leader = max(members, key=self.lead)
         row = self._roster.get(leader)
@@ -254,6 +257,15 @@ class Parley:
         try:
             from .initiative import approach
 
+            state = await self.link.story_state(npcs=[leader], timeout=1)
+            entry = self.talk.people.get(leader)
+            if (not valid() or state.get("dialog") or state.get("cutscene")
+                or entry is None or entry.activity != "routine" or asleep(entry.state)
+                or self.talk.partner is not None or self.bodies.busy(leader)):
+                return
+            # A native conversation defers the greeting; only an eligible approach uses the attempt.
+            encounter = next(f for f in self._encounters() if f["id"] == key)
+            self.chronicle.record({**encounter, "hail_attempted": True})
             if not await approach(self.link, self.bodies, self.talk, leader, valid=valid) or not valid():
                 return
             view = self.perception.view(leader) if self.perception else None
@@ -268,6 +280,7 @@ class Parley:
                 tools={ULTIMATUM, "propose_deal", "set_intent", "recall"}, kind="bandit_hail",
             )
             if turn is not None:
+                encounter = next(f for f in self._encounters() if f["id"] == key)
                 self.chronicle.record({**encounter, "hailed": True, "leader": leader})
         finally:
             if self._hails.get(key) is task:
@@ -514,13 +527,15 @@ class Parley:
         for encounter in self._encounters():
             distances = [self._distance(who) for who in encounter["members"]]
             far = all(distance is not None and distance > LEAVE_CM for distance in distances)
-            since = encounter.get("far_since")
+            key = encounter["id"]
+            since = self._far_since.get(key)
             if far and since is None:
-                self.chronicle.record({**encounter, "far_since": self._ticks})
+                self._far_since[key] = self._ticks
             elif far and self._ticks - since >= LEAVE_MS:
                 self.chronicle.record({**encounter, "status": "closed", "why": "left"})
+                self._far_since.pop(key, None)
             elif not far and since is not None:
-                self.chronicle.record({**encounter, "far_since": None})
+                self._far_since.pop(key, None)
         latest = {f["npc"]: f for f in self.chronicle.facts("parley_ultimatum")}
         for npc, threat in latest.items():
             if threat.get("status") not in {"active", "expired"}:
@@ -719,6 +734,7 @@ class Parley:
                     task.cancel()
                 self._pending_hails.clear()
                 self._hails.clear()
+                self._far_since.clear()
             case Session() | WorldLoaded():
                 if isinstance(msg, WorldLoaded) and self._loading:
                     # No Session means a portal: the hero left the old world's demands behind.
@@ -732,6 +748,7 @@ class Parley:
                     task.cancel()
                 self._pending_hails.clear()
                 self._hails.clear()
+                self._far_since.clear()
                 self._ticks, self._minute, self._roster = 0, None, {}
                 self._roster_complete = False
                 self._loading = False

@@ -420,7 +420,8 @@ async def test_the_conversational_models_fight_ends_with_the_companion_back_at_t
 
 
 @pytest.mark.parametrize("reason", ["Сначала потребуй — ultimatum.", "У вас уговор."])
-async def test_companion_model_cannot_attack_a_gang_without_a_cause(reason):
+@pytest.mark.parametrize("direct", [False, True])
+async def test_companion_model_cannot_attack_a_gang_without_a_cause(reason, direct):
     fake = FakeGame()
     fake.nearby = [{"id": BANDIT, "name": "Бандит", "distance": 600.0, "guild": 9, "dead": False}]
     cm, dialogue, talk = await _desk(fake, FakeBackend("-", delay=0))
@@ -433,10 +434,12 @@ async def test_companion_model_cannot_attack_a_gang_without_a_cause(reason):
         }), await talk.link.snapshot(GORN, fresh=True))
         assert result.status == "rejected" and "Нужен приказ героя" in result.output
         assert conv.intent.goal == "follow_hero"
-        assert talk.orders.fight_intent(GORN, BANDIT) is False
         assert fights(fake) == []
 
-        await fake.send(type="player_text", text="В атаку!", focus=BANDIT)
+        if direct:
+            assert talk.orders.fight_intent(GORN, BANDIT) is True
+        else:
+            await fake.send(type="player_text", text="В атаку!", focus=BANDIT)
         await _until(lambda: fights(fake) == [BANDIT])
     finally:
         await cm.__aexit__(None, None, None)

@@ -676,8 +676,6 @@ class Orders:
         npc = npc.upper()
         if not self._following(npc) and npc not in self.standing:
             return False
-        if self.fight_reason(npc, target) is not None:
-            return False
         if target is None:
             return True  # whoever: it stands up for the hero anyway
         target = target.upper()

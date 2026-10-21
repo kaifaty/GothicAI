@@ -7,8 +7,8 @@
 #       LLM=chatgpt runs only the short compensation scene with the real model
 #   crime_ally: new game, no SAVE, LLM=fake; Brago attacks the following Cavalorn, the hero knocks him
 #       down and finishes him; murder and crime_side remain in the chronicle and Cavalorn answers
-#   bandit_parley: new game, LLM=fake; Brago's first fight is rejected, an active ultimatum stays quiet;
-#       Y pays 100 gold for four hours of peace with the cave gang, including 1015; no attack for 20 s,
+#   bandit_parley: new game, LLM=fake; Brago's first fight is rejected, an unanswered ultimatum expires
+#       and he attacks; Y pays 100 gold to end the fight for four hours, including 1015; quiet for 20 s,
 #       then drawing a weapon breaks the truce and Brago attacks
 #   bandit_hold: new game, no SAVE, LLM=fake; ranger bandits and a scripted party member stay quiet
 #       on renewable 5 s parley leases for 30 s, then releasing to scripts starts a native attack
@@ -436,7 +436,13 @@ if [ "$SCENARIO" = "m3" ] || [ "$SCENARIO" = "m5e" ]; then
   VOICE_ARGS=(--asr-url "ws://127.0.0.1:$ASR_PORT" --voice-file "$VOICE_FILE")
 fi
 
-(cd "$ROOT/server" && exec uv run gothic-ai serve --port "$PORT" --scenario "$SCENARIO" --llm "$LLM" --exit-after --no-console \
+SCENARIO_ARGS=(--scenario "$SCENARIO")
+case "$SCENARIO" in
+  # These fixtures own hold verdicts or measure native reactions before contact.
+  bandit_hold|fight_reactions_bandits|fight_reactions_flee) SCENARIO_ARGS+=(--no-parley) ;;
+esac
+
+(cd "$ROOT/server" && exec uv run gothic-ai serve --port "$PORT" "${SCENARIO_ARGS[@]}" --llm "$LLM" --exit-after --no-console \
   --memory-db "$LOG_DIR/memory.sqlite3" --trace-dir "$LOG_DIR/traces" "${VOICE_ARGS[@]}" "${TTS_ARGS[@]}" "${BRAIN_ARGS[@]}" "${QUICK_ARGS[@]}" "${BODY_ARGS[@]}") >"$LOG_DIR/server.log" 2>&1 &
 SRV=$!
 GAME=""
