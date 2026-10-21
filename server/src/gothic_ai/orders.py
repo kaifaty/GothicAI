@@ -189,6 +189,7 @@ class Orders:
         link.listeners.append(self.on_message)
         # the conversational model's "fight X" for a companion is carried out here (dialogue.py)
         dialogue.companion_fight = self.fight_intent
+        dialogue.companion_fight_reason = self.fight_reason
         dialogue.fighting = lambda npc: npc.upper() in self.fights
         dialogue.on_attack.append(self.attacked)
 
@@ -658,6 +659,16 @@ class Orders:
         self.journal.add("defend", npc=npc, name=name, target=foe)
         self.dialogue.remember(npc, name, f"{foe_name} {did} — ты бросился в бой.")
         self._start(npc, foe, standing, seek=False)
+
+    def fight_reason(self, npc: str, target: str | None) -> str | None:
+        """A companion's model may not start a fight with a gang still willing to bargain."""
+        if not self.companion(npc) or target is None or self.foe(target):
+            return None
+        if self.dialogue.fight_reason is not None and self.dialogue.fight_reason(
+            target.upper(), self.link.snapshots.get(target.upper())
+        ) is not None:
+            return "У шайки нет повода для драки: идут переговоры или действует уговор. Нужен приказ героя."
+        return None
 
     def fight_intent(self, npc: str, target: str | None) -> bool:
         """The conversational model set a companion on `target`: it fights it here and comes back to the hero

@@ -13,6 +13,7 @@ from ..deals import GOLD
 from ..game import GameError, GameLink
 from ..llm import ToolCall
 from ..llm.fake import FakeStep
+from ..parley import EXPIRY_CUE
 from ..protocol import GameMessage, NpcRoster
 from .common import ClaimScript, FixedDecider, _logged, _m5b_player_weapon, _until
 
@@ -36,7 +37,9 @@ def _bandit_script() -> ClaimScript:
     })
     return ClaimScript(
         said=[
+            ("Чужак подходит", FakeStep("Стоять. Ты кто такой?")),
             (GREETING, FakeStep("Стоять. Ты кто такой?", [attack])),
+            (EXPIRY_CUE, FakeStep("Время вышло. Сам напросился!", [attack])),
             (PAYMENT, FakeStep("Сотню сюда — и четыре часа никто из наших тебя не тронет.", [ToolCall(
                 "propose_deal", {
                     "npc_gives": [], "hero_gives": [{"item": GOLD, "count": 100}],
@@ -46,8 +49,8 @@ def _bandit_script() -> ClaimScript:
             (MATE_CHALLENGE, FakeStep("А ну-ка, иди сюда!", [attack])),
             (ARMED_CHALLENGE, FakeStep("За оружие взялся? Сам напросился!", [attack])),
         ],
-        told=[("Без повода", FakeStep("Сто золотых за проход. Десять секунд на ответ.", [ToolCall(
-            "ultimatum", {"demand": "Заплати сто золотых за проход", "seconds": 10},
+        told=[("Без повода", FakeStep("Сто золотых за проход. Тридцать секунд на ответ.", [ToolCall(
+            "ultimatum", {"demand": "Заплати сто золотых за проход", "seconds": 30},
         )]))],
         default="Жду твоего решения.",
     )
@@ -60,13 +63,13 @@ async def bandit_parley(
     deals: Deals,
     parley: Parley,
 ) -> dict[str, str]:
-    """New game, LLM=fake: rejected first attack, a paid gang truce and a real new cause."""
+    """New game, LLM=fake: an expired demand, a paid gang truce and a real new cause."""
     if dialogue.llm.name != "fake":
         raise GameError("scenario bandit_parley requires LLM=fake and a new game without SAVE")
     await link.wait_world()
     results: dict[str, str] = {}
     entries: list[dict[str, Any]] = []
-    native_attacks: list[tuple[float, str]] = []
+    native_attacks: list[tuple[int, str]] = []
     original_llm, original_reflexes = dialogue.llm, talk.reflexes
     original_sink = dialogue.journal.sink
     script = _bandit_script()
@@ -83,7 +86,7 @@ async def bandit_parley(
     def record(message: GameMessage) -> None:
         if isinstance(message, NpcRoster):
             native_attacks.extend(
-                (time.monotonic(), row.id) for row in message.npcs
+                (message.t, row.id) for row in message.npcs
                 if row.id in {BRAGO, MATE} and row.state == "ZS_ATTACK"
             )
 
@@ -140,12 +143,34 @@ async def bandit_parley(
         if not check("first_fight_rejected", rejected and required and not attacks() and not native_attacks,
                      f"rejected={rejected}, ultimatum={required}, attacks={len(attacks())}"):
             return _logged(results)
-        expired = await _until(lambda: bool(
-            (ultimatum := parley.ultimatum(BRAGO)) and ultimatum.get("status") == "expired"
-        ), 20)
-        if not check("ultimatum_wait", expired and not attacks() and not native_attacks,
-                     f"expired={expired}, journal_attacks={len(attacks())}, "
+        await asyncio.sleep(5)
+        ultimatum = parley.ultimatum(BRAGO)
+        waiting = bool(ultimatum and ultimatum.get("status") == "active")
+        if not check("ultimatum_wait", waiting and not attacks() and not native_attacks,
+                     f"active={waiting}, wait_s=5, journal_attacks={len(attacks())}, "
                      f"native_attacks={len(native_attacks)}"):
+            return _logged(results)
+        expired = await _until(lambda: bool(
+            (threat := parley.ultimatum(BRAGO)) and threat.get("status") == "expired"
+        ), 35)
+        cue_seen = await _until(lambda: any(
+            EXPIRY_CUE in getattr(item, "content", "")
+            for _, messages, _ in script.calls for item in messages
+        ), 10)
+        attacked = await _until(lambda: any(npc == BRAGO for _, npc in native_attacks), 5)
+        attacking, target_hero = await link.story_eval(BRAGO, [
+            ["call", "NPC_ISINSTATE", ["inst", "SELF"], ["sym", "ZS_ATTACK"]],
+            ["&&", ["call", "NPC_GETTARGET", ["inst", "SELF"]],
+             ["call", "NPC_ISPLAYER", ["inst", "OTHER"]]],
+        ])
+        threat = parley.ultimatum(BRAGO)
+        if not check("ultimatum_expires", bool(
+            expired and cue_seen and attacked and attacking and target_hero and threat
+            and not threat.get("answered")
+            and all(at >= threat["deadline"] for at, _ in native_attacks)
+        ), f"expired={expired}, answered={threat.get('answered') if threat else None}, "
+           f"cue={cue_seen}, target_PLAYER={target_hero}, "
+           f"attack_after_ms={[at - threat['deadline'] for at, _ in native_attacks] if threat else []}"):
             return _logged(results)
         await _until(lambda: not dialogue.speaking(BRAGO), 10)
         talk.hear(PAYMENT, BRAGO, {"via": "scenario"})
@@ -158,15 +183,21 @@ async def bandit_parley(
         await asyncio.sleep(1.2)
         pressed = await link.press_deal()
         accepted = await _until(lambda: bool(parley.truce(BRAGO) and parley.truce(MATE)), 15)
+        calmed = await _until(lambda: all(
+            npc in talk.people and talk.people[npc].state != "ZS_ATTACK" for npc in (BRAGO, MATE)
+        ), 10)
         hero_after, brago_after = await gold("HERO"), await gold(BRAGO)
         fact = next((fact for fact in deals.chronicle.facts("truce")
                      if fact.get("npc") == BRAGO and MATE in fact.get("members", [])), None)
         if not check("truce_paid", bool(
-            pressed == "sent" and accepted and fact and hero_after == 100 and brago_after == brago_gold + 100
+            pressed == "sent" and accepted and calmed and fact
+            and hero_after == 100 and brago_after == brago_gold + 100
             and parley.ultimatum(BRAGO) is None
-        ), f"Y={pressed}, hero_gold={hero_after}, Brago_gold={brago_gold}->{brago_after}, fact={fact}"):
+        ), f"Y={pressed}, calmed={calmed}, hero_gold={hero_after}, "
+           f"Brago_gold={brago_gold}->{brago_after}, fact={fact}"):
             return _logged(results)
 
+        journal_mark, native_mark = len(attacks()), len(native_attacks)
         mark = len(script.outputs)
         talk.hear(MATE_CHALLENGE, MATE, {"via": "scenario"})
         refused = await _until(lambda: any("у вас уговор" in output.lower()
@@ -176,9 +207,11 @@ async def bandit_parley(
         peaceful_at = time.monotonic()
         await asyncio.sleep(20)
         if not check("gang_keeps_truce", bool(
-            not attacks() and not native_attacks and parley.truce(BRAGO) and parley.truce(MATE)
-        ), f"wait_s={time.monotonic() - peaceful_at:.1f}, journal_attacks={len(attacks())}, "
-           f"native_attacks={len(native_attacks)}"):
+            len(attacks()) == journal_mark and len(native_attacks) == native_mark
+            and parley.truce(BRAGO) and parley.truce(MATE)
+        ), f"wait_s={time.monotonic() - peaceful_at:.1f}, "
+           f"journal_attacks={len(attacks()) - journal_mark}, "
+           f"native_attacks={len(native_attacks) - native_mark}"):
             return _logged(results)
 
         await _until(lambda: not dialogue.speaking(MATE), 10)
@@ -188,13 +221,14 @@ async def bandit_parley(
             await parley.perception.fresh(BRAGO)
         await link.snapshot(BRAGO, fresh=True)
         talk.hear(ARMED_CHALLENGE, BRAGO, {"via": "scenario"})
-        attacked = await _until(lambda: bool(attacks()), 20)
+        attacked = await _until(lambda: len(attacks()) > journal_mark, 20)
         conv = dialogue.conversations.get(BRAGO)
         check("weapon_breaks_truce", bool(
             attacked and conv and (conv.intent.goal, conv.intent.target) == ("fight", "PLAYER")
-            and any(entry.get("npc") == BRAGO for entry in attacks())
+            and any(entry.get("npc") == BRAGO for entry in attacks()[journal_mark:])
             and parley.truce(BRAGO) is None and parley.truce(MATE) is None
-        ), f"journal_attacks={attacks()}, truce_broken={deals.chronicle.facts('truce_broken')}")
+        ), f"journal_attacks={attacks()[journal_mark:]}, "
+           f"truce_broken={deals.chronicle.facts('truce_broken')}")
     finally:
         dialogue.llm, talk.reflexes = original_llm, original_reflexes
         dialogue.journal.sink = original_sink
