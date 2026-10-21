@@ -36,6 +36,7 @@ def _bandit_script() -> ClaimScript:
     })
     return ClaimScript(
         said=[
+            ("Чужак подходит", FakeStep("Стоять. Ты кто такой?")),
             (GREETING, FakeStep("Стоять. Ты кто такой?", [attack])),
             (PAYMENT, FakeStep("Сотню сюда — и четыре часа никто из наших тебя не тронет.", [ToolCall(
                 "propose_deal", {
@@ -46,8 +47,8 @@ def _bandit_script() -> ClaimScript:
             (MATE_CHALLENGE, FakeStep("А ну-ка, иди сюда!", [attack])),
             (ARMED_CHALLENGE, FakeStep("За оружие взялся? Сам напросился!", [attack])),
         ],
-        told=[("Без повода", FakeStep("Сто золотых за проход. Десять секунд на ответ.", [ToolCall(
-            "ultimatum", {"demand": "Заплати сто золотых за проход", "seconds": 10},
+        told=[("Без повода", FakeStep("Сто золотых за проход. Тридцать секунд на ответ.", [ToolCall(
+            "ultimatum", {"demand": "Заплати сто золотых за проход", "seconds": 30},
         )]))],
         default="Жду твоего решения.",
     )
@@ -140,11 +141,11 @@ async def bandit_parley(
         if not check("first_fight_rejected", rejected and required and not attacks() and not native_attacks,
                      f"rejected={rejected}, ultimatum={required}, attacks={len(attacks())}"):
             return _logged(results)
-        expired = await _until(lambda: bool(
-            (ultimatum := parley.ultimatum(BRAGO)) and ultimatum.get("status") == "expired"
-        ), 20)
-        if not check("ultimatum_wait", expired and not attacks() and not native_attacks,
-                     f"expired={expired}, journal_attacks={len(attacks())}, "
+        await asyncio.sleep(5)
+        ultimatum = parley.ultimatum(BRAGO)
+        waiting = bool(ultimatum and ultimatum.get("status") == "active")
+        if not check("ultimatum_wait", waiting and not attacks() and not native_attacks,
+                     f"active={waiting}, wait_s=5, journal_attacks={len(attacks())}, "
                      f"native_attacks={len(native_attacks)}"):
             return _logged(results)
         await _until(lambda: not dialogue.speaking(BRAGO), 10)

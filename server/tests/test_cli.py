@@ -178,12 +178,14 @@ def test_crimes_is_enabled_by_default_including_scenarios(monkeypatch, flags):
 @pytest.mark.parametrize("crimes", [False, True])
 @pytest.mark.parametrize("planner", [False, True])
 @pytest.mark.parametrize("hold_threats", [False, True])
-def test_deed_control_is_independent_of_the_planner_and_threat_switch(crimes, planner, hold_threats):
-    args = SimpleNamespace(no_crimes=not crimes, no_hold_threats=not hold_threats)
+@pytest.mark.parametrize("parley", [False, True])
+def test_deed_control_is_independent_of_the_planner_and_threat_switch(crimes, planner, hold_threats, parley):
+    args = SimpleNamespace(no_crimes=not crimes, no_hold_threats=not hold_threats, no_parley=not parley)
     command = json.loads(cli._perception_control(args, planner=planner).to_json())
     assert command["hold"] == (planner and hold_threats)
     assert command.get("deeds", False) == crimes
     assert ("deeds" in command) == crimes
+    assert command["bandits"] == parley
 
 
 @pytest.mark.parametrize("flags", [[], ["--no-cover"], ["--no-crimes"], ["--scenario", "cover"]])

@@ -7,13 +7,15 @@
 #       LLM=chatgpt runs only the short compensation scene with the real model
 #   crime_ally: new game, no SAVE, LLM=fake; Brago attacks the following Cavalorn, the hero knocks him
 #       down and finishes him; murder and crime_side remain in the chronicle and Cavalorn answers
-#   bandit_parley: new game, LLM=fake; Brago's first fight is rejected, an ultimatum runs its course;
+#   bandit_parley: new game, LLM=fake; Brago's first fight is rejected, an active ultimatum stays quiet;
 #       Y pays 100 gold for four hours of peace with the cave gang, including 1015; no attack for 20 s,
 #       then drawing a weapon breaks the truce and Brago attacks
 #   bandit_hold: new game, no SAVE, LLM=fake; ranger bandits and a scripted party member stay quiet
 #       on renewable 5 s parley leases for 30 s, then releasing to scripts starts a native attack
 #   bandit_bounty: new game, LLM=fake; Brago refuses a secret without leverage, sells Dexter's name
 #       for 150 gold through Y, updates the vanilla leaflet quest and starts leading to CASTLEMINE_HUT
+#   road_bandits: new game, no SAVE, LLM=fake; the ranger gang's leader hails the hero, sells a truce
+#       for 100 gold, keeps peace for 20 s, then at least two bandits attack within 5 s of a drawn weapon
 #   m0: takes Xardas over, walks him around and returns him to his routine
 #   m1: Xardas answers a player question line by line (LLM backend: LLM=fake|chatgpt|local)
 #   websocket: Lobart and Hilda speak through Responses against an in-process fake server: per-npc
@@ -380,7 +382,7 @@ if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion || "$SCENARIO" = ne
   [ -z "${SAVE:-}" ] || { echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2; exit 2; }
 fi
 LLM="${LLM:-fake}"
-if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty || "$SCENARIO" == bandit_hold ) && ( "$LLM" != fake || -n "${SAVE:-}" ) ]]; then
+if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty || "$SCENARIO" == bandit_hold || "$SCENARIO" == road_bandits ) && ( "$LLM" != fake || -n "${SAVE:-}" ) ]]; then
   echo "scenario $SCENARIO requires LLM=fake and a new game (unset SAVE)" >&2
   exit 2
 fi

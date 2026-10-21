@@ -419,6 +419,45 @@ async def test_the_conversational_models_fight_ends_with_the_companion_back_at_t
     assert GORN in fake.attached  # never let go of in between
 
 
+@pytest.mark.parametrize("reason", ["Сначала потребуй — ultimatum.", "У вас уговор."])
+async def test_companion_model_cannot_attack_a_gang_without_a_cause(reason):
+    fake = FakeGame()
+    fake.nearby = [{"id": BANDIT, "name": "Бандит", "distance": 600.0, "guild": 9, "dead": False}]
+    cm, dialogue, talk = await _desk(fake, FakeBackend("-", delay=0))
+    try:
+        await _follows(fake, dialogue, person(BANDIT, "Бандит", 6))
+        dialogue.fight_reason = lambda npc, snap: reason if npc == BANDIT else None
+        conv = dialogue.conversations[GORN]
+        result = dialogue._set_intent(conv, ToolCall("set_intent", {
+            "goal": "fight", "target": BANDIT, "attitude": "friendly", "agenda": None,
+        }), await talk.link.snapshot(GORN, fresh=True))
+        assert result.status == "rejected" and "Нужен приказ героя" in result.output
+        assert conv.intent.goal == "follow_hero"
+        assert talk.orders.fight_intent(GORN, BANDIT) is False
+        assert fights(fake) == []
+
+        await fake.send(type="player_text", text="В атаку!", focus=BANDIT)
+        await _until(lambda: fights(fake) == [BANDIT])
+    finally:
+        await cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("struck", [False, True])
+async def test_companion_can_defend_against_an_attacker_during_parley(struck):
+    fake = FakeGame()
+    cm, dialogue, talk = await _desk(fake, FakeBackend("-", delay=0))
+    try:
+        await _follows(fake, dialogue, person(BANDIT, "Бандит", 6))
+        dialogue.fight_reason = lambda npc, snap: "У вас уговор." if npc == BANDIT else None
+        if struck:
+            await fake.perception(GORN, "ASSESSOTHERSDAMAGE", BANDIT, victim="PLAYER")
+        else:
+            talk.orders.attacked(BANDIT)
+        await _until(lambda: fights(fake) == [BANDIT])
+    finally:
+        await cm.__aexit__(None, None, None)
+
+
 async def test_guarding_the_hero_keeps_the_companion_with_him():
     fake = FakeGame()
     guard = {"goal": "guard_hero", "target": "PLAYER", "attitude": "friendly", "agenda": None}

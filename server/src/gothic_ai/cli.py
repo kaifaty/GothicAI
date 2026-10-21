@@ -735,6 +735,7 @@ def _perception_control(args: argparse.Namespace, *, planner: bool) -> ThreatCon
     return ThreatControlCmd(
         hold=planner and not args.no_hold_threats,
         deeds=True if not args.no_crimes else None,
+        bandits=not args.no_parley,
     )
 
 
@@ -985,10 +986,12 @@ async def serve(args: argparse.Namespace) -> int:
         state.people_knowledge = PeopleKnowledge(state.chronicle)
         state.dialogue.extensions.append(state.people_knowledge)
         state.dialogue.extensions.append(trust)
+        state.bodies = Bodies(link)
         if not args.no_parley:
             state.parley = Parley(
                 link, state.dialogue, state.chronicle,
                 perception=perception, companion=orders.companion, places=place_book, lead=state.talk.lead,
+                bodies=state.bodies, talk=state.talk, graph=graph, patches=state.story,
             )
             state.dialogue.extensions.append(state.parley)
         if not args.no_bounty:
@@ -1012,6 +1015,8 @@ async def serve(args: argparse.Namespace) -> int:
         )
         state.deals.roster = lambda: talk.people
         state.deals.parley = state.parley
+        if state.parley is not None:
+            state.parley.offer_pending = lambda npc: npc in state.deals.open
         state.deals.bounty = state.bounty
         state.deals.contracts.roster = lambda: talk.people
         state.dialogue.extensions.append(state.deals)
@@ -1030,7 +1035,6 @@ async def serve(args: argparse.Namespace) -> int:
         debts = asyncio.create_task(state.deals.run())  # a debt not paid back by its day is a broken word
         parley_clock = asyncio.create_task(state.parley.run()) if state.parley is not None else None
         # what each npc has on its mind about the hero, and what may come of it (wave 2 step 1)
-        state.bodies = Bodies(link)
         state.concerns = Concerns(link, state.chronicle, state.deals)
         if state.crimes is not None:
             state.concerns.extra.append(state.crimes.concerns)
@@ -1466,9 +1470,12 @@ async def serve(args: argparse.Namespace) -> int:
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
                 exit_code = 1 if bad else 0
-            elif args.scenario == "bandit_parley":
+            elif args.scenario in {"bandit_parley", "road_bandits"}:
                 assert state.parley is not None and state.deals is not None and state.talk is not None
-                results = await scenarios.bandit_parley(
+                scenario = {
+                    "road_bandits": scenarios.road_bandits, "bandit_parley": scenarios.bandit_parley,
+                }[args.scenario]
+                results = await scenario(
                     link, state.dialogue, state.talk, state.deals, state.parley
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
@@ -2757,6 +2764,7 @@ def main() -> None:
             "neural-group",
             "neural-talk",
             "bandit_parley",
+            "road_bandits",
             "bandit_hold",
             "bandit_bounty",
             "neural-load",

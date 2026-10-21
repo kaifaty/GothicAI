@@ -33,6 +33,7 @@ def _bounty_script() -> ClaimScript:
     reveal = ToolCall("tell_secret", {"secret": "client_name"})
     return ClaimScript(
         said=[
+            ("Чужак подходит", FakeStep("Эй, чужак. Подойди.")),
             (ASK, FakeStep("Сейчас расскажу.", [reveal])),
             (PAYMENT, FakeStep("Сто пятьдесят золотых — и скажу имя.", [ToolCall(
                 "propose_deal", {
