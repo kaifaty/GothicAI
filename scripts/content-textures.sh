@@ -1,29 +1,32 @@
 #!/usr/bin/env bash
 # Offline area/UV inventory of the four Gothic II worlds, including the addon.
-# Only texture names and geometry statistics are written; no game runs or texture exports.
+# The triangle mode exports NEWWORLD geometry; no game runs or texture pixels are read.
 #
 #   scripts/content-textures.sh [output-directory]
 #   scripts/content-textures.sh --self-test
 #   scripts/content-textures.sh --intent /absolute/path/outside/repository/intent.json
+#   scripts/content-textures.sh --triangles outside.json --textures names.txt [--bounds xmin zmin xmax zmax]
 #
 # env: GOTHIC_DIR  game data (default: /Volumes/DevSSD/Dev/games/Gothic II)
-# The C++ tool mounts the VDF archives with addon world priority and writes CSV/README files.
+# The C++ tool mounts geometry VDF archives with addon world priority.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
 
-if [ "$#" -gt 2 ]; then
-  echo "usage: scripts/content-textures.sh [output-directory|--self-test|--intent outside-json]" >&2
-  exit 2
-fi
+usage() {
+  echo "usage: scripts/content-textures.sh [output-directory|--self-test|--intent outside-json|--triangles outside-json --textures names-file [--bounds xmin zmin xmax zmax]]"
+}
 case "${1:-}" in
-  -h|--help)
-    echo "usage: scripts/content-textures.sh [output-directory|--self-test|--intent outside-json]"
-    exit 0 ;;
-  --self-test) ;;
-  --intent)
-    if [ "$#" -ne 2 ]; then echo "--intent requires an outside-repository JSON path" >&2; exit 2; fi
+  -h|--help) usage; exit 0 ;;
+  --self-test)
+    if [ "$#" -ne 1 ]; then usage >&2; exit 2; fi ;;
+  --intent|--triangles)
+    if [ "$1" = --intent ] && [ "$#" -ne 2 ]; then usage >&2; exit 2; fi
+    if [ "$1" = --triangles ]; then
+      if { [ "$#" -ne 4 ] && [ "$#" -ne 9 ]; } || [ "${3:-}" != --textures ] \
+          || { [ "$#" -eq 9 ] && [ "${5:-}" != --bounds ]; }; then usage >&2; exit 2; fi
+    fi
     python3 - "$ROOT" "$2" <<'PYGUARD'
 import pathlib, sys
 root, target = map(lambda p: pathlib.Path(p).resolve(), sys.argv[1:])
@@ -32,11 +35,8 @@ if target.is_relative_to(root):
 PYGUARD
     ;;
   -*) echo "unknown option: $1" >&2; exit 2 ;;
+  *) if [ "$#" -gt 1 ]; then usage >&2; exit 2; fi ;;
 esac
-if [ "${1:-}" != --intent ] && [ "$#" -gt 1 ]; then
-  echo "only --intent accepts a second argument" >&2
-  exit 2
-fi
 
 tool() {
   local build="$ROOT/OpenGothic/build" src="$ROOT/scripts/content/world-textures.cpp"
@@ -76,6 +76,9 @@ tool() {
 }
 
 bin="$(tool)"
+if [ "${1:-}" = --triangles ]; then
+  exec "$bin" --triangles "$GOTHIC_DIR" "${@:2}"
+fi
 if [ "${1:-}" = --intent ]; then
   exec "$bin" --intent "$GOTHIC_DIR" "$2"
 fi

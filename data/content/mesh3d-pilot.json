@@ -71,6 +71,11 @@
         "key": "OWN_PROP_ROPE",
         "group": "WOOD",
         "role": "rope handles on the ends; small, so they sound and collide as wood"
+      },
+      {
+        "key": "OWN_PROP_WOOD_INNER",
+        "group": "WOOD",
+        "role": "dark core box seen through the plank gaps"
       }
     ],
     "resolved_visual": "NW_HARBOUR_CRATE_01.MRM",

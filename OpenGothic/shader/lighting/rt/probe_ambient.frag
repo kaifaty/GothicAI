@@ -222,7 +222,8 @@ void main() {
     // Probe zero contains unoccluded sky only, unlike the local GI radiance.
     const vec3 sky = probeReadAmbient(probesLighting, 0, norm, vec3(0,1,0));
     const vec3 reflectedSky = mix(sharpSky, sky, orm.g*orm.g);
-    color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV) * clamp(skyVisibilitySum, 0.0, 1.0);
+    color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV) *
+             materialSpecularWeight(orm.g, orm.b) * clamp(skyVisibilitySum, 0.0, 1.0);
     }
 #endif
   color *= ao;

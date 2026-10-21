@@ -640,6 +640,9 @@ class DialogueManager:
         self.fighting: Callable[[str], bool] = lambda npc: False
         # the npc's guild (the roster's, talk.py), None if not known: whom it attacks to kill (`KILLERS`)
         self.guild_of: Callable[[str], int | None] = lambda npc: None
+        # A bandit's reason to attack the hero (parley.py); None keeps the original rules.
+        self.fight_reason: Callable[[str, Snapshot | None], str | None] | None = None
+        self.on_player_said: list[Callable[[str], None]] = []
         # the npc fights the hero right now (the scripts' attack, talk.py; companions are not asked): talked
         # to, it may call it off (`_calm`)
         self.fights_hero: Callable[[str], bool] = lambda npc: False
@@ -949,6 +952,8 @@ class DialogueManager:
     def _start_reply(
         self, conv: Conversation, user_text: str, *, overlay: bool = False, body: str | None = None
     ) -> asyncio.Task[None]:
+        for listener in self.on_player_said:
+            listener(conv.npc)
         self._cancel(conv)
         self._drop_unvoiced(conv)
         if self.budget is not None:
@@ -1076,6 +1081,8 @@ class DialogueManager:
     def told_all(self, npc: str, name: str, text: str, first: str) -> None:
         """The hero said something to several, the npc among them; `first` answers first (talk.py)."""
         conv = self.open(npc, name, warm=False)
+        for listener in self.on_player_said:
+            listener(conv.npc)
         self._note(conv, f"Герой сказал всем вам, и тебе тоже: «{text}» (первым отвечает {first})")
 
     def heard(self, npc: str, name: str, speaker: str, text: str, whom: str) -> None:
@@ -2158,7 +2165,10 @@ class DialogueManager:
     def _set_intent(self, conv: Conversation, call: ToolCall, snap: Snapshot | None) -> ToolOutcome:
         sight = self.sight(conv.npc, snap) if self.sight is not None else None
         seen = sight.targets if sight is not None else None  # whom it perceives, not all within 15 m
-        intent, reason = executor.check_intent(executor.parse_intent(call.arguments, conv.intent), snap, seen)
+        intent, reason = executor.check_intent(
+            executor.parse_intent(call.arguments, conv.intent), snap, seen,
+            fight_reason=(lambda: self.fight_reason(conv.npc, snap)) if self.fight_reason else None,
+        )
         if intent is None:
             return ToolOutcome(f"Отклонено: {reason}", "rejected")
         if executor.same(conv.intent, intent):
@@ -2268,6 +2278,12 @@ class DialogueManager:
         a beating until he is down."""
         if conv.intent is not intent:
             return "", True  # it changed its mind before it was done talking
+        if self.fight_reason is not None:
+            if why := self.fight_reason(conv.npc, self.link.snapshots.get(conv.npc)):
+                self._change_intent(
+                    conv, conv.calm or Intent(), self.link.snapshots.get(conv.npc), body=False
+                )
+                return f"Ты не напал: {why}", False
         reason = "AR_SUDDENENEMYINFERNO" if self.guild_of(conv.npc) in KILLERS else "AR_NONE"
         try:
             await self.link.story_effect(conv.npc, [{"do": "attack", "reason": reason}])

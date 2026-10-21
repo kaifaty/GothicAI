@@ -29,7 +29,8 @@ goal, lo, hi = load_goal(cfg)
 rng = np.random.default_rng(cfg.get("seed", 1))
 keys = [z["key"] for z in goal["zones"]]
 zones = {"plank": keys.index("OWN_PROP_WOOD_PLANK"), "brace": keys.index("OWN_PROP_WOOD_BRACE"),
-         "rope": keys.index("OWN_PROP_ROPE"), "nail": keys.index("OWN_PROP_IRON_NAIL")}
+         "inner": keys.index("OWN_PROP_WOOD_INNER"), "rope": keys.index("OWN_PROP_ROPE"),
+         "nail": keys.index("OWN_PROP_IRON_NAIL")}
 tile = cfg.get("stave_tile", 0.38)
 P = Parts(rng, tile / cfg.get("planks_per_tile", 4))
 nh = cfg.get("nail", 0.004) if cfg.get("nails", True) else 0.0

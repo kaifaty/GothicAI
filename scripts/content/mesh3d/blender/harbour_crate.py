@@ -13,8 +13,10 @@ crate(P, zones, base, size, R, cfg, rng): base is the centre of the bottom, size
 (all optional): post [width, thick], batten [width, thick], plank, gap [min, max],
 plank_width (target width in m), tilt_deg, proud, rope [radius, sides, segments],
 rope_ends ("both", "one", "none"), nails (bool), nail_radius, nail, broken (bool),
-lid_shift (m, one plank), lid_offset [dx, dy] (m, the whole lid pushed aside). zones: {"plank", "brace", "rope", "nail"} material indices; "nail" may
-be None when nails are off. tile is the wood tile size in metres.
+lid_shift (m, one plank), lid_offset [dx, dy] (m, the whole lid pushed aside). zones: {"plank", "brace", "inner", "rope",
+"nail"} material indices; "nail" may be None when nails are off. The dark core takes "inner": it is
+seen only through the gaps, so it has its own colour target and does not pull the planks' mean
+down. tile is the wood tile size in metres.
 """
 import math
 
@@ -48,7 +50,7 @@ def crate(P, zones, base, size, R, cfg, rng, tile):
     proud = cfg.get("proud", 0.002)
     nails = cfg.get("nails", False) and zones.get("nail") is not None
     nail_r, nail_h = cfg.get("nail_radius", 0.009), cfg.get("nail", 0.004)
-    PLANK, BRACE, ROPE, NAIL = zones["plank"], zones["brace"], zones["rope"], zones.get("nail")
+    PLANK, BRACE, INNER, ROPE, NAIL = zones["plank"], zones["brace"], zones["inner"], zones["rope"], zones.get("nail")
 
     lid_top = H
     wall_top = H - pt                     # the walls end under the lid planks
@@ -123,7 +125,7 @@ def crate(P, zones, base, size, R, cfg, rng, tile):
     core = P.new_part()
     corners = [P.vert(at(sx * cx, sy * cy, cz if sz > 0 else 0.0), core) for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)]
     for quad in ((0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)):
-        P.poly([corners[i] for i in quad], PLANK, [(0, 0), (1, 0), (1, 1), (0, 1)])
+        P.poly([corners[i] for i in quad], INNER, [(0, 0), (1, 0), (1, 1), (0, 1)])
     return at(0, 0, lid_top)
 
 

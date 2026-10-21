@@ -10,7 +10,8 @@ config: {"glb": model with tile UVs in metres and zone-key materials (barrel.py)
          "sectors": 20, "tone_spread": 0.28, "light_part": [index, gain],
          "edge_radius": 0.006, "wet_height": 0.18, "algae": 0.7, "bleach": 0.35,
          "planks_per_tile": {KEY: n}, "seam_width": 0.07, "seam_dark": 0.75, "contrast": {KEY: gamma},
-         "nodes": [NODE NAME, ...], "tile_normal": {KEY: strength}, "edge_wear": {KEY: share}}
+         "nodes": [NODE NAME, ...], "tile_normal": {KEY: strength}, "edge_wear": {KEY: share},
+         "measure_ao": {KEY: min baked AO}}
 The tiling materials are sampled through the tile UVs and baked into a new atlas
 UV: per-part tone (the builder's "_part" attribute when present, otherwise
 angular sectors around the axis and lid planks along X), dark seams where a part's tile plank ends, worn light edges from the Bevel
@@ -27,6 +28,11 @@ a hard, sparkling surface (user, 2026-10-20). So each tile's normal map is baked
 strength by its material: cloth x0.12, our own gentle procedural tiles (glass, wax, bone)
 x1, everything else x0.25; "tile_normal" overrides it per zone. Cloth, rope and fur get
 no worn light edges ("edge_wear", default 0.7 of the Bevel edge mask).
+A zone's mean is measured over all its texels, so hidden faces count: half of a crate's
+plank area is plank backs against the dark core, ends under posts and edges in the gaps,
+and the visible planks baked 1.9 times lighter than the target (reports/engine/2026-10-21-
+rough-specular). "measure_ao" measures such a zone only over texels whose baked AO is at
+least the given value, the faces open to the outside; the gain still reaches every texel.
 """
 import json
 import math
@@ -336,6 +342,9 @@ report = {}
 for index, key in enumerate(keys):
     sel = zone_id == index + 1  # the gain reaches every pixel of the zone, faces pointing down included
     measured = sel & inside & ~down
+    floor = cfg.get("measure_ao", {}).get(key)
+    if floor is not None:  # only the texels open to the outside
+        measured &= ao >= floor
     if not measured.any():
         continue
     gamma = cfg.get("contrast", {}).get(key, 1.0)
@@ -347,7 +356,11 @@ for index, key in enumerate(keys):
     mean = albedo[measured].mean(axis=0)
     gain = np.array(targets[key]) / np.maximum(mean, 1e-6)
     albedo[sel] *= gain
-    report[key] = {"pixels": int(measured.sum()), "contrast": gamma, "mean_before": mean.round(5).tolist(),
+    whole = sel & inside & ~down
+    report[key] = {"pixels": int(measured.sum()), "measure_ao": floor,
+                   "measured_share": round(float(measured.sum() / whole.sum()), 4),
+                   "mean_all_after": albedo[whole].mean(axis=0).round(5).tolist(),
+                   "contrast": gamma, "mean_before": mean.round(5).tolist(),
                    "gain": gain.round(3).tolist(), "target": targets[key],
                    "tile_normal": tile_normal(key), "edge_wear": edge_wear(key) if key not in metal_keys else None}
 albedo = np.clip(albedo, 0, 1)

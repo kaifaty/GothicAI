@@ -5,7 +5,7 @@ config: {"id": "chest", "goal": {target with bbox, budget, zones}, "nodes": [bod
          "hinge": [y, z], "seed": 1, "post": 0.06, "raise": 0.012, "plank": 0.022, "gap": 0.004,
          "planks": {"front": 4, "side": 4, "floor": 3}, "width_jitter": 0.12, "proud": 0.002,
          "band": 0.04, "arch_segments": 8, "lid_plank": 0.02, "lid_gap": 0.003, "recess": 0.004,
-         "rim": [0.05, 0.045], "end_board": 0.02, "strap": [0.045, 0.004], "straps_x": [-0.27, 0, 0.27], "body_strap": 0.17,
+         "rim": [0.05, 0.045], "rim_step": 0.003, "end_board": 0.02, "strap": [0.045, 0.004], "straps_x": [-0.27, 0, 0.27], "body_strap": 0.17,
          "hinge_leaf": 0.14, "knuckle": [0.008, 0.05], "hasp": [0.065, 0.115, 0.006],
          "nail": 0.004, "nail_radius": 0.008, "stave_tile": 0.38, "planks_per_tile": 4}
 The model is a MOB with two attachments, so it is exported as two GLB nodes named
@@ -79,7 +79,7 @@ for sx in (-1, 1):
 front_planks = []
 avoid = []
 for face_y, sign in ((yf, -1), (yb, 1)):          # planks between the posts, recessed behind them
-    span_x = 2 * hx - 2 * post + 0.02
+    span_x = 2 * hx - 2 * post                    # ends flush with the posts: a top face inside one z-fights with its top
     z = 0.0
     layout = widths(zt, cfg["planks"]["front"], avoid)
     avoid = seams_of(layout)
@@ -92,7 +92,7 @@ for face_y, sign in ((yf, -1), (yb, 1)):          # planks between the posts, re
         z += w + gap
 avoid = []
 for sx in (-1, 1):
-    span_y = (yb - yf) - 2 * post + 0.02
+    span_y = (yb - yf) - 2 * post
     z = 0.0
     layout = widths(zt, cfg["planks"]["side"], avoid)
     avoid = seams_of(layout)
@@ -105,8 +105,8 @@ inner_x = hx - raise_ - plank_t                   # inner faces of the walls
 inner_lo, inner_hi = yf + raise_ + plank_t, yb - raise_ - plank_t
 floor_t = plank_t
 y = inner_lo
-for w in widths(inner_hi - inner_lo, cfg["planks"]["floor"]):
-    body.wood(Vector((cx, y + w / 2, floor_t / 2)), X, Y, Z, 2 * inner_x, w, floor_t, BODY, tile)
+for w in widths(inner_hi - inner_lo, cfg["planks"]["floor"]):  # 1 mm up: its bottom stays out of the posts' plane
+    body.wood(Vector((cx, y + w / 2, floor_t / 2 + 0.001)), X, Y, Z, 2 * inner_x, w, floor_t, BODY, tile)
     y += w + gap
 
 straps_x = [cx + s for s in cfg.get("straps_x", [-0.27, 0.0, 0.27])]
@@ -180,12 +180,15 @@ def seated(p, q, short):
     if abs(q.z - zt) < 1e-6:
         return (p + q) / 2 + d * (short / 2)
     return (p + q) / 2
-# end rims: a segmented arched frame at each end, flush with the outline
+# end rims: a segmented arched frame at each end, flush with the outline. Neighbours overlap inside
+# each joint, so every other segment is "rim_step" narrower on both faces: two end faces in one
+# plane z-fight there (black wedges in Cycles).
+rim_step = cfg.get("rim_step", 0.003)
 for sx in (-1, 1):
-    for (p, q), n in zip(zip(V[:-1], V[1:]), seg_normals):
+    for k, ((p, q), n) in enumerate(zip(zip(V[:-1], V[1:]), seg_normals)):
         chord = q - p
         mid = seated(p, q, 0.002) - n * (rim_t / 2) + X * (cx + sx * (hx - rim_w / 2))
-        lid.wood(mid, chord.normalized(), X, n, chord.length - 0.002, rim_w, rim_t, LID, tile)
+        lid.wood(mid, chord.normalized(), X, n, chord.length - 0.002, rim_w - 2 * rim_step * (k % 2), rim_t, LID, tile)
 # planks between the rims, a little below their outer face, their ends hidden in the rims
 for (p, q), n in zip(zip(V[:-1], V[1:]), seg_normals):
     chord = q - p

@@ -131,7 +131,9 @@ part = P.new_part(wound=True)
 backing = [P.vert(Vector((cx + x * 0.97, back_y + 0.002, centre.z + (z - centre.z) * 0.97)), part) for x, z in outline]
 P.poly(backing[::-1], IRON, [(x, z) for x, z in outline][::-1])
 
-# iron rim along the front edge of the outline
+# iron rim along the front edge of the outline. Neighbours overlap 3 mm in each joint; the two
+# segments meeting at the bottom tip mirror each other, so their faces shared a plane there
+# (z-fighting, coplanar.py): every other segment is 1 mm thinner, its back still on the boards.
 rim_w, rim_t = cfg.get("rim", [0.02, 0.006])
 for i in range(len(outline)):
     (x0, z0), (x1, z1) = outline[i], outline[(i + 1) % len(outline)]
@@ -141,9 +143,10 @@ for i in range(len(outline)):
         continue
     mid = (a + b) / 2
     xm = mid.x - cx
-    c = Vector((mid.x, front_y(xm) - rim_t / 2, mid.z))
+    t = rim_t - 0.001 * (i % 2)
+    c = Vector((mid.x, front_y(xm) - t / 2, mid.z))
     inward = Y.cross(along.normalized())
-    P.board(c + inward * (rim_w / 2 - 0.003), along.normalized(), inward, front_dir, along.length + 0.006, rim_w, rim_t, IRON)
+    P.board(c + inward * (rim_w / 2 - 0.003), along.normalized(), inward, front_dir, along.length + 0.006, rim_w, t, IRON)
 # iron boss in the middle
 r_boss, h_boss = cfg.get("boss", [0.07, 0.03])
 boss_c = Vector((cx, front_y(0), centre.z + 0.02))

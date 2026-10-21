@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,8 @@ from gothic_ai.llm import ToolCall, ToolResult
 from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
-from gothic_ai.vanilla import VanillaQuests, _takes
+from gothic_ai.questlog import QuestLog
+from gothic_ai.vanilla import VanillaQuests, _bridge, _claim, _takes
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
 from tests.test_director import GRAPH, HAS_20, HILDA, LOBART, QUEST, _node
@@ -101,7 +103,7 @@ async def test_a_lie_to_lobart_is_paid_and_found_out_the_next_morning(graph):
         await vanilla.prepare(LOBART)
         situation = vanilla.situation(LOBART)
         assert "Ты ждёшь от героя: «Убрать поле репы» (id MIS_LOBART_RUEBEN)" in situation
-        assert "герой принесёт тебе Репа ×20" in situation and "Золото ×5, опыт +50" in situation
+        assert "герой принесёт тебе Репа ×20" in situation and "5 золотых, опыт +50" in situation
         assert "у героя с собой Репа ×0 из 20" in situation  # what Lobart sees for himself
         # he sees the hero has none on him: he may call it a lie to his face; nothing to go and check
         assert [t.name for t in vanilla.tools(LOBART)] == ["accept_quest", "expose_lie"]
@@ -594,4 +596,357 @@ async def test_an_ending_that_wants_its_quest_not_begun(cavalorn):
         # what he told of the bandits only in the conversation is no lie of the hero's
         assert chronicle.facts("claim")[-1]["truth"] is True and chronicle.facts("lie") == []
     finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+def test_bridge_translates_native_gate_fields_and_checklog(graph):
+    passage = {
+        "do": "set_field", "field": "AIVAR", "of": ["inst", "SELF"],
+        "index": ["int", 14, "AIV_PASSGATE"], "value": ["int", 1, "TRUE"],
+    }
+    assert _bridge(passage, {}, graph) == {"do": "gate_pass", "npc": "SELF", "value": 1}
+    assert _bridge({**passage, "of": ["inst", "HILDA"]}, {}, graph) == {
+        "do": "gate_pass", "npc": HILDA, "value": 1,
+    }
+    assert _bridge({**passage, "value": ["int", 0, "FALSE"]}, {}, graph) == {
+        "do": "gate_pass", "npc": "SELF", "value": 0,
+    }
+    assert _bridge({**passage, "field": "ATTRIBUTE"}, {}, graph) is None
+    assert _bridge({**passage, "index": ["int", 13, "AIV_LASTDISTTOWP"]}, {}, graph) is None
+    assert _bridge({"do": "call", "fn": "B_CHECKLOG", "args": []}, {}, graph) == {
+        "do": "gate_checklog",
+    }
+
+
+@pytest.fixture(scope="module")
+def real_graph():
+    data = Path(os.environ.get("GOTHIC_AI_DATA", Path.home() / ".local/share/gothic-ai"))
+    path = Path(os.environ.get("GOTHIC_STORY_GRAPH", data / "story.json"))
+    if not path.exists():
+        pytest.skip("needs actual storygraph export (GOTHIC_STORY_GRAPH)")
+    return load(path)
+
+
+async def test_constantino_herbs_accept_quest_keeps_native_passage_and_checklog(real_graph):
+    from tests.test_gates import GatesFake
+
+    graph = real_graph
+    npc, partner = "MIL_310_STADTWACHE", "MIL_333_STADTWACHE"
+    quest, ending = "MIS_ADDON_LESTER_PICKFORCONSTANTINO", "DIA_ADDON_MIL_310_STADTWACHE_CONSTANTINO"
+    fake = GatesFake(branch="A")
+    accept = FakeStep("Ладно, проходи к Константино.", [ToolCall("accept_quest", {"quest": quest}, "a1")])
+    llm = FakeBackend(script=[accept, FakeStep("Ну?")], delay=0)
+    store = MemoryStore(":memory:")
+    link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
+    fake.vars.update({quest: 1, "MIL_310_SCHONMALREINGELASSEN": 0})
+    fake.hero_items = {"ITPL_MANA_HERB_01": 10}
+    fake.npc_states.update({npc: {"state": "alive", "name": "Стражник"}, partner: {"state": "alive"}})
+    try:
+        dialogue.open(npc, "Стражник")
+        await vanilla.prepare(npc)
+        assert vanilla.offers[npc][quest].ending == ending
+        await dialogue.say_as_player(npc, "Я принёс травы Константино.")
+        await _until(lambda: chronicle.facts("claim") != [])
+        assert fake.vars[quest] == 2 and fake.vars["MIL_310_SCHONMALREINGELASSEN"] == 1
+        assert fake.fields.get((npc, "AIVAR", 14)) == 1
+        assert fake.fields.get((partner, "AIVAR", 14)) == 1
+        assert fake.hero_xp == 100 and ending in fake.known
+        assert len(fake.checklog) == 1
+        assert chronicle.facts("claim")[-1]["truth"] is True
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+GREG = "PIR_1300_ADDON_GREG_NW"
+GREG_QUEST = "MIS_ADDON_GREG_BRINGMETOTHECITY"
+GREG_BEGIN = "DIA_ADDON_GREG_NW_HALLO_JA"
+GREG_PARENT = "DIA_ADDON_GREG_NW_STADTWACHEN"
+GREG_END = f"{GREG_PARENT}_KLAMOTTEN"
+GREG_TOPIC = "TOPIC_ADDON_GREG_NW"
+GREG_TITLE = "Человек с повязкой на глазу"
+GREG_BONUS = {"ITWR_MAP_NEWWORLD": 1, "ITFO_ADDON_RUM": 2}
+
+
+def _has(item):
+    return ["call", "NPC_HASITEMS", ["inst", "OTHER"], ["sym", item]]
+
+
+def test_a_missing_fetch_item_is_not_replaced_by_an_unfulfilled_variable(graph):
+    # Pyrokar's eye: without the eye or the prior conversation, retain the fetch claim (and its lie).
+    condition = [
+        "||",
+        _has("ITMI_INNOSEYE_BROKEN_MIS"),
+        ["==", ["var", "MIS_SCKNOWSINNOSEYEISBROKEN"], ["int", 1]],
+    ]
+    assert _claim(None, condition, graph, have={}).items == {"ITMI_INNOSEYE_BROKEN_MIS": 1}
+
+
+@pytest.fixture
+def greg(tmp_path: Path) -> StoryGraph:
+    """Greg's clothing ending: the item requirement is on the parent's choice, not the ending itself."""
+    g = copy.deepcopy(GRAPH)
+    g["nodes"] += [
+        _node(
+            "DIA_ADDON_GREG_NW_HALLO",
+            GREG,
+            [{"do": "choice", "node": GREG_BEGIN, "text": "Почему бы и нет?"}],
+            condition=["==", ["var", "GREGLOCATION"], ["int", 0]],
+        ),
+        _node(
+            GREG_BEGIN,
+            GREG,
+            [
+                _line("Ты же поможешь мне пройти мимо стражников, правда?"),
+                {"do": "set", "var": GREG_QUEST, "value": ["int", 1, "LOG_RUNNING"]},
+            ],
+            kind="choice",
+            parents=["DIA_ADDON_GREG_NW_HALLO"],
+            writes=[GREG_QUEST],
+            description="Почему бы и нет?",
+        ),
+        _node(
+            GREG_PARENT,
+            GREG,
+            [
+                {
+                    "do": "choice",
+                    "node": GREG_END,
+                    "text": "Они пропустят тебя в одежде крестьянина.",
+                    "when": ["||", _has("ITAR_BAU_L"), _has("ITAR_BAU_M")],
+                }
+            ],
+            condition=[
+                "&&",
+                ["==", ["var", "GREGLOCATION"], ["int", 0]],
+                ["==", ["var", GREG_QUEST], ["int", 1, "LOG_RUNNING"]],
+            ],
+        ),
+        _node(
+            GREG_END,
+            GREG,
+            [
+                {
+                    "do": "give",
+                    "from": ["inst", "OTHER"],
+                    "to": ["inst", "SELF"],
+                    "item": ["sym", "ITAR_BAU_L"],
+                    "amount": ["int", 1],
+                    "when": _has("ITAR_BAU_L"),
+                },
+                {
+                    "do": "give",
+                    "from": ["inst", "OTHER"],
+                    "to": ["inst", "SELF"],
+                    "item": ["sym", "ITAR_BAU_M"],
+                    "amount": ["int", 1],
+                    "when": ["!", _has("ITAR_BAU_L")],
+                },
+                _line("Отлично! Вот твоя награда."),
+                {
+                    "do": "create_items",
+                    "npc": ["inst", "SELF"],
+                    "item": ["sym", "ITMI_GOLD"],
+                    "amount": ["int", 50],
+                },
+                {
+                    "do": "give",
+                    "from": ["inst", "SELF"],
+                    "to": ["inst", "OTHER"],
+                    "item": ["sym", "ITMI_GOLD"],
+                    "amount": ["int", 50],
+                },
+                {"do": "xp", "amount": ["int", 100, "XP_GREG_NW_GIVEBAUARMOR"]},
+                {"do": "set", "var": GREG_QUEST, "value": ["int", 2, "LOG_SUCCESS"]},
+            ],
+            kind="choice",
+            parents=[GREG_PARENT],
+            writes=[GREG_QUEST],
+        ),
+    ]
+    g["quests"].append(
+        {
+            "var": GREG_QUEST,
+            "topics": [{"topic": GREG_TOPIC, "title": GREG_TITLE}],
+            "running": [GREG_BEGIN],
+            "success": [GREG_END],
+            "failed": [],
+            "obsolete": [],
+            "other": [],
+        }
+    )
+    path = tmp_path / "greg-story.json"
+    path.write_text(json.dumps(g, ensure_ascii=False), encoding="utf-8")
+    return load(path)
+
+
+async def _greg(fake: FakeGame, llm: FakeBackend, graph: StoryGraph, *, running=0):
+    fake.vars = {GREG_QUEST: running, "GREGLOCATION": 0, "KAPITEL": 1}
+    fake.npc_states = {GREG: {"state": "alive", "name": "Грег"}}
+    fake.item_names = {
+        "ITMI_GOLD": "Золото",
+        "ITAR_BAU_L": "Одежда крестьянина",
+        "ITAR_BAU_M": "Одежда фермера",
+        "ITWR_MAP_NEWWORLD": "Карта земель Хориниса",
+        "ITFO_ADDON_RUM": "Ром",
+    }
+    link_cm = connected(fake)
+    link = await link_cm.__aenter__()
+    store = MemoryStore(":memory:")
+    dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=store)
+    chronicle = Chronicle(link, store)
+    vanilla = VanillaQuests(link, dialogue, chronicle, graph, hero_distance=lambda npc: 300.0)
+    await _until(lambda: chronicle.branch is not None)
+    return link_cm, dialogue, chronicle, vanilla
+
+
+async def test_greg_knows_the_whole_reward_before_giving_the_quest(greg):
+    fake = FakeGame(branch="A")
+    give = FakeStep("Помоги мне, и я заплачу.", [ToolCall("give_quest", {"quest": GREG_QUEST}, "g1")])
+    llm = FakeBackend(script=[give, FakeStep("Договорились.")], delay=0)
+    link_cm, dialogue, chronicle, vanilla = await _greg(fake, llm, greg)
+    try:
+        dialogue.open(GREG, "Грег")
+        await vanilla.prepare(GREG)
+        before = vanilla.situation(GREG) or ""
+        assert f"Ты можешь сам дать герою поручение «{GREG_TITLE}»" in before
+        for reward in ("50 золотых", "опыт +100", "Карта земель Хориниса", "Ром ×2"):
+            assert reward in before
+        assert "give_quest" in [t.name for t in vanilla.tools(GREG)]
+
+        await dialogue.say_as_player(GREG, "Как я могу тебе помочь?")
+        await _until(lambda: chronicle.facts("quest_given") != [])
+        assert {"do": "set", "var": GREG_QUEST, "value": 1} in _effects(fake, GREG)[0]
+        fake.vars[GREG_QUEST] = 1  # FakeGame keeps unchecked script effects as messages only.
+        await vanilla.prepare(GREG)
+        running = vanilla.situation(GREG) or ""
+        assert f"Ты ждёшь от героя: «{GREG_TITLE}»" in running
+        assert vanilla.starts[GREG] == {}
+        for reward in ("50 золотых", "опыт +100", "Карта земель Хориниса", "Ром ×2"):
+            assert reward in running
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("armor", ["ITAR_BAU_L", "ITAR_BAU_M"])
+async def test_gregs_parent_choice_requires_and_takes_the_clothing_the_hero_has(greg, armor):
+    fake = FakeGame(branch="A")
+    fake.hero_items = {armor: 1}
+    accept = FakeStep("Держи плату.", [ToolCall("accept_quest", {"quest": GREG_QUEST}, "a1")])
+    llm = FakeBackend(script=[accept, FakeStep("Прощай.")], delay=0)
+    link_cm, dialogue, chronicle, vanilla = await _greg(fake, llm, greg, running=1)
+    try:
+        ending = greg.nodes[GREG_END]
+        condition = vanilla._condition(ending)
+        claim = _claim(None, condition, greg, GREG, have={armor: 1})
+        assert claim.items == {armor: 1}
+        dialogue.open(GREG, "Грег")
+        await vanilla.prepare(GREG)
+        offer = vanilla.offers[GREG][GREG_QUEST]
+        assert offer.claim.items == {armor: 1}
+        assert offer.seen_true()
+
+        await dialogue.say_as_player(GREG, "Вот одежда крестьянина, в ней тебя пропустят.")
+        await _until(lambda: chronicle.facts("vanilla_reward") != [])
+        assert chronicle.facts("claim")[0]["truth"] is True
+        assert chronicle.facts("lie") == []
+        effects = _effects(fake, GREG)[0]
+        assert {"do": "give", "item": armor, "count": 1, "to": "self"} in effects
+        assert not any(e.get("to") == "self" and e.get("item") != armor for e in effects)
+        assert {"do": "give", "item": "ITMI_GOLD", "count": 50} in effects
+        assert {"do": "xp", "amount": 100} in effects
+        assert {"do": "set", "var": GREG_QUEST, "value": 2} in effects
+        assert {i: fake.hero_items[i] for i in GREG_BONUS} == GREG_BONUS
+        assert chronicle.facts("vanilla_reward")[0]["quest"] == GREG_QUEST
+
+        # QuestLog can observe this same success after accept_quest already paid it.
+        chronicle.record({"fact": "vanilla_quest", "quest": GREG_QUEST, "to": "success", "giver": GREG})
+        await _until(lambda: not vanilla._background)
+        assert len(chronicle.facts("vanilla_reward")) == 1
+        assert {i: fake.hero_items[i] for i in GREG_BONUS} == GREG_BONUS
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+async def test_gregs_missing_clothing_is_a_fetch_lie_with_the_truth_recorded(greg):
+    fake = FakeGame(branch="A")
+    accept = FakeStep("Ладно, верю.", [ToolCall("accept_quest", {"quest": GREG_QUEST}, "a1")])
+    llm = FakeBackend(script=[accept, FakeStep("Прощай.")], delay=0)
+    link_cm, dialogue, chronicle, vanilla = await _greg(fake, llm, greg, running=1)
+    try:
+        dialogue.open(GREG, "Грег")
+        await vanilla.prepare(GREG)
+        offer = vanilla.offers[GREG][GREG_QUEST]
+        assert offer.claim.kind == "fetch"
+        assert list(offer.claim.items.values()) == [1]
+        assert set(offer.claim.items) <= {"ITAR_BAU_L", "ITAR_BAU_M"}
+        assert not offer.seen_true()
+        await dialogue.say_as_player(GREG, "Одежду я оставил у дороги. Плати сейчас.")
+        await _until(lambda: chronicle.facts("lie") != [])
+        assert chronicle.facts("claim")[0]["truth"] is False
+        lie = chronicle.facts("lie")[0]
+        assert lie["kind"] == "fetch" and "0 of 1" in lie["truth"]
+        assert not any(e.get("to") == "self" for e in _effects(fake, GREG)[0])
+        assert vanilla.told[GREG_QUEST].lie
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+async def test_gregs_native_success_bonus_is_once_and_follows_the_save_branch(greg):
+    fake = FakeGame(branch="A")
+    link_cm, _, chronicle, vanilla = await _greg(fake, FakeBackend(delay=0), greg, running=1)
+    questlog = QuestLog(vanilla.link, greg, chronicle, settle_s=0)
+    try:
+        await _until(lambda: GREG_QUEST in questlog.states)
+        before_reward = chronicle.memory.head("A")
+        fake.vars[GREG_QUEST] = 2
+        # The native menu reports its parent dialog, whose choice writes success.
+        await fake.send(type="dialog_chosen", npc=GREG, node=GREG_PARENT, made=False)
+        await _until(lambda: chronicle.facts("vanilla_reward") != [])
+        transition = chronicle.facts("vanilla_quest")[0]
+        assert (transition["quest"], transition["node"], transition["giver"]) == (
+            GREG_QUEST,
+            GREG_PARENT,
+            GREG,
+        )
+        assert {i: fake.hero_items[i] for i in GREG_BONUS} == GREG_BONUS
+        bonus_effects = [
+            m for m in fake.story if m["type"] == "story_effect" and m.get("check") and m["npc"] == GREG
+        ]
+        assert len(bonus_effects) == 1
+        for item, count in GREG_BONUS.items():
+            assert {"do": "create", "item": item, "count": count} in bonus_effects[0]["effects"]
+            assert {"do": "give", "item": item, "count": count, "to": "hero"} in bonus_effects[0]["effects"]
+        after_reward = chronicle.memory.head("A")
+
+        async def succeed_again():
+            fake.vars[GREG_QUEST] = 1
+            await questlog.poll()
+            fake.vars[GREG_QUEST] = 2
+            await questlog.poll()
+            await _until(lambda: not vanilla._background)
+
+        await succeed_again()
+        assert len(chronicle.facts("vanilla_reward")) == 1
+        assert {i: fake.hero_items[i] for i in GREG_BONUS} == GREG_BONUS
+
+        async def load_branch(branch, head):
+            fake.vars[GREG_QUEST] = 1
+            await fake.send(type="loading")
+            await fake.send(type="session", branch=branch, parent="A", parent_seq=head, reason="load")
+            await vanilla.link.evaluate(["int", 1])
+            await _until(lambda: chronicle.branch == branch and GREG_QUEST in questlog.states)
+
+        await load_branch("after-reward", after_reward)
+        await succeed_again()
+        assert len(chronicle.facts("vanilla_reward")) == 1
+        assert {i: fake.hero_items[i] for i in GREG_BONUS} == GREG_BONUS
+
+        fake.hero_items.clear()  # Loading a save from before payment restores the hero's inventory too.
+        await load_branch("before-reward", before_reward)
+        assert chronicle.facts("vanilla_reward") == []
+        await succeed_again()
+        assert len(chronicle.facts("vanilla_reward")) == 1
+        assert {i: fake.hero_items[i] for i in GREG_BONUS} == GREG_BONUS
+    finally:
+        await questlog.close()
         await link_cm.__aexit__(None, None, None)

@@ -102,6 +102,38 @@ async def test_stash_teaching_and_experience_now():
         await link_cm.__aexit__(None, None, None)
 
 
+async def test_greg_sees_his_pirate_stash_and_can_offer_it():
+    greg = "PIR_1300_ADDON_GREG_NW"
+    items = {
+        GOLD: (80, "Золото"),
+        "ITFO_ADDON_RUM": (3, "Ром"),
+        "ITMI_ADDON_WHITEPEARL": (1, "Белая жемчужина"),
+        "ITMW_ADDON_PIR1HSWORD": (1, "Пиратская сабля"),
+    }
+    fake = FakeGame(branch="A")
+    link_cm, _link, _dialogue, _chronicle, deals = await _setup(
+        fake, FakeBackend(delay=0), MemoryStore(":memory:")
+    )
+    try:
+        fake.item_names.update({item: name for item, (_, name) in items.items()})
+        await deals.contracts.prepare(greg)
+        situation = deals.contracts.situation(greg) or ""
+        assert "Твой тайник" in situation
+        assert "80 золотых (ITMI_GOLD) ×80" in situation
+        for item, (count, name) in items.items():
+            if item != GOLD:
+                assert f"{name} ({item}) ×{count}" in situation
+        out = await deals.propose(
+            greg,
+            "Грег",
+            _terms(npc_gives=[{"item": item, "count": count} for item, (count, _) in items.items()]),
+            None,
+        )
+        assert out.status == "accepted", out.output
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
 async def test_too_few_learning_points_the_offer_goes():
     fake = FakeGame(branch="A")
     store = MemoryStore(":memory:")

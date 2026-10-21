@@ -80,6 +80,7 @@ def prism(c, axis, radius, length, sides, material):
 bed_w = cfg.get("bed_width", 1.28)
 beam_w, beam_h = cfg.get("beam", [0.08, 0.1])
 post = cfg.get("post", 0.07)
+inset = 0.002                                  # posts are this much smaller on each side (below)
 y_rear, y_tip = lo.y, hi.y
 radius = -lo.z
 beam_x = bed_w / 2 - beam_w / 2
@@ -97,7 +98,7 @@ for _ in range(4):
     y_rear = (lo.y + B * math.sin(angle)) / math.cos(angle)                       # the rear's lower edge
 R = Matrix.Rotation(angle, 3, "X")
 y_front = y_rear + cfg.get("bed_length", 1.7)
-top_z = (hi.z - y_rear * math.sin(angle)) / math.cos(angle)
+top_z = (hi.z - (y_rear + inset) * math.sin(angle)) / math.cos(angle)   # the rear posts' back top edge
 wall = top_z - floor_z - plank_t
 
 
@@ -125,21 +126,26 @@ x = -bed_w / 2
 for wd in widths:
     board((x + wd / 2, (y_rear + y_front) / 2, floor_z + plank_t / 2), Y, X, Z, y_front - y_rear, wd, plank_t, PLANK)
     x += wd + gap
-# Posts: three along each long side, one more in the middle of the back.
+# Posts: three along each long side, one more in the middle of the back. A post is as wide as
+# the beam it passes through, and its place is flush with the beam, the floor's edge and ends:
+# faces sharing a plane z-fight (coplanar.py). So each post is 2 mm smaller on every side than
+# its place and its foot ends 2 mm up inside the beam (the middle one inside the floor plank).
+post_in = post - 2 * inset
 post_ys = np.linspace(y_rear + post / 2, y_front - post / 2, cfg.get("posts", 3))
 for sx in (-1, 1):
     for yc in post_ys:
-        P.post(w((sx * (bed_w / 2 - post / 2), yc, top_z)), w((sx * (bed_w / 2 - post / 2), yc, beam_z - beam_h / 2)),
-               post, post, R @ X, R @ Y, FRAME, tile)
-P.post(w((0, y_rear + post / 2, top_z)), w((0, y_rear + post / 2, floor_z)), post, post, R @ X, R @ Y, FRAME, tile)
+        P.post(w((sx * (bed_w / 2 - post / 2), yc, top_z)), w((sx * (bed_w / 2 - post / 2), yc, beam_z - beam_h / 2 + inset)),
+               post_in, post_in, R @ X, R @ Y, FRAME, tile)
+P.post(w((0, y_rear + post / 2, top_z)), w((0, y_rear + post / 2, floor_z + inset)), post_in, post_in, R @ X, R @ Y, FRAME, tile)
 # Rails inside the posts: both long sides and the back.
 rail_h, rail_t = cfg.get("rail", [0.1, 0.035])
+inner = post - inset                           # from the bed's edge to the posts' inner faces
 for h in cfg.get("rails", [0.22, 0.45]):
     zc = floor_z + plank_t + h
     for sx in (-1, 1):
-        board((sx * (bed_w / 2 - post - rail_t / 2), (y_rear + y_front) / 2, zc), Y, Z, X * sx,
+        board((sx * (bed_w / 2 - inner - rail_t / 2), (y_rear + y_front) / 2, zc), Y, Z, X * sx,
               y_front - y_rear - 0.02, rail_h, rail_t, PLANK)
-    board((0, y_rear + post + rail_t / 2, zc), X, Z, -Y, bed_w - 2 * post - 2 * rail_t, rail_h, rail_t, PLANK)
+    board((0, y_rear + inner + rail_t / 2, zc), X, Z, -Y, bed_w - 2 * inner - 2 * rail_t, rail_h, rail_t, PLANK)
 # Cross bar between the shafts.
 board((0, y_front + cfg.get("cross_bar", 1.25) * (y_tip - y_front) / 2, beam_z), X, Z, Y, 2 * beam_x - beam_w, 0.07, 0.06, FRAME)
 

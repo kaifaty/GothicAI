@@ -37,6 +37,7 @@ TARGETS = [
             {"key": "OWN_PROP_IRON_NAIL", "group": "METAL", "role": "small forged nail heads"},
             {"key": "OWN_PROP_IRON_BAND", "group": "METAL", "role": "forged straps; unused by the 2026-10-21 crate"},
             {"key": "OWN_PROP_ROPE", "group": "WOOD", "role": "rope handles on the ends; small, so they sound and collide as wood"},
+            {"key": "OWN_PROP_WOOD_INNER", "group": "WOOD", "role": "dark core box seen through the plank gaps"},
         ],
     },
     {

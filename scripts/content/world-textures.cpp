@@ -1,4 +1,4 @@
-// Offline surface inventory. Only names and aggregate numbers leave the game archives.
+// Offline surface inventory and geometry export. No texture pixels leave the game archives.
 // scripts/content-textures.sh builds this against the engine's ZenKit ABI.
 #include <zenkit/Logger.hh>
 #include <zenkit/MultiResolutionMesh.hh>
@@ -22,6 +22,7 @@
 #include <set>
 #include <numeric>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -396,6 +397,145 @@ void writeReadme(const fs::path& path,const std::vector<Inventory>& inventories,
 
 #include "world-intent.inc"
 
+struct TriangleBounds {
+  double xmin=-INFINITY,zmin=-INFINITY,xmax=INFINITY,zmax=INFINITY;
+  bool intersects(const Triangle& t) const {
+    double xlo=INFINITY,zlo=INFINITY,xhi=-INFINITY,zhi=-INFINITY;
+    for(auto p:t.p) {
+      xlo=std::min(xlo,p.x); xhi=std::max(xhi,p.x);
+      zlo=std::min(zlo,p.z); zhi=std::max(zhi,p.z);
+    }
+    return xhi>=xmin && xlo<=xmax && zhi>=zmin && zlo<=zmax;
+  }
+};
+
+void jsonTriangle(std::ostream& f,const Triangle& t,size_t source,const std::string& visual) {
+  f << "{\"texture\":"; jsonString(f,t.texture);
+  f << ",\"visual\":"; jsonString(f,visual);
+  f << ",\"source\":" << source << ",\"area_m2\":" << area(t.p[0],t.p[1],t.p[2])
+    << ",\"center\":"; jsonPoint(f,triangleCenter(t));
+  f << ",\"normal\":"; jsonPoint(f,triangleNormal(t));
+  f << ",\"points\":[";
+  for(size_t k=0;k<3;++k) { if(k) f << ','; jsonPoint(f,t.p[k]); }
+  f << "],\"uv\":[";
+  for(size_t k=0;k<3;++k) { if(k) f << ','; f << '[' << t.uv[k].x << ',' << t.uv[k].y << ']'; }
+  f << "]}";
+}
+
+int trianglesMain(const fs::path& game,const fs::path& destination,const fs::path& textureFile,
+                  const TriangleBounds& bounds,bool bounded) {
+  std::ifstream selected(textureFile);
+  if(!selected) throw std::runtime_error("cannot read texture selection "+textureFile.string());
+  std::set<std::string> textures;
+  for(std::string line;std::getline(selected,line);) {
+    const auto first=line.find_first_not_of(" \t\r"),last=line.find_last_not_of(" \t\r");
+    if(first!=std::string::npos && line[first]!='#') textures.insert(textureName(line.substr(first,last-first+1)));
+  }
+  if(textures.empty()) throw std::runtime_error("texture selection is empty");
+  size_t zenkitErrors=0;
+  zenkit::Logger::set(zenkit::LogLevel::ERROR,[&](auto,const char* component,const char* message) {
+    ++zenkitErrors; std::cerr << "ZenKit " << component << ": " << message << '\n';
+  });
+  std::map<std::string,fs::path> archives;
+  for(const auto& e:fs::directory_iterator(game/"Data")) if(e.is_regular_file())
+    archives[upper(e.path().filename().string())]=e.path();
+  zenkit::Vfs vfs;
+  // Deliberately mount only geometry archives; texture archives are never opened.
+  for(const auto* name:{"MESHES.VDF","MESHES_ADDON.VDF","WORLDS.VDF","WORLDS_ADDON.VDF"}) {
+    const auto it=archives.find(name); if(it==archives.end()) throw std::runtime_error(std::string("missing archive ")+name);
+    vfs.mount_disk(it->second,zenkit::VfsOverwriteBehavior::ALL);
+  }
+  const auto* worldFile=vfs.find("NEWWORLD.ZEN");
+  if(!worldFile) throw std::runtime_error("missing NEWWORLD.ZEN");
+  zenkit::World world; auto input=worldFile->open_read(); world.load(input.get(),zenkit::GameVersion::GOTHIC_2);
+  const auto worldTriangles=worldGeometry(world.world_mesh);
+  fs::create_directories(destination.parent_path());
+  auto f=output(destination);
+  f << "{\"world\":\"NEWWORLD.ZEN\",\"coordinates\":\"Gothic world centimetres (Y up)\",\"bounds_xz_cm\":";
+  if(bounded) f << '[' << bounds.xmin << ',' << bounds.zmin << ',' << bounds.xmax << ',' << bounds.zmax << ']';
+  else f << "null";
+  f << ",\"bounds_rule\":\"uncut triangles with intersecting XZ bounding rectangles\",\"candidate_house_triangles\":[";
+  size_t triangleCount=0,nextVob=0;
+  std::vector<std::array<Point,3>> occluders;
+  auto add=[&](const Geometry& geometry,const zenkit::VirtualObject* v,size_t source,const std::string& visual) {
+    for(const auto& original:geometry) {
+      auto t=original;
+      for(auto& p:t.p) p=transform(p,v);
+      if(!bounds.intersects(t)) continue;
+      if(!std::isfinite(area(t.p[0],t.p[1],t.p[2]))) throw std::runtime_error("non-finite triangle area");
+      occluders.push_back(t.p);
+      if(!textures.contains(t.texture)) continue;
+      t.shadingNormal=transformNormal(t.shadingNormal,v);
+      for(auto uv:t.uv) if(!std::isfinite(uv.x) || !std::isfinite(uv.y)) throw std::runtime_error("non-finite UV");
+      if(triangleCount++) f << ',';
+      jsonTriangle(f,t,source,visual);
+    }
+  };
+  add(worldTriangles,nullptr,0,"");
+  std::map<std::string,Geometry> cache;
+  std::vector<const zenkit::VirtualObject*> freepoints;
+  std::function<void(const zenkit::VirtualObject&)> visit=[&](const auto& v) {
+    if(v.type==zenkit::VirtualObjectType::zCVobSpot) freepoints.push_back(&v);
+    if(v.visual && !v.visual->name.empty()) {
+      auto original=upper(v.visual->name); std::replace(original.begin(),original.end(),'\\','/');
+      original=fs::path(original).filename().string(); const auto ext=fs::path(original).extension().string();
+      if((ext==".3DS" || ext==".MRM" || ext==".MSH") && v.show_visual &&
+         v.type!=zenkit::VirtualObjectType::oCNpc && v.visual->type!=zenkit::VisualType::DECAL &&
+         v.visual->type!=zenkit::VisualType::PARTICLE_EFFECT) {
+        auto visual=ext==".3DS" ? fs::path(original).replace_extension(".MRM").string() : original;
+        auto found=cache.find(visual);
+        if(found==cache.end()) {
+          const auto* file=vfs.find(visual); if(!file) throw std::runtime_error("missing static mesh "+visual);
+          found=cache.emplace(visual,staticGeometry(*file,ext==".MSH")).first;
+        }
+        add(found->second,&v,++nextVob,original);
+      }
+    }
+    for(const auto& child:v.children) if(child) visit(*child);
+  };
+  for(const auto& v:world.world_vobs) if(v) visit(*v);
+  if(zenkitErrors) throw std::runtime_error("ZenKit reported "+std::to_string(zenkitErrors)+" errors");
+  f << "],\"occluders\":[";
+  for(size_t i=0;i<occluders.size();++i) {
+    if(i) f << ','; f << '[';
+    for(size_t k=0;k<3;++k) { if(k) f << ','; jsonPoint(f,occluders[i][k]); }
+    f << ']';
+  }
+  f << "],\"waypoints\":[";
+  size_t pointCount=0;
+  if(world.way_net) for(const auto& wp:world.way_net->points) if(wp) {
+    if(pointCount++) f << ',';
+    f << "{\"name\":"; jsonString(f,wp->name);
+    f << ",\"position\":"; jsonPoint(f,Point(wp->position));
+    f << ",\"direction\":"; jsonPoint(f,Point(wp->direction)); f << '}';
+  }
+  f << "],\"freepoints\":[";
+  for(size_t k=0;k<freepoints.size();++k) {
+    if(k) f << ','; const auto& v=*freepoints[k];
+    f << "{\"name\":"; jsonString(f,v.vob_name);
+    f << ",\"position\":"; jsonPoint(f,Point(v.position));
+    f << ",\"direction\":"; jsonPoint(f,Point(v.rotation.columns[2])); f << '}';
+  }
+  f << "],\"ground_triangles\":[";
+  size_t groundCount=0;
+  for(const auto& t:worldTriangles) if(bounds.intersects(t) && triangleNormal(t).y>0.5) {
+    if(groundCount++) f << ','; f << '[';
+    for(size_t k=0;k<3;++k) { if(k) f << ','; jsonPoint(f,t.p[k]); }
+    f << ']';
+  }
+  f << "],\"ground_textures\":[";
+  size_t groundTextureCount=0;
+  for(const auto& t:worldTriangles) if(bounds.intersects(t) && triangleNormal(t).y>0.5) {
+    if(groundTextureCount++) f << ',';
+    jsonString(f,t.texture);
+  }
+  f << "]}\n";
+  std::cerr << "Triangles: " << triangleCount << " selected, " << groundCount << " upward ground, "
+            << occluders.size() << " occluders, "
+            << pointCount << " waypoints, " << freepoints.size() << " freepoints; " << destination << '\n';
+  return 0;
+}
+
 void require(bool condition,const char* message) {
   if(!condition) throw std::runtime_error(message);
 }
@@ -437,7 +577,17 @@ void selfTest() {
           "MSH fan triangulation and density");
   quad.geometry[0].flags.is_portal=1;
   require(basicGeometry(quad).empty(),"MSH portal exclusion");
-  std::cout << "self-test: 12 checks passed\n";
+  const TriangleBounds bounds{50,50,150,150};
+  auto flat=t; flat.p={Point(0,0,0),Point(200,0,0),Point(0,0,200)};
+  require(bounds.intersects(flat),"triangle export XZ overlap");
+  for(auto& p:flat.p) p.x+=500;
+  require(!bounds.intersects(flat),"triangle export XZ rejection");
+  std::ostringstream exported;
+  jsonTriangle(exported,t,7,"HOUSE.3DS");
+  require(exported.str().find("\"source\":7")!=std::string::npos &&
+          exported.str().find("\"uv\":[[0,0],[1,0],[0,1]]")!=std::string::npos,
+          "triangle export source and per-vertex UV");
+  std::cout << "self-test: 15 checks passed\n";
 }
 }
 
@@ -445,7 +595,22 @@ int main(int argc,char** argv) {
   try {
     if(argc==2 && std::string(argv[1])=="--self-test") { selfTest(); intentSelfTest(); return 0; }
     if(argc==4 && std::string(argv[1])=="--intent") return intentMain(argv[2],argv[3]);
-    if(argc!=3) throw std::runtime_error("usage: world-textures <game dir> <out dir> | --intent <game dir> <outside json> | --self-test");
+    if(argc>1 && std::string(argv[1])=="--triangles") {
+      if((argc!=6 && argc!=11) || std::string(argv[4])!="--textures" ||
+         (argc==11 && std::string(argv[6])!="--bounds"))
+        throw std::runtime_error("usage: --triangles <game dir> <outside json> --textures <names file> [--bounds xmin zmin xmax zmax]");
+      TriangleBounds bounds;
+      if(argc==11) {
+        std::array<double*,4> values={&bounds.xmin,&bounds.zmin,&bounds.xmax,&bounds.zmax};
+        for(size_t k=0;k<4;++k) {
+          size_t used=0; *values[k]=std::stod(argv[7+k],&used);
+          if(used!=std::string(argv[7+k]).size() || !std::isfinite(*values[k])) throw std::runtime_error("invalid XZ bound");
+        }
+        if(bounds.xmin>bounds.xmax || bounds.zmin>bounds.zmax) throw std::runtime_error("inverted XZ bounds");
+      }
+      return trianglesMain(argv[2],argv[3],argv[5],bounds,argc==11);
+    }
+    if(argc!=3) throw std::runtime_error("usage: world-textures <game dir> <out dir> | --intent <game dir> <outside json> | --triangles <game dir> <outside json> --textures <names file> [--bounds xmin zmin xmax zmax] | --self-test");
     size_t zenkitErrors=0;
     zenkit::Logger::set(zenkit::LogLevel::ERROR,[&](auto,const char* component,const char* message) {
       ++zenkitErrors; std::cerr << "ZenKit " << component << ": " << message << '\n';

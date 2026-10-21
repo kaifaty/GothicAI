@@ -4,23 +4,29 @@
   "scales": {
     "OWN_PROP_WOOD_PLANK": 2.5,
     "OWN_PROP_WOOD_BRACE": 2.5,
-    "OWN_PROP_ROPE": 6.6
+    "OWN_PROP_ROPE": 6.6,
+    "OWN_PROP_WOOD_INNER": 2.5
   },
   "targets": {
     "OWN_PROP_WOOD_PLANK": [
-      0.038,
-      0.031,
-      0.016
+      0.0553,
+      0.0426,
+      0.0184
     ],
     "OWN_PROP_WOOD_BRACE": [
-      0.033,
-      0.027,
-      0.014
+      0.048,
+      0.037,
+      0.016
     ],
     "OWN_PROP_ROPE": [
       0.075,
       0.066,
       0.046
+    ],
+    "OWN_PROP_WOOD_INNER": [
+      0.011,
+      0.0085,
+      0.0037
     ]
   },
   "slots": {
@@ -35,6 +41,10 @@
     "OWN_PROP_ROPE": [
       "OWN_CRATEPILE_HARBOUR_ROPE",
       "UNDEF"
+    ],
+    "OWN_PROP_WOOD_INNER": [
+      "OWN_CRATEPILE_HARBOUR_WOOD",
+      "WOOD"
     ]
   },
   "metal": [],
@@ -52,13 +62,19 @@
   "contrast": {
     "OWN_PROP_WOOD_PLANK": 1.15,
     "OWN_PROP_WOOD_BRACE": 1.15,
-    "OWN_PROP_ROPE": 1.1
+    "OWN_PROP_ROPE": 1.1,
+    "OWN_PROP_WOOD_INNER": 1.15
   },
   "edge_wear": {
     "OWN_PROP_WOOD_PLANK": 0.2,
-    "OWN_PROP_WOOD_BRACE": 0.2
+    "OWN_PROP_WOOD_BRACE": 0.2,
+    "OWN_PROP_WOOD_INNER": 0.0
   },
   "tone_spread": 0.14,
   "seam_dark": 0.3,
-  "seam_width": 0.04
+  "seam_width": 0.04,
+  "measure_ao": {
+    "OWN_PROP_WOOD_PLANK": 0.5,
+    "OWN_PROP_WOOD_BRACE": 0.5
+  }
 }

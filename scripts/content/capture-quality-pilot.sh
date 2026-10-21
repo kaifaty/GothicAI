@@ -6,6 +6,8 @@
 # --compose-2 CAPTURES OUTPUT writes seven original / city-3 / B / pilot-2 boards.
 # --compose-3 CAPTURES OUTPUT writes seven original / pilot-2 / pilot-3a / pilot-3b boards.
 # QUALITY_PILOT_TASK=gothic-ai/market-house selects market-house.bench (three views).
+# QUALITY_PILOT_TASK=gothic-ai/harbour-house selects harbour-house.bench (twelve original facade views).
+# QUALITY_PILOT_TASK=gothic-ai/harbour-hut selects harbour-hut.bench (six original views, normal game FOV).
 # --compose-house CAPTURES OUTPUT writes original / pilot-3b / house-1 boards.
 # --compose-house-2 CAPTURES OUTPUT writes original / house-1 / house-2 boards.
 set -euo pipefail
@@ -14,6 +16,8 @@ HOST="${RYZEN_HOST:-ryzen}"
 TASK="${QUALITY_PILOT_TASK:-gothic-ai/quality-pilot}"
 SCENARIO=quality-pilot.bench
 [[ "$TASK" != gothic-ai/market-house ]] || SCENARIO=market-house.bench
+[[ "$TASK" != gothic-ai/harbour-house ]] || SCENARIO=harbour-house.bench
+[[ "$TASK" != gothic-ai/harbour-hut ]] || SCENARIO=harbour-hut.bench
 
 if [[ "${1:-}" == --remote-prepare ]]; then
   task="$HOME/$TASK"
@@ -33,6 +37,7 @@ fi
 if [[ "${1:-}" == --remote-capture ]]; then
   variant="${2:?variant}"
   [[ "$variant" == original || "$variant" == city-3 || "$variant" == pilot-b || "$variant" == pilot-c || "$variant" == pilot-2 || "$variant" == pilot-3a || "$variant" == pilot-3b || "$variant" == house-1 || "$variant" == house-2 ]] || exit 2
+  [[ "$TASK" != gothic-ai/harbour-house && "$TASK" != gothic-ai/harbour-hut || "$variant" == original ]] || exit 2
   task="$HOME/$TASK"
   out="$task/runs/$variant"
   mkdir -p "$out/run"
@@ -67,14 +72,44 @@ INI
   export OPENGOTHIC_TEXTURES='' OPENGOTHIC_FRACTURE=''
   export OPENGOTHIC_CENSUS="$out/census.json"
   export OPENGOTHIC_BENCH="$task/scripts/$SCENARIO" OPENGOTHIC_BENCH_OUT="$out"
+  game="$HOME/gothic-ai/game"
+  if [[ "$TASK" == gothic-ai/harbour-house ]]; then
+    # Keep the wide survey lens isolated from the shared installation.
+    python3 - "$game" "$task/game" <<'PYGAME'
+from pathlib import Path
+import re
+import sys
+source, target = map(Path, sys.argv[1:])
+target.mkdir(exist_ok=True)
+for entry in source.iterdir():
+    if entry.name.lower() != 'system' and not (target / entry.name).exists():
+        (target / entry.name).symlink_to(entry)
+system = next(entry for entry in source.iterdir() if entry.name.lower() == 'system')
+local_system = target / system.name
+local_system.mkdir(exist_ok=True)
+for entry in system.iterdir():
+    if entry.name.lower() != 'systempack.ini' and not (local_system / entry.name).exists():
+        (local_system / entry.name).symlink_to(entry)
+original = next((p for p in system.iterdir() if p.name.lower() == 'systempack.ini'), None)
+text = original.read_text(errors='replace') if original else '[PARAMETERS]\n'
+text = re.sub(r'(?im)^[ \t]*VerticalFOV[ \t]*=.*$', '', text)
+text, count = re.subn(r'(?im)^[ \t]*\[PARAMETERS\][ \t]*\r?$', '[PARAMETERS]\nVerticalFOV=125', text, count=1)
+if not count:
+    text += '\n[PARAMETERS]\nVerticalFOV=125\n'
+(local_system / 'SystemPack.ini').write_text(text)
+PYGAME
+    game="$task/game"
+  fi
   rc=0
   (cd "$out/run" && timeout 240 "$task/build/opengothic/Gothic2Notr" \
-    -g "$HOME/gothic-ai/game" -g2 -window -devmode -save 1) >"$out/game.log" 2>&1 || rc=$?
+    -g "$game" -g2 -window -devmode -save 1) >"$out/game.log" 2>&1 || rc=$?
   printf '%s\n' "$rc" >"$out/exit.txt"
   [[ "$rc" == 0 ]] || { tail -30 "$out/game.log"; exit "$rc"; }
   check_args=()
   [[ "$TASK" != gothic-ai/quality-pilot-3 ]] || check_args+=(--iteration-3)
   [[ "$TASK" != gothic-ai/market-house ]] || check_args+=(--market-house)
+  [[ "$TASK" != gothic-ai/harbour-house ]] || check_args+=(--harbour-house)
+  [[ "$TASK" != gothic-ai/harbour-hut ]] || check_args+=(--harbour-hut)
   python3 "$task/scripts/capture-quality-pilot.py" check "$out" "$task/scripts/$SCENARIO" "$task/content/$variant/materials/materials.json" "${check_args[@]}"
   exit 0
 fi
@@ -100,6 +135,7 @@ fi
 if [[ "${1:-}" == --capture ]]; then
   variant="${2:?variant}"; out="${3:?output}"
   [[ "$variant" == original || "$variant" == city-3 || "$variant" == pilot-b || "$variant" == pilot-c || "$variant" == pilot-2 || "$variant" == pilot-3a || "$variant" == pilot-3b || "$variant" == house-1 || "$variant" == house-2 ]] || exit 2
+  [[ "$TASK" != gothic-ai/harbour-house && "$TASK" != gothic-ai/harbour-hut || "$variant" == original ]] || exit 2
   mkdir -p "$out/$variant"
   if [[ "$variant" != original ]]; then
     source_root="${CONTENT_STAGING_ROOT:-$HOME/.local/share/gothic-ai/content-staging}/$variant"

@@ -6,7 +6,9 @@ import pytest
 
 from gothic_ai.bodypilot import BodyPilot
 from gothic_ai.game import GameLink
+from gothic_ai.llm import Message, Tool, ToolCall
 from gothic_ai.protocol import BodyLease, RosterEntry
+from gothic_ai.scenarios.companions import _neural_talk_bandit
 from gothic_ai.scenarios.neural_knockout import _hero_release_state
 
 
@@ -71,3 +73,24 @@ def test_empty_local_state_requires_confirmed_release_and_unwatch(released_episo
     setattr(summary, unconfirmed, False)
 
     assert not _hero_release_state(link, pilot, "NPC", summary)[0]
+
+
+@pytest.mark.parametrize(("cue", "expected"), [
+    ("Бандит, проверим твою шпагу.", "ultimatum"),
+    ("[Срок вышел: герой не подчинился]", "set_intent"),
+    ("Бандит, я вернулся. Поговорим?", None),
+])
+async def test_neural_talk_bandit_waits_for_ultimatum_before_fighting(cue, expected):
+    attack = ToolCall("set_intent", {"goal": "fight", "target": "PLAYER"})
+    model = _neural_talk_bandit(attack)
+    events = [event async for event in model.stream(
+        instructions="You are a bandit", messages=[Message("user", cue)],
+        tools=[Tool("ultimatum", ""), Tool("set_intent", "")],
+    )]
+    calls = [event for event in events if isinstance(event, ToolCall)]
+
+    assert [call.name for call in calls] == ([expected] if expected else [])
+    if expected == "ultimatum":
+        assert calls[0].arguments == {"demand": "Уходи отсюда", "seconds": 10}
+    if expected == "set_intent":
+        assert calls[0].arguments == attack.arguments

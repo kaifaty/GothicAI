@@ -112,7 +112,8 @@ void main() {
     // The existing sky LUT has no roughness mips. Its diffuse convolution
     // supplies the broad lobe without another pass; split-sum attenuates it.
     const vec3 reflectedSky = mix(sharpSky, sky, orm.g*orm.g);
-    color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV);
+    color += reflectedSky * materialEnvBrdf(materialF0(linear, orm.b), orm.g, noV) *
+             materialSpecularWeight(orm.g, orm.b);
     } else
 #endif
     {

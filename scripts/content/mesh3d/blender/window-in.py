@@ -258,7 +258,8 @@ for sx in (-1, 1):
     prism(Vector((sx * (hi.x - fin), ry, rz)), X, fin, 2 * fin, 6, IRON)
     bx = sx * cfg.get("brackets", 0.93)
     P.board(Vector((bx, (y_wall + 0.13 + ry) / 2, rz - rr - 0.006)), Y, X, Z, ry - y_wall - 0.13 + 0.02, 0.016, 0.012, IRON)
-    P.board(Vector((bx, ry, rz - rr / 2)), Z, X, Y, rr * 3 + 0.012, 0.016, 0.008, IRON)        # the hook round the rod
+    # the hook round the rod, 2 mm narrower than the arm it overlaps: equal widths share side planes (coplanar.py)
+    P.board(Vector((bx, ry, rz - rr / 2)), Z, X, Y, rr * 3 + 0.012, 0.014, 0.008, IRON)
     P.board(Vector((bx, y_wall + 0.13, rz - 0.035)), Z, X, Y, 0.12, 0.04, 0.006, IRON)         # wall plate
 # Curtains gathered at both sides, hung on rings.
 c_x, w_top, w_bottom, c_top, folds, per_fold, depth, thick, c_y = cfg.get("curtain", [0.985, 0.4, 0.47, 0.78, 5, 4, 0.025, 0.008, 0.19])

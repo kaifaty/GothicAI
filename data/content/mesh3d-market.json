@@ -302,6 +302,11 @@
         "key": "OWN_PROP_ROPE",
         "group": "UNDEF",
         "role": "rope handles on crate ends"
+      },
+      {
+        "key": "OWN_PROP_WOOD_INNER",
+        "group": "WOOD",
+        "role": "dark core box seen through the plank gaps"
       }
     ],
     "kind": "static_mrm",

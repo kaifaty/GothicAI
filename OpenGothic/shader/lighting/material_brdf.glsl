@@ -7,6 +7,16 @@ vec3 materialF0(vec3 albedo, float metallic) {
   return mix(vec3(0.04), clamp(albedo, 0.0, 1.0), metallic);
   }
 
+// Original textures are lit by Lambert alone, through textureAlbedo(), and our
+// albedo targets are matched to them. A rough dielectric's GGX lobe is broad and
+// uncoloured: it only lays a flat grey-blue veil the originals never get (+11%
+// luminance and bluer on the crate pile at the same texel). Fade it from 0.5,
+// where the lobe still forms a highlight, to 0.8, where it no longer depends on
+// the view. Metals keep their specular in full.
+float materialSpecularWeight(float roughness, float metallic) {
+  return mix(1.0 - smoothstep(0.5, 0.8, roughness), 1.0, metallic);
+  }
+
 vec3 materialSpecular(vec3 normal, vec3 view, vec3 light, vec3 f0, float roughness) {
   const float noL = max(dot(normal, light), 0.0);
   const float noV = max(dot(normal, view), 0.0);
@@ -38,7 +48,10 @@ vec3 materialSpecular(vec3 normal, vec3 view, vec3 light, vec3 f0, float roughne
 vec3 materialBrdf(vec3 albedo, vec3 normal, vec3 view, vec3 light, vec3 orm) {
   const float metallic = orm.b;
   const vec3 diffuse = albedo * Fd_Lambert * (1.0 - metallic);
-  return diffuse + materialSpecular(normal, view, light, materialF0(albedo, metallic), orm.g);
+  const float weight = materialSpecularWeight(orm.g, metallic);
+  if(weight<=0.0)
+    return diffuse;
+  return diffuse + materialSpecular(normal, view, light, materialF0(albedo, metallic), orm.g) * weight;
   }
 
 vec3 materialEnvBrdf(vec3 f0, float roughness, float noV) {

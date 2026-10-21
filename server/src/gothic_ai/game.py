@@ -888,6 +888,11 @@ class GameLink:
     ) -> None:
         """Effects on an npc through the scripts (see StoryEffectCmd); `check`: all or nothing, the gives
         only if each giver has what it gives."""
+        if any(e.get("do") in ("gate_pass", "gate_checklog") for e in effects):
+            from .gates import play_gate_effects
+
+            await play_gate_effects(self, npc.upper(), effects)
+            return
         cmd = StoryEffectCmd(req=self._next_id("s"), npc=npc.upper(), effects=effects, check=check or None)
         await self._request(cmd, timeout)
         for e in effects:

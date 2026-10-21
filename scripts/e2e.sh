@@ -7,6 +7,9 @@
 #       LLM=chatgpt runs only the short compensation scene with the real model
 #   crime_ally: new game, no SAVE, LLM=fake; Brago attacks the following Cavalorn, the hero knocks him
 #       down and finishes him; murder and crime_side remain in the chronicle and Cavalorn answers
+#   bandit_parley: new game, LLM=fake; Brago's first fight is rejected, an ultimatum runs its course;
+#       Y pays 100 gold for four hours of peace with the cave gang, including 1015; no attack for 20 s,
+#       then drawing a weapon breaks the truce and Brago attacks
 #   m0: takes Xardas over, walks him around and returns him to his routine
 #   m1: Xardas answers a player question line by line (LLM backend: LLM=fake|chatgpt|local)
 #   websocket: Lobart and Hilda speak through Responses against an in-process fake server: per-npc
@@ -26,7 +29,8 @@
 #   neural-group: three one-handed bandits fight the hero and his swordsman companion under P30 at once;
 #       each gets >=10 decisions, no fallback, release <=2 s, service p95 <=20 ms; requires GOTHIC_BODY_URL
 #   neural-talk: a non-bandit swordsman attacks after words (AR_NONE), knocks the hero out alive, releases
-#       P30 and returns to his routine; the hero gets up. Then a hostile bandit talks, attacks, loses the
+#       P30 and returns to his routine; the hero gets up. Then a hostile bandit gives a ten-second
+#       ultimatum, attacks after its expiry, loses the
 #       fleeing hero, returns to his routine, reattacks or talks again and starts a fresh fight. After
 #       return_to_second_fight, >=20 decisions or 20 s trigger another hero flight; fight_end_clean checks
 #       target_lost/npc_unavailable, release <=2 s and no lease/body/watch after 2 s; LLM=fake, GOTHIC_BODY_URL
@@ -159,6 +163,9 @@
 #       Matteo witnesses a native theft; Andre stays locked until the next day, charges 50 through
 #       his native voiced dialog and accepts payment. Matteo still remembers. A second theft with
 #       an accepted silence deal never reaches Andre. Native theft perceptions stay enabled.
+#   gate: new game, LLM=fake: the city guard sells passage for 100 gold through Y; both gate guards
+#       get AIV_PASSGATE and the hero crosses without SECONDWARN/ATTACK. Loading the outside save,
+#       a believed let_pass claim grants passage and records its text, reference and game time.
 #   crime_react: rule reactions at the deed (docs/crime.md, layer 4a), LLM=fake; SAVE=save_slot_1.sav.
 #       Hilda's retained theft witness and own SVM shout; Lobart courage 2 demands restitution, then
 #       a temporary scenario card with courage 3 fights through native AR_THEFT to a living knockout
@@ -200,6 +207,8 @@
 #       chapter occasions consumed by Showrunner.run; every line is finished by play_book_chain before
 #       the next occasion, with a game day and an injected 15 min between them. All three must have a
 #       line/none outcome, at least one completed line. SAVE=save_slot_1.sav; TIMEOUT=1200
+#   greg: LLM=fake, new game: Greg gives his city errand, accepts farmer clothes and pays 50 gold, a map
+#       and two rum; reload the branch without the clothes and his acceptance records a lie with its truth
 #   vanilla_line: LLM=fake only, stage 5 layer 3: take and finish Lobart's turnips through the scripts'
 #       own dialogs. The vanilla success occasion produces a neighbor's line with follows and a success
 #       requirement; its book offer is open, play_book_chain completes it, and save/load keeps the same
@@ -364,6 +373,10 @@ if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion || "$SCENARIO" = ne
   [ -z "${SAVE:-}" ] || { echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2; exit 2; }
 fi
 LLM="${LLM:-fake}"
+if [[ "$SCENARIO" == bandit_parley && ( "$LLM" != fake || -n "${SAVE:-}" ) ]]; then
+  echo 'scenario bandit_parley requires LLM=fake and a new game (unset SAVE)' >&2
+  exit 2
+fi
 if [[ "$SCENARIO" == neural-soak && "$LLM" != fake ]]; then
   echo 'scenario neural-soak requires LLM=fake' >&2
   exit 2
@@ -429,6 +442,10 @@ report_game_exit() {
   else
     echo "game exited: code $game_rc ($1)"
   fi
+  if [[ ( "$1" == unexpected || "$1" == exited ) && "$game_rc" == 137 ]] &&
+     ! grep -Fq "scenario $SCENARIO: checks started" "$LOG_DIR/server.log"; then
+    echo "game killed before checks at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  fi
   GAME=""
 }
 
@@ -437,15 +454,20 @@ cleanup() {
   # Reap our exact child PID, including a game killed before the first poll.
   # `|| true` preserves the scenario status if a child has already finished.
   if [[ -n "$GAME" ]]; then
-    kill "$GAME" 2>/dev/null || true
-    # A signal during the fork/exec handoff can miss the game. Bound the wait
-    # without touching another run's process or relying on its executable name.
-    for attempt in $(seq 1 20); do
-      kill -0 "$GAME" 2>/dev/null || break
-      sleep 0.1
-    done
-    kill -KILL "$GAME" 2>/dev/null || true
-    report_game_exit cleanup
+    if ! kill -0 "$GAME" 2>/dev/null; then
+      # The server may have finished before the poll noticed the dead game.
+      report_game_exit exited
+    else
+      kill "$GAME" 2>/dev/null || true
+      # A signal during the fork/exec handoff can miss the game. Bound the wait
+      # without touching another run's process or relying on its executable name.
+      for attempt in $(seq 1 20); do
+        kill -0 "$GAME" 2>/dev/null || break
+        sleep 0.1
+      done
+      kill -KILL "$GAME" 2>/dev/null || true
+      report_game_exit cleanup
+    fi
   fi
   kill "$SRV" 2>/dev/null || true
   if [[ -n "$ASR_PID" ]]; then kill "$ASR_PID" 2>/dev/null || true; fi

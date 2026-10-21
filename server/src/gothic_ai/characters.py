@@ -23,8 +23,11 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Any
 
+from .crime_law_graph import init_ops
 from .gamedata.storygraph import StoryGraph
 from .llm import LLMBackend, LLMError, Message, Tool, ToolCall
+from .story import freed
+from .validator import Patches
 
 log = logging.getLogger(__name__)
 
@@ -219,9 +222,20 @@ WRITE_TOOL = Tool(
 
 def subjects(graph: StoryGraph, people: list[dict[str, Any]], only: set[str] | None = None) -> list[Subject]:
     """The npc's with lines of their own in the graph, among the people of the world (story_people)."""
+    disabled = Patches.of([*freed(graph.nodes.__contains__), *init_ops(graph)]).disabled
+    active: set[str] = set()
+    pending = [node.id for node in graph.nodes.values() if not node.is_choice]
+    while pending:
+        id = pending.pop()
+        if id in active or id in disabled:
+            continue
+        active.add(id)
+        pending.extend(graph.nodes[id].choices())
     by_npc: dict[str, list[str]] = {}
     does: dict[str, set[str]] = {}
     for node in graph.nodes.values():
+        if node.id not in active:
+            continue
         npc = (node.npc or "").upper()
         if not npc or npc.startswith(("$", "PC_HERO")) or npc == "CH":
             continue

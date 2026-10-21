@@ -157,11 +157,13 @@ for r in range(rows_n + 1):
     uvs.append([(x, t * (y_valance - lo.y)) for x in x_cols])
 sheet(pts, grid_normals(pts), uvs, cloth, lambda r: CLOTH)
 
-# Rope lashings round each arm's ends, over the canvas.
+# Rope lashings round each arm's ends, over the canvas. Round the arm the lashing is as wide as
+# the post under it, and the back one wraps the post's top: its sides are 2 mm thinner, inside
+# the post's faces (one plane z-fights, coplanar.py).
 for x in xs:
     for y in (lo.y + 0.06, y_front - 0.05):
         zc = arm_top(y) - arm_h / 2 + cloth / 2
-        P.board(Vector((x, y, zc)), Y, X, Z, lash_w, arm_w + 2 * lash_t, arm_h + cloth + 2 * lash_t, ROPE)
+        P.board(Vector((x, y, zc)), Y, X, Z, lash_w, arm_w + 2 * lash_t - 0.004, arm_h + cloth + 2 * lash_t, ROPE)
 
 # Valance from the canvas's free front edge: scallops, two stripes, small soft folds.
 stripes = cfg.get("stripes", [[0.015, 0.03], [0.04, 0.05]])

@@ -29,6 +29,10 @@ HOUSE_MATERIALS = (
     "NW_CITY_FACHWERKBASEMENT_WINDOW_01", "NW_CITY_FACHWERKBASEMENT_EMPTY_01",
     "NW_CITY_FACHWERKBASEMENT_CHAIN_01", "NW_CITY_WOODBEAM_02",
 )
+HARBOUR_MATERIALS = (
+    "NW_CITY_HAFEN_HOLZWAND_01", "NW_CITY_HAFEN_HOLZWAND_02", "NW_CITY_HAFEN_GIEBEL_01",
+)
+HUT_SPOTS = ("front", "gable", "three-quarter", "window", "planks", "gable-close")
 
 
 def texture_key(name):
@@ -40,7 +44,8 @@ def texture_key(name):
     return name
 
 
-def check(directory, scenario, material_index, iteration3=False, market_house=False):
+def check(directory, scenario, material_index, iteration3=False, market_house=False, harbour_house=False,
+          harbour_hut=False):
     def require(condition, reason):
         if not condition:
             raise SystemExit(f"pilot capture {directory.name}: {reason}")
@@ -50,7 +55,15 @@ def check(directory, scenario, material_index, iteration3=False, market_house=Fa
     require(not re.search(r"materials: (invalid|unsupported|unable)|\[bench\] (can not|unknown|marvin failed|goto failed)", log), "game or material error")
     commands = [line.split("#", 1)[0].strip() for line in scenario.read_text().splitlines()]
     shots = [command[5:] for command in commands if command.startswith("shot ")]
-    spots = HOUSE_SPOTS if market_house else SPOTS
+    spots = HUT_SPOTS if harbour_hut else tuple(shots) if harbour_house else HOUSE_SPOTS if market_house else SPOTS
+    if harbour_house:
+        require(len(spots) == 12 and len(set(spots)) == 12, "expected twelve distinct harbour shots")
+        views = [re.fullmatch(r"(B\d+)-(front|three-quarter)", spot) for spot in spots]
+        require(all(views), "expected harbour shot names BLOCK-front or BLOCK-three-quarter")
+        blocks = {view[1] for view in views}
+        require(len(blocks) == 6 and set(spots) == {
+            f"{block}-{view}" for block in blocks for view in ("front", "three-quarter")
+        }, "expected front and three-quarter for six harbour blocks")
     require(tuple(shots) == spots, "unexpected shot list")
     for command in commands:
         if command.startswith(("goto ", "shot ")):
@@ -58,16 +71,24 @@ def check(directory, scenario, material_index, iteration3=False, market_house=Fa
     for spot in spots:
         image = directory / (spot + ".png")
         require(image.is_file() and image.stat().st_size > 0, f"missing shot: {spot}")
+        if harbour_house or harbour_hut:
+            from PIL import Image
+            with Image.open(image) as frame:
+                require(frame.size == (1280, 720), f"shot {spot}: expected 1280x720, got {frame.size}")
     index = json.loads(material_index.read_text())
     require(bool(re.search(rf"materials: {len(index)} entries from ", log)), "wrong material count")
     if market_house:
         require(len(index) == (0 if directory.name == "original" else 58), "expected 0 original or 58 staging materials")
+    if harbour_house or harbour_hut:
+        require(directory.name == "original" and not index, "harbour survey requires original materials")
     census = json.loads((directory / "census.json").read_text())
     opened = {texture_key(row["name"]) for row in census["files"] if row["kind"] == "texture"}
     replaced = {texture_key(row["name"]) for row in census["replacements"] if row["kind"] == "texture"}
     targets = set(ITERATION3_MATERIALS if iteration3 or directory.name in ("pilot-3a", "pilot-3b") else MATERIALS)
     if market_house and directory.name != "pilot-3b":
         targets = set(HOUSE_MATERIALS)
+    if harbour_house or harbour_hut:
+        targets = set(HARBOUR_MATERIALS)
     if index:
         require(targets <= replaced, "pilot textures not replaced: " + ", ".join(sorted(targets - replaced)))
         require(not (targets & opened), "pilot originals opened: " + ", ".join(sorted(targets & opened)))
@@ -166,9 +187,10 @@ def detail(captures, output, variants):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) in (5, 6) and sys.argv[1] == "check" and (len(sys.argv) == 5 or sys.argv[5] in ("--iteration-3", "--market-house")):
+    if len(sys.argv) in (5, 6) and sys.argv[1] == "check" and (len(sys.argv) == 5 or sys.argv[5] in ("--iteration-3", "--market-house", "--harbour-house", "--harbour-hut")):
         check(*map(Path, sys.argv[2:5]), iteration3=sys.argv[-1] == "--iteration-3",
-              market_house=sys.argv[-1] == "--market-house")
+              market_house=sys.argv[-1] == "--market-house", harbour_house=sys.argv[-1] == "--harbour-house",
+              harbour_hut=sys.argv[-1] == "--harbour-hut")
     elif len(sys.argv) == 4 and sys.argv[1] in ("compose", "compose-2", "compose-3", "compose-house", "compose-house-2"):
         compose(*map(Path, sys.argv[2:]), iteration2=sys.argv[1] == "compose-2",
                 iteration3=sys.argv[1] == "compose-3", market_house=sys.argv[1] == "compose-house",
@@ -176,4 +198,4 @@ if __name__ == "__main__":
     elif len(sys.argv) >= 5 and sys.argv[1] == "detail":
         detail(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4:])
     else:
-        raise SystemExit("usage: capture-quality-pilot.py check DIRECTORY SCENARIO INDEX [--iteration-3|--market-house] | compose|compose-2|compose-3|compose-house|compose-house-2 CAPTURES OUTPUT | detail CAPTURES OUTPUT.csv VARIANT...")
+        raise SystemExit("usage: capture-quality-pilot.py check DIRECTORY SCENARIO INDEX [--iteration-3|--market-house|--harbour-house|--harbour-hut] | compose|compose-2|compose-3|compose-house|compose-house-2 CAPTURES OUTPUT | detail CAPTURES OUTPUT.csv VARIANT...")

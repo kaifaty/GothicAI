@@ -1,12 +1,109 @@
-"""Run-local settings and startup guards without starting a server or game."""
+"""Run-local settings, startup guards, and fake-game process lifecycle."""
 import configparser
 import os
+import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[1] / "e2e.sh"
+
+
+class GameExitTests(unittest.TestCase):
+    def run_game(self, mode, *, checks_started=False, server_finishes=False):
+        source = SCRIPT.read_text()
+        lifecycle = source[source.index("report_game_exit() {"):source.index("trap cleanup EXIT")]
+        monitor = source[source.index('for _ in $(seq 1 "$TIMEOUT"); do'):
+                         source.index('if [[ "$rc" == 0 && "${GOTHIC_TTS_RECORD:-0}" == 1 ]]')]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "server.log").write_text(
+                "INFO scenario m0: checks started\n" if checks_started else "")
+            game = root / "game.py"
+            game.write_text('''
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+
+root = Path(os.environ["LOG_DIR"])
+mode = sys.argv[1]
+if mode == "cleanup":
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+(root / "game.ready").touch()
+while not (root / "game.go").exists():
+    time.sleep(0.01)
+if mode == "kill":
+    os.kill(os.getpid(), signal.SIGKILL)
+elif mode == "term":
+    os.kill(os.getpid(), signal.SIGTERM)
+elif mode == "failure":
+    sys.exit(3)
+elif mode == "exited":
+    sys.exit(0)
+while True:
+    time.sleep(1)
+''')
+            harness = '\n'.join([
+                "set -euo pipefail",
+                "GAME= ASR_PID= TTS_PID= SCENARIO=m0 TIMEOUT=20",
+                # Keep the real lifecycle, with a shorter bounded cleanup wait.
+                "sleep() { command sleep 0.01; }",
+                lifecycle,
+                "trap cleanup EXIT",
+                f"{shlex.quote(sys.executable)} {shlex.quote(str(game))} {shlex.quote(mode)} &",
+                "GAME=$!",
+                'until [[ -f "$LOG_DIR/game.ready" ]]; do sleep 0.01; done',
+                'touch "$LOG_DIR/game.go"',
+            ])
+            if mode != "cleanup":
+                harness += '\nuntil ! kill -0 "$GAME" 2>/dev/null; do sleep 0.01; done'
+            if server_finishes:
+                harness += '\n(command exit 23) & SRV=$!\nuntil ! kill -0 "$SRV" 2>/dev/null; do sleep 0.01; done'
+            else:
+                harness += '\ncommand sleep 10 & SRV=$!'
+            done = subprocess.run(
+                ["bash", "-c", harness + '\n' + monitor + '\nexit "$rc"'],
+                env=dict(os.environ, LOG_DIR=str(root)), check=False,
+                capture_output=True, text=True, timeout=5)
+            return done
+
+    def test_sigkill_before_checks_records_one_utc_time(self):
+        done = self.run_game("kill")
+        self.assertEqual(done.returncode, 1, done.stderr)
+        killed = [line for line in done.stdout.splitlines()
+                  if line.startswith("game killed before checks at ")]
+        self.assertEqual(len(killed), 1, done.stdout)
+        self.assertRegex(killed[0], r"^game killed before checks at \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        self.assertIn("signal SIGKILL (9), status 137 (unexpected)", done.stdout)
+
+    def test_sigkill_after_checks_and_other_early_failures_are_not_retriable(self):
+        for mode, started in (("kill", True), ("failure", False), ("term", False)):
+            with self.subTest(mode=mode, checks_started=started):
+                done = self.run_game(mode, checks_started=started)
+                self.assertEqual(done.returncode, 1, done.stderr)
+                self.assertNotIn("game killed before checks", done.stdout)
+
+    def test_server_and_game_exit_between_polls_still_records_early_sigkill(self):
+        done = self.run_game("kill", server_finishes=True)
+        self.assertEqual(done.returncode, 23, done.stderr)
+        self.assertEqual(done.stdout.count("game killed before checks at "), 1, done.stdout)
+        self.assertIn("status 137 (exited)", done.stdout)
+
+    def test_game_already_exited_is_reported_without_unexpected(self):
+        done = self.run_game("exited", server_finishes=True)
+        self.assertEqual(done.returncode, 23, done.stderr)
+        self.assertIn("game exited: code 0 (exited)", done.stdout)
+        self.assertNotIn("unexpected", done.stdout)
+
+    def test_cleanup_sigkill_is_not_retriable_and_preserves_server_status(self):
+        done = self.run_game("cleanup", server_finishes=True)
+        self.assertEqual(done.returncode, 23, done.stderr)
+        self.assertIn("signal SIGKILL (9), status 137 (cleanup)", done.stdout)
+        self.assertNotIn("game killed before checks", done.stdout)
 
 
 class LocalCheckWaitTests(unittest.TestCase):

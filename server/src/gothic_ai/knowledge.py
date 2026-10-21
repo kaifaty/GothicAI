@@ -28,12 +28,14 @@ from typing import TYPE_CHECKING, Any
 
 from .gamedata.storygraph import QUEST_STATES, Expr, Node, Quest, StoryGraph, walk
 from .npc_tools import guild_name
+from .validator import Patches
 
 if TYPE_CHECKING:
     from .dialogue import Conversation, DialogueManager
     from .game import GameLink
     from .llm import Tool, ToolCall
     from .protocol import Snapshot
+    from .story import StoryPatches
     from .turn import ToolOutcome
 
 log = logging.getLogger(__name__)
@@ -272,9 +274,10 @@ class View:
 class Knowledge:
     """The npc's knowledge for the conversational model: a TurnExtension with situation lines and recall."""
 
-    def __init__(self, link: GameLink, graph: StoryGraph) -> None:
+    def __init__(self, link: GameLink, graph: StoryGraph, patches: StoryPatches | None = None) -> None:
         self.link = link
         self.graph = graph
+        self.patches = patches
         self.views: dict[str, View] = {}
         self._topic_uses = Counter(t for q in graph.quests.values() for t in q.topics)
         self._ambient: dict[str, list[Node]] = {}  # "VLK_6" -> its ambient dialogs
@@ -349,8 +352,14 @@ class Knowledge:
     # --- the index ----------------------------------------------------------------------------
 
     def dialogs(self, npc: str) -> list[Node]:
-        """The npc's dialogs that say something: no exits, pickpocketing or trade menus."""
-        return [n for n in self.graph.dialogs_of(npc) if not _menu_only(n)]
+        """The npc's enabled dialogs that say something: no exits, pickpocketing or trade menus."""
+        disabled = self._disabled()
+        return [n for n in self.graph.dialogs_of(npc) if n.id not in disabled and not _menu_only(n)]
+
+    def _disabled(self) -> set[str]:
+        if self.patches is None:
+            return set()
+        return Patches.of([*self.patches.static, *self.patches.ops()]).disabled
 
     def ambient(self, guild: int | None, voice: int | None, *, named: bool) -> list[Node]:
         """The ambient dialogs of the npc's kind: its own voice for a nameless one, its whole guild's for a
@@ -381,6 +390,9 @@ class Knowledge:
         pool: list[Node],
         quests: list[Quest],
     ) -> View:
+        disabled = self._disabled()
+        own = [n for n in own if n.id not in disabled]
+        pool = [n for n in pool if n.id not in disabled]
         gates: dict[str, bool | None] = {}
 
         def gate(id: str) -> bool | None:
@@ -398,7 +410,7 @@ class Knowledge:
         partial = Partial(self.graph, state, {n.id for n in own}, flow)
 
         def topic(n: Node, told: bool, sure: bool) -> Topic:
-            choices = [(c, _lines(c, partial)) for c in self._choices(n)]
+            choices = [(c, _lines(c, partial)) for c in self._choices(n, disabled)]
             return Topic(n, told, sure, _lines(n, partial), choices)
 
         told: list[Topic] = []
@@ -447,13 +459,13 @@ class Knowledge:
                         return True
         return False
 
-    def _choices(self, node: Node) -> list[Node]:
+    def _choices(self, node: Node, disabled: Collection[str] = ()) -> list[Node]:
         """The answers the dialog offers the hero, and theirs, in order."""
         out: list[Node] = []
         todo = list(node.choices())
         while todo:
             id = todo.pop(0)
-            if id in self.graph.nodes and all(c.id != id for c in out):
+            if id not in disabled and id in self.graph.nodes and all(c.id != id for c in out):
                 choice = self.graph.nodes[id]
                 out.append(choice)
                 todo += choice.choices()

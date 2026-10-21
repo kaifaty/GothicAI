@@ -330,6 +330,8 @@ class GateVM:
             return 1200
         if name == "NPC_GETNEARESTWP":
             return "post"
+        if name == "NPC_GETTRUEGUILD":
+            return self.fields.get((self.value(params[0]), "GUILD"), 0)
         if name == "HLP_STRCMP" or name == "HLP_ISITEM":
             return int(self.value(params[0]) == self.value(params[1]))
         if name == "NPC_REFUSETALK":
@@ -435,6 +437,36 @@ def test_real_gate_warns_known_thief_and_allows_previous_visitor_after_payment(r
     assert vm.execute(permit) == 1
 
 
+@pytest.mark.parametrize("npc", ["MIL_305_TORWACHE", "PAL_205_TORWACHE"])
+def test_upper_gate_keeps_native_first_warning_without_law_and_blocks_known_thief(real_graph, npc):
+    first = real_graph.nodes[f"DIA_{npc}_FIRSTWARN"]
+    admission = real_graph.nodes[f"DIA_{npc}_PASSASMIL"]
+    assert first.id in city_entry_nodes(real_graph)
+    assert not any(op.get("node") == first.id for op in init_ops(real_graph))
+    first_condition = city_entry_program(first.id, "condition", lifted_gate_steps(first, "condition"))
+    admission_condition = city_entry_program(
+        admission.id, "condition", lifted_gate_steps(admission, "condition")
+    )
+    vm = GateVM(npc)
+    vm.fields[("PC_HERO", "GUILD")] = 2  # GIL_MIL: a native admission, without a known crime
+    vm.variables["PETZCOUNTER_CITY_THEFT"] = 50  # an unreported native perception must not bar it
+    assert vm.execute(first_condition) == 1  # the guard still stops a newcomer at his post
+    assert vm.variables["PETZCOUNTER_CITY_THEFT"] == 0
+    assert vm.execute(admission_condition) == 1
+
+    # A known unpaid theft revokes an old pass and leaves the native refusal warning available.
+    vm.variables[f"{npc[:7]}_SCHONMALREINGELASSEN"] = 1
+    vm.fields[(npc, "AIVAR", 14)] = 1
+    vm.variables.update(projection_values("city", [{"kind": "theft"}]))
+    vm.variables[law_var("city")] = 1
+    assert vm.execute(first_condition) == 1
+    assert vm.fields[(npc, "AIVAR", 14)] == 0
+    assert vm.execute(admission_condition) == 0
+    vm.execute(city_entry_program(first.id, "information", lifted_gate_steps(first, "information")))
+    theft_line = next(e["id"] for e in first.effects if "воров" in e.get("text", ""))
+    assert theft_line in vm.lines
+
+
 @pytest.mark.parametrize("suffix", ["BRIBE", "PASSIERSCHEIN", "ZUMSCHMIED", "CONSTANTINO", "PERM"])
 def test_real_entry_alternatives_cannot_bypass_known_theft_but_keep_native_admission(real_graph, suffix):
     nodes = [real_graph.nodes[n] for n in city_entry_nodes(real_graph) if n.endswith("_" + suffix)]
@@ -443,6 +475,7 @@ def test_real_entry_alternatives_cannot_bypass_known_theft_but_keep_native_admis
         vm = GateVM(node.npc)
         if suffix == "PERM":
             vm.fields[(node.npc, "AIVAR", 14)] = 1
+            vm.variables[f"{node.npc[:7]}_SCHONMALREINGELASSEN"] = 1
         condition = city_entry_program(node.id, "condition", lifted_gate_steps(node, "condition"))
         information = city_entry_program(node.id, "information", lifted_gate_steps(node, "information"))
         assert vm.execute(condition) == 1

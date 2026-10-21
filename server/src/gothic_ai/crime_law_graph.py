@@ -25,7 +25,11 @@ LOCATIONS = {1: "oldcamp", 2: "city", 3: "monastery", 4: "farm"}
 AMBIENT = "DIA_AMBIENT_NEWS"
 NEWS_CRIME = "DIR_NEWS_CRIME"
 CITY_GATE_NPCS = {"MIL_310_STADTWACHE", "MIL_333_STADTWACHE"}
-CITY_ENTRY_SUFFIXES = {"FIRSTWARN", "BRIBE", "PASSIERSCHEIN", "ZUMSCHMIED", "CONSTANTINO", "PERM"}
+UPPER_GATE_NPCS = {"MIL_305_TORWACHE", "PAL_205_TORWACHE"}
+CITY_ENTRY_SUFFIXES = {
+    "FIRSTWARN", "BRIBE", "PASSIERSCHEIN", "ZUMSCHMIED", "CONSTANTINO", "PERM",
+    "PASSASCITIZEN", "PASSASMIL", "PASSASMAGE", "PASSASSLD",
+}
 
 
 def law_var(community: str) -> str:
@@ -72,7 +76,8 @@ def city_entry_nodes(graph: StoryGraph) -> set[str]:
     """The city gates' mixed greeting and every native way to grant passage."""
     return {
         node.id for node in graph.nodes.values()
-        if node.npc in CITY_GATE_NPCS and node.id.rsplit("_", 1)[-1] in CITY_ENTRY_SUFFIXES
+        if node.npc in CITY_GATE_NPCS | UPPER_GATE_NPCS
+        and node.id.rsplit("_", 1)[-1] in CITY_ENTRY_SUFFIXES
     }
 
 
@@ -133,7 +138,7 @@ def city_entry_program(node: str, part: str, own: list[Step]) -> list[Step]:
     projected = project_program("city", own)
     prefix = projected[0]["then"]  # gates must also project zeros while the law is closed
     if node.endswith("_FIRSTWARN"):
-        if part == "condition":
+        if part == "condition" and any(f"_{number}_" in node for number in ("310", "333")):
             number = "310" if "_310_" in node else "333"
             prefix.append({
                 "do": "if", "cond": city_entry_blocked(),

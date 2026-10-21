@@ -36,6 +36,132 @@ def wait_for(path):
         time.sleep(0.02)
 
 
+class KilledGameRetryTests(unittest.TestCase):
+    def run_e2e(self, mode):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix='ryzen-kill-retry-'))).resolve()
+        source = root / 'source'
+        binaries = root / 'bin'
+        (source / 'scripts').mkdir(parents=True)
+        (source / 'server').mkdir()
+        (root / 'home/gothic-ai/game/Data').mkdir(parents=True)
+        binaries.mkdir()
+        shutil.copyfile(SCRIPT.with_name('e2e.sh'), source / 'scripts/e2e.sh')
+        # Keep the production shell monitor, but replace its services and game.
+        uv = binaries / 'uv'
+        uv.write_text(f'#!{sys.executable}\n' + r'''
+import os
+from pathlib import Path
+import time
+run = Path(os.environ['LOG_DIR'])
+print('fake server started', flush=True)
+while not (run / 'begin-checks').exists():
+    time.sleep(0.01)
+print('scenario stages: checks started', flush=True)
+(run / 'checks-ready').touch()
+if os.environ['TEST_MODE'] == 'kill-after':
+    while True:
+        time.sleep(0.01)
+time.sleep(0.05)
+''')
+        game = binaries / 'game'
+        game.write_text(f'#!{sys.executable}\n' + r'''
+import os
+from pathlib import Path
+import signal
+import sys
+import time
+starts = Path(os.environ['TEST_ROOT']) / 'starts'
+number = int(starts.read_text()) + 1 if starts.exists() else 1
+starts.write_text(str(number))
+print(f'fake game run {number}', flush=True)
+mode = os.environ['TEST_MODE']
+if mode == 'kill-always' or (mode == 'kill-once' and number == 1):
+    os.kill(os.getpid(), signal.SIGKILL)
+if mode == 'exit-before':
+    sys.exit(3)
+run = Path(os.environ['LOG_DIR'])
+(run / 'begin-checks').touch()
+while not (run / 'checks-ready').exists():
+    time.sleep(0.01)
+if mode == 'kill-after':
+    os.kill(os.getpid(), signal.SIGKILL)
+while True:
+    time.sleep(0.01)
+''')
+        (binaries / 'sleep').write_text('#!/bin/sh\nexec /bin/sleep 0.02\n')
+        (binaries / 'uname').write_text('#!/bin/sh\necho Linux\n')
+        for executable in binaries.iterdir():
+            executable.chmod(0o755)
+        harness = '\n'.join([
+            'set -euo pipefail', function('e2e_window_position'), function('remote_run'),
+            'ROOT="$TEST_ROOT/source"',
+            'toolchain() { :; }',
+            'desktop() { RYZEN_SCREEN_SIZE=1920x1080; }',
+            'require_prepared() { :; }',
+            'export RYZEN_GAME_BIN="$TEST_ROOT/bin/game"',
+            'remote_run e2e "$TEST_ROOT/state" run',
+        ])
+        result = subprocess.run(
+            ['bash', '-c', harness], capture_output=True, text=True, timeout=20,
+            env=dict(os.environ, HOME=str(root / 'home'), TEST_ROOT=str(root),
+                     TEST_MODE=mode, SCENARIO='stages', GQ_PROFILE='ryzen',
+                     LLM='fake', SAVE='', GAME_EXTRA_ENV='', GOTHIC_TTS_RECORD='0', GOTHIC_SOAK_CONTROL='0',
+                     PATH=str(binaries) + os.pathsep + os.environ['PATH']),
+        )
+        return result, root / 'state/runs/run', int((root / 'starts').read_text())
+
+    def assert_kills(self, result, count):
+        times = re.findall(
+            r'^Ryzen: game killed before checks at (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z), run (\d)/4$',
+            result.stdout, re.M,
+        )
+        self.assertEqual(len(times), count, result.stdout + result.stderr)
+        self.assertEqual([int(number) for _, number in times], list(range(1, count + 1)))
+        return [timestamp for timestamp, _ in times]
+
+    def test_four_sigkills_before_checks_stop_with_76_and_preserve_every_run(self):
+        result, logs, starts = self.run_e2e('kill-always')
+        self.assertEqual(result.returncode, 76, result.stdout + result.stderr)
+        self.assertEqual(starts, 4)
+        times = self.assert_kills(result, 4)
+        self.assertIn('Ryzen: game killed before checks 4 times; times: ' + ' '.join(times), result.stdout)
+        for number, directory in enumerate([logs] + [logs / f'run-{n}' for n in range(2, 5)], 1):
+            self.assertIn(f'fake game run {number}', (directory / 'game.log').read_text())
+            self.assertIn('fake server started', (directory / 'server.log').read_text())
+            self.assertNotIn('checks started', (directory / 'server.log').read_text())
+            self.assertIn('signal SIGKILL (9), status 137', (directory / 'e2e.log').read_text())
+            self.assertIn(f'game killed before checks at {times[number - 1]}',
+                          (directory / 'e2e.log').read_text())
+
+    def test_one_sigkill_before_checks_retries_and_passes(self):
+        result, logs, starts = self.run_e2e('kill-once')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(starts, 2)
+        self.assert_kills(result, 1)
+        self.assertIn('fake game run 1', (logs / 'game.log').read_text())
+        self.assertIn('fake game run 2', (logs / 'run-2/game.log').read_text())
+        self.assertIn('scenario stages: checks started', (logs / 'run-2/server.log').read_text())
+        self.assertNotIn('game killed before checks at', (logs / 'run-2/e2e.log').read_text())
+        self.assertFalse((logs / 'run-3').exists())
+
+    def test_sigkill_after_checks_keeps_failure_without_retry(self):
+        result, logs, starts = self.run_e2e('kill-after')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(starts, 1)
+        self.assert_kills(result, 0)
+        self.assertIn('scenario stages: checks started', (logs / 'server.log').read_text())
+        self.assertIn('signal SIGKILL (9), status 137', (logs / 'e2e.log').read_text())
+        self.assertFalse((logs / 'run-2').exists())
+
+    def test_other_startup_failure_does_not_retry(self):
+        result, logs, starts = self.run_e2e('exit-before')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(starts, 1)
+        self.assert_kills(result, 0)
+        self.assertIn('game exited: code 3 (unexpected)', (logs / 'e2e.log').read_text())
+        self.assertFalse((logs / 'run-2').exists())
+
+
 class QueueSplitTests(unittest.TestCase):
     def run_game(self, action='e2e', prepare=True, build_exit=0, scenario='stages', window=None):
         directory = self.enterContext(tempfile.TemporaryDirectory(prefix='ryzen-phases-test-'))

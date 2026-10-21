@@ -79,14 +79,18 @@ for w in widths:
     y += w + gap
 
 # Cramps: a strap over each plank at each pier, bent down both long edges, two nails on top.
+# Strap and legs overlap in the bend; their faces there must not share a plane (z-fighting,
+# coplanar.py), so the legs are 1 mm narrower on each side and end 1 mm under the strap's
+# top, and the strap ends 1 mm inside the legs' outer faces.
+bend = 0.001
 for sx in (-1, 1):
     px = centre.x + sx * (hx - inset - pier_x / 2)
     for y0, y1 in planks:
         width = y1 - y0
-        P.strap(Vector((px, (y0 + y1) / 2, z_seat)), Y, X, Z, width + 2 * cramp_t, cramp_w, cramp_t, IRON)
+        P.strap(Vector((px, (y0 + y1) / 2, z_seat)), Y, X, Z, width + 2 * cramp_t - 2 * bend, cramp_w, cramp_t, IRON)
         for ye, sign in ((y0, -1), (y1, 1)):
-            c = Vector((px, ye + sign * cramp_t / 2, z_seat + cramp_t - cramp_drop / 2))
-            P.board(c, Z, X, Y * sign, cramp_drop, cramp_w, cramp_t, IRON)
+            c = Vector((px, ye + sign * cramp_t / 2, z_seat + cramp_t - bend - (cramp_drop - bend) / 2))
+            P.board(c, Z, X, Y * sign, cramp_drop - bend, cramp_w - 2 * bend, cramp_t, IRON)
         for f in (0.3, 0.7):
             P.nail(Vector((px, y0 + width * f, z_seat + cramp_t)), X, Y, Z, nail_r, nail_h, IRON)
 

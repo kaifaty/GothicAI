@@ -10,6 +10,88 @@ import pytest
 from gothic_ai import cli
 
 
+@pytest.mark.parametrize("scenario", [None, "m0"])
+def test_scenario_start_marker_waits_for_world_and_precedes_scenario(monkeypatch, caplog, tmp_path, scenario):
+    real_serve = cli.serve
+    captured = []
+
+    async def capture_args(args):
+        captured.append(args)
+        return 0
+
+    flags = [
+        "--llm", "fake", "--no-voice", "--no-tts", "--no-brain", "--no-quick", "--no-neural-body",
+        "--no-director", "--no-knowledge", "--no-questlog", "--no-crimes", "--no-gates",
+        "--no-occasions", "--no-console", "--no-trace", "--memory-db", ":memory:",
+        "--game-dir", str(tmp_path), "--exit-after",
+    ]
+    if scenario is not None:
+        flags += ["--scenario", scenario]
+    monkeypatch.delenv("GOTHIC_SOAK_CONTROL", raising=False)
+    monkeypatch.setattr(cli, "serve", capture_args)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", *flags])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+    monkeypatch.setattr(cli.places.PlaceBook, "load", Mock(return_value=None))
+    caplog.set_level("INFO", logger="gothic_ai")
+
+    def markers():
+        return [record.getMessage() for record in caplog.records if "checks started" in record.getMessage()]
+
+    async def exercise():
+        link = cli.GameLink(SimpleNamespace(send=AsyncMock()))
+        wait_entered = asyncio.Event()
+        scenario_entered = asyncio.Event()
+        real_wait_world = link.wait_world
+
+        async def wait_world():
+            wait_entered.set()
+            return await real_wait_world()
+
+        link.wait_world = wait_world
+
+        async def run_scenario(actual_link, npc):
+            assert actual_link is link
+            assert link.world == "NEWWORLD.ZEN"
+            assert markers() == ["scenario m0: checks started"]
+            scenario_entered.set()
+            return []
+
+        run_scenario_mock = AsyncMock(side_effect=run_scenario)
+        monkeypatch.setattr(cli.scenarios, "m0_smoke", run_scenario_mock)
+
+        class FakeServer:
+            def __init__(self, host, port, on_link):
+                self.on_link = on_link
+
+            async def serve_forever(self):
+                session = asyncio.create_task(self.on_link(link))
+                try:
+                    if scenario is not None:
+                        await wait_entered.wait()
+                    else:
+                        await asyncio.sleep(0)
+                    assert markers() == []
+                    run_scenario_mock.assert_not_awaited()
+                    if scenario is not None:
+                        link.world = "NEWWORLD.ZEN"
+                        link._world_ready.set()
+                        await scenario_entered.wait()
+                    link.closed.set()
+                    await session
+                finally:
+                    session.cancel()
+                    await asyncio.gather(session, return_exceptions=True)
+
+        monkeypatch.setattr(cli, "GameServer", FakeServer)
+        assert await asyncio.wait_for(real_serve(captured[0]), timeout=5) == 0
+        assert markers() == (["scenario m0: checks started"] if scenario is not None else [])
+        assert run_scenario_mock.await_count == int(scenario is not None)
+
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize(("flags", "websocket"), [([], True), (["--no-websocket"], False)])
 def test_serve_arguments_select_responses_transport(monkeypatch, flags, websocket):
     monkeypatch.setenv("OPENAI_API_KEY", "e2e-placeholder")

@@ -1,6 +1,12 @@
 {
   "about": "What an npc keeps but does not carry: it may give these in a deal as if from its inventory (contracts.py, docs/contracts.md). Counts are what it has at the start; what it gives is gone for good.",
   "stash": {
+    "PIR_1300_ADDON_GREG_NW": [
+      {"item": "ITMI_GOLD", "count": 80},
+      {"item": "ITFO_ADDON_RUM", "count": 3},
+      {"item": "ITMI_ADDON_WHITEPEARL", "count": 1},
+      {"item": "ITMW_ADDON_PIR1HSWORD", "count": 1}
+    ],
     "NONE_100_XARDAS": [
       {"item": "ITMI_GOLD", "count": 500},
       {"item": "ITRU_SUMSKEL", "count": 1},

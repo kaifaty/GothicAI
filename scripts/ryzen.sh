@@ -611,9 +611,25 @@ WRAPPER
   export GAME_BIN="$LOG_DIR/game.sh"
   echo "Ryzen: prepare/start overhead $((SECONDS - started))s"
   started=$SECONDS
-  bash "$ROOT/scripts/e2e.sh" && rc=0 || rc=$?
+  local out="$LOG_DIR" run_number killed_at
+  local killed_times=()
+  for run_number in 1 2 3 4; do
+    if (( run_number > 1 )); then
+      export LOG_DIR="$out/run-$run_number"
+      mkdir -p "$LOG_DIR"
+    fi
+    bash "$ROOT/scripts/e2e.sh" 2>&1 | tee "$LOG_DIR/e2e.log" && rc=0 || rc=$?
+    grep -E 'GPU = ' "$LOG_DIR/game.log" || true
+    killed_at="$(sed -n 's/^game killed before checks at //p' "$LOG_DIR/e2e.log")"
+    [[ -n "$killed_at" ]] || break
+    killed_times+=("$killed_at")
+    echo "Ryzen: game killed before checks at $killed_at, run $run_number/4"
+    if (( run_number == 4 )); then
+      echo "Ryzen: game killed before checks 4 times; times: ${killed_times[*]}"
+      rc=76
+    fi
+  done
   echo "Ryzen: e2e $((SECONDS - started))s, exit $rc"
-  grep -E 'GPU = ' "$LOG_DIR/game.log" || true
   return "$rc"
 }
 

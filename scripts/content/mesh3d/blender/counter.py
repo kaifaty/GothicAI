@@ -113,10 +113,12 @@ z_floor = lo.z
 h_body = z_under - z_floor
 zc = (z_under + z_floor) / 2
 
-# Top: rows of planks along the counter with staggered butt joints; the flap at -X.
+# Top: rows of planks along the counter with staggered butt joints; the flap at -X. The rows
+# stop 2 mm short of the front, behind the iron plates on its corners: a plate's face flush
+# with the planks' z-fights (coplanar.py).
 flap = cfg.get("flap", 0.62)
 xf = x0 + flap                               # where the fixed top starts
-rows = split(hi.y - lo.y, cfg.get("top_rows", 6), gap)
+rows = split(hi.y - lo.y - 0.002, cfg.get("top_rows", 6), gap)
 y = lo.y
 for i, wd in enumerate(rows):
     joint = xf + (x1 - xf) * (0.42 + 0.16 * rng.uniform() if i % 2 else 0.55 + 0.16 * rng.uniform())
@@ -178,7 +180,9 @@ leg, width, thick = cfg.get("corner", [0.16, 0.05, 0.004])
 for sx in (-1, 1):
     corner = Vector((sx * hi.x, hi.y, z_top))
     P.plate_l(corner, X * -sx, -Y, Z, leg, width, thick, IRON)
-    P.board(Vector((sx * (hi.x - leg / 2), hi.y - 0.002, z_under + top_t / 2)), X, Z, Y, leg, top_t * 0.8, 0.004, IRON)
+    # the plate on the top's front edge stops 2 mm short of the corner, its end inside the planks
+    P.board(Vector((sx * (hi.x - leg / 2 - 0.001), hi.y - 0.002, z_under + top_t / 2)), X, Z, Y, leg - 0.002, top_t * 0.8,
+            0.004, IRON)
 hinge_len, hinge_w, hinge_t = cfg.get("hinge", [0.32, 0.05, 0.005])
 for yh in (lo.y + 0.28, hi.y - 0.28):
     outline = [(0, -hinge_w / 2), (hinge_len * 0.5, -hinge_w * 0.42), (hinge_len - 0.04, -hinge_w * 0.34), (hinge_len, 0),

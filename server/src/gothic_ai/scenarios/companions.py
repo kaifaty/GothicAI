@@ -61,6 +61,15 @@ async def neural_companion_scenario(link: GameLink, pilot: BodyPilot | None) -> 
     return await _neural_fight_scenario(link, pilot, companion=True)
 
 
+def _neural_talk_bandit(attack: ToolCall) -> _OnWords:
+    return _OnWords([
+        ("проверим твою шпагу", FakeStep("Убирайся. Десять секунд тебе даю.", [ToolCall(
+            "ultimatum", {"demand": "Уходи отсюда", "seconds": 10},
+        )])),
+        ("Срок вышел", FakeStep("Не ушёл? Тогда сам напросился!", [attack])),
+    ], FakeStep("Опять ты. Что тебе?"))
+
+
 async def neural_talk_scenario(
     link: GameLink, dialogue: DialogueManager, pilot: BodyPilot | None,
 ) -> dict[str, str]:
@@ -184,10 +193,7 @@ async def neural_talk_scenario(
     })
     original_llm = dialogue.llm
     dialogue.llm = _ByNpc(
-        {"Бандит": FakeBackend(script=[
-            FakeStep("Ну что, герой, решил проверить мою шпагу? Сам напросился!", [attack]),
-            FakeStep("Опять ты. Что тебе?"),
-        ], delay=0.15)}, FakeBackend("Хм.", delay=0),
+        {"Бандит": _neural_talk_bandit(attack)}, FakeBackend("Хм.", delay=0),
     )
     link.listeners.append(heard)
     dialogue.on_attack.append(attacked)
@@ -196,7 +202,7 @@ async def neural_talk_scenario(
             previous = {id(summary) for summary in pilot.summaries}
             mark = len(lines)
             await link.debug("type", text="Бандит, проверим твою шпагу.")
-            ready = await _until(lambda: bool(attacks) and fight_ready(), 25)
+            ready = await _until(lambda: bool(attacks) and fight_ready(), 35)
             first = pilot.fights.get(npc)
             first_lease = first.lease if first else None
             first_client = first.client if first else None
