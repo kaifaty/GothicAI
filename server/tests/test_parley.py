@@ -663,4 +663,4 @@ async def test_balance_uses_visible_equipment_health_and_people_not_levels():
             }
         )
         assert "он опасен" in parley.situation(BRAGO)
-        assert "level" not in parley.situation(BRAGO)
+        assert "уров" not in parley.situation(BRAGO).lower()

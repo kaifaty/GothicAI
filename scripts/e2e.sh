@@ -10,6 +10,8 @@
 #   bandit_parley: new game, LLM=fake; Brago's first fight is rejected, an ultimatum runs its course;
 #       Y pays 100 gold for four hours of peace with the cave gang, including 1015; no attack for 20 s,
 #       then drawing a weapon breaks the truce and Brago attacks
+#   bandit_bounty: new game, LLM=fake; Brago refuses a secret without leverage, sells Dexter's name
+#       for 150 gold through Y, updates the vanilla leaflet quest and starts leading to CASTLEMINE_HUT
 #   m0: takes Xardas over, walks him around and returns him to his routine
 #   m1: Xardas answers a player question line by line (LLM backend: LLM=fake|chatgpt|local)
 #   websocket: Lobart and Hilda speak through Responses against an in-process fake server: per-npc
@@ -166,6 +168,9 @@
 #   gate: new game, LLM=fake: the city guard sells passage for 100 gold through Y; both gate guards
 #       get AIV_PASSGATE and the hero crosses without SECONDWARN/ATTACK. Loading the outside save,
 #       a believed let_pass claim grants passage and records its text, reference and game time.
+#   gate_vouch: new game, LLM=fake: nearby Lothar vouches and the guard admits the hero; a loaded
+#       branch admits a real pass without a native menu or lines. Another loaded branch believes
+#       a false Harad claim; the next morning catches it and revokes both guards' passage.
 #   crime_react: rule reactions at the deed (docs/crime.md, layer 4a), LLM=fake; SAVE=save_slot_1.sav.
 #       Hilda's retained theft witness and own SVM shout; Lobart courage 2 demands restitution, then
 #       a temporary scenario card with courage 3 fights through native AR_THEFT to a living knockout
@@ -373,8 +378,8 @@ if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion || "$SCENARIO" = ne
   [ -z "${SAVE:-}" ] || { echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2; exit 2; }
 fi
 LLM="${LLM:-fake}"
-if [[ "$SCENARIO" == bandit_parley && ( "$LLM" != fake || -n "${SAVE:-}" ) ]]; then
-  echo 'scenario bandit_parley requires LLM=fake and a new game (unset SAVE)' >&2
+if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty ) && ( "$LLM" != fake || -n "${SAVE:-}" ) ]]; then
+  echo "scenario $SCENARIO requires LLM=fake and a new game (unset SAVE)" >&2
   exit 2
 fi
 if [[ "$SCENARIO" == neural-soak && "$LLM" != fake ]]; then

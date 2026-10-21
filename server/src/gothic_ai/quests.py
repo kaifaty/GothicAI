@@ -357,7 +357,10 @@ async def caught(
     """The npc catches a false claim: it remembers, takes his word no more (trust.py), is wary of him,
     and the people around hear it. A quest, an ordinary claim and denial of a deed share this path.
     `extra`: more of the fact (the witness whose words caught him, witnesses.py)."""
+    session = link.session
     day = await _day(link)
+    if session is not link.session:
+        return
     chronicle.record(
         {
             "fact": "caught",
@@ -403,6 +406,8 @@ async def caught(
     except (GameError, TimeoutError) as err:
         log.warning("lie %s: rumor: %s", lie.quest, err)
         people = []
+    if session is not link.session:
+        return
     rumor = f"Слух: {lie.giver_name} при тебе уличил героя во лжи — тот {lie.claim()}, а это неправда"
     _tell(dialogue, chronicle, lie, "caught", rumor, people, day)
 

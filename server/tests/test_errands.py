@@ -7,11 +7,14 @@ import pytest
 import gothic_ai.errands
 from gothic_ai.bodies import BodyOutcome
 from gothic_ai.errands import Errands, checked_items
+from gothic_ai.gates import Gates
 from gothic_ai.journal import Journal
+from gothic_ai.llm import ToolCall
 from gothic_ai.meetings import DAY
 from gothic_ai.protocol import InventoryItem, RosterEntry
 from gothic_ai.social import Rumor, Spot
 from tests.test_dialogue import _until
+from tests.test_gates import CITY, GatesFake, setup_gate
 from tests.test_guide import BOOK
 
 LOBART, ANDRE, PECK, HILDA = "BAU_950_LOBART", "MIL_311_ANDRE", "MIL_332_PECK", "BAU_951_HILDA"
@@ -250,6 +253,138 @@ async def test_far_the_fork_by_the_routines():
     await _until(lambda: goal.state == "away")
     errands.tick(goal.arrive)
     assert rumors.told == [(LOBART, PECK)] and chronicle.facts("goal_done")[0]["instead_of"] == ANDRE
+
+
+@pytest.mark.parametrize("how", ["near", "far"])
+async def test_gate_news_uses_the_existing_plan_and_saved_goal(how):
+    errands, link, _, _, rumors, chronicle, _ = _desk()
+    delivered = []
+    errands.gate_news = lambda npc, to: ("gate:vouch:lothar:1", "Я поручился за героя")
+
+    async def gate_told(key, npc, to):
+        delivered.append((key, npc, to))
+
+    errands.gate_told = gate_told
+    goal, why = await errands.plan(LOBART, "Лобарт", DAWN, link.snapshots[LOBART])
+    assert goal is not None and not why
+    assert (goal.rumor, goal.title) == ("gate:vouch:lothar:1", "Я поручился за героя")
+    restored, *_ = _desk(chronicle.facts())
+    assert restored.goals[goal.id].rumor == goal.rumor
+    if how == "near":
+        await errands._near(goal, ANDRE)
+    else:
+        goal.arrive = goal.start + 300
+        goal.state = "away"
+        errands.tick(goal.arrive)
+        errands.tick(goal.arrive + 1)
+        await _until(lambda: goal.state == "done")
+    assert delivered == [(goal.rumor, LOBART, ANDRE)]
+    assert rumors.told == []
+    assert chronicle.facts("goal_done")[0]["to"] == ANDRE
+    assert chronicle.facts("goal_done")[0]["how"] == how
+
+
+async def test_delivered_vouch_does_not_hide_vouchers_other_news_to_that_guard():
+    guard = "MIL_310_STADTWACHE"
+    errands, link, _, _, rumors, chronicle, _ = _desk([
+        {"fact": "gate_vouch", "id": "andre-vouch", "npc": ANDRE, "name": "Андре",
+         "at": NOW, "expires": NOW + 2 * DAY},
+        {"fact": "gate_vouch_heard", "vouch": "andre-vouch", "from": ANDRE, "to": guard},
+    ])
+    gates = Gates.__new__(Gates)
+    gates.chronicle, gates._now = chronicle, NOW
+    errands.gate_news = gates.news
+    rumors.social.names[guard] = "Стражник"
+    rumors.social.guilds[guard] = MIL
+    rumors.social.days[guard] = _all_day("ZS_STAND_GUARDING", "GATE_POST", BARRACKS)
+    rumors.social.ties[ANDRE] = {guard: object()}
+    [rumor] = rumors.rumors.values()
+    rumor.known[ANDRE] = 1
+
+    goal, why = await errands.plan(ANDRE, "Андре", {**DAWN, "who": guard}, link.snapshots[LOBART])
+
+    assert goal is not None and not why
+    assert (goal.rumor, goal.title) == (rumor.key, rumor.title)
+
+
+async def test_vouch_and_plan_in_one_reply_deliver_the_vouch_before_after_speech(monkeypatch):
+    lothar = "PAL_203_LOTHAR"
+    async with setup_gate(GatesFake()) as system:
+        link, dialogue, chronicle, gates, _, _ = system
+        rumors = _Rumors()
+        rumors.social.names.update({lothar: "Лотар", CITY: "Стражник"})
+        rumors.social.guilds.update({lothar: 1, CITY: MIL})
+        rumors.social.days[CITY] = _all_day("ZS_STAND_GUARDING", "GATE_POST", BARRACKS)
+        errands = Errands(
+            link, dialogue, SimpleNamespace(people={}, partner=None), _Guide(), chronicle, _Bodies(),
+            rumors=lambda: rumors,
+        )
+        errands.gate_news, errands.gate_told = gates.news, gates.told
+        errands.now = DAY + 8 * 60
+        jobs = []
+        monkeypatch.setattr(dialogue, "after_speech", lambda conv, job: jobs.append(job))
+        conv = dialogue.open(lothar, "Лотар")
+
+        outcome = await gates.handle(
+            dialogue, conv, ToolCall("vouch_for_hero", {"note": "Я отвечаю за него."}, "vouch"), None,
+        )
+        goal, why = await errands.plan(lothar, "Лотар", {"do": "tell", "who": CITY}, None)
+
+        assert outcome is not None and outcome.status == "accepted"
+        assert goal is not None and not why
+        [vouch] = chronicle.facts("gate_vouch")
+        assert goal.rumor == f"gate:vouch:{vouch['id']}"
+        assert not jobs
+        assert not chronicle.facts("gate_vouch_heard")
+
+        await errands._near(goal, CITY)
+
+        [heard] = chronicle.facts("gate_vouch_heard")
+        assert (heard["vouch"], heard["from"], heard["to"]) == (vouch["id"], lothar, CITY)
+        assert goal.state == "done" and not rumors.told
+
+
+async def test_gate_news_near_waits_for_its_exact_addressee_instead_of_another_guard():
+    errands, link, _, bodies, rumors, chronicle, _ = _desk()
+    delivered = []
+    errands.gate_news = lambda npc, to: ("gate:claim:guard:1", "Герой сослался на тебя")
+
+    async def gate_told(key, npc, to):
+        delivered.append((key, npc, to))
+
+    errands.gate_told = gate_told
+    goal, _ = await errands.plan(LOBART, "Лобарт", DAWN, link.snapshots[LOBART])
+    assert goal is not None
+    errands.tick(goal.start)
+    await _until(lambda: bodies.end is not None)
+    link.nearby[LOBART] = [{"npc": PECK, "name": "Пек", "distance": 400, "guild": MIL}]
+    assert bodies.end is not None
+    bodies.end.set_result("arrived")
+    await _until(lambda: goal.state == "there")
+    errands.tick(goal.start + 30)
+    await _until(lambda: goal.state == "failed")
+    assert not delivered and not rumors.told and not chronicle.facts("goal_done")
+
+
+async def test_gate_news_far_cannot_be_delivered_to_a_substitute_guard():
+    errands, link, talk, _, rumors, chronicle, _ = _desk()
+    delivered = []
+    errands.gate_news = lambda npc, to: ("gate:vouch:lothar:1", "Я поручился за героя")
+
+    async def gate_told(key, npc, to):
+        delivered.append((key, npc, to))
+
+    errands.gate_told = gate_told
+    rumors.social.days[ANDRE] = _all_day("ZS_SLEEP", "NW_CITY_KASERN_01", BARRACKS)
+    goal, _ = await errands.plan(LOBART, "Лобарт", DAWN, link.snapshots[LOBART])
+    assert goal is not None
+    link.player = SimpleNamespace(pos=(-90000.0, 0.0, 0.0))
+    talk.people.clear()
+    errands.tick(goal.start)
+    await _until(lambda: goal.state == "away")
+    errands.tick(goal.arrive)
+    assert goal.state == "failed"
+    assert not delivered and not rumors.told and not chronicle.facts("goal_done")
 
 
 async def test_hilda_takes_lobart_the_gold_and_never_a_mission_item():

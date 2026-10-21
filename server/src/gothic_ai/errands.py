@@ -186,6 +186,8 @@ class Errands:
         self.chronicle = chronicle
         self.bodies = bodies
         self.rumors = rumors
+        self.gate_news: Callable[[str, str], tuple[str, str] | None] | None = None
+        self.gate_told: Callable[[str, str, str], Coroutine[Any, Any, None]] | None = None
         self.checked = checked_items(graph)
         self.journal = journal or dialogue.journal
         self.goals: dict[str, Goal] = {}
@@ -322,11 +324,15 @@ class Errands:
             start,  # type: ignore[arg-type]
         )
         if do == "tell":
-            rumor = self._rumor(npc, to)
-            if rumor is None:
-                return None, f"{goal.to_name} уже знает все новости, которые ты можешь рассказать"
-            goal.rumor, goal.subject = rumor.key, rumor.subject
-            goal.title = rumor.title if rumor.is_player else rumor.description()
+            news = self.gate_news(npc, to) if self.gate_news is not None else None
+            if news is not None:
+                goal.rumor, goal.title = news
+            else:
+                rumor = self._rumor(npc, to)
+                if rumor is None:
+                    return None, f"{goal.to_name} уже знает все новости, которые ты можешь рассказать"
+                goal.rumor, goal.subject = rumor.key, rumor.subject
+                goal.title = rumor.title if rumor.is_player else rumor.description()
         else:
             why = self._thing(goal, str(raw.get("item") or ""), raw.get("count"), snap)
             if why:
@@ -530,7 +536,10 @@ class Errands:
                 people = []
             if any(p.get("npc") == g.to for p in people):
                 return await self._near(g, g.to)
-            if g.do == "tell" and social is not None and (guild := social.guilds.get(g.to)):
+            if (
+                g.do == "tell" and not g.rumor.startswith("gate:")
+                and social is not None and (guild := social.guilds.get(g.to))
+            ):
                 rumor = self._of(g)
                 others = sorted(
                     (p for p in people if p.get("guild") == guild and p.get("npc") not in (g.npc, g.to)
@@ -558,6 +567,8 @@ class Errands:
             seen = await self._seen_by(g.npc, to)
             self._gave(g, to, seen)
             return self._done(g, to, "near")
+        if g.rumor.startswith("gate:"):
+            return await self._tell_gate(g, to, "near", self._world)
         rumors, rumor = self.rumors(), self._of(g)
         if rumors is None or rumor is None:
             return self._fail(g, "забыл, о чём хотел рассказать")
@@ -580,6 +591,12 @@ class Errands:
                 return self._fail(g, f"не застал на месте: {g.to_name}")
             self._spawn(self._give_far(g, self._world))
             return
+        if g.rumor.startswith("gate:"):
+            if not there:
+                return self._fail(g, f"не застал на месте: {g.to_name}")
+            g.state = "there"
+            self._spawn(self._tell_gate(g, g.to, "far", self._world))
+            return
         rumor = self._of(g)
         if rumors is None or rumor is None:
             return self._fail(g, "забыл, о чём хотел рассказать")
@@ -588,6 +605,19 @@ class Errands:
             return self._fail(g, f"не застал на месте: {g.to_name}")
         status = rumors.tell(rumor, g.npc, to)
         self._done(g, to, "far" if status == "told" else "knew")
+
+    async def _tell_gate(self, g: Goal, to: str, how: str, world: int) -> None:
+        """Gate news is addressed to this person: another guard cannot receive it in its place."""
+        if to != g.to or self.gate_told is None:
+            return self._fail(g, f"не передал новость адресату: {g.to_name}")
+        try:
+            await self.gate_told(g.rumor, g.npc, to)
+        except (GameError, TimeoutError) as err:
+            if world == self._world:
+                self._fail(g, f"не передал новость: {str(err) or type(err).__name__}")
+            return
+        if world == self._world:
+            self._done(g, to, how)
 
     def _stand_in(self, g: Goal, rumor: Rumor) -> str | None:
         """Another of the other's guild by its spot at that minute, by its routine, awake (the far fork)."""

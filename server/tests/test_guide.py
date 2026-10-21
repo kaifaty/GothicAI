@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 import gothic_ai.guide
-from gothic_ai.guide import LEAD, Guide, Way
+from gothic_ai.guide import LEAD, Guide, Lead, Way
 from gothic_ai.journal import Journal
 from gothic_ai.llm import ToolCall
 from gothic_ai.llm.fake import FakeBackend, FakeStep
@@ -18,6 +18,7 @@ from tests.test_deals import GOLD, _setup, _shown
 from tests.test_dialogue import XARDAS, _until
 
 MALETH, GUARD = "BAU_954_MALETH", "MIL_315_GUARD"
+BRAGO = "BDT_1014_BANDIT_L"
 
 
 def _place(id: str, ru: str, where: str, center: list[int], kind: str, **more: Any) -> dict[str, Any]:
@@ -192,6 +193,32 @@ async def test_it_is_told_it_may_lead_the_hero_unless_it_must_stay():
     assert (guide.situation(MALETH) or "").startswith("Можешь отвести героя к месту, если захочешь")
     await guide.prepare(XARDAS)  # the plot's: it stays where it is
     assert guide.situation(XARDAS) is None
+
+
+async def test_brago_may_lead_to_dexters_real_hut_but_not_meet_or_enter_other_houses():
+    guide, link, talk, _, _ = _guide()
+    snap = link.snapshots[MALETH]
+    guide.book = PlaceBook.load()
+    assert guide.book is not None
+    hut = guide.book.get("CASTLEMINE_HUT")
+    assert hut is not None and hut.kind == "house" and not hut.inside and not hut.entrances
+    way, why = await guide.way(BRAGO, hut.id, snap)
+    assert why == "" and way is not None and not way.door
+    assert way.points == hut.waynet and way.pos == hut.center
+    assert (await guide.way(MALETH, hut.id, snap))[1].endswith("где в него вход, ты не знаешь")
+    assert (await guide.way(BRAGO, hut.id, snap, meet=True))[1].endswith("где в него вход, ты не знаешь")
+    far = _snap((-100000, 0, 0), (-100000, 0, 100))
+    assert "слишком далеко" in (await guide.way(BRAGO, hut.id, far))[1]
+    talk.people[BRAGO] = SimpleNamespace(state="ZS_GUIDE_PLAYER")
+    assert "по скриптам" in (await guide.way(BRAGO, hut.id, snap))[1]
+    talk.people.clear()
+    guide.book = BOOK
+    assert (await guide.way(BRAGO, "FARM1_INSTABLE", snap))[1].endswith("где в него вход, ты не знаешь")
+
+    guide.leads[BRAGO] = Lead(BRAGO, "Браго", way, "D1", state="going")
+    assert guide.situation(BRAGO) == "Ты ведёшь героя к Декстеру за награду; он идёт за тобой."
+    guide.leads[BRAGO].state = "waiting"
+    assert guide.situation(BRAGO) == "Ты ведёшь героя к Декстеру за награду; он отстал: ты ждёшь его."
 
 
 async def test_it_leads_the_hero_waits_for_him_and_says_they_are_there():

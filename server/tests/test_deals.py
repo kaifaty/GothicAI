@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 import gothic_ai.deals
+from gothic_ai.bounty import Bounty
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.contracts import gold_text
 from gothic_ai.crimes import Crimes
@@ -89,14 +90,15 @@ async def test_haggle_then_accept_what_he_saw():
         fake.hero_items = {GOLD: 10}
         await fake.send(type="deal_accept", deal=v1["deal"], version=2)
         await _until(lambda: fake.statuses.count("notice") == 1)
+        await _until(lambda: len(_shown(fake)) == 3)
         assert deals.open[XARDAS].state == "open"
         assert fake.hero_items == {GOLD: 10} and chronicle.facts("deal") == []
 
         # what he saw a moment ago is not what is shown now: not carried out, the window shows v2 again
         fake.hero_items = {GOLD: 40}
         await fake.send(type="deal_accept", deal=v1["deal"], version=1)
-        await _until(lambda: len(_shown(fake)) == 3)
-        assert _shown(fake)[2]["version"] == 2 and fake.hero_items == {GOLD: 40}
+        await _until(lambda: len(_shown(fake)) == 4)
+        assert _shown(fake)[3]["version"] == 2 and fake.hero_items == {GOLD: 40}
 
         # he accepts v2: everything changes hands at once, the npc answers
         await fake.send(type="deal_accept", deal=v1["deal"], version=2)
@@ -872,6 +874,67 @@ async def test_truce_without_a_clock_fails_before_any_exchange():
         await link_cm.__aexit__(None, None, None)
 
 
+@pytest.mark.parametrize("truce", [False, True])
+async def test_deal_clears_ultimatum_and_keeps_truce_before_any_post_payment_request(monkeypatch, truce):
+    fake = FakeGame(branch="A")
+    fake.hero_items = {GOLD: 200}
+    link_cm, dialogue, chronicle, deals = await _setup(
+        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+    )
+    dialogue.guild_of = lambda npc: 9 if npc == BRAGO else 0
+    parley = Parley(dialogue.link, dialogue, chronicle)
+    deals.parley = parley
+    try:
+        snap = await dialogue.link.snapshot(BRAGO)
+        await parley.handle(
+            dialogue,
+            dialogue.open(BRAGO, "Браго"),
+            ToolCall("ultimatum", {"demand": "Заплати сто золотых", "seconds": 30}, "u1"),
+            snap,
+        )
+        outcome = await deals.propose(
+            BRAGO,
+            "Браго",
+            {
+                "hero_gives": [{"item": GOLD, "count": 100}],
+                **({"truce": {"hours": 1}} if truce else {}),
+            },
+            snap,
+        )
+        assert outcome.status == "accepted"
+        offer = deals.open[BRAGO]
+        now = parley.now()
+        exchange = dialogue.link.story_effect
+        send = deals._send
+
+        async def exchange_then_lose_clock(*args, **kwargs):
+            await exchange(*args, **kwargs)
+            assert fake.hero_items[GOLD] == 100
+            dialogue.link.snapshots.clear()
+            parley._minute = None
+            assert parley.now() is None
+
+        async def send_after_peace(msg):
+            assert parley.ultimatum(BRAGO) is None
+            assert bool(parley.truce(BRAGO)) is truce
+            await send(msg)
+
+        async def day_before_exchange(_):
+            assert fake.hero_items[GOLD] == 200
+            assert parley.ultimatum(BRAGO) is not None
+            return {}
+
+        monkeypatch.setattr(dialogue.link, "story_effect", exchange_then_lose_clock)
+        monkeypatch.setattr(deals, "_send", send_after_peace)
+        monkeypatch.setattr(gothic_ai.deals, "_day", day_before_exchange)
+        await deals.accept(offer.id, offer.version)
+        assert offer.state == "done" and len(chronicle.facts("deal")) == 1
+        if truce:
+            assert chronicle.facts("truce")[0]["until"] == now + 60
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
 @pytest.mark.parametrize("truce", [{"hours": 0}, {"hours": 25}, {"hours": True}, {"hours": 1.5}, {}])
 async def test_invalid_truce_term_is_rejected(truce):
     fake = FakeGame(branch="A")
@@ -929,6 +992,100 @@ async def test_accepting_any_deal_clears_bandit_ultimatum():
         offer = deals.open[BRAGO]
         await deals.accept(offer.id, offer.version)
         assert parley.ultimatum(BRAGO) is None and parley.truce(BRAGO) is None
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("npc,minimum", [("BDT_1013_BANDIT_L", 10), (BRAGO, 150)])
+@pytest.mark.parametrize("secret", ["client_name", "client_place"])
+async def test_bandit_secret_sale_requires_its_real_price_and_records_the_paid_secret(npc, minimum, secret):
+    fake = FakeGame(branch="A")
+    fake.hero_items = {GOLD: 300}
+    link_cm, dialogue, chronicle, deals = await _setup(
+        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+    )
+    dialogue.guild_of = lambda _: 9
+    deals.bounty = Bounty(dialogue.link, dialogue, chronicle)
+    try:
+        snap = await dialogue.link.snapshot(npc)
+        terms = {"secret": secret, "hero_gives": [{"item": GOLD, "count": minimum - 1}]}
+        result = await deals.propose(npc, "Бандит", terms, snap)
+        assert result.status == "rejected" and str(minimum) in result.output
+        assert not deals.open and not chronicle.facts("deal")
+        assert fake.hero_items[GOLD] == 300
+
+        terms["hero_gives"][0]["count"] = minimum
+        result = await deals.propose(npc, "Бандит", terms, snap)
+        assert result.status == "accepted"
+        offer = deals.open[npc]
+        assert offer.secret == secret and "раскроешь" in offer.terms()
+        await _until(lambda: bool(_shown(fake)))
+        assert any("Раскроет:" in term["text"] for term in _shown(fake)[-1]["npc_gives"])
+        await deals.accept(offer.id, offer.version)
+        assert fake.hero_items[GOLD] == 300 - minimum
+        assert chronicle.facts("deal")[0]["secret"] == secret
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+async def test_paid_secret_is_available_before_post_payment_game_requests(monkeypatch):
+    fake = FakeGame(branch="A")
+    fake.hero_items = {GOLD: 300}
+    link_cm, dialogue, chronicle, deals = await _setup(
+        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+    )
+    dialogue.guild_of = lambda _: 9
+    bounty = deals.bounty = Bounty(dialogue.link, dialogue, chronicle)
+    waiting, resume = asyncio.Event(), asyncio.Event()
+    accepting = None
+    try:
+        snap = await dialogue.link.snapshot(BRAGO)
+        result = await deals.propose(
+            BRAGO, "Браго",
+            {"secret": "client_name", "hero_gives": [{"item": GOLD, "count": 150}]}, snap,
+        )
+        assert result.status == "accepted"
+        offer = deals.open[BRAGO]
+        await _until(lambda: bool(_shown(fake)))
+        send = deals._send
+
+        async def delayed_hide(command):
+            if command.type == "deal_hide":
+                waiting.set()
+                await resume.wait()
+            await send(command)
+
+        monkeypatch.setattr(deals, "_send", delayed_hide)
+        accepting = asyncio.create_task(deals.accept(offer.id, offer.version))
+        await asyncio.wait_for(waiting.wait(), timeout=2)
+        assert fake.hero_items[GOLD] == 150
+        outcome = await bounty.handle(
+            dialogue, dialogue.open(BRAGO, "Браго", warm=False),
+            ToolCall("tell_secret", {"secret": "client_name"}), snap,
+        )
+        assert outcome.status == "accepted" and "paid" in outcome.output
+        assert chronicle.facts("deal")[0]["secret"] == "client_name"
+        assert len(chronicle.facts("bounty_secret")) == 1
+    finally:
+        resume.set()
+        if accepting is not None:
+            await accepting
+        await link_cm.__aexit__(None, None, None)
+
+
+async def test_secret_sale_schema_and_requests_require_enabled_bounty():
+    fake = FakeGame(branch="A")
+    link_cm, dialogue, chronicle, deals = await _setup(
+        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+    )
+    try:
+        assert "secret" not in deals.all_tools[0].parameters["properties"]
+        result = await deals.propose(BRAGO, "Браго", {"secret": "client_name"}, None)
+        assert result.status == "rejected" and "выключена" in result.output
+        deals.bounty = Bounty(dialogue.link, dialogue, chronicle)
+        for tool in (deals.all_tools[0], deals.tools(BRAGO)[0]):
+            assert tool.parameters["properties"]["secret"]["enum"] == ["", "client_name", "client_place"]
+            assert "secret" in tool.parameters["required"] and "tell_secret" in tool.description
     finally:
         await link_cm.__aexit__(None, None, None)
 

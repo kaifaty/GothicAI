@@ -258,7 +258,7 @@ class Parley:
         if threat and threat.get("status") == "active" and not threat.get("answered"):
             self.chronicle.record({**threat, "answered": True})
 
-    async def accept_deal(self, npc: str, hours: int | None = None) -> None:
+    async def accept_deal(self, npc: str, hours: int | None = None, *, now: int | None = None) -> None:
         npc = npc.upper()
         if not self.bandit(npc):
             return
@@ -266,7 +266,8 @@ class Parley:
             self.chronicle.record({**threat, "status": "cleared", "why": "deal"})
         if hours is None:
             return
-        now = self.now()
+        if now is None:
+            now = self.now()
         if now is None or not 1 <= hours <= 24:
             raise ValueError("truce needs the game clock and 1–24 hours")
         members = self.members(npc)

@@ -14,6 +14,7 @@ from gothic_ai.crimes import Crimes
 from gothic_ai.deals import Deals, LieRef
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.fear import knows_violence
+from gothic_ai.game import GameError
 from gothic_ai.llm import Message, ToolCall
 from gothic_ai.llm.fake import FakeStep
 from gothic_ai.memory import MemoryStore
@@ -27,6 +28,7 @@ from gothic_ai.social import Tie
 from gothic_ai.storyguard import StoryGuard
 from gothic_ai.trust import Trust
 from gothic_ai.witnesses import ASK_TOOL, Inquiry, Witnesses
+from gothic_ai.witnesses import Testimony as WitnessTestimony
 from tests.fake_game import FakeGame, connected
 from tests.test_crimes import deed
 from tests.test_dialogue import _until
@@ -371,6 +373,182 @@ async def test_a_witness_that_did_not_see_him_can_not_catch_him():
     # it saw nothing: nothing to catch him with, the lie stands
     assert any(o == "Отклонено: со слов: Хильда — героя не видели, уличить нечем." for o in llm.outputs)
     assert w.chronicle.facts("caught") == []
+
+
+@pytest.mark.parametrize("answer", [
+    "Подтверждаю: у героя есть поручение от меня.", "Отрицаю: герой мне солгал.",
+])
+async def test_gate_claim_answer_uses_code_truth_and_survives_the_testimony_fact(answer):
+    fake = FakeGame(branch="A")
+    llm = lobart(hilda=[("спрашивает тебя", FakeStep(answer))])
+    heard = []
+
+    async def gate_claim(witness, asker, said):
+        heard.append((witness, asker, said))
+        return answer
+
+    async with connected(fake) as link:
+        w = World(link, fake, llm)
+        w.witnesses.gate_claim = gate_claim
+        w.chronicle.record({
+            "fact": "covered", "npc": HILDA, "deal": "cover-gate", "day": 1,
+            "vouch": "Герой был со мной.",
+        })
+        said = "Хильда ждёт меня"
+        t = await w.witnesses._testify(None, LOBART, "Лобарт", HILDA, "Хильда", said, "near", 0)
+        assert t is not None
+        assert heard == [(HILDA, LOBART, said)]
+        assert t.gate_claim == answer and not t.cover and not t.vouch
+        fact = w.chronicle.facts("testimony")[0]
+        assert WitnessTestimony.of(fact).gate_claim == answer
+        assert answer in (w.witnesses.situation(LOBART) or "")
+        assert "героя не видели за сутки до того" not in w.witnesses._told(t)
+        await w.witnesses._speak(w.dialogue.open(HILDA, "Хильда"), t)
+        cue = str(llm.others.calls[-1][1][-1].content)
+        assert answer in cue and "ложное заявление отрицай" in cue
+
+
+async def test_gate_claim_is_checked_when_a_far_inquiry_reaches_the_named_witness():
+    fake = FakeGame(branch="A")
+    heard = []
+
+    async def gate_claim(witness, asker, said):
+        heard.append((witness, asker, said))
+        return "Отрицаю: у героя нет связи со мной."
+
+    async with connected(fake) as link:
+        w = World(link, fake, lobart())
+        w.witnesses.gate_claim = gate_claim
+        q = Inquiry("gate-question", LOBART, "Лобарт", ANDRE, "Андре", "Андре ждёт меня", AT_8, DAY + 18 * 60)
+        w.witnesses._inquire(q)
+        await w.witnesses.tick()
+        assert not heard
+        fake.hour = 18
+        await w.witnesses.tick()
+        assert heard == [(ANDRE, LOBART, q.said)]
+        assert w.chronicle.facts("testimony")[0]["gate_claim"].startswith("Отрицаю")
+
+
+@pytest.mark.parametrize("error", [GameError, TimeoutError])
+async def test_gate_claim_error_keeps_far_inquiry_until_an_answer(error):
+    fake = FakeGame(branch="A")
+    attempts = 0
+
+    async def gate_claim(witness, asker, said):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise error("Game unavailable")
+        return "Отрицаю: у героя нет связи со мной."
+
+    async with connected(fake) as link:
+        w = World(link, fake, lobart())
+        w.witnesses.gate_claim = gate_claim
+        q = Inquiry("gate-question", LOBART, "Лобарт", ANDRE, "Андре", "Андре ждёт меня", AT_8, DAY + 18 * 60)
+        w.witnesses._inquire(q)
+        fake.hour = 18
+        await w.witnesses.tick()
+        assert q.id in w.witnesses.inquiries
+        assert not w.chronicle.facts("testimony")
+        assert not w.chronicle.facts("inquiry_lapsed")
+
+        await w.witnesses.tick()
+        assert attempts == 2 and not w.witnesses.inquiries
+        assert len(w.chronicle.facts("testimony")) == 1
+        assert w.chronicle.facts("testimony")[0]["id"] == q.id
+
+
+@pytest.mark.parametrize("error", [GameError, TimeoutError])
+async def test_failed_far_inquiry_does_not_block_next_question_and_lapses_after_three_attempts(error):
+    fake = FakeGame(branch="A")
+    attempts = []
+
+    async def gate_claim(witness, asker, said):
+        attempts.append(said)
+        if said == "Андре ждёт меня":
+            raise error("Game unavailable")
+        return "Подтверждаю: у героя есть связь со мной."
+
+    async with connected(fake) as link:
+        w = World(link, fake, lobart())
+        w.witnesses.gate_claim = gate_claim
+        failed = Inquiry(
+            "failed-question", LOBART, "Лобарт", ANDRE, "Андре", "Андре ждёт меня", AT_8,
+            DAY + 18 * 60,
+        )
+        next_question = Inquiry(
+            "next-question", LOBART, "Лобарт", ANDRE, "Андре", "Андре меня послал", AT_8,
+            DAY + 18 * 60 + 1,
+        )
+        w.witnesses._inquire(failed)
+        w.witnesses._inquire(next_question)
+        fake.hour, fake.minute = 18, 5
+
+        await w.witnesses.tick()
+        assert failed.id in w.witnesses.inquiries
+        assert next_question.id not in w.witnesses.inquiries
+        [testimony] = w.chronicle.facts("testimony")
+        assert testimony["id"] == next_question.id
+        assert testimony["gate_claim"].startswith("Подтверждаю")
+        assert not w.chronicle.facts("inquiry_lapsed")
+
+        await w.witnesses.tick()
+        assert failed.id in w.witnesses.inquiries
+        await w.witnesses.tick()
+        assert not w.witnesses.inquiries
+        assert w.chronicle.facts("inquiry_lapsed") == [
+            {"fact": "inquiry_lapsed", "id": failed.id, "why": "error"}
+        ]
+        await w.witnesses.tick()
+        assert attempts == [failed.said, next_question.said, failed.said, failed.said]
+        assert len(w.chronicle.facts("testimony")) == 1
+
+
+async def test_far_inquiry_with_no_answer_is_removed_when_branch_does_not_change():
+    fake = FakeGame(branch="A")
+    async with connected(fake) as link:
+        w = World(link, fake, lobart())
+        w.witnesses.npc_crimes_enabled = False
+        q = Inquiry(
+            "disabled-npc-question", LOBART, "Лобарт", ANDRE, "Андре", "Хильда взяла кошелёк", AT_8,
+            DAY + 18 * 60, about=HILDA, about_name="Хильда",
+        )
+        w.witnesses._inquire(q)
+        fake.hour = 18
+
+        await w.witnesses.tick()
+        assert not w.witnesses.inquiries
+        assert not w.chronicle.facts("testimony")
+        assert not w.chronicle.facts("inquiry_lapsed")
+
+
+@pytest.mark.parametrize("error", [GameError, TimeoutError])
+@pytest.mark.parametrize("tier", ["near", "walk"])
+async def test_gate_claim_error_reports_unanswered_near_question(error, tier):
+    fake = FakeGame(branch="A")
+
+    async def gate_claim(witness, asker, said):
+        raise error("Game unavailable")
+
+    async with connected(fake) as link:
+        w = World(link, fake, lobart())
+        w.witnesses.gate_claim = gate_claim
+        if tier == "walk":
+            fake.npc_states[HILDA]["distance"] = 3000
+        conv = w.dialogue.open(LOBART, "Лобарт")
+        await w.witnesses.prepare(LOBART)
+        c = next(c for c in w.witnesses._near[LOBART] if c.npc == HILDA)
+        assert c.tier == tier
+
+        text, success = await w.witnesses._ask(conv, c, "Хильда ждёт меня", AT_8, None)
+        assert not success and "Хильда" in text and "пока не проверены" in text
+        assert not w.chronicle.facts("testimony")
+        if tier == "walk":
+            assert any(
+                m["type"] == "action" and m["npc"] == LOBART
+                and m["action"] == "go_to_npc" and m.get("args", {}).get("npc") == "PLAYER"
+                for m in fake.received
+            )
 
 
 async def test_who_may_be_asked_and_when_not():

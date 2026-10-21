@@ -173,6 +173,27 @@ def test_unpaid_restores_direct_and_hearsay_knowledge_without_duplicates():
     assert _desk(facts).of(LOBART) == [] and _desk(facts).of(VINO) == []
 
 
+def test_broken_gate_vouch_names_the_voucher_in_direct_news_and_rumors():
+    fact = {
+        "fact": "gate_vouch_broken", "id": "V1:C1", "vouch": "V1", "npc": HILDA,
+        "name": "Хильда", "crime": "C1", "title": "Кража", "day": 2,
+        "witnesses": [LOBART], "witness_names": {LOBART: "Лобарт"},
+    }
+    rumor = _rumor(
+        kind="gate_vouch_broken", quest="gate_vouch_broken:V1:C1",
+        about="PLAYER", about_name="герой",
+    )
+    desk = _desk([fact, rumor])
+    for npc in (LOBART, VINO):
+        [entry] = desk.of(npc)
+        assert (entry.subject, entry.about, entry.kind) == (HILDA, "PLAYER", "gate_vouch_broken")
+        assert entry.direct == (npc == LOBART)
+        assert entry.description() == "Хильда поручился за преступника"
+        assert "Хильда поручился за преступника" in desk.warning(npc, HILDA)
+    assert "со слов: Лобарт" in desk.context(VINO)
+    assert desk.of(HILDA) == []
+
+
 async def test_turn_extension_has_only_situation():
     desk = _desk(_exposed())
     await desk.prepare(LOBART)

@@ -169,6 +169,26 @@ def test_bandit_cards(expected):
     assert characters.load()[expected.npc] == expected
 
 
+@pytest.mark.parametrize(
+    ("leader", "gang"),
+    [
+        (
+            "BDT_10301_ADDON_RANGERBANDIT_M",
+            [f"BDT_1030{i}_ADDON_RANGERBANDIT_{'M' if i == 4 else 'L'}" for i in (0, 2, 3, 4, 5)],
+        ),
+        ("BDT_1001_BANDIT_L", ["BDT_1000_BANDIT_L", "BDT_1002_BANDIT_L"]),
+        ("BDT_1000_BANDIT_L", ["BDT_1002_BANDIT_L"]),  # the woods by the town have no 1001
+        ("BDT_1011_BANDIT_M", ["BDT_1009_BANDIT_L", "BDT_1010_BANDIT_L"]),
+        ("BDT_1021_LEUCHTTURMBANDIT", ["BDT_1022_LEUCHTTURMBANDIT", "BDT_1023_LEUCHTTURMBANDIT"]),
+        ("SLD_840_ALVARES", ["SLD_841_ENGARDO"]),
+    ],
+)
+def test_road_gangs_have_one_leader(leader, gang):
+    """The leader hails the hero first and answers for the gang (talk.lead): its card leads."""
+    cards = characters.load()
+    assert all(cards[leader].lead > cards[member].lead for member in gang)
+
+
 async def test_cards_from_the_models_answer(graph):
     subjects = characters.subjects(graph, PEOPLE)
     llm = FakeBackend(script=[FakeStep("", [ToolCall("write_cards", {"cards": [_card()]}, "c1")])], delay=0)

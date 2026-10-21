@@ -102,6 +102,13 @@ class Trust:
                     r.broke.append(f"обещал прийти на встречу ({f.get('what', '')}), а не пришёл")
                 case "broken" if f.get("npc") == npc:
                     r.broke.append(f"обещал вернуть {f.get('what', '')}, а не вернул")
+                case "gate_vouch_broken" if f.get("npc") == npc:
+                    kind = f.get("crime_kind") or next(
+                        (deed["kind"] for deed in facts
+                         if deed.get("fact") == "crime" and deed.get("id") == f.get("crime")),
+                        "",
+                    )
+                    r.crimes.append(f"ты поручился за него, а он совершил преступление: «{kind}»")
                 case "rumor" if f.get("to") == npc and f.get("kind") == "broken":
                     about = f.get("about_name") or f.get("about", "")
                     teller = f.get("from_name") if int(f.get("hops", 1)) > 1 else None
@@ -117,7 +124,7 @@ class Trust:
         r.heard = list(dict.fromkeys(r.heard))
         r.amended = list(dict.fromkeys(r.amended))
         if self.crimes is not None:
-            r.crimes = self.crimes.distrust(npc)
+            r.crimes.extend(self.crimes.distrust(npc))
         return r
 
     def broken(self, npc: str) -> bool:
