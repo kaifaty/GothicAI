@@ -463,6 +463,17 @@ async def test_room_entry_remains_for_encounter_rules(system, deed_id):
     assert not verdicts(system) and not system.link.actions
 
 
+@pytest.mark.parametrize("kind", ["bandit_enemy", "party_enemy"])
+@pytest.mark.parametrize("other", ["PLAYER", "CAVALORN"])
+@pytest.mark.parametrize("deed_id", [None, "deed-1"])
+async def test_bandit_sightings_remain_for_parley_without_missing_deed_fallback(system, kind, other, deed_id):
+    crime(system)
+    system.link.receive(held().model_copy(update={"kind": kind, "other": other, "deed": deed_id}))
+    await asyncio.sleep(0)
+    assert not system.react._tasks and not system.react._holds and not system.react.history
+    assert not verdicts(system) and not system.link.actions
+
+
 async def test_called_guards_hear_and_inform_law_and_nearest_free_guard_fights(system):
     system.react.cards = {CITIZEN: card(CITIZEN, honesty=4)}
     system.link.nearby = [

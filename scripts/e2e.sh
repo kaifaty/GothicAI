@@ -10,6 +10,8 @@
 #   bandit_parley: new game, LLM=fake; Brago's first fight is rejected, an ultimatum runs its course;
 #       Y pays 100 gold for four hours of peace with the cave gang, including 1015; no attack for 20 s,
 #       then drawing a weapon breaks the truce and Brago attacks
+#   bandit_hold: new game, no SAVE, LLM=fake; ranger bandits and a scripted party member stay quiet
+#       on renewable 5 s parley leases for 30 s, then releasing to scripts starts a native attack
 #   bandit_bounty: new game, LLM=fake; Brago refuses a secret without leverage, sells Dexter's name
 #       for 150 gold through Y, updates the vanilla leaflet quest and starts leading to CASTLEMINE_HUT
 #   m0: takes Xardas over, walks him around and returns him to his routine
@@ -378,7 +380,7 @@ if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion || "$SCENARIO" = ne
   [ -z "${SAVE:-}" ] || { echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2; exit 2; }
 fi
 LLM="${LLM:-fake}"
-if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty ) && ( "$LLM" != fake || -n "${SAVE:-}" ) ]]; then
+if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty || "$SCENARIO" == bandit_hold ) && ( "$LLM" != fake || -n "${SAVE:-}" ) ]]; then
   echo "scenario $SCENARIO requires LLM=fake and a new game (unset SAVE)" >&2
   exit 2
 fi

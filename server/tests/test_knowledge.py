@@ -374,15 +374,42 @@ async def test_the_npc_knows_in_its_turn_and_recalls_the_rest(graph):
     assert "Ты знаешь:\n[«Я ищу работу.»" in result.output
 
 
-@pytest.mark.skipif(
-    not (
-        Path(os.environ.get("GOTHIC_AI_DATA", Path.home() / ".local/share/gothic-ai")) / "story.json"
-    ).exists(),
-    reason="no story graph of the game on this machine",
-)
-def test_on_the_games_own_story():
+@pytest.fixture(scope="module")
+def real_graph():
     data = Path(os.environ.get("GOTHIC_AI_DATA", Path.home() / ".local/share/gothic-ai"))
-    graph = load(data / "story.json")
+    path = data / "story.json"
+    if not path.exists():
+        pytest.skip("no story graph of the game on this machine")
+    return load(path)
+
+
+@pytest.mark.parametrize("npc", ["SLD_840_ALVARES", "SLD_841_ENGARDO"])
+@pytest.mark.parametrize("heard", [False, True])
+async def test_akil_farm_ambushes_are_absent_from_knowledge(real_graph, npc, heard):
+    fake = FakeGame()
+    fake.vars = {"KAPITEL": 1}
+    dialogs = {n.id for n in real_graph.dialogs_of(npc) if n.important}
+    assert dialogs
+    fake.known = dialogs if heard else set()
+    async with connected(fake) as link:
+        vanilla = Knowledge(link, real_graph)
+        await vanilla.prepare(npc)
+        topics = vanilla.views[npc].told if heard else vanilla.views[npc].open
+        assert {t.node.id for t in topics} == dialogs
+
+        patches = StoryPatches(link, MemoryStore(":memory:"), static=freed(real_graph.nodes.__contains__))
+        knowledge = Knowledge(link, real_graph, patches)
+        await knowledge.prepare(npc)
+        assert knowledge.dialogs(npc) == []
+        assert knowledge.views[npc].open == [] and knowledge.views[npc].told == []
+        for node in real_graph.nodes.values():
+            if node.npc == npc:
+                for _, _, line in node.lines():
+                    assert knowledge.recall(npc, line) is None
+
+
+def test_on_the_games_own_story(real_graph):
+    graph = real_graph
     k = Knowledge(_Link(), graph)  # type: ignore[arg-type]
 
     def view(npc: str, guild: int, knows: set[str], **vars: int):

@@ -47,6 +47,7 @@ class NpcObserver final {
     void verdict(World& world, const rapidjson::Value& msg);
     void setHoldThreats(bool on) { holdThreats = on; }
     void setHoldDeeds(bool on) { holdDeeds = on; }
+    void setHoldBandits(World* world, bool on);
     // the server is gone: every held threat goes to the scripts now
     void releaseAll(World& world);
     // `routine`: an npc's daily routine, its routine variants and current state (v6)
@@ -106,20 +107,24 @@ class NpcObserver final {
       std::string item;    // restore the theft's ITEM before a late script delivery
       std::string deed;    // hero_deed id: rules may consume it without taking the body
       bool        room   = false;  // entry rules may warn or grant time to leave without taking the body
+      bool        bandit = false;  // sight of a hostile bandit or its prospective party target
       const Npc*  self   = nullptr;
       const Npc*  other  = nullptr;
       const Npc*  victim = nullptr;
       PercType    perc   = PERC_None;
       uint64_t    at     = 0;
       };
+    enum class HoldTo : uint8_t { Scripts, Server, Parley };
     struct Verdict final {
-      bool     server = false;  // the server acts on it (swallow repeats); false: the scripts get them
+      HoldTo   to     = HoldTo::Scripts;
       uint64_t until  = 0;
+      bool     bandit = false;
       };
     void releaseHeld(World& world, Held& h);
 
     bool                                     holdThreats = false;
     bool                                     holdDeeds = false;
+    bool                                     holdBandits = false;
     uint64_t                                 nextHold    = 1;
     std::vector<Held>                        held;
     std::unordered_map<std::string,Verdict>  verdicts;

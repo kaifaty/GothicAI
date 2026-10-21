@@ -66,7 +66,7 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 48;
+constexpr int         ProtocolVersion = 49;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
 constexpr float       IntroCm         = 3000;  // -nointro: those this near the hero at the start
@@ -575,6 +575,7 @@ void AiBridge::Impl::processInbound(World* world, Inbound& in) {
           }
         observer.setHoldThreats(false);
         observer.setHoldDeeds(false);
+        observer.setHoldBandits(nullptr,false);
         if(chat!=nullptr)
           chat->hideDeal("");  // nobody is there to carry it out
         }
@@ -845,6 +846,8 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
       observer.setHoldThreats(JsonRead::boolean(doc,"hold",false));
     if(doc.HasMember("deeds"))
       observer.setHoldDeeds(JsonRead::boolean(doc,"deeds",false));
+    if(doc.HasMember("bandits"))
+      observer.setHoldBandits(world,JsonRead::boolean(doc,"bandits",false));
     return;
     }
 

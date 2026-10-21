@@ -563,6 +563,27 @@ async def test_held_hero_events_are_context_without_model_calls_or_planner_verdi
     assert planner.stats.scripted_events == 1
 
 
+@pytest.mark.parametrize("kind,other", [
+    ("bandit_enemy", "PLAYER"), ("bandit_enemy", "CAVALORN"), ("party_enemy", "BDT_10300"),
+])
+@pytest.mark.parametrize("activity", ["routine", "body", None])
+async def test_held_bandit_sightings_are_left_to_parley_without_planner_verdicts(
+    kind, other, activity,
+) -> None:
+    planner, decider, applier, clock = make()
+    if activity is not None:
+        planner.on_roster([entry("WITNESS", 8, activity=activity)], clock.t)
+        planner.npcs["WITNESS"].next_check = clock.t + 100
+    planner.on_message(parse_game_message(json.dumps({
+        "type": "perception_held", "npc": "WITNESS", "other": other, "kind": kind, "hold": "h1",
+    })))
+    await step(planner, clock, 0.05)
+    assert not decider.calls and not applier.recent and not applier.verdicts
+    assert planner.stats.events == 0
+    if activity is not None:
+        assert not planner.npcs["WITNESS"].holds and not planner.npcs["WITNESS"].stimuli
+
+
 @pytest.mark.parametrize("crime_rooms", [False, True])
 async def test_room_observations_react_only_without_crime_rules(crime_rooms) -> None:
     planner, decider, _, clock = make()

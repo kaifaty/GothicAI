@@ -39,6 +39,7 @@ PR, который добавляет фичу или выключатель, д
 |---|---|---|---|---|
 | Планировщик NPC вне разговора (Strands Decider) | `--no-brain`; без `--decider-url` его нет | `brain/`, `decider-service/` | e2e `m4` (что нужно от моста), `m5`, `day`, `initiative` с `DECIDER_URL` | [npc-agent.md](npc-agent.md), [npc-scheduler.md](npc-scheduler.md) |
 | Угрозы свободным NPC — сначала поведенческой модели | `--no-hold-threats` | `brain/`; `cli.py` шлёт `threat_control` | e2e `m5c` | [protocol.md](protocol.md#планировщик-npc-v5) |
+| Удержание встречи бандита с героем и спутником на время переговоров, v49 | `threat_control.bandits:false`; до серверных правил переговоров (следующий шаг) включает только сценарий | `ai_bridge/npcobserver.*`; `hold_verdict.to:"parley"`, аренда 1–15 с | e2e `bandit_hold` (новая игра, `LLM=fake`); `test_protocol.py`, `test_crime_react.py`, `test_planner.py` | [protocol.md](protocol.md#планировщик-npc-v5), [npc-agent.md](npc-agent.md#как-работает-сейчас) |
 | Бой и бегство по решению модели | `--no-apply-threats` (решения только в трейсе) | `brain/reflex.py` | e2e `m5c`, `rescue`, `rescue_self` | [npc-agent.md](npc-agent.md#свободные-npc-m5c) |
 | Следующий час NPC из нового меню | `--no-apply-day` (меню в тени, работает старый `plan`) | `brain/planner.py`, `brain/day.py`, `daylife.py` | e2e `day` | [npc-tools.md](npc-tools.md#сделано-быт) |
 | NPC сам подходит и заговаривает | нет; без планировщика её нет | `initiative.py`, `concerns.py` | e2e `initiative` | [npc-tools.md](npc-tools.md#сделано-инициатива) |

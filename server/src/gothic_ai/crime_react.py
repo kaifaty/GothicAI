@@ -311,8 +311,8 @@ class CrimeReact:
                 self._receipts.pop(next(iter(self._receipts)))
             self._receipt_wake.set()
         elif isinstance(message, PerceptionHeld) and (message.deed or message.other.upper() in HERO):
-            if message.kind == "enter_room":
-                return  # CrimeMeet owns encounters; no deed is expected for room entry.
+            if message.kind in {"enter_room", "bandit_enemy", "party_enemy"}:
+                return  # Room encounters and bandit sightings belong to their own rules.
             if message.hold in self._holds or self._closed:
                 return
             self._holds.add(message.hold)

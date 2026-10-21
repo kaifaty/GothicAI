@@ -1461,6 +1461,11 @@ async def serve(args: argparse.Namespace) -> int:
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
                 exit_code = 1 if bad else 0
+            elif args.scenario == "bandit_hold":
+                results = await scenarios.bandit_hold(link, state.dialogue)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
+                exit_code = 1 if bad else 0
             elif args.scenario == "bandit_parley":
                 assert state.parley is not None and state.deals is not None and state.talk is not None
                 results = await scenarios.bandit_parley(
@@ -2752,6 +2757,7 @@ def main() -> None:
             "neural-group",
             "neural-talk",
             "bandit_parley",
+            "bandit_hold",
             "bandit_bounty",
             "neural-load",
             "neural-soak",

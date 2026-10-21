@@ -71,15 +71,21 @@ def test_what_the_model_is_told_of_an_npc(graph):
     assert characters.subjects(graph, PEOPLE, only={LOBART}) == []
 
 
-def test_samples_exclude_freed_dialogs_and_their_choices(graph):
-    brago = "BDT_1014_BANDIT_L"
-    ambush = "DIA_BDT_1014_BANDIT_KILLER"
+@pytest.mark.parametrize(
+    ("npc", "ambush"),
+    [
+        ("BDT_1014_BANDIT_L", "DIA_BDT_1014_BANDIT_KILLER"),
+        ("SLD_840_ALVARES", "DIA_ALVARES_ATTACK"),
+        ("SLD_841_ENGARDO", "DIA_ENGARDO_HALLO"),
+    ],
+)
+def test_samples_exclude_freed_dialogs_and_their_choices(graph, npc, ambush):
     choice = ambush + "_ATTACK"
     nested = choice + "_AGAIN"
     graph.nodes[ambush] = Node(
         ambush,
         "dialog",
-        brago,
+        npc,
         "",
         [_line("Это он, точно! Держи его!"), {"do": "choice", "node": choice}],
         set(),
@@ -87,16 +93,16 @@ def test_samples_exclude_freed_dialogs_and_their_choices(graph):
     graph.nodes[choice] = Node(
         choice,
         "choice",
-        brago,
+        npc,
         "",
         [_line("Хватайте его!"), {"do": "choice", "node": nested}],
         set(),
         parents=[ambush],
     )
     graph.nodes[nested] = Node(
-        nested, "choice", brago, "", [_line("Он не уйдёт!"), {"do": "set_guild"}], set(), parents=[choice]
+        nested, "choice", npc, "", [_line("Он не уйдёт!"), {"do": "set_guild"}], set(), parents=[choice]
     )
-    people = [*PEOPLE, {"npc": brago, "name": "Браго"}]
+    people = [*PEOPLE, {"npc": npc, "name": "Bandit"}]
     (trader,) = characters.subjects(graph, people)
     assert trader.npc == TRADER
     assert "Смотри, но руками не трогай." in trader.lines

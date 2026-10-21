@@ -26,6 +26,7 @@ from gothic_ai.protocol import (
     DebugCmd,
     GraphPatchCmd,
     HeroDeed,
+    HoldVerdictCmd,
     HushCmd,
     LineVoice,
     NpcActCmd,
@@ -127,6 +128,52 @@ def test_v44_independent_deeds_switch_and_held_deed_id():
     assert held.deed == "branch/deed-1"
 
 
+@pytest.mark.parametrize("hold,deeds,bandits", [(False, False, True), (True, True, False)])
+def test_v49_bandit_switch_is_independent_and_opt_in(hold, deeds, bandits):
+    assert PROTOCOL_VERSION >= 49
+    assert "bandits" not in json.loads(ThreatControlCmd(hold=True).to_json())
+    assert json.loads(ThreatControlCmd(bandits=True).to_json()) == {
+        "type": "threat_control", "bandits": True,
+    }
+    assert json.loads(ThreatControlCmd(hold=hold, deeds=deeds, bandits=bandits).to_json()) == {
+        "type": "threat_control", "hold": hold, "deeds": deeds, "bandits": bandits,
+    }
+
+
+@pytest.mark.parametrize("kind,other", [
+    ("bandit_enemy", "PLAYER"), ("bandit_enemy", "CAVALORN"), ("party_enemy", "BDT_10300"),
+])
+def test_v49_bandit_sighting_keeps_the_pair_and_distance(kind, other):
+    held = parse_game_message(_json({
+        "type": "perception_held", "hold": "bandit-1", "npc": "WITNESS", "other": other,
+        "other_name": "Target", "kind": kind, "distance": 1200,
+    }))
+    assert isinstance(held, PerceptionHeld)
+    assert (held.npc, held.other, held.other_name, held.kind, held.distance, held.deed) == (
+        "WITNESS", other, "Target", kind, 1200, None,
+    )
+
+
+@pytest.mark.parametrize("ms", [1000, 5000, 15000])
+def test_v49_parley_verdict_has_a_bounded_lease(ms):
+    assert json.loads(HoldVerdictCmd(hold="bandit-1", to="parley", ms=ms).to_json()) == {
+        "type": "hold_verdict", "hold": "bandit-1", "to": "parley", "ms": ms,
+    }
+
+
+@pytest.mark.parametrize("ms", [None, 999, 15001, 5000.5, True])
+def test_v49_parley_verdict_requires_a_valid_duration(ms):
+    with pytest.raises(ValidationError):
+        HoldVerdictCmd(hold="bandit-1", to="parley", ms=ms)
+
+
+@pytest.mark.parametrize("to", ["server", "scripts"])
+def test_existing_hold_verdicts_need_no_lease(to):
+    assert json.loads(HoldVerdictCmd(hold="h1", to=to).to_json()) == {
+        "type": "hold_verdict", "hold": "h1", "to": to,
+    }
+
+
 @pytest.mark.parametrize("kind", ["take_item", "attack"])
 def test_v47_npc_deed_keeps_shared_snapshot_and_culprit_separate_from_hero(kind):
     assert PROTOCOL_VERSION >= NPC_CRIME_PROTOCOL == 47
@@ -200,7 +247,7 @@ def test_v48_theft_range_is_observed_even_without_a_ready_callback(ready, distan
 
 
 def test_v48_chest_take_names_the_source_and_keeps_self_as_taker():
-    assert PROTOCOL_VERSION == NPC_FAR_PROTOCOL == 48
+    assert PROTOCOL_VERSION >= NPC_FAR_PROTOCOL == 48
     take = StoryEffectCmd(
         req="far-theft", npc="BAU_951_HILDA",
         effects=[{"do": "chest_take", "chest": "CHEST_LOBART", "item": "ITMI_GOLD", "count": 2}],

@@ -168,7 +168,18 @@ struct Seen final {
   uint64_t         periodMs = EventPeriodMs;
   };
 
-Seen classify(World& world, Npc& self, Npc& other, Npc* victim, PercType perc) {
+Seen classify(World& world, Npc& self, Npc& other, Npc* victim, PercType perc, bool bandits = false) {
+  if(bandits && (perc==PERC_ASSESSENEMY ||
+                (perc==PERC_ASSESSPLAYER && other.isPlayer() &&
+                 HeroDeed::aivar(self,"AIV_EnemyOverride")==0)) &&
+     !other.isDead() && !other.isDown() &&
+     world.script().personAttitude(self,other)==ATT_HOSTILE) {
+    // Without EnemyOverride, B_AssessPlayer can attack through B_AssessEnemy.
+    if(self.guild()==GIL_BDT && (other.isPlayer() || HeroDeed::aivar(other,"AIV_PARTYMEMBER")!=0))
+      return Seen{"bandit_enemy"};
+    if(perc==PERC_ASSESSENEMY && HeroDeed::aivar(self,"AIV_PARTYMEMBER")!=0 && other.guild()==GIL_BDT)
+      return Seen{"party_enemy"};
+    }
   if(victim!=nullptr && victim->isMonster() && world.script().guildAttitude(*victim,self)==ATT_HOSTILE) {
     // a dangerous monster killed by a person (the hero, someone else, the npc itself): the danger is over.
     // Hits on it are no news (the hero fighting a wolf is not an attack on someone), nor is a kill by another
@@ -252,6 +263,14 @@ void NpcObserver::tick(World& world) {
     if(now<held[i].at+HoldMs) {
       ++i;
       continue;
+      }
+    if(held[i].bandit) {
+      // A missed renewal means the server can no longer promise a quiet parley.
+      for(auto it=verdicts.begin(); it!=verdicts.end();) {
+        if(it->second.to==HoldTo::Parley)
+          it = verdicts.erase(it); else
+          ++it;
+        }
       }
     releaseHeld(world,held[i]);  // no verdict in time: the scripts react as they would have
     held.erase(held.begin()+ptrdiff_t(i));
@@ -432,12 +451,19 @@ void NpcObserver::physicsNoise(World& world, Npc& self, const PhysicsNoise& nois
 
 bool NpcObserver::intercept(World& world, Npc& self, Npc& other, Npc* victim, PercType perc,
                             const HeroDeed* deed, std::string_view deedId) {
-  if(&other==&self)
+  if(&other==&self || self.isPlayer() || self.isDead() || self.isDown() ||
+     self.guild()>=GIL_SEPERATOR_HUM || self.isTalk() || self.isAttack())
     return false;
   const bool hero = other.isPlayer();
   const bool room = hero && perc==PERC_ASSESSENTERROOM;
-  Seen seen;
-  if(hero) {
+  Seen seen = classify(world,self,other,victim,perc,holdBandits);
+  const bool bandit = seen.kind=="bandit_enemy" || seen.kind=="party_enemy";
+  if(bandit && BodyController::owns(self))
+    return false;
+  // ASSESSENEMY ignores AIV_EnemyOverride: even a script-silenced bandit
+  // must tell the server that its gang sees the hero.
+  if(!bandit && hero) {
+    seen = Seen{};
     if(!holdDeeds)
       return false;
     if(room) {
@@ -457,16 +483,13 @@ bool NpcObserver::intercept(World& world, Npc& self, Npc& other, Npc* victim, Pe
     // Self-defence, weapon warnings and all uncertain events stay vanilla.
     if(seen.kind.empty())
       return false;
-    } else {
+    } else if(!bandit) {
     if(!holdThreats)
       return false;
     if(perc!=PERC_ASSESSENEMY && perc!=PERC_ASSESSWARN && perc!=PERC_ASSESSDAMAGE && perc!=PERC_ASSESSOTHERSDAMAGE)
       return false;
     seen = classify(world,self,other,victim,perc);
     }
-  if(self.isPlayer() || self.isDead() || self.isDown() || self.guild()>=GIL_SEPERATOR_HUM || self.isTalk() ||
-     self.isAttack())
-    return false;  // already fighting by its scripts: they go on
   if(seen.kind.empty())
     return false;
   Npc* pl = world.player();
@@ -480,19 +503,20 @@ bool NpcObserver::intercept(World& world, Npc& self, Npc& other, Npc* victim, Pe
   const uint64_t now = world.tickCount();
   // Separate actions of the hero must never inherit a verdict about an earlier
   // theft or strike. Threats from other actors keep their existing pair cache.
-  const auto     key = symbol + "/" + otherId + (room ? "/room" : (hero ? "/"+std::string(deedId) : ""));
+  const auto     key = symbol + "/" + otherId + (bandit ? "/bandit" : (room ? "/room" : (hero ? "/"+std::string(deedId) : "")));
   if(auto v = verdicts.find(key); v!=verdicts.end() && now<v->second.until)
-    return v->second.server;  // decided a moment ago: the server acts, or the scripts take it
-  verdicts[key] = Verdict{true,now+HoldMs};  // repeats while it is being decided are held too
+    return v->second.to!=HoldTo::Scripts;  // pending, leased, or already assigned to the scripts
+  verdicts[key] = Verdict{HoldTo::Server,now+HoldMs,bandit};
 
   Held h;
   h.id     = "h" + std::to_string(nextHold++);
   h.key    = key;
-  if(hero && !room) {
+  if(hero && !room && !bandit) {
     h.item = deed->item;
     h.deed = deedId;
     }
   h.room   = room;
+  h.bandit = bandit;
   h.self   = &self;
   h.other  = &other;
   h.victim = victim;
@@ -518,7 +542,17 @@ void NpcObserver::verdict(World& world, const rapidjson::Value& msg) {
   auto it = std::find_if(held.begin(),held.end(),[&](const Held& h){ return h.id==id; });
   if(it==held.end())
     return;  // released already (too late)
-  bool server = JsonRead::str(msg,"to")=="server";
+  if(it->bandit && world.tickCount()>=it->at+HoldMs)
+    return;  // tick releases the overdue signal and all leases after the inbound queue
+  const auto to = JsonRead::str(msg,"to");
+  const auto ms = msg.FindMember("ms");
+  if(to=="parley" && it->bandit && ms!=msg.MemberEnd() && ms->value.IsInt64() &&
+     ms->value.GetInt64()>=1000 && ms->value.GetInt64()<=15000) {
+    verdicts[it->key] = Verdict{HoldTo::Parley,world.tickCount()+uint64_t(ms->value.GetInt64()),true};
+    held.erase(it);
+    return;
+    }
+  bool server = to=="server";
   // Deed and room rules may deliberately end in silence, a warning or time to
   // leave. Threats still require an actual body action before they are swallowed.
   if(server && it->deed.empty() && !it->room) {
@@ -538,10 +572,31 @@ void NpcObserver::verdict(World& world, const rapidjson::Value& msg) {
     }
   // A new entry must be reconsidered against current knowledge, including after
   // the hero left or made amends. Only in-flight room repeats share the hold.
-  verdicts[it->key] = Verdict{server,world.tickCount()+(it->room ? 0 : VerdictMs)};
+  verdicts[it->key] = Verdict{server ? HoldTo::Server : HoldTo::Scripts,
+                             world.tickCount()+(it->room ? 0 : VerdictMs),it->bandit};
   if(!server)
     releaseHeld(world,*it);
   held.erase(it);
+  }
+
+void NpcObserver::setHoldBandits(World* world, bool on) {
+  holdBandits = on;
+  if(on)
+    return;
+  for(size_t i=0; i<held.size();) {
+    if(!held[i].bandit) {
+      ++i;
+      continue;
+      }
+    if(world!=nullptr)
+      releaseHeld(*world,held[i]);
+    held.erase(held.begin()+ptrdiff_t(i));
+    }
+  for(auto it=verdicts.begin(); it!=verdicts.end();) {
+    if(it->second.bandit)
+      it = verdicts.erase(it); else
+      ++it;
+    }
   }
 
 void NpcObserver::releaseAll(World& world) {
@@ -583,7 +638,10 @@ void NpcObserver::releaseHeld(World& world, Held& h) {
   if(self==nullptr || other==nullptr || self->isDead() || self->isDown() || other->isDead())
     return;
   if(auto v = verdicts.find(h.key); v!=verdicts.end())
-    v->second = Verdict{false,world.tickCount()+(h.room ? 0 : VerdictMs)};
+    v->second = Verdict{HoldTo::Scripts,world.tickCount()+(h.room ? 0 : VerdictMs),h.bandit};
+  if(h.bandit && (self->isAttack() || self->isTalk() || !owner(npcId(world,*self)).empty() ||
+                 BodyController::owns(*self)))
+    return;  // an explicit fight or a newer owner takes precedence over a late sight signal
   if(!h.item.empty()) {
     const auto item = world.script().findSymbolIndex(h.item);
     if(item!=size_t(-1))

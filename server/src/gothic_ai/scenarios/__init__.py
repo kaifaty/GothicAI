@@ -1,4 +1,5 @@
 from .bandit_bounty import bandit_bounty as bandit_bounty
+from .bandit_hold import bandit_hold as bandit_hold
 from .bandit_parley import bandit_parley as bandit_parley
 from .basics import m0_smoke as m0_smoke
 from .basics import m1_chat as m1_chat

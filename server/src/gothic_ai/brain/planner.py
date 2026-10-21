@@ -461,6 +461,8 @@ class NpcPlanner:
 
     def on_held(self, msg: PerceptionHeld, now: float) -> None:
         """A threat the game holds from the npc's scripts until the model decides (or 0.6 s pass)."""
+        if msg.kind in {"bandit_enemy", "party_enemy"}:
+            return  # Parley owns these sightings, including late holds for an unknown or owned npc.
         if msg.deed is not None or msg.other.upper() in {"PLAYER", "HERO", "PC_HERO"}:
             # CrimeReact/CrimeMeet settle hero deeds and room entry. Keep their context,
             # including when a malformed hold has no deed id and must fall back to scripts.
