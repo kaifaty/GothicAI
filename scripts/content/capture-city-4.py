@@ -58,35 +58,21 @@ def check(directory, scenario, index, variant):
     if variant not in VARIANTS:
         raise SystemExit("unknown city-4 capture variant")
     expected = 58 if variant == "city-3" else 65
-    if len(json.loads(index.read_text())) != expected:
+    packed = json.loads(index.read_text())
+    if len(packed) != expected:
         raise SystemExit(f"{variant}: expected packed index with {expected} materials")
-    if variant != "city-3":
-        subprocess.run(["bash", str(HERE / "capture-city.sh"), "--check", str(directory),
-                        str(scenario), str(index), "before" if variant == "original" else "after"], check=True)
-        if variant == "original":
-            census = json.loads((directory / "census.json").read_text())
-            if census["replacements"]:
-                raise SystemExit("original baseline must have zero replacements")
-        return
-    log = (directory / "game.log").read_text(errors="replace")
-    if ((directory / "exit.txt").read_text().strip() != "0" or "[bench] done" not in log
-            or not re.search(r"materials: 58 entries from ", log)
-            or re.search(r"materials: (invalid|unsupported|unable)|\[bench\] (can not|unknown|marvin failed|goto failed)", log)):
-        raise SystemExit("city-3: unsuccessful capture or wrong material count")
-    for command in commands(scenario):
-        if command.startswith(("goto ", "shot ")) and f"[bench] {command}\n" not in log:
-            raise SystemExit("city-3: command not reached: " + command)
-        if command.startswith("shot "):
-            image = directory / (command[5:] + ".png")
-            if not image.is_file() or not image.stat().st_size:
-                raise SystemExit("city-3: missing shot: " + command[5:])
-    events = directory / "events.jsonl"
-    for line in events.read_text().splitlines() if events.exists() else ():
-        event = json.loads(line)
-        kind = event.get("kind", "")
-        if kind == "error" or kind.endswith("_error") or event.get("pass") is False:
-            raise SystemExit("city-3: benchmark error: " + kind)
-    print("city-3: successful capture; materials=58")
+    if variant == "city-3":
+        tour = scenario.read_text().partition("# Census-only surface tour:")[2]
+        targets = {name for name in re.findall(r"^# ([A-Z0-9_]+\.TGA)$", tour, re.MULTILINE)
+                   if not name.startswith("NW_MISC_")}
+        if len(targets) != 58 or set(packed) != targets:
+            raise SystemExit("city-3: packed index must match all 58 city census targets")
+    subprocess.run(["bash", str(HERE / "capture-city.sh"), "--check", str(directory),
+                    str(scenario), str(index), "before" if variant == "original" else "after"], check=True)
+    if variant == "original":
+        census = json.loads((directory / "census.json").read_text())
+        if census["replacements"]:
+            raise SystemExit("original baseline must have zero replacements")
 
 
 def compose(captures, scenario, output):
