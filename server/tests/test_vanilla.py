@@ -9,11 +9,13 @@ import pytest
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.gamedata.storygraph import StoryGraph, load
+from gothic_ai.knowledge import Partial, StoryState
 from gothic_ai.llm import ToolCall, ToolResult
 from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.questlog import QuestLog
+from gothic_ai.story import freed
 from gothic_ai.vanilla import VanillaQuests, _bridge, _claim, _takes
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
@@ -625,6 +627,41 @@ def real_graph():
     if not path.exists():
         pytest.skip("needs actual storygraph export (GOTHIC_STORY_GRAPH)")
     return load(path)
+
+
+def test_akil_farm_ambush_dialogs_and_choices_are_freed(real_graph):
+    disabled = {op["node"] for op in freed(real_graph.nodes.__contains__)}
+    npcs = {"SLD_840_ALVARES", "SLD_841_ENGARDO"}
+    important = {n.id for n in real_graph.nodes.values() if n.npc in npcs and n.important}
+    choices = set(real_graph.node("DIA_ALVARES_ATTACK").choices())
+    assert len(important) == 4 and len(choices) == 5
+    assert important | choices <= disabled
+    for npc in ("ALVARES", "ENGARDO"):
+        assert f"DIA_{npc}_EXIT" not in disabled
+        assert f"DIA_{npc}_PICKPOCKET" not in disabled
+
+
+@pytest.mark.parametrize("chapter", [1, 2, 3, 4])
+@pytest.mark.parametrize("node_id", ["DIA_AKIL_NACHKAMPF", "DIA_KATI_HALLO", "DIA_RANDOLPH_HALLO"])
+def test_akils_rescue_endings_need_no_prior_dialog_or_journal(real_graph, node_id, chapter):
+    bandits = [real_graph.npc(npc) for npc in ("ALVARES", "ENGARDO")]
+    state = StoryState(
+        vars={"KAPITEL": chapter},
+        npcs={npc: {"state": "dead"} for npc in bandits},
+    )
+    partial = Partial(real_graph, state)
+    node = real_graph.node(node_id)
+    assert partial.truth(node.condition) is (node_id != "DIA_RANDOLPH_HALLO" or chapter < 4)
+    for npc in bandits:
+        state.npcs[npc]["state"] = "alive"
+        assert partial.truth(node.condition) is False
+        state.npcs[npc]["state"] = "dead"
+
+    if node_id == "DIA_AKIL_NACHKAMPF":
+        ending = next(e for e in node.effects if e.get("var") == "TOPIC_END_AKILSSLDSTILLTHERE")
+        assert ending["do"] == "set" and partial.value(ending["value"]) == 1
+        assert "AKILS_SLDSTILLTHERE" not in str(ending.get("when"))
+        assert "TOPIC_AKILSSLDSTILLTHERE" not in str(ending.get("when"))
 
 
 async def test_constantino_herbs_accept_quest_keeps_native_passage_and_checklog(real_graph):
