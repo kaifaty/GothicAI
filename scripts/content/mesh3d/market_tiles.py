@@ -12,7 +12,8 @@ A source tile is quilted seamless along its axes (seam_fix.seamless), resized to
 1024² and turned into the six stage-1 maps by the CPU filter (bakeoff.filtered_maps).
 "crop": [l, t, r, b] with "size": [w, h] cuts a panel (a whole carpet) out of our own
 concept instead and keeps its aspect; such a panel has axes "".
-"copy" reuses an existing tile directory unchanged; "procedural": {"base": [r, g, b],
+"equalize": n brings n equal columns (planks side by side) to one mean colour, so a light plank
+of the source does not land on every n-th board of a model. "copy" reuses an existing tile directory unchanged; "procedural": {"base": [r, g, b],
 "noise": 0.08, "seed": 1, "relief": 0.25} makes a smooth periodic surface (wax, glass, bone) with
 no image_gen; relief scales its normal, height and AO down from the filter's full strength. The atlas bake later scales
 each zone to the original's measured mean colour, so a tile carries pattern and
@@ -44,7 +45,7 @@ SOURCE_SET = "mesh3d-market"
 
 
 def build_tile(source: Path, axes: str, roughness: float, metallic: float, out: Path,
-               crop: list | None = None, size: list | None = None) -> dict:
+               crop: list | None = None, size: list | None = None, equalize: int = 0) -> dict:
     with Image.open(source) as image:
         rgb = image.convert("RGB")
     if crop:  # a panel (a whole carpet), not a tile: cut its rectangle and keep its own aspect
@@ -54,6 +55,14 @@ def build_tile(source: Path, axes: str, roughness: float, metallic: float, out: 
         left, top = (rgb.width - side) // 2, (rgb.height - side) // 2
         rgb = rgb.crop((left, top, left + side, top + side)).resize((1024, 1024), Image.Resampling.LANCZOS)
     rgb, seam = seamless(rgb, axes) if axes else (rgb, dict(applied=False, axes=""))
+    if equalize:  # n equal columns (planks) brought to one mean colour; per-part tone comes from the bake
+        pixels = np.asarray(rgb, dtype=np.float32)
+        mean = pixels.reshape(-1, 3).mean(axis=0)
+        edges = np.linspace(0, pixels.shape[1], equalize + 1).round().astype(int)
+        for left, right in zip(edges[:-1], edges[1:]):
+            column = pixels[:, left:right]
+            column *= mean / np.maximum(column.reshape(-1, 3).mean(axis=0), 1e-3)
+        rgb = Image.fromarray(np.clip(pixels, 0, 255).round().astype("uint8"))
     maps = bakeoff.filtered_maps(rgb, {"parameters": {"tiling_axes": axes, "roughness_base": roughness}})
     maps["metallic"] = np.full_like(maps["height"], metallic)
     out.mkdir(parents=True, exist_ok=True)
@@ -162,7 +171,7 @@ def main() -> int:
         png = Path(tile["png"]).expanduser()
         raw = png.read_bytes()
         seam = build_tile(png, tile["axes"], tile["roughness"], tile.get("metallic", 0.0), target,
-                          tile.get("crop"), tile.get("size"))
+                          tile.get("crop"), tile.get("size"), tile.get("equalize", 0))
         print(f"{key}: built from {png.name}, seam {seam.get('applied')}")
         if args.import_sources:
             record = record_for(key, tile, seam, raw, args.utc, files_root, target)

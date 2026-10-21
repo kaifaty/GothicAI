@@ -71,8 +71,19 @@ for b in range(boards):
     shrink = lambda x, z: (x * (1 - bevel / (w / 2)), z * (1 - bevel / (h / 2)))
     fr = [P.vert(Vector((cx + sx, face, cz + sz)), part) for sx, sz in (shrink(x, z) for x, z in poly)]
     bk = [P.vert(Vector((cx + x, wall, cz + z)), part) for x, z in poly]
-    P.poly(fr[::-1], WOOD, [(ou + x, ov + z) for x, z in poly][::-1])
-    P.poly(bk, WOOD, [(ou + x, ov + z) for x, z in poly])
+    # Front and back as fans from the centroid: the flanks are concave, and the shared n-gon
+    # triangulation folded a triangle over a reflex corner of the front face (seen from behind in game).
+    mx, mz = sum(x for x, _ in poly) / len(poly), sum(z for _, z in poly) / len(poly)
+    for i in range(len(poly)):
+        (x0, z0), (x1, z1) = poly[i], poly[(i + 1) % len(poly)]
+        assert (x0 - mx) * (z1 - mz) - (z0 - mz) * (x1 - mx) < 0, "board outline is not star-shaped from its centroid"
+    mid_fr = P.vert(Vector((cx + shrink(mx, mz)[0], face, cz + shrink(mx, mz)[1])), part)
+    mid_bk = P.vert(Vector((cx + mx, wall, cz + mz)), part)
+    for i in range(len(poly)):
+        j = (i + 1) % len(poly)
+        uv = [(ou + poly[k][0], ov + poly[k][1]) for k in (i, j)] + [(ou + mx, ov + mz)]
+        P.poly((fr[j], fr[i], mid_fr), WOOD, [uv[1], uv[0], uv[2]])
+        P.poly((bk[i], bk[j], mid_bk), WOOD, uv)
     n = len(poly)
     for i in range(n):
         j = (i + 1) % n
@@ -148,6 +159,7 @@ for sx in (-1, 1):
     apex = P.vert(b + up * ear_h - fwd * (ear_h * 0.35) + side * (sx * 0.02), p)
     for i in range(4):
         P.poly((corners[i], corners[(i + 1) % 4], apex), FUR, ((0, 0), (0.1, 0), (0.05, 0.15)))
+    P.poly(corners[::-1], FUR, ((0, 0), (0.05, 0), (0.05, 0.05), (0, 0.05)))   # hidden base: open, one ear came out inside out
 
 
 def dome(centre, normal, radius, depth, material, segs=8):

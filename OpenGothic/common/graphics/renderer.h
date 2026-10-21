@@ -215,7 +215,6 @@ class Renderer final {
 
     struct {
       Tempest::StorageImage     hiZ;
-      Tempest::StorageBuffer    counter;
       } hiz;
 
     struct {

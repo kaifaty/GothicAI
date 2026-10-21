@@ -6,6 +6,7 @@
     gothic-launcher login               sign in to ChatGPT (once)
     gothic-launcher config show | set KEY [VALUE] | unset KEY | import-env [FILE]
     gothic-launcher control             the launcher window's link to the core (see control.py)
+    gothic-launcher play                Ryzen desktop session (also used by the terminal fallback)
 
 The first run takes the values of the repository's `.env`.
 """
@@ -14,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import getpass
+import json
 import os
 import signal
 import subprocess
@@ -99,6 +102,63 @@ async def _run(sup: Supervisor) -> int:
     return 128 + interrupted[0] if interrupted else code
 
 
+def play(args: argparse.Namespace) -> int:
+    """The terminal fallback follows exactly the window's session.start path."""
+    from .control import Control
+
+    def write(msg: dict[str, Any]) -> None:
+        if msg["event"] == "service":
+            print_event(Event(**msg["data"]))
+        elif msg["event"] == "journal":
+            print_event(Event("server", "journal", data=msg["data"]))
+        elif msg["event"] == "session" and msg["data"]["state"] == "running":
+            print(f"logs: {msg['data']['log_dir']}", flush=True)
+            if url := msg["data"].get("health_url"):
+                print(f"server health: {url}", flush=True)
+
+    return asyncio.run(_controlled_session(Control(write), "new" if args.smoke else "continue", args.smoke))
+
+
+def session_worker(args: argparse.Namespace) -> int:
+    """Only called by LinuxSession inside gq; stdout is the window's normal event stream."""
+    from .control import Control
+    from .linux_session import installation_lock
+
+    def write(msg: dict[str, Any]) -> None:
+        print(json.dumps(msg, ensure_ascii=False), flush=True)
+
+    with installation_lock():
+        control = Control(
+            write,
+            config_dir=args.config_dir,
+            state_file=args.log_dir / "session.json",
+            log_root=args.log_dir.parent,
+            admitted=True,
+            session_log_dir=args.log_dir,
+            no_voice=args.no_voice,
+        )
+        return asyncio.run(_controlled_session(control, args.mode, args.smoke))
+
+
+async def _controlled_session(control, mode: str, smoke: bool) -> int:
+    loop = asyncio.get_running_loop()
+    closing = asyncio.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        loop.add_signal_handler(sig, closing.set)
+    try:
+        await control.session_start(mode=mode, smoke=smoke)
+        assert control.task is not None
+        stopping = asyncio.create_task(closing.wait())
+        try:
+            await asyncio.wait({control.task, stopping}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stopping.cancel()
+        await control.shutdown()
+        return control.session["code"] or 0
+    finally:
+        await control.shutdown()
+
+
 def login(args: argparse.Namespace) -> int:
     repo, uv = tools(Config.load())
     argv = [str(uv), "run", "--project", str(repo / "server"), "gothic-ai", "login", "chatgpt"]
@@ -146,6 +206,8 @@ def _describe(e: Event) -> str | None:
         case "ready":
             return " ".join(filter(None, ["ready", e.detail, _providers(data)]))
         case "status":
+            if e.proc == "microphone":
+                return e.detail
             if not data.get("ok"):
                 return "not answering"
             if "game" in data:
@@ -161,6 +223,8 @@ def _describe(e: Event) -> str | None:
             return f"stopped{': ' + e.detail if e.detail else ''}"
         case "starting":
             return "starting"
+        case "waiting":
+            return e.detail
         case "journal":
             return _journal_line(data)
     return None
@@ -263,6 +327,16 @@ def main() -> None:
         "--smoke", action="store_true", help="test with fake LLM, without voice, TTS or remote models"
     )
 
+    p = sub.add_parser("play", help="start a Ryzen desktop session (the window's play action)")
+    p.add_argument("--smoke", action="store_true", help="fake LLM, no model requests or voice")
+
+    p = sub.add_parser("_session", help=argparse.SUPPRESS)
+    p.add_argument("--mode", choices=("menu", "continue", "new"), required=True)
+    p.add_argument("--config-dir", type=Path, required=True)
+    p.add_argument("--log-dir", type=Path, required=True)
+    p.add_argument("--smoke", action="store_true")
+    p.add_argument("--no-voice", action="store_true")
+
     sub.add_parser("login", help="sign in to ChatGPT")
     sub.add_parser("control", help="serve the launcher window: JSON lines on stdin and stdout")
 
@@ -278,10 +352,15 @@ def main() -> None:
     a.add_argument("file", nargs="?")
 
     args = parser.parse_args()
+    interrupted = False
     try:
         match args.command:
             case "up":
                 code = up(args)
+            case "play":
+                code = play(args)
+            case "_session":
+                code = session_worker(args)
             case "login":
                 code = login(args)
             case "control":
@@ -297,4 +376,10 @@ def main() -> None:
         code = 2
     except KeyboardInterrupt:
         code = 130
+        interrupted = True
+    if args.command == "play" and code and not interrupted:
+        print(f"Gothic AI exited with code {code}.", file=sys.stderr)
+        if sys.stdin.isatty():
+            with contextlib.suppress(EOFError):
+                input("Press Enter to close this terminal.")
     sys.exit(code)

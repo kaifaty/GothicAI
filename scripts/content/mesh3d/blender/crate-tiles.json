@@ -1,0 +1,9 @@
+{
+ "output": "~/.local/share/gothic-ai/content-staging/market-set/crate-tiles",
+ "tiles": {
+  "own_prop_wood_plank": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_wood_crate"},
+  "own_prop_wood_brace": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_wood_crate"},
+  "own_prop_rope": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_rope"},
+  "own_prop_iron_nail": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_iron_band"}
+ }
+}

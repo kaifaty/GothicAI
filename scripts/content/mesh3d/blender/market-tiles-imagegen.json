@@ -58,6 +58,19 @@
     2048,
     1463
    ]
+  },
+  "own_prop_wood_crate": {
+   "png": "~/.local/share/gothic-ai/content-sources/mesh3d-market/tile-wood-crate.png",
+   "axes": "v",
+   "roughness": 0.88,
+   "metallic": 0.0,
+   "equalize": 4
+  },
+  "own_prop_wood_mossy": {
+   "png": "~/.local/share/gothic-ai/content-sources/mesh3d-market/tile-wood-mossy.png",
+   "axes": "uv",
+   "roughness": 0.97,
+   "metallic": 0.0
   }
  }
 }

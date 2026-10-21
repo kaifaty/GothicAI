@@ -70,6 +70,8 @@ function service(session: Session, name: string, icon: Row["icon"], title: strin
 }
 
 export function duringGame(session: Session, p: Providers | null, voiceOff: boolean, speechOff: boolean): Row[] {
+  if (session.voice_enabled !== undefined) voiceOff = !session.voice_enabled;
+  if (session.tts_enabled !== undefined) speechOff = !session.tts_enabled;
   const server = session.services.server;
   const game = session.services.game;
   const connected = server?.health?.game === true;

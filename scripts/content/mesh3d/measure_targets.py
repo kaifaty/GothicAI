@@ -35,7 +35,8 @@ TARGETS = [
             {"key": "OWN_PROP_WOOD_PLANK", "group": "WOOD", "role": "box plank faces"},
             {"key": "OWN_PROP_WOOD_BRACE", "group": "WOOD", "role": "corner and face reinforcing rails"},
             {"key": "OWN_PROP_IRON_NAIL", "group": "METAL", "role": "small forged nail heads"},
-            {"key": "OWN_PROP_IRON_BAND", "group": "METAL", "role": "corner straps or continuous reinforcing bands"},
+            {"key": "OWN_PROP_IRON_BAND", "group": "METAL", "role": "forged straps; unused by the 2026-10-21 crate"},
+            {"key": "OWN_PROP_ROPE", "group": "WOOD", "role": "rope handles on the ends; small, so they sound and collide as wood"},
         ],
     },
     {

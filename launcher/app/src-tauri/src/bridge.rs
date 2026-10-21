@@ -169,9 +169,12 @@ fn home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
-/// The core's own log: ~/Library/Logs/GothicAI/launcher.log, appended.
+/// The core's own log, appended alongside the platform's session logs.
 fn log_file() -> std::io::Result<File> {
+    #[cfg(target_os = "macos")]
     let dir = home().join("Library/Logs/GothicAI");
+    #[cfg(target_os = "linux")]
+    let dir = home().join(".local/state/gothic-ai/logs");
     std::fs::create_dir_all(&dir)?;
     OpenOptions::new()
         .create(true)

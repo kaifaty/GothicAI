@@ -39,7 +39,9 @@ STABLE_S = 60.0  # a service that ran this long restarts after the shortest dela
 STATUS_EVERY_S = 3.0
 TAIL_LINES = 40
 
-EventKind = Literal["starting", "ready", "status", "exited", "restarting", "stopped", "failed", "journal"]
+EventKind = Literal[
+    "starting", "ready", "status", "exited", "restarting", "stopped", "failed", "journal", "waiting"
+]
 JOURNAL_PREFIX = "JOURNAL "
 
 

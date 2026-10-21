@@ -31,13 +31,15 @@ export type Health = { ok: boolean; service?: string; game?: boolean; providers?
 export type ServiceState = { state: string; detail: string; health?: Health };
 
 export type Session = {
-  state: "running" | "stopped";
+  state: "waiting" | "running" | "stopped";
   mode: string;
   save: string | null;
   started: number;
   ended?: number;
   log_dir: string;
   services: Record<string, ServiceState>;
+  voice_enabled?: boolean;
+  tts_enabled?: boolean;
   failed: { proc: string; detail: string } | null;
   code: number | null;
 };

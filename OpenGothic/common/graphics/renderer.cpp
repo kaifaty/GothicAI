@@ -401,7 +401,6 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
     }
 
   hiz.hiZ       = device.image2d(TextureFormat::R16,  hw, hh, true);
-  hiz.counter   = device.ssbo(nullptr, sizeof(uint32_t));
 
   sceneOpaque   = device.attachment(TextureFormat::R11G11B10UF,w,h);
   sceneDepth    = device.attachment(TextureFormat::R32F,       w,h);
@@ -1155,19 +1154,25 @@ void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   const int      wgW  = std::max(std::max(hiz.hiZ.w()/2, 1) / wgSz.x, 1);
   const int      wgH  = std::max(std::max(hiz.hiZ.h()/2, 1) / wgSz.y, 1);
   struct Push {
-    uint32_t numGroups;
+    uint32_t baseMip;
     uint32_t mip;
     } push = {};
-  push.numGroups = uint32_t(wgW * wgH);
-  push.mip       = mip;
+  push.baseMip = 0;
+  push.mip     = mip;
 
-  cmd.setBinding(0, hiz.counter);
   for(uint32_t i=0; i<maxBind; ++i)
     cmd.setBinding(1+i, hiz.hiZ, Sampler::nearest(), std::min(i, mip-1));
   cmd.setPushData(push);
   cmd.setPipeline(shaders.hiZMip);
   //cmd.dispatchThreads(std::max(uint32_t(hiz.hiZ.w())/2u, 1u), std::max(uint32_t(hiz.hiZ.h())/2u, 1u));
   cmd.dispatch(size_t(wgW), size_t(wgH));
+
+  if(mip>5) {
+    // the mips past 4 read mip 4 of all workgroups above: a dispatch of their own (see hiz_mip.comp)
+    push.baseMip = 4;
+    cmd.setPushData(push);
+    cmd.dispatch(1, 1);
+    }
   }
 
 void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {

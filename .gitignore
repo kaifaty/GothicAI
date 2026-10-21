@@ -31,6 +31,7 @@ data/
 !/data/content/city-4-generated.jsonl
 !/data/content/city-4-counts.json
 !/data/content/quality-pilot-3.jsonl
+!/data/content/market-house.jsonl
 !/data/content/city-materials.csv
 !OpenGothic/data/
 

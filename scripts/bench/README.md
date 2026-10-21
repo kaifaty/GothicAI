@@ -42,6 +42,15 @@ A `shot` is written at the end of its frame, so the scenario waits after each on
 chest, cart, signpost, stall roof, inner window, cupboard; `<prop>_view.png` and `<prop>_near.png`), then the census.
 It checks the tile relief of the atlases ([report](../../reports/content/2026-10-prop-relief/README.md)): run it with
 the props' root and with a root of the earlier bake, `OPENGOTHIC_CENSUS=<absolute output>/census.json`, `TIMEOUT=900`.
+`own-mesh-culling` frames four of those spots (the room with the bookshelf, the bench, the cart with the lamp post and
+rope coils, the cupboard) 1 s, 2.5 s and 4 s after the teleport; two runs give the same PNGs to the pixel. Until
+2026-10-21 props went missing from such frames on the Mac at random, their shadows kept: the Hi-Z mips 5-6 were built
+from stale texels ([report](../../reports/engine/2026-10-21-hiz-culling/README.md)). Mac frames shot before that
+may lack props in either take of a comparison.
+`own-mesh-backfaces` takes close-ups of the seven market props whose parts were inside out (barrel group,
+carpet, shield, oil lamp, wolf head, candle, rope; `backfaces_<prop>[_<side>].png`): the barrel group and the rope from
+four sides, the carpet at its four edges, the wall props from their `own-mesh-market` spots at about half the distance,
+then the census. Run it with the set root and with a root of the earlier bake.
 `own-mesh-mob` frames the harbour `BENCH_NW_CITY_01.ASC` beside the wooden wall
 (prop-survey 20649, ZEN vob.id 23479), then uses the native `AI_UseMob` seat/stand
 fixture at `NW_CITY_HABOUR_BENCH_01`. It writes empty, seated and standing screenshots,

@@ -4,7 +4,6 @@
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
-layout(binding = 0, std430)   buffer  coherent SB0 { uint counter; };
 layout(binding = 1, r16)      uniform coherent image2D   mip0;
 layout(binding = 2, r16)      uniform coherent image2D   mip1;
 layout(binding = 3, r16)      uniform coherent image2D   mip2;
@@ -16,12 +15,11 @@ layout(binding = 8, r16)      uniform coherent image2D   mip7; // 128x128
 //layout(binding = 9, r16)      uniform coherent image2D   mip8;
 
 layout(push_constant, std140) uniform PushConstant {
-  uint numGroups; //TODO: NumWorkgroups builtin is used, but remap_num_workgroups_builtin() was not called
+  uint baseMip; // 0: mips 1-4, a workgroup per 8x8 texels of mip 1; 4: the mips past 4, one workgroup
   uint mipCount;
   };
 
 shared float tile[8][8];
-shared uint  cnt;
 
 float load(int mip, ivec2 uv) {
 #if defined(IOS) && 0
@@ -118,6 +116,7 @@ void processTile(ivec2 group, int baseMip, uint mipCount) {
     barrier();
 
     gsize /= 2;
+    dstSz  = max(ivec2(1,1), imgSz >> (baseMip+i));
     if(local.x<gsize.x && local.y<gsize.y) {
       uv = group*gsize + local;
       z  = gatherTile(local);
@@ -129,22 +128,8 @@ void processTile(ivec2 group, int baseMip, uint mipCount) {
   }
 
 void main() {
-  processTile(ivec2(gl_WorkGroupID.xy), 0, mipCount);
-
-  if(mipCount<=4)
-    return;
-
-  memoryBarrierImage();
-  barrier();
-
-  if(gl_LocalInvocationIndex==0) {
-    cnt = atomicAdd(counter, 1);
-    }
-  barrier();
-
-  if(cnt < numGroups-1)
-    return;
-
-  atomicExchange(counter, 0); // skip buffer memory-barrier
-  processTile(ivec2(0), 4, mipCount);
+  // The mips past 4 read mip 4 of all workgroups, so they take a dispatch of their own (baseMip 4).
+  // The last workgroup of one dispatch used to do them: on Metal (M1 Pro) it read zeros and stale
+  // values for the other workgroups' texels, and mips 5-6 culled visible objects.
+  processTile(baseMip==0 ? ivec2(gl_WorkGroupID.xy) : ivec2(0), int(baseMip), mipCount);
   }

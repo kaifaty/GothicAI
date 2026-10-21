@@ -65,7 +65,12 @@
       {
         "key": "OWN_PROP_IRON_BAND",
         "group": "METAL",
-        "role": "corner straps or continuous reinforcing bands"
+        "role": "forged straps; unused by the 2026-10-21 crate"
+      },
+      {
+        "key": "OWN_PROP_ROPE",
+        "group": "WOOD",
+        "role": "rope handles on the ends; small, so they sound and collide as wood"
       }
     ],
     "resolved_visual": "NW_HARBOUR_CRATE_01.MRM",

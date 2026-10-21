@@ -6,6 +6,10 @@ config: {"out_dir": str, "size": int, "target_height": float,
          "items": [{"name": str, "glb": str, "materials": "ours"|"own"}]}
 Writes <out_dir>/<name>-<view>.png per view and <name>-wire.png from the last view.
 views: [{"name", "elevation", "azimuth", "ortho"}], default one 3/4 view.
+"fit": "extent" (config or item) scales the largest bbox side to target_height instead of the
+height, so a long or flat prop (counter, carpet) stays in frame.
+"backfaces": true shades the back of every face flat magenta. Cycles shades both sides,
+the game does not: a part built inside out looks right here and black in game.
 """
 import json
 import math
@@ -96,6 +100,34 @@ def our_material(mat):
     links.new(nmap.outputs[0], bsdf.inputs["Normal"])
 
 
+BACKFACE = (1.0, 0.0, 1.0, 1)
+
+
+def mark_backfaces(mat):
+    """Mix a flat magenta emission over the material wherever the camera sees a face from its back.
+    Only camera rays: a bounce ray that starts on one of two coplanar faces hits the other from
+    behind at once and would tint a correct face magenta."""
+    mat.use_nodes = True
+    nodes, links = mat.node_tree.nodes, mat.node_tree.links
+    out = next(n for n in nodes if n.type == "OUTPUT_MATERIAL" and n.is_active_output)
+    surface = out.inputs["Surface"]
+    front = surface.links[0].from_socket if surface.is_linked else None
+    geometry = nodes.new("ShaderNodeNewGeometry")
+    path = nodes.new("ShaderNodeLightPath")
+    seen = nodes.new("ShaderNodeMath")
+    seen.operation = "MULTIPLY"
+    links.new(geometry.outputs["Backfacing"], seen.inputs[0])
+    links.new(path.outputs["Is Camera Ray"], seen.inputs[1])
+    back = nodes.new("ShaderNodeEmission")
+    back.inputs["Color"].default_value = BACKFACE
+    mix = nodes.new("ShaderNodeMixShader")
+    links.new(seen.outputs[0], mix.inputs["Fac"])
+    if front is not None:
+        links.new(front, mix.inputs[1])
+    links.new(back.outputs[0], mix.inputs[2])
+    links.new(mix.outputs[0], surface)
+
+
 def load(item):
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=item["glb"])
@@ -110,19 +142,25 @@ def load(item):
     corners = [Vector(c) for c in obj.bound_box]
     lo = Vector([min(c[i] for c in corners) for i in range(3)])
     hi = Vector([max(c[i] for c in corners) for i in range(3)])
-    factor = config["target_height"] / (hi.z - lo.z)
+    size = hi - lo
+    extent = max(size) if item.get("fit", config.get("fit", "height")) == "extent" else size.z
+    factor = config["target_height"] / extent
     obj.scale = (factor,) * 3
     obj.location = (-(lo.x + hi.x) / 2 * factor, -(lo.y + hi.y) / 2 * factor, -lo.z * factor)
     if item["materials"] == "ours":
         for slot in obj.material_slots:
             our_material(slot.material)
-    return obj, len(obj.data.polygons)
+    if config.get("backfaces"):
+        for slot in obj.material_slots:
+            if slot.material is not None:
+                mark_backfaces(slot.material)
+    return obj, len(obj.data.polygons), size.z * factor
 
 
-def camera(scene, height, view):
+def camera(scene, height, view, centre_z):
     cam = bpy.data.objects.new("cam", bpy.data.cameras.new("cam"))
     elev, azim = math.radians(min(view.get("elevation", 20), 89.9)), math.radians(view.get("azimuth", 35))
-    target = Vector((0, 0, height * 0.5))
+    target = Vector((0, 0, centre_z))
     if view.get("ortho"):
         cam.data.type = "ORTHO"
         cam.data.ortho_scale = height * view.get("scale", 1.25)
@@ -140,8 +178,8 @@ VIEWS = config.get("views", [{"name": "34", "elevation": 12, "azimuth": 35}])
 for item in config["items"]:
     for view in VIEWS:
         scene = reset()
-        obj, faces = load(item)
-        camera(scene, config["target_height"], view)
+        obj, faces, height = load(item)
+        camera(scene, config["target_height"], view, height / 2)
         scene.render.filepath = str(out_dir / f"{item['name']}-{view['name']}.png")
         bpy.ops.render.render(write_still=True)
     wire_mat = bpy.data.materials.new("wire")
@@ -150,6 +188,8 @@ for item in config["items"]:
     base_mat = bpy.data.materials.new("base")
     base_mat.use_nodes = True
     base_mat.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (0.7, 0.7, 0.7, 1)
+    if config.get("backfaces"):
+        mark_backfaces(base_mat)
     obj.data.materials.clear()
     obj.data.materials.append(base_mat)
     obj.data.materials.append(wire_mat)

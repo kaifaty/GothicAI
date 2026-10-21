@@ -52,9 +52,15 @@ class Parts:
         self.part_layer = self.bm.verts.layers.float.new("_part")
         self.parts = 0
         self.nails = 0
+        self.wound = set()
 
-    def new_part(self):
+    def new_part(self, wound=False):
+        """wound: the builder winds this part's faces itself. Its faces stay out of the normal
+        recalculation in to_object, which guesses the side of an open strip or a lone quad at
+        random (barrel staves and carpet fringes came out facing in)."""
         self.parts += 1
+        if wound:
+            self.wound.add(self.parts - 1)
         return self.parts - 1
 
     def vert(self, co, part):
@@ -155,12 +161,15 @@ class Parts:
         self.board(c + ax_n * (thick / 2), ax_len, ax_w, ax_n, length, width, thick, material)
 
     def nail(self, c, ax_a, ax_b, ax_n, radius, height, material, sink=0.001):
-        """A three-sided nail head sunk into the wood; its open base is hidden, so it costs 3 triangles."""
-        part = self.new_part()
+        """A three-sided nail head sunk into the wood; its open base is hidden, so it costs 3 triangles.
+        Wound outward here: the recalculation turned one of the oil lamp's two heads inside out."""
+        part = self.new_part(wound=True)
         self.nails += 1
         offset = self.rng.uniform(0, 2 * math.pi)
         base = [self.vert(c + (ax_a * math.cos(t) + ax_b * math.sin(t)) * radius - ax_n * sink, part)
                 for t in (2 * math.pi * i / 3 + offset for i in range(3))]
+        if ax_a.cross(ax_b).dot(ax_n) < 0:  # the base must run counter-clockwise seen from the tip
+            base.reverse()
         tip = self.vert(c + ax_n * height, part)
         for i in range(3):
             self.poly((base[i], base[(i + 1) % 3], tip), material, [(0, 0), (radius, 0), (radius / 2, height)])
@@ -169,7 +178,7 @@ class Parts:
         """Triangulate into a new object with zone materials and "_part"; returns (object, open edges)."""
         bm = self.bm
         bmesh.ops.triangulate(bm, faces=bm.faces)
-        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        bmesh.ops.recalc_face_normals(bm, faces=[f for f in bm.faces if round(f.verts[0][self.part_layer]) not in self.wound])
         open_edges = sum(1 for e in bm.edges if not e.is_manifold)
         mesh = bpy.data.meshes.new(name)
         bm.to_mesh(mesh)

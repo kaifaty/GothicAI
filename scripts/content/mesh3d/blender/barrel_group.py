@@ -83,7 +83,7 @@ def barrel(centre, roll, yaw):
         return centre + R @ Vector((r * math.cos(a), r * math.sin(a), s))
     step = 2 * math.pi / sides
     for k in range(sides):
-        part = P.new_part()
+        part = P.new_part(wound=True)   # an open strip: its outward winding below is kept
         plank = int(rng.integers(0, 4))
         v_off = rng.uniform(0, tile)
         a0, a1 = k * step, (k + 1) * step
@@ -100,7 +100,7 @@ def barrel(centre, roll, yaw):
                    ((u0, v0), (u1, v0), (u1, v1), (u0, v1)))
             along += seg
     for s_head, sign in ((-half + recess, -1), (half - recess, 1)):   # each head faces out of its end
-        part = P.new_part()
+        part = P.new_part(wound=True)
         r = r_end - rim
         verts = [P.vert(at(s_head, r, k * step), part) for k in range(sides)]
         if sign < 0:

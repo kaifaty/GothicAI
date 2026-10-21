@@ -103,15 +103,25 @@ def prepare():
     run(["cmake", "--build", graph / "build", "--target", "storygraph", "--parallel", "12"])
     for project in ("server", "asr-service", "tts-service", "launcher/core"):
         run([Path.home() / ".local/bin/uv", "sync", "--locked", "--project", repo / project])
+    os.environ["CARGO_BUILD_JOBS"] = "12"
+    try:
+        run([repo / "scripts/build-launcher.sh", "--no-install"])
+    except subprocess.CalledProcessError:
+        print("Launcher build failed; Gothic AI will keep its terminal launcher", file=sys.stderr, flush=True)
+        return 3
+    return 0
 
 
-def desktop_entry(repo):
+def desktop_entry(repo, launcher_ready=True):
     # Desktop Entry quoting differs from shell quoting (notably percent and dollar).
-    script = str(repo / "scripts/ryzen-play-session.sh")
-    quoted = '"' + script.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`").replace("%", "%%") + '"'
+    binary = repo / "launcher/app/src-tauri/target/release/gothic-launcher"
+    window = launcher_ready and os.access(binary, os.X_OK)
+    executable = str(binary if window else repo / "scripts/ryzen-play-session.sh")
+    quoted = '"' + executable.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`").replace("%", "%%") + '"'
+    command = quoted if window else f'ptyxis --new-window "--title=Gothic AI" -- {quoted}'
     return ("[Desktop Entry]\nType=Application\nName=Gothic AI\n"
             "Comment=Gothic II с ИИ\n"
-            f'Exec=ptyxis --new-window "--title=Gothic AI" -- {quoted}\n'
+            f"Exec={command}\n"
             f"Icon={repo}/launcher/app/src-tauri/icons/128x128.png\n"
             "Terminal=false\nCategories=Game;RolePlaying;\nStartupNotify=true\n")
 
@@ -124,7 +134,7 @@ def remote_install(action, payload, source):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise ValueError("Gothic AI is playing or updating; close it before install/update") from None
+            raise ValueError("Gothic AI is open, playing or updating; close it before install/update") from None
         queue = home / "gothic-ai/bin/gq"
         if not os.access(queue, os.X_OK):
             raise ValueError("gq is not installed: run scripts/gq install ryzen on the Mac")
@@ -149,23 +159,22 @@ def remote_install(action, payload, source):
         os.chdir(repo)
         os.environ["GQ_OWNER"] = "ryzen-play-install"
         result = owned_process(build_command(source))
-        if result:
+        if result not in (0, 3):
             return result
         create_settings(home / ".config/gothic-ai/settings.toml", payload["settings"], repo, home)
         applications = home / ".local/share/applications"
         applications.mkdir(parents=True, exist_ok=True)
-        (applications / "gothic-ai.desktop").write_text(desktop_entry(repo))
+        (applications / "gothic-ai.desktop").write_text(desktop_entry(repo, launcher_ready=result == 0))
         print("Ready: open Gothic AI in GNOME Applications. Login on Ryzen: "
               "~/.local/bin/uv run --project ~/gothic-ai/play/launcher/core gothic-launcher login", flush=True)
-    return 0
+    return result
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     try:
         if argv == ["__prepare"]:
-            prepare()
-            return 0
+            return prepare()
         if argv[:1] == ["__remote"]:
             payload = json.loads(sys.stdin.readline())
             return remote_install(argv[1], payload, payload["installer"])

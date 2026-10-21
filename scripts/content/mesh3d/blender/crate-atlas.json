@@ -1,32 +1,32 @@
 {
-  "glb": "mesh3d-crate-concept/meshes/mesh3d-crate-concept/crate.glb",
-  "maps_dir": "mesh3d-crate-concept/tiles",
+  "glb": "market-set/build/crate/model.glb",
+  "maps_dir": "market-set/crate-tiles",
   "scales": {
-    "OWN_PROP_WOOD_PLANK": 2.6315789,
-    "OWN_PROP_WOOD_BRACE": 2.6315789,
+    "OWN_PROP_WOOD_PLANK": 2.5,
+    "OWN_PROP_WOOD_BRACE": 2.5,
     "OWN_PROP_IRON_NAIL": 5.0,
-    "OWN_PROP_IRON_BAND": 5.0
+    "OWN_PROP_ROPE": 6.6
   },
   "targets": {
     "OWN_PROP_WOOD_PLANK": [
-      0.0588,
-      0.0482,
-      0.0244
+      0.038,
+      0.031,
+      0.016
     ],
     "OWN_PROP_WOOD_BRACE": [
-      0.0588,
-      0.0482,
-      0.0244
+      0.033,
+      0.027,
+      0.014
     ],
     "OWN_PROP_IRON_NAIL": [
-      0.0282,
-      0.0269,
-      0.0168
+      0.02,
+      0.019,
+      0.016
     ],
-    "OWN_PROP_IRON_BAND": [
-      0.0282,
-      0.0269,
-      0.0168
+    "OWN_PROP_ROPE": [
+      0.075,
+      0.066,
+      0.046
     ]
   },
   "slots": {
@@ -42,30 +42,36 @@
       "OWN_CRATE_HARBOUR_IRON",
       "METAL"
     ],
-    "OWN_PROP_IRON_BAND": [
-      "OWN_CRATE_HARBOUR_IRON",
-      "METAL"
+    "OWN_PROP_ROPE": [
+      "OWN_CRATE_HARBOUR_ROPE",
+      "WOOD"
     ]
   },
   "metal": [
-    "OWN_PROP_IRON_NAIL",
-    "OWN_PROP_IRON_BAND"
+    "OWN_PROP_IRON_NAIL"
   ],
   "size": 2048,
   "seed": 1,
-  "light_part": [
-    33,
-    1.35
-  ],
-  "wet_height": 0.15,
+  "angle_limit": 66,
+  "margin": 0.003,
+  "wet_height": 0.3,
+  "algae": 0.8,
+  "bleach": 0.0,
   "planks_per_tile": {
     "OWN_PROP_WOOD_PLANK": 4,
     "OWN_PROP_WOOD_BRACE": 4
   },
   "contrast": {
-    "OWN_PROP_WOOD_PLANK": 1.3,
-    "OWN_PROP_WOOD_BRACE": 1.3,
-    "OWN_PROP_IRON_NAIL": 1.2,
-    "OWN_PROP_IRON_BAND": 1.2
-  }
+    "OWN_PROP_WOOD_PLANK": 1.15,
+    "OWN_PROP_WOOD_BRACE": 1.15,
+    "OWN_PROP_IRON_NAIL": 1.1,
+    "OWN_PROP_ROPE": 1.1
+  },
+  "edge_wear": {
+    "OWN_PROP_WOOD_PLANK": 0.2,
+    "OWN_PROP_WOOD_BRACE": 0.2
+  },
+  "tone_spread": 0.14,
+  "seam_dark": 0.3,
+  "seam_width": 0.04
 }

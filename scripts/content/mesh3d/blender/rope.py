@@ -54,6 +54,10 @@ def tube(points, part, taper_end=False):
             s2 = (s + 1) % sides
             u0, u1 = s / sides * (2 * math.pi * rad) / tile_m, (s + 1) / sides * (2 * math.pi * rad) / tile_m
             P.poly((a[s], a[s2], b[s2], b[s]), ROPE, ((u0, va / tile_m), (u1, va / tile_m), (u1, vb / tile_m), (u0, vb / tile_m)))
+    # cap both ends: open, they showed the inside of the rope from above
+    cap = [(rad * math.cos(2 * math.pi * s / sides) / tile_m, rad * math.sin(2 * math.pi * s / sides) / tile_m) for s in range(sides)]
+    P.poly(rings[0][0][::-1], ROPE, cap[::-1])
+    P.poly(rings[-1][0], ROPE, cap)
 
 
 def spiral(r_from, r_to, z, phase):

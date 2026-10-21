@@ -16,23 +16,25 @@ capture = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(capture)
 
 
-def capture_check_inputs(tmp_path, variant, materials, *, original=False):
+def capture_check_inputs(tmp_path, variant, materials, *, original=False, market_house=False):
     directory = tmp_path / variant
     directory.mkdir()
     (directory / "exit.txt").write_text("0\n")
     scenario = tmp_path / "pilot.bench"
-    scenario.write_text("".join(f"shot {spot}\n" for spot in capture.SPOTS))
+    spots = capture.HOUSE_SPOTS if market_house else capture.SPOTS
+    scenario.write_text("".join(f"shot {spot}\n" for spot in spots))
     index = tmp_path / "materials.json"
-    index.write_text(json.dumps({} if original else {"test": {}}))
+    material_count = 58 if market_house else 1
+    index.write_text(json.dumps({} if original else {f"test-{i}": {} for i in range(material_count)}))
     (directory / "game.log").write_text(
-        f"materials: {0 if original else 1} entries from test\n"
-        + "".join(f"[bench] shot {spot}\n" for spot in capture.SPOTS)
+        f"materials: {0 if original else material_count} entries from test\n"
+        + "".join(f"[bench] shot {spot}\n" for spot in spots)
         + "[bench] done\n")
     textures = [{"kind": "texture", "name": material + ".TGA"} for material in materials]
     (directory / "census.json").write_text(json.dumps({
         "files": textures if original else [], "replacements": [] if original else textures,
     }))
-    for spot in capture.SPOTS:
+    for spot in spots:
         (directory / f"{spot}.png").write_bytes(b"shot")
     return directory, scenario, index
 
@@ -69,6 +71,35 @@ def test_iteration3_rejects_opened_window_original(tmp_path):
     census.write_text(json.dumps(data))
     with pytest.raises(SystemExit, match="pilot originals opened: NW_CITY_WINDOW_03"):
         capture.check(*inputs)
+
+
+@pytest.mark.parametrize("variant,count", (("original", 12), ("pilot-3b", 8), ("house-1", 12), ("house-2", 12)))
+def test_house_captures_validate_three_views_and_target_census(tmp_path, variant, count, capsys):
+    materials = capture.ITERATION3_MATERIALS if variant == "pilot-3b" else capture.HOUSE_MATERIALS
+    inputs = capture_check_inputs(tmp_path, variant, materials, original=variant == "original", market_house=True)
+    capture.check(*inputs, market_house=True)
+    expected = f"pilot_replaced=0 pilot_originals={count}" if variant == "original" else f"pilot_replaced={count} pilot_originals=0"
+    output = capsys.readouterr().out
+    assert f"shots=3 materials={0 if variant == 'original' else 58}" in output
+    assert expected in output
+
+
+@pytest.mark.parametrize("variant", ("house-1", "house-2"))
+def test_house_captures_reject_missing_basement_replacement(tmp_path, variant):
+    inputs = capture_check_inputs(tmp_path, variant, capture.ITERATION3_MATERIALS, market_house=True)
+    with pytest.raises(SystemExit, match="pilot textures not replaced: NW_CITY_FACHWERKBASEMENT"):
+        capture.check(*inputs, market_house=True)
+
+
+@pytest.mark.parametrize("variant", ("house-1", "house-2"))
+def test_house_captures_reject_opened_basement_original(tmp_path, variant):
+    inputs = capture_check_inputs(tmp_path, variant, capture.HOUSE_MATERIALS, market_house=True)
+    census = inputs[0] / "census.json"
+    data = json.loads(census.read_text())
+    data["files"] = [{"kind": "texture", "name": "NW_CITY_FACHWERKBASEMENT_CHAIN_01-C.TEX"}]
+    census.write_text(json.dumps(data))
+    with pytest.raises(SystemExit, match="pilot originals opened: NW_CITY_FACHWERKBASEMENT_CHAIN_01"):
+        capture.check(*inputs, market_house=True)
 
 
 def test_flat_frame_has_no_detail_and_uses_linear_rec709(tmp_path):
@@ -141,5 +172,34 @@ def test_iteration3_boards_keep_panel_width_and_variant_order(tmp_path):
         with Image.open(path) as board:
             assert board.format == "JPEG"
             assert board.size == (4 * 768, 432 + 44)
+            for panel, colour in enumerate(colours):
+                assert board.getpixel((panel * 768 + 384, 260)) == pytest.approx(colour, abs=3)
+
+
+@pytest.mark.parametrize("house2", (False, True))
+def test_house_boards_keep_three_full_frame_panels_in_order(tmp_path, house2):
+    variants = ("original", "house-1", "house-2") if house2 else ("original", "pilot-3b", "house-1")
+    colours = ((220, 20, 20), (20, 220, 20), (20, 20, 220))
+    captures = tmp_path / "captures"
+    for variant, colour in zip(variants, colours):
+        (captures / variant).mkdir(parents=True)
+        for spot in capture.HOUSE_SPOTS:
+            Image.new("RGB", (1280, 720), colour).save(captures / variant / f"{spot}.png")
+    output = tmp_path / "boards"
+    if house2:
+        output.mkdir()
+        for spot in capture.HOUSE_SPOTS:
+            (output / f"{spot}.jpg").write_bytes(b"existing JPEG")
+    capture.compose(captures, output, market_house=not house2, market_house2=house2)
+    suffix = "-house-2" if house2 else ""
+    expected = {f"{spot}{suffix}.jpg" for spot in capture.HOUSE_SPOTS}
+    assert {path.name for path in output.iterdir()} == (expected | {f"{spot}.jpg" for spot in capture.HOUSE_SPOTS})
+    if house2:
+        assert all((output / f"{spot}.jpg").read_bytes() == b"existing JPEG" for spot in capture.HOUSE_SPOTS)
+    for name in expected:
+        path = output / name
+        with Image.open(path) as board:
+            assert board.format == "JPEG"
+            assert board.size == (3 * 768, 432 + 44)
             for panel, colour in enumerate(colours):
                 assert board.getpixel((panel * 768 + 384, 260)) == pytest.approx(colour, abs=3)

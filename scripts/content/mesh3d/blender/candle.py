@@ -74,7 +74,7 @@ for i in range(n_feet):
     P.post(at + Z * 0.002, at - Z * foot_h, foot_w, foot_w * 0.8, X, Y, IRON, iron_tile)
 # flat ring handle on the far side, joined to the rim by a short neck
 ring_c = base + Y * (r_dish + r_ring + 0.012) + Z * (rim_h * 0.6)
-P.board(base + Y * (r_dish + 0.008) + Z * (rim_h * 0.6), Y, X, Z, 0.03, 0.024, ring_t, IRON)
+P.board(base + Y * (r_dish + 0.008) + Z * (rim_h * 0.6), Y, X, Z, 0.03, 0.024, ring_t * 0.7, IRON)   # thinner: not coplanar with the ring
 part = P.new_part()
 rows = []
 for k in range(seg):
@@ -172,6 +172,9 @@ for d in range(n_rods):
             P.poly((rings[j][k2], rings[j][k], rings[j + 1][k], rings[j + 1][k2]), WAX, ((0, 0), (0.02, 0), (0.02, 0.02), (0, 0.02)))
     for k in range(rod_sides):
         P.poly((rings[steps][(k + 1) % rod_sides], rings[steps][k], tip_v), WAX, ((0, 0), (0.02, 0), (0.01, 0.02)))
+    # cap the top: an open end showed the inside of the rod from above
+    P.poly(rings[0], WAX, [(0.01 + 0.01 * math.cos(2 * math.pi * k / rod_sides), 0.01 + 0.01 * math.sin(2 * math.pi * k / rod_sides))
+                           for k in range(rod_sides)])
 
 # wick
 P.post(floor + tilt @ (Z * (h_c - 0.008)), floor + tilt @ (Z * (h_c - 0.035)), 0.006, 0.007, X, Y, IRON, iron_tile)

@@ -10,7 +10,7 @@
 
 Свои короткие правила есть у [`server/`](server/AGENTS.md), [`OpenGothic/ai_bridge/`](OpenGothic/ai_bridge/AGENTS.md) и [`shorts/`](shorts/AGENTS.md): тесты после правки и частые грабли.
 
-**3D-модели** строит Claude сам в Blender по концепту `image_gen` и скиллу [`blender-3d`](.claude/skills/blender-3d/SKILL.md). Нейросети-генераторы 3D не используются, моделирование не отдаётся Codex и `codex-worker`.
+**3D-модели** строит Claude сам в Blender по концепту `image_gen` и скиллу [`blender-3d`](.claude/skills/blender-3d/SKILL.md). Замысел предмета до концепта — по скиллу [`object-design`](.claude/skills/object-design/SKILL.md). Нейросети-генераторы 3D не используются, моделирование не отдаётся Codex и `codex-worker`.
 
 ## Где считаются модели
 

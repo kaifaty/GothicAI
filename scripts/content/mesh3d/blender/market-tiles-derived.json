@@ -12,6 +12,9 @@
   },
   "own_prop_nose": {
    "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_leather"
+  },
+  "own_prop_wood_mossy_brace": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_wood_mossy"
   }
  }
 }

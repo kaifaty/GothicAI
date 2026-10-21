@@ -5,10 +5,15 @@
 # --compose CAPTURES OUTPUT writes seven original / city-3 / B / C boards.
 # --compose-2 CAPTURES OUTPUT writes seven original / city-3 / B / pilot-2 boards.
 # --compose-3 CAPTURES OUTPUT writes seven original / pilot-2 / pilot-3a / pilot-3b boards.
+# QUALITY_PILOT_TASK=gothic-ai/market-house selects market-house.bench (three views).
+# --compose-house CAPTURES OUTPUT writes original / pilot-3b / house-1 boards.
+# --compose-house-2 CAPTURES OUTPUT writes original / house-1 / house-2 boards.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HOST="${RYZEN_HOST:-ryzen}"
 TASK="${QUALITY_PILOT_TASK:-gothic-ai/quality-pilot}"
+SCENARIO=quality-pilot.bench
+[[ "$TASK" != gothic-ai/market-house ]] || SCENARIO=market-house.bench
 
 if [[ "${1:-}" == --remote-prepare ]]; then
   task="$HOME/$TASK"
@@ -27,7 +32,7 @@ fi
 
 if [[ "${1:-}" == --remote-capture ]]; then
   variant="${2:?variant}"
-  [[ "$variant" == original || "$variant" == city-3 || "$variant" == pilot-b || "$variant" == pilot-c || "$variant" == pilot-2 || "$variant" == pilot-3a || "$variant" == pilot-3b ]] || exit 2
+  [[ "$variant" == original || "$variant" == city-3 || "$variant" == pilot-b || "$variant" == pilot-c || "$variant" == pilot-2 || "$variant" == pilot-3a || "$variant" == pilot-3b || "$variant" == house-1 || "$variant" == house-2 ]] || exit 2
   task="$HOME/$TASK"
   out="$task/runs/$variant"
   mkdir -p "$out/run"
@@ -61,7 +66,7 @@ INI
   export OPENGOTHIC_CONTENT="$task/content/$variant"
   export OPENGOTHIC_TEXTURES='' OPENGOTHIC_FRACTURE=''
   export OPENGOTHIC_CENSUS="$out/census.json"
-  export OPENGOTHIC_BENCH="$task/scripts/quality-pilot.bench" OPENGOTHIC_BENCH_OUT="$out"
+  export OPENGOTHIC_BENCH="$task/scripts/$SCENARIO" OPENGOTHIC_BENCH_OUT="$out"
   rc=0
   (cd "$out/run" && timeout 240 "$task/build/opengothic/Gothic2Notr" \
     -g "$HOME/gothic-ai/game" -g2 -window -devmode -save 1) >"$out/game.log" 2>&1 || rc=$?
@@ -69,11 +74,12 @@ INI
   [[ "$rc" == 0 ]] || { tail -30 "$out/game.log"; exit "$rc"; }
   check_args=()
   [[ "$TASK" != gothic-ai/quality-pilot-3 ]] || check_args+=(--iteration-3)
-  python3 "$task/scripts/capture-quality-pilot.py" check "$out" "$task/scripts/quality-pilot.bench" "$task/content/$variant/materials/materials.json" "${check_args[@]}"
+  [[ "$TASK" != gothic-ai/market-house ]] || check_args+=(--market-house)
+  python3 "$task/scripts/capture-quality-pilot.py" check "$out" "$task/scripts/$SCENARIO" "$task/content/$variant/materials/materials.json" "${check_args[@]}"
   exit 0
 fi
 
-if [[ "${1:-}" == --compose || "${1:-}" == --compose-2 || "${1:-}" == --compose-3 ]]; then
+if [[ "${1:-}" == --compose || "${1:-}" == --compose-2 || "${1:-}" == --compose-3 || "${1:-}" == --compose-house || "${1:-}" == --compose-house-2 ]]; then
   exec uv run --no-project --with pillow python "$ROOT/scripts/content/capture-quality-pilot.py" "${1#--}" "${2:?captures}" "${3:?output}"
 fi
 
@@ -82,7 +88,7 @@ if [[ "${1:-}" == --prepare ]]; then
   rsync -a --delete --exclude=.git --exclude=build --exclude=__pycache__ \
     "$ROOT/OpenGothic/" "$HOST:$TASK/source/OpenGothic/"
   rsync -a "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
-    "$ROOT/scripts/content/quality-pilot.bench" "$HOST:$TASK/scripts/"
+    "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
   common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
   rsync -a "${SAVE:-$(dirname "$common")/save_slot_1.sav}" "$HOST:$TASK/save_slot_1.sav"
   GQ_OWNER="${TASK##*/}" "$ROOT/scripts/gq" --host "$HOST" run --class quick \
@@ -93,7 +99,7 @@ fi
 
 if [[ "${1:-}" == --capture ]]; then
   variant="${2:?variant}"; out="${3:?output}"
-  [[ "$variant" == original || "$variant" == city-3 || "$variant" == pilot-b || "$variant" == pilot-c || "$variant" == pilot-2 || "$variant" == pilot-3a || "$variant" == pilot-3b ]] || exit 2
+  [[ "$variant" == original || "$variant" == city-3 || "$variant" == pilot-b || "$variant" == pilot-c || "$variant" == pilot-2 || "$variant" == pilot-3a || "$variant" == pilot-3b || "$variant" == house-1 || "$variant" == house-2 ]] || exit 2
   mkdir -p "$out/$variant"
   if [[ "$variant" != original ]]; then
     source_root="${CONTENT_STAGING_ROOT:-$HOME/.local/share/gothic-ai/content-staging}/$variant"
@@ -104,7 +110,7 @@ if [[ "${1:-}" == --capture ]]; then
     ssh -T "$HOST" "printf '{}\\n' >~/$TASK/content/original/materials/materials.json"
   fi
   rsync -a "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
-    "$ROOT/scripts/content/quality-pilot.bench" "$HOST:$TASK/scripts/"
+    "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
   rc=0
   GQ_OWNER="${TASK##*/}" "$ROOT/scripts/gq" --host "$HOST" run --class quick \
     --threads 4 --mem 5G --gpu-mem 4G --display --display-exclusive \
@@ -113,5 +119,5 @@ if [[ "${1:-}" == --capture ]]; then
   rsync -a "$HOST:$TASK/runs/$variant/" "$out/$variant/"
   exit "$rc"
 fi
-echo 'usage: capture-quality-pilot.sh --prepare | --capture original|city-3|pilot-b|pilot-c|pilot-2|pilot-3a|pilot-3b OUTPUT | --compose|--compose-2|--compose-3 CAPTURES OUTPUT' >&2
+echo 'usage: capture-quality-pilot.sh --prepare | --capture original|city-3|pilot-b|pilot-c|pilot-2|pilot-3a|pilot-3b|house-1|house-2 OUTPUT | --compose|--compose-2|--compose-3|--compose-house|--compose-house-2 CAPTURES OUTPUT' >&2
 exit 2

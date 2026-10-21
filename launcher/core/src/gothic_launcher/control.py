@@ -22,7 +22,7 @@ Methods (params in brackets):
     test.voice [seconds?]              record the microphone and recognize it through a temporary ASR
                                        service; voice_test events carry {"level"} and {"partial"}
     test.speech                        one line in Xardas' voice through a temporary TTS service, aloud
-    session.start [mode]               "menu" (default), "continue" or "new"
+    session.start [mode, smoke?]       "menu" (default), "continue" or "new"; smoke: quota-free run
     session.stop
     report.create                      a zip of the latest session's logs, keys removed
 
@@ -63,6 +63,7 @@ from .commands import (
     services,
     tools,
 )
+from .linux_session import LinuxSession, installation_lock
 from .settings import CONFIG_DIR, Config, Secrets, Settings
 from .state import STATE_DIR, AlreadyRunning, SessionFile
 from .supervisor import Event, NotReady, Supervisor, temporary
@@ -87,12 +88,18 @@ class Control:
         config_dir: Path = CONFIG_DIR,
         state_file: Path = STATE_DIR / "launcher.json",
         log_root: Path = LOG_ROOT,
+        admitted: bool = False,
+        session_log_dir: Path | None = None,
+        no_voice: bool = False,
     ) -> None:
         self.write = write
         self.config_dir = config_dir
         self.state_file = state_file
         self.log_root = log_root
-        self.supervisor: Supervisor | None = None
+        self.admitted = admitted  # internal worker, already inside its gq unit
+        self.session_log_dir = session_log_dir
+        self.no_voice = no_voice
+        self.supervisor: Supervisor | LinuxSession | None = None
         self.task: asyncio.Task[None] | None = None
         self.session: dict[str, Any] | None = None  # the running (or last) session, as the window sees it
         self.journal: deque[dict[str, Any]] = deque(maxlen=JOURNAL_KEEP)
@@ -319,7 +326,7 @@ class Control:
 
     # --- the session ---------------------------------------------------------------------------
 
-    async def session_start(self, mode: str = "menu") -> dict[str, Any]:
+    async def session_start(self, mode: str = "menu", smoke: bool = False) -> dict[str, Any]:
         if self.task is not None and not self.task.done():
             raise RequestError("Игра уже запущена")
         if mode not in ("menu", "continue", "new"):
@@ -328,13 +335,19 @@ class Control:
         left = lock.acquire()  # AlreadyRunning: a `gothic-launcher up` in a terminal holds it
         try:
             config = self._config()
+            if smoke:
+                from .cli import _smoke_settings
+
+                _smoke_settings(config)
+            if self.no_voice:
+                config.settings.voice.enabled = False
             layout = find_layout(config)
         except Exception:
             lock.release()
             raise
         save = latest_save(layout.game_home) if mode == "continue" else None
         ports = Ports.free()
-        log_dir = new_log_dir(self.log_root)
+        log_dir = self.session_log_dir or new_log_dir(self.log_root)
         self.journal.clear()
         self.session = {
             "state": "running",
@@ -346,13 +359,46 @@ class Control:
             "failed": None,
             "code": None,
         }
-        self.supervisor = Supervisor(
-            services(config, layout, ports, cwd=log_dir),
-            game(config, layout, ports, save=save, new=mode == "new"),
-            log_dir,
-            self._on_event,
-            session=lock,
-        )
+        try:
+            if sys.platform == "linux" and not self.admitted:
+                queued = LinuxSession(
+                    layout,
+                    self.config_dir,
+                    log_dir,
+                    mode,
+                    smoke,
+                    self._on_linux_message,
+                    self._on_event,
+                    lock,
+                )
+                try:
+                    from .cli import _require_credentials
+
+                    if not queued.microphone:
+                        config.settings.voice.enabled = False
+                    _require_credentials(config)
+                except Exception:
+                    queued.lock.close()
+                    raise
+                self.supervisor = queued
+                self.session["state"] = "waiting"
+                self.session["services"]["queue"] = {"state": "waiting", "detail": "Ожидаем допуска gq"}
+            else:
+                self.supervisor = Supervisor(
+                    services(config, layout, ports, cwd=log_dir),
+                    game(config, layout, ports, save=save, new=mode == "new"),
+                    log_dir,
+                    self._on_event,
+                    session=lock,
+                )
+                if sys.platform == "linux":
+                    self.session["voice_enabled"] = config.settings.voice.enabled
+                    self.session["tts_enabled"] = config.settings.tts.enabled
+                    self.session["health_url"] = f"http://127.0.0.1:{ports.server}/health"
+        except Exception:
+            lock.release()
+            self.session = None
+            raise
         for name, pgid in left.items():
             self._on_event(Event(name, "stopped", f"left over by a launcher that was killed (group {pgid})"))
         self.task = asyncio.create_task(self._run(self.supervisor, lock))
@@ -363,7 +409,20 @@ class Control:
         await self.shutdown()
         return self.session
 
-    async def _run(self, sup: Supervisor, lock: SessionFile) -> None:
+    def _on_linux_message(self, msg: dict[str, Any]) -> None:
+        if msg["event"] == "session":
+            queued = (self.session or {}).get("services", {}).get("queue")
+            self.session = msg["data"]
+            if queued is not None:
+                self.session["services"]["queue"] = queued
+            self.write({"event": "session", "data": self.session})
+        elif msg["event"] == "service":
+            self._on_event(Event(**msg["data"]))
+        elif msg["event"] == "journal":
+            self.journal.append(msg["data"])
+            self.write(msg)
+
+    async def _run(self, sup: Supervisor | LinuxSession, lock: SessionFile) -> None:
         try:
             code = await sup.run()
         except Exception as err:
@@ -495,4 +554,5 @@ def main() -> int:
         format="%(asctime)s %(levelname).1s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    return asyncio.run(serve())
+    with installation_lock() if sys.platform == "linux" else contextlib.nullcontext():
+        return asyncio.run(serve())

@@ -125,8 +125,9 @@ for b in range(boards):
         j = (i + 1) % n
         P.poly((fr[i], fr[j], bk[j], bk[i]), mat, ((0, 0), (0.02, 0), (0.02, 0.02), (0, 0.02)))
 
-# a dark backing behind the boards, so the gaps between them read as shadow
-part = P.new_part()
+# a dark backing behind the boards, so the gaps between them read as shadow; a lone face, so its
+# front-facing winding is kept (the normal recalculation had turned it to the wall)
+part = P.new_part(wound=True)
 backing = [P.vert(Vector((cx + x * 0.97, back_y + 0.002, centre.z + (z - centre.z) * 0.97)), part) for x, z in outline]
 P.poly(backing[::-1], IRON, [(x, z) for x, z in outline][::-1])
 

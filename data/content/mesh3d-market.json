@@ -296,12 +296,12 @@
       {
         "key": "OWN_PROP_WOOD_BRACE",
         "group": "WOOD",
-        "role": "crate frame battens"
+        "role": "crate end frames and cleats"
       },
       {
-        "key": "OWN_PROP_IRON_BAND",
-        "group": "METAL",
-        "role": "forged iron straps, hoops, brackets and nails"
+        "key": "OWN_PROP_ROPE",
+        "group": "UNDEF",
+        "role": "rope handles on crate ends"
       }
     ],
     "kind": "static_mrm",

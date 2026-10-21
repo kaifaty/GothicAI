@@ -1,4 +1,5 @@
 import asyncio
+import fcntl
 import json
 import sys
 import zipfile
@@ -68,7 +69,11 @@ def setup(tmp_path, monkeypatch):
     )
     window = Window()
     c = Control(
-        window, config_dir=config_dir, state_file=tmp_path / "launcher.json", log_root=tmp_path / "logs"
+        window,
+        config_dir=config_dir,
+        state_file=tmp_path / "launcher.json",
+        log_root=tmp_path / "logs",
+        admitted=True,  # exercise the local supervisor; queue admission has its own Linux tests
     )
 
     def fake_services(config, layout, ports: Ports, cwd: Path) -> list[Proc]:
@@ -220,3 +225,74 @@ async def test_checks_respect_switched_off_parts(checks_setup):
     await call(c, "settings.set", key="voice.enabled", value=False)
     with pytest.raises(RuntimeError, match="выключен"):
         await call(c, "test.voice")
+
+
+async def test_smoke_control_uses_fake_model_without_saving_overrides(setup, monkeypatch):
+    c, window, tmp_path = setup
+    saved = (c.config_dir / "settings.toml").read_text()
+    captured = {}
+
+    def smoke_services(config, layout, ports, cwd):
+        captured.update(config.settings.model_dump())
+        return []
+
+    monkeypatch.setattr(control_module, "services", smoke_services)
+    await call(c, "session.start", mode="new", smoke=True)
+    await c.shutdown()
+    assert captured["llm"]["backend"] == "fake"
+    assert not captured["llm"]["quick"] and not captured["llm"]["body_url"]
+    assert not captured["voice"]["enabled"] and not captured["tts"]["enabled"]
+    assert (c.config_dir / "settings.toml").read_text() == saved
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_idle_linux_core_holds_install_lock_until_serve_returns(tmp_path, monkeypatch, fails):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    async def serve():
+        with (tmp_path / "gothic-ai/play.install.lock").open("ab") as updating:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(updating, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            await asyncio.sleep(0)
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(updating, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if fails:
+            raise RuntimeError("serve failed")
+        return 0
+
+    monkeypatch.setattr(control_module, "serve", serve)
+    if fails:
+        with pytest.raises(RuntimeError, match="serve failed"):
+            control_module.main()
+    else:
+        assert control_module.main() == 0
+    with (tmp_path / "gothic-ai/play.install.lock").open("ab") as updating:
+        fcntl.flock(updating, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def test_linux_core_refuses_to_start_while_installing(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(sys, "platform", "linux")
+    path = tmp_path / "gothic-ai/play.install.lock"
+    path.parent.mkdir()
+
+    async def serve():
+        pytest.fail("control must not start while install/update holds the lock")
+
+    monkeypatch.setattr(control_module, "serve", serve)
+    with path.open("ab") as updating:
+        fcntl.flock(updating, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(control_module.LaunchError, match="install/update is running"):
+            control_module.main()
+
+
+def test_macos_core_does_not_take_linux_install_lock(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(control_module, "installation_lock", lambda: pytest.fail("Linux-only lock"))
+
+    async def serve():
+        return 0
+
+    monkeypatch.setattr(control_module, "serve", serve)
+    assert control_module.main() == 0

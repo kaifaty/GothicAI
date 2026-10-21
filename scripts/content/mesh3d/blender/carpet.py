@@ -25,7 +25,7 @@ goal, lo, hi = load_goal(cfg)
 rng = np.random.default_rng(cfg.get("seed", 1))
 CARPET = 0
 P = Parts(rng, 0.1)
-part = P.new_part()
+part = P.new_part(wound=True)   # an open shell (no bottom): the top and edges below are wound outward
 
 nx, ny = cfg.get("grid", [14, 10])
 thick, bumps = cfg.get("thickness", 0.012), cfg.get("bumps", 0.003)
@@ -73,16 +73,15 @@ fu, fv = cfg.get("fringe_uv", [0.477, 0.5])
 spot = [(fu - 0.003, fv - 0.003), (fu + 0.003, fv - 0.003), (fu + 0.003, fv + 0.003), (fu - 0.003, fv + 0.003)]
 for sx, xe in ((-1, x0), (1, x1)):
     for y in np.linspace(y0 + 0.06, y1 - 0.06, f_count):
-        p = P.new_part()
+        p = P.new_part(wound=True)   # a lone quad: the normal recalculation turned every tassel face down
         angle = rng.uniform(-0.18, 0.18)
         length = f_len * rng.uniform(0.75, 1.0)
         d = Vector((sx * math.cos(angle), math.sin(angle), 0))
         s = Vector((-d.y, d.x, 0)) * (f_w / 2)
         start = Vector((xe - sx * 0.005, y, lo.z + 0.003))
         end = start + d * length
-        quad = [P.vert(start - s, p), P.vert(start + s, p), P.vert(end + s, p), P.vert(end - s, p)]
-        if sx > 0:  # keep the tassel facing up
-            quad = quad[::-1]
+        # counter-clockwise seen from above at both ends, so the tassel faces up
+        quad = [P.vert(end - s, p), P.vert(end + s, p), P.vert(start + s, p), P.vert(start - s, p)]
         P.poly(quad, CARPET, spot)
 
 P.finish(goal, out, lo, hi, {"grid": [nx, ny]})
