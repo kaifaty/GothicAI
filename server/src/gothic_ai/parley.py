@@ -334,6 +334,9 @@ class Parley:
             if self.perception:
                 known.update(v.npc.upper() for v in self.perception.views())
             members.update(who for who in known if self.bandit(who) and self._place(who) == place)
+        for encounter in self._encounters():
+            if npc in encounter["members"]:
+                members.update(encounter["members"])
         return sorted(members)
 
     def _distance(self, npc: str) -> float | None:

@@ -577,8 +577,8 @@ if [ "$(uname -s)" = Darwin ]; then
   until ! LC_ALL=C pgrep -f '^[^ ]*python[0-9.]* [^ ]*bin/pytest|^[^ ]*Gothic2Notr -g' >/dev/null; do sleep 5; done
 fi
 GAME_ENV=("GOTHIC_AI_URL=ws://127.0.0.1:$PORT" "OPENGOTHIC_FPS_LOG=${OPENGOTHIC_FPS_LOG:-1}")
-if [[ "$SCENARIO" == neural-soak ]]; then
-  # Refuse a fixed-step recording: the soak must keep the ordinary game clock.
+if [[ "$SCENARIO" == neural-soak || "$SCENARIO" == road_bandits ]]; then
+  # These fixtures must keep the ordinary game clock.
   SOAK_BUILD="$(dirname "$GAME_BIN")"
   SOAK_NORMAL_CLOCK=0
   # ryzen.sh publishes cache entries only from cadence-enabled builds. A fresh
@@ -604,9 +604,12 @@ if [[ "$SCENARIO" == neural-soak ]]; then
     SOAK_BUILD="$(dirname "$SOAK_BUILD")"
   done
   if [[ "$SOAK_NORMAL_CLOCK" == 1 ]]; then
-    GAME_ENV+=("OPENGOTHIC_BENCH=$ROOT/scripts/bench/neural-soak-e2e.bench" "OPENGOTHIC_BENCH_OUT=$LOG_DIR"
+    GAME_ENV+=("OPENGOTHIC_BENCH=$ROOT/scripts/bench/${SCENARIO//_/-}-e2e.bench" "OPENGOTHIC_BENCH_OUT=$LOG_DIR"
       "OPENGOTHIC_BENCH_REALTIME=1" "OPENGOTHIC_BENCH_KEEP=1" "TEMPEST_BACKGROUND=1"
       "TEMPEST_WINDOW_SIZE=640x360" "OPENGOTHIC_BENCH_ENCODER=-c:v libx264 -preset ultrafast -crf 30")
+  elif [[ "$SCENARIO" == road_bandits ]]; then
+    echo 'road_bandits requires a normal-clock bench build' >&2
+    exit 2
   else
     echo 'neural-soak: video unavailable (normal-clock bench not compiled)'
   fi

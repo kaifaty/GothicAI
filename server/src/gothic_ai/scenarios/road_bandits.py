@@ -179,16 +179,13 @@ async def road_bandits(
            f"ZS_ATTACK={native_attacks}"):
             return _logged(results)
 
-        hp_before = (await link.snapshot(leader, fresh=True)).player.hp
+        initial = await link.snapshot(leader, fresh=True)
+        hp_before = initial.player.hp if initial.player else None
         health: list[int | None] = []
-        positions: list[tuple[float, float, float]] = []
+        positions = [initial.player.pos] if initial.player else []
         peaceful_at = time.monotonic()
-        walked = 0
+        await link.debug("destruction_traces", text="signal road_walk")
         while time.monotonic() - peaceful_at < 20:
-            elapsed = time.monotonic() - peaceful_at
-            if walked < 3 and elapsed >= 5 * (walked + 1):
-                await link.debug("player_goto", to=sorted(GANG)[walked], distance=250)
-                walked += 1
             current = await link.snapshot(leader, fresh=True)
             health.append(current.player.hp if current.player else None)
             if current.player:
@@ -196,11 +193,16 @@ async def road_bandits(
             await asyncio.sleep(0.25)
         during = [npc for at, npc in native_attacks if at >= peaceful_at]
         travelled = max((math.dist(positions[0], pos) for pos in positions), default=0)
+        steps = [math.dist(before, after) for before, after in zip(positions, positions[1:], strict=False)]
+        path_cm, max_step = sum(steps), max(steps, default=0)
+        moving_samples = sum(step > 5 for step in steps)
         if not check("passes", bool(
-            health and all(hp == hp_before == 1200 for hp in health) and not during and walked == 3
-            and travelled > 100 and len(hail_calls()) == 1 and all(parley.truce(npc) for npc in GANG)
+            health and all(hp == hp_before == 1200 for hp in health) and not during
+            and travelled > 100 and moving_samples >= 8 and max_step <= 150 and path_cm >= 5 * max_step
+            and len(hail_calls()) == 1 and all(parley.truce(npc) for npc in GANG)
         ), f"seconds={time.monotonic() - peaceful_at:.2f}, samples={len(health)}, "
-           f"HP={hp_before}->{health[-1]}, positions={walked + 1}, travelled_cm={travelled:.0f}, "
+           f"HP={hp_before}->{health[-1]}, travelled_cm={travelled:.0f}, path_cm={path_cm:.0f}, "
+           f"moving_samples={moving_samples}, max_step_cm={max_step:.0f}, "
            f"hail_calls={len(hail_calls())}, ZS_ATTACK={during}"):
             return _logged(results)
 

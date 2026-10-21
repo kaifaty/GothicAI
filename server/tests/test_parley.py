@@ -838,6 +838,21 @@ async def test_leaving_all_members_for_sixty_continuous_seconds_starts_a_new_enc
         assert len(turns) == 2 and parley._encounters()[0]["id"] != original
 
 
+async def test_deal_keeps_the_encounter_band_after_its_leader_steps_away():
+    async with world() as (_, link, _, chronicle, parley):
+        encounter = parley._encounter(BRAGO)
+        assert encounter["members"] == sorted([BRAGO, MATE])
+        # The greeting moved Brago: the farthest member is now beyond his snapshot's 15 m radius.
+        link.snapshots[BRAGO].nearby_npcs.clear()
+        assert parley.members(BRAGO) == sorted([BRAGO, MATE])
+        assert parley.members(MATE) == sorted([BRAGO, MATE])
+        await parley.accept_deal(BRAGO, 4)
+        assert chronicle.facts("truce")[-1]["members"] == sorted([BRAGO, MATE])
+        assert parley.truce(MATE) is not None
+        parley.chronicle.record({**encounter, "status": "closed", "why": "left"})
+        assert parley.members(BRAGO) == [BRAGO]
+
+
 async def test_encounter_hail_rolls_back_with_the_save_branch_and_world_change_ends_it(monkeypatch):
     async with world() as (_, link, dialogue, chronicle, parley):
         _, turns = hail_body(monkeypatch, dialogue, parley)
