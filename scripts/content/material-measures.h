@@ -18,8 +18,30 @@ struct Result {
   int direction=0; // 0:none, 1:along U, 2:along V; direction of the long details
   double directionConfidence=0, angle=0;
   std::array<double,3> oklab{}, meanRgb{};
-  double logSpread=0, detailK3=0, detailK9=0, detailK27=0;
+  double logSpread=0, detailK3=0, detailK9=0, detailK27=0, highlightY=0;
 };
+
+inline double highlightPercentile(std::vector<double>& values) {
+  if(values.empty()) throw std::runtime_error("no pixels surviving alpha cutoff");
+  const double index=0.99*(values.size()-1);
+  const size_t lower=size_t(index),upper=std::min(lower+1,values.size()-1);
+  std::nth_element(values.begin(),values.begin()+lower,values.end());
+  const double low=values[lower];
+  const double high=upper==lower?low:*std::min_element(values.begin()+upper,values.end());
+  return low+(high-low)*(index-lower);
+}
+
+// Native-resolution visible pixels, without the UV-grid averaging used below.
+inline double highlightY(const uint8_t* rgba,int width,int height) {
+  if(!rgba || width<=0 || height<=0) throw std::runtime_error("invalid RGBA dimensions");
+  std::vector<double> values;
+  values.reserve(size_t(width)*height);
+  for(size_t i=0;i<size_t(width)*height;++i) {
+    if(rgba[4*i+3]<128) continue;
+    values.push_back(0.2126*linear(rgba[4*i])+0.7152*linear(rgba[4*i+1])+0.0722*linear(rgba[4*i+2]));
+  }
+  return highlightPercentile(values);
+}
 
 inline std::pair<double,double> period(const std::vector<double>& image,int w,int h,bool u) {
   const int n=u?w:h, lines=u?h:w;
@@ -66,15 +88,19 @@ inline Result measure(const uint8_t* rgba,int width,int height) {
   if(!rgba || width<=0 || height<=0) throw std::runtime_error("invalid RGBA dimensions");
   Result result;
   double count=0;
+  std::vector<double> nativeVisible;
+  nativeVisible.reserve(size_t(width)*height);
   // Mean visible-pixel linear RGB, then its OKLab coordinates. This is the
   // mean color that per-channel linear gains can reproduce exactly.
   for(int i=0;i<width*height;++i) {
     if(rgba[4*i+3]<128) continue;
     const double r=linear(rgba[4*i]),g=linear(rgba[4*i+1]),b=linear(rgba[4*i+2]);
     result.meanRgb[0]+=r; result.meanRgb[1]+=g; result.meanRgb[2]+=b;
+    nativeVisible.push_back(0.2126*r+0.7152*g+0.0722*b);
     ++count;
   }
   if(!count) throw std::runtime_error("no pixels surviving alpha cutoff");
+  result.highlightY=highlightPercentile(nativeVisible);
   for(int c=0;c<3;++c) result.meanRgb[c]/=count;
   const auto& rgb=result.meanRgb;
   const double l=std::cbrt(0.4122214708*rgb[0]+0.5363325363*rgb[1]+0.0514459929*rgb[2]);

@@ -70,6 +70,25 @@ def test_mean_color_averages_linear_rgb_before_oklab():
     assert result["oklab"][0] == pytest.approx(.5 ** (1/3), abs=1e-7)
 
 
+def test_highlight_uses_visible_native_linear_y_and_interpolated_percentile():
+    image = np.array([[[255, 255, 255, 127], [0, 0, 0, 128], [255, 255, 255, 255]]], dtype=np.uint8)
+    assert measure_material(image)["highlight_y"] == pytest.approx(.99, abs=1e-12)
+    image = np.random.default_rng(99).integers(0, 256, (259, 263, 4), dtype=np.uint8)
+    rgb = image[:, :, :3] / 255.
+    linear = np.where(rgb <= .04045, rgb / 12.92, ((rgb + .055) / 1.055) ** 2.4)
+    visible = image[:, :, 3] >= 128
+    expected = np.percentile((linear @ [.2126, .7152, .0722])[visible], 99)
+    assert measure_material(image)["highlight_y"] == pytest.approx(expected, abs=1e-12)
+    image[~visible, :3] = 255
+    assert measure_material(image)["highlight_y"] == pytest.approx(expected, abs=1e-12)
+
+
+def test_highlight_is_not_reduced_to_uv_grid_cell_means():
+    image = np.zeros((512, 512, 3), dtype=np.uint8)
+    image[::2, ::16] = 255  # 3.125% white native pixels, quarter-white UV cells.
+    assert measure_material(image)["highlight_y"] == pytest.approx(1, abs=1e-12)
+
+
 @pytest.mark.parametrize("gray", [0, 128, 255])
 def test_flat_image_has_exactly_zero_log_contrast_and_detail(gray):
     measured = measure_material(np.full((64, 64, 3), gray, dtype=np.uint8))

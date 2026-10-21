@@ -159,6 +159,7 @@ def material_csv(names):
         row.update(texture=name, target_period_u_uv="0.125", target_period_v_uv="0",
                    target_direction="V", target_direction_confidence="0.9",
                    target_oklab_l="0.4", target_oklab_a="-0.01", target_oklab_b="0.02",
+                   target_highlight_y="0.5",
                    **dict.fromkeys(measurement.DETAIL_FIELDS, "0.2"))
         writer.writerow(row)
     return stream.getvalue()
@@ -185,6 +186,44 @@ def test_missing_previous_scalar_targets_are_still_filled(tmp_path):
     values = measurement.parse_material_measurements(material_csv(["A.TGA"]), rows)
     updated = measurement.update_material_measurements(tmp_path / "mapping.csv", rows, values)
     assert {field: updated[0][field] for field in measurement.MEASUREMENT_FIELDS} == values["A.TGA"]
+
+
+def test_highlight_measurement_and_update_preserve_every_previous_field(tmp_path, monkeypatch):
+    rows = [{field: "unchanged, quoted" for field in measurement.FIELDS
+             if field != "target_highlight_y"} for _ in range(2)]
+    rows[0]["texture"], rows[1]["texture"] = "A.TGA", "B.TGA"
+    before = deepcopy(rows)
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return type("Result", (), {"stdout": "texture,target_highlight_y\nA.TGA,0.99\nB.TGA,0.25\n"})()
+
+    monkeypatch.setattr(measurement.subprocess, "run", run)
+    values = measurement.measure_highlights(Path("extractor"), Path("game"), rows)
+    assert values == {"A.TGA": .99, "B.TGA": .25}
+    updated = measurement.update_highlights(tmp_path / "mapping.csv", rows, values)
+    assert rows == before
+    assert [{field: row[field] for field in before[0]} for row in updated] == before
+    assert [row["target_highlight_y"] for row in updated] == ["0.99", "0.25"]
+    assert calls == [(["extractor", "--highlights", "game", "A.TGA", "B.TGA"],
+                      {"check": True, "capture_output": True, "text": True})]
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -.01, 1.01, True])
+def test_invalid_highlight_update_does_not_modify_mapping(tmp_path, value):
+    path = tmp_path / "mapping.csv"
+    path.write_text("unchanged\n")
+    with pytest.raises(ValueError, match="target_highlight_y"):
+        measurement.update_highlights(path, [{"texture": "A.TGA"}], {"A.TGA": value})
+    assert path.read_text() == "unchanged\n"
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-.1", "1.01"])
+def test_highlight_parser_requires_finite_unit_interval_scalar(value):
+    with pytest.raises(ValueError, match="target_highlight_y"):
+        measurement.parse_measurements(f"texture,target_highlight_y\nA.TGA,{value}\n",
+                                       ["A.TGA"], field="target_highlight_y")
 
 
 @pytest.mark.parametrize("header", measurement.MAPPING_HEADERS)
