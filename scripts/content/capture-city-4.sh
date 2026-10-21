@@ -13,7 +13,11 @@ if [[ "${1:-}" == --remote-capture ]]; then
   variant="${2:?variant}"
   [[ "$variant" == original || "$variant" == city-3 || "$variant" == city-4 ]] || exit 2
   task="$HOME/$TASK"
-  out="$task/runs/$variant"
+  capture="${3:?capture root}"
+  [[ "$(dirname "$capture")" == "$task/captures" && "${capture##*/}" == run-* && -d "$capture" ]] || {
+    echo 'Invalid city-4 capture root' >&2; exit 2;
+  }
+  out="$capture/runs/$variant"
   mkdir -p "$out/run"
   cp "$task/save_slot_1.sav" "$out/run/save_slot_1.sav"
   cat >"$out/run/Gothic.ini" <<'INI'
@@ -42,18 +46,18 @@ INI
   export VK_ICD_FILENAMES="$VK_DRIVER_FILES"
   export ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1 TEMPEST_WINDOW_SIZE=1280x720
   export TEMPEST_WINDOW_POS=100,100 GOTHIC_AI=0
-  export OPENGOTHIC_CONTENT="$task/content/$variant"
+  export OPENGOTHIC_CONTENT="$capture/content/$variant"
   export OPENGOTHIC_TEXTURES='' OPENGOTHIC_FRACTURE=''
   export OPENGOTHIC_CENSUS="$out/census.json"
-  export OPENGOTHIC_BENCH="$task/scripts/city-4.bench" OPENGOTHIC_BENCH_OUT="$out"
+  export OPENGOTHIC_BENCH="$capture/scripts/city-4.bench" OPENGOTHIC_BENCH_OUT="$out"
   rc=0
   (cd "$out/run" && timeout 600 "$task/build/opengothic/Gothic2Notr" \
     -g "$HOME/gothic-ai/game" -g2 -window -devmode -save 1) >"$out/game.log" 2>&1 || rc=$?
   printf '%s\n' "$rc" >"$out/exit.txt"
   [[ "$rc" == 0 ]] || { tail -30 "$out/game.log"; exit "$rc"; }
-  index="$task/content/$variant/materials/materials.json"
-  [[ "$variant" != original ]] || index="$task/content/city-4/materials/materials.json"
-  python3 "$task/scripts/capture-city-4.py" check "$out" "$task/scripts/city-4.bench" "$index" "$variant"
+  index="$capture/content/$variant/materials/materials.json"
+  [[ "$variant" != original ]] || index="$capture/content/city-4/materials/materials.json"
+  python3 "$capture/scripts/capture-city-4.py" check "$out" "$capture/scripts/city-4.bench" "$index" "$variant"
   exit 0
 fi
 
@@ -136,13 +140,18 @@ if [[ "${1:-}" == --capture ]]; then
   mkdir -p "$out"
   out="$(cd "$out" && pwd -P)"
   case "$out" in "$ROOT"|"$ROOT"/*) echo 'capture output must be outside git' >&2; exit 2 ;; esac
+  inputs="$(mktemp -d "$out/.city-4-inputs-XXXXXXXX")"
+  trap 'rm -rf -- "$inputs"' EXIT
   python3 "$ROOT/scripts/content/capture-city-4.py" prepare "$STAGING/city-4/materials/materials.json" \
-    "$out/city-4.bench" "$5"
-  ssh -T "$HOST" "mkdir -p ~/$TASK/scripts ~/$TASK/content/original/materials ~/$TASK/content/city-4; df -h ~"
+    "$inputs/city-4.bench" "$5"
+  cp "$inputs/city-4.bench" "$inputs/city-4-inspection.bench" "$out/"
+  ssh -T "$HOST" 'df -h ~'
+  capture="$(ssh -T "$HOST" "mkdir -p ~/$TASK/captures; mktemp -d ~/$TASK/captures/run-XXXXXXXX")"
+  ssh -T "$HOST" "mkdir -p '$capture/scripts' '$capture/content/original/materials' '$capture/content/city-4'"
   rsync -a "$ROOT/scripts/content/capture-city-4.sh" "$ROOT/scripts/content/capture-city-4.py" \
-    "$ROOT/scripts/content/capture-city.sh" "$out/city-4.bench" "$HOST:$TASK/scripts/"
+    "$ROOT/scripts/content/capture-city.sh" "$inputs/city-4.bench" "$HOST:$capture/scripts/"
   # The baseline still needs the city-4 index as its census target list.
-  rsync -a --delete "$STAGING/city-4/" "$HOST:$TASK/content/city-4/"
+  rsync -a --delete "$STAGING/city-4/" "$HOST:$capture/content/city-4/"
   if [[ "$variant" == city-3 ]]; then
     python3 - "$STAGING/city-3/materials/materials.json" <<'PY'
 import json
@@ -151,18 +160,18 @@ import sys
 if len(json.loads(Path(sys.argv[1]).read_text())) != 58:
     raise SystemExit('city-3 must have 58 packed materials')
 PY
-    ssh -T "$HOST" "mkdir -p ~/$TASK/content/city-3"
-    rsync -a --delete "$STAGING/city-3/" "$HOST:$TASK/content/city-3/"
+    ssh -T "$HOST" "mkdir -p '$capture/content/city-3'"
+    rsync -a --delete "$STAGING/city-3/" "$HOST:$capture/content/city-3/"
   elif [[ "$variant" == original ]]; then
-    ssh -T "$HOST" "printf '{}\\n' >~/$TASK/content/original/materials/materials.json"
+    ssh -T "$HOST" "printf '{}\\n' >'$capture/content/original/materials/materials.json'"
   fi
   rc=0
   GQ_OWNER=city-4 "$ROOT/scripts/gq" --host "$HOST" run --class quick \
     --threads 4 --mem 5G --gpu-mem 4G --display --display-exclusive \
     --max 12m --wait-max 900 --name "city-4 $variant captures" -- \
-    bash "$TASK/scripts/capture-city-4.sh" --remote-capture "$variant" || rc=$?
+    bash "$capture/scripts/capture-city-4.sh" --remote-capture "$variant" "$capture" || rc=$?
   mkdir -p "$out/$variant"
-  rsync -a "$HOST:$TASK/runs/$variant/" "$out/$variant/"
+  rsync -a "$HOST:$capture/runs/$variant/" "$out/$variant/"
   exit "$rc"
 fi
 echo 'usage: capture-city-4.sh --prepare | --capture original|city-3|city-4 OUTPUT --inspection NW_MISC.bench | --compose CAPTURES OUTPUT | --mac-city-fps OUTPUT' >&2

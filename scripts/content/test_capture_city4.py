@@ -1,13 +1,16 @@
 """City-4 tour coverage and census requirements, without a game or original pixels."""
 import importlib.util
 import json
-from pathlib import Path
+import os
 import re
+import shutil
 import subprocess
+import sys
+import time
+from pathlib import Path
 
-from PIL import Image
 import pytest
-
+from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location("capture_city4", HERE / "capture-city-4.py")
@@ -155,3 +158,148 @@ def test_compose_writes_one_jpeg_triple_per_comparison_point(tmp_path):
     assert len(list(output.glob("*.jpg"))) == 33
     with Image.open(output / "pilot_roof.jpg") as image:
         assert image.format == "JPEG" and image.size == (60, 54)
+
+
+@pytest.mark.parametrize("variant", ("original", "city-3", "city-4"))
+def test_queued_launchers_keep_their_own_inputs_and_outputs(tmp_path, variant):
+    repo = tmp_path / "repo"
+    scripts = repo / "scripts/content"
+    scripts.mkdir(parents=True)
+    for name in ("capture-city-4.sh", "capture-city-4.py", "capture-city.sh", "city-intent.bench",
+                 "city-3.bench", "quality-pilot.bench"):
+        shutil.copy2(HERE / name, scripts / name)
+    home = tmp_path / "remote-home"
+    home.mkdir()
+    queue = tmp_path / "queued"
+    queue.mkdir()
+    release = tmp_path / "release"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+
+    def executable(path, source):
+        path.write_text(f"#!{sys.executable}\n" + source)
+        path.chmod(0o755)
+
+    executable(fake_bin / "ssh", '''
+import os
+import subprocess
+import sys
+args = sys.argv[1:]
+assert args.pop(0) == '-T'
+args.pop(0)  # host
+raise SystemExit(subprocess.call(['bash', '-c', args[0]], cwd=os.environ['HOME']))
+''')
+    executable(fake_bin / "rsync", '''
+import os
+from pathlib import Path
+import shutil
+import sys
+args = [arg for arg in sys.argv[1:] if arg not in ('-a', '--delete')]
+def resolve(value):
+    remote = ':' in value
+    path = Path(value.split(':', 1)[-1])
+    return Path(os.environ['HOME']) / path if remote and not path.is_absolute() else path
+target = resolve(args[-1])
+if '--delete' in sys.argv and target.exists():
+    shutil.rmtree(target)
+target.mkdir(parents=True, exist_ok=True)
+for source in args[:-1]:
+    path = resolve(source)
+    if source.endswith('/'):
+        shutil.copytree(path, target, dirs_exist_ok=True)
+    else:
+        shutil.copy2(path, target)
+''')
+    executable(repo / "scripts/gq", '''
+import json
+import os
+from pathlib import Path
+import sys
+import time
+command = sys.argv[sys.argv.index('--') + 1:]
+root = Path(os.environ['HOME']) / Path(command[1]).parent.parent
+variant = command[3]
+state = Path(os.environ['CITY4_CAPTURE_TEST_STATE'])
+(state / 'queued' / (str(os.getpid()) + '.json')).write_text(json.dumps(command))
+deadline = time.monotonic() + 15
+while not (state / 'release').exists():
+    if time.monotonic() > deadline:
+        raise SystemExit('fake queue admission timed out')
+    time.sleep(0.02)
+out = root / 'runs' / variant
+out.mkdir(parents=True, exist_ok=True)
+data = {'marker': (root / 'content/city-4/marker').read_text(),
+        'scenario': (root / 'scripts/city-4.bench').read_text(),
+        'helper': (root / 'scripts/capture-city.sh').read_text(),
+        'index': json.loads((root / 'content' / variant / 'materials/materials.json').read_text())}
+if variant == 'city-3':
+    data['city3_marker'] = (root / 'content/city-3/marker').read_text()
+(out / 'inputs.json').write_text(json.dumps(data))
+''')
+    processes = []
+    outputs = []
+    try:
+        for marker in ("A", "B"):
+            inputs = tmp_path / f"inputs-{marker}"
+            inputs.mkdir()
+            index, _, inspection = prepared_tour(inputs)
+            inspection.write_text(inspection.read_text() + f"\n# capture-test {marker}\n")
+            staging = inputs / "staging"
+            names = json.loads(index.read_text())
+            for name in ("city-4", "city-3"):
+                packed = staging / name
+                (packed / "materials").mkdir(parents=True)
+                (packed / "marker").write_text(marker)
+                (packed / "materials/materials.json").write_text(json.dumps(
+                    names if name == "city-4" else {k: v for k, v in names.items()
+                                                   if not k.startswith("NW_MISC_")}))
+            (scripts / "capture-city.sh").write_text(
+                (HERE / "capture-city.sh").read_text() + f"\n# runner {marker}\n")
+            output = tmp_path / f"output-{marker}"
+            outputs.append(output)
+            env = dict(os.environ, HOME=str(home), PATH=f"{fake_bin}:{os.environ['PATH']}",
+                       CONTENT_STAGING_ROOT=str(staging), CITY4_CAPTURE_TEST_STATE=str(tmp_path))
+            processes.append(subprocess.Popen(
+                ["bash", str(scripts / "capture-city-4.sh"), "--capture", variant, str(output),
+                 "--inspection", str(inspection)], env=env, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+            deadline = time.monotonic() + 10
+            while len(list(queue.glob("*.json"))) < len(processes):
+                assert all(p.poll() is None for p in processes), "launcher exited before queue admission"
+                assert time.monotonic() < deadline, "launcher did not reach the fake queue"
+                time.sleep(0.02)
+        # Both launchers have uploaded; A has not been admitted while B changed every input.
+        release.touch()
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=10)
+            assert process.returncode == 0, stdout + stderr
+    finally:
+        release.touch()
+        for process in processes:
+            if process.poll() is None:
+                process.communicate(timeout=20)
+
+    requests = [json.loads(path.read_text()) for path in queue.glob("*.json")]
+    assert len({request[1] for request in requests}) == 2
+    for request in requests:
+        assert request[:1] == ["bash"] and request[2:4] == ["--remote-capture", variant]
+        assert len(request) == 5 and Path(request[4]) == Path(request[1]).parent.parent
+    for marker, output in zip(("A", "B"), outputs):
+        data = json.loads((output / variant / "inputs.json").read_text())
+        assert data["marker"] == marker
+        assert f"# capture-test {marker}\n" in data["scenario"]
+        assert data["helper"].endswith(f"# runner {marker}\n")
+        assert len(data["index"]) == {"original": 0, "city-3": 58, "city-4": 65}[variant]
+        if variant == "city-3":
+            assert data["city3_marker"] == marker
+
+
+def test_remote_capture_rejects_a_shared_runtime_root(tmp_path):
+    home = tmp_path / "home"
+    shared = home / "gothic-ai/city-4"
+    shared.mkdir(parents=True)
+    result = subprocess.run(
+        ["bash", str(HERE / "capture-city-4.sh"), "--remote-capture", "city-4", str(shared)],
+        check=False, env=dict(os.environ, HOME=str(home)), capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "Invalid city-4 capture root" in result.stderr
