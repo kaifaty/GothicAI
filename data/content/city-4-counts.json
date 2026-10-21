@@ -78,10 +78,10 @@
     "v": 6
   },
   "NW_MISC_STRONG_STONEWALL_01.TGA": {
-    "selected_attempt": 1,
-    "source_sha256": "59fb11e35fb83dd61572aa034ea0303b2094c847c52739fac734e5516b522cb1",
+    "selected_attempt": 2,
+    "source_sha256": "eeac7edaebb9472a92e23c7600b14bc37ca9767b73f91e0f5c96aaccdbac35f1",
     "u": 8,
-    "v": 20
+    "v": 16
   },
   "NW_CITY_HAFEN_GIEBEL_01.TGA": {
     "selected_attempt": 2,
@@ -120,10 +120,10 @@
     "v": 4
   },
   "NW_MISC_STRONG_STONEWALL_SIDE_01.TGA": {
-    "selected_attempt": 1,
-    "source_sha256": "2f9663fa50e223ea361c2ea7ca876a30cf3b3ce441e5e0a123e64fff1a3d4760",
-    "u": 7.2,
-    "v": 19.0
+    "selected_attempt": 2,
+    "source_sha256": "d1071bba0673e73d43e0d6f00b11eb36c3e8192fe4b882500db5e9be0cc0a73b",
+    "u": 8,
+    "v": 19.3
   },
   "NW_CITY_HAFEN_HOLZWAND_01.TGA": {
     "selected_attempt": 1,
@@ -162,8 +162,8 @@
     "v": 6.0
   },
   "NW_MISC_STRONG_STONEWALL_ENTRANCE_01.TGA": {
-    "selected_attempt": 1,
-    "source_sha256": "854f4fcfe61a2f21d955c55ae7c090ae02f217d5cf923b1b2c274f1578a5bb93",
+    "selected_attempt": 2,
+    "source_sha256": "a3d67c5b80ba5bf42ce4b169d1882dd81fc78470b643efd43a7239385f738787",
     "u": null,
     "v": null
   },
@@ -204,10 +204,10 @@
     "v": 3.0
   },
   "NW_MISC_STRONG_STONEWALL_BLOCKBORDER_01.TGA": {
-    "selected_attempt": 2,
-    "source_sha256": "8cff7ff67c50821093cd226125623995874e285c244a3136d6dfe862453732d3",
-    "u": 4.0,
-    "v": 7.0
+    "selected_attempt": 3,
+    "source_sha256": "f4abe46f53cd0447e961abcf575d6cb9d1d92617225bac65e01ca48195dc18a3",
+    "u": 4,
+    "v": 7
   },
   "NW_CITY_INSIDEFLOOR_11.TGA": {
     "selected_attempt": 2,
@@ -246,9 +246,9 @@
     "v": 10.0
   },
   "NW_MISC_STRONG_STONEWALL_ROUNDBORDER_01.TGA": {
-    "selected_attempt": 1,
-    "source_sha256": "bd70cb6bc10113a68f3c676aadbcf3c8934a4f628d7ead9400edf65cb9268ee5",
-    "u": 4.0,
+    "selected_attempt": 2,
+    "source_sha256": "43cae89ade14dfb4691bf6c508c22125db83a773b3cafee6853ac5d7a959d1b7",
+    "u": 4,
     "v": null
   }
 }

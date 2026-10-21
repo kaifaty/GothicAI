@@ -37,6 +37,8 @@ def test_scope_counts_and_module_parts_come_only_from_csv():
         assert params['detail_ceiling'] is True
         assert params['detail_targets'] == {
             field: float(row['target_' + field]) for field in city4.FIELDS}
+        assert params['target_highlight_y'] == float(row['target_highlight_y'])
+        assert params['fine_gain_max'] == (1. if row['texture'] in city4.GATE_WALLS else None)
         assert params['physical_uv_metres'] == [float(row['uv_m_u']), float(row['uv_m_v'])]
         assert 'Lighting: even shadowless diffuse illumination, identical exposure from corner to corner.' in record['prompt']
         for axis in ('u', 'v'):
@@ -91,6 +93,41 @@ def test_third_attempt_and_opaque_alpha_are_rejected(tmp_path):
         city4.read_sources(tmp_path/'alpha', [name], tmp_path/'store')
 
 
+def test_gate_round2_sources_append_global_attempts_without_rewriting_history(tmp_path):
+    name = 'NW_MISC_STRONG_STONEWALL_BLOCKBORDER_01.TGA'
+    directory, store = tmp_path/'input', tmp_path/'store'
+    first = source(directory, name)
+    second = source(directory, name, attempt=2, colour='#112233')
+    old = city4.read_sources(directory, [name], store)[name]
+    retained = {path.relative_to(store): path.read_bytes() for path in store.rglob('*') if path.is_file()}
+    third = source(directory/'round-2', name, colour='#223344')
+    fourth = source(directory/'round-2', name, attempt=2, colour='#334455')
+    attempts = city4.read_sources(directory, [name], store)[name]
+    assert attempts[:2] == old
+    assert [item['attempt'] for item in attempts] == [1, 2, 3, 4]
+    assert [(item['round'], item['round_attempt']) for item in attempts[2:]] == [(2, 1), (2, 2)]
+    for item, path in zip(attempts, (first, second, third, fourth)):
+        assert (store/item['source_png']).read_bytes() == path.read_bytes()
+        assert city4.pilot.file_digest(store/item['source_png']) == item['source_sha256']
+    assert all((store/path).read_bytes() == raw for path, raw in retained.items())
+    assert attempts[2]['source_png'] == 'city-4/round-2/' + third.name
+    assert json.loads(third.with_suffix('.json').read_text())['attempt'] == 1
+
+
+def test_round2_rejects_unrequested_materials_and_a_third_wall_call(tmp_path):
+    name = 'NW_MISC_STRONG_STONEWALL_01.TGA'
+    directory = tmp_path/'input'
+    source(directory, name)
+    unexpected = source(directory/'round-2', 'NW_MISC_OLDSTONEPATH_01.TGA')
+    with pytest.raises(ValueError, match='five gate walls'):
+        city4.read_sources(directory, [name], tmp_path/'store')
+    unexpected.unlink()
+    unexpected.with_suffix('.json').unlink()
+    source(directory/'round-2', name, attempt=3)
+    with pytest.raises(ValueError, match='third attempt'):
+        city4.read_sources(directory, [name], tmp_path/'store')
+
+
 def test_visual_admission_uses_only_known_counts_and_twenty_percent_tolerance():
     record = city4.recipes(textures=['NW_CITY_BODENDIELEN_02.TGA'])[0]
     assert city4.visual_measurement(record, dict(v=6))['visual_count_pass']
@@ -129,6 +166,17 @@ def test_failed_first_visual_attempt_requires_retry_before_output(tmp_path):
     with pytest.raises(ValueError, match='second attempt required'):
         city4.build(args, [record])
     assert list(tmp_path.iterdir()) == [counts]
+
+
+def test_first_round2_attempt_requires_retry_even_when_global_attempt_is_two(tmp_path):
+    record = city4.recipes(textures=['NW_MISC_STRONG_STONEWALL_01.TGA'])[0]
+    record['generation'] = dict(selected_attempt=2, attempts=[
+        dict(attempt=1), dict(attempt=2, round=2, round_attempt=1)])
+    counts = tmp_path/'counts.json'
+    counts.write_text(json.dumps({record['replaces'][0]: dict(u=100, v=100)}))
+    args = SimpleNamespace(visual_counts=counts, marigold_log=None)
+    with pytest.raises(ValueError, match='second attempt required'):
+        city4.build(args, [record])
 
 
 def test_iid_checks_input_and_retains_output_in_city4_namespace(tmp_path, monkeypatch):
@@ -211,6 +259,36 @@ def test_pilot_reuses_selected_raw_history_without_copy_or_reselection(tmp_path,
         city4.prepare(args, city4.recipes(textures=[name]))
 
 
+def test_prepare_retains_checksums_of_previous_iid_sources(tmp_path, monkeypatch):
+    name = 'NW_MISC_STRONG_STONEWALL_01.TGA'
+    store = tmp_path/'store'
+    source(store/'city-4', name)
+    source(store/'city-4/round-2', name, colour='#223344')
+    source(store/'city-4/round-2', name, attempt=2, colour='#334455')
+    previous_iid = dict(source_png='city-4/marigold/old/albedo.png', source_sha256='a'*64)
+    earlier_iid = dict(source_png='city-4/marigold/earlier/albedo.png', source_sha256='b'*64)
+    old = dict(replaces=[name], generation=dict(iid_source=previous_iid,
+        retained_iid_sources=[earlier_iid]))
+    retained = tmp_path/'previous-city-4.jsonl'
+    retained.write_text('old registry bytes are not rewritten during prepare\n')
+    monkeypatch.setattr(city4.registry, 'check_registry', lambda path, source_root: [old])
+    monkeypatch.setattr(city4.generate, 'target_corrected_maps', lambda image, record:
+        ({'albedo': np.asarray(image)/255}, {'linear_rgb_max_error': 0}, None))
+    monkeypatch.setattr(city4, 'measure_light', lambda path: dict(lighting_risk=False))
+    monkeypatch.setattr(city4, 'seamless', lambda image, axes, overlap_fraction:
+        (image, dict(axes=axes)))
+    args = SimpleNamespace(input_dir=store/'city-4', source_root=store,
+        prepared_dir=tmp_path/'prepared', select=[name + ':3'], command='prepare', registry_output=retained)
+    record = city4.prepare(args, city4.recipes(textures=[name]))[0]
+    assert record['generation']['selected_attempt'] == 3
+    assert record['generation']['attempts'][-1]['round_attempt'] == 2
+    assert record['generation']['retained_iid_sources'] == [earlier_iid, previous_iid]
+    assert set(city4.registry.source_references(record)) >= {
+        (item['source_png'], item['source_sha256']) for item in (earlier_iid, previous_iid)}
+    assert retained.read_text() == 'old registry bytes are not rewritten during prepare\n'
+    assert old['generation']['retained_iid_sources'] == [earlier_iid]
+
+
 def test_detail_fit_uses_visible_alpha_and_retains_mask(tmp_path, monkeypatch):
     record = city4.recipes(textures=['NW_CITY_FLAG_01.TGA'])[0]
     mask = np.zeros((16, 16), dtype=bool)
@@ -219,11 +297,14 @@ def test_detail_fit_uses_visible_alpha_and_retains_mask(tmp_path, monkeypatch):
     rgba[..., 3] = mask * 255
     record['_maps'] = {'albedo': rgba.astype(np.float32)/255}
     record['generation'] = {'colour_correction': {'before': True}}
-    def fitted(rgb, targets, *, target_oklab, ceiling, mask):
+    def fitted(rgb, targets, *, target_oklab, ceiling, mask, target_highlight_y, fine_gain_max):
         assert ceiling is True
         assert np.array_equal(mask, rgba[..., 3] == 255)
         assert targets == record['parameters']['detail_targets']
-        return np.full((16, 16, 3), 80, dtype=np.uint8), dict(colour={'fitted': True}, converged=True)
+        assert target_highlight_y == record['parameters']['target_highlight_y']
+        assert fine_gain_max is None
+        return np.full((16, 16, 3), 80, dtype=np.uint8), dict(colour={'fitted': True},
+            converged=True, highlight={'feasible': True})
     monkeypatch.setattr(city4, 'fit_material_detail', fitted)
     monkeypatch.setattr(city4.generate, 'numeric_rejection', lambda record, correction: None)
     city4.fit_detail(record, rgba[..., :3])
@@ -234,6 +315,32 @@ def test_detail_fit_uses_visible_alpha_and_retains_mask(tmp_path, monkeypatch):
     assert record['generation']['colour_correction_before_fit'] == {'before': True}
     assert set(city4.FIELDS) <= record['generation']['detail_measures_before'].keys()
     assert set(city4.FIELDS) <= record['generation']['detail_measures_after'].keys()
+
+
+def test_gate_wall_fit_passes_fine_gain_and_highlight_ceilings(monkeypatch):
+    record = city4.recipes(textures=['NW_MISC_STRONG_STONEWALL_01.TGA'])[0]
+    record['generation'] = {'colour_correction': {'before': True}}
+    def fitted(rgb, targets, *, target_oklab, ceiling, mask, target_highlight_y, fine_gain_max):
+        assert ceiling is True and mask is None
+        assert fine_gain_max == 1.
+        assert target_highlight_y == record['parameters']['target_highlight_y']
+        return np.full((16, 16, 3), 80, dtype=np.uint8), dict(colour={'fitted': True},
+            converged=True, highlight={'feasible': True})
+    monkeypatch.setattr(city4, 'fit_material_detail', fitted)
+    monkeypatch.setattr(city4.generate, 'numeric_rejection', lambda record, correction: None)
+    city4.fit_detail(record, np.full((16, 16, 3), 100, dtype=np.uint8))
+    assert np.all(np.rint(record['_maps']['albedo']*255) == 80)
+
+
+def test_unattainable_highlight_ceiling_stops_before_map_output(monkeypatch):
+    record = city4.recipes(textures=['NW_MISC_STRONG_STONEWALL_01.TGA'])[0]
+    record['generation'] = {'colour_correction': {'before': True}}
+    monkeypatch.setattr(city4, 'fit_material_detail', lambda *args, **kwargs:
+        (np.full((16, 16, 3), 80, dtype=np.uint8), dict(highlight=dict(
+            feasible=False, infeasibility='mean colour is above the requested highlight ceiling'))))
+    with pytest.raises(ValueError, match='highlight ceiling is infeasible: mean colour'):
+        city4.fit_detail(record, np.full((16, 16, 3), 100, dtype=np.uint8))
+    assert '_maps' not in record
 
 
 def test_build_saves_fitted_albedo_for_unflagged_material(tmp_path, monkeypatch):

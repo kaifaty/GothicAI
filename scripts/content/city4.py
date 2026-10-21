@@ -42,6 +42,8 @@ ROOT = Path(__file__).resolve().parents[2]
 BASE = Path.home() / '.local/share/gothic-ai'
 SET = 'city-4'
 SOURCE_NAME = re.compile(r'(NW_(?:CITY|HARBOUR|MISC)_[A-Z0-9_]+)-attempt-([12])\Z')
+GATE_WALLS = frozenset('NW_MISC_STRONG_STONEWALL' + suffix + '.TGA'
+    for suffix in ('_01', '_SIDE_01', '_ENTRANCE_01', '_BLOCKBORDER_01', '_ROUNDBORDER_01'))
 
 
 def rows(mapping):
@@ -88,6 +90,9 @@ def recipe(row, classes, mapping, bible):
     detail_targets = {field: float(row['target_' + field]) for field in FIELDS}
     if any(not math.isfinite(value) or value < 0 for value in detail_targets.values()):
         raise ValueError(f'{name}: detail targets must be finite and nonnegative')
+    highlight_target = float(row['target_highlight_y'])
+    if not math.isfinite(highlight_target) or not 0 < highlight_target <= 1:
+        raise ValueError(f'{name}: target_highlight_y must be in (0, 1]')
     encoded = np.rint(np.clip(_srgb(oklab_to_linear(target)), 0, 1) * 255).astype(np.uint8)
     hex_colour = '#' + ''.join(f'{value:02x}' for value in encoded)
     module = row['decision'] != 'include'
@@ -143,6 +148,8 @@ def recipe(row, classes, mapping, bible):
         physical_uv_metres=metres, source_aspect=metres[0]/metres[1],
         detail_count_target=counts, detail_centimetres=centimetres,
         detail_targets=detail_targets, detail_ceiling=True,
+        target_highlight_y=highlight_target,
+        fine_gain_max=1. if name in GATE_WALLS else None,
         detail_policy='final quantized detail metrics never exceed CSV targets when feasible; bounded gains, shoulder and mean-colour correction included in fit',
         count_direction=row['count_direction'], tiling_axes=axes, tileable=bool(axes),
         antitile=city_set.antitile_mode(row), antitile_cell=1., metallic=0,
@@ -177,7 +184,7 @@ def recipes(mapping=ROOT/'data/content/city-materials.csv', bible=ROOT/'docs/con
     return [recipe(row, classes, mapping, bible) for row in selected if row['texture'] in chosen]
 
 
-def read_sources(directory, names, source_root):
+def _read_source_batch(directory, names, source_root, namespace):
     """Retain original tool PNG and metadata bytes; at most two calls per material."""
     found = {name: [] for name in names}
     for path in sorted(directory.glob('NW_*-attempt-*.json')):
@@ -214,7 +221,7 @@ def read_sources(directory, names, source_root):
             elif 'A' in image.getbands() and image.getchannel('A').getextrema() != (255, 255):
                 raise ValueError(f'{name}: opaque material has transparent pixels')
             image.load()
-        relative = Path(SET) / source.name
+        relative = Path(namespace) / source.name
         _write_immutable(source_root / relative, raw)
         _write_immutable(source_root / relative.with_suffix('.json'), raw_metadata)
         found[name].append(dict(attempt=attempt, prompt=meta['prompt'], utc=meta['utc'],
@@ -222,6 +229,30 @@ def read_sources(directory, names, source_root):
     for name, attempts in found.items():
         if [item['attempt'] for item in attempts] != list(range(1, len(attempts)+1)) or not 1 <= len(attempts) <= 2:
             raise ValueError(f'{name}: require one or two consecutive attempts starting at 1')
+    return found
+
+
+def read_sources(directory, names, source_root):
+    """Append at most two gate-wall retries from the fixed round-2 namespace."""
+    found = _read_source_batch(directory, names, source_root, SET)
+    round2 = directory / 'round-2'
+    available = set()
+    for path in round2.glob('NW_*-attempt-*.json'):
+        match = SOURCE_NAME.fullmatch(path.stem)
+        if match is None:
+            raise ValueError(f'invalid round-2 source name or third attempt: {path.name}')
+        name = match[1] + '.TGA'
+        if name not in GATE_WALLS:
+            raise ValueError(f'{name}: round-2 regeneration is limited to the five gate walls')
+        if name in found:
+            available.add(name)
+    if available:
+        replacements = _read_source_batch(round2, sorted(available), source_root, SET + '/round-2')
+        for name, attempts in replacements.items():
+            offset = len(found[name])
+            for item in attempts:
+                item.update(round=2, round_attempt=item['attempt'], attempt=offset + item['attempt'])
+            found[name].extend(attempts)
     return found
 
 
@@ -247,7 +278,18 @@ def prepare(args, records):
             if any(not item['source_png'].startswith('quality-pilot-2/') for item in attempts[name]):
                 raise ValueError(f'{name}: reused pilot source must remain in quality-pilot-2')
             registry.verify_sources(attempts[name], args.source_root)
-    selected = pilot.selections(args.select, names)
+    selected = {}
+    for value in args.select:
+        name, attempt = value.rsplit(':', 1)
+        name = pilot.texture_name(name)
+        allowed = ('1', '2', '3', '4') if name in GATE_WALLS else ('1', '2')
+        if name not in names or name in selected or attempt not in allowed:
+            raise ValueError(f'invalid or repeated selection {value!r}')
+        selected[name] = int(attempt)
+    previous_city = {}
+    if getattr(args, 'registry_output', None) and args.registry_output.exists():
+        previous_city = {record['replaces'][0]: record for record in
+            registry.check_registry(args.registry_output, source_root=args.source_root)}
     args.prepared_dir.mkdir(parents=True, exist_ok=True)
     flagged_dir = args.prepared_dir / 'flagged'
     flagged_dir.mkdir(exist_ok=True)
@@ -297,10 +339,18 @@ def prepare(args, records):
                 shutil.copyfile(target, flagged)
         record['generation'] = dict(outcome='complete', attempts=attempts[name],
             selected_attempt=number, attempt_limit=2, colour_correction=correction,
+            attempt_limit_scope='per generation round',
             numeric_rejection=rejection, geometry=geometry, seam=seam, prepared_sha256=digest,
             detector_before=lighting,
             source_policy='text-only image_gen; original generator PNG and metadata bytes retained and checksummed',
             model_identity='image_gen.imagegen; underlying model/version not exposed; no seed exposed')
+        old_generation = previous_city.get(name, {}).get('generation', {})
+        retained_iid = deepcopy(old_generation.get('retained_iid_sources', []))
+        old_iid = old_generation.get('iid_source')
+        if old_iid and old_iid not in retained_iid:
+            retained_iid.append(deepcopy(old_iid))
+        if retained_iid:
+            record['generation']['retained_iid_sources'] = retained_iid
         if previous:
             record['models'] = [deepcopy(previous['models'][0])]
             record['generation'].update(
@@ -381,7 +431,11 @@ def fit_detail(record, pixels):
         lighting = detect_baked_lighting(Image.fromarray(pixels))
         generation['detector_after_iid'] = dict(lighting, lighting_risk=lighting_risk(lighting))
     fitted, fit = fit_material_detail(pixels.astype(np.float64) / 255,
-        params['detail_targets'], target_oklab=params['target_oklab'], ceiling=True, mask=mask)
+        params['detail_targets'], target_oklab=params['target_oklab'], ceiling=True, mask=mask,
+        target_highlight_y=params['target_highlight_y'], fine_gain_max=params['fine_gain_max'])
+    if not fit['highlight']['feasible']:
+        raise ValueError(f'{record["replaces"][0]}: highlight ceiling is infeasible: '
+            f'{fit["highlight"]["infeasibility"]}')
     output = (alpha_material.harden_and_dilate(np.dstack((fitted, alpha_bytes)))
         if alpha else fitted)
     maps = bakeoff.filtered_maps(Image.fromarray(output[..., :3]), record)
@@ -411,7 +465,10 @@ def build(args, records):
     for record in records:
         name, generation = record['replaces'][0], record['generation']
         visual = visual_measurement(record, counts[name])
-        if (not visual['visual_count_pass'] and generation['selected_attempt'] != 2
+        selected = next((attempt for attempt in generation.get('attempts', [])
+            if attempt['attempt'] == generation['selected_attempt']), {})
+        local_attempt = selected.get('round_attempt', generation['selected_attempt'])
+        if (not visual['visual_count_pass'] and local_attempt != 2
                 and name not in pilot.TEXTURES):
             raise ValueError(f'{name}: visual count differs by more than 20%; second attempt required')
         generation['visual_inspection'] = visual
