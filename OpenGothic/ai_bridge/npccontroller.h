@@ -91,6 +91,9 @@ class NpcController final {
       Tempest::Vec3   movedFrom;          // where it last was a step away from: stuck if it stays there
       uint64_t        movedAt  = 0;
       bool            byWay    = false;   // going round by the waynet, a straight walk having got stuck
+      uint64_t        start    = 0;
+      uint64_t        behindAt = 0;       // left behind (farther than FollowCatchUp) since; 0: close enough
+      uint64_t        nextProgress = 0;
       };
 
     struct Controlled final {
@@ -115,6 +118,7 @@ class NpcController final {
     void regainControl(Controlled& c);
     void keepHeroPace(World& world, Npc& npc);
     void updateFollow(World& world, Controlled& c, uint64_t now);
+    void logFollow(World& world, Controlled& c, uint64_t now);
     void stopFollow(Controlled& c, std::string_view reason);
     bool giveItem(World& world, Controlled& c, const Action& a, std::string& err);
     void finishAction(Controlled& c, std::string_view status, std::string_view detail, double distance = -1);

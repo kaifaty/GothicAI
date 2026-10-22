@@ -46,6 +46,7 @@ constexpr uint64_t WalkStartMs      = 3000;  // arm stuck detection even if it c
 constexpr float    FollowMovedCm    = 75;
 constexpr float    WalkSameSpotCm   = 100;   // a replanned waynet route got stuck here again
 constexpr uint64_t WalkProgressMs   = 5000;
+constexpr uint64_t FollowProgressMs = 1000;
 constexpr float    TakeRange        = 2000;  // cm: take_item picks up the nearest such thing within this
 constexpr float    ChestNear        = 300;   // cm: use_chest walks to the chest's waypoint from farther
 constexpr uint64_t StateStartMs     = 3000;  // fight/flee: the script state must begin within this
@@ -311,6 +312,7 @@ void NpcController::action(World& world, const rapidjson::Value& msg) {
     // for whoever wants a limit (Cavalorn gave up after 10 minutes, 2026-10-14)
     const int64_t limit = integer(args,"timeout_ms",0);
     f.until    = limit>0 ? world.tickCount() + uint64_t(limit) : 0;
+    f.start    = world.tickCount();
     c->follow  = f;
     emitActionResult(id,symbol,"done","",-1);
     return;
@@ -886,11 +888,15 @@ void NpcController::updateFollow(World& world, Controlled& c, uint64_t now) {
         return target->canRayHitPoint(w.position(),true);
         });
       if(wp!=nullptr) {
+        Tempest::Log::i("[ai] ",c.symbol," follow stuck at [",pos.x,",",pos.y,",",pos.z,"], ",d/100.f,
+                        " m: waynet to ",wp->name);
         f.byWay = true;
         c.npc->aiPush(AiQueue::aiGoToPoint(*wp));
         return;
         }
       }
+    Tempest::Log::i("[ai] ",c.symbol," follow stuck at [",pos.x,",",pos.y,",",pos.z,"], ",d/100.f," m: ",
+                    f.byWay ? "on the waynet too, straight again" : "no waypoint he sees, straight again");
     f.byWay = false;  // stuck on the waynet too: straight again
     }
   if(d<=FollowNear || (now<f.nextStep && f.nextStep<=now+FollowStepMs) || c.npc->isAiBusy())
@@ -898,6 +904,41 @@ void NpcController::updateFollow(World& world, Controlled& c, uint64_t now) {
   f.nextStep = now + FollowStepMs;
   f.byWay    = false;
   c.npc->aiPush(AiQueue::aiGoToNpc(target));
+  }
+
+void NpcController::logFollow(World& world, Controlled& c, uint64_t now) {
+  // how a companion left behind catches up (as go_to_npc's progress): from farther than FollowCatchUp
+  // until it is near again, a line a second; whatever it does meanwhile (an action keeps it from steps)
+  auto& f      = *c.follow;
+  Npc*  target = f.toPlayer ? world.player() : world.findNpcByInstance(f.target);
+  if(target==nullptr)
+    return;
+  const float d = std::sqrt(c.npc->qDistTo(*target));
+  if(f.behindAt==0 && d<=FollowCatchUp)
+    return;
+  if(f.behindAt==0) {
+    f.behindAt     = now;
+    f.nextProgress = now;
+    }
+  if(d<=FollowNear) {
+    Tempest::Log::i("[ai] ",c.symbol," follow caught up in ",double(now-f.behindAt)/1000.," s, ",d/100.f," m");
+    f.behindAt = 0;
+    return;
+    }
+  if(now<f.nextProgress)
+    return;
+  f.nextProgress = now + FollowProgressMs;
+  const auto pos = c.npc->position();
+  const auto wp  = c.npc->currentGoToPoint();
+  char progress[160];
+  std::snprintf(progress,sizeof(progress)," progress t=%.1fs behind=%.1fs pos=[%.0f,%.0f,%.0f] d=%.1fm idle=%.1fs",
+                double(now-f.start)/1000.,double(now-f.behindAt)/1000.,double(pos.x),double(pos.y),double(pos.z),
+                double(d)/100.,f.movedAt==0 ? 0. : double(now-f.movedAt)/1000.);
+  Tempest::Log::i("[ai] ",c.symbol," follow",progress," point=",wp!=nullptr ? wp->name : "-",
+                  " walk=",uint32_t(c.npc->walkMode())," lead=",uint32_t(target->walkMode()),
+                  " body=",uint32_t(c.npc->bodyStateMasked())," busy=",int(c.npc->isAiBusy()),
+                  " queue=",c.npc->aiQueueSize()," way=",int(f.byWay)," act=",c.act ? c.act->type : "-",
+                  " los=",int(c.npc->canSeeNpc(*target,true)));
   }
 
 void NpcController::stopFollow(Controlled& c, std::string_view reason) {
@@ -1009,6 +1050,8 @@ void NpcController::tick(World& world) {
       updateAction(world,c,now);
     else if(c.follow)
       updateFollow(world,c,now);
+    if(c.follow)
+      logFollow(world,c,now);
     if(now>=c.nextSnapshot || c.nextSnapshot>now+SnapshotPeriodMs) {
       emitSnapshot(world,c);
       c.nextSnapshot = now + SnapshotPeriodMs;
