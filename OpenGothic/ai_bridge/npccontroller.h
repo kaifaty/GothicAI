@@ -12,6 +12,7 @@
 
 #include "game/constants.h"
 #include "game/gamescript.h"
+#include "followprogress.h"
 
 class Npc;
 class World;
@@ -88,8 +89,7 @@ class NpcController final {
       bool            toPlayer = false;
       uint64_t        until    = 0;
       uint64_t        nextStep = 0;
-      Tempest::Vec3   movedFrom;          // where it last was a step away from: stuck if it stays there
-      uint64_t        movedAt  = 0;
+      FollowProgress  progress;
       bool            byWay    = false;   // going round by the waynet, a straight walk having got stuck
       uint64_t        start    = 0;
       uint64_t        behindAt = 0;       // left behind (farther than FollowCatchUp) since; 0: close enough
