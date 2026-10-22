@@ -2139,13 +2139,20 @@ async def companion_scenario(
     party = await link.evaluate(["field", ["inst", npc], "AIVAR", 15])
     check("party", party == 1, f"AIV_PARTYMEMBER {party}")
     await link.debug("player_goto", near=bandit, distance=2000)
-    await _until(lambda: 0 <= dist() <= 6 and dist(bandit) >= 15, 20)
+    if not await _until(lambda: 0 <= dist() <= 6 and dist(bandit) >= 15, 20):
+        # the setup of «Погоди.» 20 m off: without it `defend` would measure how far it fell behind
+        check("defend", False, f"setup: 20 m off the bandit, {npc} did not catch up: {dist():.1f} m")
+        link.act = act  # type: ignore[method-assign]
+        return _logged(results)
     talk.hear("Кавалорн, погоди.", None, {"via": "scenario"})
     halted = await _until(
         lambda: talk.orders is not None and getattr(talk.orders.standing.get(npc), "kind", "") == "halt", 5
     )
     await link.debug("teleport", near=bandit, distance=250)
-    await _until(lambda: 0 <= dist(bandit) <= 5 and dist() >= 12, 15)
+    if not await _until(lambda: 0 <= dist(bandit) <= 5 and dist() >= 12, 15):
+        check("defend", False, f"setup: halted {halted}, bandit {dist(bandit):.1f} m, {npc} {dist():.1f} m")
+        link.act = act  # type: ignore[method-assign]
+        return _logged(results)
     far = dist()
     exp = await link.evaluate(["field", hero, "EXP"])
     talk.hear("Эй, ты! А ну отойди с дороги.", bandit, {"via": "scenario"})
