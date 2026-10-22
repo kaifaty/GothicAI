@@ -2047,7 +2047,8 @@ async def companion_scenario(
     following = await _until(lambda: since(0, "follow") and 0 <= dist() <= 5, 20)
     check("follow", following, f"{dist():.1f} m")
 
-    # pace: the hero is suddenly 11+ m off; a run covers it in about 2 s, a walk in 5 or more
+    # pace: the hero is suddenly 11+ m off. Counted with the teleport, the first snapshot and the turn, a run
+    # (3.3 m/s by the bridge's follow log) measures 2.4-2.9 m/s here, a walk about 1.4 (2026-10-22)
     await link.debug("player_goto", near=npc, distance=1100)
     t0 = time.monotonic()
     await _until(lambda: dist() >= 9, 3)
@@ -2055,7 +2056,7 @@ async def companion_scenario(
     caught_up = await _until(lambda: 0 <= dist() <= 5, 20)
     took = time.monotonic() - t0
     speed = (d0 - 5) / took if took > 0 else 0.0
-    check("pace", caught_up and speed >= 2.5, f"{d0:.1f} m -> 5 m in {took:.1f} s, {speed:.1f} m/s")
+    check("pace", caught_up and speed >= 2.0, f"{d0:.1f} m -> 5 m in {took:.1f} s, {speed:.1f} m/s")
 
     # freed: next to the bandit at the steps, nothing starts on its own
     await link.debug("player_goto", to=bandit, distance=300)
