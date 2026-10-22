@@ -11,10 +11,10 @@ class FollowProgress final {
 
     struct Point { float x=0, y=0, z=0; };
 
-    bool update(uint64_t now, Point follower, Point leader) {
+    bool update(uint64_t now, Point follower, Point leader, bool byWay = false) {
       const float distance = std::sqrt(distanceSquared(follower,leader));
       if(!initialized || distance<=bestDistance-MovedCm ||
-         (distanceSquared(leader,leaderFrom)>MovedCm*MovedCm &&
+         ((byWay || distanceSquared(leader,leaderFrom)>MovedCm*MovedCm) &&
           distanceSquared(follower,followerFrom)>=MovedCm*MovedCm)) {
         reset(now,follower,leader);
         }

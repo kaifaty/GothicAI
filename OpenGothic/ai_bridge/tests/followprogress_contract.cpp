@@ -53,6 +53,32 @@ int main() {
             "running behind a moving leader at a constant distance never detects");
     }
 
+  P sideways;
+  for(uint64_t tick=0; tick<=12000; tick+=1000) {
+    const float distance = static_cast<float>(tick)*0.33f;
+    require(!sideways.update(tick,{0,0,distance},{10000,0,0},true),
+            "a waynet detour sideways from a stationary leader never detects");
+    }
+  require(!sideways.update(13000,{0,0,4290},{10000,0,0}),
+          "returning to direct follow retains the last progress grace period");
+  require(sideways.update(14000,{0,0,4620},{10000,0,0}),
+          "returning to direct follow requires distance progress again");
+
+  P away;
+  for(uint64_t tick=0; tick<=12000; tick+=1000) {
+    const float distance = static_cast<float>(tick)*0.33f;
+    require(!away.update(tick,{-distance,0,0},{10000,0,0},true),
+            "a waynet detour away from a stationary leader never detects");
+    }
+
+  P waynetStill;
+  require(!waynetStill.update(0,{10,20,30},{1000,20,30},true),
+          "a waynet follower starts with a fresh timeout");
+  require(!waynetStill.update(P::StuckMs-1,{10,20,30},{1000,20,30},true),
+          "a stationary waynet follower waits for the full timeout");
+  require(waynetStill.update(P::StuckMs,{10,20,30},{1000,20,30},true),
+          "a stationary waynet follower still detects at the timeout");
+
   P still;
   require(!still.update(0,{10,20,30},{1000,20,30}),"the initial position at time zero is not stuck");
   require(!still.update(P::StuckMs-1,{10,20,30},{1000,20,30}),"a stationary follower waits for the full timeout");
