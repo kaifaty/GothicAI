@@ -19,4 +19,4 @@ def test_native_follow_progress_detects_oscillation_without_blocking_running(tmp
         check=True, capture_output=True, text=True, timeout=60,
     )
     checked = subprocess.run([str(executable)], check=True, capture_output=True, text=True, timeout=10)
-    assert checked.stdout == "Follow progress contract: 73 checks passed\n"
+    assert checked.stdout == "Follow progress contract: 88 checks passed\n"

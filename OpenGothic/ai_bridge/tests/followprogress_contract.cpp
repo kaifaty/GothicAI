@@ -85,6 +85,21 @@ int main() {
   require(still.update(P::StuckMs,{10,20,30},{1000,20,30}),"a stationary follower detects at the timeout");
   require(still.idleMs(P::StuckMs)==P::StuckMs,"idle time includes the initial zero-time sample");
 
+  P paused;
+  for(uint64_t tick=0; tick<=10000; tick+=1000) {
+    paused.reset(tick,{0,0,0},{300,0,0});
+    require(paused.idleMs(tick)==0 && !paused.update(tick,{0,0,0},{300,0,0}),
+            "waiting near the leader keeps the no-progress clock reset");
+    }
+  paused.reset(11000,{0,0,0},{1500,0,0});
+  require(paused.idleMs(11000)==0,"the idle tick after the leader moves grants a fresh pursuit timeout");
+  require(!paused.update(12000,{0,0,0},{1500,0,0}),
+          "one second of turning after a pause is not stuck");
+  require(!paused.update(11000+P::StuckMs-1,{0,0,0},{1500,0,0}),
+          "pursuit after a pause waits for the full no-progress timeout");
+  require(paused.update(11000+P::StuckMs,{0,0,0},{1500,0,0}),
+          "two stationary walking seconds after a pause still detect a blockage");
+
   P threshold;
   require(!threshold.update(0,{0,0,0},{1000,0,0}),"the distance milestone starts with the first sample");
   require(!threshold.update(P::StuckMs,{P::MovedCm,0,0},{1000,0,0}),

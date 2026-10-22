@@ -878,6 +878,8 @@ void NpcController::updateFollow(World& world, Controlled& c, uint64_t now) {
   const auto pos = c.npc->position();
   const auto lead = target->position();
   const FollowProgress::Point follower{pos.x,pos.y,pos.z}, leader{lead.x,lead.y,lead.z};
+  if(d<=FollowNear || !c.npc->isAiBusy() || c.npc->haveOutput())
+    f.progress.reset(now,follower,leader);
   const bool stuck = f.progress.update(now,follower,leader,f.byWay);
   if(c.npc->isAiBusy() && !c.npc->haveOutput() && d>FollowNear && stuck) {
     c.npc->clearAiQueue();
