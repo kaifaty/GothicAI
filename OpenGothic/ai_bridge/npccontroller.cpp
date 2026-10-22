@@ -41,9 +41,9 @@ constexpr float    FollowNear       = 400;   // stop closing in
 constexpr float    FollowCatchUp    = 800;   // farther than this it runs, whatever the leader does
 constexpr float    FollowLost       = 6000;  // give up
 constexpr uint64_t FollowStepMs     = 500;
-constexpr uint64_t FollowStuckMs    = 2000;  // walking, but it has not moved FollowMovedCm in this long: stuck
+constexpr uint64_t FollowStuckMs    = FollowProgress::StuckMs; // go_to_npc: no movement for this long
 constexpr uint64_t WalkStartMs      = 3000;  // arm stuck detection even if it cannot take its first step
-constexpr float    FollowMovedCm    = 75;
+constexpr float    FollowMovedCm    = FollowProgress::MovedCm;
 constexpr float    WalkSameSpotCm   = 100;   // a replanned waynet route got stuck here again
 constexpr uint64_t WalkProgressMs   = 5000;
 constexpr uint64_t FollowProgressMs = 1000;
@@ -872,17 +872,19 @@ void NpcController::updateFollow(World& world, Controlled& c, uint64_t now) {
   if((c.npc->walkMode() & (WalkBit::WM_Walk | WalkBit::WM_Sneak))!=pace)
     c.npc->setWalkMode(pace);
   // a walk to an npc goes straight at him: past a cave's bend or a tower's wall it runs into the rock and
-  // stays there. Got nowhere for a while: by the waynet, to the point nearest him that he can see from where
-  // he is (as the engine's own fights do), then straight at him again
+  // oscillates there. No closer for a while: by the waynet, to the point nearest him that he can see from
+  // where he is (as the engine's own fights do), then straight at him again. If he moves too, the companion's
+  // own movement still counts as progress, so running at a constant distance does not trigger a detour
   const auto pos = c.npc->position();
-  if(f.movedAt==0 || (pos-f.movedFrom).quadLength()>=FollowMovedCm*FollowMovedCm) {
-    f.movedFrom = pos;
-    f.movedAt   = now;
-    }
-  if(c.npc->isAiBusy() && !c.npc->haveOutput() && d>FollowNear && now>=f.movedAt+FollowStuckMs) {
+  const auto lead = target->position();
+  const FollowProgress::Point follower{pos.x,pos.y,pos.z}, leader{lead.x,lead.y,lead.z};
+  if(d<=FollowNear || !c.npc->isAiBusy() || c.npc->haveOutput())
+    f.progress.reset(now,follower,leader);
+  const bool stuck = f.progress.update(now,follower,leader,f.byWay);
+  if(c.npc->isAiBusy() && !c.npc->haveOutput() && d>FollowNear && stuck) {
     c.npc->clearAiQueue();
     c.npc->clearGoTo();
-    f.movedAt = now;
+    f.progress.reset(now,follower,leader);
     if(!f.byWay) {
       auto wp = world.findWayPoint(target->position(),[&](const WayPoint& w) {
         return target->canRayHitPoint(w.position(),true);
@@ -933,7 +935,7 @@ void NpcController::logFollow(World& world, Controlled& c, uint64_t now) {
   char progress[160];
   std::snprintf(progress,sizeof(progress)," progress t=%.1fs behind=%.1fs pos=[%.0f,%.0f,%.0f] d=%.1fm idle=%.1fs",
                 double(now-f.start)/1000.,double(now-f.behindAt)/1000.,double(pos.x),double(pos.y),double(pos.z),
-                double(d)/100.,f.movedAt==0 ? 0. : double(now-f.movedAt)/1000.);
+                double(d)/100.,double(f.progress.idleMs(now))/1000.);
   Tempest::Log::i("[ai] ",c.symbol," follow",progress," point=",wp!=nullptr ? wp->name : "-",
                   " walk=",uint32_t(c.npc->walkMode())," lead=",uint32_t(target->walkMode()),
                   " body=",uint32_t(c.npc->bodyStateMasked())," busy=",int(c.npc->isAiBusy()),
