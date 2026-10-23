@@ -43,6 +43,68 @@ def test_dagger_step_cap_uses_valid_steps_when_episode_lengths_differ():
     assert not mask.any()
 
 
+def test_family_balance_keeps_v4_decision_shares_and_half_teacher_control_weight(tmp_path):
+    v4 = [{"family": family, "steps": count} for family, count in
+          (("point", 500), ("object", 200), ("follow_below_gate", 300))]
+    entries = v4 + [{"family": "point", "steps": 1000, "effective_steps": 500}]
+    weights, result = train.family_balance_weights(entries, v4)
+    assert weights == pytest.approx({"point": 1., "object": 2., "follow": 2.})
+    assert result["effective_decisions"] == {"point": 1000, "object": 200, "follow": 300}
+    assert result["minimum_shares"] == {"object": .2, "follow": .3}
+    assert result["weighted_shares"]["object"] == pytest.approx(.2)
+    assert result["weighted_shares"]["follow"] == pytest.approx(.3)
+    # Long DAgger tails disappear when teacher episodes end. Family weights
+    # must use the exact randomly retained decisions, including half weights.
+    teachers = [dict(family=family, steps=steps, source_kind="teacher") for family, steps in
+                (("point", 2), ("object", 1), ("follow_below_gate", 1))]
+    dagger = []
+    for number, values in enumerate(([.5, 1.], [1., .5], [.5, .5])):
+        file = f"dagger-{number}.npz"
+        np.savez_compressed(tmp_path / file, sample_weight=np.tile(values, 3).astype(np.float32))
+        dagger.append(dict(family="point", steps=6, source_kind="dagger", file=file))
+    selected = np.array([[1, 1], [1, 0], [1, 0], [1, 1], [1, 1], [1, 1]], bool)
+    train.cap_dagger_steps(selected, [False] * 3 + [True] * 3, np.random.default_rng(17))
+    expected_point = 2 + sum(np.asarray(values)[selected[row + 3]].sum()
+                             for row, values in enumerate(([.5, 1.], [1., .5], [.5, .5])))
+    cached_weights = {}
+    weights, actual = train.epoch_family_balance([teachers + dagger], tmp_path, 2, 17,
+        result["v4_decisions"], cached_weights)
+    assert actual["effective_decisions"] == {"point": expected_point, "object": 1, "follow": 1}
+    assert len(cached_weights) == 3
+    assert actual["weighted_shares"]["object"] == pytest.approx(.2)
+    assert actual["weighted_shares"]["follow"] == pytest.approx(.3)
+    assert train.epoch_family_balance([teachers + dagger], tmp_path, 2, 17,
+        result["v4_decisions"], cached_weights)[0] == weights
+
+
+def test_aggregate_training_index_combines_hd_versions_without_opening_episode_files(tmp_path):
+    caches = [tmp_path / "v4", tmp_path / "v5"]
+    for number, cache in enumerate(caches):
+        cache.mkdir()
+        version, memory = (2, 3) if number == 0 else (3, 4)
+        preprocessing = (train.HD_PREPROCESSING if memory == 3 else
+                         {**train.HD_PREPROCESSING, "navigation_memory_version": 4})
+        entries = [{"id": family, "pair": [family, "goal"], "split": "train", "family": family,
+                    "steps": steps, "source_kind": "teacher", "file": f"episodes/{family}.npz"}
+                   for family, steps in (("point", 50 * (number + 1)), ("object", 20), ("follow_below_gate", 30))]
+        index = dict(cache_version=train.HD_CACHE_VERSION, navdemo_version=version,
+            navigation_memory_version=memory, preprocessing=preprocessing, vector_size=train.VECTOR_SIZE,
+            near_shape=list(train.HD_NEAR_SHAPE), far_shape=list(train.HD_FAR_SHAPE),
+            heads=list(train.BC3_HEADS), classes=list(train.BC3_CLASSES), eye_layout=[[0, 0, 1]],
+            episodes=entries, action_change={"N": sum(ep["steps"] for ep in entries), "n_I": 10},
+            class_counts={"train": {head: [10] * count for head, count in zip(train.BC3_HEADS, train.BC3_CLASSES)}},
+            auxiliary={"detour": {"available_steps": 0}})
+        (cache / "index.json").write_text(json.dumps(index))
+    result = train.aggregate_training_index(caches[0], [str(caches[1])], str(caches[0]))
+    assert len(result["episodes"]) == 6
+    assert result["navigation_memory_version"] == 4
+    assert result["preprocessing"]["navigation_memory_version"] == 4
+    assert all(Path(ep["file"]).is_absolute() for ep in result["episodes"])
+    assert result["family_balance"]["weighted_shares"]["object"] == pytest.approx(.2)
+    assert result["family_balance"]["weighted_shares"]["follow"] == pytest.approx(.3)
+    assert result["class_counts"]["train"]["maneuver"] == [20, 20, 20]
+
+
 def test_index_rejects_v1_semantics_even_with_same_vector_dimensions(tmp_path):
     index = {"cache_version": train.CACHE_VERSION, "vector_size": train.VECTOR_SIZE,
              "preprocessing": {**train.PREPROCESSING, "roads_schema": "next_node_v1"},
@@ -104,6 +166,30 @@ def test_bc3_loss_weights_action_changes_and_maneuver_windows():
         assert ratio.item() == pytest.approx(50 if head == "maneuver" else 10)
     assert all(terms[name].item() == 0 for name in auxiliary)
 
+    # Teacher-control attenuation must survive normalization and apply to every
+    # action/auxiliary term; a link mask removes only the maneuver gradient.
+    for value in logits.values():
+        value.grad = None
+    for name in auxiliary:
+        auxiliary[name].grad = None
+        targets[name + "_valid"] = torch.ones(1, 2)
+    targets["next_near"].fill_(1)
+    targets["detour"].fill_(1)
+    targets["sample_weight"] = torch.full((1, 2), .5)
+    _, half = train.bc3_loss(logits, auxiliary, labels, mask, targets,
+                            [torch.ones(c) for c in train.BC3_CLASSES], 10.)
+    targets["sample_weight"] = torch.ones(1, 2)
+    _, full = train.bc3_loss(logits, auxiliary, labels, mask, targets,
+                            [torch.ones(c) for c in train.BC3_CLASSES], 10.)
+    for name in full:
+        torch.testing.assert_close(half[name], full[name] * .5)
+    targets["maneuver_valid"] = torch.tensor([[1., 0.]])
+    loss, _ = train.bc3_loss(logits, auxiliary, labels, mask, targets,
+                            [torch.ones(c) for c in train.BC3_CLASSES], 10.)
+    loss.backward()
+    assert logits["maneuver"].grad[0, 1].abs().sum() == 0
+    assert logits["forward"].grad[0, 1].abs().sum() > 0
+
 
 def test_bc3_next_frame_targets_cross_tbptt_boundary_without_episode_leak():
     episode = dict(labels=np.zeros((3, 5), np.int64),
@@ -137,3 +223,17 @@ def test_bc3_initialization_preserves_actor_and_conditions_exclusive_maneuvers(t
                                             jump.weight[0] + climb.weight[1])))
     with pytest.raises(ValueError, match="eye layout"):
         train.initialize_bc3(current, path, {**index, "eye_layout": [[1, 0, 1]]})
+
+    hd = NavPolicy(train.VECTOR_SIZE, 8, format_version=3, auxiliary=True)
+    hd_index = dict(preprocessing={**train.HD_PREPROCESSING, "navigation_memory_version": 4},
+                    eye_layout=index["eye_layout"])
+    export_weights(hd, tmp_path / "policy.navbc", preprocessing={**hd_index["preprocessing"],
+                                                                "eye_layout": hd_index["eye_layout"]})
+    checkpoint = tmp_path / "last.pt"
+    torch.save(dict(config=dict(format_version=3, auxiliary=True, vector_size=train.VECTOR_SIZE, hidden_size=8),
+                    model=hd.state_dict()), checkpoint)
+    learner = NavPolicy(train.VECTOR_SIZE, 8, format_version=3, auxiliary=True)
+    initialization = train.initialize_bc3_hd(learner, checkpoint, hd_index)
+    assert initialization["reset"] == [] and initialization["expanded"] == []
+    for name, value in hd.state_dict().items():
+        torch.testing.assert_close(learner.state_dict()[name], value)

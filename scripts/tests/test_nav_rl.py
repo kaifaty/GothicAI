@@ -793,6 +793,35 @@ def test_validation_commands_preserve_world_seed_and_force_sampled_zero_teacher(
         rl.action_seeds("7,7")
 
 
+def test_dagger_train_selection_rejects_held_out_splits_before_any_recording(monkeypatch):
+    value = dict(id="v5-water-a", family="water", goal_kind="point", split="train",
+                 region="harbour", start="A", goal="B", seed=19, recorded=False)
+    monkeypatch.setattr(rl, "rows", lambda _: iter([value]))
+    assert rl.dagger_scenarios(Path("/unused.jsonl")) == [value]
+    for change in (dict(split="validation"), dict(split="test"), dict(family="detour"), dict(final_test=True)):
+        monkeypatch.setattr(rl, "rows", lambda _, change=change: iter([dict(value, **change)]))
+        with pytest.raises(ValueError, match="requires train"):
+            rl.dagger_scenarios(Path("/unused.jsonl"))
+
+
+def test_dagger_commands_select_v3b_or_v2_without_changing_learner_sampling():
+    args = SimpleNamespace(npc="NPC", limit_ms=10000, weights=Path("/hd.navbc"), roads=Path("/roads"))
+    value = dict(id="v5-water-a", family="water", goal_kind="point", split="train",
+                 region="harbour", start="A", goal="B", seed=19, local=False)
+    ordinary = rl.policy_commands(args, value, 43, teacher_beta=.1, dagger=True)
+    assert "navdemos drive-teacher 3" in ordinary
+    assert "navdemos dagger on" in ordinary
+    assert "navdemos record on" in ordinary
+    assert "navdemos perception-monitor on" in ordinary
+    assert "roads stranger NPC" in ordinary
+    assert ordinary[-2] == "navdemos drive NPC A B 10000 /hd.navbc 0.1 43 sample"
+    jump = rl.policy_commands(args, dict(value, family="jump", transition_id=7), 43, teacher_beta=.1, dagger=True)
+    assert "navdemos drive-teacher 2" in jump
+    assert jump[-2].endswith("0.1 43 sample 7")
+    with pytest.raises(ValueError, match="cannot run another split"):
+        rl.validation_commands(args, value, 43)
+
+
 def test_lean_validation_commands_disable_recording_for_every_family(tmp_path, monkeypatch):
     manifest, groups = validation_manifest(tmp_path)
     args = validation_drive_args(tmp_path, manifest, family=None)

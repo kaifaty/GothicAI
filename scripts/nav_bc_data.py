@@ -9,8 +9,9 @@ The default cache accepts NAVDEMO v2 recordings and contains successful teacher
 episodes and all DAgger episodes from training pairs. A saved split preserves
 the held-out (start, goal) pairs; new successful v2 pairs join training.
 With --manifest, BC3 uses exactly the listed memory-v3 training episodes,
-including failed follow trials, without creating a new split. BC4 uses the v5
-manifest's memory-v4 NAVDEMO v3 recordings and HD maps with familiar appended.
+including failed follow trials, without creating a new split. HD also accepts
+the v5 memory-v4 recordings without familiar and labelled memory-v4 DAgger drives.
+BC4 appends familiar to those HD maps.
 """
 
 from __future__ import annotations
@@ -374,10 +375,10 @@ def unpack_cached(source, start: int | None = None, stop: int | None = None) -> 
               "baseline": source["baseline"][selected].astype(np.int64),
               "situations": source["situations"][selected].astype(np.uint8),
               "action_change": source["action_change"][selected].astype(np.uint8)}
-    for name in ("maneuver_weight", "stuck", "detour"):
+    for name in ("maneuver_weight", "sample_weight", "stuck", "detour"):
         if name in source:
             result[name] = source[name][selected].astype(np.float32)
-    for name in ("stuck_valid", "next_near_valid", "detour_valid"):
+    for name in ("maneuver_valid", "stuck_valid", "next_near_valid", "detour_valid"):
         if name in source:
             result[name] = source[name][selected].astype(np.uint8)
     for name in ("near", "far", *(["aux_near"] if "aux_near_channels" in source else [])):
@@ -491,9 +492,13 @@ def load_training_manifest(path: Path, source: Path) -> tuple[dict[str, Any], li
 
 
 def prepare_manifest(source: Path, output: Path, manifest_path: Path,
-                     chunk_records: int = 32, input_variant: str = "compact") -> dict[str, Any]:
+                     chunk_records: int = 32, input_variant: str = "compact",
+                     dagger_sources: list[Path] | None = None,
+                     maneuver_links: Path | None = None) -> dict[str, Any]:
     """Prepare the manifest's frozen training population without held-out reads."""
-    if any(not path.is_absolute() for path in (source, output, manifest_path)):
+    dagger_sources = dagger_sources or []
+    if any(not path.is_absolute() for path in
+           (source, output, manifest_path, *dagger_sources, *([maneuver_links] if maneuver_links else []))):
         raise ValueError("source, output and manifest paths must be absolute")
     if output.resolve().is_relative_to(source.resolve()):
         raise ValueError("cache must be outside the source recordings")
@@ -507,11 +512,51 @@ def prepare_manifest(source: Path, output: Path, manifest_path: Path,
         if previous.get("cache_version") != cache_version:
             raise ValueError("input variants require separate cache directories")
     manifest, episodes = load_training_manifest(manifest_path, source)
-    navdemo_version, memory_version = (3, 4) if familiar else (2, 3)
-    if (manifest["format"]["version"] != navdemo_version
-            or manifest["format"]["navigation_memory_version"] != memory_version):
+    navdemo_version = manifest["format"]["version"]
+    memory_version = manifest["format"]["navigation_memory_version"]
+    if ((familiar and (navdemo_version, memory_version) != (3, 4))
+            or (not hd and (navdemo_version, memory_version) != (2, 3))):
         raise ValueError("manifest recording and memory versions differ from the requested input variant")
+    for entry in episodes:
+        entry.update(source_kind="teacher", navdemo_version=navdemo_version, memory_version=memory_version)
+    link_starts_cm = None
+    if hd and not familiar and memory_version == 4:
+        if maneuver_links is None:
+            raise ValueError("HD memory-v4 preparation requires --maneuver-links for v3b maneuver masks")
+        from nav_jump_routes import read_links
+        # The accepted-links text format contains directed links only; the C++
+        # loader leaves OffMeshLink.bidirectional at its default false.
+        link_starts_cm = np.asarray([link["start"] for link in read_links(maneuver_links)], np.float32).reshape(-1, 3) * 100
+    for source_number, recordings in enumerate(dagger_sources, start=1):
+        if not hd or familiar:
+            raise ValueError("manifest DAgger aggregation requires HD input without familiar")
+        if output.resolve().is_relative_to(recordings.resolve()):
+            raise ValueError("cache must be outside the DAgger recordings")
+        dagger_samples = nav_demos.episode_paths(recordings)
+        if not dagger_samples:
+            raise ValueError(f"no labelled DAgger recordings in {recordings}")
+        for samples in dagger_samples:
+            scenario = json.loads((samples.parent / "episode.json").read_text(encoding="utf-8"))
+            family = scenario.get("dataset_family", scenario.get("family", scenario.get("goal_kind")))
+            if (scenario.get("split") != "train" or scenario.get("drive") is not True
+                    or scenario.get("dagger") is not True or scenario.get("dagger_scenario", {}).get("split") != "train"
+                    or scenario.get("training_valid") is not True or "nonfinite_observation" in scenario
+                    or scenario.get("termination") == "nonfinite_observation"
+                    or scenario.get("navigation_memory_version") != 4 or scenario.get("journey_memory") is not True
+                    or scenario.get("demo_version") != 3 or not family):
+                raise ValueError(f"DAgger requires explicit train-only memory-v4 learner drives: {samples.parent}")
+            if (family == "jump" and scenario.get("teacher_version") != 2
+                    or family != "jump" and scenario.get("teacher_version") != 3):
+                raise ValueError(f"DAgger requires teacher v2 for jump and v3b otherwise: {samples.parent}")
+            identity = f"dagger-{source_number}-{samples.parent.relative_to(recordings).as_posix().replace('/', '-')}"
+            episodes.append(dict(id=identity, family=family, directory=samples.parent, scenario=scenario,
+                                 decisions=scenario["decisions"], source_kind="dagger",
+                                 navdemo_version=3, memory_version=4))
+    if dagger_sources:
+        navdemo_version, memory_version = 3, 4
     preprocessing = BC4_PREPROCESSING if familiar else HD_PREPROCESSING if hd else PREPROCESSING
+    if hd and not familiar and memory_version == 4:
+        preprocessing = {**preprocessing, "navigation_memory_version": 4}
     index: dict[str, Any] = {
         "cache_version": cache_version, "navdemo_version": navdemo_version, "navigation_memory_version": memory_version,
         "manifest": str(manifest_path), "heads": list(BC3_HEADS), "classes": list(BC3_CLASSES),
@@ -541,15 +586,23 @@ def prepare_manifest(source: Path, output: Path, manifest_path: Path,
     for number, entry in enumerate(episodes, start=1):
         directory, scenario = entry["directory"], entry["scenario"]
         samples = directory / "samples.bin.gz"
-        if (nav_demos.episode_version(samples) != navdemo_version
-                or nav_demos.episode_memory_version(samples) != memory_version):
-            raise ValueError(f"training episode is not NAVDEMO v{navdemo_version} memory-v{memory_version}: {directory}")
+        if (nav_demos.episode_version(samples) != entry["navdemo_version"]
+                or nav_demos.episode_memory_version(samples) != entry["memory_version"]):
+            raise ValueError(f"training episode is not NAVDEMO v{entry['navdemo_version']} memory-v{entry['memory_version']}: {directory}")
         metadata = json.loads((directory / "episode.json").read_text(encoding="utf-8"))
         if metadata.get("decisions") != entry["decisions"]:
             raise ValueError(f"manifest decision count differs from recording: {directory}")
-        with samples.open("rb") as stream:
-            if hashlib.file_digest(stream, "sha256").hexdigest() != entry["samples_sha256"]:
-                raise ValueError(f"manifest sample checksum differs: {directory}")
+        if entry["source_kind"] == "teacher":
+            with samples.open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != entry["samples_sha256"]:
+                    raise ValueError(f"manifest sample checksum differs: {directory}")
+        annotations = None
+        if entry["source_kind"] == "dagger":
+            annotations = [json.loads(line) for line in (directory / "samples.jsonl").read_text().splitlines()]
+            if (len(annotations) != entry["decisions"] or any(
+                    type(row.get("teacher_control")) is not bool or type(row.get("maneuver_mask")) is not bool
+                    for row in annotations)):
+                raise ValueError(f"DAgger per-decision annotations differ from the recording: {directory}")
         layout = nav_demos.ray_layout(samples)
         if common_layout is None:
             common_layout = layout
@@ -573,6 +626,20 @@ def prepare_manifest(source: Path, output: Path, manifest_path: Path,
                             situations=situation_masks(inputs, layout, labels, steps),
                             time_ms=records["time_ms"].copy(), position_cm=records["position_cm"].copy(),
                             detour=detour, detour_valid=detour_valid)
+            if annotations is not None:
+                chunk_annotations = annotations[steps:steps + len(records)]
+                if not np.array_equal(records["time_ms"], [row["time_ms"] for row in chunk_annotations]):
+                    raise ValueError(f"DAgger annotation times differ from the recording: {directory}")
+                features["sample_weight"] = np.asarray(
+                    [.5 if row["teacher_control"] else 1. for row in chunk_annotations], dtype=np.float32)
+                features["maneuver_valid"] = np.asarray(
+                    [not row["maneuver_mask"] for row in chunk_annotations], dtype=np.uint8)
+                if entry["family"] != "jump" and labels[:, 4].any():
+                    raise ValueError(f"v3b DAgger maneuver labels must be none: {directory}")
+            elif link_starts_cm is not None and teacher_version == 3:
+                labels[:, 4] = 0
+                features["maneuver_valid"] = (np.linalg.norm(
+                    records["position_cm"][:, None] - link_starts_cm[None], axis=2) > 300).all(axis=1).astype(np.uint8)
             for name, values in features.items():
                 parts.setdefault(name, []).append(values)
             steps += len(records)
@@ -619,8 +686,11 @@ def prepare_manifest(source: Path, output: Path, manifest_path: Path,
         index["episodes"].append({
             "id": identity, "family": entry["family"], "pair": [scenario["start"], scenario["goal"]],
             "start": scenario["start"], "goal": scenario["goal"], "region": scenario["region"],
-            "split": "train", "steps": steps, "file": relative_file.as_posix(), "source_kind": "teacher",
-            "success": entry.get("teacher_goal_success") is True,
+            "split": "train", "steps": steps, "file": relative_file.as_posix(), "source_kind": entry["source_kind"],
+            "effective_steps": float(arrays["sample_weight"].sum()) if "sample_weight" in arrays else float(steps),
+            "teacher_control_steps": int((arrays["sample_weight"] == .5).sum()) if "sample_weight" in arrays else 0,
+            "success": (scenario.get("success") is True if entry["source_kind"] == "dagger" else
+                        entry.get("teacher_goal_success") is True),
         })
         changes += int(arrays["action_change"].sum())
         decisions += steps
@@ -642,11 +712,11 @@ def prepare_manifest(source: Path, output: Path, manifest_path: Path,
 def prepare(source: Path, output: Path, seed: int = 17, validation_fraction: float = .2,
             chunk_records: int = 32, split_index: Path | None = None,
             dagger_sources: list[Path] | None = None, manifest: Path | None = None,
-            input_variant: str = "compact") -> dict[str, Any]:
+            input_variant: str = "compact", maneuver_links: Path | None = None) -> dict[str, Any]:
     if manifest is not None:
-        if split_index is not None or dagger_sources:
-            raise ValueError("BC3 manifest preparation does not accept legacy split-index or DAgger sources")
-        return prepare_manifest(source, output, manifest, chunk_records, input_variant)
+        if split_index is not None:
+            raise ValueError("manifest preparation does not accept legacy split-index")
+        return prepare_manifest(source, output, manifest, chunk_records, input_variant, dagger_sources, maneuver_links)
     if input_variant != "compact":
         raise ValueError("HD preparation requires the frozen BC3 --manifest")
     dagger_sources = dagger_sources or []
@@ -800,12 +870,14 @@ def main() -> None:
     prepare_command.add_argument("--dagger-source", type=Path, action="append", default=[],
                                  help="add all labelled learner drives from original training pairs; repeat per round")
     prepare_command.add_argument("--manifest", type=Path,
-                                 help="use only frozen manifest training recordings (v4 BC3 or v5 BC4)")
+                                 help="use only frozen manifest training recordings (v4 BC3/HD or v5 HD/BC4)")
     prepare_command.add_argument("--input-variant", choices=("compact", "hd", "hd-familiar"), default="compact",
                                  help="HD keeps native map cells and physical-feet-relative height extrema")
+    prepare_command.add_argument("--maneuver-links", type=Path,
+                                 help="accepted directed links; required to mask v3b maneuvers within 3m in HD memory-v4 data")
     args = parser.parse_args()
     prepare(args.source, args.output, args.seed, args.validation_fraction, args.chunk_records,
-            args.split_index, args.dagger_source, args.manifest, args.input_variant)
+            args.split_index, args.dagger_source, args.manifest, args.input_variant, args.maneuver_links)
 
 
 if __name__ == "__main__":

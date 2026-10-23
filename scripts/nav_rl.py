@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import copy
 import csv
 import gzip
+import hashlib
 import importlib.util
 import json
 import math
@@ -33,6 +34,7 @@ HEADS = ("forward", "strafe", "turn", "walk", "jump", "climb")
 CLASSES = (3, 3, 3, 2, 2, 2)
 REWARDS = ("progress_cm", "arrived", "blocked", "fall_damage", "death", "jump", "climb", "time_ms")
 VALIDATION_FAMILIES = ("point", "object", "approach", "follow_below_gate", "jump")
+DAGGER_FAMILIES = (*VALIDATION_FAMILIES, "follow", "water")
 ACTION_SEEDS = (18102027, 18102028, 18102029)
 
 
@@ -322,6 +324,7 @@ def checked_paths(args, policy=False):
         if not line.endswith(b"\n"):
             raise ValueError("Weight file has no bounded JSON header line")
         preprocessing = json.loads(line).get("preprocessing", {})
+        args.policy_input_variant = preprocessing.get("input_variant")
         args.navigation_memory_version = preprocessing.get("navigation_memory_version", 3)
         journey_override = os.environ.get("OPENGOTHIC_NAV_JOURNEY_MEMORY")
         if journey_override is not None:
@@ -330,10 +333,11 @@ def checked_paths(args, policy=False):
             args.navigation_memory_version = 4 if journey_override == "1" else 3
         version = preprocessing.get("navdemo_version", 1)
         args.navdemo_version = 3 if version == 2 and args.navigation_memory_version == 4 else version
-        if args.navigation_memory_version == 4:
+        if args.navigation_memory_version == 4 and (args.policy_input_variant == "hd-familiar"
+                or "familiar" in preprocessing.get("map_order", ())):
             familiar = getattr(args, "familiar_map", None)
             if familiar is None or not familiar.is_file():
-                raise ValueError("Memory-v4 policy evaluation requires --familiar-map")
+                raise ValueError("HD familiar policy input requires --familiar-map")
     args.output.mkdir(parents=True, exist_ok=True)
     args.cache.mkdir(parents=True, exist_ok=True)
     os.environ["OPENGOTHIC_BODY_TRACE"] = "0"
@@ -473,6 +477,8 @@ def qualify(args):
 
 
 def drive(args):
+    if getattr(args, "dagger_scenarios", None) is not None:
+        return drive_dagger(args)
     if getattr(args, "manifest", None) is not None or getattr(args, "detour_scenarios", None) is not None:
         return drive_validation(args)
     pairs = load_pairs(args.pairs)
@@ -600,18 +606,25 @@ def validation_commands(args, value, action_seed):
     """Keep world/target randomness frozen while varying only policy sampling."""
     if value.get("split") != "validation":
         raise ValueError("Policy validation cannot run another split")
+    return policy_commands(args, value, action_seed)
+
+
+def policy_commands(args, value, action_seed, *, teacher_beta=0, dagger=False):
     kind, npc = value["goal_kind"], args.npc
     limit = value.get("limit_ms", args.limit_ms)
     if type(limit) is not int or limit <= 0:
-        raise ValueError("Validation scenario limit must be positive")
-    suffix = f"{limit} {args.weights} 0 {action_seed} sample"
-    record = "off" if getattr(args, "lean", False) or value.get("family") == "detour" else "on"
-    roads_mode = "stranger" if getattr(args, "stranger", False) else "on"
+        raise ValueError("Policy scenario limit must be positive")
+    suffix = f"{limit} {args.weights} {teacher_beta:g} {action_seed} sample"
+    record = "off" if not dagger and (getattr(args, "lean", False) or value.get("family") == "detour") else "on"
+    roads_mode = "stranger" if getattr(args, "stranger", False) or (dagger and value.get("local") is False) else "on"
     commands = [f"roads load {args.roads}", f"roads {roads_mode} {npc}", f"navdemos record {record}",
                 "navdemos perception-mode gaze", "navdemos oracle off"]
     if getattr(args, "familiar_map", None) is not None:
         commands.insert(1, f"roads familiar-load {args.familiar_map}")
-    if value.get("family") == "safety":
+    if dagger:
+        teacher = 2 if value["family"] == "jump" else 3
+        commands.extend([f"navdemos drive-teacher {teacher}", "navdemos dagger on"])
+    if dagger or value.get("family") == "safety":
         commands.append("navdemos perception-monitor on")
     if value.get("fence_control"):
         commands.extend(["goto NW_FARM1_ENTRANCE_03", f"put {npc} 0 0 -1400",
@@ -626,7 +639,7 @@ def validation_commands(args, value, action_seed):
         if not isinstance(target, str) or not target or any(c.isspace() for c in target):
             raise ValueError("Invalid frozen moving-target symbol")
         commands.append(f"navdemos drive-moving {npc} {value['start']} {target} {','.join(route)} "
-                        f"{kind} {limit} {value['seed']} {args.weights} 0 {action_seed} sample")
+                        f"{kind} {limit} {value['seed']} {args.weights} {teacher_beta:g} {action_seed} sample")
     else:
         command = "drive-object" if kind == "object" else "drive"
         watch = ""
@@ -637,6 +650,123 @@ def validation_commands(args, value, action_seed):
             watch = f" {identifier}"
         commands.append(f"navdemos {command} {npc} {value['start']} {value['goal']} {suffix}{watch}")
     return [*commands, "navdemos wait"]
+
+
+def dagger_scenarios(path):
+    """Accept explicit train scenarios only, including unused frozen train pools."""
+    result, seen = [], set()
+    for original in rows(path):
+        if (not isinstance(original, dict) or original.get("split") != "train"
+                or original.get("family") not in DAGGER_FAMILIES
+                or original.get("goal_kind") not in ("point", "object", "approach", "follow")
+                or original.get("final_test") or original.get("fence_control")):
+            raise ValueError("DAgger recording requires train point/object/approach/follow/jump/water scenarios")
+        for key in ("id", "region", "start", "goal"):
+            token = original.get(key)
+            if not isinstance(token, str) or not token or any(c.isspace() for c in token):
+                raise ValueError(f"Invalid DAgger scenario token: {key}")
+        identifier = original["id"]
+        if Path(identifier).name != identifier or identifier in (".", "..") or identifier in seen:
+            raise ValueError(f"Unsafe or duplicate DAgger scenario ID: {identifier}")
+        if type(original.get("seed")) is not int or not 0 <= original["seed"] <= 0xffffffff:
+            raise ValueError(f"Invalid DAgger scenario seed: {identifier}")
+        npc = original.get("npc")
+        if npc is not None and (not isinstance(npc, str) or not npc or any(c.isspace() for c in npc)):
+            raise ValueError(f"Invalid DAgger scenario NPC: {identifier}")
+        seen.add(identifier)
+        result.append(dict(original))
+    if not result:
+        raise ValueError("No train DAgger scenarios")
+    return result
+
+
+def drive_dagger(args):
+    if args.action_mode != "sample":
+        raise ValueError("DAgger collection requires softmax sampling")
+    values = dagger_scenarios(args.dagger_scenarios)
+    if args.indices is not None:
+        selected = [int(value) for value in args.indices.split(",")]
+        if not selected or len(set(selected)) != len(selected) or any(not 0 <= index < len(values) for index in selected):
+            raise ValueError("--indices must contain distinct valid DAgger indices")
+        values = [values[index] for index in selected]
+    if any(value["family"] == "jump" for value in values) and getattr(args, "jump_links", None) is None:
+        raise ValueError("Jump DAgger requires --jump-links from the frozen corpus inputs")
+    os.environ["OPENGOTHIC_NAV_JOURNEY_MEMORY"] = "1"
+    checked_paths(args, policy=True)
+    if args.navigation_memory_version != 4 or args.policy_input_variant != "hd":
+        raise ValueError("DAgger requires the HD input without the familiar channel, on journey memory 4")
+    beta = max(0.1, args.teacher_beta)
+    with args.weights.open("rb") as stream:
+        weights_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+    jobs = [(index, value, seed) for index, value in enumerate(values)
+            for seed in action_seeds(getattr(args, "action_seeds", None))]
+    workers = min(args.parallel, len(jobs))
+    def collect(worker_index):
+        assigned = jobs[worker_index::workers]
+        for jumping in (False, True):
+            group = [job for job in assigned if (job[1]["family"] == "jump") == jumping]
+            if not group:
+                continue
+            worker = copy(args)
+            worker.output = args.output / "dagger-workers" / str(worker_index) / ("jump" if jumping else "ordinary")
+            worker.cache = args.cache / ("jump" if jumping else "ordinary")
+            worker.cache.mkdir(parents=True, exist_ok=True)
+            if jumping:
+                worker.links = args.jump_links
+            runner = new_runner(worker, "dagger")
+            try:
+                for index, value, sampling_seed in group:
+                    # DART chooses an episode from the native mixing seed. Share
+                    # a repeat seed across scenarios without correlating DART.
+                    seed = int.from_bytes(hashlib.sha256(f"{sampling_seed}:{value['id']}".encode()).digest()[:4], "little")
+                    directory = args.output / "dagger" / value["family"] / value["id"] / f"seed-{sampling_seed}"
+                    identity = dict(dagger_scenario=value, scenario_seed=value["seed"], action_seed=seed,
+                                    sampling_seed=sampling_seed,
+                                    weights=str(args.weights), weights_sha256=weights_sha256, teacher_beta=beta)
+                    existing = (directory / "episode.json").is_file()
+                    if existing:
+                        episode = read_json(directory / "episode.json")
+                        if not args.resume or any(episode.get(key) != expected for key, expected in identity.items()):
+                            raise ValueError(f"Existing or different DAgger episode: {directory}")
+                    else:
+                        if directory.exists() and any(directory.iterdir()):
+                            raise ValueError(f"Incomplete DAgger episode: {directory}")
+                        worker.seed = value["seed"]
+                        worker.npc = value.get("npc", args.npc)
+                        started = time.monotonic()
+                        scenario(worker, runner, f"dagger-{value['id']}-{seed}",
+                                 policy_commands(worker, value, seed, teacher_beta=beta, dagger=True), directory)
+                        episode = read_json(directory / "episode.json")
+                    if (episode.get("demo_version") != 3 or episode.get("navigation_memory_version") != 4
+                            or episode.get("journey_memory") is not True or episode.get("physics_mode") != args.physics
+                            or episode.get("oracle") is not False or episode.get("action_mode") != "sample"
+                            or episode.get("teacher_beta") != beta or episode.get("mixing_seed") != seed
+                            or episode.get("drive") is not True or episode.get("dagger") is not True
+                            or episode.get("observation_source") != "learner_memory"
+                            or episode.get("teacher_version") != (2 if jumping else 3)
+                            or episode.get("record") is not True):
+                        raise ValueError(f"Runner DAgger identity differs: {directory}")
+                    count = 0
+                    for sample in rows(directory / "samples.jsonl"):
+                        if any(type(sample.get(key)) is not bool for key in ("teacher_control", "dart", "maneuver_mask")):
+                            raise ValueError(f"Missing DAgger control/label metadata: {directory}")
+                        count += 1
+                    if count != episode.get("decisions"):
+                        raise ValueError(f"DAgger sidecar decision count differs: {directory}")
+                    if not existing:
+                        for key in ("id", "family", "split", "region", "place_id", "dataset_family"):
+                            if key in value:
+                                episode[key] = value[key]
+                        episode.update(index=index, **identity, collector_wall_s=time.monotonic() - started)
+                        write_json(directory / "episode.json", episode)
+                    print(json.dumps(dict(id=value["id"], family=value["family"], action_seed=seed,
+                                          decisions=count, success=episode["success"], elapsed_ms=episode["elapsed_ms"])), flush=True)
+            finally:
+                runner.close()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(collect, index) for index in range(workers)]
+        for future in futures:
+            future.result()
 
 
 def safety_scenarios(args):
@@ -1630,6 +1760,8 @@ def main():
     parser.add_argument("--pairs", type=Path)
     parser.add_argument("--manifest", type=Path, help="Frozen v4 corpus manifest; drive reads splits.validation only")
     parser.add_argument("--detour-scenarios", type=Path, help="Frozen detour-val JSONL; drive only, text recording without NAVDEMO")
+    parser.add_argument("--dagger-scenarios", type=Path, help="Explicit train-only JSONL; drive records learner memory and online teacher labels")
+    parser.add_argument("--teacher-beta", type=float, default=0.1, help="DAgger baseline teacher probability, clamped to at least 0.1")
     parser.add_argument("--lean", action="store_true", help="Manifest validation with text-only physical outcomes; no NAVDEMO")
     parser.add_argument("--families", help="Comma-separated validation families; default all five")
     parser.add_argument("--object-probes", type=Path, help="Frozen object Detour probes for validation summary")
@@ -1663,7 +1795,7 @@ def main():
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--indices")
     parser.add_argument("--roads", type=Path, default=REPO / "server/src/gothic_ai/gamedata/places.json")
-    parser.add_argument("--familiar-map", type=Path, help="Eye-baked familiar atlas; required for memory-v4 policy evaluation")
+    parser.add_argument("--familiar-map", type=Path, help="Eye-baked familiar atlas; required for the hd-familiar policy input")
     parser.add_argument("--stranger", action="store_true", help="Evaluate validation drive without the resident's known roads or familiar map")
     parser.add_argument("--links", type=Path, default=REPO / "reports/navigation/2026-10-16-teacher/raw/accepted-links.txt")
     for name in ("runner", "assets", "save", "cache", "ini", "weights"):
@@ -1685,12 +1817,19 @@ def main():
         parser.error("--manifest is exclusive with --pairs and only supports validation drive")
     if args.detour_scenarios is not None and (args.command != "drive" or args.pairs is not None or args.manifest is not None):
         parser.error("--detour-scenarios is exclusive with --pairs/--manifest and only supports validation drive")
+    if args.dagger_scenarios is not None and (args.command != "drive" or args.pairs is not None
+            or args.manifest is not None or args.detour_scenarios is not None or args.lean
+            or args.families is not None or args.safety_fixtures is not None or args.fence_control):
+        parser.error("--dagger-scenarios requires an exclusive train recording drive")
+    if not math.isfinite(args.teacher_beta) or not 0 <= args.teacher_beta <= 1:
+        parser.error("--teacher-beta must be a probability")
     if args.lean and (args.command != "drive" or (args.manifest is None and args.detour_scenarios is None)):
         parser.error("--lean requires manifest or detour validation drive")
     if args.stranger and (args.command != "drive" or (args.manifest is None and args.detour_scenarios is None)):
         parser.error("--stranger requires manifest or detour validation drive")
     if (args.command in ("qualify", "drive", "population", "equivalence", "death-smoke")
-            and args.pairs is None and args.manifest is None and args.detour_scenarios is None):
+            and args.pairs is None and args.manifest is None and args.detour_scenarios is None
+            and args.dagger_scenarios is None):
         parser.error("--pairs is required")
     if args.command in ("check", "summarize", "compare") and args.source is None:
         parser.error("--source is required")
