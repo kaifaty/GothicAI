@@ -35,6 +35,13 @@ constexpr float Pi=3.14159265358979323846f;
 constexpr uint64_t PolicyWarmupDecisions=30;
 struct RecordedKeys { uint64_t time=0; NpcKeys::KeyState keys; };
 struct MotionSample { uint64_t time=0; Vec3 position; bool commanded=false; };
+struct DaggerMotionSample : MotionSample { std::vector<Vec3> teacherPath; };
+struct DaggerEvidence {
+  const char* trigger="";
+  bool stalled=false,memoryDanger=false;
+  float headingCosine=1,pathProgressCm=0;
+  uint64_t headingMs=0,progressWindowMs=0;
+};
 struct CriticState {
   double pathCm=0;
   std::array<float,3> firstDirection={};
@@ -100,7 +107,7 @@ struct Episode {
   uint64_t teacherUntil=0,headingDisagreedAt=0,daggerInterventions=0,dartDecisions=0,maneuverMaskedDecisions=0;
   unsigned dartRemaining=0;
   std::string takeoverReason;
-  std::deque<MotionSample> daggerMotion;
+  std::deque<DaggerMotionSample> daggerMotion;
   std::mt19937_64 mixingRng,actionRng,dartRng;
   KnownRoads::Guidance guidance;
   uint64_t began=0,limit=240000,next=0,decisions=0,frames=0,cvFrames=0;
@@ -394,6 +401,7 @@ void finish(Episode& ep,World& world) {
        <<",\"target_final_down\":"<<ep.target->isDown()
        <<",\"target_final_dead\":"<<ep.target->isDead();
   out<<",\"next_corner\":";vector(out,ep.path.corners.empty()?ep.goal:cm(ep.path.corners.back()));
+  if(ep.dagger)out<<",\"dagger_control_version\":2";
   if(ep.drive) {
     out<<",\"teacher_beta\":"<<ep.teacherBeta<<",\"mixing_seed\":"<<ep.mixingSeed
        <<",\"dagger\":"<<ep.dagger<<",\"dagger_interventions\":"<<ep.daggerInterventions
@@ -1190,23 +1198,59 @@ bool memoryDangerAhead(const NavDemoWriter::Snapshot& sample,const std::array<fl
   for(size_t row=0;row<near.size;++row)for(size_t column=0;column<near.size;++column) {
     const auto& cell=near.cells[row*near.size+column];
     // Match channels quantized into NAVDEMO and the learner's observation.
-    if(std::lround(cell.water*255.f)==0 && std::lround(cell.drop*255.f)==0 &&
-       std::lround(cell.ledge*255.f)==0)continue;
+    if(std::lround(cell.water*255.f)<128 && std::lround(cell.drop*255.f)<128)continue;
     const float right=(float(column)+.5f-float(near.size)*.5f)*near.cellCm;
     const float forward=(float(row)+.5f-float(near.size)*.5f)*near.cellCm;
     const float along=right*movement[0]+forward*movement[1];
     const float across=std::abs(right*movement[1]-forward*movement[0]);
     // A 15-cm body margin plus half a cell diagonal covers the commanded lane.
-    if(along>0 && along<=150.f && across<=15.f+near.cellCm*.707107f)return true;
+    const float approach=sample.body.velocityCmS[0]*right+sample.body.velocityCmS[2]*forward;
+    if(along>0 && along<=100.f && across<=15.f+near.cellCm*.707107f && approach>0)return true;
   }
   return false;
 }
-const char* daggerTrigger(Episode& ep,const NavDemoWriter::Snapshot& sample,const NpcKeys::KeyState& learner) {
+std::vector<Vec3> daggerTeacherPath(const Episode& ep,const NavDemoWriter::Snapshot& sample) {
+  const Vec3 position(sample.position[0],sample.position[1],sample.position[2]);
+  std::vector<Vec3> path={position};
+  if(ep.teacherVersion==3) {
+    const float yaw=sample.bodyYawDeg*Pi/180.f,c=std::cos(yaw),s=std::sin(yaw);
+    for(const auto& point:ep.memoryTeacher.plan())
+      path.push_back(position+Vec3(point.forwardCm*c-point.rightCm*s,0,
+                                   point.forwardCm*s+point.rightCm*c));
+  }
+  else {
+    const Vec3 corner(sample.teacherCorner[0],sample.teacherCorner[1],sample.teacherCorner[2]);
+    path.push_back(corner);
+    // The hint can refer to a direct segment outside the retained corridor.
+    // Only continue through that corridor when its corner matches the hint.
+    for(size_t i=0;i<ep.path.corners.size();++i)if((cm(ep.path.corners[i])-corner).length()<1.f) {
+      for(size_t j=i+1;j<ep.path.corners.size();++j)path.push_back(cm(ep.path.corners[j]));
+      break;
+    }
+  }
+  return path;
+}
+float daggerPathArc(const std::vector<Vec3>& path,const Vec3& position) {
+  float closest=std::numeric_limits<float>::max(),arc=0,offset=0;
+  for(size_t i=1;i<path.size();++i) {
+    const auto delta=path[i]-path[i-1],relative=position-path[i-1];
+    const float square=delta.x*delta.x+delta.z*delta.z;
+    if(square==0)continue;
+    const float fraction=std::clamp((relative.x*delta.x+relative.z*delta.z)/square,0.f,1.f);
+    const auto error=relative-delta*fraction;
+    const float distance=error.x*error.x+error.z*error.z,length=std::sqrt(square);
+    if(distance<closest) {closest=distance;arc=offset+fraction*length;}
+    offset+=length;
+  }
+  return arc;
+}
+DaggerEvidence daggerTrigger(Episode& ep,const NavDemoWriter::Snapshot& sample,const NpcKeys::KeyState& learner) {
+  DaggerEvidence evidence;
   const auto movement=movementDirection(learner);
   const bool moving=movement[0]!=0 || movement[1]!=0;
   const auto now=sample.gameMs;
-  ep.daggerMotion.push_back({now,Vec3(sample.position[0],sample.position[1],sample.position[2]),
-                            ep.learnerCommanded});
+  ep.daggerMotion.push_back({{now,Vec3(sample.position[0],sample.position[1],sample.position[2]),
+                             ep.learnerCommanded},daggerTeacherPath(ep,sample)});
   ep.learnerCommanded=moving;
   const auto cutoff=now>=2000?now-2000:0;
   while(ep.daggerMotion.size()>1 && ep.daggerMotion[1].time<=cutoff)ep.daggerMotion.pop_front();
@@ -1214,8 +1258,16 @@ const char* daggerTrigger(Episode& ep,const NavDemoWriter::Snapshot& sample,cons
   for(size_t i=1;i<ep.daggerMotion.size();++i)
     if(ep.daggerMotion[i].commanded)commanded+=ep.daggerMotion[i].time-ep.daggerMotion[i-1].time;
   const auto displacement=ep.daggerMotion.back().position-ep.daggerMotion.front().position;
-  const bool stalled=moving && now-ep.daggerMotion.front().time>=2000 && commanded>=2000 &&
-                     std::hypot(displacement.x,displacement.z)<30.f;
+  evidence.progressWindowMs=now-ep.daggerMotion.front().time;
+  evidence.stalled=moving && evidence.progressWindowMs>=2000 && commanded>=2000 &&
+                   std::hypot(displacement.x,displacement.z)<30.f;
+  // Freeze the earlier teacher polyline: replanning can change its length even
+  // without movement. Progress is forward arc distance on that same route.
+  if(evidence.progressWindowMs>=2000) {
+    const auto& previous=ep.daggerMotion.front();
+    evidence.pathProgressCm=daggerPathArc(previous.teacherPath,ep.daggerMotion.back().position)-
+                            daggerPathArc(previous.teacherPath,previous.position);
+  }
   auto teacher=movementDirection(sample.keys);
   if(ep.teacherVersion==3) {
     // The endpoint can lie behind an obstacle while the next route segment
@@ -1231,19 +1283,25 @@ const char* daggerTrigger(Episode& ep,const NavDemoWriter::Snapshot& sample,cons
     const auto relative=local(delta,sample.bodyYawDeg*Pi/180.f);
     if(std::hypot(relative[0],relative[2])>=1.f)teacher={relative[0],relative[2]};
   }
-  const bool disagree=moving && movement[0]*teacher[0]+movement[1]*teacher[1]<0;
+  const float teacherLength=std::hypot(teacher[0],teacher[1]);
+  if(teacherLength>0)evidence.headingCosine=(movement[0]*teacher[0]+movement[1]*teacher[1])/teacherLength;
+  const bool disagree=moving && evidence.headingCosine<-.5f;
   if(disagree && !ep.headingDisagrees)ep.headingDisagreedAt=now;
   ep.headingDisagrees=disagree;
-  if(stalled)return "stall";
-  if(memoryDangerAhead(sample,movement))return "memory_danger";
-  if(disagree && now-ep.headingDisagreedAt>1000)return "heading";
-  return "";
+  evidence.headingMs=disagree?now-ep.headingDisagreedAt:0;
+  evidence.memoryDanger=memoryDangerAhead(sample,movement);
+  if(evidence.stalled)evidence.trigger="stall";
+  else if(evidence.memoryDanger)evidence.trigger="memory_danger";
+  else if(disagree && evidence.headingMs>2000 && evidence.pathProgressCm<=0)evidence.trigger="heading";
+  return evidence;
 }
 NpcKeys::KeyState mixTeacher(Episode& ep,const NavDemoWriter::Snapshot& sample,NpcKeys::KeyState learner) {
   const auto now=sample.gameMs;
-  const auto* trigger=ep.dagger?daggerTrigger(ep,sample,learner):"";
+  const auto learnerKeys=learner;
+  const auto evidence=ep.dagger?daggerTrigger(ep,sample,learner):DaggerEvidence{};
+  const auto* trigger=evidence.trigger;
   if(ep.dagger && now>=ep.teacherUntil && trigger[0]!='\0') {
-    ep.teacherUntil=now+uint64_t(std::uniform_int_distribution<unsigned>(10,20)(ep.mixingRng))*100;
+    ep.teacherUntil=now+1000;
     ep.takeoverReason=trigger;++ep.daggerInterventions;
   }
   const bool held=ep.dagger && now<ep.teacherUntil;
@@ -1269,7 +1327,14 @@ NpcKeys::KeyState mixTeacher(Episode& ep,const NavDemoWriter::Snapshot& sample,N
   if(ep.dagger && ep.samples.is_open()) {
     ep.samples<<"{\"time_ms\":"<<now<<",\"elapsed_ms\":"<<now-ep.began
               <<",\"teacher_control\":"<<ep.teacherControlled<<",\"maneuver_mask\":"<<ep.maneuverMasked
-              <<",\"dart\":"<<dart<<",\"takeover\":"<<std::quoted(ep.takeoverReason)<<"}\n";
+              <<",\"dart\":"<<dart<<",\"takeover\":"<<std::quoted(ep.takeoverReason)
+              <<",\"learner_keys\":["<<learnerKeys.forward<<','<<learnerKeys.strafe<<','<<learnerKeys.turn
+              <<','<<int(learnerKeys.walk)<<','<<int(learnerKeys.jump)<<','<<int(learnerKeys.climb)<<']'
+              <<",\"trigger\":"<<std::quoted(trigger)<<",\"stall\":"<<evidence.stalled
+              <<",\"memory_danger\":"<<evidence.memoryDanger<<",\"heading_cosine\":"<<evidence.headingCosine
+              <<",\"heading_disagreement_ms\":"<<evidence.headingMs
+              <<",\"teacher_path_progress_cm\":"<<evidence.pathProgressCm
+              <<",\"progress_window_ms\":"<<evidence.progressWindowMs<<"}\n";
     if(!ep.samples)throw std::runtime_error("navdemos DAgger sample write failed");
   }
   ep.maneuverMaskedDecisions+=ep.maneuverMasked;

@@ -17,6 +17,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -231,6 +232,95 @@ struct Observation final {
       }
     }
   };
+
+void replayActions(const std::string& weights,const std::string& samples,
+                   const std::string& metadata,const std::string& output) {
+  const NavPolicy policy(weights);
+  std::ifstream episodeFile(metadata);
+  require(bool(episodeFile),"cannot open replay episode metadata");
+  const std::string text{std::istreambuf_iterator<char>(episodeFile),std::istreambuf_iterator<char>()};
+  rapidjson::Document episode;episode.Parse(text.c_str());
+  require(!episode.HasParseError() && episode.IsObject(),"invalid replay episode JSON");
+  require(episode.HasMember("mixing_seed") && episode["mixing_seed"].IsUint64(),"missing replay mixing seed");
+  require(episode.HasMember("decisions") && episode["decisions"].IsUint64(),"missing replay decision count");
+  require(episode.HasMember("action_mode") && episode["action_mode"].IsString() &&
+          std::string(episode["action_mode"].GetString())=="sample","replay requires sampled learner actions");
+  require(episode.HasMember("eye_layout") && episode["eye_layout"].IsArray() &&
+          episode["eye_layout"].Size()==NavDemoWriter::rayCount,"replay eye layout mismatch");
+  std::vector<std::array<float,3>> layout;
+  for(const auto& row:episode["eye_layout"].GetArray()) {
+    require(row.IsArray() && row.Size()==3,"replay eye layout row mismatch");
+    std::array<float,3> ray;
+    for(size_t i=0;i<ray.size();++i) {
+      require(row[rapidjson::SizeType(i)].IsNumber(),"invalid replay eye layout scalar");
+      ray[i]=row[rapidjson::SizeType(i)].GetFloat();
+      require(std::isfinite(ray[i]),"non-finite replay eye layout scalar");
+      }
+    require(ray[2]>0,"invalid replay eye range");
+    layout.push_back(ray);
+    }
+  struct Stream final {
+    gzFile file;
+    ~Stream() {if(file)gzclose(file);}
+    } stream{gzopen(samples.c_str(),"rb")};
+  require(stream.file!=nullptr,"cannot open replay NAVDEMO");
+  const auto bytes=[&](std::vector<uint8_t>& data) {
+    require(data.size()<=size_t(std::numeric_limits<int>::max()),"oversized replay NAVDEMO block");
+    require(gzread(stream.file,data.data(),unsigned(data.size()))==int(data.size()),"truncated replay NAVDEMO");
+    };
+  std::vector<uint8_t> raw(NavDemoWriter::headerBytes);bytes(raw);
+  require(std::memcmp(raw.data(),"NAVDEMO\0",8)==0,"invalid replay NAVDEMO magic");
+  Cursor header(raw);
+  header.current+=8;
+  const auto version=header.u32();
+  // DAgger4 records the V3 familiar byte for inspection; HD still reads the
+  // identical V2 road fields and ignores that additional memory channel.
+  const bool hdJourneyRecording=version==3 && policy.navDemoVersion()==2 &&
+                                policy.weightVersion()==3 && policy.navigationMemoryVersion()==4;
+  require(version>=1 && version<=3 && (version==policy.navDemoVersion() || hdJourneyRecording),
+          "replay NAVDEMO version mismatch");
+  require(header.u32()==NavDemoWriter::recordBytesForVersion(version) &&
+          header.u32()==NavDemoWriter::rayCount && header.u32()==NavDemoWriter::nearSize &&
+          header.u32()==NavDemoWriter::farSize && header.u32()==100,"replay NAVDEMO header mismatch");
+  raw.resize(NavDemoWriter::recordBytesForVersion(version));
+  std::ofstream out(output);
+  require(bool(out),"cannot create replay action output");
+  out<<std::boolalpha;
+  std::mt19937_64 rng(episode["mixing_seed"].GetUint64());
+  NavPolicy::State state;
+  Observation observation;
+  uint64_t previousMs=0;
+  const uint64_t decisions=episode["decisions"].GetUint64();
+  for(uint64_t step=0;step<decisions;++step) {
+    bytes(raw);observation.decode(raw,layout,version);
+    require(step==0 || (observation.snapshot.gameMs>previousMs && observation.snapshot.gameMs-previousMs==100),
+            "replay decisions must be exactly 100 ms apart");
+    previousMs=observation.snapshot.gameMs;
+    const auto result=policy.step(observation.snapshot,state);
+    std::array<size_t,NavPolicy::headCount> indices={};
+    // Keep the arithmetic and RNG draws identical to navdemos.cpp::select.
+    for(size_t i=0;i<policy.actionHeadCount();++i) {
+      const auto& head=result.logits[i];
+      const double temperature=policy.headTemperature(i);
+      const double maximum=*std::max_element(head.begin(),head.end())/temperature;
+      std::vector<double> probabilities;double total=0;
+      for(float value:head) {probabilities.push_back(std::exp(double(value)/temperature-maximum));total+=probabilities.back();}
+      const double draw=std::uniform_real_distribution<double>(0.,total)(rng);
+      double cumulative=0;indices[i]=probabilities.size()-1;
+      for(size_t j=0;j<probabilities.size();++j) {
+        cumulative+=probabilities[j];if(draw<cumulative) {indices[i]=j;break;}
+        }
+      }
+    const bool jump=policy.weightVersion()>=2 ? indices[4]==1 : indices[4]!=0;
+    const bool climb=policy.weightVersion()>=2 ? indices[4]==2 : indices[5]!=0;
+    out<<"{\"time_ms\":"<<previousMs<<",\"learner_keys\":{\"forward\":"<<int(indices[0])-1
+       <<",\"strafe\":"<<int(indices[1])-1<<",\"turn\":"<<int(indices[2])-1
+       <<",\"walk\":"<<(indices[3]!=0)<<",\"jump\":"<<jump<<",\"climb\":"<<climb<<"}}\n";
+    }
+  require(gzgetc(stream.file)==-1 && gzeof(stream.file),"trailing or damaged replay NAVDEMO payload");
+  out.close();require(bool(out),"cannot finish replay action output");
+  std::cout<<"{\"replay\":\"navpolicy_actions\",\"decisions\":"<<decisions<<"}\n";
+  }
 
 struct Fixture final {
   gzFile stream=nullptr;
@@ -562,6 +652,10 @@ void benchmark(const std::string& weights,const std::string& path,size_t npcs,si
 
 int main(int argc,char** argv) {
   try {
+    if(argc==6 && std::string(argv[1])=="--replay-actions") {
+      replayActions(argv[2],argv[3],argv[4],argv[5]);
+      return 0;
+      }
     if(argc==3 && std::string(argv[1])=="--memory") {
       memoryContract(argv[2]);
       return 0;
@@ -584,6 +678,7 @@ int main(int argc,char** argv) {
       }
     std::cerr<<"usage: gothic-navpolicy-contract WEIGHTS FIXTURE\n"
              <<"       gothic-navpolicy-contract --memory WEIGHTS\n"
+             <<"       gothic-navpolicy-contract --replay-actions WEIGHTS SAMPLES.bin.gz EPISODE.json OUTPUT.jsonl\n"
              <<"       gothic-navpolicy-contract --benchmark WEIGHTS FIXTURE [--npcs 20] [--decisions 2000]\n";
     return 2;
     }

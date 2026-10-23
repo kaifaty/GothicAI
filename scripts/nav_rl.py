@@ -9,7 +9,7 @@ measurement are separate commands so a measured test set cannot be reselected.
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 from copy import copy
 import csv
@@ -720,6 +720,187 @@ def dagger_control_metrics(root):
 
     return dict(all=summary(groups["all"]),
                 by_family={family: summary(counts) for family, counts in sorted(groups.items()) if family != "all"})
+
+
+def dagger_threshold_replay(steps):
+    """Replay new takeovers on fixed observations with recovered learner keys.
+
+    The changed hold schedule cannot reuse recorded beta draws: beta steps are
+    their expectation (0.1) on unheld decisions. DART hold extensions are omitted.
+    """
+    reasons = ("stall", "memory_danger", "heading")
+    history, counts = deque(), Counter()
+    previous_commanded, disagreement, held_until, held_reason = False, None, -1, ""
+
+    def arc(position, path):
+        best_distance, best_arc, offset = math.inf, 0., 0.
+        for first, second in zip(path, path[1:]):
+            dx, dz = second[0] - first[0], second[1] - first[1]
+            length2 = dx * dx + dz * dz
+            if not length2:
+                continue
+            fraction = max(0., min(1., ((position[0] - first[0]) * dx
+                                       + (position[1] - first[1]) * dz) / length2))
+            distance = ((position[0] - first[0] - fraction * dx) ** 2
+                        + (position[1] - first[1] - fraction * dz) ** 2)
+            if distance < best_distance:
+                best_distance, best_arc = distance, offset + fraction * math.sqrt(length2)
+            offset += math.sqrt(length2)
+        return best_arc
+
+    for step in steps:
+        counts["decisions"] += 1
+        counts["recovered_teacher_step_proposals"] += step["was_teacher_controlled"]
+        now, position, movement = step["time_ms"], step["position"], step["movement"]
+        moving = bool(movement[0] or movement[1])
+        history.append((now, position, previous_commanded, step["teacher_path"]))
+        previous_commanded = moving
+        while len(history) > 1 and history[1][0] <= now - 2000:
+            history.popleft()
+        complete = now - history[0][0] >= 2000
+        commanded = sum(second[0] - first[0] for first, second in zip(history, list(history)[1:]) if second[2])
+        stalled = moving and complete and commanded >= 2000 and math.dist(position, history[0][1]) < 30
+        teacher = step["teacher_direction"]
+        teacher_length = math.hypot(*teacher)
+        disagree = moving and teacher_length > 0 and (movement[0] * teacher[0] + movement[1] * teacher[1]) < -.5 * teacher_length
+        if not disagree:
+            disagreement = None
+        elif disagreement is None:
+            disagreement = now
+        progress = complete and arc(position, history[0][3]) > arc(history[0][1], history[0][3])
+        candidates = (stalled, moving and step["danger"], disagree and now - disagreement > 2000 and not progress)
+        for reason, candidate in zip(reasons, candidates):
+            counts["candidate_" + reason] += candidate
+        trigger = next((reason for reason, candidate in zip(reasons, candidates) if candidate), "")
+        if now >= held_until and trigger:
+            held_until, held_reason = now + 1000, trigger
+            counts["interventions_" + trigger] += 1
+        if now < held_until:
+            counts["steps_" + held_reason] += 1
+        else:
+            counts["steps_beta"] += .1
+    return counts
+
+
+def dagger_calibrate(args):
+    """Read recordings once in bounded chunks; never modify the source corpus."""
+    import numpy as np
+    import subprocess
+    if sys.platform != "linux":
+        raise ValueError("Run navigation calibration on Ryzen/Linux under gq")
+    if args.runner is None or args.weights is None:
+        raise ValueError("DAgger calibration requires --runner policy contract binary and --weights")
+    demos = module("nav_demos")
+    coordinates = (np.arange(64) + .5 - 32) * 25
+    right, forward = np.meshgrid(coordinates, coordinates)
+    groups = defaultdict(Counter)
+    verification = Counter()
+    episodes = 0
+    with args.weights.open("rb") as stream:
+        weights_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+
+    def steps(directory, episode):
+        if episode["weights_sha256"] != weights_sha256:
+            raise ValueError(f"DAgger calibration weights differ: {directory}")
+        actions = np.loadtxt(directory / "actions.txt", ndmin=2)
+        samples = list(rows(directory / "samples.jsonl"))
+        if len(actions) != len(samples) + 1 or len(samples) != episode["decisions"]:
+            raise ValueError(f"DAgger calibration action/sample counts differ: {directory}")
+        replay_path = args.output / "replayed-actions" / episode["family"] / episode["id"] / (directory.name + ".jsonl")
+        replay_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run([str(args.runner), "--replay-actions", str(args.weights), str(directory / "samples.bin.gz"),
+                        str(directory / "episode.json"), str(replay_path)], check=True)
+        recovered = list(rows(replay_path))
+        if len(recovered) != len(samples):
+            raise ValueError(f"Native learner replay count differs: {directory}")
+        plans = {value["elapsed_ms"]: value for value in rows(directory / "teacher-paths.jsonl")}
+        index = 0
+        for chunk in demos.iter_chunks(directory, chunk_records=32):
+            for record in chunk:
+                sample = samples[index]
+                if int(record["time_ms"]) != sample["time_ms"] or actions[index, 0] != sample["elapsed_ms"]:
+                    raise ValueError(f"DAgger calibration timestamps differ: {directory}")
+                x, _, z = (float(value) for value in record["position_cm"])
+                yaw = math.radians(float(record["body_yaw_deg"]))
+                cosine, sine = math.cos(yaw), math.sin(yaw)
+                keys = record["keys"]
+                def movement(forward_key, strafe):
+                    return (float(np.sign(strafe)), 0.) if strafe else (0., float(np.sign(forward_key)))
+                proposal = recovered[index]
+                learner = proposal["learner_keys"]
+                if proposal["time_ms"] != sample["time_ms"]:
+                    raise ValueError(f"Native learner replay timestamp differs: {directory}")
+                if not sample["teacher_control"]:
+                    verification["compared_learner_steps"] += 1
+                    mismatch = any(learner[head] != actions[index, column + 1] for column, head in enumerate(HEADS))
+                    verification["mismatching_learner_steps"] += mismatch
+                    if mismatch:
+                        raise ValueError(f"Native learner replay differs on observed student step {index}: {directory}")
+                direction = movement(learner["forward"], learner["strafe"])
+                teacher = movement(keys["forward"], keys["strafe"])
+                path = [(x, z)]
+                if episode["teacher_version"] == 3:
+                    plan = plans[sample["elapsed_ms"]]["local_plan_cm"]
+                    path.extend((x + ahead * cosine - side * sine, z + ahead * sine + side * cosine) for side, ahead in plan)
+                    if keys["forward"] >= 0 and keys["strafe"] == 0:
+                        teacher = next(((side, ahead) for side, ahead in plan if math.hypot(side, ahead) > 1), teacher)
+                else:
+                    corner = record["teacher_hint"]["next_corner_cm"]
+                    dx, dz = float(corner[0]) - x, float(corner[2]) - z
+                    path.append((float(corner[0]), float(corner[2])))
+                    if math.hypot(dx, dz) >= 1:
+                        teacher = (-dx * sine + dz * cosine, dx * cosine + dz * sine)
+                channels = record["memory_near"]["channels"]
+                along = right * direction[0] + forward * direction[1]
+                across = np.abs(right * direction[1] - forward * direction[0])
+                velocity = record["body"]["velocity_cm_s"]
+                danger = bool(np.any(((channels[:, :, 5] >= 128) | (channels[:, :, 4] >= 128))
+                    & (along > 0) & (along <= 100) & (across <= 15 + 25 * .707107)
+                    & (right * velocity[0] + forward * velocity[2] > 0)))
+                yield dict(time_ms=sample["elapsed_ms"], position=(x, z), movement=direction,
+                           teacher_direction=teacher, teacher_path=path, danger=danger,
+                           was_teacher_controlled=sample["teacher_control"])
+                index += 1
+        if index != len(samples):
+            raise ValueError(f"DAgger calibration NAVDEMO count differs: {directory}")
+
+    for source in sorted(args.source.glob("dagger/*/*/seed-*/episode.json")):
+        episode = read_json(source)
+        result = dagger_threshold_replay(steps(source.parent, episode))
+        result["episodes"] = 1
+        for family in ("all", episode["family"]):
+            groups[family].update(result)
+        episodes += 1
+        print(json.dumps(dict(calibrated=episodes, family=episode["family"], id=episode["id"])), flush=True)
+    if not episodes:
+        raise ValueError(f"No DAgger episodes in {args.source}")
+
+    def summary(counts):
+        count = counts["decisions"]
+        by_reason = {reason: dict(interventions=counts["interventions_" + reason],
+            candidate_decisions=counts["candidate_" + reason], decisions=counts["steps_" + reason],
+            fraction_all_decisions=counts["steps_" + reason] / count)
+            for reason in ("stall", "memory_danger", "heading", "beta")}
+        teacher = sum(value["decisions"] for value in by_reason.values())
+        return dict(episodes=counts["episodes"], decisions=count,
+            recovered_teacher_step_proposals=counts["recovered_teacher_step_proposals"],
+            state_interventions=sum(value["interventions"] for value in by_reason.values()),
+            state_teacher_decisions=sum(by_reason[reason]["decisions"] for reason in ("stall", "memory_danger", "heading")),
+            estimated_teacher_decisions=teacher, estimated_teacher_fraction=teacher / count, by_reason=by_reason)
+
+    output = dict(approximate=True, source=str(args.source),
+        assumptions=["Fixed recorded trajectories and observations; changed control would produce different states.",
+            "Frozen HD native inference recovers pre-mix learner proposals on all recorded states; GRU and sampling seed are replayed per episode.",
+            "Beta is its expected 0.1 share of unheld steps; recorded beta draws do not apply to the changed hold schedule.",
+            "DART-induced hold extensions are omitted.",
+            "v2 teacher path progress uses recorded next corner only; v3 uses the full recorded local polyline."],
+        baseline=dagger_control_metrics(args.source),
+        native_replay_verification=dict(verification),
+        estimate=dict(all=summary(groups["all"]), by_family={family: summary(counts)
+            for family, counts in sorted(groups.items()) if family != "all"}))
+    write_json(args.output / "calibration.json", output)
+    print(json.dumps(output, ensure_ascii=False), flush=True)
+    return output
 
 
 def drive_dagger(args):
@@ -1797,7 +1978,7 @@ def death_smoke(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("generate", "qualify", "drive", "population", "check", "summarize", "history", "compare", "equivalence", "death-smoke"))
+    parser.add_argument("command", choices=("generate", "qualify", "drive", "population", "check", "summarize", "history", "compare", "equivalence", "death-smoke", "dagger-calibrate"))
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--pairs", type=Path)
     parser.add_argument("--manifest", type=Path, help="Frozen v4 corpus manifest; drive reads splits.validation only")
@@ -1873,7 +2054,7 @@ def main():
             and args.pairs is None and args.manifest is None and args.detour_scenarios is None
             and args.dagger_scenarios is None):
         parser.error("--pairs is required")
-    if args.command in ("check", "summarize", "compare") and args.source is None:
+    if args.command in ("check", "summarize", "compare", "dagger-calibrate") and args.source is None:
         parser.error("--source is required")
     if args.command == "compare" and args.reference is None:
         parser.error("--reference is required")
@@ -1881,7 +2062,7 @@ def main():
         parser.error("population requires episodes >= N; near hero mode requires N=1")
     try:
         {"generate": generate, "qualify": qualify, "drive": drive, "population": population,
-         "check": check, "summarize": summarize, "history": history, "compare": compare, "equivalence": equivalence, "death-smoke": death_smoke}[args.command](args)
+         "check": check, "summarize": summarize, "history": history, "compare": compare, "equivalence": equivalence, "death-smoke": death_smoke, "dagger-calibrate": dagger_calibrate}[args.command](args)
     except (ValueError, OSError, RuntimeError, KeyError) as exc:
         parser.exit(1, f"nav-rl: {exc}\n")
 

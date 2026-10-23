@@ -852,6 +852,23 @@ def test_dagger_control_metrics_preserve_student_and_masked_decisions(monkeypatc
     with pytest.raises(ValueError, match="teacher_control_decisions count differs"):
         rl.dagger_control_metrics(root)
 
+    # Offline estimates use recovered learner proposals on the recorded path.
+    def replay_steps(progress=False, danger=False):
+        for index in range(41):
+            x = index * (10 if progress else -10)
+            yield dict(time_ms=index * 100, position=(x, 0), movement=(0, -1),
+                       teacher_direction=(0, 1), teacher_path=[(x, 0), (x + 500, 0)],
+                       danger=danger and index == 0, was_teacher_controlled=index % 2 == 0)
+    replay = rl.dagger_threshold_replay(replay_steps())
+    assert replay["recovered_teacher_step_proposals"] == 21
+    assert replay["interventions_heading"] == 2
+    assert replay["steps_heading"] == 20
+    assert replay["steps_beta"] == pytest.approx(2.1)
+    assert rl.dagger_threshold_replay(replay_steps(progress=True))["interventions_heading"] == 0
+    danger_replay = rl.dagger_threshold_replay(replay_steps(progress=True, danger=True))
+    assert danger_replay["interventions_memory_danger"] == 1
+    assert danger_replay["steps_memory_danger"] == 10  # Exactly one second.
+
 
 def test_lean_validation_commands_disable_recording_for_every_family(tmp_path, monkeypatch):
     manifest, groups = validation_manifest(tmp_path)
