@@ -494,7 +494,8 @@ def load_training_manifest(path: Path, source: Path) -> tuple[dict[str, Any], li
 def prepare_manifest(source: Path, output: Path, manifest_path: Path,
                      chunk_records: int = 32, input_variant: str = "compact",
                      dagger_sources: list[Path] | None = None,
-                     maneuver_links: Path | None = None) -> dict[str, Any]:
+                     maneuver_links: Path | None = None,
+                     episode_range: tuple[int, int] | None = None) -> dict[str, Any]:
     """Prepare the manifest's frozen training population without held-out reads."""
     dagger_sources = dagger_sources or []
     if any(not path.is_absolute() for path in
@@ -554,6 +555,13 @@ def prepare_manifest(source: Path, output: Path, manifest_path: Path,
                                  navdemo_version=3, memory_version=4))
     if dagger_sources:
         navdemo_version, memory_version = 3, 4
+    total_episodes = len(episodes)
+    if episode_range is not None:
+        start, stop = episode_range
+        if (type(start) is not int or type(stop) is not int
+                or not 0 <= start < stop <= total_episodes):
+            raise ValueError(f"invalid preparation episode range {episode_range}: {total_episodes} available")
+        episodes = episodes[start:stop]
     preprocessing = BC4_PREPROCESSING if familiar else HD_PREPROCESSING if hd else PREPROCESSING
     if hd and not familiar and memory_version == 4:
         preprocessing = {**preprocessing, "navigation_memory_version": 4}
@@ -573,6 +581,8 @@ def prepare_manifest(source: Path, output: Path, manifest_path: Path,
                                  "teacher_versions": [1, 2], "memory_teacher_hints_excluded": True},
                       "true_map": {"available": False, "reason": f"not recorded in NAVDEMO v{navdemo_version}"}},
     }
+    if episode_range is not None:
+        index["preparation_range"] = dict(start=start, stop=stop, total=total_episodes)
     common_layout, changes, decisions = None, 0, 0
     (output / "episodes").mkdir(parents=True, exist_ok=True)
     cache_bytes = sum(path.stat().st_size for path in output.rglob("*") if path.is_file()) if hd else 0

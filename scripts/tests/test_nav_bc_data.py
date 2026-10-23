@@ -459,6 +459,25 @@ def test_compact_v5_manifest_uses_supplied_root_and_only_eligible_train(tmp_path
     assert not cached["labels"][:, 4].any()
     teacher = data.load_cached(hd_output / hd_index["episodes"][0]["file"])
     assert not teacher["maneuver_valid"].any()
+    chunk_output = tmp_path / "hd-chunk"
+    original_chunks = demos.iter_chunks
+    def selected_chunks(samples, chunk_records):
+        assert samples.parent == dagger
+        return original_chunks(samples, chunk_records)
+    with monkeypatch.context() as storage:
+        storage.setattr(data.shutil, "disk_usage", lambda path: SimpleNamespace(free=32 * 1024**3))
+        storage.setattr(demos, "iter_chunks", selected_chunks)
+        chunk = data.prepare_manifest(source, chunk_output, path, input_variant="hd", chunk_records=1,
+            dagger_sources=[tmp_path / "dagger"], maneuver_links=links, episode_range=(1, 2))
+        for invalid_range in ((2, 2), (0, 3)):
+            with pytest.raises(ValueError, match="episode range"):
+                data.prepare_manifest(source, tmp_path / "invalid-chunk", path, input_variant="hd",
+                    dagger_sources=[tmp_path / "dagger"], maneuver_links=links, episode_range=invalid_range)
+    assert chunk["preparation_range"] == {"start": 1, "stop": 2, "total": 2}
+    assert chunk["episodes"] == [hd_index["episodes"][1]]
+    assert chunk["splits"]["train"] == {"pairs": 1, "episodes": 1, "steps": 2}
+    assert list((chunk_output / "episodes").glob("*.npz")) == [chunk_output / entry["file"]]
+    assert not (tmp_path / "invalid-chunk").exists()
 
 
 @pytest.mark.parametrize("input_variant", ["compact", "hd", "hd-familiar"])

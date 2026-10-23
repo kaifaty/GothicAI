@@ -3,18 +3,90 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ $# == 1 && ( "$1" == --help || "$1" == -h ) ]]; then
-  echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke | calibrate | collect-r1 PHASE (1..6)'
+  echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke | calibrate | train-r1 | collect-r1 PHASE (1..6)'
   exit 0
 fi
 stage="${1:-}"
 phase="${2:-}"
-if ! { [[ $# == 1 && ( "$stage" == smoke || "$stage" == calibrate ) ]] || [[ $# == 2 && "$stage" == collect-r1 && "$phase" =~ ^[1-6]$ ]]; }; then
-  echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke | calibrate | collect-r1 PHASE (1..6)' >&2
+if ! { [[ $# == 1 && ( "$stage" == smoke || "$stage" == calibrate || "$stage" == train-r1 ) ]] || [[ $# == 2 && "$stage" == collect-r1 && "$phase" =~ ^[1-6]$ ]]; }; then
+  echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke | calibrate | train-r1 | collect-r1 PHASE (1..6)' >&2
   exit 2
 fi
 export GQ_OWNER=nav-dagger4
 task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-dagger4" "$HOME"')"
 archive=/mnt/shared/gothic-ai/nav-dagger4
+if [[ "$stage" == train-r1 ]]; then
+  ssh ryzen "bash -s -- '$task' '$archive'" <<'TRAIN_INPUTS'
+set -euo pipefail
+task="$1"; archive="$2"
+df -h "$HOME" /mnt/shared
+test -x "$task/.venv/bin/python"
+test -x "$task/build/opengothic/gothic-body-runner"
+test -x "$task/build/opengothic/gothic-navpolicy-contract"
+test ! -e "$archive/round1/run/last.pt"
+for phase in 1 2 3 4 5 6; do test -f "$archive/round1/phase-$phase/passed"; done
+test -f "$HOME/gothic-ai/nav-demos-v4/manifest.json"
+test -f /mnt/shared/gothic-ai/nav-demos-v5/manifest.json
+mkdir -p "$task/input" "$task/tmp" "$task/hot-cache" "$archive/input/hd" "$archive/logs" "$archive/round1/validation/setup-rejections"
+copy_input() { if [[ -f "$2" ]]; then cmp "$1" "$2"; else cp "$1" "$2"; fi; }
+copy_input "$HOME/gothic-ai/nav-dagger3/hd-run/last.pt" "$archive/input/hd/last.pt"
+copy_input "$HOME/gothic-ai/nav-dagger3/hd-run/policy.navbc" "$archive/input/hd/policy.navbc"
+copy_input "$HOME/gothic-ai/nav-bc3/run/it35/policy.navbc" "$archive/input/bc3.navbc"
+for name in fixtures.json object-probes.jsonl detour-val.jsonl; do
+  copy_input "$HOME/gothic-ai/nav-demos-v5/input/$name" "$task/input/$name"
+done
+cmp "$task/input/detour-val.jsonl" "$HOME/gothic-ai/nav-dagger3/detours/detour-val.jsonl"
+for source in "$HOME/gothic-ai/nav-dagger3/hd-validation/setup-rejections/"*.json; do
+  copy_input "$source" "$archive/round1/validation/setup-rejections/$(basename "$source")"
+done
+for mode in ordinary jump; do
+  mkdir -p "$task/validation-cache/$mode"
+  for source in "$HOME/gothic-ai/nav-dagger3/hd-measure-cache/$mode/"*.navmesh; do
+    copy_input "$source" "$task/validation-cache/$mode/$(basename "$source")"
+  done
+done
+python3 - "$task" "$archive" <<'TRAIN_CHECK'
+from collections import Counter
+import json
+from pathlib import Path
+import shutil
+import sys
+task, archive = map(Path, sys.argv[1:])
+if shutil.disk_usage(task).free < 50 * 1024**3:
+    raise ValueError("Round 1 training needs 50 GiB free including its cache reserve")
+events = [json.loads(line) for line in (archive / "logs/collection-chain.log").read_text().splitlines()]
+if events[-1] != dict(event="dagger4_chain_complete", phase=6):
+    raise ValueError("Round 1 collection chain has not completed phase 6")
+all_counts, families, phases = Counter(), {}, []
+for number in range(1, 7):
+    metrics = json.loads((archive / f"round1/phase-{number}/control-metrics.json").read_text())
+    if metrics["all"]["episodes"] != 100:
+        raise ValueError("Every round 1 phase must contain 100 completed train episodes")
+    phases.append(dict(phase=number, **metrics))
+    for key in ("episodes", "decisions", "teacher_control_decisions"):
+        all_counts[key] += metrics["all"][key]
+    for family, values in metrics["by_family"].items():
+        counts = families.setdefault(family, Counter())
+        for key in ("episodes", "decisions", "teacher_control_decisions", "dagger_interventions", "dart_decisions"):
+            counts[key] += values[key]
+        for reason, value in values["by_reason"].items():
+            counts[reason] += value["decisions"]
+if (all_counts["episodes"], all_counts["decisions"], all_counts["teacher_control_decisions"]) != (600, 568845, 188259):
+    raise ValueError("Round 1 frozen collection totals differ")
+def summary(counts):
+    return dict(counts, teacher_control_fraction=counts["teacher_control_decisions"] / counts["decisions"])
+result = dict(all=summary(all_counts), by_family={key: summary(value) for key, value in families.items()}, by_phase=phases)
+(archive / "round1/control-metrics.json").write_text(json.dumps(result, indent=2) + "\n")
+print(json.dumps(dict(event="dagger4_round1_collection_verified", all=result["all"], by_family=result["by_family"])))
+TRAIN_CHECK
+TRAIN_INPUTS
+  rsync -rt --no-links --exclude=__pycache__ "$ROOT/scripts/" "ryzen:$task/source/scripts/"
+  rsync -rt --no-links "$ROOT/reports/navigation/2026-10-22-demos-v5/manifest.json" "ryzen:$task/input/v5-compact.json"
+  "$ROOT/scripts/gq" submit --class batch --threads 6 --cpu-quota 600% --mem 16G --max 2h \
+    --name 'nav dagger4 round1 prepare v4 part 1/7' -- "$task/.venv/bin/python" -B -I \
+    "$task/source/scripts/nav_dagger4_round.py" --task "$task" --step 0
+  exit
+fi
 if [[ "$stage" == collect-r1 || "$stage" == calibrate ]]; then
   ssh ryzen "bash -s -- '$task' '$archive' '$stage' '$phase'" <<'ROUND_INPUTS'
 set -euo pipefail
