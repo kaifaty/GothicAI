@@ -680,6 +680,48 @@ def dagger_scenarios(path):
     return result
 
 
+def dagger_control_metrics(root):
+    """Count every visited decision, including masked labels and DART steps."""
+    reasons = ("beta", "stall", "memory_danger", "heading")
+    groups = defaultdict(lambda: Counter({reason: 0 for reason in reasons}))
+    for path in sorted(Path(root).glob("dagger/*/*/seed-*/episode.json")):
+        episode = read_json(path)
+        family = episode["family"]
+        counts = Counter(episodes=1, dagger_interventions=episode["dagger_interventions"])
+        for sample in rows(path.parent / "samples.jsonl"):
+            controlled, dart, masked = (sample[key] for key in ("teacher_control", "dart", "maneuver_mask"))
+            reason = sample["takeover"]
+            if (any(type(value) is not bool for value in (controlled, dart, masked))
+                    or (controlled and reason not in reasons) or (not controlled and (reason or dart))):
+                raise ValueError(f"Invalid DAgger control metadata: {path.parent}")
+            counts["decisions"] += 1
+            counts["teacher_control_decisions"] += controlled
+            counts["dart_decisions"] += dart
+            counts["maneuver_masked_decisions"] += masked
+            if controlled:
+                counts[reason] += 1
+        for key in ("decisions", "teacher_control_decisions", "dart_decisions", "maneuver_masked_decisions"):
+            if counts[key] != episode[key]:
+                raise ValueError(f"DAgger {key} count differs: {path.parent}")
+        for group in ("all", family):
+            groups[group].update(counts)
+    if not groups:
+        raise ValueError(f"No DAgger episodes in {root}")
+
+    def summary(counts):
+        total, teacher = counts["decisions"], counts["teacher_control_decisions"]
+        return dict(episodes=counts["episodes"], decisions=total,
+            teacher_control_decisions=teacher, teacher_control_fraction=teacher / total if total else 0,
+            dagger_interventions=counts["dagger_interventions"], dart_decisions=counts["dart_decisions"],
+            maneuver_masked_decisions=counts["maneuver_masked_decisions"],
+            by_reason={reason: dict(decisions=counts[reason],
+                fraction_all_decisions=counts[reason] / total if total else 0,
+                fraction_teacher_decisions=counts[reason] / teacher if teacher else 0) for reason in reasons})
+
+    return dict(all=summary(groups["all"]),
+                by_family={family: summary(counts) for family, counts in sorted(groups.items()) if family != "all"})
+
+
 def drive_dagger(args):
     if args.action_mode != "sample":
         raise ValueError("DAgger collection requires softmax sampling")

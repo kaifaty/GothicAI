@@ -822,6 +822,37 @@ def test_dagger_commands_select_v3b_or_v2_without_changing_learner_sampling():
         rl.validation_commands(args, value, 43)
 
 
+def test_dagger_control_metrics_preserve_student_and_masked_decisions(monkeypatch):
+    root = Path("/virtual")
+    episodes = {}
+    samples = {}
+    for family, controls in (("water", ["memory_danger", "memory_danger", "beta", ""]),
+                             ("point", ["heading", "stall", "", ""])):
+        directory = root / "dagger" / family / "scenario" / "seed-7"
+        samples[directory / "samples.jsonl"] = [dict(teacher_control=bool(reason), takeover=reason,
+            dart=index == 0, maneuver_mask=index == 1) for index, reason in enumerate(controls)]
+        episodes[directory / "episode.json"] = dict(family=family, decisions=4,
+            teacher_control_decisions=sum(bool(reason) for reason in controls), dagger_interventions=2,
+            dart_decisions=1, maneuver_masked_decisions=1)
+    monkeypatch.setattr(Path, "glob", lambda path, pattern: iter(episodes))
+    monkeypatch.setattr(rl, "read_json", episodes.__getitem__)
+    monkeypatch.setattr(rl, "rows", lambda path: iter(samples[path]))
+    metrics = rl.dagger_control_metrics(root)
+    assert metrics["all"]["decisions"] == 8
+    assert metrics["all"]["teacher_control_decisions"] == 5
+    assert metrics["all"]["teacher_control_fraction"] == 5 / 8
+    assert metrics["all"]["dagger_interventions"] == 4
+    assert metrics["all"]["dart_decisions"] == 2
+    assert metrics["all"]["maneuver_masked_decisions"] == 2
+    assert metrics["by_family"]["water"]["teacher_control_fraction"] == 3 / 4
+    assert metrics["by_family"]["point"]["teacher_control_fraction"] == 1 / 2
+    reason = metrics["by_family"]["water"]["by_reason"]["memory_danger"]
+    assert reason == dict(decisions=2, fraction_all_decisions=1 / 2, fraction_teacher_decisions=2 / 3)
+    episodes[next(iter(episodes))]["teacher_control_decisions"] = 4
+    with pytest.raises(ValueError, match="teacher_control_decisions count differs"):
+        rl.dagger_control_metrics(root)
+
+
 def test_lean_validation_commands_disable_recording_for_every_family(tmp_path, monkeypatch):
     manifest, groups = validation_manifest(tmp_path)
     args = validation_drive_args(tmp_path, manifest, family=None)

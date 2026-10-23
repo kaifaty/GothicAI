@@ -3,13 +3,164 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ $# == 1 && ( "$1" == --help || "$1" == -h ) ]]; then
-  echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke'
+  echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke | collect-r1 PHASE (1..6)'
   exit 0
 fi
-[[ $# == 1 && "$1" == smoke ]] || { echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke' >&2; exit 2; }
+stage="${1:-}"
+phase="${2:-}"
+if ! { [[ $# == 1 && "$stage" == smoke ]] || [[ $# == 2 && "$stage" == collect-r1 && "$phase" =~ ^[1-6]$ ]]; }; then
+  echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke | collect-r1 PHASE (1..6)' >&2
+  exit 2
+fi
 export GQ_OWNER=nav-dagger4
 task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-dagger4" "$HOME"')"
 archive=/mnt/shared/gothic-ai/nav-dagger4
+if [[ "$stage" == collect-r1 ]]; then
+  ssh ryzen "bash -s -- '$task' '$archive' '$phase'" <<'ROUND_INPUTS'
+set -euo pipefail
+task="$1"; archive="$2"; phase="$3"
+df -h "$HOME" /mnt/shared
+test -f "$archive/smoke/passed"
+test -x "$task/build/opengothic/gothic-body-runner"
+test -x "$task/.venv/bin/python"
+test ! -e "$archive/round1/phase-$phase/passed"
+# One hundred full NAVDEMO episodes fit even at their uncompressed upper bound.
+python3 -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home()).free >= 70*1024**3, "Collection needs 70 GiB free including its reserve"'
+mkdir -p "$task/input" "$archive/round1" "$archive/logs"
+ROUND_INPUTS
+  rsync -rt --no-links --exclude=__pycache__ "$ROOT/scripts/" "ryzen:$task/source/scripts/"
+  ssh ryzen "'$task/.venv/bin/python' -B -I - '$task' '${task%/*}/nav-demos-v4' '${task%/*}/nav-demos-v5' '/mnt/shared/gothic-ai/nav-demos-v5'" <<'ROUND_SELECT'
+import json
+from collections import Counter
+from pathlib import Path
+import sys
+
+task, v4, v5, stored_v5 = map(Path, sys.argv[1:])
+# All input corpora are read-only. Only this task receives a frozen selection.
+sys.path.insert(0, str(task / "source/scripts"))
+import nav_demos_v4_collect as collect
+import nav_rl as rl
+
+nodes = rl.read_json(v5 / "knownroads/roads-graph.json")["nodes"]
+positions = collect.v3.load_start_positions(stored_v5 / "diagnostics/discovery/points-v3.jsonl")
+snapshots = list(rl.rows(v5 / "knownroads/roads-snapshots.jsonl"))
+recorded = {entry["id"] for entry in rl.read_json(stored_v5 / "recordings/collection-metrics.json")["episodes"]}
+counts = dict(point=100, object=100, approach=100, follow_below_gate=100, jump=102, water=98)
+# Native snapping maps these train routes onto too few distinct connected points.
+degenerate = {"follow-d790094b6039c0bf", "follow-3c00a35e82d9bfec"}
+selected = {}
+for family, count in counts.items():
+    pool = list(rl.rows(v5 / "recording-input" / f"{family}.jsonl"))
+    if family != "water":
+        old = {value["id"]: value for value in rl.rows(v4 / "recording-input" / f"{family}.jsonl")}
+        if old != {value["id"]: value for value in pool}:
+            raise ValueError(f"Frozen v4/v5 train pools differ: {family}")
+    if any(value.get("split") != "train" for value in pool):
+        raise ValueError(f"Held-out scenario in frozen train pool: {family}")
+    pool = [value for value in pool if value["id"] not in degenerate]
+    key = "place_id" if family == "object" else "site_id" if family == "jump" else "region"
+    unused = collect.balanced([value for value in pool if value["id"] not in recorded], key, seed=23102026)
+    used = collect.balanced([value for value in pool if value["id"] in recorded], key, seed=23102026)
+    take_unused = min(len(unused), count // 2)
+    take_used = min(len(used), count - take_unused)
+    take_unused = count - take_used
+    chosen = unused[:take_unused] + used[:take_used]
+    if len(chosen) != count:
+        raise ValueError(f"Insufficient train scenarios for {family}")
+    selected[family] = []
+    for original in collect.balanced(chosen, key, seed=23102026):
+        value = collect.resident_scenario(original, (nodes, positions, snapshots))
+        value.update(family=family, limit_ms=240000, dagger_round=1,
+                     unused_in_v5=original["id"] not in recorded)
+        if value["npc"] == value.get("target"):
+            raise ValueError("DAgger actor and moving target must differ")
+        selected[family].append(value)
+# Interleave families before cutting six mixed allocations.
+values = [selected[family][index] for index in range(max(counts.values()))
+          for family in counts if index < len(selected[family])]
+target = task / "input/round1-train.jsonl"
+rl.write_pairs(target, values)
+rl.dagger_scenarios(target)
+if len(values) != 600 or len({value["id"] for value in values}) != 600:
+    raise ValueError("Round 1 must contain 600 distinct train scenarios")
+for phase in range(6):
+    group = values[phase * 100:(phase + 1) * 100]
+    if len(group) != 100:
+        raise ValueError("Each collection phase must contain 100 scenarios")
+    print(json.dumps(dict(event="dagger4_round1_selection", phase=phase + 1, episodes=len(group),
+        by_family=dict(Counter(value["family"] for value in group)),
+        unused_in_v5=sum(value["unused_in_v5"] for value in group))))
+ROUND_SELECT
+  ssh ryzen "cat > '$task/collect-r1.sh'" <<'ROUND_PHASE'
+#!/usr/bin/env bash
+set -euo pipefail
+task="$(cd "$(dirname "$0")" && pwd)"
+archive=/mnt/shared/gothic-ai/nav-dagger4
+phase="${1:?phase}"
+output="$task/round1/phase-$phase"
+destination="$archive/round1/phase-$phase"
+exec > >(tee -a "$archive/logs/collect-r1-$phase.log") 2>&1
+export TMPDIR="$task/tmp" UV_CACHE_DIR="$HOME/.cache/uv"
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export OPENGOTHIC_BODY_TRACE=0 PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+export OPENGOTHIC_NAV_JOURNEY_MEMORY=1
+unset OPENGOTHIC_NAV_FAMILIAR_MAP
+cd "$task/source"
+python="$task/.venv/bin/python"
+df -h "$HOME" /mnt/shared
+"$python" -B -I -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home()).free >= 70*1024**3, "Collection needs 70 GiB free including its reserve"'
+indices="$("$python" -B -I -c 'import sys; phase=int(sys.argv[1]); print(",".join(map(str,range((phase-1)*100,phase*100))))' "$phase")"
+"$python" -B -I scripts/nav_rl.py drive --dagger-scenarios "$task/input/round1-train.jsonl" \
+  --indices "$indices" --runner "$task/build/opengothic/gothic-body-runner" \
+  --assets "$HOME/gothic-ai/game" --save "$task/input/save.sav" \
+  --cache "$task/smoke-cache" --links "$task/input/accepted-links.txt" \
+  --jump-links "$task/input/jump-links.txt" --roads "$task/input/places.json" \
+  --weights "$archive/smoke/policy.navbc" --output "$output" --physics cv --parallel 12 \
+  --teacher-beta 0.1 --action-mode sample --action-seeds 23102027 --limit-ms 240000 \
+  --watchdog-seconds 900 --resume
+"$python" -B -I - "$output" "$destination" "$task/input/round1-train.jsonl" <<'ROUND_ARCHIVE'
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+sys.path.insert(0, str(Path.cwd() / "scripts"))
+import nav_rl as rl
+
+source, target, selection = map(Path, sys.argv[1:])
+metrics = rl.dagger_control_metrics(source)
+if metrics["all"]["episodes"] != 100:
+    raise ValueError("Collection phase must finish all 100 selected train episodes")
+rl.write_json(source / "control-metrics.json", metrics)
+def hashes(root):
+    result = {}
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"Symlink in collection output: {path}")
+        if path.is_file():
+            with path.open("rb") as stream:
+                result[str(path.relative_to(root))] = hashlib.file_digest(stream, "sha256").hexdigest()
+    return result
+expected = hashes(source)
+target.mkdir(parents=True, exist_ok=True)
+subprocess.run(["rsync", "-rt", "--no-links", str(source) + "/", str(target) + "/"], check=True)
+if hashes(target) != expected:
+    raise ValueError("Collection archive checksum mismatch; retaining all local recordings")
+frozen = target.parent / "round1-train.jsonl"
+if not frozen.exists():
+    shutil.copyfile(selection, frozen)
+if frozen.read_bytes() != selection.read_bytes():
+    raise ValueError("Archived round selection differs")
+(target / "passed").write_text("100 train episodes; archive SHA256 verified\n")
+shutil.rmtree(source)
+print(json.dumps(dict(event="dagger4_round1_phase_complete", archive=str(target), **metrics)))
+ROUND_ARCHIVE
+ROUND_PHASE
+  "$ROOT/scripts/gq" submit --class batch --threads 18 --cpu-quota 1800% --mem 16G --max 2h \
+    --name "nav dagger4 round1 collect phase $phase/6" -- bash "$task/collect-r1.sh" "$phase"
+  exit
+fi
 ssh ryzen "bash -s -- '$task' '$archive'" <<'INPUTS'
 set -euo pipefail
 task="$1"; archive="$2"
