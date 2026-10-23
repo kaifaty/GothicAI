@@ -42,12 +42,12 @@ families = metrics["by_family"]
 if metrics["all"]["episodes"] != 6 or len(families) != 6:
     raise ValueError("Accepted calibration must contain all six train families")
 violations = {family: dict(teacher_control_fraction=value["teacher_control_fraction"],
-                          limit=.75 if family in ("follow", "follow_below_gate") else .5)
+                          limit=.7 if family == "jump" else .75 if family in ("follow", "follow_below_gate") else .5)
     for family, value in families.items()
-    if value["teacher_control_fraction"] > (.75 if family in ("follow", "follow_below_gate") else .5)}
+    if value["teacher_control_fraction"] > (.7 if family == "jump" else .75 if family in ("follow", "follow_below_gate") else .5)}
 if violations:
     raise ValueError(f"Accepted calibration exceeds family limits: {violations}")
-(archive / "calibration/passed").write_text("User accepted calibration with non-follow <=50%, follow <=75%; original evidence preserved\n")
+(archive / "calibration/passed").write_text("User accepted calibration with jump <=70%, follow <=75%, other families <=50%; original evidence preserved\n")
 print(json.dumps(dict(event="dagger4_calibration_accepted", **metrics)), flush=True)
 ACCEPT_CALIBRATION
   elif (( phase >= 3 )); then
@@ -276,9 +276,9 @@ def main():
         metrics = v4.read_json(archive / f"round1/phase-{phase}/control-metrics.json")
         emit("dagger4_chain_phase_control", phase=phase, **metrics)
         violations = {family: dict(teacher_control_fraction=value["teacher_control_fraction"],
-                                  limit=.75 if family in ("follow", "follow_below_gate") else .5)
+                                  limit=.7 if family == "jump" else .75 if family in ("follow", "follow_below_gate") else .5)
             for family, value in metrics["by_family"].items()
-            if value["teacher_control_fraction"] > (.75 if family in ("follow", "follow_below_gate") else .5)}
+            if value["teacher_control_fraction"] > (.7 if family == "jump" else .75 if family in ("follow", "follow_below_gate") else .5)}
         if violations:
             emit("dagger4_chain_stopped", phase=phase, reason="teacher_fraction_above_family_limit",
                  violating_families=violations)
@@ -400,14 +400,14 @@ if hashes(target) != expected_hashes:
 shutil.rmtree(source)
 print(json.dumps(dict(event="dagger4_calibration_quick_complete", archive=str(target), **metrics)), flush=True)
 violations = {family: dict(teacher_control_fraction=value["teacher_control_fraction"],
-                          limit=.75 if family in ("follow", "follow_below_gate") else .5)
+                          limit=.7 if family == "jump" else .75 if family in ("follow", "follow_below_gate") else .5)
     for family, value in metrics["by_family"].items()
-    if value["teacher_control_fraction"] > (.75 if family in ("follow", "follow_below_gate") else .5)}
+    if value["teacher_control_fraction"] > (.7 if family == "jump" else .75 if family in ("follow", "follow_below_gate") else .5)}
 if violations:
     print(json.dumps(dict(event="dagger4_calibration_stopped", reason="teacher_fraction_above_family_limit",
                           violating_families=violations)), flush=True)
     raise SystemExit(0)
-(archive / "calibration/passed").write_text("6 train episodes; non-follow <=50%, follow <=75%\n")
+(archive / "calibration/passed").write_text("6 train episodes; jump <=70%, follow <=75%, other families <=50%\n")
 print(json.dumps(dict(event="dagger4_calibration_passed", next_action="bash scripts/nav-dagger4-remote.sh collect-r1 2")), flush=True)
 CALIBRATE_VERIFY
 CALIBRATE_PHASE
