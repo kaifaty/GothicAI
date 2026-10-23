@@ -869,6 +869,19 @@ def test_dagger_control_metrics_preserve_student_and_masked_decisions(monkeypatc
     assert danger_replay["interventions_memory_danger"] == 1
     assert danger_replay["steps_memory_danger"] == 10  # Exactly one second.
 
+    # Standing within the follow band is valid even when movement is commanded.
+    def stationary_steps(distance, kind="follow"):
+        for index in range(21):
+            yield dict(time_ms=index * 100, position=(0, 0), movement=(0, 1),
+                       teacher_direction=(0, 1), teacher_path=[(0, 0), (500, 0)],
+                       danger=False, was_teacher_controlled=False,
+                       goal_kind=kind, target_distance_cm=distance)
+    for distance in (200, 350, 500):
+        assert rl.dagger_threshold_replay(stationary_steps(distance))["interventions_stall"] == 0
+    for distance in (199, 501):
+        assert rl.dagger_threshold_replay(stationary_steps(distance))["interventions_stall"] == 1
+    assert rl.dagger_threshold_replay(stationary_steps(350, kind="approach"))["interventions_stall"] == 1
+
 
 def test_lean_validation_commands_disable_recording_for_every_family(tmp_path, monkeypatch):
     manifest, groups = validation_manifest(tmp_path)

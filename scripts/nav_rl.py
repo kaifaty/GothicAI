@@ -759,7 +759,8 @@ def dagger_threshold_replay(steps):
             history.popleft()
         complete = now - history[0][0] >= 2000
         commanded = sum(second[0] - first[0] for first, second in zip(history, list(history)[1:]) if second[2])
-        stalled = moving and complete and commanded >= 2000 and math.dist(position, history[0][1]) < 30
+        follow_band = step.get("goal_kind") == "follow" and 200 <= step["target_distance_cm"] <= 500
+        stalled = not follow_band and moving and complete and commanded >= 2000 and math.dist(position, history[0][1]) < 30
         teacher = step["teacher_direction"]
         teacher_length = math.hypot(*teacher)
         disagree = moving and teacher_length > 0 and (movement[0] * teacher[0] + movement[1] * teacher[1]) < -.5 * teacher_length
@@ -814,6 +815,8 @@ def dagger_calibrate(args):
         if len(recovered) != len(samples):
             raise ValueError(f"Native learner replay count differs: {directory}")
         plans = {value["elapsed_ms"]: value for value in rows(directory / "teacher-paths.jsonl")}
+        target_distances = ({int(row[0]): float(row[4]) for row in np.loadtxt(
+            directory / "target-trajectory.txt", ndmin=2)} if episode["goal_kind"] == "follow" else {})
         index = 0
         for chunk in demos.iter_chunks(directory, chunk_records=32):
             for record in chunk:
@@ -859,6 +862,8 @@ def dagger_calibrate(args):
                     & (right * velocity[0] + forward * velocity[2] > 0)))
                 yield dict(time_ms=sample["elapsed_ms"], position=(x, z), movement=direction,
                            teacher_direction=teacher, teacher_path=path, danger=danger,
+                           goal_kind=episode["goal_kind"], target_distance_cm=(
+                               target_distances[sample["elapsed_ms"]] if episode["goal_kind"] == "follow" else 0),
                            was_teacher_controlled=sample["teacher_control"])
                 index += 1
         if index != len(samples):

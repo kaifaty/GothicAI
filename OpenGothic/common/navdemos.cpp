@@ -38,8 +38,8 @@ struct MotionSample { uint64_t time=0; Vec3 position; bool commanded=false; };
 struct DaggerMotionSample : MotionSample { std::vector<Vec3> teacherPath; };
 struct DaggerEvidence {
   const char* trigger="";
-  bool stalled=false,memoryDanger=false;
-  float headingCosine=1,pathProgressCm=0;
+  bool stalled=false,memoryDanger=false,followBand=false;
+  float headingCosine=1,pathProgressCm=0,targetDistanceCm=0;
   uint64_t headingMs=0,progressWindowMs=0;
 };
 struct CriticState {
@@ -401,7 +401,7 @@ void finish(Episode& ep,World& world) {
        <<",\"target_final_down\":"<<ep.target->isDown()
        <<",\"target_final_dead\":"<<ep.target->isDead();
   out<<",\"next_corner\":";vector(out,ep.path.corners.empty()?ep.goal:cm(ep.path.corners.back()));
-  if(ep.dagger)out<<",\"dagger_control_version\":2";
+  if(ep.dagger)out<<",\"dagger_control_version\":3";
   if(ep.drive) {
     out<<",\"teacher_beta\":"<<ep.teacherBeta<<",\"mixing_seed\":"<<ep.mixingSeed
        <<",\"dagger\":"<<ep.dagger<<",\"dagger_interventions\":"<<ep.daggerInterventions
@@ -1259,7 +1259,9 @@ DaggerEvidence daggerTrigger(Episode& ep,const NavDemoWriter::Snapshot& sample,c
     if(ep.daggerMotion[i].commanded)commanded+=ep.daggerMotion[i].time-ep.daggerMotion[i-1].time;
   const auto displacement=ep.daggerMotion.back().position-ep.daggerMotion.front().position;
   evidence.progressWindowMs=now-ep.daggerMotion.front().time;
-  evidence.stalled=moving && evidence.progressWindowMs>=2000 && commanded>=2000 &&
+  evidence.targetDistanceCm=(ep.daggerMotion.back().position-ep.goal).length();
+  evidence.followBand=ep.goalKind=="follow" && evidence.targetDistanceCm>=200.f && evidence.targetDistanceCm<=500.f;
+  evidence.stalled=!evidence.followBand && moving && evidence.progressWindowMs>=2000 && commanded>=2000 &&
                    std::hypot(displacement.x,displacement.z)<30.f;
   // Freeze the earlier teacher polyline: replanning can change its length even
   // without movement. Progress is forward arc distance on that same route.
@@ -1331,6 +1333,7 @@ NpcKeys::KeyState mixTeacher(Episode& ep,const NavDemoWriter::Snapshot& sample,N
               <<",\"learner_keys\":["<<learnerKeys.forward<<','<<learnerKeys.strafe<<','<<learnerKeys.turn
               <<','<<int(learnerKeys.walk)<<','<<int(learnerKeys.jump)<<','<<int(learnerKeys.climb)<<']'
               <<",\"trigger\":"<<std::quoted(trigger)<<",\"stall\":"<<evidence.stalled
+              <<",\"follow_band\":"<<evidence.followBand<<",\"target_distance_cm\":"<<evidence.targetDistanceCm
               <<",\"memory_danger\":"<<evidence.memoryDanger<<",\"heading_cosine\":"<<evidence.headingCosine
               <<",\"heading_disagreement_ms\":"<<evidence.headingMs
               <<",\"teacher_path_progress_cm\":"<<evidence.pathProgressCm

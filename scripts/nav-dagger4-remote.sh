@@ -29,15 +29,39 @@ if [[ "$stage" == calibrate ]]; then
   cmp "$task/input/round1-train.jsonl" "$archive/round1/round1-train.jsonl"
 else
   test ! -e "$archive/round1/phase-$phase/passed"
-  if (( phase >= 2 )); then test -f "$archive/calibration/passed"; fi
+  if (( phase == 2 )); then
+    test -f "$archive/calibration/quick/passed"
+    test ! -e "$archive/calibration/follow-check/passed"
+    python3 - "$archive" <<'ACCEPT_CALIBRATION'
+import json
+from pathlib import Path
+import sys
+archive = Path(sys.argv[1])
+metrics = json.loads((archive / "calibration/quick/control-metrics.json").read_text())
+families = metrics["by_family"]
+if metrics["all"]["episodes"] != 6 or len(families) != 6:
+    raise ValueError("Accepted calibration must contain all six train families")
+violations = {family: dict(teacher_control_fraction=value["teacher_control_fraction"],
+                          limit=.75 if family in ("follow", "follow_below_gate") else .5)
+    for family, value in families.items()
+    if value["teacher_control_fraction"] > (.75 if family in ("follow", "follow_below_gate") else .5)}
+if violations:
+    raise ValueError(f"Accepted calibration exceeds family limits: {violations}")
+(archive / "calibration/passed").write_text("User accepted calibration with non-follow <=50%, follow <=75%; original evidence preserved\n")
+print(json.dumps(dict(event="dagger4_calibration_accepted", **metrics)), flush=True)
+ACCEPT_CALIBRATION
+  elif (( phase >= 3 )); then
+    test -f "$archive/calibration/passed"
+    test -f "$archive/calibration/follow-check/passed"
+  fi
 fi
 # One hundred full NAVDEMO episodes fit even at their uncompressed upper bound.
 python3 -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home()).free >= 70*1024**3, "Collection needs 70 GiB free including its reserve"'
 mkdir -p "$task/input" "$archive/round1" "$archive/logs"
 ROUND_INPUTS
   rsync -rt --no-links --exclude=__pycache__ "$ROOT/scripts/" "ryzen:$task/source/scripts/"
+  rsync -rt --no-links "$ROOT/OpenGothic/common/navdemos.cpp" "ryzen:$task/source/OpenGothic/common/"
   if [[ "$stage" == calibrate ]]; then
-    rsync -rt --no-links "$ROOT/OpenGothic/common/navdemos.cpp" "ryzen:$task/source/OpenGothic/common/"
     rsync -rt --no-links "$ROOT/OpenGothic/tests/navpolicy_contract.cpp" "ryzen:$task/source/OpenGothic/tests/"
   else
   ssh ryzen "'$task/.venv/bin/python' -B -I - '$task' '${task%/*}/nav-demos-v4' '${task%/*}/nav-demos-v5' '/mnt/shared/gothic-ai/nav-demos-v5'" <<'ROUND_SELECT'
@@ -116,6 +140,7 @@ phase="${1:?phase}"
 test ! -e "$archive/round1/phase-$phase/passed"
 if (( phase >= 2 )); then
   test -f "$archive/calibration/passed"
+  test -f "$archive/calibration/follow-check/passed"
   cmp "$task/input/round1-train.jsonl" "$archive/round1/round1-train.jsonl"
 fi
 output="$task/round1/phase-$phase"
@@ -152,7 +177,7 @@ import nav_rl as rl
 source, target, selection = map(Path, sys.argv[1:])
 for path in source.glob("dagger/*/*/seed-*/episode.json"):
     episode = rl.read_json(path)
-    if episode.get("dagger_control_version") != 2:
+    if episode.get("dagger_control_version") != 3:
         raise ValueError(f"Collection needs calibrated DAgger controls: {path}")
 metrics = rl.dagger_control_metrics(source)
 if metrics["all"]["episodes"] != 100:
@@ -245,13 +270,18 @@ def main():
     with v4.own_task(task):
         if phase >= 2 and not (archive / "calibration/passed").is_file():
             raise ValueError("Calibrated quick check must pass before phase 2–6")
+        if phase >= 2 and not (archive / "calibration/follow-check/passed").is_file():
+            raise ValueError("Follow-band stall quick check must pass before phase 2–6")
         subprocess.run(["bash", str(task / "collect-r1.sh"), str(phase)], check=True)
         metrics = v4.read_json(archive / f"round1/phase-{phase}/control-metrics.json")
-        fraction = metrics["all"]["teacher_control_fraction"]
         emit("dagger4_chain_phase_control", phase=phase, **metrics)
-        if fraction > .45:
-            emit("dagger4_chain_stopped", phase=phase, reason="teacher_fraction_above_45_percent",
-                 teacher_control_fraction=fraction)
+        violations = {family: dict(teacher_control_fraction=value["teacher_control_fraction"],
+                                  limit=.75 if family in ("follow", "follow_below_gate") else .5)
+            for family, value in metrics["by_family"].items()
+            if value["teacher_control_fraction"] > (.75 if family in ("follow", "follow_below_gate") else .5)}
+        if violations:
+            emit("dagger4_chain_stopped", phase=phase, reason="teacher_fraction_above_family_limit",
+                 violating_families=violations)
             return 0
         if phase == 6:
             emit("dagger4_chain_complete", phase=phase)
@@ -339,7 +369,7 @@ for path in episodes:
     if value["id"] not in expected:
         raise ValueError(f"Unexpected calibration scenario: {path}")
     scenario = expected.pop(value["id"])
-    if (value.get("dagger_control_version") != 2 or value.get("navigation_memory_version") != 4
+    if (value.get("dagger_control_version") != 3 or value.get("navigation_memory_version") != 4
             or value.get("teacher_beta") != .1 or value.get("action_mode") != "sample"
             or value.get("drive") is not True or value.get("family") != scenario["family"]
             or value.get("dagger_scenario") != scenario or value.get("sampling_seed") != 23102027
@@ -366,22 +396,134 @@ target.mkdir(parents=True, exist_ok=True)
 subprocess.run(["rsync", "-rt", "--no-links", str(source) + "/", str(target) + "/"], check=True)
 if hashes(target) != expected_hashes:
     raise ValueError("Calibration archive checksum mismatch; retaining local recordings")
-(target / "passed").write_text("6 full train episodes; controls v2; memory4; SHA256 verified\n")
+(target / "passed").write_text("6 full train episodes; controls v3; memory4; SHA256 verified\n")
 shutil.rmtree(source)
-fraction = metrics["all"]["teacher_control_fraction"]
 print(json.dumps(dict(event="dagger4_calibration_quick_complete", archive=str(target), **metrics)), flush=True)
-if not .2 <= fraction <= .35:
-    print(json.dumps(dict(event="dagger4_calibration_stopped", reason="teacher_fraction_outside_20_to_35_percent",
-                          teacher_control_fraction=fraction)), flush=True)
+violations = {family: dict(teacher_control_fraction=value["teacher_control_fraction"],
+                          limit=.75 if family in ("follow", "follow_below_gate") else .5)
+    for family, value in metrics["by_family"].items()
+    if value["teacher_control_fraction"] > (.75 if family in ("follow", "follow_below_gate") else .5)}
+if violations:
+    print(json.dumps(dict(event="dagger4_calibration_stopped", reason="teacher_fraction_above_family_limit",
+                          violating_families=violations)), flush=True)
     raise SystemExit(0)
-(archive / "calibration/passed").write_text(f"6 train episodes; teacher_control_fraction={fraction:.8f}\n")
-import nav_demos_v4_chain as v4
-identifier = v4.submit_next(task, script=task / "chain-r1.py", owner="nav-dagger4", extra=("--phase", "2"))
-print(json.dumps(dict(event="dagger4_calibration_passed", next_phase=2, next_job=identifier)), flush=True)
+(archive / "calibration/passed").write_text("6 train episodes; non-follow <=50%, follow <=75%\n")
+print(json.dumps(dict(event="dagger4_calibration_passed", next_action="bash scripts/nav-dagger4-remote.sh collect-r1 2")), flush=True)
 CALIBRATE_VERIFY
 CALIBRATE_PHASE
     "$ROOT/scripts/gq" submit --class quick --threads 12 --cpu-quota 1200% --mem 16G --max 45m \
       --name 'nav dagger4 threshold replay and six-family quick' -- bash "$task/calibrate.sh"
+    exit
+  fi
+  if [[ "$phase" == 2 ]]; then
+    ssh ryzen "cat > '$task/follow-check.sh'" <<'FOLLOW_CHECK_PHASE'
+#!/usr/bin/env bash
+set -euo pipefail
+task="$(cd "$(dirname "$0")" && pwd)"
+archive=/mnt/shared/gothic-ai/nav-dagger4
+mkdir -p "$task/tmp" "$archive/logs"
+exec > >(tee -a "$archive/logs/follow-check.log") 2>&1
+export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
+export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
+export UV_CACHE_DIR="$HOME/.cache/uv" TMPDIR="$task/tmp"
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export OPENGOTHIC_BODY_TRACE=0 PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+export OPENGOTHIC_NAV_JOURNEY_MEMORY=1
+unset OPENGOTHIC_NAV_FAMILIAR_MAP
+python="$task/.venv/bin/python"
+cd "$task/source"
+test -f "$archive/calibration/passed"
+test ! -e "$archive/calibration/follow-check/passed"
+cmp "$task/input/round1-train.jsonl" "$archive/round1/round1-train.jsonl"
+cmake --build "$task/build" --target gothic-body-runner --parallel 3
+"$python" -B -m pytest -q -p no:cacheprovider --basetemp "$task/tmp/pytest-follow-check" \
+  scripts/tests/test_nav_rl.py -k dagger
+"$python" -B -I scripts/nav_rl.py drive --dagger-scenarios "$task/input/round1-train.jsonl" \
+  --indices 27,87 --runner "$task/build/opengothic/gothic-body-runner" \
+  --assets "$HOME/gothic-ai/game" --save "$task/input/save.sav" \
+  --cache "$task/smoke-cache" --links "$task/input/accepted-links.txt" \
+  --jump-links "$task/input/jump-links.txt" --roads "$task/input/places.json" \
+  --weights "$archive/smoke/policy.navbc" --output "$task/calibration/follow-check" --physics cv --parallel 2 \
+  --teacher-beta 0.1 --action-mode sample --action-seeds 23102027 --limit-ms 240000 \
+  --watchdog-seconds 900 --resume
+"$python" -B -I - "$task" "$archive" <<'FOLLOW_CHECK_VERIFY'
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+task, archive = map(Path, sys.argv[1:])
+sys.path.insert(0, str(task / "source/scripts"))
+import nav_rl as rl
+source, target = task / "calibration/follow-check", archive / "calibration/follow-check"
+selection = list(rl.rows(task / "input/round1-train.jsonl"))
+expected = {selection[index]["id"]: selection[index] for index in (27, 87)}
+if any(value["family"] not in ("follow", "follow_below_gate") or value["split"] != "train"
+       or value["limit_ms"] != 240000 for value in expected.values()):
+    raise ValueError("Follow stall quick needs the two frozen full train follow episodes")
+episodes = list(source.glob("dagger/*/*/seed-*/episode.json"))
+if len(episodes) != 2:
+    raise ValueError(f"Follow stall quick needs two episodes, found {len(episodes)}")
+band_decisions = 0
+for path in episodes:
+    value = rl.read_json(path)
+    if value["id"] not in expected:
+        raise ValueError(f"Unexpected follow stall scenario: {path}")
+    scenario = expected.pop(value["id"])
+    if (value.get("dagger_control_version") != 3 or value.get("navigation_memory_version") != 4
+            or value.get("teacher_beta") != .1 or value.get("action_mode") != "sample"
+            or value.get("drive") is not True or value.get("family") != scenario["family"]
+            or value.get("dagger_scenario") != scenario or value.get("sampling_seed") != 23102027
+            or value.get("teacher_version") != 3):
+        raise ValueError(f"Follow stall learner controls differ: {path}")
+    steps = list(rl.rows(path.parent / "samples.jsonl"))
+    if not steps or len(steps) != value["decisions"]:
+        raise ValueError(f"Follow stall per-step counters differ: {path}")
+    episode_band = 0
+    for sample in steps:
+        if type(sample["follow_band"]) is not bool or type(sample["stall"]) is not bool:
+            raise ValueError(f"Missing follow stall diagnostics: {path}")
+        distance = float(sample["target_distance_cm"])
+        if (min(abs(distance - 200), abs(distance - 500)) >= .001
+                and sample["follow_band"] != (200 <= distance <= 500)):
+            raise ValueError(f"Follow band disagrees with physical target distance: {path}")
+        if sample["follow_band"]:
+            episode_band += 1
+            if sample["stall"] or sample["trigger"] == "stall":
+                raise ValueError(f"Follow stall intervention inside the target band: {path}")
+    band_decisions += episode_band
+    print(json.dumps(dict(event="dagger4_follow_stall_episode", id=value["id"],
+        decisions=len(steps), in_band_decisions=episode_band,
+        teacher_control_fraction=value["teacher_control_decisions"] / len(steps))), flush=True)
+if expected or not band_decisions:
+    raise ValueError("Follow stall quick must finish both episodes and visit the target band")
+metrics = rl.dagger_control_metrics(source)
+rl.write_json(source / "control-metrics.json", metrics)
+def hashes(root):
+    result = {}
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"Symlink in follow stall quick output: {path}")
+        if path.is_file():
+            with path.open("rb") as stream:
+                result[str(path.relative_to(root))] = hashlib.file_digest(stream, "sha256").hexdigest()
+    return result
+expected_hashes = hashes(source)
+target.mkdir(parents=True, exist_ok=True)
+subprocess.run(["rsync", "-rt", "--no-links", str(source) + "/", str(target) + "/"], check=True)
+if hashes(target) != expected_hashes:
+    raise ValueError("Follow stall archive checksum mismatch; retaining local recordings")
+(target / "passed").write_text(f"2 full train episodes; controls v3; {band_decisions} in-band decisions without stall; SHA256 verified\n")
+shutil.rmtree(source)
+print(json.dumps(dict(event="dagger4_follow_stall_passed", in_band_decisions=band_decisions, **metrics)), flush=True)
+import nav_demos_v4_chain as v4
+identifier = v4.submit_next(task, script=task / "chain-r1.py", owner="nav-dagger4", extra=("--phase", "2"))
+print(json.dumps(dict(event="dagger4_follow_stall_continued", next_phase=2, next_job=identifier)), flush=True)
+FOLLOW_CHECK_VERIFY
+FOLLOW_CHECK_PHASE
+    "$ROOT/scripts/gq" submit --class quick --threads 6 --cpu-quota 600% --mem 12G --max 25m \
+      --name 'nav dagger4 follow-band stall quick before phase 2' -- bash "$task/follow-check.sh"
     exit
   fi
   "$ROOT/scripts/gq" submit --class batch --threads 18 --cpu-quota 1800% --mem 16G --max 2h \
