@@ -2800,6 +2800,8 @@ class DialogueManager:
                 return ToolOutcome("Намерение не изменилось.", "accepted")
 
             async def follow() -> tuple[str, bool]:
+                if conv.intent.goal not in executor.COMPANION_GOALS:
+                    return "", True  # it changed its mind before it was done talking
                 if not await self._hold(conv, "follow"):
                     return "Тело не смогло выполнить намерение: ты занят", False
                 return await self._body(conv, [("follow", {"npc": "PLAYER"})])
@@ -2890,6 +2892,8 @@ class DialogueManager:
         why = "follow" if intent.goal == "follow_hero" else "intent"
 
         async def job() -> tuple[str, bool]:
+            if acts != executor.intent_actions(old, conv.intent, following):
+                return "", True  # it changed its mind before it was done talking
             if not await self._hold(conv, why):
                 return "Тело не смогло выполнить намерение: ты занят", False
             try:
