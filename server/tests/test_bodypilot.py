@@ -4337,19 +4337,34 @@ async def test_loading_reason_survives_late_heartbeat_failure_while_policy_is_in
         assert not rig.link.body_leases and not rig.link.body_latest
 
 
-@pytest.mark.parametrize("rpc,stage", [("story_eval", "symbol_eval"), ("body_watch", "body_watch")])
-@pytest.mark.parametrize("failure", ["timeout", "rejected"])
-async def test_watch_setup_failure_identifies_rpc_and_failure_type(rpc, stage, failure, caplog):
+@pytest.mark.parametrize("rpc,stage,failure,delay", [
+    pytest.param("story_eval", "symbol_eval", "delayed_success", 0.300, id="symbol_setup_300ms"),
+    pytest.param("body_watch", "body_watch", "delayed_success", 0.300, id="watch_setup_300ms"),
+    pytest.param("story_eval", "symbol_eval", "timeout", 0.600, id="symbol_timeout_600ms"),
+    pytest.param("body_watch", "body_watch", "timeout", 0.600, id="watch_timeout_600ms"),
+    pytest.param("story_eval", "symbol_eval", "rejected", 0, id="symbol_rejected"),
+    pytest.param("body_watch", "body_watch", "rejected", 0, id="watch_rejected"),
+])
+async def test_watch_setup_failure_identifies_rpc_and_failure_type(rpc, stage, failure, delay, caplog):
     caplog.set_level("WARNING", logger="gothic_ai.bodypilot")
     async with running() as rig:
-        if failure == "timeout":
-            rig.bridge.response_delays[rpc] = 0.300
-        else:
+        if failure == "rejected":
             rig.bridge.request_rejections[rpc] = deque([f"fake {rpc} rejected"])
+        else:
+            rig.bridge.response_delays[rpc] = delay
         rig.roster(activity="fight", state="ZS_ATTACK")
         await eventually(lambda: rig.bridge.commands(rpc))
         # The first reply remains delayed, while an unsubscribe may acknowledge promptly.
         rig.bridge.response_delays.clear()
+        if failure == "delayed_success":
+            await eventually(lambda: rig.fight._watch_ready)
+            await eventually(lambda: not rig.bridge._response_tasks)
+            assert rig.fight._symbol == 50 and rig.fight._watched
+            assert rig.pilot.last_summary is None and rig.fight.lease is None
+            assert [command["npcs"] for command in rig.bridge.commands("body_watch")] == [["NPC"]]
+            assert not rig.bridge.commands("body_acquire") and not rig.policy.requests
+            assert not [record for record in caplog.records if "watch setup failed stage=" in record.message]
+            return
         await eventually(lambda: rig.pilot.last_summary is not None)
         await eventually(lambda: not rig.bridge._response_tasks)
         summary = rig.pilot.last_summary
@@ -4377,7 +4392,7 @@ async def test_watch_setup_failure_identifies_rpc_and_failure_type(rpc, stage, f
 
 async def test_watch_timeout_clears_applied_subscription_and_ignores_late_replies():
     async with running() as rig:
-        rig.bridge.response_delays["body_watch"] = 0.300
+        rig.bridge.response_delays["body_watch"] = 0.600
         rig.roster(activity="fight", state="ZS_ATTACK")
         await eventually(lambda: rig.bridge._watched_npc == "NPC")
         # The bridge applies the watch immediately, before its delayed acknowledgement.
