@@ -42,6 +42,7 @@ from .chains import ChainAuthor
 from .characters import Cards, Traits
 from .chests import ChestDesk
 from .chronicle import Chronicle
+from .combat_barks import CombatBarks
 from .concerns import Concerns
 from .consequences import LieConsequences
 from .contracts import symbol_by_name
@@ -228,6 +229,7 @@ def print_event(msg: GameMessage) -> None:
 class ServerState:
     def __init__(self) -> None:
         self.dialogue: DialogueManager | None = None
+        self.combat_barks: CombatBarks | None = None
         self.voice: VoiceInput | None = None
         self.brain: NpcPlanner | None = None
         self.incidents: IncidentDesk | None = None
@@ -856,6 +858,8 @@ async def serve(args: argparse.Namespace) -> int:
             quick=quick,
             svm_lines=not args.no_svm_lines,
         )
+        if not args.no_combat_barks:
+            state.combat_barks = CombatBarks(state.dialogue)
         # the bandits below Xardas's tower are freed of their scripted ambush: our models decide (story.py)
         static = freed(graph.nodes.__contains__) if graph is not None else freed()
         static = static if args.free_bandits else []
@@ -883,6 +887,8 @@ async def serve(args: argparse.Namespace) -> int:
             state.interject = interject
             state.incidents.speaks_up_there = interject.covers
         state.incidents.companion = state.talk.orders.companion
+        if state.combat_barks is not None:
+            state.combat_barks.companion = state.talk.orders.companion
         if args.beasts or args.scenario in {"wolf", "wolf_load"}:
             # wolves hear the tone of his words: they let him pass, run or bite (docs/beasts.md)
             state.beasts = BeastDesk(link, quick=tone_quick, journal=journal, trace=trace)
@@ -1577,6 +1583,12 @@ async def serve(args: argparse.Namespace) -> int:
                 results = await scenarios.m5e_talk(link, state.dialogue, state.talk, state.voice, args.npc)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario m5e: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "combat_barks":
+                assert state.dialogue is not None and state.combat_barks is not None
+                results = await scenarios.combat_barks(link, state.dialogue, state.combat_barks)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "svm_lines":
                 assert state.dialogue is not None
@@ -3002,6 +3014,7 @@ def main() -> None:
             "m5c",
             "m5e",
             "svm_lines",
+            "combat_barks",
             "orders",
             "fight_reactions_wolf",
             "fight_reactions_sight",
@@ -3154,6 +3167,7 @@ def main() -> None:
     p.add_argument(
         "--no-svm-lines", action="store_true", help="keep the humans' native SVM voices and subtitles"
     )
+    p.add_argument("--no-combat-barks", action="store_true", help="disable quick-model combat cries")
     p.add_argument("--no-brain", action="store_true", help="do not plan npc decisions outside conversations")
     p.add_argument("--no-director", action="store_true", help="do not repair quests left without an ending")
     p.add_argument("--no-gates", action="store_true", help="disable conversational gate admission")

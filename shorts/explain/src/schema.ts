@@ -10,6 +10,7 @@ const Text = z.object({
   y: z.number().optional(), // top in frame pixels; defaults to 260 tall / 140 wide
   size: z.number().default(64),
   color: z.string().optional(),
+  enter: z.enum(['rise', 'pop', 'slide']).default('rise'), // parts/motion.ts
 });
 
 const TagLine = z.object({
@@ -27,9 +28,24 @@ const Tag = z.object({
   at: z.number().default(0),
   until: z.number().optional(),
   side: z.enum(['center', 'right', 'left']).default('center'), // where the box opens from the pin
+  enter: z.enum(['rise', 'pop', 'slide']).default('rise'), // parts/motion.ts
 });
 
 const Point = z.tuple([z.number(), z.number()]); // pixels of the selected frame, from the bench's data
+
+// a path that draws itself (an arrow's flight, a route): through `points`, smoothed unless `curve` is false; its
+// tip runs from the first point to the last over `dur`, an arrowhead on it with `arrow`
+const PathLine = z.object({
+  points: z.array(Point).min(2),
+  curve: z.boolean().default(true),
+  color: z.string(),
+  at: z.number().default(0),
+  dur: z.number().default(0.6),
+  until: z.number().optional(),
+  width: z.number().default(8),
+  arrow: z.boolean().default(false),
+  dash: z.boolean().default(false),
+});
 
 // a line over the picture (a line of sight from the bench's `sight`): it draws itself from `from` toward `to`; with
 // `cut` it stops there (a wall in the way): solid up to it, `cutColor` and dashed past it from `cutAt`, a cross on it
@@ -287,12 +303,16 @@ const Beat = z.object({
   labels: z.tuple([z.string(), z.string()]).optional(), // split: top/bottom in tall, left/right in wide
   labelColors: z.tuple([z.string(), z.string()]).optional(), // default: the old rule's grey, the new one's gold
   freeze: z.number().optional(), // footage stops here (seconds into the beat)
-  zoom: z.object({at: z.number(), dur: z.number(), scale: z.number(), x: z.number(), y: z.number()}).optional(),
+  zoom: z.object({at: z.number(), dur: z.number(), scale: z.number(), x: z.number(), y: z.number(),
+    ease: z.enum(['inOut', 'linear']).default('inOut')}).optional(), // linear: a slow push across the beat
+  // how this beat comes in; the beat before it stays under it for `dur` (parts/motion.ts), so no time moves
+  enter: z.object({type: z.enum(['fade', 'slide', 'wipe', 'zoom', 'flash']), dur: z.number().positive().default(0.35)}).optional(),
   game: z.number().default(1), // the beat's relative game level, also kept in the game stem
   texts: z.array(Text).default([]),
   tags: z.array(Tag).default([]),
   strokes: z.array(Stroke).default([]),
   fans: z.array(Fan).default([]),
+  paths: z.array(PathLine).default([]),
   follow: Follow.optional(),
   followBottom: Follow.optional(), // split: bottom in tall, right in wide
   hp: Hp.optional(),
@@ -405,5 +425,6 @@ export type FlowCard = z.infer<typeof FlowCard>;
 export type TagT = z.infer<typeof Tag>;
 export type StrokeT = z.infer<typeof Stroke>;
 export type FanT = z.infer<typeof Fan>;
+export type PathT = z.infer<typeof PathLine>;
 export type TextT = z.infer<typeof Text>;
 export type Word = z.infer<typeof Word>;

@@ -3850,7 +3850,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const VisualFx* vfx, int32_t s
   }
 
 void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32_t splId, bool isSpell) {
-  const int32_t traceHpBefore = TestBench::bodyTracing() ? attribute(ATR_HITPOINTS) : 0;
+  const int32_t traceHpBefore = attribute(ATR_HITPOINTS);
   float a  = angleDir(other.x-x,other.z-z);
   float da = a-angle;
   if(std::cos(da*M_PI/180.0)<0)
@@ -3894,6 +3894,9 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     queueArrowPhysics(*b);
   const auto traceDamage = [&] {
     BodyObservations::noteEvent(*this,&other,hitResult.value>0 ? "damage_received" : "damage_no_loss",owner.tickCount());
+    const int32_t lost = traceHpBefore-attribute(ATR_HITPOINTS);
+    if(lost>0)
+      Gothic::inst().onCombatHit(*this,other,lost,isSpell ? "spell" : (b==nullptr ? "melee" : "ranged"));
     if(TestBench::bodyTracing())
       TestBench::bodyEvent(*this,&other,"damage",owner.tickCount(),
                           "\"damage_kind\":" + TestBench::bodyJson(isSpell ? "spell" : (b==nullptr ? "melee" : "ranged")) +

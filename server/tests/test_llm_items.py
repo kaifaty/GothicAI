@@ -1,5 +1,9 @@
 from types import SimpleNamespace
 
+import httpx
+import openai
+import pytest
+
 from gothic_ai.llm import (
     QUICK_MAX_TOKENS,
     Done,
@@ -15,6 +19,7 @@ from gothic_ai.llm import (
     make_quick,
     quick_url,
 )
+from gothic_ai.llm.base import QUICK_SLOT
 from gothic_ai.llm.openai_compat import chat_messages
 from gothic_ai.llm.openai_responses import OpenAIResponsesBackend, input_items
 
@@ -261,6 +266,48 @@ async def test_the_quick_backend_caps_its_answers_and_warms_the_servers_cache():
     assert "temperature" not in sent[0] and "temperature" not in sent[1]
     assert sent[2]["temperature"] == 0.6
     assert isinstance(events[-1], Done) and events[-1].text == "Держись!"
+
+
+@pytest.mark.parametrize("reject", [None, "prewarm", "stream"])
+async def test_quick_slot_transport_and_one_time_unsupported_field_fallback(reject, caplog):
+    backend = make_quick("http://127.0.0.1:9/v1")
+    sent = []
+
+    async def create(**kwargs):
+        sent.append(kwargs)
+        if reject and "extra_body" in kwargs:
+            response = httpx.Response(400, request=httpx.Request("POST", "http://fake/v1/chat/completions"))
+            raise openai.BadRequestError("Unknown field: id_slot", response=response,
+                                         body={"param": "id_slot"})
+        if not kwargs.get("stream"):
+            return SimpleNamespace()
+
+        async def chunks():
+            yield SimpleNamespace(choices=[SimpleNamespace(
+                delta=SimpleNamespace(content="Есть!", tool_calls=None),
+            )], timings={"cache_n": 100, "prompt_n": 20})
+
+        return chunks()
+
+    backend._client.chat.completions.create = create
+    token = QUICK_SLOT.set(2)
+    try:
+        if reject == "stream":
+            async for _ in backend.stream(instructions="", messages=[]):
+                pass
+        await backend.prewarm(instructions="", messages=[])
+        async for _ in backend.stream(instructions="", messages=[]):
+            pass
+    finally:
+        QUICK_SLOT.reset(token)
+        await backend.aclose()
+    if reject:
+        assert sent[0]["extra_body"]["id_slot"] == 2
+        assert all("extra_body" not in request for request in sent[1:])
+        assert len([r for r in caplog.records if "rejected id_slot" in r.message]) == 1
+    else:
+        assert [r["extra_body"]["id_slot"] for r in sent] == [2, 2]
+        assert backend.timings[2] == {"cache_n": 100, "prompt_n": 20}
 
 
 def test_the_quick_model_is_on_wherever_the_decider_is():

@@ -66,7 +66,7 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 50;
+constexpr int         ProtocolVersion = 51;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
 constexpr float       IntroCm         = 3000;  // -nointro: those this near the hero at the start
@@ -223,6 +223,7 @@ struct AiBridge::Impl final {
   void onObservedPerception(Npc& self, Npc& other, Npc* victim, PercType perc);
   void onPhysicsNoiseHeard(Npc& self, const PhysicsNoise& noise);
   void onHeroDeed(const HeroDeed& deed);
+  void onCombatHit(Npc& npc, Npc& by, int32_t damage, std::string_view kind);
   bool onSvmLine(Npc& npc, std::string_view svm, std::string_view line, Npc* target, bool overlay);
   // who drives the npc instead of its scripts: "attached" or nobody
   std::string_view npcOwner(std::string_view symbol) const;
@@ -367,6 +368,7 @@ AiBridge::Impl::Impl() {
   gothic.onExternalPerception.bind(this,&Impl::onPerception);
   gothic.onObservedPerception.bind(this,&Impl::onObservedPerception);
   gothic.onPhysicsNoiseHeard .bind(this,&Impl::onPhysicsNoiseHeard);
+  gothic.onCombatHit         .bind(this,&Impl::onCombatHit);
   gothic.onHeroDeed          .bind(this,&Impl::onHeroDeed);
   gothic.interceptPerception = [this](Npc& self, Npc& other, Npc* victim, PercType perc, const HeroDeed* deed) {
     World* world = Gothic::inst().world();
@@ -480,6 +482,7 @@ AiBridge::Impl::~Impl() {
   gothic.onExternalPerception.ubind(this,&Impl::onPerception);
   gothic.onObservedPerception.ubind(this,&Impl::onObservedPerception);
   gothic.onPhysicsNoiseHeard .ubind(this,&Impl::onPhysicsNoiseHeard);
+  gothic.onCombatHit         .ubind(this,&Impl::onCombatHit);
   gothic.onHeroDeed          .ubind(this,&Impl::onHeroDeed);
   gothic.interceptPerception = nullptr;
   gothic.interceptSvm       = nullptr;
@@ -803,6 +806,25 @@ void AiBridge::Impl::onPhysicsNoiseHeard(Npc& self, const PhysicsNoise& noise) {
     return;
   if(auto world = Gothic::inst().world())
     observer.physicsNoise(*world,self,noise);
+  }
+
+void AiBridge::Impl::onCombatHit(Npc& npc, Npc& by, int32_t damage, std::string_view kind) {
+  auto& gothic = Gothic::inst();
+  auto* world = gothic.world();
+  auto* hero = world!=nullptr ? world->player() : nullptr;
+  if(!connected || hero==nullptr || gothic.isInDialog() || damage<=0)
+    return;
+  const auto nearbyHuman = [&](const Npc& who) {
+    return !who.isPlayer() && who.guild()<GIL_SEPERATOR_HUM && who.qDistTo(*hero)<=3000.f*3000.f;
+    };
+  if(!nearbyHuman(npc) && !nearbyHuman(by))
+    return;
+  send(JsonWriter("combat_hit")
+         .str("npc",npc.isPlayer() ? "PLAYER" : npcSymbol(*world,npc))
+         .str("by",by.isPlayer() ? "PLAYER" : npcSymbol(*world,by))
+         .integer("damage",damage).integer("hp",npc.attribute(ATR_HITPOINTS))
+         .integer("hp_max",npc.attribute(ATR_HITPOINTSMAX))
+         .boolean("down",npc.isDown()).boolean("dead",npc.isDead()).str("kind",kind).finish());
   }
 
 bool AiBridge::Impl::onSvmLine(Npc& npc, std::string_view svm, std::string_view line, Npc* target, bool overlay) {

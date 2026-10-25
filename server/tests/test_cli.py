@@ -160,6 +160,19 @@ def test_questlog_is_enabled_by_default_including_scenarios(monkeypatch, flags):
     assert exit.value.code == 0
 
 
+@pytest.mark.parametrize("flags", [[], ["--no-combat-barks"]])
+def test_combat_barks_are_enabled_by_default(monkeypatch, flags):
+    async def serve(args):
+        assert args.no_combat_barks == ("--no-combat-barks" in flags)
+        return 0
+
+    monkeypatch.setattr(cli, "serve", serve)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", *flags])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+
+
 @pytest.mark.parametrize("flags", [[], ["--no-svm-lines"]])
 def test_svm_lines_are_enabled_by_default(monkeypatch, flags):
     async def serve(args):

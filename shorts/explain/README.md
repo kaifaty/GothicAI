@@ -101,7 +101,15 @@ the original plan gains and ducking for Studio and drafts; they do not run the p
   of the picture, to its left or right with `side`, lines appearing one by one, a roll counter that stops on the
   real number), `strokes` (a line drawing itself between two points of the picture; with `cut` it stops at a wall:
   solid up to it, dashed past it, a cross on it) and `fans` (a sector opening from a point): lines of sight and the
-  bow's focus from the bench's `sight` export;
+  bow's focus from the bench's `sight` export; `paths` (a line drawing itself through several points, smoothed
+  unless `curve: false`, `arrow` puts a head on its tip, `dash` makes it dashed): an arrow's flight, a route;
+- motion (`src/parts/motion.ts`, one set for the series): `texts` and `tags` come in with `enter`: `rise`
+  (default, a few pixels up), `pop` (a spring with a small overshoot) or `slide` (from the left). A beat's
+  `enter` (`fade`, `slide`, `wipe`, `zoom`, `flash`; `dur`, default 0.35 s) is its transition: the beat starts
+  at its own time and the one before stays under it for `dur`, silent, so no time of the voice, the captions
+  or the publication's edge fades moves; `flash` is a hard cut with a white flash. `zoom` eases in and out
+  (cubic) unless `ease: "linear"`, for a slow push across a whole beat. The footage of a beat followed by a
+  transition must run `dur` past the beat's end;
 - `split` keeps the same field names in either format: `src`/`from` are the first half, `srcBottom`/`fromBottom`
   the second; `labels` and `labelColors` follow that order. In `wide`, labels sit at the top of each half and
   a thin vertical line divides the pictures. Footage and stills cover their frame or half-frame;
@@ -429,6 +437,10 @@ Seven further beats demonstrate the diagrams: `observation-rays` (184 numbers an
 `self-imitation-flow` (2016 duels and best 25%), `one-tick` (game/bench alignment), and `service-flow`
 (Mac ⇄ Ryzen with packets). Ray distances are labelled `демо`; the cone path illustrates geometry.
 Neither example supplies recorded telemetry.
+Motion check: `python3 scripts/strips.py "$W/render/draft.mp4" "$W/plan.json" "$W/render/strips"` writes a strip
+of consecutive frames for every planned movement (entries, transitions, cuts, lines, zooms, freezes) and a
+`report.md` with the jumps nobody planned: a snap (a change in one frame while the frames around it hold) and a
+one-frame flash. The draft may be a `--scale 0.5` render; only ffmpeg runs.
 Schema and geometry checks: `node --test tests/charts.test.mjs` (Node 22.18+ for native TypeScript
 stripping), including rejection of wide-only cards in tall and interpolation of `cone.path`.
 
@@ -436,6 +448,10 @@ Remotion is under the [Remotion License](https://www.remotion.pro/license): free
 up to three people. The versions are pinned in `package.json`.
 
 ## План и журнал
+
+- 2026-10-25: added the motion set: `enter` for texts and tags (`rise`, `pop`, `slide`), beat transitions
+  (`fade`, `slide`, `wipe`, `zoom`, `flash`) that keep every time of the plan, `paths` drawn through points with an
+  arrowhead (`@remotion/paths`), an eased `zoom`, and `scripts/strips.py`. Tried on the combat-AI short.
 
 - 2026-10-19: the published game stem fades over 30 ms at every beat edge and at `freeze`, sample by sample
   in `explain.render`. The combat-AI video's click at 432.27 s needed per-beat `afade` copies of each clip;

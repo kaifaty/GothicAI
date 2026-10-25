@@ -1666,6 +1666,94 @@ async def test_notes_do_not_warm_the_quick_model_but_talking_to_the_npc_does(mon
     assert heard == "[Ты слышал, как Лобарт и Хильда говорили о герое: Лобарт: «Слыхала?» — Хильда: «Да ну?»]"
 
 
+async def test_quick_slots_evict_the_least_recent_idle_npc(monkeypatch):
+    monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
+    quick = FakeBackend("Есть!", delay=0)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    for npc in (XARDAS, LOBART, HILDA):
+        conv = dialogue.open(npc, npc, warm=False)
+        dialogue._start_prewarm(conv, [XARDAS, LOBART, HILDA])
+    await asyncio.gather(*list(dialogue._prewarms.values()))
+    assert dialogue._quick_slots == {XARDAS: 0, LOBART: 1, HILDA: 2}
+    assert quick.prewarm_slot_ids == [0, 1, 2]
+    async with dialogue._quick_request(XARDAS):
+        await dialogue._quick_words(dialogue.conversations[LOBART], [])
+        await dialogue._quick_words(dialogue.conversations[HILDA], [])
+        newcomer = dialogue.open("NEW", "Стражник", warm=False)
+        await dialogue._quick_words(newcomer, [])
+        assert dialogue._quick_slots == {XARDAS: 0, HILDA: 2, "NEW": 1}
+    await dialogue._quick_words(dialogue.open("LAST", "Последний", warm=False), [])
+    assert dialogue._quick_slots == {HILDA: 2, "NEW": 1, "LAST": 0}
+    assert quick.slot_ids == [1, 2, 1, 0]
+
+
+async def test_a_real_quick_request_cancels_its_warm_and_blocks_new_warms(monkeypatch):
+    from gothic_ai.llm.base import QUICK_SLOT
+
+    monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
+    quick = FakeBackend("Есть!", delay=0)
+    started, cancelled = asyncio.Event(), asyncio.Event()
+    warm_slots = []
+
+    async def held_warm(**kwargs):
+        warm_slots.append(QUICK_SLOT.get())
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(quick, "prewarm", held_warm)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    dialogue._start_prewarm(conv, [LOBART])
+    await asyncio.wait_for(started.wait(), 1)
+    words, _ = await asyncio.wait_for(dialogue._quick_words(conv, []), 1)
+    await _until(lambda: cancelled.is_set() and not dialogue._prewarms)
+    assert words == "Есть!" and quick.slot_ids == warm_slots == [0]
+    async with dialogue._quick_request(LOBART):
+        dialogue._start_prewarm(conv, [LOBART])
+        await asyncio.sleep(0)
+        assert not dialogue._prewarms and warm_slots == [0]
+
+
+@pytest.mark.parametrize("kind", ["first_words", "svm", "combat_bark", "fight", "order"])
+async def test_all_npc_quick_requests_use_the_prewarmed_slot(kind, monkeypatch):
+    from gothic_ai.combat_barks import CombatBarks
+    from gothic_ai.protocol import CombatHit
+
+    monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
+    quick = FakeBackend("[pain] Ай!", delay=0)
+    async with connected(FakeGame()) as link:
+        dialogue = DialogueManager(link, FakeBackend("", delay=0), PersonaProvider(None), quick=quick)
+        conv = dialogue.open(LOBART, "Лобарт", warm=False)
+        dialogue._nearby[LOBART] = ("Лобарт", 100)
+        dialogue._start_prewarm(conv, [LOBART])
+        await _until(lambda: bool(quick.prewarms))
+        if kind == "first_words":
+            await dialogue._quick_words(conv, [])
+        elif kind == "svm":
+            dialogue._start_svm(SvmLine(type="svm_line", id="s", npc=LOBART,
+                                        svm="$NOTNOW", text="Нет!", overlay=True))
+            await asyncio.gather(*list(dialogue._svm_tasks.values()))
+        elif kind == "combat_bark":
+            barks = CombatBarks(dialogue)
+            link._dispatch(NpcRoster(type="npc_roster", t=0, npcs=[
+                {"id": LOBART, "name": "Лобарт", "distance": 100},
+            ]))
+            link._dispatch(CombatHit(type="combat_hit", npc=LOBART, by="PLAYER", damage=5,
+                                    hp=95, hp_max=100, down=False, dead=False, kind="melee"))
+            await barks.task
+        elif kind == "fight":
+            dialogue.in_fight = lambda npc: True
+            await dialogue.event_turn(LOBART, "[Бой!]")
+        else:
+            await dialogue.acknowledge(LOBART, "Лобарт")
+        assert quick.slot_ids and set(quick.slot_ids) == {quick.prewarm_slot_ids[0]}
+
+
 @pytest.mark.parametrize("distance", [600, 1200])
 async def test_a_new_focused_npc_is_warmed_only_within_eight_metres(distance, monkeypatch):
     monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)

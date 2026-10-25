@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Collection, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 Role = Literal["user", "assistant", "developer"]
 ToolChoice = Literal["auto", "none"]
+
+# A quick-model request's llama.cpp slot; scoped to its coroutine, including test backends.
+QUICK_SLOT: ContextVar[int | None] = ContextVar("quick_slot", default=None)
 
 
 @dataclass(frozen=True)

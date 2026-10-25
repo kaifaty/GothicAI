@@ -23,6 +23,7 @@ from gothic_ai.protocol import (
     BeastEvent,
     Beasts,
     Chest,
+    CombatHit,
     DebugCmd,
     GraphPatchCmd,
     HeroDeed,
@@ -84,8 +85,18 @@ def test_unknown_message_type_is_rejected():
         parse_game_message('{"type":"nope"}')
 
 
+@pytest.mark.parametrize("kind", ["melee", "ranged", "spell"])
+def test_v51_combat_hit_reports_actual_health_loss(kind):
+    msg = parse_game_message(_json({
+        "type": "combat_hit", "npc": "X", "by": "PLAYER", "damage": 7,
+        "hp": 23, "hp_max": 100, "down": False, "dead": False, "kind": kind,
+    }))
+    assert isinstance(msg, CombatHit)
+    assert (msg.npc, msg.by, msg.damage, msg.hp, msg.hp_max, msg.kind) == ("X", "PLAYER", 7, 23, 100, kind)
+
+
 def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
-    assert PROTOCOL_VERSION == 50
+    assert PROTOCOL_VERSION == 51
     msg = parse_game_message(_json({
         "type": "svm_line", "id": "svm-1", "npc": "X", "svm": "$KILLENEMY",
         "text": "Ещё одним монстром меньше.", "target": "WOLF", "overlay": True,

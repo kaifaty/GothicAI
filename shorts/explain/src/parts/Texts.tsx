@@ -2,14 +2,16 @@ import React from 'react';
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {TextT} from '../schema';
 import {COLOR, FONT, OUTLINE, SAFE, WIDE_SAFE} from '../theme';
-import {rise, shown} from './anim';
+import {shown} from './anim';
+import {enterTransform} from './motion';
 
 // short texts on screen (not captions): a dark band under each, inside the safe area
 export const Texts: React.FC<{texts: TextT[]}> = ({texts}) => {
   const {fps, width, height} = useVideoConfig();
   const wide = width > height;
   const safe = wide ? WIDE_SAFE : SAFE;
-  const t = useCurrentFrame() / fps;
+  const frame = useCurrentFrame();
+  const t = frame / fps;
   return (
     <AbsoluteFill>
       {texts.map((x, i) => {
@@ -22,7 +24,8 @@ export const Texts: React.FC<{texts: TextT[]}> = ({texts}) => {
             key={i}
             style={{
               position: 'absolute',
-              top: (x.y ?? (wide ? 140 : 260)) + rise(t, x.at),
+              top: x.y ?? (wide ? 140 : 260),
+              transform: enterTransform(x.enter, t, frame, fps, x.at),
               left: safe.left,
               width: width - safe.left - safe.right,
               display: 'flex',

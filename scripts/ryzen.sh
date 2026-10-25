@@ -410,7 +410,7 @@ storygraph_ready() {
 dependency_projects() {
   echo server
   case "$1" in
-    tts|gossip|day|group|interject|programs|errand*|fight_reactions_*) echo tts-service ;;
+    tts|combat_barks|gossip|day|group|interject|programs|errand*|fight_reactions_*) echo tts-service ;;
   esac
   case "$1" in
     m3|m5e) echo asr-service ;;

@@ -18,6 +18,8 @@
 #       then drawing a weapon breaks the truce and Brago attacks
 #   bandit_hold: new game, no SAVE, LLM=fake; ranger bandits and a scripted party member stay quiet
 #       on renewable 5 s parley leases for 30 s, then releasing to scripts starts a native attack
+#   combat_barks: new game, LLM=fake; first hit warms the fighter, next checks combat_hit and overlay voice;
+#       QUICK_URL uses live Gemma and reports phrase/voice delays; TTS=fake|inworld
 #   svm_lines: new game, no SAVE, LLM=fake; QUICK_URL supplies ten live Gemma SVM lines, their native
 #       text and voice delays, then Cavalorn kills a beast and speaks its native script SVM.
 #       An unavailable QUICK_URL falls back after three errors; TTS=fake|inworld.
@@ -462,7 +464,7 @@ ASR_PID=""
 TTS_PID=""
 VOICE_ARGS=(--no-voice)
 TTS_ARGS=(--no-tts)
-if [ "$SCENARIO" = "tts" ] || [ "$SCENARIO" = "svm_lines" ] || [ "$SCENARIO" = "gossip" ] || [ "$SCENARIO" = "day" ] || [ "$SCENARIO" = "group" ] || [ "$SCENARIO" = "interject" ] || [ "$SCENARIO" = "programs" ] || [ "${SCENARIO#errand}" != "$SCENARIO" ] || [ "${SCENARIO#fight_reactions_}" != "$SCENARIO" ]; then
+if [ "$SCENARIO" = "tts" ] || [ "$SCENARIO" = "svm_lines" ] || [ "$SCENARIO" = "combat_barks" ] || [ "$SCENARIO" = "gossip" ] || [ "$SCENARIO" = "day" ] || [ "$SCENARIO" = "group" ] || [ "$SCENARIO" = "interject" ] || [ "$SCENARIO" = "programs" ] || [ "${SCENARIO#errand}" != "$SCENARIO" ] || [ "${SCENARIO#fight_reactions_}" != "$SCENARIO" ]; then
   (cd "$ROOT/tts-service" && exec uv run gothic-tts serve --port "$TTS_PORT" --provider "$TTS" --fallback none) >"$LOG_DIR/tts.log" 2>&1 &
   TTS_PID=$!
   TTS_ARGS=(--tts-url "ws://127.0.0.1:$TTS_PORT")

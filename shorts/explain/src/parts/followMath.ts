@@ -1,6 +1,9 @@
 export type Point = {x: number; y: number};
 export type Viewport = {left: number; top: number; width: number; height: number};
-export type Zoom = {at: number; dur: number; scale: number; x: number; y: number};
+export type Zoom = {at: number; dur: number; scale: number; x: number; y: number; ease?: 'inOut' | 'linear'};
+
+// the camera's curve: it starts and stops softly (cubic in-out); linear only for a slow push across a whole beat
+const easeInOut = (p: number) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
 export type Action = {frame: number; action: string; id: number; t: number};
 export type TrackSample = readonly [frame: number, x: number | null, y: number | null];
 export type HpSample = readonly [frame: number, self: number, target: number];
@@ -8,7 +11,7 @@ export type HpSample = readonly [frame: number, self: number, target: number];
 export const zoomScale = (zoom: Zoom | undefined, t: number): number => {
   if (!zoom) return 1;
   const progress = zoom.dur <= 0 ? Number(t >= zoom.at) : Math.max(0, Math.min(1, (t - zoom.at) / zoom.dur));
-  return 1 + (zoom.scale - 1) * progress;
+  return 1 + (zoom.scale - 1) * (zoom.ease === 'linear' ? progress : easeInOut(progress));
 };
 
 // Match Picture's centered object-fit: cover, then CSS scale around its local origin.

@@ -564,3 +564,24 @@ test('CombatData: размеры кадра должны быть положит
     assert.ok(result.error.issues.some(({path}) => path[0] === 'size'));
   }
 });
+
+test('motion: zoom по умолчанию плавный, linear остаётся линейным', () => {
+  const zoom = {at: 0, dur: 4, scale: 2, x: 0, y: 0};
+  assert.ok(zoomScale(zoom, 1) < 1.25, 'начало медленнее линейного');
+  assert.ok(zoomScale(zoom, 3) > 1.75, 'конец медленнее линейного');
+  assert.equal(zoomScale(zoom, 2), 1.5);
+  assert.equal(zoomScale({...zoom, ease: 'linear'}, 1), 1.25);
+});
+
+test('motion: переходы, входы и пути проходят схему с умолчаниями', () => {
+  const plan = Plan.parse({lang: 'ru', hook: {text: 'x', until: 1}, beats: [
+    {id: 'a', kind: 'still', dur: 2, src: 'a.png', texts: [{text: 'x'}]},
+    {id: 'b', kind: 'still', dur: 2, src: 'b.png', enter: {type: 'slide'},
+      texts: [{text: 'y', enter: 'pop'}], paths: [{points: [[0, 0], [100, 50], [200, 0]], color: '#fff', arrow: true}]},
+  ]});
+  assert.equal(plan.beats[0].texts[0].enter, 'rise');
+  assert.equal(plan.beats[1].enter.dur, 0.35);
+  assert.equal(plan.beats[1].paths[0].curve, true);
+  assert.throws(() => Plan.parse({lang: 'ru', hook: {text: 'x', until: 1},
+    beats: [{id: 'a', kind: 'still', dur: 2, enter: {type: 'spin'}}]}));
+});

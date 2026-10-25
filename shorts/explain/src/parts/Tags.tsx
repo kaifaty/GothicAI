@@ -4,6 +4,7 @@ import type {TagT} from '../schema';
 import {chance} from '../dice';
 import {COLOR, FONT, OUTLINE} from '../theme';
 import {rise, shown} from './anim';
+import {enterTransform} from './motion';
 
 // `{chance:exe:40:14.7}`: the chance by that rule for that talent and distance, as the game counts it
 const withChances = (text: string) =>
@@ -18,7 +19,8 @@ const SHIFT = {center: 'translateX(-50%)', right: 'translateX(-36px)', left: 'tr
 // the real one
 export const Tags: React.FC<{tags: TagT[]}> = ({tags}) => {
   const frame = useCurrentFrame();
-  const t = frame / useVideoConfig().fps;
+  const {fps} = useVideoConfig();
+  const t = frame / fps;
   return (
     <AbsoluteFill>
       {tags.map((tag, i) => {
@@ -27,7 +29,8 @@ export const Tags: React.FC<{tags: TagT[]}> = ({tags}) => {
           return null;
         }
         return (
-          <div key={i} style={{position: 'absolute', left: tag.x, top: tag.y, opacity: o}}>
+          <div key={i} style={{position: 'absolute', left: tag.x, top: tag.y, opacity: o, transformOrigin: '0 0',
+            transform: enterTransform(tag.enter, t, frame, fps, tag.at)}}>
             <div
               style={{
                 position: 'absolute',

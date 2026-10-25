@@ -9,6 +9,10 @@
 
 #include <zenkit/Stream.hh>
 #include <zenkit/MultiResolutionMesh.hh>
+#include <zenkit/Model.hh>
+#include <zenkit/ModelScript.hh>
+#include <zenkit/Archive.hh>
+#include <zenkit/Logger.hh>
 #include <zenkit/Texture.hh>
 #include <zenkit/addon/texcvt.hh>
 #include <Tempest/MemReader>
@@ -17,6 +21,7 @@
 
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -177,6 +182,138 @@ struct BaseContentContract {
     return out;
     }
 
+  static void legacyModelBounds() {
+    for(const auto* name:{"ARMOR_BDT_H.MDL","FIREPLACE_HIGH2.MDM"}) {
+      auto file=Resources::getFileBuffer(name);
+      file->seek(0,zenkit::Whence::END);
+      std::vector<std::byte> source(file->tell());
+      file->seek(0,zenkit::Whence::BEG);
+      require(file->read(source.data(),source.size())==source.size(),std::string(name)+": source read");
+      auto input=zenkit::Read::from(&source);
+      const bool model=std::string_view(name).ends_with(".MDL");
+      if(model) {
+        zenkit::ModelHierarchy hierarchy {};
+        hierarchy.load(input.get());
+        }
+      // Reach the first attachment or soft-skin proto using only container
+      // headers. Bounds below are read independently of the MRM decoder.
+      size_t payload=0,size=0;
+      while(!input->eof()) {
+        const auto type=input->read_ushort();
+        size=input->read_uint();
+        payload=input->tell();
+        if(type==0xB100) break;
+        input->seek(static_cast<std::ptrdiff_t>(payload+size),zenkit::Whence::BEG);
+        }
+      require(payload>0 && payload+size<=source.size(),std::string(name)+": proto chunk");
+      auto metadata=zenkit::Read::from(source.data()+payload,size);
+      equal(metadata->read_ushort(),model ? 0x805u : 0x705u,std::string(name)+" proto version");
+      const auto contentSize=metadata->read_uint();
+      metadata->seek(contentSize,zenkit::Whence::CUR);
+      const auto submeshes=metadata->read_ubyte();
+      metadata->seek(16+80*submeshes,zenkit::Whence::CUR);
+      auto archive=zenkit::ReadArchive::from(metadata.get());
+      for(unsigned i=0;i<submeshes;++i) {
+        (void) archive->read_string();
+        zenkit::ArchiveObject material {};
+        require(archive->read_object_begin(material) && material.class_name=="zCMaterial",
+                std::string(name)+": material object");
+        archive->skip_object(true);
+        }
+      const auto alpha=metadata->read_ubyte();
+      require(alpha<=1,std::string(name)+": source alpha-test byte");
+      zenkit::AxisAlignedBoundingBox expected {};
+      expected.load(metadata.get());
+      zenkit::OrientedBoundingBox expectedObb;
+      expectedObb.load(metadata.get());
+      metadata->seek(16,zenkit::Whence::CUR);
+      equal(metadata->tell(),size,std::string(name)+" source proto end");
+
+      const auto check=[&](const zenkit::MultiResolutionMesh& mesh) {
+        equal(mesh.alpha_test,alpha,std::string(name)+" alpha test");
+        for(unsigned axis=0;axis<3;++axis) {
+          equal(std::bit_cast<uint32_t>(mesh.bbox.min[axis]),std::bit_cast<uint32_t>(expected.min[axis]),
+                std::string(name)+" bbox min bits");
+          equal(std::bit_cast<uint32_t>(mesh.bbox.max[axis]),std::bit_cast<uint32_t>(expected.max[axis]),
+                std::string(name)+" bbox max bits");
+          require(std::isfinite(mesh.bbox.min[axis]) && std::isfinite(mesh.bbox.max[axis]) &&
+                  mesh.bbox.min[axis]<=mesh.bbox.max[axis] && std::abs(mesh.bbox.min[axis])<1000.f &&
+                  std::abs(mesh.bbox.max[axis])<1000.f,std::string(name)+": finite model-scale bounds");
+          }
+        const auto nodes=[&](auto&& self,const zenkit::OrientedBoundingBox& box)->size_t {
+          size_t count=1;
+          for(const auto& child:box.children) count+=self(self,child);
+          require(count<=13,std::string(name)+": bounded OBB tree");
+          return count;
+          };
+        equal(nodes(nodes,mesh.obbox),nodes(nodes,expectedObb),std::string(name)+" OBB nodes");
+        };
+      // Bound the first regression read to its own proto. On the old parser
+      // this fails before a full model can allocate a spurious OBB tree at EOF.
+      zenkit::MultiResolutionMesh proto {};
+      auto bounded=zenkit::Read::from(source.data()+payload,size);
+      proto.load_from_section(bounded.get());
+      check(proto);
+      equal(bounded->tell(),size,std::string(name)+" decoded proto end");
+
+      std::vector<std::string> errors;
+      zenkit::Logger::set(zenkit::LogLevel::ERROR,[&](auto,const char* component,const char* message) {
+        errors.emplace_back(std::string(component)+": "+message);
+        });
+      auto original=zenkit::Read::from(&source);
+      if(model) {
+        zenkit::Model parsed {};
+        parsed.load(original.get());
+        equal(parsed.mesh.meshes.size(),2u,"legacy armor skin count");
+        check(parsed.mesh.meshes.front().mesh);
+        }
+      else {
+        zenkit::ModelMesh parsed {};
+        parsed.load(original.get());
+        equal(parsed.attachments.size(),1u,"legacy fireplace attachment count");
+        check(parsed.attachments.begin()->second);
+        }
+      zenkit::Logger::set_default(zenkit::LogLevel::INFO);
+      require(errors.empty(),std::string(name)+": "+(errors.empty() ? "" : errors.front()));
+      std::printf("Legacy proto: %s, alpha=%u, bounds and OBB match source bytes; no parser errors\n",name,unsigned(alpha));
+      }
+    }
+
+  static void modelTagBoundary() {
+    auto input=Resources::getFileBuffer("BLATTCRAWLER.MSB");
+    size_t end=0;
+    while(!input->eof()) {
+      const auto type=input->read_ushort();
+      const auto size=input->read_uint();
+      end=input->tell()+size;
+      if(type==0xF590) break;
+      input->seek(static_cast<std::ptrdiff_t>(end),zenkit::Whence::BEG);
+      }
+    require(!input->eof() && input->read_line(false)=="DEF_HIT_LIMB","model tag source event");
+    const auto bone=input->read_line(false);
+    require(bone=="BIP01 L FRONT CLAW","model tag source bone");
+    input->seek(static_cast<std::ptrdiff_t>(end),zenkit::Whence::BEG);
+    equal(input->read_ushort(),0xF520u,"animation after model tag");
+    (void) input->read_uint();
+    const auto following=input->read_line(false);
+    require(!following.empty(),"following animation source name");
+
+    std::vector<std::string> errors;
+    zenkit::Logger::set(zenkit::LogLevel::ERROR,[&](auto,const char* component,const char* message) {
+      errors.emplace_back(std::string(component)+": "+message);
+      });
+    input->seek(0,zenkit::Whence::BEG);
+    zenkit::ModelScript script {};
+    script.load(input.get());
+    zenkit::Logger::set_default(zenkit::LogLevel::INFO);
+    require(errors.empty(),"model tag boundary: "+(errors.empty() ? "" : errors.front()));
+    equal(script.model_tags.size(),1u,"model tag count");
+    require(script.model_tags.front().bone==bone,"model tag must retain its source bone");
+    require(!script.animations.empty() && script.animations.front().name==following,
+            "model tag must retain the following animation");
+    std::puts("Model tag: BLATTCRAWLER.MSB bone and following animation match source; no parser errors");
+    }
+
   static void run(const fs::path& base, const fs::path& temporary) {
     setenv("OPENGOTHIC_CONTENT","",1);
     setenv("OPENGOTHIC_TEXTURES","",1);
@@ -190,6 +327,8 @@ struct BaseContentContract {
     Resources::loadVdfs({},true);
     require(resources.baseTextures.enabled && resources.baseMeshes.enabled,"matching archives must enable both indices");
     require(!resources.baseTextures.files.empty() && !resources.baseMeshes.files.empty(),"both indices must contain files");
+    legacyModelBounds();
+    modelTagBoundary();
     for(const auto& [key,file]:resources.baseTextures.files) {
       auto* entry=Resources::vdfsIndex().find(key+"-C.TEX");
       const bool compiled=entry!=nullptr;
