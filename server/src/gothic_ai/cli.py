@@ -89,6 +89,7 @@ from .llm.siwc import AuthError, TokenStore, login
 from .meetings import Meetings
 from .memory import DEFAULT_PATH as DEFAULT_MEMORY_DB
 from .memory import MemoryStore
+from .mercy import Mercy
 from .npc_crime_law import NpcCrimeLaw
 from .npc_crimes import NpcCrimes
 from .npc_will import NpcWill
@@ -230,6 +231,7 @@ class ServerState:
     def __init__(self) -> None:
         self.dialogue: DialogueManager | None = None
         self.combat_barks: CombatBarks | None = None
+        self.mercy: Mercy | None = None
         self.voice: VoiceInput | None = None
         self.brain: NpcPlanner | None = None
         self.incidents: IncidentDesk | None = None
@@ -957,6 +959,7 @@ async def serve(args: argparse.Namespace) -> int:
                 places=place_book,
                 names=lambda npc: personas.cards[npc].name if npc in personas.cards else npc,
                 cover=not args.no_cover,
+                mercy=not args.no_mercy,
             )
             state.dialogue.extensions.append(state.crimes)
             if graph is not None:
@@ -1012,6 +1015,11 @@ async def serve(args: argparse.Namespace) -> int:
         if not args.no_bounty:
             state.bounty = Bounty(link, state.dialogue, state.chronicle, perception=perception)
             state.dialogue.extensions.append(state.bounty)
+        if not args.no_mercy:
+            state.mercy = Mercy(state.dialogue, state.chronicle, orders, state.parley)
+            state.dialogue.extensions.append(state.mercy)
+            if state.combat_barks is not None:
+                state.combat_barks.silenced = state.mercy.silent
         # deals the npc's offer the hero in conversation: a window, the player accepts (docs/npc-tools.md)
         if graph is not None and not args.no_gates:
             state.gates = Gates(link, state.dialogue, state.chronicle, graph, crimes=state.crimes)
@@ -1589,6 +1597,12 @@ async def serve(args: argparse.Namespace) -> int:
                 results = await scenarios.combat_barks(link, state.dialogue, state.combat_barks)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "mercy":
+                assert state.dialogue is not None and state.mercy is not None and state.talk is not None
+                results = await scenarios.mercy(link, state.dialogue, state.talk, state.mercy)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario mercy: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "svm_lines":
                 assert state.dialogue is not None
@@ -3015,6 +3029,7 @@ def main() -> None:
             "m5e",
             "svm_lines",
             "combat_barks",
+            "mercy",
             "orders",
             "fight_reactions_wolf",
             "fight_reactions_sight",
@@ -3168,6 +3183,7 @@ def main() -> None:
         "--no-svm-lines", action="store_true", help="keep the humans' native SVM voices and subtitles"
     )
     p.add_argument("--no-combat-barks", action="store_true", help="disable quick-model combat cries")
+    p.add_argument("--no-mercy", action="store_true", help="disable NPC surrender and mercy")
     p.add_argument("--no-brain", action="store_true", help="do not plan npc decisions outside conversations")
     p.add_argument("--no-director", action="store_true", help="do not repair quests left without an ending")
     p.add_argument("--no-gates", action="store_true", help="disable conversational gate admission")

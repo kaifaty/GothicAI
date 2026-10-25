@@ -18,6 +18,7 @@ from .chronicle import Chronicle, Fact
 from .crime_sides import CrimeSides
 from .game import GameError, GameLink
 from .gamedata.storygraph import StoryGraph
+from .mercy import fresh_surrender
 from .people_knowledge import rumor_subject
 from .promise_breach import silence_facts
 from .protocol import DeedItem, DeedSnapshot, GameMessage, HeroDeed, Session
@@ -113,6 +114,7 @@ class Crimes:
         places: PlaceBook | None = None,
         names: Callable[[str], str] | None = None,
         cover: bool = True,
+        mercy: bool = True,
     ) -> None:
         self.link = link
         self.chronicle = chronicle
@@ -121,6 +123,7 @@ class Crimes:
         self.places = places
         self.names = names or (lambda npc: npc)
         self.cover = cover
+        self.mercy = mercy
         self.sightings: Sightings | None = None
         self.blame: Blame | None = None
         self.react: CrimeReact | None = None
@@ -333,7 +336,8 @@ class Crimes:
             case "attack":
                 action = f"напал на {victim}"
             case "murder":
-                action = f"убил человека: {victim}"
+                action = (f"убил того, кто сдался: {victim}" if crime.get("surrendered")
+                          else f"убил человека: {victim}")
             case _:
                 action = "убил чужую овцу"
         place = self.places.of(crime.get("waypoint")) if self.places is not None else None
@@ -348,6 +352,8 @@ class Crimes:
                 continue
             what = self.describe(k.crime)
             if k.degree == "seen":
+                if k.crime.get("surrendered"):
+                    what = "он " + what.removeprefix("герой ")
                 line = f"Ты видел сам: {what}."
             elif k.degree == "heard":
                 line = f"Ты слышал (со слов: {self.names(k.source)}): {what}; переходов: {k.hops}."
@@ -747,7 +753,11 @@ class Crimes:
                 else:
                     kind = "murder"
                     community = self.community(deed.victim_guild, deed.victim_npctype)
-                    if (
+                    if self.mercy and fresh_surrender(
+                        self.chronicle, victim, deed.day * 1440 + deed.hour * 60 + deed.minute,
+                    ):
+                        extra["surrendered"] = True
+                    elif (
                         deed.victim_enemy
                         or deed.victim_started_fight
                         or deed.victim_tough_guy
@@ -808,7 +818,7 @@ class Crimes:
             # These facts must precede every crime_seen: listeners immediately change attitudes
             # and deliver news to the law when knowledge is recorded.
             for npc in witnesses:
-                if why := self.sides.reason(npc, deed):
+                if why := self.sides.reason(npc, deed, surrendered=bool(extra.get("surrendered"))):
                     self.chronicle.record(
                         {"fact": "crime_side", "npc": npc, "crime": deed.id, "why": why}
                     )

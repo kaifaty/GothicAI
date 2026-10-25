@@ -50,6 +50,7 @@ class CombatBarks:
         self.link = dialogue.link
         self.rng = rng
         self.companion: Callable[[str], bool] = lambda npc: False
+        self.silenced: Callable[[str], bool] = lambda npc: False
         self.roster: dict[str, RosterEntry] = {}
         self.views: dict[str, NpcView] = {}
         self.fighters: dict[str, Fighter] = {}
@@ -91,6 +92,7 @@ class CombatBarks:
         view = self.views.get(npc)
         return bool(
             npc not in {"PLAYER", "PC_HERO"} and entry is not None
+            and not self.silenced(npc)
             and entry.guild < BEASTS and entry.distance <= 3000
             and entry.activity not in {"down", "dialog"}
             and not self.dialogue._svm_down.get(npc, False)

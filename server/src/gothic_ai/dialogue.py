@@ -2243,7 +2243,7 @@ class DialogueManager:
         line first and the conversational model's steps only act (`_quick_line`, `_act_on_line`)."""
         conv.trigger = trigger
         await self._status(conv, "thinking")
-        quick = self._fighting(conv)  # the quick model says the whole line
+        quick = kind != "mercy" and self._fighting(conv)  # surrender is the conversational model's decision
         # the hero's phrase (not on the move): the quick model's first words, the answer goes on from them
         react = kind == "player" and not overlay and not quick and self.quick is not None
         trace = TurnTrace(
@@ -2687,6 +2687,8 @@ class DialogueManager:
                 return ToolOutcome("Принято: поднимешь после реплики.", "accepted")
         for ext in self.extensions:
             if (outcome := await ext.handle(self, conv, call, snap)) is not None:
+                if call.name == "surrender" and outcome.status == "accepted":
+                    state.tools = [tool for tool in state.tools if tool.name != "surrender"]
                 if call.name == AMEND and outcome.status == "accepted" and state.dynamic_tools:
                     from .vanilla import ACCEPT, ACCEPT_NOW
 

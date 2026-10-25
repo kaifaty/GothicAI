@@ -117,13 +117,14 @@ class CrimeSides:
         conv = dialogue.conversations.get(npc) if dialogue is not None else None
         return conv is not None and conv.intent.goal == "follow_hero"
 
-    def reason(self, npc: str, deed: HeroDeed) -> SideReason | None:
+    def reason(self, npc: str, deed: HeroDeed, *, surrendered: bool = False) -> SideReason | None:
         """Keep the bridge's witness metadata and combat snapshot for direct witnesses."""
         npc, victim = self._npc(npc), self._npc(deed.victim)
         friends = {self._npc(p.npc) for p in deed.witnesses_metadata if p.npctype == 2}
         metadata = next((p for p in deed.witnesses_metadata if self._npc(p.npc) == npc), None)
         guild = metadata.guild if metadata is not None else self.crimes.people.get(npc, {}).get("guild", -1)
-        return self._reason(npc, victim, friends, guild, deed.victim_guild, deed.victim_enemy)
+        return self._reason(npc, victim, friends, guild, deed.victim_guild, deed.victim_enemy,
+                            surrendered=surrendered)
 
     def heard_reason(self, npc: str, crime: Fact) -> SideReason | None:
         """A listener can have its own side, independent of the teller's version."""
@@ -137,7 +138,8 @@ class CrimeSides:
             victim_guild = people.get(victim, {}).get("guild")
         if victim_guild is not None and victim_guild < 0:
             victim_guild = None
-        return self._reason(npc, victim, friends, guild, victim_guild)
+        return self._reason(npc, victim, friends, guild, victim_guild,
+                            surrendered=bool(crime.get("surrendered")))
 
     def _prepare_fights(self) -> None:
         dialogue = self.crimes.dialogue
@@ -179,11 +181,12 @@ class CrimeSides:
         guild: int,
         victim_guild: int | None,
         victim_enemy: bool = False,
+        surrendered: bool = False,
     ) -> SideReason | None:
         self._prepare_fights()
-        if (npc, victim) in self.fights or (victim, npc) in self.fights:
+        if not surrendered and ((npc, victim) in self.fights or (victim, npc) in self.fights):
             return "fought"
-        if self._companion(npc, friends):
+        if not surrendered and self._companion(npc, friends):
             if (
                 victim_enemy
                 or victim in self.group_threats
