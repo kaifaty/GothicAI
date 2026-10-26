@@ -185,16 +185,20 @@ async def test_the_truth_is_no_lie(graph):
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     fake.hero_items = {"ITPL_BEET": 20}
     try:
-        await dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await dialogue.say_as_player(LOBART, "Вот твоя репа.")
         await _until(lambda: chronicle.facts("claim") != [])
         assert chronicle.facts("claim")[0]["truth"] is True and chronicle.facts("lie") == []
         await _until(lambda: _effects(fake, LOBART) != [])
+        await asyncio.wait_for(asyncio.gather(*conv.actions), 3)
         # as in the scripts: Lobart pays, the turnips stay with the hero for Hilda
         assert {"do": "set", "var": TO_HILDA, "value": 1} in _effects(fake, LOBART)[0]
         assert vanilla.told[QUEST].lie is False
     finally:
-        await link_cm.__aexit__(None, None, None)
+        try:
+            await dialogue.close()
+        finally:
+            await link_cm.__aexit__(None, None, None)
 
 
 async def test_a_lie_is_mended_when_the_next_step_gets_the_goods(graph):
