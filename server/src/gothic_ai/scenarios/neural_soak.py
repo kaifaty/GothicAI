@@ -719,10 +719,13 @@ async def neural_soak_scenario(
                               ["var", "AR_NONE"], ["int", 0]]
                              for index, npc in enumerate(BANDITS[:count])])
                 loaded = False
-                combat_deadline = started + duration + (30 if probe_only else 0)
+                combat_deadline = max(
+                    started + duration + (30 if probe_only else 0), wave_start + ACQUIRE_WINDOW,
+                )
                 while time.monotonic() - wave_start < 75 and time.monotonic() < combat_deadline:
                     await poll(break_stalls=True)
-                    if probe_only and not pending_probe():
+                    if (probe_only and not pending_probe()
+                            and time.monotonic() - wave_start >= ACQUIRE_WINDOW):
                         break
                     if cause := death_cause():
                         await load_wave(saved, cause=cause)
