@@ -1,6 +1,7 @@
 """World occasions are deterministic, branch-local facts; no model is involved."""
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 
 import pytest
@@ -790,15 +791,39 @@ async def test_next_gathers_for_ten_seconds_after_the_latest_occasion_by_default
             await asyncio.gather(taking, return_exceptions=True)
 
 
-async def test_continuous_occasions_are_handed_off_at_the_thirty_second_limit(places):
+async def test_continuous_occasions_are_handed_off_at_the_thirty_second_limit(places, monkeypatch):
     async with world(places, gather=True) as (fake, clock, chronicle, occasions):
         await settle(fake, clock, occasions, "HOME")
         started = clock.t
+        committed, release = asyncio.Event(), asyncio.Event()
+        add_fact = chronicle.memory.add_fact
+
+        async def held_receipt(branch, content):
+            seq = await add_fact(branch, content)
+            fact = json.loads(content)
+            if fact.get("fact") == "found_out" and fact.get("quest") == "6":
+                committed.set()
+                await release.wait()
+            return seq
+
+        monkeypatch.setattr(chronicle.memory, "add_fact", held_receipt)
         taking = asyncio.create_task(occasions.next())
+        recording = None
         try:
             for number in range(1, 7):
-                clock.t += 5
-                await chronicle.record({"fact": "found_out", "quest": str(number)})
+                deed = {"fact": "found_out", "quest": str(number)}
+                if number == 6:
+                    # Accept the last write before the cap, then let handoff race its publication.
+                    recording = asyncio.create_task(chronicle.record(deed))
+                    await asyncio.wait_for(committed.wait(), 1)
+                    clock.t += 5
+                    await asyncio.sleep(0.03)
+                    assert not taking.done()
+                    release.set()
+                    await recording
+                else:
+                    clock.t += 5
+                    await chronicle.record(deed)
                 await occasions.poll()
                 if number < 6:
                     await asyncio.sleep(0.03)
@@ -810,8 +835,13 @@ async def test_continuous_occasions_are_handed_off_at_the_thirty_second_limit(pl
             assert result["also"][-1]["kind"] == "arrived"
             assert occasions.pending == []
         finally:
-            taking.cancel()
-            await asyncio.gather(taking, return_exceptions=True)
+            release.set()
+            try:
+                if recording is not None:
+                    await recording
+            finally:
+                taking.cancel()
+                await asyncio.gather(taking, return_exceptions=True)
 
 
 async def test_a_closed_budget_keeps_the_arrival_without_handoff_requests(places):

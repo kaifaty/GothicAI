@@ -467,11 +467,18 @@ class Occasions:
         while True:
             self._changed.clear()
             try:
+                if self.pending and self.link.world is not None and not self._gathering():
+                    # Finish accepted fact publication before taking the queue lock. Poll may
+                    # hold that lock while it records an occasion in the same completion queue.
+                    await self.chronicle.memory.complete(self.chronicle.memory.flush)
                 async with self._lock:
                     generation = self._generation
                     try:
+                        if self._events:
+                            self._wake.set()
                         can_take = (
-                            bool(self.pending) and self.link.world is not None and not self._gathering()
+                            bool(self.pending) and self.link.world is not None
+                            and not self._events and not self._gathering()
                         )
                         if can_take and ready is not None:
                             can_take = await ready()
@@ -515,4 +522,7 @@ class Occasions:
         self._raw_place = place.id if place else None
         self._set_distances(owners, values[1:])
         self._expire()
+        if self._events:
+            self._wake.set()
+            return None
         return self._consume() if self.pending else None
