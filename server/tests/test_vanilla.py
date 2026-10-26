@@ -765,12 +765,20 @@ async def test_once_lied_to_it_takes_his_word_no_more(graph):
         await link_cm.__aexit__(None, None, None)
 
 
-async def test_a_giver_remembers_its_own_kill_before_its_first_turn(graph):
+async def test_a_giver_remembers_its_own_kill_before_its_first_turn(graph, monkeypatch):
     fake = FakeGame(branch="A")
     store = await MemoryStore.open(":memory:")
     link_cm, _, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars[KILL] = 1
     fake.npc_states[BANDIT] = {"state": "dead", "name": "Бандит", "distance": 5000, "seen": False}
+    remember_dead = vanilla._remember_dead
+    together = asyncio.Barrier(2)
+
+    async def remember_together(npc, dead, how):
+        await together.wait()
+        await remember_dead(npc, dead, how)
+
+    monkeypatch.setattr(vanilla, "_remember_dead", remember_together)
     try:
         assert vanilla.offers == {}
         died = {"fact": "died", "npc": BANDIT, "killer": LOBART}
