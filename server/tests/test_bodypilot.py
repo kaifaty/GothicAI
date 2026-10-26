@@ -3499,7 +3499,8 @@ async def test_native_visibility_restoration_respects_lease_identity(scope):
         assert rig.pilot.last_summary.native_release_reason == "target_visibility_lost"
 
 
-async def test_visibility_restoration_diagnostics_keep_last_ten_actual_policy_decisions(caplog):
+@pytest.mark.parametrize("delivery", ["active", "cleanup"])
+async def test_visibility_restoration_diagnostics_keep_last_ten_actual_policy_decisions(caplog, delivery):
     caplog.set_level("INFO", logger="gothic_ai.bodypilot")
     async with running() as rig:
         await rig.active()
@@ -3519,13 +3520,32 @@ async def test_visibility_restoration_diagnostics_keep_last_ten_actual_policy_de
         rig.bridge.emit(unseen_fighter(19, t_game_ms=2200))
         await eventually(lambda: len(rig.policy.commands("step")) == 17)
         rig.clock.advance(0.35)
-        rig.link._dispatch(events(rig.bridge.control_event(
+        restoration = events(rig.bridge.control_event(
             reason="native_restored", release_reason="target_visibility_lost", owner="native",
             t_game_ms=2400,
-        )))
+        ))
+        restored_during_cleanup = []
+        if delivery == "cleanup":
+            original_call = rig.fight.client.call
+
+            async def restore_during_end_episode(command, **fields):
+                if command == "end_episode":
+                    assert rig.pilot.last_summary is None
+                    assert rig.fight._native_release_reason != "target_visibility_lost"
+                    rig.link._dispatch(restoration)
+                    restored_during_cleanup.append(command)
+                return await original_call(command, **fields)
+
+            rig.fight.client.call = restore_during_end_episode
+            # A newer ownership generation is observed before the old lease's reason arrives.
+            rig.bridge.emit(fighter(20, owned=True, control_generation=8, t_game_ms=2400))
+        else:
+            rig.link._dispatch(restoration)
         await rig.ended()
         summary = rig.pilot.last_summary
         assert summary.reason == "target_lost" and summary.release_confirmed
+        assert summary.end_trigger == "target_lost"
+        assert restored_during_cleanup == (["end_episode"] if delivery == "cleanup" else [])
         assert summary.target_invisible_seconds == pytest.approx(0.8)
         assert summary.target_invisible_game_ms == 800
         assert summary.target_invisible_last_seconds == pytest.approx(0.59)
@@ -3561,6 +3581,9 @@ async def test_native_ownership_or_dialogue_takeover_ends_episode(takeover):
             rig.pilot.unavailable = lambda _: True
             rig.bridge.emit(fighter(4, owned=True))
         await rig.ended()
+        if takeover == "lease_lost":
+            assert rig.pilot.last_summary.reason == rig.pilot.last_summary.end_trigger == "lease_lost"
+            assert rig.pilot.last_summary.native_release_reason != "target_visibility_lost"
 
 
 async def test_pending_release_keeps_watch_until_native_restoration():

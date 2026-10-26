@@ -1856,6 +1856,8 @@ class BodyFight:
                 observed_terminal = observed_terminal or self._latest_terminal(lease)
                 if observed_terminal is not None:
                     reason = observed_terminal
+                elif self._native_release_reason == "target_visibility_lost":
+                    reason = "target_lost"
             # Another fight's poll can deliver native_restored while the policy
             # episode is closing. Recheck before unwatch and orphan registration.
             if not release_confirmed and (
