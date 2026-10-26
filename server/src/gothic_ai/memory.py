@@ -13,13 +13,17 @@ the branch as a whole: patches of the story graph (story.py), which follow the s
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
 import sqlite3
 import time
+from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .llm import Message, Role
 
@@ -93,14 +97,177 @@ class BranchInfo:
     npcs: int
 
 
+async def _wait_complete[T](future: asyncio.Future[T]) -> T:
+    """Finish accepted work before propagating cancellation of its awaiter."""
+    cancelled = None
+    while True:
+        try:
+            result = await asyncio.shield(future)
+            break
+        except asyncio.CancelledError as error:
+            if future.cancelled():
+                raise
+            cancelled = error
+    if cancelled is not None:
+        raise cancelled
+    return result
+
+
 class MemoryStore:
+    """One worker owns SQLite; logical completions apply and publish on the event loop."""
+
+    def __init__(self, path: str | Path = DEFAULT_PATH) -> None:
+        self.path = path
+        self._loop = asyncio.get_running_loop()
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="npc-memory")
+        self._sql: _SqlMemory
+        self._completion_lock = asyncio.Lock()
+        self._completions: set[asyncio.Task[Any]] = set()
+        self._active_completion: asyncio.Task[Any] | None = None
+        self._closing = False
+        self._close_task: asyncio.Task[None] | None = None
+
+    @classmethod
+    async def open(cls, path: str | Path = DEFAULT_PATH) -> MemoryStore:
+        store = cls(path)
+
+        async def initialize() -> None:
+            store._sql = await store._run(_SqlMemory, path)
+
+        try:
+            await _wait_complete(asyncio.create_task(initialize()))
+        except BaseException:
+            await store.close()
+            raise
+        return store
+
+    async def _run[T](self, operation: Callable[..., T], *args: Any) -> T:
+        if self._closing and asyncio.current_task() is not self._active_completion:
+            raise RuntimeError("Memory store is closing")
+        return await _wait_complete(self._loop.run_in_executor(self._executor, operation, *args))
+
+    @property
+    def in_completion(self) -> bool:
+        """Whether this task owns the current logical completion."""
+        return asyncio.current_task() is self._active_completion
+
+    async def complete[T](self, operation_factory: Callable[[], Awaitable[T]]) -> T:
+        """Serialize persistence, local bookkeeping and publication; drain accepted work on cancel."""
+        if asyncio.current_task() is self._active_completion:
+            return await operation_factory()
+        if self._closing:
+            raise RuntimeError("Memory store is closing")
+
+        async def run() -> T:
+            async with self._completion_lock:
+                self._active_completion = asyncio.current_task()
+                try:
+                    return await operation_factory()
+                finally:
+                    self._active_completion = None
+
+        task = asyncio.create_task(run())
+        self._completions.add(task)
+        task.add_done_callback(self._completions.discard)
+        return await _wait_complete(task)
+
+    async def flush(self) -> None:
+        """Complete previously submitted SQL work; caller owns the publication/save barrier."""
+        await self._run(lambda: None)
+
+    async def close(self) -> None:
+        if asyncio.current_task() is self._active_completion:
+            raise RuntimeError("Cannot close memory inside a logical completion")
+        if self._close_task is None:
+            self._closing = True
+
+            async def finish() -> None:
+                try:
+                    await asyncio.gather(*tuple(self._completions), return_exceptions=True)
+                    if hasattr(self, "_sql"):
+                        await self._loop.run_in_executor(self._executor, self._sql.close)
+                finally:
+                    self._executor.shutdown(wait=False, cancel_futures=False)
+
+            self._close_task = asyncio.create_task(finish())
+        await _wait_complete(self._close_task)
+
+    async def ensure_branch(self, branch: str, parent: str | None = None, parent_seq: int = 0) -> int:
+        return await self._run(self._sql.ensure_branch, branch, parent, parent_seq)
+
+    async def head(self, branch: str) -> int:
+        return await self._run(self._sql.head, branch)
+
+    async def append(
+        self, branch: str, npc: str, role: Role, content: str, game_time: str | None = None
+    ) -> int:
+        return await self._run(self._sql.append, branch, npc, role, content, game_time)
+
+    async def append_messages(
+        self, branch: str, npc: str, messages: tuple[Message, ...], game_time: str | None = None
+    ) -> tuple[Entry, ...]:
+        return await self._run(self._sql.append_messages, branch, npc, messages, game_time)
+
+    async def add_summary(self, branch: str, npc: str, summary: str, covers: int) -> int:
+        return await self._run(self._sql.add_summary, branch, npc, summary, covers)
+
+    async def set_intent(self, branch: str, npc: str, intent: str, game_time: str | None = None) -> int:
+        return await self._run(self._sql.set_intent, branch, npc, intent, game_time)
+
+    async def load(self, branch: str, npc: str) -> NpcMemory:
+        return await self._run(self._sql.load, branch, npc)
+
+    async def intent(self, branch: str, npc: str) -> str | None:
+        return await self._run(self._sql.intent, branch, npc)
+
+    async def search(
+        self, branch: str, npc: str, query: str, before_seq: int, limit: int = 6
+    ) -> list[Recollection]:
+        return await self._run(self._sql.search, branch, npc, query, before_seq, limit)
+
+    async def add_seen(self, branch: str, npc: str, sighting: str) -> int:
+        return await self._run(self._sql.add_seen, branch, npc, sighting)
+
+    async def seen(self, branch: str, npc: str) -> list[str]:
+        return await self._run(self._sql.seen, branch, npc)
+
+    async def add_chest(self, branch: str, npc: str, record: str) -> int:
+        return await self._run(self._sql.add_chest, branch, npc, record)
+
+    async def chests(self, branch: str, npc: str) -> list[str]:
+        return await self._run(self._sql.chests, branch, npc)
+
+    async def add_fact(self, branch: str, fact: str) -> int:
+        return await self._run(self._sql.add_fact, branch, fact)
+
+    async def facts(self, branch: str) -> list[str]:
+        return await self._run(self._sql.facts, branch)
+
+    async def facts_since(self, branch: str, seq: int) -> list[tuple[int, str]]:
+        return await self._run(self._sql.facts_since, branch, seq)
+
+    async def add_patch(self, branch: str, op: str) -> int:
+        return await self._run(self._sql.add_patch, branch, op)
+
+    async def patches(self, branch: str) -> list[str]:
+        return await self._run(self._sql.patches, branch)
+
+    async def branches(self) -> list[BranchInfo]:
+        return await self._run(self._sql.branches)
+
+
+class _SqlMemory:
     def __init__(self, path: str | Path = DEFAULT_PATH) -> None:
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self._db = sqlite3.connect(str(path), isolation_level=None)  # autocommit; explicit transactions
-        self._db.execute("PRAGMA journal_mode=WAL")
-        self._db.executescript(_SCHEMA)
+        try:
+            self._db.execute("PRAGMA journal_mode=WAL")
+            self._db.executescript(_SCHEMA)
+        except BaseException:
+            self._db.close()
+            raise
 
     def close(self) -> None:
         self._db.close()
@@ -130,6 +297,14 @@ class MemoryStore:
 
     def append(self, branch: str, npc: str, role: Role, content: str, game_time: str | None = None) -> int:
         return self._insert(branch, npc, "message", role, content, None, game_time)
+
+    def append_messages(
+        self, branch: str, npc: str, messages: tuple[Message, ...], game_time: str | None = None
+    ) -> tuple[Entry, ...]:
+        # One worker job prevents interleaving; each row keeps its original COMMIT/crash prefix.
+        return tuple(
+            Entry(self.append(branch, npc, m.role, m.content, game_time), m.role, m.content) for m in messages
+        )
 
     def add_summary(self, branch: str, npc: str, summary: str, covers: int) -> int:
         return self._insert(branch, npc, "summary", None, summary, covers, None)

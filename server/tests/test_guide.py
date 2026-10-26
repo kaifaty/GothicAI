@@ -1,6 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -16,6 +17,7 @@ from gothic_ai.storyguard import StoryGuard
 from tests.fake_game import FakeGame
 from tests.test_deals import GOLD, _setup, _shown
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 MALETH, GUARD = "BAU_954_MALETH", "MIL_315_GUARD"
 BRAGO = "BDT_1014_BANDIT_L"
@@ -84,6 +86,8 @@ class _Link:
 
     def __init__(self) -> None:
         self.listeners: list[Any] = []
+        self.session = SimpleNamespace(branch="A")
+        self.world_generation = 0
         self.snapshots: dict[str, Any] = {MALETH: _snap((0, 0, 0), (300, 0, 0))}
         self.routines: dict[str, list[RoutineEntry]] = {
             MALETH: [RoutineEntry(start="05:00", end="21:00", state="ZS_STAND_GUARDING",
@@ -141,20 +145,23 @@ class _Dialogue:
     def audible(self, npc: str) -> bool:
         return self.heard
 
-    def open(self, npc: str, name: str) -> Any:
+    async def open(self, npc: str, name: str) -> Any:
         return self.conv
 
     def event_turn(self, npc: str, cue: str, **kw: Any) -> None:
         self.cues.append(cue)
 
-    def note(self, npc: str, text: str) -> None:
+    async def note(self, npc: str, text: str) -> None:
         self.notes.append(text)
 
 
 def _guide(link: _Link | None = None) -> tuple[Guide, _Link, _Talk, _Dialogue, list[dict[str, Any]]]:
     link = link or _Link()
     talk, dialogue, facts = _Talk(), _Dialogue(), []
-    chronicle = SimpleNamespace(record=facts.append)
+    chronicle = SimpleNamespace(
+        record=AsyncMock(side_effect=facts.append), branch="A",
+        memory=SimpleNamespace(complete=lambda operation: operation()),
+    )
     guide = Guide(link, dialogue, talk, BOOK, StoryGuard(None), chronicle)  # type: ignore[arg-type]
     return guide, link, talk, dialogue, facts
 
@@ -225,7 +232,7 @@ async def test_it_leads_the_hero_waits_for_him_and_says_they_are_there():
     guide, link, talk, dialogue, facts = _guide()
     way, _ = await guide.way(MALETH, "FARM1_MILL", link.snapshots[MALETH])
     assert way is not None
-    guide.start(MALETH, "Малет", way, "D1")
+    await guide.start(MALETH, "Малет", way, "D1")
     assert dialogue.cues[0].startswith("[Герой согласился, сделка состоялась: ты ведёшь его — мельница")
     await _until(lambda: link.walk is not None)
     assert talk.held[MALETH] == {LEAD}  # it walks ahead: it answers him on the move
@@ -257,7 +264,7 @@ async def test_he_does_not_come_and_it_goes_back_to_its_business():
     way, _ = await guide.way(MALETH, "FARM1_MILL", link.snapshots[MALETH])
     assert way is not None
     talk.partner = None
-    guide.start(MALETH, "Малет", way, "D1")
+    await guide.start(MALETH, "Малет", way, "D1")
     await _until(lambda: link.walk is not None)
     link.snapshots[MALETH] = _snap((2000, 0, 0), (-1000, 0, 0))
     await _until(lambda: MALETH not in guide.leads)
@@ -269,7 +276,7 @@ async def test_stuck_on_its_way_it_gets_back_onto_the_waynet_and_at_last_gives_u
     monkeypatch.setattr(gothic_ai.guide, "STUCK_S", 0.1)
     guide, link, _, dialogue, facts = _guide()
     link.snapshots[MALETH] = _snap((1000, 0, 0), (800, 0, 0))  # he is close behind, it does not move
-    guide.start(MALETH, "Малет", Way(BOOK.places[1], ("NW_FARM1_MILL_01",), (6000.0, 0.0, 0.0)), "D1")
+    await guide.start(MALETH, "Малет", Way(BOOK.places[1], ("NW_FARM1_MILL_01",), (6000.0, 0.0, 0.0)), "D1")
     await _until(lambda: MALETH not in guide.leads)
     hops = [args for action, args in link.acts if action == "go_to_waypoint" and "points" not in args]
     assert len(hops) == 3 and hops[0] == {"waypoint": "", "pos": [1000, 0, 0], "radius": 200}
@@ -282,18 +289,20 @@ async def test_standing_while_it_says_its_line_is_not_stuck(monkeypatch):
     guide, link, _, dialogue, _ = _guide()
     dialogue.heard = True  # a live «за мной» takes seconds, and the game starts the walk after it
     link.snapshots[MALETH] = _snap((1000, 0, 0), (800, 0, 0))
-    guide.start(MALETH, "Малет", Way(BOOK.places[1], ("NW_FARM1_MILL_01",), (6000.0, 0.0, 0.0)), "D1")
+    await guide.start(MALETH, "Малет", Way(BOOK.places[1], ("NW_FARM1_MILL_01",), (6000.0, 0.0, 0.0)), "D1")
     await _until(lambda: link.walk is not None)
     await asyncio.sleep(0.3)
     assert not [args for action, args in link.acts if action == "go_to_waypoint" and "points" not in args]
     dialogue.heard = False  # said: now standing is stuck
     await _until(lambda: any(a == "go_to_waypoint" and "points" not in args for a, args in link.acts))
+    await guide.close()
+    assert not guide._tasks and not guide.leads and link.walk.done()
 
 
 async def test_something_else_takes_its_body_the_way_is_over():
     guide, link, _, dialogue, facts = _guide()
     way = Way(BOOK.places[1], ("NW_FARM1_MILL_01",), (6000.0, 0.0, 0.0))
-    guide.start(MALETH, "Малет", way, "D1")
+    await guide.start(MALETH, "Малет", way, "D1")
     await _until(lambda: link.walk is not None)
     link.walk.set_result("cancelled")  # a fight, an order, the console
     await _until(lambda: MALETH not in guide.leads)
@@ -305,7 +314,7 @@ async def test_the_way_is_a_term_of_a_deal_and_it_sets_off_once_he_says_yes():
     lead = {"npc_gives": [], "hero_gives": [{"item": GOLD, "count": 5}], "lead": "мельница"}
     offer = FakeStep("Пять монет — и отведу.", [ToolCall("propose_deal", lead, "c1")])
     llm = FakeBackend(script=[offer], delay=0)
-    link_cm, dialogue, chronicle, deals = await _setup(fake, llm, MemoryStore(":memory:"))
+    link_cm, dialogue, chronicle, deals = await _setup(fake, llm, await MemoryStore.open(":memory:"))
     mill = BOOK.get("FARM1_MILL")
     assert mill is not None
     way = Way(mill, mill.points, (6000.0, 0.0, 0.0))
@@ -314,7 +323,7 @@ async def test_the_way_is_a_term_of_a_deal_and_it_sets_off_once_he_says_yes():
         return (way, "") if what == "мельница" else (None, "ты не знаешь такого места")
 
     started: list[tuple[Any, ...]] = []
-    deals.guide = SimpleNamespace(way=way_of, start=lambda *a: started.append(a))  # type: ignore[assignment]
+    deals.guide = SimpleNamespace(way=way_of, start=AsyncMock(side_effect=lambda *a: started.append(a)))  # type: ignore[assignment]
     try:
         out = await deals.propose(XARDAS, "Ксардас", {"lead": "замок"}, None)
         assert out.output == "Отклонено: ты не знаешь такого места"

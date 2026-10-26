@@ -13,7 +13,9 @@ from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import RosterEntry
 from tests.fake_game import FakeGame, connected
+from tests.test_deals import _owned_link
 from tests.test_dialogue import LOBART, XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 GOLD, RUNE, FEAR, FUR = "ITMI_GOLD", "ITRU_SUMSKEL", "ITRU_FEAR", "ITAT_WOLFFUR"
 WOLF = 27  # GIL_WOLF, as the fake scripts number it
@@ -46,13 +48,17 @@ async def _setup(fake: FakeGame, llm: FakeBackend, store: MemoryStore):
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
     dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=store)
+    await dialogue.initialize()
     chronicle = Chronicle(link, store)
+    await chronicle.initialize()
     deals = Deals(link, dialogue, chronicle, names=lambda name: {"Лобарт": LOBART}.get(name))
     dialogue.extensions += [deals, deals.contracts]
     await link.snapshot(XARDAS)
-    dialogue.open(XARDAS, "Ксардас")
+    await dialogue.open(XARDAS, "Ксардас")
     await deals.contracts.prepare(XARDAS)  # the stash's names
-    return link_cm, link, dialogue, chronicle, deals
+    owned = _owned_link(link_cm, dialogue, deals)
+    await owned.__aenter__()
+    return owned, link, dialogue, chronicle, deals
 
 
 async def _propose_accept(fake: FakeGame, link, deals: Deals, args: dict[str, Any]) -> dict[str, Any]:
@@ -71,7 +77,7 @@ def _effects(fake: FakeGame) -> list[dict[str, Any]]:
 
 async def test_stash_teaching_and_experience_now():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(reply="Бери.", delay=0)
     link_cm, link, dialogue, chronicle, deals = await _setup(fake, llm, store)
     try:
@@ -112,7 +118,7 @@ async def test_greg_sees_his_pirate_stash_and_can_offer_it():
     }
     fake = FakeGame(branch="A")
     link_cm, _link, _dialogue, _chronicle, deals = await _setup(
-        fake, FakeBackend(delay=0), MemoryStore(":memory:")
+        fake, FakeBackend(delay=0), await MemoryStore.open(":memory:")
     )
     try:
         fake.item_names.update({item: name for item, (_, name) in items.items()})
@@ -136,7 +142,7 @@ async def test_greg_sees_his_pirate_stash_and_can_offer_it():
 
 async def test_too_few_learning_points_the_offer_goes():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(reply="Тогда в другой раз.", delay=0)
     link_cm, link, dialogue, chronicle, deals = await _setup(fake, llm, store)
     try:
@@ -155,7 +161,7 @@ async def test_too_few_learning_points_the_offer_goes():
 
 async def test_kill_task_paid_when_he_comes_back():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(
         script=[
             FakeStep(
@@ -216,7 +222,7 @@ async def test_kill_task_paid_when_he_comes_back():
 
 async def test_a_person_by_name_and_the_task_void_when_another_kills_him():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(reply="Хорошо.", delay=0)
     link_cm, link, dialogue, chronicle, deals = await _setup(fake, llm, store)
     try:
@@ -240,7 +246,7 @@ async def test_a_person_by_name_and_the_task_void_when_another_kills_him():
 
 async def test_bring_task_paid_once_he_has_it_from_the_stash():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(reply="Хорошо.", delay=0)
     link_cm, link, dialogue, chronicle, deals = await _setup(fake, llm, store)
     try:
@@ -265,11 +271,11 @@ async def test_bring_task_paid_once_he_has_it_from_the_stash():
 async def test_dishonest_task_refuses_only_when_done_and_never_pays_after_a_load():
     fake = FakeGame(branch="A")
     link_cm, link, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend(reply="Хорошо.", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend(reply="Хорошо.", delay=0), await MemoryStore.open(":memory:")
     )
     try:
         deal = "dishonest-contract"
-        chronicle.record(
+        await chronicle.record(
             {
                 "fact": "npc_intent",
                 "npc": XARDAS,
@@ -279,7 +285,7 @@ async def test_dishonest_task_refuses_only_when_done_and_never_pays_after_a_load
                 "why": "dishonesty",
             }
         )
-        contract = deals.contracts.add(
+        contract = await deals.contracts.add(
             deal,
             XARDAS,
             "Ксардас",
@@ -352,7 +358,7 @@ async def test_dishonest_task_refuses_only_when_done_and_never_pays_after_a_load
 
 async def test_a_task_past_its_day_is_a_broken_word_and_survives_a_reload():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(reply="Хорошо.", delay=0)
     link_cm, link, dialogue, chronicle, deals = await _setup(fake, llm, store)
     try:
@@ -366,8 +372,8 @@ async def test_a_task_past_its_day_is_a_broken_word_and_survives_a_reload():
         again = Contracts(link, dialogue, chronicle, deals.stash)
         assert again.contracts["C1"].kill[0].done == 1 and again.contracts["C1"].state == "open"
 
-        assert deals.contracts.overdue(2) == []  # due by the end of day 2 (0-based)
-        assert [c.id for c in deals.contracts.overdue(3)] == ["C1"]
+        assert await deals.contracts.overdue(2) == []  # due by the end of day 2 (0-based)
+        assert [c.id for c in await deals.contracts.overdue(3)] == ["C1"]
         assert chronicle.facts("broken")[0]["contract"] == "C1"
         assert "он не сдержал слово" in (deals.contracts.situation(XARDAS) or "")
     finally:
@@ -376,7 +382,7 @@ async def test_a_task_past_its_day_is_a_broken_word_and_survives_a_reload():
 
 async def test_what_the_terms_may_not_be():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(reply="Хорошо.", delay=0)
     link_cm, link, dialogue, chronicle, deals = await _setup(fake, llm, store)
     try:

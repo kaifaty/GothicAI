@@ -77,7 +77,7 @@ class NpcCrimes:
         }
         return [f for f in self.facts() if f.get("id") in ids]
 
-    def suspect_chest(
+    async def suspect_chest(
         self, npc: str, chest: str, missing: Mapping[str, int], *, waypoint: str = "",
     ) -> list[Fact]:
         """A remembered presence explains a loss, without identifying the real thief.
@@ -85,41 +85,58 @@ class NpcCrimes:
         NPC deeds keep their own namespace. Suspecting the hero in one of these cases is deferred
         until that namespace has a bridge to hero accusations; it must never create a hero case.
         """
-        crimes = self.crimes
-        if not self.enabled or crimes is None or crimes.sightings is None:
-            return []
-        npc = npc.upper()
-        out = []
-        for crime in self.facts():
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            nonlocal npc
             if (
-                crime.get("kind") != "theft" or crime.get("chest") != chest
-                or crime.get("owner") != npc or crime.get("item") not in missing
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
             ):
-                continue
-            at = int(crime["day"]) * 1440 + int(crime["hour"]) * 60 + int(crime["minute"])
-            place = crimes.places.of(crime.get("waypoint") or waypoint) if crimes.places else None
-            if place is None:
-                continue
-            for sight in crimes.sightings.mind(npc).sightings:
+                raise GameError("session changed while recording crime state")
+            crimes = self.crimes
+            if not self.enabled or crimes is None or crimes.sightings is None:
+                return []
+            npc = npc.upper()
+            world_generation = self.link.world_generation
+            await crimes.sightings.prepare(npc)
+            if self.link.world_generation != world_generation or self.link.session is not _memory_session:
+                return []
+            out = []
+            for crime in self.facts():
                 if (
-                    sight.trace_kind or sight.who in HERO or sight.who == npc
-                    or sight.end < at - SUSPECT_MIN or sight.start > at + SUSPECT_MIN
-                    or place.id not in sight.place_ids
+                    crime.get("kind") != "theft" or crime.get("chest") != chest
+                    or crime.get("owner") != npc or crime.get("item") not in missing
                 ):
                     continue
-                if any(
-                    f.get("npc") == npc and f.get("crime") == crime["id"]
-                    and f.get("suspect") == sight.who
-                    for f in self.chronicle.facts("npc_crime_suspected")
-                ):
+                at = int(crime["day"]) * 1440 + int(crime["hour"]) * 60 + int(crime["minute"])
+                place = crimes.places.of(crime.get("waypoint") or waypoint) if crimes.places else None
+                if place is None:
                     continue
-                fact = {
-                    "fact": "npc_crime_suspected", "npc": npc, "crime": crime["id"],
-                    "suspect": sight.who, "chest": chest, "sighting": sight.record(),
-                }
-                self.chronicle.record(fact)
-                out.append(fact)
-        return out
+                for sight in crimes.sightings.mind(npc).sightings:
+                    if (
+                        sight.trace_kind or sight.who in HERO or sight.who == npc
+                        or sight.end < at - SUSPECT_MIN or sight.start > at + SUSPECT_MIN
+                        or place.id not in sight.place_ids
+                    ):
+                        continue
+                    if any(
+                        f.get("npc") == npc and f.get("crime") == crime["id"]
+                        and f.get("suspect") == sight.who
+                        for f in self.chronicle.facts("npc_crime_suspected")
+                    ):
+                        continue
+                    fact = {
+                        "fact": "npc_crime_suspected", "npc": npc, "crime": crime["id"],
+                        "suspect": sight.who, "chest": chest, "sighting": sight.record(),
+                    }
+                    await self.chronicle.record(fact)
+                    out.append(fact)
+            return out
+
+        return await self.chronicle.memory.complete(persist)
 
     def _human(self, npc: str, guild: int | None = None) -> bool | None:
         if guild is None and self.crimes is not None:
@@ -194,76 +211,88 @@ class NpcCrimes:
             npc, target=target, state=actor_state, target_state=target_state, item=item, mission=mission,
         )
 
-    def record(self, deed: NpcDeed, *, far: bool = False) -> Fact | None:
+    async def record(self, deed: NpcDeed, *, far: bool = False) -> Fact | None:
         """One truth and one discovery per actual witness, in the current save branch only."""
-        crimes = self.crimes
-        if not self.enabled or crimes is None or self.chronicle.branch is None or self.crime(deed.id):
-            return None
-        culprit = crimes._npc(deed.culprit)
-        if not culprit or culprit in HERO:
-            return None
-        victim, owner, community = crimes._npc(deed.victim), "", None
-        item, count = deed.item.upper(), deed.count
-        if deed.kind == "take_item":
-            if not item or count <= 0:
-                return None
-            ownership = crimes._ownership(deed, culprit=culprit)
-            if ownership is None:
-                return None
-            owner, guild, npctype = ownership
-            victim = owner
-            community = crimes.community(guild, npctype)
-            kind = "theft"
-        elif deed.kind == "attack":
-            if (
-                not victim or victim == culprit or victim in HERO
-                or deed.victim_is_monster or deed.victim_guild > 16
-            ):
-                return None
-            community = crimes.community(deed.victim_guild, deed.victim_npctype)
-            kind = "attack"
-        else:
-            return None
-        metadata = {crimes._npc(person.npc): person for person in deed.witnesses_metadata}
-        witnesses = list(dict.fromkeys(
-            npc for raw in deed.witnesses if raw
-            if (npc := crimes._npc(raw)) not in {culprit, crimes._npc(deed.victim), *HERO}
-            # Old snapshots can omit metadata: keep the bridge's observation but prove the live
-            # guild before allowing a voice or a body reaction. Current bridges supply every guild.
-            if self._human(npc, metadata[npc].guild if npc in metadata else None) is not False
-        ))
-        for npc, person in metadata.items():
-            crimes.people[npc] = {
-                **crimes.people.get(npc, {}), "guild": person.guild, "npctype": person.npctype,
-            }
-        for npc, guild, npctype in (
-            (culprit, deed.culprit_guild, deed.culprit_npctype),
-            (victim, deed.victim_guild, deed.victim_npctype),
-            (deed.owner, deed.owner_npc_guild, deed.owner_npctype),
-            (deed.chest_owner, deed.chest_owner_guild, deed.chest_owner_npctype),
-            (deed.room_owner, deed.room_owner_guild, deed.room_owner_npctype),
-        ):
-            if npc and guild >= 0:
-                npc = crimes._npc(npc)
-                crimes.people[npc] = {**crimes.people.get(npc, {}), "guild": guild, "npctype": npctype}
-        fact: Fact = {
-            "fact": "npc_crime", "id": deed.id, "culprit": culprit, "kind": kind,
-            "victim": victim, "owner": owner, "community": community, "item": item, "count": count,
-            "place": deed.position.model_dump(), "waypoint": deed.waypoint,
-            "day": deed.day, "hour": deed.hour, "minute": deed.minute, "witnesses": witnesses,
-            **({"far": True} if far else {}),
-            **({"chest": deed.chest} if deed.chest else {}),
-        }
-        self.chronicle.record(fact)
-        for npc in witnesses:
-            self.chronicle.record({
-                "fact": "npc_crime_seen", "npc": npc, "crime": deed.id,
-                "culprit_name": crimes.names(culprit), "victim_name": crimes.names(victim),
-                "name": crimes.names(npc),
-            })
-        return fact
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
 
-    def _on_message(self, message: GameMessage) -> None:
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            crimes = self.crimes
+            if not self.enabled or crimes is None or self.chronicle.branch is None or self.crime(deed.id):
+                return None
+            culprit = crimes._npc(deed.culprit)
+            if not culprit or culprit in HERO:
+                return None
+            victim, owner, community = crimes._npc(deed.victim), "", None
+            item, count = deed.item.upper(), deed.count
+            if deed.kind == "take_item":
+                if not item or count <= 0:
+                    return None
+                ownership = crimes._ownership(deed, culprit=culprit)
+                if ownership is None:
+                    return None
+                owner, guild, npctype = ownership
+                victim = owner
+                community = crimes.community(guild, npctype)
+                kind = "theft"
+            elif deed.kind == "attack":
+                if (
+                    not victim or victim == culprit or victim in HERO
+                    or deed.victim_is_monster or deed.victim_guild > 16
+                ):
+                    return None
+                community = crimes.community(deed.victim_guild, deed.victim_npctype)
+                kind = "attack"
+            else:
+                return None
+            metadata = {crimes._npc(person.npc): person for person in deed.witnesses_metadata}
+            witnesses = list(dict.fromkeys(
+                npc for raw in deed.witnesses if raw
+                if (npc := crimes._npc(raw)) not in {culprit, crimes._npc(deed.victim), *HERO}
+                # Old snapshots can omit metadata: keep the bridge's observation but prove the live
+                # guild before allowing a voice or a body reaction. Current bridges supply every guild.
+                if self._human(npc, metadata[npc].guild if npc in metadata else None) is not False
+            ))
+            for npc, person in metadata.items():
+                crimes.people[npc] = {
+                    **crimes.people.get(npc, {}), "guild": person.guild, "npctype": person.npctype,
+                }
+            for npc, guild, npctype in (
+                (culprit, deed.culprit_guild, deed.culprit_npctype),
+                (victim, deed.victim_guild, deed.victim_npctype),
+                (deed.owner, deed.owner_npc_guild, deed.owner_npctype),
+                (deed.chest_owner, deed.chest_owner_guild, deed.chest_owner_npctype),
+                (deed.room_owner, deed.room_owner_guild, deed.room_owner_npctype),
+            ):
+                if npc and guild >= 0:
+                    npc = crimes._npc(npc)
+                    crimes.people[npc] = {**crimes.people.get(npc, {}), "guild": guild, "npctype": npctype}
+            fact: Fact = {
+                "fact": "npc_crime", "id": deed.id, "culprit": culprit, "kind": kind,
+                "victim": victim, "owner": owner, "community": community, "item": item, "count": count,
+                "place": deed.position.model_dump(), "waypoint": deed.waypoint,
+                "day": deed.day, "hour": deed.hour, "minute": deed.minute, "witnesses": witnesses,
+                **({"far": True} if far else {}),
+                **({"chest": deed.chest} if deed.chest else {}),
+            }
+            await self.chronicle.record(fact)
+            for npc in witnesses:
+                await self.chronicle.record({
+                    "fact": "npc_crime_seen", "npc": npc, "crime": deed.id,
+                    "culprit_name": crimes.names(culprit), "victim_name": crimes.names(victim),
+                    "name": crimes.names(npc),
+                })
+            return fact
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def _on_message(self, message: GameMessage) -> None:
         if isinstance(message, (Loading, Session)):
             self._generation += 1
             self.roster.clear()
@@ -287,7 +316,7 @@ class NpcCrimes:
             if len(self._completed) > 256:
                 self._completed.pop(next(iter(self._completed)))
         elif isinstance(message, NpcDeed):
-            if crime := self.record(message):
+            if crime := await self.record(message):
                 self._spawn(self._react(crime, self._generation))
 
     def _free(self, npc: str) -> bool:
@@ -311,26 +340,39 @@ class NpcCrimes:
             raise GameError(receipt.detail or "action rejected")
         return action_id
 
-    def _heard(self, crime: Fact, witness: str, guard: str) -> None:
+    async def _heard(self, crime: Fact, witness: str, guard: str) -> None:
         """A guard hears a nearby cry, never acquires a fictitious visual observation."""
-        if self.crimes is None or guard in crime["witnesses"]:
-            return
-        key = f"npc_crime_seen:{crime['id']}"
-        if any(
-            f.get("quest") == key and f.get("to") == guard and f.get("subject") == crime["culprit"]
-            for f in self.chronicle.facts("rumor")
-        ):
-            return
-        names = self.crimes.names
-        self.chronicle.record({
-            "fact": "rumor", "quest": key, "kind": "npc_" + crime["kind"],
-            "subject": crime["culprit"], "subject_name": names(crime["culprit"]),
-            "about": crime["victim"], "about_name": names(crime["victim"]),
-            "from": witness, "from_name": names(witness), "to": guard, "hops": 1,
-            "how": "shout", "day": crime["day"],
-        })
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            if self.crimes is None or guard in crime["witnesses"]:
+                return
+            key = f"npc_crime_seen:{crime['id']}"
+            if any(
+                f.get("quest") == key and f.get("to") == guard and f.get("subject") == crime["culprit"]
+                for f in self.chronicle.facts("rumor")
+            ):
+                return
+            names = self.crimes.names
+            await self.chronicle.record({
+                "fact": "rumor", "quest": key, "kind": "npc_" + crime["kind"],
+                "subject": crime["culprit"], "subject_name": names(crime["culprit"]),
+                "about": crime["victim"], "about_name": names(crime["victim"]),
+                "from": witness, "from_name": names(witness), "to": guard, "hops": 1,
+                "how": "shout", "day": crime["day"],
+            })
+
+        return await self.chronicle.memory.complete(persist)
 
     async def _react(self, crime: Fact, generation: int) -> None:
+        world_generation, session = self.link.world_generation, self.link.session
         if self.settled(crime["id"]):
             return
         fighters: set[str] = set()
@@ -361,10 +403,13 @@ class NpcCrimes:
                     await self._act(witness, "say_svm", svm=svm, overlay=True)
                 if generation != self._generation:
                     return
-                self.chronicle.record({
+                await self.chronicle.record({
                     "fact": "npc_crime_reaction", "crime": crime["id"], "npc": witness,
                     "reaction": "shout", "svm": svm,
                 })
+                if (world_generation != self.link.world_generation
+                        or session is not self.link.session):
+                    return
                 nearby = await self.link.story_nearby(witness, SHOUT_RANGE_CM)
                 nearby.insert(0, {"npc": witness, "distance": 0})
                 for person in nearby:
@@ -399,11 +444,11 @@ class NpcCrimes:
                     await self._fight(crime, guard, generation, role="guard", svm=guard_svm)
                     fighters.add(guard)
                     if guard_svm:
-                        self.chronicle.record({
+                        await self.chronicle.record({
                             "fact": "npc_crime_reaction", "crime": crime["id"], "npc": guard,
                             "reaction": "shout", "svm": svm,
                         })
-                    self._heard(crime, witness, guard)
+                    await self._heard(crime, witness, guard)
             except (GameError, TimeoutError, ConnectionError) as error:
                 log.debug("NPC crime %s reaction of %s: %s", crime["id"], witness, error)
 
@@ -428,7 +473,7 @@ class NpcCrimes:
         )
         if generation != self._generation:
             raise GameError("мир сменился во время защиты")
-        self.chronicle.record({
+        await self.chronicle.record({
             "fact": "npc_crime_reaction", "crime": crime["id"], "npc": npc,
             "culprit": crime["culprit"],
             "reaction": "fight", "role": role, "act": action_id,
@@ -525,7 +570,7 @@ class NpcCrimes:
                         "to": "npc", "npc": crime["owner"],
                     }], check=True)
                     if generation == self._generation:
-                        self.chronicle.record({
+                        await self.chronicle.record({
                             "fact": "npc_crime_restitution", "crime": crime["id"],
                             "npc": crime["owner"], "culprit": crime["culprit"], "fighter": fighter,
                             "item": crime["item"], "count": amount, "how": "defeated_thief",
@@ -550,20 +595,32 @@ class NpcCrimes:
         finally:
             self._reclaiming.discard((generation, crime["id"], fighter))
             if outcome and generation == self._generation:
-                self._defense_finished(crime, fighter, action_id, outcome, reason, returned)
+                await self._defense_finished(crime, fighter, action_id, outcome, reason, returned)
 
-    def _defense_finished(
+    async def _defense_finished(
         self, crime: Fact, fighter: str, action_id: str, outcome: str, reason: str, returned: int,
     ) -> None:
         """A terminal result is evidence about this defense, never evidence or a penalty for the hero."""
-        if any(
-            f.get("crime") == crime["id"] and f.get("fighter") == fighter and f.get("act") == action_id
-            for f in self.chronicle.facts("npc_crime_defense")
-        ):
-            return
-        self.chronicle.record({
-            "fact": "npc_crime_defense", "crime": crime["id"], "culprit": crime["culprit"],
-            "fighter": fighter, "act": action_id, "outcome": outcome, "reason": reason,
-            "item": crime["item"], "count": crime["count"], "returned": returned,
-            **({"blamed": crime["blamed"]} if crime.get("blamed") else {}),
-        })
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            if any(
+                f.get("crime") == crime["id"] and f.get("fighter") == fighter and f.get("act") == action_id
+                for f in self.chronicle.facts("npc_crime_defense")
+            ):
+                return
+            await self.chronicle.record({
+                "fact": "npc_crime_defense", "crime": crime["id"], "culprit": crime["culprit"],
+                "fighter": fighter, "act": action_id, "outcome": outcome, "reason": reason,
+                "item": crime["item"], "count": crime["count"], "returned": returned,
+                **({"blamed": crime["blamed"]} if crime.get("blamed") else {}),
+            })
+
+        return await self.chronicle.memory.complete(persist)

@@ -120,7 +120,9 @@ class QuestBoard:
         qid = f"Q{len(self.quests) + 1}"
         tag = f"{qid}_{instance.upper()}"
         made = await self.link.story_spawn(instance, tag, count, near=giver, distance=distance)
-        self.chronicle.record({"fact": "spawned", "tag": tag, "instance": instance.upper(), "count": made})
+        await self.chronicle.record(
+            {"fact": "spawned", "tag": tag, "instance": instance.upper(), "count": made}
+        )
         q = Quest(
             qid,
             giver.upper(),
@@ -133,7 +135,7 @@ class QuestBoard:
             reward_name,
             reward_count,
         )
-        self.chronicle.record({"fact": "quest", **_fields(q)})
+        await self.chronicle.record({"fact": "quest", **_fields(q)})
         self.quests[qid] = q
         await self._watch()
         return q
@@ -235,15 +237,15 @@ class QuestBoard:
             return note, False
         done = self.done(q)
         count = int(give.arguments.get("count") or q.reward_count)  # capped by what the giver had
-        self.chronicle.record({"fact": "paid", "quest": q.id, "item": q.reward_item, "count": count})
+        await self.chronicle.record({"fact": "paid", "quest": q.id, "item": q.reward_item, "count": count})
         claim = {"fact": "claim", "quest": q.id, "npc": q.giver, "name": q.giver_name, "title": q.title}
-        self.chronicle.record({**claim, "reward": q.reward(), "believed": True, "truth": done})
-        self._belief(q, True, "hero")
+        await self.chronicle.record({**claim, "reward": q.reward(), "believed": True, "truth": done})
+        await self._belief(q, True, "hero")
         if not done:
             # not blocked: written down with the truth, to be found out
             q.lie = True
             truth = f"killed {self.chronicle.killed(q.tag)} of {q.count}"
-            self.chronicle.record({"fact": "lie", "quest": q.id, "npc": q.giver, "truth": truth})
+            await self.chronicle.record({"fact": "lie", "quest": q.id, "npc": q.giver, "truth": truth})
             self.journal.add("lie", npc=q.giver, name=q.giver_name, quest=q.id, truth=truth)
             await self._watch()
         return f"Ты отдал герою награду за поручение «{q.title}»: {q.reward_name} ×{count}", True
@@ -267,10 +269,10 @@ class QuestBoard:
         await unmask(self.link, self.dialogue, self.chronicle, self.journal, lie, how, self.hero_distance)
         await self._watch()
 
-    def _belief(self, q: Quest, believed: bool, source: str) -> None:
+    async def _belief(self, q: Quest, believed: bool, source: str) -> None:
         """What the giver believes about the quest being done, and why."""
         fact = {"fact": "belief", "npc": q.giver, "quest": q.id, "claim": "done", "believed": believed}
-        self.chronicle.record({**fact, "source": source})
+        await self.chronicle.record({**fact, "source": source})
 
     def _spawn(self, coro: Any) -> None:
         task = asyncio.create_task(coro)
@@ -307,7 +309,7 @@ async def unmask(
     """The giver learns the truth: it remembers, turns against the hero, acts through the scripts (refusing
     to talk, a beating if the hero is near), and the people around hear it."""
     day = await _day(link)
-    chronicle.record(
+    await chronicle.record(
         {
             "fact": "found_out",
             "quest": lie.quest,
@@ -319,16 +321,16 @@ async def unmask(
         }
     )
     belief = {"fact": "belief", "npc": lie.giver, "quest": lie.quest, "claim": "done", "believed": False}
-    chronicle.record({**belief, "source": how})
+    await chronicle.record({**belief, "source": how})
     journal.add("lie_found_out", npc=lie.giver, name=lie.giver_name, quest=lie.quest, how=how)
-    dialogue.remember(
+    await dialogue.remember(
         lie.giver,
         lie.giver_name,
         f"Ты узнал правду: герой солгал тебе, что выполнил твоё поручение «{lie.title}», — ты {how}. "
         f"А награду ({lie.reward}) он у тебя взял",
     )
     agenda = "make the hero answer for lying to you and taking your reward"
-    dialogue.change_intent(lie.giver, lie.giver_name, attitude="hostile", agenda=agenda)
+    await dialogue.change_intent(lie.giver, lie.giver_name, attitude="hostile", agenda=agenda)
     effects: list[dict[str, Any]] = [{"do": "refuse_talk", "seconds": REFUSE_TALK_S}]
     near = hero_distance(lie.giver)
     if near is not None and near <= ATTACK_CM:
@@ -343,7 +345,7 @@ async def unmask(
         f"Слух: {lie.giver_name} при тебе рассказывал, что герой его обманул — сказал, что выполнил "
         f"поручение «{lie.title}», взял награду ({lie.reward}), а это неправда"
     )
-    _tell(dialogue, chronicle, lie, "found_out", rumor, people, day)
+    await _tell(dialogue, chronicle, lie, "found_out", rumor, people, day)
 
 
 async def caught(
@@ -363,7 +365,7 @@ async def caught(
     day = await _day(link)
     if session is not link.session:
         return
-    chronicle.record(
+    await chronicle.record(
         {
             "fact": "caught",
             "quest": lie.quest,
@@ -379,7 +381,7 @@ async def caught(
     )
     if not lie.said:
         belief = {"fact": "belief", "npc": lie.giver, "quest": lie.quest, "claim": "done", "believed": False}
-        chronicle.record({**belief, "source": how})
+        await chronicle.record({**belief, "source": how})
     journal.add(
         "lie_caught",
         npc=lie.giver,
@@ -388,15 +390,15 @@ async def caught(
         how=how,
         **({"crime": lie.crime} if lie.crime else {}),
     )
-    dialogue.remember(
+    await dialogue.remember(
         lie.giver,
         lie.giver_name,
         f"Ты уличил героя во лжи: он {lie.claim()}, а ты {how}. На слово ты ему больше не веришь",
     )
-    conv = dialogue.open(lie.giver, lie.giver_name)
+    conv = await dialogue.open(lie.giver, lie.giver_name)
     if conv.intent.attitude != "hostile":
         agenda = "make the hero prove what he claims; never take his word again"
-        dialogue.change_intent(
+        await dialogue.change_intent(
             lie.giver, lie.giver_name, body=not bool(lie.crime), attitude="wary", agenda=agenda
         )
     if lie.crime:
@@ -411,10 +413,10 @@ async def caught(
     if session is not link.session:
         return
     rumor = f"Слух: {lie.giver_name} при тебе уличил героя во лжи — тот {lie.claim()}, а это неправда"
-    _tell(dialogue, chronicle, lie, "caught", rumor, people, day)
+    await _tell(dialogue, chronicle, lie, "caught", rumor, people, day)
 
 
-def _tell(
+async def _tell(
     dialogue: DialogueManager,
     chronicle: Chronicle,
     lie: Lie,
@@ -425,8 +427,8 @@ def _tell(
 ) -> None:
     """The people around the giver keep what they heard as a rumor; then it goes round (social.py)."""
     for p in people:
-        dialogue.remember(p["npc"], p.get("name") or p["npc"], rumor)
-        chronicle.record(
+        await dialogue.remember(p["npc"], p.get("name") or p["npc"], rumor)
+        await chronicle.record(
             {
                 "fact": "rumor",
                 "quest": lie.quest,

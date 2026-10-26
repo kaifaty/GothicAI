@@ -426,7 +426,7 @@ class Casting:
             if proposal is None:
                 break
             log.info("casting: %s, proposal %d: %s", place, attempt + 1, proposal)
-            built = build(proposal, brief, self.cast.next_id())
+            built = build(proposal, brief, await self.cast.next_id())
             if isinstance(built, list):
                 errors = built
             else:
@@ -434,10 +434,12 @@ class Casting:
                 spec = _carrying(spec, brief.carries)
                 made, errors = await self.cast.introduce(spec, person)
                 if made is not None:
-                    self.chronicle.record({"fact": "cast_reason", "npc": spec.npc, "reason": proposal.reason})
+                    await self.chronicle.record(
+                        {"fact": "cast_reason", "npc": spec.npc, "reason": proposal.reason}
+                    )
                     return spec
             log.info("casting: %s, rejected: %s", place, "; ".join(errors))
-            self.chronicle.record({"fact": "cast_rejected", "place": brief.place, "why": errors})
+            await self.chronicle.record({"fact": "cast_rejected", "place": brief.place, "why": errors})
         self.journal.add("cast_none", place=place, why=errors)
         return None
 
@@ -466,7 +468,7 @@ class Casting:
         for i, point in enumerate(points[:count]):
             face = MALE_FACE_LIST[i % len(MALE_FACE_LIST)]
             spec = NpcSpec(
-                npc=self.cast.next_id(),
+                npc=await self.cast.next_id(),
                 like=brief.templates["bandit"],
                 at=point,
                 name="Бандит",
@@ -528,6 +530,6 @@ class Casting:
             templates=templates,
             things=things,
             people=dict(sorted(here.items())[:MAX_PEOPLE]),
-            cast=[c.name for c in self.cast.characters()],
+            cast=[c.name for c in await self.cast.characters()],
             premise=premise,
         )

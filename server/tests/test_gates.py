@@ -21,6 +21,7 @@ from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 CITY = "MIL_310_STADTWACHE"
 PAIR = "MIL_333_STADTWACHE"
@@ -221,7 +222,7 @@ def gate_graph() -> StoryGraph:
 
 @asynccontextmanager
 async def setup_gate(fake: GatesFake, *, npc: str = CITY):
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     fake.symbols.update({GOLD: "item", LETTER: "item", HERBS: "item"})
     fake.item_names.update({GOLD: "Золото", LETTER: "Пропуск", HERBS: "Травы"})
     fake.symbols["VLK_417_CONSTANTINO"] = "npc"
@@ -244,22 +245,27 @@ async def setup_gate(fake: GatesFake, *, npc: str = CITY):
         dialogue = DialogueManager(
             link, FakeBackend("Проходи.", delay=0), PersonaProvider(None), memory=store,
         )
+        await dialogue.initialize()
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         gates = Gates(link, dialogue, chronicle, graph)
         deals = Deals(link, dialogue, chronicle, gates=gates)
         dialogue.extensions.append(deals)
         await _until(lambda: chronicle.branch is not None)
         await link.snapshot(npc)
-        conv = dialogue.open(npc, "Стражник")
+        conv = await dialogue.open(npc, "Стражник")
         await gates.prepare(npc)
-        yield link, dialogue, chronicle, gates, deals, conv
-        if conv.reply is not None:
-            await conv.reply
-        if conv.actions:
-            await asyncio.gather(*conv.actions)
-        if chronicle._background:
-            await asyncio.gather(*chronicle._background)
-    store.close()
+        try:
+            yield link, dialogue, chronicle, gates, deals, conv
+            if conv.reply is not None:
+                await conv.reply
+            if conv.actions:
+                await asyncio.gather(*conv.actions)
+            if chronicle._background:
+                await asyncio.gather(*chronicle._background)
+        finally:
+            await dialogue.close()
+    await store.close()
 
 
 async def _call(system, args: dict[str, Any]):

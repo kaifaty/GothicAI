@@ -28,10 +28,11 @@ event of the world:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import re
 import time
-from collections.abc import Callable, Collection, Coroutine, Sequence
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -397,7 +398,7 @@ class TalkDesk:
         # a conversation is over (npc, why: npc, gone, walked_away, switched): e.g. an offer not taken goes
         self.on_talk_end: list[Callable[[str, str], None]] = []
         # the hero starts to speak: others talking near him stop (gossip.py); True if someone did
-        self.on_hero_voice: list[Callable[[], bool]] = []
+        self.on_hero_voice: list[Callable[[], bool | Awaitable[bool]]] = []
         # npc's of a scene near the hero his next words may go to, the one who spoke last first (gossip.py)
         self.scene_hint: Callable[[], list[str]] = lambda: []
         # how much an npc leads others (its character card, cli.py): the first to answer a phrase to several
@@ -445,28 +446,31 @@ class TalkDesk:
 
     # --- events ---------------------------------------------------------------------------
 
-    def on_message(self, msg: GameMessage) -> None:
+    async def on_message(self, msg: GameMessage) -> None:
         match msg:
             case NpcRoster():
                 if msg.hour is not None and msg.minute is not None:
                     self.game_time = (msg.hour, msg.minute)
                 entries = {e.id.upper(): e for e in msg.npcs}
                 self.people = entries if msg.full else {**self.people, **entries}
-                self._check_end()
+                await self._check_end()
             case PttStart():
-                self.interrupt()  # the hero starts to speak: whoever answers him stops
+                await self.interrupt()  # the hero starts to speak: whoever answers him stops
             case PlayerText():
-                self.interrupt()
-                self.hear(msg.text, msg.focus, {"via": "text"})
+                generation, session = self.link.world_generation, self.link.session
+                await self.interrupt()
+                if generation != self.link.world_generation or session is not self.link.session:
+                    return
+                await self.hear(msg.text, msg.focus, {"via": "text"})
             case LineStarted():
                 if self.partner is not None and msg.npc.upper() == self.partner.npc:
                     self.partner.last_at = self.clock()
             case NpcEvent():
                 if msg.other == "PLAYER":
-                    self._hero_act(msg.npc.upper(), msg.kind, msg.detail)
+                    await self._hero_act(msg.npc.upper(), msg.kind, msg.detail)
             case Perception():
                 if msg.other == "PLAYER" and msg.perc in PERC_ACTS:
-                    self._hero_act(msg.npc.upper(), PERC_ACTS[msg.perc], None)
+                    await self._hero_act(msg.npc.upper(), PERC_ACTS[msg.perc], None)
             case Attached():
                 self.attached.add(msg.npc.upper())
             case Detached():
@@ -480,7 +484,7 @@ class TalkDesk:
                 self.held.clear()
                 self.attached.clear()
 
-    def hear(self, text: str, focus: str | None = None, details: dict[str, Any] | None = None) -> None:
+    async def hear(self, text: str, focus: str | None = None, details: dict[str, Any] | None = None) -> None:
         """The hero said `text` (voice or the input line): to whom, witnesses, the answer."""
         text = text.strip()
         if not text:
@@ -503,7 +507,7 @@ class TalkDesk:
             if explicit_attack is not None and order is not None and order.kind == "attack" and squad:
                 self._spawn(self._attack_heard(text, focus, details, to, order, squad, self._phrase))
                 return
-        self._heard(text, focus, details, to, order)
+        await self._heard(text, focus, details, to, order)
 
     async def _attack_heard(
         self,
@@ -519,9 +523,9 @@ class TalkDesk:
         target = await self.orders.attack_target(focus, squad, text, to)
         if phrase != self._phrase:
             return  # newer words superseded this order while the game checked sight
-        self._heard(text, target, details, Addressee(*squad[0], "companion"), order, attack=True)
+        await self._heard(text, target, details, Addressee(*squad[0], "companion"), order, attack=True)
 
-    def _heard(
+    async def _heard(
         self,
         text: str,
         focus: str | None,
@@ -531,6 +535,7 @@ class TalkDesk:
         *,
         attack: bool = False,
     ) -> None:
+        generation, session, phrase = self.link.world_generation, self.link.session, self._phrase
         now = self.clock()
         squad: list[tuple[str, str]] = []
         # An attack addressed to companions is never submitted to the wolf's tone model, even when
@@ -556,7 +561,13 @@ class TalkDesk:
         log.info("hero -> %s (%s): %s", to.id if to else "nobody", to.why if to else "-", text)
         for listener in self.on_phrase:
             listener(None if beast is not None else to, text)  # a wolf joins no conversation
-        self._witnesses(text, to, {npc for npc, _ in squad})
+        await self._witnesses(text, to, {npc for npc, _ in squad})
+        if (
+            generation != self.link.world_generation
+            or session is not self.link.session
+            or phrase != self._phrase
+        ):
+            return
         if self.planner is not None and beast is None:
             self.planner.on_player_text(to.id if to else "", text, now)
         if squad or beast is not None:
@@ -564,13 +575,25 @@ class TalkDesk:
         if to is None:
             self._spawn(self.link.send(ChatStatusCmd(status="notice", detail="Рядом некому ответить")))
             return
-        if self._refused(to.id):
+        if await self._refused(to.id):
+            return
+        if (
+            generation != self.link.world_generation
+            or session is not self.link.session
+            or phrase != self._phrase
+        ):
             return
         talk = self.partner
         if talk is None or talk.npc != to.id:
             if talk is not None:
-                self._end("switched", to.name)
-            talk = self._open(to.id, to.name, now)
+                await self._end("switched", to.name)
+                if (
+                    generation != self.link.world_generation
+                    or session is not self.link.session
+                    or phrase != self._phrase
+                ):
+                    return
+            talk = await self._open(to.id, to.name, now)
         talk.last_at = now
         self._spawn(self._answer(talk, text))
 
@@ -595,7 +618,7 @@ class TalkDesk:
                     return True
         return False
 
-    def begin(self, npc: str, name: str, posture: str | None = None) -> bool:
+    async def begin(self, npc: str, name: str, posture: str | None = None) -> bool:
         """The npc opens the conversation itself (it came up to the hero): it is his partner now, and his next
         words go to it. Not while he talks to another; True if it is the partner already."""
         npc = npc.upper()
@@ -603,42 +626,55 @@ class TalkDesk:
             return False
         if self.partner is not None:
             return self.partner.npc == npc
-        self._open(npc, name, self.clock()).posture = posture
+        (await self._open(npc, name, self.clock())).posture = posture
         return True
 
-    def _open(self, npc: str, name: str, now: float) -> Talk:
-        self.dialogue.open(npc, name).new_meeting = True
+    async def _open(self, npc: str, name: str, now: float) -> Talk:
+        generation, session = self.link.world_generation, self.link.session
+        conv = await self.dialogue.open(npc, name)
+        if generation != self.link.world_generation or session is not self.link.session:
+            raise GameError("world changed while opening a conversation")
+        conv.new_meeting = True
         self.partner = Talk(npc, name, now, now)
         if self.planner is not None:
             self.planner.talking(npc, True)
         return self.partner
 
-    def interrupt(self) -> bool:
+    async def interrupt(self) -> bool:
         """The hero speaks: the partner stops answering (what it said so far stays in its memory), and so
-        do two npc's talking near him. Synchronous: what they said is in their memories before his words
+        do two npc's talking near him. What they said is in their memories before his words
         are answered. True if anyone stopped."""
-        cut = any([f() for f in self.on_hero_voice])  # every one of them, not just up to the first
-        if self.partner is None or not self.dialogue.interrupt(self.partner.npc):
+        generation, session, partner = self.link.world_generation, self.link.session, self.partner
+        cuts = []
+        for listener in self.on_hero_voice:
+            result = listener()
+            cuts.append(await result if inspect.isawaitable(result) else result)
+            if generation != self.link.world_generation or session is not self.link.session:
+                return any(cuts)
+        cut = any(cuts)
+        if partner is None or not await self.dialogue.interrupt(partner.npc):
+            return cut
+        if generation != self.link.world_generation or session is not self.link.session:
             return cut
         self.journal.add(
-            "interrupt", npc=self.partner.npc, name=self.partner.name, **({"scene": True} if cut else {})
+            "interrupt", npc=partner.npc, name=partner.name, **({"scene": True} if cut else {})
         )
         return True
 
-    def end(self, why: str = "walked_away") -> None:
+    async def end(self, why: str = "walked_away") -> None:
         """The conversation is over (scenarios, the console)."""
-        self._end(why)
+        await self._end(why)
 
-    def on_npc_end(self, npc: str) -> None:
+    async def on_npc_end(self, npc: str) -> None:
         """The npc said goodbye."""
         if self.partner is not None and self.partner.npc == npc.upper():
-            self._end("npc")
+            await self._end("npc")
 
     # --- the answer -----------------------------------------------------------------------
 
     async def _answer(self, talk: Talk, text: str) -> None:
         npc = talk.npc
-        if self._refused(npc):
+        if await self._refused(npc):
             return
         snap = asyncio.create_task(self._snapshot(npc)) if npc not in self.attached else None
         if npc in self.held:  # it listens, walks along or follows already
@@ -655,7 +691,7 @@ class TalkDesk:
             await snap
         if self.partner is not talk:
             return  # the hero turned to someone else meanwhile
-        if self._refused(npc):
+        if await self._refused(npc):
             return
         body = POSTURE_OPTIONS[choice].ru if choice else None
         self.dialogue.say_as_player(npc, text, overlay=choice not in (None, "listen"), body=body)
@@ -726,13 +762,13 @@ class TalkDesk:
         self._spawn(self._act(npc, "turn_to", npc="PLAYER"))
         return True
 
-    def _refused(self, npc: str) -> bool:
+    async def _refused(self, npc: str) -> bool:
         """A rule's current refusal applies to voice and typed speech as well as native dialogs."""
         reason = self.refusal(npc)
         if reason is None and not self.refuses(npc):
             return False
         if self.partner is not None and self.partner.npc == npc:
-            self._end("refused")
+            await self._end("refused")
 
         def name(who: str) -> str:
             entry = self.people.get(who.upper())
@@ -815,7 +851,7 @@ class TalkDesk:
 
     # --- the end, witnesses, the hero's doings ----------------------------------------------
 
-    def _check_end(self) -> None:
+    async def _check_end(self) -> None:
         talk = self.partner
         if talk is None:
             return
@@ -824,26 +860,29 @@ class TalkDesk:
             talk.last_at = self.clock()  # away on an errand for this conversation: it comes back
             return
         if entry is None or entry.activity == "down":
-            self._end("gone")
+            await self._end("gone")
             return
         if entry.distance <= END_CM:
             return
         if not talk.walked_off and self.dialogue.speaking(talk.npc):
             talk.walked_off = True
-            self.dialogue.note(talk.npc, "Герой ушёл, не дослушав тебя")
+            await self.dialogue.note(talk.npc, "Герой ушёл, не дослушав тебя")
         if self.clock() - talk.last_at >= self.end_silence_s:
-            self._end("walked_away")
+            await self._end("walked_away")
 
-    def _end(self, why: str, other: str | None = None) -> None:
+    async def _end(self, why: str, other: str | None = None) -> None:
+        generation, session = self.link.world_generation, self.link.session
         talk, self.partner = self.partner, None
         if talk is None:
             return
         log.info("conversation with %s over: %s", talk.npc, why)
         self.journal.add("talk_end", npc=talk.npc, name=talk.name, reason=why)
         if why == "walked_away" and not talk.walked_off:
-            self.dialogue.note(talk.npc, "Герой ушёл, разговор закончился")
+            await self.dialogue.note(talk.npc, "Герой ушёл, разговор закончился")
         elif why == "switched":
-            self.dialogue.note(talk.npc, f"Герой отвернулся от тебя и заговорил с другим: {other}")
+            await self.dialogue.note(talk.npc, f"Герой отвернулся от тебя и заговорил с другим: {other}")
+        if generation != self.link.world_generation or session is not self.link.session:
+            return
         self.free(talk.npc, "listen")
         self.free(talk.npc, "walk")
         if self.planner is not None:
@@ -851,18 +890,18 @@ class TalkDesk:
         for listener in self.on_talk_end:
             listener(talk.npc, why)
 
-    def _witnesses(self, text: str, to: Addressee | None, obeying: Collection[str] = ()) -> None:
+    async def _witnesses(self, text: str, to: Addressee | None, obeying: Collection[str] = ()) -> None:
         for e in self.people.values():
             npc = e.id.upper()
             if npc in obeying:
                 continue  # an order: it remembers that it was given one (orders.py)
             if (to is None or npc != to.id) and e.earshot <= OVERHEAR_CM and e.activity != "down":
                 if to is not None and to.why == "group" and e.earshot <= PARTNER_CM:
-                    self.dialogue.told_all(npc, e.name, text, to.name)  # to it too
+                    await self.dialogue.told_all(npc, e.name, text, to.name)  # to it too
                 else:
-                    self.dialogue.overheard(npc, e.name, text, to.name if to else None)
+                    await self.dialogue.overheard(npc, e.name, text, to.name if to else None)
 
-    def _hero_act(self, npc: str, kind: str, detail: str | None) -> None:
+    async def _hero_act(self, npc: str, kind: str, detail: str | None) -> None:
         talk = self.partner
         if talk is None or talk.npc != npc or kind not in HERO_ACTS:
             return
@@ -871,7 +910,7 @@ class TalkDesk:
             return
         self._noted[(npc, kind)] = now
         whom = "тебя" if detail in (None, "you") else ("героя" if detail == "PLAYER" else detail)
-        self.dialogue.note(npc, HERO_ACTS[kind].format(detail=whom))
+        await self.dialogue.note(npc, HERO_ACTS[kind].format(detail=whom))
 
     def _spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
         async def run() -> None:

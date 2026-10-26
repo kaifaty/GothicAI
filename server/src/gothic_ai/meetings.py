@@ -150,6 +150,22 @@ class Meetings:
         link.listeners.append(self._on_message)
         self._load()
 
+    async def close(self) -> None:
+        """Stop owned producers before the shared memory store closes."""
+        if self._on_message in self.link.listeners:
+            self.link.listeners.remove(self._on_message)
+        tasks = tuple(self._tasks)
+        for task in tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                log.error(
+                    "meetings producer failed during close",
+                exc_info=(type(result), result, result.__traceback__),
+                )
+
     def attach_planner(self, planner: NpcPlanner) -> None:
         """The planner gives the body of an npc on its way to a meeting, or waiting there, nothing else."""
         self._next_allow, planner.allow = planner.allow, self.allow
@@ -242,21 +258,33 @@ class Meetings:
             return None, why
         return MeetTerm(way, start, end), ""
 
-    def add(self, npc: str, name: str, term: MeetTerm, deal: str) -> Meeting:
+    async def add(self, npc: str, name: str, term: MeetTerm, deal: str) -> Meeting:
         """The hero said yes: the meeting, its fact, its entry in the game's diary."""
         npc = npc.upper()
+        session, world_generation = self.link.session, self.link.world_generation
+        branch = self.chronicle.branch
         here = self.link.snapshots.get(npc)
         far_m = math.dist(here.npc.pos, term.way.pos) / 100 if here is not None else 0.0
         walk = math.ceil(far_m * WAY_LONGER / WALK_M_PER_MIN)
         lead = min(LEAD_MIN[1], max(LEAD_MIN[0], walk + SPARE_MIN))
-        if self.now is None and here is not None:  # the clock from here on: a sleep right away is a leap too
-            self.now, self._read_at = _now(here), asyncio.get_running_loop().time()
         m = Meeting(f"meet-{uuid.uuid4().hex[:6]}", npc, name, term, deal, lead)
-        self.meetings[m.id] = m
-        self.chronicle.record(m.fact())
-        self.journal.add("meet", npc=npc, name=name, meet=m.id, what=term.text())
-        log.info("meeting %s with %s: %s, sets off %d min ahead", m.id, npc, term.text(), lead)
-        self._diary(m, f"{name} будет ждать меня {term.text()}.", "LOG_RUNNING")
+
+        async def persist() -> None:
+            if branch != self.chronicle.branch or session is not self.link.session:
+                raise GameError("session changed while agreeing to a meeting")
+            await self.chronicle.record(m.fact())
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return
+            if self.now is None and here is not None:
+                self.now, self._read_at = _now(here), asyncio.get_running_loop().time()
+            self.meetings[m.id] = m
+            self.journal.add("meet", npc=npc, name=name, meet=m.id, what=term.text())
+            log.info("meeting %s with %s: %s, sets off %d min ahead", m.id, npc, term.text(), lead)
+
+        await self.chronicle.memory.complete(persist)
+        if (session is self.link.session and world_generation == self.link.world_generation
+                and self.meetings.get(m.id) is m):
+            self._diary(m, f"{name} будет ждать меня {term.text()}.", "LOG_RUNNING")
         return m
 
     # --- TurnExtension --------------------------------------------------------------------------
@@ -266,10 +294,10 @@ class Meetings:
     async def prepare(self, npc: str) -> None:
         return None
 
-    def situation(self, npc: str) -> str | None:
+    async def situation(self, npc: str) -> str | None:
         npc = npc.upper()
         lines = []
-        for m in self.meetings.values():
+        for m in list(self.meetings.values()):
             if m.npc != npc:
                 continue
             match m.state:
@@ -289,7 +317,7 @@ class Meetings:
                         "сдержал слово."
                     )
                     if self.talk.partner is not None and self.talk.partner.npc == npc:
-                        self._raised(m)  # it has it in front of it while talking to him: told
+                        await self._raised(m)  # it has it in front of it while talking to him: told
         return "\n".join(lines) or None
 
     def tools(self, npc: str) -> list[Tool]:
@@ -330,16 +358,16 @@ class Meetings:
                 continue
             if all(k in state for k in ("day", "hour", "minute")):
                 now = int(state["day"]) * DAY + int(state["hour"]) * 60 + int(state["minute"])
-                self.read(now, asyncio.get_running_loop().time())
+                await self.read(now, asyncio.get_running_loop().time())
 
-    def read(self, now: int, at: float) -> None:
+    async def read(self, now: int, at: float) -> None:
         """The game's clock read at real time `at`: further on than the real time since the last read takes
         it, it has leapt."""
         if self.now is not None and self._read_at is not None:
             if now - self.now > (at - self._read_at) / GAME_MIN_S + LEAP_MIN:
                 self._leapt(self.now, now)
         self._read_at = at
-        self.tick(now)
+        await self.tick(now)
 
     def _leapt(self, before: int, now: int) -> None:
         """The clock leapt forward (the hero slept: Wld_SetTime). The engine has put everyone at their
@@ -360,39 +388,55 @@ class Meetings:
                 continue
             log.info("meeting %s: the clock leapt %s → %s, %s", m.id, clock(before), clock(now), m.state)
 
-    def tick(self, now: int) -> None:
+    async def tick(self, now: int) -> None:
         """What comes of each meeting at `now` (a game minute)."""
+        session, world_generation, world = self.link.session, self.link.world_generation, self._world
         self.now = now
         for m in list(self.meetings.values()):
+            if (session is not self.link.session or world_generation != self.link.world_generation
+                    or world != self._world):
+                return
             if m.state in OPEN and not keeps(self.chronicle, m.deal, "meet"):
                 if now >= m.term.start:
-                    self._no_show(m)
+                    await self._no_show(m)
             elif m.state in OPEN and now >= m.term.end:
-                self._over(m)
+                await self._over(m)
             elif m.state == "agreed" and now >= max(m.term.start - m.lead_min, m.retry):
                 m.state = "going"
                 self._spawn(self._walk(m, self._world))
             elif m.state == "there" and self._came(m, now):
-                self._kept(m)
+                await self._kept(m)
 
-    def _no_show(self, m: Meeting) -> None:
+    async def _no_show(self, m: Meeting) -> None:
         """It broke its own word, not the hero's, without trying to walk there."""
-        m.state = "no_show"
-        breach(
-            self.chronicle,
-            m.npc,
-            m.deal,
-            "no_show",
-            meet=m.id,
-            npc_name=m.name,
-            what=m.term.text(),
-            **self._when(),
-        )
-        log.info("meeting %s: %s chose not to come", m.id, m.npc)
-        self._diary(m, f"{m.name} не пришёл на обещанную встречу.", "LOG_FAILED")
+        session, world_generation, world = self.link.session, self.link.world_generation, self._world
+        branch, when = self.chronicle.branch, self._when()
+
+        async def persist() -> None:
+            if branch != self.chronicle.branch or session is not self.link.session:
+                raise GameError("session changed while completing a meeting")
+            if (world != self._world or world_generation != self.link.world_generation
+                    or self.meetings.get(m.id) is not m or m.state not in OPEN):
+                return
+            await breach(
+                self.chronicle, m.npc, m.deal, "no_show", meet=m.id, npc_name=m.name,
+                what=m.term.text(), **when,
+            )
+            if world != self._world or world_generation != self.link.world_generation:
+                return
+            m.state = "no_show"
+            log.info("meeting %s: %s chose not to come", m.id, m.npc)
+
+        await self.chronicle.memory.complete(persist)
+        if (session is self.link.session and world_generation == self.link.world_generation
+                and world == self._world and self.meetings.get(m.id) is m and m.state == "no_show"):
+            self._diary(m, f"{m.name} не пришёл на обещанную встречу.", "LOG_FAILED")
 
     async def _walk(self, m: Meeting, world: int) -> None:
         """There, and it waits till the end."""
+        session, world_generation = self.link.session, self.link.world_generation
+        if world != self._world or self.meetings.get(m.id) is not m or m.state != "going":
+            return
         now = self.now if self.now is not None else m.term.start
         place, m.place = m.place, False
         out = await self.bodies.act(
@@ -406,17 +450,31 @@ class Meetings:
             timeout=WALK_S,
             **({"place": True} if place else {}),
         )
-        if world != self._world or m.state != "going":
+        if (world != self._world or m.state != "going" or self.meetings.get(m.id) is not m
+                or session is not self.link.session or world_generation != self.link.world_generation):
             return  # a load, or the meeting is over meanwhile
         if out.status == "arrived":
-            m.state = "there"
-            log.info("meeting %s: %s is there, %s", m.id, m.npc, m.term.text())
-            self.journal.add("meet_there", npc=m.npc, name=m.name, meet=m.id)
-            self.dialogue.remember(
-                m.npc, m.name, f"Ты пришёл на встречу с героем и ждёшь его: {m.term.text()}"
-            )
-            if self.now is not None and self._came(m, self.now):
-                self._kept(m)
+            async def persist() -> None:
+                if (world != self._world or session is not self.link.session
+                        or world_generation != self.link.world_generation
+                        or self.meetings.get(m.id) is not m or m.state != "going"):
+                    return
+                await self.dialogue.remember(
+                    m.npc, m.name, f"Ты пришёл на встречу с героем и ждёшь его: {m.term.text()}"
+                )
+                if (world != self._world or session is not self.link.session
+                        or world_generation != self.link.world_generation):
+                    return
+                m.state = "there"
+                log.info("meeting %s: %s is there, %s", m.id, m.npc, m.term.text())
+                self.journal.add("meet_there", npc=m.npc, name=m.name, meet=m.id)
+
+            await self.chronicle.memory.complete(persist)
+            if (world != self._world or session is not self.link.session
+                    or world_generation != self.link.world_generation):
+                return
+            if m.state == "there" and self.now is not None and self._came(m, self.now):
+                await self._kept(m)
             return
         if out.status == "rejected":
             m.place = place  # it did not go at all: still there at once when it does
@@ -432,65 +490,126 @@ class Meetings:
         entry = self.talk.people.get(m.npc)
         return entry is not None and entry.distance <= MEET_CM and now >= m.term.start - EARLY_MIN
 
-    def _kept(self, m: Meeting) -> None:
-        m.state = "kept"
-        self.chronicle.record(
-            {"fact": "meet_kept", "meet": m.id, "npc": m.npc, "name": m.name, **self._when()}
-        )
-        self.journal.add("meet_kept", npc=m.npc, name=m.name, meet=m.id)
-        log.info("meeting %s kept: the hero came to %s", m.id, m.npc)
-        self._diary(m, "Я пришёл на встречу.", "LOG_SUCCESS")
-        self._spawn(self._greet(m, self._world))
+    async def _kept(self, m: Meeting) -> None:
+        session, world_generation, world = self.link.session, self.link.world_generation, self._world
+        branch, when = self.chronicle.branch, self._when()
+
+        async def persist() -> bool:
+            if branch != self.chronicle.branch or session is not self.link.session:
+                raise GameError("session changed while completing a meeting")
+            if (world != self._world or world_generation != self.link.world_generation
+                    or self.meetings.get(m.id) is not m or m.state != "there"):
+                return False
+            await self.chronicle.record(
+                {"fact": "meet_kept", "meet": m.id, "npc": m.npc, "name": m.name, **when}
+            )
+            if world != self._world or world_generation != self.link.world_generation:
+                return False
+            m.state = "kept"
+            self.journal.add("meet_kept", npc=m.npc, name=m.name, meet=m.id)
+            log.info("meeting %s kept: the hero came to %s", m.id, m.npc)
+            return True
+
+        kept = await self.chronicle.memory.complete(persist)
+        if (kept and session is self.link.session and world_generation == self.link.world_generation
+                and world == self._world and self.meetings.get(m.id) is m):
+            self._diary(m, "Я пришёл на встречу.", "LOG_SUCCESS")
+            self._spawn(self._greet(m, world))
 
     async def _greet(self, m: Meeting, world: int) -> None:
         """It speaks first: he came as they agreed (the way initiative.py opens a conversation)."""
+        session, world_generation = self.link.session, self.link.world_generation
+        if world != self._world or self.meetings.get(m.id) is not m:
+            return
         npc, note = m.npc, f"Герой пришёл на встречу, как вы договорились: {m.term.text()}"
         if self.talk.partner is not None or (self.budget is not None and not self.budget.allow(npc)):
-            self.dialogue.remember(npc, m.name, note)
+            await self.dialogue.remember(npc, m.name, note)
             return
-        if not await self.talk.listen(npc) or world != self._world:
-            self.dialogue.remember(npc, m.name, note)
+        listening = await self.talk.listen(npc)
+        if (world != self._world or session is not self.link.session
+                or world_generation != self.link.world_generation or self.meetings.get(m.id) is not m):
             return
-        if not self.talk.begin(npc, m.name, posture="listen"):
+        if not listening:
+            await self.dialogue.remember(npc, m.name, note)
+            return
+        begun = await self.talk.begin(npc, m.name, posture="listen")
+        if (world != self._world or session is not self.link.session
+                or world_generation != self.link.world_generation or self.meetings.get(m.id) is not m):
+            return
+        if not begun:
             self.talk.free(npc, "listen")
-            self.dialogue.remember(npc, m.name, note)
+            await self.dialogue.remember(npc, m.name, note)
             return
         self.dialogue.event_turn(
             npc,
             f"[{note}. Заговори с ним первым.]",
-            relevant=lambda: self.talk.partner is not None and self.talk.partner.npc == npc,
+            relevant=lambda: (session is self.link.session and world_generation == self.link.world_generation
+                              and self.talk.partner is not None and self.talk.partner.npc == npc),
             tools=TOOLS,
             kind="meet",
         )
 
-    def _over(self, m: Meeting) -> None:
+    async def _over(self, m: Meeting) -> None:
         """The end of the meeting's time: he did not come (it waited), or it did not get there."""
-        if m.state == "there":
-            m.state = "missed"
-            what = m.term.text()
-            fact = {"fact": "broken", "promise": "meet", "meet": m.id, "npc": m.npc, "name": m.name}
-            self.chronicle.record({**fact, "what": what, **self._when()})
-            self.journal.add("meet_missed", npc=m.npc, name=m.name, meet=m.id)
-            log.info("meeting %s missed: the hero did not come to %s", m.id, m.npc)
-            self.dialogue.remember(
-                m.npc,
-                m.name,
-                f"Герой не пришёл на встречу, о которой вы договорились: {what}. Он не сдержал слово",
-            )
-            self._diary(m, "Я не пришёл на встречу.", "LOG_FAILED")
-            return
-        m.state = "failed"
-        self.chronicle.record(
-            {"fact": "meet_failed", "meet": m.id, "npc": m.npc, "name": m.name, **self._when()}
-        )
-        self.journal.add("meet_failed", npc=m.npc, name=m.name, meet=m.id)
-        log.info("meeting %s failed: %s did not get there", m.id, m.npc)
-        self.dialogue.remember(m.npc, m.name, f"Ты так и не дошёл до места встречи с героем: {m.term.text()}")
-        self._diary(m, f"{m.name} так и не пришёл.", "LOG_OBSOLETE")
+        session, world_generation, world = self.link.session, self.link.world_generation, self._world
+        branch, when = self.chronicle.branch, self._when()
 
-    def _raised(self, m: Meeting) -> None:
-        m.raised = True
-        self.chronicle.record({"fact": "meet_raised", "meet": m.id, "npc": m.npc})
+        async def persist() -> State | None:
+            if branch != self.chronicle.branch or session is not self.link.session:
+                raise GameError("session changed while completing a meeting")
+            if (world != self._world or world_generation != self.link.world_generation
+                    or self.meetings.get(m.id) is not m or m.state not in OPEN):
+                return None
+            if m.state == "there":
+                what = m.term.text()
+                fact = {"fact": "broken", "promise": "meet", "meet": m.id, "npc": m.npc, "name": m.name}
+                await self.chronicle.record({**fact, "what": what, **when})
+                if world != self._world or world_generation != self.link.world_generation:
+                    return None
+                m.state = "missed"
+                self.journal.add("meet_missed", npc=m.npc, name=m.name, meet=m.id)
+                log.info("meeting %s missed: the hero did not come to %s", m.id, m.npc)
+                await self.dialogue.remember(
+                    m.npc, m.name,
+                    f"Герой не пришёл на встречу, о которой вы договорились: {what}. Он не сдержал слово",
+                )
+            else:
+                await self.chronicle.record(
+                    {"fact": "meet_failed", "meet": m.id, "npc": m.npc, "name": m.name, **when}
+                )
+                if world != self._world or world_generation != self.link.world_generation:
+                    return None
+                m.state = "failed"
+                self.journal.add("meet_failed", npc=m.npc, name=m.name, meet=m.id)
+                log.info("meeting %s failed: %s did not get there", m.id, m.npc)
+                await self.dialogue.remember(
+                    m.npc, m.name, f"Ты так и не дошёл до места встречи с героем: {m.term.text()}"
+                )
+            return m.state
+
+        state = await self.chronicle.memory.complete(persist)
+        if (session is self.link.session and world_generation == self.link.world_generation
+                and world == self._world and self.meetings.get(m.id) is m):
+            if state == "missed":
+                self._diary(m, "Я не пришёл на встречу.", "LOG_FAILED")
+            elif state == "failed":
+                self._diary(m, f"{m.name} так и не пришёл.", "LOG_OBSOLETE")
+
+    async def _raised(self, m: Meeting) -> None:
+        session, world_generation, world = self.link.session, self.link.world_generation, self._world
+        branch = self.chronicle.branch
+
+        async def persist() -> None:
+            if branch != self.chronicle.branch or session is not self.link.session:
+                raise GameError("session changed while recording a missed meeting")
+            if (world != self._world or world_generation != self.link.world_generation
+                    or self.meetings.get(m.id) is not m or m.raised):
+                return
+            await self.chronicle.record({"fact": "meet_raised", "meet": m.id, "npc": m.npc})
+            if world == self._world and world_generation == self.link.world_generation:
+                m.raised = True
+
+        await self.chronicle.memory.complete(persist)
 
     def _when(self) -> dict[str, int]:
         if self.now is None:
@@ -501,9 +620,13 @@ class Meetings:
         """Its topic in the game's diary: «Встреча: Малет, день 3»."""
         topic = f"Встреча: {m.name}, день {m.term.start // DAY + 1}"
         effect = {"do": "journal", "topic": topic, "text": text, "status": status}
-        self._spawn(self._effect(m.npc, effect))
+        self._spawn(self._effect(m.npc, effect, self.link.session, self.link.world_generation))
 
-    async def _effect(self, npc: str, effect: dict[str, Any]) -> None:
+    async def _effect(
+        self, npc: str, effect: dict[str, Any], session: Session | None, world_generation: int,
+    ) -> None:
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            return
         try:
             await self.link.story_effect(npc, [effect])
         except (GameError, TimeoutError) as err:

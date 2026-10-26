@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -10,10 +11,12 @@ from gothic_ai.dialogue import DialogueManager
 from gothic_ai.group import GroupTalk
 from gothic_ai.interject import STEP_IN_CUE, WORD_CUE, Interjections
 from gothic_ai.llm import FakeBackend, FakeStep
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.talk import Addressee, TalkDesk
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import HILDA, LOBART, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_talk import person
 
 MALETH, VINO = "BAU_954_MALETH", "BAU_952_VINO"
@@ -56,7 +59,8 @@ def short_lines(monkeypatch):
 async def _desk(fake: FakeGame, llm, decider, budget: Budget | None = None):
     cm = connected(fake)
     link = await cm.__aenter__()
-    dialogue = DialogueManager(link, llm, PersonaProvider(None))
+    dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:"))
+    await dialogue.initialize()
     talk = TalkDesk(link, dialogue, end_silence_s=30)
     group = GroupTalk(link, dialogue, talk)
     dialogue.extensions.append(group)
@@ -82,6 +86,7 @@ async def test_the_likeliest_to_speak_up_do_two_at_most():
     llm = FakeBackend("Ну?", delay=0)
     decider = ByCharacter({"Хильда": (0.2, 0.7), "Малет": (0.7, 0.15), "Вино": (0.6, 0.22)})
     cm, dialogue, talk, interject = await _desk(fake, llm, decider)
+    interject.view_of = AsyncMock(return_value=("You see the hero and his listeners.",))
     try:
         await fake.roster(*NEAR)
         await fake.send(type="player_text", text="Лобарт, привет")
@@ -97,6 +102,7 @@ async def test_the_likeliest_to_speak_up_do_two_at_most():
     assert cues(dialogue, HILDA) == [STEP_IN_CUE] and cues(dialogue, MALETH) == [WORD_CUE]
     assert cues(dialogue, VINO) == [] and len(llm.calls) == 3
     assert interject.spoke == {HILDA, MALETH}
+    assert interject.view_of.await_count == 3
 
 
 async def test_nobody_speaks_up_twice_in_a_row_and_the_quiet_keep_quiet():
@@ -155,7 +161,7 @@ async def test_bandit_replies_after_cavalorns_threat_from_live_game(brago_p, spe
         await _until(lambda: len(talk.people) == 3)
         talk.last = (Addressee(cavalorn, "Кавалорн", "partner"), "Здарова, псы.")
         interject.group.on_phrase(*talk.last)
-        dialogue.open(cavalorn, "Кавалорн")
+        await dialogue.open(cavalorn, "Кавалорн")
         await dialogue.say_as_player(cavalorn, talk.last[1])
         await _until(lambda: bool(interject.asked))
         if speaks:

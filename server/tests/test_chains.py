@@ -23,6 +23,7 @@ from tests.test_authoring import BOOK, _author, graph  # noqa: F401 - the graph 
 from tests.test_dialogue import _until
 from tests.test_director import HILDA, LOBART
 from tests.test_director import QUEST as VANILLA_QUEST
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_questbook import FUNCS
 
 YARD = "FARM1_ENTRANCE"
@@ -169,7 +170,7 @@ async def _setup(
     fake = FakeGame(branch="A")
     steps = [FakeStep("", [ToolCall(PROPOSE, raw, f"chain{i}")]) for i, raw in enumerate(script or [])]
     llm = FakeBackend(script=steps, delay=0)
-    link_cm, author, _ = await _author(fake, llm, story_graph, MemoryStore(":memory:"))
+    link_cm, author, _ = await _author(fake, llm, story_graph, await MemoryStore.open(":memory:"))
     crimes = None
     try:
         data = deepcopy(BOOK)
@@ -312,7 +313,7 @@ async def test_every_invalid_description_is_rejected_before_casting(graph, case,
         made, errors = await chains._try(raw, brief)
         assert made is None and any(expected in error for error in errors), errors
         assert casting.calls == [] and fake.cast == {} and brief.roles == {}
-        assert chains.book.all() == {} and chains.author.patches.records(QUEST) == []
+        assert await chains.book.all() == {} and await chains.author.patches.records(QUEST) == []
         assert len(fake.graph) == 1  # the session's initial replace, no proposed graph
 
 
@@ -336,7 +337,7 @@ async def test_the_chain_people_budget_counts_each_bandit_before_casting(graph, 
         made, errors = await chains._try(_proposal(), brief)
         assert made is None and f"новых персонажей 3, а бюджет цепочки — не больше {max_people}" in errors
         assert casting.calls == [] and fake.cast == {} and brief.roles == {}
-        assert chains.book.all() == {}
+        assert await chains.book.all() == {}
 
 
 async def test_a_bad_structure_never_reaches_casting_or_the_book(graph):  # noqa: F811
@@ -347,7 +348,7 @@ async def test_a_bad_structure_never_reaches_casting_or_the_book(graph):  # noqa
         raw["cast"][0]["count"] = "1"
         made, errors = await chains._try(raw, brief)
         assert made is None and any("структура предложения" in error for error in errors)
-        assert casting.calls == [] and fake.cast == {} and chains.book.all() == {}
+        assert casting.calls == [] and fake.cast == {} and await chains.book.all() == {}
 
 
 async def test_the_brief_keeps_author_context_and_marks_people_and_occupied_places(graph):  # noqa: F811
@@ -396,7 +397,7 @@ async def test_a_hostile_giver_cannot_start_a_chain_with_an_impossible_turn_in(g
     async with _setup(graph, [_proposal()]) as (fake, chains, casting, llm):
         fake.attitudes[HILDA] = 0
         assert await chains.chain(HILDA) is None
-        assert not llm.calls and not casting.calls and not chains.book.all()
+        assert not llm.calls and not casting.calls and not await chains.book.all()
 
 
 @pytest.mark.parametrize("kind", ["talk", "bring"])
@@ -412,7 +413,7 @@ async def test_a_hostile_person_from_the_world_cannot_be_a_chain_dialog_target(g
         ]
         made, errors = await chains._try(raw, brief)
         assert made is None and any(f"NPC '{LOBART}' нет в сводке и ролях" in e for e in errors)
-        assert not casting.calls and not fake.cast and not chains.book.all()
+        assert not casting.calls and not fake.cast and not await chains.book.all()
 
 
 @pytest.mark.parametrize("kind", ["talk", "bring"])
@@ -427,7 +428,7 @@ async def test_even_a_single_new_bandit_cannot_be_a_chain_dialog_target(graph, k
         ]
         made, errors = await chains._try(raw, brief)
         assert made is None and any("бандит враждебен герою, talk/bring невозможны" in e for e in errors)
-        assert not casting.calls and not fake.cast and not chains.book.all()
+        assert not casting.calls and not fake.cast and not await chains.book.all()
 
 
 async def test_all_roles_are_alive_placeholders_and_earlier_quests_exist_during_preflight(graph, monkeypatch):  # noqa: F811
@@ -461,7 +462,7 @@ async def test_all_roles_are_alive_placeholders_and_earlier_quests_exist_during_
         assert casting.calls[0][1:] == (YARD, "townsman", _proposal()["cast"][0]["about"], (GOODS,))
         assert [thing.item for thing in brief.roles["thief"][0].items] == [GOODS]
         assert len(fake.cast) == 3 and len({s.at for s in brief.roles["camp"]}) == 2
-        assert set(chains.book.all()) == {q.id for q in made}
+        assert set(await chains.book.all()) == {q.id for q in made}
         assert fake.graph[-1]["ops"] == [op for q in made for op in questbook.build(q)]
 
 
@@ -509,7 +510,7 @@ def _single_proposal() -> dict[str, Any]:
     return raw
 
 
-def _record_crime(chains: ChainAuthor, **changes: Any) -> dict[str, Any]:
+async def _record_crime(chains: ChainAuthor, **changes: Any) -> dict[str, Any]:
     fact = {
         "fact": "crime",
         "id": "stolen-bread",
@@ -528,7 +529,7 @@ def _record_crime(chains: ChainAuthor, **changes: Any) -> dict[str, Any]:
         "witnesses": [LOBART],
         **changes,
     }
-    chains.chronicle.record(fact)
+    await chains.chronicle.record(fact)
     return fact
 
 
@@ -557,9 +558,9 @@ def _return_loot(item: str = STOLEN) -> dict[str, Any]:
 
 async def test_crime_brief_separates_the_directors_truth_from_peoples_knowledge(graph):  # noqa: F811
     async with _setup(graph, with_crimes=True) as (_, chains, _, _):
-        deed = _record_crime(chains)
-        chains.chronicle.record({"fact": "crime_seen", "crime": deed["id"], "npc": LOBART})
-        chains.chronicle.record(
+        deed = await _record_crime(chains)
+        await chains.chronicle.record({"fact": "crime_seen", "crime": deed["id"], "npc": LOBART})
+        await chains.chronicle.record(
             {"fact": "rumor", "crime": deed["id"], "from": LOBART, "to": "BAU_952_MALAK", "hops": 1}
         )
         brief = await chains.brief(HILDA, crime=deed["id"])
@@ -579,9 +580,9 @@ async def test_crime_brief_separates_the_directors_truth_from_peoples_knowledge(
 @pytest.mark.parametrize("cover", [True, False])
 async def test_old_cover_testimony_enters_chain_context_when_cover_is_disabled(graph, cover):  # noqa: F811
     async with _setup(graph, with_crimes=True) as (_, chains, _, _):
-        deed = _record_crime(chains)
+        deed = await _record_crime(chains)
         chains.crimes.cover = cover
-        chains.chronicle.record({
+        await chains.chronicle.record({
             "fact": "testimony", "npc": "REMOTE_KNOWER", "witness": LOBART, "cover": "D1",
             "crime_saw": [deed["id"]], "crime_told": [],
         })
@@ -591,7 +592,7 @@ async def test_old_cover_testimony_enters_chain_context_when_cover_is_disabled(g
 
 async def test_the_hero_can_return_his_own_loot_without_spawning_it_or_being_forgiven(graph):  # noqa: F811
     async with _setup(graph, [_return_loot()], with_crimes=True) as (fake, chains, casting, _):
-        deed = _record_crime(chains, witnesses=[])
+        deed = await _record_crime(chains, witnesses=[])
         fake.symbols.update({STOLEN: "item", "PC_HERO": "npc"})
         fake.hero_items[STOLEN] = 1
         made = await chains.chain(HILDA, crime=deed["id"], quest_count=1, max_people=0)
@@ -602,7 +603,7 @@ async def test_the_hero_can_return_his_own_loot_without_spawning_it_or_being_for
         assert "WLD_INSERTITEM" not in str(fake.graph[-1])
         assert chains.chronicle.facts("chain")[-1]["crime"] == deed["id"]
 
-        nodes = Patches.of(chains.author.patches.ops()).nodes
+        nodes = Patches.of(await chains.author.patches.ops()).nodes
         done = nodes[f"{quest.id}_DONE"]
         await fake.send(type="dialog_chosen", npc=HILDA, node=f"{quest.id}_GIVE", made=True)
         await _until(lambda: chains.book.progress(quest.id).state == "given")
@@ -621,20 +622,20 @@ async def test_the_hero_can_return_his_own_loot_without_spawning_it_or_being_for
 
 async def test_only_the_item_of_the_linked_crime_is_allowed_beyond_the_item_pool(graph):  # noqa: F811
     async with _setup(graph, with_crimes=True) as (fake, chains, casting, _):
-        linked = _record_crime(chains)
-        _record_crime(chains, id="other-theft", item="ITFO_WINE")
+        linked = await _record_crime(chains)
+        await _record_crime(chains, id="other-theft", item="ITFO_WINE")
         fake.symbols.update({STOLEN: "item", "ITFO_WINE": "item", "PC_HERO": "npc"})
         brief = await chains.brief(HILDA, crime=linked["id"])
         assert brief is not None
         brief.quest_count = 1
         made, errors = await chains._try(_return_loot("ITFO_WINE"), brief)
         assert made is None and any("вещи 'ITFO_WINE' нет в сводке" in e for e in errors)
-        assert not casting.calls and not chains.book.all()
+        assert not casting.calls and not await chains.book.all()
 
 
 async def test_extra_crime_loot_cannot_be_created_in_a_new_persons_inventory(graph):  # noqa: F811
     async with _setup(graph, with_crimes=True) as (_, chains, casting, _):
-        deed = _record_crime(chains)
+        deed = await _record_crime(chains)
         brief = await chains.brief(HILDA, crime=deed["id"])
         assert brief is not None
         raw = _proposal()
@@ -648,9 +649,9 @@ async def test_extra_crime_loot_cannot_be_created_in_a_new_persons_inventory(gra
 async def test_disabled_or_unknown_crime_does_not_reach_the_builder_model(graph, with_crimes):  # noqa: F811
     async with _setup(graph, [_return_loot()], with_crimes=with_crimes) as (_, chains, _, llm):
         if not with_crimes:
-            _record_crime(chains)
+            await _record_crime(chains)
         assert await chains.chain(HILDA, crime="stolen-bread", quest_count=1) is None
-        assert not llm.calls and not chains.book.all()
+        assert not llm.calls and not await chains.book.all()
 
 
 async def test_a_single_errand_uses_book_goals_and_one_atomic_patch(graph):  # noqa: F811
@@ -667,7 +668,7 @@ async def test_a_single_errand_uses_book_goals_and_one_atomic_patch(graph):  # n
         assert not casting.calls and not fake.cast
         assert len(fake.graph) == 2  # initial session replacement plus the whole quest
         assert fake.graph[-1]["ops"] == questbook.build(quest)
-        assert list(chains.book.all()) == [quest.id]
+        assert list(await chains.book.all()) == [quest.id]
         [fact] = chains.chronicle.facts("chain")
         assert fact["quests"] == [quest.id] and fact["roles"] == {}
         instructions, messages, _ = llm.calls[0]
@@ -700,7 +701,7 @@ async def test_place_with_only_freepoints_cannot_be_a_reach_target_even_with_an_
         assert any(
             line.startswith(f"- {FIELD} —") and "дойти: нет" in line for line in brief.text().splitlines()
         )
-        assert not casting.calls and not chains.book.all() and len(fake.graph) == 1
+        assert not casting.calls and not await chains.book.all() and len(fake.graph) == 1
 
 
 async def test_two_quests_requested_as_one_are_rejected_and_explained_to_the_model(graph):  # noqa: F811
@@ -718,7 +719,7 @@ async def test_a_single_errand_cannot_add_roles_when_the_stranger_has_used_the_b
     raw["cast"] = _proposal()["cast"][:1]
     async with _setup(graph, [raw]) as (fake, chains, casting, _):
         assert await chains.chain(HILDA, quest_count=1, max_people=0) is None
-        assert not casting.calls and not fake.cast and not chains.book.all()
+        assert not casting.calls and not fake.cast and not await chains.book.all()
         assert len(fake.graph) == 1
         assert all(
             any("новых персонажей 1" in why and "не больше 0" in why for why in fact["why"])
@@ -770,7 +771,7 @@ async def test_retry_after_game_refusal_keeps_the_cast_and_shows_its_roles(graph
             if not kwargs.get("replace"):
                 proposed += 1
                 if proposed == 1:
-                    assert chains.book.all() == {}
+                    assert await chains.book.all() == {}
                     raise GameError("лагерь временно не принят")
             return await original_patch(ops, **kwargs)
 
@@ -783,7 +784,7 @@ async def test_retry_after_game_refusal_keeps_the_cast_and_shows_its_roles(graph
         assert all(spec.npc in repeated for spec in casting.specs)
         assert "Новых персонажей в этой цепочке — не больше 3" in repeated
         assert "лагерь временно не принят" in llm.calls[1][1][-1].content
-        assert len(chains.author.patches.records(QUEST)) == 2
+        assert len(await chains.author.patches.records(QUEST)) == 2
         assert [q.id for q in made] == ["DIR_Q1", "DIR_Q2"]
 
 
@@ -817,7 +818,7 @@ async def test_a_retry_must_keep_the_description_of_already_introduced_roles(gra
         made, errors = await chains._try(raw, brief)
         assert made is None and any("уже поставлена" in error for error in errors)
         assert len(casting.calls) == calls and len(fake.cast) == 2
-        assert chains.book.all() == {}
+        assert await chains.book.all() == {}
 
 
 @pytest.mark.parametrize("state", [0, LOG_RUNNING, LOG_SUCCESS, LOG_FAILED, LOG_OBSOLETE])
@@ -827,7 +828,7 @@ async def test_after_blocks_the_next_offer_until_the_first_quest_succeeds(graph,
         assert made is not None
         first, second = made
         fake.vars[first.id] = state
-        give = Patches.of(chains.author.patches.ops()).nodes[f"{second.id}_GIVE"]
+        give = Patches.of(await chains.author.patches.ops()).nodes[f"{second.id}_GIVE"]
         assert fake.evaluate(give["condition"], HILDA) == int(state == LOG_SUCCESS)
 
 
@@ -846,7 +847,7 @@ async def test_a_vanilla_response_opens_only_its_first_quest_and_informs_the_giv
             assert VANILLA_QUEST not in q.knows
         brief = llm.calls[0][1][0].content
         assert "Поручение отвечает на дело «Убрать поле репы»." in brief and VANILLA_QUEST not in brief
-        nodes = Patches.of(chains.author.patches.ops()).nodes
+        nodes = Patches.of(await chains.author.patches.ops()).nodes
         assert fake.evaluate(nodes[f"{first.id}_GIVE"]["condition"], HILDA) == 1
         fake.vars[VANILLA_QUEST] = LOG_RUNNING
         assert fake.evaluate(nodes[f"{first.id}_GIVE"]["condition"], HILDA) == 0
@@ -854,7 +855,7 @@ async def test_a_vanilla_response_opens_only_its_first_quest_and_informs_the_giv
         assert fake.evaluate(nodes[f"{second.id}_GIVE"]["condition"], HILDA) == 1
         chains.book.quests.clear()
         chains.book._version = -1
-        assert [chains.book.all()[q.id] for q in made] == made
+        assert [(await chains.book.all())[q.id] for q in made] == made
 
 
 async def test_only_two_failed_proposals_are_spent_and_no_cast_is_left(graph):  # noqa: F811
@@ -864,7 +865,7 @@ async def test_only_two_failed_proposals_are_spent_and_no_cast_is_left(graph):  
         assert await chains.chain(HILDA) is None
         assert len(llm.calls) == 2 and casting.calls == [] and fake.cast == {}
         assert [fact["attempt"] for fact in chains.chronicle.facts("chain_rejected")] == [1, 2]
-        assert chains.chronicle.facts("chain") == [] and chains.book.all() == {}
+        assert chains.chronicle.facts("chain") == [] and await chains.book.all() == {}
 
 
 async def test_a_chain_can_use_people_from_the_brief_without_new_roles(graph):  # noqa: F811
@@ -918,9 +919,9 @@ def _find_npc_thief(crime: str) -> dict[str, Any]:
 async def test_npc_crime_builder_knows_only_the_linked_deed_and_can_ask_to_convince_giver(graph):  # noqa: F811
     crime = "npc-stolen-bread"
     async with _setup(graph, [_find_npc_thief(crime)], with_crimes=True) as (_, chains, casting, llm):
-        deed = _record_crime(chains, fact="npc_crime", id=crime, culprit="BAU_952_MALAK")
-        chains.chronicle.record({"fact": "npc_crime_seen", "npc": LOBART, "crime": crime})
-        chains.chronicle.record({"fact": "blamed", "id": "BLAME_1", "npc": HILDA, "crime": crime,
+        deed = await _record_crime(chains, fact="npc_crime", id=crime, culprit="BAU_952_MALAK")
+        await chains.chronicle.record({"fact": "npc_crime_seen", "npc": LOBART, "crime": crime})
+        await chains.chronicle.record({"fact": "blamed", "id": "BLAME_1", "npc": HILDA, "crime": crime,
                                  "culprit": LOBART, "truth": False, "because": "hero_words"})
         made = await chains.chain(HILDA, crime=crime, quest_count=1, max_people=0)
         assert made is not None and len(made) == 1 and not casting.calls
@@ -936,7 +937,7 @@ async def test_npc_crime_builder_knows_only_the_linked_deed_and_can_ask_to_convi
 
 async def test_npc_crime_actual_item_can_be_returned_without_creating_another_copy(graph):  # noqa: F811
     async with _setup(graph, [_return_loot()], with_crimes=True) as (fake, chains, casting, _):
-        deed = _record_crime(chains, fact="npc_crime", id="npc-loot", culprit="BAU_952_MALAK")
+        deed = await _record_crime(chains, fact="npc_crime", id="npc-loot", culprit="BAU_952_MALAK")
         fake.symbols.update({STOLEN: "item", "PC_HERO": "npc"})
         fake.hero_items[STOLEN] = 1
         made = await chains.chain(HILDA, crime=deed["id"], quest_count=1, max_people=0)
@@ -948,10 +949,10 @@ async def test_npc_crime_actual_item_can_be_returned_without_creating_another_co
 @pytest.mark.parametrize("linked", ["hero", "other_npc", "disabled_npc"])
 async def test_blame_goal_cannot_target_an_unlinked_or_disabled_npc_deed(graph, linked):  # noqa: F811
     async with _setup(graph, with_crimes=True) as (_, chains, casting, _):
-        deed = _record_crime(chains)
-        _record_crime(chains, fact="npc_crime", id="npc-other", culprit="BAU_952_MALAK")
+        deed = await _record_crime(chains)
+        await _record_crime(chains, fact="npc_crime", id="npc-other", culprit="BAU_952_MALAK")
         if linked != "hero":
-            deed = _record_crime(chains, fact="npc_crime", id="npc-linked", culprit="BAU_952_MALAK")
+            deed = await _record_crime(chains, fact="npc_crime", id="npc-linked", culprit="BAU_952_MALAK")
         if linked == "disabled_npc":
             chains.npc_crimes = False
             assert await chains.brief(HILDA, crime=deed["id"]) is None
@@ -961,16 +962,16 @@ async def test_blame_goal_cannot_target_an_unlinked_or_disabled_npc_deed(graph, 
         brief.quest_count = 1
         made, errors = await chains._try(_find_npc_thief("npc-other"), brief)
         assert made is None and "blame: нужен id связанного дела NPC" in errors
-        assert not casting.calls and not chains.book.all()
+        assert not casting.calls and not await chains.book.all()
 
 
 async def test_refuting_the_latest_accusation_does_not_restore_an_older_builder_belief(graph):  # noqa: F811
     async with _setup(graph, with_crimes=True) as (_, chains, _, _):
-        deed = _record_crime(chains, fact="npc_crime", id="npc-loot", culprit="BAU_952_MALAK")
+        deed = await _record_crime(chains, fact="npc_crime", id="npc-loot", culprit="BAU_952_MALAK")
         for number, culprit in enumerate([LOBART, "BAU_961_VINO"], 1):
-            chains.chronicle.record({"fact": "blamed", "id": f"BLAME_{number}", "npc": HILDA,
+            await chains.chronicle.record({"fact": "blamed", "id": f"BLAME_{number}", "npc": HILDA,
                                      "crime": deed["id"], "culprit": culprit, "truth": False})
-        chains.chronicle.record({"fact": "blame_refuted", "blamed": "BLAME_2", "how": "no_goods"})
+        await chains.chronicle.record({"fact": "blame_refuted", "blamed": "BLAME_2", "how": "no_goods"})
         text = chains._crime_context(deed, {})
         assert "винит:" not in text
         assert "пострадавший; может заметить пропажу" in text

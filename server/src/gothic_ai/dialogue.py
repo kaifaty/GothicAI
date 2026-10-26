@@ -66,6 +66,7 @@ from .protocol import (
     HushCmd,
     LineStarted,
     LineVoice,
+    Loading,
     MemoryCmd,
     Mood,
     NpcDied,
@@ -614,9 +615,9 @@ class TurnExtension(Protocol):
         """Before a turn: what the situation and the tools need from the game."""
         ...
 
-    def situation(self, npc: str) -> str | None: ...
+    def situation(self, npc: str) -> Awaitable[str | None] | str | None: ...
 
-    def tools(self, npc: str) -> list[Tool]: ...
+    def tools(self, npc: str) -> Awaitable[list[Tool]] | list[Tool]: ...
 
     async def handle(
         self, dialogue: DialogueManager, conv: Conversation, call: ToolCall, snap: Snapshot | None
@@ -698,7 +699,7 @@ class DialogueManager:
         llm: LLMBackend,
         personas: PersonaProvider,
         *,
-        memory: MemoryStore | None = None,
+        memory: MemoryStore,
         tts: TtsClient | None = None,
         tools: bool = True,
         journal: Journal | None = None,
@@ -712,17 +713,17 @@ class DialogueManager:
         self.trace = trace  # every turn as a JSON line (see trace.py)
         self.budget = budget  # calls nobody asked for (summaries); the player's turns are only counted
         # the npc's intent changed (e.g. for the planner: what it wants from the hero after the chat)
-        self.on_intent: Callable[[str, Intent], None] | None = None
-        self.on_fight: Callable[[str, str], None] | None = None
+        self.on_intent: Callable[[str, Intent], Awaitable[None] | None] | None = None
+        self.on_fight: Callable[[str, str], Awaitable[None] | None] | None = None
         # the hero said something to the npc (npc, words): the gesture its body makes in the pause before
         # the answer (incidents.py asks the behavioral model)
         self.first_reaction: Callable[[str, str], Awaitable[FirstReaction]] | None = None
         # something the npc's body was to do did not work (npc, what)
-        self.on_body_failed: Callable[[str, str], None] | None = None
+        self.on_body_failed: Callable[[str, str], Awaitable[None] | None] | None = None
         # whether the npc is under our control (attached): only then do intents move its body directly
         self.controls: Callable[[str], bool] | None = None
         # the intent of an npc we do not control changed (npc, old, new): who runs its body carries it out
-        self.on_free_intent: Callable[[str, Intent, Intent], None] | None = None
+        self.on_free_intent: Callable[[str, Intent, Intent], Awaitable[None] | None] | None = None
         # a free npc's body is needed for a commitment (give an item, follow): hold it (attach) for `why`,
         # and let it go again; without them only controlled npc's act on commitments (talk.py)
         self.take_body: Callable[[str, str], Awaitable[bool]] | None = None
@@ -735,22 +736,22 @@ class DialogueManager:
         # the npc's guild (the roster's, talk.py), None if not known: whom it attacks to kill (`KILLERS`)
         self.guild_of: Callable[[str], int | None] = lambda npc: None
         # A bandit's reason to attack the hero (parley.py); None keeps the original rules.
-        self.fight_reason: Callable[[str, Snapshot | None], str | None] | None = None
+        self.fight_reason: Callable[[str, Snapshot | None], Awaitable[str | None] | str | None] | None = None
         # Parley's balance of forces, read synchronously from snapshots and perception in memory.
         self.balance: Callable[[str], str | None] | None = None
-        self.on_player_said: list[Callable[[str], None]] = []
+        self.on_player_said: list[Callable[[str], Awaitable[None] | None]] = []
         # the npc fights the hero right now (the scripts' attack, talk.py; companions are not asked): talked
         # to, it may call it off (`_calm`)
         self.fights_hero: Callable[[str], bool] = lambda npc: False
         # an npc called off its fight with the hero (npc): a companion fighting it lets it be (orders.py)
-        self.on_calm: list[Callable[[str], None]] = []
+        self.on_calm: list[Callable[[str], Awaitable[None] | None]] = []
         # an npc turned on the hero by its own decision (npc): his companions stand up for him (orders.py)
-        self.on_attack: list[Callable[[str], None]] = []
+        self.on_attack: list[Callable[[str], Awaitable[None] | None]] = []
         # the npc ended the conversation (its goodbye has been said)
-        self.on_end: Callable[[str], None] | None = None
+        self.on_end: Callable[[str], Awaitable[None] | None] | None = None
         # an npc's turn is over and it said something (npc, name, the text said, the turn's kind, the npc it
         # said it to: None for the hero or aloud): whoever stood by heard it (group.py)
-        self.on_said: list[Callable[[str, str, str, str, str | None], None]] = []
+        self.on_said: list[Callable[[str, str, str, str, str | None], Awaitable[None] | None]] = []
         # one voice at a time around the hero (group.py): a seat before a turn thinks, before a line is heard
         self.floor: Floor | None = None
         self._line_seats: dict[str, int | None] = {}  # a line -> the seat of the turn that said it
@@ -777,15 +778,20 @@ class DialogueManager:
         self._svm_down: dict[str, bool] = {}  # latest known deaths, roster and snapshot health
         self._focus: str | None = None
         # what the npc sees (perception.py), in place of the snapshot's omniscient lines
-        self.sight: Callable[[str, Snapshot | None], Sight | None] | None = None
+        self.sight: Callable[[str, Snapshot | None], Awaitable[Sight | None]] | None = None
         self.extensions: list[TurnExtension] = []
         self.llm = llm
         self.personas = personas
-        self.memory = memory or MemoryStore(":memory:")
+        self.memory = memory
         self.tts = tts
         self._tts_paused_until = 0.0
         self.tools = npc_tools.TOOLS if tools else []
         self.branch: str | None = None
+        self._generation = 0
+        self._world_generation = link.world_generation
+        self._session: Session | None = None
+        self._closing: asyncio.Future[list[Any]] | None = None
+        self._close_reported = False
         self.conversations: dict[str, Conversation] = {}
         self._line_ids = itertools.count(1)
         self._reply_ids = itertools.count(1)
@@ -805,17 +811,29 @@ class DialogueManager:
         link.listeners.append(self._on_message)
         if getattr(link, "hello", None) is not None:
             self._svm_mode()
-        if link.session is not None:
-            self._switch_branch(link.session)
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
+        if self._closing is not None:
+            return
         match msg:
             case Hello():
                 self._svm_mode()
             case SvmLine():
-                self._start_svm(msg)
+                await self._start_svm(msg)
             case Session():
-                self._switch_branch(msg)
+                await self._switch_branch(msg)
+            case Loading():
+                self._world_generation = self.link.world_generation
+                self._generation += 1
+                tasks = self._reset_conversations()
+                if tasks:
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for error in results:
+                        if isinstance(error, BaseException) and not isinstance(error, asyncio.CancelledError):
+                            log.error(
+                                "dialogue producer failed during loading",
+                                exc_info=(type(error), error, error.__traceback__),
+                            )
             case LineStarted():
                 self._spoke_at[msg.npc.upper()] = time.monotonic()
                 if msg.line in self._lines:
@@ -823,7 +841,7 @@ class DialogueManager:
                 if (started := self._starts.pop(msg.line, None)) is not None:
                     started.set()
             case PttStart():
-                self.prewarm_listeners(msg.focus)  # while he speaks
+                await self.prewarm_listeners(msg.focus)  # while he speaks
             case NpcDied():
                 self._svm_down[msg.npc.upper()] = True
             case Snapshot():
@@ -835,7 +853,7 @@ class DialogueManager:
                     self._nearby.clear()
                 self._nearby.update((e.id.upper(), (e.name, e.distance)) for e in msg.npcs)
                 self._svm_down.update((e.id.upper(), e.activity == "down") for e in msg.npcs)
-                self._prewarm_focus()
+                await self._prewarm_focus()
             case NpcViews():
                 self._focus = next(
                     (v.hero.focus.upper() for v in msg.views if v.hero is not None and v.hero.focus),
@@ -844,7 +862,7 @@ class DialogueManager:
                 for view in msg.views:
                     if view.hero is not None:
                         self._nearby[view.npc.upper()] = (view.name, view.hero.distance)
-                self._prewarm_focus()
+                await self._prewarm_focus()
             case LineVoice():
                 self._spawn_story_voice(msg)
 
@@ -853,7 +871,7 @@ class DialogueManager:
             replace=self.svm_lines and self.quick is not None and self._svm_available,
         )))
 
-    def _start_svm(self, msg: SvmLine) -> None:
+    async def _start_svm(self, msg: SvmLine) -> None:
         received = time.monotonic()
         npc = msg.npc.upper()
         attempt: dict[str, Any] = {"outcome": "busy", "answer": ""}
@@ -879,14 +897,14 @@ class DialogueManager:
         ):
             pass
         else:
-            conv = self.open(npc, self._nearby.get(npc, (npc, 0))[0], warm=False)
+            conv = await self.open(npc, self._nearby.get(npc, (npc, 0))[0], warm=False)
             task = asyncio.create_task(self._svm_line(conv, msg, received, attempt, record))
             self._svm_tasks[npc] = task
 
             def finished(done: asyncio.Task[str | None]) -> None:
                 if self._svm_tasks.get(npc) is done:
                     del self._svm_tasks[npc]
-                if done.cancelled() or done.result() is None:
+                if attempt["outcome"] != "said" and (done.cancelled() or done.result() is None):
                     record()  # also records cancellation before the coroutine's first step
 
             task.add_done_callback(finished)
@@ -936,7 +954,7 @@ class DialogueManager:
                 asyncio.timeout_at(received + SVM_REPLY_S),
                 aclosing(self._quick_stream(
                     conv.npc, instructions=conv.persona.instructions,
-                    messages=[Message("developer", f"{self._brief(conv)}\n{hint}")],
+                    messages=[Message("developer", f"{await self._brief(conv)}\n{hint}")],
                     tools=[], temperature=0.7,
                 )) as events,
             ):
@@ -974,7 +992,7 @@ class DialogueManager:
                 if line is not None:
                     conv.svm_pending[line] = record
                     if self.tts is None:
-                        self._svm_started(conv, line)
+                        await self._svm_started(conv, line)
                     return line  # its first sound or cancellation finishes the trace
         except TimeoutError:
             attempt["answer"] = first_words(svm_text(text))[0]
@@ -991,24 +1009,31 @@ class DialogueManager:
         except GameError:
             attempt["outcome"] = "error"
         except asyncio.CancelledError:
-            attempt["outcome"] = "busy"
+            if attempt["outcome"] != "said":
+                attempt["outcome"] = "busy"
             raise
 
-    def _svm_started(self, conv: Conversation, line: str) -> None:
-        if record := conv.svm_pending.pop(line, None):
-            conv.earlier_lines.append(line)
-            self._line_replies[line] = line
-            words = self._lines[line][0]
-            conv.svm_phrases.append(" ".join(_LETTERS.findall(words.casefold())))
-            self._note(conv, f"Ты сказал вслух: «{words}»")
-            record("said")
+    async def _svm_started(self, conv: Conversation, line: str) -> None:
+        async def persist() -> None:
+            if record := conv.svm_pending.pop(line, None):
+                conv.earlier_lines.append(line)
+                self._line_replies[line] = line
+                words = self._lines[line][0]
+                conv.svm_phrases.append(" ".join(_LETTERS.findall(words.casefold())))
+                await self._note(conv, f"Ты сказал вслух: «{words}»")
+                record("said")
 
-    def _bark_started(self, conv: Conversation, line: str) -> None:
-        if record := conv.bark_pending.pop(line, None):
-            conv.earlier_lines.append(line)
-            self._line_replies[line] = line
-            self._note(conv, f"Ты сказал вслух: «{self._lines[line][0]}»")
-            record("said")
+        await self.memory.complete(persist)
+
+    async def _bark_started(self, conv: Conversation, line: str) -> None:
+        async def persist() -> None:
+            if record := conv.bark_pending.pop(line, None):
+                conv.earlier_lines.append(line)
+                self._line_replies[line] = line
+                await self._note(conv, f"Ты сказал вслух: «{self._lines[line][0]}»")
+                record("said")
+
+        await self.memory.complete(persist)
 
     async def _recover_svm(self) -> None:
         assert self.quick is not None
@@ -1038,28 +1063,119 @@ class DialogueManager:
 
     # --- memory -------------------------------------------------------------------------
 
-    def _switch_branch(self, session: Session) -> None:
-        if session.branch != self.branch:
-            # another line of play (new game or a load): conversations are read again from memory
-            for conv in self.conversations.values():
-                for task in conv.tasks():
-                    task.cancel()
-            self.conversations.clear()
-            for task in self._svm_tasks.values():
-                task.cancel()
-            self._svm_tasks.clear()
-            self._spoke_at.clear()
-            for task in self._prewarms.values():
-                task.cancel()
-            self._prewarms.clear()
-            self._prewarm_history.clear()
-            self._quick_slots.clear()
-            self._quick_used.clear()
-            self._nearby.clear()
-            self._svm_down.clear()
-            self._focus = None
+    def _reset_conversations(self) -> set[asyncio.Task[Any]]:
+        tasks = {task for conv in self.conversations.values() for task in conv.tasks()}
+        tasks.update(self._svm_tasks.values())
+        tasks.update(self._prewarms.values())
+        tasks.discard(asyncio.current_task())
+        for task in tasks:
+            task.cancel()
+        self.conversations.clear()
+        for task in self._svm_tasks.values():
+            task.cancel()
+        self._svm_tasks.clear()
+        self._spoke_at.clear()
+        for task in self._prewarms.values():
+            task.cancel()
+        self._prewarms.clear()
+        self._prewarm_history.clear()
+        self._quick_slots.clear()
+        self._quick_used.clear()
+        self._nearby.clear()
+        self._svm_down.clear()
+        self._focus = None
+        return tasks
+
+    async def initialize(self) -> None:
+        """Hydrate an already received Session after every listener has been registered."""
+        session = self.link.session
+        if session is None:
+            return
+
+        async def persist() -> None:
+            if self.link.session is not session or self._closing is not None:
+                raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+            if self._session is session:
+                return
+            if self._session is not None:
+                raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+            self._world_generation = self.link.world_generation
+            self._generation += 1
             self.branch = session.branch
-        head = self.memory.ensure_branch(session.branch, session.parent, session.parent_seq)
+            await self._hydrate_session(session, self._generation)
+
+        await self.memory.complete(persist)
+
+    async def close(self) -> None:
+        """Stop owned producers and drain their accepted writes; the shared store stays open."""
+        if self._closing is None:
+            tasks = {task for conv in self.conversations.values() for task in conv.tasks()}
+            tasks.update(self._prewarms.values())
+            tasks.update(self._svm_tasks.values())
+            tasks.update(self._background)
+            tasks.update(self._story_voices)
+            if self._svm_probe is not None:
+                tasks.add(self._svm_probe)
+            tasks.discard(asyncio.current_task())
+            for task in tasks:
+                task.cancel()
+            self._closing = asyncio.gather(*tasks, return_exceptions=True)
+            if self._on_message in self.link.listeners:
+                self.link.listeners.remove(self._on_message)
+        cancelled = None
+        while True:
+            try:
+                results = await asyncio.shield(self._closing)
+                break
+            except asyncio.CancelledError as error:
+                cancelled = error
+        if not self._close_reported:
+            self._close_reported = True
+            self._generation += 1
+            self._reset_conversations()
+            for error in results:
+                if isinstance(error, BaseException) and not isinstance(error, asyncio.CancelledError):
+                    log.error(
+                        "dialogue producer failed during close",
+                        exc_info=(type(error), error, error.__traceback__),
+                    )
+        if cancelled is not None:
+            raise cancelled
+
+    async def _switch_branch(self, session: Session) -> None:
+        if session is not self._session or session.branch != self.branch:
+            self._world_generation = self.link.world_generation
+            self._generation += 1
+            tasks = self._reset_conversations()
+            self.branch = session.branch
+        else:
+            tasks = set()
+        generation = self._generation
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for error in results:
+                if isinstance(error, BaseException) and not isinstance(error, asyncio.CancelledError):
+                    log.error(
+                        "dialogue producer failed during session change",
+                        exc_info=(type(error), error, error.__traceback__),
+                    )
+
+        async def persist() -> None:
+            await self._hydrate_session(session, generation)
+
+        await self.memory.complete(persist)
+
+    async def _hydrate_session(self, session: Session, generation: int) -> None:
+        if (self.branch != session.branch or self._generation != generation
+                or self.link.session is not session or self._closing is not None
+                or self._world_generation != self.link.world_generation):
+            return
+        head = await self.memory.ensure_branch(session.branch, session.parent, session.parent_seq)
+        if (self.branch != session.branch or self._generation != generation
+                or self.link.session is not session or self._closing is not None
+                or self._world_generation != self.link.world_generation):
+            return
+        self._session = session
         log.info(
             "memory: branch %s (%s%s), head %d",
             session.branch,
@@ -1067,27 +1183,69 @@ class DialogueManager:
             f" from {session.parent}@{session.parent_seq}" if session.parent else "",
             head,
         )
-        self._send_head(session.branch, head)
+        await self._send_head(session.branch, head, generation, session)
 
-    def _current_branch(self) -> str:
+    async def _current_branch(self) -> str:
+        await self.initialize()
         if self.branch is None:
-            self.branch = f"unsaved-{uuid.uuid4().hex[:12]}"
-            self.memory.ensure_branch(self.branch)
-            log.warning("the game did not report a session; memories go to %s", self.branch)
+            generation, session, world = self._generation, self.link.session, self.link.world_generation
+
+            async def persist() -> None:
+                if self.branch is not None:
+                    return
+                branch = f"unsaved-{uuid.uuid4().hex[:12]}"
+                await self.memory.ensure_branch(branch)
+                if (self._generation != generation or self.link.session is not session
+                        or self.link.world_generation != world):
+                    raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+                self.branch = branch
+                log.warning("the game did not report a session; memories go to %s", branch)
+
+            await self.memory.complete(persist)
+        assert self.branch is not None
         return self.branch
 
-    def _remember(self, conv: Conversation, role: Role, content: str) -> None:
-        seq = self.memory.append(
-            conv.branch, conv.npc, role, content, game_time(self.link.snapshots.get(conv.npc))
-        )
-        conv.memory.entries.append(Entry(seq, role, content))
-        self._send_head(conv.branch, seq)
-        self.prewarm(conv.npc)
+    def _live(self, conv: Conversation, generation: int, session: Session | None) -> bool:
+        return (self._generation == generation and self.branch == conv.branch
+                and self.conversations.get(conv.npc) is conv
+                and self.link.session is session and self._session is session
+                and self._world_generation == self.link.world_generation)
 
-    def _send_head(self, branch: str, seq: int) -> None:
-        self._spawn(self.link.send(MemoryCmd(branch=branch, seq=seq)))
+    async def _remember(self, conv: Conversation, role: Role, content: str) -> None:
+        branch, npc, generation = conv.branch, conv.npc, self._generation
+        session = self.link.session
+        when = game_time(self.link.snapshots.get(npc))
+
+        async def persist() -> None:
+            if not self._live(conv, generation, session):
+                raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+            seq = await self.memory.append(branch, npc, role, content, when)
+            if not self._live(conv, generation, session):
+                return
+            conv.memory.entries.append(Entry(seq, role, content))
+            await self._send_head(branch, seq, generation, session)
+            if self._live(conv, generation, session):
+                self.prewarm(npc)
+
+        await self.memory.complete(persist)
+
+    async def _send_head(
+        self, branch: str, seq: int, generation: int, session: Session | None
+    ) -> None:
+        if (self.branch != branch or self._generation != generation
+                or self.link.session is not session or self._session is not session
+                or self._world_generation != self.link.world_generation):
+            return
+        try:
+            await self.link.send(MemoryCmd(branch=branch, seq=seq))
+        except GameError:
+            pass  # the game is gone; it learns the durable head on reconnect
 
     def _spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
+        if self._closing is not None:
+            coro.close()
+            return
+
         async def run() -> None:
             try:
                 await coro
@@ -1099,7 +1257,8 @@ class DialogueManager:
         task.add_done_callback(self._background.discard)
 
     def _maybe_compact(self, conv: Conversation) -> None:
-        if len(conv.memory.entries) <= MAX_HISTORY or (conv.compacting and not conv.compacting.done()):
+        if (self._closing is not None or len(conv.memory.entries) <= MAX_HISTORY
+                or (conv.compacting and not conv.compacting.done())):
             return
         if self.budget is not None and not self.budget.allow(conv.npc):
             return  # later: the next message tries again
@@ -1129,12 +1288,23 @@ class DialogueManager:
         if not text:
             return
         covers = old[-1].seq
-        seq = self.memory.add_summary(conv.branch, conv.npc, text, covers)
-        conv.memory.summary, conv.memory.summary_seq = text, covers
-        conv.memory.entries = [e for e in conv.memory.entries if e.seq > covers]
-        log.info("%s: %d messages folded into the summary (%d chars)", conv.npc, len(old), len(text))
-        self._send_head(conv.branch, seq)
-        self.prewarm(conv.npc)
+        branch, npc, generation = conv.branch, conv.npc, self._generation
+        session = self.link.session
+
+        async def persist() -> None:
+            if not self._live(conv, generation, session):
+                raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+            seq = await self.memory.add_summary(branch, npc, text, covers)
+            if not self._live(conv, generation, session):
+                return
+            conv.memory.summary, conv.memory.summary_seq = text, covers
+            conv.memory.entries = [e for e in conv.memory.entries if e.seq > covers]
+            log.info("%s: %d messages folded into the summary (%d chars)", npc, len(old), len(text))
+            await self._send_head(branch, seq, generation, session)
+            if self._live(conv, generation, session):
+                self.prewarm(npc)
+
+        await self.memory.complete(persist)
 
     # --- the quick model of a fight ----------------------------------------------------------
 
@@ -1166,7 +1336,7 @@ class DialogueManager:
         candidates.sort(key=lambda n: (n != looking_at, self._distance(n)))
         return sorted(candidates[:PREWARM_SLOTS], key=lambda n: n == looking_at)
 
-    def _prewarm_focus(self) -> None:
+    async def _prewarm_focus(self) -> None:
         """Open a nearby focused npc without a turn; repeated views reuse its unchanged history."""
         npc = self._focus
         if (
@@ -1175,7 +1345,7 @@ class DialogueManager:
             or not hasattr(self.quick, "prewarm")
         ):
             return
-        conv = self.open(npc, self._nearby[npc][0], warm=False)
+        conv = await self.open(npc, self._nearby[npc][0], warm=False)
         if self._prewarm_history.get(npc) != conv.history:
             self.prewarm(npc)
 
@@ -1183,7 +1353,7 @@ class DialogueManager:
         """Fill one of the quick model's three slots for a nearby focused npc, recent partner or fighter.
         Its next words only read the situation and trigger. New history replaces a running warm."""
         conv = self.conversations.get(npc.upper())
-        if conv is None or not self._listening(conv):
+        if self._closing is not None or conv is None or not self._listening(conv):
             return
         candidates = self._warm_candidates()
         if conv.npc in candidates:
@@ -1217,12 +1387,12 @@ class DialogueManager:
 
         task.add_done_callback(forget)
 
-    def prewarm_listeners(self, focus: str | None = None) -> None:
+    async def prewarm_listeners(self, focus: str | None = None) -> None:
         """Push-to-talk warms up to three npc's: the focused one (even before a first conversation)
         and the nearest recent partners or fighters. Focus goes last, freshest in the three slots."""
         focus = focus.upper() if focus else None
         if focus in self._nearby and focus not in self.conversations and hasattr(self.quick, "prewarm"):
-            self.open(focus, self._nearby[focus][0], warm=False)
+            await self.open(focus, self._nearby[focus][0], warm=False)
         if focus in self.conversations:
             self._open_ahead(focus)  # though it has not talked lately: the words to it are on their way
         candidates = self._warm_candidates(focus)
@@ -1305,10 +1475,10 @@ class DialogueManager:
         for task in self._svm_tasks.values():
             task.cancel()
 
-    def _brief(self, conv: Conversation) -> str:
+    async def _brief(self, conv: Conversation) -> str:
         """What the npc perceives now, briefly: the situation of the quick model's words."""
         snap = self.link.snapshots.get(conv.npc)
-        sight = self.sight(conv.npc, snap) if self.sight is not None else None
+        sight = await self.sight(conv.npc, snap) if self.sight is not None else None
         text = npc_tools.render_situation(snap, conv.intent, sight, brief=True)
         if self.balance is not None and (balance := self.balance(conv.npc)):
             text += "\n" + balance
@@ -1369,21 +1539,65 @@ class DialogueManager:
         for record in conv.svm_pending.values():
             record("busy")
         conv.svm_pending.clear()
-        conv.reply = asyncio.create_task(turn)
-        conv.reply.add_done_callback(lambda _: self.prewarm(conv.npc))
+        previous = conv.reply
+        started = False
+
+        async def ordered() -> None:
+            nonlocal started
+            try:
+                if previous is not None:
+                    await asyncio.gather(previous, return_exceptions=True)
+                started = True
+                await turn
+            finally:
+                if not started:
+                    turn.close()
+
+        def finished(_: asyncio.Task[None]) -> None:
+            if not started:
+                turn.close()
+            self.prewarm(conv.npc)
+
+        conv.reply = asyncio.create_task(ordered())
+        conv.reply.add_done_callback(finished)
         return conv.reply
 
     # --- conversation -------------------------------------------------------------------
 
-    def open(self, npc: str, name: str, *, warm: bool = True) -> Conversation:
+    async def open(self, npc: str, name: str, *, warm: bool = True) -> Conversation:
         """The npc's conversation, read from memory the first time. `warm`: it is about to talk to the hero,
         the quick model reads its instructions and history now (not for a note: a rumor or a witness would
         warm it for every npc around)."""
         npc = npc.upper()
+        if (self._closing is not None or (self._session is not None and (
+                self._session is not self.link.session
+                or self._world_generation != self.link.world_generation))):
+            raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+        initial_session, initial_generation = self._session, self._generation
+        initial_world = self.link.world_generation
+        ready_session = self.link.session
+        if not self.memory.in_completion:
+            ready_session = await self.link.wait_session_ready()
+        await self.initialize()
+        if (self._closing is not None or self._session is not self.link.session
+                or (ready_session is not None and self._session is not ready_session)
+                or (initial_session is not None and (
+                    self._session is not initial_session or self._generation != initial_generation
+                    or self.link.world_generation != initial_world))):
+            raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
         conv = self.conversations.get(npc)
         if conv is None:
-            branch = self._current_branch()
-            conv = Conversation(npc, self.personas.get(npc, name), branch, self.memory.load(branch, npc))
+            branch = await self._current_branch()
+            generation, session = self._generation, self.link.session
+            memory = await self.memory.load(branch, npc)
+            if (self.branch != branch or self._generation != generation
+                    or self.link.session is not session or self._session is not session
+                    or self._world_generation != self.link.world_generation or self._closing is not None):
+                raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+            conv = self.conversations.get(npc)
+            if conv is not None:
+                return conv
+            conv = Conversation(npc, self.personas.get(npc, name), branch, memory)
             if conv.memory.intent:
                 conv.intent = Intent.from_json(conv.memory.intent)
             self.conversations[npc] = conv
@@ -1414,7 +1628,6 @@ class DialogueManager:
     def _cancel(self, conv: Conversation) -> None:
         if conv.reply is not None and not conv.reply.done():
             conv.reply.cancel()
-        conv.reply = None
 
     def _drop_unvoiced(self, conv: Conversation, lines: Collection[str] | None = None) -> None:
         for line in tuple(conv.bark_pending):
@@ -1435,16 +1648,19 @@ class DialogueManager:
     def _start_reply(
         self, conv: Conversation, user_text: str, *, overlay: bool = False, body: str | None = None
     ) -> asyncio.Task[None]:
-        for listener in self.on_player_said:
-            listener(conv.npc)
         self._cancel(conv)
         self._drop_unvoiced(conv)
         if self.budget is not None:
             self.budget.note(conv.npc)
         conv.talked_at = time.monotonic()
-        return self._reply(
-            conv, self._turn(conv, Message("user", user_text), "player", overlay=overlay, body=body)
-        )
+        async def turn() -> None:
+            for listener in self.on_player_said:
+                completion = listener(conv.npc)
+                if completion is not None:
+                    await completion
+            await self._turn(conv, Message("user", user_text), "player", overlay=overlay, body=body)
+
+        return self._reply(conv, turn())
 
     def _said(self, conv: Conversation) -> tuple[list[str], bool, bool]:
         """The latest reply: the texts of its lines that started, whether one is being said now and
@@ -1494,7 +1710,7 @@ class DialogueManager:
             return now - self._sent.get(line, now) < LINE_LOST_S
         return at + self._audio.get(line, line_duration(text)) > now
 
-    def interrupt(self, npc: str) -> bool:
+    async def interrupt(self, npc: str) -> bool:
         """The hero speaks while the npc answers: it stops at once (its voice, the lines it did not say
         yet, the turn if it is still thinking) and remembers being interrupted. False if it was silent."""
         conv = self.conversations.get(npc.upper())
@@ -1523,7 +1739,7 @@ class DialogueManager:
             npc=conv.npc, reply=(conv.reply_id or None) if replying else None, said=spoken or None,
         )))
         if not running and replying:
-            self._note(conv, f"Герой перебил тебя{f'; ты успел сказать: «{spoken}»' if spoken else ''}")
+            await self._note(conv, f"Герой перебил тебя{f'; ты успел сказать: «{spoken}»' if spoken else ''}")
         return True
 
     def _reset_overlay(self, conv: Conversation) -> None:
@@ -1562,19 +1778,29 @@ class DialogueManager:
                 if owner == earlier and self._lines[line][1] is not None
             )
             await self.link.send(HushCmd(npc=conv.npc, reply=earlier, said=said or None))
-            self._note(conv, f"Ты оборвал себя на полуслове{f'; успел сказать: «{said}»' if said else ''}")
+            await self._note(
+                conv, f"Ты оборвал себя на полуслове{f'; успел сказать: «{said}»' if said else ''}"
+            )
 
-    def remember(self, npc: str, name: str, text: str) -> None:
+    async def remember(self, npc: str, name: str, text: str) -> None:
         """A remark in the memory of any npc, also one nobody talks to (a rumor, something it saw)."""
-        self._note(self.open(npc, name, warm=False), text)
+        await self._note(await self.open(npc, name, warm=False), text)
 
-    def change_intent(self, npc: str, name: str, *, body: bool = True, **fields: Any) -> None:
+    async def change_intent(self, npc: str, name: str, *, body: bool = True, **fields: Any) -> None:
         """Change what the npc wants or how it sees the hero, from outside a turn (a lie found out).
         `body` False: the body has done its part already (an order, orders.py)."""
-        conv = self.open(npc, name)
-        self._change_intent(
-            conv, replace(conv.intent, **fields), self.link.snapshots.get(conv.npc), body=body
-        )
+        conv = await self.open(npc, name)
+        generation, session = self._generation, self.link.session
+        fields = dict(fields)
+
+        async def persist() -> None:
+            if not self._live(conv, generation, session):
+                raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+            await self._change_intent(
+                conv, replace(conv.intent, **fields), self.link.snapshots.get(conv.npc), body=body
+            )
+
+        await self.memory.complete(persist)
 
     def after_speech(
         self,
@@ -1600,25 +1826,29 @@ class DialogueManager:
     def return_body(self, conv: Conversation, why: str) -> None:
         self._free(conv, why)
 
-    def overheard(self, npc: str, name: str, text: str, to_name: str | None) -> None:
+    async def overheard(self, npc: str, name: str, text: str, to_name: str | None) -> None:
         """A witness: the npc heard the hero say something to someone else (no model call, only memory)."""
-        conv = self.open(npc, name, warm=False)
+        conv = await self.open(npc, name, warm=False)
         whom = f" собеседнику ({to_name})" if to_name else " вслух"
-        self._note(conv, f"Ты слышал, как герой сказал{whom}: «{text}»")
+        await self._note(conv, f"Ты слышал, как герой сказал{whom}: «{text}»")
 
-    def told_all(self, npc: str, name: str, text: str, first: str) -> None:
+    async def told_all(self, npc: str, name: str, text: str, first: str) -> None:
         """The hero said something to several, the npc among them; `first` answers first (talk.py)."""
-        conv = self.open(npc, name, warm=False)
+        conv = await self.open(npc, name, warm=False)
         for listener in self.on_player_said:
-            listener(conv.npc)
-        self._note(conv, f"Герой сказал всем вам, и тебе тоже: «{text}» (первым отвечает {first})")
+            completion = listener(conv.npc)
+            if completion is not None:
+                await completion
+        await self._note(conv, f"Герой сказал всем вам, и тебе тоже: «{text}» (первым отвечает {first})")
 
-    def heard(self, npc: str, name: str, speaker: str, text: str, whom: str) -> None:
+    async def heard(self, npc: str, name: str, speaker: str, text: str, whom: str) -> None:
         """A witness: the npc heard another npc (`speaker`, its name) say something, `whom`: "герою",
         "вслух". No model call, only memory."""
-        self._note(self.open(npc, name, warm=False), f"Ты слышал, как {speaker} говорит {whom}: «{text}»")
+        await self._note(
+            await self.open(npc, name, warm=False), f"Ты слышал, как {speaker} говорит {whom}: «{text}»"
+        )
 
-    def overheard_talk(
+    async def overheard_talk(
         self, npc: str, name: str, names: tuple[str, str], said: list[tuple[str, str]]
     ) -> None:
         """A witness: the npc heard two others talk about the hero (a scene, gossip.py): `said` is
@@ -1626,8 +1856,8 @@ class DialogueManager:
         if not said:
             return
         lines = " — ".join(f"{who}: «{text}»" for who, text in said)
-        self._note(
-            self.open(npc, name, warm=False),
+        await self._note(
+            await self.open(npc, name, warm=False),
             f"Ты слышал, как {names[0]} и {names[1]} говорили о герое: {lines}",
         )
 
@@ -1649,25 +1879,27 @@ class DialogueManager:
         names the trigger in the turn's trace (an npc that comes up to the hero: "initiative"); `to`: the
         npc its lines are said to (another spoke to it, group.py), unless one of them calls someone else."""
         conv = self.conversations.get(npc.upper())
-        if conv is None:
+        if self._closing is not None or conv is None:
             return None
         if conv.reply is not None and not conv.reply.done():
             conv.pending.append(cue)
             return None
-        offered = self._offered(npc)
-        if tools is None:
-            offered = [t for t in offered if t in self.tools]  # its own, not the extensions'
-        else:
-            offered = [t for t in offered if t.name in tools]
-        turn = self._turn(
-            conv, Message("developer", cue), kind, relevant, overlay=overlay, tools=offered, to=to
-        )
-        return self._reply(conv, turn)
+        async def turn() -> None:
+            offered = await self._offered(npc)
+            if tools is None:
+                offered = [t for t in offered if t in self.tools]
+            else:
+                offered = [t for t in offered if t.name in tools]
+            await self._turn(
+                conv, Message("developer", cue), kind, relevant, overlay=overlay, tools=offered, to=to
+            )
 
-    def note(self, npc: str, text: str) -> None:
+        return self._reply(conv, turn())
+
+    async def note(self, npc: str, text: str) -> None:
         """A remark in the npc's history (what happened to it)."""
         if conv := self.conversations.get(npc.upper()):
-            self._note(conv, text)
+            await self._note(conv, text)
 
     def has_spoken(self, npc: str) -> bool:
         """The npc's current turn has sent a line already."""
@@ -1739,8 +1971,8 @@ class DialogueManager:
         hold up the order's actions). Nothing without the quick model."""
         if self.quick is None:
             return
-        conv = self.open(npc, name)
-        request: list[Item] = [*conv.history, Message("developer", f"{self._brief(conv)}\n{ACK_HINT}")]
+        conv = await self.open(npc, name)
+        request: list[Item] = [*conv.history, Message("developer", f"{await self._brief(conv)}\n{ACK_HINT}")]
         words, mood = await self._quick_words(conv, request)
         if words:
             await self._say(conv, words, None, overlay=True, mood=mood)
@@ -1800,7 +2032,7 @@ class DialogueManager:
                     to=to,
                 )
             )
-            self._bark_started(conv, line)
+            await self._bark_started(conv, line)
             return line
         if conv.voice is None:
             conv.voice = asyncio.Queue()
@@ -1870,8 +2102,8 @@ class DialogueManager:
                                 to=to,
                             )
                         )
-                        self._svm_started(conv, line)
-                        self._bark_started(conv, line)
+                        await self._svm_started(conv, line)
+                        await self._bark_started(conv, line)
 
                     async def chunk(pcm: bytes, line: str = line) -> None:
                         if line in conv.hushed:
@@ -1927,8 +2159,8 @@ class DialogueManager:
                             to=to,
                         )
                     )
-                    self._svm_started(conv, line)
-                    self._bark_started(conv, line)
+                    await self._svm_started(conv, line)
+                    await self._bark_started(conv, line)
             except GameError:
                 pass
             finally:
@@ -1968,8 +2200,12 @@ class DialogueManager:
             for npc, name, to, text, mood in lines
             if (said := to_game_text(text))
         ]
+        if self._closing is not None:
+            raise asyncio.CancelledError("NPC dialogue is closed")
         play = ScenePlay(self, scene, quiet)
         play.task = asyncio.create_task(self._play(play))
+        self._background.add(play.task)
+        play.task.add_done_callback(self._background.discard)
         return play
 
     def started_at(self, line: str) -> float | None:
@@ -2020,6 +2256,7 @@ class DialogueManager:
         finally:
             if play.next_voice is not None:
                 play.next_voice.cancel()
+                await asyncio.gather(play.next_voice, return_exceptions=True)
             for line in lines:
                 self._starts.pop(line.line, None)
 
@@ -2130,22 +2367,44 @@ class DialogueManager:
             )
         await self.link.send(SayEndCmd(npc=line.npc, line=line.line, audio_s=round(audio_s, 3)))
 
-    def _commit(
+    async def _commit(
         self, conv: Conversation, trigger: Message, text: str, kind: str, to: str | None = None
     ) -> None:
-        # one synchronous step: an interrupted reply and its replacement cannot interleave here.
-        # What started the turn is remembered even when the npc said nothing (it may have acted).
-        self._remember(conv, trigger.role, trigger.content)
-        if text := text.strip():
-            self._remember(conv, "assistant", text)
-            for listener in self.on_said:
-                listener(conv.npc, conv.persona.name, to_game_text(text), kind, to)
-        self._maybe_compact(conv)
+        branch, npc, generation = conv.branch, conv.npc, self._generation
+        session = self.link.session
+        when = game_time(self.link.snapshots.get(npc))
+        text = text.strip()
+        messages = (Message(trigger.role, trigger.content),)
+        if text:
+            messages += (Message("assistant", text),)
 
-    def _note(self, conv: Conversation, note: str) -> None:
+        async def persist() -> None:
+            if not self._live(conv, generation, session):
+                raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+            entries = await self.memory.append_messages(branch, npc, messages, when)
+            if not self._live(conv, generation, session):
+                return
+            conv.memory.entries.extend(entries)
+            await self._send_head(branch, entries[-1].seq, generation, session)
+            if not self._live(conv, generation, session):
+                return
+            self.prewarm(npc)
+            if text:
+                for listener in self.on_said:
+                    if not self._live(conv, generation, session):
+                        return
+                    completion = listener(npc, conv.persona.name, to_game_text(text), kind, to)
+                    if completion is not None:
+                        await completion
+            if self._live(conv, generation, session):
+                self._maybe_compact(conv)
+
+        await self.memory.complete(persist)
+
+    async def _note(self, conv: Conversation, note: str) -> None:
         if note:
             log.info("%s note: %s", conv.npc, note)
-            self._remember(conv, "developer", f"[{note}]")
+            await self._remember(conv, "developer", f"[{note}]")
 
     def _after_speech(
         self,
@@ -2158,7 +2417,10 @@ class DialogueManager:
         """Run a body job once the npc has said its queued lines; the note it returns goes into the
         history after the current turn. A failure is reported (`on_body_failed`); a success with `then`
         starts a turn with that cue."""
+        if self._closing is not None:
+            return
         reply = conv.reply
+        generation, session = self._generation, self.link.session
 
         async def run() -> None:
             if conv.voice is not None:
@@ -2166,11 +2428,22 @@ class DialogueManager:
             note, ok = await job()
             if reply is not None and not reply.done() and reply is not asyncio.current_task():
                 await asyncio.wait({reply})  # the note goes after this turn's reply in the history
-            self._note(conv, note)
-            if not ok and self.on_body_failed is not None:
-                self.on_body_failed(conv.npc, note)
-            if ok and then is not None:  # a turn as one with the hero: the extensions' tools too (a deal)
-                self.event_turn(conv.npc, then, kind=kind, tools=[t.name for t in self._offered(conv.npc)])
+            async def finish() -> None:
+                if not self._live(conv, generation, session):
+                    return
+                await self._note(conv, note)
+                if not self._live(conv, generation, session):
+                    return
+                if not ok and self.on_body_failed is not None:
+                    completion = self.on_body_failed(conv.npc, note)
+                    if completion is not None:
+                        await completion
+                if ok and then is not None and self._live(conv, generation, session):
+                    tools = [t.name for t in await self._offered(conv.npc)]
+                    if self._live(conv, generation, session):
+                        self.event_turn(conv.npc, then, kind=kind, tools=tools)
+
+            await self.memory.complete(finish)
 
         task = asyncio.create_task(run())
         conv.actions.add(task)
@@ -2190,9 +2463,18 @@ class DialogueManager:
                 await asyncio.sleep(max(0.0, (last_at or 0) + line_duration(last_text) - time.monotonic()))
                 break
             await asyncio.sleep(0.2)
-        self._note(conv, "Ты закончил разговор")
-        if self.on_end is not None:
-            self.on_end(conv.npc)
+        generation, session = self._generation, self.link.session
+
+        async def finish() -> None:
+            if not self._live(conv, generation, session):
+                return
+            await self._note(conv, "Ты закончил разговор")
+            if self.on_end is not None and self._live(conv, generation, session):
+                completion = self.on_end(conv.npc)
+                if completion is not None:
+                    await completion
+
+        await self.memory.complete(finish)
 
     async def _turn(
         self,
@@ -2292,7 +2574,7 @@ class DialogueManager:
         state = TurnState(
             relevant=relevant,
             overlay=overlay,
-            tools=self._offered(conv.npc, sight) if tools is None else tools,
+            tools=await self._offered(conv.npc, sight) if tools is None else tools,
             sight=sight,
             dynamic_tools=tools is None,
             reply=f"R{next(self._reply_ids)}",
@@ -2314,7 +2596,7 @@ class DialogueManager:
                 if quick and full is not None:  # the quick model said nothing: the whole situation, as usual
                     situation_text, _, state.sight = await full
                     if state.dynamic_tools:
-                        state.tools = self._offered(conv.npc, state.sight)
+                        state.tools = await self._offered(conv.npc, state.sight)
                     if sound:
                         situation_text += SOUND_SAID.format(sound)
                     request = [*conv.history, Message("developer", situation_text), trigger]
@@ -2327,13 +2609,13 @@ class DialogueManager:
             log.error("%s: %s", conv.npc, err)
             self.journal.add("llm_error", npc=conv.npc, name=conv.persona.name, detail=str(err))
             if state.text:  # a turn that failed before a word was said is not remembered
-                self._commit(conv, trigger, state.text, kind, state.to)
+                await self._commit(conv, trigger, state.text, kind, state.to)
             trace.close("llm_error")
             await self._status(conv, "error", str(err))
             return
         except StaleTurn:
             # what the turn was about is over: words now would be out of place
-            self._commit(conv, trigger, state.text, kind, state.to)
+            await self._commit(conv, trigger, state.text, kind, state.to)
             trace.close("stale")
             await self._status(conv, "idle")
             return
@@ -2342,11 +2624,17 @@ class DialogueManager:
                 first.cancel()  # its gesture too: the hero speaks again
             if conv.cut is not None:  # the hero interrupted: only what was said counts
                 said, conv.cut = conv.cut, None
-                self._commit(conv, trigger, said, kind, state.to)
-                self._note(conv, "Герой перебил тебя" + ("" if said else ", ты не успел ничего сказать"))
+                async def interrupted() -> None:
+                    await self._commit(conv, trigger, said, kind, state.to)
+                    await self._note(
+                        conv, "Герой перебил тебя" + ("" if said else ", ты не успел ничего сказать")
+                    )
+
+                await self.memory.complete(interrupted)
                 trace.close("interrupted")
                 raise
-            self._commit(conv, trigger, state.text, kind, state.to)  # the npc remembers what it already said
+            # The npc remembers what it already said.
+            await self._commit(conv, trigger, state.text, kind, state.to)
             trace.close("cancelled")
             raise
         finally:
@@ -2354,9 +2642,12 @@ class DialogueManager:
             if full is not None:
                 full.cancel()  # done by now, unless the turn ended before the line
 
-        self._commit(conv, trigger, state.text, kind, state.to)
-        if kind == "player" and state.to is None and not state.end_requested and not state.follow_set:
-            self._repair_follow_agreement(conv, trigger.content, state.text)
+        async def finish() -> None:
+            await self._commit(conv, trigger, state.text, kind, state.to)
+            if kind == "player" and state.to is None and not state.end_requested and not state.follow_set:
+                await self._repair_follow_agreement(conv, trigger.content, state.text)
+
+        await self.memory.complete(finish)
         trace.close(status)
         total = time.monotonic() - state.started
         if state.text:
@@ -2471,7 +2762,7 @@ class DialogueManager:
         await self._status(conv, "idle")
         situation_text, _, state.sight = await full
         if state.dynamic_tools:
-            state.tools = self._offered(conv.npc, state.sight)
+            state.tools = await self._offered(conv.npc, state.sight)
         said = " ".join(s for s in (sound, state.text.strip()) if s)
         situation_text += (
             f"\nТы уже сказал вслух: «{said}». Новых слов не нужно: реши, что ты делаешь, и сделай это "
@@ -2496,7 +2787,7 @@ class DialogueManager:
             conv.new_meeting = False
             if conv.memory.entries or conv.memory.summary:
                 when = game_time(self.link.snapshots.get(conv.npc))
-                self._note(conv, f"Новая встреча с героем{f', {when}' if when else ''}")
+                await self._note(conv, f"Новая встреча с героем{f', {when}' if when else ''}")
         if not brief:
             for ext in self.extensions:
                 try:
@@ -2504,13 +2795,16 @@ class DialogueManager:
                 except (GameError, TimeoutError) as err:
                     log.warning("%s: %s not ready: %s", conv.npc, type(ext).__name__, err)
         snap = self.link.snapshots.get(conv.npc)
-        sight = self.sight(conv.npc, snap) if self.sight is not None else None
+        sight = await self.sight(conv.npc, snap) if self.sight is not None else None
         situation_text = npc_tools.render_situation(snap, conv.intent, sight, brief=brief)
         if brief and self.balance is not None and (balance := self.balance(conv.npc)):
             situation_text += "\n" + balance
         if not brief:
             for ext in self.extensions:
-                if extra := ext.situation(conv.npc):
+                extra = ext.situation(conv.npc)
+                if isinstance(extra, Awaitable):
+                    extra = await extra
+                if extra:
                     situation_text += "\n" + extra
         if not brief and self.fights_hero(conv.npc):
             situation_text += "\n" + FIGHTS_HERO
@@ -2647,7 +2941,7 @@ class DialogueManager:
                 state.end_requested = True
                 return ToolOutcome("Разговор закончится, когда ты договоришь.", "accepted")
             case npc_tools.SET_INTENT:
-                outcome = self._set_intent(conv, call, snap, state=state)
+                outcome = await self._set_intent(conv, call, snap, state=state)
                 if outcome.status == "accepted" and conv.intent.goal in executor.COMPANION_GOALS:
                     state.follow_set = True
                 return outcome
@@ -2655,7 +2949,7 @@ class DialogueManager:
                 if state.recalled:
                     return ToolOutcome("Больше ничего не вспоминается.", "ignored")
                 state.recalled = True
-                return ToolOutcome(self._recall(conv, str(call.arguments.get("query", ""))), "read")
+                return ToolOutcome(await self._recall(conv, str(call.arguments.get("query", ""))), "read")
             case npc_tools.GIVE_ITEM:
                 args, reason = executor.check_give(call.arguments, snap)
                 if args is None:
@@ -2691,7 +2985,7 @@ class DialogueManager:
                     from .vanilla import ACCEPT, ACCEPT_NOW
 
                     before = {t.name for t in state.tools}
-                    state.tools = self._offered(conv.npc, state.sight)
+                    state.tools = await self._offered(conv.npc, state.sight)
                     if ACCEPT not in before and any(t.name == ACCEPT for t in state.tools):
                         outcome = replace(
                             outcome, output=f"{outcome.output}\n{ACCEPT_NOW}", continue_turn=True
@@ -2709,11 +3003,16 @@ class DialogueManager:
             unique.setdefault(tool.name, tool)
         return list(unique.values())
 
-    def _offered(self, npc: str, sight: Sight | None = None) -> list[Tool]:
+    async def _offered(self, npc: str, sight: Sight | None = None) -> list[Tool]:
         """The tools for a turn with the hero: the npc's own and those of the extensions."""
-        tools = [*self.tools, *(t for ext in self.extensions for t in ext.tools(npc))]
+        tools = list(self.tools)
+        for ext in self.extensions:
+            offered = ext.tools(npc)
+            if isinstance(offered, Awaitable):
+                offered = await offered
+            tools.extend(offered)
         if sight is None and self.sight is not None:
-            sight = self.sight(npc, None)
+            sight = await self.sight(npc, None)
         if sight is None or not sight.things:  # nothing lying about that it sees: nothing to pick up
             tools = [t for t in tools if t.name != npc_tools.TAKE_ITEM]
         unique = {}
@@ -2721,11 +3020,13 @@ class DialogueManager:
             unique.setdefault(tool.name, tool)
         return list(unique.values())
 
-    def _recall(self, conv: Conversation, query: str) -> str:
+    async def _recall(self, conv: Conversation, query: str) -> str:
         """Older messages than the npc has in mind (folded into the summary, or beyond what was loaded), and
         what extensions that answer recall know of it (knowledge.py: the npc's dialogs in full)."""
         first = conv.memory.entries[0].seq if conv.memory.entries else conv.memory.summary_seq + 1
-        found = self.memory.search(conv.branch, conv.npc, query, min(conv.memory.summary_seq, first - 1))
+        found = await self.memory.search(
+            conv.branch, conv.npc, query, min(conv.memory.summary_seq, first - 1)
+        )
         parts = []
         if found:
             speaker = {"user": "Герой", "assistant": "Ты", "developer": ""}
@@ -2776,41 +3077,54 @@ class DialogueManager:
         if self.free_body is not None:
             self.free_body(conv.npc, why)
 
-    def _set_intent(
+    async def _set_intent(
         self, conv: Conversation, call: ToolCall, snap: Snapshot | None, *, state: TurnState | None = None
     ) -> ToolOutcome:
-        sight = self.sight(conv.npc, snap) if self.sight is not None else None
-        seen = sight.targets if sight is not None else None  # whom it perceives, not all within 15 m
-        intent, reason = executor.check_intent(
-            executor.parse_intent(call.arguments, conv.intent), snap, seen,
-            fight_reason=(lambda: self.fight_reason(conv.npc, snap)) if self.fight_reason else None,
-        )
-        if intent is None:
-            return ToolOutcome(f"Отклонено: {reason}", "rejected")
-        if executor.same(conv.intent, intent):
-            if (
-                intent.goal not in executor.COMPANION_GOALS
-                or snap is None
-                or snap.npc.following
-                or self.fighting(conv.npc)
-                or (state is not None and state.follow_set)
-            ):
-                return ToolOutcome("Намерение не изменилось.", "accepted")
+        generation, session = self._generation, self.link.session
+        call = ToolCall(call.name, dict(call.arguments), call.call_id)
 
-            async def follow() -> tuple[str, bool]:
-                if not await self._hold(conv, "follow"):
-                    return "Тело не смогло выполнить намерение: ты занят", False
-                return await self._body(conv, [("follow", {"npc": "PLAYER"})])
+        async def persist() -> ToolOutcome:
+            if not self._live(conv, generation, session):
+                raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+            sight = await self.sight(conv.npc, snap) if self.sight is not None else None
+            seen = sight.targets if sight is not None else None  # whom it perceives, not all within 15 m
+            fight_reason = self.fight_reason(conv.npc, snap) if self.fight_reason is not None else None
+            if isinstance(fight_reason, Awaitable):
+                fight_reason = await fight_reason
+            if not self._live(conv, generation, session):
+                raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+            intent, reason = executor.check_intent(
+                executor.parse_intent(call.arguments, conv.intent), snap, seen,
+                fight_reason=(lambda: fight_reason) if self.fight_reason else None,
+            )
+            if intent is None:
+                return ToolOutcome(f"Отклонено: {reason}", "rejected")
+            if executor.same(conv.intent, intent):
+                if (
+                    intent.goal not in executor.COMPANION_GOALS
+                    or snap is None
+                    or snap.npc.following
+                    or self.fighting(conv.npc)
+                    or (state is not None and state.follow_set)
+                ):
+                    return ToolOutcome("Намерение не изменилось.", "accepted")
 
+                async def follow() -> tuple[str, bool]:
+                    if not await self._hold(conv, "follow"):
+                        return "Тело не смогло выполнить намерение: ты занят", False
+                    return await self._body(conv, [("follow", {"npc": "PLAYER"})])
+
+                self._journal_call(conv, call.name, call.arguments)
+                self._after_speech(conv, follow)
+                return ToolOutcome(f"Принято: {intent.describe()}.", "accepted")
             self._journal_call(conv, call.name, call.arguments)
-            self._after_speech(conv, follow)
+            body = not (state is not None and state.follow_set and intent.goal in executor.COMPANION_GOALS)
+            await self._change_intent(conv, intent, snap, body=body)
             return ToolOutcome(f"Принято: {intent.describe()}.", "accepted")
-        self._journal_call(conv, call.name, call.arguments)
-        body = not (state is not None and state.follow_set and intent.goal in executor.COMPANION_GOALS)
-        self._change_intent(conv, intent, snap, body=body)
-        return ToolOutcome(f"Принято: {intent.describe()}.", "accepted")
 
-    def _repair_follow_agreement(self, conv: Conversation, heard: str, reply: str) -> None:
+        return await self.memory.complete(persist)
+
+    async def _repair_follow_agreement(self, conv: Conversation, heard: str, reply: str) -> None:
         """Carry out a spoken commitment when the conversational model forgot its tool call."""
         if not follow_agreement(heard, reply, conv.persona.name):
             return
@@ -2819,7 +3133,7 @@ class DialogueManager:
             snap is None or snap.npc.following or self.fighting(conv.npc)
         ):
             return
-        outcome = self._set_intent(
+        outcome = await self._set_intent(
             conv,
             ToolCall(
                 "set_intent",
@@ -2833,82 +3147,113 @@ class DialogueManager:
             snap,
         )
         if outcome.status == "accepted":
-            self._note(conv, f"Герой позвал тебя: «{heard}» — идти за ним. Ты согласился и идёшь за героем.")
+            await self._note(
+                conv, f"Герой позвал тебя: «{heard}» — идти за ним. Ты согласился и идёшь за героем."
+            )
 
-    def _change_intent(
+    async def _change_intent(
         self, conv: Conversation, intent: Intent, snap: Snapshot | None, *, body: bool = True
     ) -> None:
-        old = conv.intent
-        if intent.goal in executor.INCIDENT_GOALS and old.goal not in executor.INCIDENT_GOALS:
-            conv.calm = old  # what to go back to when the incident is over
-        conv.intent = intent
-        with_hero = old.goal in executor.COMPANION_GOALS or (
-            old.goal in executor.INCIDENT_GOALS
-            and conv.calm is not None
-            and conv.calm.goal in executor.COMPANION_GOALS
-        )
-        seq = self.memory.set_intent(
-            conv.branch, conv.npc, intent.to_json(), game_time(self.link.snapshots.get(conv.npc))
-        )
-        self._send_head(conv.branch, seq)
-        if self.on_intent is not None:
-            self.on_intent(conv.npc, intent)
-        following = snap.npc.following if snap else False
-        acts = executor.intent_actions(old, intent, following)
-        if body and intent.goal == "fight" and with_hero and self.companion_fight is not None:
-            if self.companion_fight(conv.npc, intent.target):
-                return  # a companion's fight: it stays with the hero (orders.py)
-        if old.goal in executor.COMPANION_GOALS and intent.goal not in executor.COMPANION_GOALS:
-            self._free(conv, "follow")  # after `stop`, if it is still following (below)
-        if not body:
-            return
-        fighting = (old.goal, old.target) == ("fight", "PLAYER") or self.fights_hero(conv.npc)
-        if fighting and intent.goal != "fight" and intent.attitude != "hostile":
-            self._after_speech(conv, lambda: self._calm(conv, intent))  # talked down: it stops
-            return
-        if (
-            intent.goal == "fight"
-            and intent.target == "PLAYER"
-            and (old.goal, old.target) != ("fight", "PLAYER")
-        ):
-            self._after_speech(conv, lambda: self._attack_hero(conv, intent))
-            return
-        if self.fighting(conv.npc) and intent.goal in executor.COMPANION_GOALS:
-            return  # it is fighting for the hero: it follows him again once the fight is over (orders.py)
-        if intent.goal in executor.INCIDENT_GOALS and not self._controlled(conv.npc):
-            # a free npc's goal of the moment (flee, fight, seek help) is carried out by whoever runs its body
-            # (the planner): held for it, the npc would be out of the scripts in the middle of the danger
-            if self.on_free_intent is not None:
-                self.on_free_intent(conv.npc, old, intent)
-            return
-        if not acts:
-            return
-        if self.take_body is None and not self._controlled(conv.npc):
-            return  # nobody can lend us a free npc's body
-        why = "follow" if intent.goal == "follow_hero" else "intent"
+        branch, npc, generation, session = conv.branch, conv.npc, self._generation, self.link.session
+        serialized = intent.to_json()
+        when = game_time(self.link.snapshots.get(npc))
 
-        async def job() -> tuple[str, bool]:
-            if not await self._hold(conv, why):
-                return "Тело не смогло выполнить намерение: ты занят", False
-            try:
-                return await self._body(conv, acts)
-            finally:
-                if why != "follow":
-                    self._free(conv, why)
+        async def persist() -> None:
+            if not self._live(conv, generation, session):
+                raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+            old = conv.intent
+            calm = (
+                old if intent.goal in executor.INCIDENT_GOALS and old.goal not in executor.INCIDENT_GOALS
+                else conv.calm
+            )
+            with_hero = old.goal in executor.COMPANION_GOALS or (
+                old.goal in executor.INCIDENT_GOALS
+                and calm is not None
+                and calm.goal in executor.COMPANION_GOALS
+            )
+            seq = await self.memory.set_intent(branch, npc, serialized, when)
+            if not self._live(conv, generation, session):
+                return
+            conv.calm, conv.intent = calm, intent
+            await self._send_head(branch, seq, generation, session)
+            if not self._live(conv, generation, session):
+                return
+            if self.on_intent is not None:
+                completion = self.on_intent(npc, intent)
+                if completion is not None:
+                    await completion
+            if not self._live(conv, generation, session):
+                return
+            following = snap.npc.following if snap else False
+            acts = executor.intent_actions(old, intent, following)
+            if body and intent.goal == "fight" and with_hero and self.companion_fight is not None:
+                if self.companion_fight(conv.npc, intent.target):
+                    return  # a companion's fight: it stays with the hero (orders.py)
+            if old.goal in executor.COMPANION_GOALS and intent.goal not in executor.COMPANION_GOALS:
+                self._free(conv, "follow")  # after `stop`, if it is still following (below)
+            if not body:
+                return
+            fighting = (old.goal, old.target) == ("fight", "PLAYER") or self.fights_hero(conv.npc)
+            if fighting and intent.goal != "fight" and intent.attitude != "hostile":
+                self._after_speech(conv, lambda: self._calm(conv, intent))  # talked down: it stops
+                return
+            if (
+                intent.goal == "fight"
+                and intent.target == "PLAYER"
+                and (old.goal, old.target) != ("fight", "PLAYER")
+            ):
+                self._after_speech(conv, lambda: self._attack_hero(conv, intent))
+                return
+            if self.fighting(conv.npc) and intent.goal in executor.COMPANION_GOALS:
+                return  # it is fighting for the hero: it follows him again once the fight is over (orders.py)
+            if intent.goal in executor.INCIDENT_GOALS and not self._controlled(conv.npc):
+                # A free npc's goal of the moment (flee, fight, seek help) is carried out
+                # by whoever runs its body
+                # (the planner): held for it, the npc would be out of the scripts in the middle of the danger
+                if self.on_free_intent is not None:
+                    completion = self.on_free_intent(conv.npc, old, intent)
+                    if completion is not None:
+                        await completion
+                return
+            if not acts:
+                return
+            if self.take_body is None and not self._controlled(conv.npc):
+                return  # nobody can lend us a free npc's body
+            why = "follow" if intent.goal == "follow_hero" else "intent"
 
-        self._after_speech(conv, job)
+            async def job() -> tuple[str, bool]:
+                if not await self._hold(conv, why):
+                    return "Тело не смогло выполнить намерение: ты занят", False
+                try:
+                    return await self._body(conv, acts)
+                finally:
+                    if why != "follow":
+                        self._free(conv, why)
 
-    def incident_over(self, npc: str, *, body: bool = True) -> None:
+            self._after_speech(conv, job)
+
+        await self.memory.complete(persist)
+
+    async def incident_over(self, npc: str, *, body: bool = True) -> None:
         """Goals that only hold while something is going on (flee, fight...) end with it: the npc goes
         back to what it wanted before, keeping its attitude and agenda. `body` False: the caller moves
         the body (orders.py)."""
         conv = self.conversations.get(npc.upper())
-        if conv is None or conv.intent.goal not in executor.INCIDENT_GOALS:
+        if conv is None:
             return
-        calm = conv.calm or Intent()
-        intent = Intent(calm.goal, calm.target, conv.intent.attitude, conv.intent.agenda)
-        log.info("%s: the incident is over, intent back to %s", conv.npc, intent.goal)
-        self._change_intent(conv, intent, self.link.snapshots.get(conv.npc), body=body)
+        generation, session = self._generation, self.link.session
+
+        async def persist() -> None:
+            if not self._live(conv, generation, session):
+                raise asyncio.CancelledError("NPC memory belongs to an invalidated session")
+            if conv.intent.goal not in executor.INCIDENT_GOALS:
+                return
+            calm = conv.calm or Intent()
+            intent = Intent(calm.goal, calm.target, conv.intent.attitude, conv.intent.agenda)
+            log.info("%s: the incident is over, intent back to %s", conv.npc, intent.goal)
+            await self._change_intent(conv, intent, self.link.snapshots.get(conv.npc), body=body)
+
+        await self.memory.complete(persist)
 
     async def _attack_hero(self, conv: Conversation, intent: Intent) -> tuple[str, bool]:
         """The npc turns on the hero, after its words: the scripts' own attack (B_Attack), held or free, so
@@ -2916,9 +3261,15 @@ class DialogueManager:
         a beating until he is down."""
         if conv.intent is not intent:
             return "", True  # it changed its mind before it was done talking
+        generation, session = self._generation, self.link.session
         if self.fight_reason is not None:
-            if why := self.fight_reason(conv.npc, self.link.snapshots.get(conv.npc)):
-                self._change_intent(
+            why = self.fight_reason(conv.npc, self.link.snapshots.get(conv.npc))
+            if isinstance(why, Awaitable):
+                why = await why
+            if not self._live(conv, generation, session) or conv.intent is not intent:
+                return "", True
+            if why:
+                await self._change_intent(
                     conv, conv.calm or Intent(), self.link.snapshots.get(conv.npc), body=False
                 )
                 return f"Ты не напал: {why}", False
@@ -2930,7 +3281,9 @@ class DialogueManager:
         log.info("%s attacks the hero (%s)", conv.npc, reason)
         self.journal.add("attack", npc=conv.npc, name=conv.persona.name, target="PLAYER", reason=reason)
         for listener in self.on_attack:
-            listener(conv.npc)
+            completion = listener(conv.npc)
+            if completion is not None:
+                await completion
         return "Ты напал на героя.", True
 
     async def _calm(
@@ -2950,7 +3303,9 @@ class DialogueManager:
         log.info("%s calls off its fight with the hero (%s)", conv.npc, attitude)
         self.journal.add("calm", npc=conv.npc, name=conv.persona.name, attitude=attitude)
         for listener in self.on_calm:
-            listener(conv.npc)
+            completion = listener(conv.npc)
+            if completion is not None:
+                await completion
         return "Ты прекратил драку с героем.", True
 
     async def _body(self, conv: Conversation, acts: list[executor.Action]) -> tuple[str, bool]:
@@ -2958,7 +3313,9 @@ class DialogueManager:
         failed = []
         for action, args in acts:
             if action == "fight" and self.on_fight is not None:
-                self.on_fight(conv.npc, args["npc"])
+                completion = self.on_fight(conv.npc, args["npc"])
+                if completion is not None:
+                    await completion
             try:
                 res = await self.link.act(conv.npc, action, **args)  # type: ignore[arg-type]
             except (GameError, TimeoutError) as err:

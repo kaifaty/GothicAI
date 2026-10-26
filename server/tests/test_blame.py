@@ -19,6 +19,7 @@ from gothic_ai.social import DAY, Rumors, Social
 from gothic_ai.trust import Trust
 from tests.test_crimes import HILDA, LOBART
 from tests.test_crimes import deed as hero_deed
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_npc_crimes import NAMES, THIEF, NpcLink, deed
 
 WORDS = "Это Вино взял кубок."
@@ -29,25 +30,26 @@ class Dialogue:
         self.conversations = {}
         self.notes = []
 
-    def open(self, npc, name):
+    async def open(self, npc, name):
         return self.conversations.setdefault(npc, SimpleNamespace(
             npc=npc, persona=SimpleNamespace(name=name), intent=SimpleNamespace(attitude="neutral"),
             memory=SimpleNamespace(entries=[]), trigger=Message("user", WORDS),
         ))
 
-    def remember(self, npc, name, text):
+    async def remember(self, npc, name, text):
         self.notes.append((npc, text))
 
-    def change_intent(self, npc, name, **fields):
-        conv = self.open(npc, name)
+    async def change_intent(self, npc, name, **fields):
+        conv = await self.open(npc, name)
         for key, value in fields.items():
             setattr(conv.intent, key, value)
 
 
 @pytest.fixture
 async def system():
-    link, memory, dialogue = NpcLink(), MemoryStore(":memory:"), Dialogue()
+    link, memory, dialogue = NpcLink(), (await MemoryStore.open(":memory:")), Dialogue()
     chronicle = Chronicle(link, memory)
+    await chronicle.initialize()
     crimes = Crimes(link, chronicle, names=lambda npc: NAMES.get(npc, npc))
     cards = {npc: SimpleNamespace(name=name) for npc, name in NAMES.items()}
     deeds = NpcCrimes(link, chronicle, crimes=crimes, cards=cards)
@@ -61,34 +63,34 @@ async def system():
     await crimes.close()
     if chronicle._background:
         await asyncio.gather(*chronicle._background)
-    memory.close()
+    await memory.close()
 
 
-def hero_case(s, *, heard=False, seen=False):
-    crime = s.crimes.record(hero_deed(
+async def hero_case(s, *, heard=False, seen=False):
+    crime = await s.crimes.record(hero_deed(
         owner=LOBART, owner_npc_guild=8, chest="CHEST", item_name="Кубок",
         witnesses=[LOBART] if seen else [],
     ))
     if heard:
-        s.chronicle.record({
+        await s.chronicle.record({
             "fact": "rumor", "crime": crime["id"], "to": LOBART, "from": HILDA, "kind": "theft",
         })
     elif not seen:
-        s.chronicle.record({"fact": "crime_suspected", "npc": LOBART, "crime": crime["id"]})
+        await s.chronicle.record({"fact": "crime_suspected", "npc": LOBART, "crime": crime["id"]})
     return crime
 
 
-def npc_case(s, *, seen=False):
-    crime = s.deeds.record(deed(owner=LOBART, witnesses=[LOBART] if seen else [], chest="CHEST"))
+async def npc_case(s, *, seen=False):
+    crime = await s.deeds.record(deed(owner=LOBART, witnesses=[LOBART] if seen else [], chest="CHEST"))
     if not seen:
-        s.chronicle.record({
+        await s.chronicle.record({
             "fact": "npc_crime_suspected", "npc": LOBART, "crime": crime["id"], "suspect": HILDA,
         })
     return crime
 
 
 async def accuse(s, cid, who="Вино"):
-    conv = s.dialogue.open(LOBART, "Лобарт")
+    conv = await s.dialogue.open(LOBART, "Лобарт")
     return await s.blame.handle(s.dialogue, conv, ToolCall("blame", {"who": who, "crime": cid}, "b1"), None)
 
 
@@ -100,7 +102,7 @@ async def drain(s):
 @pytest.mark.parametrize("heard", [False, True])
 async def test_hero_known_or_suspected_case_accepts_false_belief_without_showing_truth(system, heard):
     s = system
-    crime = hero_case(s, heard=heard)
+    crime = await hero_case(s, heard=heard)
     result = await accuse(s, crime["id"])
     assert result.status == "accepted"
     [belief] = s.chronicle.facts("blamed")
@@ -116,7 +118,7 @@ async def test_hero_known_or_suspected_case_accepts_false_belief_without_showing
 
 async def test_npc_case_accepts_actual_or_false_culprit_and_keeps_truth_in_code(system):
     s = system
-    crime = npc_case(s)
+    crime = await npc_case(s)
     assert (await accuse(s, crime["id"])).status == "accepted"
     assert s.chronicle.facts("blamed")[-1]["truth"] is True
     assert (await accuse(s, crime["id"], "Хильда")).status == "accepted"
@@ -126,14 +128,14 @@ async def test_npc_case_accepts_actual_or_false_culprit_and_keeps_truth_in_code(
 
 async def test_hunch_without_hero_words_is_refuted_without_catching_the_hero(system):
     s = system
-    crime = hero_case(s)
-    conv = s.dialogue.open(LOBART, "Лобарт")
+    crime = await hero_case(s)
+    conv = await s.dialogue.open(LOBART, "Лобарт")
     conv.trigger = None
     conv.memory.entries = [Message("assistant", "Наверное, это Вино взял кубок.")]
     assert (await accuse(s, crime["id"])).status == "accepted"
     belief = s.blame.active(LOBART, crime["id"])
     assert belief["because"] == "hunch" and "said" not in belief
-    s.chronicle.record({
+    await s.chronicle.record({
         "fact": "npc_crime_defense", "crime": crime["id"], "culprit": THIEF,
         "blamed": belief["id"], "fighter": LOBART, "outcome": "no_goods",
     })
@@ -147,10 +149,10 @@ async def test_hunch_without_hero_words_is_refuted_without_catching_the_hero(sys
 @pytest.mark.parametrize("current", [False, True])
 async def test_declined_name_selects_the_exact_recent_hero_line(system, current):
     s = system
-    crime = hero_case(s)
+    crime = await hero_case(s)
     s.deeds.cards[THIEF].name = "Малак"
     s.crimes.names = lambda npc: "Малак" if npc == THIEF else NAMES.get(npc, npc)
-    conv = s.dialogue.open(LOBART, "Лобарт")
+    conv = await s.dialogue.open(LOBART, "Лобарт")
     said = "Это Малака работа."
     conv.memory.entries = [Message("user", "Малак был у дороги.")]
     if not current:
@@ -166,8 +168,8 @@ async def test_declined_name_selects_the_exact_recent_hero_line(system, current)
 @pytest.mark.parametrize("words", ["Привет.", "Кто-то взял кубок.", "Я виноват."])
 async def test_hero_words_without_the_accused_name_are_a_hunch(system, words):
     s = system
-    crime = hero_case(s)
-    conv = s.dialogue.open(LOBART, "Лобарт")
+    crime = await hero_case(s)
+    conv = await s.dialogue.open(LOBART, "Лобарт")
     conv.trigger = Message("user", words)
     conv.memory.entries = [Message("assistant", WORDS), Message("system", WORDS)]
     assert (await accuse(s, crime["id"])).status == "accepted"
@@ -179,8 +181,8 @@ async def test_hero_words_without_the_accused_name_are_a_hunch(system, words):
 
 async def test_old_hero_words_outside_recent_lines_do_not_turn_a_hunch_into_a_claim(system):
     s = system
-    crime = hero_case(s)
-    conv = s.dialogue.open(LOBART, "Лобарт")
+    crime = await hero_case(s)
+    conv = await s.dialogue.open(LOBART, "Лобарт")
     conv.trigger = Message("user", "Привет.")
     conv.memory.entries = [Message("user", WORDS), *[Message("user", "Погода.") for _ in range(8)]]
     assert (await accuse(s, crime["id"])).status == "accepted"
@@ -190,7 +192,7 @@ async def test_old_hero_words_outside_recent_lines_do_not_turn_a_hunch_into_a_cl
 
 @pytest.mark.parametrize("kind", ["hero", "npc"])
 async def test_eyewitness_victim_cannot_blame_anyone(system, kind):
-    crime = hero_case(system, seen=True) if kind == "hero" else npc_case(system, seen=True)
+    crime = (await hero_case(system, seen=True)) if kind == "hero" else (await npc_case(system, seen=True))
     result = await accuse(system, crime["id"])
     assert result.status == "rejected" and "сам видел" in result.output
     assert system.chronicle.facts("blamed") == []
@@ -198,28 +200,28 @@ async def test_eyewitness_victim_cannot_blame_anyone(system, kind):
 
 @pytest.mark.parametrize("who", ["PLAYER", "PC_HERO", "Герой", "Лобарт", "несуществующий"])
 async def test_blame_requires_another_person(system, who):
-    crime = hero_case(system)
+    crime = await hero_case(system)
     assert (await accuse(system, crime["id"], who)).status == "rejected"
     assert not system.blame.beliefs()
 
 
 async def test_unknown_or_someone_elses_case_rejected(system):
     s = system
-    crime = s.deeds.record(deed(owner=HILDA))
+    crime = await s.deeds.record(deed(owner=HILDA))
     assert (await accuse(s, crime["id"])).status == "rejected"
-    crime = s.deeds.record(deed(id="unknown", owner=LOBART))
+    crime = await s.deeds.record(deed(id="unknown", owner=LOBART))
     assert (await accuse(s, crime["id"])).status == "rejected"
     assert (await accuse(s, "missing-id")).status == "rejected"
 
 
 async def test_testimony_is_belief_source_and_does_not_prove_hero_crime(system):
     s = system
-    crime = s.deeds.record(deed(owner=LOBART))
+    crime = await s.deeds.record(deed(owner=LOBART))
     testimony = {
         "fact": "testimony", "id": "T1", "npc": LOBART, "witness": HILDA, "about": THIEF,
         "crime_told": [crime["id"]],
     }
-    s.chronicle.record(testimony)
+    await s.chronicle.record(testimony)
     assert s.crimes.testimony_crimes(testimony) == []
     assert (await accuse(s, crime["id"])).status == "accepted"
     belief = s.blame.active(LOBART, crime["id"])
@@ -232,10 +234,12 @@ async def test_own_trace_takes_priority_over_hero_words(system):
     from gothic_ai.sightings import Sighting
 
     s = system
-    crime = hero_case(s)
+    crime = await hero_case(s)
     at = 3 * 1440 + 9 * 60 + 15
     sight = Sighting(THIEF, "Вино", at, at, place_ids=["FARM"])
-    s.crimes.sightings = SimpleNamespace(mind=lambda _: SimpleNamespace(sightings=[sight]))
+    s.crimes.sightings = SimpleNamespace(
+        prepare=lambda _: asyncio.sleep(0), mind=lambda _: SimpleNamespace(sightings=[sight]),
+    )
     s.crimes.places = SimpleNamespace(of=lambda _: SimpleNamespace(id="FARM"))
     assert (await accuse(s, crime["id"])).status == "accepted"
     belief = s.blame.active(LOBART, crime["id"])
@@ -248,11 +252,11 @@ async def test_testimony_about_presence_is_a_belief_source_without_proving_the_d
     from gothic_ai.sightings import Sighting
 
     s = system
-    crime = hero_case(s)
+    crime = await hero_case(s)
     at = 3 * 1440 + 9 * 60 + 15
     sight = Sighting(THIEF, "Вино", at, at, place_ids=["FARM"])
     s.crimes.places = SimpleNamespace(of=lambda _: SimpleNamespace(id="FARM"))
-    s.chronicle.record({
+    await s.chronicle.record({
         "fact": "testimony", "id": "T_presence", "npc": LOBART, "about": THIEF,
         "witness": HILDA, "told": [sight.record()], "crime_told": [],
     })
@@ -265,10 +269,10 @@ async def test_testimony_about_presence_is_a_belief_source_without_proving_the_d
 
 async def test_no_goods_refutes_false_words_and_uses_existing_caught_trust_rumor_path(system):
     s = system
-    crime = hero_case(s)
+    crime = await hero_case(s)
     await accuse(s, crime["id"])
     belief = s.blame.active(LOBART, crime["id"])
-    s.chronicle.record({
+    await s.chronicle.record({
         "fact": "npc_crime_defense", "crime": crime["id"], "culprit": THIEF,
         "blamed": belief["id"], "fighter": LOBART, "outcome": "no_goods",
     })
@@ -280,7 +284,7 @@ async def test_no_goods_refutes_false_words_and_uses_existing_caught_trust_rumor
     assert caught["said"] and caught["title"] == WORDS and "со слов" not in caught["how"]
     assert "crime" not in caught  # disproving a frame is not eyewitness proof of the hero's theft
     assert Trust(s.chronicle).of(LOBART).lied
-    assert s.dialogue.open(LOBART, "Лобарт").intent.attitude == "wary"
+    assert (await s.dialogue.open(LOBART, "Лобарт")).intent.attitude == "wary"
     assert any("вещи не оказалось" in note for _, note in s.dialogue.notes)
     rumors = Rumors(s.link, s.dialogue, s.chronicle)
     assert any(r.kind == "caught" and r.is_player and r.title == WORDS for r in rumors.rumors.values())
@@ -288,11 +292,11 @@ async def test_no_goods_refutes_false_words_and_uses_existing_caught_trust_rumor
 
 async def test_reclaimed_true_hero_words_count_as_true_claim_once(system):
     s = system
-    crime = npc_case(s)
+    crime = await npc_case(s)
     await accuse(s, crime["id"])
     belief = s.blame.active(LOBART, crime["id"])
     for kind in ["npc_crime_restitution", "npc_crime_defense"]:
-        s.chronicle.record({
+        await s.chronicle.record({
             "fact": kind, "crime": crime["id"], "culprit": THIEF, "npc": LOBART,
             "blamed": belief["id"], "outcome": "reclaimed",
         })
@@ -304,7 +308,7 @@ async def test_reclaimed_true_hero_words_count_as_true_claim_once(system):
 
 async def test_true_belief_missing_goods_does_not_catch_a_true_statement(system):
     s = system
-    crime = npc_case(s)
+    crime = await npc_case(s)
     await accuse(s, crime["id"])
     await s.blame.refute(s.blame.active(LOBART, crime["id"]))
     assert len(s.chronicle.facts("blame_refuted")) == 1
@@ -313,7 +317,7 @@ async def test_true_belief_missing_goods_does_not_catch_a_true_statement(system)
 
 async def test_belief_temporarily_suspends_hero_compensation(system):
     s = system
-    crime = hero_case(s, heard=True)
+    crime = await hero_case(s, heard=True)
     amends = Amends.__new__(Amends)
     amends.crimes, amends.chronicle = s.crimes, s.chronicle
     meet = CrimeMeet.__new__(CrimeMeet)
@@ -328,7 +332,7 @@ async def test_belief_temporarily_suspends_hero_compensation(system):
 
 async def test_source_and_rumor_describe_belief_without_visual_proof(system):
     s = system
-    crime = hero_case(s)
+    crime = await hero_case(s)
     await accuse(s, crime["id"])
     belief = s.blame.active(LOBART, crime["id"])
     event = source_event(belief, s.chronicle.facts())
@@ -346,7 +350,7 @@ async def test_source_and_rumor_describe_belief_without_visual_proof(system):
     rumors.social.tie(LOBART, HILDA).meets = [(0, DAY)]
     rumors.gate = lambda *_: True
     rumors.clock = 3 * DAY + 600
-    assert rumors.spread(rumors.clock, rumors.clock + 1) == 1
+    assert (await rumors.spread(rumors.clock, rumors.clock + 1)) == 1
     [learned] = s.chronicle.facts("rumor")
     assert (learned["from"], learned["to"], learned["subject"], learned["kind"]) == (
         LOBART, HILDA, THIEF, "blamed",
@@ -358,27 +362,27 @@ async def test_source_and_rumor_describe_belief_without_visual_proof(system):
 
 async def test_load_recovers_consequences_without_duplicate_facts(system):
     s = system
-    crime = hero_case(s)
+    crime = await hero_case(s)
     await accuse(s, crime["id"])
     belief = s.blame.active(LOBART, crime["id"])
-    s.chronicle.record({
+    await s.chronicle.record({
         "fact": "blame_refuted", "blamed": belief["id"], "npc": LOBART,
         "culprit": THIEF, "crime": crime["id"], "how": "no_goods",
     })
     for _ in range(2):
-        s.link.receive(Session(type="session", branch="A"))
+        await s.link.receive(Session(type="session", branch="A"))
         await drain(s)
     assert len(s.chronicle.facts("blamed")) == 1
     assert len(s.chronicle.facts("blame_refuted")) == len(s.chronicle.facts("caught")) == 1
     assert not s.blame.beliefs()
-    s.link.receive(Session(type="session", branch="B"))
+    await s.link.receive(Session(type="session", branch="B"))
     await drain(s)
     assert s.chronicle.facts() == [] and s.blame.tools(LOBART) == []
 
 
 async def test_switch_hides_tool_and_saved_belief_no_longer_suspends_hero_case(system):
     s = system
-    crime = hero_case(s)
+    crime = await hero_case(s)
     assert s.blame.tools(LOBART) == [BLAME_TOOL]
     await accuse(s, crime["id"])
     s.deeds.enabled = False
@@ -389,20 +393,20 @@ async def test_switch_hides_tool_and_saved_belief_no_longer_suspends_hero_case(s
 
 async def test_named_animal_cannot_be_blamed(system):
     s = system
-    crime = hero_case(s)
+    crime = await hero_case(s)
     s.crimes.people[THIEF] = {"guild": 20}
     assert (await accuse(s, crime["id"])).status == "rejected"
 
 
 async def test_legacy_defense_before_new_belief_does_not_refute_it_after_loading(system):
     s = system
-    crime = hero_case(s)
-    s.chronicle.record({
+    crime = await hero_case(s)
+    await s.chronicle.record({
         "fact": "npc_crime_defense", "crime": crime["id"], "culprit": THIEF, "outcome": "no_goods",
     })
     await drain(s)
     await accuse(s, crime["id"])
-    s.link.receive(Session(type="session", branch="A"))
+    await s.link.receive(Session(type="session", branch="A"))
     await drain(s)
     assert s.blame.active(LOBART, crime["id"]) is not None
     assert not s.chronicle.facts("blame_refuted")

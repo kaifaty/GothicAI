@@ -94,7 +94,7 @@ async def follow_back(link: GameLink, dialogue: DialogueManager) -> dict[str, st
     await link.debug("player_goto", waypoint=STAIRS)
     await link.debug("npc_goto", npc=CAVALORN, waypoint=STAIRS)
     await link.attach(CAVALORN)
-    conv = dialogue.open(CAVALORN, "Кавалорн", warm=False)
+    conv = await dialogue.open(CAVALORN, "Кавалорн", warm=False)
     conv.intent = Intent("follow_hero", "PLAYER", "friendly")
     results: dict[str, str] = {}
     follows = 0

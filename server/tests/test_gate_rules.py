@@ -13,6 +13,7 @@ from gothic_ai.gamedata.storygraph import Node, Quest
 from gothic_ai.llm import ToolCall
 from gothic_ai.trust import Trust
 from tests.test_gates import CITY, PAIR, GatesFake, _has_pass, _until, setup_gate
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_witnesses import World, lobart
 
 LOTHAR = "PAL_203_LOTHAR"
@@ -25,7 +26,7 @@ DAY = 1440
 
 async def _tool(system, name: str, args: dict[str, Any], *, npc: str = CITY):
     link, dialogue, _, gates, _, guard = system
-    conv = guard if npc == guard.npc else dialogue.open(npc, "Лотар" if npc == LOTHAR else npc)
+    conv = guard if npc == guard.npc else await dialogue.open(npc, "Лотар" if npc == LOTHAR else npc)
     jobs = []
     original = dialogue.after_speech
     dialogue.after_speech = lambda conv, job: jobs.append(job)
@@ -112,10 +113,10 @@ async def test_vouch_delivered_to_one_guard_is_not_known_by_another_guard():
     async with setup_gate(fake) as system:
         fact = await _vouch(system)
         chronicle, gates = system[2], system[3]
-        chronicle.record({"fact": "gate_vouch_heard", "vouch": fact["id"], "to": PAIR})
+        await chronicle.record({"fact": "gate_vouch_heard", "vouch": fact["id"], "to": PAIR})
         await gates.prepare(CITY)
         assert (await _admit(system)).status == "rejected"
-        chronicle.record({"fact": "gate_vouch_heard", "vouch": fact["id"], "to": CITY})
+        await chronicle.record({"fact": "gate_vouch_heard", "vouch": fact["id"], "to": CITY})
         await gates.prepare(CITY)
         assert "basis vouch" in (gates.situation(CITY) or "")
         assert (await _admit(system)).status == "accepted"
@@ -145,7 +146,7 @@ async def test_vouch_expires_at_exactly_two_game_days(minute, accepted):
     fake.day, fake.hour, fake.minute = 4, 14, 30
     async with setup_gate(fake) as system:
         fact = await _vouch(system)
-        system[2].record({"fact": "gate_vouch_heard", "vouch": fact["id"], "to": CITY})
+        await system[2].record({"fact": "gate_vouch_heard", "vouch": fact["id"], "to": CITY})
         fake.day, fake.hour, fake.minute = 6, 14, minute
         await system[3].prepare(CITY)
         assert ("basis vouch" in (system[3].situation(CITY) or "")) is accepted
@@ -158,7 +159,7 @@ async def test_named_claim_truth_accepts_each_recorded_relationship(kind):
         fact = {"fact": kind, "id": "relationship-1", "giver" if kind == "quest" else "npc": HARAD}
         if kind == "gate_vouch":
             fact.update(at=DAY, expires=3 * DAY)
-        system[2].record(fact)
+        await system[2].record(fact)
         assert await system[3].claim_truth(HARAD) is True
         assert await system[3].claim_truth(BOSPER) is False
 
@@ -192,7 +193,7 @@ async def test_named_npc_confirms_only_recorded_truth_when_asked(truth):
     _reachable(fake)
     async with setup_gate(fake) as system:
         if truth:
-            system[2].record({"fact": "deal", "id": "deal-harad", "npc": HARAD})
+            await system[2].record({"fact": "deal", "id": "deal-harad", "npc": HARAD})
         assert (await _admit(system, basis="claim", about=HARAD)).status == "accepted"
         answer = await system[3].claim_heard(HARAD, CITY, "Меня ждёт Гарад.")
         assert answer
@@ -269,7 +270,7 @@ async def test_morning_rule_does_not_expose_true_unnamed_or_unreachable_claims(m
 
         monkeypatch.setattr(system[0], "story_people", read_people)
         if reason == "truth":
-            system[2].record({"fact": "contract", "id": "C1", "npc": HARAD})
+            await system[2].record({"fact": "contract", "id": "C1", "npc": HARAD})
         about = "" if reason == "unnamed" else HARAD
         assert (await _admit(system, basis="claim", about=about)).status == "accepted"
         fake.day += 1
@@ -290,7 +291,7 @@ async def test_relationship_created_after_admission_does_not_rewrite_false_claim
     _reachable(fake)
     async with setup_gate(fake) as system:
         assert (await _admit(system, basis="claim", about=HARAD)).status == "accepted"
-        system[2].record({"fact": "contract", "id": "C1", "npc": HARAD})
+        await system[2].record({"fact": "contract", "id": "C1", "npc": HARAD})
         fake.day += 1
         fake.hour, fake.minute = 6, 0
         await system[3].check_claims()
@@ -304,12 +305,12 @@ async def test_voucher_responsibility_lasts_until_three_days_after_expiry(offset
         chronicle = system[2]
         vouch = await _vouch(system)
         original = copy.deepcopy(vouch)
-        chronicle.record({
+        await chronicle.record({
             "fact": "crime", "id": "city-crime", "kind": "theft", "community": "city",
             "victim": HARAD, "owner": HARAD, "day": 1, "hour": 8, "minute": 0,
         })
         assert chronicle.facts("gate_vouch_broken") == []
-        chronicle.record({
+        await chronicle.record({
             "fact": "crime_known", "community": "city", "crime": "city-crime",
             "via": CITY, "how": "witness", "at": vouch["at"] + offset,
         })
@@ -328,10 +329,10 @@ async def test_voucher_does_not_answer_for_unknown_crime_or_crime_outside_city()
         vouch = await _vouch(system)
         chronicle = system[2]
         for crime, community in [("secret-city", "city"), ("farm-crime", "farm")]:
-            chronicle.record({
+            await chronicle.record({
                 "fact": "crime", "id": crime, "kind": "theft", "community": community,
             })
-        chronicle.record({
+        await chronicle.record({
             "fact": "crime_known", "community": "farm", "crime": "farm-crime",
             "via": "BAU_950_LOBART", "at": vouch["at"] + 1,
         })
@@ -344,7 +345,7 @@ async def test_step_one_claim_without_id_is_checked_only_once():
     _reachable(fake)
     async with setup_gate(fake) as system:
         chronicle, gates = system[2], system[3]
-        chronicle.record({
+        await chronicle.record({
             "fact": "gate_claim", "npc": CITY, "about": HARAD, "claim": "Меня ждёт Гарад.",
             "believed": True, "day": 0, "hour": 14, "minute": 30,
         })
@@ -371,7 +372,7 @@ async def test_guard_must_identify_the_gate_claim_when_asking_named_npc():
 async def test_old_gate_claim_does_not_replace_unrelated_witness_testimony(monkeypatch, already_checked):
     fake = GatesFake()
     async with setup_gate(fake) as system:
-        world = World(system[0], fake, lobart())
+        world = await World.open(system[0], fake, lobart())
         _reachable(fake)
         gates, chronicle = system[3], system[2]
         world.witnesses.gate_claim = gates.claim_heard
@@ -379,7 +380,7 @@ async def test_old_gate_claim_does_not_replace_unrelated_witness_testimony(monke
         if already_checked:
             assert await gates.claim_heard(HARAD, CITY, "Меня ждёт Гарад.")
         notes = len(gates.dialogue.conversations.get(HARAD).memory.entries) if already_checked else 0
-        world.chronicle.record({
+        await world.chronicle.record({
             "fact": "covered", "npc": HARAD, "deal": "cover-theft", "day": fake.day,
             "vouch": "Герой был со мной.",
         })
@@ -390,7 +391,7 @@ async def test_old_gate_claim_does_not_replace_unrelated_witness_testimony(monke
         assert testimony.cover == "cover-theft" and testimony.vouch == "Герой был со мной."
         reactions = []
         monkeypatch.setattr(world.dialogue, "event_turn", lambda npc, cue, **kw: reactions.append(kw))
-        world.witnesses._react(CITY, testimony)
+        await world.witnesses._react(CITY, testimony)
         assert "catch_lie" in reactions[0]["tools"]
         assert len(chronicle.facts("gate_claim_checked")) == int(already_checked)
         if already_checked:
@@ -455,11 +456,11 @@ async def test_revocation_retries_remember_the_named_witness_denial_only_once(mo
                 await gates.check_claims()
         assert not chronicle.facts("gate_claim_checked")
         assert not any("Тебе передали заявление героя" in e.content
-                       for e in chronicle.memory.load(chronicle.branch, HARAD).entries)
+                       for e in (await chronicle.memory.load(chronicle.branch, HARAD)).entries)
         await gates.check_claims()
         await gates.check_claims()
         assert attempts == 3 and len(chronicle.facts("gate_claim_checked")) == 1
-        notes = [e.content for e in chronicle.memory.load(chronicle.branch, HARAD).entries
+        notes = [e.content for e in (await chronicle.memory.load(chronicle.branch, HARAD)).entries
                  if "Тебе передали заявление героя" in e.content]
         assert len(notes) == 1 and "Отрицаю" in notes[0]
 
@@ -468,12 +469,12 @@ async def test_revocation_retries_remember_the_named_witness_denial_only_once(mo
 async def test_concurrent_morning_check_and_witness_keep_the_code_verdict(monkeypatch, first):
     fake = GatesFake()
     async with setup_gate(fake) as system:
-        world = World(system[0], fake, lobart())
+        world = await World.open(system[0], fake, lobart())
         _reachable(fake)
         gates, chronicle = system[3], system[2]
         world.witnesses.gate_claim = gates.claim_heard
         # A step-one claim has no stored truth: checking it awaits the game's relationship state.
-        chronicle.record({
+        await chronicle.record({
             "fact": "gate_claim", "id": "concurrent-claim", "npc": CITY, "about": HARAD,
             "claim": "Меня ждёт Гарад.", "believed": True, "day": 0, "hour": 14, "minute": 30,
         })
@@ -512,7 +513,7 @@ async def test_concurrent_morning_check_and_witness_keep_the_code_verdict(monkey
         [testimony] = world.chronicle.facts("testimony")
         assert testimony["gate_claim"].startswith("Отрицаю")
         assert len(chronicle.facts("caught")) == len(chronicle.facts("gate_claim_checked")) == 1
-        notes = [e.content for e in chronicle.memory.load(chronicle.branch, HARAD).entries
+        notes = [e.content for e in (await chronicle.memory.load(chronicle.branch, HARAD)).entries
                  if "Тебе передали заявление героя" in e.content]
         assert len(notes) == 1
         assert not _has_pass(fake, CITY) and not _has_pass(fake, PAIR)

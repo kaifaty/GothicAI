@@ -11,6 +11,7 @@ from gothic_ai.protocol import Loading, RosterEntry, Session
 from tests.fake_game import FakeGame
 from tests.test_deals import GOLD, POTION, _setup
 from tests.test_dialogue import XARDAS
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 CARD = Card(XARDAS, "Ксардас", "", "", 3, 4, 4, 3, 3, 3)
 
@@ -26,7 +27,7 @@ async def offer(deals, *, day=3, items=None, **extra):
 async def test_later_window_accept_due_payment_and_reload_once():
     fake = FakeGame(branch="A")
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     dialogue.event_turn = lambda *a, **kw: None
     deals.cards = {XARDAS: CARD}
@@ -51,7 +52,7 @@ async def test_later_window_accept_due_payment_and_reload_once():
         assert effects["check"] is True and effects["effects"] == [
             {"do": "give", "item": POTION, "count": 1, "to": "hero"}
         ]
-        deals.reload()
+        await deals.reload()
         await deals.prepare(XARDAS)
         assert fake.hero_items[POTION] == 1 and len(chronicle.facts("npc_later_paid")) == 1
     finally:
@@ -61,7 +62,7 @@ async def test_later_window_accept_due_payment_and_reload_once():
 async def test_dishonest_refuses_once_and_intent_survives_reload_and_card_change():
     fake = FakeGame(branch="A")
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     dialogue.event_turn = lambda *a, **kw: None
     deals.cards = {XARDAS: replace(CARD, honesty=1)}
@@ -80,7 +81,7 @@ async def test_dishonest_refuses_once_and_intent_survives_reload_and_card_change
         assert broken["how"] == "unpaid" and broken["witnesses"] == ["HEARER"]
         assert "ты решил не отдавать" in deals.situation(XARDAS)
         deals.cards = {XARDAS: CARD}
-        deals.reload()
+        await deals.reload()
         await deals.prepare(XARDAS)
         assert POTION not in fake.hero_items
         assert len(chronicle.facts("npc_broken")) == len(chronicle.facts("npc_intent")) == 1
@@ -103,7 +104,7 @@ async def test_dishonest_refuses_once_and_intent_survives_reload_and_card_change
 async def test_honest_shortage_is_not_cheating_and_retries():
     fake = FakeGame(branch="A")
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     dialogue.event_turn = lambda *a, **kw: None
     deals.cards = {XARDAS: CARD}
@@ -125,19 +126,20 @@ async def test_honest_shortage_is_not_cheating_and_retries():
         await link_cm.__aexit__(None, None, None)
 
 
-def load_branch(chronicle, deals):
+async def load_branch(chronicle, deals):
     session = Session(
-        type="session", branch="B", parent="A", parent_seq=chronicle.memory.head("A"), reason="load"
+        type="session", branch="B", parent="A", parent_seq=await chronicle.memory.head("A"), reason="load"
     )
-    chronicle._on_session(session)
-    deals._on_message(session)
+    pending = deals.link._dispatch(session)
+    if pending is not None:
+        await pending
 
 
 @pytest.mark.parametrize("invalidate", ["loading", "session"])
 async def test_loading_while_reading_day_cannot_start_old_payment(monkeypatch, invalidate):
     fake = FakeGame(branch="A")
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     dialogue.event_turn = lambda *a, **kw: None
     deals.cards = {XARDAS: CARD}
@@ -160,14 +162,14 @@ async def test_loading_while_reading_day_cannot_start_old_payment(monkeypatch, i
         if invalidate == "loading":
             deals._on_message(Loading(type="loading"))
         else:
-            load_branch(chronicle, deals)
+            await load_branch(chronicle, deals)
         release.set()
         await asyncio.wait_for(preparing, 1)
         assert not days and not deals._paying
         assert not chronicle.facts("npc_later_paid") and POTION not in fake.hero_items
         if invalidate == "loading":
             await deals.prepare(XARDAS)  # a turn during loading has no pending old-world items
-            load_branch(chronicle, deals)
+            await load_branch(chronicle, deals)
         await deals.prepare(XARDAS)
         await deals.prepare(XARDAS)
         assert fake.hero_items[POTION] == 1 and len(chronicle.facts("npc_later_paid")) == 1
@@ -179,7 +181,7 @@ async def test_loading_while_reading_day_cannot_start_old_payment(monkeypatch, i
 async def test_loading_cancels_inflight_transfer_before_it_reaches_new_world(monkeypatch):
     fake = FakeGame(branch="A")
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     dialogue.event_turn = lambda *a, **kw: None
     deals.cards = {XARDAS: CARD}
@@ -205,7 +207,7 @@ async def test_loading_cancels_inflight_transfer_before_it_reaches_new_world(mon
         await asyncio.wait_for(started.wait(), 1)
         payment = deals._paying[deal.id]
         deals._on_message(Loading(type="loading"))
-        load_branch(chronicle, deals)
+        await load_branch(chronicle, deals)
         await asyncio.wait_for(preparing, 1)
         assert cancelled.is_set() and payment.cancelled()
         assert not deals._paying and not chronicle.facts("npc_later_paid")
@@ -222,7 +224,7 @@ async def test_loading_cancels_inflight_transfer_before_it_reaches_new_world(mon
 async def test_late_transfer_reply_cannot_write_into_loaded_branch(monkeypatch):
     fake = FakeGame(branch="A")
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     dialogue.event_turn = lambda *a, **kw: None
     deals.cards = {XARDAS: CARD}
@@ -245,7 +247,7 @@ async def test_late_transfer_reply_cannot_write_into_loaded_branch(monkeypatch):
         preparing = asyncio.create_task(deals.prepare(XARDAS))
         await asyncio.wait_for(started.wait(), 1)
         old = deals.npc_later[deal.id]
-        load_branch(chronicle, deals)
+        await load_branch(chronicle, deals)
         release.set()
         await asyncio.wait_for(preparing, 1)
         assert not old.paid and not deals.npc_later[deal.id].paid
@@ -269,7 +271,7 @@ async def test_late_transfer_reply_cannot_write_into_loaded_branch(monkeypatch):
 async def test_later_validation(raw):
     fake = FakeGame(branch="A")
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     try:
         result = await deals.propose(XARDAS, "Ксардас", {"npc_later": raw}, deals.link.snapshots[XARDAS])

@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -20,6 +21,7 @@ from gothic_ai.talk import Talk, TalkDesk
 from gothic_ai.trust import Trust
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 POTION, GOLD = "ITPO_HEALTH_01", "ITMI_GOLD"
 BRAGO = "BDT_1014_BANDIT_L"
@@ -33,6 +35,20 @@ def _offer(npc_gives: int, gold: int, call_id: str = "c1") -> ToolCall:
     return ToolCall("propose_deal", args, call_id)
 
 
+@asynccontextmanager
+async def _owned_link(link_cm, dialogue, deals):
+    try:
+        yield
+    finally:
+        tasks = {*deals._background, *deals._paying.values(),
+                 *deals.contracts._background, *deals.contracts._paying.values()}
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await dialogue.close()
+        await link_cm.__aexit__(None, None, None)
+
+
 async def _setup(fake: FakeGame, llm: FakeBackend, store: MemoryStore, *, gates=None):
     fake.symbols = {GOLD: "item", POTION: "item"}
     fake.item_names = {GOLD: "Золото", POTION: "Эликсир лечения"}
@@ -40,12 +56,16 @@ async def _setup(fake: FakeGame, llm: FakeBackend, store: MemoryStore, *, gates=
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
     dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=store)
+    await dialogue.initialize()
     chronicle = Chronicle(link, store)
+    await chronicle.initialize()
     deals = Deals(link, dialogue, chronicle, gates=gates)
     dialogue.extensions.append(deals)
     await link.snapshot(XARDAS)
-    dialogue.open(XARDAS, "Ксардас")
-    return link_cm, dialogue, chronicle, deals
+    await dialogue.open(XARDAS, "Ксардас")
+    owned = _owned_link(link_cm, dialogue, deals)
+    await owned.__aenter__()
+    return owned, dialogue, chronicle, deals
 
 
 def _shown(fake: FakeGame) -> list[dict]:
@@ -54,7 +74,7 @@ def _shown(fake: FakeGame) -> list[dict]:
 
 async def test_haggle_then_accept_what_he_saw():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(
         script=[
             FakeStep("Эликсир — за пятьдесят золотых.", [_offer(1, 50)]),
@@ -65,15 +85,15 @@ async def test_haggle_then_accept_what_he_saw():
     )
     link_cm, dialogue, chronicle, deals = await _setup(fake, llm, store)
     try:
-        assert "propose_deal" in [t.name for t in dialogue._offered(XARDAS)]
-        assert "withdraw_deal" not in [t.name for t in dialogue._offered(XARDAS)]
+        assert "propose_deal" in [t.name for t in await dialogue._offered(XARDAS)]
+        assert "withdraw_deal" not in [t.name for t in await dialogue._offered(XARDAS)]
         await dialogue.say_as_player(XARDAS, "Продай эликсир.")
         await _until(lambda: len(_shown(fake)) == 1)
         v1 = _shown(fake)[0]
         assert (v1["version"], v1["npc"]) == (1, XARDAS)
         assert v1["npc_gives"] == [{"item": POTION, "count": 1, "text": "Эликсир лечения"}]
         assert v1["hero_gives"] == [{"item": GOLD, "count": 50, "text": "50 золотых"}]
-        assert "withdraw_deal" in [t.name for t in dialogue._offered(XARDAS)]
+        assert "withdraw_deal" in [t.name for t in await dialogue._offered(XARDAS)]
 
         # haggling changes the terms in the same window
         await dialogue.say_as_player(XARDAS, "Дорого.")
@@ -121,7 +141,7 @@ async def test_haggle_then_accept_what_he_saw():
 
 async def test_declined_the_npc_offers_otherwise():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(
         script=[
             FakeStep("Эликсир — за пятьдесят.", [_offer(1, 50)]),
@@ -156,7 +176,7 @@ async def test_declined_the_npc_offers_otherwise():
 
 async def test_what_cannot_be_offered():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     try:
         snap = dialogue.link.snapshots[XARDAS]
@@ -212,7 +232,7 @@ async def test_a_thing_of_its_story_by_a_guessed_id():
         "ITWR_MAP_NEWWORLD_ORNAMENTS_ADDON",
     )
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     fake.symbols.update({sealed: "item", opened: "item", map_: "item", "DIA_X": "dialog"})
     fake.item_names.update({sealed: "Запечатанное послание", opened: "Вскрытое послание", map_: "Карта"})
@@ -263,7 +283,7 @@ async def test_a_thing_of_its_story_by_a_guessed_id():
 
 async def test_an_offer_not_taken_goes_with_the_conversation():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     try:
         snap = dialogue.link.snapshots[XARDAS]
@@ -284,7 +304,7 @@ async def test_an_offer_not_taken_goes_with_the_conversation():
 
 async def test_any_end_of_the_conversation_takes_the_offer():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     try:
         talk = TalkDesk(dialogue.link, dialogue)
@@ -293,7 +313,7 @@ async def test_any_end_of_the_conversation_takes_the_offer():
         args = {"npc_gives": [{"item": POTION, "count": 1}], "hero_gives": [{"item": GOLD, "count": 20}]}
         await deals.propose(XARDAS, "Ксардас", args, snap)
         talk.partner = Talk(XARDAS, "Ксардас", 0.0, 0.0)
-        talk._end("switched", "Диего")  # the hero turned to someone else
+        await talk._end("switched", "Диего")  # the hero turned to someone else
         await _until(lambda: XARDAS not in deals.open)
         await _until(lambda: fake.deals[-1] == {"type": "deal_hide", "deal": "D1"})
     finally:
@@ -302,7 +322,7 @@ async def test_any_end_of_the_conversation_takes_the_offer():
 
 async def test_the_npc_no_longer_has_it():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend("Ох, а эликсира-то уже нет.", delay=0)
     link_cm, dialogue, chronicle, deals = await _setup(fake, llm, store)
     try:
@@ -336,7 +356,7 @@ BOOK = f"caught:{XARDAS}:MIS_BOOK"
 
 async def test_he_forgives_a_lie_and_keeps_quiet_about_it():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     try:
         snap = dialogue.link.snapshots[XARDAS]
@@ -347,7 +367,7 @@ async def test_he_forgives_a_lie_and_keeps_quiet_about_it():
             "name": "Ксардас",
             "title": "Принести книгу",
         }
-        chronicle.record({**caught, "how": "видел сам", "day": 1})
+        await chronicle.record({**caught, "how": "видел сам", "day": 1})
         assert "он уже лгал тебе" in Trust(chronicle).situation(XARDAS)
         situation = deals.situation(XARDAS) or ""
         assert f"- {BOOK}: он обманул тебя: уверял, что сделал «Принести книгу», а это неправда" in situation
@@ -392,24 +412,24 @@ async def test_he_forgives_a_lie_and_keeps_quiet_about_it():
         await link_cm.__aexit__(None, None, None)
 
 
-def _theft(chronicle: Chronicle, *, witness: str, victim: str = XARDAS, crime_id: str = "C1"):
-    chronicle.record(
+async def _theft(chronicle: Chronicle, *, witness: str, victim: str = XARDAS, crime_id: str = "C1"):
+    await chronicle.record(
         {
             "fact": "crime", "id": crime_id, "kind": "theft", "victim": victim, "owner": victim,
             "item": POTION, "count": 2, "day": 1, "hour": 14, "minute": 20,
             "place": {"x": 0, "y": 0, "z": 0}, "waypoint": "FARM", "community": "farm",
         }
     )
-    chronicle.record({"fact": "crime_seen", "npc": witness, "crime": crime_id})
+    await chronicle.record({"fact": "crime_seen", "npc": witness, "crime": crime_id})
 
 
 async def test_crime_deals_require_the_victim_or_an_actual_witness():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     deals.crimes = Crimes(dialogue.link, chronicle)
     try:
-        _theft(chronicle, witness=XARDAS, victim="LESTER")
+        await _theft(chronicle, witness=XARDAS, victim="LESTER")
         snap = dialogue.link.snapshots[XARDAS]
         result = await deals.propose(XARDAS, "Ксардас", {"forgive": ["crime:C1"]}, snap)
         assert result.status == "rejected" and "только пострадавший" in result.output
@@ -418,7 +438,7 @@ async def test_crime_deals_require_the_victim_or_an_actual_witness():
         assert not chronicle.facts("forgiven") and not chronicle.facts("silenced")
 
         # Knowing a rumor does not make him a witness who can sell his silence.
-        chronicle.record({
+        await chronicle.record({
             "fact": "rumor", "kind": "theft", "crime": "C1", "to": "LOBART", "from": XARDAS, "hops": 1,
         })
         result = await deals.propose("LOBART", "Лобарт", {"silence": ["crime:C1"]}, None)
@@ -451,12 +471,12 @@ async def test_crime_deals_require_the_victim_or_an_actual_witness():
 )
 async def test_cover_terms_are_shown_and_recorded_only_on_acceptance(cover, expected):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     deals.crimes = Crimes(dialogue.link, chronicle)
     try:
         if "crime" in cover:
-            _theft(chronicle, witness=XARDAS)
+            await _theft(chronicle, witness=XARDAS)
         outcome = await deals.propose(XARDAS, "Ксардас", {"cover": cover}, None)
         assert outcome.status == "accepted"
         assert not chronicle.facts("covered") and not chronicle.facts("silenced")
@@ -474,7 +494,7 @@ async def test_cover_terms_are_shown_and_recorded_only_on_acceptance(cover, expe
             assert deals.crimes.known(XARDAS)[0].silenced
         else:
             assert not chronicle.facts("silenced")
-        deals.reload()
+        await deals.reload()
         result = await deals.propose(XARDAS, "Ксардас", {"cover": {"vouch": ""}}, None)
         assert result.status == "accepted" and deals.open[XARDAS].id != offer.id
     finally:
@@ -495,7 +515,7 @@ async def test_cover_terms_are_shown_and_recorded_only_on_acceptance(cover, expe
 )
 async def test_cover_rejects_unknown_crime_remote_day_and_empty_terms(cover, why):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     deals.crimes = Crimes(dialogue.link, chronicle)
     try:
@@ -508,12 +528,12 @@ async def test_cover_rejects_unknown_crime_remote_day_and_empty_terms(cover, why
 
 async def test_cover_requires_seen_crime_and_can_follow_a_silence_deal():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     deals.crimes = Crimes(dialogue.link, chronicle)
     try:
-        _theft(chronicle, witness="LESTER")
-        chronicle.record(
+        await _theft(chronicle, witness="LESTER")
+        await chronicle.record(
             {
                 "fact": "rumor",
                 "kind": "theft",
@@ -524,8 +544,8 @@ async def test_cover_requires_seen_crime_and_can_follow_a_silence_deal():
         )
         result = await deals.propose(XARDAS, "Ксардас", {"cover": {"crime": "C1"}}, None)
         assert result.status == "rejected" and "только видевший" in result.output
-        chronicle.record({"fact": "crime_seen", "npc": XARDAS, "crime": "C1"})
-        chronicle.record({"fact": "silenced", "npc": XARDAS, "crime": "C1", "deal": "old"})
+        await chronicle.record({"fact": "crime_seen", "npc": XARDAS, "crime": "C1"})
+        await chronicle.record({"fact": "silenced", "npc": XARDAS, "crime": "C1", "deal": "old"})
         result = await deals.propose(XARDAS, "Ксардас", {"cover": {"crime": "C1"}}, None)
         assert result.status == "accepted"
     finally:
@@ -535,7 +555,7 @@ async def test_cover_requires_seen_crime_and_can_follow_a_silence_deal():
 @pytest.mark.parametrize("crimes,cover", [(True, False), (False, True)])
 async def test_cover_is_unavailable_without_cover_or_crimes(crimes, cover):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     deals.crimes = Crimes(dialogue.link, chronicle) if crimes else None
     deals.cover = cover
@@ -551,15 +571,15 @@ async def test_cover_is_unavailable_without_cover_or_crimes(crimes, cover):
 
 async def test_a_victim_can_forgive_a_crime_he_heard_of():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     deals.crimes = Crimes(dialogue.link, chronicle)
     try:
-        _theft(chronicle, witness="LESTER")
+        await _theft(chronicle, witness="LESTER")
         snap = dialogue.link.snapshots[XARDAS]
         result = await deals.propose(XARDAS, "Ксардас", {"forgive": ["crime:C1"]}, snap)
         assert result.status == "rejected"  # being the owner is not knowledge
-        chronicle.record({
+        await chronicle.record({
             "fact": "rumor", "kind": "theft", "crime": "C1", "to": XARDAS, "from": "LESTER", "hops": 1,
         })
         assert "crime:C1" in (deals.situation(XARDAS) or "")
@@ -577,11 +597,11 @@ async def test_a_victim_can_forgive_a_crime_he_heard_of():
 
 async def test_repay_a_theft_returns_the_whole_item_quantity_once():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     deals.crimes = Crimes(dialogue.link, chronicle)
     try:
-        _theft(chronicle, witness=XARDAS)
+        await _theft(chronicle, witness=XARDAS)
         snap = dialogue.link.snapshots[XARDAS]
         for wanted in ([], [{"item": POTION, "count": 1}]):
             result = await deals.propose(
@@ -606,11 +626,11 @@ async def test_repay_a_theft_returns_the_whole_item_quantity_once():
 
 async def test_repay_a_theft_by_agreed_price_only_forgives_after_transfer():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     deals.crimes = Crimes(dialogue.link, chronicle)
     try:
-        _theft(chronicle, witness=XARDAS)
+        await _theft(chronicle, witness=XARDAS)
         snap = dialogue.link.snapshots[XARDAS]
         result = await deals.propose(XARDAS, "Ксардас", {
             "repay": ["crime:C1"], "hero_gives": [{"item": GOLD, "count": 30}],
@@ -644,14 +664,16 @@ def test_a_lie_in_his_own_words():
 
 async def test_lies_of_keeps_his_own_words():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, _dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     try:
         lie = {"quest": "", "title": "всё утро был в городе", "said": True, "day": 1}
-        chronicle.record({"fact": "caught", "npc": XARDAS, "name": "Ксардас", "how": "видел сам", **lie})
-        chronicle.record({"fact": "caught", "npc": XARDAS, "name": "Ксардас", "quest": "MIS_BOOK"})
+        await chronicle.record(
+            {"fact": "caught", "npc": XARDAS, "name": "Ксардас", "how": "видел сам", **lie}
+        )
+        await chronicle.record({"fact": "caught", "npc": XARDAS, "name": "Ксардас", "quest": "MIS_BOOK"})
         heard = {"kind": "caught", "about": XARDAS, "about_name": "Ксардас", "from": XARDAS, "hops": 1}
-        chronicle.record({"fact": "rumor", "to": "LESTER", **heard, **lie})
+        await chronicle.record({"fact": "rumor", "to": "LESTER", **heard, **lie})
         known, _, _ = deals.lies_of(XARDAS)
         assert known[f"caught:{XARDAS}:"].said and not known[BOOK].said
         heard_of = deals.lies_of("LESTER")[0][f"caught:{XARDAS}:"]
@@ -664,7 +686,7 @@ async def test_lies_of_keeps_his_own_words():
 
 async def test_a_debt_by_its_day_or_a_broken_word():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     try:
         snap = dialogue.link.snapshots[XARDAS]
@@ -697,8 +719,8 @@ async def test_a_debt_by_its_day_or_a_broken_word():
         assert f"- {debt.id}: 25 золотых до конца дня 3" in (deals.situation(XARDAS) or "")
 
         # the day is over: a broken word, to him and in his memory
-        assert deals.overdue(2) == []
-        assert deals.overdue(3) == [debt] and deals.overdue(4) == []
+        assert await deals.overdue(2) == []
+        assert await deals.overdue(3) == [debt] and await deals.overdue(4) == []
         assert chronicle.facts("broken")[0]["what"] == "25 золотых до конца дня 3"
         line = Trust(chronicle).situation(XARDAS) or ""
         assert "он не сдержал слово: обещал вернуть 25 золотых до конца дня 3, а не вернул." in line
@@ -734,7 +756,7 @@ async def test_a_debt_by_its_day_or_a_broken_word():
 async def test_day_is_told_when_it_changes(monkeypatch):
     monkeypatch.setattr(gothic_ai.deals, "DEBTS_EVERY_S", 0.01)
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     watch = None
     try:
@@ -765,9 +787,11 @@ async def test_day_is_told_when_it_changes(monkeypatch):
         await _until(lambda: deals.day is None)
 
         # a debt written past the deals is theirs once they reload
-        chronicle.record({"fact": "debt", "id": "e2e", "npc": XARDAS, "item": GOLD, "count": 5, "due": 3})
+        await chronicle.record(
+            {"fact": "debt", "id": "e2e", "npc": XARDAS, "item": GOLD, "count": 5, "due": 3}
+        )
         assert "e2e" not in deals.debts
-        deals.reload()
+        await deals.reload()
         assert deals.debts["e2e"].give.count == 5 and len(deals.debts) == 2
     finally:
         if watch is not None:
@@ -789,7 +813,7 @@ class _IgnoresAllowed(FakeBackend):
 
 async def test_a_tool_not_offered_in_the_turn_is_rejected():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = _IgnoresAllowed(
         script=[FakeStep("Эликсир — за пятьдесят.", [_offer(1, 50)]), FakeStep("Ладно.")], delay=0
     )
@@ -807,14 +831,14 @@ async def test_a_tool_not_offered_in_the_turn_is_rejected():
 @pytest.mark.parametrize("hours", [1, 24])
 async def test_bandit_truce_is_a_real_deal_accepted_with_y(hours):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     dialogue.guild_of = lambda npc: 9 if npc == BRAGO else 0
     parley = Parley(dialogue.link, dialogue, chronicle)
     deals.parley = parley
     try:
         snap = await dialogue.link.snapshot(BRAGO)
-        conv = dialogue.open(BRAGO, "Браго")
+        conv = await dialogue.open(BRAGO, "Браго")
         outcome = await parley.handle(
             dialogue,
             conv,
@@ -829,7 +853,7 @@ async def test_bandit_truce_is_a_real_deal_accepted_with_y(hours):
             {"hero_gives": [{"item": GOLD, "count": 100}], "truce": {"hours": hours}},
             snap,
         )
-        assert result.status == "accepted" and parley.truce(BRAGO) is None
+        assert result.status == "accepted" and await parley.truce(BRAGO) is None
         assert parley.ultimatum(BRAGO) is not None
         offer = deals.open[BRAGO]
         await _until(lambda: _shown(fake) != [])
@@ -838,7 +862,7 @@ async def test_bandit_truce_is_a_real_deal_accepted_with_y(hours):
         await _until(lambda: bool(chronicle.facts("deal")))
         assert fake.hero_items[GOLD] == 100 and fake.npc_items[BRAGO][GOLD] == 100
         assert chronicle.facts("deal")[0]["truce"] == {"hours": hours}
-        assert parley.ultimatum(BRAGO) is None and parley.truce(BRAGO) is not None
+        assert parley.ultimatum(BRAGO) is None and await parley.truce(BRAGO) is not None
     finally:
         await link_cm.__aexit__(None, None, None)
 
@@ -847,7 +871,7 @@ async def test_truce_without_a_clock_fails_before_any_exchange():
     fake = FakeGame(branch="A")
     fake.hero_items = {GOLD: 200}
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     dialogue.guild_of = lambda npc: 9
     deals.parley = Parley(dialogue.link, dialogue, chronicle)
@@ -879,7 +903,7 @@ async def test_deal_clears_ultimatum_and_keeps_truce_before_any_post_payment_req
     fake = FakeGame(branch="A")
     fake.hero_items = {GOLD: 200}
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     dialogue.guild_of = lambda npc: 9 if npc == BRAGO else 0
     parley = Parley(dialogue.link, dialogue, chronicle)
@@ -888,7 +912,7 @@ async def test_deal_clears_ultimatum_and_keeps_truce_before_any_post_payment_req
         snap = await dialogue.link.snapshot(BRAGO)
         await parley.handle(
             dialogue,
-            dialogue.open(BRAGO, "Браго"),
+            await dialogue.open(BRAGO, "Браго"),
             ToolCall("ultimatum", {"demand": "Заплати сто золотых", "seconds": 30}, "u1"),
             snap,
         )
@@ -916,7 +940,7 @@ async def test_deal_clears_ultimatum_and_keeps_truce_before_any_post_payment_req
 
         async def send_after_peace(msg):
             assert parley.ultimatum(BRAGO) is None
-            assert bool(parley.truce(BRAGO)) is truce
+            assert bool(await parley.truce(BRAGO)) is truce
             await send(msg)
 
         async def day_before_exchange(_):
@@ -938,7 +962,7 @@ async def test_deal_clears_ultimatum_and_keeps_truce_before_any_post_payment_req
 @pytest.mark.parametrize("truce", [{"hours": 0}, {"hours": 25}, {"hours": True}, {"hours": 1.5}, {}])
 async def test_invalid_truce_term_is_rejected(truce):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     dialogue.guild_of = lambda npc: 9
     deals.parley = Parley(dialogue.link, dialogue, chronicle)
@@ -952,7 +976,7 @@ async def test_invalid_truce_term_is_rejected(truce):
 
 async def test_truce_requires_bandit_and_enabled_parley():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     try:
         assert "truce" not in deals.all_tools[0].parameters["properties"]
@@ -969,14 +993,14 @@ async def test_truce_requires_bandit_and_enabled_parley():
 
 async def test_accepting_any_deal_clears_bandit_ultimatum():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend("…", delay=0), store)
     dialogue.guild_of = lambda npc: 9 if npc == BRAGO else 0
     parley = Parley(dialogue.link, dialogue, chronicle)
     deals.parley = parley
     try:
         snap = await dialogue.link.snapshot(BRAGO)
-        conv = dialogue.open(BRAGO, "Браго")
+        conv = await dialogue.open(BRAGO, "Браго")
         await parley.handle(
             dialogue,
             conv,
@@ -991,7 +1015,7 @@ async def test_accepting_any_deal_clears_bandit_ultimatum():
         assert outcome.status == "accepted" and parley.ultimatum(BRAGO) is not None
         offer = deals.open[BRAGO]
         await deals.accept(offer.id, offer.version)
-        assert parley.ultimatum(BRAGO) is None and parley.truce(BRAGO) is None
+        assert parley.ultimatum(BRAGO) is None and await parley.truce(BRAGO) is None
     finally:
         await link_cm.__aexit__(None, None, None)
 
@@ -1002,7 +1026,7 @@ async def test_bandit_secret_sale_requires_its_real_price_and_records_the_paid_s
     fake = FakeGame(branch="A")
     fake.hero_items = {GOLD: 300}
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     dialogue.guild_of = lambda _: 9
     deals.bounty = Bounty(dialogue.link, dialogue, chronicle)
@@ -1032,7 +1056,7 @@ async def test_paid_secret_is_available_before_post_payment_game_requests(monkey
     fake = FakeGame(branch="A")
     fake.hero_items = {GOLD: 300}
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     dialogue.guild_of = lambda _: 9
     bounty = deals.bounty = Bounty(dialogue.link, dialogue, chronicle)
@@ -1060,7 +1084,7 @@ async def test_paid_secret_is_available_before_post_payment_game_requests(monkey
         await asyncio.wait_for(waiting.wait(), timeout=2)
         assert fake.hero_items[GOLD] == 150
         outcome = await bounty.handle(
-            dialogue, dialogue.open(BRAGO, "Браго", warm=False),
+            dialogue, await dialogue.open(BRAGO, "Браго", warm=False),
             ToolCall("tell_secret", {"secret": "client_name"}), snap,
         )
         assert outcome.status == "accepted" and "paid" in outcome.output
@@ -1076,7 +1100,7 @@ async def test_paid_secret_is_available_before_post_payment_game_requests(monkey
 async def test_secret_sale_schema_and_requests_require_enabled_bounty():
     fake = FakeGame(branch="A")
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:")
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:")
     )
     try:
         assert "secret" not in deals.all_tools[0].parameters["properties"]
@@ -1107,13 +1131,13 @@ async def test_gate_deal_request_schema_is_available_only_on_post(
     fake = FakeGame(branch="A")
     gates = SimpleNamespace(on_post=lambda _: on_post) if enabled else None
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:"), gates=gates
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:"), gates=gates
     )
     deals.crimes = Crimes(dialogue.link, chronicle) if cover else None
     deals.parley = Parley(dialogue.link, dialogue, chronicle) if parley_enabled else None
     try:
         [tool] = [
-            tool for tool in dialogue._request_tools(dialogue._offered(npc))
+            tool for tool in dialogue._request_tools(await dialogue._offered(npc))
             if tool.name == "propose_deal"
         ]
         assert ("let_pass" in tool.parameters["properties"]) is (enabled and on_post)
@@ -1137,7 +1161,7 @@ async def test_gate_deal_is_shown_and_paid_only_with_the_passage(monkeypatch):
         bribe=AsyncMock(),
     )
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:"), gates=gates
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:"), gates=gates
     )
     monkeypatch.setattr(dialogue, "event_turn", lambda *args, **kwargs: None)
 
@@ -1151,7 +1175,7 @@ async def test_gate_deal_is_shown_and_paid_only_with_the_passage(monkeypatch):
         assert "let_pass" in tool.parameters["required"]
         [tool] = deals.tools(XARDAS)
         assert "let_pass" not in tool.parameters["properties"] and "let_pass" not in tool.description
-        dialogue.open(guard, "Стражник")
+        await dialogue.open(guard, "Стражник")
         result = await deals.propose(
             guard, "Стражник", {"let_pass": True, "hero_gives": [{"item": GOLD, "count": 100}]}, None
         )
@@ -1188,7 +1212,7 @@ async def test_gate_deal_rejected_by_live_permission(guard, amount, reason):
         on_post=lambda npc: True, bribe_error=AsyncMock(return_value=reason), bribe=AsyncMock()
     )
     link_cm, _, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:"), gates=gates
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:"), gates=gates
     )
     try:
         result = await deals.propose(
@@ -1213,11 +1237,11 @@ async def test_gate_deal_rechecked_on_y_without_losing_gold(monkeypatch, reason)
         bribe=AsyncMock(),
     )
     link_cm, dialogue, chronicle, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:"), gates=gates
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:"), gates=gates
     )
     monkeypatch.setattr(dialogue, "event_turn", lambda *args, **kwargs: None)
     try:
-        dialogue.open(guard, "Стражник")
+        await dialogue.open(guard, "Стражник")
         result = await deals.propose(
             guard, "Стражник", {"let_pass": True, "hero_gives": [{"item": GOLD, "count": 100}]}, None
         )
@@ -1248,7 +1272,7 @@ async def test_gate_deal_requires_only_gold_now(terms):
         on_post=lambda npc: True, bribe_error=AsyncMock(return_value=""), bribe=AsyncMock()
     )
     link_cm, dialogue, _, deals = await _setup(
-        fake, FakeBackend("…", delay=0), MemoryStore(":memory:"), gates=gates
+        fake, FakeBackend("…", delay=0), await MemoryStore.open(":memory:"), gates=gates
     )
     try:
         result = await deals.propose(

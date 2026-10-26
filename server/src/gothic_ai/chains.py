@@ -481,7 +481,7 @@ class ChainAuthor:
             except (GameError, TimeoutError) as err:
                 made, errors = None, [f"игра не ответила: {err}"]
             if made is not None:
-                self.chronicle.record(
+                await self.chronicle.record(
                     {
                         "fact": "chain",
                         "npc": brief.base.npc,
@@ -492,7 +492,7 @@ class ChainAuthor:
                     }
                 )
                 return made
-            self.chronicle.record(
+            await self.chronicle.record(
                 {"fact": "chain_rejected", "npc": brief.base.npc, "attempt": attempt, "why": errors}
             )
             log.info("chain: rejected %d: %s", attempt, "; ".join(errors))
@@ -671,7 +671,7 @@ class ChainAuthor:
             q = questbook.Quest.of(
                 {
                     **data,
-                    "id": self.book.next_id(taken),
+                    "id": await self.book.next_id(taken),
                     "giver": brief.base.npc,
                     "after": out[-1].id if out else "",
                     "requires": [] if out else brief.base.requires,

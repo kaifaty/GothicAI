@@ -18,7 +18,8 @@ others are not concerns.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from .chronicle import Chronicle, Fact
@@ -31,7 +32,7 @@ from .protocol import GameMessage, Loading, Session
 
 RANK = {"debt_broken": 0, "lied": 1, "witness": 1, "crime_witness": 1, "debt_due": 2, "errand": 2}
 CRIME_WITNESS_EN = "decide whether to report the hero's crime, stay quiet, or demand payment for silence"
-# the facts that change what an npc has on its mind; deals.py updates its debts before it records them
+# The facts that change what an NPC has on its mind; callbacks run after the SQL receipt.
 FACTS = frozenset(
     {
         "debt",
@@ -77,7 +78,8 @@ class Concerns:
         self.deals = deals
         # Query the existing law rules for guards only; this desk never advances or changes the law.
         self._crime_law = CrimeLaw(deals.crimes) if deals.crimes is not None else None
-        self.on_change: list[Callable[[str], None]] = []  # an npc whose concerns may have changed
+        # An NPC whose concerns may have changed; observers finish before the caller proceeds.
+        self.on_change: list[Callable[[str], Awaitable[None] | None]] = []
         self.extra: list[Callable[[str], list[Concern]]] = []  # more kinds, from other desks (witnesses.py)
         self._cache: dict[str, list[Concern]] = {}
         chronicle.on_fact.append(self._on_fact)
@@ -109,15 +111,20 @@ class Concerns:
 
     def _compute(self, npc: str) -> list[Concern]:
         out = []
+        # A fact listener can run before the writer resumes to update its local debt flags.
+        paid = {f.get("id") for f in self.chronicle.facts("debt_paid")}
+        broken = {f.get("debt") for f in self.chronicle.facts("broken")}
         for d in self.deals.debts.values():
-            if d.npc != npc or d.paid:
+            if d.npc != npc or d.paid or d.id in paid:
                 continue
-            if d.broken:
+            if d.broken or d.id in broken:
                 ru = f"герой не вернул тебе долг в срок: {d.what()}"
-                out.append(Concern(f"debt_broken:{d.id}", npc, RANK["debt_broken"], _debt_en(d), ru))
+                out.append(Concern(
+                    f"debt_broken:{d.id}", npc, RANK["debt_broken"], _debt_en(d, broken=True), ru
+                ))
             elif self.deals.day == d.due:
                 ru = f"сегодня последний день: герой должен вернуть тебе {d.give.text()}"
-                out.append(Concern(f"debt_due:{d.id}", npc, RANK["debt_due"], _debt_en(d), ru))
+                out.append(Concern(f"debt_due:{d.id}", npc, RANK["debt_due"], _debt_en(d, broken=False), ru))
         known, forgiven, _ = self.deals.lies_of(npc)
         for key, lie in known.items():
             if lie.about != npc or key in forgiven:
@@ -168,7 +175,9 @@ class Concerns:
             )
         return out
 
-    def _on_fact(self, f: Fact) -> None:
+    async def _on_fact(self, f: Fact) -> None:
+        link = self.chronicle.link
+        branch, session, world = self.chronicle.branch, link.session, link.world_generation
         if f.get("fact") == "rumor" and rumor_subject(f) != "PLAYER":
             return
         if f.get("fact") not in FACTS:
@@ -191,27 +200,46 @@ class Concerns:
                         if seen.get("crime") == crime_id
                     ]
         for npc in dict.fromkeys(str(n).upper() for n in affected if n):
-            self._changed(npc)
+            if (self.chronicle.branch != branch or link.session is not session
+                    or link.world_generation != world):
+                return
+            await self._changed(npc)
 
-    def _on_day(self, day: int) -> None:
+    async def _on_day(self, day: int) -> None:
         """A debt may be due today: its lender's concerns change."""
+        link = self.chronicle.link
+        branch, session, world = self.chronicle.branch, link.session, link.world_generation
         for npc in dict.fromkeys(d.npc for d in self.deals.debts.values() if not d.paid and not d.broken):
-            self._changed(npc)
+            if (self.chronicle.branch != branch or link.session is not session
+                    or link.world_generation != world):
+                return
+            await self._changed(npc)
 
-    def _on_reload(self) -> None:
+    async def _on_reload(self) -> None:
         """The debts were read again: every lender's concerns may have changed."""
+        link = self.chronicle.link
+        branch, session, world = self.chronicle.branch, link.session, link.world_generation
         self._cache.clear()
         for npc in dict.fromkeys(d.npc.upper() for d in self.deals.debts.values()):
-            self._changed(npc)
+            if (self.chronicle.branch != branch or link.session is not session
+                    or link.world_generation != world):
+                return
+            await self._changed(npc)
 
-    def changed(self, npc: str) -> None:
+    async def changed(self, npc: str) -> None:
         """The npc's concerns may be other now (time passed: witnesses.py)."""
-        self._changed(npc.upper())
+        await self._changed(npc.upper())
 
-    def _changed(self, npc: str) -> None:
+    async def _changed(self, npc: str) -> None:
+        link = self.chronicle.link
+        branch, session, world = self.chronicle.branch, link.session, link.world_generation
         self._cache.pop(npc, None)
         for listener in self.on_change:
-            listener(npc)
+            if (self.chronicle.branch != branch or link.session is not session
+                    or link.world_generation != world):
+                return
+            if inspect.isawaitable(result := listener(npc)):
+                await result
 
     def _on_message(self, msg: GameMessage) -> None:
         match msg:
@@ -219,10 +247,10 @@ class Concerns:
                 self._cache.clear()  # another branch, other facts
 
 
-def _debt_en(d: Debt) -> str:
+def _debt_en(d: Debt, *, broken: bool) -> str:
     """The lender's agenda: by tonight, or his day has passed."""
     gold = d.give.item == GOLD
-    if d.broken:
+    if broken:
         owed = f"the {d.give.count} gold he owes you" if gold else "what he borrowed from you"
         return f"make the hero pay back {owed}; his day has passed"
     owed = f"{d.give.count} gold to you" if gold else "what he borrowed from you"

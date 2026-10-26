@@ -5,11 +5,32 @@ from gothic_ai.executor import Intent
 from gothic_ai.journal import Journal
 from gothic_ai.llm import FakeBackend, ToolCall, ToolResult
 from gothic_ai.llm.fake import FakeStep
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 CAVALORN = "BAU_4300_ADDON_CAVALORN"
+
+
+@pytest.fixture
+async def memory(monkeypatch):
+    store = await MemoryStore.open(":memory:")
+    managers = []
+    original = DialogueManager.__init__
+
+    def tracked(manager, *args, **kwargs):
+        original(manager, *args, **kwargs)
+        managers.append(manager)
+
+    monkeypatch.setattr(DialogueManager, "__init__", tracked)
+    try:
+        yield store
+    finally:
+        for manager in managers:
+            await manager.close()
+        await store.close()
 
 
 @pytest.mark.parametrize(
@@ -35,17 +56,20 @@ CAVALORN = "BAU_4300_ADDON_CAVALORN"
         ("Пойдём к бандитам.", "Давай, веди же!"),
     ],
 )
-async def test_a_spoken_follow_agreement_repairs_the_missing_intent(heard, reply):
+async def test_a_spoken_follow_agreement_repairs_the_missing_intent(heard, reply, memory):
     fake = FakeGame()
     llm = FakeBackend(reply, delay=0)
     entries = []
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), journal=Journal(entries.append))
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), journal=Journal(entries.append), memory=memory
+        )
         await link.attach(CAVALORN)
-        conv = dialogue.open(CAVALORN, "Кавалорн")
+        conv = await dialogue.open(CAVALORN, "Кавалорн")
         conv.intent = Intent(attitude="friendly", agenda="Help with the bandits")
         await dialogue.say_as_player(CAVALORN, heard)
         await _until(lambda: any(m.get("action") == "follow" for m in fake.received))
+        await _until(lambda: not conv.actions)
 
     assert conv.intent == Intent("follow_hero", "PLAYER", "friendly", "Help with the bandits")
     note = next(m for m in conv.history if "Ты согласился и идёшь за героем" in m.content)
@@ -90,19 +114,19 @@ async def test_a_spoken_follow_agreement_repairs_the_missing_intent(heard, reply
         ("Иди за мной, сказал он.", "Ладно, веди."),
     ],
 )
-async def test_other_words_do_not_make_a_follow_agreement(heard, reply):
+async def test_other_words_do_not_make_a_follow_agreement(heard, reply, memory):
     assert not follow_agreement(heard, reply, "Кавалорн")
     fake = FakeGame()
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(reply, delay=0), PersonaProvider(None))
-        conv = dialogue.open(CAVALORN, "Кавалорн")
+        dialogue = DialogueManager(link, FakeBackend(reply, delay=0), PersonaProvider(None), memory=memory)
+        conv = await dialogue.open(CAVALORN, "Кавалорн")
         await dialogue.say_as_player(CAVALORN, heard)
 
     assert conv.intent.goal == "none"
     assert not any(m.get("action") == "follow" for m in fake.received)
 
 
-async def test_the_models_follow_intent_is_not_applied_twice():
+async def test_the_models_follow_intent_is_not_applied_twice(memory):
     fake = FakeGame()
     llm = FakeBackend(
         "Иду, прикроешь мне спину.",
@@ -110,11 +134,12 @@ async def test_the_models_follow_intent_is_not_applied_twice():
         tool_calls=[ToolCall("set_intent", {"goal": "follow_hero", "target": "PLAYER"})],
     )
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
         await link.attach(CAVALORN)
-        conv = dialogue.open(CAVALORN, "Кавалорн")
+        conv = await dialogue.open(CAVALORN, "Кавалорн")
         await dialogue.say_as_player(CAVALORN, "Ну ты идешь, нет?")
         await _until(lambda: any(m.get("action") == "follow" for m in fake.received))
+        await _until(lambda: not conv.actions)
 
     assert conv.intent.goal == "follow_hero"
     assert len([m for m in fake.received if m.get("action") == "follow"]) == 1
@@ -123,7 +148,7 @@ async def test_the_models_follow_intent_is_not_applied_twice():
 
 @pytest.mark.parametrize("goal", ["follow_hero", "guard_hero"])
 @pytest.mark.parametrize("body", ["walking", "following", "fighting", "unknown"])
-async def test_the_models_repeated_companion_intent_resumes_following(goal, body):
+async def test_the_models_repeated_companion_intent_resumes_following(goal, body, memory):
     fake = FakeGame()
     llm = FakeBackend(
         script=[
@@ -139,11 +164,11 @@ async def test_the_models_repeated_companion_intent_resumes_following(goal, body
         return True
 
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
         dialogue.take_body = take_body
         dialogue.fighting = lambda npc: body == "fighting"
         await link.attach(CAVALORN)
-        conv = dialogue.open(CAVALORN, "Кавалорн")
+        conv = await dialogue.open(CAVALORN, "Кавалорн")
         conv.intent = Intent(goal, "PLAYER")
         snap = await link.snapshot(CAVALORN, fresh=True)
         link.snapshots[CAVALORN] = snap.model_copy(update={
@@ -171,14 +196,14 @@ async def test_the_models_repeated_companion_intent_resumes_following(goal, body
 
 @pytest.mark.parametrize("model_calls", [0, 1, 2])
 @pytest.mark.parametrize("goal", ["follow_hero", "guard_hero"])
-async def test_a_follow_agreement_recalls_a_companion_whose_body_is_walking(model_calls, goal):
+async def test_a_follow_agreement_recalls_a_companion_whose_body_is_walking(model_calls, goal, memory):
     fake = FakeGame()
     calls = [ToolCall("set_intent", {"goal": goal, "target": "PLAYER"}) for _ in range(model_calls)]
     llm = FakeBackend("Иду, прикроешь мне спину.", delay=0, tool_calls=calls)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
         await link.attach(CAVALORN)
-        conv = dialogue.open(CAVALORN, "Кавалорн")
+        conv = await dialogue.open(CAVALORN, "Кавалорн")
         conv.intent = Intent(goal, "PLAYER")
         snap = await link.snapshot(CAVALORN, fresh=True)
         link.snapshots[CAVALORN] = snap.model_copy(update={
@@ -197,7 +222,7 @@ async def test_a_follow_agreement_recalls_a_companion_whose_body_is_walking(mode
 
 @pytest.mark.parametrize("goal", ["follow_hero", "guard_hero"])
 @pytest.mark.parametrize("update", [{"agenda": "Help the hero with the bandits"}, {"attitude": "friendly"}])
-async def test_updating_a_companion_intent_does_not_repeat_follow(goal, update):
+async def test_updating_a_companion_intent_does_not_repeat_follow(goal, update, memory):
     fake = FakeGame()
     arguments = {"goal": goal, "target": "PLAYER"}
     llm = FakeBackend(
@@ -207,10 +232,10 @@ async def test_updating_a_companion_intent_does_not_repeat_follow(goal, update):
     )
     changed = []
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
         dialogue.on_intent = lambda npc, intent: changed.append(intent)
         await link.attach(CAVALORN)
-        conv = dialogue.open(CAVALORN, "Кавалорн")
+        conv = await dialogue.open(CAVALORN, "Кавалорн")
         conv.intent = Intent(goal, "PLAYER")
         snap = await link.snapshot(CAVALORN, fresh=True)
         link.snapshots[CAVALORN] = snap.model_copy(update={
@@ -225,18 +250,18 @@ async def test_updating_a_companion_intent_does_not_repeat_follow(goal, update):
         expected = Intent(goal, "PLAYER", **update)
         assert conv.intent == expected
         assert changed == [expected]
-        assert Intent.from_json(dialogue.memory.load(conv.branch, CAVALORN).intent) == expected
+        assert Intent.from_json((await dialogue.memory.load(conv.branch, CAVALORN)).intent) == expected
 
     follows = [m for m in fake.received if m.get("action") == "follow"]
     assert len(follows) == 1
     assert follows[0]["args"] == {"npc": "PLAYER"}
 
 
-async def test_an_event_turn_cannot_make_a_follow_agreement():
+async def test_an_event_turn_cannot_make_a_follow_agreement(memory):
     fake = FakeGame()
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend("Пошли.", delay=0), PersonaProvider(None))
-        conv = dialogue.open(CAVALORN, "Кавалорн")
+        dialogue = DialogueManager(link, FakeBackend("Пошли.", delay=0), PersonaProvider(None), memory=memory)
+        conv = await dialogue.open(CAVALORN, "Кавалорн")
         await dialogue.event_turn(CAVALORN, "Пойдём к бандитам.")
 
     assert conv.intent.goal == "none"

@@ -120,11 +120,28 @@ class Guide:
         link.listeners.append(self._on_message)
 
     def _on_message(self, msg: GameMessage) -> None:
-        if isinstance(msg, Loading):  # the game lets every body go with the world
+        if isinstance(msg, (Loading, Session)):  # the game lets every body go with the world
             for task in self._tasks.values():
-                task.cancel()
+                if not task.done() and not task.cancelling():
+                    task.cancel()
         if isinstance(msg, Loading | Session):
             self._routines.clear()
+
+    async def close(self) -> None:
+        """Stop owned producers before the shared memory store closes."""
+        if self._on_message in self.link.listeners:
+            self.link.listeners.remove(self._on_message)
+        tasks = tuple(self._tasks.values())
+        for task in tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                log.error(
+                    "guide producer failed during close",
+                exc_info=(type(result), result, result.__traceback__),
+                )
 
     # --- TurnExtension -----------------------------------------------------------------------------
 
@@ -239,10 +256,13 @@ class Guide:
 
     # --- the way -----------------------------------------------------------------------------------
 
-    def start(self, npc: str, name: str, way: Way, deal: str) -> None:
+    async def start(self, npc: str, name: str, way: Way, deal: str) -> None:
         """The hero said yes to a deal with `lead`: the npc tells him to come along, and leads him."""
         npc = npc.upper()
-        conv = self.dialogue.open(npc, name)
+        session, world_generation = self.link.session, self.link.world_generation
+        conv = await self.dialogue.open(npc, name)
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            raise GameError("world changed while starting a lead")
         lead = self.leads[npc] = Lead(npc, name, way, deal)
         log.info("%s leads the hero to %s%s", npc, way.place.id, " (its way in)" if way.door else "")
         self.journal.add("lead", npc=npc, name=name, place=way.place.id, door=way.door, deal=deal)
@@ -253,13 +273,18 @@ class Guide:
             tools=(),
             kind="lead",
         )
-        task = asyncio.get_running_loop().create_task(self._run(conv, lead, turn))
+        task = asyncio.get_running_loop().create_task(
+            self._run(conv, lead, turn, session, world_generation)
+        )
         self._tasks[npc] = task
         conv.actions.add(task)  # a commitment under way: no gesture cuts it off (dialogue.body_busy)
         task.add_done_callback(conv.actions.discard)
         task.add_done_callback(lambda t: self._tasks.pop(npc, None) if self._tasks.get(npc) is t else None)
 
-    async def _run(self, conv: Conversation, lead: Lead, turn: asyncio.Task[None] | None) -> None:
+    async def _run(
+        self, conv: Conversation, lead: Lead, turn: asyncio.Task[None] | None,
+        session: Session | None, world_generation: int,
+    ) -> None:
         npc = lead.npc
         try:
             # it says «за мной» first, then sets off
@@ -269,18 +294,28 @@ class Guide:
                 await asyncio.wait({turn})
             if conv.voice is not None:
                 await conv.voice.join()
-            if not await self.talk.hold(npc, LEAD):
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return
+            held = await self.talk.hold(npc, LEAD)
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return
+            if not held:
                 await self._over(lead, "taken", "Ты не смог пойти: тебя не отпускают")
                 return
             self.talk.stop_listening(npc)  # it walks ahead: what it answers him is said on the move
             how = await self._walk(lead)
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return
             if how == "arrived":
                 how = await self._there(lead)
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return
             await self._over(lead, how)
         finally:
             if self.leads.get(npc) is lead:
                 del self.leads[npc]
-            self.talk.free(npc, LEAD)
+            if session is self.link.session and world_generation == self.link.world_generation:
+                self.talk.free(npc, LEAD)
 
     async def _walk(self, lead: Lead) -> How:
         """The way with the hero after it, waiting for him as he falls behind: how it ended."""
@@ -291,18 +326,29 @@ class Guide:
             go = asyncio.ensure_future(self._go(lead))
             behind = asyncio.ensure_future(self._until(lambda: self._behind(lead), deadline))
             stuck = asyncio.ensure_future(self._stuck(lead))
-            await asyncio.wait({go, behind, stuck}, return_when=asyncio.FIRST_COMPLETED)
-            got_stuck = stuck.done() and not go.done()
-            if not go.done():
-                lead.stopping = True
-                if got_stuck:  # back onto the waynet where it is, then the way again from there
-                    unstuck += 1
-                    await self._back_on_way(lead)
-                else:  # he fell behind (or the time is up): it stops and turns to him
-                    await self._act(lead.npc, "turn_to", npc="PLAYER")
-            behind.cancel()
-            stuck.cancel()
-            status = await go
+            try:
+                await asyncio.wait({go, behind, stuck}, return_when=asyncio.FIRST_COMPLETED)
+                got_stuck = stuck.done() and not go.done()
+                if not go.done():
+                    lead.stopping = True
+                    if got_stuck:  # back onto the waynet where it is, then the way again from there
+                        unstuck += 1
+                        await self._back_on_way(lead)
+                    else:  # he fell behind (or the time is up): it stops and turns to him
+                        await self._act(lead.npc, "turn_to", npc="PLAYER")
+                behind.cancel()
+                stuck.cancel()
+                status = await go
+            finally:
+                for task in (go, behind, stuck):
+                    if not task.done() and not task.cancelling():
+                        task.cancel()
+                results = await asyncio.gather(go, behind, stuck, return_exceptions=True)
+                for result in results:
+                    if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                        log.error(
+                            "guide route task failed", exc_info=(type(result), result, result.__traceback__),
+                        )
             hero = self._hero(lead)
             log.info(
                 "%s on the way to %s: %s%s, %s", lead.npc, lead.way.place.id, status, " (stuck)" * got_stuck,
@@ -391,35 +437,46 @@ class Guide:
     async def _over(self, lead: Lead, how: How, why: str = "") -> None:
         """The way is over: a fact, what the npc remembers of it, its words."""
         npc, way = lead.npc, lead.way
+        session, world_generation = self.link.session, self.link.world_generation
+        branch = self.chronicle.branch
         snap = self.link.snapshots.get(npc)
         when = {"day": snap.world.day, "hour": snap.world.hour, "minute": snap.world.minute} if snap else {}
-        self.chronicle.record(
-            {"fact": "led", "npc": npc, "name": lead.name, "place": way.place.id, "door": way.door,
-             "deal": lead.deal, "how": how, **when}
-        )  # fmt: skip
-        self.journal.add("led", npc=npc, name=lead.name, place=way.place.id, how=how)
-        log.info("%s led the hero to %s: %s", npc, way.place.id, how)
-        match how:
-            case "arrived":
-                if self.talk.partner is not None and self.talk.partner.npc == npc:
-                    await self.talk.listen(npc)  # it stands by him while the conversation lasts
-                self.dialogue.note(npc, f"Ты привёл героя, куда он просил: {way.where_ru()}")
-                turn = self.dialogue.event_turn(
-                    npc, f"[Вы пришли: {way.where_ru()}. Скажи герою, что пришли.]", kind="lead"
-                )
-                await self._said(npc, turn)
-            case "lost":
-                self.dialogue.note(
-                    npc, f"Ты вёл героя ({way.title()}), но он отстал и не пришёл; ты вернулся к своим делам"
-                )
-            case "failed":
-                self.dialogue.note(npc, f"Ты не смог дойти с героем ({way.title()}): дорогу не пройти")
-                turn = self.dialogue.event_turn(
-                    npc, "[Ты не смог довести героя: дорогу туда не пройти. Скажи ему.]", kind="lead"
-                )
-                await self._said(npc, turn)
-            case "taken":
-                self.dialogue.note(npc, why or f"Тебя отвлекли, и ты не довёл героя ({way.title()})")
+        note = {
+            "arrived": f"Ты привёл героя, куда он просил: {way.where_ru()}",
+            "lost": f"Ты вёл героя ({way.title()}), но он отстал и не пришёл; ты вернулся к своим делам",
+            "failed": f"Ты не смог дойти с героем ({way.title()}): дорогу не пройти",
+            "taken": why or f"Тебя отвлекли, и ты не довёл героя ({way.title()})",
+        }[how]
+
+        async def persist() -> None:
+            if branch != self.chronicle.branch or session is not self.link.session:
+                raise GameError("session changed while completing a lead")
+            await self.chronicle.record(
+                {"fact": "led", "npc": npc, "name": lead.name, "place": way.place.id, "door": way.door,
+                 "deal": lead.deal, "how": how, **when}
+            )  # fmt: skip
+            self.journal.add("led", npc=npc, name=lead.name, place=way.place.id, how=how)
+            log.info("%s led the hero to %s: %s", npc, way.place.id, how)
+            if session is self.link.session and world_generation == self.link.world_generation:
+                await self.dialogue.note(npc, note)
+
+        await self.chronicle.memory.complete(persist)
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            return
+        if how == "arrived":
+            if self.talk.partner is not None and self.talk.partner.npc == npc:
+                await self.talk.listen(npc)  # it stands by him while the conversation lasts
+                if session is not self.link.session or world_generation != self.link.world_generation:
+                    return
+            turn = self.dialogue.event_turn(
+                npc, f"[Вы пришли: {way.where_ru()}. Скажи герою, что пришли.]", kind="lead"
+            )
+            await self._said(npc, turn)
+        elif how == "failed":
+            turn = self.dialogue.event_turn(
+                npc, "[Ты не смог довести героя: дорогу туда не пройти. Скажи ему.]", kind="lead"
+            )
+            await self._said(npc, turn)
 
     async def _said(self, npc: str, turn: asyncio.Task[None] | None) -> None:
         """Its words are said before its body goes back to its business."""

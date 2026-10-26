@@ -18,6 +18,7 @@ from gothic_ai.memory import MemoryStore
 from gothic_ai.protocol import DialogChosen, Loading, Session
 from tests.test_crime_law_graph import GateVM
 from tests.test_crimes import Link
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 AT = 3 * 1440 + 9 * 60 + 15
 ANDRE = "MIL_311_ANDRE"
@@ -63,17 +64,18 @@ class RuntimeLink(Link):
     async def patch_graph(self, ops: list[dict[str, Any]]) -> None:
         self.patches.append(copy.deepcopy(ops))
 
-    def receive(self, message: Any) -> None:
+    async def receive(self, message: Any) -> None:
         if isinstance(message, Session):
             self.session = message
-        super().receive(message)
+        await super().receive(message)
 
 
 @pytest.fixture
 async def runtime(monkeypatch):
     link = RuntimeLink()
-    memory = MemoryStore(":memory:")
+    memory = await MemoryStore.open(":memory:")
     chronicle = Chronicle(link, memory)  # type: ignore[arg-type]
+    await chronicle.initialize()
     crimes = Crimes(link, chronicle)  # type: ignore[arg-type]
     node = Node(
         "DIA_ANDRE_PETZMASTER",
@@ -103,10 +105,10 @@ async def runtime(monkeypatch):
     await crimes.close()
     if chronicle._background:
         await asyncio.gather(*chronicle._background)
-    memory.close()
+    await memory.close()
 
 
-def case(system, *, crime="theft-1", community="city", guard=False, at=AT, witness=None):
+async def case(system, *, crime="theft-1", community="city", guard=False, at=AT, witness=None):
     fact = {
         "fact": "crime",
         "id": crime,
@@ -119,9 +121,9 @@ def case(system, *, crime="theft-1", community="city", guard=False, at=AT, witne
         "item": "ITFO_BREAD",
         "count": 1,
     }
-    system.chronicle.record(fact)
+    await system.chronicle.record(fact)
     npc = witness or (ANDRE if guard else CITIZEN)
-    system.chronicle.record(
+    await system.chronicle.record(
         {
             "fact": "crime_seen",
             "crime": crime,
@@ -133,31 +135,31 @@ def case(system, *, crime="theft-1", community="city", guard=False, at=AT, witne
     return fact
 
 
-def native_choice(system, node=PAYNOW, *, made=False):
-    system.link.receive(DialogChosen(type="dialog_chosen", npc=ANDRE, node=node, made=made))
+async def native_choice(system, node=PAYNOW, *, made=False):
+    await system.link.receive(DialogChosen(type="dialog_chosen", npc=ANDRE, node=node, made=made))
 
 
 @pytest.mark.parametrize("resolution", ["forgiven", "silenced", "absolved"])
 async def test_resolved_case_stops_native_news_without_erasing_knowledge(runtime, resolution):
     witness = "BAU_951_HILDA"
-    crime = case(runtime, community="farm", witness=witness)
+    crime = await case(runtime, community="farm", witness=witness)
     assert runtime.service._news_levels() == {witness: 3}
 
     fact = {"fact": resolution, "npc": witness, "crime": crime["id"]}
     if resolution == "absolved":
         fact = {"fact": resolution, "community": "farm", "crimes": [crime["id"]]}
-    runtime.chronicle.record(fact)
+    await runtime.chronicle.record(fact)
 
     assert runtime.crimes.known(witness)
     assert runtime.service._news_levels() == {}
 
-    case(runtime, crime="unresolved-theft", community="farm", witness=witness)
+    await case(runtime, crime="unresolved-theft", community="farm", witness=witness)
     assert runtime.service._news_levels() == {witness: 3}
 
 
 async def test_native_pollution_stays_locked_then_known_counters_are_written_before_opening(runtime):
     link, service = runtime.link, runtime.service
-    case(runtime)
+    await case(runtime)
     for suffix in ("THEFT", "ATTACK", "MURDER", "SHEEPKILLER"):
         link.variables[f"PETZCOUNTER_CITY_{suffix}"] = 17
     link.variables.update({"ANDRE_LASTPETZCOUNTER": 17, "ANDRE_LASTPETZCRIME": 4})
@@ -184,11 +186,11 @@ async def test_native_pollution_stays_locked_then_known_counters_are_written_bef
 
 @pytest.mark.parametrize("made,paid", [(False, True), (True, False)])
 async def test_only_native_dialog_choice_can_absolve_its_cases(runtime, made, paid):
-    case(runtime, guard=True)
+    await case(runtime, guard=True)
     await runtime.service.tick()
     assert runtime.law.debt("city") == 50
     runtime.link.variables["ANDRE_SCHULDEN"] = 0  # the successful native payment has completed
-    native_choice(runtime, made=made)
+    await native_choice(runtime, made=made)
     await runtime.service.tick()
     assert bool(runtime.chronicle.facts("absolved")) is paid
     assert runtime.law.debt("city") == (0 if paid else 50)
@@ -197,10 +199,10 @@ async def test_only_native_dialog_choice_can_absolve_its_cases(runtime, made, pa
 
 
 async def test_native_paynow_with_unsettled_script_debt_does_not_absolve(runtime):
-    case(runtime, guard=True)
+    await case(runtime, guard=True)
     await runtime.service.tick()
     runtime.link.variables["ANDRE_SCHULDEN"] = 50
-    native_choice(runtime)
+    await native_choice(runtime)
     await runtime.service.tick()
     assert runtime.chronicle.facts("absolved") == []
     assert runtime.law.debt("city") == 50
@@ -212,7 +214,7 @@ async def test_city_entry_uses_runtime_law_and_reopens_in_the_payment_poll(runti
     entry = city_entry_program(
         "DIA_MIL_310_STADTWACHE_BRIBE", "condition", [{"do": "return", "value": ["int", 1]}]
     )
-    case(runtime)
+    await case(runtime)
     await runtime.service.tick()
     vm.variables.update(runtime.link.variables)
     assert vm.execute(entry) == 1  # eyewitness report still travelling
@@ -220,7 +222,7 @@ async def test_city_entry_uses_runtime_law_and_reopens_in_the_payment_poll(runti
     await runtime.service.tick()
     vm.variables.update(runtime.link.variables)
     assert vm.execute(entry) == 0
-    native_choice(runtime)
+    await native_choice(runtime)
     await runtime.service.tick()
     vm.variables.update(runtime.link.variables)
     assert runtime.chronicle.facts("absolved")[0]["crimes"] == ["theft-1"]
@@ -228,9 +230,9 @@ async def test_city_entry_uses_runtime_law_and_reopens_in_the_payment_poll(runti
 
 
 async def test_city_entry_rebuilds_from_the_loaded_branch_law(runtime):
-    case(runtime)
+    await case(runtime)
     await runtime.service.tick()
-    saved_head = runtime.memory.head("A")
+    saved_head = await runtime.memory.head("A")
     runtime.link.clock = AT + 1440
     await runtime.service.tick()
     vm = GateVM("MIL_333_STADTWACHE")
@@ -239,7 +241,7 @@ async def test_city_entry_rebuilds_from_the_loaded_branch_law(runtime):
     )
     vm.variables.update(runtime.link.variables)
     assert vm.execute(entry) == 0
-    runtime.link.receive(Session(type="session", branch="B", parent="A", parent_seq=saved_head))
+    await runtime.link.receive(Session(type="session", branch="B", parent="A", parent_seq=saved_head))
     runtime.link.clock = AT
     await runtime.service.tick()
     vm.variables.update(runtime.link.variables)
@@ -293,14 +295,14 @@ async def test_installer_patches_both_parts_of_entry_that_never_read_native_petz
 
 
 async def test_payment_covers_event_snapshot_while_report_arriving_on_tick_stays_owed(runtime):
-    case(runtime, crime="already-known", guard=True)
-    case(runtime, crime="still-travelling")
+    await case(runtime, crime="already-known", guard=True)
+    await case(runtime, crime="still-travelling")
     await runtime.service.tick()
     assert [f["id"] for f in runtime.law.unpaid("city")] == ["already-known"]
 
     runtime.link.clock = AT + 1440
     runtime.link.variables["ANDRE_SCHULDEN"] = 0
-    native_choice(runtime)
+    await native_choice(runtime)
     await runtime.service.tick()
     (payment,) = runtime.chronicle.facts("absolved")
     assert payment["crimes"] == ["already-known"]
@@ -311,11 +313,11 @@ async def test_payment_covers_event_snapshot_while_report_arriving_on_tick_stays
 
 
 async def test_loc_all_cancels_existing_pending_reports_but_not_a_later_crime(runtime):
-    case(runtime, crime="city-before", guard=True)
-    case(runtime, crime="farm-pending", community="farm")
+    await case(runtime, crime="city-before", guard=True)
+    await case(runtime, crime="farm-pending", community="farm")
     await runtime.service.tick()
-    native_choice(runtime, "DIA_PARLAN_WELCOME")
-    case(runtime, crime="city-after", guard=True, at=AT + 1)
+    await native_choice(runtime, "DIA_PARLAN_WELCOME")
+    await case(runtime, crime="city-after", guard=True, at=AT + 1)
     runtime.link.clock = AT + 2
     await runtime.service.tick()
     assert {f["community"] for f in runtime.chronicle.facts("absolved")} == {"city", "farm"}
@@ -330,16 +332,16 @@ async def test_loc_all_cancels_existing_pending_reports_but_not_a_later_crime(ru
 
 
 async def test_loading_a_branch_before_arrival_resets_runtime_projection_and_drops_old_payment(runtime):
-    case(runtime)
+    await case(runtime)
     await runtime.service.tick()
-    saved_head = runtime.memory.head("A")
+    saved_head = await runtime.memory.head("A")
     runtime.link.clock = AT + 1440
     await runtime.service.tick()
     assert runtime.link.variables[law_var("city")] == 1
-    native_choice(runtime)
+    await native_choice(runtime)
     assert runtime.service._events
 
-    runtime.link.receive(Session(type="session", branch="B", parent="A", parent_seq=saved_head))
+    await runtime.link.receive(Session(type="session", branch="B", parent="A", parent_seq=saved_head))
     assert not runtime.service._installed
     assert runtime.service._projection == {}
     assert runtime.service._levels is None
@@ -360,17 +362,17 @@ async def test_loading_a_branch_before_arrival_resets_runtime_projection_and_dro
 
 
 async def test_loading_notification_discards_a_queued_payment(runtime):
-    case(runtime, guard=True)
+    await case(runtime, guard=True)
     await runtime.service.tick()
-    native_choice(runtime)
-    runtime.link.receive(Loading(type="loading"))
+    await native_choice(runtime)
+    await runtime.link.receive(Loading(type="loading"))
     await runtime.service.tick()
     assert runtime.chronicle.facts("absolved") == []
     assert runtime.law.debt("city") == 50
 
 
 async def test_a_clock_reply_from_previous_branch_cannot_publish_law_state(runtime):
-    case(runtime, guard=True)
+    await case(runtime, guard=True)
     started, resume = asyncio.Event(), asyncio.Event()
 
     async def pause_state():
@@ -380,7 +382,7 @@ async def test_a_clock_reply_from_previous_branch_cannot_publish_law_state(runti
     runtime.link.state_hook = pause_state
     task = asyncio.create_task(runtime.service.tick())
     await started.wait()
-    runtime.link.receive(Session(type="session", branch="B"))
+    await runtime.link.receive(Session(type="session", branch="B"))
     runtime.link.clock = AT - 1440
     resume.set()
     await task
@@ -395,7 +397,7 @@ async def test_a_clock_reply_from_previous_branch_cannot_publish_law_state(runti
 
 async def test_unavailable_legacy_witness_does_not_block_a_current_local_guard_report(runtime, monkeypatch):
     remote = "MIL_OLDWORLD_WITNESS"
-    runtime.chronicle.record(
+    await runtime.chronicle.record(
         {
             "fact": "crime",
             "id": "legacy-oldcamp",
@@ -406,8 +408,8 @@ async def test_unavailable_legacy_witness_does_not_block_a_current_local_guard_r
             "minute": AT % 60,
         }
     )
-    runtime.chronicle.record({"fact": "crime_seen", "crime": "legacy-oldcamp", "npc": remote})
-    current = case(runtime, crime="current-city", guard=True)
+    await runtime.chronicle.record({"fact": "crime_seen", "crime": "legacy-oldcamp", "npc": remote})
+    current = await case(runtime, crime="current-city", guard=True)
     requested = []
 
     async def unavailable(npc, expressions):

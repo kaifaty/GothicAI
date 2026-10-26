@@ -19,6 +19,7 @@ from gothic_ai.sightings import Sighting
 from gothic_ai.social import Rumors, Social
 from tests.test_crime_react import card
 from tests.test_crimes import HILDA, LOBART, Link
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 THIEF, VICTIM = "BAU_952_VINO", "BAU_953_MALETH"
 GUARD, OTHER_GUARD = "MIL_300_GUARD", "MIL_301_GUARD"
@@ -28,14 +29,16 @@ NAMES = {LOBART: "Лобарт", HILDA: "Хильда", THIEF: "Вино", VICTI
 
 @pytest.mark.parametrize("suspect", [THIEF, HILDA])
 async def test_missing_chest_suspects_remembered_person_even_when_innocent(system, suspect):
-    crime = system.deeds.record(deed(chest="CHEST", chest_owner=LOBART))
+    crime = await system.deeds.record(deed(chest="CHEST", chest_owner=LOBART))
     at = 3 * 1440 + 9 * 60 + 15
     sight = Sighting(suspect, NAMES[suspect], at - 2, at + 2, place_ids=["FARM"])
-    system.hero.sightings = SimpleNamespace(mind=lambda npc: SimpleNamespace(sightings=[sight]))
+    system.hero.sightings = SimpleNamespace(
+        mind=lambda npc: SimpleNamespace(sightings=[sight]), prepare=lambda npc: asyncio.sleep(0),
+    )
     system.hero.places = SimpleNamespace(of=lambda wp: SimpleNamespace(id="FARM"))
-    suspected = system.deeds.suspect_chest(LOBART, "CHEST", {"ITFO_BREAD": 1})
+    suspected = await system.deeds.suspect_chest(LOBART, "CHEST", {"ITFO_BREAD": 1})
     assert [(f["crime"], f["suspect"]) for f in suspected] == [(crime["id"], suspect)]
-    assert system.deeds.suspect_chest(LOBART, "CHEST", {"ITFO_BREAD": 1}) == []
+    assert (await system.deeds.suspect_chest(LOBART, "CHEST", {"ITFO_BREAD": 1})) == []
     assert system.chronicle.facts("crime_suspected") == []
     assert system.hero.known(LOBART) == []
     assert system.deeds.seen(LOBART) == []
@@ -43,17 +46,19 @@ async def test_missing_chest_suspects_remembered_person_even_when_innocent(syste
 
 @pytest.mark.parametrize("change", ["hero", "old", "elsewhere", "other_item", "disabled"])
 async def test_chest_suspicion_needs_spatial_temporal_memory_and_skips_hero(system, change):
-    system.deeds.record(deed(chest="CHEST", chest_owner=LOBART))
+    await system.deeds.record(deed(chest="CHEST", chest_owner=LOBART))
     at = 3 * 1440 + 9 * 60 + 15
     sight = Sighting("PLAYER" if change == "hero" else THIEF, "Кто-то", at, at,
                      place_ids=["CITY" if change == "elsewhere" else "FARM"])
     if change == "old":
         sight.start = sight.end = at - 120
-    system.hero.sightings = SimpleNamespace(mind=lambda npc: SimpleNamespace(sightings=[sight]))
+    system.hero.sightings = SimpleNamespace(
+        mind=lambda npc: SimpleNamespace(sightings=[sight]), prepare=lambda npc: asyncio.sleep(0),
+    )
     system.hero.places = SimpleNamespace(of=lambda wp: SimpleNamespace(id="FARM"))
     system.deeds.enabled = change != "disabled"
     item = "OTHER" if change == "other_item" else "ITFO_BREAD"
-    assert system.deeds.suspect_chest(LOBART, "CHEST", {item: 1}) == []
+    assert (await system.deeds.suspect_chest(LOBART, "CHEST", {item: 1})) == []
     assert system.chronicle.facts("npc_crime_suspected") == []
 
 
@@ -73,7 +78,7 @@ class NpcLink(Link):
     async def npc_act(self, npc: str, action: str, /, **args: Any) -> str:
         self.actions.append((npc, action, args))
         action_id = f"a{len(self.actions)}"
-        self.receive(NpcActResult(
+        await self.receive(NpcActResult(
             type="npc_act_result", id=action_id, npc=npc,
             status="queued" if self.accept else "rejected", detail=None if self.accept else "busy",
         ))
@@ -102,8 +107,9 @@ class NpcLink(Link):
 
 @pytest.fixture
 async def system():
-    link, memory = NpcLink(), MemoryStore(":memory:")
+    link, memory = NpcLink(), (await MemoryStore.open(":memory:"))
     chronicle = Chronicle(link, memory)
+    await chronicle.initialize()
     hero = Crimes(link, chronicle, names=lambda npc: NAMES.get(npc, npc))
     deeds = NpcCrimes(link, chronicle, crimes=hero)
     yield SimpleNamespace(link=link, memory=memory, chronicle=chronicle, hero=hero, deeds=deeds)
@@ -111,7 +117,7 @@ async def system():
     await hero.close()
     if chronicle._background:
         await asyncio.gather(*chronicle._background)
-    memory.close()
+    await memory.close()
 
 
 def deed(**fields: Any) -> NpcDeed:
@@ -130,7 +136,7 @@ def deed(**fields: Any) -> NpcDeed:
     {"owner": THIEF, "chest": "CHEST", "chest_owner": LOBART},
 ])
 async def test_own_public_unowned_and_dropped_items_leave_no_fact(system, ownership):
-    assert system.deeds.record(deed(**ownership)) is None
+    assert (await system.deeds.record(deed(**ownership))) is None
     assert system.chronicle.facts() == []
 
 
@@ -142,7 +148,7 @@ async def test_own_public_unowned_and_dropped_items_leave_no_fact(system, owners
     ({"owner": LOBART, "owner_npc_guild": 12, "item_dropped": True}, LOBART, None),
 ])
 async def test_foreign_world_chest_room_and_guild_ownership(system, ownership, owner, community):
-    fact = system.deeds.record(deed(**ownership, witnesses=[HILDA, HILDA.lower(), THIEF]))
+    fact = await system.deeds.record(deed(**ownership, witnesses=[HILDA, HILDA.lower(), THIEF]))
     assert fact is not None
     assert fact["fact"] == "npc_crime" and fact["culprit"] == THIEF and fact["kind"] == "theft"
     assert (fact["victim"], fact["owner"], fact["community"]) == (owner, owner, community)
@@ -150,14 +156,14 @@ async def test_foreign_world_chest_room_and_guild_ownership(system, ownership, o
     assert system.deeds.seen(HILDA) == [fact]
     assert system.deeds.seen(THIEF) == []
     assert system.hero.facts() == [] and system.hero.known(HILDA) == []
-    assert system.deeds.record(deed(**ownership)) is None
+    assert (await system.deeds.record(deed(**ownership))) is None
     assert len(system.deeds.facts()) == 1
 
 
 async def test_owner_can_witness_theft_but_attack_victim_cannot_witness_own_assault(system):
-    theft = system.deeds.record(deed(owner=LOBART, witnesses=[LOBART, HILDA, THIEF]))
+    theft = await system.deeds.record(deed(owner=LOBART, witnesses=[LOBART, HILDA, THIEF]))
     assert theft["witnesses"] == [LOBART, HILDA]
-    attack = system.deeds.record(deed(
+    attack = await system.deeds.record(deed(
         id="attack", kind="attack", victim=VICTIM, victim_guild=3, victim_npctype=3,
         witnesses=[HILDA, VICTIM, THIEF, "PLAYER"],
     ))
@@ -171,13 +177,13 @@ async def test_owner_can_witness_theft_but_attack_victim_cannot_witness_own_assa
     {"kind": "attack", "victim": "WOLF", "victim_guild": 30},
 ])
 async def test_malformed_nonphysical_and_non_npc_deeds_are_not_recorded(system, fields):
-    assert system.deeds.record(deed(owner=LOBART, **fields)) is None
+    assert (await system.deeds.record(deed(owner=LOBART, **fields))) is None
     assert system.chronicle.facts() == []
 
 
 @pytest.mark.parametrize("kind,word", [("take_item", "украл"), ("attack", "напал")])
 async def test_sources_teach_only_witnesses_then_rumors_about_culprit(system, kind, word):
-    system.deeds.record(deed(
+    await system.deeds.record(deed(
         kind=kind, owner=LOBART, victim=VICTIM if kind == "attack" else "", witnesses=[HILDA, LOBART],
     ))
     people = PeopleKnowledge(system.chronicle)
@@ -192,14 +198,15 @@ async def test_sources_teach_only_witnesses_then_rumors_about_culprit(system, ki
     social = Social([{"npc": npc, "name": name} for npc, name in NAMES.items()])
     social.tie(HILDA, VICTIM).meets = [(0, 1440)]
     rumors = Rumors.__new__(Rumors)
+    rumors.link = system.link
     rumors.social, rumors.chronicle = social, system.chronicle
     rumors.dead, rumors.rumors, rumors.tells = set(), {}, defaultdict(int)
-    rumors.dialogue = SimpleNamespace(remember=lambda *args: None)
+    rumors.dialogue = SimpleNamespace(remember=lambda *args: asyncio.sleep(0))
     rumors.gate, rumors.clock = lambda *args: True, 3 * 1440 + 555
     rumors._load()
     [rumor] = rumors.rumors.values()
     assert rumor.known == {HILDA: 0, LOBART: 0}
-    assert rumors.tell(rumor, HILDA, VICTIM) == "told"
+    assert (await rumors.tell(rumor, HILDA, VICTIM)) == "told"
     [heard] = people.of(VICTIM)
     assert heard.subject == THIEF and not heard.direct and heard.source == HILDA
     assert word in people.context(VICTIM) and "со слов: Хильда" in people.context(VICTIM)
@@ -212,7 +219,7 @@ async def test_sources_teach_only_witnesses_then_rumors_about_culprit(system, ki
 @pytest.mark.parametrize("courage,fights", [(1, False), (2, False), (3, True), (5, True)])
 async def test_owner_cries_and_only_brave_owner_fights(system, courage, fights):
     system.deeds.cards = {LOBART: card(LOBART, courage=courage)}
-    fact = system.deeds.record(deed(owner=LOBART, witnesses=[LOBART, HILDA]))
+    fact = await system.deeds.record(deed(owner=LOBART, witnesses=[LOBART, HILDA]))
     await system.deeds._react(fact, 0)
     actions = system.link.actions
     if not fights:
@@ -228,7 +235,7 @@ async def test_owner_cries_and_only_brave_owner_fights(system, courage, fights):
 
 
 async def test_matching_guard_in_shout_range_fights_and_hears_without_fake_seen(system):
-    fact = system.deeds.record(deed(owner=LOBART, owner_npc_guild=3, witnesses=[HILDA]))
+    fact = await system.deeds.record(deed(owner=LOBART, owner_npc_guild=3, witnesses=[HILDA]))
     system.link.nearby = [
         {"npc": GUARD, "guild": 2, "distance": 2500},
         {"npc": OTHER_GUARD, "guild": 2, "distance": 2501},
@@ -246,7 +253,7 @@ async def test_matching_guard_in_shout_range_fights_and_hears_without_fake_seen(
 
 
 async def test_witness_guard_fights_even_when_nearby_query_excludes_self(system):
-    fact = system.deeds.record(deed(
+    fact = await system.deeds.record(deed(
         kind="attack", victim=VICTIM, victim_guild=3, witnesses=[GUARD],
         witnesses_metadata=[{"npc": GUARD, "guild": 2, "npctype": 0}],
     ))
@@ -259,7 +266,7 @@ async def test_witness_guard_fights_even_when_nearby_query_excludes_self(system)
 
 
 async def test_two_witness_guards_each_shout_inside_their_one_native_fight(system):
-    fact = system.deeds.record(deed(
+    fact = await system.deeds.record(deed(
         kind="attack", victim=VICTIM, victim_guild=3, witnesses=[GUARD, OTHER_GUARD],
         witnesses_metadata=[{"npc": npc, "guild": 2, "npctype": 0} for npc in (GUARD, OTHER_GUARD)],
     ))
@@ -271,7 +278,7 @@ async def test_two_witness_guards_each_shout_inside_their_one_native_fight(syste
 
 
 async def test_shout_does_not_pull_a_protected_guard_from_its_post(system):
-    fact = system.deeds.record(deed(owner=LOBART, owner_npc_guild=3, witnesses=[HILDA]))
+    fact = await system.deeds.record(deed(owner=LOBART, owner_npc_guild=3, witnesses=[HILDA]))
     system.link.nearby = [
         {"npc": GUARD, "guild": 2, "npctype": 0, "distance": 300, "state": "ZS_GUARD_PASSAGE"},
         {"npc": OTHER_GUARD, "guild": 2, "npctype": 0, "distance": 500},
@@ -282,11 +289,11 @@ async def test_shout_does_not_pull_a_protected_guard_from_its_post(system):
 
 @pytest.mark.parametrize("busy", ["fight", "dialog", "sleep", "body"])
 async def test_busy_or_sleeping_witness_remembers_but_does_not_act(system, busy):
-    fact = system.deeds.record(deed(owner=LOBART, witnesses=[HILDA]))
+    fact = await system.deeds.record(deed(owner=LOBART, witnesses=[HILDA]))
     if busy == "body":
         system.link.owned.add(HILDA)
     else:
-        system.link.receive(NpcRoster(type="npc_roster", t=0, npcs=[{
+        await system.link.receive(NpcRoster(type="npc_roster", t=0, npcs=[{
             "id": HILDA, "name": "Хильда", "distance": 200,
             "activity": "routine" if busy == "sleep" else busy,
             "state": "ZS_SLEEP" if busy == "sleep" else "ZS_STAND",
@@ -297,7 +304,7 @@ async def test_busy_or_sleeping_witness_remembers_but_does_not_act(system, busy)
 
 
 async def test_defeated_thief_returns_only_stolen_amount_to_real_owner(system):
-    fact = system.deeds.record(deed(owner=LOBART))
+    fact = await system.deeds.record(deed(owner=LOBART))
     await system.deeds._reclaim(fact, HILDA, 0)
     assert system.link.effects == [(THIEF, [{
         "do": "give", "item": "ITFO_BREAD", "count": 1, "to": "npc", "npc": LOBART,
@@ -310,12 +317,12 @@ async def test_defeated_thief_returns_only_stolen_amount_to_real_owner(system):
 @pytest.mark.parametrize("values", [[1, 1, 0, 1, 1, 0, 0], [1, 0, 1, 1, 1, 0, 0], [1, 0, 0, 0, 1, 0, 0]])
 async def test_dead_bodies_and_missing_stolen_item_do_not_restitute(system, values):
     system.link.values = values
-    await system.deeds._reclaim(system.deeds.record(deed(owner=LOBART)), HILDA, 0)
+    await system.deeds._reclaim((await system.deeds.record(deed(owner=LOBART))), HILDA, 0)
     assert system.link.effects == []
 
 
 async def test_two_fighters_restitute_case_once_and_never_more_than_inventory(system):
-    fact = system.deeds.record(deed(owner=LOBART, count=3))
+    fact = await system.deeds.record(deed(owner=LOBART, count=3))
     system.deeds._track_reclaim(fact, HILDA, 0)
     system.deeds._track_reclaim(fact, HILDA, 0)
     system.deeds._track_reclaim(fact, LOBART, 0)
@@ -325,7 +332,7 @@ async def test_two_fighters_restitute_case_once_and_never_more_than_inventory(sy
 
 
 async def test_no_unconsciousness_does_not_count_as_winning(system):
-    fact = system.deeds.record(deed(owner=LOBART))
+    fact = await system.deeds.record(deed(owner=LOBART))
     system.link.values = [0, 0, 0, 1, 1, 0, 0]
     moments = iter([0.0, 0.0, 181.0])
     system.deeds.clock = lambda: next(moments)
@@ -341,7 +348,7 @@ async def test_both_switches_refuse_harm_and_suppress_deeds(system, enabled, wit
     try:
         for action, args in [("steal", {"deed": True}), ("fight", {"deed": True, "npc": VICTIM})]:
             assert "выключены" in await service.check_command(THIEF, action, args)
-        assert service.record(deed(owner=LOBART, witnesses=[HILDA])) is None
+        assert (await service.record(deed(owner=LOBART, witnesses=[HILDA]))) is None
         assert system.chronicle.facts() == []
         assert await service.check_command(THIEF, "say_svm", {"svm": "HELP"}) is None
     finally:
@@ -375,20 +382,24 @@ async def test_guard_failure_has_specific_reason_and_no_side_effect(system):
 
 
 async def test_save_load_restores_deeds_and_knowledge_and_older_save_drops_them(system):
-    before = system.memory.head("A")
-    first = system.deeds.record(deed(owner=LOBART, witnesses=[HILDA]))
-    saved = system.memory.head("A")
-    system.deeds.record(deed(id="later", owner=LOBART, witnesses=[HILDA]))
-    system.link.receive(Session(type="session", branch="loaded", parent="A", parent_seq=saved, reason="load"))
+    before = await system.memory.head("A")
+    first = await system.deeds.record(deed(owner=LOBART, witnesses=[HILDA]))
+    saved = await system.memory.head("A")
+    await system.deeds.record(deed(id="later", owner=LOBART, witnesses=[HILDA]))
+    await system.link.receive(
+        Session(type="session", branch="loaded", parent="A", parent_seq=saved, reason="load")
+    )
     assert system.deeds.facts() == [first]
     assert len(PeopleKnowledge(system.chronicle).of(HILDA)) == 1
-    assert system.deeds.record(deed(owner=LOBART)) is None
-    system.link.receive(Session(type="session", branch="old", parent="A", parent_seq=before, reason="load"))
+    assert (await system.deeds.record(deed(owner=LOBART))) is None
+    await system.link.receive(
+        Session(type="session", branch="old", parent="A", parent_seq=before, reason="load")
+    )
     assert system.deeds.facts() == [] and PeopleKnowledge(system.chronicle).of(HILDA) == []
 
 
 async def test_loading_cancels_reclaim_without_writing_to_loaded_branch(system):
-    fact = system.deeds.record(deed(owner=LOBART))
+    fact = await system.deeds.record(deed(owner=LOBART))
     entered, blocked = asyncio.Event(), asyncio.Event()
 
     async def evaluate(npc, exprs):
@@ -400,25 +411,25 @@ async def test_loading_cancels_reclaim_without_writing_to_loaded_branch(system):
     system.deeds._track_reclaim(fact, HILDA, 0)
     await entered.wait()
     tasks = tuple(system.deeds._tasks)
-    system.link.receive(Loading(type="loading"))
+    await system.link.receive(Loading(type="loading"))
     await asyncio.gather(*tasks, return_exceptions=True)
     assert all(task.cancelled() for task in tasks)
     assert not system.link.effects and not system.chronicle.facts("npc_crime_restitution")
 
 
 async def test_nonlethal_action_done_can_prove_knockout_after_native_fight_already_ended(system):
-    fact = system.deeds.record(deed(owner=LOBART))
+    fact = await system.deeds.record(deed(owner=LOBART))
     system.link.values = [1, 0, 0, 2, 0, 0, 0]
-    system.link.receive(NpcIdle(type="npc_idle", npc=LOBART, act="fight-1", reason="done"))
+    await system.link.receive(NpcIdle(type="npc_idle", npc=LOBART, act="fight-1", reason="done"))
     await system.deeds._reclaim(fact, LOBART, 0, "fight-1")
     assert len(system.link.effects) == 1
 
 
 @pytest.mark.parametrize("reason", ["interrupted", "gone", "timeout", "failed", "done"])
 async def test_unrelated_later_defeat_after_finished_action_does_not_restitute(system, reason):
-    fact = system.deeds.record(deed(owner=LOBART))
+    fact = await system.deeds.record(deed(owner=LOBART))
     system.link.values = [0 if reason == "done" else 1, 0, 0, 2, 0, 0, 0]
-    system.link.receive(NpcIdle(type="npc_idle", npc=LOBART, act="fight-1", reason=reason))
+    await system.link.receive(NpcIdle(type="npc_idle", npc=LOBART, act="fight-1", reason=reason))
     await system.deeds._reclaim(fact, LOBART, 0, "fight-1")
     assert not system.link.effects
 
@@ -426,7 +437,7 @@ async def test_unrelated_later_defeat_after_finished_action_does_not_restitute(s
 @pytest.mark.parametrize("guild", [16, 18, 27, 31])
 async def test_nonhuman_bridge_witness_cannot_learn_speak_or_start_defense(system, guild):
     sheep = "SHEEP_WITNESS"
-    fact = system.deeds.record(deed(
+    fact = await system.deeds.record(deed(
         owner=LOBART, witnesses=[sheep, HILDA],
         witnesses_metadata=[{"npc": sheep, "guild": guild}, {"npc": HILDA, "guild": 12}],
     ))
@@ -441,14 +452,14 @@ async def test_nonhuman_bridge_witness_cannot_learn_speak_or_start_defense(syste
 async def test_cached_nonhuman_is_filtered_even_when_old_snapshot_lacks_metadata(system):
     sheep = "SHEEP_WITNESS"
     system.hero.people[sheep] = {"guild": 18}
-    fact = system.deeds.record(deed(owner=LOBART, witnesses=[sheep, HILDA]))
+    fact = await system.deeds.record(deed(owner=LOBART, witnesses=[sheep, HILDA]))
     assert fact["witnesses"] == [HILDA]
 
 
 @pytest.mark.parametrize("guild", [None, 18, 27])
 async def test_old_witness_without_guild_needs_live_human_proof_before_svm(system, guild):
     # Legacy bridge observations remain evidence, but do not authorize a voice without live identity.
-    fact = system.deeds.record(deed(owner=LOBART, witnesses=[HILDA]))
+    fact = await system.deeds.record(deed(owner=LOBART, witnesses=[HILDA]))
     system.link.guilds[HILDA] = guild
     assert fact["witnesses"] == [HILDA]
     await system.deeds._react(fact, 0)
@@ -457,7 +468,7 @@ async def test_old_witness_without_guild_needs_live_human_proof_before_svm(syste
 
 
 async def test_unknown_human_witness_is_confirmed_once_before_svm(system):
-    fact = system.deeds.record(deed(owner=LOBART, witnesses=[HILDA]))
+    fact = await system.deeds.record(deed(owner=LOBART, witnesses=[HILDA]))
     await system.deeds._react(fact, 0)
     assert system.hero.people[HILDA]["guild"] == 12
     assert system.link.actions == [(HILDA, "say_svm", {"svm": "DIRTYTHIEF", "overlay": True})]
@@ -474,7 +485,7 @@ async def test_direct_svm_and_fight_svm_refuse_nonhuman_speakers(system):
 
 
 async def test_defender_knockout_ends_tracker_and_leaves_stolen_goods_with_thief(system):
-    fact = system.deeds.record(deed(owner=LOBART))
+    fact = await system.deeds.record(deed(owner=LOBART))
     system.link.values = [0, 0, 0, 2, 0, 0, 1]
     system.deeds._track_reclaim(fact, LOBART, 0, "fight-1")
     await asyncio.gather(*tuple(system.deeds._tasks))
@@ -489,9 +500,9 @@ async def test_defender_knockout_ends_tracker_and_leaves_stolen_goods_with_thief
 
 
 async def test_native_knockout_receipt_can_arrive_before_script_unconscious_state(system):
-    fact = system.deeds.record(deed(owner=LOBART))
+    fact = await system.deeds.record(deed(owner=LOBART))
     system.link.values = [0, 0, 0, 2, 0, 0, 0]
-    system.link.receive(NpcIdle(
+    await system.link.receive(NpcIdle(
         type="npc_idle", npc=LOBART, act="fight-1", reason="done", detail="target_down",
     ))
     await system.deeds._reclaim(fact, LOBART, 0, "fight-1")
@@ -501,9 +512,9 @@ async def test_native_knockout_receipt_can_arrive_before_script_unconscious_stat
 
 
 async def test_native_defender_down_receipt_ends_tracker_before_script_state_catches_up(system):
-    fact = system.deeds.record(deed(owner=LOBART))
+    fact = await system.deeds.record(deed(owner=LOBART))
     system.link.values = [0, 0, 0, 2, 0, 0, 0]
-    system.link.receive(NpcIdle(
+    await system.link.receive(NpcIdle(
         type="npc_idle", npc=LOBART, act="fight-1", reason="gone", detail="defender_down",
     ))
     await system.deeds._reclaim(fact, LOBART, 0, "fight-1")
@@ -512,16 +523,16 @@ async def test_native_defender_down_receipt_ends_tracker_before_script_state_cat
 
 
 async def test_native_timeout_is_terminal_and_does_not_reclaim_or_restart_fight(system):
-    fact = system.deeds.record(deed(owner=LOBART))
+    fact = await system.deeds.record(deed(owner=LOBART))
     system.link.values = [0, 0, 0, 2, 1, 0, 0]
-    system.link.receive(NpcIdle(type="npc_idle", npc=LOBART, act="fight-1", reason="timeout"))
+    await system.link.receive(NpcIdle(type="npc_idle", npc=LOBART, act="fight-1", reason="timeout"))
     await system.deeds._reclaim(fact, LOBART, 0, "fight-1")
     assert not system.link.effects and not system.link.actions
     assert system.chronicle.facts("npc_crime_defense")[0]["outcome"] == "timeout"
 
 
 async def test_server_waits_for_native_timeout_receipt_reserve_then_finishes_once(system):
-    fact = system.deeds.record(deed(owner=LOBART))
+    fact = await system.deeds.record(deed(owner=LOBART))
     moments = iter([0.0, 121.0, 181.0])
     system.deeds.clock = lambda: next(moments)
     system.link.values = [0, 0, 0, 2, 1, 0, 0]
@@ -533,7 +544,7 @@ async def test_server_waits_for_native_timeout_receipt_reserve_then_finishes_onc
 
 @pytest.mark.parametrize("error_type", [GameError, TimeoutError])
 async def test_reclaim_failure_warns_with_actual_error_and_tracked_fight(system, caplog, error_type):
-    fact = system.deeds.record(deed(owner=LOBART))
+    fact = await system.deeds.record(deed(owner=LOBART))
 
     async def fail_transfer(npc, effects, *, check=False):
         raise error_type("missing: hero ITFO_BREAD 1 (has 0)")

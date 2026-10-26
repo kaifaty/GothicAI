@@ -35,7 +35,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -248,7 +249,7 @@ class Sightings:
         desk: PerceptionDesk,
         chronicle: Chronicle,
         *,
-        knows_hero: Callable[[str], bool] = lambda npc: False,
+        knows_hero: Callable[[str], Awaitable[bool]] | None = None,
         journal: Journal | None = None,
         crimes: Crimes | None = None,
     ) -> None:
@@ -263,6 +264,7 @@ class Sightings:
         self.now = 0  # the game's clock as the latest view had it (minutes)
         self._clock_known = False
         self._minds: dict[str, Mind] = {}
+        self._generation = 0
         self._shown: dict[str, dict[str, Sighting]] = {}  # npc -> the hero's sightings by id, last turn
         self._crime_shown: dict[str, dict[str, Fact]] = {}  # npc -> its own crime_seen evidence, last turn
         self._caught: set[tuple[str, str]] = set()  # (npc, his words) caught already
@@ -271,7 +273,7 @@ class Sightings:
         desk.on_view.append(self.saw)
         link.listeners.append(self._on_message)
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         match msg:
             case Session():
                 self.branch = msg.branch
@@ -281,11 +283,12 @@ class Sightings:
             case NpcViews():
                 times = [v.time for v in msg.views if v.time is not None]
                 if times:
-                    self._sweep(max(times))
+                    await self._sweep(max(times))
             case NpcEvent(kind="noise"):
-                self.heard(msg)
+                await self.heard(msg)
 
     def _forget(self) -> None:
+        self._generation += 1
         self._minds.clear()
         self._shown.clear()
         self._crime_shown.clear()
@@ -295,19 +298,31 @@ class Sightings:
 
     # --- seeing ---------------------------------------------------------------------------------
 
-    def saw(self, view: NpcView) -> None:
+    async def saw(self, view: NpcView) -> None:
         """A view of the npc's (pushed or asked): whom it sees goes into its sightings."""
         if self.branch is None or view.time is None:
             return
+        branch, generation, session = self.branch, self._generation, self.link.session
+
+        async def apply() -> None:
+            await self.prepare(view.npc)
+            if self._current(branch, generation, session):
+                await self._saw(view, branch, generation, session)
+
+        await self.memory.complete(apply)
+
+    async def _saw(self, view: NpcView, branch: str, generation: int, session: Any) -> None:
         now = view.time
+        assert now is not None
         self.now = max(self.now, now)
         self._clock_known = True
         viewer = view.npc.upper()
-        mind = self.mind(viewer)
+        mind = deepcopy(self.mind(viewer))
         for who, look, known in self._subjects(view):
             s = mind.going.get(who)
             if s is not None and now - s.end > GAP_MIN:
-                self._close(viewer, mind, s)
+                if not await self._close(viewer, mind, s, branch, generation, session):
+                    return
                 s = None
             if s is None:
                 name = "Герой" if who == HERO else look.name if known else self.desk.label(viewer, look)
@@ -329,7 +344,8 @@ class Sightings:
             if doing := _doing(look.state, look.body, 0):
                 s.doing = doing
             if s.saved < 0 or s.end - s.saved >= SAVE_MIN:
-                self._write(viewer, s)
+                if not await self._write(viewer, mind, s, branch, generation, session):
+                    return
         hello = getattr(self.link, "hello", None)
         if hello is None or hello.protocol >= TRACE_PROTOCOL:
             for trace in view.traces:
@@ -350,13 +366,26 @@ class Sightings:
                         trace_age=trace.age if trace.kind == "broken" else None,
                     )
                     mind.traces[who] = s
-                    self._write(viewer, s)
+                    if not await self._write(viewer, mind, s, branch, generation, session):
+                        return
+        if self._current(branch, generation, session):
+            self._minds[viewer] = mind
 
-    def heard(self, event: NpcEvent) -> None:
+    async def heard(self, event: NpcEvent) -> None:
         """An actual noise event, kept separately from things seen and never usable as a В line."""
         hello = getattr(self.link, "hello", None)
         if self.branch is None or (hello is not None and hello.protocol < NOISE_PROTOCOL):
             return
+        branch, generation, session = self.branch, self._generation, self.link.session
+
+        async def apply() -> None:
+            await self.prepare(event.npc)
+            if self._current(branch, generation, session):
+                await self._heard(event, branch, generation, session)
+
+        await self.memory.complete(apply)
+
+    async def _heard(self, event: NpcEvent, branch: str, generation: int, session: Any) -> None:
         now = event.time if event.time is not None else self.now if self._clock_known else None
         if now is None:
             return
@@ -367,12 +396,12 @@ class Sightings:
         where = place.where_ru if place is not None else f"у точки {event.place}" if event.place else "рядом"
         sound = Heard(now, where, place.id if place is not None else "")
         viewer = event.npc.upper()
-        mind = self.mind(viewer)
+        mind = deepcopy(self.mind(viewer))
         if sound in mind.heard:
             return
         mind.heard.append(sound)
         del mind.heard[:-KEEP]
-        self._remember(viewer, sound.record())
+        await self._remember(viewer, sound.record(), mind, branch, generation, session)
 
     def _subjects(self, view: NpcView) -> list[tuple[str, Look, bool]]:
         """Whom of those it sees it keeps: the hero, the people it knows (the nearest), and the strangers and
@@ -398,39 +427,84 @@ class Sightings:
         wp = look.waypoint or view.waypoint or view.nearest_waypoint
         return (f"у точки {wp}" if wp else "где-то рядом"), ""
 
-    def _sweep(self, now: int) -> None:
+    async def _sweep(self, now: int) -> None:
         """Sightings unseen for long enough are over: their end is written down."""
-        self.now = max(self.now, now)
-        self._clock_known = True
-        for viewer, mind in self._minds.items():
-            for s in list(mind.going.values()):
-                if self.now - s.end > GAP_MIN:
-                    self._close(viewer, mind, s)
-
-    def _close(self, viewer: str, mind: Mind, s: Sighting) -> None:
-        if s.saved != s.end:
-            self._write(viewer, s)
-        mind.going.pop(s.who, None)
-
-    def _write(self, viewer: str, s: Sighting) -> None:
-        self._remember(viewer, s.record())
-        s.saved = s.end
-
-    def _remember(self, viewer: str, record: dict[str, Any]) -> None:
-        if self.branch is None:
+        branch, generation, session = self.branch, self._generation, self.link.session
+        if branch is None:
             return
-        seq = self.memory.add_seen(self.branch, viewer, json.dumps(record, ensure_ascii=False))
+
+        async def apply() -> None:
+            if not self._current(branch, generation, session):
+                return
+            self.now = max(self.now, now)
+            self._clock_known = True
+            for viewer, cached in list(self._minds.items()):
+                mind = deepcopy(cached)
+                for s in list(mind.going.values()):
+                    if self.now - s.end > GAP_MIN:
+                        if not await self._close(viewer, mind, s, branch, generation, session):
+                            return
+                if self._current(branch, generation, session):
+                    self._minds[viewer] = mind
+
+        await self.memory.complete(apply)
+
+    async def _close(
+        self, viewer: str, mind: Mind, s: Sighting, branch: str, generation: int, session: Any,
+    ) -> bool:
+        mind.going.pop(s.who, None)
+        if s.saved != s.end:
+            return await self._write(viewer, mind, s, branch, generation, session)
+        return self._current(branch, generation, session)
+
+    async def _write(
+        self, viewer: str, mind: Mind, s: Sighting, branch: str, generation: int, session: Any,
+    ) -> bool:
+        s.saved = s.end
+        return await self._remember(viewer, s.record(), mind, branch, generation, session)
+
+    async def _remember(
+        self, viewer: str, record: dict[str, Any], mind: Mind,
+        branch: str, generation: int, session: Any,
+    ) -> bool:
+        content = json.dumps(record, ensure_ascii=False)
+        seq = await self.memory.add_seen(branch, viewer, content)
+        if not self._current(branch, generation, session):
+            return False
+        self._minds[viewer] = deepcopy(mind)
         # the head goes into the next save, so a load brings this back
-        self._spawn(self.link.send(MemoryCmd(branch=self.branch, seq=seq)))
+        try:
+            await self.link.send(MemoryCmd(branch=branch, seq=seq))
+        except GameError:
+            pass  # the game is gone; it learns the head again on reconnect
+        return self._current(branch, generation, session)
+
+    def _current(self, branch: str, generation: int, session: Any) -> bool:
+        return (
+            self.branch == branch and self._generation == generation
+            and self.link.session is session and session is not None and session.branch == branch
+        )
 
     def mind(self, npc: str) -> Mind:
-        """What the npc saw, read from the save branch the first time."""
+        """The prepared mind; reading it never performs storage work."""
+        return self._minds[npc.upper()] if self.branch is not None else Mind()
+
+    async def prepare(self, npc: str) -> None:
+        """Load the NPC's saved sightings before cache-only consumers read them."""
         npc = npc.upper()
-        mind = self._minds.get(npc)
-        if mind is None:
+        branch, generation, session = self.branch, self._generation, self.link.session
+        if branch is None:
+            return
+
+        async def load() -> None:
+            if not self._current(branch, generation, session) or npc in self._minds:
+                return
+            records = await self.memory.seen(branch, npc)
+            if not self._current(branch, generation, session):
+                return
             latest: dict[str, Sighting] = {}
             sounds: list[Heard] = []
-            for raw in self.memory.seen(self.branch, npc) if self.branch is not None else []:
+            for raw in records:
                 try:
                     record = json.loads(raw)
                     if not isinstance(record, dict):
@@ -445,10 +519,11 @@ class Sightings:
                 latest[s.key] = s
             people = [s for s in latest.values() if not s.trace_kind]
             traces = {s.who: s for s in latest.values() if s.trace_kind}
-            mind = self._minds[npc] = Mind(
+            self._minds[npc] = Mind(
                 sorted(people, key=lambda s: s.start)[-KEEP:], traces=traces, heard=sounds[-KEEP:]
             )
-        return mind
+
+        await self.memory.complete(load)
 
     # --- in words ---------------------------------------------------------------------------------
 
@@ -482,19 +557,23 @@ class Sightings:
 
     # --- TurnExtension --------------------------------------------------------------------------
 
-    async def prepare(self, npc: str) -> None:
-        pass  # perception asks the view afresh before the turn; it comes here as any view
-
-    def situation(self, npc: str) -> str | None:
+    async def situation(self, npc: str) -> str | None:
         npc = npc.upper()
         if self.branch is None:
+            return None
+        branch, generation, session = self.branch, self._generation, self.link.session
+        await self.prepare(npc)
+        if not self._current(branch, generation, session):
             return None
         lines = []
         shown: dict[str, Sighting] = {}
         trail = self.hero_trail(npc)[:HERO_SHOWN]
         if trail:
+            known = await self.knows_hero(npc) if self.knows_hero is not None else False
+            if not self._current(branch, generation, session):
+                return None
             lines.append(
-                "Героя:" if self.knows_hero(npc) else "Героя (имени его ты не знаешь, но в лицо узнаёшь):"
+                "Героя:" if known else "Героя (имени его ты не знаешь, но в лицо узнаёшь):"
             )
             for i, s in enumerate(trail, 1):
                 shown[f"В{i}"] = s
@@ -694,18 +773,6 @@ class Sightings:
             f"- героя: {self.words(s)}" if s.who == HERO else f"- {self._other(s, self.now)}" for s in hits
         ]
         return "Что ты видел сам:\n" + "\n".join(lines)
-
-    def _spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
-        async def run() -> None:
-            try:
-                await coro
-            except GameError:
-                pass  # the game is gone; it learns the head again on reconnect
-
-        task = asyncio.create_task(run())
-        self._background.add(task)
-        task.add_done_callback(self._background.discard)
-
 
 # --- time in words ------------------------------------------------------------------------------
 

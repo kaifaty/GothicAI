@@ -311,14 +311,14 @@ class FarWorld:
                     raise
                 if not self._current(generation):
                     return None
-                chronicle.record({
+                await chronicle.record({
                     "fact": "npc_crime_restitution", "crime": cid, "npc": crime["owner"],
                     "culprit": culprit, "fighter": fighter, "item": crime["item"], "count": returned,
                     "how": "defeated_thief", "far": True,
                     **({"blamed": crime["blamed"]} if crime.get("blamed") else {}),
                 })
                 outcome = "reclaimed"
-        chronicle.record({
+        await chronicle.record({
             "fact": "npc_crime_reaction", "crime": cid, "npc": fighter,
             "culprit": culprit,
             "reaction": "fight", "role": role, "act": action, "far": True,
@@ -331,5 +331,5 @@ class FarWorld:
             "far": True,
             **({"blamed": crime["blamed"]} if crime.get("blamed") else {}),
         }
-        chronicle.record(result)
+        await chronicle.record(result)
         return result

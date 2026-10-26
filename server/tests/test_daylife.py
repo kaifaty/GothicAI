@@ -33,6 +33,7 @@ from tests.fake_game import FakeGame, connected
 from tests.fakes import Clock, FakeDecider
 from tests.test_dialogue import _until
 from tests.test_director import LOBART, QUEST, VINO, XARDAS
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_planner import make, step
 from tests.test_talk import person
 
@@ -181,7 +182,7 @@ async def _day(
     """The parts as cli.py wires them, around the fake game at 10:00 of day 1: the rumors with the people's
     days, the gossip desk, the day desk and a planner that asks the routines from the game and applies the
     do menu. Lobart caught the hero lying, Vino heard it from him today; the gate lets Vino tell Malet."""
-    fake, store = FakeGame(branch="A", protocol=protocol), MemoryStore(":memory:")
+    fake, store = FakeGame(branch="A", protocol=protocol), await MemoryStore.open(":memory:")
     fake.auto_idle = True
     fake.hour, fake.minute = 10, 0
     for p in PEOPLE_DAY:
@@ -193,8 +194,10 @@ async def _day(
         dialogue = DialogueManager(
             link, llm, PersonaProvider(None), memory=store, journal=Journal(journal.append), trace=trace
         )
+        await dialogue.initialize()
         dialogue.scene_pace = lambda text: 0.05
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         talk = TalkDesk(link, dialogue)
         rumors = Rumors(link, dialogue, chronicle)
         rumors.social, rumors.clock = Social(PEOPLE_DAY), AT
@@ -222,10 +225,10 @@ async def _day(
         link.listeners.append(planner.on_message)
         scenes.follow(planner)
         desk.follow(planner, scenes)
-        chronicle.record(
+        await chronicle.record(
             {"fact": "caught", "quest": QUEST, "npc": LOBART, "name": "Лобарт", "title": TITLE, "day": 1}
         )
-        _heard(chronicle, VINO)
+        await _heard(chronicle, VINO)
         d = D(
             fake,
             llm,
@@ -264,11 +267,11 @@ def _lines(*lines: tuple[str, str, str]) -> FakeStep:
     return FakeStep(tool_calls=[ToolCall("lines", {"lines": said, "quiet": False, "reason": "новость"})])
 
 
-def _heard(chronicle: Chronicle, npc: str) -> None:
+async def _heard(chronicle: Chronicle, npc: str) -> None:
     """`npc` heard Lobart's news from him today (one retelling away)."""
     rumor = {"fact": "rumor", "quest": QUEST, "kind": "caught", "about": LOBART, "about_name": "Лобарт"}
     told = {"title": TITLE, "from": LOBART, "from_name": "Лобарт", "to": npc, "hops": 1, "how": "met"}
-    chronicle.record({**rumor, **told, "day": 1})
+    await chronicle.record({**rumor, **told, "day": 1})
 
 
 def _minute(at: str) -> int:
@@ -395,7 +398,7 @@ async def test_fresh_news_offers_a_walk_to_tell_it(tmp_path, monkeypatch):
         assert offered()
 
         # Paul and Quint meet at 11:00: at 10:30 the schedule passes it anyway, at 09:30 he walks over
-        _heard(d.chronicle, P)
+        await _heard(d.chronicle, P)
         d.open.add((P, Q))
         assert "chat" not in _menu(d, P, "10:30").do
         chat = _menu(d, P, "09:30").do["chat"]
@@ -530,8 +533,8 @@ async def test_busy_bodies_wait_then_the_news_passes(tmp_path, monkeypatch):
         statuses: list[str] = []
         offer = d.rumors.offer_status
 
-        def recorded(r: Rumor, a: str, b: str, how: str = "met") -> Any:
-            statuses.append(offer(r, a, b, how))
+        async def recorded(r: Rumor, a: str, b: str, how: str = "met") -> str:
+            statuses.append(await offer(r, a, b, how))
             return statuses[-1]
 
         monkeypatch.setattr(d.rumors, "offer_status", recorded)
@@ -600,16 +603,20 @@ async def test_a_death_seen_is_prayed_for(tmp_path):
         assert "pray" not in _menu(d, T1, "20:30").do  # Vatras prays there then: the temple holds one
         assert "pray" not in _menu(d, T1, state="ZS_PRAY_INNOS_FP").do  # it prays already
         assert "pray" in _menu(d, T1).do
-        d.chronicle.record({"fact": "day", "npc": T1, "what": "pray", "concern": f"death:{T2}", "day": 1})
+        await d.chronicle.record(
+            {"fact": "day", "npc": T1, "what": "pray", "concern": f"death:{T2}", "day": 1}
+        )
         assert "pray" not in _menu(d, T1).do  # prayed for
 
 
 async def test_a_loss_is_drunk_away_in_a_tavern(tmp_path):
     async with _day(tmp_path) as d:
         d.fake.auto_idle = False  # his walk goes on
-        d.chronicle.record({"fact": "found_out", "quest": "Q1", "npc": T1, "name": "Горожанин", "day": 1})
-        d.chronicle.record({"fact": "paid", "quest": "Q1", "item": "ITMI_GOLD", "count": 50})
-        d.chronicle.record({"fact": "broken", "debt": "D1", "npc": T2, "name": "Горожанка", "day": 1})
+        await d.chronicle.record(
+            {"fact": "found_out", "quest": "Q1", "npc": T1, "name": "Горожанин", "day": 1}
+        )
+        await d.chronicle.record({"fact": "paid", "quest": "Q1", "item": "ITMI_GOLD", "count": 50})
+        await d.chronicle.record({"fact": "broken", "debt": "D1", "npc": T2, "name": "Горожанка", "day": 1})
         menu = _menu(d, T1)
         assert list(menu.do) == ["keep_routine", "tavern"]
         assert menu.do["tavern"] == DayOption(
@@ -644,8 +651,10 @@ async def test_a_spot_with_room_for_two_takes_two_trips(tmp_path):
         d.rumors.social = Social([*PEOPLE_DAY, drinker])
         assert d.rumors.social.capacity(TAVERN) == 2
         d.fake.auto_idle = False  # their walks go on
-        d.chronicle.record({"fact": "found_out", "quest": "Q1", "npc": T1, "name": "Горожанин", "day": 1})
-        d.chronicle.record({"fact": "broken", "debt": "D1", "npc": T2, "name": "Горожанка", "day": 1})
+        await d.chronicle.record(
+            {"fact": "found_out", "quest": "Q1", "npc": T1, "name": "Горожанин", "day": 1}
+        )
+        await d.chronicle.record({"fact": "broken", "debt": "D1", "npc": T2, "name": "Горожанка", "day": 1})
         _take(d, T1, "tavern")
         assert "tavern" in _menu(d, T2).do  # one place of two is held
         rec = _rec(d, T2)

@@ -736,23 +736,31 @@ class QuestBook:
 
     # --- the branch -----------------------------------------------------------------------------
 
-    def all(self) -> dict[str, Quest]:
+    async def all(self) -> dict[str, Quest]:
         """The quests of the current branch, from the records of its log."""
         if self._version != self.patches.version:
-            self._version = self.patches.version
-            self.quests = {}
-            for record in self.patches.records(QUEST):
+            version, generation = self.patches.version, self._generation
+            branch, session = self.patches.branch, self.link.session
+            records = await self.patches.records(QUEST)
+            if (
+                version != self.patches.version or generation != self._generation
+                or branch != self.patches.branch or session is not self.link.session
+            ):
+                raise GameError("session changed while reading authored quests")
+            quests = {}
+            for record in records:
                 q = Quest.of(record["quest"])
-                self.quests[q.id] = q
+                quests[q.id] = q
+            self.quests, self._version = quests, version
         return self.quests
 
-    def next_id(self, taken: set[str] = frozenset()) -> str:
+    async def next_id(self, taken: set[str] = frozenset()) -> str:
         """DIR_Q<n> nobody has: no quest, no variable of the branch."""
-        vars = Patches.of(self.patches.ops()).vars
+        vars = Patches.of(await self.patches.ops()).vars
         prefix = f"{DIRECTOR_PREFIX}Q"
         used = [
             int(k[len(prefix) :])
-            for k in [*vars, *self.all(), *taken]
+            for k in [*vars, *await self.all(), *taken]
             if k.startswith(prefix) and k[len(prefix) :].isdigit()
         ]
         return f"{prefix}{1 + max([0, *used])}"
@@ -780,7 +788,7 @@ class QuestBook:
         """The save's stages and goals, and the people the descriptions mention."""
         variables: set[str] = set()
         people: set[str] = set()
-        for q in self.all().values():
+        for q in (await self.all()).values():
             variables.update((q.id, stage_var(q)))
             people.add(q.giver.upper())
             for k, stage in enumerate(q.stages, 1):
@@ -789,11 +797,11 @@ class QuestBook:
                     people.update(n.upper() for n in (goal.npc, *goal.npcs) if n)
         return WorldState.from_game(await self.link.story_state(vars=sorted(variables), npcs=sorted(people)))
 
-    def dead_ends(self, state: WorldState) -> list[DeadEnd]:
+    async def dead_ends(self, state: WorldState) -> list[DeadEnd]:
         """Find blocked dialogs in stage order, one per quest. World goals do not die with their NPCs."""
-        told = Patches.of(self.patches.ops()).told
+        told = Patches.of(await self.patches.ops()).told
         out = []
-        for q in self.all().values():
+        for q in (await self.all()).values():
             progress = self.progress(q.id)
             status = state.vars.get(q.id)
             if status != LOG_RUNNING and (status is not None or progress.state != "given"):
@@ -825,7 +833,7 @@ class QuestBook:
         """Replace just the blocked dialog. Its conditions and required effects belong to the book."""
         from .director import Repair
 
-        q = self.all().get(brief.quest)
+        q = (await self.all()).get(brief.quest)
         if q is None:
             return None, [f"нет квеста книги {brief.quest}"]
         if p.kind == "close":
@@ -850,7 +858,7 @@ class QuestBook:
                 await self.link.story_effect(brief.dead, effects)
             except (GameError, TimeoutError) as err:
                 return None, [f"игра не приняла закрытие: {err}"]
-            self._fact(q, "story_quest_obsolete" if status == LOG_OBSOLETE else "story_quest_failed")
+            await self._fact(q, "story_quest_obsolete" if status == LOG_OBSOLETE else "story_quest_failed")
             return Repair(q.id, "close"), []
         if p.kind != "handover":
             return None, [f"вид ремонта: handover или close, а не {p.kind!r}"]
@@ -937,13 +945,13 @@ class QuestBook:
             await self.patches.make({"op": QUEST, "quest": updated.to_dict()}, ops)
         except (GameError, TimeoutError) as err:
             return None, [f"игра не приняла правку: {err}"]
-        self.all()
+        await self.all()
         try:
             await self.link.story_effect(p.npc, [{"do": "journal", "topic": q.title, "text": p.journal_now}])
         except (GameError, TimeoutError) as err:
             log.warning("questbook: repair journal: %s", err)
         if self.dialogue is not None:
-            self.dialogue.remember(
+            await self.dialogue.remember(
                 p.npc,
                 updated.name(p.npc),
                 f"{brief.dead_name} мёртв. Ты принял его поручение герою «{q.title}»: "
@@ -966,7 +974,7 @@ class QuestBook:
             point=lambda p: places is not None and places.of(p) is not None,
             gold=xp,
             xp=xp,
-            quests=self.all(),
+            quests=await self.all(),
             story=await self.director.story() if vanilla else None,
             waypoint=lambda p: places is not None and places.is_waypoint(p),
             npc_crimes={str(f["id"]) for f in self.chronicle.facts("npc_crime")},
@@ -988,7 +996,7 @@ class QuestBook:
         """
         if not quests:
             return None, ["в цепочке нет квестов"]
-        previous = dict(self.all())
+        previous = dict(await self.all())
         ops: list[Op] = []
         try:
             for q in quests:
@@ -1018,22 +1026,44 @@ class QuestBook:
         except GameError as err:
             return None, [f"игра не приняла правку: {err}"]
         for q in quests:
-            self._made(q)
+            await self._made(q)
         return quests, []
 
-    def _made(self, q: Quest) -> None:
+    async def _made(self, q: Quest) -> None:
         """The accepted description and what its giver knows, after the entire graph has been accepted."""
-        if q.knows and self.dialogue is not None:
-            self.dialogue.remember(q.giver, q.name(q.giver), q.knows)
-        self.chronicle.record(
-            {"fact": "story_quest", "id": q.id, "giver": q.giver, "title": q.title, "reason": q.reason}
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
         )
-        self.journal.add("story_quest", npc=q.giver, name=q.name(q.giver), quest=q.id, title=q.title)
-        log.info("questbook: %s gives %s «%s», %d stage(s)", q.giver, q.id, q.title, len(q.stages))
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            if q.knows and self.dialogue is not None:
+                await self.dialogue.remember(q.giver, q.name(q.giver), q.knows)
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
+            await self.chronicle.record(
+                {"fact": "story_quest", "id": q.id, "giver": q.giver, "title": q.title, "reason": q.reason}
+            )
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            self.journal.add("story_quest", npc=q.giver, name=q.name(q.giver), quest=q.id, title=q.title)
+            log.info("questbook: %s gives %s «%s», %d stage(s)", q.giver, q.id, q.title, len(q.stages))
+
+        return await self.chronicle.memory.complete(persist)
 
     # --- following -----------------------------------------------------------------------------
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         match msg:
             case Loading() | Session():
                 self._generation += 1
@@ -1043,17 +1073,21 @@ class QuestBook:
                     task.cancel()
                 self._version = -1
             case DialogChosen(made=True):
-                for q in self.all().values():
+                for q in (await self.all()).values():
                     if (dialog := q.dialogs().get(msg.node)) is not None:
-                        self._chosen(q, msg.node, *dialog)
+                        await self._chosen(q, msg.node, *dialog)
             case TriggerFired():
-                for q in self.all().values():
-                    self._fired(q, msg.id)
+                for q in (await self.all()).values():
+                    await self._fired(q, msg.id)
 
-    def _on_fact(self, fact: Fact) -> None:
+    async def _on_fact(self, fact: Fact) -> None:
         if fact.get("fact") != "blamed":
             return
-        task = asyncio.create_task(self._settle_blame(list(self.all().values())))
+        generation, session = self._generation, self.link.session
+        quests = list((await self.all()).values())
+        if generation != self._generation or session is not self.link.session:
+            return
+        task = asyncio.create_task(self._settle_blame(quests))
         self._blame_tasks.add(task)
         task.add_done_callback(self._blame_tasks.discard)
 
@@ -1100,39 +1134,110 @@ class QuestBook:
                         if generation != self._generation:
                             return
                         if not recorded:
-                            self._fact(q, "story_quest_goal", stage=p.stage, goal=gid,
+                            await self._fact(q, "story_quest_goal", stage=p.stage, goal=gid,
                                        crime=goal.crime, blamed=belief.get("id", ""))
                 except (GameError, TimeoutError) as err:
                     log.warning("questbook: blame goal: %s", err)
 
-    def _chosen(self, q: Quest, node: str, npc: str, talk: Talk | None) -> None:
-        if node == give_node(q) and self.progress(q.id).state == "open":
-            self._fact(q, "story_quest_given")
-        elif node == done_node(q) and self.progress(q.id).state == "given":
-            self._fact(q, "story_quest_done")
-            self._outcome(q, npc, "amended" if self._terms(q) else "done", "full")
-        if talk is not None and talk.remember and self.dialogue is not None:
-            self.dialogue.remember(npc.upper(), q.name(npc.upper()), talk.remember)
+    async def _chosen(self, q: Quest, node: str, npc: str, talk: Talk | None) -> None:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
 
-    def _fired(self, q: Quest, id: str) -> None:
-        for k in range(1, len(q.stages)):
-            if id == stage_trigger(q, k):
-                self._fact(q, "story_quest_stage", stage=k + 1)
-        if id == late_trigger(q) and self.progress(q.id).state == "given":
-            self._fact(q, "story_quest_failed")
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            if node == give_node(q) and self.progress(q.id).state == "open":
+                await self._fact(q, "story_quest_given")
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
+            elif node == done_node(q) and self.progress(q.id).state == "given":
+                await self._fact(q, "story_quest_done")
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
+                await self._outcome(q, npc, "amended" if self._terms(q) else "done", "full")
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
+            if talk is not None and talk.remember and self.dialogue is not None:
+                await self.dialogue.remember(npc.upper(), q.name(npc.upper()), talk.remember)
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
 
-    def _fact(self, q: Quest, kind: str, **data: Any) -> None:
-        fact: Fact = {"fact": kind, "id": q.id, **data}
-        self.chronicle.record(fact)
-        self.journal.add(kind, npc=q.giver, name=q.name(q.giver), quest=q.id, title=q.title, **data)
-        log.info("questbook: %s «%s»: %s %s", q.id, q.title, kind, data or "")
+        return await self.chronicle.memory.complete(persist)
+
+    async def _fired(self, q: Quest, id: str) -> None:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            for k in range(1, len(q.stages)):
+                if id == stage_trigger(q, k):
+                    await self._fact(q, "story_quest_stage", stage=k + 1)
+                    if (
+                        branch != self.chronicle.branch or generation != self.chronicle._generation
+                        or session is not self.chronicle.link.session
+                    ):
+                        raise GameError("session changed while recording NPC state")
+            if id == late_trigger(q) and self.progress(q.id).state == "given":
+                await self._fact(q, "story_quest_failed")
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def _fact(self, q: Quest, kind: str, **data: Any) -> None:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            fact: Fact = {"fact": kind, "id": q.id, **data}
+            await self.chronicle.record(fact)
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            self.journal.add(kind, npc=q.giver, name=q.name(q.giver), quest=q.id, title=q.title, **data)
+            log.info("questbook: %s «%s»: %s %s", q.id, q.title, kind, data or "")
+
+        return await self.chronicle.memory.complete(persist)
 
     async def settle(self, npc: str | None = None) -> None:
         """The truth from the save: the quests' variables in the game, and what the chronicle missed of them
         (a message lost while the server was away)."""
         mine = [
             q
-            for q in self.all().values()
+            for q in (await self.all()).values()
             if npc is None or q.giver == npc.upper() or any(r["npc"] == npc.upper() for r in q.repairs)
         ]
         if not mine:
@@ -1153,15 +1258,15 @@ class QuestBook:
         for q in mine:
             p, status, stage = self.progress(q.id), vars.get(q.id), vars.get(stage_var(q))
             if status in (LOG_RUNNING, LOG_SUCCESS, LOG_FAILED, LOG_OBSOLETE) and p.state == "open":
-                self._fact(q, "story_quest_given")
+                await self._fact(q, "story_quest_given")
             if isinstance(stage, int) and 1 < stage <= len(q.stages) and stage > p.stage:
-                self._fact(q, "story_quest_stage", stage=stage)
+                await self._fact(q, "story_quest_stage", stage=stage)
             if status == LOG_SUCCESS and p.state != "done":
-                self._fact(q, "story_quest_done")
+                await self._fact(q, "story_quest_done")
             elif status == LOG_FAILED and p.state != "failed":
-                self._fact(q, "story_quest_failed")
+                await self._fact(q, "story_quest_failed")
             elif status == LOG_OBSOLETE and p.state != "obsolete":
-                self._fact(q, "story_quest_obsolete")
+                await self._fact(q, "story_quest_obsolete")
 
     # --- the conversation (TurnExtension) ------------------------------------------------------
 
@@ -1178,18 +1283,18 @@ class QuestBook:
             for j, goal in enumerate(stage.goals, 1)
         }
 
-    def _done_goals(self, q: Quest) -> set[str]:
+    async def _done_goals(self, q: Quest) -> set[str]:
         done = self._completed_goals | {
             f["id"] for f in self.chronicle.facts("triggered") if f.get("count", 0) >= 1
         }
         done.update(f["goal"] for f in self.chronicle.facts("story_quest_goal") if f.get("id") == q.id)
-        told = Patches.of(self.patches.ops()).told
+        told = Patches.of(await self.patches.ops()).told
         done.update(gid for gid in self._goals(q) if goal_node(gid) in told)
         return done
 
-    def _removable(self, q: Quest) -> dict[str, Goal]:
+    async def _removable(self, q: Quest) -> dict[str, Goal]:
         dropped = {id for f in self._terms(q) for id in f["drop"]}
-        done = self._done_goals(q)
+        done = await self._done_goals(q)
         return {
             goal_id(q, k, j): goal
             for k, stage in enumerate(q.stages, 1)
@@ -1224,9 +1329,9 @@ class QuestBook:
             case _:
                 raise ValueError(f"Goal cannot be amended: {goal.kind}")
 
-    def _outcome(self, q: Quest, npc: str, how: str, pay: str, why: str | None = None) -> None:
+    async def _outcome(self, q: Quest, npc: str, how: str, pay: str, why: str | None = None) -> None:
         terms = self._terms(q)
-        self.chronicle.record(
+        await self.chronicle.record(
             {
                 "fact": "quest_outcome",
                 "quest": q.id,
@@ -1238,10 +1343,10 @@ class QuestBook:
             }
         )
 
-    def situation(self, npc: str) -> str | None:
+    async def situation(self, npc: str) -> str | None:
         npc = npc.upper()
         out = []
-        for q in self.all().values():
+        for q in (await self.all()).values():
             inherited = [r for r in q.repairs if r["npc"] == npc]
             if q.giver != npc and not inherited:
                 continue
@@ -1270,7 +1375,7 @@ class QuestBook:
                 for term in self._terms(q):
                     names = ", ".join(self._goal_name(q, goals[id]) for id in term["drop"])
                     out.append(f"Снято тобой: {names} — «{term['why']}»")
-                removable = self._removable(q)
+                removable = await self._removable(q)
                 if removable:
                     out.append(
                         "Можешь снять цели (amend_quest): "
@@ -1290,15 +1395,19 @@ class QuestBook:
 
     all_tools: tuple[Tool, ...] = (AMEND_TOOL, DROP_TOOL)
 
-    def tools(self, npc: str) -> list[Tool]:
+    async def tools(self, npc: str) -> list[Tool]:
         npc = npc.upper()
         quests = [
-            q for q in self.all().values()
+            q for q in (await self.all()).values()
             if self.progress(q.id).state == "given"
             and q.id not in self.dropping
             and (q.giver == npc or any(r["npc"] == npc for r in q.repairs))
         ]
-        tools = [AMEND_TOOL] if any(self._removable(q) for q in quests) else []
+        tools = []
+        for quest in quests:
+            if await self._removable(quest):
+                tools.append(AMEND_TOOL)
+                break
         if quests:
             tools.append(DROP_TOOL)
         return tools
@@ -1308,7 +1417,7 @@ class QuestBook:
     ) -> ToolOutcome | None:
         if call.name not in (AMEND_TOOL.name, DROP_TOOL.name):
             return None
-        q = self.all().get(str(call.arguments.get("quest", "")).upper())
+        q = (await self.all()).get(str(call.arguments.get("quest", "")).upper())
         if q is None or (q.giver != conv.npc and not any(r["npc"] == conv.npc for r in q.repairs)):
             return ToolOutcome("Отклонено: такого дела ты от героя не ждёшь.", "rejected")
         if self.progress(q.id).state != "given":
@@ -1330,8 +1439,8 @@ class QuestBook:
         if not isinstance(drop, list) or not drop or not all(isinstance(d, str) for d in drop):
             return ToolOutcome("Отклонено: укажи id снимаемых пунктов из обстановки.", "rejected")
         ids = list(dict.fromkeys(d.upper() for d in drop))
-        goals, removable = self._goals(q), self._removable(q)
-        done = self._done_goals(q)
+        goals, removable = self._goals(q), await self._removable(q)
+        done = await self._done_goals(q)
         for id in ids:
             if id not in removable:
                 why_not = "этот пункт не снимается" if id in goals else "такого пункта нет в уговоре"
@@ -1346,7 +1455,7 @@ class QuestBook:
             "fact": "quest_terms", "quest": q.id, "npc": conv.npc,
             "name": conv.persona.name, "drop": ids, "why": why,
         }
-        self.chronicle.record(fact)
+        await self.chronicle.record(fact)
         self.journal.add("quest_amended", **{k: v for k, v in fact.items() if k != "fact"})
         return ToolOutcome(
             "Принято: ты снял пункты: " + ", ".join(self._goal_name(q, goals[id]) for id in ids) + ".",
@@ -1363,7 +1472,7 @@ class QuestBook:
         except (GameError, TimeoutError) as err:
             self.dropping.discard(q.id)
             return f"Ты не смог отменить поручение «{q.title}»: {err}", False
-        self._outcome(q, conv.npc, "dropped", "none", why)
+        await self._outcome(q, conv.npc, "dropped", "none", why)
         self.journal.add(
             "quest_dropped", npc=conv.npc, name=conv.persona.name, quest=q.id, title=q.title, why=why
         )

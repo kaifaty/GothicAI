@@ -18,9 +18,10 @@ The hero's phrase is an event too: the body may gesture in the pause before the 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
 from .brain.apply import Decision
@@ -167,7 +168,7 @@ class IncidentDesk:
         self.attached: set[str] = set()
         self.reactions: list[Reaction] = []  # recent ones, for the console and tests
         # what an npc perceives now, for the behavioral model (perception.py)
-        self.view_of: Callable[[str], tuple[str, ...]] = lambda npc: ()
+        self.view_of: Callable[[str], tuple[str, ...] | Awaitable[tuple[str, ...]]] = lambda npc: ()
         self._tasks: set[asyncio.Task[Any]] = set()
         link.listeners.append(self.on_message)
         dialogue.first_reaction = self.first_reaction
@@ -195,7 +196,7 @@ class IncidentDesk:
 
     # --- events ---------------------------------------------------------------------------
 
-    def on_message(self, msg: GameMessage) -> None:
+    async def on_message(self, msg: GameMessage) -> None:
         match msg:
             case Attached():
                 self.attached.add(msg.npc.upper())
@@ -203,14 +204,14 @@ class IncidentDesk:
                 npc = msg.npc.upper()
                 self.attached.discard(npc)
                 if msg.reason == "down":
-                    self._event(npc, IncidentEvent("down", self.clock()))
+                    await self._event(npc, IncidentEvent("down", self.clock()))
                 self.tracker.close(npc)
             case Perception():
                 npc = msg.npc.upper()
                 if npc in self.attached and npc in self.dialogue.conversations:
                     event = classify(msg, self._names(npc), self.clock())
                     if event is not None:
-                        self._event(npc, event)
+                        await self._event(npc, event)
             case NpcEvent(kind="npc_threat"):
                 npc = msg.npc.upper()
                 if npc in self.attached and not self.companion(npc):
@@ -220,23 +221,26 @@ class IncidentDesk:
             case FollowEnded():
                 npc = msg.npc.upper()
                 if msg.reason in FOLLOW_REASONS and npc in self.dialogue.conversations:
-                    self._event(
+                    await self._event(
                         npc, IncidentEvent("follow_ended", self.clock(), detail=FOLLOW_REASONS[msg.reason])
                     )
             case Loading() | Session():
                 for npc in list(self.tracker.current):
                     self.tracker.close(npc)
 
-    def on_body_failed(self, npc: str, what: str) -> None:
+    async def on_body_failed(self, npc: str, what: str) -> None:
         if npc in self.attached:
-            self._event(npc, IncidentEvent("action_failed", self.clock(), detail=what.strip("[]")))
+            await self._event(npc, IncidentEvent("action_failed", self.clock(), detail=what.strip("[]")))
 
     async def first_reaction(self, npc: str, text: str) -> FirstReaction:
         """The hero spoke to the npc: if it is ours, the behavioral model's gesture while it thinks of an
         answer (made when the dialogue calls for it, after its first words)."""
         if self.reflexes is None or npc not in self.attached:
             return FirstReaction()
-        ctx, clock = self._context(npc)
+        session, world_generation = self.link.session, self.link.world_generation
+        ctx, clock = await self._context(npc)
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            return FirstReaction()
         conv = self.dialogue.conversations.get(npc)
         move = await self.reflexes.phrase(ctx, text, conv.intent if conv else None, clock)
         return FirstReaction((lambda: self._spawn(self._gesture(move))) if move is not None else None)
@@ -252,7 +256,7 @@ class IncidentDesk:
             return True
         return self.fighting_ru(npc) is not None or self.foe(npc)
 
-    def _event(self, npc: str, event: IncidentEvent) -> None:
+    async def _event(self, npc: str, event: IncidentEvent) -> None:
         inc = self.tracker.add(npc, event)
         log.info("%s incident #%d: %s", npc, inc.id, event.describe_en())
         if inc.version == 1:
@@ -260,7 +264,7 @@ class IncidentDesk:
         if event.spec.urgent:
             self.dialogue.prewarm(npc)  # its words come after `settle_s`: the quick model reads meanwhile
         if event.kind == "down":
-            self.dialogue.note(npc, event.describe_ru())
+            await self.dialogue.note(npc, event.describe_ru())
             return
         if event.spec.urgent and self.companion(npc):
             self._spawn(self._escalate_later(npc, inc.id))  # its body fights already (orders.py)
@@ -283,21 +287,28 @@ class IncidentDesk:
 
     # --- the fast loop ----------------------------------------------------------------------
 
-    def _context(self, npc: str) -> tuple[NpcContext, str | None]:
+    async def _context(self, npc: str) -> tuple[NpcContext, str | None]:
         conv = self.dialogue.conversations.get(npc)
         snap = self.link.snapshots.get(npc)
         name = conv.persona.name if conv else npc
         traits = conv.persona.traits if conv else None
         distance = snap.player.distance if snap is not None and snap.player is not None else 0.0
         clock = clock_text(snap.world.hour, snap.world.minute) if snap is not None else None
-        return NpcContext(npc, name, -1, distance, True, traits=traits, view=self.view_of(npc)), clock
+        view = self.view_of(npc)
+        if inspect.isawaitable(view):
+            view = await view
+        return NpcContext(npc, name, -1, distance, True, traits=traits, view=view), clock
 
     async def _react(self, npc: str, incident_id: int) -> None:
         assert self.reflexes is not None
         inc = self.tracker.current.get(npc)
         if inc is None or inc.id != incident_id:
             return
-        ctx, clock = self._context(npc)
+        session, world_generation = self.link.session, self.link.world_generation
+        ctx, clock = await self._context(npc)
+        if (session is not self.link.session or world_generation != self.link.world_generation
+                or self.tracker.current.get(npc) is not inc):
+            return
         conv = self.dialogue.conversations.get(npc)
         reaction = await self.reflexes.react(ctx, inc, conv.intent if conv else None, clock)
         if reaction is not None:
@@ -338,7 +349,7 @@ class IncidentDesk:
         """The safety rule: a beaten npc goes back to the game's scripts, which fight back or flee."""
         log.info("%s: beaten (%s), handing over to the game's scripts", npc, event.describe_en())
         self.tracker.close(npc)
-        self.dialogue.note(npc, f"{event.describe_ru()}. Ты прервал разговор и защищаешься")
+        await self.dialogue.note(npc, f"{event.describe_ru()}. Ты прервал разговор и защищаешься")
         try:
             await self.link.act(npc, "return_to_routine", timeout=10)
         except (GameError, TimeoutError) as err:
@@ -388,7 +399,7 @@ class IncidentDesk:
             if inc is None or inc.id != incident_id or not inc.active(self.clock(), self.tracker.gap_s):
                 break
             await asyncio.sleep(max(0.05, inc.last + self.tracker.gap_s - self.clock()))
-        self.dialogue.incident_over(npc)
+        await self.dialogue.incident_over(npc)
 
     # --- the slow loop ----------------------------------------------------------------------
 
@@ -426,7 +437,9 @@ class IncidentDesk:
         self.planner = planner
         planner.on_escalate = self.on_planner_escalate
 
-    def on_planner_escalate(self, npc: str, level: float, reaction: Decision | None, flight: Flight) -> None:
+    async def on_planner_escalate(
+        self, npc: str, level: float, reaction: Decision | None, flight: Flight
+    ) -> None:
         """The behavioral model says how much a free npc's moment calls for its own words: from the planner's
         `escalate_level` on, or when the danger it spoke about is over, the conversational model speaks for
         it, on the move, if the hero hears it, not too often and within the budget."""
@@ -466,7 +479,7 @@ class IncidentDesk:
             if settles
             else ""
         )
-        self.dialogue.open(npc, rec.name)
+        await self.dialogue.open(npc, rec.name)
         log.info(
             "%s: escalate %.1f%s, the conversational model speaks for it",
             npc,
@@ -524,7 +537,7 @@ class IncidentDesk:
                 if self.planner is None or not self.planner.stirred(npc):
                     break
                 await asyncio.sleep(self.calm_poll_s)
-            self.dialogue.incident_over(npc)
+            await self.dialogue.incident_over(npc)
         finally:
             self._calming.discard(npc)
 

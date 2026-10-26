@@ -275,7 +275,7 @@ async def trace_crime(
             {"knowledge": knowledge(), "testimony": testimony, "caught": caught()},
         ):
             return _logged(results)
-        talk.end("gone")
+        await talk.end("gone")
         await settled()
 
         await release("setup")
@@ -462,14 +462,14 @@ async def trace_crime(
             knowledge(),
         )
 
-        talk.end("gone")
+        await talk.end("gone")
         await settled()
         snapshot_facts = [
             f for f in facts() if f.get("fact") in {"crime", "crime_seen", "testimony", "caught"}
         ]
         snapshot_knowledge, snapshot_trust = knowledge(), asdict(trust.of(LOBART))
         snapshot_debris = observed.record()
-        head = sightings.memory.head(chronicle.branch) if chronicle.branch else 0
+        head = await sightings.memory.head(chronicle.branch) if chronicle.branch else 0
         await asyncio.sleep(0.5)  # the bridge must receive the memory head before the save
         saved = await _save(link, slot)
         if saved is None:

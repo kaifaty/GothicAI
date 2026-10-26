@@ -348,16 +348,16 @@ class Author:
             dialogue.extensions.append(self)
         self._load()
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         match msg:
             case Session():
                 self._load()
             case DialogChosen(made=True):
                 for q in self.old.values():
                     if msg.node == q.give and q.stage == "open":
-                        self._stage(q, "given")
+                        await self._stage(q, "given")
                     elif msg.node == q.done and q.stage != "done":
-                        self._stage(q, "done")
+                        await self._stage(q, "done")
 
     # --- a quest ------------------------------------------------------------------------------
 
@@ -386,15 +386,15 @@ class Author:
             if made is not None:
                 return made
             log.info("author: %s, rejected: %s", npc, "; ".join(errors))
-            self.chronicle.record({"fact": "authored_rejected", "npc": npc, "why": errors})
+            await self.chronicle.record({"fact": "authored_rejected", "npc": npc, "why": errors})
         self.journal.add("authored_none", npc=npc, name=brief.name, why=errors)
         return None
 
-    def given(self, npc: str) -> list[str]:
+    async def given(self, npc: str) -> list[str]:
         """The titles of the quests the npc gave before, the old ones too."""
         npc = npc.upper()
         old = [q.title for q in self.old.values() if q.npc == npc]
-        return old + [q.title for q in self.book.all().values() if q.giver == npc]
+        return old + [q.title for q in (await self.book.all()).values() if q.giver == npc]
 
     async def brief(
         self,
@@ -434,7 +434,7 @@ class Author:
             spots=spots,
             xp=xp,
             gold=xp,
-            given=self.given(npc),
+            given=await self.given(npc),
             premise=premise,
             requires=requires if requires is not None else [],
             follows=quest.title if (quest := self.graph.quests.get(follows.upper())) else "",
@@ -482,7 +482,7 @@ class Author:
             errors.append(f"золота {p.gold}, а можно от 0 до {brief.gold}")
         if not 0 <= p.xp <= brief.xp:
             errors.append(f"опыта {p.xp}, а можно от 0 до {brief.xp}")
-        if title in self.given(brief.npc):
+        if title in await self.given(brief.npc):
             errors.append(f"поручение «{title}» уже было")
         if errors or spot is None:
             return None, errors
@@ -500,7 +500,7 @@ class Author:
             ),
         )
         q = questbook.Quest(
-            id=self.book.next_id({*self.old}),
+            id=await self.book.next_id({*self.old}),
             giver=brief.npc,
             title=title,
             give=Talk(p.give_description, p.give_lines),
@@ -525,14 +525,36 @@ class Author:
         log.info("author: %s gives %s «%s»: %s %s", q.giver, q.id, title, item, spot.point)
         return q, []
 
-    def _stage(self, q: OldQuest, stage: str) -> None:
-        q.stage = stage
-        self.chronicle.record({"fact": f"authored_{stage}", "id": q.id, "npc": q.npc})
-        self.journal.add(f"authored_{stage}", npc=q.npc, name=q.name, quest=q.id, title=q.title)
-        if stage == "done" and self.dialogue is not None:
-            self.dialogue.remember(
-                q.npc, q.name, f"Герой нашёл и принёс твою пропавшую вещь — {q.item_name}."
-            )
+    async def _stage(self, q: OldQuest, stage: str) -> None:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            await self.chronicle.record({"fact": f"authored_{stage}", "id": q.id, "npc": q.npc})
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            q.stage = stage
+            self.journal.add(f"authored_{stage}", npc=q.npc, name=q.name, quest=q.id, title=q.title)
+            if stage == "done" and self.dialogue is not None:
+                await self.dialogue.remember(
+                    q.npc, q.name, f"Герой нашёл и принёс твою пропавшую вещь — {q.item_name}."
+                )
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
+
+        return await self.chronicle.memory.complete(persist)
 
     # --- the save branch --------------------------------------------------------------------
 

@@ -600,7 +600,7 @@ class GossipDesk:
             if s.state == "playing":
                 s.state, s.why = "done", s.play.why
         finally:
-            self._end(s)
+            await self._end(s)
 
     async def _walk(self, s: Scene, walker: str) -> bool:
         """One walks up to the other (held: a controller walk); False if the scene is over."""
@@ -761,7 +761,7 @@ class GossipDesk:
 
     # --- the end --------------------------------------------------------------------------------------
 
-    def cut(self, why: str) -> bool:
+    async def cut(self, why: str) -> bool:
         """Stop the running scene at once (the hero's voice, a threat, he left; loading: nothing more goes
         to the game). Its notes are written now: they are in the memories before his words are answered.
         True if there was one."""
@@ -774,7 +774,7 @@ class GossipDesk:
             s.writing.cancel()
         said = s.play.cut(hush=why != "loading") if s.play is not None else []
         if why != "loading":
-            self._notes(s, said)
+            await self._notes(s, said)
         log.info("scene %s cut (%s) after %d line(s)", s.id, why, len(said))
         self.journal.add(
             "scene_cut", npc=s.a, name=s.a_name, to=s.b, to_name=s.b_name, why=why, said=len(said)
@@ -788,7 +788,7 @@ class GossipDesk:
     def _stopped(self, s: Scene) -> bool:
         return s.state != "writing" or s.world != self._world
 
-    def _end(self, s: Scene) -> None:
+    async def _end(self, s: Scene) -> None:
         """Notes, witnesses, the trace; the holds go now, or after the hero's grace. Once."""
         if s.ended:
             return
@@ -799,7 +799,7 @@ class GossipDesk:
         said = s.play.said() if s.play is not None else []
         if not gone:
             if not s.noted:
-                self._notes(s, said)
+                await self._notes(s, said)
             if said:
                 self._spawn(self._witnesses(s, said))
         self._trace(s, said)
@@ -816,23 +816,39 @@ class GossipDesk:
             self.scene = None
         self.last = s
 
-    def _notes(self, s: Scene, said: list[SceneLine]) -> None:
+    async def _notes(self, s: Scene, said: list[SceneLine]) -> None:
         """What both remember: the lines said, never as their own replies (D10)."""
-        s.noted = True
-        an, bn = s.a_name, s.b_name
-        ending = "а" if self._she(s.a, an) else ""
-        if not said:
-            text = f"Ты рассказал{ending} человеку по имени {bn} то, что знаешь о герое: {s.news}"
-            self.dialogue.remember(s.a, an, text)
-            return
-        cut = ". Вы замолчали: заговорил герой." if s.why == "hero" else ""
-        told = " — ".join(f"{'Ты' if x.npc == s.a else bn}: «{x.text}»" for x in said)
-        heard = " — ".join(f"{'Ты' if x.npc == s.b else an}: «{x.text}»" for x in said)
-        where = f" (герой стоял в {s.hero_cm / 100:.0f} м)"
-        self.dialogue.remember(
-            s.a, an, f"Ты рассказал{ending} о герое человеку по имени {bn}{where}: {told}{cut}"
-        )
-        self.dialogue.remember(s.b, bn, f"{an} рассказал{ending} тебе о герое: {heard}{cut}")
+        session, world_generation = self.link.session, self.link.world_generation
+
+        def current() -> bool:
+            return (
+                s.world == self._world and session is self.link.session
+                and world_generation == self.link.world_generation
+            )
+
+        async def persist() -> None:
+            if s.noted or not current():
+                return
+            an, bn = s.a_name, s.b_name
+            ending = "а" if self._she(s.a, an) else ""
+            if not said:
+                text = f"Ты рассказал{ending} человеку по имени {bn} то, что знаешь о герое: {s.news}"
+                await self.dialogue.remember(s.a, an, text)
+            else:
+                cut = ". Вы замолчали: заговорил герой." if s.why == "hero" else ""
+                told = " — ".join(f"{'Ты' if x.npc == s.a else bn}: «{x.text}»" for x in said)
+                heard = " — ".join(f"{'Ты' if x.npc == s.b else an}: «{x.text}»" for x in said)
+                where = f" (герой стоял в {s.hero_cm / 100:.0f} м)"
+                await self.dialogue.remember(
+                    s.a, an, f"Ты рассказал{ending} о герое человеку по имени {bn}{where}: {told}{cut}"
+                )
+                if not current():
+                    return
+                await self.dialogue.remember(s.b, bn, f"{an} рассказал{ending} тебе о герое: {heard}{cut}")
+            if current():
+                s.noted = True
+
+        await self.dialogue.memory.complete(persist)
 
     async def _witnesses(self, s: Scene, said: list[SceneLine]) -> None:
         """Those standing by heard it (a note, no rumor fact: the code decides who passes it)."""
@@ -849,7 +865,7 @@ class GossipDesk:
                 if not n or n in (s.a, s.b) or n in heard or p.get("dead") or s.world != self._world:
                     continue
                 heard.add(n)
-                self.dialogue.overheard_talk(n, p.get("name") or n, (s.a_name, s.b_name), lines)
+                await self.dialogue.overheard_talk(n, p.get("name") or n, (s.a_name, s.b_name), lines)
 
     def _trace(self, s: Scene, said: list[SceneLine]) -> None:
         if self.trace is None:
@@ -894,13 +910,13 @@ class GossipDesk:
 
     # --- the game -----------------------------------------------------------------------------------
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         s = self.scene
         running = s is not None and s.state in RUNNING
         match msg:
             case Loading() | Session():
                 self._world += 1
-                self.cut("loading")
+                await self.cut("loading")
                 self._sight_busy.clear()
                 self._gaps.clear()
                 self._probing.clear()
@@ -924,25 +940,25 @@ class GossipDesk:
                         self._spawn(self._turn(line.to, line.npc))
             case Perception() if running and s is not None and msg.npc.upper() in s.held:
                 if classify(msg, {}, time.monotonic()) is not None or msg.perc in PERC_ACTS:
-                    self.cut("threat")
+                    await self.cut("threat")
             case NpcEvent() if running and s is not None and msg.npc.upper() in (s.a, s.b):
                 kind, _ = normalize(msg.kind, msg.other, msg.other_name, msg.detail)
                 if policy(kind).threat or policy(kind).scripted:
-                    self.cut("threat")
+                    await self.cut("threat")
             case Detached() if running and s is not None and msg.npc.upper() in s.held:
                 if msg.reason != "server":
-                    self.cut("gone")
+                    await self.cut("gone")
             case NpcRoster() if running and s is not None:
                 people = self.talk.people  # merged already: talk.py listens first
                 ea, eb = people.get(s.a), people.get(s.b)
                 if ea is None or eb is None or "down" in (ea.activity, eb.activity):
-                    self.cut("gone")
+                    await self.cut("gone")
                 elif any(e.activity == "dialog" for e in people.values()):
-                    self.cut("dialog")
+                    await self.cut("dialog")
                 elif "body" in (ea.activity, eb.activity):
-                    self.cut("body")
+                    await self.cut("body")
                 elif min(ea.distance, eb.distance) > LEAVE_CM:
-                    self.cut("hero_left")
+                    await self.cut("hero_left")
 
     async def _turn(self, npc: str, to: str) -> None:
         try:
@@ -989,7 +1005,7 @@ class GossipDesk:
         if world != self._world:
             return
         self._staged = None
-        told = self.rumors.offer(r, a, b)
+        told = await self.rumors.offer(r, a, b)
         waited = self._staged is not None and self._staged[:4] == (r.key, a, b, "wait")
         code = "told" if told else "wait" if waited else "held"
         if code == "wait":

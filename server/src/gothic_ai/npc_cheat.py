@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from .chronicle import Chronicle, Fact
 from .fear import afraid
+from .game import GameError
 
 if TYPE_CHECKING:
     from .characters import Card
@@ -24,7 +25,7 @@ INTENT_LABELS = {
 }
 
 
-def decide(
+async def decide(
     chronicle: Chronicle,
     npc: str,
     deal: str,
@@ -35,29 +36,42 @@ def decide(
     enabled: bool = True,
 ) -> Fact | None:
     """Keep an existing decision, or record it once. Disabled and immediate deals have no intent."""
-    existing = next((f for f in chronicle.facts("npc_intent") if f.get("deal") == deal), None)
-    if existing is not None:
-        return existing
-    if not enabled or not how:
-        return None
-    npc = npc.upper()
-    card = cards.get(npc)
-    holds, why = True, "no_card"
-    if card is not None:
-        holds = card.honesty >= 3 or (card.honesty == 2 and card.greed < 4)
-        why = "honesty" if holds else "dishonesty"
-        if not holds and crimes is not None and afraid(npc, cards, crimes, courage=3):
-            holds, why = True, "fear"
-    fact = {
-        "fact": "npc_intent",
-        "deal": deal,
-        "npc": npc,
-        "keeps": holds,
-        "how": list(dict.fromkeys(how)),
-        "why": why,
-    }
-    chronicle.record(fact)
-    return fact
+    _memory_branch, _memory_generation, _memory_session = (
+        chronicle.branch, chronicle._generation, chronicle.link.session
+    )
+
+    async def persist():
+        nonlocal npc
+        if (
+            _memory_branch != chronicle.branch or _memory_generation != chronicle._generation
+            or _memory_session is not chronicle.link.session
+        ):
+            raise GameError("session changed while recording crime state")
+        existing = next((f for f in chronicle.facts("npc_intent") if f.get("deal") == deal), None)
+        if existing is not None:
+            return existing
+        if not enabled or not how:
+            return None
+        npc = npc.upper()
+        card = cards.get(npc)
+        holds, why = True, "no_card"
+        if card is not None:
+            holds = card.honesty >= 3 or (card.honesty == 2 and card.greed < 4)
+            why = "honesty" if holds else "dishonesty"
+            if not holds and crimes is not None and afraid(npc, cards, crimes, courage=3):
+                holds, why = True, "fear"
+        fact = {
+            "fact": "npc_intent",
+            "deal": deal,
+            "npc": npc,
+            "keeps": holds,
+            "how": list(dict.fromkeys(how)),
+            "why": why,
+        }
+        await chronicle.record(fact)
+        return fact
+
+    return await chronicle.memory.complete(persist)
 
 
 def keeps(chronicle: Chronicle, deal_id: str, how: str) -> bool:
@@ -70,20 +84,44 @@ def keeps(chronicle: Chronicle, deal_id: str, how: str) -> bool:
     )
 
 
-def breach(chronicle: Chronicle, npc: str, deal: str, how: str, **fields: Any) -> Fact | None:
-    if any(f.get("deal") == deal and f.get("how") == how for f in chronicle.facts("npc_broken")):
-        return None
-    fact = {**fields, "fact": "npc_broken", "npc": npc.upper(), "deal": deal, "how": how}
-    chronicle.record(fact)
-    return fact
+async def breach(chronicle: Chronicle, npc: str, deal: str, how: str, **fields: Any) -> Fact | None:
+    _memory_branch, _memory_generation, _memory_session = (
+        chronicle.branch, chronicle._generation, chronicle.link.session
+    )
+
+    async def persist():
+        if (
+            _memory_branch != chronicle.branch or _memory_generation != chronicle._generation
+            or _memory_session is not chronicle.link.session
+        ):
+            raise GameError("session changed while recording crime state")
+        if any(f.get("deal") == deal and f.get("how") == how for f in chronicle.facts("npc_broken")):
+            return None
+        fact = {**fields, "fact": "npc_broken", "npc": npc.upper(), "deal": deal, "how": how}
+        await chronicle.record(fact)
+        return fact
+
+    return await chronicle.memory.complete(persist)
 
 
-def betrayed(chronicle: Chronicle, npc: str, deal: str, how: str, to: str) -> Fact | None:
-    if any(f.get("deal") == deal for f in chronicle.facts("betrayed")):
-        return None
-    fact = {"fact": "betrayed", "npc": npc.upper(), "deal": deal, "how": how, "to": to}
-    chronicle.record(fact)
-    return fact
+async def betrayed(chronicle: Chronicle, npc: str, deal: str, how: str, to: str) -> Fact | None:
+    _memory_branch, _memory_generation, _memory_session = (
+        chronicle.branch, chronicle._generation, chronicle.link.session
+    )
+
+    async def persist():
+        if (
+            _memory_branch != chronicle.branch or _memory_generation != chronicle._generation
+            or _memory_session is not chronicle.link.session
+        ):
+            raise GameError("session changed while recording crime state")
+        if any(f.get("deal") == deal for f in chronicle.facts("betrayed")):
+            return None
+        fact = {"fact": "betrayed", "npc": npc.upper(), "deal": deal, "how": how, "to": to}
+        await chronicle.record(fact)
+        return fact
+
+    return await chronicle.memory.complete(persist)
 
 
 def hearers(

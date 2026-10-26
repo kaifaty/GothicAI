@@ -25,6 +25,7 @@ from tests.fake_game import FakeGame
 from tests.test_concerns import _setup
 from tests.test_director import HILDA, LOBART, QUEST, VINO
 from tests.test_gossip import AT, _gossip, _tick, _together
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_npc_crimes import deed as npc_deed
 
 ANDRE = "MIL_311_ANDRE"
@@ -51,19 +52,19 @@ def rumor(**changes):
     }
 
 
-def crime(systems):
+async def crime(systems):
     deed = {
         "fact": "crime", "id": "theft-1", "kind": "theft", "community": "city",
         "victim": LOBART, "item": "ITFO_BREAD", "item_name": "Хлеб", "count": 1,
         "day": 3, "hour": 9, "minute": 0, "witnesses": [],
     }
-    systems.chronicle.record(deed)
+    await systems.chronicle.record(deed)
     return deed
 
 
 @pytest.mark.parametrize("kind", ["cover", "caught", "found_out", "broken"])
 async def test_npc_news_is_neither_hero_trust_lie_deal_option_nor_concern(systems, kind):
-    systems.chronicle.record(rumor(kind=kind, subject=HILDA.lower()))
+    await systems.chronicle.record(rumor(kind=kind, subject=HILDA.lower()))
     record = systems.trust.of(LOBART)
     assert not record.broken and not record.heard
     assert systems.trust.situation(LOBART) is None
@@ -76,27 +77,27 @@ async def test_legacy_hero_news_keeps_trust_deal_and_concern_semantics(systems, 
     fact = rumor(subject=subject)
     if subject is None:
         fact.pop("subject")
-    systems.chronicle.record(fact)
+    await systems.chronicle.record(fact)
     assert systems.trust.of(LOBART).heard
     assert systems.deals.lies_of(LOBART)[0]
     assert systems.concerns.top(LOBART) is not None
 
 
 async def test_npc_news_cannot_supply_a_title_for_the_heros_claim_or_lie(systems):
-    systems.chronicle.record(rumor(title="Чужая ложь"))
-    systems.chronicle.record({"fact": "claim", "quest": QUEST, "npc": LOBART, "truth": True})
-    systems.chronicle.record({"fact": "caught", "quest": QUEST, "npc": LOBART})
+    await systems.chronicle.record(rumor(title="Чужая ложь"))
+    await systems.chronicle.record({"fact": "claim", "quest": QUEST, "npc": LOBART, "truth": True})
+    await systems.chronicle.record({"fact": "caught", "quest": QUEST, "npc": LOBART})
     record = systems.trust.of(LOBART)
     assert record.kept == [f"«{QUEST}»"]
     assert record.lied == [f"«{QUEST}»"]
 
 
 async def test_broken_gate_vouch_breaks_only_vouchers_trust_and_keeps_crime_distrust(systems):
-    crime(systems)
-    systems.chronicle.record({"fact": "crime_seen", "crime": "theft-1", "npc": LOBART})
+    await crime(systems)
+    await systems.chronicle.record({"fact": "crime_seen", "crime": "theft-1", "npc": LOBART})
     existing = systems.crimes.distrust(LOBART)
     assert existing
-    systems.chronicle.record({
+    await systems.chronicle.record({
         "fact": "gate_vouch_broken", "id": "V1:theft-1", "vouch": "V1", "npc": LOBART,
         "name": "Лобарт", "crime": "theft-1", "crime_kind": "theft",
         "title": "Лобарт поручился за преступника",
@@ -107,7 +108,7 @@ async def test_broken_gate_vouch_breaks_only_vouchers_trust_and_keeps_crime_dist
     assert "Лобарт поручился за преступника" not in record.crimes[0]
     assert "ты поручился за него" in systems.trust.situation(LOBART)
     assert not systems.trust.of(VINO).broken
-    systems.chronicle.record(rumor(
+    await systems.chronicle.record(rumor(
         kind="gate_vouch_broken", subject=LOBART, subject_name="Лобарт", to=VINO,
         quest="gate_vouch_broken:V1:theft-1",
     ))
@@ -115,38 +116,38 @@ async def test_broken_gate_vouch_breaks_only_vouchers_trust_and_keeps_crime_dist
 
 
 async def test_npc_news_never_teaches_a_hero_crime_or_native_memory_or_law(systems):
-    crime(systems)
-    systems.chronicle.record(rumor(kind="theft", crime="theft-1", to=ANDRE, at=5000))
+    await crime(systems)
+    await systems.chronicle.record(rumor(kind="theft", crime="theft-1", to=ANDRE, at=5000))
     assert systems.crimes.known(ANDRE) == []
     assert systems.crimes.distrust(ANDRE) == []
     assert memory_value(systems.crimes, ANDRE) == (0, 0)
     assert systems.law.deliveries() == []
-    assert systems.law.tick(10000) == []
+    assert await systems.law.tick(10000) == []
     assert systems.law.known("city") == []
     assert systems.law.debt("city") == 0
     assert not systems.chronicle.facts("crime_law_time")
 
 
 async def test_npc_news_to_victim_does_not_resolve_a_witness_concern(systems):
-    crime(systems)
+    await crime(systems)
     systems.crimes.people[VINO] = {"guild": 3, "npctype": 0}
-    systems.chronicle.record({"fact": "crime_seen", "crime": "theft-1", "npc": VINO})
+    await systems.chronicle.record({"fact": "crime_seen", "crime": "theft-1", "npc": VINO})
     assert systems.concerns.top(VINO).key == "crime_witness:theft-1"
     fact = rumor(kind="theft", crime="theft-1")
-    systems.chronicle.record(fact)
+    await systems.chronicle.record(fact)
     assert not _delivers_crime(fact, "theft-1", LOBART, systems.crimes)
     systems.concerns._cache.clear()
     assert systems.concerns.top(VINO).key == "crime_witness:theft-1"
 
 
 async def test_legacy_crime_rumor_still_teaches_the_guard_and_law(systems):
-    crime(systems)
+    await crime(systems)
     fact = rumor(kind="theft", crime="theft-1", to=ANDRE, at=5000)
     fact.pop("subject")
-    systems.chronicle.record(fact)
+    await systems.chronicle.record(fact)
     assert systems.crimes.known(ANDRE)[0].suspect == "PLAYER"
     assert memory_value(systems.crimes, ANDRE) == (3, 3)
-    assert systems.law.tick(5000)[0]["crime"] == "theft-1"
+    assert (await systems.law.tick(5000))[0]["crime"] == "theft-1"
 
 
 async def test_npc_news_never_queues_amends_for_the_hero(systems):
@@ -156,12 +157,12 @@ async def test_npc_news_never_queues_amends_for_the_hero(systems):
     amends.chronicle = systems.chronicle
     amends.lies = {}
     amends.storylets, amends.looked = {}, {}
-    crime(systems)
+    await crime(systems)
     for kind in ("cover", "caught", "found_out", "broken"):
         amends._on_fact(rumor(kind=kind))
     amends._on_fact(rumor(kind="theft", crime="theft-1"))
     assert amends._queue.empty() and amends.lies == {}
-    systems.chronicle.record(rumor(kind="theft", crime="theft-1"))
+    await systems.chronicle.record(rumor(kind="theft", crime="theft-1"))
     amends._load()
     assert amends._queue.empty()
     old = rumor()
@@ -171,8 +172,8 @@ async def test_npc_news_never_queues_amends_for_the_hero(systems):
 
 
 async def test_npc_news_is_absent_from_chain_and_showrunner_hero_crime_knowledge(systems):
-    deed = crime(systems)
-    systems.chronicle.record(rumor(kind="theft", crime="theft-1", to=ANDRE))
+    deed = await crime(systems)
+    await systems.chronicle.record(rumor(kind="theft", crime="theft-1", to=ANDRE))
     chain = object.__new__(ChainAuthor)
     chain.crimes, chain.chronicle = systems.crimes, systems.chronicle
     assert ANDRE not in chain._crime_context(deed, {})
@@ -182,7 +183,7 @@ async def test_npc_news_is_absent_from_chain_and_showrunner_hero_crime_knowledge
     assert all(k["npc"] != ANDRE for k in briefs["theft-1"]["knowledge"])
     old = rumor(kind="theft", crime="theft-1", to=ANDRE)
     old.pop("subject")
-    systems.chronicle.record(old)
+    await systems.chronicle.record(old)
     assert ANDRE in chain._crime_context(deed, {})
     briefs = showrunner._crime_briefs({}, systems.chronicle.facts())
     assert any(k["npc"] == ANDRE and k["suspect"] == "PLAYER"
@@ -199,8 +200,8 @@ async def test_npc_news_does_not_wake_hero_crime_runtime_readers(systems):
     memory = object.__new__(CrimeMemoryRuntime)
     memory.chronicle, memory._projection = systems.chronicle, {}
     memory.project = AsyncMock()
-    crime(systems)
-    systems.chronicle.record(rumor(kind="theft", crime="theft-1", to=ANDRE))
+    await crime(systems)
+    await systems.chronicle.record(rumor(kind="theft", crime="theft-1", to=ANDRE))
     await memory.tick()
     memory.project.assert_not_awaited()
 
@@ -215,9 +216,9 @@ async def test_npc_news_does_not_wake_hero_crime_runtime_readers(systems):
 
 @pytest.mark.parametrize("kind", ["take_item", "attack"])
 async def test_npc_physical_deeds_and_their_news_leave_every_hero_reader_unchanged(systems, kind):
-    hero_case = crime(systems)
+    hero_case = await crime(systems)
     systems.crimes.people[LOBART] = {"guild": 3, "npctype": 0}
-    systems.chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": hero_case["id"]})
+    await systems.chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": hero_case["id"]})
     showrunner = object.__new__(Showrunner)
     showrunner.crimes, showrunner.law = systems.crimes, systems.law
     amends = object.__new__(Amends)
@@ -249,18 +250,18 @@ async def test_npc_physical_deeds_and_their_news_leave_every_hero_reader_unchang
     before = hero_views()
     service = NpcCrimes(systems.crimes.link, systems.chronicle, crimes=systems.crimes)
     try:
-        service.record(npc_deed(
+        await service.record(npc_deed(
             id=hero_case["id"], culprit=HILDA, kind=kind, owner=VINO,
             victim=VINO if kind == "attack" else "", victim_guild=3, owner_npc_guild=3,
             witnesses=[LOBART, ANDRE],
         ))
-        systems.chronicle.record({
+        await systems.chronicle.record({
             "fact": "rumor", "quest": "npc_crime_seen:" + hero_case["id"],
             "subject": HILDA, "kind": "npc_attack" if kind == "attack" else "npc_theft",
             "to": LOBART, "from": ANDRE, "about": VINO, "hops": 1, "day": 3,
         })
         for outcome in ("reclaimed", "defender_down", "timeout"):
-            systems.chronicle.record({
+            await systems.chronicle.record({
                 "fact": "npc_crime_defense", "crime": hero_case["id"], "culprit": HILDA,
                 "fighter": ANDRE, "act": f"defense-{outcome}", "outcome": outcome, "reason": outcome,
                 "item": "ITFO_BREAD", "count": 1, "returned": int(outcome == "reclaimed"),
@@ -289,7 +290,7 @@ async def test_npc_gossip_passes_as_fact_without_a_hero_scene(tmp_path):
         g.rumors.rumors = {r.key: r}
         staging = g.desk.stage(r, LOBART, HILDA)
         assert staging.tier == "fact" and staging.why == "news about an npc"
-        assert _tick(g) == 1
+        assert await _tick(g) == 1
         [fact] = g.chronicle.facts("rumor")
         assert fact["subject"] == VINO and fact["to"] == HILDA
         assert VINO in _news(r) or "Вино" in _news(r)
@@ -328,7 +329,7 @@ def test_day_trip_news_describes_the_npc_subject():
 async def test_errand_description_memory_and_reload_keep_the_npc_subject():
     from tests.test_errands import DAWN, _desk
 
-    errands, link, _, _, rumors, chronicle, notes = _desk()
+    errands, link, _, _, rumors, chronicle, notes = await _desk()
     r = Rumor("exposed:T1", "cover", LOBART, "Лобарт", "", known={LOBART: 0},
               subject=HILDA, subject_name="Хильда")
     rumors.rumors = {r.key: r}
@@ -336,7 +337,7 @@ async def test_errand_description_memory_and_reload_keep_the_npc_subject():
     assert goal is not None and not why
     assert goal.subject == HILDA and goal.title == r.description()
     assert "Хильда" in goal.what() and "рассказать о герое" not in goal.what()
-    again, *_ = _desk(chronicle.facts())
+    again, *_ = await _desk(chronicle.facts())
     assert again.goals[goal.id].subject == HILDA
-    errands._done(goal, ANDRE, "far")
+    await errands._done(goal, ANDRE, "far")
     assert "Хильда" in notes[-1] and "Ты рассказал о герое" not in notes[-1]

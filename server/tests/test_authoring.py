@@ -17,6 +17,7 @@ from gothic_ai.validator import Patches, Rules, Story, WorldState, validate
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
 from tests.test_director import GRAPH, HILDA, NAMES, QUEST, SYMBOLS
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 BOOK = {
     "version": VERSION,
@@ -95,7 +96,9 @@ async def _author(fake: FakeGame, llm: FakeBackend, graph: StoryGraph, store: Me
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
     patches = StoryPatches(link, store)
+    await patches.initialize()
     chronicle = Chronicle(link, store)
+    await chronicle.initialize()
     director = Director(link, graph, patches, chronicle, llm, pacing=Pacing(cooldown_s=0), settle_s=0)
     author = Author(link, graph, patches, chronicle, director, llm, places=PlaceBook(BOOK))
     await _until(lambda: patches.branch is not None and chronicle.branch is not None)
@@ -110,7 +113,7 @@ async def test_the_author_makes_a_quest_after_a_rejected_proposal(graph):
     fake = FakeGame(branch="A")
     greedy = _quest(gold=500, place="CITY")
     llm = FakeBackend(script=[FakeStep("", [greedy]), FakeStep("", [_quest()])], delay=0)
-    link_cm, author, chronicle = await _author(fake, llm, graph, MemoryStore(":memory:"))
+    link_cm, author, chronicle = await _author(fake, llm, graph, await MemoryStore.open(":memory:"))
     try:
         premise = "Хильда потеряла пилу после ночного переполоха. Работу надо закончить до дождя."
         q = await author.quest(HILDA, premise)
@@ -176,20 +179,20 @@ async def test_the_author_makes_a_quest_after_a_rejected_proposal(graph):
 
         # the hero takes it, then brings the saw: the giver knows where it stands
         book = author.book
-        assert book.situation(HILDA) is None and author.situation(HILDA) is None
+        assert await book.situation(HILDA) is None and author.situation(HILDA) is None
         await fake.send(type="dialog_chosen", npc=HILDA, node="DIR_Q1_GIVE", made=True)
         await _until(lambda: book.progress("DIR_Q1").state == "given")
         assert "найти твою пропавшую вещь — Пила: она лежит на полях фермы Лобарта." in (
-            book.situation(HILDA) or ""
+            await book.situation(HILDA) or ""
         )
         await fake.send(type="dialog_chosen", npc=HILDA, node="DIR_Q1_DONE", made=True)
         await _until(lambda: book.progress("DIR_Q1").state == "done")
-        assert "ты заплатил: 20 золотых, опыт +50" in (book.situation(HILDA) or "")
+        assert "ты заплатил: 20 золотых, опыт +50" in (await book.situation(HILDA) or "")
 
         # a load of the branch brings it back as it stands: the description from the log, the rest from facts
         book.quests.clear()
         book._version = -1
-        assert book.all()["DIR_Q1"] == q and book.progress("DIR_Q1").state == "done"
+        assert (await book.all())["DIR_Q1"] == q and book.progress("DIR_Q1").state == "done"
 
         # another: the next variable, and the model knows what she asked before
         llm.script.append(FakeStep("", [_quest(title="Грабли", item="ITMI_RAKE")]))
@@ -204,7 +207,7 @@ async def test_the_author_makes_a_quest_after_a_rejected_proposal(graph):
 async def test_no_quest_from_the_plot_or_the_dead(graph):
     fake = FakeGame(branch="A")
     llm = FakeBackend(script=[], delay=0)
-    link_cm, author, _ = await _author(fake, llm, graph, MemoryStore(":memory:"))
+    link_cm, author, _ = await _author(fake, llm, graph, await MemoryStore.open(":memory:"))
     try:
         fake.npc_states[HILDA]["state"] = "dead"
         assert await author.quest(HILDA) is None
@@ -229,7 +232,9 @@ async def test_the_brief_excludes_items_named_anywhere_in_scripts_and_unknown_to
         {"do": "give", "item": ["sym", "ITMI_HAMMER"], "amount": ["int", 1]}
     )
     fake = FakeGame(branch="A")
-    link_cm, author, _ = await _author(fake, FakeBackend(script=[], delay=0), graph, MemoryStore(":memory:"))
+    link_cm, author, _ = await _author(
+        fake, FakeBackend(script=[], delay=0), graph, await MemoryStore.open(":memory:")
+    )
     try:
         fake.symbols.update({"ITMI_HAMMER": "item", "ITAT_MEATBUGFLESH": "item", "ITPL_FORESTBERRY": "var"})
         fake.item_names.update(
@@ -249,7 +254,7 @@ async def test_the_brief_excludes_items_named_anywhere_in_scripts_and_unknown_to
 async def test_a_vanilla_response_keeps_its_opening_and_the_givers_knowledge(graph):
     fake = FakeGame(branch="A")
     llm = FakeBackend(script=[FakeStep("", [_quest()])], delay=0)
-    link_cm, author, _ = await _author(fake, llm, graph, MemoryStore(":memory:"))
+    link_cm, author, _ = await _author(fake, llm, graph, await MemoryStore.open(":memory:"))
     try:
         fake.vars[QUEST] = 2
         requires = [{"kind": "quest", "quest": QUEST, "state": "success"}]
@@ -266,7 +271,7 @@ async def test_a_vanilla_response_keeps_its_opening_and_the_givers_knowledge(gra
         assert fake.evaluate(give["condition"], HILDA) == 0
         author.book.quests.clear()
         author.book._version = -1
-        assert author.book.all()[q.id] == q
+        assert (await author.book.all())[q.id] == q
     finally:
         await link_cm.__aexit__(None, None, None)
 

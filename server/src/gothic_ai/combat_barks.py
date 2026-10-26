@@ -67,7 +67,7 @@ class CombatBarks:
         self.branch = dialogue.branch
         self.link.listeners.append(self._on_message)
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         match msg:
             case NpcRoster():
                 if msg.full:
@@ -92,7 +92,7 @@ class CombatBarks:
                 self.last_at = float("-inf")
             case CombatHit():
                 if self.hits and self.dialogue.quick is not None:
-                    self._hit(msg)
+                    await self._hit(msg)
 
     def _eligible(self, npc: str) -> bool:
         entry = self.roster.get(npc)
@@ -120,7 +120,7 @@ class CombatBarks:
         card = self.dialogue.personas.cards.get(npc)
         return card.name if card else npc
 
-    def _hit(self, hit: CombatHit) -> None:
+    async def _hit(self, hit: CombatHit) -> None:
         now = time.monotonic()
         victim, attacker = hit.npc.upper(), hit.by.upper()
         new_fighters = []
@@ -135,7 +135,7 @@ class CombatBarks:
             # A raw hit need not be an IncidentDesk incident: warm both human participants here.
             candidates = [*self.dialogue._prewarm_history, *new_fighters]
             for npc in sorted(new_fighters):
-                conv = self.dialogue.open(npc, self._name(npc), warm=False)
+                conv = await self.dialogue.open(npc, self._name(npc), warm=False)
                 if self.dialogue._prewarm_history.get(npc) != conv.history:
                     self.dialogue._start_prewarm(conv, candidates)
         if hit.down or hit.dead:
@@ -162,7 +162,7 @@ class CombatBarks:
                         and (seen.att == "friendly" or (entry and seen.guild == entry.guild))):
                         allies.append((seen.distance, npc))
             if allies:
-                self._attempt(min(allies)[1], "ally_down", hit,
+                await self._attempt(min(allies)[1], "ally_down", hit,
                               f"{self._name(victim)} упал — его сразил {self._name(attacker)}", now)
             return
         fighter = self.fighters[victim]
@@ -171,9 +171,9 @@ class CombatBarks:
         if self._eligible(victim):
             event = (f"ты тяжело ранен, сил почти не осталось — бьёт {self._name(attacker)}" if low
                      else f"тебе больно досталось — {self._name(attacker)}")
-            self._attempt(victim, "low_hp" if low else "hurt", hit, event, now)
+            await self._attempt(victim, "low_hp" if low else "hurt", hit, event, now)
         if self._eligible(attacker):
-            self._attempt(attacker, "landed", hit, f"ты попал по {self._name(victim)}", now)
+            await self._attempt(attacker, "landed", hit, f"ты попал по {self._name(victim)}", now)
 
     def _busy(self, npc: str) -> bool:
         conv = self.dialogue.conversations.get(npc)
@@ -203,11 +203,11 @@ class CombatBarks:
 
     async def humiliate(self, conv: Conversation, target: str) -> None:
         if self.dialogue.quick is not None:
-            task = self._attempt(conv.npc, "humiliate", None, target, time.monotonic())
+            task = await self._attempt(conv.npc, "humiliate", None, target, time.monotonic())
             if task is not None:
                 await task
 
-    def _attempt(
+    async def _attempt(
         self, npc: str, reason: str, hit: CombatHit | None, event: str, received: float,
     ) -> asyncio.Task[None] | None:
         fighter = self.fighters.setdefault(npc, Fighter())
@@ -241,7 +241,7 @@ class CombatBarks:
             record("chance")
         else:
             fighter.first = False
-            conv = self.dialogue.open(npc, self._name(npc), warm=False)
+            conv = await self.dialogue.open(npc, self._name(npc), warm=False)
             self.task = asyncio.create_task(self._generate(conv, event, received, attempt, record))
             self.task.add_done_callback(lambda task: record("busy") if task.cancelled() else None)
             return self.task
@@ -261,7 +261,7 @@ class CombatBarks:
                 async with aclosing(self.dialogue._quick_stream(
                     conv.npc, instructions=conv.persona.instructions,
                     messages=[Message(
-                        "developer", f"{self.dialogue._brief(conv)}\n{hint}",
+                        "developer", f"{await self.dialogue._brief(conv)}\n{hint}",
                     )],
                     tools=[], temperature=0.7,
                 )) as events:

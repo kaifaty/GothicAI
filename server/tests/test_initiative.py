@@ -33,6 +33,7 @@ from tests.fake_game import FakeGame, connected
 from tests.fakes import Clock, FakeDecider
 from tests.test_dialogue import XARDAS, _until
 from tests.test_director import _node
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_planner import step
 from tests.test_talk import person
 
@@ -83,7 +84,7 @@ async def _scene(
     """The parts as cli.py wires them, around the fake game (branch A, day 1, 08:00). The behavioral model
     picks approach_talk; an npc's soft act ends only when the test says so (npc_idle). The budget's clock
     stands: nothing refills."""
-    fake, store = FakeGame(branch="A"), MemoryStore(":memory:")
+    fake, store = FakeGame(branch="A"), await MemoryStore.open(":memory:")
     llm = llm or FakeBackend(WORDS, delay=0)
     journal: list[dict[str, Any]] = []
     trace = TraceWriter(tmp_path)
@@ -91,7 +92,9 @@ async def _scene(
         dialogue = DialogueManager(
             link, llm, PersonaProvider(None), memory=store, journal=Journal(journal.append), trace=trace
         )
+        await dialogue.initialize()
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         crimes = Crimes(link, chronicle) if with_crimes else None
         deals = Deals(link, dialogue, chronicle, crimes=crimes)
         dialogue.extensions.append(deals)
@@ -143,13 +146,13 @@ async def _scene(
         )
 
 
-def _owes(s: Scene, npc: str = LOBART, name: str = "Лобарт") -> None:
+async def _owes(s: Scene, npc: str = LOBART, name: str = "Лобарт") -> None:
     """The hero did not pay back the 25 gold he borrowed of the npc: a debt written past the deals, as the e2e
     seeds one, broken on day 1."""
     debt = {"fact": "debt", "id": "d1", "npc": npc, "npc_name": name, "due": 0, "day": 0}
-    s.chronicle.record({**debt, "item": "ITMI_GOLD", "count": 25, "name": "Золото"})
-    s.deals.reload()
-    s.deals.overdue(1)
+    await s.chronicle.record({**debt, "item": "ITMI_GOLD", "count": 25, "name": "Золото"})
+    await s.deals.reload()
+    await s.deals.overdue(1)
 
 
 async def _around(s: Scene, *people: dict) -> None:
@@ -446,7 +449,7 @@ async def test_rule_approach_respects_sleep_busy_posts_and_other_conversation(tm
     async with _scene(tmp_path) as s:
         await _around(s, entry)
         if partner is not None:
-            s.talk.begin(partner, "Малет")
+            await s.talk.begin(partner, "Малет")
         approach = ImportantApproach(s.desk.link, s.desk.bodies, s.talk, s.desk.guard, s.chronicle)
         try:
             assert not await approach.approach(
@@ -484,7 +487,7 @@ def graph(tmp_path: Path) -> StoryGraph:
 
 async def test_the_lender_walks_up_and_speaks_first(tmp_path):
     async with _scene(tmp_path) as s:
-        _owes(s)
+        await _owes(s)
         await _around(s, person(LOBART, "Лобарт", 8))
         assert s.planner.npcs[LOBART].agenda == AGENDA  # its concern is what it wants of the hero
         await _near(s)
@@ -539,12 +542,14 @@ async def test_the_lender_walks_up_and_speaks_first(tmp_path):
 
 async def test_a_witness_can_approach_about_a_case_only_once(tmp_path):
     async with _scene(tmp_path, with_crimes=True) as s:
-        s.chronicle.record({
+        await s.chronicle.record({
             "fact": "crime", "id": "C1", "kind": "theft", "victim": MALETH, "owner": MALETH,
             "item": "ITFO_BREAD", "count": 1, "day": 1, "hour": 8, "minute": 0,
             "community": "farm", "waypoint": "FARM1_IN",
         })
-        s.chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "C1", "guild": 8, "npctype": 0})
+        await s.chronicle.record(
+            {"fact": "crime_seen", "npc": LOBART, "crime": "C1", "guild": 8, "npctype": 0}
+        )
         await _comes_up(s)
         (fact,) = s.chronicle.facts("initiative")
         assert fact["occasion"] == "crime_witness:C1"
@@ -553,15 +558,17 @@ async def test_a_witness_can_approach_about_a_case_only_once(tmp_path):
         # The concern remains for the conversation; this case never prompts another approach,
         # including after a day and after reloading the saved initiative facts.
         assert s.concerns.top(LOBART).key == "crime_witness:C1"
-        s.talk.on_npc_end(LOBART)
+        await s.talk.on_npc_end(LOBART)
         await _until(lambda: s.planner.npcs[LOBART].activity == "routine")
         s.desk.now += 1440
         s.desk._load()
         assert s.desk.allow(s.planner.npcs[LOBART], "approach_talk") == "уже говорил об этом деле"
         assert s.desk.walks == 1
         original = s.chronicle.facts("crime")[0]
-        s.chronicle.record({**original, "id": "C2"})
-        s.chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "C2", "guild": 8, "npctype": 0})
+        await s.chronicle.record({**original, "id": "C2"})
+        await s.chronicle.record(
+            {"fact": "crime_seen", "npc": LOBART, "crime": "C2", "guild": 8, "npctype": 0}
+        )
         assert s.desk.occasion(LOBART).key == "crime_witness:C2"
         assert s.desk.allow(s.planner.npcs[LOBART], "approach_talk") is None
 
@@ -569,7 +576,7 @@ async def test_a_witness_can_approach_about_a_case_only_once(tmp_path):
 async def test_the_heros_next_words_go_to_it(tmp_path):
     llm = FakeBackend(script=[FakeStep(WORDS), FakeStep("Давно бы так.")], delay=0)
     async with _scene(tmp_path, llm) as s:
-        _owes(s)
+        await _owes(s)
         # Maleth is in front of the hero and nearer: without a partner his words would go to Maleth
         await _comes_up(s, person(MALETH, "Малет", 2, True))
         await s.fake.send(type="player_text", text="Ну, чего тебе?")
@@ -585,7 +592,7 @@ async def test_the_heros_next_words_go_to_it(tmp_path):
 
 async def test_no_budget_no_walk(tmp_path):
     async with _scene(tmp_path, budget=Budget(per_npc_per_min=0, total_per_min=0)) as s:
-        _owes(s)
+        await _owes(s)
         await _around(s, person(LOBART, "Лобарт", 8))
         await _near(s)
         assert _decided(s) == [(LOBART, "approach_talk", "initiative desk")]
@@ -598,7 +605,7 @@ async def test_no_budget_no_walk(tmp_path):
 
 async def test_pending_important_dialog_keeps_it_away(tmp_path):
     async with _scene(tmp_path) as s:
-        _owes(s)
+        await _owes(s)
         s.fake.important = {LOBART}  # the scripts have an important dialog for the hero (Npc_CheckInfo)
         await _around(s, person(LOBART, "Лобарт", 8))
         await _near(s)
@@ -646,7 +653,7 @@ async def test_checkinfo_unknown_falls_back_to_the_graph(tmp_path, graph, monkey
 
 async def test_not_during_a_dialog(tmp_path):
     async with _scene(tmp_path) as s:
-        _owes(s)
+        await _owes(s)
         s.fake.in_dialog = True  # the hero is in a dialog of the scripts
         await _around(s, person(LOBART, "Лобарт", 8))
         await _near(s)
@@ -659,7 +666,7 @@ async def test_not_during_a_dialog(tmp_path):
 
 async def test_not_while_the_hero_talks_to_another(tmp_path):
     async with _scene(tmp_path, FakeBackend("Растёт помаленьку.", delay=0)) as s:
-        _owes(s)
+        await _owes(s)
         await _around(s, person(LOBART, "Лобарт", 8), person(MALETH, "Малет", 3, True))
         await s.fake.send(type="player_text", text="Малет, как урожай?")
         await _said(s, "Растёт помаленьку.", npc=MALETH)
@@ -673,7 +680,7 @@ async def test_not_while_the_hero_talks_to_another(tmp_path):
 
 async def test_plot_npc_only_close(tmp_path):
     async with _scene(tmp_path) as s:
-        _owes(s, XARDAS, "Ксардас")
+        await _owes(s, XARDAS, "Ксардас")
         await _around(s, person(XARDAS, "Ксардас", 12, True))
         await _near(s, XARDAS)
         assert _decided(s) == [(XARDAS, "approach_talk", "veto: сюжетный: только слова")]
@@ -695,7 +702,7 @@ async def test_plot_npc_only_close(tmp_path):
 async def test_guard_at_post_does_not_walk(tmp_path):
     post = {"state": "ZS_GUARD_PASSAGE"}  # his dialogs warn and attack by where he stands
     async with _scene(tmp_path) as s:
-        _owes(s, GUARD, "Стражник")
+        await _owes(s, GUARD, "Стражник")
         asleep = person(VINO, "Вино", 6, state="ZS_SLEEP")
         await _around(s, person(GUARD, "Стражник", 8, True, **post), asleep)
         await _near(s, GUARD)
@@ -715,7 +722,7 @@ async def test_guard_at_post_does_not_walk(tmp_path):
 
 async def test_it_did_not_get_there(tmp_path):
     async with _scene(tmp_path, budget=Budget(clock=Clock())) as s:
-        _owes(s)
+        await _owes(s)
         await _around(s, person(LOBART, "Лобарт", 8))
         # struck down or taken over on the way; the bridge gave it up; it stopped short of the hero
         for n, (reason, metres) in enumerate([("gone", 3), ("timeout", 3), ("done", 9)], 1):
@@ -742,7 +749,7 @@ async def test_it_did_not_get_there(tmp_path):
 
 async def test_hero_spoke_first_while_it_walked(tmp_path):
     async with _scene(tmp_path, FakeBackend("Ага, вот и ты.", delay=0)) as s:
-        _owes(s)
+        await _owes(s)
         await _around(s, person(LOBART, "Лобарт", 8))
         await _near(s)
         await _walks(s, 1)
@@ -768,7 +775,7 @@ async def test_hero_spoke_first_on_its_way(tmp_path, moving):
     look replaces the walk, whose end never comes. Either way it knows what it came for, at once."""
     async with _scene(tmp_path, FakeBackend("Ага, вот и ты.", delay=0)) as s:
         s.fake.track_acts = True
-        _owes(s)
+        await _owes(s)
         await _around(s, person(LOBART, "Лобарт", 8))
         await _near(s)
         await _walks(s, 1)
@@ -785,13 +792,13 @@ async def test_hero_spoke_first_on_its_way(tmp_path, moving):
 
 async def test_one_per_occasion_per_game_hour_and_the_facts_line(tmp_path):
     async with _scene(tmp_path) as s:
-        _owes(s)
-        before = s.store.head("A")
+        await _owes(s)
+        before = await s.store.head("A")
         await _comes_up(s)  # day 1, 08:00
-        saved = s.store.head("A")
+        saved = await s.store.head("A")
         at_8 = REMEMBERS.format("08:00")
         assert s.desk.facts(LOBART) == (at_8,) and s.desk.facts(MALETH) == ()
-        s.talk.on_npc_end(LOBART)  # its goodbye: back to its day
+        await s.talk.on_npc_end(LOBART)  # its goodbye: back to its day
         await _until(lambda: s.planner.npcs[LOBART].activity == "routine")
 
         # half an hour on it is asked again: it remembers, and the desk holds it back
@@ -833,7 +840,7 @@ async def test_other_choices_wait_while_it_walks(tmp_path):
         s.fake.track_acts = True
         walk_act = s.desk.bodies.act
         s.desk.bodies.act = lambda npc, action, **args: walk_act(npc, action, timeout=1.5, **args)  # not 35 s
-        _owes(s)
+        await _owes(s)
         await _around(s, person(LOBART, "Лобарт", 8, True))
         await _near(s)
         await _walks(s, 1)
@@ -902,7 +909,7 @@ async def test_one_gone_to_bed_does_not_come(tmp_path):
 
 async def _up_while_two_talk(s: Scene) -> None:
     """Lobart walks up to the hero while two others talk next to him (gossip.py's floor)."""
-    _owes(s)
+    await _owes(s)
     await _around(s, person(LOBART, "Лобарт", 8))
     await _near(s)
     await _walks(s, 1)

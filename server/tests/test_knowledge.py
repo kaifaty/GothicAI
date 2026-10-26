@@ -15,6 +15,7 @@ from gothic_ai.story import StoryPatches, freed
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
 from tests.test_director import _line, _node
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 LOBART = "BAU_950_LOBART"
 QUEST = "MIS_LOBART_RUEBEN"
@@ -187,15 +188,15 @@ class _Link:
     world = "NEWWORLD.ZEN"
 
 
-def _view(graph: StoryGraph, knows: set[str] = frozenset(), **vars: int):
+async def _view(graph: StoryGraph, knows: set[str] = frozenset(), **vars: int):
     k = Knowledge(_Link(), graph)  # type: ignore[arg-type]
-    own = k.dialogs(LOBART)
+    own = await k.dialogs(LOBART)
     state = StoryState(
         vars={"KAPITEL": 1, QUEST: 0, **vars},
         knows={n.id: n.id in knows for n in own} | {"DIA_ANDRE_HILFBAUERLOBART": False},
         fields={("SELF", "GUILD"): GIL_BAU},
     )
-    view = k.view(LOBART, state, GIL_BAU, own, k.ambient(GIL_BAU, 1, named=True), k.quests(LOBART))
+    view = await k.view(LOBART, state, GIL_BAU, own, k.ambient(GIL_BAU, 1, named=True), k.quests(LOBART))
     k.views[LOBART] = view
     return k, view
 
@@ -212,8 +213,8 @@ def test_three_valued_story_logic(graph):
     assert p.truth(["==", ["field", ["inst", "OTHER"], "GUILD"], ["int", 7]]) is None
 
 
-def test_what_lobart_knows_in_chapter_1(graph):
-    _, view = _view(graph, knows={"DIA_LOBART_HALLO"})
+async def test_what_lobart_knows_in_chapter_1(graph):
+    _, view = await _view(graph, knows={"DIA_LOBART_HALLO"})
     assert [t.node.id for t in view.told] == ["DIA_LOBART_HALLO"]
     # the work he can offer, and more work once they have talked of it (only the talk has to get there);
     # no exits in the menu
@@ -232,8 +233,8 @@ def test_what_lobart_knows_in_chapter_1(graph):
         assert later not in text
 
 
-def test_after_the_hero_took_the_job(graph):
-    _, view = _view(graph, knows={"DIA_LOBART_HALLO", "DIA_LOBART_WORKNOW"}, MIS_LOBART_RUEBEN=1)
+async def test_after_the_hero_took_the_job(graph):
+    _, view = await _view(graph, knows={"DIA_LOBART_HALLO", "DIA_LOBART_WORKNOW"}, MIS_LOBART_RUEBEN=1)
     assert [t.node.id for t in view.told] == ["DIA_LOBART_HALLO", "DIA_LOBART_WORKNOW"]
     assert [(t.node.id, t.sure) for t in view.open] == [
         ("DIA_LOBART_MOREWORK", True),
@@ -244,16 +245,16 @@ def test_after_the_hero_took_the_job(graph):
     assert "- «Вот твоя репа!»\n" in text  # it waits for the turnips: the topic, not what he'd say then
 
 
-def test_chapter_3(graph):
-    _, view = _view(graph, knows={"DIA_LOBART_HALLO"}, KAPITEL=3)
+async def test_chapter_3(graph):
+    _, view = await _view(graph, knows={"DIA_LOBART_HALLO"}, KAPITEL=3)
     assert [(t.node.id, t.sure) for t in view.open] == [("DIA_LOBART_AFTER", True), ("DIA_LOBART_KAP3", True)]
     text = brief(view)
     assert "- «Что нового?» — Орки у ворот города!" in text
     assert "«Говорят, в Долине драконы!»" in text and "работу" not in text
 
 
-def test_recall_gives_the_topic_in_full(graph):
-    k, _ = _view(graph, knows={"DIA_LOBART_HALLO", "DIA_LOBART_WORKNOW"}, MIS_LOBART_RUEBEN=1)
+async def test_recall_gives_the_topic_in_full(graph):
+    k, _ = await _view(graph, knows={"DIA_LOBART_HALLO", "DIA_LOBART_WORKNOW"}, MIS_LOBART_RUEBEN=1)
     found = k.recall(LOBART, "сколько репы собрать?")
     assert found is not None and found.startswith("Ты знаешь:\n[«Я ищу работу.» — герой это уже слышал")
     assert "Ты: «Могу предложить поденную работу: собрать репу за амбаром.»" in found
@@ -278,12 +279,13 @@ async def test_freed_dialogs_are_absent_from_open_and_told_knowledge(bandit_grap
         assert "Тогда тебе конец!" in vanilla.recall(BANDIT, "конец")
 
         patches = StoryPatches(
-            link, MemoryStore(":memory:"), static=freed(lambda node: node in bandit_graph.nodes)
+            link, await MemoryStore.open(":memory:"), static=freed(lambda node: node in bandit_graph.nodes)
         )
+        await patches.initialize()
         knowledge = Knowledge(link, bandit_graph, patches)
         for npc in (BRAGO, BANDIT):
             await knowledge.prepare(npc)
-            assert knowledge.dialogs(npc) == []
+            assert await knowledge.dialogs(npc) == []
             assert knowledge.views[npc].open == [] and knowledge.views[npc].told == []
         assert "Это он, точно" not in knowledge.situation(BRAGO)
         assert knowledge.recall(BRAGO, "Это он, точно") is None
@@ -299,7 +301,8 @@ async def test_branch_disable_enable_and_load_change_npc_knowledge(bandit_graph)
     fake = FakeGame(branch="A")
     fake.vars = {"KAPITEL": 1}
     async with connected(fake) as link:
-        patches = StoryPatches(link, MemoryStore(":memory:"))
+        patches = StoryPatches(link, await MemoryStore.open(":memory:"))
+        await patches.initialize()
         knowledge = Knowledge(link, bandit_graph, patches)
         await _until(lambda: len(fake.graph) == 1)
         await knowledge.prepare(BRAGO)
@@ -328,7 +331,8 @@ async def test_disabled_choices_and_ambient_dialogs_do_not_leak_into_recall(grap
     fake.vars = {"KAPITEL": 1, QUEST: 0}
     fake.fields = {("SELF", "GUILD"): GIL_BAU}
     async with connected(fake) as link:
-        patches = StoryPatches(link, MemoryStore(":memory:"))
+        patches = StoryPatches(link, await MemoryStore.open(":memory:"))
+        await patches.initialize()
         knowledge = Knowledge(link, graph, patches)
         await _until(lambda: len(fake.graph) == 1)
         await knowledge.prepare(LOBART)
@@ -358,10 +362,13 @@ async def test_the_npc_knows_in_its_turn_and_recalls_the_rest(graph):
         delay=0,
     )
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         knowledge = Knowledge(link, graph)
         dialogue.extensions.append(knowledge)
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await dialogue.say_as_player(LOBART, "Сколько репы тебе надо?")
         await _until(lambda: len(llm.calls) == 2)
 
@@ -397,10 +404,13 @@ async def test_akil_farm_ambushes_are_absent_from_knowledge(real_graph, npc, hea
         topics = vanilla.views[npc].told if heard else vanilla.views[npc].open
         assert {t.node.id for t in topics} == dialogs
 
-        patches = StoryPatches(link, MemoryStore(":memory:"), static=freed(real_graph.nodes.__contains__))
+        patches = StoryPatches(
+            link, await MemoryStore.open(":memory:"), static=freed(real_graph.nodes.__contains__)
+        )
+        await patches.initialize()
         knowledge = Knowledge(link, real_graph, patches)
         await knowledge.prepare(npc)
-        assert knowledge.dialogs(npc) == []
+        assert await knowledge.dialogs(npc) == []
         assert knowledge.views[npc].open == [] and knowledge.views[npc].told == []
         for node in real_graph.nodes.values():
             if node.npc == npc:
@@ -408,28 +418,28 @@ async def test_akil_farm_ambushes_are_absent_from_knowledge(real_graph, npc, hea
                     assert knowledge.recall(npc, line) is None
 
 
-def test_on_the_games_own_story(real_graph):
+async def test_on_the_games_own_story(real_graph):
     graph = real_graph
     k = Knowledge(_Link(), graph)  # type: ignore[arg-type]
 
-    def view(npc: str, guild: int, knows: set[str], **vars: int):
-        own = k.dialogs(npc)
+    async def view(npc: str, guild: int, knows: set[str], **vars: int):
+        own = await k.dialogs(npc)
         state = StoryState(
             vars=vars, knows={n.id: n.id in knows for n in own}, fields={("SELF", "GUILD"): guild}
         )
-        return k.view(npc, state, guild, own, k.ambient(guild, None, named=True), k.quests(npc))
+        return await k.view(npc, state, guild, own, k.ambient(guild, None, named=True), k.quests(npc))
 
     xardas = {"KAPITEL": 1, "XARDAS_GOESTORITUALINNOSEYE": 0, "SATURAS_KLAUEINSMEER": 0}
-    ch1 = view("NONE_100_XARDAS", 0, {"DIA_XARDAS_HELLO"}, **xardas)
+    ch1 = await view("NONE_100_XARDAS", 0, {"DIA_XARDAS_HELLO"}, **xardas)
     ids = {t.node.id for t in [*ch1.told, *ch1.open]}
     assert "DIA_XARDAS_TODO" in ids
     # the ritual of chapter 3, and what waits for it
     assert not ids & {"DIA_XARDAS_BACKFROMOW", "DIA_XARDAS_RITUALREQUEST", "DIA_XARDAS_BEREIT"}
-    ch3 = view("NONE_100_XARDAS", 0, {"DIA_XARDAS_HELLO"}, **{**xardas, "KAPITEL": 3})
+    ch3 = await view("NONE_100_XARDAS", 0, {"DIA_XARDAS_HELLO"}, **{**xardas, "KAPITEL": 3})
     ids = {t.node.id for t in ch3.open}
     assert "DIA_XARDAS_BACKFROMOW" in ids and "DIA_XARDAS_TODO" not in ids
 
-    lobart = view("BAU_950_LOBART", 8, set(), KAPITEL=1, MIS_LOBART_RUEBEN=0)
+    lobart = await view("BAU_950_LOBART", 8, set(), KAPITEL=1, MIS_LOBART_RUEBEN=0)
     ids = {t.node.id for t in lobart.open}
     assert "DIA_LOBART_WORKNOW" in ids and "DIA_LOBART_RUEBENRUNNING" not in ids
     assert lobart.rumors  # the farmers' talk of chapter 1

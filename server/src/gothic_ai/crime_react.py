@@ -380,6 +380,7 @@ class CrimeReact:
             raise _Fallback("action_rejected:" + (receipt.detail or action))
 
     async def _handle(self, held: PerceptionHeld, generation: int) -> None:
+        world_generation, session = self.link.world_generation, self.link.session
         verdict, reason = "scripts", "missing_crime"
         role: Role | None = None
         reaction: Reaction | None = None
@@ -431,7 +432,10 @@ class CrimeReact:
                 elif reaction.kind == "flee":
                     await self._act(npc, "flee", npc="PLAYER", **voice)
                 elif reaction.kind == "call_guards":
-                    self.law.called(crime["id"], npc, guards)
+                    await self.law.called(crime["id"], npc, guards)
+                    if (world_generation != self.link.world_generation
+                            or session is not self.link.session):
+                        return
                     guard = next((guard for guard in guards if self._free(guard)), None)
                     if guard:
                         await self._act(guard, "fight", npc="PLAYER", reason="AR_GUARDCALLEDTOTHIEF")
@@ -461,7 +465,9 @@ class CrimeReact:
         if reaction is not None and reaction.svm:
             fact["svm"] = reaction.svm
         self.history.append(fact)
-        self.crimes.chronicle.record(fact)
+        await self.crimes.chronicle.record(fact)
+        if world_generation != self.link.world_generation or session is not self.link.session:
+            return
         try:
             await self.link.send(HoldVerdictCmd(hold=held.hold, to=verdict))  # type: ignore[arg-type]
         except (GameError, ConnectionError):
@@ -524,7 +530,7 @@ class CrimeReact:
                         "do": "give", "item": crime["item"], "count": amount, "to": "self",
                     }], check=True)
                     if generation == self._generation:
-                        self.crimes.chronicle.record({
+                        await self.crimes.chronicle.record({
                             "fact": "crime_restitution", "crime": crime["id"], "npc": crime["owner"],
                             "fighter": fighter, "item": crime["item"], "count": amount,
                             "how": "defeated_thief",

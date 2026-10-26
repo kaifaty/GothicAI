@@ -39,10 +39,11 @@ The terms are what the code can carry out and check (step 2: deals in the story)
 from __future__ import annotations
 
 import asyncio
+import inspect
 import itertools
 import logging
 import uuid
-from collections.abc import Callable, Collection, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -671,7 +672,9 @@ class Deals:
         self.stash = Stash(chronicle)
         self.purse = Purse(chronicle)
         # what the npc knows it keeps in its chests (chests.py): a thing it offers may be there
-        self.in_chests: Callable[[str], dict[str, tuple[int, str]]] = lambda npc: {}
+        self.in_chests: Callable[
+            [str], dict[str, tuple[int, str]] | Awaitable[dict[str, tuple[int, str]]]
+        ] = lambda npc: {}
         # the tasks of the deals and their rewards: a TurnExtension of its own (cli.py)
         self.contracts = Contracts(link, dialogue, chronicle, self.stash, journal=self.journal)
         self.guide: Guide | None = None  # where it may lead the hero, and the way (guide.py)
@@ -682,12 +685,21 @@ class Deals:
         self._paying: dict[str, asyncio.Task[bool]] = {}
         self._world_generation = 0
         self.day: int | None = None  # the game day, as last read
-        self.on_day: list[Callable[[int], None]] = []  # a new game day (concerns.py: a debt due today)
-        self.on_reload: list[Callable[[], None]] = []  # the debts were read again (concerns.py)
+        # A new game day: a debt may be due today (concerns.py).
+        self.on_day: list[Callable[[int], Awaitable[None] | None]] = []
+        self.on_reload: list[Callable[[], Awaitable[None] | None]] = []  # debts read again (concerns.py)
         self._ids = itertools.count(1)
         self._background: set[asyncio.Task[Any]] = set()
         link.listeners.append(self._on_message)
         self._load()
+
+    def _context(self) -> tuple[str, Session | None, int]:
+        return self.chronicle.branch, self.link.session, self.link.world_generation
+
+    def _check_context(self, context: tuple[str, Session | None, int]) -> None:
+        if (self.chronicle.branch != context[0] or self.link.session is not context[1]
+                or self.link.world_generation != context[2]):
+            raise asyncio.CancelledError
 
     def _on_message(self, msg: GameMessage) -> None:
         match msg:
@@ -713,7 +725,7 @@ class Deals:
         day = await _day(self.link)
         if generation != self._world_generation or "day" not in day:
             return
-        self._set_day(day["day"])
+        await self._set_day(day["day"])
         for later in pending:
             if generation != self._world_generation:
                 return
@@ -844,6 +856,7 @@ class Deals:
         *,
         hero_words: Collection[str] = (),
     ) -> ToolOutcome:
+        context = self._context()
         npc = npc.upper()
         current = self.open.get(npc)
         if current is not None and current.state in ("accepting", "unknown"):
@@ -861,18 +874,21 @@ class Deals:
             return ToolOutcome("Отклонено: secret — client_name, client_place или пустая строка.", "rejected")
         if secret and self.bounty is None:
             return ToolOutcome("Отклонено: продажа тайн выключена.", "rejected")
-        npc_gives, why = self._npc_gives(npc, args.get("npc_gives"), snap)
+        npc_gives, why = await self._npc_gives(npc, args.get("npc_gives"), snap)
+        self._check_context(context)
         if npc_gives is None:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
         xp, why = _parse_xp(args.get("npc_xp"))
         if xp is None:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
         teach, why = await parse_teach(self.link, args.get("npc_teach"))
+        self._check_context(context)
         if teach is None:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
         task_raw = args.get("task") if isinstance(args.get("task"), dict) else {}
         reward_raw = args.get("reward") if isinstance(args.get("reward"), dict) else {}
         kills, why = await parse_kills(self.link, task_raw.get("kill"), self.names)
+        self._check_context(context)
         if kills is None:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
         bring, why = _parse(task_raw.get("bring"))
@@ -881,13 +897,15 @@ class Deals:
         days, why = _parse_days(task_raw.get("days"))
         if days is None:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
-        paid, why = self._npc_gives(npc, reward_raw.get("npc_gives"), snap)
+        paid, why = await self._npc_gives(npc, reward_raw.get("npc_gives"), snap)
+        self._check_context(context)
         if paid is None:
             return ToolOutcome(f"Отклонено: награда — {why}", "rejected")
         paid_xp, why = _parse_xp(reward_raw.get("xp"))
         if paid_xp is None:
             return ToolOutcome(f"Отклонено: награда — {why}", "rejected")
         paid_teach, why = await parse_teach(self.link, reward_raw.get("teach"))
+        self._check_context(context)
         if paid_teach is None:
             return ToolOutcome(f"Отклонено: награда — {why}", "rejected")
         # what it pays with is decided when it pays: what it carries then, the rest from its stash
@@ -916,6 +934,7 @@ class Deals:
         later_ids = {i for i, _, _ in later_raw}
         asked = {*wanted, *bring, *later_ids, *(npc_later_raw[0] if npc_later_raw else ())}
         things, swaps, day, why = await self._items(npc, asked, set(wanted) - set(bring) - later_ids)
+        self._check_context(context)
         if things is None:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
         npc_later = None
@@ -941,9 +960,11 @@ class Deals:
             brought = tuple(Give(i, c, things[i]) for i, c in bring.items())
             task = Task(kills, brought, day + days if days else None)
         lead, why = await self._lead(npc, args.get("lead"), snap)
+        self._check_context(context)
         if why:
             return ToolOutcome(f"Отклонено: {why}", "rejected")
         meet, why = await self._meet(npc, args.get("meet"), snap)
+        self._check_context(context)
         if why:
             return ToolOutcome(f"Отклонено: встреча — {why}", "rejected")
         given = (
@@ -974,6 +995,7 @@ class Deals:
                 return ToolOutcome("Отклонено: за проход герой платит золотом сейчас.", "rejected")
             try:
                 why = await self.gates.bribe_error(npc, sum(g.count for g in hero_gives))
+                self._check_context(context)
             except (GameError, TimeoutError) as err:
                 why = f"не выходит проверить разрешение прохода: {err}"
             if why:
@@ -1014,6 +1036,7 @@ class Deals:
             return ToolOutcome(f"Эти условия герой уже видит: {current.terms()}.", "accepted")
         try:
             await self.link.send(deal.show())
+            self._check_context(context)
         except GameError as err:
             return ToolOutcome(f"Отклонено: {err}", "rejected")
         self.open[npc] = deal
@@ -1107,7 +1130,9 @@ class Deals:
 
     # --- the terms ------------------------------------------------------------------------------
 
-    def _npc_gives(self, npc: str, raw: Any, snap: Snapshot | None) -> tuple[tuple[Give, ...] | None, str]:
+    async def _npc_gives(
+        self, npc: str, raw: Any, snap: Snapshot | None
+    ) -> tuple[tuple[Give, ...] | None, str]:
         """What the npc gives: what it carries first, the rest from its stash (contracts.py)."""
         wanted, why = _parse(raw)
         if wanted is None:
@@ -1125,7 +1150,10 @@ class Deals:
             if got is None:
                 listed = "; ".join(f"{nm} ({i}) ×{c}" for i, (c, nm) in have.items()) or "пусто"
                 hidden = f" Твой тайник: {self.stash.text(npc)}." if kept else ""
-                stored = self.in_chests(npc).get(item)
+                chests = self.in_chests(npc)
+                if inspect.isawaitable(chests):
+                    chests = await chests
+                stored = chests.get(item)
                 if stored is not None:
                     hidden += (
                         f" {stored[1]} ({item}) ×{stored[0]} лежит у тебя в сундуке: сначала достань "
@@ -1307,6 +1335,7 @@ class Deals:
     # --- the hero accepts ------------------------------------------------------------------------
 
     async def accept(self, deal_id: str, version: int) -> None:
+        context = self._context()
         deal = next((d for d in self.open.values() if d.id == deal_id), None)
         if deal is None or deal.state != "open":
             log.info("deal %s v%d accepted, but it is not open", deal_id, version)
@@ -1315,15 +1344,18 @@ class Deals:
             # the terms changed as he pressed: he takes only what he saw
             log.info("deal %s: v%d accepted, v%d is shown", deal_id, version, deal.version)
             await self._notice("Условия изменились — посмотри ещё раз")
+            self._check_context(context)
             await self._send(deal.show())
+            self._check_context(context)
             return
         truce_now = self.parley.now() if self.parley is not None else None
         if deal.truce is not None and self.parley is not None and truce_now is None:
             raise ValueError("truce needs the game clock")
         deal.state = "accepting"
         day = await _day(self.link)
+        self._check_context(context)
         if "day" in day:
-            self._set_day(day["day"])
+            await self._set_day(day["day"])
         effects = deal.effects()
         try:
             if deal.let_pass:
@@ -1332,23 +1364,33 @@ class Deals:
                     if self.gates is not None
                     else "пропуск через ворота выключен."
                 )
+                self._check_context(context)
                 if why:
                     await self._failed(deal, why)
+                    self._check_context(context)
                     return
                 await self.gates.bribe(deal.npc, effects=effects)
+                self._check_context(context)
             elif effects:
                 await self.link.story_effect(deal.npc, effects, check=True)
+                self._check_context(context)
         except GateResultUnknown as err:
+            self._check_context(context)
             deal.state = "unknown"
             await self._send(DealHideCmd(deal=deal.id))
+            self._check_context(context)
             await self._notice("Исход сделки за проход неизвестен")
-            self.dialogue.note(
+            self._check_context(context)
+            await self.dialogue.note(
                 deal.npc,
                 f"Исход принятой сделки за проход неизвестен: {err}. Повторно брать плату нельзя.",
             )
+            self._check_context(context)
             return
         except (GameError, TimeoutError) as err:
+            self._check_context(context)
             await self._failed(deal, str(err))
+            self._check_context(context)
             return
         debts = [Debt(uuid.uuid4().hex[:6], deal.npc, deal.name, x.give, x.due) for x in deal.later]
         how = []
@@ -1361,109 +1403,147 @@ class Deals:
         ):
             if present:
                 how.append(term)
-        decide(
-            self.chronicle,
-            deal.npc,
-            deal.id,
-            how,
-            cards=self.cards,
-            crimes=self.crimes,
-            enabled=self.cheat,
-        )
-        self.chronicle.record(
-            {
-                "fact": "deal",
-                "npc": deal.npc,
-                "name": deal.name,
-                "deal": deal.id,
-                "version": deal.version,
-                "npc_gives": [g.fact() for g in deal.npc_gives],
-                "hero_gives": [g.fact() for g in deal.hero_gives],
-                "gold": deal.gold(),
-                **({"let_pass": True} if deal.let_pass else {}),
-                "forgive": [lie.key for lie in deal.forgive],
-                "silence": [lie.key for lie in deal.silence],
-                "later": [{**d.give.fact(), "due": d.due, "debt": d.id} for d in debts],
-                "repay": [d.id for d in deal.repay] + [ref.key for ref in deal.crime_repay],
-                **({"xp": deal.xp} if deal.xp else {}),
-                **({"teach": [t.fact() for t in deal.teach]} if deal.teach else {}),
-                **({"lead": deal.lead.place.id} if deal.lead else {}),
-                **({"meet": deal.meet.text()} if deal.meet else {}),
-                **({"cover": deal.cover.fact()} if deal.cover else {}),
-                **({"npc_later": deal.npc_later.fact()} if deal.npc_later else {}),
-                **({"truce": {"hours": deal.truce}} if deal.truce is not None else {}),
-                **({"secret": deal.secret} if deal.secret else {}),
-                **day,
-            }
-        )
+
+        async def accepted() -> None:
+            self._check_context(context)
+            await decide(
+                self.chronicle,
+                deal.npc,
+                deal.id,
+                how,
+                cards=self.cards,
+                crimes=self.crimes,
+                enabled=self.cheat,
+            )
+            self._check_context(context)
+            await self.chronicle.record(
+                {
+                    "fact": "deal",
+                    "npc": deal.npc,
+                    "name": deal.name,
+                    "deal": deal.id,
+                    "version": deal.version,
+                    "npc_gives": [g.fact() for g in deal.npc_gives],
+                    "hero_gives": [g.fact() for g in deal.hero_gives],
+                    "gold": deal.gold(),
+                    **({"let_pass": True} if deal.let_pass else {}),
+                    "forgive": [lie.key for lie in deal.forgive],
+                    "silence": [lie.key for lie in deal.silence],
+                    "later": [{**d.give.fact(), "due": d.due, "debt": d.id} for d in debts],
+                    "repay": [d.id for d in deal.repay] + [ref.key for ref in deal.crime_repay],
+                    **({"xp": deal.xp} if deal.xp else {}),
+                    **({"teach": [t.fact() for t in deal.teach]} if deal.teach else {}),
+                    **({"lead": deal.lead.place.id} if deal.lead else {}),
+                    **({"meet": deal.meet.text()} if deal.meet else {}),
+                    **({"cover": deal.cover.fact()} if deal.cover else {}),
+                    **({"npc_later": deal.npc_later.fact()} if deal.npc_later else {}),
+                    **({"truce": {"hours": deal.truce}} if deal.truce is not None else {}),
+                    **({"secret": deal.secret} if deal.secret else {}),
+                    **day,
+                }
+            )
+            self._check_context(context)
+
+        await self.chronicle.memory.complete(accepted)
+        self._check_context(context)
         if self.parley is not None:
             await self.parley.accept_deal(deal.npc, deal.truce, now=truce_now)
+            self._check_context(context)
         deal.state = "done"
         if self.open.get(deal.npc) is deal:
             del self.open[deal.npc]
         await self._send(DealHideCmd(deal=deal.id))
+        self._check_context(context)
         await self._notice("Сделка заключена")
-        repaid = {ref.key for ref in deal.crime_repay}
-        forgiven = {ref.key: ref for ref in (*deal.forgive, *deal.crime_repay) if isinstance(ref, CrimeRef)}
-        for ref in forgiven.values():
-            self.chronicle.record(
-                {
-                    "fact": "forgiven",
-                    "npc": deal.npc,
-                    "crime": ref.crime,
-                    "deal": deal.id,
-                    "paid": ref.key in repaid,
-                    **({"hero_gives": [g.fact() for g in deal.hero_gives]} if ref.key in repaid else {}),
-                    **day,
-                }
-            )
-        for ref in deal.silence:
-            if isinstance(ref, CrimeRef) and keeps(self.chronicle, deal.id, "silence"):
-                self.chronicle.record(
-                    {"fact": "silenced", "npc": deal.npc, "crime": ref.crime, "deal": deal.id, **day}
-                )
-        if deal.cover and keeps(self.chronicle, deal.id, "cover"):
-            self.chronicle.record({"fact": "covered", "npc": deal.npc, "deal": deal.id, **deal.cover.fact()})
-            if deal.cover.crime is not None:
-                self.chronicle.record(
+        self._check_context(context)
+
+        async def promises() -> None:
+            self._check_context(context)
+            repaid = {ref.key for ref in deal.crime_repay}
+            forgiven = {
+                ref.key: ref for ref in (*deal.forgive, *deal.crime_repay) if isinstance(ref, CrimeRef)
+            }
+            for ref in forgiven.values():
+                await self.chronicle.record(
                     {
-                        "fact": "silenced",
+                        "fact": "forgiven",
                         "npc": deal.npc,
-                        "crime": deal.cover.crime.crime,
+                        "crime": ref.crime,
                         "deal": deal.id,
-                        "cover": deal.id,
+                        "paid": ref.key in repaid,
+                        **({"hero_gives": [g.fact() for g in deal.hero_gives]} if ref.key in repaid else {}),
                         **day,
                     }
                 )
-        if deal.task:
-            self.contracts.add(deal.id, deal.npc, deal.name, deal.task, deal.reward, day.get("day"))
-        if deal.npc_later:
-            later = deal.npc_later
-            later.deal, later.npc, later.name = deal.id, deal.npc, deal.name
-            self.npc_later[deal.id] = later
+                self._check_context(context)
+            for ref in deal.silence:
+                if isinstance(ref, CrimeRef) and keeps(self.chronicle, deal.id, "silence"):
+                    await self.chronicle.record(
+                        {"fact": "silenced", "npc": deal.npc, "crime": ref.crime, "deal": deal.id, **day}
+                    )
+                    self._check_context(context)
+            if deal.cover and keeps(self.chronicle, deal.id, "cover"):
+                await self.chronicle.record(
+                    {"fact": "covered", "npc": deal.npc, "deal": deal.id, **deal.cover.fact()}
+                )
+                self._check_context(context)
+                if deal.cover.crime is not None:
+                    await self.chronicle.record(
+                        {
+                            "fact": "silenced",
+                            "npc": deal.npc,
+                            "crime": deal.cover.crime.crime,
+                            "deal": deal.id,
+                            "cover": deal.id,
+                            **day,
+                        }
+                    )
+                    self._check_context(context)
+            if deal.task:
+                await self.contracts.add(deal.id, deal.npc, deal.name, deal.task, deal.reward, day.get("day"))
+                self._check_context(context)
+            if deal.npc_later:
+                later = deal.npc_later
+                later.deal, later.npc, later.name = deal.id, deal.npc, deal.name
+                self.npc_later[deal.id] = later
+
+        await self.chronicle.memory.complete(promises)
+        self._check_context(context)
         if deal.meet is not None and self.meetings is not None:
-            self.meetings.add(deal.npc, deal.name, deal.meet, deal.id)
-        for d in debts:
-            self.debts[d.id] = d
-            self.chronicle.record(
-                {
-                    "fact": "debt",
-                    "id": d.id,
-                    "npc": d.npc,
-                    "npc_name": d.name,
-                    **d.give.fact(),
-                    "due": d.due,
-                    **day,
-                }
-            )
-        for d in deal.repay:
-            d.paid = True
-            self.chronicle.record({"fact": "debt_paid", "id": d.id, "npc": d.npc, **day})
-        self.journal.add("deal", npc=deal.npc, name=deal.name, deal=deal.id, version=deal.version)
-        log.info("deal %s v%d with %s done: %s", deal.id, deal.version, deal.npc, deal.terms())
-        self.dialogue.note(deal.npc, f"Герой принял твою сделку, она состоялась: {deal.terms()}")
+            await self.meetings.add(deal.npc, deal.name, deal.meet, deal.id)
+            self._check_context(context)
+
+        async def settled() -> None:
+            self._check_context(context)
+            for d in debts:
+                await self.chronicle.record(
+                    {
+                        "fact": "debt",
+                        "id": d.id,
+                        "npc": d.npc,
+                        "npc_name": d.name,
+                        **d.give.fact(),
+                        "due": d.due,
+                        **day,
+                    }
+                )
+                self._check_context(context)
+                self.debts[d.id] = d
+            for d in deal.repay:
+                await self.chronicle.record({"fact": "debt_paid", "id": d.id, "npc": d.npc, **day})
+                self._check_context(context)
+                d.paid = True
+            self.journal.add("deal", npc=deal.npc, name=deal.name, deal=deal.id, version=deal.version)
+            log.info("deal %s v%d with %s done: %s", deal.id, deal.version, deal.npc, deal.terms())
+            await self.dialogue.note(deal.npc, f"Герой принял твою сделку, она состоялась: {deal.terms()}")
+            self._check_context(context)
+
+        await self.chronicle.memory.complete(settled)
+        self._check_context(context)
         if deal.lead is not None and self.guide is not None:
-            self.guide.start(deal.npc, deal.name, deal.lead, deal.id)  # it tells him to come along, and goes
+            # It tells him to come along, and goes.
+            await self.guide.start(deal.npc, deal.name, deal.lead, deal.id)
+            self._check_context(context)
             return
         self.dialogue.event_turn(
             deal.npc,
@@ -1474,12 +1554,15 @@ class Deals:
 
     async def decline(self, deal_id: str, version: int) -> None:
         """The hero declined (N): the offer goes, the npc hears of it and may offer otherwise."""
+        context = self._context()
         deal = next((d for d in self.open.values() if d.id == deal_id), None)
         if deal is None or deal.state != "open":
             log.info("deal %s v%d declined, but it is not open", deal_id, version)
             return
         await self._close(deal, "declined")
-        self.dialogue.note(deal.npc, f"Герой отказался от твоего предложения: {deal.terms()}")
+        self._check_context(context)
+        await self.dialogue.note(deal.npc, f"Герой отказался от твоего предложения: {deal.terms()}")
+        self._check_context(context)
         self.dialogue.event_turn(
             deal.npc,
             "[Герой отказался от сделки. Отзовись коротко; захочешь — предложи иначе.]",
@@ -1489,11 +1572,17 @@ class Deals:
     async def _failed(self, deal: Deal, error: str) -> None:
         """Something is missing after all: the hero's things (his window marks them), or the npc's (it no
         longer has what it offered: the offer goes)."""
+        context = self._context()
+        if self.open.get(deal.npc) is not deal:
+            raise asyncio.CancelledError
         log.info("deal %s v%d with %s failed: %s", deal.id, deal.version, deal.npc, error)
         if deal.let_pass and "missing:" not in error:
             await self._close(deal, "withdrawn")
+            self._check_context(context)
             await self._notice("Проход не открыт")
-            self.dialogue.note(deal.npc, f"Сделка за проход не состоялась: {error}")
+            self._check_context(context)
+            await self.dialogue.note(deal.npc, f"Сделка за проход не состоялась: {error}")
+            self._check_context(context)
             self.dialogue.event_turn(
                 deal.npc,
                 f"[Сделка за проход не состоялась: {error}. Объясни герою.]",
@@ -1503,11 +1592,14 @@ class Deals:
         if "missing: hero LP" in error:
             # he can't find learning points in his pocket: the offer goes, the npc may offer otherwise
             await self._close(deal, "withdrawn")
+            self._check_context(context)
             await self._notice("Не хватает очков обучения")
+            self._check_context(context)
             need = error.removeprefix("missing: hero LP ").replace("(has", "(у него")
-            self.dialogue.note(
+            await self.dialogue.note(
                 deal.npc, f"Сделка сорвалась: у героя не хватает очков обучения — нужно {need}"
             )
+            self._check_context(context)
             self.dialogue.event_turn(
                 deal.npc,
                 f"[Сделка не состоялась: у героя не хватает очков обучения — нужно {need}. Скажи ему; "
@@ -1517,30 +1609,41 @@ class Deals:
             return
         if "missing: npc" in error:
             await self._close(deal, "withdrawn")
+            self._check_context(context)
             await self._notice("Сделка не состоялась")
-            self.dialogue.note(deal.npc, "Сделка сорвалась: у тебя уже нет того, что ты обещал отдать")
+            self._check_context(context)
+            await self.dialogue.note(deal.npc, "Сделка сорвалась: у тебя уже нет того, что ты обещал отдать")
+            self._check_context(context)
             self.dialogue.event_turn(
                 deal.npc, "[Сделка сорвалась: у тебя нет того, что ты предлагал. Объясни герою.]", tools=()
             )
             return
         deal.state = "open"
         await self._notice("Не хватает того, что ты отдаёшь")
+        self._check_context(context)
         await self._send(deal.show())  # the same version: the window lets Y be pressed again
+        self._check_context(context)
 
     async def _close(self, deal: Deal, state: DealState, how: str = "") -> None:
+        context = self._context()
+        if self.open.get(deal.npc) is not deal:
+            raise asyncio.CancelledError
         deal.state = state
         if self.open.get(deal.npc) is deal:
             del self.open[deal.npc]
         await self._send(DealHideCmd(deal=deal.id))
+        self._check_context(context)
         log.info("deal %s with %s: %s", deal.id, deal.npc, state)
         self.journal.add(f"deal_{state}", npc=deal.npc, name=deal.name, deal=deal.id, version=deal.version)
         if state == "expired":
-            self.dialogue.note(deal.npc, f"{how}, твоё предложение снято: {deal.terms()}")
+            await self.dialogue.note(deal.npc, f"{how}, твоё предложение снято: {deal.terms()}")
+            self._check_context(context)
 
     # --- the debts --------------------------------------------------------------------------------
 
     async def pay_later(self, later: NpcLater, day: dict[str, int], *, generation: int | None = None) -> bool:
         """The NPC's deferred items, once due: an honest transfer or its recorded refusal."""
+        context = self._context()
         if generation is None:
             generation = self._world_generation
         if generation != self._world_generation:
@@ -1548,16 +1651,21 @@ class Deals:
         if later.paid:
             return True
         if not keeps(self.chronicle, later.deal, "npc_later"):
-            breach(
-                self.chronicle,
-                later.npc,
-                later.deal,
-                "unpaid",
-                npc_name=later.name,
-                items=[g.fact() for g in later.gives],
-                witnesses=hearers(self.dialogue, later.npc, self.roster()),
-                **day,
-            )
+            async def refuse() -> None:
+                self._check_context(context)
+                await breach(
+                    self.chronicle,
+                    later.npc,
+                    later.deal,
+                    "unpaid",
+                    npc_name=later.name,
+                    items=[g.fact() for g in later.gives],
+                    witnesses=hearers(self.dialogue, later.npc, self.roster()),
+                    **day,
+                )
+                self._check_context(context)
+
+            await self.chronicle.memory.complete(refuse)
             return False
         have, kept = carried(self.link.snapshots.get(later.npc)), self.stash.left(later.npc)
         gives = []
@@ -1571,6 +1679,7 @@ class Deals:
         effects = [effect for give in gives for effect in give.effects("hero")]
         try:
             await self.link.story_effect(later.npc, effects, check=True)
+            self._check_context(context)
         except (GameError, TimeoutError) as err:
             if generation != self._world_generation:
                 return False
@@ -1581,20 +1690,28 @@ class Deals:
             return False
         if generation != self._world_generation:
             return False
-        later.paid, later.missing = True, ""
-        self.chronicle.record(
-            {
-                "fact": "npc_later_paid",
-                "deal": later.deal,
-                "npc": later.npc,
-                "gives": [g.fact() for g in gives],
-                **day,
-            }
-        )
-        self.dialogue.note(
-            later.npc, f"Ты отдал герою обещанное по сделке {later.deal}: {_list(later.gives)}"
-        )
+        async def paid() -> None:
+            self._check_context(context)
+            await self.chronicle.record(
+                {
+                    "fact": "npc_later_paid",
+                    "deal": later.deal,
+                    "npc": later.npc,
+                    "gives": [g.fact() for g in gives],
+                    **day,
+                }
+            )
+            self._check_context(context)
+            later.paid, later.missing = True, ""
+            await self.dialogue.note(
+                later.npc, f"Ты отдал герою обещанное по сделке {later.deal}: {_list(later.gives)}"
+            )
+            self._check_context(context)
+
+        await self.chronicle.memory.complete(paid)
+        self._check_context(context)
         await self._notice("Обещанное получено")
+        self._check_context(context)
         return True
 
     async def run(self) -> None:
@@ -1605,51 +1722,74 @@ class Deals:
             if not tasks and not any(not d.paid and not d.broken for d in self.debts.values()):
                 continue
             await self.link.wait_world()
+            context = self._context()
             try:
                 day = int((await self.link.story_state()).get("day", 0))
             except (GameError, TimeoutError) as err:
                 log.info("debts: %s", err or type(err).__name__)
                 continue
-            self._set_day(day)
-            self.overdue(day)
-            self.contracts.overdue(day)
-
-    def overdue(self, day: int) -> list[Debt]:
-        """The debts past their day as of `day`, now broken words."""
-        out = []
-        for d in self.debts.values():
-            if d.paid or d.broken or day <= d.due:
+            try:
+                self._check_context(context)
+                await self._set_day(day)
+                await self.overdue(day)
+                self._check_context(context)
+                await self.contracts.overdue(day)
+            except asyncio.CancelledError:
+                if (asyncio.current_task().cancelling()
+                        or (self.chronicle.branch == context[0] and self.link.session is context[1]
+                            and self.link.world_generation == context[2])):
+                    raise
                 continue
-            d.broken = True
-            out.append(d)
-            self.chronicle.record(
-                {
-                    "fact": "broken",
-                    "debt": d.id,
-                    "npc": d.npc,
-                    "name": d.name,
-                    "what": d.what(),
-                    "due": d.due,
-                    "day": day,
-                }
-            )
-            self.journal.add("debt_broken", npc=d.npc, name=d.name, what=d.what())
-            log.info("debt %s to %s broken: %s", d.id, d.npc, d.what())
-            broke = f"Герой не вернул тебе долг в срок: {d.what()}. Он не сдержал слово"
-            self.dialogue.remember(d.npc, d.name, broke)
-        return out
 
-    def _set_day(self, day: int) -> None:
+    async def overdue(self, day: int) -> list[Debt]:
+        """The debts past their day as of `day`, now broken words."""
+        context = self._context()
+
+        async def persist() -> list[Debt]:
+            self._check_context(context)
+            out = []
+            for d in self.debts.values():
+                if d.paid or d.broken or day <= d.due:
+                    continue
+                await self.chronicle.record(
+                    {
+                        "fact": "broken",
+                        "debt": d.id,
+                        "npc": d.npc,
+                        "name": d.name,
+                        "what": d.what(),
+                        "due": d.due,
+                        "day": day,
+                    }
+                )
+                self._check_context(context)
+                d.broken = True
+                out.append(d)
+                self.journal.add("debt_broken", npc=d.npc, name=d.name, what=d.what())
+                log.info("debt %s to %s broken: %s", d.id, d.npc, d.what())
+                broke = f"Герой не вернул тебе долг в срок: {d.what()}. Он не сдержал слово"
+                await self.dialogue.remember(d.npc, d.name, broke)
+            return out
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def _set_day(self, day: int) -> None:
+        context = self._context()
         if day != self.day:
             self.day = day
             for listener in self.on_day:
-                listener(day)
+                if inspect.isawaitable(result := listener(day)):
+                    await result
+                self._check_context(context)
 
-    def reload(self) -> None:
+    async def reload(self) -> None:
         """The debts again from the chronicle: after a fact written past the deals (the e2e seeds a debt)."""
+        context = self._context()
         self._load()
         for listener in self.on_reload:
-            listener()
+            if inspect.isawaitable(result := listener()):
+                await result
+            self._check_context(context)
 
     def _load(self) -> None:
         self._cancel_payments()

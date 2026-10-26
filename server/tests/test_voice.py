@@ -10,11 +10,13 @@ from websockets.asyncio.server import serve
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.journal import Journal
 from gothic_ai.llm.fake import FakeBackend
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.talk import TalkDesk
 from gothic_ai.voice import MIC_DENIED, AsrClient, VoiceInput
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 XARDAS_NEAR = {
     "id": XARDAS,
@@ -80,7 +82,10 @@ async def test_push_to_talk_anywhere_becomes_the_heros_phrase_to_whom_he_looks_a
     entries: list[dict] = []
     async with fake_asr() as (url, utterances), connected(fake) as link:
         journal = Journal(entries.append)
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), journal=journal)
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), journal=journal, memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         talk = TalkDesk(link, dialogue)
         voice = VoiceInput(link, talk.hear, FakeSource(speech()), AsrClient(url), journal=journal)
         await fake.roster(XARDAS_NEAR)

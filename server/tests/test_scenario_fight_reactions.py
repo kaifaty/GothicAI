@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -315,39 +315,41 @@ async def test_wait_hit_geometry_cancellation_removes_listener():
     assert link.raw_body_listeners == [trace.body]
 
 
-def test_suppress_companion_defense_restores_on_boundary_packet_before_contact():
+async def test_suppress_companion_defense_restores_on_boundary_packet_before_contact():
     trace = ready_trace()
     link = SimpleNamespace(raw_body_listeners=[trace.body])
-    stand_up = Mock()
+    stand_up = AsyncMock()
     orders = SimpleNamespace(_stand_up=stand_up)
 
     def closed():
         return trace.game_ms["bandit"] >= 200
 
     with suppress_companion_defense(orders, "companion", link, closed):
-        orders._stand_up("companion", "bandit", "struck", struck=True)
+        await orders._stand_up("companion", "bandit", "struck", struck=True)
         stand_up.assert_not_called()
-        orders._stand_up("other", "bandit", "struck", struck=True)
+        await orders._stand_up("other", "bandit", "struck", struck=True)
         stand_up.assert_called_once_with("other", "bandit", "struck", struck=True)
+        stand_up.assert_awaited_once_with("other", "bandit", "struck", struck=True)
         packet = {"observations": [row(t=199, target=111)]}
         for listener in tuple(link.raw_body_listeners):
             listener(packet)
-        orders._stand_up("companion", "bandit", "struck", struck=True)
+        await orders._stand_up("companion", "bandit", "struck", struck=True)
         assert stand_up.call_count == 1
 
         packet = {"observations": [row(t=200, target=111)]}
         for listener in tuple(link.raw_body_listeners):
             listener(packet)
         assert orders._stand_up is stand_up
-        orders._stand_up("companion", "bandit", "struck", struck=True)
+        await orders._stand_up("companion", "bandit", "struck", struck=True)
         assert stand_up.call_count == 2
+        assert stand_up.await_count == 2
 
     assert orders._stand_up is stand_up
     assert link.raw_body_listeners == [trace.body]
 
 
-def test_suppress_companion_defense_can_close_immediately_when_h_becomes_known():
-    stand_up = Mock()
+async def test_suppress_companion_defense_can_close_immediately_when_h_becomes_known():
+    stand_up = AsyncMock()
     orders = SimpleNamespace(_stand_up=stand_up)
     link = SimpleNamespace(raw_body_listeners=[])
     hit = None
@@ -356,19 +358,20 @@ def test_suppress_companion_defense_can_close_immediately_when_h_becomes_known()
         return hit is not None
 
     with suppress_companion_defense(orders, "companion", link, closed) as check_closed:
-        orders._stand_up("companion", "bandit", "struck", struck=True)
+        await orders._stand_up("companion", "bandit", "struck", struck=True)
         stand_up.assert_not_called()
         hit = 100
         check_closed()
         assert orders._stand_up is stand_up
-        orders._stand_up("companion", "bandit", "struck", struck=True)
+        await orders._stand_up("companion", "bandit", "struck", struck=True)
         stand_up.assert_called_once()
+        stand_up.assert_awaited_once()
 
     assert link.raw_body_listeners == []
 
 
 def test_suppress_companion_defense_restores_and_removes_listener_after_error_before_h():
-    stand_up = Mock()
+    stand_up = AsyncMock()
     orders = SimpleNamespace(_stand_up=stand_up)
     link = SimpleNamespace(raw_body_listeners=[])
 
@@ -381,7 +384,7 @@ def test_suppress_companion_defense_restores_and_removes_listener_after_error_be
 
 
 async def test_suppress_companion_defense_restores_and_removes_listener_after_cancellation_before_h():
-    stand_up = Mock()
+    stand_up = AsyncMock()
     orders = SimpleNamespace(_stand_up=stand_up)
     link = SimpleNamespace(raw_body_listeners=[])
     entered = asyncio.Event()
@@ -524,7 +527,7 @@ async def test_stopped_companion_hit_arms_h_before_request_resumes_and_boundary_
     trace = ready_trace()
     link = GameLink(SimpleNamespace())
     link.raw_body_listeners.append(trace.body)
-    stand_up = Mock()
+    stand_up = AsyncMock()
     orders = SimpleNamespace(_stand_up=stand_up)
     hit = None
     resumed = False
@@ -551,7 +554,7 @@ async def test_stopped_companion_hit_arms_h_before_request_resumes_and_boundary_
         packet = {"observations": [row(t=120, attack=True, target=111)]}
         for listener in tuple(link.raw_body_listeners):
             listener(packet)
-        orders._stand_up("companion", "bandit", "struck", struck=True)
+        await orders._stand_up("companion", "bandit", "struck", struck=True)
         stand_up.assert_called_once_with("companion", "bandit", "struck", struck=True)
         assert not resumed
 
@@ -568,7 +571,7 @@ async def test_stopped_companion_hit_arms_h_before_request_resumes_and_boundary_
     assert returned == proof and hit == 100
     assert armed == [(proof, selected)]
     assert orders._stand_up is stand_up
-    assert stand_up.call_count == 1
+    assert stand_up.call_count == 1 and stand_up.await_count == 1
     assert link.listeners == [] and link._requests == {}
     assert link.raw_body_listeners == [trace.body]
 

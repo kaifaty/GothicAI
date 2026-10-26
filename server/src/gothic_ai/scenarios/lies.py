@@ -353,7 +353,9 @@ async def vanilla_lie(
     # the hero makes amends (amends.py has Lobart ask for them; here they are made at once): the turnips are
     # his job again, for real, and the ending pays nothing a second time
     made = {"fact": "amends", "id": "E2E", "npc": giver, "to": giver, "gold": 0}
-    vanilla.chronicle.record({**made, "lie": f"found_out:{giver}:{RUEBEN}", "quest": RUEBEN, "about": giver})
+    await vanilla.chronicle.record(
+        {**made, "lie": f"found_out:{giver}:{RUEBEN}", "quest": RUEBEN, "about": giver}
+    )
     ok = await _until(lambda: any(f.get("quest") == RUEBEN for f in facts("quest_reopened")), 20)
     await _until(lambda: any(f.get("second_chance") for f in facts("lie_consequences")), 30)
     ending = await link.story_program("DIA_LOBART_RUEBENRUNNING")
@@ -464,7 +466,7 @@ async def vanilla_given(
     check("can_give", "Ты можешь сам дать герою поручение «Бандиты Кавалорна»" in situation, situation[:300])
 
     # the hero offers his help in his own words
-    talk.hear("Кавалорн, давай я помогу тебе с бандитами.", None, {"via": "scenario"})
+    await talk.hear("Кавалорн, давай я помогу тебе с бандитами.", None, {"via": "scenario"})
     ok = await _until(lambda: any(f.get("quest") == quest for f in facts("quest_given")), 60)
     await asyncio.sleep(1)
     menu = await link.offered_dialogs(npc)
@@ -484,7 +486,7 @@ async def vanilla_given(
     check("letter", "Ватрас" in situation and "Засчитывая" in situation, situation[:400])
 
     # the hero says so
-    talk.hear("Кавалорн, Браго и его парни мертвы.", None, {"via": "scenario"})
+    await talk.hear("Кавалорн, Браго и его парни мертвы.", None, {"via": "scenario"})
     ok = await _until(lambda: any(f.get("quest") == quest for f in facts("claim")), 60)
     await asyncio.sleep(2)
     claim = next((f for f in facts("claim") if f.get("quest") == quest), {})
@@ -610,7 +612,7 @@ async def vanilla_spare(
         before_ids = {row["id"] for row in trace_rows()}
         conv = dialogue.conversations.get(npc)
         before = conv.reply if conv else None
-        talk.hear(text, npc, {"via": "scenario"})
+        await talk.hear(text, npc, {"via": "scenario"})
 
         def answered() -> bool:
             conv = dialogue.conversations.get(npc)
@@ -720,7 +722,7 @@ async def vanilla_spare(
     if not check("given", answered and given and await var(quest) == 1, facts("quest_given")[-1:]):
         return finish()
 
-    vanilla.chronicle.record(
+    await vanilla.chronicle.record(
         {
             "fact": "caught",
             "npc": npc,
@@ -738,7 +740,7 @@ async def vanilla_spare(
     if not check("saved", saved is not None and all(baseline.get(b, {}).get("state") == "alive"
                                                   for b in bandits), baseline):
         return finish()
-    talk.end("scenario")
+    await talk.end("scenario")
     if not await _until(lambda: npc not in talk.attached, 20):
         check("released", False, "Cavalorn is still attached")
         return finish()
@@ -781,7 +783,7 @@ async def vanilla_spare(
     plea = "Не убивай меня! Я уйду отсюда и больше не вернусь, клянусь!"
     name = talk.people[npc].name
     speaker = talk.people[spared].name if spared in talk.people else "Бандит"
-    dialogue.heard(npc, name, speaker, plea, "тебе")
+    await dialogue.heard(npc, name, speaker, plea, "тебе")
     await link.send(SayCmd(npc=spared, line="AIB_VSPARE_PLEA", text=plea, to=npc))
     before_reward = await rewards()
     answered, spare_turns = await say("Кавалорн, отпусти его.")
@@ -855,7 +857,7 @@ async def vanilla_spare(
         except GameError as err:
             log.info("vspare: detach %s: %s", spared, err)
     talk.free(npc, "scenario")
-    talk.end("scenario")
+    await talk.end("scenario")
     await _until(lambda: npc not in talk.attached, 20)
 
     loading = asyncio.create_task(wait_message(link, Session, lambda m: m.reason == "load", 60))
@@ -1297,7 +1299,7 @@ async def amends_storylet(
     if not ok:
         return _logged(results)
     s = next((x for x in amends.storylets.values() if x.npc == ANDRE), next(iter(amends.storylets.values())))
-    closed = [op["node"] for op in amends.patches.ops() if op.get("op") == "disable"]
+    closed = [op["node"] for op in await amends.patches.ops() if op.get("op") == "disable"]
     check("closed", bool(s.close) and set(s.close) <= set(closed), f"{s.name}: {s.close}")
 
     # the hero comes: the npc starts the talk himself (an important dialog)
@@ -1341,14 +1343,14 @@ async def amends_storylet(
         paid = pressed == "sent" and await _until(lambda: s.stage == "done", 20)
     await asyncio.sleep(1)
     left = int(await link.evaluate(["call", "NPC_HASITEMS", hero, ["sym", "ITMI_GOLD"]]) or 0)
-    opened = {op["node"] for op in amends.patches.ops() if op.get("op") == "enable"}
+    opened = {op["node"] for op in await amends.patches.ops() if op.get("op") == "enable"}
     check(
         "paid",
         paid and left == gold - price and set(s.close) <= opened,
         f"{s.description if deals is None else 'a deal'}: {gold} -> {left} gold",
     )
     if deals is not None:
-        removed = {op["node"] for op in amends.patches.ops() if op.get("op") == "remove_node"}
+        removed = {op["node"] for op in await amends.patches.ops() if op.get("op") == "remove_node"}
         check("menu_clean", {s.talk, s.pay} <= removed, sorted({s.talk, s.pay} - removed))
     line = Trust(amends.chronicle).situation(s.npc) or ""
     check("forgiven", "он загладил вину" in line, line.splitlines()[-1:])

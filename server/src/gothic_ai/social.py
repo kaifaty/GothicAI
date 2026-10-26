@@ -393,10 +393,10 @@ class Rumors:
         state = await self.link.story_state()
         now = int(state.get("day", 0)) * DAY + int(state.get("hour", 0)) * 60 + int(state.get("minute", 0))
         if self.clock is not None and now > self.clock:
-            self.spread(self.clock, now)
+            await self.spread(self.clock, now)
         self.clock = now
 
-    def spread(self, after: int, until: int) -> int:
+    async def spread(self, after: int, until: int) -> int:
         """The meetings in (after, until], in order: each passes on what one knows and the other does not.
         How many retellings there were. Only a live window (a tick, not a jump of the clock) is staged."""
         social = self.social
@@ -428,7 +428,8 @@ class Rumors:
                     if self._waits(r, a, b, t, until, meeting):
                         continue  # no fact, no tell: the next tick tries again
                     staging = None  # waited long enough, or cannot wait: a fact as it always was
-                self._pass(r, a, b, t, "met" if meeting is not None else "dealings", staging)
+                if not await self._pass(r, a, b, t, "met" if meeting is not None else "dealings", staging):
+                    continue
                 told += 1
                 if r.tells(b, day):
                     meetings(b, t)
@@ -441,7 +442,7 @@ class Rumors:
             return False
         return self._passes(r, a, b, self.clock, meet=True)
 
-    def offer_status(self, r: Rumor, a: str, b: str, how: str = "met") -> Literal["told", "wait", "no"]:
+    async def offer_status(self, r: Rumor, a: str, b: str, how: str = "met") -> Literal["told", "wait", "no"]:
         """An occasion the schedule does not have now (two acquaintances see each other near the hero,
         gossip.py; a walk to tell one, daylife.py, how: visited; the e2e): the same checks and lot as a
         meeting. told: it passed; wait: they are busy now, ask again later; no: it does not pass."""
@@ -451,10 +452,9 @@ class Rumors:
         staging = self._staging(r, a, b)
         if staging is not None and staging.tier == "wait":
             return "wait"
-        self._pass(r, a, b, clock, how, staging)
-        return "told"
+        return "told" if await self._pass(r, a, b, clock, how, staging) else "no"
 
-    def tell(self, r: Rumor, a: str, b: str) -> Literal["told", "wait", "no"]:
+    async def tell(self, r: Rumor, a: str, b: str) -> Literal["told", "wait", "no"]:
         """a has set out to tell b (an errand, errands.py): no lot and no day's count, it means to; only the
         living, what each knows and a's word to keep silent (deals.py). how: told, also when near the hero
         it is a scene of two voices (gossip.py)."""
@@ -471,12 +471,11 @@ class Rumors:
         staging = self._staging(r, a, b)
         if staging is not None and staging.tier == "wait":
             return "wait"
-        self._pass(r, a, b, clock, "told", staging)
-        return "told"
+        return "told" if await self._pass(r, a, b, clock, "told", staging) else "no"
 
-    def offer(self, r: Rumor, a: str, b: str) -> bool:
+    async def offer(self, r: Rumor, a: str, b: str) -> bool:
         """offer_status of a meeting: True if it passed (busy now: the view trigger asks again later)."""
-        return self.offer_status(r, a, b) == "told"
+        return await self.offer_status(r, a, b) == "told"
 
     def _new_to(self, r: Rumor, teller: str, listener: str) -> bool:
         """A first telling, or the justified version of a killing heard without its reason."""
@@ -527,74 +526,138 @@ class Rumors:
             first = self.waiting[key] = t  # a wait of an earlier meeting is over
         return t - first < DEFER_MAX_MIN
 
-    def _pass(self, r: Rumor, a: str, b: str, t: int, how: str, staging: Staging | None) -> None:
-        """b hears it from a: the fact first; then, said or seen, how it looks (gossip.py)."""
-        shown = staging if staging is not None and staging.tier in ("words", "sight") else None
-        if shown is not None and shown.tier == "words" and how != "told":
-            how = "talked"  # an errand's stays told: it went to tell it
-        fact = self._learn(r, b, a, t, how, shown.keys() if shown is not None else None)
-        if self.waiting:
-            self.waiting.pop((r.key, a, b), None)
-        if shown is not None and self.on_staged is not None:
-            try:
-                self.on_staged(r, a, b, shown, fact)
-            except Exception:
-                log.exception("rumors: staging %s -> %s failed", a, b)  # the fact stays
+    async def _pass(self, r: Rumor, a: str, b: str, t: int, how: str, staging: Staging | None) -> bool:
+        """b hears it from a: admission and its fact share one logical completion."""
+        session, world_generation = self.link.session, self.link.world_generation
 
-    def _learn(
+        async def persist() -> bool:
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return False
+            if self.social is None:
+                return False
+            if how == "told":
+                if a in self.dead or b in self.dead:
+                    return False
+                if a not in r.known or not self._new_to(r, a, b) or a in r.silent or a == r.subject:
+                    return False
+                if r.crime and (
+                    not r.tells(a, t // DAY)
+                    or (self.social.guilds.get(a) in OUTLAWS) != (self.social.guilds.get(b) in OUTLAWS)
+                ):
+                    return False
+            elif self.social.ties.get(a, {}).get(b) is None or not self._passes(
+                r, a, b, t, meet=how != "dealings",
+            ):
+                return False
+            shown = staging if staging is not None and staging.tier in ("words", "sight") else None
+            heard_how = "talked" if shown is not None and shown.tier == "words" and how != "told" else how
+            fact = await self._learn(r, b, a, t, heard_how, shown.keys() if shown is not None else None)
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return True
+            if self.waiting:
+                self.waiting.pop((r.key, a, b), None)
+            if shown is not None and self.on_staged is not None:
+                try:
+                    self.on_staged(r, a, b, shown, fact)
+                except Exception:
+                    log.exception("rumors: staging %s -> %s failed", a, b)  # the fact stays
+            return True
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def _learn(
         self, r: Rumor, listener: str, teller: str, at: int, how: str, extra: dict[str, Any] | None = None
     ) -> Fact:
-        assert self.social is not None
-        hops = r.known[teller] + 1
-        r.known[listener] = min(r.known.get(listener, hops), hops)
-        r.since.setdefault(listener, at // DAY)
-        self.tells[(r.key, teller, at // DAY)] += 1
-        teller_name = self.social.names.get(teller, teller)
-        name = self.social.names.get(listener, listener)
-        if not r.about_name or r.about_name == r.about:
-            r.about_name = self.social.names.get(r.about, r.about)
-        if not r.is_player and (not r.subject_name or r.subject_name in {r.subject, "герой"}):
-            r.subject_name = self.social.names.get(r.subject, r.subject)
-        crime = self.crimes.crime(r.crime) if self.crimes is not None and r.is_player and r.crime else None
-        excuse = {}
-        if crime is not None:
-            self.crimes.learn_side(listener, crime)
-            excuse = dict(self.crimes.excuse(teller, r.crime))
-            if excuse and excuse.get("excuse_by_name") in {None, "", excuse["excuse_by"]}:
-                origin = excuse["excuse_by"]
-                excuse["excuse_by_name"] = self.social.names.get(origin, origin)
-        fact: Fact = {
-            "fact": "rumor",
-            "quest": r.quest,
-            "kind": r.kind,
-            "about": r.about,
-            "about_name": r.about_name,
-            "title": r.title,
-            "subject": r.subject,
-            "subject_name": r.subject_name,
-            "from": teller,
-            "from_name": teller_name,
-            "to": listener,
-            "hops": r.known[listener],
-            "how": how,
-            "day": at // DAY,
-            **({"said": True} if r.said else {}),
-            **({"crime": r.crime, "at": at} if r.crime else {}),
-            **excuse,
-            **(extra or {}),
-        }
-        self.chronicle.record(fact)
-        if r.is_player:
-            for promise in broken_promises(
-                self.chronicle, teller, crime=r.crime, rumor=r.key,
-                cover=self.crimes is not None and self.crimes.cover, at=at,
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
             ):
-                betrayed(self.chronicle, teller, str(promise.get("deal", "")), "told", listener)
-        remembered = r.told(teller_name)
-        if crime is not None and excuse:
-            remembered += f". {self.crimes.excuse_text(crime, excuse)}"
-        self.dialogue.remember(listener, name, remembered)
-        return fact
+                raise GameError("session changed while recording NPC state")
+            assert self.social is not None
+            hops = r.known[teller] + 1
+            heard_hops = min(r.known.get(listener, hops), hops)
+            tell_key = (r.key, teller, at // DAY)
+            tell_count = self.tells.get(tell_key, 0) + 1
+            teller_name = self.social.names.get(teller, teller)
+            name = self.social.names.get(listener, listener)
+            about_name, subject_name = r.about_name, r.subject_name
+            if not about_name or about_name == r.about:
+                about_name = self.social.names.get(r.about, r.about)
+            if not r.is_player and (not subject_name or subject_name in {r.subject, "герой"}):
+                subject_name = self.social.names.get(r.subject, r.subject)
+            crime = (
+                self.crimes.crime(r.crime) if self.crimes is not None and r.is_player and r.crime else None
+            )
+            excuse = {}
+            if crime is not None:
+                await self.crimes.learn_side(listener, crime)
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
+                excuse = dict(self.crimes.excuse(teller, r.crime))
+                if excuse and excuse.get("excuse_by_name") in {None, "", excuse["excuse_by"]}:
+                    origin = excuse["excuse_by"]
+                    excuse["excuse_by_name"] = self.social.names.get(origin, origin)
+            fact: Fact = {
+                "fact": "rumor",
+                "quest": r.quest,
+                "kind": r.kind,
+                "about": r.about,
+                "about_name": about_name,
+                "title": r.title,
+                "subject": r.subject,
+                "subject_name": subject_name,
+                "from": teller,
+                "from_name": teller_name,
+                "to": listener,
+                "hops": heard_hops,
+                "how": how,
+                "day": at // DAY,
+                **({"said": True} if r.said else {}),
+                **({"crime": r.crime, "at": at} if r.crime else {}),
+                **excuse,
+                **(extra or {}),
+            }
+            await self.chronicle.record(fact)
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            r.known[listener] = heard_hops
+            r.since.setdefault(listener, at // DAY)
+            self.tells[tell_key] = tell_count
+            r.about_name, r.subject_name = about_name, subject_name
+            if r.is_player:
+                for promise in broken_promises(
+                    self.chronicle, teller, crime=r.crime, rumor=r.key,
+                    cover=self.crimes is not None and self.crimes.cover, at=at,
+                ):
+                    await betrayed(self.chronicle, teller, str(promise.get("deal", "")), "told", listener)
+                    if (
+                        branch != self.chronicle.branch or generation != self.chronicle._generation
+                        or session is not self.chronicle.link.session
+                    ):
+                        raise GameError("session changed while recording NPC state")
+            remembered = r.told(teller_name)
+            if crime is not None and excuse:
+                remembered += f". {self.crimes.excuse_text(crime, excuse)}"
+            await self.dialogue.remember(listener, name, remembered)
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            return fact
+
+        return await self.chronicle.memory.complete(persist)
 
     # --- the save branch --------------------------------------------------------------------
 

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from gothic_ai import cli
+from gothic_ai.protocol import Loading, MemoryCmd, Result
 
 
 @pytest.mark.parametrize("scenario", [None, "m0"])
@@ -40,7 +41,25 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(monkeypatch
         return [record.getMessage() for record in caplog.records if "checks started" in record.getMessage()]
 
     async def exercise():
-        link = cli.GameLink(SimpleNamespace(send=AsyncMock()))
+        stores = []
+        real_open = cli.MemoryStore.open
+
+        async def capture_store(path):
+            store = await real_open(path)
+            stores.append(store)
+            return store
+
+        monkeypatch.setattr(cli.MemoryStore, "open", capture_store)
+        sent = []
+        save_sent = asyncio.Event()
+
+        async def send(raw):
+            command = json.loads(raw)
+            sent.append(command)
+            if command["type"] == "debug" and command["cmd"] == "save":
+                save_sent.set()
+
+        link = cli.GameLink(SimpleNamespace(send=AsyncMock(side_effect=send)))
         wait_entered = asyncio.Event()
         scenario_entered = asyncio.Event()
         real_wait_world = link.wait_world
@@ -55,6 +74,53 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(monkeypatch
             assert actual_link is link
             assert link.world == "NEWWORLD.ZEN"
             assert markers() == ["scenario m0: checks started"]
+            store = stores[0]
+            await store.ensure_branch("save-order")
+            started, release = asyncio.Event(), asyncio.Event()
+
+            async def write_before_save():
+                started.set()
+                await release.wait()
+                seq = await store.append("save-order", npc, "developer", "Before the save")
+                await link.send(MemoryCmd(branch="save-order", seq=seq))
+
+            write = asyncio.create_task(store.complete(write_before_save))
+            await started.wait()
+            save = asyncio.create_task(link.debug("save", slot=1))
+            await asyncio.sleep(0)
+            assert not save_sent.is_set()
+            release.set()
+            await write
+            await asyncio.wait_for(save_sent.wait(), 1)
+            # The boundary protects transmission, not the game's later reply.
+            assert await asyncio.wait_for(store.complete(lambda: store.head("save-order")), 1) == 1
+            ordered = [c for c in sent if c["type"] in {"memory", "debug"}]
+            assert [c["type"] for c in ordered] == ["memory", "debug"]
+            assert ordered[0]["seq"] == 1
+            pending = link._dispatch(Result(type="result", req=ordered[1]["req"], ok=True))
+            if pending is not None:
+                await pending
+            await save
+            started.clear()
+            release.clear()
+
+            async def hold_completion():
+                started.set()
+                await release.wait()
+
+            held = asyncio.create_task(store.complete(hold_completion))
+            await started.wait()
+            retired_save = asyncio.create_task(link.debug("save", slot=2))
+            await asyncio.sleep(0)
+            pending = link._dispatch(Loading(type="loading"))
+            loading = asyncio.create_task(pending) if pending is not None else None
+            release.set()
+            await held
+            with pytest.raises(cli.GameError, match="world changed"):
+                await retired_save
+            if loading is not None:
+                await loading
+            assert [c for c in sent if c["type"] == "debug" and c["cmd"] == "save"] == [ordered[1]]
             scenario_entered.set()
             return []
 

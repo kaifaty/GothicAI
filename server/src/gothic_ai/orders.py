@@ -359,28 +359,40 @@ class Orders:
         before: Standing | None,
         target: str | None,
     ) -> None:
+        session, world_generation = self.link.session, self.link.world_generation
         self._spawn(self.dialogue.acknowledge(npc, name))
         what = commands.SAID[order.kind]
-        self.dialogue.remember(npc, name, f"Герой приказал тебе: «{order.heard}» — {what}. Ты подчинился.")
+        await self.dialogue.remember(
+            npc, name, f"Герой приказал тебе: «{order.heard}» — {what}. Ты подчинился."
+        )
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            return
         if order.kind in WEAPONS:
             failed = await self._weapon(npc, order.kind, before)
         else:
             assert standing is not None
             failed = await self._carry_out(npc, name, order.kind, standing, target)
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            return
         if failed:
-            self.dialogue.remember(npc, name, f"Приказ героя ({what}) ты выполнить не смог: {failed}")
+            await self.dialogue.remember(npc, name, f"Приказ героя ({what}) ты выполнить не смог: {failed}")
 
     async def _carry_out(
         self, npc: str, name: str, kind: str, standing: Standing, target: str | None
     ) -> str | None:
         """The body's part of the order; what did not work, None if all did."""
+        session, world_generation = self.link.session, self.link.world_generation
         if kind in ("follow", "come", "retreat"):
             return await self._follow(npc, stop=kind != "follow")
         if kind == "dismiss":
             self.standing.pop(npc, None)
             await self._act(npc, "stop")
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return None
             if self._following(npc):
-                self.dialogue.change_intent(npc, name, goal="keep_routine", target=None, body=False)
+                await self.dialogue.change_intent(npc, name, goal="keep_routine", target=None, body=False)
+                if session is not self.link.session or world_generation != self.link.world_generation:
+                    return None
             self.talk.free(npc, "follow")
             self.talk.free(npc, "order")
             return None
@@ -397,12 +409,19 @@ class Orders:
     async def _weapon(self, npc: str, kind: str, before: Standing | None) -> str | None:
         """Take the weapon out or put it away; put away, it ends a fight the npc was ordered into. An npc
         not held for anything is held only for this."""
+        session, world_generation = self.link.session, self.link.world_generation
         held = npc in self.talk.held
         if not await self.talk.hold(npc, "order"):
             return "тебя не отпускают"
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            return None
         if kind == "sheathe" and before is not None and before.kind == "attack":
             await self._resume(npc, before)
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return None
         status = await self._act(npc, "draw_weapon" if kind == "draw" else "remove_weapon")
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            return None
         if not held:
             self.talk.free(npc, "order")
         return failed(status)
@@ -508,12 +527,17 @@ class Orders:
     async def _resume(self, npc: str, standing: Standing | None) -> None:
         """After an order that ends (attack, halt): a companion follows the hero again, an npc that only
         stood on his order goes back to its business."""
+        session, world_generation = self.link.session, self.link.world_generation
         if standing is not None and not self._current(npc, standing):
             return
         self.standing.pop(npc, None)
         conv = self.dialogue.conversations.get(npc)
         if conv is not None and conv.intent.goal in INCIDENT_GOALS - COMPANION_GOALS:
-            self.dialogue.incident_over(npc, body=False)  # its fight is over: it means to go with him again
+            await self.dialogue.incident_over(
+                npc, body=False
+            )  # its fight is over: it means to go with him again
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return
         if self._following(npc):
             await self._follow(npc, stop=True)
         else:
@@ -522,15 +546,15 @@ class Orders:
 
     # --- fights without an order -----------------------------------------------------------------
 
-    def on_message(self, msg: GameMessage) -> None:
+    async def on_message(self, msg: GameMessage) -> None:
         match msg:
             case Perception():
-                self._perceived(msg)
+                await self._perceived(msg)
             case NpcRoster():
                 self._party()
             case NpcViews():
                 for view in msg.views:
-                    self._hunting(view)
+                    await self._hunting(view)
             case Loading():
                 self.foes.clear()
                 self.party.clear()
@@ -573,7 +597,7 @@ class Orders:
             self.party.pop(npc, None)
         log.info("%s %s the hero's party", npc, "joins" if on else "leaves")
 
-    def _hunting(self, view: NpcView) -> None:
+    async def _hunting(self, view: NpcView) -> None:
         """A visible monster already fighting the hero, or hostile and closing on him: do not wait for
         damage perceptions. Native combat targets disambiguate a hunt from merely passing nearby."""
         npc = view.npc.upper()
@@ -600,10 +624,10 @@ class Orders:
                 continue
             if self.talk.beasts is not None and self.talk.beasts.spares(other.id):
                 continue
-            self._stand_up(npc, other.id.upper(), "охотится на героя", struck=False)
+            await self._stand_up(npc, other.id.upper(), "охотится на героя", struck=False)
             break
 
-    def _perceived(self, p: Perception) -> None:
+    async def _perceived(self, p: Perception) -> None:
         npc, other = p.npc.upper(), p.other.upper()
         if other == "PLAYER" or other == npc or self.companion(other):
             return
@@ -622,14 +646,14 @@ class Orders:
                     if victim == "PLAYER"
                     else (f"напал на: {self._name(npc, victim)}")
                 )
-                self._stand_up(npc, other, did, struck=victim == npc)
+                await self._stand_up(npc, other, did, struck=victim == npc)
         elif p.perc == "ASSESSENEMY" and p.distance <= ENEMY_CM and self._monster(npc, other):
             if self.talk.beasts is not None and self.talk.beasts.spares(other):
                 return  # a wolf the hero talked round: it lets him pass, so do they (beasts.py)
             if npc in self.talk.attached and self.companion(npc):
-                self._stand_up(npc, other, "бросается на вас", struck=False)
+                await self._stand_up(npc, other, "бросается на вас", struck=False)
 
-    def attacked(self, npc: str) -> None:
+    async def attacked(self, npc: str) -> None:
         """`npc` turns on the hero by its own decision (dialogue.py: its model's, after its words): before
         a blow is struck, every companion near enough stands up for him."""
         npc = npc.upper()
@@ -638,11 +662,12 @@ class Orders:
         self.foes[npc] = self.clock()
         for companion in list(self.talk.attached):
             if companion != npc and self.companion(companion) and self._hero_cm(companion) <= DEFEND_CM:
-                self._stand_up(companion, npc, "напал на героя", struck=False)
+                await self._stand_up(companion, npc, "напал на героя", struck=False)
 
-    def _stand_up(self, npc: str, foe: str, did: str, *, struck: bool) -> None:
+    async def _stand_up(self, npc: str, foe: str, did: str, *, struck: bool) -> None:
         """A companion fights `foe` without an order: it struck the hero, the companion or another one, or it
         is a monster close by. Not when it fights already, retreats, or waits away from the hero."""
+        session, world_generation = self.link.session, self.link.world_generation
         if npc in self.fights:
             return
         standing = self.standing.get(npc)
@@ -656,7 +681,9 @@ class Orders:
         foe_name = self._name(npc, foe)
         log.info("%s stands up for the hero: fights %s", npc, foe)
         self.journal.add("defend", npc=npc, name=name, target=foe)
-        self.dialogue.remember(npc, name, f"{foe_name} {did} — ты бросился в бой.")
+        await self.dialogue.remember(npc, name, f"{foe_name} {did} — ты бросился в бой.")
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            return
         self._start(npc, foe, standing, seek=False)
 
     def fight_intent(self, npc: str, target: str | None) -> bool:
@@ -786,6 +813,7 @@ class Orders:
         """Walk to the place ahead of the hero and wait there; on arrival, say what is there."""
         if not self._current(npc, standing):
             return "", True  # an order came first
+        reply = self.dialogue.conversations[npc].reply
         if not await self.talk.hold(npc, "order"):
             return "Ты не смог пойти: тебя не отпускают", False
         assert place.center is not None
@@ -808,6 +836,10 @@ class Orders:
         # there at its back (Cavalorn saw nobody in the bandits' cave, 2026-10-13)
         if await self._look_around(npc, place, standing) is None:
             return "", True  # an order came meanwhile
+        if reply is not None and not reply.done() and reply is not asyncio.current_task():
+            await asyncio.wait({reply})
+        if not self._current(npc, standing):
+            return "", True
         self._later(self.go_wait_s, npc, standing)
         self._spawn(self._meet(npc, standing))
         self.dialogue.event_turn(

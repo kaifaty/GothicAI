@@ -35,6 +35,7 @@ falls behind (expired / errors), MID and FAR timers stretch.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import itertools
 import logging
 import random
@@ -265,7 +266,7 @@ class NpcPlanner:
         agenda_of: Callable[[str], str | None] | None = None,
         routine_of: Callable[[str], Awaitable[Any]] | None = None,
         habits_of: Callable[[str], list[Habit]] | None = None,
-        view_of: Callable[[str], tuple[str, ...]] | None = None,
+        view_of: Callable[[str], tuple[str, ...] | Awaitable[tuple[str, ...]]] | None = None,
         trace: TraceWriter | None = None,
         facts_of: Callable[[str], tuple[str, ...]] | None = None,
     ) -> None:
@@ -283,7 +284,9 @@ class NpcPlanner:
         self.routines: dict[str, RoutineSlot] = {}
         # how much the moment calls for the npc's own words: (npc, level, the reaction applied or None,
         # flight); told every level, the listener decides (`escalate_level`, or more when it already spoke)
-        self.on_escalate: Callable[[str, float, Decision | None, Flight], None] | None = None
+        self.on_escalate: Callable[
+            [str, float, Decision | None, Flight], Awaitable[None] | None
+        ] | None = None
         # a reason not to apply a sure choice now, or None (initiative.py: one walk-up at a time)
         self.allow: Callable[[NpcRecord, str], str | None] | None = None
         # takes approach_talk over: walks the npc up and lets it speak; without it the applier walks it
@@ -656,8 +659,9 @@ class NpcPlanner:
 
     # --- scheduling -----------------------------------------------------------------------
 
-    def tick(self, now: float) -> None:
+    async def tick(self, now: float) -> None:
         """Turn due timers into requests and send what the budget allows."""
+        world = self._world
         self._refill(now)
         for rec in self.npcs.values():
             if rec.investigation is not None and now - rec.investigation.since >= INVESTIGATION_MAX_S:
@@ -706,18 +710,22 @@ class NpcPlanner:
         ready.sort(key=lambda r: (not r.pending.urgent, -r.importance, r.pending.created))
         inflight = sum(1 for r in self.npcs.values() if r.flight is not None)
         for rec in ready:
+            if self.npcs.get(rec.id) is not rec or rec.pending is None or rec.flight is not None:
+                continue
             urgent = rec.pending.urgent
             if not urgent and (inflight >= self.cfg.max_inflight or self._tokens < 1):
                 break
             if not urgent:
                 self._tokens -= 1
-            self._send(rec, now)
+            await self._send(rec, now)
+            if world != self._world:
+                return
             inflight += 1
 
     async def run(self) -> None:
         try:
             while True:
-                self.tick(self.clock())
+                await self.tick(self.clock())
                 await asyncio.sleep(self.cfg.tick_s)
         finally:
             self.reset()
@@ -830,12 +838,17 @@ class NpcPlanner:
         p.not_before = min(p.not_before, not_before) if urgent else max(p.not_before, not_before)
         p.deadline = max(p.deadline, stale)
 
-    def _send(self, rec: NpcRecord, now: float) -> None:
+    async def _send(self, rec: NpcRecord, now: float) -> None:
         pend = rec.pending
         assert pend is not None
         rec.pending = None
         rec.stimuli = [s for s in rec.stimuli if s.alive(now)]
+        world, version = self._world, rec.version
         view = self.view_of(rec.id) if self.view_of is not None else ()
+        if inspect.isawaitable(view):
+            view = await view
+        if world != self._world or self.npcs.get(rec.id) is not rec or rec.version != version:
+            return
         ctx = NpcContext(
             rec.id,
             rec.name,
@@ -1164,7 +1177,8 @@ class NpcPlanner:
             log.info("escalate %s %.1f after %s", npc, level, ",".join(flight.stimuli))
             self._trace(npc, flight, a, True, "", question="escalate", questions=questions, sent=sent)
             if self.on_escalate is not None:
-                self.on_escalate(npc, level, reaction, flight)
+                if inspect.isawaitable(result := self.on_escalate(npc, level, reaction, flight)):
+                    await result
 
     def _trace(
         self,

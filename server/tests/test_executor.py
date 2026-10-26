@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from gothic_ai import executor
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.executor import Intent
@@ -9,6 +11,25 @@ from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import Snapshot
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
+
+
+@pytest.fixture(autouse=True)
+async def close_dialogues(monkeypatch, close_memory_stores):
+    managers = []
+    original = DialogueManager.__init__
+
+    def tracked(manager, *args, **kwargs):
+        original(manager, *args, **kwargs)
+        managers.append(manager)
+
+    monkeypatch.setattr(DialogueManager, "__init__", tracked)
+    try:
+        yield
+    finally:
+        for manager in reversed(managers):
+            await manager.close()
+
 
 SNAP = Snapshot.model_validate(FakeGame().snapshot(XARDAS))
 FOLLOW = {
@@ -84,12 +105,15 @@ def test_a_goal_there_is_no_more_reads_as_none():
 async def _turn(
     llm: FakeBackend, fake: FakeGame, store: MemoryStore | None = None, text: str = "Дай мне что-нибудь"
 ):
+    if store is None:
+        store = await MemoryStore.open(":memory:")
     async with connected(fake) as link:
         dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=store)
+        await dialogue.initialize()
         changed: list[Intent] = []
         dialogue.on_intent = lambda npc, intent: changed.append(intent)
         await link.attach(XARDAS)
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await asyncio.wait_for(dialogue.say_as_player(XARDAS, text), 5)
         await _until(lambda: not dialogue.conversations[XARDAS].actions)
         await _until(lambda: any(m["type"] == "chat_text" and m.get("final") for m in fake.received))
@@ -168,7 +192,7 @@ async def test_rejections_stop_after_three_steps_and_the_last_one_only_talks():
 
 
 async def test_follow_intent_moves_the_body_after_the_line_and_is_remembered():
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend("Хорошо, я пойду с тобой.", tool_calls=[ToolCall("set_intent", FOLLOW)], delay=0)
     fake = FakeGame()
     dialogue, changed = await _turn(llm, fake, store, "Пойдём со мной")
@@ -180,9 +204,9 @@ async def test_follow_intent_moves_the_body_after_the_line_and_is_remembered():
     assert len(llm.calls) == 1  # accepted with words: no second step
 
     # a load of a save made after this keeps the intent
-    head = store.head("test-branch")
-    store.ensure_branch("after-load", "test-branch", head)
-    assert Intent.from_json(store.load("after-load", XARDAS).intent or "") == intent
+    head = await store.head("test-branch")
+    await store.ensure_branch("after-load", "test-branch", head)
+    assert Intent.from_json((await store.load("after-load", XARDAS)).intent or "") == intent
 
     # and the next turn shows it to the model
     again = FakeBackend("Идём.", delay=0)
@@ -201,13 +225,13 @@ async def test_the_same_intent_twice_is_not_carried_out_twice():
 
 
 async def test_recall_brings_back_what_the_summary_lost():
-    store = MemoryStore(":memory:")
-    store.ensure_branch("test-branch")
-    store.append(
+    store = await MemoryStore.open(":memory:")
+    await store.ensure_branch("test-branch")
+    await store.append(
         "test-branch", XARDAS, "user", "Меня зовут Ронан, я ищу своего брата Бенно.", "день 1, 09:00"
     )
-    store.append("test-branch", XARDAS, "assistant", "Брата ищи в городе.", "день 1, 09:00")
-    store.add_summary("test-branch", XARDAS, "Герой пришёл к тебе в первый день.", covers=2)
+    await store.append("test-branch", XARDAS, "assistant", "Брата ищи в городе.", "день 1, 09:00")
+    await store.add_summary("test-branch", XARDAS, "Герой пришёл к тебе в первый день.", covers=2)
     llm = FakeBackend(
         script=[
             FakeStep("Хм…", [ToolCall("recall", {"query": "брат героя"})]),

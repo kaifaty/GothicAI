@@ -18,6 +18,7 @@ from gothic_ai.storyguard import StoryGuard
 from gothic_ai.witnesses import Witnesses
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_perception import HILDA, LOBART, MALETH
 from tests.test_sightings import BOOK, record_theft
 from tests.test_witnesses import (
@@ -38,7 +39,18 @@ VOUCH = "Он всё утро был со мной в поле."
 
 
 class CoverWorld:
-    def __init__(self, link, fake, llm=None, *, courage: int | None = None, cover: bool = True):
+    @classmethod
+    async def open(cls, link, fake, llm=None, *, courage: int | None = None, cover: bool = True):
+        world = cls(
+            link, fake, llm, memory=await MemoryStore.open(":memory:"), courage=courage, cover=cover
+        )
+        await world.chronicle.initialize()
+        await world.dialogue.initialize()
+        return world
+
+    def __init__(
+        self, link, fake, llm=None, *, memory: MemoryStore, courage: int | None = None, cover: bool = True,
+    ):
         fake.day, fake.hour, fake.minute = 1, 9, 35
         fake.npc_states = {
             HILDA: {"state": "alive", "name": "Хильда", "distance": 900},
@@ -46,7 +58,7 @@ class CoverWorld:
             ANDRE: {"state": "alive", "name": "Андре", "distance": 90000},
         }
         fake.views = {LOBART: lobarts_view(), HILDA: hildas_view()}
-        self.store = MemoryStore(":memory:")
+        self.store = memory
         self.dialogue = DialogueManager(link, llm or lobart(), PersonaProvider(None), memory=self.store)
         self.chronicle = Chronicle(link, self.store)
         social = Social()
@@ -77,27 +89,27 @@ class CoverWorld:
         self.dialogue.extensions += [self.desk, self.seen, self.witnesses]
         self.dialogue.sight = self.desk.sight
 
-    def covered(self, *, npc: str = HILDA, deal: str = "D1", **fields: Any) -> None:
-        self.chronicle.record({"fact": "covered", "npc": npc, "deal": deal, **fields})
+    async def covered(self, *, npc: str = HILDA, deal: str = "D1", **fields: Any) -> None:
+        await self.chronicle.record({"fact": "covered", "npc": npc, "deal": deal, **fields})
         if fields.get("crime"):
-            self.chronicle.record(
+            await self.chronicle.record(
                 {"fact": "silenced", "npc": npc, "deal": deal, "cover": deal, "crime": fields["crime"]}
             )
 
-    def saw(
+    async def saw(
         self, npc: str = HILDA, name: str = "Хильда", minute: int = AT_8,
         waypoint: str = "NW_FARM1_PATH_01",
     ) -> None:
-        self.seen.saw(hero_seen_by(npc, name, minute, waypoint))
-        self.seen.saw(hero_seen_by(npc, name, minute + 5, waypoint))
+        await self.seen.saw(hero_seen_by(npc, name, minute, waypoint))
+        await self.seen.saw(hero_seen_by(npc, name, minute + 5, waypoint))
 
     async def testify(self, *, witness: str = HILDA, name: str = "Хильда", said: str = SAID):
         result = await self.witnesses._testify(None, LOBART, "Лобарт", witness, name, said, "far", 0)
         assert result is not None
         return result
 
-    def violence(self, *, degree: str = "seen", kind: str = "attack", forgiven: str = "") -> None:
-        self.chronicle.record(
+    async def violence(self, *, degree: str = "seen", kind: str = "attack", forgiven: str = "") -> None:
+        await self.chronicle.record(
             {
                 "fact": "crime",
                 "id": "violence",
@@ -111,9 +123,9 @@ class CoverWorld:
             }
         )
         if degree == "seen":
-            self.chronicle.record({"fact": "crime_seen", "npc": HILDA, "crime": "violence"})
+            await self.chronicle.record({"fact": "crime_seen", "npc": HILDA, "crime": "violence"})
         elif degree == "heard":
-            self.chronicle.record(
+            await self.chronicle.record(
                 {
                     "fact": "rumor",
                     "to": HILDA,
@@ -124,7 +136,7 @@ class CoverWorld:
                 }
             )
         elif degree == "suspects":
-            self.chronicle.record(
+            await self.chronicle.record(
                 {
                     "fact": "crime_suspected",
                     "npc": HILDA,
@@ -133,12 +145,12 @@ class CoverWorld:
                 }
             )
         if forgiven:
-            self.chronicle.record({"fact": "forgiven", "npc": forgiven, "crime": "violence"})
+            await self.chronicle.record({"fact": "forgiven", "npc": forgiven, "crime": "violence"})
 
     async def catch(self, sid: str = "В1", *, said: str = SAID):
-        conv = self.dialogue.open(LOBART, "Лобарт")
+        conv = await self.dialogue.open(LOBART, "Лобарт")
         conv.trigger = Message("user", LIE)
-        self.seen.situation(LOBART)
+        await self.seen.situation(LOBART)
         self.witnesses.situation(LOBART)
         result = await self.seen.handle(
             self.dialogue, conv, ToolCall("catch_lie", {"said": said, "seen": sid}, "catch"), None
@@ -162,13 +174,14 @@ class CoverWorld:
 async def test_crime_cover_hides_the_deed_and_only_its_place_within_one_hour(offset, place, hidden):
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake)
+        w = await CoverWorld.open(link, fake)
         fake.hour, fake.minute = 10, 0
-        record_theft(w.chronicle)
+        await record_theft(w.chronicle)
         at = AT_8 + offset
         sighting = Sighting("PLAYER", "Герой", at, at, [place], place_ids=[place])
+        await w.seen.prepare(HILDA)
         w.seen.mind(HILDA).sightings.append(sighting)
-        w.covered(crime="C1", vouch=VOUCH)
+        await w.covered(crime="C1", vouch=VOUCH)
         t = await w.testify()
 
         assert t.saw == [sighting]
@@ -183,11 +196,12 @@ async def test_crime_cover_hides_the_deed_and_only_its_place_within_one_hour(off
 async def test_crime_cover_hides_a_later_trace_when_the_deed_just_left_the_question_window():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake)
-        record_theft(w.chronicle)
-        w.covered(crime="C1", vouch=VOUCH)
+        w = await CoverWorld.open(link, fake)
+        await record_theft(w.chronicle)
+        await w.covered(crime="C1", vouch=VOUCH)
         at = AT_8 + 40
         sighting = Sighting("PLAYER", "Герой", at, at, place_ids=["FARM1_OUT"])
+        await w.seen.prepare(HILDA)
         w.seen.mind(HILDA).sightings.append(sighting)
         fake.day, fake.hour, fake.minute = 2, 8, 40
 
@@ -204,12 +218,13 @@ async def test_crime_cover_hides_a_later_trace_when_the_deed_just_left_the_quest
 async def test_day_cover_keeps_other_days_and_other_deeds_truthful():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake)
+        w = await CoverWorld.open(link, fake)
         yesterday = Sighting("PLAYER", "Герой", 12 * 60, 12 * 60 + 5, place_ids=["FARM1_OUT"])
         today = Sighting("PLAYER", "Герой", AT_8, AT_8 + 5, place_ids=["FARM1_OUT"])
+        await w.seen.prepare(HILDA)
         w.seen.mind(HILDA).sightings.extend([yesterday, today])
-        record_theft(w.chronicle)
-        w.covered(day=1)
+        await record_theft(w.chronicle)
+        await w.covered(day=1)
         t = await w.testify()
         assert t.saw == [today, yesterday] and t.told == [yesterday]
         assert t.crime_saw == t.crime_told == ["C1"]
@@ -219,9 +234,9 @@ async def test_day_cover_keeps_other_days_and_other_deeds_truthful():
 async def test_a_cover_outside_the_question_window_does_not_change_the_answer():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake)
-        w.saw()
-        w.covered(day=-1, vouch=VOUCH)
+        w = await CoverWorld.open(link, fake)
+        await w.saw()
+        await w.covered(day=-1, vouch=VOUCH)
         t = await w.testify()
         assert t.told == t.saw and t.told
         assert not w.chronicle.facts("testimony")[0].get("cover")
@@ -232,19 +247,19 @@ async def test_a_cover_outside_the_question_window_does_not_change_the_answer():
 async def test_npc_breaking_a_promise_testifies_truthfully_and_betrayal_is_once(promise, keeps):
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake)
-        w.saw(waypoint="NW_FARM1_OUT_01")
-        record_theft(w.chronicle)
+        w = await CoverWorld.open(link, fake)
+        await w.saw(waypoint="NW_FARM1_OUT_01")
+        await record_theft(w.chronicle)
         how = "silence" if promise == "silence" else "cover"
         terms = (
             {"silence": ["crime:C1"]} if promise == "silence" else
             {"cover": {"crime": "C1", "vouch": VOUCH}} if promise == "crime_cover" else
             {"cover": {"day": 1, "vouch": VOUCH}}
         )
-        w.chronicle.record({
+        await w.chronicle.record({
             "fact": "npc_intent", "npc": HILDA, "deal": "D1", "keeps": keeps, "how": [how],
         })
-        w.chronicle.record({"fact": "deal", "npc": HILDA, "deal": "D1", **terms})
+        await w.chronicle.record({"fact": "deal", "npc": HILDA, "deal": "D1", **terms})
         t = await w.testify()
         assert t.saw and t.crime_saw == ["C1"]
         assert t.told == ([] if keeps and how == "cover" else t.saw)
@@ -259,18 +274,19 @@ async def test_npc_breaking_a_promise_testifies_truthfully_and_betrayal_is_once(
 async def test_disabling_cheating_after_load_restores_cover_without_rewriting_facts():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake)
-        w.saw(waypoint="NW_FARM1_OUT_01")
-        record_theft(w.chronicle)
-        w.chronicle.record({
+        w = await CoverWorld.open(link, fake)
+        await w.saw(waypoint="NW_FARM1_OUT_01")
+        await record_theft(w.chronicle)
+        await w.chronicle.record({
             "fact": "npc_intent", "npc": HILDA, "deal": "D1", "keeps": False, "how": ["cover"],
         })
-        w.chronicle.record({
+        await w.chronicle.record({
             "fact": "deal", "npc": HILDA, "deal": "D1", "cover": {"crime": "C1", "vouch": VOUCH},
         })
-        saved = w.store.head("A")
+        saved = await w.store.head("A")
         await fake.send(type="session", branch="loaded", parent="A", parent_seq=saved, reason="load")
         await _until(lambda: w.chronicle.branch == "loaded", 5)
+        await link.wait_session_ready()
         w.chronicle.npc_cheat_enabled = False
         t = await w.testify()
         assert t.saw and not t.told and t.crime_saw == ["C1"] and not t.crime_told
@@ -283,8 +299,8 @@ async def test_disabling_cheating_after_load_restores_cover_without_rewriting_fa
 async def test_vouch_without_a_sighting_is_a_real_testimony_and_not_evidence():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake)
-        w.covered(day=1, vouch=VOUCH)
+        w = await CoverWorld.open(link, fake)
+        await w.covered(day=1, vouch=VOUCH)
         t = await w.testify()
         assert t.saw == t.told == [] and t.crime_saw == t.crime_told == []
         text = w.witnesses.situation(LOBART) or ""
@@ -305,14 +321,14 @@ async def test_cover_applies_to_all_three_question_tiers(tier):
         hilda=[("спрашивает тебя", FakeStep("Он был со мной в поле."))],
     )
     async with connected(fake) as link:
-        w = CoverWorld(link, fake, llm)
+        w = await CoverWorld.open(link, fake, llm)
         who, name = (ANDRE, "Андре") if tier == "far" else (HILDA, "Хильда")
-        w.saw(who, name)
-        w.covered(npc=who, day=1, vouch=VOUCH)
+        await w.saw(who, name)
+        await w.covered(npc=who, day=1, vouch=VOUCH)
         if tier == "walk":
             fake.npc_states[HILDA]["distance"] = 3000
         if tier == "far":
-            conv = w.dialogue.open(LOBART, "Лобарт")
+            conv = await w.dialogue.open(LOBART, "Лобарт")
             conv.trigger = Message("user", LIE)
             await w.witnesses.prepare(LOBART)
             out = await w.witnesses.handle(
@@ -323,7 +339,7 @@ async def test_cover_applies_to_all_three_question_tiers(tier):
             fake.hour, fake.minute = 18, 5
             await w.witnesses.tick()
         else:
-            w.dialogue.open(LOBART, "Лобарт")
+            await w.dialogue.open(LOBART, "Лобарт")
             await w.dialogue.say_as_player(LOBART, LIE)
             await _until(lambda: bool(w.chronicle.facts("testimony")), 10)
             await _until(lambda: any("уличить нечем" in s for s in llm.outputs), 10)
@@ -341,16 +357,16 @@ async def test_cover_applies_to_all_three_question_tiers(tier):
 async def test_a_timorous_witness_with_unforgiven_violence_lies_about_everything(degree, kind):
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake, courage=2)
-        w.saw()
-        w.violence(degree=degree, kind=kind)
-        record_theft(w.chronicle)
+        w = await CoverWorld.open(link, fake, courage=2)
+        await w.saw()
+        await w.violence(degree=degree, kind=kind)
+        await record_theft(w.chronicle)
         t = await w.testify()
         assert t.saw and t.crime_saw and not t.told and not t.crime_told
         assert w.chronicle.facts("testimony")[0]["cover"] == "fear"
         assert "говорит, что не видел" in (w.witnesses.situation(LOBART) or "")
         assert (await w.catch("С1")).status == "rejected"
-        await w.witnesses._speak(w.dialogue.open(HILDA, "Хильда"), t)
+        await w.witnesses._speak(await w.dialogue.open(HILDA, "Хильда"), t)
         cue = str(w.dialogue.llm.others.calls[0][1][-1].content)
         assert "ты боишься героя: скажи, что ничего не видел" in cue
 
@@ -371,9 +387,9 @@ async def test_without_fear_ground_or_after_its_own_forgiveness_a_witness_tells_
 ):
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake, courage=courage)
-        w.saw()
-        w.violence(degree=degree, kind=kind, forgiven=forgiven)
+        w = await CoverWorld.open(link, fake, courage=courage)
+        await w.saw()
+        await w.violence(degree=degree, kind=kind, forgiven=forgiven)
         t = await w.testify()
         assert t.saw and t.told == t.saw and t.crime_told == t.crime_saw
         assert not w.chronicle.facts("testimony")[0].get("cover")
@@ -382,9 +398,9 @@ async def test_without_fear_ground_or_after_its_own_forgiveness_a_witness_tells_
 async def test_another_persons_forgiveness_does_not_remove_the_witnesss_fear():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake, courage=2)
-        w.saw()
-        w.violence(degree="heard", kind="murder", forgiven=MALETH)
+        w = await CoverWorld.open(link, fake, courage=2)
+        await w.saw()
+        await w.violence(degree="heard", kind="murder", forgiven=MALETH)
         await w.testify()
         assert w.chronicle.facts("testimony")[0]["cover"] == "fear"
 
@@ -392,10 +408,10 @@ async def test_another_persons_forgiveness_does_not_remove_the_witnesss_fear():
 async def test_a_deal_cover_takes_priority_over_fear_and_keeps_its_words():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake, courage=2)
-        w.saw()
-        w.violence(degree="heard", kind="murder")
-        w.covered(day=1, vouch=VOUCH)
+        w = await CoverWorld.open(link, fake, courage=2)
+        await w.saw()
+        await w.violence(degree="heard", kind="murder")
+        await w.covered(day=1, vouch=VOUCH)
         await w.testify()
         fact = w.chronicle.facts("testimony")[0]
         assert fact["cover"] == "D1" and fact["vouch"] == VOUCH
@@ -408,19 +424,19 @@ async def test_a_deal_cover_takes_priority_over_fear_and_keeps_its_words():
 async def test_catching_the_same_words_exposes_a_covering_witness(source, cover, said):
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake, courage=2 if cover == "fear" else None)
-        w.saw()
+        w = await CoverWorld.open(link, fake, courage=2 if cover == "fear" else None)
+        await w.saw()
         if cover == "fear":
-            w.violence(degree="heard", kind="murder")
+            await w.violence(degree="heard", kind="murder")
         else:
-            w.covered(day=1, vouch=VOUCH)
+            await w.covered(day=1, vouch=VOUCH)
         false = await w.testify()
         if source == "own":
-            w.saw(LOBART, "Лобарт")
+            await w.saw(LOBART, "Лобарт")
             sid = "В1"
         else:
             fake.minute += 1  # the second witness's answer is first in the situation
-            w.saw(MALETH, "Малет")
+            await w.saw(MALETH, "Малет")
             await w.testify(witness=MALETH, name="Малет")
             sid = "С1"
         assert (await w.catch(sid, said=said)).status == "accepted"
@@ -438,10 +454,10 @@ async def test_catching_the_same_words_exposes_a_covering_witness(source, cover,
 async def test_vouch_can_be_a_lie_without_sightings_but_honest_ignorance_cannot(vouch, exposed):
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake)
-        w.covered(day=1, vouch=vouch)
+        w = await CoverWorld.open(link, fake)
+        await w.covered(day=1, vouch=vouch)
         await w.testify()
-        w.saw(LOBART, "Лобарт")
+        await w.saw(LOBART, "Лобарт")
         assert (await w.catch()).status == "accepted"
         assert bool(w.chronicle.facts("exposed")) is exposed
 
@@ -449,24 +465,25 @@ async def test_vouch_can_be_a_lie_without_sightings_but_honest_ignorance_cannot(
 async def test_cover_and_exposure_survive_load_and_the_same_pair_is_not_exposed_twice():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake)
-        w.saw()
-        w.covered(day=1, vouch=VOUCH)
+        w = await CoverWorld.open(link, fake)
+        await w.saw()
+        await w.covered(day=1, vouch=VOUCH)
         false = await w.testify()
-        w.saw(LOBART, "Лобарт")
+        await w.saw(LOBART, "Лобарт")
         assert (await w.catch()).status == "accepted"
         (exposed,) = w.chronicle.facts("exposed")
         (caught,) = w.chronicle.facts("caught")
-        saved = w.store.head("A")
+        saved = await w.store.head("A")
         await fake.send(type="session", branch="loaded", parent="A", parent_seq=saved, reason="load")
         await _until(lambda: w.chronicle.branch == "loaded", 5)
+        await link.wait_session_ready()
         assert w.chronicle.facts("covered")[0]["deal"] == "D1"
         assert w.chronicle.facts("exposed") == [exposed]
         fake.minute += 2
         restored = await w.testify(said="с утра сидел в таверне")
         assert restored.saw and not restored.told
         assert w.chronicle.facts("testimony")[-1]["cover"] == "D1"
-        w.chronicle.record(caught)
+        await w.chronicle.record(caught)
         assert w.chronicle.facts("exposed") == [exposed]
         assert exposed["testimony"] == false.id
 
@@ -474,11 +491,11 @@ async def test_cover_and_exposure_survive_load_and_the_same_pair_is_not_exposed_
 async def test_a_catch_for_different_words_does_not_expose_the_witness():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake)
-        w.saw()
-        w.covered(day=1, vouch=VOUCH)
+        w = await CoverWorld.open(link, fake)
+        await w.saw()
+        await w.covered(day=1, vouch=VOUCH)
         await w.testify()
-        w.chronicle.record(
+        await w.chronicle.record(
             {
                 "fact": "caught",
                 "quest": "other",
@@ -495,19 +512,19 @@ async def test_a_catch_for_different_words_does_not_expose_the_witness():
 async def test_no_cover_ignores_deals_fear_and_old_covered_testimonies():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake, courage=2, cover=False)
-        w.saw()
-        w.violence(degree="heard", kind="murder")
-        record_theft(w.chronicle)
-        record_theft(w.chronicle, id="ordinary-silence", hour=7)
-        w.covered(crime="C1", day=1, vouch=VOUCH)
-        w.chronicle.record({"fact": "silenced", "npc": HILDA, "crime": "ordinary-silence"})
+        w = await CoverWorld.open(link, fake, courage=2, cover=False)
+        await w.saw()
+        await w.violence(degree="heard", kind="murder")
+        await record_theft(w.chronicle)
+        await record_theft(w.chronicle, id="ordinary-silence", hour=7)
+        await w.covered(crime="C1", day=1, vouch=VOUCH)
+        await w.chronicle.record({"fact": "silenced", "npc": HILDA, "crime": "ordinary-silence"})
         t = await w.testify()
         assert t.told == t.saw and t.saw
         assert "C1" in t.crime_told and "ordinary-silence" not in t.crime_told
         fact = w.chronicle.facts("testimony")[0]
         assert not fact.get("cover") and not fact.get("vouch")
-        w.chronicle.record(
+        await w.chronicle.record(
             {
                 **fact,
                 "id": "old-cover",
@@ -521,7 +538,7 @@ async def test_no_cover_ignores_deals_fear_and_old_covered_testimonies():
         assert old.told == old.saw and "C1" in old.crime_told
         assert "ordinary-silence" not in old.crime_told
         assert VOUCH not in (w.witnesses.situation(LOBART) or "")
-        w.chronicle.record(
+        await w.chronicle.record(
             {
                 "fact": "caught",
                 "quest": "proof",

@@ -245,7 +245,9 @@ async def vanilla_line(
         return _logged(results)
     check("follows_requires", line.get("follows") == RUEBEN and line.get("requires") == REQUIRES, line)
     check("giver", line.get("giver") == giver and await _giver_ok(link, director, line), giver)
-    made = [director.book.all()[qid] for qid in line.get("quests", []) if qid in director.book.all()]
+    made = [
+        (await director.book.all())[qid] for qid in line.get("quests", []) if qid in await director.book.all()
+    ]
     check("book", bool(made) and len(made) == len(line.get("quests", [])), [q.id for q in made])
     if not made:
         return _logged(results)
@@ -272,7 +274,8 @@ async def vanilla_line(
     check("line_after_load", director.lines == lines, director.lines)
     check(
         "book_after_load",
-        [director.book.all()[q.id].to_dict() for q in made if q.id in director.book.all()] == descriptions
+        [(await director.book.all())[q.id].to_dict() for q in made if q.id in await director.book.all()]
+        == descriptions
         and all(director.book.progress(q.id).state == "done" for q in made),
         [q.id for q in made],
     )
@@ -389,12 +392,12 @@ async def vanilla_line_live(link: GameLink, director: Showrunner, quests: QuestL
             check(f"{state}_giver", safe, {"giver": fact.get("giver"), "follows": fact.get("follows")})
             if not safe:
                 break
-            made = [director.book.all()[qid] for qid in fact["quests"]]
+            made = [(await director.book.all())[qid] for qid in fact["quests"]]
             for q in made:
                 log.info("vanilla line live %s built: %s", state, json.dumps(q.to_dict(), ensure_ascii=False))
             characters = [
                 spec.model_dump()
-                for spec in director.casting.cast.characters()
+                for spec in await director.casting.cast.characters()
                 if spec.npc in fact["characters"]
             ]
             log.info("vanilla line live %s characters: %s", state, json.dumps(characters, ensure_ascii=False))

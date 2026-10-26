@@ -153,7 +153,7 @@ class NpcWill:
         if self._tasks:
             await asyncio.gather(*tuple(self._tasks), return_exceptions=True)
 
-    def _on_message(self, message: GameMessage) -> None:
+    async def _on_message(self, message: GameMessage) -> None:
         if isinstance(message, (Loading, Session)):
             self._generation += 1
             self._now = None
@@ -188,9 +188,9 @@ class NpcWill:
                             if a["id"] == active and a.get("action") == message.act), None)
             if attempt is not None:
                 self._active.pop(message.npc.upper(), None)
-                self._finished(attempt, message)
+                await self._finished(attempt, message)
 
-    def _on_fact(self, fact: Fact) -> None:
+    async def _on_fact(self, fact: Fact) -> None:
         if fact.get("fact") == "npc_crime" and fact.get("kind") == "theft":
             npc = str(fact.get("culprit") or "")
             if npc in self._starting:
@@ -200,7 +200,7 @@ class NpcWill:
                                 if a.get("kind") == "greed" and self._matches(a, fact)
                                 and self._active.get(npc) == a["id"]), None)
                 if attempt is not None:
-                    self._transferred(attempt, fact)
+                    await self._transferred(attempt, fact)
         if fact.get("fact") in {
             "npc_crime", "npc_crime_seen", "npc_crime_suspected", "rumor", "blamed", "blame_refuted",
         }:
@@ -224,9 +224,17 @@ class NpcWill:
 
     async def tick(self, now: int | None = None) -> None:
         """Check character rules on the game hour, and pending claims on roster meetings."""
-        if not self.enabled or self.chronicle.branch is None:
+        if not self.enabled:
+            return
+        session, world_generation = self.link.session, self.link.world_generation
+        if not self.chronicle.memory.in_completion:
+            await self.link.wait_session_ready()
+        if (session is not self.link.session or world_generation != self.link.world_generation
+                or self.chronicle.branch is None):
             return
         async with self._lock:
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return
             generation = self._generation
             if now is not None:
                 self._now = now
@@ -235,15 +243,21 @@ class NpcWill:
             if self._now is None:
                 return
             await self.far_world.refresh(generation)
-            if generation != self._generation:
+            if (generation != self._generation or session is not self.link.session
+                    or world_generation != self.link.world_generation):
                 return
-            self._recover_attempts()
+            await self._recover_attempts()
+            if (generation != self._generation or session is not self.link.session
+                    or world_generation != self.link.world_generation):
+                return
             for rule in MOTIVES.values():
                 await getattr(self, rule.discover)(generation)
-                if generation != self._generation:
+                if (generation != self._generation or session is not self.link.session
+                        or world_generation != self.link.world_generation):
                     return
             for motive in self.pending():
-                if generation != self._generation or not self.enabled:
+                if (generation != self._generation or not self.enabled or session is not self.link.session
+                        or world_generation != self.link.world_generation):
                     return
                 rule = MOTIVES.get(motive.get("kind", ""))
                 if rule is None or not rule.accepts(self.cards.get(motive["npc"])):
@@ -362,50 +376,62 @@ class NpcWill:
             result.append(attempt)
         return result
 
-    def _outcome(self, attempt: Fact, outcome: str, reason: str, *, at: int | None = None,
+    async def _outcome(self, attempt: Fact, outcome: str, reason: str, *, at: int | None = None,
                  detail: str = "", crime: str = "") -> None:
-        _, _, outcomes, _ = self._attempt_history()
-        previous = outcomes.get((attempt["id"], attempt["action"]))
-        if previous is not None and (outcome != "committed" or previous.get("outcome") == "committed"):
-            return
-        finished = self._now if at is None else at
-        if finished is None:
-            return
-        self.chronicle.record({
-            "fact": "npc_will_outcome", "npc": attempt["npc"], "kind": attempt["kind"],
-            "target": attempt["target"], "motive": attempt["motive"], "attempt": attempt["id"],
-            "action": attempt["action"],
-            "outcome": outcome, "reason": reason, "finished_at": finished,
-            **({"far": True} if attempt.get("far") else {}),
-            **({"detail": detail} if detail else {}), **({"crime": crime} if crime else {}),
-            **({"retry_at": finished + RETRY_MINUTES}
-               if attempt["kind"] == "greed" and outcome == "aborted" else {}),
-        })
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
 
-    def _transferred(self, attempt: Fact, crime: Fact) -> None:
-        self._outcome(attempt, "committed", "native_transfer", at=self._at(crime), crime=crime["id"])
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            _, _, outcomes, _ = self._attempt_history()
+            previous = outcomes.get((attempt["id"], attempt["action"]))
+            if previous is not None and (outcome != "committed" or previous.get("outcome") == "committed"):
+                return
+            finished = self._now if at is None else at
+            if finished is None:
+                return
+            await self.chronicle.record({
+                "fact": "npc_will_outcome", "npc": attempt["npc"], "kind": attempt["kind"],
+                "target": attempt["target"], "motive": attempt["motive"], "attempt": attempt["id"],
+                "action": attempt["action"],
+                "outcome": outcome, "reason": reason, "finished_at": finished,
+                **({"far": True} if attempt.get("far") else {}),
+                **({"detail": detail} if detail else {}), **({"crime": crime} if crime else {}),
+                **({"retry_at": finished + RETRY_MINUTES}
+                   if attempt["kind"] == "greed" and outcome == "aborted" else {}),
+            })
 
-    def _finished(self, attempt: Fact, receipt: NpcIdle) -> None:
+        return await self.chronicle.memory.complete(persist)
+
+    async def _transferred(self, attempt: Fact, crime: Fact) -> None:
+        await self._outcome(attempt, "committed", "native_transfer", at=self._at(crime), crime=crime["id"])
+
+    async def _finished(self, attempt: Fact, receipt: NpcIdle) -> None:
         self._refresh_clock()
         if attempt["kind"] == "greed" and attempt.get("outcome") == "committed":
             crime = self.npc_crimes.crime(str(attempt.get("crime") or ""))
             if crime is not None:
-                self._transferred(attempt, crime)
+                await self._transferred(attempt, crime)
             return
         completed = attempt["kind"] != "greed" and receipt.reason in {"done", "arrived"}
-        self._outcome(attempt, "completed" if completed else "aborted", receipt.reason or "unknown",
+        await self._outcome(attempt, "completed" if completed else "aborted", receipt.reason or "unknown",
                       detail=receipt.detail or "")
 
-    def _recover_attempts(self) -> None:
+    async def _recover_attempts(self) -> None:
         for attempt in self.attempts():
             if attempt["kind"] != "greed":
                 continue
             if attempt.get("outcome") == "committed":
                 crime = self.npc_crimes.crime(str(attempt.get("crime") or ""))
                 if crime is not None:
-                    self._transferred(attempt, crime)
+                    await self._transferred(attempt, crime)
             elif not attempt.get("outcome") and self._active.get(attempt["npc"]) != attempt["id"]:
-                self._outcome(attempt, "aborted", "load_interrupted")
+                await self._outcome(attempt, "aborted", "load_interrupted")
 
     def _retry_ready(self, motive: Fact) -> bool:
         last = next((a for a in reversed(self.attempts()) if a.get("motive") == motive["id"]), None)
@@ -417,13 +443,25 @@ class NpcWill:
         now = self._now or 0
         return {"at": now, "day": now // DAY, "hour": now % DAY // 60, "minute": now % 60}
 
-    def _remember(self, npc: str, kind: str, target: str, key: str, why: str, **extra: Any) -> None:
-        if any(f.get("id") == key for f in self.chronicle.facts("npc_motive")):
-            return
-        self.chronicle.record({
-            "fact": "npc_motive", "id": key, "npc": npc, "kind": kind, "target": target,
-            "why": why, **extra, **self._stamp(),
-        })
+    async def _remember(self, npc: str, kind: str, target: str, key: str, why: str, **extra: Any) -> None:
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            if any(f.get("id") == key for f in self.chronicle.facts("npc_motive")):
+                return
+            await self.chronicle.record({
+                "fact": "npc_motive", "id": key, "npc": npc, "kind": kind, "target": target,
+                "why": why, **extra, **self._stamp(),
+            })
+
+        return await self.chronicle.memory.complete(persist)
 
     def _resolved(self, crime: str) -> bool:
         return self.npc_crimes.settled(crime) or any(
@@ -431,14 +469,18 @@ class NpcWill:
         )
 
     async def _discover_reclaim(self, generation: int) -> None:
+        world_generation, session = self.link.world_generation, self.link.session
         if self.blame is not None:
             for belief in self.blame.beliefs():
                 crime = self.blame.crime_for(belief)
                 if crime is None or crime.get("kind") != "theft" or self._resolved(crime["id"]):
                     continue
                 npc, culprit, cid = belief["npc"], belief["culprit"], belief["crime"]
-                self._remember(npc, "reclaim", culprit, f"reclaim:{belief['id']}",
+                await self._remember(npc, "reclaim", culprit, f"reclaim:{belief['id']}",
                                "считает его виновным в пропаже", crime=cid, blamed=belief["id"])
+                if (world_generation != self.link.world_generation
+                        or session is not self.link.session):
+                    return
         for crime in self.npc_crimes.facts():
             owner, culprit, cid = crime.get("owner"), crime.get("culprit"), crime.get("id")
             if crime.get("kind") != "theft" or not owner or not culprit or self._resolved(cid):
@@ -450,17 +492,24 @@ class NpcWill:
                 continue
             if any(k.kind == "npc_theft" and k.subject == culprit and
                    k.key == f"npc_crime_seen:{cid}" for k in self.people.of(owner)):
-                self._remember(owner, "reclaim", culprit, f"reclaim:{owner}:{cid}",
+                await self._remember(owner, "reclaim", culprit, f"reclaim:{owner}:{cid}",
                                "знает, кто украл его вещь", crime=cid)
+                if (world_generation != self.link.world_generation
+                        or session is not self.link.session):
+                    return
 
     async def _discover_suspect(self, generation: int) -> None:
+        world_generation, session = self.link.world_generation, self.link.session
         for suspicion in self.chronicle.facts("npc_crime_suspected"):
             npc, target, cid = suspicion.get("npc"), suspicion.get("suspect"), suspicion.get("crime")
             if not npc or not target or target in {"PLAYER", "HERO", "PC_HERO"} or not cid:
                 continue
             if self.npc_crimes.crime(cid) is not None and not self._resolved(cid):
-                self._remember(npc, "suspect", target, f"suspect:{npc}:{cid}:{target}",
+                await self._remember(npc, "suspect", target, f"suspect:{npc}:{cid}:{target}",
                                "вспомнил его около сундука во время пропажи; доказательств нет", crime=cid)
+                if (world_generation != self.link.world_generation
+                        or session is not self.link.session):
+                    return
 
     def _cool(self, npc: str, card: Card | None) -> bool:
         interval = greed_interval(card)
@@ -499,6 +548,7 @@ class NpcWill:
         return math.dist(actor.npc.pos, other.npc.pos) <= MEET_CM
 
     async def _discover_greed(self, generation: int) -> None:
+        world_generation, session = self.link.world_generation, self.link.session
         social = self.rumors.social if self.rumors is not None else None
         if social is None:
             return
@@ -547,11 +597,14 @@ class NpcWill:
                             return
                         if reason or args.get("expected_owner") != owner:
                             continue
-                        self._remember(
+                        await self._remember(
                             npc, "greed", chest.id, f"greed:{npc}:{self._now}",
                             f"честность {card.honesty}, жадность {card.greed}; чужой сундук в обычном месте",
                             owner=owner, item=item.item,
                         )
+                        if (world_generation != self.link.world_generation
+                                or session is not self.link.session):
+                            return
                         break
                     else:
                         continue
@@ -575,6 +628,7 @@ class NpcWill:
                     and math.dist(other.pos, chest.pos) > OWNER_NEAR_CM)
 
     async def _discover_far_greed(self, generation: int) -> None:
+        world_generation, session = self.link.world_generation, self.link.session
         world, hour = self.far_world, (self._now or 0) // 60
         for npc in world.all_names():
             card = self.cards.get(npc)
@@ -604,11 +658,14 @@ class NpcWill:
                             return
                         if args.get("expected_owner") != owner:
                             continue
-                        self._remember(
+                        await self._remember(
                             npc, "greed", chest.id, f"greed:{npc}:{self._now}",
                             f"честность {card.honesty}, жадность {card.greed}; чужой сундук вдали",
                             owner=owner, item=item.item, far=True,
                         )
+                        if (world_generation != self.link.world_generation
+                                or session is not self.link.session):
+                            return
                         break
                     else:
                         continue
@@ -668,11 +725,12 @@ class NpcWill:
         started_at = self._stamp()
         try:
             action = await self.npc_crimes._act(npc, "steal", **args)
-            self._started(motive, "steal", action, generation, started_at=started_at)
+            await self._started(motive, "steal", action, generation, started_at=started_at)
         finally:
             self._starting.pop(npc, None)
 
     async def _steal_far(self, motive: Fact, generation: int) -> None:
+        session, world_generation = self.link.session, self.link.world_generation
         npc, owner = motive["npc"], motive["owner"]
         if not self._cool(npc, self.cards.get(npc)) or not self._retry_ready(motive):
             return
@@ -705,9 +763,12 @@ class NpcWill:
         }], check=True)
         if generation != self._generation:
             return
-        self._started(motive, "steal", action, generation, started_at=started_at, far=True)
+        await self._started(motive, "steal", action, generation, started_at=started_at, far=True)
+        if (generation != self._generation or session is not self.link.session
+                or world_generation != self.link.world_generation):
+            return
         attempt = next(a for a in reversed(self.attempts()) if a["action"] == action)
-        self.npc_crimes.record(NpcDeed(
+        await self.npc_crimes.record(NpcDeed(
             type="npc_deed", id=action, kind="take_item", culprit=npc,
             culprit_guild=metadata[npc]["guild"], culprit_npctype=metadata[npc]["npctype"],
             item=motive["item"], count=1, owner=owner, owner_npc_guild=metadata[owner]["guild"],
@@ -721,7 +782,7 @@ class NpcWill:
         self._active.pop(npc, None)
         crime = self.npc_crimes.crime(action)
         if crime is not None:
-            self._outcome(attempt, "committed", "far_transfer", crime=action)
+            await self._outcome(attempt, "committed", "far_transfer", crime=action)
 
     async def meeting(self, npc: str, target: str, generation: int) -> str | None:
         if await self.far_world.meeting(npc, target, generation):
@@ -740,6 +801,7 @@ class NpcWill:
         return await self.far_world.fight(crime, fighter, generation, role=role)
 
     async def _meet(self, motive: Fact, rule: MotiveRule, generation: int) -> None:
+        session, world_generation = self.link.session, self.link.world_generation
         npc, target, cid = motive["npc"], motive["target"], motive["crime"]
         if not self._resolved(cid) and await self.far_world.meeting(npc, target, generation):
             await self._meet_far(motive, rule, generation)
@@ -775,11 +837,15 @@ class NpcWill:
             )
         if generation != self._generation:
             return
-        self._started(motive, str(act), action, generation, started_at=started_at)
+        await self._started(motive, str(act), action, generation, started_at=started_at)
+        if (generation != self._generation or session is not self.link.session
+                or world_generation != self.link.world_generation):
+            return
         if act == "accuse":
-            self._accused(motive)
+            await self._accused(motive)
 
     async def _meet_far(self, motive: Fact, rule: MotiveRule, generation: int) -> None:
+        session, world_generation = self.link.session, self.link.world_generation
         npc, cid = motive["npc"], motive["crime"]
         if motive["kind"] == "reclaim" and (
             any(key[1:] == (cid, npc) for key in self.npc_crimes._reclaiming)
@@ -812,12 +878,18 @@ class NpcWill:
                 return
         if generation != self._generation or self.npc_crimes.settled(cid):
             return
-        self._started(motive, act, action, generation, far=True)
+        await self._started(motive, act, action, generation, far=True)
+        if (generation != self._generation or session is not self.link.session
+                or world_generation != self.link.world_generation):
+            return
         self._active.pop(npc, None)
         attempt = next(a for a in reversed(self.attempts()) if a["action"] == action)
         if act == "accuse":
-            self._accused(motive, far=True)
-        self._outcome(attempt, "completed", "far_meeting")
+            await self._accused(motive, far=True)
+            if (generation != self._generation or session is not self.link.session
+                    or world_generation != self.link.world_generation):
+                return
+        await self._outcome(attempt, "completed", "far_meeting")
 
     def _reacted(self, motive: Fact) -> bool:
         original = self.npc_crimes.crime(motive["crime"])
@@ -828,58 +900,88 @@ class NpcWill:
             for f in self.chronicle.facts("npc_crime_reaction")
         )
 
-    def _started(self, motive: Fact, act: str, action: str, generation: int, *,
+    async def _started(self, motive: Fact, act: str, action: str, generation: int, *,
                  started_at: dict[str, int] | None = None, far: bool = False) -> None:
-        if generation != self._generation:
-            return
-        ordinal = 1 + sum(f.get("motive") == motive["id"] for f in self.chronicle.facts("npc_will"))
-        identity = f"{motive['id']}:attempt:{ordinal}"
-        if action not in self.npc_crimes._completed:
-            self._active[motive["npc"]] = identity
-        attempt = {
-            "fact": "npc_will", "id": identity, "npc": motive["npc"], "kind": motive["kind"],
-            "target": motive["target"], "act": act, "action": action, "motive": motive["id"],
-            **({"far": True} if far else {}),
-            **({key: motive[key] for key in ("crime", "owner", "item") if key in motive}),
-            **(started_at if started_at is not None else self._stamp()),
-        }
-        self.chronicle.record(attempt)
-        for crime in self._starting.get(motive["npc"], []):
-            if self._matches(attempt, crime):
-                self._transferred(attempt, crime)
-        if receipt := self.npc_crimes._completed.get(action):
-            current = next(a for a in self.attempts() if a["id"] == identity)
-            self._finished(current, receipt)
+        world_generation = self.link.world_generation
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            if generation != self._generation:
+                return
+            ordinal = 1 + sum(f.get("motive") == motive["id"] for f in self.chronicle.facts("npc_will"))
+            identity = f"{motive['id']}:attempt:{ordinal}"
+            attempt = {
+                "fact": "npc_will", "id": identity, "npc": motive["npc"], "kind": motive["kind"],
+                "target": motive["target"], "act": act, "action": action, "motive": motive["id"],
+                **({"far": True} if far else {}),
+                **({key: motive[key] for key in ("crime", "owner", "item") if key in motive}),
+                **(started_at if started_at is not None else self._stamp()),
+            }
+            await self.chronicle.record(attempt)
+            if (generation == self._generation and self.link.world_generation == world_generation
+                    and self.link.session is _memory_session
+                    and action not in self.npc_crimes._completed):
+                self._active[motive["npc"]] = identity
+            for crime in self._starting.get(motive["npc"], []):
+                if self._matches(attempt, crime):
+                    await self._transferred(attempt, crime)
+            if receipt := self.npc_crimes._completed.get(action):
+                current = next(a for a in self.attempts() if a["id"] == identity)
+                await self._finished(current, receipt)
+
+        return await self.chronicle.memory.complete(persist)
 
     def _name(self, npc: str) -> str:
         entry = self.roster.get(npc)
         return entry.name if entry is not None else npc
 
-    def _accused(self, motive: Fact, *, far: bool = False) -> None:
-        npc, target = motive["npc"], motive["target"]
-        witnesses = {npc}
-        for observer, view in self.views.items():
-            if far:
-                break
-            if self.clock() - self._view_at.get(observer, -math.inf) > VIEW_SECONDS:
-                continue
-            if any(o.id.upper() == npc and o.distance <= MEET_CM for o in view.sees):
-                witnesses.add(observer)
-        witnesses.discard(target)
-        self.chronicle.record({
-            "fact": "npc_accused", "id": motive["id"], "npc": npc, "name": self._name(npc),
-            "target": target, "target_name": self._name(target), "kind": motive["kind"],
-            "crime": motive["crime"], "witnesses": sorted(witnesses),
-            **({"far": True} if far else {}),
-            "witness_names": {who: self._name(who) for who in witnesses}, **self._stamp(),
-        })
-        branch = self.chronicle.branch
-        if self.memory is None or branch is None:
-            return
-        name = self._name(target)
-        note = (f"Ты думаешь, что {name} украл твою вещь, и обвинил его; доказательств нет."
-                if motive["kind"] == "suspect" else f"Ты обвинил {name} в краже своей вещи.")
-        seq = self.memory.append(branch, npc, "system", note)
-        task = asyncio.create_task(self.link.send(MemoryCmd(branch=branch, seq=seq)))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+    async def _accused(self, motive: Fact, *, far: bool = False) -> None:
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            npc, target = motive["npc"], motive["target"]
+            witnesses = {npc}
+            for observer, view in self.views.items():
+                if far:
+                    break
+                if self.clock() - self._view_at.get(observer, -math.inf) > VIEW_SECONDS:
+                    continue
+                if any(o.id.upper() == npc and o.distance <= MEET_CM for o in view.sees):
+                    witnesses.add(observer)
+            witnesses.discard(target)
+            await self.chronicle.record({
+                "fact": "npc_accused", "id": motive["id"], "npc": npc, "name": self._name(npc),
+                "target": target, "target_name": self._name(target), "kind": motive["kind"],
+                "crime": motive["crime"], "witnesses": sorted(witnesses),
+                **({"far": True} if far else {}),
+                "witness_names": {who: self._name(who) for who in witnesses}, **self._stamp(),
+            })
+            branch = self.chronicle.branch
+            if self.memory is None or branch is None:
+                return
+            name = self._name(target)
+            note = (f"Ты думаешь, что {name} украл твою вещь, и обвинил его; доказательств нет."
+                    if motive["kind"] == "suspect" else f"Ты обвинил {name} в краже своей вещи.")
+            seq = await self.memory.append(branch, npc, "system", note)
+            if _memory_generation != self.chronicle._generation or _memory_session is not self.link.session:
+                raise GameError("session changed while remembering an accusation")
+            try:
+                await self.link.send(MemoryCmd(branch=branch, seq=seq))
+            except GameError:
+                pass
+
+        return await self.chronicle.memory.complete(persist)

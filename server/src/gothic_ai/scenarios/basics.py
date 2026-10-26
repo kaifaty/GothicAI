@@ -20,6 +20,7 @@ from ..knowledge import Knowledge, Topic
 from ..llm import LLMBackend, Message, ToolCall, ToolResult
 from ..llm.fake import FakeBackend, FakeStep
 from ..llm.openai_responses import OpenAIResponsesBackend
+from ..memory import MemoryStore
 from ..npc_tools import GESTURES as NPC_GESTURES
 from ..perception import BEASTS
 from ..persona import PersonaProvider, habits_of
@@ -115,7 +116,7 @@ async def m1_chat(
     await link.wait_world()
     await attach_when_free(link, npc)
     snap = await link.snapshot(npc)
-    conv = dialogue.open(npc, snap.npc.name)
+    conv = await dialogue.open(npc, snap.npc.name)
 
     started: list[str] = []
     link.listeners.append(lambda msg: started.append(msg.line) if isinstance(msg, LineStarted) else None)
@@ -158,7 +159,7 @@ async def websocket(link: GameLink, dialogue: DialogueManager) -> dict[str, str]
     async def say(npc: str, text: str) -> list[str]:
         await link.debug("player_goto", to=npc, distance=250)
         snap = await link.snapshot(npc, fresh=True)
-        conv = dialogue.open(npc, snap.npc.name)
+        conv = await dialogue.open(npc, snap.npc.name)
         await dialogue.say_as_player(npc, text)
         lines = list(conv.last_lines)
         if lines:
@@ -356,40 +357,47 @@ async def m2_actions(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     llm = FakeBackend(
         "Держи, это поможет тебе.", delay=0, tool_calls=[ToolCall("give_item", {"item": potion, "count": 1})]
     )
-    dialogue = DialogueManager(link, llm, PersonaProvider(None))
-    conv = dialogue.open(npc, snap.npc.name)
-    before = count_of(await link.snapshot(npc, fresh=True))
-    await dialogue.say_as_player(npc, "Дай зелье")
-    for _ in range(60):
-        if any(m.role == "developer" for m in conv.history):
-            break
+    memory = await MemoryStore.open()
+    dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+    try:
+        conv = await dialogue.open(npc, snap.npc.name)
+        before = count_of(await link.snapshot(npc, fresh=True))
+        await dialogue.say_as_player(npc, "Дай зелье")
+        for _ in range(60):
+            if any(m.role == "developer" for m in conv.history):
+                break
+            await asyncio.sleep(0.5)
+        after = count_of(await link.snapshot(npc, fresh=True))
+        note = next((m.content for m in conv.history if m.role == "developer"), "no note")
+        results["give_item"] = (
+            f"{'done' if after == before - 1 else 'failed'} ({potion}: {before} -> {after}, {note})"
+        )
+
+        res = await link.act(npc, "give_item", item="ITMI_NOT_A_REAL_ITEM", count=1)
+        results["give_item_missing"] = res.status
+
+        ended: list[str] = []
+        link.listeners.append(lambda m: ended.append(m.reason) if isinstance(m, FollowEnded) else None)
+        res = await link.act(npc, "follow", npc="PLAYER")
+        following = (await link.snapshot(npc, fresh=True)).npc.following
+        results["follow"] = f"{res.status}, following={following}"
+        await asyncio.sleep(2)
+        res = await link.act(npc, "stop")
         await asyncio.sleep(0.5)
-    after = count_of(await link.snapshot(npc, fresh=True))
-    note = next((m.content for m in conv.history if m.role == "developer"), "no note")
-    results["give_item"] = (
-        f"{'done' if after == before - 1 else 'failed'} ({potion}: {before} -> {after}, {note})"
-    )
+        results["stop"] = f"{res.status}, follow_ended={ended}"
 
-    res = await link.act(npc, "give_item", item="ITMI_NOT_A_REAL_ITEM", count=1)
-    results["give_item_missing"] = res.status
+        for gesture, anim in NPC_GESTURES.items():
+            results[f"gesture {gesture}"] = (await link.act(npc, "play_ani", name=anim)).status
 
-    ended: list[str] = []
-    link.listeners.append(lambda m: ended.append(m.reason) if isinstance(m, FollowEnded) else None)
-    res = await link.act(npc, "follow", npc="PLAYER")
-    following = (await link.snapshot(npc, fresh=True)).npc.following
-    results["follow"] = f"{res.status}, following={following}"
-    await asyncio.sleep(2)
-    res = await link.act(npc, "stop")
-    await asyncio.sleep(0.5)
-    results["stop"] = f"{res.status}, follow_ended={ended}"
-
-    for gesture, anim in NPC_GESTURES.items():
-        results[f"gesture {gesture}"] = (await link.act(npc, "play_ani", name=anim)).status
-
-    await link.act(npc, "return_to_routine")
-    for name, outcome in results.items():
-        log.info("%-24s %s", name, outcome)
-    return results
+        await link.act(npc, "return_to_routine")
+        for name, outcome in results.items():
+            log.info("%-24s %s", name, outcome)
+        return results
+    finally:
+        try:
+            await dialogue.close()
+        finally:
+            await memory.close()
 
 
 async def tts_lines(
@@ -399,7 +407,7 @@ async def tts_lines(
     await link.wait_world()
     await attach_when_free(link, npc)
     snap = await link.snapshot(npc)
-    conv = dialogue.open(npc, snap.npc.name)
+    conv = await dialogue.open(npc, snap.npc.name)
     voiced: dict[str, bool] = {}
     link.listeners.append(
         lambda m: voiced.__setitem__(m.line, m.voiced) if isinstance(m, LineStarted) else None
@@ -445,9 +453,9 @@ async def m3_memory_voice(
 
     await attach_when_free(link, npc)
     snap = await link.snapshot(npc)
-    dialogue.open(npc, snap.npc.name)
+    await dialogue.open(npc, snap.npc.name)
     await dialogue.say_as_player(npc, "Запомни: меня зовут Тестер.")
-    head = dialogue.memory.head(first)
+    head = await dialogue.memory.head(first)
     await asyncio.sleep(0.5)  # the game has the head by now
 
     for attempt in range(30):  # the game refuses to save during the opening dialog
@@ -476,7 +484,7 @@ async def m3_memory_voice(
     await link.wait_world()
     await attach_when_free(link, npc)
     snap = await link.snapshot(npc, fresh=True)
-    conv = dialogue.open(npc, snap.npc.name)
+    conv = await dialogue.open(npc, snap.npc.name)
     said = [m.content for m in conv.history if m.role == "user"]
     ok = said == ["Запомни: меня зовут Тестер."]
     results["memory"] = f"{'done' if ok else 'failed'} (remembers {said})"
@@ -858,10 +866,12 @@ async def m5_turn_loop(
     )
     budget = Budget()
     spoken: list[dict[str, Any]] = []  # the journal's entries: who said a line, how soon
+    memory = await MemoryStore.open()
     dialogue = DialogueManager(
         link,
         llm,
         PersonaProvider(None),
+        memory=memory,
         trace=trace,
         budget=budget,
         journal=Journal(spoken.append),
@@ -870,7 +880,6 @@ async def m5_turn_loop(
     reflexes = Reflexes(decider or FixedDecider({"react": "run_to_hero", "gesture": "nod"}))
     desk = IncidentDesk(link, dialogue, reflexes, budget, trace)
     desk.attached.add(npc)  # it was attached before the desk was listening
-    conv = dialogue.open(npc, snap.npc.name)
 
     async def following(expected: bool) -> bool:
         for _ in range(20):
@@ -880,6 +889,7 @@ async def m5_turn_loop(
         return False
 
     try:
+        conv = await dialogue.open(npc, snap.npc.name)
         # 1. a commitment the npc cannot keep is rejected before the game and corrected in the same turn
         before = count_of(await link.snapshot(npc, fresh=True))
         await dialogue.say_as_player(npc, "Дай мне свиток огненного шара")
@@ -917,9 +927,11 @@ async def m5_turn_loop(
         calls = len(llm.calls)
         reacted_at: float | None = None
         started = time.monotonic()
-        link._dispatch(
+        pending = link._dispatch(
             Perception(type="perception", npc=npc, perc="ASSESSDAMAGE", other="WOLF", distance=300.0)
         )
+        if pending is not None:
+            await pending
         for _ in range(100):
             if reacted_at is None and any(r.question == "react" for r in desk.reactions):
                 reacted_at = time.monotonic() - started
@@ -944,7 +956,18 @@ async def m5_turn_loop(
                 f"{'done' if ok else 'failed'} ({line.get('llm')}, first token {line.get('first_token_s')} s)"
             )
     finally:
-        await link.act(npc, "return_to_routine")
+        try:
+            await link.act(npc, "return_to_routine")
+        finally:
+            link.listeners.remove(desk.on_message)
+            tasks = tuple(desk._background)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                await dialogue.close()
+            finally:
+                await memory.close()
     for name, outcome in results.items():
         log.info("%-24s %s", name, outcome)
     return results
@@ -1194,11 +1217,12 @@ async def m5c_free_npc(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str
     link.listeners.append(planner.on_message)
     runner = asyncio.create_task(planner.run())
     llm = FakeBackend("Ещё одна тварь из тьмы. Прочь, или сгоришь!", delay=0)
-    dialogue = DialogueManager(link, llm, PersonaProvider(None))
+    memory = await MemoryStore.open()
+    dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
     budget = Budget()
-    IncidentDesk(link, dialogue, None, budget, None, planner=planner)
-    await link.send(ThreatControlCmd(hold=True))
+    desk = IncidentDesk(link, dialogue, None, budget, None, planner=planner)
     try:
+        await link.send(ThreatControlCmd(hold=True))
         for _ in range(50):  # the roster brings the npc to the planner
             if npc in planner.npcs:
                 break
@@ -1252,8 +1276,20 @@ async def m5c_free_npc(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str
             else "failed (no words)"
         )
     finally:
-        await link.send(ThreatControlCmd(hold=False))
-        runner.cancel()
+        try:
+            await link.send(ThreatControlCmd(hold=False))
+        finally:
+            runner.cancel()
+            tasks = (runner, *desk._background)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            link.listeners.remove(planner.on_message)
+            link.listeners.remove(desk.on_message)
+            try:
+                await dialogue.close()
+            finally:
+                await memory.close()
     for name, outcome in results.items():
         log.info("%-24s %s", name, outcome)
     return results

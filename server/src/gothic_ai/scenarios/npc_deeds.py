@@ -433,7 +433,7 @@ async def npc_deeds(
             return _logged(results)
         assert rumor is not None
         rumors.gate = lambda r, a, b: r.key == rumor.key and (a, b) == (HILDA, LOBART)
-        passed = rumors.offer_status(rumor, HILDA, LOBART)
+        passed = await rumors.offer_status(rumor, HILDA, LOBART)
         if not check(
             "npc_rumor", passed == "told" and rumor.known.get(LOBART) == 1
             and any(e.subject == VINO and not e.direct and e.source == HILDA for e in people.of(LOBART)),

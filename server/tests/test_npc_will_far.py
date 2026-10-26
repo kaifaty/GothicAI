@@ -17,6 +17,7 @@ from gothic_ai.people_knowledge import PeopleKnowledge
 from gothic_ai.protocol import Chest, NpcView, NpcViews, Session
 from gothic_ai.social import Social
 from tests.test_crimes import HILDA, LOBART
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_npc_crimes import NAMES, THIEF
 from tests.test_npc_will import (
     DAY,
@@ -90,8 +91,9 @@ class FarLink(WillLink):
 
 @pytest.fixture
 async def system():
-    link, memory = FarLink(), MemoryStore(":memory:")
+    link, memory = FarLink(), await MemoryStore.open(":memory:")
     chronicle = Chronicle(link, memory)
+    await chronicle.initialize()
     crimes = Crimes(link, chronicle, names=lambda npc: NAMES.get(npc, npc))
     cards = {npc: character(npc, courage=2) for npc in (LOBART, HILDA, THIEF)}
     deeds = NpcCrimes(link, chronicle, crimes=crimes, cards=cards)
@@ -109,7 +111,7 @@ async def system():
     await crimes.close()
     if chronicle._background:
         await asyncio.gather(*chronicle._background)
-    memory.close()
+    await memory.close()
 
 
 def routine(pos: tuple[int, int, int], *, waypoint: str = "FARM1_IN", state: str = "ZS_STAND",
@@ -117,7 +119,7 @@ def routine(pos: tuple[int, int, int], *, waypoint: str = "FARM1_IN", state: str
     return {"start": start, "end": end, "state": state, "waypoint": waypoint, "pos": list(pos)}
 
 
-def far_scene(system, *, now: int = NOW, witness: bool = False, owner_x: int = 20000,
+async def far_scene(system, *, now: int = NOW, witness: bool = False, owner_x: int = 20000,
               owner_state: str = "ZS_STAND", greedy: bool = True) -> None:
     if greedy:
         system.cards[THIEF] = character(THIEF, honesty=1, greed=5)
@@ -148,15 +150,15 @@ def far_scene(system, *, now: int = NOW, witness: bool = False, owner_x: int = 2
         sees=[],
     ) for npc, pos in positions.items()]
     system.link.views = {view.npc: view for view in views}
-    system.link.receive(NpcViews(type="npc_views", t=now, views=views))
+    (await system.link.receive(NpcViews(type="npc_views", t=now, views=views)))
 
 
 def update_social(system) -> None:
     system.will.rumors.social = Social(system.link.people)
 
 
-def near_scene(system, *, now: int) -> None:
-    greed_scene(system, now=now)
+async def near_scene(system, *, now: int) -> None:
+    (await greed_scene(system, now=now))
     system.link.engine = {
         npc: {"state": "alive", "pos": list(snapshot.npc.pos)}
         for npc, snapshot in system.link.snapshots.items()
@@ -165,7 +167,7 @@ def near_scene(system, *, now: int) -> None:
 
 
 async def test_far_greed_transfers_before_truth_and_uses_separate_witness_rule(system):
-    far_scene(system, witness=True)
+    (await far_scene(system, witness=True))
     await system.will.tick(NOW)
     assert system.link.effects == [(THIEF, [{
         "do": "chest_take", "chest": CHEST, "item": ITEM, "count": 1,
@@ -187,7 +189,7 @@ async def test_far_greed_transfers_before_truth_and_uses_separate_witness_rule(s
 
 
 async def test_far_owner_can_be_a_witness_from_outside_owner_near_gate(system):
-    far_scene(system, owner_x=11601)
+    (await far_scene(system, owner_x=11601))
     await system.will.tick(NOW)
     [crime] = system.deeds.facts()
     assert crime["witnesses"] == [LOBART]
@@ -195,7 +197,7 @@ async def test_far_owner_can_be_a_witness_from_outside_owner_near_gate(system):
 
 
 async def test_sleeping_far_owner_does_not_prevent_theft_or_become_a_witness(system):
-    far_scene(system, owner_x=11601, owner_state="ZS_SLEEP")
+    (await far_scene(system, owner_x=11601, owner_state="ZS_SLEEP"))
     await system.will.tick(NOW)
     [crime] = system.deeds.facts()
     assert crime["witnesses"] == []
@@ -203,7 +205,7 @@ async def test_sleeping_far_owner_does_not_prevent_theft_or_become_a_witness(sys
 
 
 async def test_far_greed_uses_the_current_routine_instead_of_any_daily_spot(system):
-    far_scene(system)
+    (await far_scene(system))
     system.link.people[0]["routine"] = [
         routine((10000, 0, 0), start=8 * 60, end=9 * 60),
         routine((30000, 0, 0), waypoint="FARM1_FIELD", start=9 * 60, end=8 * 60),
@@ -215,7 +217,7 @@ async def test_far_greed_uses_the_current_routine_instead_of_any_daily_spot(syst
 
 @pytest.mark.parametrize("actor_x,owner_x", [(14001, 20000), (10000, 11600)])
 async def test_far_greed_rechecks_real_actor_and_owner_positions(system, actor_x, owner_x):
-    far_scene(system)
+    (await far_scene(system))
     system.link.engine[THIEF]["pos"] = [actor_x, 0, 0]
     system.link.engine[LOBART]["pos"] = [owner_x, 0, 0]
     # This cached chest distance still claims the owner is away.
@@ -225,7 +227,7 @@ async def test_far_greed_rechecks_real_actor_and_owner_positions(system, actor_x
 
 
 async def test_far_greed_uses_current_routine_when_engine_has_no_position(system):
-    far_scene(system)
+    (await far_scene(system))
     for npc in (THIEF, LOBART):
         system.link.engine[npc].pop("pos")
     await system.will.tick(NOW)
@@ -236,7 +238,7 @@ async def test_far_greed_uses_current_routine_when_engine_has_no_position(system
 
 @pytest.mark.parametrize("observer", [HILDA, "PLAYER", "SHEEP"])
 async def test_far_greed_waits_when_the_thief_currently_perceives_someone(system, observer):
-    far_scene(system)
+    (await far_scene(system))
     view = system.link.views[THIEF]
     if observer == "PLAYER":
         view = view.model_copy(update={"hero": view.hero.model_copy(update={"seen": True})})
@@ -252,10 +254,10 @@ async def test_far_greed_waits_when_the_thief_currently_perceives_someone(system
 
 
 async def test_far_greed_checks_new_candidates_only_once_per_game_hour(system):
-    far_scene(system)
+    (await far_scene(system))
     system.link.chests.clear()
     await system.will.tick(NOW)
-    far_scene(system, now=NOW + 1)
+    (await far_scene(system, now=NOW + 1))
     await system.will.tick(NOW + 1)
     assert not system.link.effects
     system.will.rumors.clock = NOW + 60
@@ -266,15 +268,15 @@ async def test_far_greed_checks_new_candidates_only_once_per_game_hour(system):
 @pytest.mark.parametrize("first", ["near", "far"])
 async def test_greed_cooldown_is_shared_between_nearby_actions_and_distant_outcomes(system, first):
     if first == "near":
-        near_scene(system, now=NOW)
+        (await near_scene(system, now=NOW))
         await system.will.tick(NOW)
-        commit_theft(system)
-        finish_action(system)
-        far_scene(system, now=NOW + DAY)
+        (await commit_theft(system))
+        (await finish_action(system))
+        (await far_scene(system, now=NOW + DAY))
     else:
-        far_scene(system)
+        (await far_scene(system))
         await system.will.tick(NOW)
-        near_scene(system, now=NOW + DAY)
+        (await near_scene(system, now=NOW + DAY))
     await system.will.tick(NOW + DAY)
     assert len(system.chronicle.facts("npc_will")) == 1
     assert not system.will._cool(THIEF, system.cards[THIEF])
@@ -287,7 +289,7 @@ async def test_greed_cooldown_is_shared_between_nearby_actions_and_distant_outco
 
 @pytest.mark.parametrize("enabled,hero_crimes", [(False, True), (True, False)])
 async def test_both_crime_switches_disable_distant_motives_and_effects(system, enabled, hero_crimes):
-    far_scene(system)
+    (await far_scene(system))
     system.deeds.enabled = enabled and hero_crimes
     await system.will.tick(NOW)
     assert not system.link.effects and not system.deeds.facts()
@@ -296,10 +298,10 @@ async def test_both_crime_switches_disable_distant_motives_and_effects(system, e
 
 @pytest.mark.parametrize("kind,knowledge", [("suspect", "npc_suspected"), ("reclaim", "npc_accusation")])
 async def test_far_meeting_accuses_once_without_svm_and_keeps_belief_separate(system, kind, knowledge):
-    far_scene(system, greedy=False, owner_x=11000)
-    case = theft(system, witnesses=[LOBART] if kind == "reclaim" else [])
+    (await far_scene(system, greedy=False, owner_x=11000))
+    case = (await theft(system, witnesses=[LOBART] if kind == "reclaim" else []))
     if kind == "suspect":
-        system.chronicle.record({
+        await system.chronicle.record({
             "fact": "npc_crime_suspected", "npc": LOBART, "crime": case["id"], "suspect": THIEF,
         })
     await system.will.tick(NOW)
@@ -312,15 +314,15 @@ async def test_far_meeting_accuses_once_without_svm_and_keeps_belief_separate(sy
     [decision] = system.chronicle.facts("npc_will")
     assert (decision["act"], decision["far"]) == ("accuse", True)
     assert (knowledge, THIEF) in {(k.kind, k.subject) for k in system.people.of(LOBART)}
-    assert system.memory.load("A", LOBART).entries
+    assert (await system.memory.load("A", LOBART)).entries
     assert not system.link.actions and not system.link.effects
     assert system.crimes.facts() == []
     assert bool(system.deeds.seen(LOBART)) is (kind == "reclaim")
 
 
 async def test_distant_accusation_waits_for_a_current_routine_meeting(system):
-    far_scene(system, greedy=False)
-    theft(system, witnesses=[LOBART])
+    (await far_scene(system, greedy=False))
+    (await theft(system, witnesses=[LOBART]))
     await system.will.tick(NOW)
     assert len(system.will.pending()) == 1 and not system.chronicle.facts("npc_accused")
     system.link.people[1]["routine"] = [routine((11000, 0, 0))]
@@ -330,14 +332,14 @@ async def test_distant_accusation_waits_for_a_current_routine_meeting(system):
 
 
 async def test_settled_case_stops_already_pending_reclaim_and_suspicion(system):
-    far_scene(system, greedy=False)
-    case = theft(system, witnesses=[LOBART])
-    system.chronicle.record({
+    (await far_scene(system, greedy=False))
+    case = (await theft(system, witnesses=[LOBART]))
+    await system.chronicle.record({
         "fact": "npc_crime_suspected", "npc": LOBART, "crime": case["id"], "suspect": THIEF,
     })
     await system.will.tick(NOW)
     assert {m["kind"] for m in system.will.pending()} == {"reclaim", "suspect"}
-    system.chronicle.record({
+    await system.chronicle.record({
         "fact": "npc_crime_settled", "crime": case["id"], "by": "MIL_300_GUARD", "how": "returned",
     })
     system.link.people[1]["routine"] = [routine((11000, 0, 0))]
@@ -349,31 +351,37 @@ async def test_settled_case_stops_already_pending_reclaim_and_suspicion(system):
 
 
 async def test_loading_completed_far_theft_restores_cooldown_without_repeating_transfer(system):
-    far_scene(system)
-    before = system.memory.head("A")
+    (await far_scene(system))
+    before = await system.memory.head("A")
     await system.will.tick(NOW)
-    saved = system.memory.head("A")
-    system.link.receive(Session(type="session", branch="loaded", parent="A", parent_seq=saved, reason="load"))
-    far_scene(system, now=NOW + DAY)
+    saved = await system.memory.head("A")
+    await system.link.receive(Session(
+        type="session", branch="loaded", parent="A", parent_seq=saved, reason="load",
+    ))
+    (await far_scene(system, now=NOW + DAY))
     await system.will.tick(NOW + DAY)
     assert len(system.link.effects) == len(system.deeds.facts()) == 1
     assert len(system.chronicle.facts("npc_motive")) == len(system.chronicle.facts("npc_will")) == 1
-    system.link.receive(Session(type="session", branch="old", parent="A", parent_seq=before, reason="load"))
-    far_scene(system, now=NOW + DAY)
+    await system.link.receive(Session(
+        type="session", branch="old", parent="A", parent_seq=before, reason="load",
+    ))
+    (await far_scene(system, now=NOW + DAY))
     await system.will.tick(NOW + DAY)
     assert len(system.link.effects) == 2
     assert len(system.deeds.facts()) == len(system.chronicle.facts("npc_will")) == 1
 
 
 async def test_loading_waiting_far_motive_resumes_once_instead_of_discovering_a_duplicate(system):
-    far_scene(system)
+    (await far_scene(system))
     view = system.link.views[THIEF]
     system.link.views[THIEF] = view.model_copy(update={"hero": view.hero.model_copy(update={"seen": True})})
     await system.will.tick(NOW)
     assert len(system.will.pending()) == 1 and not system.link.effects
-    saved = system.memory.head("A")
-    system.link.receive(Session(type="session", branch="loaded", parent="A", parent_seq=saved, reason="load"))
-    far_scene(system, now=NOW + 60)
+    saved = await system.memory.head("A")
+    await system.link.receive(Session(
+        type="session", branch="loaded", parent="A", parent_seq=saved, reason="load",
+    ))
+    (await far_scene(system, now=NOW + 60))
     await system.will.tick(NOW + 60)
     await system.will.tick(NOW + 120)
     assert len(system.link.effects) == len(system.deeds.facts()) == 1

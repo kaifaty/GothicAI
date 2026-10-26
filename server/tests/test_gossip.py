@@ -35,8 +35,9 @@ from tests.fake_game import FakeGame, connected
 from tests.fakes import Clock, FakeDecider
 from tests.test_dialogue import _until
 from tests.test_director import HILDA, LOBART, QUEST, VINO
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_planner import make
-from tests.test_social import PEOPLE, _h
+from tests.test_social import ANDRE, PEOPLE, _h
 from tests.test_talk import person
 
 AT = DAY + _h(9) + 1  # day 1, 09:01: Lobart and Hilda's farm day goes on
@@ -87,7 +88,7 @@ async def _gossip(
 ) -> AsyncIterator[G]:
     """The parts as cli.py wires them, around the fake game (branch A). Lobart caught the hero lying; the gate
     opens only his pass to Hilda. The budget's clock stands: nothing refills."""
-    fake, store = FakeGame(branch="A", protocol=protocol), MemoryStore(":memory:")
+    fake, store = FakeGame(branch="A", protocol=protocol), await MemoryStore.open(":memory:")
     fake.auto_idle = True
     llm = llm or FakeBackend(script=[_lines(*THREE)], delay=0)
     journal: list[dict[str, Any]] = []
@@ -96,8 +97,10 @@ async def _gossip(
         dialogue = DialogueManager(
             link, llm, PersonaProvider(None), memory=store, journal=Journal(journal.append), trace=trace
         )
+        await dialogue.initialize()
         dialogue.scene_pace = lambda text: 0.05
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         trust = Trust(chronicle)
         dialogue.extensions.append(trust)
         talk = TalkDesk(link, dialogue)
@@ -120,7 +123,7 @@ async def _gossip(
             trace=trace,
             journal=dialogue.journal,
         )
-        chronicle.record(
+        await chronicle.record(
             {"fact": "caught", "quest": QUEST, "npc": LOBART, "name": "Лобарт", "title": TITLE, "day": 1}
         )
         rumors.gate = lambda r, a, b: (a, b) == (LOBART, HILDA)
@@ -199,10 +202,10 @@ async def _together(
     )
 
 
-def _tick(g: G, at: int = AT) -> int:
+async def _tick(g: G, at: int = AT) -> int:
     """A live tick of the rumors (a game minute): how many passes."""
     g.rumors.clock = at
-    return g.rumors.spread(at - 1, at)
+    return await g.rumors.spread(at - 1, at)
 
 
 async def _over(g: G, state: str = "done", timeout: float = 5.0) -> gossip.Scene:
@@ -239,16 +242,45 @@ def _types(g: G, kind: str) -> list[str]:
     return [m["npc"] for m in g.fake.received if m["type"] == kind]
 
 
-async def test_scene_instead_of_a_silent_pass(tmp_path):
+async def test_scene_instead_of_a_silent_pass(tmp_path, monkeypatch):
     async with _gossip(tmp_path) as g:
         await _together(g)
-        assert _tick(g) == 1
+        assert await _tick(g) == 1
         # the fact first, at once: the words come second
         (fact,) = g.chronicle.facts("rumor")
         assert (fact["from"], fact["to"], fact["hops"], fact["how"]) == (LOBART, HILDA, 1, "talked")
         assert fact["seen_by"] == ["PLAYER"] and "where" in fact
         assert not g.fake.says and g.desk.scenes == 1 and g.desk.floor_busy()
         s = await _over(g)
+
+        notes = gossip.Scene(
+            "notes-cancel", VINO, ANDRE, "Вино", "Андре", KEY, "words", world=g.desk._world,
+        )
+        spoken = [SceneLine("notes-line", VINO, "Вино", ANDRE, THREE[0][1], None)]
+        remember = g.dialogue.remember
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def delayed_remember(npc, name, text):
+            await remember(npc, name, text)
+            if npc == VINO:
+                entered.set()
+                await release.wait()
+
+        monkeypatch.setattr(g.dialogue, "remember", delayed_remember)
+        pending = asyncio.create_task(g.desk._notes(notes, spoken))
+        await asyncio.wait_for(entered.wait(), 2)
+        pending.cancel()
+        await asyncio.sleep(0)
+        try:
+            assert not pending.done() and not notes.noted
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        assert notes.noted
+        for npc in (VINO, ANDRE):
+            memory = await g.dialogue.memory.load(g.dialogue.branch, npc)
+            assert len(memory.entries) == 1 and THREE[0][1] in memory.entries[0].content
 
     # both held, then free again
     assert _types(g, "attach") == [LOBART, HILDA] and sorted(_types(g, "detach")) == [LOBART, HILDA]
@@ -327,11 +359,11 @@ async def test_crime_scene_brief_keeps_the_excuse_and_asks_teller_to_voice_it(tm
     async with _gossip(tmp_path) as g:
         crimes = Crimes(g.desk.link, g.chronicle, names=lambda npc: "Браго" if npc == "BRAGO" else npc)
         g.rumors.crimes = crimes
-        g.chronicle.record({"fact": "crime", "id": "c1", "kind": "murder", "victim": "BRAGO", "day": 1})
+        await g.chronicle.record({"fact": "crime", "id": "c1", "kind": "murder", "victim": "BRAGO", "day": 1})
         source = HILDA if retold else LOBART
-        g.chronicle.record({"fact": "crime_side", "npc": source, "crime": "c1", "why": why})
+        await g.chronicle.record({"fact": "crime_side", "npc": source, "crime": "c1", "why": why})
         if retold:
-            g.chronicle.record({
+            await g.chronicle.record({
                 "fact": "rumor", "crime": "c1", "kind": "murder", "from": HILDA, "to": LOBART,
                 "excuse": why, "excuse_by": HILDA, "excuse_by_name": HILDA,
             })
@@ -369,15 +401,15 @@ async def test_view_can_offer_the_justified_version_to_a_knowing_listener(
             "fact": "crime", "id": "c1", "kind": "murder", "victim": "BRAGO",
             "community": "city", "day": 1,
         }
-        g.chronicle.record(crime)
-        g.chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "c1"})
-        g.chronicle.record({"fact": "crime_side", "npc": LOBART, "crime": "c1", "why": "fought"})
-        g.chronicle.record({
+        await g.chronicle.record(crime)
+        await g.chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "c1"})
+        await g.chronicle.record({"fact": "crime_side", "npc": LOBART, "crime": "c1", "why": "fought"})
+        await g.chronicle.record({
             "fact": "rumor", "crime": "c1", "kind": "murder", "quest": "crime:c1",
             "about": LOBART, "from": VINO, "to": HILDA, "hops": 1, "day": 1,
         })
         if degree == "seen":
-            g.chronicle.record({"fact": "crime_seen", "npc": HILDA, "crime": "c1"})
+            await g.chronicle.record({"fact": "crime_seen", "npc": HILDA, "crime": "c1"})
         [knowledge] = crimes.known(HILDA)
         assert knowledge.degree == degree and not knowledge.excuse
         if reactions is not None:
@@ -408,7 +440,7 @@ async def test_one_fact_per_pass_and_witnesses(tmp_path):
             HILDA: [{"npc": LOBART, "name": "Лобарт", "distance": 400, "guild": 8}, vino],
         }
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _over(g)
         await _until(lambda: not g.desk._background)  # both lookups of who stood by have answered
 
@@ -423,7 +455,7 @@ async def test_hero_cuts_both(tmp_path, monkeypatch):
     async with _gossip(tmp_path) as g:
         g.dialogue.scene_pace = lambda text: 0.5
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _until(lambda: len(g.fake.says) == 2)
         s = g.desk.scene
         assert s is not None and s.play is not None
@@ -469,7 +501,7 @@ async def test_hero_addresses_one_after_the_cut(tmp_path):
     async with _gossip(tmp_path, llm) as g:
         g.dialogue.scene_pace = lambda text: 0.5
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _until(lambda: len(g.fake.says) == 2)
         await g.fake.send(type="player_text", text="Хильда, о чём вы шептались?")
         await _until(lambda: answer in g.fake.said)
@@ -510,7 +542,7 @@ async def test_budget_for_two(tmp_path):
     async with _gossip(tmp_path, budget=budget) as g:
         await _together(g)
         assert g.desk.stage(g.rumor, LOBART, HILDA).tier == "sight"
-        _tick(g)
+        await _tick(g)
         await _until(lambda: len(g.fake.acts) == 2)
     assert not g.llm.calls and [f["how"] for f in g.chronicle.facts("rumor")] == ["met"]
     assert budget.allow(LOBART)  # nothing taken
@@ -520,7 +552,7 @@ async def test_budget_for_two(tmp_path):
     budget = Budget(per_npc_per_min=2, clock=Clock())
     async with _gossip(tmp_path, llm, budget=budget) as g:
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _over(g)
     assert len(llm.calls) == 2 and len(g.fake.says) == 3
     assert not budget.can(LOBART) and not budget.can(HILDA)
@@ -530,7 +562,7 @@ async def test_budget_for_two(tmp_path):
     async with _gossip(tmp_path, budget=budget) as g:
         g.fake.busy_attaches = 1
         await _together(g)
-        _tick(g)
+        await _tick(g)
         s = await _over(g, "dropped")
     assert s.why == "hold" and not g.llm.calls and not g.fake.says
     assert budget.allow_all((LOBART, HILDA)) and budget.allow_all((LOBART, HILDA))
@@ -539,7 +571,7 @@ async def test_budget_for_two(tmp_path):
 async def test_far_without_the_model(tmp_path):
     async with _gossip(tmp_path) as g:
         await _together(g, 40, 42, seen=False)
-        assert _tick(g) == 1
+        assert await _tick(g) == 1
         await asyncio.sleep(0.2)
 
     assert [(f["to"], f["how"]) for f in g.chronicle.facts("rumor")] == [(HILDA, "met")]
@@ -553,7 +585,7 @@ async def test_sight_turns_and_chatter(tmp_path):
         async with _gossip(tmp_path) as g:
             # in view at 18 m, together: seen, not heard
             await _together(g, 18, 19, lobart={"state": state}, hilda={"state": state})
-            _tick(g)
+            await _tick(g)
             await asyncio.sleep(0.3)
             assert not g.desk.busy(LOBART) and not g.desk.busy(HILDA)
 
@@ -574,19 +606,19 @@ async def test_sight_waits_while_one_of_them_talks(tmp_path):
         await _together(g, 18, 19)  # seen, not heard
         assert desk.stage(r, LOBART, HILDA).tier == "sight"
         # the hero talks to Lobart across the yard: no chatter turns him away from it
-        assert g.talk.begin(LOBART, "Лобарт")
+        assert await g.talk.begin(LOBART, "Лобарт")
         assert desk.stage(r, LOBART, HILDA).tier == "wait"
-        g.talk.end()
+        await g.talk.end()
         # she answers someone
         g.dialogue.speaking = lambda npc: npc == HILDA
         assert desk.stage(r, LOBART, HILDA).tier == "wait"
         del g.dialogue.speaking
         # he talks to another: only the words wait for that
-        assert g.talk.begin(VINO, "Вино")
+        assert await g.talk.begin(VINO, "Вино")
         assert desk.stage(r, LOBART, HILDA).tier == "sight"
-        g.talk.end()
-        assert g.talk.begin(LOBART, "Лобарт")
-        assert _tick(g) == 0
+        await g.talk.end()
+        assert await g.talk.begin(LOBART, "Лобарт")
+        assert await _tick(g) == 0
         await asyncio.sleep(0.2)
     assert not g.fake.acts and g.chronicle.facts("rumor") == []
 
@@ -597,9 +629,9 @@ async def test_busy_waits_and_sleep_is_fact(tmp_path):
         await _together(g)
         assert desk.stage(r, LOBART, HILDA).tier == "words"
         # the hero talks to someone
-        assert g.talk.begin(VINO, "Вино")
+        assert await g.talk.begin(VINO, "Вино")
         assert desk.stage(r, LOBART, HILDA).tier == "wait"
-        g.talk.end()
+        await g.talk.end()
         # one of them answers him
         g.dialogue.speaking = lambda npc: npc == HILDA
         assert desk.stage(r, LOBART, HILDA).tier == "wait"
@@ -656,7 +688,7 @@ async def test_busy_waits_and_sleep_is_fact(tmp_path):
         await _until(lambda: g.perception.view(LOBART).sees[0].distance == 500)
         await asyncio.sleep(0.1)
         assert not decider.calls and g.chronicle.facts("rumor") == []
-        assert _tick(g) == 1 and g.chronicle.facts("rumor")[0]["how"] == "met"
+        assert await _tick(g) == 1 and g.chronicle.facts("rumor")[0]["how"] == "met"
 
 
 async def test_posts_and_escorts_are_never_held(tmp_path):
@@ -668,7 +700,7 @@ async def test_posts_and_escorts_are_never_held(tmp_path):
             await _together(g, seen=False, **who)
             assert desk.stage(r, LOBART, HILDA).tier == "fact"
         await _together(g, lobart={"state": "ZS_GUARD_PASSAGE"})
-        _tick(g)
+        await _tick(g)
         await _until(lambda: len(g.fake.acts) == 2)
         assert not _types(g, "attach") and not g.fake.says
 
@@ -676,7 +708,7 @@ async def test_posts_and_escorts_are_never_held(tmp_path):
     async with _gossip(tmp_path) as g:
         g.guard.plot = lambda npc: npc == LOBART
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _over(g)
     assert _types(g, "attach") == [LOBART, HILDA] and [m["npc"] for m, _ in g.fake.says] == [
         LOBART,
@@ -692,7 +724,7 @@ async def test_bad_lines_retried_then_dropped(tmp_path):
     llm = FakeBackend(script=[_lines(*five), _lines(*twice)], delay=0)
     async with _gossip(tmp_path, llm) as g:
         await _together(g)
-        _tick(g)
+        await _tick(g)
         s = await _over(g, "dropped")
 
     assert s.why == "model" and len(llm.calls) == 2 and not g.fake.says
@@ -714,7 +746,7 @@ async def test_no_retry_once_out_of_earshot(tmp_path):
     llm = FakeBackend(script=[_lines(*five), _lines(*THREE)], delay=0, first=0.5)
     async with _gossip(tmp_path, llm) as g:
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _until(lambda: bool(llm.calls))  # writing
         # he steps back meanwhile: not gone (no cut), but they are not heard any more
         await _around(g, person(LOBART, "Лобарт", 16, True), person(HILDA, "Хильда", 18, True))
@@ -760,7 +792,7 @@ async def test_a_line_that_never_starts(tmp_path, monkeypatch):
     async with _gossip(tmp_path) as g:
         g.fake.drop_says = {HILDA}  # she can't speak now: the bridge drops her line without a word
         await _together(g)
-        _tick(g)
+        await _tick(g)
         s = await _over(g)
 
     assert s.why == "not_started" and [m["npc"] for m, _ in g.fake.says] == [LOBART, HILDA]
@@ -776,7 +808,7 @@ async def test_cut_during_the_attach_frees_it(tmp_path):
     async with _gossip(tmp_path) as g:
         g.fake.attach_delay = 0.5
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _until(lambda: _types(g, "attach") == [LOBART])
         await g.fake.send(type="ptt_start")  # while the game is still attaching him
         s = await _over(g, "cut")
@@ -787,22 +819,36 @@ async def test_cut_during_the_attach_frees_it(tmp_path):
     assert _notes(g, LOBART) == [f"[Ты рассказал человеку по имени Хильда то, что знаешь о герое: {NEWS}]"]
 
 
-async def test_cut_before_it_begins(tmp_path):
-    # the hero's voice in the same moment the pass was staged: nobody is held
+async def test_cut_before_it_begins(tmp_path, monkeypatch):
+    # The hero's voice before the staged scene starts its body work: nobody is held.
+    async def wait_then_words(*args):
+        await begin.wait()
+        await words(*args)
+
     async with _gossip(tmp_path) as g:
+        begin, words = asyncio.Event(), g.desk._words
+        monkeypatch.setattr(g.desk, "_words", wait_then_words)
         await _together(g)
-        _tick(g)
-        assert g.desk.cut("hero")  # its task has not run yet
+        await _tick(g)
+        try:
+            assert (await g.desk.cut("hero"))
+        finally:
+            begin.set()
         s = await _over(g, "cut")
     assert s.why == "hero" and not s.held and not _types(g, "attach")
     assert not g.llm.calls and not g.fake.says
 
     # mob users (no holds, no walk): no model call, and nothing taken from the budget
     async with _gossip(tmp_path) as g:
+        begin, words = asyncio.Event(), g.desk._words
+        monkeypatch.setattr(g.desk, "_words", wait_then_words)
         await _together(g, lobart_body="mob", hilda_body="mob")
         assert g.desk.stage(g.rumor, LOBART, HILDA).tier == "words"
-        _tick(g)
-        assert g.desk.cut("hero")
+        await _tick(g)
+        try:
+            assert (await g.desk.cut("hero"))
+        finally:
+            begin.set()
         s = await _over(g, "cut")
         await asyncio.sleep(0.1)  # a write begun anyway would have called the model by now
     assert s.why == "hero" and not _types(g, "attach") and not g.llm.calls
@@ -813,7 +859,7 @@ async def test_loading_drops_the_scene(tmp_path):
     async with _gossip(tmp_path) as g:
         g.dialogue.scene_pace = lambda text: 0.5
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _until(lambda: len(g.fake.says) == 1)
         await g.fake.send(type="loading")
         await _until(lambda: g.desk.last is not None)
@@ -830,7 +876,7 @@ async def test_a_hold_that_lands_after_a_load_is_freed(tmp_path):
     async with _gossip(tmp_path) as g:
         g.fake.attach_delay = 0.5
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _until(lambda: _types(g, "attach") == [LOBART])
         await g.fake.send(type="loading")  # while the game is still attaching him: his hold comes after
         await _until(lambda: g.desk.last is not None and g.desk.last.released, 2)
@@ -846,7 +892,7 @@ async def test_threat_cuts_the_scene(tmp_path):
     async with _gossip(tmp_path) as g:
         g.dialogue.scene_pace = lambda text: 0.5
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _until(lambda: len(g.fake.says) == 1)
         await g.fake.perception(LOBART, "ASSESSDAMAGE", "WOLF")  # a held speaker is hit
         s = await _over(g, "cut", 2)  # freed at once
@@ -856,7 +902,7 @@ async def test_threat_cuts_the_scene(tmp_path):
     async with _gossip(tmp_path) as g:
         g.dialogue.scene_pace = lambda text: 0.5
         await _together(g, hilda_body="mob")
-        _tick(g)
+        await _tick(g)
         await _until(lambda: len(g.fake.says) == 1)
         assert _types(g, "attach") == [LOBART]
         await g.fake.send(type="npc_event", npc=HILDA, kind="monster_attack", other="WOLF", detail="you")
@@ -868,7 +914,7 @@ async def test_the_hero_walks_away_and_a_dialog_opens(tmp_path):
     async with _gossip(tmp_path) as g:
         g.dialogue.scene_pace = lambda text: 0.5
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _until(lambda: len(g.fake.says) == 1)
         await _around(g, person(LOBART, "Лобарт", 21), person(HILDA, "Хильда", 23))
         s = await _over(g, "cut", 2)
@@ -878,7 +924,7 @@ async def test_the_hero_walks_away_and_a_dialog_opens(tmp_path):
     async with _gossip(tmp_path) as g:
         g.dialogue.scene_pace = lambda text: 0.5
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _until(lambda: len(g.fake.says) == 1)
         await _together(g, others=(person(VINO, "Вино", 5, activity="dialog"),))
         s = await _over(g, "cut", 2)
@@ -953,7 +999,7 @@ async def test_planner_veto_while_busy(tmp_path):
         planner.allow = lambda rec, choice: "before" if rec.id == VINO else None  # the initiative's
         g.desk.follow(planner)
         await _together(g)
-        _tick(g)
+        await _tick(g)
         await _until(lambda: bool(g.llm.calls))  # writing
         assert planner.allow(NpcRecord(LOBART, "Лобарт"), "look_at") == "болтает"
         assert planner.allow(NpcRecord(LOBART, "Лобарт"), "fight") is None  # its body is the threat's
@@ -978,7 +1024,7 @@ async def test_walker_walks_up(tmp_path):
         await _together(g, gap_m=12)
         staging = g.desk.stage(g.rumor, LOBART, HILDA)
         assert (staging.tier, staging.walker) == ("words", LOBART)
-        _tick(g)
+        await _tick(g)
         await _over(g)
 
     assert written_before == [False] and len(g.llm.calls) == 1  # the write only once he is there
@@ -1003,11 +1049,11 @@ async def test_a_natural_pass_reaches_words(tmp_path, monkeypatch):
     async with _gossip(tmp_path) as g:
         g.rumors.gate = None
         await _together(g)
-        assert g.talk.begin(LOBART, "Лобарт")  # he caught the hero, they still talk
-        assert _tick(g) == 0 and g.rumors.waiting == {(KEY, LOBART, HILDA): AT}
+        assert await g.talk.begin(LOBART, "Лобарт")  # he caught the hero, they still talk
+        assert await _tick(g) == 0 and g.rumors.waiting == {(KEY, LOBART, HILDA): AT}
         assert g.chronicle.facts("rumor") == []
-        g.talk.end()  # the hero walks off: the next tick, Lobart turns to his wife
-        assert _tick(g, AT + 1) == 1 and not g.rumors.waiting
+        await g.talk.end()  # the hero walks off: the next tick, Lobart turns to his wife
+        assert await _tick(g, AT + 1) == 1 and not g.rumors.waiting
         await _over(g)
 
     assert [(f["to"], f["how"]) for f in g.chronicle.facts("rumor")] == [(HILDA, "talked")]

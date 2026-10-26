@@ -400,7 +400,7 @@ class Director:
         return WorldState.from_game(value)
 
     async def story(self) -> Story:
-        return Story(self.graph, await self.world(), Patches.of(self.patches.ops()))
+        return Story(self.graph, await self.world(), Patches.of(await self.patches.ops()))
 
     async def look(self, dead: Iterable[str] | None = None) -> list[str]:
         """Quests the deaths of `dead` (None: of anyone) left without an ending; each gets a repair."""
@@ -427,11 +427,11 @@ class Director:
         broken: list[str] = []
         while True:
             state = story.state.merge(await self.book.world())
-            story = Story(self.graph, state, Patches.of(self.patches.ops()))
+            story = Story(self.graph, state, Patches.of(await self.patches.ops()))
             blocked = next(
                 (
                     b
-                    for b in self.book.dead_ends(state)
+                    for b in await self.book.dead_ends(state)
                     if b.quest not in self.given_up and (deaths is None or b.npc in deaths)
                 ),
                 None,
@@ -453,7 +453,7 @@ class Director:
             brief = await self.brief(quest, story)
             if brief is None:
                 return None
-            self.chronicle.record(
+            await self.chronicle.record(
                 {
                     "fact": "dead_end",
                     "quest": quest,
@@ -476,19 +476,19 @@ class Director:
                         return done
                     previous = proposal
                 log.info("director: %s, attempt %d rejected: %s", quest, attempt, errors)
-                self.chronicle.record(
+                await self.chronicle.record(
                     {"fact": "repair_rejected", "quest": quest, "attempt": attempt, "why": errors}
                 )
                 self.journal.add("repair_rejected", quest=quest, attempt=attempt, why=errors)
             self.given_up.add(quest)
-            self.chronicle.record({"fact": "unrepaired", "quest": quest})
+            await self.chronicle.record({"fact": "unrepaired", "quest": quest})
             return None
         finally:
             self.pacing.stepped()
 
     async def brief(self, quest: str, story: Story) -> Brief | None:
-        if self.book is not None and quest in self.book.all():
-            blocked = next((b for b in self.book.dead_ends(story.state) if b.quest == quest), None)
+        if self.book is not None and quest in await self.book.all():
+            blocked = next((b for b in await self.book.dead_ends(story.state) if b.quest == quest), None)
             return await self._book_brief(blocked, story) if blocked is not None else None
         q = self.graph.quests.get(quest)
         if q is None:
@@ -538,7 +538,7 @@ class Director:
         assert self.book is not None
         from .questbook import GOLD, TALKS, done_node, goal_id, goal_node
 
-        q = self.book.all()[blocked.quest]
+        q = (await self.book.all())[blocked.quest]
         node = story.patches.nodes.get(blocked.node)
         if node is None:
             return None
@@ -786,10 +786,10 @@ class Director:
 
     async def _try(self, p: Proposal, brief: Brief, story: Story) -> tuple[Repair | None, list[str]]:
         """Build the change from the proposal, check it, make it."""
-        if self.book is not None and brief.quest in self.book.all():
+        if self.book is not None and brief.quest in await self.book.all():
             done, errors = await self.book.repair(p, brief, story)
             if done is not None:
-                self._done(done, brief, p)
+                await self._done(done, brief, p)
             return done, errors
         if p.kind == "close":
             return await self._close(p, brief, story)
@@ -851,14 +851,14 @@ class Director:
             await self._effects(p.npc, [{"do": "journal", "topic": brief.title, "text": p.journal_now}])
         name = story.state.name(p.npc)
         if self.dialogue is not None:
-            self.dialogue.remember(
+            await self.dialogue.remember(
                 p.npc,
                 name,
                 f"{brief.dead_name} мёртв. Его поручение герою «{brief.title or brief.quest}» теперь "
                 f"принимаешь ты — когда герой придёт с ним, в разговоре: «{p.description}»",
             )
         done = Repair(brief.quest, "handover", p.npc, id, ops)
-        self._done(done, brief, p)
+        await self._done(done, brief, p)
         return done, []
 
     async def _close(self, p: Proposal, brief: Brief, story: Story) -> tuple[Repair | None, list[str]]:
@@ -879,13 +879,13 @@ class Director:
             return None, errors
         await self._effects(brief.dead, effects)
         done = Repair(brief.quest, "close")
-        self._done(done, brief, p)
+        await self._done(done, brief, p)
         return done, []
 
-    def _done(self, done: Repair, brief: Brief, p: Proposal) -> None:
+    async def _done(self, done: Repair, brief: Brief, p: Proposal) -> None:
         self.repairs.append(done)
         fact = {"fact": "repair", "quest": done.quest, "kind": done.kind, "npc": done.npc, "node": done.node}
-        self.chronicle.record({**fact, "from": brief.dead, "reason": p.reason})
+        await self.chronicle.record({**fact, "from": brief.dead, "reason": p.reason})
         self.journal.add(
             "repair", quest=done.quest, how=done.kind, npc=done.npc, node=done.node, reason=p.reason
         )

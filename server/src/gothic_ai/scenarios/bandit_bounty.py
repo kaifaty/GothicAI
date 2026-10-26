@@ -122,12 +122,12 @@ async def bandit_bounty(
         ), f"near={ready}, Cavalorn={away:.0f} cm ({parked.status}), hero_gold={hero_gold}"):
             return _logged(results)
 
-        talk.hear(ASK, BRAGO, {"via": "scenario"})
+        await talk.hear(ASK, BRAGO, {"via": "scenario"})
         refused = await _until(lambda: any("Отклонено" in output for output in script.outputs), 20)
         if not check("secret_requires_leverage", refused and not revealed(), script.outputs):
             return _logged(results)
         await _until(lambda: not dialogue.speaking(BRAGO), 10)
-        talk.hear(PAYMENT, BRAGO, {"via": "scenario"})
+        await talk.hear(PAYMENT, BRAGO, {"via": "scenario"})
         offered = await _until(lambda: BRAGO in deals.open, 20)
         offer = deals.open.get(BRAGO)
         window = await link.deal_window() or {}
@@ -149,7 +149,7 @@ async def bandit_bounty(
             return _logged(results)
 
         await _until(lambda: not dialogue.speaking(BRAGO), 10)
-        talk.hear(NAME, BRAGO, {"via": "scenario"})
+        await talk.hear(NAME, BRAGO, {"via": "scenario"})
         told = await _until(lambda: bool(revealed()), 20)
         facts = revealed()
         state = await link.story_state(vars=["BDT13_DEXTER_VERRATEN"])
@@ -165,7 +165,7 @@ async def bandit_bounty(
             return _logged(results)
 
         await _until(lambda: not dialogue.speaking(BRAGO), 10)
-        talk.hear(LEAD, BRAGO, {"via": "scenario"})
+        await talk.hear(LEAD, BRAGO, {"via": "scenario"})
         offered = await _until(lambda: BRAGO in deals.open, 20)
         offer = deals.open.get(BRAGO)
         if not check("lead_offered", bool(

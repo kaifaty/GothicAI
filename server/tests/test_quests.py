@@ -12,6 +12,7 @@ from gothic_ai.quests import QuestBoard
 from gothic_ai.trust import WORD_BROKEN
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 PAY = FakeStep("Держи, заслужил.", [ToolCall("pay_reward", {"quest": "Q1"}, "c1")])
 
@@ -20,7 +21,9 @@ async def _setup(fake: FakeGame, llm: FakeBackend, store: MemoryStore):
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
     dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=store)
+    await dialogue.initialize()
     chronicle = Chronicle(link, store)
+    await chronicle.initialize()
     board = QuestBoard(link, dialogue, chronicle, hero_distance=lambda npc: 300.0)
     await link.attach(XARDAS)  # the fake game hands items over only for attached npc's
     await link.snapshot(XARDAS)
@@ -29,7 +32,7 @@ async def _setup(fake: FakeGame, llm: FakeBackend, store: MemoryStore):
 
 async def test_a_lie_is_paid_found_out_and_spread():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[PAY, FakeStep("Ну?")], delay=0)
     link_cm, dialogue, chronicle, board = await _setup(fake, llm, store)
     try:
@@ -42,15 +45,15 @@ async def test_a_lie_is_paid_found_out_and_spread():
         # the hero kills one wolf of two and says he killed them all
         await fake.send(type="npc_died", npc="WOLF", tag=q.tag, killer="PLAYER")
         await _until(lambda: chronicle.killed(q.tag, "PLAYER") == 1)
-        dialogue.open(XARDAS, "Ксардас")
-        assert "pay_reward" in [t.name for t in dialogue._offered(XARDAS)]
+        await dialogue.open(XARDAS, "Ксардас")
+        assert "pay_reward" in [t.name for t in await dialogue._offered(XARDAS)]
         await dialogue.say_as_player(XARDAS, "Я перебил волков [Герой отдаёт шкуры], плати.")
         await _until(lambda: q.paid and q.lie)
         assert "(Герой отдаёт шкуры)" in llm.calls[0][1][-1].content  # his words, not a remark
         assert any(a["action"] == "give_item" for a in fake.received if a["type"] == "action")
         assert chronicle.facts("lie")[0]["truth"] == "killed 1 of 2"
         assert "Ты поверил герою" in board.situation(XARDAS)
-        assert "pay_reward" not in [t.name for t in dialogue._offered(XARDAS)]  # paid already
+        assert "pay_reward" not in [t.name for t in await dialogue._offered(XARDAS)]  # paid already
 
         # a wolf that lives turns up 8 m from the giver, behind a wall: nothing yet
         fake.people_near = [{"npc": "PC_THIEF", "name": "Диего", "distance": 500, "guild": 0}]
@@ -80,20 +83,20 @@ async def test_a_lie_is_paid_found_out_and_spread():
 @pytest.mark.parametrize("killer", ["PLAYER", "NONE_100_XARDAS"])
 async def test_the_truth_is_no_lie_and_quests_follow_the_save(killer):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[PAY, FakeStep("Ну?")], delay=0)
     link_cm, dialogue, chronicle, board = await _setup(fake, llm, store)
     try:
         q = await board.give(XARDAS, "Ксардас", "перебей волков", "WOLF", 1, "ITPO_HEALTH_01", "Эликсир", 1)
         await fake.send(type="npc_died", npc="WOLF", tag=q.tag, killer=killer)
         await _until(lambda: board.done(q))
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Волк мёртв.")
         await _until(lambda: chronicle.facts("paid") != [])
         assert not q.lie and chronicle.facts("lie") == []
 
         # a load of a save made before the quest: it is gone; one made after it: it is back, paid
-        head = store.head("A")
+        head = await store.head("A")
         await fake.send(type="session", branch="B", parent="A", parent_seq=0, reason="load")
         await _until(lambda: board.quests == {})
         await fake.send(type="session", branch="C", parent="A", parent_seq=head, reason="load")
@@ -105,18 +108,18 @@ async def test_the_truth_is_no_lie_and_quests_follow_the_save(killer):
 @pytest.mark.parametrize("lied", [False, True])
 async def test_pay_reward_names_the_actual_trust_reason(lied):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(delay=0)
     link_cm, dialogue, chronicle, board = await _setup(fake, llm, store)
     try:
         q = await board.give(XARDAS, "Ксардас", "перебей волков", "WOLF", 1, "ITPO_HEALTH_01", "Эликсир", 1)
-        chronicle.record({"fact": "gate_vouch_broken", "npc": XARDAS, "crime_kind": "theft"})
+        await chronicle.record({"fact": "gate_vouch_broken", "npc": XARDAS, "crime_kind": "theft"})
         if lied:
-            chronicle.record({"fact": "caught", "npc": XARDAS, "quest": "OLD_QUEST"})
+            await chronicle.record({"fact": "caught", "npc": XARDAS, "quest": "OLD_QUEST"})
         record = board.trust.of(XARDAS)
         assert record.crimes and not record.broke
         assert bool(record.lied) is lied
-        conv = dialogue.open(XARDAS, "Ксардас")
+        conv = await dialogue.open(XARDAS, "Ксардас")
         result = await board.handle(dialogue, conv, ToolCall("pay_reward", {"quest": q.id}, "c1"), None)
         assert result is not None and result.status == "rejected"
         reason = (

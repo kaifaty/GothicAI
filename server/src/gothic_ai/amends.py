@@ -564,7 +564,7 @@ class Amends:
                     if required:
                         errors, previous = ["правило встречи требует kind: amends"], proposal
                         continue
-                    self.chronicle.record(
+                    await self.chronicle.record(
                         {"fact": "amends_none", "lie": key, "npc": npc, "reason": proposal.reason}
                     )
                     return None
@@ -572,11 +572,15 @@ class Amends:
                 if made is not None:
                     return made
                 previous = proposal
-                self.chronicle.record({"fact": "amends_rejected", "lie": key, "npc": npc, "why": errors})
+                await self.chronicle.record(
+                    {"fact": "amends_rejected", "lie": key, "npc": npc, "why": errors}
+                )
             if required and self._current(brief, world):
                 made, errors = await self._try(self._fallback(brief), brief, story, world=world)
                 if made is None and self._current(brief, world):
-                    self.chronicle.record({"fact": "amends_rejected", "lie": key, "npc": npc, "why": errors})
+                    await self.chronicle.record(
+                        {"fact": "amends_rejected", "lie": key, "npc": npc, "why": errors}
+                    )
                 return made
             return None
         finally:
@@ -748,12 +752,12 @@ class Amends:
             p.description,
         )
         self.storylets[s.id] = s
-        self.chronicle.record({"fact": "amends_open", **asdict(s), "reason": p.reason})
+        await self.chronicle.record({"fact": "amends_open", **asdict(s), "reason": p.reason})
         self.journal.add("amends_open", npc=s.npc, name=s.name, lie=s.lie, close=s.close, gold=s.gold)
         if self.dialogue is not None:
             what = "дело" if isinstance(brief.lie, CrimeCase) else "ложь"
             closed = " Твои дела для него закрыты до расплаты." if s.close else ""
-            self.dialogue.remember(
+            await self.dialogue.remember(
                 s.npc,
                 s.name,
                 f"Ты требуешь загладить вину за {what} ({brief.lie.words()}). Расплата: {_price(s)}.{closed}",
@@ -776,7 +780,7 @@ class Amends:
             log.warning("amends: %s: %s", s.id, err)
             return
         if world == self._world and not self._loading:
-            self.chronicle.record({"fact": "amends_told", "id": s.id})
+            await self.chronicle.record({"fact": "amends_told", "id": s.id})
 
     async def _withdraw_crimes(self, world: int) -> None:
         """A silenced or dead victim no longer has a native important demand waiting."""
@@ -789,14 +793,14 @@ class Amends:
             for node in (s.talk, s.pay):
                 if world != self._world:
                     return
-                if node in self.patches_nodes():
+                if node in await self.patches_nodes():
                     await self._apply({"op": "remove_node", "node": node})
             for closed in s.close:
                 if world != self._world:
                     return
                 await self._apply({"op": "enable", "node": closed})
             if world == self._world:
-                self.chronicle.record({"fact": "amends_withdrawn", "id": s.id})
+                await self.chronicle.record({"fact": "amends_withdrawn", "id": s.id})
 
     async def _paid(self, s: Storylet) -> None:
         """The hero made amends: the npc's dialogs open again; so do those of the others asking the same of
@@ -810,7 +814,7 @@ class Amends:
                 for node in (other.talk, other.pay):
                     if world != self._world or self._loading:
                         return
-                    if node in self.patches_nodes():
+                    if node in await self.patches_nodes():
                         await self._apply({"op": "remove_node", "node": node})
                 await self._settle(other, world=world)
 
@@ -831,7 +835,7 @@ class Amends:
                 for node in (s.talk, s.pay):
                     if world != self._world or self._loading:
                         return
-                    if node in self.patches_nodes():
+                    if node in await self.patches_nodes():
                         await self._apply({"op": "remove_node", "node": node})
                 if world != self._world or self._loading:
                     return
@@ -844,8 +848,8 @@ class Amends:
                     )
                 await self._settle(s, world=world)
 
-    def patches_nodes(self) -> set[str]:
-        return {op["node"]["id"] for op in self.patches.ops() if op.get("op") == "add_node"}
+    async def patches_nodes(self) -> set[str]:
+        return {op["node"]["id"] for op in await self.patches.ops() if op.get("op") == "add_node"}
 
     async def _apply(self, op: dict[str, Any]) -> None:
         try:
@@ -871,7 +875,7 @@ class Amends:
         if crime:
             fact["crime"] = crime
             if paid:
-                self.chronicle.record(
+                await self.chronicle.record(
                     {
                         "fact": "forgiven",
                         "npc": lie.victim if isinstance(lie, CrimeCase) else s.npc,
@@ -883,15 +887,15 @@ class Amends:
                 )
         elif lie is not None:
             fact.update(quest=lie.quest, about=lie.victim)
-        self.chronicle.record(fact)
+        await self.chronicle.record(fact)
         self.journal.add("amends", npc=s.npc, name=s.name, to=s.to, gold=s.gold)
         if self.dialogue is not None:
-            self.dialogue.remember(
+            await self.dialogue.remember(
                 s.npc, s.name, f"Герой загладил вину ({_price(s)}). Твои дела для него снова открыты"
             )
             if s.to != s.npc:
                 paid = f" и заплатил тебе {s.gold} золотых" if s.gold else ""
-                self.dialogue.remember(s.to, s.to_name, f"Герой пришёл к тебе повиниться за ложь{paid}")
+                await self.dialogue.remember(s.to, s.to_name, f"Герой пришёл к тебе повиниться за ложь{paid}")
 
     # --- the save branch --------------------------------------------------------------------
 

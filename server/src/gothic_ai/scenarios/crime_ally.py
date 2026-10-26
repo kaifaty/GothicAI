@@ -113,8 +113,8 @@ async def crime_ally(
         await link.debug("player_goto", to=CAVALORN, distance=300)
         if not check("cavalorn_near", await _until(lambda: 0 <= distance(CAVALORN) <= 1500, 20)):
             return _logged(results)
-        dialogue.open(CAVALORN, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
-        talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
+        (await dialogue.open(CAVALORN, "Кавалорн")).intent = Intent("follow_hero", "PLAYER", "friendly")
+        await talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
         if not check("follow", await _until(lambda: bool(follows) and 0 <= distance(CAVALORN) <= 500, 20)):
             return _logged(results)
 
@@ -163,7 +163,7 @@ async def crime_ally(
         if perception is not None:
             await perception.fresh(BRAGO)
         await link.snapshot(BRAGO, fresh=True)
-        talk.hear("Эй, Браго! Не трогай Кавалорна.", BRAGO, {"via": "scenario"})
+        await talk.hear("Эй, Браго! Не трогай Кавалорна.", BRAGO, {"via": "scenario"})
 
         def attacked() -> bool:
             conv = dialogue.conversations.get(BRAGO)
@@ -202,7 +202,7 @@ async def crime_ally(
         hit_landed = await _until_async(hit, bool, 5)
         # A companion otherwise finishes the downed enemy himself before the next roster arrives.
         # Retreat preempts the fight with stop/follow and suppresses another automatic attack.
-        talk.hear("Кавалорн, отступай!", CAVALORN, {"via": "scenario"})
+        await talk.hear("Кавалорн, отступай!", CAVALORN, {"via": "scenario"})
         down = await _until(lambda: BRAGO in talk.people and talk.people[BRAGO].activity == "down", 10)
         snapshot = await link.snapshot(BRAGO, fresh=True)
         if not check(
@@ -267,7 +267,7 @@ async def crime_ally(
         await link.debug("teleport", near=CAVALORN, distance=250)
         await _until(lambda: 0 <= distance(CAVALORN) <= 500, 5)
         mark, started = len(entries), time.monotonic()
-        talk.hear(QUESTION, CAVALORN, {"via": "scenario"})
+        await talk.hear(QUESTION, CAVALORN, {"via": "scenario"})
         answers = await _until(lambda: any(
             entry.get("kind") == "npc" and entry.get("npc") == CAVALORN and ANSWER in entry.get("text", "")
             for entry in entries[mark:]

@@ -16,6 +16,7 @@ from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import Detached, HeroDeed, NpcEvent, Perception, Session, Snapshot
 from gothic_ai.social import Rumors, Social
 from tests.fake_game import FakeGame, connected
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 MATE, ROAD, CITIZEN = "BDT_1015_BANDIT_L", "BDT_1090_BANDIT", "VLK_414_RUPERT"
 DEXTER = "BDT_1060_DEXTER"
@@ -29,12 +30,16 @@ async def world():
         {"id": CITIZEN, "name": "Руперт", "distance": 100, "guild": 3},
     ]
     async with connected(fake) as link:
-        store = MemoryStore(":memory:")
+        store = await MemoryStore.open(":memory:")
         dialogue = DialogueManager(link, FakeBackend(delay=0), PersonaProvider(None), memory=store)
+        await dialogue.initialize()
         dialogue.guild_of = lambda npc: 3 if npc == CITIZEN else 9
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         await link.attach(BRAGO)
         await link.snapshot(BRAGO, fresh=True)
+        # The attach snapshot can satisfy that wait before the explicit snapshot reply arrives.
+        await link.story_state()
         for npc in (LURE, MATE, ROAD, CITIZEN):
             link.snapshots[npc] = Snapshot.model_validate(fake.snapshot(npc))
         bounty = Bounty(link, dialogue, chronicle)
@@ -48,25 +53,29 @@ async def world():
                     fake.vars[operation["var"]] = operation["value"]
 
         link.story_effect = apply
-        yield fake, link, dialogue, chronicle, bounty
+        try:
+            yield fake, link, dialogue, chronicle, bounty
+        finally:
+            await dialogue.close()
+            await store.close()
 
 
 async def disclose(dialogue, bounty, npc=BRAGO, secret="client_name"):
-    conv = dialogue.open(npc, "Браго" if npc == BRAGO else "Бандит", warm=False)
+    conv = await dialogue.open(npc, "Браго" if npc == BRAGO else "Бандит", warm=False)
     return await bounty.handle(
         dialogue, conv, ToolCall("tell_secret", {"secret": secret}), dialogue.link.snapshots.get(npc)
     )
 
 
-def health(link, bounty, hp, maximum=100):
+async def health(link, bounty, hp, maximum=100):
     snap = link.snapshots[BRAGO]
     snap = snap.model_copy(update={"npc": snap.npc.model_copy(update={"hp": hp, "hp_max": maximum})})
     link.snapshots[BRAGO] = snap
-    bounty._on_message(snap)
+    await bounty._on_message(snap)
 
 
 async def calm(dialogue):
-    conv = dialogue.open(BRAGO, "Браго", warm=False)
+    conv = await dialogue.open(BRAGO, "Браго", warm=False)
     conv.intent = Intent("calm", "PLAYER", "neutral")
     return await dialogue._calm(conv, conv.intent)
 
@@ -130,7 +139,7 @@ async def test_secret_sale_requires_minimum_gold_paid_now(npc, minimum):
 @pytest.mark.parametrize("secret", ["client_name", "client_place"])
 async def test_paid_secret_has_native_consequences_and_is_idempotent(secret):
     async with world() as (fake, _, dialogue, chronicle, bounty):
-        chronicle.record({"fact": "deal", "id": "paid-secret", "npc": BRAGO, "secret": secret})
+        await chronicle.record({"fact": "deal", "id": "paid-secret", "npc": BRAGO, "secret": secret})
         outcome = await disclose(dialogue, bounty, secret=secret)
         assert outcome.status == "accepted" and "paid" in outcome.output
         assert fake.vars["BDT13_DEXTER_VERRATEN"] == 1 and fake.vars["MIS_STECKBRIEFE"] == 1
@@ -156,7 +165,7 @@ async def test_paid_secret_has_native_consequences_and_is_idempotent(secret):
 
 async def test_a_paid_name_does_not_authorize_the_place():
     async with world() as (_, _, dialogue, chronicle, bounty):
-        chronicle.record({"fact": "deal", "id": "name", "npc": BRAGO, "secret": "client_name"})
+        await chronicle.record({"fact": "deal", "id": "name", "npc": BRAGO, "secret": "client_name"})
         assert (await disclose(dialogue, bounty, secret="client_place")).status == "rejected"
         assert (await disclose(dialogue, bounty)).status == "accepted"
 
@@ -165,7 +174,7 @@ async def test_a_paid_name_does_not_authorize_the_place():
 async def test_new_disclosures_do_not_repeat_native_effects_or_reopen_the_quest(second_npc, second_secret):
     async with world() as (fake, _, dialogue, chronicle, bounty):
         for npc, secret in ((BRAGO, "client_name"), (second_npc, second_secret)):
-            chronicle.record({"fact": "deal", "npc": npc, "secret": secret})
+            await chronicle.record({"fact": "deal", "npc": npc, "secret": secret})
         assert (await disclose(dialogue, bounty)).status == "accepted"
         fake.vars["MIS_STECKBRIEFE"] = 2
         before = list(fake.story)
@@ -179,7 +188,7 @@ async def test_new_disclosures_do_not_repeat_native_effects_or_reopen_the_quest(
 async def test_late_first_disclosure_preserves_a_closed_vanilla_quest(status):
     async with world() as (fake, _, dialogue, chronicle, bounty):
         fake.vars["MIS_STECKBRIEFE"] = status
-        chronicle.record({"fact": "deal", "npc": BRAGO, "secret": "client_name"})
+        await chronicle.record({"fact": "deal", "npc": BRAGO, "secret": "client_name"})
         assert (await disclose(dialogue, bounty)).status == "accepted"
         assert fake.vars["MIS_STECKBRIEFE"] == status
         assert fake.story[-1]["effects"] == [
@@ -190,7 +199,7 @@ async def test_late_first_disclosure_preserves_a_closed_vanilla_quest(status):
 async def test_vanilla_disclosure_also_prevents_repeating_native_effects():
     async with world() as (fake, _, dialogue, chronicle, bounty):
         fake.vars.update(BDT13_DEXTER_VERRATEN=1, MIS_STECKBRIEFE=2)
-        chronicle.record({"fact": "deal", "npc": BRAGO, "secret": "client_name"})
+        await chronicle.record({"fact": "deal", "npc": BRAGO, "secret": "client_name"})
         assert (await disclose(dialogue, bounty)).status == "accepted"
         assert not fake.story and fake.vars["MIS_STECKBRIEFE"] == 2
         assert len(chronicle.facts("bounty_secret")) == 1
@@ -202,13 +211,13 @@ async def test_game_failures_reject_the_tool_without_crashing_the_turn(monkeypat
     async with world() as (_, link, dialogue, chronicle, bounty):
         npc = LURE if operation == "bond" else BRAGO
         if operation != "bond":
-            chronicle.record({"fact": "deal", "npc": npc, "secret": "client_name"})
+            await chronicle.record({"fact": "deal", "npc": npc, "secret": "client_name"})
 
         async def fail(*args, **kwargs):
             raise error
 
         monkeypatch.setattr(link, "story_effect" if operation == "effect" else "story_state", fail)
-        conv = dialogue.open(npc, "Бандит", warm=False)
+        conv = await dialogue.open(npc, "Бандит", warm=False)
         result = await dialogue._tool(
             conv, ToolCall("tell_secret", {"secret": "client_name"}),
             SimpleNamespace(tools=bounty.tools(npc)),
@@ -219,7 +228,7 @@ async def test_game_failures_reject_the_tool_without_crashing_the_turn(monkeypat
 
 async def test_retry_after_applied_effect_timeout_does_not_repeat_the_journal(monkeypatch):
     async with world() as (fake, link, dialogue, chronicle, bounty):
-        chronicle.record({"fact": "deal", "npc": BRAGO, "secret": "client_name"})
+        await chronicle.record({"fact": "deal", "npc": BRAGO, "secret": "client_name"})
         apply = link.story_effect
 
         async def applied_then_timeout(*args, **kwargs):
@@ -252,14 +261,14 @@ async def test_vanilla_friendship_is_live_and_belongs_only_to_the_lure():
 @pytest.mark.parametrize("injury", ["below_half", "knockdown"])
 async def test_hero_must_win_and_the_npc_must_successfully_calm(injury):
     async with world() as (_, link, dialogue, chronicle, bounty):
-        bounty._on_message(Perception(
+        await bounty._on_message(Perception(
             type="perception", npc=BRAGO, perc="ASSESSDAMAGE", other="PLAYER", distance=100
         ))
         assert (await disclose(dialogue, bounty)).status == "rejected"
         if injury == "below_half":
-            health(link, bounty, 49)
+            await health(link, bounty, 49)
         else:
-            bounty._on_message(Detached(type="detached", npc=BRAGO, reason="down"))
+            await bounty._on_message(Detached(type="detached", npc=BRAGO, reason="down"))
         assert (await disclose(dialogue, bounty)).status == "rejected"
         assert (await calm(dialogue))[1]
         assert (await disclose(dialogue, bounty)).status == "accepted"
@@ -269,36 +278,36 @@ async def test_hero_must_win_and_the_npc_must_successfully_calm(injury):
 @pytest.mark.parametrize("attacker", [None, MATE])
 async def test_low_health_and_calm_do_not_prove_the_hero_won(attacker):
     async with world() as (_, link, dialogue, _, bounty):
-        health(link, bounty, 49)
+        await health(link, bounty, 49)
         if attacker:
-            bounty._on_message(Perception(
+            await bounty._on_message(Perception(
                 type="perception", npc=BRAGO, perc="ASSESSDAMAGE", other=attacker, distance=100
             ))
-            bounty._on_message(NpcEvent(type="npc_event", npc=BRAGO, kind="attack", other=attacker))
+            await bounty._on_message(NpcEvent(type="npc_event", npc=BRAGO, kind="attack", other=attacker))
         assert (await calm(dialogue))[1]
         assert (await disclose(dialogue, bounty)).status == "rejected"
 
 
 async def test_exactly_half_health_is_not_a_defeat():
     async with world() as (_, link, dialogue, _, bounty):
-        bounty._on_message(HeroDeed(
+        await bounty._on_message(HeroDeed(
             type="hero_deed", id="hero-hit", kind="attack", victim=BRAGO,
             position={"x": 0, "y": 0, "z": 0},
         ))
-        health(link, bounty, 50)
+        await health(link, bounty, 50)
         assert (await calm(dialogue))[1]
         assert (await disclose(dialogue, bounty)).status == "rejected"
 
 
 async def test_repeated_hits_and_duplicate_damage_signals_do_not_repeat_defeat_facts():
     async with world() as (_, link, _, chronicle, bounty):
-        health(link, bounty, 40)
+        await health(link, bounty, 40)
         for number in range(5):
-            bounty._on_message(HeroDeed(
+            await bounty._on_message(HeroDeed(
                 type="hero_deed", id=f"hit-{number}", kind="attack", victim=BRAGO,
                 position={"x": 0, "y": 0, "z": 0},
             ))
-            bounty._on_message(Perception(
+            await bounty._on_message(Perception(
                 type="perception", npc=BRAGO, perc="ASSESSDAMAGE", other="PLAYER", distance=100,
             ))
         assert [f["state"] for f in chronicle.facts("bounty_fight")] == ["hit", "lost"]
@@ -307,12 +316,12 @@ async def test_repeated_hits_and_duplicate_damage_signals_do_not_repeat_defeat_f
 @pytest.mark.parametrize("end", ["recovered", "other_attacker"])
 async def test_an_old_defeat_cannot_authorize_a_later_unrelated_calm(end):
     async with world() as (_, link, dialogue, _, bounty):
-        bounty._on_message(NpcEvent(type="npc_event", npc=BRAGO, kind="attack", detail="you"))
-        health(link, bounty, 49)
+        await bounty._on_message(NpcEvent(type="npc_event", npc=BRAGO, kind="attack", detail="you"))
+        await health(link, bounty, 49)
         if end == "recovered":
-            health(link, bounty, 100)
+            await health(link, bounty, 100)
         else:
-            bounty._on_message(Perception(
+            await bounty._on_message(Perception(
                 type="perception", npc=BRAGO, perc="ASSESSDAMAGE", other=MATE, distance=100,
             ))
         assert (await calm(dialogue))[1]
@@ -321,8 +330,8 @@ async def test_an_old_defeat_cannot_authorize_a_later_unrelated_calm(end):
 
 async def test_failed_calm_does_not_authorize_interrogation(monkeypatch):
     async with world() as (_, link, dialogue, _, bounty):
-        bounty._on_message(NpcEvent(type="npc_event", npc=BRAGO, kind="attack", detail="you"))
-        health(link, bounty, 49)
+        await bounty._on_message(NpcEvent(type="npc_event", npc=BRAGO, kind="attack", detail="you"))
+        await health(link, bounty, 49)
 
         async def failed(*args, **kwargs):
             raise GameError("calm failed")
@@ -340,14 +349,14 @@ async def test_betrayal_uses_existing_rumors_and_dexter_only_knows_after_hearing
             {"npc": DEXTER, "name": "Декстер", "guild": 9},
         ])
         rumors.clock = 8 * 60
-        chronicle.record({"fact": "deal", "id": "paid", "npc": BRAGO, "secret": "client_name"})
+        await chronicle.record({"fact": "deal", "id": "paid", "npc": BRAGO, "secret": "client_name"})
         await disclose(dialogue, bounty)
         [rumor] = list(rumors.rumors.values())
         assert rumor.subject == BRAGO and rumor.known == {MATE: 0}
         people = PeopleKnowledge(chronicle)
         assert "Браго сдал Декстера" in people.situation(MATE)
         assert people.situation(DEXTER) is None
-        assert rumors.tell(rumor, MATE, DEXTER) == "told"
+        assert (await rumors.tell(rumor, MATE, DEXTER)) == "told"
         [fact] = chronicle.facts("rumor")
         assert fact["subject"] == BRAGO and fact["to"] == DEXTER
         assert "Браго сдал Декстера" in people.situation(DEXTER)
@@ -356,14 +365,14 @@ async def test_betrayal_uses_existing_rumors_and_dexter_only_knows_after_hearing
 
 async def test_save_branch_rolls_back_disclosure_and_defeat_leverage():
     async with world() as (_, link, dialogue, chronicle, bounty):
-        before = chronicle.memory.head(chronicle.branch)
-        bounty._on_message(NpcEvent(type="npc_event", npc=BRAGO, kind="attack", detail="you"))
-        health(link, bounty, 49)
+        before = await chronicle.memory.head(chronicle.branch)
+        await bounty._on_message(NpcEvent(type="npc_event", npc=BRAGO, kind="attack", detail="you"))
+        await health(link, bounty, 49)
         await calm(dialogue)
         assert (await disclose(dialogue, bounty)).status == "accepted"
         session = Session(type="session", branch="before-bounty", parent=chronicle.branch, parent_seq=before)
-        chronicle._on_message(session)
-        bounty._on_message(session)
+        await link._dispatch(session)
+        await link.wait_session_ready()
         assert bounty.revealed(BRAGO, "client_name") is None
         assert not chronicle.facts("bounty_betrayal")
         assert (await disclose(dialogue, bounty)).status == "rejected"

@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from .chronicle import Fact
 from .crimes import COMMUNITIES, Crimes
+from .game import GameError
 from .npc_cheat import betrayed
 from .people_knowledge import rumor_subject
 from .promise_breach import broken_promises, silence_facts
@@ -107,67 +108,92 @@ class CrimeLaw:
         surrendered = sum(bool(f.get("surrendered")) for f in self.unpaid(community))
         return min(1000, 50 * total + (500 if counters["MURDER"] else 0) + 250 * surrendered)
 
-    def inform(self, crime: str, *, via: str, how: str, at: int) -> Fact | None:
+    async def inform(self, crime: str, *, via: str, how: str, at: int) -> Fact | None:
         """The common arrival path: delayed reports and an on-scene call teach law once."""
-        deed = self.crimes.crime(crime)
-        if deed is None or (community := deed.get("community")) not in LAW_COMMUNITIES:
-            return None
-        if self.crimes.side(via, crime) is not None:
-            return None
-        if any(f.get("id") == crime for f in self.known(community)):
-            return None
-        fact: Fact = {
-            "fact": "crime_known", "community": community, "crime": crime,
-            "how": how, "via": via.upper(), "at": at,
-        }
-        self.chronicle.record(fact)
-        for promise in broken_promises(
-            self.chronicle, via, crime=crime, cover=self.crimes.cover, at=at,
-        ):
-            betrayed(self.chronicle, via, str(promise.get("deal", "")), "reported", community)
-        return fact
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
 
-    def called(
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            deed = self.crimes.crime(crime)
+            if deed is None or (community := deed.get("community")) not in LAW_COMMUNITIES:
+                return None
+            if self.crimes.side(via, crime) is not None:
+                return None
+            if any(f.get("id") == crime for f in self.known(community)):
+                return None
+            fact: Fact = {
+                "fact": "crime_known", "community": community, "crime": crime,
+                "how": how, "via": via.upper(), "at": at,
+            }
+            await self.chronicle.record(fact)
+            for promise in broken_promises(
+                self.chronicle, via, crime=crime, cover=self.crimes.cover, at=at,
+            ):
+                await betrayed(self.chronicle, via, str(promise.get("deal", "")), "reported", community)
+            return fact
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def called(
         self, crime: str, via: str, guards: Iterable[str], *, at: int | None = None
     ) -> list[Fact]:
         """Teach guards who heard the witness and deliver that call to their community law."""
-        deed = self.crimes.crime(crime)
-        if deed is None or deed.get("community") not in LAW_COMMUNITIES:
-            return []
-        if self.crimes.side(via, crime) is not None:
-            return []
-        when = at if at is not None else self.now
-        if when is None:
-            when = game_minutes(deed)
-        if when is None:
-            return []
-        via = via.upper()
-        listeners = sorted({
-            npc.upper() for npc in guards if self.crimes.side(npc, crime) is None
-        })
-        source = next(
-            (f["npc"] for f in self.chronicle.facts("crime_seen")
-             if f.get("crime") == crime and f.get("npc")),
-            via,
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
         )
-        out = []
-        for npc in listeners:
-            if not self.is_guard(npc, deed["community"]):
-                continue
-            if not any(k.crime["id"] == crime and k.degree != "suspects" for k in self.crimes.known(npc)):
-                fact: Fact = {
-                    "fact": "rumor", "crime": crime, "from": via, "to": npc,
-                    "hops": 1, "at": when, "how": "called",
-                    "quest": f"crime:{crime}", "kind": deed["kind"], "about": source,
-                    "about_name": self.crimes.names(source), "title": self.crimes.describe(deed),
-                    "day": when // DAY_MINUTES,
-                }
-                self.chronicle.record(fact)
-                out.append(fact)
-        if any(self.is_guard(npc, deed["community"]) for npc in listeners):
-            if arrival := self.inform(crime, via=via, how="called", at=when):
-                out.append(arrival)
-        return out
+
+        async def persist():
+            nonlocal via
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            deed = self.crimes.crime(crime)
+            if deed is None or deed.get("community") not in LAW_COMMUNITIES:
+                return []
+            if self.crimes.side(via, crime) is not None:
+                return []
+            when = at if at is not None else self.now
+            if when is None:
+                when = game_minutes(deed)
+            if when is None:
+                return []
+            via = via.upper()
+            listeners = sorted({
+                npc.upper() for npc in guards if self.crimes.side(npc, crime) is None
+            })
+            source = next(
+                (f["npc"] for f in self.chronicle.facts("crime_seen")
+                 if f.get("crime") == crime and f.get("npc")),
+                via,
+            )
+            out = []
+            for npc in listeners:
+                if not self.is_guard(npc, deed["community"]):
+                    continue
+                if not any(k.crime["id"] == crime and k.degree != "suspects" for k in self.crimes.known(npc)):
+                    fact: Fact = {
+                        "fact": "rumor", "crime": crime, "from": via, "to": npc,
+                        "hops": 1, "at": when, "how": "called",
+                        "quest": f"crime:{crime}", "kind": deed["kind"], "about": source,
+                        "about_name": self.crimes.names(source), "title": self.crimes.describe(deed),
+                        "day": when // DAY_MINUTES,
+                    }
+                    await self.chronicle.record(fact)
+                    out.append(fact)
+            if any(self.is_guard(npc, deed["community"]) for npc in listeners):
+                if arrival := await self.inform(crime, via=via, how="called", at=when):
+                    out.append(arrival)
+            return out
+
+        return await self.chronicle.memory.complete(persist)
 
     def _times(self, facts: list[Fact]) -> dict[int, int]:
         stamps = {
@@ -181,33 +207,45 @@ class CrimeLaw:
             if (at := game_minutes(fact)) is not None or (at := stamps.get(index)) is not None
         }
 
-    def tick(self, now: int) -> list[Fact]:
+    async def tick(self, now: int) -> list[Fact]:
         """Advance reports using this branch's game minutes, preserving missing event clocks once.
 
         Event ordinals are stable when Chronicle copies a branch at a saved head. They identify the
         original fact without mutating shared facts or relying on process-local evidence after a load.
         """
-        self._branch, self._now = self.chronicle.branch, now
-        facts = self.chronicle.facts()
-        times = self._times(facts)
-        for index, fact in enumerate(facts):
-            if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
-                continue
-            if fact.get("fact") in _TIMED_FACTS and index not in times:
-                self.chronicle.record({"fact": "crime_law_time", "event": index, "at": now})
-        out = []
-        known = {(f.get("community"), f.get("crime")) for f in self.chronicle.facts("crime_known")}
-        # The earliest surviving route wins, including when a clock jump crosses several deadlines.
-        for report in sorted(self.deliveries(), key=lambda d: d.due):
-            key = (report.community, report.crime["id"])
-            if report.status != "pending" or report.due > now or key in known:
-                continue
-            if fact := self.inform(
-                report.crime["id"], via=report.via, how=report.how, at=report.due
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
             ):
-                known.add(key)
-                out.append(fact)
-        return out
+                raise GameError("session changed while recording crime state")
+            self._branch, self._now = self.chronicle.branch, now
+            facts = self.chronicle.facts()
+            times = self._times(facts)
+            for index, fact in enumerate(facts):
+                if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+                    continue
+                if fact.get("fact") in _TIMED_FACTS and index not in times:
+                    await self.chronicle.record({"fact": "crime_law_time", "event": index, "at": now})
+            out = []
+            known = {(f.get("community"), f.get("crime")) for f in self.chronicle.facts("crime_known")}
+            # The earliest surviving route wins, including when a clock jump crosses several deadlines.
+            for report in sorted(self.deliveries(), key=lambda d: d.due):
+                key = (report.community, report.crime["id"])
+                if report.status != "pending" or report.due > now or key in known:
+                    continue
+                if fact := await self.inform(
+                    report.crime["id"], via=report.via, how=report.how, at=report.due
+                ):
+                    known.add(key)
+                    out.append(fact)
+            return out
+
+        return await self.chronicle.memory.complete(persist)
 
     def deliveries(self) -> list[LawDelivery]:
         facts = self.chronicle.facts()
@@ -282,7 +320,7 @@ class CrimeLaw:
                 candidates.append((at, index, "repaid" if fact.get("paid") else "forgiven"))
         return min(candidates)[2] if candidates else ""
 
-    def absolve(
+    async def absolve(
         self,
         community: str | None,
         *,
@@ -290,30 +328,42 @@ class CrimeLaw:
         how: str = "paid",
     ) -> list[Fact]:
         """Pay known cases, or grant LOC_ALL absolution to every extant case, including pending ones."""
-        selected = set(crimes) if crimes is not None else None
-        out = []
-        for target in LAW_COMMUNITIES if community is None else (community,):
-            if target not in LAW_COMMUNITIES:
-                continue
-            candidates = (
-                self.crimes.facts() if community is None or selected is not None else self.unpaid(target)
-            )
-            paid = self._absolved(target)
-            ids = [
-                f["id"]
-                for f in candidates
-                if f.get("community") == target
-                and f["id"] not in paid
-                and (selected is None or f["id"] in selected)
-            ]
-            if not ids:
-                continue
-            fact: Fact = {"fact": "absolved", "community": target, "crimes": ids, "how": how}
-            if self.now is not None:
-                fact["at"] = self.now
-            self.chronicle.record(fact)
-            out.append(fact)
-        return out
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            selected = set(crimes) if crimes is not None else None
+            out = []
+            for target in LAW_COMMUNITIES if community is None else (community,):
+                if target not in LAW_COMMUNITIES:
+                    continue
+                candidates = (
+                    self.crimes.facts() if community is None or selected is not None else self.unpaid(target)
+                )
+                paid = self._absolved(target)
+                ids = [
+                    f["id"]
+                    for f in candidates
+                    if f.get("community") == target
+                    and f["id"] not in paid
+                    and (selected is None or f["id"] in selected)
+                ]
+                if not ids:
+                    continue
+                fact: Fact = {"fact": "absolved", "community": target, "crimes": ids, "how": how}
+                if self.now is not None:
+                    fact["at"] = self.now
+                await self.chronicle.record(fact)
+                out.append(fact)
+            return out
+
+        return await self.chronicle.memory.complete(persist)
 
     def summary(self) -> str:
         lines = []

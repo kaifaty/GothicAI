@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import json
 from pathlib import Path
@@ -13,6 +14,7 @@ from gothic_ai.protocol import (
     Hello,
     Loading,
     Result,
+    Session,
     parse_game_message,
 )
 
@@ -217,17 +219,51 @@ def test_raw_body_listener_keeps_original_json_values_after_cache_acceptance():
     assert link.body_stale_packets == 3
 
 
-async def test_receive_loop_exposes_original_body_packet_without_model_repacking():
+@pytest.mark.parametrize("async_session", [False, True])
+async def test_receive_loop_exposes_original_body_packet_without_model_repacking(async_session):
     original = packet()
+    entered, release, body_received, finish = (asyncio.Event() for _ in range(4))
 
     class StreamingConnection(Connection):
         async def _empty(self):
+            if async_session:
+                yield Session(type="session", branch="numeric-receive").model_dump_json()
             yield json.dumps({"type": "body_observations", "packet": original})
+            await finish.wait()
 
     link = GameLink(StreamingConnection())
     received = []
-    link.raw_body_listeners.append(received.append)
-    await link.run()
+    ordinary = []
+
+    def raw(packet):
+        received.append(packet)
+        body_received.set()
+
+    async def initialize(message):
+        if isinstance(message, Session):
+            entered.set()
+            await release.wait()
+
+    if async_session:
+        link.listeners.append(initialize)
+    link.listeners.append(ordinary.append)
+    link.raw_body_listeners.append(raw)
+    receiver = asyncio.create_task(link.run())
+    try:
+        if async_session:
+            await asyncio.wait_for(entered.wait(), 1)
+            ready = asyncio.create_task(link.wait_session_ready())
+            await asyncio.sleep(0)
+            assert not ready.done() and not ordinary and not received
+            release.set()
+            assert (await asyncio.wait_for(ready, 1)).branch == "numeric-receive"
+        await asyncio.wait_for(body_received.wait(), 1)
+        expected = [Session, BodyObservations] if async_session else [BodyObservations]
+        assert [type(m) for m in ordinary] == expected
+    finally:
+        release.set()
+        finish.set()
+        await receiver
     assert received == [original]
     assert isinstance(received[0]["observations"], list)
     assert isinstance(received[0]["observations"][0]["self"]["position_world_cm"], list)

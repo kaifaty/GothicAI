@@ -1,6 +1,7 @@
 import asyncio
 import json
 import random
+from unittest.mock import AsyncMock
 
 import pytest
 from websockets.asyncio.server import serve
@@ -55,7 +56,7 @@ def make(decider: FakeDecider | None = None, **cfg) -> tuple[NpcPlanner, FakeDec
 
 async def step(planner: NpcPlanner, clock: Clock, seconds: float = 0.0) -> None:
     clock.t += seconds
-    planner.tick(clock.t)
+    await planner.tick(clock.t)
     await settle()
 
 
@@ -175,8 +176,11 @@ async def test_new_npcs_get_spread_first_checks() -> None:
     assert len(plans) == 100 and len(set(plans)) == 100  # one per npc
 
 
-async def test_urgent_event_goes_to_urgent_lane_and_is_applied() -> None:
+@pytest.mark.parametrize("async_view", [False, True])
+async def test_urgent_event_goes_to_urgent_lane_and_is_applied(async_view) -> None:
     planner, decider, applier, clock = make()
+    view = ("You see the hero by the forge.",)
+    planner.view_of = AsyncMock(return_value=view) if async_view else lambda npc: view
     planner.on_roster([entry("SMITH", 5)], clock.t)
     planner.on_event("SMITH", "player_speech", clock.t, detail="Привет, кузнец!")
     await step(planner, clock)
@@ -184,6 +188,7 @@ async def test_urgent_event_goes_to_urgent_lane_and_is_applied() -> None:
     assert (call["lane"], call["deadline_ms"]) == ("urgent", 300)
     assert '"Привет, кузнец!"' in call["state"] and call["state"].startswith("You are Smith, a citizen")
     assert set(call["questions"]) == {"react"}
+    assert view[0] in call["state"]
     await settle()
     react = [d for d in applier.recent if d.question == "react"]
     assert react and react[0].choice == "greet" and react[0].stimuli == ("player_speech",)
@@ -1268,7 +1273,7 @@ async def test_native_held_threat_combat_waits_for_the_pilot(claimed) -> None:
             "type": "perception_held", "hold": "h1", "npc": "BANDIT",
             "kind": "npc_attack", "other": "CAVALORN"
         })))
-        planner.tick(clock.t)
+        await planner.tick(clock.t)
         # The pilot can start after the model's reaction was scheduled, before its native task runs.
         handled.add("BANDIT")
         await settle()

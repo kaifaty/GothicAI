@@ -391,7 +391,7 @@ async def crime_talk(
         await link.debug("player_goto", pos=(chest.pos[0], chest.pos[1], chest.pos[2] + 200))
         await link.debug("npc_goto", npc=LOBART, to="PC_HERO", distance=0)
         await link.debug("player_goto", waypoint="NW_FARM1_INHOUSE_02")
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         held = await dialogue.borrow_body(conv, "scenario-chest")
         try:
             opened = await link.act(

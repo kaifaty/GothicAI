@@ -72,8 +72,8 @@ async def _at_the_steps(
     await link.debug("player_goto", to=npc, distance=300)
     if not await _until(lambda: 0 <= dist(npc) <= 15, 20):
         return f"{npc} is not around the hero: {dist(npc):.1f} m"
-    dialogue.open(npc, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
-    talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
+    (await dialogue.open(npc, "Кавалорн")).intent = Intent("follow_hero", "PLAYER", "friendly")
+    await talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
     await _until(lambda: 0 <= dist(npc) <= 5, 20)
     await link.debug("player_goto", to=steps, distance=400)
     await link.debug("npc_goto", npc=brago, to=steps, distance=300)
@@ -155,8 +155,8 @@ async def group_scenario(
         and npc in talk.people and talk.people[npc].earshot <= 1000, 15,
     ):
         return _logged({"roster": "failed (bandits not in view or companion out of earshot)"})
-    talk.end("scenario")
-    opened = talk.begin(npc, names[npc])
+    await talk.end("scenario")
+    opened = await talk.begin(npc, names[npc])
     check(
         "current_companion",
         opened
@@ -167,11 +167,11 @@ async def group_scenario(
         talk.partner,
     )
     t0 = time.monotonic()
-    talk.hear("Пацаны, здорово!", None, {"via": "scenario"})
+    await talk.hear("Пацаны, здорово!", None, {"via": "scenario"})
     first = talk.last[0] if talk.last else None
     check("first", first is not None and first.id == brago and first.why == "group", first)
     for who in (bandit, npc, steps):  # as the fast loop's escalations would ask for words
-        dialogue.open(who, names[who])
+        await dialogue.open(who, names[who])
         dialogue.event_turn(who, "[Событие: герой сказал рядом: «Пацаны, здорово!»]", overlay=who != npc)
     quiet = await _until(
         lambda: time.monotonic() - t0 > 3 and not any(dialogue.speaking(n) for n in names), 40
@@ -231,7 +231,7 @@ async def group_scenario(
 
     link.listeners.append(on_line)
     mark = time.monotonic()
-    talk.hear("Кавалорн, это они тебя ограбили?", None, {"via": "scenario"})
+    await talk.hear("Кавалорн, это они тебя ограбили?", None, {"via": "scenario"})
     await _until(lambda: bool(brago_says.calls) and time.monotonic() - mark > 3, 40)
     await _until(lambda: not any(dialogue.speaking(n) for n in names), 40)
     await asyncio.gather(*watchers, return_exceptions=True)
@@ -324,7 +324,7 @@ async def interject_scenario(
     unasked: list[str] = []
     for text, focus in phrases:
         mark, seen, asked = time.monotonic(), len(entries), len(interject.asked)
-        talk.hear(text, focus, {"via": "scenario"})
+        await talk.hear(text, focus, {"via": "scenario"})
         await asyncio.sleep(2)
         await _until(lambda: not any(dialogue.speaking(n) for n in names), 60)
         await asyncio.sleep(3)  # one who speaks up asks for words after the answer
@@ -512,7 +512,7 @@ async def gossip_scenario(
         )
 
         # 2. an hour later: a jump of the clock stages nothing, and every pair is held
-        talk.end()
+        await talk.end()
         await link.debug("time", hour=10, minute=0)
         await asyncio.sleep(TICK_S + 1)
         held = f"{len(to_hilda())} fact(s), {gossip.scenes} scene(s)"
@@ -692,7 +692,7 @@ async def gossip_scenario(
         )
 
         # 7. far from the hero a pass is only the fact: no model, no words
-        talk.end()
+        await talk.end()
         social = rumors.social or social  # built again after the load
         r = rumor()
         acquainted = social.ties.get(HILDA, {})
@@ -713,7 +713,7 @@ async def gossip_scenario(
         for _ in range(3):
             # opened only within this synchronous call: no tick sees the pair open
             open_pairs.add((HILDA, other))
-            told = rumors.offer(r, HILDA, other)
+            told = await rumors.offer(r, HILDA, other)
             open_pairs.discard((HILDA, other))
             if told:
                 break
@@ -917,7 +917,7 @@ async def gossip_demo(
         await link.debug("time", hour=10, minute=0)
         await link.debug("skip_important", near=HILDA)  # her greeting would stop the hero
         day = int((await link.story_state()).get("day", 0))
-        rumors.chronicle.record(
+        await rumors.chronicle.record(
             {
                 "fact": "caught",
                 "quest": RUEBEN,

@@ -536,7 +536,7 @@ class DayDesk:
                 return
             result = await self._chat(npc, opt, since) if opt.kind == "chat" else "done"
             if result is not None and world == self._world:
-                self._record(npc, name, opt, result)
+                await self._record(npc, name, opt, result)
         finally:
             if world == self._world and self.walking.get(npc) is opt:
                 del self.walking[npc]
@@ -568,7 +568,7 @@ class DayDesk:
                     return None
             if self._told(r, npc, b, since):
                 return "told"
-            status = self.rumors.offer_status(r, npc, b, how="visited")
+            status = await self.rumors.offer_status(r, npc, b, how="visited")
             if status != "wait":
                 break
         if status == "told" or self._told(r, npc, b, since):
@@ -587,27 +587,44 @@ class DayDesk:
             for f in self.chronicle.facts("rumor")[since:]
         )
 
-    def _record(self, npc: str, name: str, opt: DayOption, outcome: str) -> None:
+    async def _record(self, npc: str, name: str, opt: DayOption, outcome: str) -> None:
         """The arrival's fact (principle 4): who, what, to whom, why, where, for how long, what came of it and
         who saw it."""
-        now, args = self._now(), opt.args or {}
-        place = self.book.of(args.get("waypoint")) if self.book is not None else None
-        fact: Fact = {"fact": "day", "npc": npc, "name": name, "what": opt.kind}
-        if opt.partner is not None:
-            fact |= {"to": opt.partner, "to_name": self._name(opt.partner)}
-        fact |= {
-            "concern": opt.concern,
-            "where": place.id if place is not None else None,
-            "minutes": args.get("minutes"),
-            "outcome": outcome,
-            "seen_by": self._seen_by(npc),
-            "day": now // DAY,
-            "hour": now % DAY // 60,
-            "minute": now % 60,
-        }
-        self.chronicle.record(fact)
-        self.last = (npc, opt, outcome)
-        self.journal.add("day", npc=npc, name=name, what=opt.kind, to=opt.partner, outcome=outcome)
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            now, args = self._now(), opt.args or {}
+            place = self.book.of(args.get("waypoint")) if self.book is not None else None
+            fact: Fact = {"fact": "day", "npc": npc, "name": name, "what": opt.kind}
+            if opt.partner is not None:
+                fact |= {"to": opt.partner, "to_name": self._name(opt.partner)}
+            fact |= {
+                "concern": opt.concern,
+                "where": place.id if place is not None else None,
+                "minutes": args.get("minutes"),
+                "outcome": outcome,
+                "seen_by": self._seen_by(npc),
+                "day": now // DAY,
+                "hour": now % DAY // 60,
+                "minute": now % 60,
+            }
+            await self.chronicle.record(fact)
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            self.last = (npc, opt, outcome)
+            self.journal.add("day", npc=npc, name=name, what=opt.kind, to=opt.partner, outcome=outcome)
+
+        return await self.chronicle.memory.complete(persist)
 
     def _failed(self, npc: str, name: str, opt: DayOption, outcome: BodyOutcome) -> None:
         """It never got there (gone, a timeout, rejected, lost, failed, or done: in the state and out of it
@@ -635,34 +652,51 @@ class DayDesk:
 
     # --- deaths seen ------------------------------------------------------------------------------
 
-    def _on_view(self, view: NpcView) -> None:
+    async def _on_view(self, view: NpcView) -> None:
         """A body the npc sees: an acquaintance's (a person's, not a creature's) is a death it saw, once."""
-        social = self.rumors.social
-        if social is None:
-            return
-        viewer = view.npc.upper()
-        known = social.ties.get(viewer, {})
-        for o in view.sees:
-            dead = o.id.upper()
-            if o.kind != "body" or o.guild >= PEOPLE_GUILDS or dead not in known:
-                continue
-            if (viewer, dead) in self._mourned:
-                continue
-            self._mourned.add((viewer, dead))
-            at = view.time if view.time is not None else self.rumors.clock
-            place = self.perception.place(view)
-            fact: Fact = {
-                "fact": "death_seen",
-                "npc": viewer,
-                "name": view.name,
-                "dead": dead,
-                "dead_name": o.name,
-                "where": place.id if place is not None else None,
-            }
-            if at is not None:
-                fact |= {"day": at // DAY, "hour": at % DAY // 60, "minute": at % 60}
-            self.chronicle.record(fact)
-            log.info("day: %s saw %s dead", viewer, dead)
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            social = self.rumors.social
+            if social is None:
+                return
+            viewer = view.npc.upper()
+            known = social.ties.get(viewer, {})
+            for o in view.sees:
+                dead = o.id.upper()
+                if o.kind != "body" or o.guild >= PEOPLE_GUILDS or dead not in known:
+                    continue
+                if (viewer, dead) in self._mourned:
+                    continue
+                at = view.time if view.time is not None else self.rumors.clock
+                place = self.perception.place(view)
+                fact: Fact = {
+                    "fact": "death_seen",
+                    "npc": viewer,
+                    "name": view.name,
+                    "dead": dead,
+                    "dead_name": o.name,
+                    "where": place.id if place is not None else None,
+                }
+                if at is not None:
+                    fact |= {"day": at // DAY, "hour": at % DAY // 60, "minute": at % 60}
+                await self.chronicle.record(fact)
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
+                self._mourned.add((viewer, dead))
+                log.info("day: %s saw %s dead", viewer, dead)
+
+        return await self.chronicle.memory.complete(persist)
 
     # --- the game ---------------------------------------------------------------------------------
 

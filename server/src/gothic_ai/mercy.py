@@ -145,10 +145,10 @@ class Mercy:
         return bool(battle and self._alive(npc) and self._ours(battle.opponent)
                     and (time.monotonic() - battle.last < 20 or self.dialogue.in_fight(npc)))
 
-    def _urgent(self, npc: str, cue: str, *, offer: bool = False) -> asyncio.Task | None:
+    async def _urgent(self, npc: str, cue: str, *, offer: bool = False) -> asyncio.Task | None:
         entry = self.orders.talk.people.get(npc)
-        conv = self.dialogue.open(npc, entry.name if entry else npc, warm=False)
-        self.dialogue.interrupt(npc)
+        conv = await self.dialogue.open(npc, entry.name if entry else npc, warm=False)
+        await self.dialogue.interrupt(npc)
         self.dialogue._cancel(conv)
         if offer:
             self.offering.add(npc)
@@ -160,7 +160,7 @@ class Mercy:
             turn.add_done_callback(lambda _: self.offering.discard(npc))
         return turn
 
-    def _hit(self, hit: CombatHit) -> None:
+    async def _hit(self, hit: CombatHit) -> None:
         npc, attacker = hit.npc.upper(), hit.by.upper()
         if self._ours(npc) or not self._ours(attacker):
             return
@@ -175,9 +175,9 @@ class Mercy:
             offers = self.chronicle.facts("mercy_offer")
             battle.offered = any(f["npc"] == npc and self._ticks - f["t"] < 20000 for f in offers)
         battle.last, battle.hp, battle.opponent = now, hit.hp, attacker
-        if attacker in {"PLAYER", "PC_HERO"} and self._betray(npc):
+        if attacker in {"PLAYER", "PC_HERO"} and await self._betray(npc):
             if not hit.dead and not hit.down:
-                self._urgent(
+                await self._urgent(
                     npc, "[Он сдался тебе и ударил. Перемирие снято. Реши по характеру, что делать.]",
                 )
             return
@@ -186,8 +186,8 @@ class Mercy:
             return
         if (surrender := self._latest(npc)) and surrender["status"] == "pending":
             if attacker in {"PLAYER", "PC_HERO"}:
-                self.chronicle.record({**surrender, "status": "attacked"})
-                self._urgent(
+                await self.chronicle.record({**surrender, "status": "attacked"})
+                await self._urgent(
                     npc, "[Ты сдался, а он бьёт. Реши сам: бежать, драться насмерть или молить ещё.]",
                 )
             return
@@ -215,27 +215,49 @@ class Mercy:
         if not low and (balance is None or "он опасен" not in balance):
             return
         battle.offered = True
-        self.chronicle.record({"fact": "mercy_offer", "npc": npc, "t": self._ticks})
+        await self.chronicle.record({"fact": "mercy_offer", "npc": npc, "t": self._ticks})
         attacker = hit.by.upper()
         who = "герой" if attacker in {"PLAYER", "PC_HERO"} else f"спутник героя {attacker}"
         plight = "ты тяжело ранен, сил почти не осталось" if low else "бой идёт против тебя"
-        self._urgent(
+        await self._urgent(
             npc, f"[Сейчас бой: {plight}; "
             f"бьёт {who}. {balance or ''} Реши по характеру и положению, сдаваться ли: surrender{{words}}. "
             "Можно продолжать драться, бежать или звать на помощь.]", offer=True,
         )
 
-    def _spare(self, npc: str) -> None:
-        fact = self._latest(npc)
-        if fact is None or fact["status"] != "pending" or not self._alive(npc):
-            return
-        self.chronicle.record({**fact, "status": "spared"})
-        self.dialogue.remember(npc, fact["name"], PARDON)
+    async def _spare(self, npc: str) -> None:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
 
-    def hero_said(self, npc: str) -> None:
-        self._spare(npc.upper())
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            fact = self._latest(npc)
+            if fact is None or fact["status"] != "pending" or not self._alive(npc):
+                return
+            await self.chronicle.record({**fact, "status": "spared"})
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            await self.dialogue.remember(npc, fact["name"], PARDON)
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
 
-    def _on_message(self, msg: GameMessage) -> None:
+        return await self.chronicle.memory.complete(persist)
+
+    async def hero_said(self, npc: str) -> None:
+        await self._spare(npc.upper())
+
+    async def _on_message(self, msg: GameMessage) -> None:
         if isinstance(msg, (Loading, Session)):
             if self._scene is not None:
                 self._scene.cancel()
@@ -250,7 +272,7 @@ class Mercy:
         if self._loading:
             return
         if isinstance(msg, CombatHit):
-            self._hit(msg)
+            await self._hit(msg)
             return
         if isinstance(msg, (Snapshot, NpcViews, NpcRoster)):
             self._ticks = msg.t
@@ -267,11 +289,11 @@ class Mercy:
                     elif view.hero and view.hero.weapon == "none":
                         fact = self._latest(view.npc)
                         if fact and fact.get("armed"):
-                            self._spare(view.npc.upper())
+                            await self._spare(view.npc.upper())
             latest = {f["npc"]: f for f in self.chronicle.facts("surrender")}
             for npc, fact in latest.items():
                 if fact["status"] == "pending" and msg.t >= fact["deadline"]:
-                    self._spare(npc)
+                    await self._spare(npc)
 
     async def prepare(self, npc: str) -> None:
         self.accepting.discard(npc)
@@ -348,18 +370,42 @@ class Mercy:
             self.link.listeners.remove(fired)
             await self.link.patch_graph([triggers.removal(key)])
 
-    def _betray(self, npc: str) -> bool:
-        fact = fresh_yield(self.chronicle, npc, self._ticks)
-        if fact is None or any(f["yield"] == fact["id"] for f in self.chronicle.facts("yield_broken")):
-            return False
-        self.chronicle.record({"fact": "yield_broken", "yield": fact["id"], "npc": npc, "t": self._ticks})
-        for truce in self.chronicle.facts("truce"):
-            if npc in truce["members"] and not any(
-                f["truce"] == truce["id"] for f in self.chronicle.facts("truce_broken")
+    async def _betray(self, npc: str) -> bool:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
             ):
-                self.chronicle.record({"fact": "truce_broken", "truce": truce["id"], "npc": npc,
-                                       "members": truce["members"], "reason": "yield_broken"})
-        return True
+                raise GameError("session changed while recording NPC state")
+            fact = fresh_yield(self.chronicle, npc, self._ticks)
+            if fact is None or any(f["yield"] == fact["id"] for f in self.chronicle.facts("yield_broken")):
+                return False
+            await self.chronicle.record(
+                {"fact": "yield_broken", "yield": fact["id"], "npc": npc, "t": self._ticks}
+            )
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            for truce in self.chronicle.facts("truce"):
+                if npc in truce["members"] and not any(
+                    f["truce"] == truce["id"] for f in self.chronicle.facts("truce_broken")
+                ):
+                    await self.chronicle.record({"fact": "truce_broken", "truce": truce["id"], "npc": npc,
+                                           "members": truce["members"], "reason": "yield_broken"})
+                    if (
+                        branch != self.chronicle.branch or generation != self.chronicle._generation
+                        or session is not self.chronicle.link.session
+                    ):
+                        raise GameError("session changed while recording NPC state")
+            return True
+
+        return await self.chronicle.memory.complete(persist)
 
     async def _ransom(self, npc: str, raw: object) -> tuple[list[Give], str | None, list[str]]:
         if not isinstance(raw, list) or any(not isinstance(x, str) for x in raw):
@@ -438,14 +484,14 @@ class Mercy:
             point = snap.npc.nearest_waypoint or snap.npc.waypoint
             place = self.places.of(point) if self.places else None
             where = place.ru if place else point or snap.world.name
-            self.chronicle.record({
+            await self.chronicle.record({
                 "fact": "humiliated", "npc": npc, "name": conv.persona.name, "hero": "PLAYER",
                 "place": place.id if place else point or snap.world.name, "place_name": where,
                 "time": self._now(), "t": self._ticks, "witnesses": list(witnesses),
             })
-            self.dialogue.remember(npc, conv.persona.name, f"Ты обмочил сдавшегося героя: у {where}.")
+            await self.dialogue.remember(npc, conv.persona.name, f"Ты обмочил сдавшегося героя: у {where}.")
             for witness, name in witnesses.items():
-                self.dialogue.remember(
+                await self.dialogue.remember(
                     witness, name, f"{conv.persona.name} обмочил сдавшегося героя у {where}.",
                 )
             hold = self.link.act(npc, "play_ani", name="S_PEE", hold_ms=PEE_HOLD_MS)
@@ -473,6 +519,7 @@ class Mercy:
         return completed
 
     async def _accept(self, conv: Conversation, call: ToolCall, snap: Snapshot | None) -> ToolOutcome:
+        session, world_generation = self.link.session, self.link.world_generation
         npc, now = conv.npc, self._now()
         if npc not in self.accepting or not self._hero_turn(npc) or not await self._hero_fight(npc):
             return ToolOutcome(
@@ -502,23 +549,37 @@ class Mercy:
         except (GameError, TimeoutError) as error:
             return ToolOutcome(f"Отклонено: не удалось принять сдачу ({error}).", "rejected")
         intent = Intent(attitude="wary")
-        self.dialogue._change_intent(conv, intent, snap, body=False)
+        await self.dialogue._change_intent(conv, intent, snap, body=False)
+        if (session is not self.link.session or world_generation != self.link.world_generation
+                or self.dialogue.conversations.get(npc) is not conv):
+            raise asyncio.CancelledError("Surrender belongs to an invalidated world")
         output, ok = await self.dialogue._calm(conv, intent, effects=[g.effect("self") for g in gives])
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            raise asyncio.CancelledError("Surrender belongs to an invalidated world")
         if not ok:
             return ToolOutcome(f"Отклонено: {output}", "rejected")
         self.accepting.discard(npc)
         if community is not None:
-            self.law.absolve(community, crimes=cases)
-        self.chronicle.record({
+            await self.law.absolve(community, crimes=cases)
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            raise asyncio.CancelledError("Surrender belongs to an invalidated world")
+        await self.chronicle.record({
             "fact": "hero_yield", "id": uuid.uuid4().hex, "npc": npc, "name": conv.persona.name,
             "t": self._ticks, "deadline": self._ticks + 60000, "until": (now // 1440 + 2) * 1440,
             "take": [g.fact() for g in gives],
         })
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            raise asyncio.CancelledError("Surrender belongs to an invalidated world")
         self.orders.truce(npc)
         if self.parley:
             await self.parley.accept_deal(npc, 1, now=now)
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            raise asyncio.CancelledError("Surrender belongs to an invalidated world")
         taken = "; ".join(f"{g.name} ×{g.count} ({g.item})" for g in gives) or "ничего, без выкупа"
-        self.dialogue.remember(npc, conv.persona.name, f"Герой сдался тебе в бою; ты взял: {taken}.")
+        await self.dialogue.remember(npc, conv.persona.name, f"Герой сдался тебе в бою; ты взял: {taken}.")
+        if (session is not self.link.session or world_generation != self.link.world_generation
+                or self.dialogue.conversations.get(npc) is not conv):
+            raise asyncio.CancelledError("Surrender belongs to an invalidated world")
         self.dialogue._drop_unvoiced(conv)
         await self.dialogue._say(conv, words.strip(), None, overlay=True)
         scene = await self._humiliate(conv) if humiliate else None
@@ -535,6 +596,7 @@ class Mercy:
             return await self._accept(conv, call, snap)
         if call.name != "surrender":
             return None
+        session, world_generation = self.link.session, self.link.world_generation
         if not self._alive(conv.npc):
             return ToolOutcome("Отклонено: ты мёртв или без сознания.", "rejected")
         if self.silent(conv.npc):
@@ -563,18 +625,28 @@ class Mercy:
                 f"Отклонено: игра не подтвердила исход сдачи ({type(error).__name__}: {error}).", "rejected",
             )
         intent = Intent(attitude="wary")
-        dialogue._change_intent(conv, intent, snap, body=False)
+        await dialogue._change_intent(conv, intent, snap, body=False)
+        if (session is not self.link.session or world_generation != self.link.world_generation
+                or dialogue.conversations.get(conv.npc) is not conv):
+            raise asyncio.CancelledError("Surrender belongs to an invalidated world")
         _, ok = await dialogue._calm(conv, intent)
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            raise asyncio.CancelledError("Surrender belongs to an invalidated world")
         if not ok:
             return ToolOutcome("Отклонено: тело не смогло прекратить бой.", "rejected")
-        self.chronicle.record({
+        await self.chronicle.record({
             "fact": "surrender", "npc": conv.npc, "name": conv.persona.name,
             "until": (now // 1440 + 2) * 1440, "deadline": self._ticks + 20000,
             "status": "pending", "armed": self._armed,
         })
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            raise asyncio.CancelledError("Surrender belongs to an invalidated world")
         self.orders.truce(conv.npc)
         if self.parley:
             await self.parley.accept_deal(conv.npc, 1, now=now)
+        if (session is not self.link.session or world_generation != self.link.world_generation
+                or dialogue.conversations.get(conv.npc) is not conv):
+            raise asyncio.CancelledError("Surrender belongs to an invalidated world")
         dialogue._drop_unvoiced(conv)
         await dialogue._say(conv, words.strip(), None, overlay=True)
         return ToolOutcome(

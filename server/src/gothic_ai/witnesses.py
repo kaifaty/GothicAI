@@ -33,8 +33,9 @@ about it (initiative.py), once.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -250,7 +251,8 @@ class Witnesses:
         self.all_tools = (ASK_TOOL if npc_crimes else HERO_ASK_TOOL,)
         self.cards = cards if cards is not None else {}
         self.people_knowledge = people_knowledge or PeopleKnowledge(chronicle)
-        self.on_change: list[Callable[[str], None]] = []  # an asker whose concerns changed with time
+        # An asker whose concerns changed with time.
+        self.on_change: list[Callable[[str], Awaitable[None] | None]] = []
         self.now = 0  # the game's clock as the latest story_state had it (minutes); 0: not known
         self.inquiries: dict[str, Inquiry] = {}  # far questions not asked yet
         self._near: dict[str, list[Candidate]] = {}  # asker -> whom it may ask, from the last prepare
@@ -450,7 +452,7 @@ class Witnesses:
                 c.meets or 0,
                 about, about_name,
             )
-            self._inquire(q)
+            await self._inquire(q)
             return ToolOutcome(
                 f"Принято: спросишь при встрече ({self._at(q.meets)}): {c.name}; ответ узнаешь потом.",
                 "accepted",
@@ -537,7 +539,7 @@ class Witnesses:
         """Near: it calls the witness over; a walk: it goes to the witness and back. Then the witness tells
         what it saw (aloud, if the hero hears) and the asker reacts."""
         npc, name = conv.npc, conv.persona.name
-        wconv = self.dialogue.open(c.npc, c.name)
+        wconv = await self.dialogue.open(c.npc, c.name)
         held = await self.dialogue.borrow_body(conv, "witness")
         wheld = False
         t: Testimony | None = None
@@ -588,7 +590,7 @@ class Witnesses:
             return "", False
         if asking is not None and not asking.done() and asking is not asyncio.current_task():
             await asyncio.wait({asking}, timeout=WAIT_S)  # the reaction is a turn of its own, not pending
-        self._react(npc, t)
+        await self._react(npc, t)
         return "", True
 
     async def _speak(self, wconv: Conversation, t: Testimony) -> None:
@@ -652,7 +654,7 @@ class Witnesses:
         except TimeoutError:
             log.info("witness %s: its words took too long", wconv.npc)
 
-    def _react(self, npc: str, t: Testimony) -> None:
+    async def _react(self, npc: str, t: Testimony) -> None:
         """The asker hears the answer: whether it contradicts the hero is its own judgment."""
         cue = (
             f"[Ответ: {self._told(t)}. Улики — строки С1… в «Что тебе рассказали о герое другие». "
@@ -678,7 +680,7 @@ class Witnesses:
                 npc, cue, tools=tools, kind="witness"
             )
         else:
-            self.dialogue.note(npc, cue.strip("[]"))
+            await self.dialogue.note(npc, cue.strip("[]"))
 
     async def _testify(
         self, id: str | None, npc: str, name: str, witness: str, wname: str, said: str, tier: str, at: int,
@@ -689,9 +691,21 @@ class Witnesses:
         """
         if about != HERO and not self.npc_crimes_enabled:
             return None
-        branch = self.chronicle.branch
+        branch, session = self.chronicle.branch, self.link.session
+        generation = self.link.world_generation
+        await self.sightings.prepare(witness)
+        if (
+            self.chronicle.branch != branch
+            or session is not self.link.session
+            or generation != self.link.world_generation
+        ):
+            return None
         state = await self._state()
-        if self.chronicle.branch != branch:
+        if (
+            self.chronicle.branch != branch
+            or session is not self.link.session
+            or generation != self.link.world_generation
+        ):
             return None  # another world: this answer belongs to none of its facts
         now = self._now()
         at = at or now
@@ -703,7 +717,11 @@ class Witnesses:
         )
         if about == HERO and self.gate_claim is not None:
             t.gate_claim = await self.gate_claim(witness, npc, said) or ""
-            if self.chronicle.branch != branch:
+            if (
+                self.chronicle.branch != branch
+                or session is not self.link.session
+                or generation != self.link.world_generation
+            ):
                 return None
         t.told = list(saw)
         if self.crimes is not None and about == HERO:
@@ -719,48 +737,76 @@ class Witnesses:
             self._npc_evidence(t)
         elif self.cover_enabled and not t.gate_claim:
             self._cover(t)
-        crime_excuses = {}
-        if self.crimes is not None and about == HERO:
-            for crime_id in t.crime_told:
-                if crime := self.crimes.crime(crime_id):
-                    # Recording knowledge synchronously changes attitudes and informs the law.
-                    self.crimes.learn_side(npc, crime)
-                if self.crimes.side(witness, crime_id) is not None:
-                    crime_excuses[crime_id] = {
-                        **self.crimes.excuse(witness, crime_id), "excuse_by_name": wname,
-                    }
-        self.chronicle.record(
-            {
-                "fact": "testimony",
-                "id": t.id,
-                "npc": npc,
-                "name": name,
-                "witness": witness,
-                "witness_name": wname,
-                "said": said,
-                "tier": tier,
-                "at": at,
-                **({"about": about, "about_name": about_name} if about != HERO else {}),
-                "saw": [s.record() for s in t.saw],
-                "told": [s.record() for s in t.told],
-                **({"crime_saw": t.crime_saw, "crime_told": t.crime_told} if t.crime_saw else {}),
-                **({"crime_excuses": crime_excuses} if crime_excuses else {}),
-                **({"cover": t.cover, "vouch": t.vouch} if t.cover else {}),
-                **({"gate_claim": t.gate_claim} if t.gate_claim else {}),
-                "minute": now,
-                **({"day": int(state["day"])} if "day" in state else {}),
-            }
-        )
-        if about == HERO:
-            self._betrayal(t)
-        self.journal.add("testimony", npc=npc, name=name, witness=witness, saw=len(t.saw), tier=tier)
-        self.dialogue.remember(
-            witness, wname,
-            f"Тебя расспрашивали о {about_name or 'герое'} ({name}): герой говорит «{said}»",
-        )
-        if tier == "far":
-            self.dialogue.remember(npc, name, f"Ты расспросил при встрече: {self._told(t)}")
-        return t
+        memory_generation = self.chronicle._generation
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or memory_generation != self.chronicle._generation
+                or session is not self.link.session or generation != self.link.world_generation
+            ):
+                return None
+            crime_excuses = {}
+            if self.crimes is not None and about == HERO:
+                for crime_id in t.crime_told:
+                    if crime := self.crimes.crime(crime_id):
+                        # Recording knowledge synchronously changes attitudes and informs the law.
+                        await self.crimes.learn_side(npc, crime)
+                        if (
+                            self.chronicle.branch != branch
+                            or session is not self.link.session
+                            or generation != self.link.world_generation
+                        ):
+                            return None
+                    if self.crimes.side(witness, crime_id) is not None:
+                        crime_excuses[crime_id] = {
+                            **self.crimes.excuse(witness, crime_id), "excuse_by_name": wname,
+                        }
+            await self.chronicle.record(
+                {
+                    "fact": "testimony",
+                    "id": t.id,
+                    "npc": npc,
+                    "name": name,
+                    "witness": witness,
+                    "witness_name": wname,
+                    "said": said,
+                    "tier": tier,
+                    "at": at,
+                    **({"about": about, "about_name": about_name} if about != HERO else {}),
+                    "saw": [s.record() for s in t.saw],
+                    "told": [s.record() for s in t.told],
+                    **({"crime_saw": t.crime_saw, "crime_told": t.crime_told} if t.crime_saw else {}),
+                    **({"crime_excuses": crime_excuses} if crime_excuses else {}),
+                    **({"cover": t.cover, "vouch": t.vouch} if t.cover else {}),
+                    **({"gate_claim": t.gate_claim} if t.gate_claim else {}),
+                    "minute": now,
+                    **({"day": int(state["day"])} if "day" in state else {}),
+                }
+            )
+            if (
+                self.chronicle.branch != branch
+                or session is not self.link.session
+                or generation != self.link.world_generation
+            ):
+                return None
+            if about == HERO:
+                await self._betrayal(t)
+            self.journal.add("testimony", npc=npc, name=name, witness=witness, saw=len(t.saw), tier=tier)
+            await self.dialogue.remember(
+                witness, wname,
+                f"Тебя расспрашивали о {about_name or 'герое'} ({name}): герой говорит «{said}»",
+            )
+            if (branch != self.chronicle.branch or memory_generation != self.chronicle._generation
+                    or session is not self.link.session or generation != self.link.world_generation):
+                return None
+            if tier == "far":
+                await self.dialogue.remember(npc, name, f"Ты расспросил при встрече: {self._told(t)}")
+                if (branch != self.chronicle.branch or memory_generation != self.chronicle._generation
+                        or session is not self.link.session or generation != self.link.world_generation):
+                    return None
+            return t
+
+        return await self.chronicle.memory.complete(persist)
 
     def _subject(self, npc: str, who: str) -> tuple[str, str] | None:
         """Resolve a named human, including one absent from the current view; never the hero."""
@@ -895,92 +941,150 @@ class Witnesses:
                 covers.append({"npc": f.get("npc"), "deal": f.get("deal"), **f["cover"]})
         return covers
 
-    def _betrayal(self, t: Testimony) -> None:
+    async def _betrayal(self, t: Testimony) -> None:
         """Only evidence actually disclosed reveals a broken silence or cover in the Chronicle."""
-        deals = {
-            str(f.get("deal", ""))
-            for crime in t.crime_told
-            for f in broken_promises(
-                self.chronicle, t.witness, crime=crime, cover=self.cover_enabled, at=t.minute,
-            )
-        }
-        if self.cover_enabled:
-            for f in self.chronicle.facts("deal"):
-                promise = f.get("cover")
-                deal = str(f.get("deal", ""))
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            deals = {
+                str(f.get("deal", ""))
+                for crime in t.crime_told
+                for f in broken_promises(
+                    self.chronicle, t.witness, crime=crime, cover=self.cover_enabled, at=t.minute,
+                )
+            }
+            if self.cover_enabled:
+                for f in self.chronicle.facts("deal"):
+                    promise = f.get("cover")
+                    deal = str(f.get("deal", ""))
+                    if (
+                        str(f.get("npc", "")).upper() != t.witness
+                        or not isinstance(promise, dict) or keeps(self.chronicle, deal, "cover")
+                    ):
+                        continue
+                    crime = self.crimes.crime(str(promise.get("crime", ""))) if self.crimes else None
+                    places = (self.crimes.places if self.crimes else None) or self.desk.places
+                    place = places.of(crime.get("waypoint")) if places is not None and crime else None
+                    at = _crime_minute(crime) if crime else 0
+                    if any(
+                        _covered(s, promise.get("day"), place.id if place else "", at)
+                        for s in t.told
+                    ):
+                        deals.add(deal)
+            for deal in deals:
+                await betrayed(self.chronicle, t.witness, deal, "testified", t.npc)
                 if (
-                    str(f.get("npc", "")).upper() != t.witness
-                    or not isinstance(promise, dict) or keeps(self.chronicle, deal, "cover")
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def _on_fact(self, f: Fact) -> None:
+        """Catching the same words by another route also reveals the covering witness."""
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            if not self.cover_enabled or f.get("fact") != "caught" or not f.get("said"):
+                return
+            npc = str(f.get("npc", "")).upper()
+            words = roots(str(f.get("title", "")))
+            by = f.get("quest", "")
+            for fact in self.chronicle.facts("testimony"):
+                if (
+                    fact.get("npc") != npc or not fact.get("cover")
+                    or not words or not words <= roots(str(fact.get("said", "")))
                 ):
                     continue
-                crime = self.crimes.crime(str(promise.get("crime", ""))) if self.crimes else None
-                places = (self.crimes.places if self.crimes else None) or self.desk.places
-                place = places.of(crime.get("waypoint")) if places is not None and crime else None
-                at = _crime_minute(crime) if crime else 0
+                t = Testimony.of(fact)
+                lied = (
+                    bool(t.vouch)
+                    or any(s.record() not in [r.record() for r in t.told] for s in t.saw)
+                    or bool(set(t.crime_saw) - set(t.crime_told))
+                )
+                if not lied or f.get("testimony") == t.id:
+                    continue
                 if any(
-                    _covered(s, promise.get("day"), place.id if place else "", at)
-                    for s in t.told
+                    e.get("npc") == npc and e.get("testimony") == t.id
+                    for e in self.chronicle.facts("exposed")
                 ):
-                    deals.add(deal)
-        for deal in deals:
-            betrayed(self.chronicle, t.witness, deal, "testified", t.npc)
+                    continue
+                now = self._now()
+                await self.chronicle.record({
+                    "fact": "exposed", "npc": npc, "liar": t.witness, "testimony": t.id,
+                    "by": by, "cover": t.cover, "name": t.name, "subject_name": t.witness_name,
+                    "day": now // DAY, "at": now,
+                })
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
+                what = (
+                    f"{t.witness_name} побоялся(ась) сказать правду"
+                    if t.cover == "fear"
+                    else f"{t.witness_name} тебя обманул(а), покрывая героя"
+                )
+                await self.dialogue.remember(npc, t.name, what)
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
 
-    def _on_fact(self, f: Fact) -> None:
-        """Catching the same words by another route also reveals the covering witness."""
-        if not self.cover_enabled or f.get("fact") != "caught" or not f.get("said"):
-            return
-        npc = str(f.get("npc", "")).upper()
-        words = roots(str(f.get("title", "")))
-        by = f.get("quest", "")
-        for fact in self.chronicle.facts("testimony"):
-            if (
-                fact.get("npc") != npc or not fact.get("cover")
-                or not words or not words <= roots(str(fact.get("said", "")))
-            ):
-                continue
-            t = Testimony.of(fact)
-            lied = (
-                bool(t.vouch)
-                or any(s.record() not in [r.record() for r in t.told] for s in t.saw)
-                or bool(set(t.crime_saw) - set(t.crime_told))
-            )
-            if not lied or f.get("testimony") == t.id:
-                continue
-            if any(
-                e.get("npc") == npc and e.get("testimony") == t.id
-                for e in self.chronicle.facts("exposed")
-            ):
-                continue
-            now = self._now()
-            self.chronicle.record({
-                "fact": "exposed", "npc": npc, "liar": t.witness, "testimony": t.id,
-                "by": by, "cover": t.cover, "name": t.name, "subject_name": t.witness_name,
-                "day": now // DAY, "at": now,
-            })
-            what = (
-                f"{t.witness_name} побоялся(ась) сказать правду"
-                if t.cover == "fear"
-                else f"{t.witness_name} тебя обманул(а), покрывая героя"
-            )
-            self.dialogue.remember(npc, t.name, what)
+        return await self.chronicle.memory.complete(persist)
 
-    def _inquire(self, q: Inquiry) -> None:
-        self.inquiries[q.id] = q
-        self.chronicle.record(
-            {
-                "fact": "inquiry",
-                "id": q.id,
-                "npc": q.npc,
-                "name": q.name,
-                "witness": q.witness,
-                "witness_name": q.witness_name,
-                "said": q.said,
-                "minute": q.minute,
-                "meets": q.meets,
-                **({"about": q.about, "about_name": q.about_name} if q.about != HERO else {}),
-            }
+    async def _inquire(self, q: Inquiry) -> None:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
         )
-        self.journal.add("ask_witness", npc=q.npc, name=q.name, witness=q.witness, tier="far", said=q.said)
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            await self.chronicle.record(
+                {
+                    "fact": "inquiry",
+                    "id": q.id,
+                    "npc": q.npc,
+                    "name": q.name,
+                    "witness": q.witness,
+                    "witness_name": q.witness_name,
+                    "said": q.said,
+                    "minute": q.minute,
+                    "meets": q.meets,
+                    **({"about": q.about, "about_name": q.about_name} if q.about != HERO else {}),
+                }
+            )
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            self.inquiries[q.id] = q
+            self.journal.add(
+                "ask_witness", npc=q.npc, name=q.name, witness=q.witness, tier="far", said=q.said
+            )
+
+        return await self.chronicle.memory.complete(persist)
 
     # --- the far questions, on the game's clock ---------------------------------------------------
 
@@ -1004,7 +1108,7 @@ class Witnesses:
             if self.chronicle.branch != branch:
                 return  # a load: the new branch's questions are taken at the next tick
             if q.npc in dead or q.witness in dead:
-                self._lapse(q, "dead")
+                await self._lapse(q, "dead")
             elif self.now >= q.meets and q.id in self.inquiries:
                 try:
                     await self._testify(
@@ -1017,14 +1121,17 @@ class Witnesses:
                     q.attempts += 1
                     log.info("witnesses: inquiry %s attempt %d/3 failed: %s", q.id, q.attempts, err)
                     if q.attempts >= 3:
-                        self._lapse(q, "error")
+                        await self._lapse(q, "error")
                     continue
                 if self.chronicle.branch != branch:
                     return
                 self.inquiries.pop(q.id, None)
         for npc in self._expire():
             for listener in self.on_change:
-                listener(npc)
+                if self.chronicle.branch != branch:
+                    return
+                if inspect.isawaitable(result := listener(npc)):
+                    await result
 
     def _windows(self) -> bool:
         """Far answers still on someone's mind (their concern ends with time, which nobody else notices)."""
@@ -1050,14 +1157,36 @@ class Witnesses:
                 out.append(str(f.get("npc", "")).upper())
         return list(dict.fromkeys(out))
 
-    def _lapse(self, q: Inquiry, why: str) -> None:
-        self.inquiries.pop(q.id, None)
-        self.chronicle.record({"fact": "inquiry_lapsed", "id": q.id, "why": why})
-        self.dialogue.remember(
-            q.npc,
-            q.name,
-            f"Ты так и не расспросил о словах героя «{q.said}» того, кого хотел: {q.witness_name}",
+    async def _lapse(self, q: Inquiry, why: str) -> None:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
         )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            await self.chronicle.record({"fact": "inquiry_lapsed", "id": q.id, "why": why})
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            self.inquiries.pop(q.id, None)
+            await self.dialogue.remember(
+                q.npc,
+                q.name,
+                f"Ты так и не расспросил о словах героя «{q.said}» того, кого хотел: {q.witness_name}",
+            )
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+
+        return await self.chronicle.memory.complete(persist)
 
     # --- helpers --------------------------------------------------------------------------------
 

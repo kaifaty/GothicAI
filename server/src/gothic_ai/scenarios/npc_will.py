@@ -405,7 +405,7 @@ async def npc_will(
             return False
         assert rumor is not None
         rumors.gate = lambda r, a, b: r.key == rumor.key and (a, b) == (VINO, LOBART)
-        status = rumors.offer_status(rumor, VINO, LOBART)
+        status = await rumors.offer_status(rumor, VINO, LOBART)
         rumors.gate = lambda *_: False
         return check(
             f"{label}_owner_heard", status == "told"
@@ -559,7 +559,7 @@ async def npc_will(
         await link.debug("npc_goto", npc=LOBART, to=HERO_INSTANCE, distance=0)
         await link.debug("player_goto", waypoint=HOUSE)
         preparing.add(LOBART)
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         held = await dialogue.borrow_body(conv, "scenario-npc-will-chest")
         try:
             opened = await link.act(LOBART, "use_chest", chest=CHEST, take=[], put=[], timeout=90)

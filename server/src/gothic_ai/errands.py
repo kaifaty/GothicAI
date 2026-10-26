@@ -199,6 +199,15 @@ class Errands:
         link.listeners.append(self._on_message)
         self._load()
 
+    def _context(self) -> tuple[str, Session | None, int]:
+        return self.chronicle.branch, self.link.session, self.link.world_generation
+
+    def _check_context(self, context: tuple[str, Session | None, int], g: Goal | None = None) -> None:
+        if (self.chronicle.branch != context[0] or self.link.session is not context[1]
+                or self.link.world_generation != context[2]
+                or (g is not None and self.goals.get(g.id) is not g)):
+            raise asyncio.CancelledError
+
     def social(self) -> Social | None:
         rumors = self.rumors()
         return rumors.social if rumors is not None else None
@@ -249,7 +258,10 @@ class Errands:
 
     async def prepare(self, npc: str) -> None:
         npc = npc.upper()
-        self._may[npc] = await self.guide.free(npc)
+        context = self._context()
+        why = await self.guide.free(npc)
+        self._check_context(context)
+        self._may[npc] = why
 
     def tools(self, npc: str) -> list[Tool]:
         npc = npc.upper()
@@ -288,9 +300,11 @@ class Errands:
 
     async def plan(self, npc: str, name: str, raw: Any, snap: Snapshot | None) -> tuple[Goal | None, str]:
         """The goal of a `plan` call, recorded, or None with why not (Russian, for the model)."""
+        context = self._context()
         raw = raw if isinstance(raw, dict) else {}
         npc = npc.upper()
         why = self._may[npc] if npc in self._may else await self.guide.free(npc)
+        self._check_context(context)
         if why:
             return None, why
         social = self.social()
@@ -337,10 +351,15 @@ class Errands:
             why = self._thing(goal, str(raw.get("item") or ""), raw.get("count"), snap)
             if why:
                 return None, why
-        self.goals[goal.id] = goal
-        self.chronicle.record(goal.fact())
-        self.journal.add("goal", npc=npc, name=name, goal=goal.id, what=goal.what(), start=start)
-        log.info("goal %s of %s: %s, %s", goal.id, npc, goal.what(), goal.when(now))
+        async def persist() -> None:
+            self._check_context(context)
+            await self.chronicle.record(goal.fact())
+            self._check_context(context)
+            self.goals[goal.id] = goal
+            self.journal.add("goal", npc=npc, name=name, goal=goal.id, what=goal.what(), start=start)
+            log.info("goal %s of %s: %s, %s", goal.id, npc, goal.what(), goal.when(now))
+
+        await self.chronicle.memory.complete(persist)
         return goal, ""
 
     def _who(self, npc: str, raw: str, social: Social) -> tuple[str | None, str]:
@@ -430,15 +449,24 @@ class Errands:
             if not any(g.state in OPEN for g in self.goals.values()):  # "there" waits by the clock too
                 continue
             await self.link.wait_world()
+            context = self._context()
             try:
                 state = await self.link.story_state()
             except (GameError, TimeoutError) as err:
                 log.info("errands: %s", str(err) or type(err).__name__)
                 continue
-            if all(k in state for k in ("day", "hour", "minute")):
-                self.tick(int(state["day"]) * DAY + int(state["hour"]) * 60 + int(state["minute"]))
+            try:
+                self._check_context(context)
+                if all(k in state for k in ("day", "hour", "minute")):
+                    await self.tick(int(state["day"]) * DAY + int(state["hour"]) * 60 + int(state["minute"]))
+            except asyncio.CancelledError:
+                if (asyncio.current_task().cancelling()
+                        or (self.chronicle.branch == context[0] and self.link.session is context[1]
+                            and self.link.world_generation == context[2])):
+                    raise
+                continue
 
-    def tick(self, now: int) -> None:
+    async def tick(self, now: int) -> None:
         """What comes of each goal at `now` (a game minute)."""
         self.now = now
         for g in list(self.goals.values()):
@@ -446,17 +474,22 @@ class Errands:
                 g.state = "leaving"
                 self._spawn(self._set_off(g, now, self._world))
             elif g.state == "away" and now >= g.arrive:
-                self._far(g)
+                await self._far(g)
 
     async def _set_off(self, g: Goal, now: int, world: int) -> None:
         """It sets off: in front of the hero for real, else only in the world's reckoning. Where the hero is
         now: a fresh snapshot (the cached one may be from before he went off, a teleport, a load)."""
+        if world != self._world:
+            return
+        context = self._context()
+        self._check_context(context, g)
         hero, here = await self._now_where(g.npc, now)
+        self._check_context(context, g)
         if world != self._world or g.state != "leaving":
             return
         there = self._spot(g.to, now)
         if there is None or here is None:
-            return self._fail(g, f"не знал, где {g.to_name}")
+            return await self._fail(g, f"не знал, где {g.to_name}")
         walk = _walk_min(here, there.pos)
         there = self._spot(g.to, now + walk) or there
         near = hero is not None and (
@@ -491,7 +524,13 @@ class Errands:
 
     async def _walk(self, g: Goal, there: Spot, walk: int, world: int) -> None:
         """There for real, and what it came for."""
-        if not (g.do == "give" and await self._by(g.npc, g.to)):  # a give to one right by it: no walk first
+        if world != self._world:
+            return
+        context = self._context()
+        self._check_context(context, g)
+        nearby = g.do == "give" and await self._by(g.npc, g.to)
+        self._check_context(context, g)
+        if not nearby:  # a give to one right by it: no walk first
             out = await self.bodies.act(
                 g.npc,
                 "start_activity",
@@ -502,19 +541,22 @@ class Errands:
                 radius=500,
                 timeout=WALK_S,
             )
+            self._check_context(context, g)
             if world != self._world or g.state != "going":
                 return  # a load, or it is over meanwhile
             if out.status != "arrived":
-                return self._cut_off(g, out.status, out.detail)
+                return await self._cut_off(g, out.status, out.detail)
+        self._check_context(context, g)
         g.state = "there"
         await self._find(g, world)
+        self._check_context(context, g)
 
-    def _cut_off(self, g: Goal, status: str, detail: str) -> None:
+    async def _cut_off(self, g: Goal, status: str, detail: str) -> None:
         if not (status == "rejected" and "busy" in detail):  # held for a talk: not a try, only later
             g.tries += 1
         log.info("goal %s: %s's walk %s (%s), try %d", g.id, g.npc, status, detail, g.tries)
         if g.tries >= TRIES:
-            return self._fail(g, f"так и не дошёл туда, где {g.to_name}")
+            return await self._fail(g, f"так и не дошёл туда, где {g.to_name}")
         g.state, g.retry = "agreed", (self.now or g.start) + RETRY_MIN
 
     async def _by(self, npc: str, other: str) -> bool:
@@ -526,11 +568,16 @@ class Errands:
     async def _find(self, g: Goal, world: int) -> None:
         """It looks for the other there. The fork: another of its guild hears it, or it waits, then gives
         up."""
+        if world != self._world:
+            return
+        context = self._context()
+        self._check_context(context, g)
         social = self.social()
         until = (self.now or g.start) + WAIT_MIN
         while world == self._world and g.state == "there":
             try:
                 people = await self.link.story_nearby(g.npc, FIND_CM)
+                self._check_context(context, g)
             except (GameError, TimeoutError) as err:
                 log.info("goal %s: %s", g.id, str(err) or type(err).__name__)
                 people = []
@@ -550,8 +597,9 @@ class Errands:
                     log.info("goal %s: %s is not there, %s hears it instead", g.id, g.to, others[0]["npc"])
                     return await self._near(g, str(others[0]["npc"]))
             if self.now is not None and self.now >= until:
-                return self._fail(g, f"не застал на месте: {g.to_name}")
+                return await self._fail(g, f"не застал на месте: {g.to_name}")
             await asyncio.sleep(TICK_S)
+            self._check_context(context, g)
 
     def _of(self, g: Goal) -> Rumor | None:
         rumors = self.rumors()
@@ -560,64 +608,86 @@ class Errands:
     async def _near(self, g: Goal, to: str) -> None:
         """What it came for, in the world as it is: tell it (a scene in front of the hero), or hand it
         over."""
+        context = self._context()
+        self._check_context(context, g)
         if g.do == "give":
             out = await self.bodies.act(g.npc, "give", npc=to, item=g.item, count=g.count, timeout=GIVE_S)
+            self._check_context(context, g)
             if out.status != "done":
-                return self._fail(g, f"не отдал ({out.status}: {out.detail}) — кому: {g.to_name}")
+                return await self._fail(g, f"не отдал ({out.status}: {out.detail}) — кому: {g.to_name}")
             seen = await self._seen_by(g.npc, to)
-            self._gave(g, to, seen)
-            return self._done(g, to, "near")
+            self._check_context(context, g)
+            async def delivered() -> None:
+                self._check_context(context, g)
+                await self._gave(g, to, seen)
+                await self._done(g, to, "near")
+
+            return await self.chronicle.memory.complete(delivered)
         if g.rumor.startswith("gate:"):
             return await self._tell_gate(g, to, "near", self._world)
         rumors, rumor = self.rumors(), self._of(g)
         if rumors is None or rumor is None:
-            return self._fail(g, "забыл, о чём хотел рассказать")
+            return await self._fail(g, "забыл, о чём хотел рассказать")
         for _ in range(TELL_TRIES):
-            status = rumors.tell(rumor, g.npc, to)
+            status = await rumors.tell(rumor, g.npc, to)
+            self._check_context(context, g)
             if status != "wait":
                 break
             await asyncio.sleep(TELL_EVERY_S)
+            self._check_context(context, g)
         if status == "wait":
-            return self._fail(g, f"так и не улучил минуту рассказать — кому: {g.to_name}")
-        self._done(g, to, "near" if status == "told" else "knew")
+            return await self._fail(g, f"так и не улучил минуту рассказать — кому: {g.to_name}")
+        await self._done(g, to, "near" if status == "told" else "knew")
+        self._check_context(context, g)
 
-    def _far(self, g: Goal) -> None:
+    async def _far(self, g: Goal) -> None:
         """Far from the hero, at the minute it would be there: the outcome as a fact, no walk, no model."""
+        context = self._context()
+        self._check_context(context, g)
         social, rumors = self.social(), self.rumors()
         spot = social.spot(g.to, g.arrive) if social is not None else None
         there = spot is not None and "SLEEP" not in spot.state and (rumors is None or g.to not in rumors.dead)
         if g.do == "give":
             if not there:
-                return self._fail(g, f"не застал на месте: {g.to_name}")
+                return await self._fail(g, f"не застал на месте: {g.to_name}")
             self._spawn(self._give_far(g, self._world))
             return
         if g.rumor.startswith("gate:"):
             if not there:
-                return self._fail(g, f"не застал на месте: {g.to_name}")
+                return await self._fail(g, f"не застал на месте: {g.to_name}")
             g.state = "there"
             self._spawn(self._tell_gate(g, g.to, "far", self._world))
             return
         rumor = self._of(g)
         if rumors is None or rumor is None:
-            return self._fail(g, "забыл, о чём хотел рассказать")
+            return await self._fail(g, "забыл, о чём хотел рассказать")
         to = g.to if there else self._stand_in(g, rumor)
         if to is None:
-            return self._fail(g, f"не застал на месте: {g.to_name}")
-        status = rumors.tell(rumor, g.npc, to)
-        self._done(g, to, "far" if status == "told" else "knew")
+            return await self._fail(g, f"не застал на месте: {g.to_name}")
+        status = await rumors.tell(rumor, g.npc, to)
+        self._check_context(context, g)
+        await self._done(g, to, "far" if status == "told" else "knew")
+        self._check_context(context, g)
 
     async def _tell_gate(self, g: Goal, to: str, how: str, world: int) -> None:
         """Gate news is addressed to this person: another guard cannot receive it in its place."""
+        if world != self._world:
+            return
+        context = self._context()
+        self._check_context(context, g)
         if to != g.to or self.gate_told is None:
-            return self._fail(g, f"не передал новость адресату: {g.to_name}")
+            return await self._fail(g, f"не передал новость адресату: {g.to_name}")
         try:
             await self.gate_told(g.rumor, g.npc, to)
+            self._check_context(context, g)
         except (GameError, TimeoutError) as err:
             if world == self._world:
-                self._fail(g, f"не передал новость: {str(err) or type(err).__name__}")
+                await self._fail(g, f"не передал новость: {str(err) or type(err).__name__}")
+                self._check_context(context, g)
             return
         if world == self._world:
-            self._done(g, to, how)
+            await self._done(g, to, how)
+            self._check_context(context, g)
 
     def _stand_in(self, g: Goal, rumor: Rumor) -> str | None:
         """Another of the other's guild by its spot at that minute, by its routine, awake (the far fork)."""
@@ -639,17 +709,28 @@ class Errands:
         return best[1] if best is not None else None
 
     async def _give_far(self, g: Goal, world: int) -> None:
+        if world != self._world:
+            return
+        context = self._context()
+        self._check_context(context, g)
         effect = {"do": "give", "item": g.item, "count": g.count, "to": "npc", "npc": g.to}
         try:
             await self.link.story_effect(g.npc, [effect], check=True)
+            self._check_context(context, g)
         except (GameError, TimeoutError) as err:
             if world == self._world:
-                self._fail(g, f"не отдал ({str(err) or type(err).__name__}) — кому: {g.to_name}")
+                await self._fail(g, f"не отдал ({str(err) or type(err).__name__}) — кому: {g.to_name}")
+                self._check_context(context, g)
             return
         if world != self._world or g.state != "away":
             return
-        self._gave(g, g.to, [])
-        self._done(g, g.to, "far")
+
+        async def delivered() -> None:
+            self._check_context(context, g)
+            await self._gave(g, g.to, [])
+            await self._done(g, g.to, "far")
+
+        await self.chronicle.memory.complete(delivered)
 
     async def _seen_by(self, npc: str, to: str) -> list[str]:
         try:
@@ -662,49 +743,71 @@ class Errands:
             seen.append("PLAYER")
         return seen
 
-    def _gave(self, g: Goal, to: str, seen: list[str]) -> None:
-        social = self.social()
-        there = self._spot(to, self.now or g.start)
-        self.chronicle.record({
-            "fact": "gave", "from": g.npc, "from_name": g.name, "to": to,
-            "to_name": social.names.get(to, to) if social is not None else to, "item": g.item,
-            "item_name": g.item_name, "count": g.count, "where": there.waypoint if there else "",
-            "seen_by": seen, "goal": g.id, **self._when(),
-        })  # fmt: skip
-        self.journal.add("gave", npc=g.npc, to=to, item=g.item, count=g.count, goal=g.id)
+    async def _gave(self, g: Goal, to: str, seen: list[str]) -> None:
+        context = self._context()
 
-    def _done(self, g: Goal, to: str, how: str) -> None:
-        g.state = "done"
-        social = self.social()
-        to_name = social.names.get(to, to) if social is not None else to
-        fact: Fact = {"fact": "goal_done", "goal": g.id, "npc": g.npc, "name": g.name, "to": to,
-                      "to_name": to_name, "how": how, **self._when()}  # fmt: skip
-        if to != g.to:
-            fact["instead_of"] = g.to
-        self.chronicle.record(fact)
-        self.journal.add("goal_done", npc=g.npc, goal=g.id, to=to, how=how)
-        log.info("goal %s done (%s): %s -> %s", g.id, how, g.npc, to)
-        if g.do == "give":
-            note = f"Ты отнёс {g.item_name}, {g.count} шт. — кому: {to_name}"
-        elif how == "knew":
-            news = "о герое" if g.subject == "PLAYER" else f"новость ({g.title})"
-            note = f"Ты пришёл рассказать {news}, а он уже знал — кому: {to_name}"
-        else:
-            news = "о герое" if g.subject == "PLAYER" else "новость"
-            note = f"Ты рассказал {news} ({g.title}) — кому: {to_name}"
+        async def persist() -> None:
+            self._check_context(context, g)
+            social = self.social()
+            there = self._spot(to, self.now or g.start)
+            await self.chronicle.record({
+                "fact": "gave", "from": g.npc, "from_name": g.name, "to": to,
+                "to_name": social.names.get(to, to) if social is not None else to, "item": g.item,
+                "item_name": g.item_name, "count": g.count, "where": there.waypoint if there else "",
+                "seen_by": seen, "goal": g.id, **self._when(),
+            })  # fmt: skip
+            self._check_context(context, g)
+            self.journal.add("gave", npc=g.npc, to=to, item=g.item, count=g.count, goal=g.id)
+
+        await self.chronicle.memory.complete(persist)
+
+    async def _done(self, g: Goal, to: str, how: str) -> None:
+        context = self._context()
+
+        async def persist() -> None:
+            self._check_context(context, g)
+            social = self.social()
+            to_name = social.names.get(to, to) if social is not None else to
+            fact: Fact = {"fact": "goal_done", "goal": g.id, "npc": g.npc, "name": g.name, "to": to,
+                          "to_name": to_name, "how": how, **self._when()}  # fmt: skip
             if to != g.to:
-                note += f"; не застал: {g.to_name}"
-        self.dialogue.remember(g.npc, g.name, note)
+                fact["instead_of"] = g.to
+            await self.chronicle.record(fact)
+            self._check_context(context, g)
+            g.state = "done"
+            self.journal.add("goal_done", npc=g.npc, goal=g.id, to=to, how=how)
+            log.info("goal %s done (%s): %s -> %s", g.id, how, g.npc, to)
+            if g.do == "give":
+                note = f"Ты отнёс {g.item_name}, {g.count} шт. — кому: {to_name}"
+            elif how == "knew":
+                news = "о герое" if g.subject == "PLAYER" else f"новость ({g.title})"
+                note = f"Ты пришёл рассказать {news}, а он уже знал — кому: {to_name}"
+            else:
+                news = "о герое" if g.subject == "PLAYER" else "новость"
+                note = f"Ты рассказал {news} ({g.title}) — кому: {to_name}"
+                if to != g.to:
+                    note += f"; не застал: {g.to_name}"
+            await self.dialogue.remember(g.npc, g.name, note)
 
-    def _fail(self, g: Goal, why: str) -> None:
+        await self.chronicle.memory.complete(persist)
+
+    async def _fail(self, g: Goal, why: str) -> None:
         """A dead end: a note for it; a thing it was to give stays its own, and on its mind (a concern)."""
-        g.state = "failed"
-        self.chronicle.record(
-            {"fact": "goal_failed", "goal": g.id, "npc": g.npc, "name": g.name, "why": why, **self._when()}
-        )
-        self.journal.add("goal_failed", npc=g.npc, goal=g.id, why=why)
-        log.info("goal %s failed: %s %s", g.id, g.npc, why)
-        self.dialogue.remember(g.npc, g.name, f"Поручение не вышло: {g.what()} — {why}")
+        context = self._context()
+
+        async def persist() -> None:
+            self._check_context(context, g)
+            await self.chronicle.record(
+                {"fact": "goal_failed", "goal": g.id, "npc": g.npc, "name": g.name,
+                 "why": why, **self._when()}
+            )
+            self._check_context(context, g)
+            g.state = "failed"
+            self.journal.add("goal_failed", npc=g.npc, goal=g.id, why=why)
+            log.info("goal %s failed: %s %s", g.id, g.npc, why)
+            await self.dialogue.remember(g.npc, g.name, f"Поручение не вышло: {g.what()} — {why}")
+
+        await self.chronicle.memory.complete(persist)
 
     def concerns(self, npc: str) -> list[Concern]:
         """A thing it was to take someone and did not: it may tell the hero so (concerns.py). Until the day is

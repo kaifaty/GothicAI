@@ -9,6 +9,7 @@ from gothic_ai.dialogue import DialogueManager
 from gothic_ai.game import GameLink
 from gothic_ai.journal import Journal
 from gothic_ai.llm import FakeBackend, ToolCall
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import RosterEntry
 from gothic_ai.talk import TalkDesk, addressee, default_posture
@@ -16,6 +17,7 @@ from tests.fake_game import FakeGame, connected
 from tests.fakes import FakeDecider
 from tests.test_crime_react import card
 from tests.test_dialogue import HILDA, LOBART, XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 
 def person(npc: str, name: str, metres: float, in_view: bool = False, **extra) -> dict:
@@ -145,7 +147,10 @@ def test_the_codes_posture_when_the_behavioral_model_is_unsure():
 async def _desk(fake: FakeGame, llm, decider: FakeDecider | None = None, journal: Journal | None = None):
     cm = connected(fake)
     link = await cm.__aenter__()
-    dialogue = DialogueManager(link, llm, PersonaProvider(None), journal=journal)
+    dialogue = DialogueManager(
+        link, llm, PersonaProvider(None), journal=journal, memory=await MemoryStore.open(":memory:")
+    )
+    await dialogue.initialize()
     reflexes = Reflexes(decider) if decider is not None else None
     talk = TalkDesk(link, dialogue, reflexes, end_silence_s=0.2)
     return cm, link, dialogue, talk
@@ -179,10 +184,10 @@ async def test_an_npc_can_open_the_conversation():
         # Xardas in front of the hero and nearer: without a partner the hero's words would go to him
         await fake.roster(person(LOBART, "Лобарт", 3), person(XARDAS, "Ксардас", 2, True))
         assert await talk.listen(LOBART)  # it came up: stops and turns to the hero
-        assert talk.begin(LOBART, "Лобарт", posture="listen")
+        assert await talk.begin(LOBART, "Лобарт", posture="listen")
         assert talk.partner.npc == LOBART and talk.partner.posture == "listen"
-        assert talk.begin(LOBART, "Лобарт")  # the partner already
-        assert not talk.begin(XARDAS, "Ксардас")  # the hero talks to another
+        assert await talk.begin(LOBART, "Лобарт")  # the partner already
+        assert not await talk.begin(XARDAS, "Ксардас")  # the hero talks to another
         await fake.send(type="player_text", text="Чего тебе?")
         await _until(lambda: fake.said == ["Долг, парень."])
     finally:
@@ -352,7 +357,7 @@ async def test_the_heros_voice_stops_a_scene_without_a_partner():
 
     talk.on_hero_voice += [scene, other]
     try:
-        assert talk.interrupt() and calls == ["scene", "other"]  # every one asked
+        assert await talk.interrupt() and calls == ["scene", "other"]  # every one asked
         await fake.send(type="ptt_start")  # the talk key
         await _until(lambda: len(calls) == 4)
         await fake.send(type="player_text", text="Эй!")  # typed
@@ -379,7 +384,7 @@ async def test_an_npc_held_for_a_scene_listens_to_the_hero():
         await _until(lambda: fake.said == ["Не твоё дело."])
         assert talk.held == {HILDA: {"scene", "listen"}}
 
-        talk.end()  # the conversation is over; the scene's hold is the scene's to free
+        await talk.end()  # the conversation is over; the scene's hold is the scene's to free
         assert talk.partner is None and talk.held == {HILDA: {"scene"}}
         talk.free(HILDA, "scene")
         await _until(lambda: HILDA not in fake.attached)
@@ -499,7 +504,7 @@ async def test_rule_refusal_blocks_voice_model_and_ends_existing_partner_until_r
     try:
         await fake.roster(XARDAS_NEAR)
         await _until(lambda: XARDAS in talk.people)
-        assert not talk.begin(XARDAS, "Ксардас")
+        assert not await talk.begin(XARDAS, "Ксардас")
         assert not await talk.listen(XARDAS)
         await fake.send(type="player_text", text="Поговорим?", focus=XARDAS)
         await _until(lambda: any(m.get("action") == "say_svm" for m in fake.received))
@@ -568,13 +573,16 @@ _ASR_WORLD_WORDS = [
 
 
 @pytest.fixture
-def asr_talk():
+async def asr_talk():
     link = GameLink(None)
-    dialogue = DialogueManager(link, FakeBackend("Слушаю."), PersonaProvider(None))
+    dialogue = DialogueManager(
+        link, FakeBackend("Слушаю."), PersonaProvider(None), memory=await MemoryStore.open(":memory:")
+    )
+    await dialogue.initialize()
     return TalkDesk(link, dialogue)
 
 
-def test_asr_hints_prioritize_focus_partner_and_world_before_others_by_name(asr_talk):
+async def test_asr_hints_prioritize_focus_partner_and_world_before_others_by_name(asr_talk):
     asr_talk.people = roster(
         person("FAR", "Ватрас", 1, heard=2000),
         person("FOCUS", "Лорд Хаген", 30),
@@ -582,7 +590,7 @@ def test_asr_hints_prioritize_focus_partner_and_world_before_others_by_name(asr_
         person("NEAR", "Лотар", 12, heard=200),
         person("PARTNER", "Диего", 5),
     )
-    assert asr_talk.begin("PARTNER", "Диего")
+    assert (await asr_talk.begin("PARTNER", "Диего"))
 
     assert asr_talk.asr_hints("focus") == [
         "Лорд Хаген", "Хаген", "Хагена", "Хагену", "Хагеном", "Хагене", "Диего",
@@ -657,19 +665,19 @@ def test_asr_hints_keep_full_name_and_skip_short_words_and_addresses(asr_talk):
     ]
 
 
-def test_asr_hints_skip_down_focus_and_partner(asr_talk):
+async def test_asr_hints_skip_down_focus_and_partner(asr_talk):
     asr_talk.people = roster(
         person("FOCUS", "Ксардас", 1, activity="down"),
         person("PARTNER", "Декстер", 2, activity="down"),
         person("NEAR", "Педро", 3),
     )
-    assert asr_talk.begin("PARTNER", "Декстер")
+    assert (await asr_talk.begin("PARTNER", "Декстер"))
 
     assert asr_talk.asr_hints("FOCUS") == [*_ASR_WORLD_WORDS, "Педро"]
 
 
-def test_asr_hints_include_partner_name_when_missing_from_roster(asr_talk):
-    assert asr_talk.begin("PARTNER", "Лотар")
+async def test_asr_hints_include_partner_name_when_missing_from_roster(asr_talk):
+    assert (await asr_talk.begin("PARTNER", "Лотар"))
 
     assert asr_talk.asr_hints(None) == [
         "Лотар", "Лотара", "Лотару", "Лотаром", "Лотаре", *_ASR_WORLD_WORDS,
@@ -692,14 +700,14 @@ def test_asr_hints_filter_each_string_to_inworld_characters(asr_talk):
     assert all(all(c.isalpha() or c.isdigit() or c in " .,'():!?;-" for c in hint) for hint in hints)
 
 
-def test_asr_hints_deduplicate_and_limit_to_100_after_prioritizing(asr_talk):
+async def test_asr_hints_deduplicate_and_limit_to_100_after_prioritizing(asr_talk):
     asr_talk.people = roster(
         *(person(f"NPC_{i}", f"Педро {i}", i + 1) for i in reversed(range(110))),
         person("FAR", "Аарон", 1000),
         person("FOCUS", "Ксардас", 50),
         person("PARTNER", "Ватрас", 40),
     )
-    assert asr_talk.begin("PARTNER", "Ватрас")
+    assert (await asr_talk.begin("PARTNER", "Ватрас"))
 
     hints = asr_talk.asr_hints("FOCUS")
 

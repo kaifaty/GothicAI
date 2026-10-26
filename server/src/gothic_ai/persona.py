@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from . import characters
 from .brain.day import Habit
 from .characters import Card
-from .gamedata.ou import load_npc_lines, voice_index
+from .gamedata import ou
 from .protocol import Mood
 
 if TYPE_CHECKING:
@@ -230,6 +230,9 @@ class PersonaProvider:
         self.game_dir = game_dir
         self.cards = characters.load() if cards is None else cards  # gamedata/characters.json
         self.people = people  # the director's characters on this branch (cast.py), by id
+        # Prepare once at startup, before live callbacks request a new NPC's persona.
+        path = ou.find_ou_file(game_dir) if game_dir is not None else None
+        self._game_lines = ou.parse_ou_bin(path.read_bytes()) if path is not None else {}
 
     def get(self, npc: str, name: str) -> Persona:
         npc = npc.upper()
@@ -301,8 +304,8 @@ class PersonaProvider:
         game."""
         if self.game_dir is None:
             return (), None
-        lines = load_npc_lines(self.game_dir, npc)
+        lines = ou.npc_lines(self._game_lines, npc)
         samples = tuple(pick_samples([text for _, text in lines]))
-        index = voice_index(lines)
+        index = ou.voice_index(lines)
         log.info("persona %s: %d original lines, %d samples, voice %s", npc, len(lines), len(samples), index)
         return samples, index

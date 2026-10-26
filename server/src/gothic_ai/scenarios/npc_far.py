@@ -242,7 +242,7 @@ async def npc_far(
         await link.debug("player_goto", pos=(chest.pos[0], chest.pos[1], chest.pos[2] + 200))
         await link.debug("npc_goto", npc=LOBART, to=HERO_INSTANCE, distance=0)
         await link.debug("player_goto", waypoint=HOUSE)
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         held = await _until_async(
             lambda: dialogue.borrow_body(conv, "scenario-npc-far-chest"), bool, 15,
         )

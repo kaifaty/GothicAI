@@ -281,6 +281,9 @@ class _Build:
     before_people: set[str]
     before_quests: set[str]
     giver: str
+    branch: str | None
+    chronicle_generation: int
+    session: Session | None
     outcome: Fact | None = None
 
 
@@ -343,18 +346,19 @@ class Showrunner:
         self._budget_reason: str | None = None
         self.link.listeners.append(self._on_message)
 
-    def _on_message(self, message: GameMessage) -> None:
+    async def _on_message(self, message: GameMessage) -> None:
         if isinstance(message, (Session, Loading)):
-            if isinstance(message, Loading) and self._building is not None:
-                # Loading still belongs to the old branch. Cancellation runs asynchronously and may
-                # only be delivered after Session has switched the chronicle and the builders.
-                self._finish_build(self._building, ["постройка отменена загрузкой"])
+            build = self._building if isinstance(message, Loading) else None
             self._generation += 1
             self._budget_state = None
             self._budget_checked = float("-inf")
             self._budget_reason = None
             if self._work is not None:
                 self._work.cancel()
+            if build is not None:
+                # Loading still belongs to the old branch. Revoke the builder before waiting for
+                # its durable partial receipts; the ordered Session fanout has not switched them yet.
+                await self._finish_build(build, ["постройка отменена загрузкой"])
 
     @property
     def lines(self) -> list[Fact]:
@@ -431,7 +435,7 @@ class Showrunner:
             nearby.update({p.id: p for p, _ in self.places.near(place.center, NEAR_CM, MAX_PLACES)})
         world = {p["npc"]: p for p in await self.link.story_people()}
         # Own characters are residents too, including a newly introduced person before the next poll.
-        own = self.casting.cast.characters()
+        own = await self.casting.cast.characters()
         for spec in own:
             world.setdefault(
                 spec.npc,
@@ -471,7 +475,7 @@ class Showrunner:
         peaceful = await non_hostile(self.link, candidates, context=context)
         candidates = {n: description for n, description in candidates.items() if n in peaceful}
         quests = []
-        for q in self.book.all().values():
+        for q in (await self.book.all()).values():
             progress = self.book.progress(q.id)
             if progress.state not in CLOSED:
                 quests.append(f"{q.id}: «{q.title}», {progress.state}, стадия {progress.stage}")
@@ -537,18 +541,22 @@ class Showrunner:
         for f in facts:
             if f.get("fact") in {"line", "line_failed"}:
                 line_quests.update(f.get("quests", []))
-                titles = [self.book.all()[q].title for q in f.get("quests", []) if q in self.book.all()]
+                titles = [
+                    (await self.book.all())[q].title
+                    for q in f.get("quests", [])
+                    if q in await self.book.all()
+                ]
                 history.append(
                     f"{f.get('kind')}, заказчик {f.get('giver')}: {', '.join(titles)}; "
                     f"замысел {f.get('premise', '')}; персонажи {', '.join(f.get('characters', []))}"
                 )
         history += [
             f"Квест {q.id}: «{q.title}», заказчик {q.giver}"
-            for q in self.book.all().values()
+            for q in (await self.book.all()).values()
             if q.id not in line_quests
         ]
         history += [f"Прежнее поручение «{q.title}», заказчик {q.npc}" for q in self.author.old.values()]
-        history += [f"Персонаж {s.npc}: {s.name}" for s in self.casting.cast.characters()]
+        history += [f"Персонаж {s.npc}: {s.name}" for s in await self.casting.cast.characters()]
         return Brief(
             occasion,
             int(state.get("vars", {}).get("KAPITEL") or 1),
@@ -909,7 +917,7 @@ class Showrunner:
                     and generation == self._generation
                     and not any(f.get("occasion") == occasion for f in self.chronicle.facts("line_failed"))
                 ):
-                    self._record("line_failed", occasion, why=[self._unexpected(error)])
+                    await self._record("line_failed", occasion, why=[self._unexpected(error)])
                 # A failure with no queued occasion can happen before handoff. Avoid spinning while
                 # waiting for a usable world; an associated occasion has already been consumed.
                 await asyncio.sleep(self.occasions.busy_poll_s)
@@ -942,7 +950,7 @@ class Showrunner:
             ],
             **{k: state[k] for k in ("day", "hour", "minute")},
         }
-        self.chronicle.record(occasion)
+        await self.chronicle.record(occasion)
         return await self.decide(occasion)
 
     async def decide(self, occasion: Fact, *, wait_budget: bool = False) -> Fact | None:
@@ -962,9 +970,9 @@ class Showrunner:
             finally:
                 self._work = None
 
-    def _record(self, fact_kind: str, occasion: Fact, **details: Any) -> Fact:
+    async def _record(self, fact_kind: str, occasion: Fact, **details: Any) -> Fact:
         fact = {"fact": fact_kind, "occasion": occasion, **details}
-        self.chronicle.record(fact)
+        await self.chronicle.record(fact)
         return fact
 
     async def _decide(self, occasion: Fact, *, wait_budget: bool = False) -> Fact | None:
@@ -991,10 +999,10 @@ class Showrunner:
                     # this decision acquired the lock. Keep the whole group for the next opening.
                     self.occasions.put_back(occasion)
                     return None
-                return self._record("line_skipped", occasion, why=budget.reasons)
+                return await self._record("line_skipped", occasion, why=budget.reasons)
             brief = await self._brief(occasion, budget, state)
             if not brief.candidates and not budget.people_left:
-                return self._record(
+                return await self._record(
                     "line_skipped",
                     occasion,
                     why=[
@@ -1003,14 +1011,14 @@ class Showrunner:
                     ],
                 )
         except (GameError, TimeoutError) as error:
-            return self._record("line_failed", occasion, why=[f"не удалось прочитать мир: {error}"])
+            return await self._record("line_failed", occasion, why=[f"не удалось прочитать мир: {error}"])
         open_ahead(self.model.llm, CACHE_KEY, keep=True)
         previous = None
         errors: list[str] = []
         for attempt in range(1, ATTEMPTS + 1):
             raw = await self.model.propose(brief, previous, errors)
             if raw is None:
-                return self._record("line_failed", occasion, why=["модель не ответила"])
+                return await self._record("line_failed", occasion, why=["модель не ответила"])
             try:
                 proposal = Proposal.of(raw)
                 errors = self.canon(proposal, brief)
@@ -1020,19 +1028,35 @@ class Showrunner:
                 proposal = None
                 errors = [f"структура предложения: {e['loc']}: {e['msg']}" for e in error.errors()]
             if errors:
-                rejected = self._record("line_rejected", occasion, proposal=raw, attempt=attempt, why=errors)
+                rejected = await self._record(
+                    "line_rejected", occasion, proposal=raw, attempt=attempt, why=errors
+                )
                 previous = raw
                 continue
             assert proposal is not None
             if proposal.kind == "none":
-                return self._record("line_none", occasion, reason=proposal.reason, proposal=raw)
+                return await self._record("line_none", occasion, reason=proposal.reason, proposal=raw)
             return await self._build(proposal, brief)
         return rejected
 
     async def _build(self, p: Proposal, brief: Brief) -> Fact:
-        build = _Build(
-            p, brief, {s.npc for s in self.casting.cast.characters()}, set(self.book.all()), p.giver
+        generation = self._generation
+        branch, chronicle_generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.link.session
         )
+        build = _Build(
+            p,
+            brief,
+            {s.npc for s in await self.casting.cast.characters()},
+            set(await self.book.all()),
+            p.giver,
+            branch,
+            chronicle_generation,
+            session,
+        )
+        if (generation != self._generation or branch != self.chronicle.branch
+                or chronicle_generation != self.chronicle._generation or session is not self.link.session):
+            raise asyncio.CancelledError("Showrunner build belongs to an invalidated session")
         self._building = build
         made = None
         errors = []
@@ -1073,14 +1097,14 @@ class Showrunner:
                 pass
             # Keep the builder's receipts, including all quests of a completed chain.
             quests = ([q.id for q in made] if isinstance(made, list) else [made.id]) if made else None
-            return self._finish_build(build, errors, quests=quests, at=at)
+            return await self._finish_build(build, errors, quests=quests, at=at)
         except Exception as error:
-            self._finish_build(build, [self._unexpected(error)])
+            await self._finish_build(build, [self._unexpected(error)])
             raise  # run() logs the traceback and moves on to the next occasion
         finally:
             self._building = None
 
-    def _finish_build(
+    async def _finish_build(
         self,
         build: _Build,
         errors: list[str],
@@ -1088,29 +1112,41 @@ class Showrunner:
         quests: list[str] | None = None,
         at: Fact | None = None,
     ) -> Fact:
-        if build.outcome is not None:
+        async def persist() -> Fact:
+            nonlocal quests
+            if build.outcome is not None:
+                return build.outcome
+            if (build.branch != self.chronicle.branch
+                    or build.chronicle_generation != self.chronicle._generation
+                    or build.session is not self.link.session):
+                raise asyncio.CancelledError("Showrunner build belongs to an invalidated session")
+            p, brief = build.proposal, build.brief
+            characters = sorted({s.npc for s in await self.casting.cast.characters()} - build.before_people)
+            if quests is None:
+                quests = [q for q in await self.book.all() if q not in build.before_quests]
+            if (build.branch != self.chronicle.branch
+                    or build.chronicle_generation != self.chronicle._generation
+                    or build.session is not self.link.session):
+                raise asyncio.CancelledError("Showrunner build belongs to an invalidated session")
+            # A stranger may have been recorded just before Loading interrupted character()'s return.
+            giver = build.giver or (characters[0] if p.kind == "stranger" and len(characters) == 1 else "")
+            build.outcome = await self._record(
+                "line_failed" if errors else "line",
+                brief.occasion,
+                kind=p.kind,
+                giver=giver,
+                premise=p.premise,
+                follows=p.follows,
+                **({"crime": p.crime} if p.crime else {}),
+                requires=p.requires,
+                reason=p.reason,
+                quests=quests,
+                characters=characters,
+                chapter=brief.chapter,
+                **(at or {k: getattr(brief, k) for k in ("day", "hour", "minute")}),
+                wall_time=self.clock(),
+                **({"why": errors} if errors else {}),
+            )
             return build.outcome
-        p, brief = build.proposal, build.brief
-        characters = sorted({s.npc for s in self.casting.cast.characters()} - build.before_people)
-        if quests is None:
-            quests = [q for q in self.book.all() if q not in build.before_quests]
-        # A stranger may have been recorded just before Loading interrupted character()'s return.
-        giver = build.giver or (characters[0] if p.kind == "stranger" and len(characters) == 1 else "")
-        build.outcome = self._record(
-            "line_failed" if errors else "line",
-            brief.occasion,
-            kind=p.kind,
-            giver=giver,
-            premise=p.premise,
-            follows=p.follows,
-            **({"crime": p.crime} if p.crime else {}),
-            requires=p.requires,
-            reason=p.reason,
-            quests=quests,
-            characters=characters,
-            chapter=brief.chapter,
-            **(at or {k: getattr(brief, k) for k in ("day", "hour", "minute")}),
-            wall_time=self.clock(),
-            **({"why": errors} if errors else {}),
-        )
-        return build.outcome
+
+        return await self.chronicle.memory.complete(persist)

@@ -11,6 +11,7 @@ from gothic_ai.protocol import Session, Snapshot
 from tests.fake_game import FakeGame
 from tests.test_deals import GOLD, POTION, _setup, _shown
 from tests.test_dialogue import LOBART, XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 UNASKED = "Отклонено: герой не просил у тебя денег, а сам ты их не предлагаешь."
 GIFT = (
@@ -30,7 +31,7 @@ def gold(count):
 @pytest.fixture
 async def purse():
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, deals = await _setup(fake, FakeBackend(delay=0), store)
     dialogue.event_turn = lambda *a, **kw: None
     try:
@@ -128,7 +129,7 @@ async def test_only_accepted_gifts_use_allowance_and_survive_reload(purse):
     await accept(purse)
     assert purse.fake.hero_items[GOLD] == 30
     assert purse.chronicle.facts("deal")[0]["npc_gives"][0]["count"] == 30
-    purse.deals.reload()
+    await purse.deals.reload()
     out = await offer(purse, 30)
     assert out.status == "rejected" and out.output == GIFT.format(left=20)
     assert XARDAS not in purse.deals.open
@@ -150,20 +151,22 @@ async def test_accepted_mixed_gift_and_loan_uses_only_gift_allowance(purse, amou
 
 
 async def test_gift_allowance_follows_save_branch(purse):
-    saved_seq = purse.chronicle.memory.head("A")
+    saved_seq = await purse.chronicle.memory.head("A")
     assert (await offer(purse, 50)).status == "accepted"
     await accept(purse)
     out = await offer(purse, 1)
     assert out.status == "rejected" and out.output == GIFT.format(left=0)
     session = Session(type="session", branch="B", parent="A", parent_seq=saved_seq, reason="load")
-    purse.chronicle._on_session(session)
-    purse.deals._on_message(session)
+    await purse.fake.send(**session.model_dump(exclude_none=True))
+    link = purse.deals.link
+    await _until(lambda: link.session is not None and link.session.branch == "B")
+    await link.wait_session_ready()
     assert purse.chronicle.facts("deal") == []
     assert (await offer(purse, 50)).status == "accepted"
 
 
 async def test_old_excess_gift_allows_trade_and_loan_but_no_new_gift(purse):
-    purse.chronicle.record(
+    await purse.chronicle.record(
         {"fact": "deal", "deal": "old-gift", "npc": XARDAS, "npc_gives": gold(100)}
     )
     out = await offer(
@@ -181,10 +184,10 @@ async def test_old_excess_gift_allows_trade_and_loan_but_no_new_gift(purse):
 
 
 async def test_old_excess_debt_allows_trade_and_repayment_but_no_new_loan(purse):
-    purse.chronicle.record(
+    await purse.chronicle.record(
         {"fact": "debt", "id": "old-debt", "npc": XARDAS, "item": GOLD, "count": 250, "due": 4}
     )
-    purse.deals.reload()
+    await purse.deals.reload()
     out = await offer(
         purse,
         0,
@@ -237,7 +240,7 @@ async def test_outstanding_and_overdue_debt_count_but_repayment_frees_limit(purs
     (debt,) = purse.deals.debts.values()
     assert debt.npc == XARDAS and debt.give.item == GOLD and debt.give.count == 150
     if broken:
-        assert purse.deals.overdue(debt.due + 1) == [debt]
+        assert await purse.deals.overdue(debt.due + 1) == [debt]
         assert debt.broken and not debt.paid
     out = await offer(purse, 100, later=100)
     assert out.status == "rejected" and out.output == LOAN.format(owed=150, after=250)

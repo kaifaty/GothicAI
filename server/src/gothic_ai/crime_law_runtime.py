@@ -198,6 +198,7 @@ class CrimeLawRuntime:
     async def tick(self) -> None:
         async with self._lock:
             generation, branch = self._generation, self.chronicle.branch
+            world_generation, session = self.link.world_generation, self.link.session
             if branch is None:
                 return
             if not self._installed:
@@ -216,16 +217,22 @@ class CrimeLawRuntime:
             if now is None:
                 raise GameError("crime law: game clock missing")
             events, self._events = self._events, []
-            self.law.tick(now)
+            await self.law.tick(now)
+            if (generation != self._generation or branch != self.chronicle.branch
+                    or world_generation != self.link.world_generation or session is not self.link.session):
+                return
             # Payments cover exactly the cases known when the native choice ran. A report that
             # arrives during this server tick belongs to the next bill.
             for message, cases in events:
                 if message.node == "DIA_PARLAN_WELCOME":
-                    self.law.absolve(None, crimes=cases, how="LOC_ALL")
+                    await self.law.absolve(None, crimes=cases, how="LOC_ALL")
                 else:
                     prefix = message.node.removeprefix("DIA_").removesuffix("_PETZMASTER_PAYNOW")
                     if state.get("vars", {}).get(f"{prefix}_SCHULDEN") == 0:
-                        self.law.absolve(self._paynow[message.node], crimes=cases)
+                        await self.law.absolve(self._paynow[message.node], crimes=cases)
+            if (generation != self._generation or branch != self.chronicle.branch
+                    or world_generation != self.link.world_generation or session is not self.link.session):
+                return
             for community in LAWFUL:
                 unpaid = self.law.unpaid(community)
                 cases = tuple(sorted(f["id"] for f in unpaid))

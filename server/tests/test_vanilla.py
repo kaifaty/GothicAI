@@ -23,6 +23,7 @@ from gothic_ai.vanilla import VanillaQuests, _bridge, _claim, _takes
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
 from tests.test_director import GRAPH, HAS_20, HILDA, LOBART, QUEST, _node
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 TO_HILDA = "MIS_LOBART_RUEBENTOHILDA"
 BANDIT = "BDT_1_BANDIT"
@@ -88,7 +89,9 @@ async def _setup(fake: FakeGame, llm: FakeBackend, graph: StoryGraph, store: Mem
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
     dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=store)
+    await dialogue.initialize()
     chronicle = Chronicle(link, store)
+    await chronicle.initialize()
     vanilla = VanillaQuests(link, dialogue, chronicle, graph, hero_distance=lambda npc: 300.0)
     await _until(lambda: chronicle.branch is not None)
     return link_cm, dialogue, chronicle, vanilla
@@ -98,9 +101,11 @@ async def _setup(fake: FakeGame, llm: FakeBackend, graph: StoryGraph, store: Mem
 @pytest.mark.parametrize("checking", [False, True])
 async def test_foreign_quest_ids_are_left_to_the_next_extension(graph, tool, checking):
     fake = FakeGame(branch="A")
-    link_cm, dialogue, _, vanilla = await _setup(fake, FakeBackend(delay=0), graph, MemoryStore(":memory:"))
+    link_cm, dialogue, _, vanilla = await _setup(
+        fake, FakeBackend(delay=0), graph, await MemoryStore.open(":memory:")
+    )
     try:
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         if checking:
             fake.vars[KILL] = 1
             await vanilla.prepare(LOBART)
@@ -116,11 +121,11 @@ def _effects(fake: FakeGame, npc: str) -> list[list[dict]]:
 
 async def test_a_lie_to_lobart_is_paid_and_found_out_the_next_morning(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[ACCEPT, FakeStep("Ну?")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     try:
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         situation = vanilla.situation(LOBART)
         assert "Ты ждёшь от героя: «Убрать поле репы» (id MIS_LOBART_RUEBEN)" in situation
@@ -175,12 +180,12 @@ async def test_a_lie_to_lobart_is_paid_and_found_out_the_next_morning(graph):
 
 async def test_the_truth_is_no_lie(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[ACCEPT, FakeStep("Ну?")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     fake.hero_items = {"ITPL_BEET": 20}
     try:
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await dialogue.say_as_player(LOBART, "Вот твоя репа.")
         await _until(lambda: chronicle.facts("claim") != [])
         assert chronicle.facts("claim")[0]["truth"] is True and chronicle.facts("lie") == []
@@ -194,11 +199,11 @@ async def test_the_truth_is_no_lie(graph):
 
 async def test_a_lie_is_mended_when_the_next_step_gets_the_goods(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[ACCEPT, FakeStep("Ну?")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     try:
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await dialogue.say_as_player(LOBART, "Репа в амбаре.")
         await _until(lambda: chronicle.facts("lie") != [])
         fake.vars[TO_HILDA] = 2  # he got turnips after all and brought them to Hilda
@@ -213,14 +218,14 @@ async def test_a_lie_is_mended_when_the_next_step_gets_the_goods(graph):
 
 async def test_a_lie_about_a_killing_is_found_out_when_the_victim_turns_up(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     accept = FakeStep("Мёртв, говоришь? Хорошо.", [ToolCall("accept_quest", {"quest": KILL}, "c1")])
     llm = FakeBackend(script=[accept, FakeStep("Ну?")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     fake.vars[KILL] = 1
     fake.npc_states[BANDIT] = {"state": "alive", "name": "Бандит"}
     try:
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         situation = vanilla.situation(LOBART)
         assert "будут мертвы: Бандит" in situation and "далеко, проверить сам не можешь" in situation
@@ -256,11 +261,11 @@ async def test_a_lie_about_a_killing_is_found_out_when_the_victim_turns_up(graph
 
 async def test_lies_follow_the_save_branch(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[ACCEPT, FakeStep("Ну?")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     try:
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await dialogue.say_as_player(LOBART, "Репа в амбаре.")
         await _until(lambda: chronicle.facts("lie") != [])
         assert vanilla.told[QUEST].lie
@@ -286,12 +291,12 @@ def test_an_ending_takes_what_the_hero_has():
 
 async def test_what_the_hero_has_on_him_is_seen_and_the_rest_is_the_lie(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[ACCEPT, FakeStep("Ну?")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     fake.hero_items = {"ITPL_BEET": 5}
     try:
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert "у героя с собой Репа ×5 из 20 — это он отдаст тебе сразу" in vanilla.situation(LOBART)
         await dialogue.say_as_player(LOBART, "Вот пять, остальные пятнадцать в амбаре.")
@@ -310,7 +315,7 @@ async def test_what_the_hero_has_on_him_is_seen_and_the_rest_is_the_lie(graph):
 
 async def test_someone_alive_before_its_eyes_is_not_taken_on_word(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     expose = FakeStep("Врёшь! Вон он стоит.", [ToolCall("expose_lie", {"quest": KILL}, "c2")])
     llm = FakeBackend(script=[expose, FakeStep("Пошёл вон.")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
@@ -318,7 +323,7 @@ async def test_someone_alive_before_its_eyes_is_not_taken_on_word(graph):
     fake.npc_states[BANDIT] = {"state": "alive", "name": "Бандит", "distance": 1200}
     fake.people_near = [{"npc": HILDA, "name": "Хильда", "distance": 400, "guild": 0}]
     try:
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         situation = vanilla.situation(LOBART)
         assert "у тебя на глазах: Бандит — жив" in situation
@@ -361,7 +366,7 @@ async def test_someone_alive_before_its_eyes_is_not_taken_on_word(graph):
 
 async def test_the_npc_goes_to_see_and_catches_the_lie(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     check = FakeStep("Сейчас сам посмотрю.", [ToolCall("check_claim", {"quest": KILL}, "c1")])
     llm = FakeBackend(script=[check, FakeStep("Ах ты лжец!")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
@@ -369,7 +374,7 @@ async def test_the_npc_goes_to_see_and_catches_the_lie(graph):
     fake.npc_states[BANDIT] = {"state": "alive", "name": "Бандит", "distance": 4000}
     try:
         await vanilla.link.attach(LOBART)
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert "Бандит — в 40 м, отсюда не видно: можешь сходить и посмотреть сам" in vanilla.situation(
             LOBART
@@ -400,7 +405,7 @@ async def test_the_npc_goes_to_see_and_catches_the_lie(graph):
 async def test_a_check_replaced_by_a_new_action_does_not_resume_the_walk(graph, monkeypatch, action):
     fake = FakeGame(branch="A")
     fake.slow_actions = {"go_to_npc"}
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars[KILL] = 1
     fake.npc_states[BANDIT] = {"state": "dead", "name": "Бандит", "distance": 4000, "seen": False}
@@ -408,7 +413,7 @@ async def test_a_check_replaced_by_a_new_action_does_not_resume_the_walk(graph, 
     dialogue.free_body = lambda npc, why: returned.append((npc, why))
     try:
         await vanilla.link.attach(LOBART)
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         offer = vanilla.offers[LOBART][KILL]
         target = offer.reachable()
@@ -441,13 +446,13 @@ async def test_a_check_replaced_by_a_new_action_does_not_resume_the_walk(graph, 
 async def test_a_check_in_progress_cannot_start_another_walk(graph):
     fake = FakeGame(branch="A")
     fake.slow_actions = {"go_to_npc"}
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, _, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars[KILL] = 1
     fake.npc_states[BANDIT] = {"state": "dead", "name": "Бандит", "distance": 4000, "seen": False}
     try:
         await vanilla.link.attach(LOBART)
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert "check_claim" in [t.name for t in vanilla.tools(LOBART)]
 
@@ -489,7 +494,7 @@ async def test_behind_a_wall_is_not_before_its_eyes(graph):
     """The bandit is 10 m from Lobart, behind the barn: Lobart does not see him (the engine's sight), so he
     can neither call it a lie to his face nor refuse on what he sees; he goes, looks that way, and sees."""
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     check = FakeStep("Пойду гляну.", [ToolCall("check_claim", {"quest": KILL}, "c1")])
     llm = FakeBackend(script=[check, FakeStep("Ах ты лжец!")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
@@ -497,7 +502,7 @@ async def test_behind_a_wall_is_not_before_its_eyes(graph):
     fake.npc_states[BANDIT] = {"state": "alive", "name": "Бандит", "distance": 1000, "seen": False}
     try:
         await vanilla.link.attach(LOBART)
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         situation = vanilla.situation(LOBART) or ""
         assert "на глазах" not in situation
@@ -515,7 +520,7 @@ async def test_behind_a_wall_is_not_before_its_eyes(graph):
 
 async def test_the_npc_goes_to_see_and_pays_for_the_truth(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     check = FakeStep("Сейчас сам посмотрю.", [ToolCall("check_claim", {"quest": KILL}, "c1")])
     llm = FakeBackend(script=[check, FakeStep("Правда. Молодец.")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
@@ -523,7 +528,7 @@ async def test_the_npc_goes_to_see_and_pays_for_the_truth(graph):
     fake.npc_states[BANDIT] = {"state": "dead", "name": "Бандит", "distance": 4000}
     try:
         await vanilla.link.attach(LOBART)
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await dialogue.say_as_player(LOBART, "Бандит мёртв.")
         await _until(lambda: chronicle.facts("claim") != [])
         claim = chronicle.facts("claim")[0]
@@ -537,7 +542,7 @@ async def test_the_npc_goes_to_see_and_pays_for_the_truth(graph):
 
 async def test_a_check_in_progress_is_not_offered_or_started_again(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     check = FakeStep("Пойду проверю.", [ToolCall("check_claim", {"quest": KILL}, "c1")])
     llm = FakeBackend(script=[check, FakeStep("Жди, я ещё не посмотрел.")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
@@ -548,7 +553,7 @@ async def test_a_check_in_progress_is_not_offered_or_started_again(graph):
     fake.slow_actions = {"go_to_npc"}
     try:
         await vanilla.link.attach(LOBART)
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         await dialogue.say_as_player(LOBART, "Бандит мёртв.")
         await _until(lambda: LOBART in fake.long_running)
@@ -612,7 +617,7 @@ async def test_a_check_in_progress_blocks_another_check_but_not_another_acceptan
     graph.instances["SECOND_BANDIT"] = other_npc
 
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     check = FakeStep("Пойду проверю.", [ToolCall("check_claim", {"quest": KILL}, "c1")])
     llm = FakeBackend(script=[check, FakeStep("Правда. Молодец.")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
@@ -625,12 +630,12 @@ async def test_a_check_in_progress_blocks_another_check_but_not_another_acceptan
     fake.slow_actions = {"go_to_npc"}
     try:
         if distrust:
-            chronicle.record({
+            await chronicle.record({
                 "fact": "caught", "quest": KILL, "npc": LOBART,
                 "title": "Бандит у фермы", "how": "видел сам",
             })
         await vanilla.link.attach(LOBART)
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert set(vanilla.offers[LOBART]) == {KILL, other_quest}
         assert ("accept_quest" in {t.name for t in vanilla.tools(LOBART)}) is not distrust
@@ -665,7 +670,7 @@ async def test_a_check_in_progress_blocks_another_check_but_not_another_acceptan
         ] == [BANDIT]
 
         if distrust:
-            chronicle.record({"fact": "died", "npc": other_npc, "killer": LOBART})
+            await chronicle.record({"fact": "died", "npc": other_npc, "killer": LOBART})
             await _until(lambda: any(f["dead"] == other_npc for f in chronicle.facts("seen_dead")))
             await vanilla.prepare(LOBART)
             assert vanilla.offers[LOBART][other_quest].seen_true()
@@ -689,7 +694,7 @@ async def test_a_check_in_progress_blocks_another_check_but_not_another_acceptan
 
 async def test_loading_after_a_check_is_cancelled_before_speech_ends_offers_it_again(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     check = FakeStep("Сам посмотрю.", [ToolCall("check_claim", {"quest": KILL}, "c1")])
     llm = FakeBackend(script=[check], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
@@ -698,7 +703,7 @@ async def test_loading_after_a_check_is_cancelled_before_speech_ends_offers_it_a
         "state": "dead", "name": "Бандит", "distance": 4000, "seen": False,
     }
     try:
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         conv.voice = asyncio.Queue()
         conv.voice.put_nowait(("held", "Сам посмотрю.", None, False, None, False, None))
         conv.voice.get_nowait()  # a line is being voiced: join waits until task_done
@@ -724,16 +729,16 @@ async def test_loading_after_a_check_is_cancelled_before_speech_ends_offers_it_a
 
 async def test_once_lied_to_it_takes_his_word_no_more(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(
         script=[FakeStep("Не верю."), ACCEPT, FakeStep("Вот это другое дело.")], delay=0
     )
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     try:
-        chronicle.record(
+        await chronicle.record(
             {"fact": "caught", "quest": KILL, "npc": LOBART, "title": "Бандит у фермы", "how": "видел сам"}
         )
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert "accept_quest" not in {t.name for t in vanilla.tools(LOBART)}
         assert (
@@ -762,15 +767,15 @@ async def test_once_lied_to_it_takes_his_word_no_more(graph):
 
 async def test_a_giver_remembers_its_own_kill_before_its_first_turn(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, _, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars[KILL] = 1
     fake.npc_states[BANDIT] = {"state": "dead", "name": "Бандит", "distance": 5000, "seen": False}
     try:
         assert vanilla.offers == {}
         died = {"fact": "died", "npc": BANDIT, "killer": LOBART}
-        chronicle.record(died)
-        chronicle.record(died)
+        await chronicle.record(died)
+        await chronicle.record(died)
         await _until(lambda: not vanilla._background)
         assert chronicle.facts("seen_dead") == [
             {"fact": "seen_dead", "npc": LOBART, "dead": BANDIT, "how": "killed"}
@@ -791,14 +796,14 @@ async def test_a_giver_remembers_its_own_kill_before_its_first_turn(graph):
 )
 async def test_a_death_is_remembered_only_when_the_giver_sees_it(graph, distance, seen, witnessed):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, _, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars[KILL] = 1
     fake.npc_states[BANDIT] = {"state": "dead", "name": "Бандит", "distance": distance}
     if seen is not None:
         fake.npc_states[BANDIT]["seen"] = seen
     try:
-        chronicle.record({"fact": "died", "npc": BANDIT, "killer": "PLAYER"})
+        await chronicle.record({"fact": "died", "npc": BANDIT, "killer": "PLAYER"})
         await _until(lambda: not vanilla._background)
         assert chronicle.facts("seen_dead") == (
             [{"fact": "seen_dead", "npc": LOBART, "dead": BANDIT, "how": "saw_die"}]
@@ -816,7 +821,7 @@ async def test_a_death_is_remembered_only_when_the_giver_sees_it(graph, distance
 @pytest.mark.parametrize("error", [GameError("no game"), TimeoutError("no answer")])
 async def test_a_failed_death_observation_is_not_remembered(graph, monkeypatch, error):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, _, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars[KILL] = 1
     original = vanilla.link.story_state
@@ -828,7 +833,7 @@ async def test_a_failed_death_observation_is_not_remembered(graph, monkeypatch, 
 
     monkeypatch.setattr(vanilla.link, "story_state", unavailable)
     try:
-        chronicle.record({"fact": "died", "npc": BANDIT, "killer": "PLAYER"})
+        await chronicle.record({"fact": "died", "npc": BANDIT, "killer": "PLAYER"})
         await _until(lambda: not vanilla._background)
         assert chronicle.facts("seen_dead") == []
     finally:
@@ -838,12 +843,12 @@ async def test_a_failed_death_observation_is_not_remembered(graph, monkeypatch, 
 @pytest.mark.parametrize("status", [2, 3, 4])
 async def test_a_closed_quest_does_not_remember_a_new_death(graph, status):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, _, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars[KILL] = status
     fake.npc_states[BANDIT] = {"state": "dead", "distance": 1000, "seen": True}
     try:
-        chronicle.record({"fact": "died", "npc": BANDIT, "killer": LOBART})
+        await chronicle.record({"fact": "died", "npc": BANDIT, "killer": LOBART})
         await _until(lambda: not vanilla._background)
         assert chronicle.facts("seen_dead") == []
     finally:
@@ -852,18 +857,18 @@ async def test_a_closed_quest_does_not_remember_a_new_death(graph, status):
 
 async def test_a_seen_body_is_remembered_once_and_follows_the_save_branch(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, _, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars[KILL] = 1
     fake.npc_states[BANDIT] = {"state": "dead", "name": "Бандит", "distance": 1000, "seen": True}
     try:
-        before = store.head("A")
+        before = await store.head("A")
         await vanilla.prepare(LOBART)
         await vanilla.prepare(LOBART)
         assert chronicle.facts("seen_dead") == [
             {"fact": "seen_dead", "npc": LOBART, "dead": BANDIT, "how": "saw_body"}
         ]
-        after = store.head("A")
+        after = await store.head("A")
         fake.npc_states[BANDIT].update(distance=5000, seen=False)
 
         async def load_branch(branch, head):
@@ -900,7 +905,7 @@ def two_bandits(graph):
 async def test_amendment_list_distinguishes_same_named_targets(two_bandits):
     fake = FakeGame(branch="A")
     link_cm, dialogue, chronicle, vanilla = await _setup(
-        fake, FakeBackend(delay=0), two_bandits, MemoryStore(":memory:")
+        fake, FakeBackend(delay=0), two_bandits, await MemoryStore.open(":memory:")
     )
     fake.instances["SECOND_BANDIT"] = "BDT_2_BANDIT"
     fake.vars.update({QUEST: 2, KILL: 1})
@@ -909,8 +914,8 @@ async def test_amendment_list_distinguishes_same_named_targets(two_bandits):
         "BDT_2_BANDIT": {"state": "dead", "name": "Бандит", "distance": 9000, "seen": False},
     })
     try:
-        chronicle.record({"fact": "seen_dead", "npc": LOBART, "dead": "BDT_2_BANDIT", "how": "saw_die"})
-        dialogue.open(LOBART, "Лобарт")
+        await chronicle.record({"fact": "seen_dead", "npc": LOBART, "dead": "BDT_2_BANDIT", "how": "saw_die"})
+        await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert (
             f"Можешь снять пункты (amend_quest): {BANDIT} — Бандит (жив, у тебя на глазах); "
@@ -924,7 +929,7 @@ async def test_amendment_list_distinguishes_same_named_targets(two_bandits):
 async def test_completion_reminder_requires_every_target_witnessed(two_bandits, unseen):
     fake = FakeGame(branch="A")
     link_cm, dialogue, chronicle, vanilla = await _setup(
-        fake, FakeBackend(delay=0), two_bandits, MemoryStore(":memory:")
+        fake, FakeBackend(delay=0), two_bandits, await MemoryStore.open(":memory:")
     )
     fake.instances["SECOND_BANDIT"] = "BDT_2_BANDIT"
     fake.vars.update({QUEST: 2, KILL: 1})
@@ -933,10 +938,12 @@ async def test_completion_reminder_requires_every_target_witnessed(two_bandits, 
         "BDT_2_BANDIT": {"state": "dead", "name": "Второй бандит", "distance": 9000, "seen": False},
     })
     try:
-        chronicle.record({"fact": "caught", "npc": LOBART, "quest": QUEST})
+        await chronicle.record({"fact": "caught", "npc": LOBART, "quest": QUEST})
         if not unseen:
-            chronicle.record({"fact": "seen_dead", "npc": LOBART, "dead": "BDT_2_BANDIT", "how": "saw_die"})
-        dialogue.open(LOBART, "Лобарт")
+            await chronicle.record(
+                {"fact": "seen_dead", "npc": LOBART, "dead": "BDT_2_BANDIT", "how": "saw_die"}
+            )
+        await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert vanilla.trust.broken(LOBART)
         assert vanilla.offers[LOBART][KILL].seen_true() is not unseen
@@ -950,7 +957,7 @@ async def test_completion_reminder_requires_every_target_witnessed(two_bandits, 
 
 async def test_even_a_distrustful_giver_accepts_deaths_it_witnessed_earlier(two_bandits):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     accept = FakeStep("С ними покончено.", [ToolCall("accept_quest", {"quest": KILL}, "a1")])
     llm = FakeBackend(script=[accept, FakeStep("Держи плату.")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, two_bandits, store)
@@ -961,12 +968,12 @@ async def test_even_a_distrustful_giver_accepts_deaths_it_witnessed_earlier(two_
         "state": "dead", "name": "Второй бандит", "distance": 1000, "seen": True
     }
     try:
-        chronicle.record({"fact": "caught", "npc": LOBART, "quest": KILL, "how": "видел сам"})
-        chronicle.record({"fact": "died", "npc": BANDIT, "killer": LOBART})
-        chronicle.record({"fact": "died", "npc": "BDT_2_BANDIT", "killer": "PLAYER"})
+        await chronicle.record({"fact": "caught", "npc": LOBART, "quest": KILL, "how": "видел сам"})
+        await chronicle.record({"fact": "died", "npc": BANDIT, "killer": LOBART})
+        await chronicle.record({"fact": "died", "npc": "BDT_2_BANDIT", "killer": "PLAYER"})
         await _until(lambda: not vanilla._background)
         fake.npc_states["BDT_2_BANDIT"].update(distance=5000, seen=False)
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         offer = vanilla.offers[LOBART][KILL]
         assert offer.seen_true() and offer.reachable() is None
@@ -983,7 +990,7 @@ async def test_even_a_distrustful_giver_accepts_deaths_it_witnessed_earlier(two_
 
 async def test_checking_another_body_keeps_the_death_already_witnessed(two_bandits):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     check = FakeStep("Проверю второго.", [ToolCall("check_claim", {"quest": KILL}, "c1")])
     llm = FakeBackend(script=[check, FakeStep("Оба мертвы. Держи плату.")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, two_bandits, store)
@@ -994,10 +1001,10 @@ async def test_checking_another_body_keeps_the_death_already_witnessed(two_bandi
         "state": "dead", "name": "Второй бандит", "distance": 4000, "seen": False
     }
     try:
-        chronicle.record({"fact": "died", "npc": BANDIT, "killer": LOBART})
+        await chronicle.record({"fact": "died", "npc": BANDIT, "killer": LOBART})
         await _until(lambda: not vanilla._background)
         await vanilla.link.attach(LOBART)
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert vanilla.offers[LOBART][KILL].reachable().npc == "BDT_2_BANDIT"
         await dialogue.say_as_player(LOBART, "Оба бандита мертвы.")
@@ -1030,19 +1037,19 @@ def test_broken_trust_reason_lists_every_cause_in_order():
 @pytest.mark.parametrize("lied", [False, True])
 async def test_accept_quest_names_the_actual_trust_reason(graph, lied):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     fake.vars[KILL] = 1
     fake.npc_states[BANDIT] = {"state": "alive", "name": "Бандит", "distance": 4000}
     try:
-        chronicle.record({"fact": "gate_vouch_broken", "npc": LOBART, "crime_kind": "theft"})
+        await chronicle.record({"fact": "gate_vouch_broken", "npc": LOBART, "crime_kind": "theft"})
         if lied:
-            chronicle.record({"fact": "caught", "npc": LOBART, "quest": QUEST})
+            await chronicle.record({"fact": "caught", "npc": LOBART, "quest": QUEST})
         record = vanilla.trust.of(LOBART)
         assert record.crimes and not record.broke
         assert bool(record.lied) is lied
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         result = await vanilla.handle(dialogue, conv, ToolCall("accept_quest", {"quest": KILL}, "c1"), None)
         assert result is not None and result.status == "rejected"
@@ -1168,9 +1175,11 @@ async def _cavalorn(fake: FakeGame, llm: FakeBackend, graph: StoryGraph):
     fake.instances = {"AMBUSHER_1013": BRAGO}
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=store)
+    await dialogue.initialize()
     chronicle = Chronicle(link, store)
+    await chronicle.initialize()
     vanilla = VanillaQuests(link, dialogue, chronicle, graph, hero_distance=lambda npc: 300.0)
     await _until(lambda: chronicle.branch is not None)
     return link_cm, dialogue, chronicle, vanilla
@@ -1202,8 +1211,8 @@ async def test_a_distrustful_giver_promises_no_reward_until_every_death_is_seen(
     }
     fake.fns["C_BRAGOBANDITSDEAD"] = 1
     try:
-        chronicle.record({"fact": "caught", "npc": CAVALORN, "quest": KILLBRAGO, "how": "видел сам"})
-        dialogue.open(CAVALORN, "Кавалорн")
+        await chronicle.record({"fact": "caught", "npc": CAVALORN, "quest": KILLBRAGO, "how": "видел сам"})
+        await dialogue.open(CAVALORN, "Кавалорн")
         await vanilla.prepare(CAVALORN)
         offer = vanilla.offers[CAVALORN][KILLBRAGO]
         said = offer.said
@@ -1221,7 +1230,7 @@ async def test_a_distrustful_giver_promises_no_reward_until_every_death_is_seen(
         assert "check_claim" in {t.name for t in vanilla.tools(CAVALORN)}
         assert chronicle.facts("claim") == [] and _effects(fake, CAVALORN) == []
 
-        chronicle.record({"fact": "died", "npc": "BDT_2_BANDIT", "killer": CAVALORN})
+        await chronicle.record({"fact": "died", "npc": "BDT_2_BANDIT", "killer": CAVALORN})
         await _until(lambda: not vanilla._background)
         assert {"fact": "seen_dead", "npc": CAVALORN, "dead": "BDT_2_BANDIT", "how": "killed"} in (
             chronicle.facts("seen_dead")
@@ -1254,7 +1263,7 @@ async def test_checking_and_accepting_a_quest_carries_its_ending_lines_to_the_mo
     fake.fns["C_BRAGOBANDITSDEAD"] = 1
     try:
         await vanilla.link.attach(CAVALORN)
-        dialogue.open(CAVALORN, "Кавалорн")
+        await dialogue.open(CAVALORN, "Кавалорн")
         await vanilla.prepare(CAVALORN)
         said = vanilla.offers[CAVALORN][KILLBRAGO].said
         assert said == f"«{VATRAS}»"
@@ -1281,10 +1290,10 @@ async def test_the_givers_mistaken_death_observation_is_not_the_heros_lie(cavalo
         assert chronicle.facts("seen_dead")[0]["how"] == "saw_body"
         fake.npc_states[BRAGO].update(state="alive", distance=5000, seen=False)
         fake.fns["C_BRAGOBANDITSDEAD"] = 0
-        chronicle.record({"fact": "caught", "npc": CAVALORN, "quest": KILLBRAGO, "how": "видел сам"})
+        await chronicle.record({"fact": "caught", "npc": CAVALORN, "quest": KILLBRAGO, "how": "видел сам"})
         if reload:
             vanilla._load()
-        dialogue.open(CAVALORN, "Кавалорн")
+        await dialogue.open(CAVALORN, "Кавалорн")
         await vanilla.prepare(CAVALORN)
         assert vanilla.offers[CAVALORN][KILLBRAGO].seen_true()
         await dialogue.say_as_player(CAVALORN, "С бандитами покончено.")
@@ -1314,7 +1323,7 @@ async def test_a_seen_death_does_not_make_an_unseen_target_in_a_helper_true(cava
     }
     fake.fns["C_BRAGOBANDITSDEAD"] = 0
     try:
-        dialogue.open(CAVALORN, "Кавалорн")
+        await dialogue.open(CAVALORN, "Кавалорн")
         await dialogue.say_as_player(CAVALORN, "Все бандиты мертвы.")
         await _until(lambda: chronicle.facts("lie") != [])
         assert chronicle.facts("claim")[0]["truth"] is False
@@ -1326,7 +1335,7 @@ async def test_a_seen_death_does_not_make_an_unseen_target_in_a_helper_true(cava
 
 async def test_a_target_reviving_before_the_givers_eyes_overrides_its_memory(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[FakeStep("Но он же жив!")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     fake.vars.update({QUEST: 2, KILL: 1})
@@ -1335,7 +1344,7 @@ async def test_a_target_reviving_before_the_givers_eyes_overrides_its_memory(gra
         await vanilla.prepare(LOBART)
         assert vanilla.offers[LOBART][KILL].seen_true()
         fake.npc_states[BANDIT]["state"] = "alive"
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         offer = vanilla.offers[LOBART][KILL]
         assert not offer.seen_true() and offer.reachable() is None
@@ -1384,7 +1393,7 @@ async def test_a_quest_of_the_scripts_given_in_a_conversation(cavalorn):
     llm = FakeBackend(script=[give, FakeStep("Ну?")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _cavalorn(fake, llm, cavalorn)
     try:
-        dialogue.open(CAVALORN, "Кавалорн")
+        await dialogue.open(CAVALORN, "Кавалорн")
         await vanilla.prepare(CAVALORN)
         situation = vanilla.situation(CAVALORN) or ""
         # what he told of the bandits in the conversation counts: BANDITEN, a dialog of his own
@@ -1423,7 +1432,7 @@ async def test_an_ending_that_wants_its_quest_not_begun(cavalorn):
     try:
         fake.npc_states[BRAGO]["state"] = "dead"
         fake.fns["C_BRAGOBANDITSDEAD"] = 1
-        dialogue.open(CAVALORN, "Кавалорн")
+        await dialogue.open(CAVALORN, "Кавалорн")
         await vanilla.prepare(CAVALORN)
         offer = vanilla.offers[CAVALORN][KILLBRAGO]
         assert offer.ending == KILLED and offer.claim.dead == [BRAGO] and offer.claim.own == [BANDITEN]
@@ -1517,13 +1526,13 @@ async def test_constantino_herbs_accept_quest_keeps_native_passage_and_checklog(
     fake = GatesFake(branch="A")
     accept = FakeStep("Ладно, проходи к Константино.", [ToolCall("accept_quest", {"quest": quest}, "a1")])
     llm = FakeBackend(script=[accept, FakeStep("Ну?")], delay=0)
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     fake.vars.update({quest: 1, "MIL_310_SCHONMALREINGELASSEN": 0})
     fake.hero_items = {"ITPL_MANA_HERB_01": 10}
     fake.npc_states.update({npc: {"state": "alive", "name": "Стражник"}, partner: {"state": "alive"}})
     try:
-        dialogue.open(npc, "Стражник")
+        await dialogue.open(npc, "Стражник")
         await vanilla.prepare(npc)
         assert vanilla.offers[npc][quest].ending == ending
         await dialogue.say_as_player(npc, "Я принёс травы Константино.")
@@ -1672,9 +1681,11 @@ async def _greg(fake: FakeGame, llm: FakeBackend, graph: StoryGraph, *, running=
     }
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=store)
+    await dialogue.initialize()
     chronicle = Chronicle(link, store)
+    await chronicle.initialize()
     vanilla = VanillaQuests(link, dialogue, chronicle, graph, hero_distance=lambda npc: 300.0)
     await _until(lambda: chronicle.branch is not None)
     return link_cm, dialogue, chronicle, vanilla
@@ -1686,7 +1697,7 @@ async def test_greg_knows_the_whole_reward_before_giving_the_quest(greg):
     llm = FakeBackend(script=[give, FakeStep("Договорились.")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _greg(fake, llm, greg)
     try:
-        dialogue.open(GREG, "Грег")
+        await dialogue.open(GREG, "Грег")
         await vanilla.prepare(GREG)
         before = vanilla.situation(GREG) or ""
         assert f"Ты можешь сам дать герою поручение «{GREG_TITLE}»" in before
@@ -1721,7 +1732,7 @@ async def test_gregs_parent_choice_requires_and_takes_the_clothing_the_hero_has(
         condition = vanilla._condition(ending)
         claim = _claim(None, condition, greg, GREG, have={armor: 1})
         assert claim.items == {armor: 1}
-        dialogue.open(GREG, "Грег")
+        await dialogue.open(GREG, "Грег")
         await vanilla.prepare(GREG)
         offer = vanilla.offers[GREG][GREG_QUEST]
         assert offer.claim.items == {armor: 1}
@@ -1742,7 +1753,7 @@ async def test_gregs_parent_choice_requires_and_takes_the_clothing_the_hero_has(
         assert chronicle.facts("quest_outcome")[0]["pay"] == "full"
 
         # QuestLog can observe this same success after accept_quest already paid it.
-        chronicle.record({"fact": "vanilla_quest", "quest": GREG_QUEST, "to": "success", "giver": GREG})
+        await chronicle.record({"fact": "vanilla_quest", "quest": GREG_QUEST, "to": "success", "giver": GREG})
         await _until(lambda: not vanilla._background)
         assert len(chronicle.facts("vanilla_reward")) == 1
         assert {i: fake.hero_items[i] for i in GREG_BONUS} == GREG_BONUS
@@ -1756,7 +1767,7 @@ async def test_gregs_missing_clothing_is_a_fetch_lie_with_the_truth_recorded(gre
     llm = FakeBackend(script=[accept, FakeStep("Прощай.")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _greg(fake, llm, greg, running=1)
     try:
-        dialogue.open(GREG, "Грег")
+        await dialogue.open(GREG, "Грег")
         await vanilla.prepare(GREG)
         offer = vanilla.offers[GREG][GREG_QUEST]
         assert offer.claim.kind == "fetch"
@@ -1780,7 +1791,7 @@ async def test_gregs_native_success_bonus_is_once_and_follows_the_save_branch(gr
     questlog = QuestLog(vanilla.link, greg, chronicle, settle_s=0)
     try:
         await _until(lambda: GREG_QUEST in questlog.states)
-        before_reward = chronicle.memory.head("A")
+        before_reward = await chronicle.memory.head("A")
         fake.vars[GREG_QUEST] = 2
         # The native menu reports its parent dialog, whose choice writes success.
         await fake.send(type="dialog_chosen", npc=GREG, node=GREG_PARENT, made=False)
@@ -1799,7 +1810,7 @@ async def test_gregs_native_success_bonus_is_once_and_follows_the_save_branch(gr
         for item, count in GREG_BONUS.items():
             assert {"do": "create", "item": item, "count": count} in bonus_effects[0]["effects"]
             assert {"do": "give", "item": item, "count": count, "to": "hero"} in bonus_effects[0]["effects"]
-        after_reward = chronicle.memory.head("A")
+        after_reward = await chronicle.memory.head("A")
 
         async def succeed_again():
             fake.vars[GREG_QUEST] = 1
@@ -1837,7 +1848,7 @@ async def test_gregs_native_success_bonus_is_once_and_follows_the_save_branch(gr
 
 async def test_amending_is_immediate_accumulates_and_survives_loading(two_bandits):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), two_bandits, store)
     fake.vars.update({QUEST: 2, KILL: 1})
     fake.instances["SECOND_BANDIT"] = "BDT_2_BANDIT"
@@ -1848,8 +1859,8 @@ async def test_amending_is_immediate_accumulates_and_survives_loading(two_bandit
     entries = []
     vanilla.journal = Journal(entries.append)
     try:
-        chronicle.record({"fact": "caught", "npc": LOBART, "quest": QUEST})
-        conv = dialogue.open(LOBART, "Лобарт")
+        await chronicle.record({"fact": "caught", "npc": LOBART, "quest": QUEST})
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert f"{BANDIT} — Первый бандит" in vanilla.situation(LOBART)
         result = await vanilla.handle(
@@ -1904,11 +1915,11 @@ async def test_an_amendment_cannot_remove_variables_helpers_or_unknown_terms(gra
         effect["when"] = guard
     graph.functions["C_BANDIT_PERMISSION"] = {"params": 0, "body": ["int", 1], "lifted": True}
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars.update({QUEST: 2, KILL: 1, "MIS_BANDIT_PERMISSION": 1})
     try:
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert vanilla.offers[LOBART][KILL].claim.vars == {"MIS_BANDIT_PERMISSION": 1}
         result = await vanilla.handle(
@@ -1931,11 +1942,11 @@ async def test_the_main_plot_cannot_be_amended_or_dropped(graph, tool):
     chapter.reads = {KILL}
     graph.nodes[chapter.id] = chapter
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars.update({QUEST: 2, KILL: 1})
     try:
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert not {"amend_quest", "drop_quest"} & {t.name for t in vanilla.tools(LOBART)}
         args = {"quest": KILL, "why": "Передумал"}
@@ -1954,7 +1965,7 @@ async def test_a_giver_cannot_change_a_quest_it_did_not_ask_for(cavalorn, tool):
     fake = FakeGame(branch="A")
     link_cm, dialogue, chronicle, vanilla = await _cavalorn(fake, FakeBackend(delay=0), cavalorn)
     try:
-        conv = dialogue.open(CAVALORN, "Кавалорн")
+        conv = await dialogue.open(CAVALORN, "Кавалорн")
         await vanilla.prepare(CAVALORN)
         assert not vanilla.offers[CAVALORN][KILLBRAGO].asked
         assert not {"amend_quest", "drop_quest"} & {t.name for t in vanilla.tools(CAVALORN)}
@@ -1975,7 +1986,7 @@ async def test_a_giver_cannot_change_a_quest_it_did_not_ask_for(cavalorn, tool):
 @pytest.mark.parametrize("drop_all", [False, True])
 async def test_a_spared_target_before_its_eyes_does_not_block_a_distrustful_giver(two_bandits, drop_all):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     accept = FakeStep("С ними покончено.", [ToolCall("accept_quest", {"quest": KILL}, "a1")])
     llm = FakeBackend(script=[accept, FakeStep("Держи плату.")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, two_bandits, store)
@@ -1988,10 +1999,12 @@ async def test_a_spared_target_before_its_eyes_does_not_block_a_distrustful_give
         },
     })
     try:
-        chronicle.record({"fact": "caught", "npc": LOBART, "quest": QUEST})
+        await chronicle.record({"fact": "caught", "npc": LOBART, "quest": QUEST})
         if not drop_all:
-            chronicle.record({"fact": "seen_dead", "npc": LOBART, "dead": "BDT_2_BANDIT", "how": "killed"})
-        conv = dialogue.open(LOBART, "Лобарт")
+            await chronicle.record(
+                {"fact": "seen_dead", "npc": LOBART, "dead": "BDT_2_BANDIT", "how": "killed"}
+            )
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         dropped = [BANDIT, "BDT_2_BANDIT"] if drop_all else [BANDIT]
         result = await vanilla.handle(
@@ -2040,8 +2053,10 @@ async def test_amended_helper_counts_only_unseen_remaining_targets_as_lies(caval
     })
     fake.fns["C_BRAGOBANDITSDEAD"] = 0
     try:
-        chronicle.record({"fact": "seen_dead", "npc": CAVALORN, "dead": "BDT_2_BANDIT", "how": "saw_body"})
-        conv = dialogue.open(CAVALORN, "Кавалорн")
+        await chronicle.record(
+            {"fact": "seen_dead", "npc": CAVALORN, "dead": "BDT_2_BANDIT", "how": "saw_body"}
+        )
+        conv = await dialogue.open(CAVALORN, "Кавалорн")
         await vanilla.prepare(CAVALORN)
         result = await vanilla.handle(
             dialogue, conv,
@@ -2075,13 +2090,13 @@ async def test_a_dropped_item_is_no_lie_and_the_ending_takes_only_what_the_hero_
             if effect.get("when") == HAS_20:
                 effect["when"] = ["fn", "C_TURNIPS_BROUGHT"]
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[ACCEPT, FakeStep("Хватит и этого.")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     fake.hero_items = {"ITPL_BEET": 5}
     fake.fns["C_TURNIPS_BROUGHT"] = 0
     try:
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         result = await vanilla.handle(
             dialogue, conv,
@@ -2108,13 +2123,13 @@ async def test_dropping_a_death_does_not_waive_a_helpers_story_state_or_broken_t
         "params": 0, "body": ["==", ["var", "MIS_BANDIT_PERMISSION"], ["int", 1]], "lifted": True,
     }
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars.update({QUEST: 2, KILL: 1, "MIS_BANDIT_PERMISSION": 1})
     fake.fns["C_BANDIT_PERMISSION"] = 1
     try:
-        chronicle.record({"fact": "caught", "npc": LOBART, "quest": QUEST})
-        conv = dialogue.open(LOBART, "Лобарт")
+        await chronicle.record({"fact": "caught", "npc": LOBART, "quest": QUEST})
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         result = await vanilla.handle(
             dialogue, conv,
@@ -2140,14 +2155,14 @@ async def test_a_giver_can_drop_a_required_conversation(graph):
             ["call", "NPC_KNOWSINFO", ["inst", "OTHER"], ["sym", "DIA_HILDA_HALLO"]],
         ]
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     accept = FakeStep("Ладно.", [ToolCall("accept_quest", {"quest": KILL}, "a1")])
     llm = FakeBackend(script=[accept], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, graph, store)
     fake.vars.update({QUEST: 2, KILL: 1})
     fake.npc_states[BANDIT] = {"state": "dead", "name": "Бандит", "distance": 500, "seen": True}
     try:
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         assert "DIA_HILDA_HALLO" in vanilla.offers[LOBART][KILL].claim.knows
         result = await vanilla.handle(
@@ -2182,7 +2197,7 @@ async def test_accepting_without_pay_keeps_experience_continuation_and_takes_ite
     llm = FakeBackend(script=[accept, FakeStep("Прощай.")], delay=0)
     link_cm, dialogue, chronicle, vanilla = await _greg(fake, llm, greg, running=1)
     try:
-        conv = dialogue.open(GREG, "Грег")
+        conv = await dialogue.open(GREG, "Грег")
         await vanilla.prepare(GREG)
         assert "опыт" in vanilla.situation(GREG) and "в любом случае" in vanilla.situation(GREG)
         result = await vanilla.handle(
@@ -2208,7 +2223,9 @@ async def test_accepting_without_pay_keeps_experience_continuation_and_takes_ite
         for reload in (False, True):
             if reload:
                 vanilla._load()
-            chronicle.record({"fact": "vanilla_quest", "quest": GREG_QUEST, "to": "success", "giver": GREG})
+            await chronicle.record(
+                {"fact": "vanilla_quest", "quest": GREG_QUEST, "to": "success", "giver": GREG}
+            )
             await _until(lambda: not vanilla._background)
             assert chronicle.facts("vanilla_reward") == []
             assert len(_effects(fake, GREG)) == 1
@@ -2218,7 +2235,7 @@ async def test_accepting_without_pay_keeps_experience_continuation_and_takes_ite
 
 async def test_dropping_a_quest_closes_its_journal_without_an_ending_or_reward(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     drop = FakeStep(
         "Больше не нужно.", [ToolCall("drop_quest", {"quest": QUEST, "why": "Урожай пропал"}, "d1")]
     )
@@ -2227,7 +2244,7 @@ async def test_dropping_a_quest_closes_its_journal_without_an_ending_or_reward(g
     entries = []
     vanilla.journal = Journal(entries.append)
     try:
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await dialogue.say_as_player(LOBART, "Что с репой?")
         await _until(lambda: chronicle.facts("quest_outcome") != [])
         effects = _effects(fake, LOBART)[0]
@@ -2251,7 +2268,7 @@ async def test_dropping_a_quest_closes_its_journal_without_an_ending_or_reward(g
 
 async def test_dropping_a_quest_leaves_a_shared_journal_topic_open(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     drop = FakeStep(
         "Больше не нужно.", [ToolCall("drop_quest", {"quest": QUEST, "why": "Урожай пропал"}, "d1")]
     )
@@ -2260,7 +2277,7 @@ async def test_dropping_a_quest_leaves_a_shared_journal_topic_open(graph):
     for topic in graph.quests[QUEST].topics:
         vanilla._topic_uses[topic] = 2  # another quest writes to it too
     try:
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await dialogue.say_as_player(LOBART, "Что с репой?")
         await _until(lambda: chronicle.facts("quest_outcome") != [])
         effects = _effects(fake, LOBART)[0]
@@ -2273,7 +2290,7 @@ async def test_dropping_a_quest_leaves_a_shared_journal_topic_open(graph):
 @pytest.mark.parametrize("drop_all", [False, True])
 async def test_an_old_check_uses_terms_amended_during_its_walk(two_bandits, monkeypatch, drop_all):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), two_bandits, store)
     fake.instances["SECOND_BANDIT"] = "BDT_2_BANDIT"
     fake.vars.update({QUEST: 2, KILL: 1})
@@ -2287,9 +2304,11 @@ async def test_an_old_check_uses_terms_amended_during_its_walk(two_bandits, monk
     monkeypatch.setattr(vanilla, "_react", lambda conv, cue: cues.append(cue))
     try:
         if not drop_all:
-            chronicle.record({"fact": "seen_dead", "npc": LOBART, "dead": "BDT_2_BANDIT", "how": "killed"})
+            await chronicle.record(
+                {"fact": "seen_dead", "npc": LOBART, "dead": "BDT_2_BANDIT", "how": "killed"}
+            )
         await vanilla.link.attach(LOBART)
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         old = vanilla.offers[LOBART].pop(KILL)
         target = old.reachable()
@@ -2333,7 +2352,7 @@ async def test_an_old_check_uses_terms_amended_during_its_walk(two_bandits, monk
 
 async def test_an_old_check_does_not_play_an_ending_after_the_quest_was_dropped(graph, monkeypatch):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, dialogue, chronicle, vanilla = await _setup(fake, FakeBackend(delay=0), graph, store)
     fake.vars.update({QUEST: 2, KILL: 1})
     fake.npc_states[BANDIT] = {"state": "alive", "name": "Бандит", "distance": 4000, "seen": False}
@@ -2343,7 +2362,7 @@ async def test_an_old_check_does_not_play_an_ending_after_the_quest_was_dropped(
     monkeypatch.setattr(vanilla, "_react", lambda conv, cue: cues.append(cue))
     try:
         await vanilla.link.attach(LOBART)
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
         old = vanilla.offers[LOBART].pop(KILL)
         target = old.reachable()
@@ -2412,10 +2431,10 @@ async def test_an_optional_helper_branch_does_not_block_witnessed_amended_terms(
     })
     fake.fns["C_BRAGOBANDITSDEAD"] = away
     try:
-        chronicle.record({"fact": "caught", "npc": CAVALORN, "quest": KILLBRAGO})
+        await chronicle.record({"fact": "caught", "npc": CAVALORN, "quest": KILLBRAGO})
         for dead in ("BDT_2_BANDIT", "BDT_3_BANDIT"):
-            chronicle.record({"fact": "seen_dead", "npc": CAVALORN, "dead": dead, "how": "saw_die"})
-        conv = dialogue.open(CAVALORN, "Кавалорн")
+            await chronicle.record({"fact": "seen_dead", "npc": CAVALORN, "dead": dead, "how": "saw_die"})
+        conv = await dialogue.open(CAVALORN, "Кавалорн")
         await vanilla.prepare(CAVALORN)
         result = await vanilla.handle(
             dialogue, conv,

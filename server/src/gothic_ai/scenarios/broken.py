@@ -119,7 +119,7 @@ async def broken_memory(
         if isinstance(original, FakeBackend):
             step = FakeStep("Не видел, кто ломал. Одних обломков мало, чтобы обвинять тебя.")
             if observation is not None:
-                sid, _ = _trace_evidence_line(sightings.situation(LOBART) or "", observation)
+                sid, _ = _trace_evidence_line(await sightings.situation(LOBART) or "", observation)
                 step = FakeStep(
                     "Не с весны! Я только что видел свежие обломки этого забора.",
                     [ToolCall("catch_lie", {"said": age_lie, "seen": sid})],
@@ -226,7 +226,7 @@ async def broken_memory(
         sid, line = _trace_evidence_line(request(row), control_observed)
         check("control_in_request", bool(sid) and "Следы, которые ты видел" in request(row), line)
         check("control_no_accusation", not catches(row) and not chronicle.facts("caught"), catches(row))
-        talk.end("gone")
+        await talk.end("gone")
 
         await link.debug("time", hour=9, minute=0)
         await release("positive_setup")
@@ -288,7 +288,7 @@ async def broken_memory(
         ):
             return _logged(results)
         observed = sightings.mind(LOBART).traces[f"TRACE:{broken.id}:broken"]
-        sid, line = _trace_evidence_line(sightings.situation(LOBART) or "", observed)
+        sid, line = _trace_evidence_line(await sightings.situation(LOBART) or "", observed)
         check("trace_memory", bool(sid) and bool(line), line)
         row = await deny(observed)
         prompt = request(row)

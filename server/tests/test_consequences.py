@@ -15,6 +15,7 @@ from gothic_ai.story import StoryPatches
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
 from tests.test_director import GRAPH, HILDA, LOBART, NAMES, QUEST, SYMBOLS, _node
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 CLOTHES, PRICE = "DIA_LOBART_BUYCLOTHES", "WERT_LOBARTSRUESTUNG"
 ENDING, GOLD_CHOICE = "DIA_LOBART_RUEBENRUNNING", "DIA_LOBART_RUEBENRUNNING_GOLD"
@@ -124,10 +125,12 @@ async def test_a_lie_found_out_changes_the_dialogs_of_the_one_lied_to(graph):
         (ENDING, "information"): ENDING_INFO,  # the quest's own: as the lie left it
         ("DIA_HILDA_HALLO", "condition"): [{"do": "return", "value": ["!=", ["var", QUEST], ["int", 2]]}],
     }
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     async with connected(fake) as link:
         patches = StoryPatches(link, store)
+        await patches.initialize()
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         llm = FakeBackend("", delay=0)
         director = Director(link, graph, patches, chronicle, llm, pacing=Pacing(cooldown_s=0), settle_s=0)
         lies = LieConsequences(link, graph, patches, chronicle, director)
@@ -140,7 +143,7 @@ async def test_a_lie_found_out_changes_the_dialogs_of_the_one_lied_to(graph):
             "name": "Лобарт",
             "title": "Убрать поле репы",
         }
-        chronicle.record({**found, "how": "наутро не досчитался репы", "day": 2})
+        await chronicle.record({**found, "how": "наутро не досчитался репы", "day": 2})
         await _until(lambda: chronicle.facts("lie_consequences") != [])
         ops = {(op["node"], op["part"]): op["steps"] for op in _ops(fake)}
         # the clothes cost what they cost without the turnips, his gold for the turnips is halved
@@ -154,7 +157,7 @@ async def test_a_lie_found_out_changes_the_dialogs_of_the_one_lied_to(graph):
         # the hero makes amends: Lobart pays as before, and the turnips are his job again, for real; the
         # ending pays nothing a second time
         before = len(_ops(fake))
-        chronicle.record(
+        await chronicle.record(
             {"fact": "amends", "npc": LOBART, "to": LOBART, "about": LOBART, "quest": QUEST, "gold": 5}
         )
         await _until(lambda: len(_ops(fake)) >= before + 2)

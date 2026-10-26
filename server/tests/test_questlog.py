@@ -20,6 +20,7 @@ from gothic_ai.questlog import QuestLog
 from gothic_ai.showrunner import PROPOSE, Showrunner
 from tests.fake_game import FakeGame, connected
 from tests.fakes import Clock
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 LOBART, HILDA = "BAU_950_LOBART", "BAU_951_HILDA"
 QUEST, SECOND = "MIS_LOBART_RUEBEN", "MIS_HILDA_SOUP"
@@ -80,7 +81,7 @@ class World:
     async def load(self, *, branch="loaded", head=None, inherit=True):
         parent = self.chronicle.branch if inherit else None
         if head is None:
-            head = self.chronicle.memory.head(parent) if parent else 0
+            head = await self.chronicle.memory.head(parent) if parent else 0
         await self.fake.send(type="loading")
         await self.fake.send(type="session", branch=branch, parent=parent, parent_seq=head, reason="load")
         await self.link.evaluate(["int", 1])
@@ -92,7 +93,8 @@ async def world(graph, *, initial=0, poll_s=30.0, settle_s=0.005):
     fake = FakeGame(branch="original")
     fake.vars = {QUEST: initial, SECOND: 0, "KAPITEL": 1}
     async with connected(fake) as link:
-        chronicle = Chronicle(link, MemoryStore(":memory:"))
+        chronicle = Chronicle(link, await MemoryStore.open(":memory:"))
+        await chronicle.initialize()
         questlog = QuestLog(link, graph, chronicle, poll_s=poll_s, settle_s=settle_s)
         try:
             await until(lambda: len(questlog.states) == len(graph.quests))
@@ -231,7 +233,7 @@ async def test_only_facts_before_the_saved_head_form_the_loaded_baseline(graph):
     async with world(graph) as w:
         w.fake.vars[QUEST] = 1
         await w.questlog.poll()
-        saved = w.chronicle.memory.head(w.chronicle.branch)
+        saved = await w.chronicle.memory.head(w.chronicle.branch)
         first = w.facts[0]
         w.fake.vars[QUEST] = 2
         await w.questlog.poll()
@@ -378,7 +380,7 @@ async def test_quest_changes_become_vanilla_occasions_between_deeds_and_chapters
         w.fake.vars[QUEST] = 1
         await w.chosen(ACCEPT)
         await until(lambda: len(w.facts) == 1)
-        w.chronicle.record({"fact": "found_out", "quest": "MIS_LIE"})
+        await w.chronicle.record({"fact": "found_out", "quest": "MIS_LIE"})
         await occasions.poll()  # arrived, chapter, the quest change, deed
         expected = ["deed", "vanilla", "chapter", "arrived", "quiet"]
         assert [f["kind"] for f in occasions.pending] == expected
@@ -403,7 +405,7 @@ async def test_showrunner_decide_accepts_a_real_vanilla_occasion_without_special
         current = await occasions.next()
         assert current["kind"] == "vanilla" and current["vanilla"] == w.facts[0]
         author = SimpleNamespace(
-            book=SimpleNamespace(all=lambda: {}),
+            book=SimpleNamespace(all=AsyncMock(return_value={})),
             rules=SimpleNamespace(plot_npc=lambda npc: False),
             graph=graph,
             cards={},
@@ -411,7 +413,9 @@ async def test_showrunner_decide_accepts_a_real_vanilla_occasion_without_special
             quest=AsyncMock(),
         )
         chains = SimpleNamespace(chain=AsyncMock())
-        casting = SimpleNamespace(cast=SimpleNamespace(characters=lambda: [], cards=lambda: {}))
+        casting = SimpleNamespace(
+            cast=SimpleNamespace(characters=AsyncMock(side_effect=lambda: []), cards=lambda: {})
+        )
         llm = FakeBackend(
             script=[FakeStep("", [ToolCall(PROPOSE, {"kind": "none", "reason": "Пока тишина."}, "p1")])],
             delay=0,

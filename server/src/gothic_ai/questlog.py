@@ -98,7 +98,7 @@ class QuestLog:
                     fact.update(node=chosen.node, npc=chosen.npc)
                 if var in self._givers:
                     fact["giver"] = self._givers[var]
-                self.chronicle.record(fact)
+                await self.chronicle.record(fact)
             for var, cause in causes.items():
                 if self._pending.get(var) == cause:
                     del self._pending[var]

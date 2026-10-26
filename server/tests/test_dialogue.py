@@ -16,17 +16,41 @@ from gothic_ai.game import GameLink
 from gothic_ai.journal import Journal
 from gothic_ai.llm import Done, LLMError, LLMEvent, Message, TextDelta, Tool, ToolCall, ToolResult
 from gothic_ai.llm.fake import FakeBackend, FakeStep
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import MOOD_DELIVERY, PersonaProvider
-from gothic_ai.protocol import Hello, LineStarted, NpcDied, NpcRoster, Snapshot, SvmLine
+from gothic_ai.protocol import Hello, LineStarted, NpcDied, NpcRoster, Session, Snapshot, SvmLine
 from gothic_ai.scenarios import basics as scenarios
 from gothic_ai.talk import TalkDesk
 from gothic_ai.trace import TraceWriter
 from gothic_ai.tts import Speech, TtsClient, TtsError
 from tests.fake_game import FakeGame, connected
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 XARDAS = "NONE_100_XARDAS"
 LOBART = "BAU_950_LOBART"
 HILDA = "BAU_951_HILDA"
+
+
+@pytest.fixture
+async def memory(monkeypatch):
+    store = await MemoryStore.open(":memory:")
+    managers = []
+    initialize = DialogueManager.__init__
+
+    def track(manager, *args, **kwargs):
+        initialize(manager, *args, **kwargs)
+        if manager.memory is store:
+            managers.append(manager)
+
+    monkeypatch.setattr(DialogueManager, "__init__", track)
+    try:
+        yield store
+    finally:
+        try:
+            for manager in managers:
+                await manager.close()
+        finally:
+            await store.close()
 
 
 async def _until(predicate, timeout: float = 3.0) -> None:
@@ -40,18 +64,19 @@ async def _until(predicate, timeout: float = 3.0) -> None:
     (True, False, True, False), (True, True, False, False),
 ])
 async def test_svm_mode_waits_for_hello_and_requires_an_available_quick_model(
-    quick, enabled, available, replace,
+    memory, quick, enabled, available, replace,
 ):
     conn = SimpleNamespace(send=AsyncMock())
     link = GameLink(conn)
     llm = FakeBackend()
     dialogue = DialogueManager(
-        link, llm, PersonaProvider(None), quick=llm if quick else None,
+        link, llm, PersonaProvider(None), memory=memory, quick=llm if quick else None,
         svm_lines=enabled,
     )
+    await dialogue.initialize()
     dialogue._svm_available = available
     conn.send.assert_not_awaited()
-    link._dispatch(Hello(type="hello", protocol=50, client="fake", codepage="cp1251"))
+    await link._dispatch(Hello(type="hello", protocol=50, client="fake", codepage="cp1251"))
     await asyncio.gather(*dialogue._background)
     assert [json.loads(call.args[0]) for call in conn.send.await_args_list] == [
         {"type": "svm_mode", "replace": replace},
@@ -80,7 +105,7 @@ async def test_svm_mode_waits_for_hello_and_requires_an_available_quick_model(
     ("$UNKNOWN", LOBART, "", "обращаясь к Лобарт", "(зевает)", "зевает", None),
 ])
 async def test_svm_uses_persona_and_situation_without_history_and_voices_twelve_words(
-    tmp_path, svm, target, event, to, native, prompt_text, target_state,
+    memory, tmp_path, svm, target, event, to, native, prompt_text, target_state,
 ):
     phrase = "Я ещё покажу тебе как надо встречать незваных гостей у моих ворот."
     quick = FakeBackend(f"[angry] (потягиваюсь) {phrase} Это уже вторая фраза.", delay=0, chunk=200)
@@ -93,15 +118,16 @@ async def test_svm_uses_persona_and_situation_without_history_and_voices_twelve_
     )
     async with scene_tts(per_char=0.0001) as (url, requests), connected(fake) as link:
         dialogue = DialogueManager(
-            link, llm, PersonaProvider(None), quick=quick, tts=TtsClient(url), trace=writer,
+            link, llm, PersonaProvider(None), memory=memory, quick=quick, tts=TtsClient(url), trace=writer,
         )
+        await dialogue.initialize()
         link.snapshots[XARDAS] = Snapshot.model_validate(fake.snapshot(XARDAS))
         dialogue._nearby[XARDAS] = ("Ксардас", 3000)
         dialogue._nearby[LOBART] = ("Лобарт", 100)
         if target_state in {"died", "revived"}:
-            link._dispatch(NpcDied(type="npc_died", npc=LOBART, name="Лобарт", killer=XARDAS))
+            await link._dispatch(NpcDied(type="npc_died", npc=LOBART, name="Лобарт", killer=XARDAS))
         if target_state in {"down", "revived"}:
-            link._dispatch(NpcRoster.model_validate({
+            await link._dispatch(NpcRoster.model_validate({
                 "type": "npc_roster", "t": 1, "full": False,
                 "npcs": [{"id": LOBART, "name": "Лобарт", "distance": 100,
                           "activity": "down" if target_state == "down" else "routine"}],
@@ -109,13 +135,13 @@ async def test_svm_uses_persona_and_situation_without_history_and_voices_twelve_
         if target_state == "snapshot":
             target_snapshot = fake.snapshot(LOBART)
             target_snapshot["npc"].update(name="Лобарт", hp=0)
-            link._dispatch(Snapshot.model_validate(target_snapshot))
-        dialogue.remember(XARDAS, "Ксардас", "Ты защищаешь свою башню от зверей")
+            await link._dispatch(Snapshot.model_validate(target_snapshot))
+        await dialogue.remember(XARDAS, "Ксардас", "Ты защищаешь свою башню от зверей")
         conv = dialogue.conversations[XARDAS]
         assert conv.history
-        brief = dialogue._brief(conv)
+        brief = await dialogue._brief(conv)
         started = time.monotonic()
-        dialogue._on_message(line)
+        await dialogue._on_message(line)
         await _until(lambda: not dialogue._svm_tasks and bool(fake.say_ends))
 
     assert fake.said == [phrase] and fake.voiced == [True]
@@ -156,16 +182,19 @@ async def test_svm_uses_persona_and_situation_without_history_and_voices_twelve_
     ("(дьявольский смех)", "", "nothing"),
 ])
 async def test_svm_thirteen_words_or_only_stage_directions_are_silent_and_traced(
-    tmp_path, phrase, answer, outcome,
+    memory, tmp_path, phrase, answer, outcome,
 ):
     quick = FakeBackend(phrase, delay=0, chunk=200)
     conn = SimpleNamespace(send=AsyncMock())
     writer = TraceWriter(tmp_path)
     dialogue = DialogueManager(
-        GameLink(conn), FakeBackend(), PersonaProvider(None), quick=quick, trace=writer,
+        GameLink(conn), FakeBackend(), PersonaProvider(None), memory=memory, quick=quick, trace=writer,
     )
+    await dialogue.link._dispatch(Session(type="session", branch="test-branch"))
+    await dialogue.initialize()
+    dialogue.link._conn.send.reset_mock()
     dialogue._nearby[XARDAS] = ("Ксардас", 100)
-    dialogue._on_message(SvmLine(
+    await dialogue._on_message(SvmLine(
         type="svm_line", id="long", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True,
     ))
     await _until(lambda: not dialogue._svm_tasks)
@@ -176,17 +205,20 @@ async def test_svm_thirteen_words_or_only_stage_directions_are_silent_and_traced
     assert record["elapsed_ms"] >= 0
 
 
-async def test_svm_deadline_is_two_seconds_and_lateness_does_not_count_as_an_error(tmp_path):
+async def test_svm_deadline_is_two_seconds_and_lateness_does_not_count_as_an_error(memory, tmp_path):
     assert dialogue_module.SVM_REPLY_S == 2.0
     quick = FakeBackend("Убирайся!", delay=0, first=2.2)
     conn = SimpleNamespace(send=AsyncMock())
     writer = TraceWriter(tmp_path)
     dialogue = DialogueManager(
-        GameLink(conn), FakeBackend(), PersonaProvider(None), quick=quick, trace=writer,
+        GameLink(conn), FakeBackend(), PersonaProvider(None), memory=memory, quick=quick, trace=writer,
     )
+    await dialogue.link._dispatch(Session(type="session", branch="test-branch"))
+    await dialogue.initialize()
+    dialogue.link._conn.send.reset_mock()
     dialogue._nearby[XARDAS] = ("Ксардас", 100)
     dialogue._svm_errors = 2
-    dialogue._on_message(SvmLine(
+    await dialogue._on_message(SvmLine(
         type="svm_line", id="late", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True,
     ))
     await _until(lambda: not dialogue._svm_tasks)
@@ -199,18 +231,21 @@ async def test_svm_deadline_is_two_seconds_and_lateness_does_not_count_as_an_err
 
 
 @pytest.mark.parametrize("busy", ["turn", "recent", "scene"])
-async def test_svm_does_not_interrupt_a_turn_or_a_line_said_in_the_last_three_seconds(tmp_path, busy):
+async def test_svm_does_not_interrupt_a_turn_or_a_line_said_in_the_last_three_seconds(memory, tmp_path, busy):
     assert dialogue_module.SVM_QUIET_S == 3.0
     quick = FakeBackend("Убирайся!", delay=0)
     conn = SimpleNamespace(send=AsyncMock())
     writer = TraceWriter(tmp_path)
     dialogue = DialogueManager(
-        GameLink(conn), FakeBackend(), PersonaProvider(None), quick=quick, trace=writer,
+        GameLink(conn), FakeBackend(), PersonaProvider(None), memory=memory, quick=quick, trace=writer,
     )
+    await dialogue.link._dispatch(Session(type="session", branch="test-branch"))
+    await dialogue.initialize()
+    dialogue.link._conn.send.reset_mock()
     dialogue._nearby[XARDAS] = ("Ксардас", 100)
     if busy == "scene":
-        dialogue._on_message(LineStarted(type="line_started", npc=XARDAS, line="scene", voiced=True))
-    conv = dialogue.open(XARDAS, "Ксардас", warm=False)
+        await dialogue._on_message(LineStarted(type="line_started", npc=XARDAS, line="scene", voiced=True))
+    conv = await dialogue.open(XARDAS, "Ксардас", warm=False)
     if busy == "turn":
         conv.reply = asyncio.create_task(asyncio.Event().wait())
     elif busy == "recent":
@@ -218,7 +253,7 @@ async def test_svm_does_not_interrupt_a_turn_or_a_line_said_in_the_last_three_se
         assert time.monotonic() - conv.said_at < 3
         conn.send.reset_mock()
     try:
-        dialogue._on_message(SvmLine(
+        await dialogue._on_message(SvmLine(
             type="svm_line", id="busy", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True,
         ))
         assert dialogue._svm_tasks == {} and quick.calls == []
@@ -232,19 +267,22 @@ async def test_svm_does_not_interrupt_a_turn_or_a_line_said_in_the_last_three_se
 
 
 @pytest.mark.parametrize("source", ["roster", "snapshot"])
-async def test_svm_beyond_thirty_metres_is_silent_without_opening_a_conversation(tmp_path, source):
+async def test_svm_beyond_thirty_metres_is_silent_without_opening_a_conversation(memory, tmp_path, source):
     conn = SimpleNamespace(send=AsyncMock())
     link = GameLink(conn)
     quick = FakeBackend(delay=0)
     writer = TraceWriter(tmp_path)
-    dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), quick=quick, trace=writer)
+    dialogue = DialogueManager(
+        link, FakeBackend(), PersonaProvider(None), memory=memory, quick=quick, trace=writer,
+    )
+    await dialogue.initialize()
     if source == "roster":
         dialogue._nearby[XARDAS] = ("Ксардас", 3000.1)
     else:
         snapshot = FakeGame().snapshot(XARDAS)
         snapshot["player"]["distance"] = 3000.1
         link.snapshots[XARDAS] = Snapshot.model_validate(snapshot)
-    dialogue._on_message(SvmLine(
+    await dialogue._on_message(SvmLine(
         type="svm_line", id="far", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True,
     ))
     assert dialogue._svm_tasks == {} and quick.calls == [] and dialogue.conversations == {}
@@ -253,26 +291,29 @@ async def test_svm_beyond_thirty_metres_is_silent_without_opening_a_conversation
     assert record["outcome"] == "far" and record["elapsed_ms"] >= 0
 
 
-async def test_svm_has_one_pending_line_per_npc_three_slots_and_yields_to_quick_words(tmp_path):
+async def test_svm_has_one_pending_line_per_npc_three_slots_and_yields_to_quick_words(memory, tmp_path):
     quick = FakeBackend("К оружию!", delay=0, first=60)
     conn = SimpleNamespace(send=AsyncMock())
     writer = TraceWriter(tmp_path)
     dialogue = DialogueManager(
-        GameLink(conn), FakeBackend(), PersonaProvider(None), quick=quick, trace=writer,
+        GameLink(conn), FakeBackend(), PersonaProvider(None), memory=memory, quick=quick, trace=writer,
     )
+    await dialogue.link._dispatch(Session(type="session", branch="test-branch"))
+    await dialogue.initialize()
+    dialogue.link._conn.send.reset_mock()
     for npc in (XARDAS, LOBART, HILDA, "MIL_320_SPEAKER"):
         dialogue._nearby[npc] = (npc, 100)
     line = SvmLine(type="svm_line", id="first", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True)
-    dialogue._on_message(line)
-    dialogue._on_message(line.model_copy(update={"id": "same-npc"}))
+    await dialogue._on_message(line)
+    await dialogue._on_message(line.model_copy(update={"id": "same-npc"}))
     for npc in (LOBART, HILDA):
-        dialogue._on_message(line.model_copy(update={"id": npc, "npc": npc}))
-    dialogue._on_message(line.model_copy(update={"id": "fourth", "npc": "MIL_320_SPEAKER"}))
+        await dialogue._on_message(line.model_copy(update={"id": npc, "npc": npc}))
+    await dialogue._on_message(line.model_copy(update={"id": "fourth", "npc": "MIL_320_SPEAKER"}))
     assert len(dialogue._svm_tasks) == 3
     tasks = list(dialogue._svm_tasks.values())
     await _until(lambda: len(quick.calls) == 3)
     quick.first = 0
-    conv = dialogue.open("MIL_320_SPEAKER", "Стражник", warm=False)
+    conv = await dialogue.open("MIL_320_SPEAKER", "Стражник", warm=False)
     words, _ = await asyncio.wait_for(dialogue._quick_words(conv, []), 0.5)
     await asyncio.gather(*tasks, return_exceptions=True)
     await _until(lambda: not dialogue._svm_tasks)
@@ -285,24 +326,29 @@ async def test_svm_has_one_pending_line_per_npc_three_slots_and_yields_to_quick_
     assert all(r["elapsed_ms"] >= 0 for r in records)
 
 
-async def test_svm_repeats_are_normalized_and_only_the_last_five_said_phrases_count(tmp_path, monkeypatch):
+async def test_svm_repeats_are_normalized_and_only_the_last_five_said_phrases_count(
+    memory, tmp_path, monkeypatch
+):
     replies = ["Первый.", "Второй.", "Третий.", "Четвёртый.", "Пятый.", "ПЕРВЫЙ!!!", "Шестой.", "Первый."]
     quick = FakeBackend(script=[FakeStep(text) for text in replies], delay=0)
     writer = TraceWriter(tmp_path)
     dialogue = DialogueManager(
-        GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(), PersonaProvider(None),
+        GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(), PersonaProvider(None), memory=memory,
         quick=quick, trace=writer,
     )
+    await dialogue.link._dispatch(Session(type="session", branch="test-branch"))
+    await dialogue.initialize()
+    dialogue.link._conn.send.reset_mock()
     dialogue._nearby[XARDAS] = ("Ксардас", 100)
     monkeypatch.setattr(dialogue, "_say", AsyncMock(wraps=dialogue._say))
-    conv = dialogue.open(XARDAS, "Ксардас", warm=False)
+    conv = await dialogue.open(XARDAS, "Ксардас", warm=False)
     line = SvmLine(type="svm_line", id="repeat", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True)
     for index in range(len(replies)):
         conv.said_at = float("-inf")
         conv.overlay_free_at = 0
         for sent in dialogue._sent:
             dialogue._sent[sent] = float("-inf")  # earlier sends expired during the skipped cooldown
-        dialogue._on_message(line.model_copy(update={"id": str(index)}))
+        await dialogue._on_message(line.model_copy(update={"id": str(index)}))
         await _until(lambda: not dialogue._svm_tasks)
     records = [json.loads(raw) for raw in writer.path().read_text().splitlines()]
     assert [r["outcome"] for r in records] == ["said"] * 5 + ["repeat", "said", "said"]
@@ -311,7 +357,9 @@ async def test_svm_repeats_are_normalized_and_only_the_last_five_said_phrases_co
     assert len(conv.history) == 7 and "ПЕРВЫЙ!!!" not in str(conv.history)
 
 
-async def test_svm_three_errors_restore_original_lines_then_probes_restore_replacement(tmp_path, monkeypatch):
+async def test_svm_three_errors_restore_original_lines_then_probes_restore_replacement(
+    memory, tmp_path, monkeypatch
+):
     assert dialogue_module.SVM_RECOVER_S == 30.0
     monkeypatch.setattr(dialogue_module, "SVM_RECOVER_S", 0.05)
     quick = FakeBackend("Снова на ногах!", delay=0)
@@ -321,13 +369,18 @@ async def test_svm_three_errors_restore_original_lines_then_probes_restore_repla
     conn = SimpleNamespace(send=AsyncMock())
     link = GameLink(conn)
     writer = TraceWriter(tmp_path)
-    dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), quick=quick, trace=writer)
+    dialogue = DialogueManager(
+        link, FakeBackend(), PersonaProvider(None), memory=memory, quick=quick, trace=writer,
+    )
+    await dialogue.link._dispatch(Session(type="session", branch="test-branch"))
+    await dialogue.initialize()
+    dialogue.link._conn.send.reset_mock()
     dialogue._nearby[XARDAS] = ("Ксардас", 100)
-    link._dispatch(Hello(type="hello", protocol=50, client="fake", codepage="cp1251"))
+    await link._dispatch(Hello(type="hello", protocol=50, client="fake", codepage="cp1251"))
     await asyncio.gather(*dialogue._background)
     line = SvmLine(type="svm_line", id="error", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True)
     for index in range(3):
-        dialogue._on_message(line.model_copy(update={"id": str(index)}))
+        await dialogue._on_message(line.model_copy(update={"id": str(index)}))
         await _until(lambda: not dialogue._svm_tasks)
         assert dialogue._svm_errors == index + 1
         assert dialogue._svm_available is (index < 2)
@@ -335,7 +388,7 @@ async def test_svm_three_errors_restore_original_lines_then_probes_restore_repla
     assert [json.loads(c.args[0]) for c in conn.send.await_args_list] == [
         {"type": "svm_mode", "replace": True}, {"type": "svm_mode", "replace": False},
     ]
-    dialogue._on_message(line.model_copy(update={"id": "unavailable"}))
+    await dialogue._on_message(line.model_copy(update={"id": "unavailable"}))
     assert dialogue._svm_tasks == {}
     await _until(lambda: dialogue._svm_available)
     await _until(lambda: len(conn.send.await_args_list) == 3)
@@ -348,12 +401,13 @@ async def test_svm_three_errors_restore_original_lines_then_probes_restore_repla
     assert dialogue.conversations[XARDAS].history == []
 
 
-async def test_player_phrases_get_replies_line_by_line():
+async def test_player_phrases_get_replies_line_by_line(memory):
     fake = FakeGame()
     llm = FakeBackend("Ты наконец вернулся из храма. Хорошо, теперь слушай меня внимательно.", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Привет")
         await _until(lambda: fake.statuses[-2:] == ["thinking", "idle"])
         assert fake.said == ["Ты наконец вернулся из храма.", "Хорошо, теперь слушай меня внимательно."]
@@ -377,7 +431,7 @@ async def test_player_phrases_get_replies_line_by_line():
 
 
 async def test_cavalorns_fragmented_tool_text_is_logged_without_being_said_or_remembered(
-    caplog, monkeypatch
+    memory, caplog, monkeypatch
 ):
     npc = "BAU_4300_ADDON_CAVALORN"
     spoken = [
@@ -393,9 +447,11 @@ async def test_cavalorns_fragmented_tool_text_is_logged_without_being_said_or_re
     monkeypatch.setattr(dialogue_module, "CHAT_TEXT_EVERY", 0)
     async with scene_tts(per_char=0.0001) as (url, requests), connected(fake) as link:
         dialogue = DialogueManager(
-            link, llm, PersonaProvider(None), tts=TtsClient(url), journal=Journal(entries.append)
+            link, llm, PersonaProvider(None), memory=memory,
+            tts=TtsClient(url), journal=Journal(entries.append)
         )
-        conv = dialogue.open(npc, "Кавалорн")
+        await dialogue.initialize()
+        conv = await dialogue.open(npc, "Кавалорн")
         await dialogue.say_as_player(npc, "Помочь тебе?")
         await _until(lambda: len(fake.say_ends) == 3 and fake.statuses[-1:] == ["idle"])
 
@@ -405,7 +461,7 @@ async def test_cavalorns_fragmented_tool_text_is_logged_without_being_said_or_re
     assert texts[-1] == clean
     assert all(clean.startswith(text.strip()) for text in texts)  # no partial leaked prefix was shown
     assert conv.history[-1] == Message("assistant", clean)
-    assert dialogue.memory.load("test-branch", npc).entries[-1].content == clean
+    assert (await dialogue.memory.load("test-branch", npc)).entries[-1].content == clean
     assert [entry["text"] for entry in entries if entry["kind"] == "npc"] == [clean]
     warnings = [
         r.getMessage()
@@ -428,7 +484,7 @@ class HiddenQuestTool:
         return []
 
 
-async def test_extensions_share_tool_names_once_and_the_first_definition_wins():
+async def test_extensions_share_tool_names_once_and_the_first_definition_wins(memory):
     class QuestTools(HiddenQuestTool):
         def __init__(self, description):
             self.all_tools = (Tool("amend_quest", description),)
@@ -440,9 +496,10 @@ async def test_extensions_share_tool_names_once_and_the_first_definition_wins():
     llm = FakeBackend("Ладно.", delay=0)
     first, second = QuestTools("First definition."), QuestTools("Second definition.")
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
         dialogue.extensions.extend([first, second])
-        offered = dialogue._offered(XARDAS)
+        offered = await dialogue._offered(XARDAS)
         assert [t.name for t in offered].count("amend_quest") == 1
         assert next(t for t in offered if t.name == "amend_quest") is first.all_tools[0]
         request = dialogue._request_tools(
@@ -450,7 +507,7 @@ async def test_extensions_share_tool_names_once_and_the_first_definition_wins():
         )
         assert [t.name for t in request].count("turn_signal") == 1
         assert next(t for t in request if t.name == "turn_signal").description == "First signal."
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Не нужно никуда идти.")
         await _until(lambda: fake.statuses[-1:] == ["idle"])
         requested = llm.calls[0][2]
@@ -459,9 +516,8 @@ async def test_extensions_share_tool_names_once_and_the_first_definition_wins():
 
 
 @pytest.mark.parametrize("own", [False, True])
-async def test_amend_quest_routes_to_the_extension_owning_its_id(tmp_path, own):
+async def test_amend_quest_routes_to_the_extension_owning_its_id(memory, tmp_path, own):
     from gothic_ai.gamedata.storygraph import load
-    from gothic_ai.memory import MemoryStore
     from gothic_ai.questbook import goal_id
     from gothic_ai.vanilla import VanillaQuests
     from tests.test_director import GRAPH, QUEST
@@ -471,7 +527,7 @@ async def test_amend_quest_routes_to_the_extension_owning_its_id(tmp_path, own):
     path.write_text(json.dumps(GRAPH), encoding="utf-8")
     graph = load(path)
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = memory
     link_cm, book, _, chronicle = await _book(fake, store, graph)
     try:
         q = _quest()
@@ -492,6 +548,7 @@ async def test_amend_quest_routes_to_the_extension_owning_its_id(tmp_path, own):
             delay=0,
         )
         dialogue = DialogueManager(book.link, llm, PersonaProvider(None), memory=store)
+        await dialogue.initialize()
         VanillaQuests(book.link, dialogue, chronicle, graph)
         book.dialogue = dialogue
         dialogue.extensions.append(book)
@@ -499,8 +556,8 @@ async def test_amend_quest_routes_to_the_extension_owning_its_id(tmp_path, own):
         if own:
             assert await book.make(q) == []
             fake.vars.update({q.id: 1, "DIR_Q1_STAGE": 1})
-            chronicle.record({"fact": "story_quest_given", "id": q.id})
-        dialogue.open(npc, name)
+            await chronicle.record({"fact": "story_quest_given", "id": q.id})
+        await dialogue.open(npc, name)
         await dialogue.say_as_player(npc, "Не нужно никуда идти.")
         await _until(lambda: bool(chronicle.facts("quest_terms")))
         assert chronicle.facts("quest_terms")[0]["quest"] == quest
@@ -519,11 +576,10 @@ async def test_amend_quest_routes_to_the_extension_owning_its_id(tmp_path, own):
 
 @pytest.mark.parametrize("remaining_alive,explicit_tools", [(False, False), (True, False), (False, True)])
 async def test_amending_refreshes_automatic_tools_and_continues_only_when_accept_opens(
-    tmp_path, remaining_alive, explicit_tools
+    memory, tmp_path, remaining_alive, explicit_tools
 ):
     from gothic_ai.gamedata.storygraph import load
     from gothic_ai.llm import ToolResult
-    from gothic_ai.memory import MemoryStore
     from gothic_ai.trace import TraceWriter, find_turn
     from gothic_ai.vanilla import ACCEPT_NOW
     from tests.test_director import GRAPH, QUEST, RUNNING
@@ -550,7 +606,8 @@ async def test_amending_refreshes_automatic_tools_and_continues_only_when_accept
         FakeStep("Дело сделано.", [ToolCall("accept_quest", {"quest": QUEST}, "a1")]),
     ], delay=0)
     fake = FakeGame(branch="A")
-    link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, load(path), MemoryStore(":memory:"))
+    link_cm, dialogue, chronicle, vanilla = await _setup(fake, llm, load(path), memory)
+    await dialogue.initialize()
     fake.instances["SECOND_BANDIT"] = "BDT_2_BANDIT"
     fake.npc_states.update({
         BANDIT: {"state": "alive", "name": "Бандит", "distance": 500, "seen": True},
@@ -561,9 +618,9 @@ async def test_amending_refreshes_automatic_tools_and_continues_only_when_accept
     })
     dialogue.trace = TraceWriter(tmp_path / "traces")
     try:
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         await vanilla.prepare(LOBART)
-        offered = dialogue._offered(LOBART)
+        offered = await dialogue._offered(LOBART)
         assert "accept_quest" not in {t.name for t in offered}
         await dialogue._turn(
             conv, Message("user", "Пощади его, с остальными покончено."), "player",
@@ -602,13 +659,14 @@ async def test_amending_refreshes_automatic_tools_and_continues_only_when_accept
 @pytest.mark.parametrize(
     "leak", ["give_item?", "set_intent?", "give_quest?", "turn_signal?", "functions.give_quest({...})"]
 )
-async def test_tool_names_are_filtered_from_base_extension_and_turn_tools(leak, caplog):
+async def test_tool_names_are_filtered_from_base_extension_and_turn_tools(memory, leak, caplog):
     fake = FakeGame()
     llm = FakeBackend(leak, chunk=2, delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), tools=False)
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory, tools=False)
+        await dialogue.initialize()
         dialogue.extensions.append(HiddenQuestTool())
-        conv = dialogue.open(XARDAS, "Ксардас")
+        conv = await dialogue.open(XARDAS, "Ксардас")
         await dialogue._turn(
             conv, Message("user", "Что скажешь?"), "player", tools=[Tool("turn_signal", "Signal.")]
         )
@@ -652,12 +710,15 @@ async def test_tool_names_are_filtered_from_base_extension_and_turn_tools(leak, 
     ],
 )
 async def test_only_the_service_sentence_is_removed_from_a_merged_line_or_tail(
-    reply, clean, leak, caplog
+    memory, reply, clean, leak, caplog
 ):
     fake = FakeGame()
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(reply, chunk=3, delay=0), PersonaProvider(None))
-        conv = dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(
+            link, FakeBackend(reply, chunk=3, delay=0), PersonaProvider(None), memory=memory,
+        )
+        await dialogue.initialize()
+        conv = await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Ладно")
         await _until(lambda: fake.statuses[-1:] == ["idle"])
 
@@ -670,15 +731,18 @@ async def test_only_the_service_sentence_is_removed_from_a_merged_line_or_tail(
     )
 
 
-async def test_ordinary_speech_is_not_filtered(caplog):
+async def test_ordinary_speech_is_not_filtered(memory, caplog):
     reply = (
         "Дай мне функцию подумать. Это задание как раз по тебе. Отдам тебе булаву после боя. "
         "Xardas знает больше. Ладно, пошли."
     )
     fake = FakeGame()
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(reply, chunk=3, delay=0), PersonaProvider(None))
-        conv = dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(
+            link, FakeBackend(reply, chunk=3, delay=0), PersonaProvider(None), memory=memory,
+        )
+        await dialogue.initialize()
+        conv = await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Что скажешь?")
         await _until(lambda: fake.statuses[-1:] == ["idle"])
 
@@ -687,21 +751,68 @@ async def test_ordinary_speech_is_not_filtered(caplog):
     assert not [r for r in caplog.records if r.name == "gothic_ai.dialogue" and r.levelname == "WARNING"]
 
 
-async def test_new_player_text_interrupts_the_reply_in_flight():
+@pytest.mark.parametrize("retired", [False, True])
+async def test_new_player_text_interrupts_the_reply_in_flight(memory, monkeypatch, retired):
     fake = FakeGame()
     llm = FakeBackend("Слишком долгий ответ, который никто не дослушает до конца. " * 5, delay=0.05)
+    committed, release = asyncio.Event(), asyncio.Event()
+    append = memory.append_messages
+
+    async def held_receipt(*args, **kwargs):
+        entries = await append(*args, **kwargs)
+        if not committed.is_set():
+            committed.set()
+            await release.wait()
+        return entries
+
+    monkeypatch.setattr(memory, "append_messages", held_receipt)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
+        if retired:
+            await dialogue.remember(XARDAS, "Ксардас", "Saved before the interrupted turn")
+        conv = await dialogue.open(XARDAS, "Ксардас")
         first = dialogue.say_as_player(XARDAS, "Расскажи всё")
         await _until(lambda: any(m["type"] == "chat_text" for m in fake.received))
+        # The existing first-turn meeting note belongs to the save, before the interrupted reply commits.
+        saved, saved_seq = list(conv.history), await memory.head("test-branch")
         assert not first.done()
         second = dialogue.say_as_player(XARDAS, "Стоп")
-        await second
-        assert first.cancelled()
+        try:
+            await asyncio.wait_for(committed.wait(), 3)
+            assert not second.done() and len(llm.calls) == 1
+            assert conv.history == saved  # the SQL receipt has not reached the live cache
+            if retired:
+                head_start = len(fake.heads)
+                fanout = link._dispatch(Session(
+                    type="session", branch="after-load", parent="test-branch", parent_seq=saved_seq,
+                    reason="load",
+                ))
+                assert fanout is not None
+                switch = asyncio.create_task(fanout)
+                await asyncio.sleep(0)
+                release.set()
+                await asyncio.wait_for(switch, 3)
+                await asyncio.gather(first, second, return_exceptions=True)
+                assert first.cancelled() and second.cancelled()
+                loaded = await dialogue.open(XARDAS, "Ксардас")
+                assert loaded.history == saved
+                durable = await memory.load("test-branch", XARDAS)
+                assert [entry.message() for entry in durable.entries[:saved_seq]] == saved
+                assert [entry.role for entry in durable.entries[saved_seq:]] == ["user", "assistant"]
+                assert await memory.head("after-load") == saved_seq
+                await _until(lambda: fake.heads[-1:] == [("after-load", saved_seq)])
+                assert all(branch == "after-load" for branch, _ in fake.heads[head_start:])
+            else:
+                release.set()
+                await second
+                assert first.cancelled()
+        finally:
+            release.set()
 
-    roles = [m.role for m in dialogue.conversations[XARDAS].history]
-    assert roles == ["user", "assistant", "user", "assistant"]  # partial reply kept, turns stay paired
+    if not retired:
+        roles = [m.role for m in dialogue.conversations[XARDAS].history]
+        assert roles == ["user", "assistant", "user", "assistant"]  # partial reply kept, turns stay paired
 
 
 class FailingBackend:
@@ -714,11 +825,12 @@ class FailingBackend:
         yield  # pragma: no cover
 
 
-async def test_llm_error_is_reported_to_the_game_and_history_untouched():
+async def test_llm_error_is_reported_to_the_game_and_history_untouched(memory):
     fake = FakeGame()
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FailingBackend(), PersonaProvider(None))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(link, FailingBackend(), PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Привет")
         await _until(lambda: fake.statuses[-1:] == ["error"])
 
@@ -756,12 +868,13 @@ async def _quick(dialogue: DialogueManager) -> DialogueManager:
     return dialogue
 
 
-async def test_a_model_gone_quiet_is_asked_again():
+async def test_a_model_gone_quiet_is_asked_again(memory):
     fake = FakeGame()
     llm = StallingBackend("Я здесь, говори.")
     async with connected(fake) as link:
-        dialogue = await _quick(DialogueManager(link, llm, PersonaProvider(None)))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = await _quick(DialogueManager(link, llm, PersonaProvider(None), memory=memory))
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Ты тут?")
         await _until(lambda: fake.statuses[-2:] == ["thinking", "idle"])
 
@@ -769,12 +882,13 @@ async def test_a_model_gone_quiet_is_asked_again():
     assert (llm.calls, llm.closed) == (2, 2)  # the stalled stream was closed, not left hanging
 
 
-async def test_a_model_gone_quiet_after_some_words_is_not_asked_again():
+async def test_a_model_gone_quiet_after_some_words_is_not_asked_again(memory):
     fake = FakeGame()
     llm = StallingBackend("Это повтор.", said="Сейчас скажу. ")
     async with connected(fake) as link:
-        dialogue = await _quick(DialogueManager(link, llm, PersonaProvider(None)))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = await _quick(DialogueManager(link, llm, PersonaProvider(None), memory=memory))
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Ну?")
         await _until(lambda: fake.statuses[-1:] == ["error"])
 
@@ -784,29 +898,31 @@ async def test_a_model_gone_quiet_after_some_words_is_not_asked_again():
     assert [(m.role, m.content) for m in history] == [("user", "Ну?"), ("assistant", "Сейчас скажу.")]
 
 
-async def test_a_model_quiet_twice_gives_up():
+async def test_a_model_quiet_twice_gives_up(memory):
     fake = FakeGame()
     llm = StallingBackend("Поздно.", stalls=2)
     async with connected(fake) as link:
-        dialogue = await _quick(DialogueManager(link, llm, PersonaProvider(None)))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = await _quick(DialogueManager(link, llm, PersonaProvider(None), memory=memory))
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Эй")
         await _until(lambda: fake.statuses[-1:] == ["error"])
 
     assert (llm.calls, fake.said) == (2, [])  # one retry a turn
 
 
-async def test_m1_scenario_with_fake_llm():
+async def test_m1_scenario_with_fake_llm(memory):
     fake = FakeGame()
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(delay=0), PersonaProvider(None))
+        dialogue = DialogueManager(link, FakeBackend(delay=0), PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
         lines = await asyncio.wait_for(scenarios.m1_chat(link, dialogue), 10)
 
     assert len(lines) >= 2
     assert fake.attached == set()  # returned to routine
 
 
-async def test_tool_call_runs_in_the_game_and_its_outcome_becomes_a_note():
+async def test_tool_call_runs_in_the_game_and_its_outcome_becomes_a_note(memory):
     fake = FakeGame()
     llm = FakeBackend(
         "Возьми это зелье, оно тебе пригодится.",
@@ -814,9 +930,10 @@ async def test_tool_call_runs_in_the_game_and_its_outcome_becomes_a_note():
         tool_calls=[ToolCall("give_item", {"item": "ITPO_HEALTH_01", "count": 2})],
     )
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
         await link.attach(XARDAS)
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Дай что-нибудь")
         await _until(lambda: any(m.role == "developer" for m in dialogue.conversations[XARDAS].history))
 
@@ -827,16 +944,17 @@ async def test_tool_call_runs_in_the_game_and_its_outcome_becomes_a_note():
     assert history[-1].content == "[Ты отдал герою: Эликсир лечения ×2]"
 
 
-async def test_end_conversation_waits_for_the_goodbye_to_be_spoken():
+async def test_end_conversation_waits_for_the_goodbye_to_be_spoken(memory):
     fake = FakeGame()
     llm = FakeBackend(
         "Довольно. Ступай, мне нужно работать.", delay=0, tool_calls=[ToolCall("end_conversation", {})]
     )
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
         ended: list[tuple[str, int]] = []
         dialogue.on_end = lambda npc: ended.append((npc, len(fake.said)))
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Ты старый дурак")
         assert not ended  # goodbye not spoken yet
         await _until(lambda: bool(ended), timeout=6)
@@ -845,14 +963,15 @@ async def test_end_conversation_waits_for_the_goodbye_to_be_spoken():
     assert dialogue.conversations[XARDAS].history[-1].content == "[Ты закончил разговор]"
 
 
-async def test_reply_text_streams_to_the_chat_before_its_lines():
+async def test_reply_text_streams_to_the_chat_before_its_lines(memory):
     fake = FakeGame()
     llm = FakeBackend(
         "Ты наконец вернулся из храма. Хорошо, теперь слушай меня внимательно.", chunk=4, delay=0.02
     )
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Где я?")
         await _until(lambda: any(m["type"] == "chat_text" and m["final"] for m in fake.received))
 
@@ -901,20 +1020,23 @@ class CountedBackend(FakeBackend):
     ids=["first-comma", "first-words-max"],
 )
 async def test_ordinary_speech_reaches_say_on_the_same_chunks_as_main(
-    reply, expected, sentence_end_chunk, monkeypatch
+    memory, reply, expected, sentence_end_chunk, monkeypatch
 ):
     # Constants were measured through origin/main's DialogueManager with the same three-character chunks.
     fake = FakeGame()
     llm = CountedBackend(reply, chunk=3, delay=0)
     said: list[tuple[str, int]] = []
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), tts=TtsClient("ws://unused"))
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), memory=memory, tts=TtsClient("ws://unused"),
+        )
+        await dialogue.initialize()
 
         async def record_say(conv, text, *args, **kwargs):
             said.append((text, llm.chunks))
 
         monkeypatch.setattr(dialogue, "_say", record_say)
-        conv = dialogue.open(XARDAS, "Ксардас")
+        conv = await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Что скажешь?")
         await _until(lambda: fake.statuses[-1:] == ["idle"])
 
@@ -923,7 +1045,7 @@ async def test_ordinary_speech_reaches_say_on_the_same_chunks_as_main(
     assert conv.history[-1] == Message("assistant", reply)
 
 
-async def test_a_fragmented_tool_call_drops_its_arguments_after_a_short_sentence(caplog, monkeypatch):
+async def test_a_fragmented_tool_call_drops_its_arguments_after_a_short_sentence(memory, caplog, monkeypatch):
     clean = "Держи."
     leak = 'functions.give_item({"item": "ITMI_GOLD", "count": 50})'
     fake = FakeGame()
@@ -933,10 +1055,11 @@ async def test_a_fragmented_tool_call_drops_its_arguments_after_a_short_sentence
         dialogue = DialogueManager(
             link,
             FakeBackend(clean + " " + leak, chunk=3, delay=0),
-            PersonaProvider(None),
+            PersonaProvider(None), memory=memory,
             journal=Journal(entries.append),
         )
-        conv = dialogue.open(XARDAS, "Ксардас")
+        await dialogue.initialize()
+        conv = await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Дашь золота?")
         await _until(lambda: fake.statuses[-1:] == ["idle"])
 
@@ -945,7 +1068,7 @@ async def test_a_fragmented_tool_call_drops_its_arguments_after_a_short_sentence
     assert texts[-1] == clean
     assert all(clean.startswith(text.strip()) for text in texts)
     assert conv.history[-1] == Message("assistant", clean)
-    assert dialogue.memory.load("test-branch", XARDAS).entries[-1].content == clean
+    assert (await dialogue.memory.load("test-branch", XARDAS)).entries[-1].content == clean
     assert [entry["text"] for entry in entries if entry["kind"] == "npc"] == [clean]
     assert any(
         leak in r.getMessage() and XARDAS in r.getMessage() and r.levelname == "WARNING"
@@ -966,7 +1089,7 @@ async def test_a_fragmented_tool_call_drops_its_arguments_after_a_short_sentence
     ],
     ids=["reason", "reason-before-speech", "multiline-array-before-speech", "unclosed-quote"],
 )
-async def test_a_tool_call_does_not_end_inside_its_arguments(leak, suffix, caplog, monkeypatch):
+async def test_a_tool_call_does_not_end_inside_its_arguments(memory, leak, suffix, caplog, monkeypatch):
     clean = "Держи." + suffix
     fake = FakeGame()
     entries: list[dict] = []
@@ -975,10 +1098,11 @@ async def test_a_tool_call_does_not_end_inside_its_arguments(leak, suffix, caplo
         dialogue = DialogueManager(
             link,
             FakeBackend("Держи. " + leak + suffix, chunk=3, delay=0),
-            PersonaProvider(None),
+            PersonaProvider(None), memory=memory,
             journal=Journal(entries.append),
         )
-        conv = dialogue.open(XARDAS, "Ксардас")
+        await dialogue.initialize()
+        conv = await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Дашь золота?")
         await _until(lambda: fake.statuses[-1:] == ["idle"])
 
@@ -987,7 +1111,7 @@ async def test_a_tool_call_does_not_end_inside_its_arguments(leak, suffix, caplo
     assert texts[-1] == clean
     assert all(clean.startswith(text.strip()) for text in texts)
     assert conv.history[-1] == Message("assistant", clean)
-    assert dialogue.memory.load("test-branch", XARDAS).entries[-1].content == clean
+    assert (await dialogue.memory.load("test-branch", XARDAS)).entries[-1].content == clean
     assert [entry["text"] for entry in entries if entry["kind"] == "npc"] == [clean]
     assert any(
         leak in r.getMessage() and XARDAS in r.getMessage() and r.levelname == "WARNING"
@@ -995,7 +1119,7 @@ async def test_a_tool_call_does_not_end_inside_its_arguments(leak, suffix, caplo
     )
 
 
-async def test_a_late_tool_marker_keeps_the_spoken_clause_and_removes_the_pending_sentence(caplog):
+async def test_a_late_tool_marker_keeps_the_spoken_clause_and_removes_the_pending_sentence(memory, caplog):
     prefix = "Ты вернулся из храма,"
     leak = "пока ждал тебя function give_item(item=ITMI_GOLD)?"
     clean = prefix + " После боя поговорим."
@@ -1004,10 +1128,11 @@ async def test_a_late_tool_marker_keeps_the_spoken_clause_and_removes_the_pendin
         dialogue = DialogueManager(
             link,
             FakeBackend(prefix + " " + leak + " После боя поговорим.", chunk=3, delay=0),
-            PersonaProvider(None),
+            PersonaProvider(None), memory=memory,
             tts=TtsClient(url),
         )
-        conv = dialogue.open(XARDAS, "Ксардас")
+        await dialogue.initialize()
+        conv = await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Что скажешь?")
         await _until(lambda: len(fake.say_ends) == 2 and fake.statuses[-1:] == ["idle"])
 
@@ -1018,14 +1143,15 @@ async def test_a_late_tool_marker_keeps_the_spoken_clause_and_removes_the_pendin
     assert any(leak in r.getMessage() and r.levelname == "WARNING" for r in caplog.records)
 
 
-async def test_mood_tags_set_the_face_of_the_lines_and_are_not_said():
+async def test_mood_tags_set_the_face_of_the_lines_and_are_not_said(memory):
     fake = FakeGame()
     llm = FakeBackend(
         "[angry] Опять ты здесь? Чего тебе нужно? [friendly] Ладно, проходи, раз уж пришёл.", delay=0
     )
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Привет")
         await _until(lambda: fake.statuses[-2:] == ["thinking", "idle"])
 
@@ -1041,12 +1167,13 @@ async def test_mood_tags_set_the_face_of_the_lines_and_are_not_said():
     assert "[angry]" in instructions  # the model is told how to tag
 
 
-async def test_lines_without_a_tag_have_no_mood():
+async def test_lines_without_a_tag_have_no_mood(memory):
     fake = FakeGame()
     llm = FakeBackend("Ты наконец вернулся из храма. Хорошо, теперь слушай меня внимательно.", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Привет")
         await _until(lambda: fake.statuses[-2:] == ["thinking", "idle"])
     assert all(m.get("mood") is None for m in fake.received if m["type"] == "say")
@@ -1095,13 +1222,14 @@ class OneVoiceTts(TtsClient):
 
 
 @asynccontextmanager
-async def one_voice_dialogue(with_tts, llm, *, queued=(), audio_s=0.1):
+async def one_voice_dialogue(memory, with_tts, llm, *, queued=(), audio_s=0.1):
     fake = OneVoiceGame(queued)
     async with connected(fake) as link:
         dialogue = DialogueManager(
-            link, llm, PersonaProvider(None), tts=OneVoiceTts(audio_s) if with_tts else None
+            link, llm, PersonaProvider(None), memory=memory, tts=OneVoiceTts(audio_s) if with_tts else None
         )
-        conv = dialogue.open(XARDAS, "Ксардас")
+        await dialogue.initialize()
+        conv = await dialogue.open(XARDAS, "Ксардас")
         try:
             yield fake, dialogue, conv
         finally:
@@ -1113,12 +1241,12 @@ async def one_voice_dialogue(with_tts, llm, *, queued=(), audio_s=0.1):
 
 @pytest.mark.parametrize("trigger", ["player", "event"])
 @pytest.mark.parametrize("with_tts", [True, False])
-async def test_a_turn_cancels_svm_waiting_to_be_heard(tmp_path, trigger, with_tts):
+async def test_a_turn_cancels_svm_waiting_to_be_heard(memory, tmp_path, trigger, with_tts):
     words = "Вон отсюда!"
     note = Message("developer", f"[Ты сказал вслух: «{words}»]")
     llm = FakeBackend("Теперь я тебя слушаю.", delay=0, first=60)
     writer = TraceWriter(tmp_path)
-    async with one_voice_dialogue(with_tts, llm) as (fake, dialogue, conv):
+    async with one_voice_dialogue(memory, with_tts, llm) as (fake, dialogue, conv):
         dialogue.trace = writer
         if with_tts:
             held = dialogue.tts.held[words] = asyncio.Event()
@@ -1136,7 +1264,7 @@ async def test_a_turn_cancels_svm_waiting_to_be_heard(tmp_path, trigger, with_tt
             type="svm_line", id="svm-held", npc=XARDAS, svm="$GETOUTOFHERE",
             text="Убирайся отсюда!", overlay=True,
         )
-        dialogue._on_message(svm)
+        await dialogue._on_message(svm)
         if with_tts:
             await _until(lambda: words in dialogue.tts.requested and not dialogue._svm_tasks)
             assert conv.voice.empty()  # TTS already owns the line
@@ -1172,7 +1300,10 @@ async def test_a_turn_cancels_svm_waiting_to_be_heard(tmp_path, trigger, with_tt
         dialogue.quick = FakeBackend(words, delay=0)
         conv.said_at = conv.talked_at = float("-inf")
         conv.overlay_free_at = 0
-        dialogue._on_message(svm.model_copy(update={"id": "svm-retry"}))
+        await dialogue._on_message(svm.model_copy(update={"id": "svm-retry"}))
+        await asyncio.gather(*dialogue._svm_tasks.values())
+        if with_tts:
+            await conv.voice.join()
         await _until(lambda: fake.said == [*previous, words] and bool(conv.svm_phrases))
         assert len(conv.svm_phrases) == 1 and conv.history.count(note) == 1
         records = [r for r in map(json.loads, writer.path().read_text().splitlines())
@@ -1183,11 +1314,13 @@ async def test_a_turn_cancels_svm_waiting_to_be_heard(tmp_path, trigger, with_tt
 
 
 @pytest.mark.parametrize("drop", ["queue", "interrupt"])
-async def test_queued_svm_counts_for_cooldown_and_repeats_and_finishes_its_dropped_trace(tmp_path, drop):
+async def test_queued_svm_counts_for_cooldown_and_repeats_and_finishes_its_dropped_trace(
+    memory, tmp_path, drop
+):
     words = "Вон отсюда!"
     note = Message("developer", f"[Ты сказал вслух: «{words}»]")
     writer = TraceWriter(tmp_path)
-    async with one_voice_dialogue(True, FakeBackend()) as (fake, dialogue, conv):
+    async with one_voice_dialogue(memory, True, FakeBackend()) as (fake, dialogue, conv):
         dialogue.trace = writer
         blocker = "Сначала закончу мысль." if drop == "queue" else words
         held = dialogue.tts.held[blocker] = asyncio.Event()
@@ -1201,24 +1334,24 @@ async def test_queued_svm_counts_for_cooldown_and_repeats_and_finishes_its_dropp
             type="svm_line", id="queued", npc=XARDAS, svm="$GETOUTOFHERE",
             text="Убирайся отсюда!", overlay=True,
         )
-        dialogue._on_message(svm)
+        await dialogue._on_message(svm)
         await _until(lambda: bool(conv.svm_pending) and not dialogue._svm_tasks)
         assert conv.voice.qsize() == (1 if drop == "queue" else 0)
 
         conv.said_at = float("-inf")  # the pending line's own clock enforces its cooldown
-        dialogue._on_message(svm.model_copy(update={"id": "recent"}))
+        await dialogue._on_message(svm.model_copy(update={"id": "recent"}))
         assert len(dialogue.quick.calls) == 1
         for line in conv.svm_pending:
             dialogue._sent[line] -= 3.05
         dialogue.quick = FakeBackend("ВОН ОТСЮДА!!!", delay=0)
-        dialogue._on_message(svm.model_copy(update={"id": "repeat"}))
+        await dialogue._on_message(svm.model_copy(update={"id": "repeat"}))
         await _until(lambda: not dialogue._svm_tasks)
         assert not conv.svm_phrases and note not in conv.history
 
         if drop == "queue":
             dialogue._drop_unvoiced(conv)
         else:
-            assert dialogue.interrupt(XARDAS)
+            assert await dialogue.interrupt(XARDAS)
         assert not conv.svm_pending
         held.set()
         await asyncio.wait_for(conv.voice.join(), 1)
@@ -1231,13 +1364,13 @@ async def test_queued_svm_counts_for_cooldown_and_repeats_and_finishes_its_dropp
         ]
 
 
-async def test_a_started_svm_is_audible_and_can_be_interrupted():
+async def test_a_started_svm_is_audible_and_can_be_interrupted(memory):
     words = "Вон отсюда!"
     previous = "Наш разговор пока закончен."
     llm = FakeBackend(previous, delay=0)
-    async with one_voice_dialogue(True, llm, audio_s=2.0) as (fake, dialogue, conv):
+    async with one_voice_dialogue(memory, True, llm, audio_s=2.0) as (fake, dialogue, conv):
         talk = TalkDesk(dialogue.link, dialogue)
-        assert talk.begin(XARDAS, "Ксардас")
+        assert await talk.begin(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Расскажи.")
         await _until(
             lambda: bool(fake.say_ends) and dialogue.started_at(fake.says[0][0]["line"]) is not None
@@ -1249,7 +1382,7 @@ async def test_a_started_svm_is_audible_and_can_be_interrupted():
         dialogue._spoke_at[XARDAS] = conv.said_at = conv.overlay_free_at = old_at
         dialogue.quick = FakeBackend(words, delay=0)
         dialogue._nearby[XARDAS] = ("Ксардас", 100)
-        dialogue._on_message(SvmLine(
+        await dialogue._on_message(SvmLine(
             type="svm_line", id="speaking", npc=XARDAS, svm="$GETOUTOFHERE",
             text="Убирайся отсюда!", overlay=True,
         ))
@@ -1268,7 +1401,7 @@ async def test_a_started_svm_is_audible_and_can_be_interrupted():
 
 @pytest.mark.parametrize("with_tts", [True, False])
 @pytest.mark.parametrize("first_started", [True, False])
-async def test_an_overlay_event_cuts_the_unheard_previous_reply(with_tts, first_started):
+async def test_an_overlay_event_cuts_the_unheard_previous_reply(memory, with_tts, first_started):
     old_texts = (
         "Я обещал ему пощаду и сдержу слово.",
         "Не лезь в драку раньше времени.",
@@ -1280,7 +1413,9 @@ async def test_an_overlay_event_cuts_the_unheard_previous_reply(with_tts, first_
     urgent = "Бандиты уже напали на героя!"
     llm = FakeBackend(script=[FakeStep(old_reply), FakeStep(urgent)], delay=0)
     queued = old_texts[1:] if first_started else old_texts
-    async with one_voice_dialogue(with_tts, llm, queued=queued, audio_s=10.0) as (fake, dialogue, conv):
+    async with one_voice_dialogue(
+        memory, with_tts, llm, queued=queued, audio_s=10.0
+    ) as (fake, dialogue, conv):
         await dialogue.say_as_player(XARDAS, "Что ты обещал?")
         await _until(lambda: len(fake.says) == 3 and (not with_tts or len(fake.say_ends) == 3))
         lines, reply = conv.last_lines[:], conv.reply_id
@@ -1307,9 +1442,9 @@ async def test_an_overlay_event_cuts_the_unheard_previous_reply(with_tts, first_
 
 
 @pytest.mark.parametrize("with_tts", [True, False])
-async def test_an_overlay_does_not_hush_an_already_heard_reply(with_tts):
+async def test_an_overlay_does_not_hush_an_already_heard_reply(memory, with_tts):
     llm = FakeBackend(script=[FakeStep("Я сдержу своё слово."), FakeStep("Бандиты напали!")], delay=0)
-    async with one_voice_dialogue(with_tts, llm) as (fake, dialogue, conv):
+    async with one_voice_dialogue(memory, with_tts, llm) as (fake, dialogue, conv):
         await dialogue.say_as_player(XARDAS, "Ты обещаешь?")
         await _until(lambda: bool(fake.says) and (not with_tts or bool(fake.say_ends)))
         (line,) = conv.last_lines
@@ -1326,10 +1461,10 @@ async def test_an_overlay_does_not_hush_an_already_heard_reply(with_tts):
 
 
 @pytest.mark.parametrize("with_tts", [True, False])
-async def test_two_overlays_of_one_turn_wait_without_hushing_each_other(with_tts, monkeypatch):
+async def test_two_overlays_of_one_turn_wait_without_hushing_each_other(memory, with_tts, monkeypatch):
     monkeypatch.setattr(dialogue_module, "line_duration", lambda text: 0.2)
     llm = FakeBackend("[angry] Бандиты уже напали на героя! [friendly] Я обязательно тебя прикрою!", delay=0)
-    async with one_voice_dialogue(with_tts, llm) as (fake, dialogue, conv):
+    async with one_voice_dialogue(memory, with_tts, llm) as (fake, dialogue, conv):
         turn = dialogue.event_turn(XARDAS, "[Событие: нападение]", overlay=True)
         assert turn is not None
         await _until(lambda: len(fake.says) == 1 and (not with_tts or len(fake.say_ends) == 1))
@@ -1344,12 +1479,12 @@ async def test_two_overlays_of_one_turn_wait_without_hushing_each_other(with_tts
 
 
 @pytest.mark.parametrize("with_tts", [True, False])
-async def test_an_ordinary_reply_waits_for_the_sounding_overlay(with_tts, monkeypatch):
+async def test_an_ordinary_reply_waits_for_the_sounding_overlay(memory, with_tts, monkeypatch):
     monkeypatch.setattr(dialogue_module, "line_duration", lambda text: 0.2)
     llm = FakeBackend(
         script=[FakeStep("Я обязательно тебя прикрою!"), FakeStep("Теперь можно поговорить.")], delay=0
     )
-    async with one_voice_dialogue(with_tts, llm) as (fake, dialogue, conv):
+    async with one_voice_dialogue(memory, with_tts, llm) as (fake, dialogue, conv):
         overlay = dialogue.event_turn(XARDAS, "[Событие: нападение]", overlay=True)
         assert overlay is not None
         await overlay
@@ -1368,7 +1503,7 @@ async def test_an_ordinary_reply_waits_for_the_sounding_overlay(with_tts, monkey
 
 
 @pytest.mark.parametrize("with_tts", [True, False])
-async def test_interrupt_releases_the_overlay_wait_for_the_next_reply(with_tts, monkeypatch):
+async def test_interrupt_releases_the_overlay_wait_for_the_next_reply(memory, with_tts, monkeypatch):
     monkeypatch.setattr(dialogue_module, "line_duration", lambda text: 2.0)
     second = "Я обязательно тебя прикрою!"
     answer = "Теперь я тебя слушаю."
@@ -1376,7 +1511,7 @@ async def test_interrupt_releases_the_overlay_wait_for_the_next_reply(with_tts, 
         script=[FakeStep(f"[angry] Бандиты уже напали на героя! [friendly] {second}"), FakeStep(answer)],
         delay=0,
     )
-    async with one_voice_dialogue(with_tts, llm, audio_s=2.0) as (fake, dialogue, conv):
+    async with one_voice_dialogue(memory, with_tts, llm, audio_s=2.0) as (fake, dialogue, conv):
         overlay = dialogue.event_turn(XARDAS, "[Событие: нападение]", overlay=True)
         assert overlay is not None
         await _until(
@@ -1385,7 +1520,7 @@ async def test_interrupt_releases_the_overlay_wait_for_the_next_reply(with_tts, 
             and (not with_tts or (len(fake.say_ends) == 1 and conv.voice.empty()))
         )
         old_free_at = conv.overlay_free_at
-        assert dialogue.interrupt(XARDAS)
+        assert await dialogue.interrupt(XARDAS)
         assert conv.overlay_free_at <= time.monotonic()
         await asyncio.gather(overlay, return_exceptions=True)
 
@@ -1398,11 +1533,11 @@ async def test_interrupt_releases_the_overlay_wait_for_the_next_reply(with_tts, 
         assert not any(m["text"] == second for m, _ in fake.says)
 
 
-async def test_an_overlay_hushes_at_first_sound_and_drops_only_old_unvoiced_lines():
+async def test_an_overlay_hushes_at_first_sound_and_drops_only_old_unvoiced_lines(memory):
     old = "Я обещал ему пощаду и сдержу слово."
     urgent, following = "Бандиты уже напали на героя!", "Я обязательно тебя прикрою!"
     llm = FakeBackend(script=[FakeStep(old), FakeStep(f"[angry] {urgent} [friendly] {following}")], delay=0)
-    async with one_voice_dialogue(True, llm, audio_s=0.5) as (fake, dialogue, conv):
+    async with one_voice_dialogue(memory, True, llm, audio_s=0.5) as (fake, dialogue, conv):
         await dialogue.say_as_player(XARDAS, "Что ты обещал?")
         await _until(lambda: bool(fake.say_ends) and dialogue.started_at(conv.last_lines[0]) is not None)
         dialogue._audio[conv.last_lines[0]] = 10.0
@@ -1432,17 +1567,17 @@ async def test_an_overlay_hushes_at_first_sound_and_drops_only_old_unvoiced_line
         assert [m["text"] for m, _ in fake.says] == [old, urgent, following]
 
 
-async def test_a_stream_finishing_after_interrupt_does_not_restore_the_overlay_wait():
+async def test_a_stream_finishing_after_interrupt_does_not_restore_the_overlay_wait(memory):
     urgent, answer = "Я обязательно тебя прикрою!", "Теперь я тебя слушаю."
     llm = FakeBackend(script=[FakeStep(urgent), FakeStep(answer)], delay=0)
-    async with one_voice_dialogue(True, llm, audio_s=10.0) as (fake, dialogue, conv):
+    async with one_voice_dialogue(memory, True, llm, audio_s=10.0) as (fake, dialogue, conv):
         finishing = dialogue.tts.finishing[urgent] = asyncio.Event()
         overlay = dialogue.event_turn(XARDAS, "[Событие: нападение]", overlay=True)
         assert overlay is not None
         await overlay
         await _until(lambda: bool(fake.says) and dialogue.started_at(conv.last_lines[0]) is not None)
         assert not fake.say_ends
-        assert dialogue.interrupt(XARDAS)
+        assert await dialogue.interrupt(XARDAS)
         reset_at = conv.overlay_free_at
 
         reply = dialogue.event_turn(XARDAS, "[Событие: герой заговорил]")
@@ -1454,11 +1589,11 @@ async def test_a_stream_finishing_after_interrupt_does_not_restore_the_overlay_w
         assert conv.overlay_free_at == reset_at
 
 
-async def test_tts_failure_fallback_hushes_old_speech_and_holds_the_next_reply(monkeypatch):
+async def test_tts_failure_fallback_hushes_old_speech_and_holds_the_next_reply(memory, monkeypatch):
     monkeypatch.setattr(dialogue_module, "line_duration", lambda text: 0.2)
     old, urgent, answer = "Я сдержу своё слово.", "Бандиты уже напали!", "Теперь я тебя слушаю."
     llm = FakeBackend(script=[FakeStep(old), FakeStep(urgent), FakeStep(answer)], delay=0)
-    async with one_voice_dialogue(True, llm, audio_s=10.0) as (fake, dialogue, conv):
+    async with one_voice_dialogue(memory, True, llm, audio_s=10.0) as (fake, dialogue, conv):
         await dialogue.say_as_player(XARDAS, "Ты обещаешь?")
         await _until(lambda: bool(fake.say_ends) and dialogue.started_at(conv.last_lines[0]) is not None)
         old_reply = conv.reply_id
@@ -1481,12 +1616,13 @@ async def test_tts_failure_fallback_hushes_old_speech_and_holds_the_next_reply(m
         assert dialogue.tts.requested == [old, urgent]
 
 
-async def test_a_new_mood_starts_a_new_line():
+async def test_a_new_mood_starts_a_new_line(memory):
     fake = FakeGame()
     llm = FakeBackend("[friendly] Ты вернулся. [angry] Времени мало, слушай внимательно.", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Привет")
         await _until(lambda: fake.statuses[-2:] == ["thinking", "idle"])
     # "Ты вернулся." is short and would be merged with the next sentence, but its mood is another
@@ -1527,16 +1663,17 @@ async def scene_tts(per_char: float = 0.01, fail: bool = False):
         yield f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}", requests
 
 
-def _scene_dialogue(link, pace: float = 0.05, **kwargs) -> DialogueManager:
-    dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), **kwargs)
+async def _scene_dialogue(link, memory, pace: float = 0.05, **kwargs) -> DialogueManager:
+    dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), memory=memory, **kwargs)
+    await dialogue.initialize()
     dialogue.scene_pace = lambda text: pace
     return dialogue
 
 
-async def test_a_scene_is_said_in_turn_each_line_whole_and_to_the_other():
+async def test_a_scene_is_said_in_turn_each_line_whole_and_to_the_other(memory):
     fake = FakeGame()
     async with scene_tts() as (url, requests), connected(fake) as link:
-        dialogue = _scene_dialogue(link, tts=TtsClient(url))
+        dialogue = await _scene_dialogue(link, memory, tts=TtsClient(url))
         play = dialogue.play_scene(SCENE, quiet=True)
         await asyncio.wait_for(play.task, 10)
 
@@ -1560,11 +1697,11 @@ async def test_a_scene_is_said_in_turn_each_line_whole_and_to_the_other():
     assert dialogue.conversations == {}  # nobody remembers it here: gossip.py writes the notes
 
 
-async def test_without_a_voice_a_line_waits_for_the_one_before_to_start_and_be_said():
+async def test_without_a_voice_a_line_waits_for_the_one_before_to_start_and_be_said(memory):
     fake = FakeGame()
     fake.start_delay = 0.3
     async with connected(fake) as link:
-        play = _scene_dialogue(link).play_scene(SCENE[:2])
+        play = (await _scene_dialogue(link, memory)).play_scene(SCENE[:2])
         await asyncio.wait_for(play.task, 5)
 
     (first, t0), (second, t1) = fake.says
@@ -1574,12 +1711,12 @@ async def test_without_a_voice_a_line_waits_for_the_one_before_to_start_and_be_s
     assert [line.audio_s for line in play.lines] == [None, None]
 
 
-async def test_a_line_the_game_never_starts_ends_the_scene(monkeypatch):
+async def test_a_line_the_game_never_starts_ends_the_scene(memory, monkeypatch):
     monkeypatch.setattr(dialogue_module, "SCENE_START_S", 0.3)
     fake = FakeGame()
     fake.drop_says = {HILDA}  # she can't speak now: the bridge drops her line without a word
     async with connected(fake) as link:
-        dialogue = _scene_dialogue(link)
+        dialogue = await _scene_dialogue(link, memory)
         play = dialogue.play_scene(SCENE)
         await asyncio.wait_for(play.task, 5)
         await _until(lambda: bool(fake.hushed))
@@ -1590,10 +1727,10 @@ async def test_a_line_the_game_never_starts_ends_the_scene(monkeypatch):
     assert dialogue._starts == {}
 
 
-async def test_the_hero_cuts_a_scene_both_stop():
+async def test_the_hero_cuts_a_scene_both_stop(memory):
     fake = FakeGame()
     async with connected(fake) as link:
-        dialogue = _scene_dialogue(link, pace=0.5)
+        dialogue = await _scene_dialogue(link, memory, pace=0.5)
         play = dialogue.play_scene(SCENE)
         await _until(lambda: play.sent == 2 and dialogue.started_at(play.lines[1].line) is not None)
         said = play.cut()
@@ -1609,11 +1746,11 @@ async def test_the_hero_cuts_a_scene_both_stop():
     assert len(fake.says) == 2 and play.why == "cut"
 
 
-async def test_a_line_sent_but_not_started_is_hushed_plainly_and_a_load_hushes_nothing():
+async def test_a_line_sent_but_not_started_is_hushed_plainly_and_a_load_hushes_nothing(memory):
     fake = FakeGame()
     fake.start_delay = 0.5
     async with connected(fake) as link:
-        dialogue = _scene_dialogue(link)
+        dialogue = await _scene_dialogue(link, memory)
         play = dialogue.play_scene(SCENE)
         await _until(lambda: play.sent == 1)
         assert play.cut() == []
@@ -1631,11 +1768,11 @@ async def test_a_line_sent_but_not_started_is_hushed_plainly_and_a_load_hushes_n
     assert len(fake.says) == 2
 
 
-async def test_a_voice_that_fails_leaves_the_scene_in_subtitles():
+async def test_a_voice_that_fails_leaves_the_scene_in_subtitles(memory):
     fake = FakeGame()
     journal: list[dict] = []
     async with scene_tts(fail=True) as (url, requests), connected(fake) as link:
-        dialogue = _scene_dialogue(link, tts=TtsClient(url), journal=Journal(journal.append))
+        dialogue = await _scene_dialogue(link, memory, tts=TtsClient(url), journal=Journal(journal.append))
         play = dialogue.play_scene(SCENE)
         await asyncio.wait_for(play.task, 5)
 
@@ -1646,19 +1783,31 @@ async def test_a_voice_that_fails_leaves_the_scene_in_subtitles():
     assert [e["kind"] for e in journal] == ["tts_off"]
 
 
-async def test_notes_do_not_warm_the_quick_model_but_talking_to_the_npc_does(monkeypatch):
+async def test_notes_do_not_warm_the_quick_model_but_talking_to_the_npc_does(memory, monkeypatch):
     monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
     fake = FakeGame()
     quick = FakeBackend("Хм...", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), quick=quick)
-        dialogue.remember(HILDA, "Хильда", "Лобарт рассказал тебе о герое")  # a rumor
-        dialogue.overheard(HILDA, "Хильда", "Привет", None)
+        dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), memory=memory, quick=quick)
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def nested_note():
+            entered.set()
+            await release.wait()
+            await dialogue.remember(HILDA, "Хильда", "Лобарт рассказал тебе о герое")  # a rumor
+
+        writing = asyncio.create_task(memory.complete(nested_note))
+        await entered.wait()
+        initializing = asyncio.create_task(dialogue.initialize())
+        await asyncio.sleep(0)  # bootstrap queues behind the active logical write
+        release.set()
+        await asyncio.wait_for(asyncio.gather(writing, initializing), 3)
+        await dialogue.overheard(HILDA, "Хильда", "Привет", None)
         said = [("Лобарт", "Слыхала?"), ("Хильда", "Да ну?")]
-        dialogue.overheard_talk(XARDAS, "Ксардас", ("Лобарт", "Хильда"), said)
+        await dialogue.overheard_talk(XARDAS, "Ксардас", ("Лобарт", "Хильда"), said)
         await asyncio.sleep(0.05)
         assert quick.prewarms == []
-        dialogue.open(HILDA, "Хильда")  # the hero talks to her: her history, notes and all, is read now
+        await dialogue.open(HILDA, "Хильда")  # the hero talks to her: her history, notes and all, is read now
         await _until(lambda: len(quick.prewarms) == 1)
         assert quick.prewarms[0][1] == dialogue.conversations[HILDA].history
 
@@ -1666,13 +1815,15 @@ async def test_notes_do_not_warm_the_quick_model_but_talking_to_the_npc_does(mon
     assert heard == "[Ты слышал, как Лобарт и Хильда говорили о герое: Лобарт: «Слыхала?» — Хильда: «Да ну?»]"
 
 
-async def test_quick_slots_evict_the_least_recent_idle_npc(monkeypatch):
+async def test_quick_slots_evict_the_least_recent_idle_npc(memory, monkeypatch):
     monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
     quick = FakeBackend("Есть!", delay=0)
     dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
-                               PersonaProvider(None), quick=quick)
+                               PersonaProvider(None), memory=memory, quick=quick)
+    await dialogue.link._dispatch(Session(type="session", branch="test-branch"))
+    await dialogue.initialize()
     for npc in (XARDAS, LOBART, HILDA):
-        conv = dialogue.open(npc, npc, warm=False)
+        conv = await dialogue.open(npc, npc, warm=False)
         dialogue._start_prewarm(conv, [XARDAS, LOBART, HILDA])
     await asyncio.gather(*list(dialogue._prewarms.values()))
     assert dialogue._quick_slots == {XARDAS: 0, LOBART: 1, HILDA: 2}
@@ -1680,15 +1831,15 @@ async def test_quick_slots_evict_the_least_recent_idle_npc(monkeypatch):
     async with dialogue._quick_request(XARDAS):
         await dialogue._quick_words(dialogue.conversations[LOBART], [])
         await dialogue._quick_words(dialogue.conversations[HILDA], [])
-        newcomer = dialogue.open("NEW", "Стражник", warm=False)
+        newcomer = await dialogue.open("NEW", "Стражник", warm=False)
         await dialogue._quick_words(newcomer, [])
         assert dialogue._quick_slots == {XARDAS: 0, HILDA: 2, "NEW": 1}
-    await dialogue._quick_words(dialogue.open("LAST", "Последний", warm=False), [])
+    await dialogue._quick_words(await dialogue.open("LAST", "Последний", warm=False), [])
     assert dialogue._quick_slots == {HILDA: 2, "NEW": 1, "LAST": 0}
     assert quick.slot_ids == [1, 2, 1, 0]
 
 
-async def test_a_real_quick_request_cancels_its_warm_and_blocks_new_warms(monkeypatch):
+async def test_a_real_quick_request_cancels_its_warm_and_blocks_new_warms(memory, monkeypatch):
     from gothic_ai.llm.base import QUICK_SLOT
 
     monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
@@ -1706,8 +1857,10 @@ async def test_a_real_quick_request_cancels_its_warm_and_blocks_new_warms(monkey
 
     monkeypatch.setattr(quick, "prewarm", held_warm)
     dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
-                               PersonaProvider(None), quick=quick)
-    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+                               PersonaProvider(None), memory=memory, quick=quick)
+    await dialogue.link._dispatch(Session(type="session", branch="test-branch"))
+    await dialogue.initialize()
+    conv = await dialogue.open(LOBART, "Лобарт", warm=False)
     dialogue._start_prewarm(conv, [LOBART])
     await asyncio.wait_for(started.wait(), 1)
     words, _ = await asyncio.wait_for(dialogue._quick_words(conv, []), 1)
@@ -1720,30 +1873,33 @@ async def test_a_real_quick_request_cancels_its_warm_and_blocks_new_warms(monkey
 
 
 @pytest.mark.parametrize("kind", ["first_words", "svm", "combat_bark", "fight", "order"])
-async def test_all_npc_quick_requests_use_the_prewarmed_slot(kind, monkeypatch):
+async def test_all_npc_quick_requests_use_the_prewarmed_slot(memory, kind, monkeypatch):
     from gothic_ai.combat_barks import CombatBarks
     from gothic_ai.protocol import CombatHit
 
     monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
     quick = FakeBackend("[pain] Ай!", delay=0)
     async with connected(FakeGame()) as link:
-        dialogue = DialogueManager(link, FakeBackend("", delay=0), PersonaProvider(None), quick=quick)
-        conv = dialogue.open(LOBART, "Лобарт", warm=False)
+        dialogue = DialogueManager(
+            link, FakeBackend("", delay=0), PersonaProvider(None), memory=memory, quick=quick,
+        )
+        await dialogue.initialize()
+        conv = await dialogue.open(LOBART, "Лобарт", warm=False)
         dialogue._nearby[LOBART] = ("Лобарт", 100)
         dialogue._start_prewarm(conv, [LOBART])
         await _until(lambda: bool(quick.prewarms))
         if kind == "first_words":
             await dialogue._quick_words(conv, [])
         elif kind == "svm":
-            dialogue._start_svm(SvmLine(type="svm_line", id="s", npc=LOBART,
+            await dialogue._start_svm(SvmLine(type="svm_line", id="s", npc=LOBART,
                                         svm="$NOTNOW", text="Нет!", overlay=True))
             await asyncio.gather(*list(dialogue._svm_tasks.values()))
         elif kind == "combat_bark":
             barks = CombatBarks(dialogue)
-            link._dispatch(NpcRoster(type="npc_roster", t=0, npcs=[
+            await link._dispatch(NpcRoster(type="npc_roster", t=0, npcs=[
                 {"id": LOBART, "name": "Лобарт", "distance": 100},
             ]))
-            link._dispatch(CombatHit(type="combat_hit", npc=LOBART, by="PLAYER", damage=5,
+            await link._dispatch(CombatHit(type="combat_hit", npc=LOBART, by="PLAYER", damage=5,
                                     hp=95, hp_max=100, down=False, dead=False, kind="melee"))
             await barks.task
         elif kind == "fight":
@@ -1755,18 +1911,21 @@ async def test_all_npc_quick_requests_use_the_prewarmed_slot(kind, monkeypatch):
 
 
 @pytest.mark.parametrize("distance", [600, 1200])
-async def test_a_new_focused_npc_is_warmed_only_within_eight_metres(distance, monkeypatch):
+async def test_a_new_focused_npc_is_warmed_only_within_eight_metres(memory, distance, monkeypatch):
     monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
     fake = FakeGame()
     quick = FakeBackend(delay=0)
     warm = quick.prewarm
     attempts = 0
+    ready = asyncio.Event()
+    ready.set()
 
     async def prewarm(*, instructions, messages):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
             raise LLMError("temporary prewarm failure")
+        await ready.wait()
         await warm(instructions=instructions, messages=messages)
 
     monkeypatch.setattr(quick, "prewarm", prewarm)
@@ -1776,7 +1935,8 @@ async def test_a_new_focused_npc_is_warmed_only_within_eight_metres(distance, mo
         "hero": {"id": "PLAYER", "name": "Я", "distance": distance, "focus": HILDA},
     }
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), quick=quick)
+        dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), memory=memory, quick=quick)
+        await dialogue.initialize()
         await fake.push_views(view)
         if distance > 800:
             await asyncio.sleep(0.05)
@@ -1791,25 +1951,28 @@ async def test_a_new_focused_npc_is_warmed_only_within_eight_metres(distance, mo
         conv = dialogue.conversations[HILDA]
         assert quick.prewarms == [(conv.persona.instructions, [])]
         assert conv.history == [] and conv.reply is None and conv.talked_at == float("-inf")
-        assert dialogue.memory.load("test-branch", HILDA).entries == []
+        assert (await dialogue.memory.load("test-branch", HILDA)).entries == []
         assert dialogue.llm.calls == [] and fake.said == [] and fake.statuses == []
 
         await fake.push_views(view)
         await asyncio.sleep(0.05)
         assert len(quick.prewarms) == 1  # unchanged views do not reread the same history
 
-        dialogue.note(HILDA, "Ты заметила героя")
-        dialogue.note(HILDA, "Герой остановился рядом")
+        ready.clear()  # keep the older warm pending while both async notes commit
+        await dialogue.note(HILDA, "Ты заметила героя")
+        await dialogue.note(HILDA, "Герой остановился рядом")
+        ready.set()
         await _until(lambda: len(quick.prewarms) == 2)
         assert quick.prewarms[-1][1] == conv.history  # the newer history replaces the pending warm
 
 
-async def test_the_talk_key_warms_a_new_focused_npc(monkeypatch):
+async def test_the_talk_key_warms_a_new_focused_npc(memory, monkeypatch):
     monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
     fake = FakeGame()
     quick = FakeBackend(delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), quick=quick)
+        dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), memory=memory, quick=quick)
+        await dialogue.initialize()
         await fake.roster({"id": HILDA, "name": "Хильда", "distance": 1200})
         await fake.send(type="ptt_start", focus=HILDA)
         await _until(lambda: len(quick.prewarms) == 1)
@@ -1818,7 +1981,7 @@ async def test_the_talk_key_warms_a_new_focused_npc(monkeypatch):
         assert conv.history == [] and conv.reply is None and fake.said == []
 
 
-async def test_three_nearest_listeners_are_warmed_with_the_focus_last(monkeypatch):
+async def test_three_nearest_listeners_are_warmed_with_the_focus_last(memory, monkeypatch):
     monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
     fake = FakeGame()
     quick = FakeBackend(delay=0)
@@ -1830,11 +1993,12 @@ async def test_three_nearest_listeners_are_warmed_with_the_focus_last(monkeypatc
         {"id": "BAU_4300_ADDON_CAVALORN", "name": "Кавалорн", "distance": 300},
     ]
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), quick=quick)
+        dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), memory=memory, quick=quick)
+        await dialogue.initialize()
         for person in people:
-            dialogue.open(person["id"], person["name"], warm=False).talked_at = time.monotonic()
-        dialogue._on_message(NpcRoster(type="npc_roster", t=1000, full=True, npcs=people))
-        dialogue.prewarm_listeners(HILDA)
+            (await dialogue.open(person["id"], person["name"], warm=False)).talked_at = time.monotonic()
+        await dialogue._on_message(NpcRoster(type="npc_roster", t=1000, full=True, npcs=people))
+        await dialogue.prewarm_listeners(HILDA)
         await _until(lambda: len(quick.prewarms) >= 3)
         assert [instructions for instructions, _ in quick.prewarms] == [
             dialogue.conversations[npc].persona.instructions for npc in (XARDAS, LOBART, HILDA)
@@ -1860,18 +2024,19 @@ async def test_three_nearest_listeners_are_warmed_with_the_focus_last(monkeypatc
         ]
 
 
-async def test_a_running_npcs_turn_does_not_start_a_prewarm(monkeypatch):
+async def test_a_running_npcs_turn_does_not_start_a_prewarm(memory, monkeypatch):
     monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
     fake = FakeGame()
     quick = FakeBackend("Хм...", delay=0)
     llm = StallingBackend("Слушаю.")
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), quick=quick)
-        dialogue.open(HILDA, "Хильда", warm=False)
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory, quick=quick)
+        await dialogue.initialize()
+        await dialogue.open(HILDA, "Хильда", warm=False)
         turn = dialogue.say_as_player(HILDA, "Что скажешь?")
         try:
             await _until(lambda: llm.calls == 1)
-            dialogue.prewarm_listeners(HILDA)
+            await dialogue.prewarm_listeners(HILDA)
             await asyncio.sleep(0.05)
             assert not turn.done() and quick.prewarms == []
         finally:
@@ -1879,15 +2044,18 @@ async def test_a_running_npcs_turn_does_not_start_a_prewarm(monkeypatch):
             await asyncio.gather(turn, return_exceptions=True)
 
 
-async def test_a_line_that_never_starts_is_not_spoken_forever(monkeypatch):
+async def test_a_line_that_never_starts_is_not_spoken_forever(memory, monkeypatch):
     """The game does not start a line of an npc far from the hero (or one the bridge refused): after a while
     the npc is not counted as speaking any more, or whatever waits for it (a scene) would wait forever."""
     monkeypatch.setattr(dialogue_module, "LINE_LOST_S", 0.3)
     fake = FakeGame()
     fake.drop_says.add(XARDAS)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend("Ступай.", delay=0), PersonaProvider(None))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(
+            link, FakeBackend("Ступай.", delay=0), PersonaProvider(None), memory=memory,
+        )
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Привет.")
         await _until(lambda: dialogue.conversations[XARDAS].reply.done())
         assert dialogue.speaking(XARDAS)  # its line may still come
@@ -1895,15 +2063,16 @@ async def test_a_line_that_never_starts_is_not_spoken_forever(monkeypatch):
         assert not dialogue.speaking(XARDAS)
 
 
-async def test_an_npc_that_means_to_fight_the_hero_attacks_him_through_the_scripts():
+async def test_an_npc_that_means_to_fight_the_hero_attacks_him_through_the_scripts(memory):
     fake = FakeGame()
     fight = {"goal": "fight", "target": "PLAYER", "attitude": "hostile", "agenda": None}
     llm = FakeBackend("Кошелёк или жизнь!", delay=0, tool_calls=[ToolCall("set_intent", fight)])
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
         dialogue.guild_of = lambda npc: 9  # a bandit
         await link.attach(XARDAS)
-        dialogue.open(XARDAS, "Бандит")
+        await dialogue.open(XARDAS, "Бандит")
         await dialogue.say_as_player(XARDAS, "Отойди с дороги")
         await _until(lambda: any(m.get("type") == "story_effect" for m in fake.story))
         await _until(lambda: dialogue.conversations[XARDAS].history[-1].content == "[Ты напал на героя.]")
@@ -1924,7 +2093,7 @@ def _situation_of(messages) -> str:
     return next(m.content for m in reversed(messages) if m.role == "developer" and "Обстановка" in m.content)
 
 
-async def test_a_line_in_a_fight_is_the_quick_models_and_the_turns_model_only_acts():
+async def test_a_line_in_a_fight_is_the_quick_models_and_the_turns_model_only_acts(memory):
     """The bandit's "Держи его!" comes from the quick model at once; the conversational model, told what was
     said, decides the attack, and its own words are not said."""
     fake = FakeGame()
@@ -1932,11 +2101,12 @@ async def test_a_line_in_a_fight_is_the_quick_models_and_the_turns_model_only_ac
     quick = FakeBackend("[hostile] Это он! Держи его!", delay=0)
     llm = FakeBackend("Слова, которых никто не услышит.", delay=0, tool_calls=[ToolCall("set_intent", fight)])
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), quick=quick)
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory, quick=quick)
+        await dialogue.initialize()
         dialogue.in_fight = lambda npc: True
         dialogue.guild_of = lambda npc: 9  # a bandit
         await link.attach(XARDAS)
-        dialogue.open(XARDAS, "Бандит")
+        await dialogue.open(XARDAS, "Бандит")
         await dialogue.event_turn(XARDAS, "[Событие: герой сказал рядом: «Давай поговорим»]")
         await _until(lambda: any(m.get("type") == "story_effect" for m in fake.story))
 
@@ -1953,13 +2123,14 @@ async def test_a_line_in_a_fight_is_the_quick_models_and_the_turns_model_only_ac
     assert dialogue.conversations[XARDAS].intent.goal == "fight"
 
 
-async def test_the_turns_model_speaks_when_the_quick_model_fails():
+async def test_the_turns_model_speaks_when_the_quick_model_fails(memory):
     fake = FakeGame()
     llm = FakeBackend("Сам справлюсь!", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), quick=FailingBackend())
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory, quick=FailingBackend())
+        await dialogue.initialize()
         dialogue.in_fight = lambda npc: True
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.event_turn(XARDAS, "[Событие: Волк нападает на тебя]")
         await _until(lambda: fake.said == ["Сам справлюсь!"])
 
@@ -1967,15 +2138,16 @@ async def test_the_turns_model_speaks_when_the_quick_model_fails():
     assert dialogue_module.QUICK_HINT not in _situation_of(messages)  # the whole situation, as usual
 
 
-async def test_out_of_a_fight_the_quick_model_only_says_the_first_words():
+async def test_out_of_a_fight_the_quick_model_only_says_the_first_words(memory):
     """The hero's phrase: the quick model's first words, then the conversational model's answer. An event
     outside a fight is the conversational model's alone."""
     fake = FakeGame()
     quick = FakeBackend("[angry] Тьфу! И это всё?", delay=0)
     llm = FakeBackend("Не спеши.", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), quick=quick)
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory, quick=quick)
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Ты старый дурак")
         await dialogue.event_turn(XARDAS, "[Событие: герой подошёл к тебе]")
         await _until(lambda: fake.said == ["Тьфу!", "Не спеши.", "Не спеши."])
@@ -1993,7 +2165,7 @@ async def test_out_of_a_fight_the_quick_model_only_says_the_first_words():
 
 
 @pytest.mark.parametrize("reply", ["Держи свиток.", "Ишь ты! Держи свиток."])
-async def test_a_rejection_remembers_the_first_words_and_the_main_reply(reply):
+async def test_a_rejection_remembers_the_first_words_and_the_main_reply(memory, reply):
     fake = FakeGame()
     quick = FakeBackend("[angry] Ишь ты!", delay=0)
     llm = FakeBackend(
@@ -2007,9 +2179,10 @@ async def test_a_rejection_remembers_the_first_words_and_the_main_reply(reply):
         delay=0,
     )
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), quick=quick)
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory, quick=quick)
+        await dialogue.initialize()
         await link.attach(XARDAS)
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Дай мне свиток.")
         await _until(lambda: fake.statuses[-1:] == ["idle"])
 
@@ -2025,7 +2198,7 @@ async def test_a_rejection_remembers_the_first_words_and_the_main_reply(reply):
     assert result.output.count("Ишь ты!") == 1
 
 
-async def test_first_words_do_not_end_a_turn_after_a_silent_accepted_call():
+async def test_first_words_do_not_end_a_turn_after_a_silent_accepted_call(memory):
     fake = FakeGame()
     llm = FakeBackend(
         script=[
@@ -2036,10 +2209,11 @@ async def test_first_words_do_not_end_a_turn_after_a_silent_accepted_call():
     )
     async with connected(fake) as link:
         dialogue = DialogueManager(
-            link, llm, PersonaProvider(None), quick=FakeBackend("Хм...", delay=0)
+            link, llm, PersonaProvider(None), memory=memory, quick=FakeBackend("Хм...", delay=0)
         )
+        await dialogue.initialize()
         await link.attach(XARDAS)
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Дай мне зелье.")
         await _until(lambda: fake.statuses[-1:] == ["idle"])
         await _until(
@@ -2051,19 +2225,23 @@ async def test_first_words_do_not_end_a_turn_after_a_silent_accepted_call():
     assert any(m["type"] == "action" and m["action"] == "give_item" for m in fake.received)
 
 
-async def test_no_first_words_to_a_greeting_or_without_the_quick_model_in_time(monkeypatch):
+async def test_no_first_words_to_a_greeting_or_without_the_quick_model_in_time(memory, monkeypatch):
     monkeypatch.setattr(dialogue_module, "REACTION_S", 0.2)
     fake = FakeGame()
     nothing = FakeBackend("[friendly] —", delay=0)
     late = FakeBackend("Хм...", delay=0, first=1.0)
     async with connected(fake) as link:
         greeted = DialogueManager(
-            link, FakeBackend("Здравствуй.", delay=0), PersonaProvider(None), quick=nothing
+            link, FakeBackend("Здравствуй.", delay=0), PersonaProvider(None), memory=memory, quick=nothing
         )
-        greeted.open(XARDAS, "Ксардас")
+        await greeted.initialize()
+        await greeted.open(XARDAS, "Ксардас")
         await greeted.say_as_player(XARDAS, "Привет")
-        slow = DialogueManager(link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), quick=late)
-        slow.open(LOBART, "Лобарт")
+        slow = DialogueManager(
+            link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), memory=memory, quick=late,
+        )
+        await slow.initialize()
+        await slow.open(LOBART, "Лобарт")
         await slow.say_as_player(LOBART, "Где мне найти работу?")
         await _until(lambda: fake.said == ["Здравствуй.", "Слушаю."])
 
@@ -2072,7 +2250,7 @@ async def test_no_first_words_to_a_greeting_or_without_the_quick_model_in_time(m
         assert "Ты уже сказал вслух" not in _situation_of(messages)
 
 
-async def test_the_quick_model_is_kept_warm_with_the_history_of_an_npc_in_a_fight(monkeypatch):
+async def test_the_quick_model_is_kept_warm_with_the_history_of_an_npc_in_a_fight(memory, monkeypatch):
     """Whenever the history of an npc in a fight grows, and when the hero starts to speak, the quick model
     reads the npc's instructions and history: its next line only reads the situation and the trigger."""
     monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
@@ -2080,12 +2258,15 @@ async def test_the_quick_model_is_kept_warm_with_the_history_of_an_npc_in_a_figh
     quick = FakeBackend("Держись!", delay=0)
     fighting = {LOBART}
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend("", delay=0), PersonaProvider(None), quick=quick)
+        dialogue = DialogueManager(
+            link, FakeBackend("", delay=0), PersonaProvider(None), memory=memory, quick=quick,
+        )
+        await dialogue.initialize()
         dialogue.in_fight = lambda npc: npc in fighting
-        dialogue.open(XARDAS, "Ксардас", warm=False)  # nobody talks to them yet
-        dialogue.open(LOBART, "Лобарт", warm=False)
-        dialogue.note(XARDAS, "Ты видел волка")  # not in a fight: nothing to warm
-        dialogue.note(LOBART, "Волк нападает на тебя")
+        await dialogue.open(XARDAS, "Ксардас", warm=False)  # nobody talks to them yet
+        await dialogue.open(LOBART, "Лобарт", warm=False)
+        await dialogue.note(XARDAS, "Ты видел волка")  # not in a fight: nothing to warm
+        await dialogue.note(LOBART, "Волк нападает на тебя")
         await _until(lambda: len(quick.prewarms) == 1)
         instructions, history = quick.prewarms[0]
         assert "Лобарт" in instructions and history == dialogue.conversations[LOBART].history
@@ -2100,16 +2281,17 @@ async def test_the_quick_model_is_kept_warm_with_the_history_of_an_npc_in_a_figh
         await _until(lambda: len(quick.prewarms) == 3)
 
 
-async def test_an_npc_acting_on_its_quick_line_is_done_speaking():
+async def test_an_npc_acting_on_its_quick_line_is_done_speaking(memory):
     """While the conversational model decides what to do about the line, the npc is not speaking: the hero's
     next phrase is a new turn, not an interruption, and the line said is remembered as it was."""
     fake = FakeGame()
     quick = FakeBackend("Держись!", delay=0)
     llm = FakeBackend("Неслышные слова.", delay=0, first=5.0)  # still deciding when the hero speaks again
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), quick=quick)
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory, quick=quick)
+        await dialogue.initialize()
         dialogue.in_fight = lambda npc: True
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         first = dialogue.event_turn(XARDAS, "[Событие: Волк нападает на тебя]")
         conv = dialogue.conversations[XARDAS]
         await _until(lambda: conv.acting and fake.statuses[-1:] == ["idle"])
@@ -2124,14 +2306,17 @@ async def test_an_npc_acting_on_its_quick_line_is_done_speaking():
     assert not any("перебил" in h for h in history)
 
 
-async def test_a_quick_line_ends_at_its_first_blank_line():
+async def test_a_quick_line_ends_at_its_first_blank_line(memory):
     """Gemma, seeing tool calls in the history, may write one out after its line: it is never said."""
     fake = FakeGame()
     quick = FakeBackend("[hostile] Это он! Держи его!\n\nset_intent(goal=fight, target=PLAYER)", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend("", delay=0), PersonaProvider(None), quick=quick)
+        dialogue = DialogueManager(
+            link, FakeBackend("", delay=0), PersonaProvider(None), memory=memory, quick=quick,
+        )
+        await dialogue.initialize()
         dialogue.in_fight = lambda npc: True
-        dialogue.open(XARDAS, "Бандит")
+        await dialogue.open(XARDAS, "Бандит")
         await dialogue.event_turn(XARDAS, "[Событие: герой сказал рядом: «Давай поговорим»]")
         await _until(lambda: fake.statuses[-1:] == ["idle"] and fake.said)
 
@@ -2139,34 +2324,40 @@ async def test_a_quick_line_ends_at_its_first_blank_line():
     assert dialogue.conversations[XARDAS].history[-1] == Message("assistant", "Это он! Держи его!")
 
 
-async def test_the_first_words_go_out_before_the_gesture():
+async def test_the_first_words_go_out_before_the_gesture(memory):
     """The game's queue holds a line until the gesture before it is over: the words go first."""
     fake = FakeGame()
     seen: list[bool] = []
     async with connected(fake) as link:
         dialogue = DialogueManager(
-            link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), quick=FakeBackend("Хм...", delay=0)
+            link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), memory=memory,
+            quick=FakeBackend("Хм...", delay=0)
         )
+        await dialogue.initialize()
 
         async def first_reaction(npc: str, text: str) -> FirstReaction:
             return FirstReaction(lambda: seen.append(any(t == "Хм..." for t, _ in dialogue._lines.values())))
 
         dialogue.first_reaction = first_reaction
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Что ты знаешь о драконах?")
         await _until(lambda: fake.said == ["Хм...", "Слушаю."])
 
     assert seen == [True]
 
 
-async def test_a_companion_answers_an_order_through_the_quick_model():
+async def test_a_companion_answers_an_order_through_the_quick_model(memory):
     fake = FakeGame()
     quick = FakeBackend("[neutral] Стою.", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), quick=quick)
-        dialogue.remember(LOBART, "Лобарт", "Герой приказал тебе: «Стой!» — остановиться. Ты подчинился.")
+        dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), memory=memory, quick=quick)
+        await dialogue.initialize()
+        await dialogue.remember(
+            LOBART, "Лобарт", "Герой приказал тебе: «Стой!» — остановиться. Ты подчинился."
+        )
         await dialogue.acknowledge(LOBART, "Лобарт")
-        silent = DialogueManager(link, FakeBackend(), PersonaProvider(None))
+        silent = DialogueManager(link, FakeBackend(), PersonaProvider(None), memory=memory)
+        await silent.initialize()
         await silent.acknowledge(LOBART, "Лобарт")  # no quick model: no answer
         await _until(lambda: fake.said == ["Стою."])
 
@@ -2178,7 +2369,7 @@ async def test_a_companion_answers_an_order_through_the_quick_model():
     assert quick.temperatures == [None]
 
 
-async def test_first_words_accept_eight_words_but_not_nine_and_trace_rejections(tmp_path):
+async def test_first_words_accept_eight_words_but_not_nine_and_trace_rejections(memory, tmp_path):
     from gothic_ai.trace import TraceWriter, read
 
     eight = "Твоё невежество явно граничит с самым настоящим безумием."
@@ -2189,9 +2380,11 @@ async def test_first_words_accept_eight_words_but_not_nine_and_trace_rejections(
     fake = FakeGame()
     async with connected(fake) as link:
         dialogue = DialogueManager(
-            link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), quick=quick, trace=writer
+            link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), memory=memory,
+            quick=quick, trace=writer
         )
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         for phrase in ("Невежда!", "Сам такой!", "Да ты сам!", "До встречи."):
             await dialogue.say_as_player(XARDAS, phrase)
         await _until(lambda: fake.said.count("Слушаю.") == 4)
@@ -2208,7 +2401,7 @@ async def test_first_words_accept_eight_words_but_not_nine_and_trace_rejections(
         assert 0 <= event["elapsed_ms"] < dialogue_module.REACTION_S * 1000
 
 
-async def test_a_pure_sound_waits_four_player_turns_but_words_with_a_sound_do_not(tmp_path):
+async def test_a_pure_sound_waits_four_player_turns_but_words_with_a_sound_do_not(memory, tmp_path):
     from gothic_ai.trace import TraceWriter, read
 
     replies = ["Хммм...", "Ого!", "Хм, двести золотых?", "—", "Ааа!", "Гм!"]
@@ -2217,14 +2410,16 @@ async def test_a_pure_sound_waits_four_player_turns_but_words_with_a_sound_do_no
     writer = TraceWriter(tmp_path)
     async with connected(fake) as link:
         dialogue = DialogueManager(
-            link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), quick=quick, trace=writer
+            link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), memory=memory,
+            quick=quick, trace=writer
         )
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         for _ in replies:
             await dialogue.say_as_player(XARDAS, "Сколько стоит свиток?")
         await _until(lambda: fake.said.count("Слушаю.") == len(replies))
         quick.script = [FakeStep("Ого!")]
-        dialogue.open(LOBART, "Лобарт")
+        await dialogue.open(LOBART, "Лобарт")
         await dialogue.say_as_player(LOBART, "Двести золотых!")
         await _until(lambda: fake.said.count("Слушаю.") == len(replies) + 1)
 
@@ -2238,7 +2433,7 @@ async def test_a_pure_sound_waits_four_player_turns_but_words_with_a_sound_do_no
 
 
 @pytest.mark.parametrize("failure", ["late", "error"])
-async def test_failed_first_words_attempts_are_traced(tmp_path, monkeypatch, failure):
+async def test_failed_first_words_attempts_are_traced(memory, tmp_path, monkeypatch, failure):
     from gothic_ai.trace import TraceWriter, find_turn
 
     monkeypatch.setattr(dialogue_module, "REACTION_S", 0.02)
@@ -2247,9 +2442,11 @@ async def test_failed_first_words_attempts_are_traced(tmp_path, monkeypatch, fai
     writer = TraceWriter(tmp_path)
     async with connected(fake) as link:
         dialogue = DialogueManager(
-            link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), quick=quick, trace=writer
+            link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), memory=memory,
+            quick=quick, trace=writer
         )
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Как мне быть?")
         await _until(lambda: fake.said == ["Слушаю."])
     turn, _ = find_turn(writer.path(), None)
@@ -2262,7 +2459,7 @@ async def test_failed_first_words_attempts_are_traced(tmp_path, monkeypatch, fai
 
 @pytest.mark.parametrize("waiting_for_delivery", [False, True])
 async def test_interrupted_first_words_are_traced_as_late_until_sent(
-    tmp_path, monkeypatch, waiting_for_delivery
+    memory, tmp_path, monkeypatch, waiting_for_delivery
 ):
     from gothic_ai.trace import TraceWriter, find_turn
 
@@ -2276,10 +2473,13 @@ async def test_interrupted_first_words_are_traced_as_late_until_sent(
         await asyncio.Event().wait()
 
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), quick=quick, trace=writer)
+        dialogue = DialogueManager(
+            link, FakeBackend(), PersonaProvider(None), memory=memory, quick=quick, trace=writer,
+        )
+        await dialogue.initialize()
         if waiting_for_delivery:
             monkeypatch.setattr(dialogue, "_say", wait_to_say)
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         task = dialogue.say_as_player(XARDAS, "Я убью дракона!")
         if waiting_for_delivery:
             await asyncio.wait_for(waiting.wait(), 1)
@@ -2297,7 +2497,7 @@ async def test_interrupted_first_words_are_traced_as_late_until_sent(
     assert fake.said == []
 
 
-async def test_first_words_are_short_and_not_the_same_twice_in_a_row():
+async def test_first_words_are_short_and_not_the_same_twice_in_a_row(memory):
     """Gemma now and then answers at once in a whole sentence, or says "Хм..." to everything: such first
     words are not said (the answer would follow a second one; the same sound grows tiresome)."""
     fake = FakeGame()
@@ -2311,8 +2511,11 @@ async def test_first_words_are_short_and_not_the_same_twice_in_a_row():
         delay=0,
     )
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), quick=quick)
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(
+            link, FakeBackend("Слушаю.", delay=0), PersonaProvider(None), memory=memory, quick=quick,
+        )
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         for phrase in (
             "Что это за башня?",
             "А кто тут живёт?",
@@ -2325,16 +2528,17 @@ async def test_first_words_are_short_and_not_the_same_twice_in_a_row():
     assert [m["text"] for m, _ in fake.says if m.get("filler")] == ["Хм...", "Ишь ты!"]
 
 
-async def test_one_fighting_the_hero_may_call_it_off_and_keeps_to_it():
+async def test_one_fighting_the_hero_may_call_it_off_and_keeps_to_it(memory):
     fake = FakeGame()
     calm = {"goal": "none", "target": None, "attitude": "wary", "agenda": None}
     llm = FakeBackend("Ладно, ладно. Живи пока.", delay=0, tool_calls=[ToolCall("set_intent", calm)])
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
         dialogue.fights_hero = lambda npc: True  # the scripts' attack on the hero
         calmed: list[str] = []
         dialogue.on_calm.append(calmed.append)
-        dialogue.open(XARDAS, "Бандит")
+        await dialogue.open(XARDAS, "Бандит")
         await dialogue.say_as_player(XARDAS, "Воу, воу, ты чего? Спокуха!")
         await _until(
             lambda: dialogue.conversations[XARDAS].history[-1].content == "[Ты прекратил драку с героем.]"
@@ -2347,23 +2551,24 @@ async def test_one_fighting_the_hero_may_call_it_off_and_keeps_to_it():
     assert "Ты дерёшься с героем. Прекратить драку" in situation
 
 
-async def test_words_with_a_hostile_heart_do_not_end_the_fight():
+async def test_words_with_a_hostile_heart_do_not_end_the_fight(memory):
     fake = FakeGame()
     still = {"goal": "none", "target": None, "attitude": "hostile", "agenda": None}
     llm = FakeBackend(
         "Спокуха? Сейчас я тебе покажу спокуху!", delay=0, tool_calls=[ToolCall("set_intent", still)]
     )
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
         dialogue.fights_hero = lambda npc: True
-        dialogue.open(XARDAS, "Бандит")
+        await dialogue.open(XARDAS, "Бандит")
         await dialogue.say_as_player(XARDAS, "Спокуха!")
         await _until(lambda: dialogue.conversations[XARDAS].intent.attitude == "hostile")
         await asyncio.sleep(0.1)
     assert not [m for m in fake.story if m["type"] == "story_effect"]
 
 
-async def test_a_rejection_after_the_quick_fight_line_keeps_the_next_step_silent():
+async def test_a_rejection_after_the_quick_fight_line_keeps_the_next_step_silent(memory):
     fake = FakeGame()
     quick = FakeBackend("[hostile] Держись!", delay=0)
     llm = FakeBackend(
@@ -2377,10 +2582,11 @@ async def test_a_rejection_after_the_quick_fight_line_keeps_the_next_step_silent
         delay=0,
     )
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), quick=quick)
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory, quick=quick)
+        await dialogue.initialize()
         dialogue.in_fight = lambda npc: True
         await link.attach(XARDAS)
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.event_turn(XARDAS, "[Событие: Волк нападает на тебя]")
         await _until(lambda: fake.said == ["Держись!"])
 

@@ -228,7 +228,7 @@ class Gates:
         at = game_minutes(state)
         assert at is not None
         self._now = at
-        self.chronicle.record({
+        await self.chronicle.record({
             "fact": "gate_vouch", "id": uuid.uuid4().hex, "npc": npc, **VOUCHERS[npc],
             "note": note, "at": at, "expires": at + 2 * DAY_MINUTES,
             **{k: int(state[k]) for k in ("day", "hour", "minute")},
@@ -257,7 +257,7 @@ class Gates:
             distance = person.get("distance")
             if (v["id"] not in heard and person.get("state") not in {"dead", "absent"}
                     and distance is not None and 0 <= distance <= 1000):
-                self.chronicle.record({
+                await self.chronicle.record({
                     "fact": "gate_vouch_heard", "vouch": v["id"], "to": npc,
                     "from": v["npc"], "at": self._now,
                 })
@@ -311,7 +311,7 @@ class Gates:
                 return
             at = game_minutes(state) or 0
             if any(v["id"] == id and v["npc"] == npc for v in self._active(at)):
-                self.chronicle.record({
+                await self.chronicle.record({
                     "fact": "gate_vouch_heard", "vouch": id, "from": npc, "to": to, "at": at,
                 })
         elif kind == "claim":
@@ -356,10 +356,10 @@ class Gates:
                 await self._expose(claim, f"проверил заявление у {witness}")
             if session is not self.link.session:
                 return ""
-            self.dialogue.remember(
+            await self.dialogue.remember(
                 witness, witness, f"Тебе передали заявление героя «{claim['claim']}». {answer}",
             )
-            self.chronicle.record({
+            await self.chronicle.record({
                 "fact": "gate_claim_checked", "claim": _claim_id(claim), "npc": witness.upper(),
                 "to": asker.upper(), "truth": bool(truth),
             })
@@ -401,7 +401,7 @@ class Gates:
             if (guard["npc"] == npc or guard.get("guild") not in (1, 2)
                     or not self._city_person(guard)):
                 continue
-            self.chronicle.record({
+            await self.chronicle.record({
                 "fact": "rumor", "kind": "caught", "quest": lie.quest, "said": True,
                 "about": npc, "about_name": lie.giver_name, "title": lie.title,
                 "from": npc, "from_name": lie.giver_name, "to": guard["npc"], "hops": 1,
@@ -430,7 +430,7 @@ class Gates:
             person = people.get(about, {})
             if (not self._city_person(person)
                     or not any(r.get("waypoint") and r.get("pos") for r in person.get("routine", []))):
-                self.chronicle.record({
+                await self.chronicle.record({
                     "fact": "gate_claim_checked", "claim": _claim_id(claim), "npc": about,
                     "truth": None, "skipped": "not a reachable city person",
                 })
@@ -439,7 +439,7 @@ class Gates:
             if session is not self.link.session:
                 return
             if live.get("state") in (None, "dead", "absent"):
-                self.chronicle.record({
+                await self.chronicle.record({
                     "fact": "gate_claim_checked", "claim": _claim_id(claim), "npc": about,
                     "truth": None, "skipped": "named person is dead or absent",
                 })
@@ -457,7 +457,7 @@ class Gates:
                 log.warning("gate claim check: %s", error)
             await asyncio.sleep(1)
 
-    def _on_fact(self, fact: Fact) -> None:
+    async def _on_fact(self, fact: Fact) -> None:
         if fact.get("fact") != "crime_known" or fact.get("community") != "city":
             return
         deed = next((f for f in self.chronicle.facts("crime") if f.get("id") == fact.get("crime")), None)
@@ -472,7 +472,7 @@ class Gates:
                 continue
             title = f"{v['name']} поручился за преступника"
             observers = [npc for npc in ("MIL_311_ANDRE", "PAL_200_HAGEN") if npc != v["npc"]]
-            self.chronicle.record({
+            await self.chronicle.record({
                 "fact": "gate_vouch_broken", "id": uuid.uuid4().hex, "vouch": v["id"],
                 "npc": v["npc"], "name": v["name"], "crime": deed["id"], "title": title,
                 "crime_kind": deed["kind"],
@@ -480,7 +480,7 @@ class Gates:
                 "witness_names": {npc: VOUCHERS[npc]["name"] for npc in observers},
                 "at": at, "day": at // DAY_MINUTES,
             })
-            self.dialogue.remember(
+            await self.dialogue.remember(
                 v["npc"], v["name"],
                 f"Городу стало известно преступление героя: {deed.get('kind', '')}. "
                 "Ты поручился за него и отвечаешь своим именем. Герой подорвал твоё доверие.",
@@ -553,11 +553,11 @@ class Gates:
                 else:
                     await _run(self.link, npc, _admission(npc), ["int", 1], _post(self.graph, npc))
                     if claim_fact is not None and session is self.link.session:
-                        self.chronicle.record(claim_fact)
+                        await self.chronicle.record(claim_fact)
             except GateResultUnknown as error:
                 kept = ""
                 if claim_fact is not None and session is self.link.session:
-                    self.chronicle.record({**claim_fact, "admission": "unknown"})
+                    await self.chronicle.record({**claim_fact, "admission": "unknown"})
                     kept = " Your accepted claim has been kept."
                 return f"Passage outcome is unknown: {error}.{kept}", False
             except (GameError, TimeoutError) as error:
