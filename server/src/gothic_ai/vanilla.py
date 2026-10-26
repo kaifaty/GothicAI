@@ -1205,8 +1205,17 @@ class VanillaQuests:
 
     async def _remember_dead(self, npc: str, dead: str, how: str) -> None:
         """One observation of this pair, kept in the save branch."""
-        if (npc, dead) not in self.seen_dead:
-            await self.chronicle.record({"fact": "seen_dead", "npc": npc, "dead": dead, "how": how})
+        branch, session = self.chronicle.branch, self.link.session
+        world_generation = self.link.world_generation
+
+        async def remember() -> None:
+            if (branch != self.chronicle.branch or session is not self.link.session
+                    or world_generation != self.link.world_generation):
+                return
+            if (npc, dead) not in self.seen_dead:
+                await self.chronicle.record({"fact": "seen_dead", "npc": npc, "dead": dead, "how": how})
+
+        await self.chronicle.memory.complete(remember)
 
     async def _see_death(self, fact: Fact, branch: str | None) -> None:
         """The giver's own kills and deaths before its eyes, even before its first conversation turn."""
