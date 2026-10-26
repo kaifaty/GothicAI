@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import replace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -201,10 +202,13 @@ async def test_an_npc_can_open_the_conversation():
     assert dialogue.conversations[LOBART].history[0].content == "Чего тебе?"
 
 
-async def test_a_busy_npc_keeps_working_and_answers_on_the_move():
+@pytest.mark.parametrize("async_view", [False, True])
+async def test_a_busy_npc_keeps_working_and_answers_on_the_move(async_view):
     fake = FakeGame()
     llm = FakeBackend("Некогда мне.", delay=0)
     cm, link, dialogue, talk = await _desk(fake, llm, FakeDecider(choice="keep_working", confidence=0.9))
+    view = ("You see the hero by the anvil.",)
+    talk.view_of = AsyncMock(return_value=view) if async_view else lambda npc: view
     try:
         await fake.roster(person(XARDAS, "Ксардас", 3, True, state="ZS_SMITH_ANVIL"))
         await fake.send(type="player_text", text="Как дела?", focus=XARDAS)
@@ -218,6 +222,9 @@ async def test_a_busy_npc_keeps_working_and_answers_on_the_move():
     assert say["overlay"] is True
     state = next(c["state"] for c in talk.reflexes.decider.calls if "posture" in c["questions"])
     assert "Right now you hammer at the anvil." in state and '"Как дела?"' in state
+    assert view[0] in state
+    if async_view:
+        talk.view_of.assert_awaited_once_with(XARDAS)
 
 
 async def test_the_hero_interrupts_the_npc():

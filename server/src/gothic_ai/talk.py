@@ -383,7 +383,7 @@ class TalkDesk:
         self.clock = clock
         self.planner = planner
         # what an npc perceives now, for the behavioral model (perception.py)
-        self.view_of: Callable[[str], tuple[str, ...]] = lambda npc: ()
+        self.view_of: Callable[[str], tuple[str, ...] | Awaitable[tuple[str, ...]]] = lambda npc: ()
         self.refuses: Callable[[str], bool] = lambda npc: False
         self.refusal: Callable[[str], Encounter | None] = lambda npc: None
         self.end_silence_s = end_silence_s
@@ -709,6 +709,13 @@ class TalkDesk:
         if self.reflexes is None or fights(entry):
             return default  # one in a fight fights on while it answers: whether to stop is its words' call
         conv = self.dialogue.conversations.get(talk.npc)
+        session, world_generation = self.link.session, self.link.world_generation
+        view = self.view_of(talk.npc)
+        if inspect.isawaitable(view):
+            view = await view
+        if (session is not self.link.session or world_generation != self.link.world_generation
+                or self.partner is not talk or self.dialogue.conversations.get(talk.npc) is not conv):
+            raise GameError("conversation changed while preparing posture")
         ctx = NpcContext(
             talk.npc,
             talk.name,
@@ -716,10 +723,13 @@ class TalkDesk:
             entry.distance if entry else 0.0,
             entry.in_view if entry else True,
             traits=conv.persona.traits if conv else None,
-            view=self.view_of(talk.npc),
+            view=view,
         )
         clock = clock_text(*self.game_time) if self.game_time else None
         reaction = await self.reflexes.posture(ctx, text, doing(entry), conv.intent if conv else None, clock)
+        if (session is not self.link.session or world_generation != self.link.world_generation
+                or self.partner is not talk or self.dialogue.conversations.get(talk.npc) is not conv):
+            raise GameError("conversation changed while choosing posture")
         if reaction is None:
             return default
         if self.trace is not None:

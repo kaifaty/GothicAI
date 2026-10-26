@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -931,10 +932,13 @@ async def test_the_hero_walks_away_and_a_dialog_opens(tmp_path):
         assert s.why == "dialog" and len(g.fake.says) == 1
 
 
-async def test_view_trigger_with_shadow_talk_to(tmp_path, monkeypatch):
+@pytest.mark.parametrize("async_view", [False, True])
+async def test_view_trigger_with_shadow_talk_to(tmp_path, monkeypatch, async_view):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     async with _gossip(tmp_path) as g:
         planner, decider, _, _ = make(FakeDecider("tell", 0.9))
+        view = ("You see Hilda waiting by the field.",)
+        planner.view_of = AsyncMock(return_value=view) if async_view else lambda npc: view
         g.desk.follow(planner)
         g.rumors.gate = lambda r, a, b: False  # held closed
         g.rumors.clock = AT
@@ -961,6 +965,9 @@ async def test_view_trigger_with_shadow_talk_to(tmp_path, monkeypatch):
     assert held["options"] == {"tell": "tell Хильда now", "keep": "keep it to yourself for now"}
     assert "News you know and Хильда does not: the hero lied to you: he claimed" in held["state"]
     assert told["code"] == "told"
+    assert view[0] in held["state"] and view[0] in told["state"]
+    if async_view:
+        assert planner.view_of.await_count == 2
     call = decider.calls[0]
     assert (call["lane"], call["priority"], call["deadline_ms"]) == ("background", 0.2, gossip.SHADOW_MS)
     # nobody around the hero: the pass is a fact as any other

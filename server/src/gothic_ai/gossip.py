@@ -17,6 +17,7 @@ model), fact (as before); wait while their bodies are busy. The fact comes first
 from __future__ import annotations
 
 import asyncio
+import inspect
 import itertools
 import json
 import logging
@@ -1019,13 +1020,23 @@ class GossipDesk:
     ) -> dict[str, Any] | None:
         """The behavioral model's `talk_to` for a, as a `brain` row (planner.py's shape), or None."""
         rec, entry = planner.npcs.get(a), self.talk.people.get(a)
+        world, session = self._world, self.link.session
+        world_generation = self.link.world_generation
+        version = rec.version if rec is not None else None
+        view = planner.view_of(a) if planner.view_of is not None else ()
+        if inspect.isawaitable(view):
+            view = await view
+        if (world != self._world or session is not self.link.session
+                or world_generation != self.link.world_generation or planner.npcs.get(a) is not rec
+                or (rec is not None and rec.version != version)):
+            return None
         ctx = NpcContext(
             a,
             rec.name if rec is not None else self._name(a),
             rec.guild if rec is not None else entry.guild if entry is not None else 0,
             rec.distance_cm if rec is not None else entry.distance if entry is not None else 0.0,
             rec.in_view if rec is not None else entry.in_view if entry is not None else False,
-            view=planner.view_of(a) if planner.view_of is not None else (),
+            view=view,
         )
         clock = self.rumors.clock
         when = clock_text(clock % DAY // 60, clock % 60) if clock is not None else None
@@ -1035,6 +1046,10 @@ class GossipDesk:
         rid = f"{a}#talk_to{next(self._ids)}"
         sent = time.monotonic()
         outcome = await planner.decider.decide(rid, "background", 0.2, SHADOW_MS, sit.state, sit.questions)
+        if (world != self._world or session is not self.link.session
+                or world_generation != self.link.world_generation or planner.npcs.get(a) is not rec
+                or (rec is not None and rec.version != version)):
+            return None
         answer = (outcome.answers or {}).get("talk_to") if outcome.kind == "answers" else None
         if not answer:
             return None
