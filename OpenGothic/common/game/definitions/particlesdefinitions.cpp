@@ -62,6 +62,9 @@ std::shared_ptr<zenkit::IParticleEffect> ParticlesDefinitions::implGetDirect(std
   if(!vm || name.empty())
     return nullptr;
 
+  if(name=="PFX_GAI_PEE")
+    return peeStream();
+
   auto id = vm->find_symbol_by_name(name);
   if(id==nullptr) {
     if(!relaxed)
@@ -72,5 +75,41 @@ std::shared_ptr<zenkit::IParticleEffect> ParticlesDefinitions::implGetDirect(std
   auto ret = std::make_shared<zenkit::IParticleEffect>();
   ret->vis_tex_is_quadpoly = 1; // seem to be default
   vm->init_instance(ret, id);
+  return ret;
+  }
+
+// The game's own stream (PEE, the S_PEE animation starts it) aimed at a kneeling hero a metre ahead
+// (mercy.py's humiliation): its look and gravity, a faster throw up in the npc's frame, gone at the hero
+std::shared_ptr<zenkit::IParticleEffect> ParticlesDefinitions::peeStream() {
+  auto id = vm->find_symbol_by_name("PEE");
+  if(id==nullptr)
+    return nullptr;
+  auto ret = std::make_shared<zenkit::IParticleEffect>();
+  ret->vis_tex_is_quadpoly = 1;
+  vm->init_instance(ret, id);
+  // one key a hundred seconds long: the model keeps an effect only for its preferred time (MdlVisual::tick);
+  // Npc::tickPeeStream stops it when the pose ends
+  ret->pps_value          = PeeStream::pps;
+  ret->pps_is_looping     = 1;
+  ret->pps_scale_keys_s   = "1";
+  ret->pps_fps            = 0.01f;
+  ret->dir_mode_s         = "DIR";
+  ret->dir_for_s          = "OBJECT";
+  ret->dir_angle_head     = PeeStream::head;
+  ret->dir_angle_head_var = PeeStream::spread;
+  ret->dir_angle_elev     = PeeStream::elev;
+  ret->dir_angle_elev_var = PeeStream::spread;
+  ret->vel_avg            = PeeStream::vel;
+  ret->vel_var            = PeeStream::vel*PeeStream::velSpread;  // a frame's particles string out
+  ret->lsp_part_avg       = PeeStream::lifeMs;
+  ret->lsp_part_var       = PeeStream::lifeMs*0.1f;
+  ret->vis_alpha_start    = PeeStream::alphaStart;
+  ret->vis_alpha_end      = PeeStream::alphaEnd;
+  ret->vis_size_start_s   = PeeStream::size;
+  ret->vis_name_s         = PeeStream::texture;
+  ret->vis_tex_color_start_s = PeeStream::color;
+  ret->vis_tex_color_end_s   = PeeStream::color;
+  ret->vis_size_end_scale = PeeStream::sizeEnd;
+  ret->use_emitters_for   = 0;
   return ret;
   }

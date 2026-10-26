@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-PEE_DISTANCE_CM = 70
+PEE_DISTANCE_CM = 100  # judged on bench stills: room for the arc between them
 PEE_HOLD_MS = 4000
 PEE_APPROACH_TIMEOUT_MS = 15000
 HUMILIATE_FORBIDDEN_GUILDS = {1, 4, 5, 14}  # PAL, KDF, NOV, KDW

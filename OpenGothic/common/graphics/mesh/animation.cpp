@@ -405,6 +405,8 @@ void Animation::Sequence::processPfx(const MdsParticleEffect& p, MdlVisual& visu
     visual.stopEffect(p.index);
     }
   else if(!p.name.empty()) {
+    if(p.name==visual.mutedPfx())
+      return;
     Effect e(PfxEmitter(world,p.name),p.position);
     e.setActive(true);
     visual.startEffect(world,std::move(e),p.index,false);
