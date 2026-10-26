@@ -2162,7 +2162,9 @@ class DialogueManager:
 
         async def run() -> None:
             if conv.voice is not None:
-                await conv.voice.join()  # the npc says what it said before acting on it
+                await conv.voice.join()  # finish sending the audio before observing its playback
+            while self.audible(conv.npc):  # noqa: ASYNC110 - native line starts and durations govern playback
+                await asyncio.sleep(0.05)
             note, ok = await job()
             if reply is not None and not reply.done() and reply is not asyncio.current_task():
                 await asyncio.wait({reply})  # the note goes after this turn's reply in the history

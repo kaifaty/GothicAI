@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from gothic_ai.dialogue import DialogueManager, follow_agreement
@@ -45,7 +47,8 @@ async def test_a_spoken_follow_agreement_repairs_the_missing_intent(heard, reply
         conv = dialogue.open(CAVALORN, "Кавалорн")
         conv.intent = Intent(attitude="friendly", agenda="Help with the bandits")
         await dialogue.say_as_player(CAVALORN, heard)
-        await _until(lambda: any(m.get("action") == "follow" for m in fake.received))
+        await asyncio.gather(*conv.actions)
+        assert any(m.get("action") == "follow" for m in fake.received)
 
     assert conv.intent == Intent("follow_hero", "PLAYER", "friendly", "Help with the bandits")
     note = next(m for m in conv.history if "Ты согласился и идёшь за героем" in m.content)
