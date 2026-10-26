@@ -285,9 +285,9 @@ def suppress_companion_defense(
     original = orders._stand_up
     restored = False
 
-    def stand_up(who: str, foe: str, did: str, *, struck: bool) -> None:
+    async def stand_up(who: str, foe: str, did: str, *, struck: bool) -> None:
         if who.upper() != npc.upper():
-            original(who, foe, did, struck=struck)
+            await original(who, foe, did, struck=struck)
 
     def restore() -> None:
         nonlocal restored
@@ -612,7 +612,7 @@ async def fight_reactions(
         await link.debug("player_goto", pos=point(-900))
         if not await _until(lambda: CAVALORN in talk.people, 10):
             raise GameError("fight_reactions setup: Cavalorn absent from roster")
-        dialogue.open(CAVALORN, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
+        (await dialogue.open(CAVALORN, "Кавалорн")).intent = Intent("follow_hero", "PLAYER", "friendly")
 
         if case in {"wolf", "sight"}:
             monster = f"DIR_NPC_FIGHT_{case.upper()}"

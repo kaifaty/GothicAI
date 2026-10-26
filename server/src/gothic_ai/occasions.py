@@ -262,7 +262,7 @@ class Occasions:
                 if info.get("state") == "alive" and info.get("distance", float("inf")) <= AWAY_CM
             )
             if self._activity is None:
-                self._reset_quiet()
+                await self._reset_quiet()
             if self._candidate != self._raw_place:
                 self._candidate, self._since = self._raw_place, self.clock()
                 self.current = None
@@ -270,20 +270,20 @@ class Occasions:
                 self.current = place
                 if place.id not in self.visited:
                     self.visited.add(place.id)
-                    self.chronicle.record(
+                    await self.chronicle.record(
                         {"fact": "visited", "place": place.id, "waypoint": waypoint, **self._time}
                     )
                     if residents or place.kind in {"camp", "cave"}:
-                        self._occasion("arrived")
+                        await self._occasion("arrived")
             if chapter_due:
                 value = state.get("vars", {}).get("KAPITEL")
                 if isinstance(value, int):
                     previous = self._chapter
                     if previous is None or value > previous:
                         self._chapter = value
-                        self.chronicle.record({"fact": "chapter", "value": value, **self._time})
+                        await self.chronicle.record({"fact": "chapter", "value": value, **self._time})
                         if previous is not None:
-                            self._occasion("chapter", chapter=value)
+                            await self._occasion("chapter", chapter=value)
                     self._chapter_checked = self.clock()
             events = list(self._events)
             vanilla = iter(await with_quest_outcomes(
@@ -296,25 +296,25 @@ class Occasions:
             for fact in events:
                 self._events.popleft()
                 if fact["fact"] in LINES:
-                    self._reset_quiet()
+                    await self._reset_quiet()
                 elif fact["fact"] == "vanilla_quest":
-                    self._occasion("vanilla", vanilla=next(vanilla))
+                    await self._occasion("vanilla", vanilla=next(vanilla))
                 elif self._is_deed(fact):
                     if self.crimes and self._human_killed(fact):
                         # A death scan may precede the passive perception's crime by a frame. Wait
                         # for one more sample before falling back to the older, less detailed deed.
                         self._deaths.append(fact)
                     else:
-                        self._occasion(
+                        await self._occasion(
                             "deed", deed=fact,
                             **({"crime": fact["id"]} if fact["fact"] in {"crime", "npc_crime"} else {}),
                         )
             for fact in deaths:
                 if self._is_deed(fact):
-                    self._occasion("deed", deed=fact)
+                    await self._occasion("deed", deed=fact)
             at = _minutes(self._time)
             if self.current is not None and at is not None and at - self._activity >= DAY_MINUTES:
-                self._occasion("quiet")
+                await self._occasion("quiet")
             self._expire()
             self._changed.set()
 
@@ -353,27 +353,62 @@ class Occasions:
         if _minutes(self._time) is None:
             self._time.clear()
 
-    def _reset_quiet(self) -> None:
-        self._activity = _minutes(self._time)
-        self.chronicle.record({"fact": "occasion_clock", **self._time})
+    async def _reset_quiet(self) -> None:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
 
-    def _occasion(self, kind: str, **details: Any) -> None:
-        if (key := self._npc_deed_key(details.get("deed", {}))) is not None:
-            self._npc_deeds.add(key)
-        fact = {
-            "fact": "occasion",
-            "kind": kind,
-            "place": self._raw_place,
-            "waypoint": self.waypoint,
-            "people": list(self._nearby),
-            **self._time,
-            **details,
-        }
-        self.chronicle.record(fact)
-        self._activity = _minutes(fact)
-        self.pending.append(fact)
-        self._queued_at[id(fact)] = self.clock()
-        self.pending.sort(key=lambda f: PRIORITY[f["kind"]])
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            await self.chronicle.record({"fact": "occasion_clock", **self._time})
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+
+            self._activity = _minutes(self._time)
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def _occasion(self, kind: str, **details: Any) -> None:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            fact = {
+                "fact": "occasion",
+                "kind": kind,
+                "place": self._raw_place,
+                "waypoint": self.waypoint,
+                "people": list(self._nearby),
+                **self._time,
+                **details,
+            }
+            await self.chronicle.record(fact)
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            if (key := self._npc_deed_key(details.get("deed", {}))) is not None:
+                self._npc_deeds.add(key)
+            self._activity = _minutes(fact)
+            self.pending.append(fact)
+            self._queued_at[id(fact)] = self.clock()
+            self.pending.sort(key=lambda f: PRIORITY[f["kind"]])
+
+        return await self.chronicle.memory.complete(persist)
 
     def _expire(self) -> None:
         at = _minutes(self._time)
@@ -432,11 +467,18 @@ class Occasions:
         while True:
             self._changed.clear()
             try:
+                if self.pending and self.link.world is not None and not self._gathering():
+                    # Finish accepted fact publication before taking the queue lock. Poll may
+                    # hold that lock while it records an occasion in the same completion queue.
+                    await self.chronicle.memory.complete(self.chronicle.memory.flush)
                 async with self._lock:
                     generation = self._generation
                     try:
+                        if self._events:
+                            self._wake.set()
                         can_take = (
-                            bool(self.pending) and self.link.world is not None and not self._gathering()
+                            bool(self.pending) and self.link.world is not None
+                            and not self._events and not self._gathering()
                         )
                         if can_take and ready is not None:
                             can_take = await ready()
@@ -480,4 +522,7 @@ class Occasions:
         self._raw_place = place.id if place else None
         self._set_distances(owners, values[1:])
         self._expire()
+        if self._events:
+            self._wake.set()
+            return None
         return self._consume() if self.pending else None

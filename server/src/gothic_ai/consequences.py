@@ -238,7 +238,7 @@ class LieConsequences:
             if done:
                 fact = {"fact": "lie_consequences", "npc": npc, "quests": sorted(lies.unbelieved)}
                 fact |= {"halved": lies.halve, "second_chance": sorted(lies.second_chance)}
-                self.chronicle.record({**fact, "nodes": sorted({op["node"] for op in done})})
+                await self.chronicle.record({**fact, "nodes": sorted({op["node"] for op in done})})
                 self.journal.add("lie_consequences", **{k: v for k, v in fact.items() if k != "fact"})
             return done
 
@@ -248,7 +248,7 @@ class LieConsequences:
 
     async def _wanted(self, npc: str, lies: Lies) -> list[dict[str, Any]]:
         """The changes that bring the npc's dialogs to what the lies make them."""
-        current = self._current()
+        current = await self._current()
         ops = []
         for node in self._dialogs(npc):
             parts: tuple[Part, ...] = ("information",) if node.is_choice else ("condition", "information")
@@ -306,9 +306,11 @@ class LieConsequences:
             except (GameError, TimeoutError) as err:
                 log.warning("lie consequences: %s %s not reopened: %s", npc, quest, err)
             else:
-                self.chronicle.record({"fact": "quest_reopened", "npc": npc, "name": name, "quest": quest})
+                await self.chronicle.record(
+                    {"fact": "quest_reopened", "npc": npc, "name": name, "quest": quest}
+                )
                 self.journal.add("quest_reopened", npc=npc, quest=quest)
-                self._remember(
+                await self._remember(
                     npc,
                     f"Герой повинился за ложь про «{title}». Работа так и не сделана: она снова за ним — "
                     "пусть сделает по-настоящему, второй раз ты за неё не платишь",
@@ -324,9 +326,11 @@ class LieConsequences:
             return
         if value != 2 or quest in self.lies(npc).made_good:  # LOG_SUCCESS
             return
-        self.chronicle.record({"fact": "lie_made_good", "npc": npc, "name": self._name(npc), "quest": quest})
+        await self.chronicle.record(
+            {"fact": "lie_made_good", "npc": npc, "name": self._name(npc), "quest": quest}
+        )
         self.journal.add("lie_made_good", npc=npc, quest=quest)
-        self._remember(
+        await self._remember(
             npc, f"Герой всё-таки сделал «{self._title(quest)}» по-настоящему. Теперь ты это засчитываешь"
         )
         await self.update(npc)
@@ -336,10 +340,10 @@ class LieConsequences:
         found = [n for n in self.graph.nodes.values() if n.npc == npc and not n.id.endswith(SKIP)]
         return sorted(found, key=lambda n: n.id)
 
-    def _current(self) -> dict[Key, list[Step] | None]:
+    async def _current(self) -> dict[Key, list[Step] | None]:
         """The programs in place now, from the branch's changes."""
         out: dict[Key, list[Step] | None] = {}
-        for op in self.patches.ops():
+        for op in await self.patches.ops():
             if op.get("op") == "program":
                 out[(str(op.get("node", "")).upper(), op.get("part") or "information")] = op.get("steps")
         return out
@@ -358,9 +362,9 @@ class LieConsequences:
             return False
         return True
 
-    def _remember(self, npc: str, text: str) -> None:
+    async def _remember(self, npc: str, text: str) -> None:
         if self.dialogue is not None:
-            self.dialogue.remember(npc, self._name(npc), text)
+            await self.dialogue.remember(npc, self._name(npc), text)
 
     def _name(self, npc: str) -> str:
         found = [f for f in self.chronicle.facts("found_out") if f.get("npc") == npc]

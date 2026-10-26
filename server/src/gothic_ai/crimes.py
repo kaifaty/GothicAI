@@ -155,18 +155,31 @@ class Crimes:
             if fact.get("npc") == npc.upper() and fact.get("crime") == crime
         ), None)
 
-    def learn_side(self, npc: str, crime: Fact) -> Fact | None:
+    async def learn_side(self, npc: str, crime: Fact) -> Fact | None:
         """Record a listener's own side before its knowledge can trigger consequences."""
-        npc = npc.upper()
-        side = self.side(npc, crime["id"])
-        if side is not None or crime.get("kind") != "murder":
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            nonlocal npc
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            npc = npc.upper()
+            side = self.side(npc, crime["id"])
+            if side is not None or crime.get("kind") != "murder":
+                return side
+            why = self.sides.heard_reason(npc, crime)
+            if why is None:
+                return None
+            side = {"fact": "crime_side", "npc": npc, "crime": crime["id"], "why": why}
+            await self.chronicle.record(side)
             return side
-        why = self.sides.heard_reason(npc, crime)
-        if why is None:
-            return None
-        side = {"fact": "crime_side", "npc": npc, "crime": crime["id"], "why": why}
-        self.chronicle.record(side)
-        return side
+
+        return await self.chronicle.memory.complete(persist)
 
     def _side_excuse(self, npc: str, crime: str) -> dict[str, str]:
         side = self.side(npc, crime)
@@ -418,6 +431,7 @@ class Crimes:
 
     async def prepare(self, npc: str) -> None:
         npc = npc.upper()
+        world_generation, session = self.link.world_generation, self.link.session
         # story_people has guilds, but OldCamp/BL membership also depends on NPCTYPE. Read both
         # fields through the existing evaluator rather than guessing a community from a name.
         if self.known(npc) and "npctype" not in self.people.get(npc, {}):
@@ -431,58 +445,77 @@ class Crimes:
                 values = []
             if (
                 self.chronicle.branch == branch
+                and self.link.world_generation == world_generation and self.link.session is session
                 and len(values) == 2
                 and all(isinstance(v, int) for v in values)
             ):
                 self.people[npc] = {**self.people.get(npc, {}), "guild": values[0], "npctype": values[1]}
         # Only a deferred murder reaction may begin here. Ordinary turns never reassert wariness.
-        self._apply_attitude(npc, hostile_only=True)
+        if self.link.world_generation == world_generation and self.link.session is session:
+            await self._apply_attitude(npc, hostile_only=True)
 
-    def _apply_attitude(
+    async def _apply_attitude(
         self,
         npc: str,
         *,
         crimes: set[str] | None = None,
         hostile_only: bool = False,
     ) -> None:
-        if self.dialogue is None:
-            return
-        npc = npc.upper()
-        applied = {
-            (f.get("crime"), f.get("attitude"))
-            for f in self.chronicle.facts("crime_attitude")
-            if f.get("npc") == npc
-        }
-        pending = []
-        for knowledge in self.known(npc):
-            crime = knowledge.crime["id"]
-            if crimes is not None and crime not in crimes:
-                continue
-            attitude = self._attitude_of(npc, knowledge)
-            if (
-                attitude is None
-                or (hostile_only and attitude != "hostile")
-                or (crime, attitude) in applied
-                or (crime, "hostile") in applied
-            ):
-                continue
-            pending.append((crime, attitude))
-        if not pending:
-            return
-        attitude = "hostile" if any(a == "hostile" for _, a in pending) else "wary"
-        name = self.names(npc)
-        current = self.dialogue.open(npc, name).intent.attitude
-        if current != "hostile" and current != attitude:
-            # This is a belief change only; vanilla still owns every physical reaction in this layer.
-            self.dialogue.change_intent(npc, name, body=False, attitude=attitude)
-        # Consume the reaction even when an existing wary/hostile intent already covers it. The
-        # conversational model may soften later, and a load must not revive the old reaction.
-        for crime, reaction in pending:
-            self.chronicle.record(
-                {"fact": "crime_attitude", "npc": npc, "crime": crime, "attitude": reaction}
-            )
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+        world_generation = self.link.world_generation
 
-    def _on_fact(self, fact: Fact) -> None:
+        async def persist():
+            nonlocal npc
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            if self.dialogue is None or self.link.world is None:
+                return
+            npc = npc.upper()
+            applied = {
+                (f.get("crime"), f.get("attitude"))
+                for f in self.chronicle.facts("crime_attitude")
+                if f.get("npc") == npc
+            }
+            pending = []
+            for knowledge in self.known(npc):
+                crime = knowledge.crime["id"]
+                if crimes is not None and crime not in crimes:
+                    continue
+                attitude = self._attitude_of(npc, knowledge)
+                if (
+                    attitude is None
+                    or (hostile_only and attitude != "hostile")
+                    or (crime, attitude) in applied
+                    or (crime, "hostile") in applied
+                ):
+                    continue
+                pending.append((crime, attitude))
+            if not pending:
+                return
+            attitude = "hostile" if any(a == "hostile" for _, a in pending) else "wary"
+            name = self.names(npc)
+            conversation = await self.dialogue.open(npc, name)
+            if self.link.world_generation != world_generation or self.link.session is not _memory_session:
+                return
+            current = conversation.intent.attitude
+            if current != "hostile" and current != attitude:
+                # This is a belief change only; vanilla still owns every physical reaction in this layer.
+                await self.dialogue.change_intent(npc, name, body=False, attitude=attitude)
+            # Consume the reaction even when an existing wary/hostile intent already covers it. The
+            # conversational model may soften later, and a load must not revive the old reaction.
+            for crime, reaction in pending:
+                await self.chronicle.record(
+                    {"fact": "crime_attitude", "npc": npc, "crime": crime, "attitude": reaction}
+                )
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def _on_fact(self, fact: Fact) -> None:
         if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
             return
         if fact.get("fact") in {"crime_seen", "rumor", "testimony"}:
@@ -491,9 +524,9 @@ class Crimes:
             if fact.get("crime"):
                 crimes.add(fact["crime"])
             if npc and crimes:
-                self._apply_attitude(npc, crimes=crimes)
+                await self._apply_attitude(npc, crimes=crimes)
 
-    def suspect_chest(
+    async def suspect_chest(
         self,
         npc: str,
         chest: str,
@@ -502,48 +535,67 @@ class Crimes:
         waypoint: str = "",
     ) -> list[Fact]:
         """A missing item plus a remembered presence is suspicion, never proof of the thief."""
-        if self.sightings is None:
-            return []
-        npc = npc.upper()
-        out = []
-        for crime in self.facts():
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            nonlocal npc
             if (
-                crime.get("kind") != "theft"
-                or crime.get("chest") != chest
-                or crime.get("victim") != npc
-                or crime.get("item") not in missing
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
             ):
-                continue
-            at = (
-                int(crime.get("day", 0)) * 1440 + int(crime.get("hour", 0)) * 60 + int(crime.get("minute", 0))
-            )
-            place = self.places.of(crime.get("waypoint") or waypoint) if self.places is not None else None
-            if place is None:
-                continue  # no spatial evidence is better than accusing everyone seen that day
-            for s in self.sightings.mind(npc).sightings:
+                raise GameError("session changed while recording crime state")
+            if self.sightings is None:
+                return []
+            npc = npc.upper()
+            world_generation = self.link.world_generation
+            await self.sightings.prepare(npc)
+            if self.link.world_generation != world_generation or self.link.session is not _memory_session:
+                return []
+            out = []
+            for crime in self.facts():
                 if (
-                    s.trace_kind
-                    or s.end < at - SUSPECT_MIN
-                    or s.start > at + SUSPECT_MIN
-                    or place.id not in s.place_ids
+                    crime.get("kind") != "theft"
+                    or crime.get("chest") != chest
+                    or crime.get("victim") != npc
+                    or crime.get("item") not in missing
                 ):
                     continue
-                if any(
-                    f.get("npc") == npc and f.get("crime") == crime["id"] and f.get("suspect") == s.who
-                    for f in self.chronicle.facts("crime_suspected")
-                ):
-                    continue
-                fact = {
-                    "fact": "crime_suspected",
-                    "npc": npc,
-                    "crime": crime["id"],
-                    "suspect": s.who,
-                    "chest": chest,
-                    "sighting": s.record(),
-                }
-                self.chronicle.record(fact)
-                out.append(fact)
-        return out
+                at = (
+                    int(crime.get("day", 0)) * 1440
+                    + int(crime.get("hour", 0)) * 60
+                    + int(crime.get("minute", 0))
+                )
+                place = self.places.of(crime.get("waypoint") or waypoint) if self.places is not None else None
+                if place is None:
+                    continue  # no spatial evidence is better than accusing everyone seen that day
+                for s in self.sightings.mind(npc).sightings:
+                    if (
+                        s.trace_kind
+                        or s.end < at - SUSPECT_MIN
+                        or s.start > at + SUSPECT_MIN
+                        or place.id not in s.place_ids
+                    ):
+                        continue
+                    if any(
+                        f.get("npc") == npc and f.get("crime") == crime["id"] and f.get("suspect") == s.who
+                        for f in self.chronicle.facts("crime_suspected")
+                    ):
+                        continue
+                    fact = {
+                        "fact": "crime_suspected",
+                        "npc": npc,
+                        "crime": crime["id"],
+                        "suspect": s.who,
+                        "chest": chest,
+                        "sighting": s.record(),
+                    }
+                    await self.chronicle.record(fact)
+                    out.append(fact)
+            return out
+
+        return await self.chronicle.memory.complete(persist)
 
     def concerns(self, npc: str) -> list[Concern]:
         from .concerns import Concern
@@ -662,10 +714,10 @@ class Crimes:
                 return None if guild == actor_guild else ("", guild, 0)
         return None
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         self.sides.on_message(msg)
         if isinstance(msg, HeroDeed):
-            self.record(msg)
+            await self.record(msg)
         elif isinstance(msg, Session):
             self.people.clear()
             self._noncrimes.clear()
@@ -673,169 +725,181 @@ class Crimes:
         elif isinstance(msg, (Snapshot, NpcRoster, NpcViews)):
             self._ticks = msg.t
 
-    def record(self, deed: HeroDeed) -> Fact | None:
+    async def record(self, deed: HeroDeed) -> Fact | None:
         """Classify a raw bridge deed and keep one truth plus one fact per real witness."""
-        if self.chronicle.branch is None:
-            return None
-        # Reconnect delivery or duplicate perceptions cannot turn one deed into two crimes. The
-        # branch query also survives a save/load, unlike a process-wide set of event ids.
-        if any(f.get("id") == deed.id for f in self.facts()):
-            return None
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
 
-        victim, owner = self._npc(deed.victim), ""
-        community = None
-        witnesses = list(dict.fromkeys(self._npc(npc) for npc in deed.witnesses if npc))
-        item, count = deed.item.upper(), deed.count
-        extra: dict[str, Any] = {}
-        match deed.kind:
-            case "take_item":
-                if not item or count <= 0:
-                    return None
-                ownership = self._ownership(deed)
-                if ownership is None:
-                    return self._noncrime(deed.id)
-                owner, guild, npctype = ownership
-                if deed.owner:
-                    deaths = [
-                        fact for fact in self.chronicle.facts("died")
-                        if self._npc(fact.get("npc", "")) == owner
-                    ]
-                    violence = {
-                        fact.get("kind") for fact in self.facts()
-                        if self._npc(fact.get("victim", "")) == owner
-                        and not (fact.get("kind") == "murder" and fact.get("lawful_fight"))
-                    }
-                    if (
-                        deed.owner_npc_guild > 16
-                        or any(fact.get("monster") is True for fact in deaths)
-                        or (deaths and "murder" not in violence)
-                        or (
-                            not violence.intersection({"attack", "murder"})
-                            and self.sides.fought_hero_group(owner, deed)
-                        )
-                    ):
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            if self.chronicle.branch is None:
+                return None
+            # Reconnect delivery or duplicate perceptions cannot turn one deed into two crimes. The
+            # branch query also survives a save/load, unlike a process-wide set of event ids.
+            if any(f.get("id") == deed.id for f in self.facts()):
+                return None
+
+            victim, owner = self._npc(deed.victim), ""
+            community = None
+            witnesses = list(dict.fromkeys(self._npc(npc) for npc in deed.witnesses if npc))
+            item, count = deed.item.upper(), deed.count
+            extra: dict[str, Any] = {}
+            match deed.kind:
+                case "take_item":
+                    if not item or count <= 0:
+                        return None
+                    ownership = self._ownership(deed)
+                    if ownership is None:
                         return self._noncrime(deed.id)
-                victim = owner
-                community = self.community(guild, npctype)
-                kind = "theft"
-            case "attack":
-                if not victim:
-                    return None
-                betrayal = self.mercy and fresh_yield(self.chronicle, victim, self._ticks)
-                if not betrayal and (
-                    deed.victim_is_monster
-                    or deed.victim_guild > 16
-                    or deed.victim_in_fight
-                    or deed.victim_enemy
-                    or deed.victim_started_fight
-                    or deed.victim_npctype == 2
-                    or deed.victim_tough_guy
-                    or deed.victim_guild in TOUGH_GUILDS
-                ):
-                    return self._noncrime(deed.id)
-                community = self.community(deed.victim_guild, deed.victim_npctype)
-                kind = "attack"
-                if betrayal:
-                    extra["yield_broken"] = True
-            case "murder":
-                if not victim:
-                    return None
-                if deed.victim_is_sheep or deed.victim_guild == 18:
-                    if deed.victim_tough_guy:  # bought/following sheep, including Betsy
-                        return self._noncrime(deed.id)
-                    kind = "sheep"
-                    # Vanilla has no sheep -> npc owner. Its crime belongs to a witness's
-                    # community. Keep an unwitnessed sheep's community unknown, without guessing
-                    # a farmer from proximity or the sheep's waypoint.
-                    community = next(
-                        (
-                            candidate
-                            for npc in deed.witnesses_metadata
-                            if self._npc(npc.npc) in witnesses
-                            if (candidate := self.community(npc.guild, npc.npctype)) is not None
-                        ),
-                        None,
-                    )
-                elif deed.victim_is_monster or deed.victim_guild > 16:
-                    return self._noncrime(deed.id)
-                else:
-                    kind = "murder"
-                    community = self.community(deed.victim_guild, deed.victim_npctype)
-                    if self.mercy and fresh_surrender(
-                        self.chronicle, victim, deed.day * 1440 + deed.hour * 60 + deed.minute,
-                    ):
-                        extra["surrendered"] = True
-                    elif (
-                        deed.victim_enemy
+                    owner, guild, npctype = ownership
+                    if deed.owner:
+                        deaths = [
+                            fact for fact in self.chronicle.facts("died")
+                            if self._npc(fact.get("npc", "")) == owner
+                        ]
+                        violence = {
+                            fact.get("kind") for fact in self.facts()
+                            if self._npc(fact.get("victim", "")) == owner
+                            and not (fact.get("kind") == "murder" and fact.get("lawful_fight"))
+                        }
+                        if (
+                            deed.owner_npc_guild > 16
+                            or any(fact.get("monster") is True for fact in deaths)
+                            or (deaths and "murder" not in violence)
+                            or (
+                                not violence.intersection({"attack", "murder"})
+                                and self.sides.fought_hero_group(owner, deed)
+                            )
+                        ):
+                            return self._noncrime(deed.id)
+                    victim = owner
+                    community = self.community(guild, npctype)
+                    kind = "theft"
+                case "attack":
+                    if not victim:
+                        return None
+                    betrayal = self.mercy and fresh_yield(self.chronicle, victim, self._ticks)
+                    if not betrayal and (
+                        deed.victim_is_monster
+                        or deed.victim_guild > 16
+                        or deed.victim_in_fight
+                        or deed.victim_enemy
                         or deed.victim_started_fight
+                        or deed.victim_npctype == 2
                         or deed.victim_tough_guy
                         or deed.victim_guild in TOUGH_GUILDS
                     ):
-                        extra["lawful_fight"] = True
-                    if deed.victim_guild >= 0:
-                        extra["victim_guild"] = deed.victim_guild
-            case "pickpocket":
-                outcome = pickpocket_outcome(
-                    deed.inventory_before,
-                    deed.inventory_after,
-                    deed.picked_pocket_before,
-                    deed.picked_pocket_after,
-                    deed.caught,
-                )
-                if outcome is None or not victim:
-                    return None
-                kind, owner = "theft", victim
-                community = self.community(deed.victim_guild, deed.victim_npctype)
-                extra = {"method": "pickpocket", "outcome": outcome}
-                gains = _inventory(deed.inventory_after) - _inventory(deed.inventory_before)
-                if outcome == "success":
-                    witnesses = []
-                    item, count = next(iter(gains.items()))
-                    if len(gains) > 1:
-                        extra["items"] = [
-                            {"item": symbol, "count": amount} for symbol, amount in gains.items()
-                        ]
-                else:
-                    witnesses = list(dict.fromkeys([victim, *witnesses]))
-                    item, count = "", 0
-            case _:
-                return None
-
-        fact = {
-            "fact": "crime",
-            "id": deed.id,
-            "kind": kind,
-            "victim": victim,
-            "owner": owner,
-            "community": community,
-            "item": item,
-            "count": count,
-            "place": deed.position.model_dump(),
-            "waypoint": deed.waypoint,
-            "day": deed.day,
-            "hour": deed.hour,
-            "minute": deed.minute,
-            "witnesses": witnesses,
-            **extra,
-            **({"chest": deed.chest} if deed.chest else {}),
-        }
-        self._noncrimes.discard(deed.id)
-        self.chronicle.record(fact)
-        metadata = {self._npc(p.npc): p for p in deed.witnesses_metadata}
-        if kind == "murder":
-            # These facts must precede every crime_seen: listeners immediately change attitudes
-            # and deliver news to the law when knowledge is recorded.
-            for npc in witnesses:
-                if why := self.sides.reason(npc, deed, surrendered=bool(extra.get("surrendered"))):
-                    self.chronicle.record(
-                        {"fact": "crime_side", "npc": npc, "crime": deed.id, "why": why}
+                        return self._noncrime(deed.id)
+                    community = self.community(deed.victim_guild, deed.victim_npctype)
+                    kind = "attack"
+                    if betrayal:
+                        extra["yield_broken"] = True
+                case "murder":
+                    if not victim:
+                        return None
+                    if deed.victim_is_sheep or deed.victim_guild == 18:
+                        if deed.victim_tough_guy:  # bought/following sheep, including Betsy
+                            return self._noncrime(deed.id)
+                        kind = "sheep"
+                        # Vanilla has no sheep -> npc owner. Its crime belongs to a witness's
+                        # community. Keep an unwitnessed sheep's community unknown, without guessing
+                        # a farmer from proximity or the sheep's waypoint.
+                        community = next(
+                            (
+                                candidate
+                                for npc in deed.witnesses_metadata
+                                if self._npc(npc.npc) in witnesses
+                                if (candidate := self.community(npc.guild, npc.npctype)) is not None
+                            ),
+                            None,
+                        )
+                    elif deed.victim_is_monster or deed.victim_guild > 16:
+                        return self._noncrime(deed.id)
+                    else:
+                        kind = "murder"
+                        community = self.community(deed.victim_guild, deed.victim_npctype)
+                        if self.mercy and fresh_surrender(
+                            self.chronicle, victim, deed.day * 1440 + deed.hour * 60 + deed.minute,
+                        ):
+                            extra["surrendered"] = True
+                        elif (
+                            deed.victim_enemy
+                            or deed.victim_started_fight
+                            or deed.victim_tough_guy
+                            or deed.victim_guild in TOUGH_GUILDS
+                        ):
+                            extra["lawful_fight"] = True
+                        if deed.victim_guild >= 0:
+                            extra["victim_guild"] = deed.victim_guild
+                case "pickpocket":
+                    outcome = pickpocket_outcome(
+                        deed.inventory_before,
+                        deed.inventory_after,
+                        deed.picked_pocket_before,
+                        deed.picked_pocket_after,
+                        deed.caught,
                     )
-        for npc in witnesses:
-            person = metadata.get(npc)
-            self.chronicle.record(
-                {
-                    "fact": "crime_seen", "npc": npc, "crime": deed.id,
-                    **({"guild": person.guild, "npctype": person.npctype} if person else {}),
-                }
-            )
-        return fact
+                    if outcome is None or not victim:
+                        return None
+                    kind, owner = "theft", victim
+                    community = self.community(deed.victim_guild, deed.victim_npctype)
+                    extra = {"method": "pickpocket", "outcome": outcome}
+                    gains = _inventory(deed.inventory_after) - _inventory(deed.inventory_before)
+                    if outcome == "success":
+                        witnesses = []
+                        item, count = next(iter(gains.items()))
+                        if len(gains) > 1:
+                            extra["items"] = [
+                                {"item": symbol, "count": amount} for symbol, amount in gains.items()
+                            ]
+                    else:
+                        witnesses = list(dict.fromkeys([victim, *witnesses]))
+                        item, count = "", 0
+                case _:
+                    return None
+
+            fact = {
+                "fact": "crime",
+                "id": deed.id,
+                "kind": kind,
+                "victim": victim,
+                "owner": owner,
+                "community": community,
+                "item": item,
+                "count": count,
+                "place": deed.position.model_dump(),
+                "waypoint": deed.waypoint,
+                "day": deed.day,
+                "hour": deed.hour,
+                "minute": deed.minute,
+                "witnesses": witnesses,
+                **extra,
+                **({"chest": deed.chest} if deed.chest else {}),
+            }
+            self._noncrimes.discard(deed.id)
+            await self.chronicle.record(fact)
+            metadata = {self._npc(p.npc): p for p in deed.witnesses_metadata}
+            if kind == "murder":
+                # These facts must precede every crime_seen: listeners immediately change attitudes
+                # and deliver news to the law when knowledge is recorded.
+                for npc in witnesses:
+                    if why := self.sides.reason(npc, deed, surrendered=bool(extra.get("surrendered"))):
+                        await self.chronicle.record(
+                            {"fact": "crime_side", "npc": npc, "crime": deed.id, "why": why}
+                        )
+            for npc in witnesses:
+                person = metadata.get(npc)
+                await self.chronicle.record(
+                    {
+                        "fact": "crime_seen", "npc": npc, "crime": deed.id,
+                        **({"guild": person.guild, "npctype": person.npctype} if person else {}),
+                    }
+                )
+            return fact
+
+        return await self.chronicle.memory.complete(persist)

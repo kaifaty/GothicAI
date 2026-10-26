@@ -10,7 +10,9 @@ from gothic_ai.llm.fake import FakeBackend
 from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from tests.fake_game import FakeGame, connected
+from tests.test_deals import _owned_link
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 LOBART, GOLD, POTION = "BAU_950_LOBART", "ITMI_GOLD", "ITPO_HEALTH_01"
 WOLF = f"found_out:{LOBART}:MIS_WOLF"
@@ -18,22 +20,30 @@ BOOK = f"caught:{XARDAS}:MIS_BOOK"
 
 
 async def _setup(fake: FakeGame, *, with_crimes: bool = False):
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
     dialogue = DialogueManager(link, FakeBackend("…", delay=0), PersonaProvider(None), memory=store)
+    await dialogue.initialize()
     chronicle = Chronicle(link, store)
+    await chronicle.initialize()
     crimes = Crimes(link, chronicle) if with_crimes else None
     deals = Deals(link, dialogue, chronicle, crimes=crimes)
     concerns = Concerns(link, chronicle, deals)
-    return link_cm, chronicle, deals, concerns
+    owned = _owned_link(link_cm, dialogue, deals)
+    await owned.__aenter__()
+    return owned, chronicle, deals, concerns
 
 
-def _debt(chronicle: Chronicle, deals: Deals, debt: str, *, npc: str = LOBART, due: int = 2, **give) -> None:
+async def _debt(
+    chronicle: Chronicle, deals: Deals, debt: str, *, npc: str = LOBART, due: int = 2, **give
+) -> None:
     """A debt written past the deals, as the e2e seeds one."""
     give = give or {"item": GOLD, "count": 25, "name": "Золото"}
-    chronicle.record({"fact": "debt", "id": debt, "npc": npc, "npc_name": npc, **give, "due": due, "day": 0})
-    deals.reload()
+    await chronicle.record(
+        {"fact": "debt", "id": debt, "npc": npc, "npc_name": npc, **give, "due": due, "day": 0}
+    )
+    await deals.reload()
 
 
 def _lie(kind: str, npc: str, quest: str, title: str) -> dict:
@@ -44,11 +54,14 @@ async def test_a_broken_debt_is_the_lenders_concern():
     fake = FakeGame(branch="A")
     link_cm, chronicle, deals, concerns = await _setup(fake)
     try:
-        _debt(chronicle, deals, "d1")
+        await _debt(chronicle, deals, "d1")
         assert concerns.of(LOBART) == []  # not due yet, nor today
-        deals.overdue(3)
+        observed = []
+        concerns.on_change.append(lambda npc: observed.append((npc, concerns.agenda(npc))))
+        await deals.overdue(3)
         c = concerns.top(LOBART)
         assert c is not None and (c.key, c.npc, c.rank) == ("debt_broken:d1", LOBART, 0)
+        assert observed[-1] == (LOBART, c.en)
         assert c.en == "make the hero pay back the 25 gold he owes you; his day has passed"
         assert len(c.en.split()) <= 15 and len(c.en) <= AGENDA_MAX
         assert c.ru == "герой не вернул тебе долг в срок: 25 золотых до конца дня 3"
@@ -57,8 +70,8 @@ async def test_a_broken_debt_is_the_lenders_concern():
         assert concerns.of(XARDAS) == [] and concerns.agenda(XARDAS) is None
 
         # something else borrowed
-        _debt(chronicle, deals, "d2", npc=XARDAS, item=POTION, count=2, name="Эликсир лечения")
-        deals.overdue(3)
+        await _debt(chronicle, deals, "d2", npc=XARDAS, item=POTION, count=2, name="Эликсир лечения")
+        await deals.overdue(3)
         c = concerns.top(XARDAS)
         assert c is not None and "Эликсир лечения ×2" in c.ru
         assert c.en == "make the hero pay back what he borrowed from you; his day has passed"
@@ -71,15 +84,20 @@ async def test_a_debt_due_today_reminds_and_not_before():
     link_cm, chronicle, deals, concerns = await _setup(fake)
     try:
         seen: list[tuple[str, str | None]] = []  # as the planner reads the agenda when told
-        concerns.on_change.append(lambda npc: seen.append((npc, concerns.agenda(npc))))
-        _debt(chronicle, deals, "d1", due=2)
+
+        async def changed(npc: str) -> None:
+            await chronicle.memory.intent(chronicle.branch, npc)  # the real planner reads saved intent
+            seen.append((npc, concerns.agenda(npc)))
+
+        concerns.on_change.append(changed)
+        await _debt(chronicle, deals, "d1", due=2)
         seen.clear()
-        deals._set_day(1)
+        await deals._set_day(1)
         assert seen == [(LOBART, None)]
-        deals._set_day(1)  # the same day: nothing new
+        await deals._set_day(1)  # the same day: nothing new
         assert len(seen) == 1
         fake.day = 2
-        deals._set_day(2)
+        await deals._set_day(2)
         reminder = "remind the hero to pay back 25 gold to you by tonight"
         assert seen[-1] == (LOBART, reminder)
         (c,) = concerns.of(LOBART)
@@ -102,12 +120,12 @@ async def test_a_lie_found_out_or_caught_until_forgiven():
     fake = FakeGame(branch="A")
     link_cm, chronicle, deals, concerns = await _setup(fake)
     try:
-        chronicle.record(_lie("found_out", LOBART, "MIS_WOLF", "Убить волка"))
+        await chronicle.record(_lie("found_out", LOBART, "MIS_WOLF", "Убить волка"))
         c = concerns.top(LOBART)
         assert c is not None and (c.key, c.rank) == (f"lied:{WOLF}", 1)
         assert c.en == "make the hero answer for lying to you and taking your reward"
         assert c.ru == "герой обманул тебя: взял награду за «Убить волка», а дела не сделал"
-        chronicle.record(_lie("caught", XARDAS, "MIS_BOOK", "Принести книгу"))
+        await chronicle.record(_lie("caught", XARDAS, "MIS_BOOK", "Принести книгу"))
         c = concerns.top(XARDAS)
         assert c is not None and c.key == f"lied:{BOOK}"
         assert c.en == "make the hero prove what he claims; never take his word again"
@@ -115,10 +133,14 @@ async def test_a_lie_found_out_or_caught_until_forgiven():
         assert all(len(e.split()) <= 15 for e in (concerns.agenda(LOBART), c.en) if e)
 
         # forgiven in a deal
-        chronicle.record({"fact": "deal", "npc": LOBART, "name": "Лобарт", "forgive": [WOLF], "silence": []})
+        await chronicle.record(
+            {"fact": "deal", "npc": LOBART, "name": "Лобарт", "forgive": [WOLF], "silence": []}
+        )
         assert concerns.of(LOBART) == []
         # amends made for it
-        chronicle.record({"fact": "amends", "id": "A1", "npc": XARDAS, "to": XARDAS, "gold": 10, "lie": BOOK})
+        await chronicle.record(
+            {"fact": "amends", "id": "A1", "npc": XARDAS, "to": XARDAS, "gold": 10, "lie": BOOK}
+        )
         assert concerns.of(XARDAS) == []
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -128,7 +150,7 @@ async def test_rumors_about_others_are_not_concerns():
     fake = FakeGame(branch="A")
     link_cm, chronicle, deals, concerns = await _setup(fake)
     try:
-        chronicle.record(_lie("caught", XARDAS, "MIS_BOOK", "Принести книгу"))
+        await chronicle.record(_lie("caught", XARDAS, "MIS_BOOK", "Принести книгу"))
         rumor = {
             "fact": "rumor",
             "kind": "caught",
@@ -139,7 +161,7 @@ async def test_rumors_about_others_are_not_concerns():
             "quest": "MIS_BOOK",
             "title": "Принести книгу",
         }
-        chronicle.record(rumor)
+        await chronicle.record(rumor)
         assert BOOK in deals.lies_of(LOBART)[0]  # he knows of it
         assert concerns.of(LOBART) == [] and concerns.top(LOBART) is None
         assert [c.key for c in concerns.of(XARDAS)] == [f"lied:{BOOK}"]
@@ -153,11 +175,11 @@ async def test_rank_and_on_change_from_facts():
     try:
         changed: list[str] = []
         concerns.on_change.append(changed.append)
-        _debt(chronicle, deals, "due", due=2)
-        chronicle.record(_lie("caught", LOBART, "MIS_FIELD", "Вспахать поле"))
-        _debt(chronicle, deals, "late", due=1)
-        deals._set_day(2)
-        deals.overdue(2)
+        await _debt(chronicle, deals, "due", due=2)
+        await chronicle.record(_lie("caught", LOBART, "MIS_FIELD", "Вспахать поле"))
+        await _debt(chronicle, deals, "late", due=1)
+        await deals._set_day(2)
+        await deals.overdue(2)
         mind = concerns.of(LOBART)
         assert [(c.key, c.rank) for c in mind] == [
             ("debt_broken:late", 0),
@@ -168,11 +190,13 @@ async def test_rank_and_on_change_from_facts():
 
         # facts of other kinds change nothing
         changed.clear()
-        chronicle.record({"fact": "belief", "npc": LOBART, "quest": "MIS_FIELD", "believed": False})
-        chronicle.record({"fact": "died", "npc": "WOLF", "killer": "PLAYER"})
+        await chronicle.record({"fact": "belief", "npc": LOBART, "quest": "MIS_FIELD", "believed": False})
+        await chronicle.record({"fact": "died", "npc": "WOLF", "killer": "PLAYER"})
         assert changed == [] and concerns.of(LOBART) is mind
         # both sides of the amends are told
-        chronicle.record({"fact": "amends", "id": "A1", "npc": XARDAS, "to": LOBART, "lie": "caught:X:Q"})
+        await chronicle.record(
+            {"fact": "amends", "id": "A1", "npc": XARDAS, "to": LOBART, "lie": "caught:X:Q"}
+        )
         assert changed == [XARDAS, LOBART] and concerns.of(LOBART) is not mind
 
         # a load: the branch loaded has none of it
@@ -191,8 +215,8 @@ async def test_a_debt_read_again_is_told_at_once():
     try:
         seen: list[tuple[str, str | None]] = []
         concerns.on_change.append(lambda npc: seen.append((npc, concerns.agenda(npc))))
-        deals._set_day(2)
-        _debt(chronicle, deals, "d1", due=2)  # due today
+        await deals._set_day(2)
+        await _debt(chronicle, deals, "d1", due=2)  # due today
         assert seen[0] == (LOBART, None)  # the fact came before the deals read it
         assert seen[-1] == (LOBART, "remind the hero to pay back 25 gold to you by tonight")
     finally:
@@ -206,9 +230,9 @@ async def test_the_agenda_set_for_a_lie_ends_with_it():
     link_cm, chronicle, deals, concerns = await _setup(fake)
     try:
         caught = "make the hero prove what he claims; never take his word again"
-        chronicle.record(_lie("caught", XARDAS, "MIS_BOOK", "Книга"))
+        await chronicle.record(_lie("caught", XARDAS, "MIS_BOOK", "Книга"))
         assert concerns.current(XARDAS, caught) == caught  # the lie stands
-        chronicle.record({"fact": "deal", "npc": XARDAS, "forgive": [BOOK], "day": 1})
+        await chronicle.record({"fact": "deal", "npc": XARDAS, "forgive": [BOOK], "day": 1})
         assert concerns.top(XARDAS) is None
         assert concerns.current(XARDAS, caught) is None
         assert (
@@ -219,8 +243,8 @@ async def test_the_agenda_set_for_a_lie_ends_with_it():
         await link_cm.__aexit__(None, None, None)
 
 
-def _theft(chronicle: Chronicle, *, witness: str = LOBART, victim: str = XARDAS, **metadata):
-    chronicle.record(
+async def _theft(chronicle: Chronicle, *, witness: str = LOBART, victim: str = XARDAS, **metadata):
+    await chronicle.record(
         {
             "fact": "crime",
             "id": "C1",
@@ -236,14 +260,14 @@ def _theft(chronicle: Chronicle, *, witness: str = LOBART, victim: str = XARDAS,
             "community": "farm",
         }
     )
-    chronicle.record({"fact": "crime_seen", "npc": witness, "crime": "C1", **metadata})
+    await chronicle.record({"fact": "crime_seen", "npc": witness, "crime": "C1", **metadata})
 
 
 async def test_a_crime_witness_has_a_choice_without_a_forced_quest():
     fake = FakeGame(branch="A")
     link_cm, chronicle, deals, concerns = await _setup(fake, with_crimes=True)
     try:
-        _theft(chronicle, guild=8, npctype=0)
+        await _theft(chronicle, guild=8, npctype=0)
         (c,) = concerns.of(LOBART)
         assert (c.key, c.npc, c.rank, c.en) == ("crime_witness:C1", LOBART, 1, CRIME_WITNESS_EN)
         assert len(c.en.split()) <= 15 and len(c.en) <= AGENDA_MAX
@@ -253,10 +277,10 @@ async def test_a_crime_witness_has_a_choice_without_a_forced_quest():
         assert "silence" in c.ru and "hero_gives" in c.ru
         assert not chronicle.facts("line") and not chronicle.facts("amends")
         # Stable key: duplicate delivery does not create a second concern.
-        chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "C1", "guild": 8, "npctype": 0})
+        await chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "C1", "guild": 8, "npctype": 0})
         assert [c.key for c in concerns.of(LOBART)] == ["crime_witness:C1"]
-        chronicle.record({"fact": "rumor", "to": "HEARER", "from": LOBART, "crime": "C1"})
-        chronicle.record({"fact": "crime_suspected", "npc": "SUSPECTER", "crime": "C1"})
+        await chronicle.record({"fact": "rumor", "to": "HEARER", "from": LOBART, "crime": "C1"})
+        await chronicle.record({"fact": "crime_suspected", "npc": "SUSPECTER", "crime": "C1"})
         assert concerns.of("HEARER") == [] and concerns.of("SUSPECTER") == []
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -266,16 +290,16 @@ async def test_recorded_side_clears_only_the_allied_witness_concern():
     ally = "BAU_4300_ADDON_CAVALORN"
     link_cm, chronicle, deals, concerns = await _setup(FakeGame(branch="A"), with_crimes=True)
     try:
-        chronicle.record({"fact": "crime", "id": "C1", "kind": "murder", "victim": XARDAS})
-        chronicle.record({"fact": "crime_seen", "npc": ally, "crime": "C1", "guild": 8, "npctype": 0})
-        chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "C1", "guild": 8, "npctype": 0})
+        await chronicle.record({"fact": "crime", "id": "C1", "kind": "murder", "victim": XARDAS})
+        await chronicle.record({"fact": "crime_seen", "npc": ally, "crime": "C1", "guild": 8, "npctype": 0})
+        await chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "C1", "guild": 8, "npctype": 0})
         assert concerns.agenda(ally) == CRIME_WITNESS_EN
         outsider = concerns.of(LOBART)
         assert [c.key for c in outsider] == ["crime_witness:C1"]
         changed = []
         concerns.on_change.append(changed.append)
 
-        chronicle.record({"fact": "crime_side", "npc": ally, "crime": "C1", "why": "fought"})
+        await chronicle.record({"fact": "crime_side", "npc": ally, "crime": "C1", "why": "fought"})
 
         assert changed == [ally]
         assert concerns.of(ally) == []
@@ -297,7 +321,7 @@ async def test_recorded_side_clears_only_the_allied_witness_concern():
 async def test_victims_and_guards_do_not_get_the_witness_concern(npc, victim, metadata):
     link_cm, chronicle, deals, concerns = await _setup(FakeGame(branch="A"), with_crimes=True)
     try:
-        _theft(chronicle, witness=npc, victim=victim, **metadata)
+        await _theft(chronicle, witness=npc, victim=victim, **metadata)
         assert concerns.of(npc) == []
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -310,7 +334,7 @@ async def test_a_priced_silence_deal_ends_the_witness_concern_when_accepted():
     fake.hero_items = {GOLD: 10}
     link_cm, chronicle, deals, concerns = await _setup(fake, with_crimes=True)
     try:
-        _theft(chronicle, guild=8, npctype=0)
+        await _theft(chronicle, guild=8, npctype=0)
         result = await deals.propose(
             LOBART, "Лобарт", {"silence": ["crime:C1"], "hero_gives": [{"item": GOLD, "count": 10}]}, None
         )
@@ -328,7 +352,7 @@ async def test_a_priced_silence_deal_ends_the_witness_concern_when_accepted():
 async def test_report_delivery_ends_the_cached_witness_concern(delivery):
     link_cm, chronicle, deals, concerns = await _setup(FakeGame(branch="A"), with_crimes=True)
     try:
-        _theft(chronicle, guild=8, npctype=0)
+        await _theft(chronicle, guild=8, npctype=0)
         assert concerns.agenda(LOBART) == CRIME_WITNESS_EN
         changed = []
         concerns.on_change.append(lambda npc: changed.append((npc, concerns.agenda(npc))))
@@ -337,7 +361,7 @@ async def test_report_delivery_ends_the_cached_witness_concern(delivery):
             "victim_rumor": {"fact": "rumor", "crime": "C1", "to": XARDAS, "from": LOBART},
             "victim_testimony": {"fact": "testimony", "npc": XARDAS, "witness": LOBART, "crime_told": ["C1"]},
         }[delivery]
-        chronicle.record(fact)
+        await chronicle.record(fact)
         assert concerns.of(LOBART) == [] and (LOBART, None) in changed
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -346,7 +370,7 @@ async def test_report_delivery_ends_the_cached_witness_concern(delivery):
 async def test_disabled_crimes_do_not_create_witness_concerns():
     link_cm, chronicle, deals, concerns = await _setup(FakeGame(branch="A"))
     try:
-        _theft(chronicle, guild=8, npctype=0)
+        await _theft(chronicle, guild=8, npctype=0)
         assert concerns.of(LOBART) == []
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -357,9 +381,9 @@ async def test_old_cover_testimony_is_a_delivery_only_when_cover_is_disabled(cov
     link_cm, chronicle, deals, concerns = await _setup(FakeGame(branch="A"), with_crimes=True)
     deals.crimes.cover = cover
     try:
-        _theft(chronicle, guild=8, npctype=0)
+        await _theft(chronicle, guild=8, npctype=0)
         assert concerns.agenda(LOBART) == CRIME_WITNESS_EN
-        chronicle.record({
+        await chronicle.record({
             "fact": "testimony", "npc": XARDAS, "witness": LOBART, "cover": "D1",
             "crime_saw": ["C1"], "crime_told": [],
         })

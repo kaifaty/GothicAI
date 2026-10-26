@@ -129,7 +129,7 @@ async def gate_scenario(
             told=[], default="Проходи.", only=name,
         )
         # Both guards have the same display name; supply the intended focus as voice input does.
-        talk.hear("Я заплачу сто золотых. Позволишь пройти в город?", GUARD)
+        await talk.hear("Я заплачу сто золотых. Позволишь пройти в город?", GUARD)
         offered = await _until(lambda: GUARD in deals.open, 30)
         window = await link.deal_window()
         if not check("bribe_offered", offered and window is not None, window):
@@ -183,7 +183,7 @@ async def gate_scenario(
             })]))],
             told=[], default="Проходи.", only=name,
         )
-        talk.hear(CLAIM, GUARD)
+        await talk.hear(CLAIM, GUARD)
         admitted = await _until_async(passage, lambda value: value == [1, 1], 20)
         check("claim_passes_both", admitted, await passage())
         await _until(lambda: bool(gates.chronicle.facts("gate_claim")), 10)
@@ -294,7 +294,7 @@ async def gate_vouch_scenario(
             ]))],
             told=[], default="Держи слово.", only=talk.people[LOTHAR].name,
         )
-        talk.hear("Лотар, я ищу честную работу. Ты можешь поручиться за меня?", LOTHAR)
+        await talk.hear("Лотар, я ищу честную работу. Ты можешь поручиться за меня?", LOTHAR)
         vouched = await _until(lambda: any(f.get("npc") == LOTHAR for f in facts("gate_vouch")), 30)
         if not check("vouch_recorded", vouched, facts("gate_vouch")):
             return _logged(results)
@@ -302,7 +302,7 @@ async def gate_vouch_scenario(
         situation = gates.situation(GUARD) or ""
         if not check("vouch_visible", "basis vouch" in situation and "Лотар" in situation, situation):
             return _logged(results)
-        talk.end()
+        await talk.end()
         if not check("guarantor_released", await _until(lambda: LOTHAR not in talk.attached, 20)):
             return _logged(results)
         dialogue.llm = ClaimScript(
@@ -311,7 +311,7 @@ async def gate_vouch_scenario(
             ]))],
             told=[], default="Проходи.", only=guard_name,
         )
-        talk.hear("Моё поручительство до тебя дошло. Пропустишь?", GUARD)
+        await talk.hear("Моё поручительство до тебя дошло. Пропустишь?", GUARD)
         if not check("vouch_passes_both", await _until_async(passage, lambda value: value == [1, 1], 20),
                      await passage()):
             return _logged(results)
@@ -334,7 +334,7 @@ async def gate_vouch_scenario(
         )
         chosen.clear()
         voiced.clear()
-        talk.hear("У меня есть пропуск в город. Вот он.", GUARD)
+        await talk.hear("У меня есть пропуск в город. Вот он.", GUARD)
         if not check("native_passes_both", await _until_async(passage, lambda value: value == [1, 1], 20),
                      await passage()):
             return _logged(results)
@@ -350,7 +350,7 @@ async def gate_vouch_scenario(
             })]))],
             told=[], default="Проходи.", only=guard_name,
         )
-        talk.hear(CLAIM, GUARD)
+        await talk.hear(CLAIM, GUARD)
         if not check("claim_passes_both", await _until_async(passage, lambda value: value == [1, 1], 20),
                      await passage()):
             return _logged(results)

@@ -117,7 +117,7 @@ async def cheat_scenario(
 
     async def release() -> None:
         await settled()
-        talk.end("gone")
+        await talk.end("gone")
         await _until(lambda: not participants.intersection(talk.attached), 20)
 
     async def gold(npc: str = "HERO") -> int:
@@ -302,7 +302,7 @@ async def cheat_scenario(
                 return _logged(results)
             assert rumor is not None
             rumors.gate = lambda r, a, b: r.key == rumor.key and (a, b) == (HILDA, LOBART)
-            passed = rumors.offer_status(rumor, HILDA, LOBART)
+            passed = await rumors.offer_status(rumor, HILDA, LOBART)
             if not check(
                 "silence_betrayed", passed == "told" and LOBART in rumor.known
                 and any(f.get("crime") == cid and f.get("from") == HILDA and f.get("to") == LOBART
@@ -313,7 +313,7 @@ async def cheat_scenario(
             ):
                 return _logged(results)
             check(
-                "betrayed_once", rumors.offer_status(rumor, HILDA, LOBART) == "no"
+                "betrayed_once", await rumors.offer_status(rumor, HILDA, LOBART) == "no"
                 and len(records("betrayed", silence.id)) == 1, records("betrayed", silence.id),
             )
             rumors.gate = lambda *_: False
@@ -412,7 +412,7 @@ async def cheat_scenario(
         if not check("honest_due_near", await near(LOBART, hearer=VINO), "control payment is due"):
             return _logged(results)
         dialogue.llm = FakeBackend("Вот твои семь золотых, как и обещал.", delay=0)
-        talk.hear("Лобарт, пора отдать обещанные семь золотых.", LOBART, {"via": "scenario"})
+        await talk.hear("Лобарт, пора отдать обещанные семь золотых.", LOBART, {"via": "scenario"})
         paid = await _until(lambda: bool(records("npc_later_paid", honest.id)), 30)
         await settled()
         if not check(

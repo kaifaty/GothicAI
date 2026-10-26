@@ -574,7 +574,7 @@ async def crime_meet(
         assert storylet is not None
         demands = [
             line.get("text", "")
-            for op in amends.patches.ops()
+            for op in await amends.patches.ops()
             if op.get("op") == "add_node" and op.get("node", {}).get("id") == storylet.talk
             for line in op["node"].get("lines", [])
             if line.get("speaker") == "self"

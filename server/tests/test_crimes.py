@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from types import SimpleNamespace
 from typing import Any
 
@@ -22,6 +23,7 @@ from gothic_ai.orders import Orders
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import HeroDeed, Loading, NpcEvent, NpcRoster, NpcViews, Perception, Session
 from gothic_ai.questbook import Goal, Progress, Quest, Stage, Talk
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 LOBART = "BAU_950_LOBART"
 HILDA = "BAU_951_HILDA"
@@ -31,9 +33,9 @@ LEE = "SLD_800_LEE"
 @pytest.mark.parametrize("status", ["pending", "spared", "attacked"])
 async def test_surrendered_murder_has_no_fight_excuse_and_costs_more(system, status):
     crimes, chronicle = system.crimes, system.chronicle
-    chronicle.record({"fact": "surrender", "npc": LOBART, "until": 5 * 1440, "status": status})
+    await chronicle.record({"fact": "surrender", "npc": LOBART, "until": 5 * 1440, "status": status})
     crimes.sides.note_fight(HILDA, LOBART)
-    crime = crimes.record(deed(
+    crime = await crimes.record(deed(
         kind="murder", victim=LOBART, victim_guild=8, victim_enemy=True, victim_started_fight=True,
         witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 8}],
     ))
@@ -41,7 +43,7 @@ async def test_surrendered_murder_has_no_fight_excuse_and_costs_more(system, sta
     assert crimes.side(HILDA, crime["id"]) is None
     assert crimes.sides.heard_reason(HILDA, crime) is None
     assert "убил того, кто сдался" in crimes.situation(HILDA)
-    chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
+    await chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
     assert CrimeLaw(crimes).debt("farm") == 800
 
 
@@ -50,16 +52,16 @@ async def test_ordinary_murder_stays_as_before_mercy(system, surrender, enabled)
     crimes, chronicle = system.crimes, system.chronicle
     crimes.mercy = enabled
     if surrender:
-        chronicle.record({"fact": "surrender", "npc": LOBART,
+        await chronicle.record({"fact": "surrender", "npc": LOBART,
                           "until": 3 * 1440 if surrender == "expired" else 5 * 1440, "status": "spared"})
     crimes.sides.note_fight(HILDA, LOBART)
-    crime = crimes.record(deed(
+    crime = await crimes.record(deed(
         kind="murder", victim=LOBART, victim_guild=8, victim_enemy=True,
         witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 8}],
     ))
     assert crime["lawful_fight"] and "surrendered" not in crime
     assert crimes.side(HILDA, crime["id"])["why"] == "fought"
-    chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
+    await chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
     assert CrimeLaw(crimes).debt("farm") == 550
 
 
@@ -68,10 +70,10 @@ async def test_ordinary_murder_stays_as_before_mercy(system, surrender, enabled)
 async def test_hero_yield_betrayal_reaches_witness_with_ordinary_attack_debt(system, enabled, ticks, broken):
     crimes, chronicle = system.crimes, system.chronicle
     crimes.mercy = enabled
-    chronicle.record({"fact": "hero_yield", "id": "yield-1", "npc": LOBART,
+    await chronicle.record({"fact": "hero_yield", "id": "yield-1", "npc": LOBART,
                       "t": 1000, "deadline": 61000, "until": 5 * 1440})
-    system.link.receive(NpcRoster(type="npc_roster", t=ticks, npcs=[]))
-    crime = crimes.record(deed(
+    await system.link.receive(NpcRoster(type="npc_roster", t=ticks, npcs=[]))
+    crime = await crimes.record(deed(
         kind="attack", victim=LOBART, victim_guild=8, victim_started_fight=True,
         witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 8}],
     ))
@@ -80,7 +82,7 @@ async def test_hero_yield_betrayal_reaches_witness_with_ordinary_attack_debt(sys
         return
     assert crime["kind"] == "attack" and crime["yield_broken"] and "surrendered" not in crime
     assert "сдался в бою" in crimes.situation(HILDA) and "ударил его" in crimes.situation(HILDA)
-    chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
+    await chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
     assert CrimeLaw(crimes).debt("farm") == 50
 
 
@@ -90,26 +92,46 @@ class Link:
         self.hello = None
         self.session = Session(type="session", branch="A")
         self.sent: list[Any] = []
+        self.world_generation = 0
+        self.world = "NEWWORLD.ZEN"
+        self._session_ready = asyncio.Event()
+        self._session_ready.set()
 
     async def send(self, message: Any) -> None:
         self.sent.append(message)
 
-    def receive(self, message: Any) -> None:
-        for listener in list(self.listeners):
-            listener(message)
+    async def wait_session_ready(self):
+        await self._session_ready.wait()
+        return self.session
+
+    async def receive(self, message: Any) -> None:
+        if isinstance(message, (Loading, Session)):
+            self.world_generation += 1
+            self.world = None if isinstance(message, Loading) else "NEWWORLD.ZEN"
+        if isinstance(message, Session):
+            self.session = message
+            self._session_ready.clear()
+        try:
+            for listener in list(self.listeners):
+                if inspect.isawaitable(result := listener(message)):
+                    await result
+        finally:
+            if isinstance(message, Session):
+                self._session_ready.set()
 
 
 @pytest.fixture
 async def system():
     link = Link()
-    memory = MemoryStore(":memory:")
+    memory = await MemoryStore.open(":memory:")
     chronicle = Chronicle(link, memory)  # type: ignore[arg-type]
+    await chronicle.initialize()
     crimes = Crimes(link, chronicle)  # type: ignore[arg-type]
     yield SimpleNamespace(link=link, memory=memory, chronicle=chronicle, crimes=crimes)
     await crimes.close()
     if chronicle._background:
         await asyncio.gather(*chronicle._background)
-    memory.close()
+    await memory.close()
 
 
 def deed(**fields: Any) -> HeroDeed:
@@ -148,7 +170,7 @@ def deed(**fields: Any) -> HeroDeed:
     ],
 )
 async def test_own_public_and_dropped_items_are_not_crimes(system, ownership):
-    assert system.crimes.record(deed(**ownership)) is None
+    assert (await system.crimes.record(deed(**ownership))) is None
     assert system.crimes.classified_noncrime("deed-1")
     assert system.chronicle.facts() == []
 
@@ -157,13 +179,13 @@ async def test_own_public_and_dropped_items_are_not_crimes(system, ownership):
 async def test_monster_loot_with_a_companion_witness_is_not_a_crime(system, monster_source):
     owner = "YGOBBO_GREEN"
     if monster_source == "death":
-        system.chronicle.record({"fact": "died", "npc": owner, "killer": "PLAYER", "monster": True})
-    assert system.crimes.record(deed(
+        await system.chronicle.record({"fact": "died", "npc": owner, "killer": "PLAYER", "monster": True})
+    assert (await system.crimes.record(deed(
         owner=owner,
         owner_npc_guild=37 if monster_source == "guild" else -1,
         witnesses=[HILDA],
         witnesses_metadata=[{"npc": HILDA, "guild": 8, "npctype": 2}],
-    )) is None
+    ))) is None
     assert system.crimes.classified_noncrime("deed-1")
     for kind in ("crime", "crime_seen", "crime_attitude"):
         assert system.chronicle.facts(kind) == []
@@ -172,12 +194,12 @@ async def test_monster_loot_with_a_companion_witness_is_not_a_crime(system, mons
 @pytest.mark.parametrize("prior_crime", [None, "attack", "murder"])
 async def test_dead_owners_loot_is_lawful_unless_the_hero_murdered_them(system, prior_crime):
     if prior_crime:
-        result = system.crimes.record(deed(
+        result = await system.crimes.record(deed(
             id="violence", kind=prior_crime, victim=LOBART, victim_guild=8,
         ))
         assert result is not None and result["kind"] == prior_crime
-    system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": False})
-    result = system.crimes.record(deed(owner=LOBART, owner_npc_guild=8, witnesses=[HILDA]))
+    await system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": False})
+    result = await system.crimes.record(deed(owner=LOBART, owner_npc_guild=8, witnesses=[HILDA]))
     if prior_crime == "murder":
         assert result is not None and result["kind"] == "theft"
         assert system.crimes.facts()[0]["kind"] == "murder"
@@ -188,9 +210,9 @@ async def test_dead_owners_loot_is_lawful_unless_the_hero_murdered_them(system, 
 
 
 async def test_monster_death_allows_loot_even_with_an_existing_murder_record(system):
-    system.crimes.record(deed(id="murder", kind="murder", victim=LOBART, victim_guild=8))
-    system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": True})
-    assert system.crimes.record(deed(owner=LOBART, witnesses=[HILDA])) is None
+    await system.crimes.record(deed(id="murder", kind="murder", victim=LOBART, victim_guild=8))
+    await system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": True})
+    assert (await system.crimes.record(deed(owner=LOBART, witnesses=[HILDA]))) is None
     assert system.crimes.classified_noncrime("deed-1")
     assert [fact["kind"] for fact in system.crimes.facts()] == ["murder"]
 
@@ -215,7 +237,9 @@ async def test_recent_fight_with_the_hero_or_a_companion_makes_bandit_loot_lawfu
         system.crimes.people[HILDA] = {"guild": 8, "npctype": 2}
     pair = (fighter, owner) if reverse else (owner, fighter)
     system.crimes.sides.note_fight(*pair)
-    assert system.crimes.record(deed(owner=owner, owner_npc_guild=9, witnesses=[HILDA], **fields)) is None
+    assert (
+        await system.crimes.record(deed(owner=owner, owner_npc_guild=9, witnesses=[HILDA], **fields))
+    ) is None
     assert system.crimes.classified_noncrime("deed-1")
     assert system.crimes.facts() == []
 
@@ -231,7 +255,7 @@ async def test_loot_requires_a_recent_fight_between_the_owner_and_the_hero_group
         system.crimes.sides.note_fight(owner, HILDA)
     elif fight == "other_owner":
         system.crimes.sides.note_fight("OTHER_BANDIT", "PLAYER")
-    result = system.crimes.record(deed(owner=owner, owner_npc_guild=9, witnesses=[HILDA]))
+    result = await system.crimes.record(deed(owner=owner, owner_npc_guild=9, witnesses=[HILDA]))
     assert result is not None and result["kind"] == "theft"
     assert not system.crimes.classified_noncrime("deed-1")
 
@@ -250,18 +274,18 @@ async def test_current_fight_sources_are_read_before_classifying_loot(system, so
             standing={HILDA: SimpleNamespace(kind="follow")},
             fights={HILDA: SimpleNamespace(target=LOBART)},
         )
-    assert system.crimes.record(deed(owner=LOBART, owner_npc_guild=8)) is None
+    assert (await system.crimes.record(deed(owner=LOBART, owner_npc_guild=8))) is None
     assert system.crimes.classified_noncrime("deed-1")
 
 
 @pytest.mark.parametrize("prior_crime", ["attack", "murder"])
 async def test_loot_after_the_heros_criminal_fight_is_still_theft(system, prior_crime):
-    result = system.crimes.record(deed(
+    result = await system.crimes.record(deed(
         id="violence", kind=prior_crime, victim=LOBART, victim_guild=8,
     ))
     assert result is not None and result["kind"] == prior_crime
     system.crimes.sides.note_fight(LOBART, "PLAYER")
-    result = system.crimes.record(deed(owner=LOBART, owner_npc_guild=8))
+    result = await system.crimes.record(deed(owner=LOBART, owner_npc_guild=8))
     assert result is not None and result["kind"] == "theft"
     assert not system.crimes.classified_noncrime("deed-1")
 
@@ -274,18 +298,18 @@ async def test_loot_after_the_heros_criminal_fight_is_still_theft(system, prior_
 async def test_loot_after_a_lawful_human_kill_preserves_murder_without_theft(
     system, owner, guild, context, aftermath,
 ):
-    murder = system.crimes.record(deed(
+    murder = await system.crimes.record(deed(
         id="murder", kind="murder", victim=owner, victim_guild=guild, **context,
     ))
     assert murder is not None and murder["kind"] == "murder" and murder["lawful_fight"] is True
     if aftermath == "dead":
-        system.chronicle.record({"fact": "died", "npc": owner, "killer": "PLAYER", "monster": False})
+        await system.chronicle.record({"fact": "died", "npc": owner, "killer": "PLAYER", "monster": False})
     else:
         system.crimes.sides.note_fight(owner, "PLAYER")
-    assert system.crimes.record(deed(
+    assert (await system.crimes.record(deed(
         owner=owner, owner_npc_guild=guild, witnesses=[HILDA],
         witnesses_metadata=[{"npc": HILDA, "guild": 8, "npctype": 2}],
-    )) is None
+    ))) is None
     assert system.crimes.classified_noncrime("deed-1")
     assert system.crimes.facts() == [murder]
     assert system.chronicle.facts("crime_seen") == []
@@ -297,9 +321,9 @@ async def test_loot_after_a_lawful_human_kill_preserves_murder_without_theft(
     {"room_owner": LOBART, "room_owner_guild": 8},
 ])
 async def test_dead_owners_chest_and_room_remain_private_property(system, ownership):
-    system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": False})
+    await system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": False})
     system.crimes.sides.note_fight(LOBART, "PLAYER")
-    result = system.crimes.record(deed(**ownership, witnesses=[HILDA]))
+    result = await system.crimes.record(deed(**ownership, witnesses=[HILDA]))
     assert result is not None and result["kind"] == "theft" and result["owner"] == LOBART
     assert not system.crimes.classified_noncrime("deed-1")
 
@@ -307,8 +331,8 @@ async def test_dead_owners_chest_and_room_remain_private_property(system, owners
 @pytest.mark.parametrize("cover", [True, False])
 async def test_cover_silence_and_old_testimony_follow_switch_but_ordinary_silence_remains(system, cover):
     system.crimes.cover = cover
-    system.crimes.record(deed(owner=LOBART, owner_npc_guild=8, witnesses=[HILDA]))
-    system.chronicle.record(
+    await system.crimes.record(deed(owner=LOBART, owner_npc_guild=8, witnesses=[HILDA]))
+    await system.chronicle.record(
         {
             "fact": "silenced",
             "npc": HILDA,
@@ -325,28 +349,28 @@ async def test_cover_silence_and_old_testimony_follow_switch_but_ordinary_silenc
         "crime_saw": ["deed-1"],
         "crime_told": [],
     }
-    system.chronicle.record(testimony)
+    await system.chronicle.record(testimony)
     assert system.crimes.known(HILDA)[0].silenced is cover
     assert bool(system.crimes.known(LOBART)) is not cover
-    system.chronicle.record({"fact": "silenced", "npc": HILDA, "crime": "deed-1", "deal": "D2"})
+    await system.chronicle.record({"fact": "silenced", "npc": HILDA, "crime": "deed-1", "deal": "D2"})
     assert system.crimes.known(HILDA)[0].silenced
     assert bool(system.crimes.known(LOBART)) is not cover
 
 
 async def test_no_cover_reconstructs_only_silence_that_preceded_the_testimony(system):
     system.crimes.cover = False
-    system.crimes.record(deed(owner=LOBART, owner_npc_guild=8, witnesses=[HILDA]))
-    system.chronicle.record({"fact": "silenced", "npc": HILDA, "crime": "deed-1"})
+    await system.crimes.record(deed(owner=LOBART, owner_npc_guild=8, witnesses=[HILDA]))
+    await system.chronicle.record({"fact": "silenced", "npc": HILDA, "crime": "deed-1"})
     before = {
         "fact": "testimony", "id": "before", "npc": LOBART, "witness": HILDA,
         "cover": "D1", "crime_saw": ["deed-1"], "crime_told": [],
     }
-    system.chronicle.record(before)
+    await system.chronicle.record(before)
     assert system.crimes.testimony_crimes(before) == []
-    system.crimes.record(deed(id="deed-2", owner=LOBART, owner_npc_guild=8, witnesses=[HILDA]))
+    await system.crimes.record(deed(id="deed-2", owner=LOBART, owner_npc_guild=8, witnesses=[HILDA]))
     after = {**before, "id": "after", "crime_saw": ["deed-2"]}
-    system.chronicle.record(after)
-    system.chronicle.record({"fact": "silenced", "npc": HILDA, "crime": "deed-2"})
+    await system.chronicle.record(after)
+    await system.chronicle.record({"fact": "silenced", "npc": HILDA, "crime": "deed-2"})
     assert system.crimes.testimony_crimes(after) == ["deed-2"]
     assert [k.crime["id"] for k in system.crimes.known(LOBART)] == ["deed-2"]
 
@@ -367,7 +391,7 @@ async def test_no_cover_reconstructs_only_silence_that_preceded_the_testimony(sy
     ],
 )
 async def test_foreign_item_room_or_chest_is_theft(system, ownership, owner, community):
-    result = system.crimes.record(deed(**ownership, witnesses=[HILDA, HILDA.lower()]))
+    result = await system.crimes.record(deed(**ownership, witnesses=[HILDA, HILDA.lower()]))
     assert result is not None
     assert result == {
         "fact": "crime",
@@ -392,7 +416,7 @@ async def test_foreign_item_room_or_chest_is_theft(system, ownership, owner, com
 
 
 async def test_opening_foreign_chest_is_raw_until_an_item_was_taken(system):
-    result = system.crimes.record(
+    result = await system.crimes.record(
         deed(
             kind="use_mob",
             item="",
@@ -404,7 +428,7 @@ async def test_opening_foreign_chest_is_raw_until_an_item_was_taken(system):
     )
     assert result is None
     assert system.chronicle.facts("crime_seen") == []
-    result = system.crimes.record(
+    result = await system.crimes.record(
         deed(
             id="deed-2",
             chest="CHEST_LOBART",
@@ -417,7 +441,7 @@ async def test_opening_foreign_chest_is_raw_until_an_item_was_taken(system):
 
 
 async def test_unprovoked_attack_records_the_victims_id_and_real_witnesses(system):
-    system.link.receive(deed(kind="attack", victim=LOBART, victim_guild=8, witnesses=[HILDA, LOBART]))
+    await system.link.receive(deed(kind="attack", victim=LOBART, victim_guild=8, witnesses=[HILDA, LOBART]))
     (result,) = system.crimes.facts()
     assert result["kind"] == "attack" and result["victim"] == LOBART
     assert result["community"] == "farm" and result["witnesses"] == [HILDA, LOBART]
@@ -441,12 +465,12 @@ async def test_unprovoked_attack_records_the_victims_id_and_real_witnesses(syste
 )
 async def test_combat_retaliation_enemies_and_vanilla_tough_guys_are_not_assaults(system, context):
     fields = {"kind": "attack", "victim": LOBART, "victim_guild": 8, **context}
-    assert system.crimes.record(deed(**fields)) is None
+    assert (await system.crimes.record(deed(**fields))) is None
     assert system.crimes.facts() == []
 
 
 async def test_human_kill_is_murder_even_after_assault_or_finishing_blow(system):
-    result = system.crimes.record(
+    result = await system.crimes.record(
         deed(
             kind="murder",
             victim=LOBART,
@@ -473,14 +497,14 @@ async def test_human_kill_is_murder_even_after_assault_or_finishing_blow(system)
 ])
 async def test_human_murder_marks_only_lawful_combat(system, context, lawful):
     fields = {"kind": "murder", "victim": LOBART, "victim_guild": 8, **context}
-    result = system.crimes.record(deed(**fields))
+    result = await system.crimes.record(deed(**fields))
     assert result is not None and result["kind"] == "murder"
     if lawful:
         assert result["lawful_fight"] is True
     else:
         assert "lawful_fight" not in result
-        system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": False})
-        loot = system.crimes.record(deed(
+        await system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": False})
+        loot = await system.crimes.record(deed(
             id="loot", owner=LOBART, owner_npc_guild=8, witnesses=[HILDA],
         ))
         assert loot is not None and loot["kind"] == "theft"
@@ -488,11 +512,11 @@ async def test_human_murder_marks_only_lawful_combat(system, context, lawful):
 
 
 async def test_monster_kill_is_not_human_murder(system):
-    assert system.crimes.record(deed(kind="murder", victim="WOLF", victim_guild=22)) is None
+    assert (await system.crimes.record(deed(kind="murder", victim="WOLF", victim_guild=22))) is None
 
 
 async def test_foreign_sheep_uses_actual_witness_community_without_inventing_its_owner(system):
-    result = system.crimes.record(
+    result = await system.crimes.record(
         deed(
             kind="murder",
             victim="SHEEP",
@@ -508,10 +532,10 @@ async def test_foreign_sheep_uses_actual_witness_community_without_inventing_its
 
 
 async def test_unwitnessed_sheep_keeps_unknown_community_and_own_sheep_is_not_a_crime(system):
-    result = system.crimes.record(deed(kind="murder", victim="SHEEP", victim_guild=18))
+    result = await system.crimes.record(deed(kind="murder", victim="SHEEP", victim_guild=18))
     assert result is not None and result["kind"] == "sheep" and result["community"] is None
     assert (
-        system.crimes.record(
+        (await system.crimes.record(
             deed(
                 id="deed-2",
                 kind="murder",
@@ -519,7 +543,7 @@ async def test_unwitnessed_sheep_keeps_unknown_community_and_own_sheep_is_not_a_
                 victim_guild=18,
                 victim_tough_guy=True,
             )
-        )
+        ))
         is None
     )
 
@@ -579,7 +603,7 @@ async def test_community_uses_lifted_helpers_and_lawkeepers_use_the_graph(system
     assert system.crimes.lawkeepers("farm") == (LEE,)
     assert system.crimes.lawkeepers("bl") == ()
     assert system.crimes.lawkeepers("city") == ()  # no such PETZMASTER in this graph
-    result = system.crimes.record(deed(owner="LOBART", owner_npc_guild=10))
+    result = await system.crimes.record(deed(owner="LOBART", owner_npc_guild=10))
     assert result is not None and result["owner"] == LOBART and result["community"] == "farm"
     assert set(COMMUNITIES) == {"city", "farm", "monastery", "oldcamp", "bl"}
 
@@ -618,7 +642,7 @@ def test_pickpocket_outcome_from_inventory_and_original_script_flag(
 
 @pytest.mark.parametrize("caught", [False, True])
 async def test_successful_pickpocket_has_no_witnesses_even_with_people_nearby(system, caught):
-    result = system.crimes.record(
+    result = await system.crimes.record(
         deed(
             kind="pickpocket",
             item="",
@@ -639,7 +663,7 @@ async def test_successful_pickpocket_has_no_witnesses_even_with_people_nearby(sy
 
 
 async def test_failed_pickpocket_adds_the_catching_victim_as_witness(system):
-    result = system.crimes.record(
+    result = await system.crimes.record(
         deed(
             kind="pickpocket",
             victim=LOBART,
@@ -654,7 +678,7 @@ async def test_failed_pickpocket_adds_the_catching_victim_as_witness(system):
 
 
 async def test_each_actual_item_gain_is_preserved_for_bespoke_pickpockets(system):
-    result = system.crimes.record(
+    result = await system.crimes.record(
         deed(
             kind="pickpocket",
             victim=LOBART,
@@ -671,26 +695,28 @@ async def test_each_actual_item_gain_is_preserved_for_bespoke_pickpockets(system
 
 async def test_save_load_restores_crime_and_seen_at_the_saved_branch_head(system):
     theft = deed(owner=LOBART, owner_npc_guild=8, witnesses=[HILDA])
-    system.link.receive(theft)
-    saved = system.memory.head("A")
-    system.link.receive(deed(id="deed-2", kind="attack", victim=LOBART, victim_guild=8))
+    await system.link.receive(theft)
+    saved = await system.memory.head("A")
+    await system.link.receive(deed(id="deed-2", kind="attack", victim=LOBART, victim_guild=8))
     assert len(system.crimes.facts()) == 2
 
-    system.link.receive(Session(type="session", branch="B", parent="A", parent_seq=saved, reason="load"))
+    await system.link.receive(
+        Session(type="session", branch="B", parent="A", parent_seq=saved, reason="load")
+    )
     assert [f["id"] for f in system.crimes.facts()] == ["deed-1"]
     assert system.chronicle.facts("crime_seen") == [{"fact": "crime_seen", "npc": HILDA, "crime": "deed-1"}]
-    system.link.receive(theft)  # reconnect replay of the same deed
+    await system.link.receive(theft)  # reconnect replay of the same deed
     assert len(system.crimes.facts()) == 1
 
-    system.link.receive(Session(type="session", branch="C", reason="new_game"))
+    await system.link.receive(Session(type="session", branch="C", reason="new_game"))
     assert system.crimes.facts() == [] and system.chronicle.facts("crime_seen") == []
-    system.link.receive(theft)
+    await system.link.receive(theft)
     assert len(system.crimes.facts()) == 1  # dedup is scoped to the branch
 
 
 async def test_no_session_does_not_create_truth_and_close_removes_listener(system):
     system.chronicle.branch = None
-    assert system.crimes.record(deed(owner=LOBART)) is None
+    assert (await system.crimes.record(deed(owner=LOBART))) is None
     assert not system.crimes.classified_noncrime("deed-1")
     await system.crimes.close()
     assert system.crimes._on_message not in system.link.listeners
@@ -698,8 +724,8 @@ async def test_no_session_does_not_create_truth_and_close_removes_listener(syste
 
 async def test_duplicate_record_is_not_a_negative_classification(system):
     raw = deed(owner=LOBART, owner_npc_guild=12)
-    assert system.crimes.record(raw) is not None
-    assert system.crimes.record(raw) is None
+    assert (await system.crimes.record(raw)) is not None
+    assert (await system.crimes.record(raw)) is None
     assert not system.crimes.classified_noncrime(raw.id)
 
 
@@ -717,7 +743,7 @@ async def test_incomplete_or_unclassified_deed_is_not_a_negative_classification(
     system.crimes.on_noncrime.append(classified.append)
     # model_copy also exercises record's defensive branch for an unknown future deed kind.
     raw = deed().model_copy(update=fields)
-    assert system.crimes.record(raw) is None
+    assert (await system.crimes.record(raw)) is None
     assert not system.crimes.classified_noncrime(raw.id)
     assert classified == [] and system.crimes.facts() == []
 
@@ -725,15 +751,15 @@ async def test_incomplete_or_unclassified_deed_is_not_a_negative_classification(
 async def test_noncrime_signal_follows_classification_and_is_cleared_on_session(system):
     classified = []
     system.crimes.on_noncrime.append(classified.append)
-    system.link.receive(deed())  # nobody owns the item
+    await system.link.receive(deed())  # nobody owns the item
     assert classified == ["deed-1"]
     assert system.crimes.classified_noncrime("deed-1")
-    system.link.receive(Session(type="session", branch="B"))
+    await system.link.receive(Session(type="session", branch="B"))
     assert not system.crimes.classified_noncrime("deed-1")
 
 
-def murder(system, **fields):
-    return system.crimes.record(
+async def murder(system, **fields):
+    return await system.crimes.record(
         deed(kind="murder", victim=LOBART, victim_guild=8, witnesses=[HILDA], **fields)
     )
 
@@ -753,7 +779,7 @@ async def test_enemy_witness_fears_only_other_violence_and_understands_its_side(
         for npc in (HILDA, LEE)
     }
     system.crimes.sides.note_fight(LOBART, HILDA)
-    system.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=8, witnesses=[HILDA, LEE]))
+    await system.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=8, witnesses=[HILDA, LEE]))
     assert system.crimes.side(HILDA, "deed-1") is not None
     assert not afraid(HILDA, cards, system.crimes, courage=2)
     assert afraid(LEE, cards, system.crimes, courage=2)
@@ -764,7 +790,7 @@ async def test_enemy_witness_fears_only_other_violence_and_understands_its_side(
     assert "Ты видел сам" in outsider_situation
     assert "ты не винишь героя" not in outsider_situation
 
-    system.crimes.record(deed(
+    await system.crimes.record(deed(
         id="other-murder", kind="murder", victim="OTHER_VICTIM", victim_guild=8, witnesses=[HILDA],
     ))
     assert system.crimes.side(HILDA, "other-murder") is None
@@ -778,33 +804,33 @@ async def test_fight_intent_survives_reset_before_the_execution(system, attacker
     # current intent nor the bridge's victim_* combat flags identifies that earlier fight.
     system.crimes.sides.note_intent(attacker, Intent())
     system.crimes.dialogue = SimpleNamespace(conversations={attacker: SimpleNamespace(intent=Intent())})
-    assert murder(system) is not None
+    assert (await murder(system)) is not None
     side(system, "fought")
 
 
 @pytest.mark.parametrize("kind", ["npc_attack", "npc_threat"])
 async def test_native_attack_or_threat_makes_its_target_a_side(system, kind):
-    system.link.receive(NpcEvent(type="npc_event", npc=HILDA, kind=kind, other=LOBART))
-    murder(system)
+    await system.link.receive(NpcEvent(type="npc_event", npc=HILDA, kind=kind, other=LOBART))
+    await murder(system)
     side(system, "fought")
 
 
 async def test_controlled_witness_damage_perception_remembers_the_attacker(system):
-    system.link.receive(
+    await system.link.receive(
         Perception(type="perception", npc=HILDA, perc="ASSESSDAMAGE", other=LOBART, distance=20)
     )
-    murder(system)
+    await murder(system)
     side(system, "fought")
 
 
 @pytest.mark.parametrize("actor,target", [(HILDA, LOBART), (LOBART, HILDA)])
 async def test_native_combat_target_in_a_view_remembers_both_directions(system, actor, target):
-    system.link.receive(NpcViews.model_validate({"type": "npc_views", "t": 1, "views": [{
+    await system.link.receive(NpcViews.model_validate({"type": "npc_views", "t": 1, "views": [{
         "npc": "OBSERVER", "name": "Наблюдатель", "sees": [
             {"id": actor, "name": actor, "distance": 100, "combat_target": target},
         ],
     }]}))
-    murder(system)
+    await murder(system)
     side(system, "fought")
 
 
@@ -823,12 +849,14 @@ async def test_companion_sides_with_hero_against_his_attacker(system, following,
     else:
         fields["witnesses_metadata"] = [{"npc": HILDA, "guild": 8, "npctype": 2}]
     if signal == "hero_attacked":
-        system.link.receive(NpcEvent(type="npc_event", npc="OBSERVER", kind="hero_attacked", other=LOBART))
+        await system.link.receive(
+            NpcEvent(type="npc_event", npc="OBSERVER", kind="hero_attacked", other=LOBART)
+        )
     elif signal == "intent":
         system.crimes.sides.note_intent(LOBART, Intent(goal="fight", target="PC_HERO"))
     else:
         fields["victim_enemy"] = True
-    murder(system, **fields)
+    await murder(system, **fields)
     side(system, "companion")
 
 
@@ -837,8 +865,8 @@ async def test_attack_on_another_companion_puts_witness_on_the_heros_side(system
     system.crimes.sides.orders = SimpleNamespace(standing={
         HILDA: SimpleNamespace(kind="follow"), LEE: SimpleNamespace(kind="follow"),
     }, fights={})
-    system.link.receive(NpcEvent(type="npc_event", npc=LEE, kind=kind, other=LOBART))
-    murder(system)
+    await system.link.receive(NpcEvent(type="npc_event", npc=LEE, kind=kind, other=LOBART))
+    await murder(system)
     side(system, "companion")
 
 
@@ -849,7 +877,7 @@ async def test_group_attack_survives_the_targets_follow_intent_reset(system):
     })
     system.crimes.sides.note_fight(LOBART, LEE)
     system.crimes.dialogue.conversations[LEE].intent = Intent()
-    murder(system)
+    await murder(system)
     side(system, "companion")
 
 
@@ -857,7 +885,7 @@ async def test_attack_on_the_group_expires_with_combat_memory(system):
     system.crimes.sides.clock = lambda: 0.0
     system.crimes.sides.note_fight(LOBART, "HERO")
     system.crimes.sides.clock = lambda: 601.0
-    murder(system, witnesses_metadata=[{"npc": HILDA, "guild": 8, "npctype": 2}])
+    await murder(system, witnesses_metadata=[{"npc": HILDA, "guild": 8, "npctype": 2}])
     assert system.crimes.side(HILDA, "deed-1") is None
     assert system.crimes.sides.group_threats == {}
 
@@ -871,6 +899,7 @@ async def test_real_intent_and_fight_callbacks_keep_the_conflict_after_the_body_
 
     system.link.act = act
     dialogue = DialogueManager(system.link, FakeBackend(), PersonaProvider(None), memory=system.memory)
+    await dialogue.initialize()
     system.crimes.dialogue = dialogue
     dialogue.on_intent = system.crimes.sides.note_intent
     dialogue.on_fight = system.crimes.sides.note_fight
@@ -881,10 +910,10 @@ async def test_real_intent_and_fight_callbacks_keep_the_conflict_after_the_body_
     orders.on_fight = system.crimes.sides.note_fight
     # The callbacks are synchronous, before an action starts. The body itself is irrelevant here.
     orders._spawn = lambda coroutine: coroutine.close()
-    conv = dialogue.open(HILDA, "Хильда")
+    conv = await dialogue.open(HILDA, "Хильда")
     if source == "intent":
-        dialogue.change_intent(HILDA, "Хильда", body=False, goal="fight", target=LOBART)
-        dialogue.change_intent(HILDA, "Хильда", body=False, goal="none", target=None)
+        await dialogue.change_intent(HILDA, "Хильда", body=False, goal="fight", target=LOBART)
+        await dialogue.change_intent(HILDA, "Хильда", body=False, goal="none", target=None)
     elif source == "executor":
         await dialogue._body(conv, [("fight", {"npc": LOBART})])
     elif source == "orders_executor":
@@ -896,15 +925,14 @@ async def test_real_intent_and_fight_callbacks_keep_the_conflict_after_the_body_
         conv.intent = Intent(goal="follow_hero")
         assert orders.take(Order("attack", "бей", "Бей его!"), LOBART, None) == [(HILDA, "Хильда")]
         conv.intent = Intent()
-    murder(system)
+    await murder(system)
     side(system, "fought")
-    if dialogue._background:
-        await asyncio.gather(*dialogue._background)
+    await dialogue.close()
 
 
 async def test_current_executor_and_order_fights_are_also_evidence(system):
     system.crimes.sides.orders = SimpleNamespace(standing={}, fights={HILDA: SimpleNamespace(target=LOBART)})
-    murder(system)
+    await murder(system)
     side(system, "fought")
 
 
@@ -912,7 +940,7 @@ async def test_current_unreported_fight_intent_is_evidence(system):
     system.crimes.dialogue = SimpleNamespace(conversations={
         LOBART: SimpleNamespace(intent=Intent(goal="fight", target=HILDA)),
     })
-    murder(system)
+    await murder(system)
     side(system, "fought")
 
 
@@ -920,7 +948,7 @@ async def test_current_unreported_fight_intent_is_evidence(system):
 async def test_attacking_a_victim_does_not_make_it_the_companions_enemy(system, hero):
     system.crimes.sides.orders = SimpleNamespace(standing={HILDA: SimpleNamespace(kind="follow")}, fights={})
     system.crimes.sides.note_fight(hero, LOBART)
-    murder(system)
+    await murder(system)
     assert system.crimes.side(HILDA, "deed-1") is None
 
 
@@ -938,7 +966,7 @@ async def test_outsiders_and_unrelated_or_expired_conflict_still_judge_the_killi
         system.crimes.sides.clock = lambda: 0.0
         system.crimes.sides.note_fight(LOBART, HILDA)
         system.crimes.sides.clock = lambda: 601.0
-    murder(system, victim_enemy=True)
+    await murder(system, victim_enemy=True)
     assert system.crimes.side(HILDA, "deed-1") is None
     assert system.crimes.attitude(HILDA) == "wary"
 
@@ -948,8 +976,8 @@ async def test_world_reset_clears_short_combat_memory_and_keeps_guild_cache(syst
     system.crimes.sides.note_fight(HILDA, LOBART)
     system.crimes.sides.note_fight(LOBART, "PLAYER")
     system.crimes.sides.hostile_guilds.add((8, 8))
-    system.link.receive(reset)
-    murder(system)
+    await system.link.receive(reset)
+    await murder(system)
     assert system.crimes.sides.fights == {}
     assert system.crimes.sides.group_threats == {}
     assert system.crimes.sides.hostile_guilds == {(8, 8)}
@@ -970,14 +998,22 @@ async def test_guild_hostility_is_read_once_per_world_and_uses_witness_to_victim
     await system.crimes.sides.prepare()
     await system.crimes.sides.prepare()
     assert len(calls) == 2 and len(calls[1][1]) == 9
-    result = system.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=2, witnesses=[HILDA],
+    result = await system.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=2, witnesses=[HILDA],
                                       witnesses_metadata=[{"npc": HILDA, "guild": 1, "npctype": 0}]))
     assert result is not None
     side(system, "hostile")
-    system.crimes.record(deed(id="reverse", kind="murder", victim=LEE, victim_guild=1, witnesses=[HILDA],
-                             witnesses_metadata=[{"npc": HILDA, "guild": 2, "npctype": 0}]))
+    await system.crimes.record(
+        deed(
+            id="reverse",
+            kind="murder",
+            victim=LEE,
+            victim_guild=1,
+            witnesses=[HILDA],
+            witnesses_metadata=[{"npc": HILDA, "guild": 2, "npctype": 0}],
+        )
+    )
     assert system.crimes.side(HILDA, "reverse") is None
-    system.link.receive(Loading(type="loading"))
+    await system.link.receive(Loading(type="loading"))
     await system.crimes.sides.prepare()
     assert len(calls) == 4
 
@@ -993,7 +1029,7 @@ async def test_old_world_guild_query_cannot_fill_the_new_world_cache(system):
     system.link.story_eval = evaluate
     pending = asyncio.create_task(system.crimes.sides.prepare())
     await requested.wait()
-    system.link.receive(Session(type="session", branch="B"))
+    await system.link.receive(Session(type="session", branch="B"))
     ready.set()
     await pending
     assert system.crimes.sides.hostile_guilds == set()
@@ -1016,14 +1052,14 @@ async def test_last_guild_matrix_classifies_a_killing_while_new_world_refresh_is
     system.link.story_eval = evaluate
     await system.crimes.sides.prepare()
     assert system.crimes.sides.hostile_guilds == {(1, 2)}
-    system.link.receive(Session(type="session", branch="B"))
+    await system.link.receive(Session(type="session", branch="B"))
     refreshing = True
     pending = asyncio.create_task(system.crimes.sides.prepare())
     await requested.wait()
     try:
         assert not pending.done()
         assert system.crimes.sides.hostile_guilds == {(1, 2)}
-        system.crimes.record(deed(
+        await system.crimes.record(deed(
             kind="murder", victim=LOBART, victim_guild=2, witnesses=[HILDA],
             witnesses_metadata=[{"npc": HILDA, "guild": 1, "npctype": 0}],
         ))
@@ -1049,7 +1085,7 @@ async def test_only_issued_open_kill_quest_from_this_witness_counts(system, stat
     system.crimes.sides.book = SimpleNamespace(
         all=lambda: {quest.id: quest}, progress=lambda _: Progress(state, stage),
     )
-    murder(system)
+    await murder(system)
     if expected:
         side(system, expected)
     else:
@@ -1062,15 +1098,18 @@ async def test_sides_precede_all_seen_facts_and_survive_chronicle_reload(system)
     system.chronicle.on_fact.append(
         lambda fact: observed.append((fact["fact"], system.crimes.side(HILDA, "deed-1")))
     )
-    murder(system)
+    await murder(system)
     assert [kind for kind, _ in observed] == ["crime", "crime_side", "crime_seen"]
     assert observed[-1][1] is not None
-    saved = system.memory.head("A")
-    system.crimes.record(deed(id="unsaved", kind="murder", victim=LEE, victim_guild=7, witnesses=[HILDA]))
+    saved = await system.memory.head("A")
+    await system.crimes.record(
+        deed(id="unsaved", kind="murder", victim=LEE, victim_guild=7, witnesses=[HILDA])
+    )
     loaded = Session(type="session", branch="B", parent="A", parent_seq=saved, reason="load")
     system.link.session = loaded
-    system.link.receive(loaded)
+    await system.link.receive(loaded)
     reloaded = Chronicle(system.link, system.memory)
+    await reloaded.initialize()
     loaded_crimes = Crimes(system.link, reloaded)
     assert [fact["id"] for fact in loaded_crimes.facts()] == ["deed-1"]
     side(SimpleNamespace(crimes=loaded_crimes, chronicle=reloaded), "fought")
@@ -1096,11 +1135,11 @@ async def test_listener_uses_the_same_side_reasons_without_witness_metadata(syst
         system.crimes.sides.book = SimpleNamespace(
             all=lambda: {quest.id: quest}, progress=lambda _: Progress("given", 1),
         )
-    crime = system.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=8))
+    crime = await system.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=8))
     assert crime["victim_guild"] == 8
-    first = system.crimes.learn_side(HILDA.lower(), crime)
+    first = await system.crimes.learn_side(HILDA.lower(), crime)
     assert first == {"fact": "crime_side", "npc": HILDA, "crime": crime["id"], "why": why}
-    assert system.crimes.learn_side(HILDA, crime) == first
+    assert (await system.crimes.learn_side(HILDA, crime)) == first
     assert len(system.chronicle.facts("crime_side")) == 1
 
 
@@ -1115,5 +1154,5 @@ async def test_listener_hostility_needs_known_victim_guild_and_prefers_saved(sys
     crime = {"id": "old-murder", "kind": "murder", "victim": LOBART}
     if saved is not None:
         crime["victim_guild"] = saved
-    side = system.crimes.learn_side(HILDA, crime)
+    side = await system.crimes.learn_side(HILDA, crime)
     assert (side["why"] if side else None) == expected

@@ -10,6 +10,7 @@ from gothic_ai.perception import PerceptionDesk
 from gothic_ai.scenarios import npc_life
 from gothic_ai.sightings import Sightings
 from tests.fake_game import FakeGame, connected
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 MALETH = "BAU_954_MALETH"
 GUARD = "ZS_STAND_GUARDING"
@@ -87,10 +88,11 @@ async def test_noise_scenario_requires_return_to_routine_post(
 
     monkeypatch.setattr(npc_life, "_until", bounded_until)
     fake = NoiseGame(returns_to_post=returns_to_post)
-    memory = MemoryStore(":memory:")
+    memory = await MemoryStore.open(":memory:")
     try:
         async with connected(fake) as link:
             chronicle = Chronicle(link, memory)
+            await chronicle.initialize()
             desk = PerceptionDesk(link)
             sightings = Sightings(link, memory, desk, chronicle)
             rosters = asyncio.create_task(fake.push_rosters())
@@ -101,7 +103,7 @@ async def test_noise_scenario_requires_return_to_routine_post(
                 await asyncio.gather(rosters, return_exceptions=True)
                 await asyncio.gather(*fake._later, return_exceptions=True)
     finally:
-        memory.close()
+        await memory.close()
 
     assert set(result) == {
         "setup", "setup_drop", "heard", "decided", "sent", "went", "idle", "routine", "memory"

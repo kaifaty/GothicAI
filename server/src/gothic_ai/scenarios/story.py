@@ -1116,7 +1116,7 @@ async def authored_quest(
     left = await link.offered_dialogs(giver)
     check("once", give not in left and done not in left, " ".join(left))
     await _until(lambda: book.progress(q.id).state == "done", 5)
-    check("knows", "ты заплатил" in (book.situation(giver) or ""), book.situation(giver) or "")
+    check("knows", "ты заплатил" in (await book.situation(giver) or ""), await book.situation(giver) or "")
     return _logged(results)
 
 
@@ -1281,7 +1281,7 @@ async def book_stages(
         return questbook.Talk(said, [{"speaker": "self", "text": answer}], remember)
 
     q = questbook.Quest(
-        id=book.next_id(),
+        id=await book.next_id(),
         giver=HILDA,
         title="Чужак у фермы",
         give=talk("Что-то случилось?", f"Кто-то бродит {look.where_ru}. Глянь, а? Заплачу."),
@@ -1330,7 +1330,9 @@ async def book_stages(
         return _logged(results)
     original_reward = q.gold, q.xp
     original = next(
-        op["node"] for op in book.patches.ops() if op.get("op") == "add_node" and op["node"]["id"] == done
+        op["node"]
+        for op in await book.patches.ops()
+        if op.get("op") == "add_node" and op["node"]["id"] == done
     )
 
     await come_to_her()
@@ -1370,7 +1372,7 @@ async def book_stages(
             return _logged(results)
         conv = dialogue.conversations.get(HILDA)
         before_reply = conv.reply if conv else None
-        talk.hear("Хильда, не нужно никуда идти: чужак уже ушёл.", HILDA, {"via": "scenario"})
+        await talk.hear("Хильда, не нужно никуда идти: чужак уже ушёл.", HILDA, {"via": "scenario"})
 
         def answered() -> bool:
             conv = dialogue.conversations.get(HILDA)
@@ -1382,7 +1384,7 @@ async def book_stages(
         terms = [f for f in facts("quest_terms") if f.get("quest") == q.id]
         stages = [f for f in facts("story_quest_stage") if f.get("id") == q.id]
         reached = [f for f in facts("triggered") if f.get("id") == gid]
-        situation = book.situation(HILDA) or ""
+        situation = await book.situation(HILDA) or ""
         accepted = bool(
             replied and advanced and book.progress(q.id).stage == 2
             and any(f.get("drop") == [gid] and f.get("why") == why for f in terms)
@@ -1393,7 +1395,7 @@ async def book_stages(
             "amended", accepted,
             f"terms={terms}; stages={stages}; reach={reached}; {await vars(stage, gid)}",
         )
-        talk.end("scenario")
+        await talk.end("scenario")
         released = await _until(lambda: HILDA not in talk.attached, 20)
         check("released", released, HILDA)
         if not accepted or not released:
@@ -1418,10 +1420,10 @@ async def book_stages(
         if not accepted:
             return _logged(results)
         successor = LOBART
-        q = book.all()[q.id]
+        q = (await book.all())[q.id]
         made = next(
             op["node"]
-            for op in reversed(book.patches.ops())
+            for op in reversed(await book.patches.ops())
             if op.get("op") == "add_node" and op["node"]["id"] == done
         )
         mandatory = [
@@ -1448,7 +1450,7 @@ async def book_stages(
             and 0 <= xp <= original_reward[1],
             f"{original_reward} -> {(gold, xp)}",
         )
-        situation = book.situation(successor) or ""
+        situation = await book.situation(successor) or ""
         check("successor_knows", "принял" in situation.lower() and "Хильд" in situation, situation)
 
     await _save_or_fail(link, slot)
@@ -1467,7 +1469,7 @@ async def book_stages(
     )
     if amend is not None:
         terms = [f for f in book.chronicle.facts("quest_terms") if f.get("quest") == q.id]
-        situation = book.situation(HILDA) or ""
+        situation = await book.situation(HILDA) or ""
         check(
             "terms_after_load",
             any(f.get("drop") == [gid] and f.get("why") == why for f in terms)
@@ -1475,9 +1477,11 @@ async def book_stages(
             f"terms={terms}; {situation}",
         )
     if director is not None:
-        q = book.all()[q.id]
+        q = (await book.all())[q.id]
         nodes = [
-            op["node"] for op in book.patches.ops() if op.get("op") == "add_node" and op["node"]["id"] == done
+            op["node"]
+            for op in await book.patches.ops()
+            if op.get("op") == "add_node" and op["node"]["id"] == done
         ]
         check(
             "repair_after_load",
@@ -1522,7 +1526,7 @@ async def book_stages(
         f"thing, gold, exp {(1, gold, exp)} -> {after}; {await vars(status, stage)}",
     )
     await _until(lambda: book.progress(q.id).state == "done", 5)
-    situation = book.situation(successor) or ""
+    situation = await book.situation(successor) or ""
     check("knows", "ты заплатил" in situation, situation)
     if amend is not None:
         outcomes = [f for f in book.chronicle.facts("quest_outcome") if f.get("quest") == q.id]
@@ -1575,7 +1579,7 @@ async def book_requires(link: GameLink, book: questbook.QuestBook, slot: int = 7
         return _logged(results)
 
     q = questbook.Quest(
-        id=book.next_id(),
+        id=await book.next_id(),
         giver=HILDA,
         title="Помощник по хозяйству",
         give=talk("Лобарт доволен моей работой. Есть ещё дело?", "Есть. Поговорим о покупках для кухни."),
@@ -1711,7 +1715,7 @@ async def book_requires(link: GameLink, book: questbook.QuestBook, slot: int = 7
     await asyncio.sleep(2)
     counts = {t["id"]: t["count"] for t in await link.triggers()}
     mine = {k: v for k, v in counts.items() if k.startswith(f"{q.id}_")}
-    restored = book.all().get(q.id)
+    restored = (await book.all()).get(q.id)
     check(
         "after_load",
         await vars(status, stage, pan) == {status: 1, stage: 2, pan: 0}
@@ -1817,9 +1821,10 @@ async def author_chain(
         refusal = [str(why) for f in rejected for why in f.get("why", f.get("errors", []))]
         check("rejected", len(script.calls) == 2 and bool(refusal), rejected)
         check("retry_reasons", bool(refusal) and all(why in script.calls[-1] for why in refusal), refusal)
+    known_quests = await chains.book.all()
     check(
         "made",
-        quests is not None and 2 <= len(quests) <= 3 and all(q.id in chains.book.all() for q in quests),
+        quests is not None and 2 <= len(quests) <= 3 and all(q.id in known_quests for q in quests),
         [q.id for q in quests]
         if quests
         else {"rejected": rejected, "proposal": script.calls if script else "see chain model log"},
@@ -1882,13 +1887,14 @@ async def author_chain(
             if any(t["id"].startswith(f"{quest.id}_") for quest in quests)
         }
         actors = after.get("npcs", {})
+        known_quests = await chains.book.all()
         check(
             "after_load",
             before == after.get("vars", {})
             and before_counts == after_counts
             and actors.get(dead, {}).get("state") == "dead"
             and all(actors.get(n, {}).get("state") == "alive" for n in rest)
-            and all(quest.id in chains.book.all() for quest in quests),
+            and all(quest.id in known_quests for quest in quests),
             f"{q.id}: {before} -> {after.get('vars')}; counts {before_counts} -> {after_counts}; {actors}",
         )
 
@@ -1897,7 +1903,7 @@ async def author_chain(
     if script is not None and "after_load" not in results:
         check("after_load", False, "the scripted chain never reached its group kill checkpoint")
     await chains.book.settle(giver)
-    situation = chains.book.situation(giver) or ""
+    situation = await chains.book.situation(giver) or ""
     check(
         "knows",
         all(q.title in situation and chains.book.progress(q.id).state == "done" for q in quests)
@@ -2083,7 +2089,7 @@ async def _peddler(link: GameLink, actors: Cast) -> tuple[NpcSpec, str] | str:
         if w["name"] not in hers
     ][:2]
     spec = NpcSpec(
-        npc=actors.next_id(),
+        npc=await actors.next_id(),
         like=towns[0],
         at=by_day,
         name="Гарет",
@@ -2209,15 +2215,15 @@ async def cast_character(link: GameLink, actors: Cast, slot: int = 7) -> dict[st
         and n == 1
         and dressed(h)
         and now == given
-        and actors.characters() == [spec],
+        and await actors.characters() == [spec],
         f"{n} of him; {h}; {now}",
     )
 
     await load(slot)
     check(
         "before",
-        await seen() == ("absent", "") and actors.characters() == [],
-        f"{await seen()}; {[c.npc for c in actors.characters()]}",
+        await seen() == ("absent", "") and await actors.characters() == [],
+        f"{await seen()}; {[c.npc for c in await actors.characters()]}",
     )
     return _logged(results)
 

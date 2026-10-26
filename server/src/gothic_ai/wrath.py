@@ -174,7 +174,7 @@ class Wrath:
                 f"Терпения осталось {temper.patience - s.took} из {temper.patience}", "accepted"
             )
         s.tipped = True
-        dialogue.change_intent(
+        await dialogue.change_intent(
             conv.npc, conv.persona.name, attitude="hostile", agenda="punish the hero for his insolence"
         )
         self._answer(conv, temper)
@@ -195,7 +195,7 @@ class Wrath:
                 log.warning("%s: raise_dead: %s", conv.npc, err)
                 return
             self.journal.add("raise_dead", npc=conv.npc, name=conv.persona.name, spell=temper.spell)
-            self.dialogue.remember(
+            await self.dialogue.remember(
                 conv.npc,
                 conv.persona.name,
                 "Ты убил героя за его дерзость и поднял его из мёртвых скелетом — теперь он служит тебе",

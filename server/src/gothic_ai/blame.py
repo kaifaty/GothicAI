@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from .chronicle import Chronicle, Fact
 from .crimes import HERO, SUSPECT_MIN, Crimes
+from .game import GameError
 from .journal import Journal
 from .knowledge import roots
 from .llm import Tool, ToolCall
@@ -162,11 +163,15 @@ class Blame:
     def tools(self, npc: str) -> list[Tool]:
         return [BLAME_TOOL] if self._eligible(npc) else []
 
-    def _person(self, npc: str, who: str) -> str | None:
+    async def _person(self, npc: str, who: str) -> str | None:
         names = {key: card.name for key, card in self.npc_crimes.cards.items()}
         names.update((key, entry.name) for key, entry in self.npc_crimes.roster.items())
         names.update((key, self.crimes.names(key)) for key in self.crimes.people)
         if self.crimes.sightings is not None:
+            world_generation, session = self.link.world_generation, self.link.session
+            await self.crimes.sightings.prepare(npc)
+            if self.link.world_generation != world_generation or self.link.session is not session:
+                return None
             names.update((s.who, s.name) for s in self.crimes.sightings.mind(npc).sightings)
         names.update((key, conv.persona.name) for key, conv in self.dialogue.conversations.items())
         normalized = who.casefold().replace("ё", "е").strip()
@@ -180,10 +185,14 @@ class Blame:
                    and s.start <= at + SUSPECT_MIN and place is not None and place.id in s.place_ids
                    for s in sightings)
 
-    def _own_trace(self, npc: str, culprit: str, crime: Fact) -> bool:
-        return self.crimes.sightings is not None and self._trace_matches(
-            self.crimes.sightings.mind(npc).sightings, culprit, crime,
-        )
+    async def _own_trace(self, npc: str, culprit: str, crime: Fact) -> bool:
+        if self.crimes.sightings is None:
+            return False
+        world_generation, session = self.link.world_generation, self.link.session
+        await self.crimes.sightings.prepare(npc)
+        if self.link.world_generation != world_generation or self.link.session is not session:
+            return False
+        return self._trace_matches(self.crimes.sightings.mind(npc).sightings, culprit, crime)
 
     @staticmethod
     def _words(conv: Conversation, name: str) -> str:
@@ -208,55 +217,73 @@ class Blame:
     async def handle(
         self, dialogue: DialogueManager, conv: Conversation, call: ToolCall, snap: Snapshot | None,
     ) -> ToolOutcome | None:
-        if call.name != BLAME:
-            return None
-        if not self.enabled or self._loading:
-            return ToolOutcome("Отклонено: дела NPC выключены или мир загружается.", "rejected")
-        npc, cid = conv.npc.upper(), str(call.arguments.get("crime") or "").strip()
-        crime = next((f for f in self._eligible(npc) if f["id"] == cid), None)
-        if crime is None:
-            return ToolOutcome("Отклонено: такого твоего дела нет в обстановке.", "rejected")
-        if any(f["id"] == cid for f in [*self.crimes.seen(npc), *self.npc_crimes.seen(npc)]):
-            return ToolOutcome("Отклонено: ты сам видел настоящего виновника этого дела.", "rejected")
-        who = str(call.arguments.get("who") or "").strip()
-        culprit = self._person(npc, who)
-        if who.upper() in HERO or who.casefold() in {"герой", "ты"}:
-            culprit = "PLAYER"
-        if culprit is None or culprit in {*HERO, npc}:
-            return ToolOutcome("Отклонено: who — другой человек из обстановки, не герой.", "rejected")
-        if self.npc_crimes._human(culprit) is False:
-            return ToolOutcome("Отклонено: who — человек.", "rejected")
-        if any(f.get("npc") == culprit for f in self.chronicle.facts("died")):
-            return ToolOutcome("Отклонено: этот человек мёртв.", "rejected")
-        existing = self.active(npc, cid)
-        if existing is not None and existing["culprit"] == culprit:
-            return ToolOutcome("Ты уже считаешь его виновным в этом деле.", "accepted")
-        testimony = next((f for f in reversed(self.chronicle.facts("testimony"))
-                          if f.get("npc") == npc and f.get("about") == culprit
-                          and (cid in f.get("crime_told", []) or self._trace_matches(
-                              [Sighting.of(row) for row in f.get("told", [])], culprit, crime,
-                          ))), None)
-        culprit_name, name = self.crimes.names(culprit), self.crimes.names(npc)
-        said = self._words(conv, culprit_name)
-        because = (
-            f"testimony:{testimony['id']}" if testimony is not None
-            else "own" if self._own_trace(npc, culprit, crime)
-            else "hero_words" if said else "hunch"
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.link.session
         )
-        number = 1 + len(self.chronicle.facts("blamed"))
-        action = self._title(crime)
-        fact = {
-            "fact": "blamed", "id": f"BLAME_{number}", "npc": npc,
-            "name": name, "culprit": culprit,
-            "culprit_name": culprit_name, "crime": cid, "because": because,
-            "truth": crime.get("fact") == "npc_crime" and crime.get("culprit") == culprit,
-            "title": f"{name} считает, что {culprit_name} {action}",
-            "day": snap.world.day if snap is not None else crime.get("day", 0),
-            **({"said": said} if because == "hero_words" else {}),
-        }
-        self.chronicle.record(fact)
-        dialogue.remember(npc, name, f"Ты считаешь, что {culprit_name} {action} ({cid}).")
-        return ToolOutcome(f"Принято: ты считаешь, что {culprit_name} {action}.", "accepted")
+
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.link.session
+            ):
+                raise GameError("session changed while recording an accusation")
+            if call.name != BLAME:
+                return None
+            if not self.enabled or self._loading:
+                return ToolOutcome("Отклонено: дела NPC выключены или мир загружается.", "rejected")
+            world_generation, session = self.link.world_generation, self.link.session
+            npc, cid = conv.npc.upper(), str(call.arguments.get("crime") or "").strip()
+            crime = next((f for f in self._eligible(npc) if f["id"] == cid), None)
+            if crime is None:
+                return ToolOutcome("Отклонено: такого твоего дела нет в обстановке.", "rejected")
+            if any(f["id"] == cid for f in [*self.crimes.seen(npc), *self.npc_crimes.seen(npc)]):
+                return ToolOutcome("Отклонено: ты сам видел настоящего виновника этого дела.", "rejected")
+            who = str(call.arguments.get("who") or "").strip()
+            culprit = await self._person(npc, who)
+            if self.link.world_generation != world_generation or self.link.session is not session:
+                raise GameError("world changed while preparing an accusation")
+            if who.upper() in HERO or who.casefold() in {"герой", "ты"}:
+                culprit = "PLAYER"
+            if culprit is None or culprit in {*HERO, npc}:
+                return ToolOutcome("Отклонено: who — другой человек из обстановки, не герой.", "rejected")
+            if self.npc_crimes._human(culprit) is False:
+                return ToolOutcome("Отклонено: who — человек.", "rejected")
+            if any(f.get("npc") == culprit for f in self.chronicle.facts("died")):
+                return ToolOutcome("Отклонено: этот человек мёртв.", "rejected")
+            existing = self.active(npc, cid)
+            if existing is not None and existing["culprit"] == culprit:
+                return ToolOutcome("Ты уже считаешь его виновным в этом деле.", "accepted")
+            testimony = next((f for f in reversed(self.chronicle.facts("testimony"))
+                              if f.get("npc") == npc and f.get("about") == culprit
+                              and (cid in f.get("crime_told", []) or self._trace_matches(
+                                  [Sighting.of(row) for row in f.get("told", [])], culprit, crime,
+                              ))), None)
+            culprit_name, name = self.crimes.names(culprit), self.crimes.names(npc)
+            said = self._words(conv, culprit_name)
+            own_trace = False if testimony is not None else await self._own_trace(npc, culprit, crime)
+            if self.link.world_generation != world_generation or self.link.session is not session:
+                raise GameError("world changed while preparing an accusation")
+            because = (
+                f"testimony:{testimony['id']}" if testimony is not None
+                else "own" if own_trace
+                else "hero_words" if said else "hunch"
+            )
+            number = 1 + len(self.chronicle.facts("blamed"))
+            action = self._title(crime)
+            fact = {
+                "fact": "blamed", "id": f"BLAME_{number}", "npc": npc,
+                "name": name, "culprit": culprit,
+                "culprit_name": culprit_name, "crime": cid, "because": because,
+                "truth": crime.get("fact") == "npc_crime" and crime.get("culprit") == culprit,
+                "title": f"{name} считает, что {culprit_name} {action}",
+                "day": snap.world.day if snap is not None else crime.get("day", 0),
+                **({"said": said} if because == "hero_words" else {}),
+            }
+            await self.chronicle.record(fact)
+            await dialogue.remember(npc, name, f"Ты считаешь, что {culprit_name} {action} ({cid}).")
+            return ToolOutcome(f"Принято: ты считаешь, что {culprit_name} {action}.", "accepted")
+
+        return await self.chronicle.memory.complete(persist)
 
     def _on_message(self, message: GameMessage) -> None:
         if isinstance(message, (Loading, Session)):
@@ -301,15 +328,24 @@ class Blame:
             return
         self._resolving.add(belief["id"])
         try:
-            if not any(f.get("blamed") == belief["id"] for f in self.chronicle.facts("blame_refuted")):
-                self.chronicle.record({
-                    "fact": "blame_refuted", "npc": belief["npc"], "culprit": belief["culprit"],
-                    "crime": belief["crime"], "blamed": belief["id"], "how": how,
-                })
-                self.dialogue.remember(
-                    belief["npc"], belief["name"],
-                    f"У {belief['culprit_name']} вещи не оказалось. Его вина не подтвердилась.",
-                )
+            branch, session = self.chronicle.branch, self.link.session
+            world_generation = self.link.world_generation
+
+            async def persist() -> None:
+                if branch != self.chronicle.branch or session is not self.link.session:
+                    raise GameError("session changed while refuting an accusation")
+                if not any(f.get("blamed") == belief["id"] for f in self.chronicle.facts("blame_refuted")):
+                    await self.chronicle.record({
+                        "fact": "blame_refuted", "npc": belief["npc"], "culprit": belief["culprit"],
+                        "crime": belief["crime"], "blamed": belief["id"], "how": how,
+                    })
+                    await self.dialogue.remember(
+                        belief["npc"], belief["name"],
+                        f"У {belief['culprit_name']} вещи не оказалось. Его вина не подтвердилась.",
+                    )
+            await self.chronicle.memory.complete(persist)
+            if self.link.world_generation != world_generation or self.link.session is not session:
+                return
             if belief["because"] != "hero_words" or belief["truth"]:
                 return
             quest = f"SAID_{belief['id']}"
@@ -323,16 +359,28 @@ class Blame:
             self._resolving.discard(belief["id"])
 
     async def confirm(self, belief: Fact) -> None:
-        if not self.enabled or self._loading or not belief["truth"] or belief["because"] != "hero_words":
-            return
-        quest = f"SAID_{belief['id']}"
-        if any(f.get("quest") == quest for f in self.chronicle.facts("claim")):
-            return
-        self.chronicle.record({
-            "fact": "claim", "quest": quest, "npc": belief["npc"], "name": belief["name"],
-            "title": belief["said"], "said": True, "truth": True, "believed": True,
-            "blamed": belief["id"], "blame_crime": belief["crime"],
-        })
-        self.dialogue.remember(
-            belief["npc"], belief["name"], f"Герой сказал правду: «{belief['said']}». Вещь вернулась.",
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.link.session
         )
+
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.link.session
+            ):
+                raise GameError("session changed while recording an accusation")
+            if not self.enabled or self._loading or not belief["truth"] or belief["because"] != "hero_words":
+                return
+            quest = f"SAID_{belief['id']}"
+            if any(f.get("quest") == quest for f in self.chronicle.facts("claim")):
+                return
+            await self.chronicle.record({
+                "fact": "claim", "quest": quest, "npc": belief["npc"], "name": belief["name"],
+                "title": belief["said"], "said": True, "truth": True, "believed": True,
+                "blamed": belief["id"], "blame_crime": belief["crime"],
+            })
+            await self.dialogue.remember(
+                belief["npc"], belief["name"], f"Герой сказал правду: «{belief['said']}». Вещь вернулась.",
+            )
+
+        return await self.chronicle.memory.complete(persist)

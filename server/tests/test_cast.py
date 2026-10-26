@@ -9,6 +9,7 @@ from gothic_ai.protocol import NpcLook, NpcSpec, NpcThing, RoutineEntry
 from gothic_ai.story import StoryPatches
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 LIKE = "VLK_4000_BUERGER"
 SYMBOLS = {
@@ -103,27 +104,32 @@ def test_a_bandit_has_a_nameless_template_guild_and_armor():
 
 
 async def test_a_character_comes_once_and_stays_with_its_saves():
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     fake = FakeGame(branch="A")
     fake.symbols = dict(SYMBOLS)
     async with connected(fake) as link:
         patches = StoryPatches(link, store)
+        await patches.initialize()
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         cast = Cast(link, patches, chronicle)
+        await cast.prepare()
         await _until(lambda: patches.branch is not None and chronicle.branch is not None)
         await patches.apply({"op": "disable", "node": "DIA_LOBART_WORKNOW"})
         await _until(lambda: fake.heads[-1:] == [("A", 1)])  # a save made before he came
 
-        assert cast.next_id() == "DIR_NPC_1"
+        assert await cast.next_id() == "DIR_NPC_1"
         made, issues = await cast.introduce(_peddler())
         assert issues == [] and made == {"npc": "DIR_NPC_1", "state": "made", "index": 74650}
         assert (
             fake.cast["DIR_NPC_1"]["name"] == "Гарет"
             and fake.cast["DIR_NPC_1"]["routine"][1]["state"] == "ZS_SLEEP"
         )
-        assert [c.npc for c in cast.characters()] == ["DIR_NPC_1"] and cast.next_id() == "DIR_NPC_2"
+        assert [c.npc for c in await cast.characters()] == [
+            "DIR_NPC_1"
+        ] and await cast.next_id() == "DIR_NPC_2"
         # he is no change of the graph
-        assert patches.ops() == [{"op": "disable", "node": "DIA_LOBART_WORKNOW"}]
+        assert await patches.ops() == [{"op": "disable", "node": "DIA_LOBART_WORKNOW"}]
         assert [f["npc"] for f in chronicle.facts("cast")] == ["DIR_NPC_1"]
         # once only
         again, issues = await cast.introduce(_peddler())
@@ -136,24 +142,26 @@ async def test_a_character_comes_once_and_stays_with_its_saves():
         assert fake.cast_asked == ["DIR_NPC_1", "DIR_NPC_1"] and fake.graph[-1]["ops"] == [
             {"op": "disable", "node": "DIA_LOBART_WORKNOW"}
         ]
-        assert [c.npc for c in cast.characters()] == ["DIR_NPC_1"]
+        assert [c.npc for c in await cast.characters()] == ["DIR_NPC_1"]
 
         # the save made before he came: no one asks for him
         graphs = len(fake.graph)
         await fake.send(type="session", branch="B", parent="A", parent_seq=1, reason="load")
         await _until(lambda: len(fake.graph) > graphs)
-        assert fake.cast_asked == ["DIR_NPC_1", "DIR_NPC_1"] and cast.characters() == []
+        assert fake.cast_asked == ["DIR_NPC_1", "DIR_NPC_1"] and await cast.characters() == []
 
 
 async def test_a_rejected_character_is_not_kept():
     fake = FakeGame(branch="A")
     fake.symbols = dict(SYMBOLS)
     async with connected(fake) as link:
-        patches = StoryPatches(link, MemoryStore(":memory:"))
+        patches = StoryPatches(link, await MemoryStore.open(":memory:"))
+        await patches.initialize()
         cast = Cast(link, patches)
+        await cast.prepare()
         await _until(lambda: patches.branch is not None)
         made, issues = await cast.introduce(_peddler(like="BAU_950_LOBART"))
-        assert made is None and issues and fake.cast == {} and cast.characters() == []
+        assert made is None and issues and fake.cast == {} and await cast.characters() == []
 
 
 @pytest.mark.parametrize("name", ["Хильда", " хИлЬдА "])
@@ -162,26 +170,30 @@ async def test_a_new_character_cannot_take_a_name_of_any_person_of_the_world(nam
     fake.symbols = dict(SYMBOLS)
     fake.people = [{"npc": "BAU_951_HILDA", "name": "Хильда", "routine": []}]
     async with connected(fake) as link:
-        patches = StoryPatches(link, MemoryStore(":memory:"))
+        patches = StoryPatches(link, await MemoryStore.open(":memory:"))
+        await patches.initialize()
         cast = Cast(link, patches)
+        await cast.prepare()
         await _until(lambda: patches.branch is not None)
         made, issues = await cast.introduce(_peddler(name=name))
         assert made is None and issues == [f"имя «{name.strip()}» уже есть у человека мира"]
-        assert fake.cast == {} and cast.characters() == []
+        assert fake.cast == {} and await cast.characters() == []
 
 
 async def test_a_new_character_cannot_take_a_name_of_a_directors_character():
     fake = FakeGame(branch="A")
     fake.symbols = dict(SYMBOLS)
     async with connected(fake) as link:
-        patches = StoryPatches(link, MemoryStore(":memory:"))
+        patches = StoryPatches(link, await MemoryStore.open(":memory:"))
+        await patches.initialize()
         cast = Cast(link, patches)
+        await cast.prepare()
         await _until(lambda: patches.branch is not None)
         made, issues = await cast.introduce(_peddler())
         assert made is not None and issues == []
         made, issues = await cast.introduce(_peddler(npc="DIR_NPC_2"))
         assert made is None and issues == ["имя «Гарет» уже есть у человека мира"]
-        assert len(cast.characters()) == 1
+        assert len(await cast.characters()) == 1
 
 
 GARET = Person(
@@ -228,8 +240,10 @@ async def test_a_character_is_a_person_to_whoever_reads_npcs():
     fake.symbols = dict(SYMBOLS)
     fake.npc_states = {"BAU_951_HILDA": {"state": "alive", "name": "Хильда"}}
     async with connected(fake) as link:
-        patches = StoryPatches(link, MemoryStore(":memory:"))
+        patches = StoryPatches(link, await MemoryStore.open(":memory:"))
+        await patches.initialize()
         cast = Cast(link, patches)
+        await cast.prepare()
         changed: list[str] = []
         cast.on_change.append(lambda: changed.append("cast"))
         await _until(lambda: patches.branch is not None)

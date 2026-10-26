@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict
 from .characters import SCALES, Card
 from .chronicle import Chronicle
 from .game import GameError, GameLink
-from .protocol import NpcSpec
+from .protocol import GameMessage, NpcSpec, Session
 from .story import StoryPatches
 
 log = logging.getLogger(__name__)
@@ -263,22 +263,50 @@ class Cast:
         self.chronicle = chronicle
         # after a character came: whoever keeps the world's people (the rumors' ties) takes them again
         self.on_change: list[Callable[[], None]] = []
-        self._people: tuple[int, dict[str, tuple[NpcSpec, Person]]] = (-1, {})  # by the log's version
+        self._people: tuple[object, dict[str, tuple[NpcSpec, Person]]] = (None, {})  # prepared session
         self._cards: tuple[object, dict[str, Card]] = (None, {})  # made of that `people`
+        link.listeners.append(self._on_message)
 
-    def characters(self) -> list[NpcSpec]:
-        return self.patches.characters()
+    async def characters(self) -> list[NpcSpec]:
+        return await self.patches.characters()
 
-    def people(self) -> dict[str, tuple[NpcSpec, Person]]:
-        """The characters that are persons (layer 3), by id: their description and who they are. Read often
-        (every card asked for), so kept until the branch's log changes."""
-        if self._people[0] != self.patches.version:
+    async def _on_message(self, message: GameMessage) -> None:
+        if isinstance(message, Session):
+            await self.prepare()
+
+    async def prepare(self) -> None:
+        version, branch, session = self.patches.version, self.patches.branch, self.link.session
+
+        async def load() -> None:
+            if (
+                version != self.patches.version
+                or branch != self.patches.branch
+                or session is not self.link.session
+            ):
+                raise GameError("session changed while preparing character cards")
+            records = await self.patches.cast()
+            if (
+                version != self.patches.version
+                or branch != self.patches.branch
+                or session is not self.link.session
+            ):
+                raise GameError("session changed while preparing character cards")
             out = {}
-            for record in self.patches.cast():
+            for record in records:
                 if record.get("person") is not None:
                     spec = NpcSpec.model_validate(record["spec"])
                     out[spec.npc] = (spec, Person.model_validate(record["person"]))
-            self._people = (self.patches.version, out)
+            self._people = (session, out)
+
+        await self.patches.memory.complete(load)
+
+    def people(self) -> dict[str, tuple[NpcSpec, Person]]:
+        """The characters that are persons (layer 3), by id: their description and who they are. Read often
+        (every card asked for), so prepared on Session and after introducing a character."""
+        if self.patches.branch is None:
+            return {}
+        if self._people[0] is not self.link.session:
+            raise RuntimeError("character cards are not prepared for the current story")
         return self._people[1]
 
     def person(self, npc: str) -> Person | None:
@@ -299,12 +327,12 @@ class Cast:
         """Whom the persons know, {npc: {other: how}}: the ties of social.py."""
         return {npc: {t.npc: t.how for t in p.ties} for npc, (_, p) in self.people().items() if p.ties}
 
-    def get(self, npc: str) -> NpcSpec | None:
-        return next((c for c in self.characters() if c.npc == npc), None)
+    async def get(self, npc: str) -> NpcSpec | None:
+        return next((c for c in await self.characters() if c.npc == npc), None)
 
-    def next_id(self) -> str:
+    async def next_id(self) -> str:
         """DIR_NPC_<n>, the next one free on the branch."""
-        taken = {c.npc for c in self.characters()}
+        taken = {c.npc for c in await self.characters()}
         n = 1
         while f"DIR_NPC_{n}" in taken:
             n += 1
@@ -315,9 +343,17 @@ class Cast:
     ) -> tuple[dict[str, Any] | None, list[str]]:
         """A new character, and who it is as a person if given: the code checks it, the game makes it, the
         branch keeps it. The game's answer ({npc, state, index}), or None and what is wrong."""
+        await self.link.wait_session_ready()
+        branch, session, generation = self.patches.branch, self.link.session, self.link.world_generation
         known = [t.npc for t in person.ties] if person is not None else []
         state = await self.link.story_state(symbols=_names(spec), npcs=known)
-        characters = self.characters()
+        characters = await self.characters()
+        if (
+            branch != self.patches.branch
+            or session is not self.link.session
+            or generation != self.link.world_generation
+        ):
+            raise GameError("session changed while introducing a character")
         issues = problems(spec, state.get("symbols", {}), {c.npc for c in characters})
         name = spec.name.strip().casefold()
         nameless_bandit = (
@@ -327,6 +363,12 @@ class Cast:
         )
         if name and not nameless_bandit:
             people = await self.link.story_people()
+            if (
+                branch != self.patches.branch
+                or session is not self.link.session
+                or generation != self.link.world_generation
+            ):
+                raise GameError("session changed while introducing a character")
             other_names = {
                 str(p.get("name") or "").strip().casefold() for p in people if p.get("npc") != spec.npc
             } | {c.name.strip().casefold() for c in characters if c.npc != spec.npc}
@@ -341,11 +383,30 @@ class Cast:
             except GameError as err:
                 issues = [f"игра не сделала персонажа: {err}"]
             else:
+                if (
+                    branch != self.patches.branch
+                    or session is not self.link.session
+                    or generation != self.link.world_generation
+                ):
+                    raise GameError("session changed while introducing a character")
+                await self.prepare()
+                if (
+                    branch != self.patches.branch
+                    or session is not self.link.session
+                    or generation != self.link.world_generation
+                ):
+                    raise GameError("session changed while introducing a character")
                 log.info("cast: %s «%s» like %s at %s", spec.npc, spec.name, spec.like, spec.at)
                 if self.chronicle is not None:
-                    self.chronicle.record(
+                    await self.chronicle.record(
                         {"fact": "cast", "npc": spec.npc, "name": spec.name, "like": spec.like, "at": spec.at}
                     )
+                if (
+                    branch != self.patches.branch
+                    or session is not self.link.session
+                    or generation != self.link.world_generation
+                ):
+                    raise GameError("session changed while introducing a character")
                 for listener in self.on_change:
                     listener()
                 return made, []

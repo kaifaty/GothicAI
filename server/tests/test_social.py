@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import json
 from collections import defaultdict
@@ -5,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -26,6 +28,7 @@ from gothic_ai.trust import Trust
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
 from tests.test_director import GRAPH, HILDA, LOBART, QUEST, VINO
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 ANDRE, VATRAS, BANDIT = "MIL_311_ANDRE", "VLK_439_VATRAS", "BDT_1013_BANDIT_L"
 FARM, FIELD, CITY = [13608, 1753, -15600], [14678, 1642, -10000], [10480, 320, 4920]  # FIELD: 57 m off
@@ -125,27 +128,32 @@ def test_who_meets_whom_and_who_has_dealings(graph):
 
 def _rumors(s: Social) -> tuple[Rumors, Rumor, list[dict]]:
     """Rumors without a game: what it records goes into a list."""
+    async def complete(operation):
+        return await operation()
+
     r = Rumors.__new__(Rumors)
+    r.link = SimpleNamespace(session=None, world_generation=0)
     facts: list[dict] = []
     r.social, r.dead, r.rumors, r.tells = s, set(), {}, defaultdict(int)
     r.chronicle = SimpleNamespace(
-        record=facts.append,
+        branch="A", _generation=0, link=r.link, memory=SimpleNamespace(complete=complete),
+        record=AsyncMock(side_effect=facts.append),
         facts=lambda kind=None: [f for f in facts if kind is None or f.get("fact") == kind],
     )
-    r.dialogue = type("D", (), {"remember": lambda self, *a: None})()
+    r.dialogue = SimpleNamespace(remember=AsyncMock())
     rumor = Rumor(QUEST, "caught", LOBART, "Лобарт", "Убрать поле репы")
     rumor.known[LOBART] = 0
     r.rumors[rumor.key] = rumor
     return r, rumor, facts
 
 
-def test_a_rumor_goes_round_the_meetings_in_order(graph, monkeypatch):
+async def test_a_rumor_goes_round_the_meetings_in_order(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     s = Social(PEOPLE, graph)
     r, rumor, facts = _rumors(s)
     # caught at 9:00; by 23:00 Hilda (on the farm) and, at 22:00 by the field, Vino from her
-    assert r.spread(DAY + _h(9), DAY + _h(23)) == 2
+    assert await r.spread(DAY + _h(9), DAY + _h(23)) == 2
     assert rumor.known == {LOBART: 0, HILDA: 1, VINO: 2}
     first, second = facts
     assert (first["from"], first["to"], first["hops"], first["how"]) == (LOBART, HILDA, 1, "met")
@@ -155,29 +163,29 @@ def test_a_rumor_goes_round_the_meetings_in_order(graph, monkeypatch):
     assert VATRAS not in rumor.known and ANDRE not in rumor.known
 
 
-def test_dealings_bring_it_to_the_city_once_a_day(graph, monkeypatch):
+async def test_dealings_bring_it_to_the_city_once_a_day(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 1.0)
     s = Social(PEOPLE, graph)
     r, rumor, facts = _rumors(s)
     # a jump of the clock over a night: Andre hears through his dealings with Lobart, Vatras meets Andre
-    r.spread(DAY + _h(9), 2 * DAY + _h(23))
+    await r.spread(DAY + _h(9), 2 * DAY + _h(23))
     assert rumor.known[ANDRE] == 1 and rumor.known[VATRAS] == 2
     assert next(f for f in facts if f["to"] == ANDRE)["how"] == "dealings"
 
 
-def test_retellings_stop_and_the_dead_tell_no_one(graph, monkeypatch):
+async def test_retellings_stop_and_the_dead_tell_no_one(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 1.0)
     monkeypatch.setitem(social.HOPS, "caught", 1)
     s = Social(PEOPLE, graph)
     r, rumor, _ = _rumors(s)
-    r.spread(DAY + _h(9), 3 * DAY)
+    await r.spread(DAY + _h(9), 3 * DAY)
     assert set(rumor.known) == {LOBART, HILDA, ANDRE}  # the first retelling only
     monkeypatch.setitem(social.HOPS, "caught", 3)
     r2, rumor2, _ = _rumors(s)
     r2.dead.add(HILDA)
-    r2.spread(DAY + _h(9), DAY + _h(23))
+    (await r2.spread(DAY + _h(9), DAY + _h(23)))
     assert HILDA not in rumor2.known and VINO not in rumor2.known
 
 
@@ -191,15 +199,17 @@ async def test_rumors_on_the_game_clock(graph, monkeypatch):
     fake = FakeGame(branch="A")
     fake.people = PEOPLE
     fake.hour, fake.minute = 9, 0
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
     try:
         dialogue = DialogueManager(link, FakeBackend("Ну?", delay=0), PersonaProvider(None), memory=store)
+        await dialogue.initialize()
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         await _until(lambda: chronicle.branch is not None)
         rumors = Rumors(link, dialogue, chronicle, graph)
-        chronicle.record(
+        await chronicle.record(
             {
                 "fact": "caught",
                 "quest": QUEST,
@@ -229,13 +239,13 @@ async def test_rumors_on_the_game_clock(graph, monkeypatch):
         await link_cm.__aexit__(None, None, None)
 
 
-def test_one_tells_a_rumor_to_a_few_a_day(graph, monkeypatch):
+async def test_one_tells_a_rumor_to_a_few_a_day(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 1.0)
     monkeypatch.setattr(social, "TELLS_PER_DAY", 1)
     s = Social(PEOPLE, graph)
     r, rumor, facts = _rumors(s)
-    r.spread(
+    await r.spread(
         DAY + _h(9),
         DAY
         + _h(
@@ -243,11 +253,11 @@ def test_one_tells_a_rumor_to_a_few_a_day(graph, monkeypatch):
         ),
     )
     assert [f["from"] for f in facts].count(LOBART) == 1  # Hilda by day; Andre waits
-    r.spread(DAY + _h(23), 2 * DAY + _h(23))
+    await r.spread(DAY + _h(23), 2 * DAY + _h(23))
     assert [f["from"] for f in facts].count(LOBART) == 2 and ANDRE in rumor.known
 
 
-def test_old_news_is_not_retold(graph, monkeypatch):
+async def test_old_news_is_not_retold(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 1.0)
     monkeypatch.setattr(social, "TELLS_PER_DAY", 1)
@@ -255,11 +265,11 @@ def test_old_news_is_not_retold(graph, monkeypatch):
     s = Social(PEOPLE, graph)
     r, rumor, facts = _rumors(s)
     rumor.since[LOBART] = 1  # he caught the hero on day 1
-    r.spread(DAY + _h(9), 4 * DAY)
+    await r.spread(DAY + _h(9), 4 * DAY)
     assert [f["from"] for f in facts].count(LOBART) == 1  # one of Hilda and Andre, that day only
 
 
-def test_a_lie_he_took_a_reward_for_goes_further(graph, monkeypatch):
+async def test_a_lie_he_took_a_reward_for_goes_further(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 1.0)
     citizen = "VLK_4000_CITIZEN"  # in the city all day, by Vatras (24 m) and not by Andre (26 m)
@@ -270,30 +280,30 @@ def test_a_lie_he_took_a_reward_for_goes_further(graph, monkeypatch):
         r, rumor, _ = _rumors(s)
         rumor.kind = kind
         r.rumors = {rumor.key: rumor}
-        r.spread(DAY + _h(9), 3 * DAY)
+        await r.spread(DAY + _h(9), 3 * DAY)
         reach[kind] = rumor.known.get(citizen)
     # Lobart -> Andre (dealings) -> Vatras (the city) -> the citizen: the third retelling is only for a lie
     # he took a reward for
     assert reach == {"caught": None, "found_out": 3}
 
 
-def test_one_who_promised_silence_tells_no_one(graph, monkeypatch):
+async def test_one_who_promised_silence_tells_no_one(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 1.0)
     s = Social(PEOPLE, graph)
     r, rumor, facts = _rumors(s)
     # Lobart took the hero's gold for keeping quiet (deals.py): the rumor does not leave him
     r._on_fact({"fact": "deal", "npc": LOBART, "silence": [rumor.key]})
-    assert r.spread(DAY + _h(9), 3 * DAY) == 0 and set(rumor.known) == {LOBART}
+    assert await r.spread(DAY + _h(9), 3 * DAY) == 0 and set(rumor.known) == {LOBART}
     # whom he told before still pass it on
     rumor.known[HILDA] = 1
-    r.spread(3 * DAY, 3 * DAY + _h(23))
+    await r.spread(3 * DAY, 3 * DAY + _h(23))
     assert VINO in rumor.known and all(f["from"] != LOBART for f in facts)
 
 
 @pytest.mark.parametrize("promise", ["lie", "crime", "cover"])
 @pytest.mark.parametrize("keeps", [False, True])
-def test_npc_intent_controls_silence_and_first_real_retelling_records_betrayal(graph, promise, keeps):
+async def test_npc_intent_controls_silence_and_first_real_retelling_records_betrayal(graph, promise, keeps):
     if promise == "lie":
         r, rumor, facts = _rumors(Social(PEOPLE, graph))
         teller, listeners = LOBART, [HILDA, VINO]
@@ -310,8 +320,8 @@ def test_npc_intent_controls_silence_and_first_real_retelling_records_betrayal(g
     r.clock = DAY + _h(9)
 
     assert (teller in rumor.silent) is keeps
-    assert r.tell(rumor, teller, listeners[0]) == ("no" if keeps else "told")
-    assert r.tell(rumor, teller, listeners[1]) == ("no" if keeps else "told")
+    assert await r.tell(rumor, teller, listeners[0]) == ("no" if keeps else "told")
+    assert await r.tell(rumor, teller, listeners[1]) == ("no" if keeps else "told")
     betrayals = [f for f in facts if f.get("fact") == "betrayed"]
     assert betrayals == ([] if keeps else [{
         "fact": "betrayed", "npc": teller, "deal": "D1", "how": "told", "to": listeners[0],
@@ -319,7 +329,7 @@ def test_npc_intent_controls_silence_and_first_real_retelling_records_betrayal(g
 
 
 @pytest.mark.parametrize("promise", ["silence", "cover"])
-def test_disabling_cheating_restores_raw_crime_promises_on_load(graph, promise):
+async def test_disabling_cheating_restores_raw_crime_promises_on_load(graph, promise):
     r, _, facts = _crime_rumors(Social(PEOPLE, graph))
     facts.extend([
         {"fact": "npc_intent", "npc": HILDA, "deal": "D1", "keeps": False, "how": [promise]},
@@ -332,11 +342,11 @@ def test_disabling_cheating_restores_raw_crime_promises_on_load(graph, promise):
     [rumor] = r.rumors.values()
     r.clock = DAY + _h(9)
     assert HILDA in rumor.silent
-    assert r.tell(rumor, HILDA, LOBART) == "no"
+    assert await r.tell(rumor, HILDA, LOBART) == "no"
     assert not any(f.get("fact") == "betrayed" for f in facts)
 
 
-def test_a_debt_not_paid_back_goes_round(graph, monkeypatch):
+async def test_a_debt_not_paid_back_goes_round(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     s = Social(PEOPLE, graph)
@@ -354,7 +364,7 @@ def test_a_debt_not_paid_back_goes_round(graph, monkeypatch):
     )
     broken = r.rumors["broken:BAU_950_LOBART:d1"]
     assert broken.hops == 2
-    r.spread(2 * DAY + _h(9), 2 * DAY + _h(23))
+    await r.spread(2 * DAY + _h(9), 2 * DAY + _h(23))
     told = next(f for f in facts if f["to"] == HILDA)
     assert (told["kind"], told["title"], told["quest"]) == ("broken", "25 золотых до конца дня 2", "d1")
     assert "задолжал человеку по имени Лобарт и не вернул в срок" in broken.told("Лобарт")
@@ -370,7 +380,7 @@ def _crime_rumors(s: Social, kind: str = "theft", witness: str = HILDA) -> tuple
         facts=lambda: r.chronicle.facts("crime"),
         crime=lambda crime_id: next((f for f in r.chronicle.facts("crime") if f["id"] == crime_id), None),
         describe=lambda f: f"герой совершил {f['kind']} (день {f['day']})",
-        learn_side=lambda npc, crime: None,
+        learn_side=AsyncMock(return_value=None),
         excuse=lambda npc, crime: {},
         react=None,
         cover=True,
@@ -410,7 +420,7 @@ def test_no_crimes_ignores_cover_silence_for_old_caught_rumors(graph, cover):
     assert (HILDA in rumor.silent) is (not cover)
 
 
-def test_crime_witnesses_share_one_rumor_and_keep_the_speaker(graph, monkeypatch):
+async def test_crime_witnesses_share_one_rumor_and_keep_the_speaker(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     r, rumor, facts = _crime_rumors(Social(PEOPLE, graph))
@@ -418,7 +428,7 @@ def test_crime_witnesses_share_one_rumor_and_keep_the_speaker(graph, monkeypatch
     assert LOBART not in rumor.known  # a victim who did not see it does not magically know
     r._on_fact({"fact": "crime_seen", "npc": VINO, "crime": "c1"})
     assert len(r.rumors) == 1 and rumor.known[VINO] == 0
-    r.spread(DAY + _h(9), DAY + _h(10))
+    await r.spread(DAY + _h(9), DAY + _h(10))
     [told] = [f for f in facts if f.get("fact") == "rumor"]
     assert (told["crime"], told["from"], told["from_name"], told["to"], told["hops"]) == (
         "c1",
@@ -430,7 +440,7 @@ def test_crime_witnesses_share_one_rumor_and_keep_the_speaker(graph, monkeypatch
     assert rumor.told("Хильда") == "Слух (со слов: Хильда): герой совершил theft (день 1)"
 
 
-def test_justified_murder_upgrades_known_news_and_keeps_its_source_on_reload(graph):
+async def test_justified_murder_upgrades_known_news_and_keeps_its_source_on_reload(graph):
     r, rumor, facts = _crime_rumors(Social(PEOPLE, graph), "murder")
     facts[0]["victim"] = BANDIT
     facts.extend([
@@ -444,22 +454,22 @@ def test_justified_murder_upgrades_known_news_and_keeps_its_source_on_reload(gra
     r._load()
     [rumor] = r.rumors.values()
     notes = []
-    r.dialogue = SimpleNamespace(remember=lambda *args: notes.append(args[-1]))
+    r.dialogue = SimpleNamespace(remember=AsyncMock(side_effect=lambda *args: notes.append(args[-1])))
     r.clock = DAY + _h(10)
-    assert r.tell(rumor, VINO, VATRAS) == "told"
-    assert r.tell(rumor, VATRAS, LOBART) == "told"
+    assert await r.tell(rumor, VINO, VATRAS) == "told"
+    assert await r.tell(rumor, VATRAS, LOBART) == "told"
     assert not [f for f in facts if f.get("fact") == "rumor"][-1].get("excuse")
     assert rumor.known[LOBART] == 2
     r.gate = lambda *args: True
-    assert r.offer_status(rumor, HILDA, LOBART) == "told"
+    assert await r.offer_status(rumor, HILDA, LOBART) == "told"
     upgraded = [f for f in facts if f.get("fact") == "rumor"][-1]
     assert (upgraded["excuse"], upgraded["excuse_by"], upgraded["excuse_by_name"]) == (
         "fought", HILDA, "Хильда",
     )
     assert "Хильда говорит:" in notes[-1] and "дрался с ним" in notes[-1]
     assert rumor.known[LOBART] == 1
-    assert r.tell(rumor, HILDA, LOBART) == "no"
-    assert r.tell(rumor, LOBART, ANDRE) == "told"
+    assert await r.tell(rumor, HILDA, LOBART) == "no"
+    assert await r.tell(rumor, LOBART, ANDRE) == "told"
     retold = [f for f in facts if f.get("fact") == "rumor"][-1]
     assert (retold["excuse"], retold["excuse_by"], retold["hops"]) == ("fought", HILDA, 2)
     tells, known = dict(r.tells), dict(rumor.known)
@@ -488,7 +498,7 @@ async def test_rumor_tick_prepares_guilds_and_still_spreads_on_read_failure(
         return {"day": 1, "hour": 10, "minute": 0}
 
     r.crimes.sides = SimpleNamespace(prepare=prepare)
-    r.link = SimpleNamespace(story_state=state)
+    r.link.story_state = state
     r.clock = DAY + _h(9)
     with caplog.at_level("INFO", logger="gothic_ai.social"):
         await r.tick()
@@ -499,11 +509,11 @@ async def test_rumor_tick_prepares_guilds_and_still_spreads_on_read_failure(
 
 
 @pytest.mark.parametrize("kind,hops", [("theft", 2), ("sheep", 2), ("attack", 3), ("murder", 4)])
-def test_crime_severity_limits_its_retellings(kind, hops, monkeypatch):
+async def test_crime_severity_limits_its_retellings(kind, hops, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     people = [_person(f"N{i}", f"NPC {i}", (_h(8), _h(22), [2000 * i, 0, 0])) for i in range(6)]
     r, rumor, facts = _crime_rumors(Social(people), kind, witness="N0")
-    r.spread(DAY + _h(9), DAY + _h(10))
+    await r.spread(DAY + _h(9), DAY + _h(10))
     assert rumor.known == {f"N{i}": i for i in range(hops + 1)}
     assert len([f for f in facts if f.get("fact") == "rumor"]) == hops
 
@@ -517,31 +527,31 @@ def test_murder_remains_news_longer_than_theft():
 
 
 @pytest.mark.parametrize("settlement", ["silenced", "forgiven"])
-def test_crime_settlement_stops_the_settled_npc_but_not_other_knowers(graph, monkeypatch, settlement):
+async def test_crime_settlement_stops_the_settled_npc_but_not_other_knowers(graph, monkeypatch, settlement):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 1.0)
     r, rumor, facts = _crime_rumors(Social(PEOPLE, graph))
     settled = {"fact": settlement, "npc": HILDA, "crime": "c1", "day": 1}
     facts.append(settled)
     r._on_fact(settled)
-    assert r.spread(DAY + _h(9), DAY + _h(23)) == 0
+    assert await r.spread(DAY + _h(9), DAY + _h(23)) == 0
     assert LOBART not in rumor.known and HILDA in rumor.silent
     # A different actual witness remains free to tell, including after branch reconstruction.
     facts.append({"fact": "crime_seen", "npc": LOBART, "crime": "c1"})
     r._load()
     [rumor] = r.rumors.values()
     assert HILDA in rumor.silent and rumor.known == {HILDA: 0, LOBART: 0}
-    r.spread(DAY + _h(9), DAY + _h(23))
+    await r.spread(DAY + _h(9), DAY + _h(23))
     assert ANDRE in rumor.known  # Lobart can still tell his acquaintance
     assert VINO not in rumor.known  # only Hilda meets Vino, and she promised not to tell
     assert not any(f.get("from") == HILDA for f in facts if f.get("fact") == "rumor")
 
 
-def test_crime_rumors_reload_only_the_current_branch(graph, monkeypatch):
+async def test_crime_rumors_reload_only_the_current_branch(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     r, _, facts = _crime_rumors(Social(PEOPLE, graph))
-    r.spread(DAY + _h(9), DAY + _h(10))
+    await r.spread(DAY + _h(9), DAY + _h(10))
     r._load()
     [rumor] = r.rumors.values()
     assert rumor.known == {HILDA: 0, LOBART: 1}
@@ -557,13 +567,13 @@ def test_crime_rumors_are_disabled_without_crimes(graph):
     assert not r.rumors and not any(f.get("fact") == "rumor" for f in facts)
 
 
-def test_an_outlaw_crime_witness_tells_only_outlaws(graph, monkeypatch):
+async def test_an_outlaw_crime_witness_tells_only_outlaws(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 1.0)
     other = "BDT_1014_BANDIT"
     s = Social([*PEOPLE, _person(other, "Другой разбойник", (0, DAY, FARM), guild=9)], graph)
     r, rumor, _ = _crime_rumors(s, witness=BANDIT)
-    r.spread(DAY + _h(9), DAY + _h(23))
+    await r.spread(DAY + _h(9), DAY + _h(23))
     assert rumor.known == {BANDIT: 0, other: 1}
 
 
@@ -577,26 +587,28 @@ def test_an_outlaw_crime_witness_tells_only_outlaws(graph, monkeypatch):
         ("murder", 0, 5, "no"),
     ],
 )
-def test_explicit_crime_telling_keeps_the_severity_and_freshness_limits(graph, kind, hops, day, expected):
+async def test_explicit_crime_telling_keeps_the_severity_and_freshness_limits(
+    graph, kind, hops, day, expected
+):
     r, rumor, facts = _crime_rumors(Social(PEOPLE, graph), kind)
     rumor.known[HILDA] = hops
     r.clock = day * DAY + _h(9)
-    assert r.tell(rumor, HILDA, LOBART) == expected
+    assert await r.tell(rumor, HILDA, LOBART) == expected
     assert len([f for f in facts if f.get("fact") == "rumor"]) == (expected == "told")
 
 
-def test_explicit_crime_telling_keeps_the_outlaw_boundary(graph):
+async def test_explicit_crime_telling_keeps_the_outlaw_boundary(graph):
     other = "BDT_1014_BANDIT"
     s = Social([*PEOPLE, _person(other, "Другой разбойник", (0, DAY, FARM), guild=9)], graph)
     r, rumor, facts = _crime_rumors(s, witness=BANDIT)
     r.clock = DAY + _h(9)
-    assert r.tell(rumor, BANDIT, HILDA) == "no"
-    assert r.tell(rumor, BANDIT, other) == "told"
+    assert await r.tell(rumor, BANDIT, HILDA) == "no"
+    assert await r.tell(rumor, BANDIT, other) == "told"
     [told] = [f for f in facts if f.get("fact") == "rumor"]
     assert told["to"] == other
 
 
-def test_crime_testimony_recipient_can_retell_the_same_story(graph):
+async def test_crime_testimony_recipient_can_retell_the_same_story(graph):
     r, rumor, facts = _crime_rumors(Social(PEOPLE, graph))
     testimony = {
         "fact": "testimony",
@@ -610,7 +622,7 @@ def test_crime_testimony_recipient_can_retell_the_same_story(graph):
     assert len(r.rumors) == 1 and rumor.known == {HILDA: 0, LOBART: 1}
     assert rumor.since[LOBART] == 2 and rumor.since[HILDA] == 1
     r.clock = 2 * DAY + _h(10)
-    assert r.tell(rumor, LOBART, ANDRE) == "told"
+    assert await r.tell(rumor, LOBART, ANDRE) == "told"
     [told] = [f for f in facts if f.get("fact") == "rumor"]
     assert (told["crime"], told["from"], told["to"], told["hops"]) == ("c1", LOBART, ANDRE, 2)
     r._load()
@@ -743,13 +755,13 @@ def test_each_ones_day_and_how_many_a_place_holds():
     assert s.capacity("FAR") == 2 and s.capacity("BED") == 1 and s.capacity("NOWHERE") == 1
 
 
-def test_retold_rumor_keeps_said(graph, monkeypatch):
+async def test_retold_rumor_keeps_said(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     s = Social(PEOPLE, graph)
     r, rumor, facts = _rumors(s)
     rumor.said = True  # his own words, seen false (sightings.py)
-    r.spread(DAY + _h(9), DAY + _h(23))
+    await r.spread(DAY + _h(9), DAY + _h(23))
     assert [(f["to"], f["hops"], f.get("said")) for f in facts] == [(HILDA, 1, True), (VINO, 2, True)]
     # two retellings away it is still his words, not a quest he claimed
     deals = Deals.__new__(Deals)
@@ -759,11 +771,11 @@ def test_retold_rumor_keeps_said(graph, monkeypatch):
         "обманул человека по имени Лобарт: сказал «Убрать поле репы», а это неправда"
     )
     r2, _, facts2 = _rumors(s)
-    r2.spread(DAY + _h(9), DAY + _h(23))
+    (await r2.spread(DAY + _h(9), DAY + _h(23)))
     assert facts2 and all("said" not in f for f in facts2)
 
 
-def test_a_live_pass_is_staged_fact_first(graph, monkeypatch):
+async def test_a_live_pass_is_staged_fact_first(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     r, rumor, facts = _rumors(Social(PEOPLE, graph))
@@ -771,7 +783,7 @@ def test_a_live_pass_is_staged_fact_first(graph, monkeypatch):
     asked, staged = _staged(r, "words")
     on_staged = r.on_staged
     r.on_staged = lambda *args: (seen.append(list(facts)), on_staged(*args))
-    assert r.spread(DAY + _h(9), DAY + _h(9) + 1) == 1  # a tick: the farm's meeting goes on
+    assert await r.spread(DAY + _h(9), DAY + _h(9) + 1) == 1  # a tick: the farm's meeting goes on
     assert asked == [(LOBART, HILDA)]
     [(a, b, tier, fact)] = staged
     assert (a, b, tier) == (LOBART, HILDA, "words")
@@ -785,19 +797,19 @@ def test_a_live_pass_is_staged_fact_first(graph, monkeypatch):
     assert r.tells[(rumor.key, LOBART, 1)] == 1
 
 
-def test_far_and_sight_keep_how(graph, monkeypatch):
+async def test_far_and_sight_keep_how(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     s = Social(PEOPLE, graph)
     # far: only the fact, as it always was
     r, _, facts = _rumors(s)
     _, staged = _staged(r, "fact")
-    r.spread(DAY + _h(9), DAY + _h(9) + 1)
+    await r.spread(DAY + _h(9), DAY + _h(9) + 1)
     assert [f["how"] for f in facts] == ["met"] and "where" not in facts[0] and not staged
     # seen, not heard: how it passed stays, where and who saw it come with it
     r, _, facts = _rumors(s)
     _, staged = _staged(r, "sight")
-    r.spread(DAY + _h(9), DAY + _h(9) + 1)
+    await r.spread(DAY + _h(9), DAY + _h(9) + 1)
     assert [(f["how"], f["where"], f["seen_by"]) for f in facts] == [("met", "NW_FARM1", ["PLAYER", LOBART])]
     assert [(a, b, tier) for a, b, tier, _ in staged] == [(LOBART, HILDA, "sight")]
     # dealings (Andre, once a day), seen
@@ -806,11 +818,11 @@ def test_far_and_sight_keep_how(graph, monkeypatch):
     at = next(s.ties[LOBART][ANDRE].occasions(LOBART, ANDRE, DAY, 2 * DAY - 1))
     r, _, facts = _rumors(s)
     _staged(r, "sight")
-    r.spread(at - 1, at)
+    await r.spread(at - 1, at)
     assert [(f["to"], f["how"], f["where"]) for f in facts] == [(ANDRE, "dealings", "NW_FARM1")]
 
 
-def test_a_time_jump_stages_nothing(graph, monkeypatch):
+async def test_a_time_jump_stages_nothing(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 1.0)
     s = Social(PEOPLE, graph)
@@ -821,32 +833,32 @@ def test_a_time_jump_stages_nothing(graph, monkeypatch):
         (DAY + 477, DAY + 480),
     ):
         before, _, facts_before = _rumors(s)
-        before.spread(after, until)
+        (await before.spread(after, until))
         r, _, facts = _rumors(s)
         asked, staged = _staged(r, "words")
-        r.spread(after, until)
+        await r.spread(after, until)
         assert facts == facts_before and facts and not asked and not staged
         assert {f["how"] for f in facts} <= {"met", "dealings"}
 
 
-def test_a_busy_pass_waits_while_the_meeting_goes_on(graph, monkeypatch):
+async def test_a_busy_pass_waits_while_the_meeting_goes_on(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     s = Social(PEOPLE, graph)
     # busy: no fact, no tell; the next tick asks again; then they are free and talk
     r, rumor, facts = _rumors(s)
     asked, _ = _staged(r, "wait", "wait", "words")
-    assert r.spread(DAY + _h(9), DAY + _h(9) + 1) == 0
+    assert await r.spread(DAY + _h(9), DAY + _h(9) + 1) == 0
     assert not facts and not any(r.tells.values()) and HILDA not in rumor.known
     assert r.waiting == {(rumor.key, LOBART, HILDA): DAY + _h(9) + 1}
-    assert r.spread(DAY + _h(9) + 1, DAY + _h(9) + 2) == 0
-    assert r.spread(DAY + _h(9) + 2, DAY + _h(9) + 3) == 1
+    assert await r.spread(DAY + _h(9) + 1, DAY + _h(9) + 2) == 0
+    assert await r.spread(DAY + _h(9) + 2, DAY + _h(9) + 3) == 1
     assert asked == [(LOBART, HILDA)] * 3 and [f["how"] for f in facts] == ["talked"] and not r.waiting
 
-    def ticks(r: Rumors, facts: list[dict], start: int) -> int:
+    async def ticks(r: Rumors, facts: list[dict], start: int) -> int:
         """Tick a minute at a time from `start` until a fact: the minute it came."""
         for m in range(start, start + DAY):
-            r.spread(m, m + 1)
+            await r.spread(m, m + 1)
             if facts:
                 return m + 1
         raise AssertionError("no fact")
@@ -854,105 +866,127 @@ def test_a_busy_pass_waits_while_the_meeting_goes_on(graph, monkeypatch):
     # busy for good: a fact as it always was after DEFER_MAX_MIN
     r, _, facts = _rumors(s)
     _, staged = _staged(r, "wait")
-    assert ticks(r, facts, DAY + _h(9)) == DAY + _h(9) + 1 + social.DEFER_MAX_MIN
+    assert await ticks(r, facts, DAY + _h(9)) == DAY + _h(9) + 1 + social.DEFER_MAX_MIN
     assert [f["how"] for f in facts] == ["met"] and not staged and not r.waiting
     # busy until the meeting ends (the farm's day, at 22:00): the last minute it can come is 21:59
     r, _, facts = _rumors(s)
     _staged(r, "wait")
-    assert ticks(r, facts, DAY + _h(21.5)) == DAY + _h(22) - 1 and [f["how"] for f in facts] == ["met"]
+    assert await ticks(r, facts, DAY + _h(21.5)) == DAY + _h(22) - 1 and [f["how"] for f in facts] == ["met"]
     # dealings come once a day: no waiting
     monkeypatch.setattr(social, "P_MEET", 0.0)
     monkeypatch.setattr(social, "P_DEAL", 1.0)
     at = next(s.ties[LOBART][ANDRE].occasions(LOBART, ANDRE, DAY, 2 * DAY - 1))
     r, _, facts = _rumors(s)
     asked, _ = _staged(r, "wait")
-    assert r.spread(at - 1, at) == 1 and asked == [(LOBART, ANDRE)]
+    assert await r.spread(at - 1, at) == 1 and asked == [(LOBART, ANDRE)]
     assert [(f["to"], f["how"]) for f in facts] == [(ANDRE, "dealings")] and not r.waiting
 
 
-def test_a_wait_of_an_earlier_meeting_is_over(graph, monkeypatch):
+async def test_a_wait_of_an_earlier_meeting_is_over(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     r, rumor, facts = _rumors(Social(PEOPLE, graph))
     _staged(r, "wait")
     # busy at the end of the night by the field (till 7:30); the farm's day is another meeting: it waits anew
-    r.spread(DAY + _h(7), DAY + _h(7) + 1)
+    await r.spread(DAY + _h(7), DAY + _h(7) + 1)
     assert r.waiting == {(rumor.key, LOBART, HILDA): DAY + _h(7) + 1}
-    r.spread(DAY + _h(8), DAY + _h(8) + 1)
+    await r.spread(DAY + _h(8), DAY + _h(8) + 1)
     assert not facts and r.waiting == {(rumor.key, LOBART, HILDA): DAY + _h(8) + 1}
 
 
-def test_a_slow_tick_is_live_and_cannot_wait_past_its_meeting(graph, monkeypatch):
+async def test_a_slow_tick_is_live_and_cannot_wait_past_its_meeting(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     s = Social(PEOPLE, graph)
     # a tick of LIVE_MIN game minutes (a slow round trip) is still live
     r, _, facts = _rumors(s)
     asked, _ = _staged(r, "words")
-    r.spread(DAY + _h(9), DAY + _h(9) + social.LIVE_MIN)
+    await r.spread(DAY + _h(9), DAY + _h(9) + social.LIVE_MIN)
     assert asked == [(LOBART, HILDA)] and [f["how"] for f in facts] == ["talked"]
     # busy at 21:58 in a tick to 21:59: the farm's meeting ends at 22:00, so the next tick would not bring
     # them together again; a fact now, not a wait that is never tried again
     r, _, facts = _rumors(s)
     _staged(r, "wait")
-    r.spread(DAY + _h(22) - 3, DAY + _h(22) - 1)
+    await r.spread(DAY + _h(22) - 3, DAY + _h(22) - 1)
     assert [(f["to"], f["how"]) for f in facts] == [(HILDA, "met")] and not r.waiting
 
 
-def test_gate_holds_and_forces(graph, monkeypatch):
+async def test_gate_holds_and_forces(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 1.0)
     s = Social(PEOPLE, graph)
     r, rumor, facts = _rumors(s)
     r.gate = lambda rumor, a, b: False
-    assert r.spread(DAY + _h(9), 2 * DAY) == 0 and not facts
+    assert await r.spread(DAY + _h(9), 2 * DAY) == 0 and not facts
     # True: past the lot and the day's tells; None: as always
     monkeypatch.setattr(social, "P_MEET", 0.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     r.gate = lambda rumor, a, b: True if (a, b) == (LOBART, HILDA) else None
     r.tells[(rumor.key, LOBART, 1)] = social.TELLS_PER_DAY
-    assert r.spread(DAY + _h(9), DAY + _h(9) + 1) == 1
+    assert await r.spread(DAY + _h(9), DAY + _h(9) + 1) == 1
     assert [(f["to"], f["how"]) for f in facts] == [(HILDA, "met")] and ANDRE not in rumor.known
     # it does not raise the dead nor teach those who know
     r2, rumor2, facts2 = _rumors(s)
     r2.dead.add(HILDA)
     r2.gate = lambda rumor, a, b: True
-    assert r2.spread(DAY + _h(9), DAY + _h(9) + 1) == 0 and not facts2
+    assert (await r2.spread(DAY + _h(9), DAY + _h(9) + 1)) == 0 and not facts2
 
 
-def test_offer_uses_the_same_checks(graph, monkeypatch):
+async def test_offer_uses_the_same_checks(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     s = Social(PEOPLE, graph)
     r, rumor, facts = _rumors(s)
-    assert not r.offer(rumor, LOBART, HILDA)  # no clock yet
+    assert not await r.offer(rumor, LOBART, HILDA)  # no clock yet
     r.clock = DAY + _h(9)
-    assert not r.offer(rumor, LOBART, VATRAS) and LOBART not in s.ties.get(VATRAS, {})  # unacquainted
-    assert not r.offer(rumor, HILDA, VINO)  # Hilda does not know it
+    assert not await r.offer(rumor, LOBART, VATRAS) and LOBART not in s.ties.get(VATRAS, {})  # unacquainted
+    assert not await r.offer(rumor, HILDA, VINO)  # Hilda does not know it
     r.dead.add(HILDA)
-    assert not r.offer(rumor, LOBART, HILDA)
+    assert not await r.offer(rumor, LOBART, HILDA)
     r.dead.clear()
     rumor.silent.add(LOBART)
-    assert not r.offer(rumor, LOBART, HILDA)
+    assert not await r.offer(rumor, LOBART, HILDA)
     rumor.silent.clear()
     r.tells[(rumor.key, LOBART, 1)] = social.TELLS_PER_DAY
-    assert not r.offer(rumor, LOBART, HILDA)
+    assert not await r.offer(rumor, LOBART, HILDA)
     r.tells.clear()
     monkeypatch.setattr(social, "P_MEET", 0.0)
-    assert not r.offer(rumor, LOBART, HILDA)  # the lot
+    assert not await r.offer(rumor, LOBART, HILDA)  # the lot
     monkeypatch.setattr(social, "P_MEET", 1.0)
     asked, staged = _staged(r, "wait")
-    assert not r.offer(rumor, LOBART, HILDA) and asked == [(LOBART, HILDA)]
+    assert not await r.offer(rumor, LOBART, HILDA) and asked == [(LOBART, HILDA)]
     assert not facts and not any(r.tells.values()) and not r.waiting  # busy: the view asks again later
     r.stage = r.on_staged = None
-    assert r.offer(rumor, LOBART, HILDA) and [(f["to"], f["how"]) for f in facts] == [(HILDA, "met")]
-    assert not r.offer(rumor, LOBART, HILDA)  # she knows it now
+    assert await r.offer(rumor, LOBART, HILDA) and [(f["to"], f["how"]) for f in facts] == [(HILDA, "met")]
+    assert not await r.offer(rumor, LOBART, HILDA)  # she knows it now
     _, staged = _staged(r, "words")
-    assert r.offer(rumor, LOBART, ANDRE)  # a tie by dealings only
+    assert await r.offer(rumor, LOBART, ANDRE)  # a tie by dealings only
     assert facts[-1]["how"] == "talked" and [(a, b) for a, b, *_ in staged] == [(LOBART, ANDRE)]
     assert r.tells[(rumor.key, LOBART, 1)] == 2
 
+    concurrent, news, recorded = _rumors(s)
+    concurrent.clock = DAY + _h(9)
+    store = await MemoryStore.open(":memory:")
+    concurrent.chronicle.memory = store
+    entered, release = asyncio.Event(), asyncio.Event()
 
-def test_can_tell_is_offer_without_its_effects(graph, monkeypatch):
+    async def delayed_record(fact):
+        entered.set()
+        await release.wait()
+        recorded.append(fact)
+
+    concurrent.chronicle.record = delayed_record
+    first = asyncio.create_task(concurrent.tell(news, LOBART, HILDA))
+    await asyncio.wait_for(entered.wait(), 2)
+    second = asyncio.create_task(concurrent.offer(news, LOBART, HILDA))
+    await asyncio.sleep(0)
+    release.set()
+    assert await asyncio.gather(first, second) == ["told", False]
+    assert len(recorded) == concurrent.tells[(news.key, LOBART, 1)] == 1
+    assert concurrent.dialogue.remember.await_count == 1
+    await store.close()
+
+
+async def test_can_tell_is_offer_without_its_effects(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     r, rumor, facts = _rumors(Social(PEOPLE, graph))
     assert not r.can_tell(rumor, LOBART, HILDA)  # no clock yet
@@ -966,10 +1000,10 @@ def test_can_tell_is_offer_without_its_effects(graph, monkeypatch):
     assert not facts and not asked and not staged and not r.tells and not r.waiting
     assert set(rumor.known) == {LOBART} and VATRAS not in r.social.ties[LOBART]  # no tie made
     monkeypatch.setattr(social, "P_MEET", 0.0)
-    assert not r.can_tell(rumor, LOBART, HILDA) and not r.offer(rumor, LOBART, HILDA)  # the lot
+    assert not r.can_tell(rumor, LOBART, HILDA) and not await r.offer(rumor, LOBART, HILDA)  # the lot
     monkeypatch.setattr(social, "P_MEET", 1.0)
     for a, b in pairs:  # and it says what offer does (Hilda knows it by her turn)
-        assert r.can_tell(rumor, a, b) == r.offer(rumor, a, b)
+        assert r.can_tell(rumor, a, b) == await r.offer(rumor, a, b)
     assert [f["to"] for f in facts] == [HILDA, VINO, ANDRE] and not r.can_tell(rumor, LOBART, HILDA)
     r.tells[(rumor.key, LOBART, 1)] = social.TELLS_PER_DAY
     rumor.known.pop(HILDA)
@@ -978,33 +1012,36 @@ def test_can_tell_is_offer_without_its_effects(graph, monkeypatch):
     assert r.can_tell(rumor, LOBART, HILDA)  # the e2e's gate, as for a meeting
 
 
-def test_offer_status_says_why_it_did_not_pass(graph, monkeypatch):
+async def test_offer_status_says_why_it_did_not_pass(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     r, rumor, facts = _rumors(Social(PEOPLE, graph))
-    assert r.offer_status(rumor, LOBART, HILDA) == "no"  # no clock yet
+    assert await r.offer_status(rumor, LOBART, HILDA) == "no"  # no clock yet
     r.clock = DAY + _h(9)
     asked, staged = _staged(r, "wait", "sight")
     # busy now: no fact, no tell, ask again later
-    assert r.offer_status(rumor, LOBART, HILDA, how="visited") == "wait"
+    assert await r.offer_status(rumor, LOBART, HILDA, how="visited") == "wait"
     assert not facts and not any(r.tells.values()) and not r.waiting and HILDA not in rumor.known
     # one walked up to the other: seen, not heard, it stays a visit
-    assert r.offer_status(rumor, LOBART, HILDA, how="visited") == "told"
+    assert await r.offer_status(rumor, LOBART, HILDA, how="visited") == "told"
     assert [(f["to"], f["hops"], f["how"], f["where"]) for f in facts] == [(HILDA, 1, "visited", "NW_FARM1")]
     assert [(a, b, tier) for a, b, tier, _ in staged] == [(LOBART, HILDA, "sight")]
-    assert r.offer_status(rumor, LOBART, HILDA, how="visited") == "no"  # she knows it now
+    assert await r.offer_status(rumor, LOBART, HILDA, how="visited") == "no"  # she knows it now
     monkeypatch.setattr(social, "P_MEET", 0.0)
-    assert r.offer_status(rumor, LOBART, ANDRE, how="visited") == "no"  # the lot
+    assert await r.offer_status(rumor, LOBART, ANDRE, how="visited") == "no"  # the lot
     assert asked == [(LOBART, HILDA)] * 2  # a no is never staged
     # said aloud near the hero: talked, whatever the occasion
     monkeypatch.setattr(social, "P_MEET", 1.0)
     _staged(r, "words")
-    assert r.offer_status(rumor, LOBART, ANDRE, how="visited") == "told" and facts[-1]["how"] == "talked"
+    assert (
+        await r.offer_status(rumor, LOBART, ANDRE, how="visited") == "told"
+        and facts[-1]["how"] == "talked"
+    )
     # offer is a meeting's: how met
     r.stage = r.on_staged = None
-    assert r.offer(rumor, HILDA, VINO) is True and facts[-1]["how"] == "met"
+    assert await r.offer(rumor, HILDA, VINO) is True and facts[-1]["how"] == "met"
 
 
-def test_busy_chain_in_one_spread(monkeypatch):
+async def test_busy_chain_in_one_spread(monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     farm = [(_h(8), _h(22), FARM)]
     s = Social(
@@ -1026,32 +1063,32 @@ def test_busy_chain_in_one_spread(monkeypatch):
     r.stage = stage
     r.on_staged = lambda rumor, a, b, staging, fact: busy.update((a, b))  # their scene begins
     t = DAY + _h(9) + 1
-    assert r.spread(t - 1, t) == 1
+    assert await r.spread(t - 1, t) == 1
     # Hilda heard it and would pass it on to Vino the same minute, but she stands in her scene
     assert asked == [(LOBART, HILDA), (HILDA, VINO)] and [f["to"] for f in facts] == [HILDA]
     assert VINO not in rumor.known and r.waiting == {(rumor.key, HILDA, VINO): t}
     busy.clear()  # the scene is over
-    assert r.spread(t, t + 1) == 1
+    assert await r.spread(t, t + 1) == 1
     assert [(f["from"], f["to"], f["hops"], f["how"]) for f in facts[1:]] == [(HILDA, VINO, 2, "talked")]
     assert not r.waiting
 
 
-def test_new_attributes_have_class_defaults(graph, monkeypatch):
+async def test_new_attributes_have_class_defaults(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     bare = Rumors.__new__(Rumors)
     assert (bare.stage, bare.on_staged, bare.gate, bare.clock, bare.waiting) == (None,) * 5
     r, rumor, facts = _rumors(Social(PEOPLE, graph))
-    assert r.spread(DAY + _h(9), DAY + _h(9) + 1) == 1  # nothing staged: as always
+    assert await r.spread(DAY + _h(9), DAY + _h(9) + 1) == 1  # nothing staged: as always
     r2, _, _ = _rumors(Social(PEOPLE, graph))
     _staged(r2, "wait")
-    assert r2.spread(DAY + _h(9), DAY + _h(9) + 1) == 0 and r2.waiting and Rumors.waiting is None
+    assert (await r2.spread(DAY + _h(9), DAY + _h(9) + 1)) == 0 and r2.waiting and Rumors.waiting is None
     r2.chronicle.facts = lambda kind=None: []
     r2._load()  # a load: the waits are gone with the rumors
     assert r2.waiting is None and not r2.rumors
 
 
-def test_a_failing_stage_leaves_a_plain_fact(graph, monkeypatch):
+async def test_a_failing_stage_leaves_a_plain_fact(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
     r, _, facts = _rumors(Social(PEOPLE, graph))
@@ -1060,11 +1097,11 @@ def test_a_failing_stage_leaves_a_plain_fact(graph, monkeypatch):
         raise RuntimeError("bug")
 
     r.stage = stage
-    assert r.spread(DAY + _h(9), DAY + _h(9) + 1) == 1 and [f["how"] for f in facts] == ["met"]
+    assert await r.spread(DAY + _h(9), DAY + _h(9) + 1) == 1 and [f["how"] for f in facts] == ["met"]
     r2, _, facts2 = _rumors(Social(PEOPLE, graph))
     _staged(r2, "words")
     r2.on_staged = lambda *args: 1 / 0
-    assert r2.spread(DAY + _h(9), DAY + _h(9) + 1) == 1 and [f["how"] for f in facts2] == ["talked"]
+    assert (await r2.spread(DAY + _h(9), DAY + _h(9) + 1)) == 1 and [f["how"] for f in facts2] == ["talked"]
 
 
 def test_whom_a_character_of_the_directors_knows(graph, monkeypatch):

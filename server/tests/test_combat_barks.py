@@ -10,29 +10,44 @@ from gothic_ai.combat_barks import HINT, CombatBarks
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.game import GameLink
 from gothic_ai.llm.fake import FakeBackend
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import CombatHit, NpcRoster, NpcViews, SvmLine
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 
 @pytest.fixture
-def rig():
+async def rig():
     conn = SimpleNamespace(send=AsyncMock())
     link = GameLink(conn)
     quick = FakeBackend("[pain] Ай, больно!", delay=0)
     rows = []
-    dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), quick=quick,
-                               trace=SimpleNamespace(write=rows.append))
+    dialogue = DialogueManager(
+        link,
+        FakeBackend(),
+        PersonaProvider(None),
+        quick=quick,
+        trace=SimpleNamespace(write=rows.append),
+        memory=await MemoryStore.open(":memory:"),
+    )
+    await dialogue.initialize()
     barks = CombatBarks(dialogue, rng=lambda: 0)
     entries = [dict(id=n, name=name, guild=guild, distance=100, activity="fight")
                for n, name, guild in [("V", "Раненый", 1), ("A", "Враг", 2),
                                       ("F", "Друг", 3), ("G", "Соратник", 1)]]
-    link._dispatch(NpcRoster(type="npc_roster", t=0, npcs=entries))
-    return SimpleNamespace(link=link, quick=quick, dialogue=dialogue, barks=barks,
-                           rows=rows, conn=conn, entries=entries)
+    await link._dispatch(NpcRoster(type="npc_roster", t=0, npcs=entries))
+    try:
+        yield SimpleNamespace(link=link, quick=quick, dialogue=dialogue, barks=barks,
+                              rows=rows, conn=conn, entries=entries)
+    finally:
+        if barks.task is not None:
+            barks.task.cancel()
+            await asyncio.gather(barks.task, return_exceptions=True)
+        await dialogue.close()
 
 
-def hit(rig, **fields):
-    rig.link._dispatch(CombatHit(**{
+async def hit(rig, **fields):
+    await rig.link._dispatch(CombatHit(**{
         "type": "combat_hit", "npc": "V", "by": "PLAYER", "damage": 10,
         "hp": 90, "hp_max": 100, "down": False, "dead": False, "kind": "melee", **fields,
     }))
@@ -62,14 +77,14 @@ def age(rig, seconds=6):
     ({"dead": True}, "F", "ally_down", "Раненый упал — его сразил герой"),
 ])
 async def test_reasons_speaker_prompt_and_overlay(rig, fields, npc, reason, event):
-    rig.link._dispatch(NpcViews(type="npc_views", t=0, views=[dict(
+    await rig.link._dispatch(NpcViews(type="npc_views", t=0, views=[dict(
         npc="V", name="Раненый", hp=100, hp_max=100, sees=[
             dict(id="A", name="Враг", distance=50, guild=2, att="hostile"),
             dict(id="F", name="Друг", distance=100, guild=3, att="friendly"),
             dict(id="G", name="Соратник", distance=200, guild=1, att="neutral"),
         ],
     )]))
-    hit(rig, **fields)
+    await hit(rig, **fields)
     await finish(rig)
     [row] = rig.rows
     assert (row["npc"], row["reason"], row["outcome"]) == (npc, reason, "said")
@@ -84,13 +99,13 @@ async def test_reasons_speaker_prompt_and_overlay(rig, fields, npc, reason, even
 
 
 async def test_ally_down_chooses_nearest_living_same_guild_person(rig):
-    rig.link._dispatch(NpcViews(type="npc_views", t=0, views=[dict(
+    await rig.link._dispatch(NpcViews(type="npc_views", t=0, views=[dict(
         npc="V", name="Раненый", hp=100, sees=[
             dict(id="F", name="Друг", distance=50, guild=3, att="friendly", body="down"),
             dict(id="G", name="Соратник", distance=1499, guild=1, att="neutral"),
         ],
     )]))
-    hit(rig, down=True)
+    await hit(rig, down=True)
     await finish(rig)
     assert rig.rows[0]["npc"] == "G"
 
@@ -99,13 +114,13 @@ async def test_ally_down_chooses_nearest_living_same_guild_person(rig):
 async def test_player_down_chooses_nearest_friend_or_companion(rig, distance, speaker):
     rig.barks.companion = lambda npc: npc == "G"
     entries = [{**e, "distance": distance if e["id"] == "F" else 500} for e in rig.entries]
-    rig.link._dispatch(NpcRoster(type="npc_roster", t=0, npcs=entries))
-    rig.link._dispatch(NpcViews(type="npc_views", t=0, views=[dict(
+    await rig.link._dispatch(NpcRoster(type="npc_roster", t=0, npcs=entries))
+    await rig.link._dispatch(NpcViews(type="npc_views", t=0, views=[dict(
         npc="V", name="Раненый", hp=100, sees=[
             dict(id="F", name="Друг", distance=100, att_hero="friendly"),
         ],
     )]))
-    hit(rig, npc="PLAYER", by="A", hp=0, down=True)
+    await hit(rig, npc="PLAYER", by="A", hp=0, down=True)
     await finish(rig)
     [row] = rig.rows
     assert (row["npc"], row["reason"], row["outcome"]) == (speaker, "ally_down", "said")
@@ -113,7 +128,7 @@ async def test_player_down_chooses_nearest_friend_or_companion(rig, distance, sp
 
 
 async def test_first_hit_warms_both_people_once_and_reuses_the_persona_prefix(rig):
-    friend = rig.dialogue.open("F", "Друг", warm=False)
+    friend = await rig.dialogue.open("F", "Друг", warm=False)
     rig.dialogue._start_prewarm(friend, ["F"])
     await asyncio.gather(*list(rig.dialogue._prewarms.values()))
     assert not rig.dialogue._prewarms
@@ -121,20 +136,20 @@ async def test_first_hit_warms_both_people_once_and_reuses_the_persona_prefix(ri
     # A different world's bark lets both warm-ups finish before this NPC's real request preempts one.
     occupied = asyncio.create_task(asyncio.sleep(60))
     rig.barks.task = occupied
-    hit(rig, by="A")
+    await hit(rig, by="A")
     await asyncio.gather(*list(rig.dialogue._prewarms.values()))
     assert rig.dialogue._prewarm_history["F"] == friend.history
     assert rig.dialogue._quick_slots["F"] == friend_slot
     rig.dialogue._nearby["F"] = ("Друг", 100)
     rig.dialogue._focus = "F"
-    rig.dialogue._prewarm_focus()
+    await rig.dialogue._prewarm_focus()
     await asyncio.gather(*list(rig.dialogue._prewarms.values()))
     assert len(rig.quick.prewarms) == 3  # looking back at the warmed friend adds no request
     rig.dialogue._focus = None
     occupied.cancel()
     await asyncio.gather(occupied, return_exceptions=True)
     rig.barks.task = None
-    hit(rig, by="A")
+    await hit(rig, by="A")
     await finish(rig)
     assert {instructions for instructions, _ in rig.quick.prewarms} == {
         rig.dialogue.conversations[npc].persona.instructions for npc in ("F", "V", "A")
@@ -143,57 +158,57 @@ async def test_first_hit_warms_both_people_once_and_reuses_the_persona_prefix(ri
     assert rig.quick.calls[0][0] in {instructions for instructions, _ in rig.quick.prewarms}
     before = len(rig.quick.prewarms)
     age(rig)
-    hit(rig, by="A")
+    await hit(rig, by="A")
     await finish(rig)
     assert len(rig.quick.prewarms) == before
 
 
 async def test_low_hp_once_per_fight_replaces_hurt(rig):
-    hit(rig, hp=29)
+    await hit(rig, hp=29)
     await finish(rig)
     age(rig)
     rig.quick.script[0] = type(rig.quick.script[0])("Не дождешься!")
-    hit(rig, hp=20)
+    await hit(rig, hp=20)
     await finish(rig)
     age(rig)
     rig.barks.fighters["V"].hit_at -= 21
-    hit(rig, hp=19)
+    await hit(rig, hp=19)
     await finish(rig)
     assert [r["reason"] for r in rig.rows] == ["low_hp", "hurt", "low_hp"]
 
 
 async def test_npc_cooldown_counts_svm_and_any_first_words(rig):
-    rig.link._dispatch(SvmLine(type="svm_line", id="s", npc="V", svm="$NOTNOW",
+    await rig.link._dispatch(SvmLine(type="svm_line", id="s", npc="V", svm="$NOTNOW",
                               text="Нет!", overlay=True))
     await asyncio.gather(*list(rig.dialogue._svm_tasks.values()))
     age(rig, 4.9)
-    hit(rig)
+    await hit(rig)
     await finish(rig)
     assert rig.rows[-1]["outcome"] == "cooldown"
     age(rig, 5.1)
     rig.quick.script[0] = type(rig.quick.script[0])("Получай!")
-    hit(rig)
+    await hit(rig)
     await finish(rig)
     assert rig.rows[-1]["outcome"] == "said"
     age(rig)
     await rig.dialogue._say(rig.dialogue.conversations["V"], "Эй!", None, filler=True)
-    hit(rig)
+    await hit(rig)
     await finish(rig)
     assert rig.rows[-1]["outcome"] == "cooldown"
 
 
 async def test_one_world_request_and_voice_then_1500ms_gap(rig):
-    hit(rig)
-    hit(rig, npc="A")
+    await hit(rig)
+    await hit(rig, npc="A")
     await finish(rig)
     assert len(rig.quick.calls) == 1 and rig.rows[0]["outcome"] == "busy"
-    hit(rig, npc="A")  # first line is still waiting for the fake game to start it
+    await hit(rig, npc="A")  # first line is still waiting for the fake game to start it
     assert rig.rows[-1]["outcome"] == "busy"
     age(rig, 1.49)
-    hit(rig, npc="A")
+    await hit(rig, npc="A")
     assert rig.rows[-1]["outcome"] == "cooldown"
     age(rig, 1.51)
-    hit(rig, npc="A")
+    await hit(rig, npc="A")
     await finish(rig)
     assert len(rig.quick.calls) == 2 and rig.rows[-1]["outcome"] == "said"
 
@@ -201,24 +216,24 @@ async def test_one_world_request_and_voice_then_1500ms_gap(rig):
 async def test_probability_only_after_first_and_resets_after_20s(rig):
     rolls = iter([0.5, 0.49])
     rig.barks.rng = lambda: next(rolls)
-    hit(rig)
+    await hit(rig)
     await finish(rig)
     age(rig)
-    hit(rig)
+    await hit(rig)
     assert rig.rows[-1]["outcome"] == "chance"
-    hit(rig)
+    await hit(rig)
     await finish(rig)
     assert len(rig.quick.calls) == 2  # 0.49 did request, even though the answer repeats
     age(rig)
     rig.barks.fighters["V"].hit_at -= 21
-    hit(rig)
+    await hit(rig)
     await finish(rig)
     assert len(rig.quick.calls) == 3  # the first hit does not roll
 
 
 @pytest.mark.parametrize("busy", ["turn", "queue", "synthesizing"])
 async def test_busy_npc_stays_silent(rig, busy):
-    conv = rig.dialogue.open("V", "Раненый", warm=False)
+    conv = await rig.dialogue.open("V", "Раненый", warm=False)
     if busy == "turn":
         conv.reply = asyncio.create_task(asyncio.sleep(60))
     else:
@@ -226,7 +241,7 @@ async def test_busy_npc_stays_silent(rig, busy):
         conv.voice.put_nowait(object())
         if busy == "synthesizing":
             conv.voice.get_nowait()  # queue empty, but its current voice is not finished
-    hit(rig)
+    await hit(rig)
     assert rig.rows[-1]["outcome"] == "busy"
     assert not rig.quick.calls and not rig.conn.send.await_count
     if conv.reply is not None:
@@ -240,12 +255,12 @@ async def test_busy_npc_stays_silent(rig, busy):
     ("Ай, больно!", 0, "same"),
 ])
 async def test_late_long_and_same_are_silent(rig, text, first, outcome):
-    hit(rig)
+    await hit(rig)
     await finish(rig)
     age(rig)
     rig.dialogue.quick = FakeBackend(text, first=first, delay=0)
     before = rig.conn.send.await_count
-    hit(rig)
+    await hit(rig)
     await finish(rig)
     assert rig.rows[-1]["outcome"] == outcome
     assert rig.conn.send.await_count == before
@@ -253,7 +268,7 @@ async def test_late_long_and_same_are_silent(rig, text, first, outcome):
 
 async def test_without_quick_no_request_or_voice(rig):
     rig.dialogue.quick = None
-    hit(rig)
+    await hit(rig)
     assert not rig.quick.calls and not rig.conn.send.await_count and not rig.rows
 
 
@@ -262,7 +277,7 @@ async def test_only_conscious_nearby_humans_in_world_speak(rig, speaker):
     entries = rig.entries + [dict(id=speaker, name=speaker, distance=3001 if speaker == "FAR" else 100,
         guild=16 if speaker == "BEAST" else 1,
         activity={"DOWN": "down", "DIALOG": "dialog"}.get(speaker, "fight"))]
-    rig.link._dispatch(NpcRoster(type="npc_roster", t=0, npcs=entries))
-    hit(rig, npc=speaker)
+    await rig.link._dispatch(NpcRoster(type="npc_roster", t=0, npcs=entries))
+    await hit(rig, npc=speaker)
     await finish(rig)
     assert not rig.quick.calls and not rig.conn.send.await_count

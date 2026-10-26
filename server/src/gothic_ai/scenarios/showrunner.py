@@ -288,7 +288,7 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
             giver,
         )
         quests = line.get("quests", [])
-        made = [director.book.all()[q] for q in quests if q in director.book.all()]
+        made = [(await director.book.all())[q] for q in quests if q in await director.book.all()]
         check(
             "book",
             len(made) == len(quests) == 1
@@ -425,7 +425,8 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
             and director.budget(chapter, at).text() == budget,
             f"{len(lines)} lines; {budget}",
         )
-        check("book_after_load", all(q in director.book.all() for q in quests), quests)
+        known_quests = await director.book.all()
+        check("book_after_load", all(q in known_quests for q in quests), quests)
         played = await play_book_chain(link, director.book, made)
         results.update({f"passage_{key}": value for key, value in played.items()})
         await director.book.settle(giver)
@@ -611,11 +612,13 @@ async def showrunner_live(link: GameLink, director: Showrunner) -> dict[str, str
             if fact["fact"] == "line_none":
                 continue
             lines += 1
-            quests = [director.book.all()[q] for q in fact["quests"]]
+            quests = [(await director.book.all())[q] for q in fact["quests"]]
             for q in quests:
                 log.info("showrunner live %s quest: %s", kind, json.dumps(q.to_dict(), ensure_ascii=False))
             characters = [
-                s.model_dump() for s in director.casting.cast.characters() if s.npc in fact["characters"]
+                s.model_dump()
+                for s in await director.casting.cast.characters()
+                if s.npc in fact["characters"]
             ]
             log.info("showrunner live %s characters: %s", kind, json.dumps(characters, ensure_ascii=False))
             played = await play_book_chain(link, director.book, quests)

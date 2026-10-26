@@ -17,6 +17,7 @@ from gothic_ai.memory import MemoryStore
 from gothic_ai.places import PlaceBook
 from gothic_ai.protocol import HoldVerdictCmd, NpcActResult, NpcRoster, PerceptionHeld
 from tests.test_crimes import HILDA, LOBART, Link, deed
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 GUARD = "MIL_305_JERGEL"
 OTHER_GUARD = "MIL_306_GUARD"
@@ -107,7 +108,7 @@ class ReactLink(Link):
         self.actions.append((npc, action, args))
         action_id = f"a{len(self.actions)}"
         if self.ack:
-            self.receive(NpcActResult(
+            await self.receive(NpcActResult(
                 type="npc_act_result", id=action_id, npc=npc,
                 status="queued" if self.accept else "rejected", detail="busy" if not self.accept else None,
             ))
@@ -121,8 +122,9 @@ def card(npc, *, courage=3, honesty=3):
 @pytest.fixture
 async def system():
     link = ReactLink()
-    memory = MemoryStore(":memory:")
+    memory = await MemoryStore.open(":memory:")
     chronicle = Chronicle(link, memory)  # type: ignore[arg-type]
+    await chronicle.initialize()
     crimes = Crimes(link, chronicle)  # type: ignore[arg-type]
     law = CrimeLaw(crimes)
     reactions = CrimeReact(link, crimes, law)  # type: ignore[arg-type]
@@ -141,7 +143,7 @@ async def system():
     await crimes.close()
     if chronicle._background:
         await asyncio.gather(*chronicle._background)
-    memory.close()
+    await memory.close()
 
 
 def held(**fields):
@@ -150,8 +152,8 @@ def held(**fields):
     )
 
 
-def crime(system, *, npc=HILDA, owner=LOBART, guild=12):
-    system.link.receive(deed(
+async def crime(system, *, npc=HILDA, owner=LOBART, guild=12):
+    await system.link.receive(deed(
         owner=owner, owner_npc_guild=guild, witnesses=[npc],
         witnesses_metadata=[{"npc": npc, "guild": system.crimes.people.get(npc, {}).get("guild", 3),
                              "npctype": 0}],
@@ -160,9 +162,11 @@ def crime(system, *, npc=HILDA, owner=LOBART, guild=12):
 
 
 async def finish(system):
-    # Only holds, not the separate post-combat restitution task, need to finish here.
+    # Wait for the published hold verdict; its persisted history can precede the send.
     for _ in range(30):
-        if system.react.history:
+        if system.react.history and any(
+            message.hold == system.react.history[-1]["hold"] for message in verdicts(system)
+        ):
             return system.react.history[-1]
         await asyncio.sleep(0.002)
     raise AssertionError("hold was not settled")
@@ -173,7 +177,7 @@ def verdicts(system):
 
 
 async def test_roles_use_true_ownership_community_and_real_shared_house(system):
-    case = crime(system)
+    case = await crime(system)
     assert system.react.role(LOBART, case) == "owner"
     assert system.react.role(HILDA, case) == "member"
     system.crimes.people[HILDA]["home_room"] = "ANOTHER_HOUSE"
@@ -189,7 +193,7 @@ async def test_roles_use_true_ownership_community_and_real_shared_house(system):
 
 
 async def test_room_and_chest_owner_are_owners_even_when_item_owner_is_another_npc(system):
-    system.link.receive(deed(
+    await system.link.receive(deed(
         owner=LOBART, owner_npc_guild=12, room_owner=HILDA, room_owner_guild=12,
         chest_owner="CHESTKEEPER", chest_owner_guild=12,
     ))
@@ -199,9 +203,11 @@ async def test_room_and_chest_owner_are_owners_even_when_item_owner_is_another_n
 
 
 async def test_ally_role_precedes_guard_but_not_owner(system):
-    case = crime(system, npc=GUARD, owner=MATTEO, guild=3)
+    case = await crime(system, npc=GUARD, owner=MATTEO, guild=3)
     for npc in (GUARD, MATTEO):
-        system.chronicle.record({"fact": "crime_side", "npc": npc, "crime": case["id"], "why": "fought"})
+        await system.chronicle.record(
+            {"fact": "crime_side", "npc": npc, "crime": case["id"], "why": "fought"}
+        )
     assert system.react.role(GUARD.lower(), case) == "ally"
     assert system.react.role(MATTEO, case) == "owner"
 
@@ -210,8 +216,8 @@ async def test_ally_role_precedes_guard_but_not_owner(system):
     (HILDA, "ally"), (CITIZEN, "member"), (GUARD, "guard"), (MATTEO, "owner"),
 ])
 async def test_justified_hearsay_changes_only_an_unrelated_listeners_role(system, npc, expected):
-    case = system.crimes.record(deed(kind="murder", victim=MATTEO, victim_guild=3))
-    system.chronicle.record({
+    case = await system.crimes.record(deed(kind="murder", victim=MATTEO, victim_guild=3))
+    await system.chronicle.record({
         "fact": "rumor", "to": npc, "from": "ALLY", "crime": case["id"], "kind": "murder", "hops": 1,
         "excuse": "fought", "excuse_by": "ALLY", "excuse_by_name": "Союзник",
     })
@@ -219,15 +225,15 @@ async def test_justified_hearsay_changes_only_an_unrelated_listeners_role(system
     assert system.crimes.does_not_blame(npc, case) is (expected == "ally")
     if expected == "ally":
         assert "Ты не винишь героя" in system.crimes.situation(npc)
-        system.chronicle.record({"fact": "crime_seen", "npc": npc, "crime": case["id"]})
+        await system.chronicle.record({"fact": "crime_seen", "npc": npc, "crime": case["id"]})
         assert system.react.role(npc, case) == "stranger"
         assert not system.crimes.does_not_blame(npc, case)
 
 
 async def test_unrelated_bandit_does_not_blame_a_justified_killing_in_the_bl_community(system):
     system.crimes.people[HILDA] = {"guild": 9, "npctype": 5}
-    case = system.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=9, victim_npctype=5))
-    system.chronicle.record({
+    case = await system.crimes.record(deed(kind="murder", victim=LOBART, victim_guild=9, victim_npctype=5))
+    await system.chronicle.record({
         "fact": "rumor", "to": HILDA, "from": "ALLY", "crime": case["id"], "kind": "murder",
         "excuse": "hostile", "excuse_by": "ALLY",
     })
@@ -239,14 +245,14 @@ async def test_unrelated_bandit_does_not_blame_a_justified_killing_in_the_bl_com
 
 @pytest.mark.parametrize("unknown", [HILDA, LOBART])
 async def test_household_requires_observer_and_owner_home_metadata(system, unknown):
-    case = crime(system)
+    case = await crime(system)
     del system.crimes.people[unknown]["home_room"]
     assert system.react.role(HILDA, case) is None
 
 
 @pytest.mark.parametrize("observer_home,owner_home", [("", "LOBART"), ("LOBART", ""), ("", "")])
 async def test_empty_home_is_uncertain_even_when_the_key_is_present(system, observer_home, owner_home):
-    case = crime(system)
+    case = await crime(system)
     system.crimes.people[HILDA]["home_room"] = observer_home
     system.crimes.people[LOBART]["home_room"] = owner_home
     assert system.react.role(HILDA, case) is None
@@ -262,7 +268,7 @@ def sleeping_house(system, npc, waypoint, *, state="ZS_GOTOBED", room=""):
 async def test_real_lobart_beds_share_a_house_without_portal_rooms(system, state):
     system.crimes.places = PlaceBook.load()
     assert system.crimes.places is not None
-    case = crime(system)
+    case = await crime(system)
     sleeping_house(system, HILDA, "NW_FARM1_INHOUSE_BED_01", state=state, room="HILDA_BEDROOM")
     sleeping_house(system, LOBART, "NW_FARM1_INHOUSE_BED_02", room="LOBART_BEDROOM")
     assert system.react.role(HILDA, case) == "member"
@@ -274,7 +280,7 @@ async def test_real_lobart_beds_share_a_house_without_portal_rooms(system, state
 
 async def test_distinct_mapped_houses_are_not_a_household_even_with_equal_guilds(system):
     system.crimes.places = PlaceBook.load()
-    case = crime(system)
+    case = await crime(system)
     sleeping_house(system, HILDA, "NW_FARM1_INSTABLE_BED_02")
     sleeping_house(system, LOBART, "NW_FARM1_INHOUSE_BED_02")
     assert system.react.role(HILDA, case) == "stranger"
@@ -287,14 +293,14 @@ async def test_distinct_mapped_houses_are_not_a_household_even_with_equal_guilds
 ])
 async def test_household_fallback_requires_known_sleep_routine_inside_a_house(system, waypoint, state):
     system.crimes.places = PlaceBook.load()
-    case = crime(system)
+    case = await crime(system)
     sleeping_house(system, HILDA, waypoint, state=state)
     sleeping_house(system, LOBART, "NW_FARM1_INHOUSE_BED_02")
     assert system.react.role(HILDA, case) is None
 
 
 async def test_mapped_beds_without_the_place_book_stay_uncertain(system):
-    case = crime(system)
+    case = await crime(system)
     sleeping_house(system, HILDA, "NW_FARM1_INHOUSE_BED_01")
     sleeping_house(system, LOBART, "NW_FARM1_INHOUSE_BED_02")
     assert system.react.role(HILDA, case) is None
@@ -302,16 +308,16 @@ async def test_mapped_beds_without_the_place_book_stay_uncertain(system):
 
 
 async def test_hold_waits_for_crime_and_keeps_real_seen_before_one_server_verdict(system):
-    system.link.receive(held())
+    await system.link.receive(held())
     await asyncio.sleep(0)
     assert not verdicts(system)
-    crime(system)
+    await crime(system)
     row = await finish(system)
     assert row["role"] == "member" and row["reaction"] == "shout"
     assert system.crimes.known(HILDA)[0].degree == "seen"
     assert system.link.actions == [(HILDA, "say_svm", {"svm": "DIRTYTHIEF", "overlay": True})]
     assert [(v.hold, v.to) for v in verdicts(system)] == [("h1", "server")]
-    system.link.receive(held())
+    await system.link.receive(held())
     await asyncio.sleep(0)
     assert len(verdicts(system)) == 1
     assert "shout" in system.react.summary("deed-1")
@@ -323,36 +329,36 @@ async def test_classified_noncrime_releases_immediately_without_waiting_for_dead
 ):
     monkeypatch.setattr(crime_react, "HOLD_SECONDS", 5.0)
     if held_first:
-        system.link.receive(held())
+        await system.link.receive(held())
         await asyncio.sleep(0)
         assert not verdicts(system)
-    system.link.receive(deed())  # Crimes explicitly classifies this unowned item as lawful
+    await system.link.receive(deed())  # Crimes explicitly classifies this unowned item as lawful
     if not held_first:
-        system.link.receive(held())
+        await system.link.receive(held())
     row = await finish(system)  # finishes within the helper's short window, not five seconds
     assert row["verdict"] == "scripts" and row["reason"] == "noncrime"
     assert len(verdicts(system)) == 1 and system.link.actions == []
-    system.link.receive(held())
+    await system.link.receive(held())
     await asyncio.sleep(0)
     assert len(verdicts(system)) == 1
 
 
 async def test_duplicate_deed_still_resolves_to_its_existing_crime(system):
-    crime(system)
-    assert system.crimes.record(deed(owner=LOBART, owner_npc_guild=12)) is None
-    system.link.receive(held())
+    await crime(system)
+    assert (await system.crimes.record(deed(owner=LOBART, owner_npc_guild=12))) is None
+    await system.link.receive(held())
     row = await finish(system)
     assert row["verdict"] == "server" and row["reaction"] == "shout"
 
 
 async def test_unclassified_deed_without_a_session_still_waits_for_real_crime(system):
     system.chronicle.branch = None
-    system.link.receive(deed())
-    system.link.receive(held())
+    await system.link.receive(deed())
+    await system.link.receive(held())
     await asyncio.sleep(0)
     assert not verdicts(system)
     system.chronicle.branch = "A"
-    crime(system)
+    await crime(system)
     assert (await finish(system))["verdict"] == "server"
 
 
@@ -363,8 +369,8 @@ async def test_missing_card_uses_three_and_projection_precedes_fight(system):
         seen.append((npc, list(system.link.actions)))
 
     system.react.project = project
-    crime(system, npc=LOBART)
-    system.link.receive(held().model_copy(update={"npc": LOBART}))
+    await crime(system, npc=LOBART)
+    await system.link.receive(held().model_copy(update={"npc": LOBART}))
     row = await finish(system)
     assert row["reaction"] == "fight"
     assert seen == [(LOBART, [])]
@@ -375,11 +381,11 @@ async def test_missing_card_uses_three_and_projection_precedes_fight(system):
 
 async def test_flee_svm_is_part_of_native_state_start_instead_of_a_cleared_queue(system):
     system.react.cards = {HILDA: card(HILDA, courage=2)}
-    system.link.receive(deed(
+    await system.link.receive(deed(
         kind="murder", victim=LOBART, victim_guild=12, witnesses=[HILDA],
         witnesses_metadata=[{"npc": HILDA, "guild": 12, "npctype": 0}],
     ))
-    system.link.receive(held().model_copy(update={"kind": "murder"}))
+    await system.link.receive(held().model_copy(update={"kind": "murder"}))
     row = await finish(system)
     assert row["reaction"] == "flee" and row["verdict"] == "server"
     assert system.link.actions == [(HILDA, "flee", {"npc": "PLAYER", "svm": "HELP"})]
@@ -387,8 +393,8 @@ async def test_flee_svm_is_part_of_native_state_start_instead_of_a_cleared_queue
 
 async def test_silence_and_ignore_are_valid_server_verdicts_without_body_action(system):
     system.react.cards = {HILDA: card(HILDA, honesty=2)}
-    crime(system)
-    system.link.receive(held())
+    await crime(system)
+    await system.link.receive(held())
     assert (await finish(system))["reaction"] == "silent"
     assert verdicts(system)[0].to == "server"
     assert system.link.actions == []
@@ -397,39 +403,39 @@ async def test_silence_and_ignore_are_valid_server_verdicts_without_body_action(
 
 @pytest.mark.parametrize("busy", [False, True])
 async def test_allied_murder_witness_keeps_truth_and_suppresses_vanilla_even_when_busy(system, busy):
-    system.link.receive(deed(
+    await system.link.receive(deed(
         kind="murder", victim=MATTEO, victim_guild=3, witnesses=[GUARD],
         witnesses_metadata=[{"npc": GUARD, "guild": 2, "npctype": 0}],
     ))
-    system.chronicle.record({"fact": "crime_side", "npc": GUARD, "crime": "deed-1", "why": "fought"})
+    await system.chronicle.record({"fact": "crime_side", "npc": GUARD, "crime": "deed-1", "why": "fought"})
     if busy:
         system.link.owned.add(GUARD)
-    system.link.receive(held().model_copy(update={"kind": "murder", "npc": GUARD}))
+    await system.link.receive(held().model_copy(update={"kind": "murder", "npc": GUARD}))
     row = await finish(system)
     assert (row["role"], row["reaction"], row["verdict"]) == ("ally", "ignore", "server")
     assert system.crimes.known(GUARD)[0].degree == "seen"
     assert system.link.actions == []
     assert [(v.hold, v.to) for v in verdicts(system)] == [("h1", "server")]
-    assert system.law.tick(3 * 1440 + 9 * 60 + 15) == []
+    assert (await system.law.tick(3 * 1440 + 9 * 60 + 15)) == []
 
 
 @pytest.mark.parametrize("failure", ["missing_crime", "missing_deed", "busy", "owned", "unknown_role"])
 async def test_uncertain_hold_returns_to_scripts_exactly_once(system, monkeypatch, failure):
     monkeypatch.setattr(crime_react, "HOLD_SECONDS", 0.02)
     if failure != "missing_crime":
-        crime(system)
+        await crime(system)
     message = held()
     if failure == "missing_deed":
         message = message.model_copy(update={"deed": None})
     elif failure == "busy":
-        system.link.receive(NpcRoster(type="npc_roster", t=0, npcs=[{
+        await system.link.receive(NpcRoster(type="npc_roster", t=0, npcs=[{
             "id": HILDA, "name": "Хильда", "guild": 12, "distance": 200, "activity": "dialog",
         }]))
     elif failure == "owned":
         system.link.owned.add(HILDA)
     elif failure == "unknown_role":
         del system.crimes.people[HILDA]["home_room"]
-    system.link.receive(message)
+    await system.link.receive(message)
     row = await finish(system)
     expected = "busy" if failure == "owned" else failure
     assert row["verdict"] == "scripts" and row["reason"] == expected
@@ -441,23 +447,23 @@ async def test_uncertain_hold_returns_to_scripts_exactly_once(system, monkeypatc
 async def test_body_receipt_failure_returns_perception_to_scripts(system, monkeypatch, accept, ack, reason):
     monkeypatch.setattr(crime_react, "HOLD_SECONDS", 0.02)
     system.link.accept, system.link.ack = accept, ack
-    crime(system)
-    system.link.receive(held())
+    await crime(system)
+    await system.link.receive(held())
     row = await finish(system)
     assert row["verdict"] == "scripts" and row["reason"] == reason
     assert len(verdicts(system)) == 1
 
 
 async def test_other_threats_remain_for_the_planner(system):
-    system.link.receive(held().model_copy(update={"deed": None, "other": "WOLF"}))
+    await system.link.receive(held().model_copy(update={"deed": None, "other": "WOLF"}))
     await asyncio.sleep(0)
     assert not system.react._tasks and not verdicts(system)
 
 
 @pytest.mark.parametrize("deed_id", [None, "deed-1"])
 async def test_room_entry_remains_for_encounter_rules(system, deed_id):
-    crime(system)
-    system.link.receive(held().model_copy(update={"kind": "enter_room", "deed": deed_id}))
+    await crime(system)
+    await system.link.receive(held().model_copy(update={"kind": "enter_room", "deed": deed_id}))
     await asyncio.sleep(0)
     assert not system.react._tasks and not system.react._holds
     assert not verdicts(system) and not system.link.actions
@@ -467,8 +473,8 @@ async def test_room_entry_remains_for_encounter_rules(system, deed_id):
 @pytest.mark.parametrize("other", ["PLAYER", "CAVALORN"])
 @pytest.mark.parametrize("deed_id", [None, "deed-1"])
 async def test_bandit_sightings_remain_for_parley_without_missing_deed_fallback(system, kind, other, deed_id):
-    crime(system)
-    system.link.receive(held().model_copy(update={"kind": kind, "other": other, "deed": deed_id}))
+    await crime(system)
+    await system.link.receive(held().model_copy(update={"kind": kind, "other": other, "deed": deed_id}))
     await asyncio.sleep(0)
     assert not system.react._tasks and not system.react._holds and not system.react.history
     assert not verdicts(system) and not system.link.actions
@@ -482,8 +488,8 @@ async def test_called_guards_hear_and_inform_law_and_nearest_free_guard_fights(s
         {"npc": "SLD_800_LEE", "guild": 7, "distance": 100},
     ]
     system.crimes.people["SLD_800_LEE"] = {"guild": 7, "npctype": 0}
-    crime(system, npc=CITIZEN, owner=MATTEO, guild=3)
-    system.link.receive(held().model_copy(update={"npc": CITIZEN}))
+    await crime(system, npc=CITIZEN, owner=MATTEO, guild=3)
+    await system.link.receive(held().model_copy(update={"npc": CITIZEN}))
     row = await finish(system)
     assert row["reaction"] == "call_guards" and row["verdict"] == "server"
     assert system.crimes.known(GUARD)[0].degree == "heard"
@@ -494,22 +500,22 @@ async def test_called_guards_hear_and_inform_law_and_nearest_free_guard_fights(s
 
 
 async def test_guard_witness_fights_and_law_knows_without_model(system):
-    crime(system, npc=GUARD, owner=MATTEO, guild=3)
-    system.link.receive(held().model_copy(update={"npc": GUARD}))
+    await crime(system, npc=GUARD, owner=MATTEO, guild=3)
+    await system.link.receive(held().model_copy(update={"npc": GUARD}))
     row = await finish(system)
     assert row["role"] == "guard" and row["reaction"] == "fight"
-    assert system.law.tick(3 * 1440 + 9 * 60 + 15)[0]["how"] == "guard"
+    assert (await system.law.tick(3 * 1440 + 9 * 60 + 15))[0]["how"] == "guard"
 
 
 async def test_cold_guard_metadata_is_shared_with_called_law_path(system):
     guard = "SLD_900_FARM_GUARD"
-    case = crime(system, owner=MATTEO, guild=8)
+    case = await crime(system, owner=MATTEO, guild=8)
     system.link.nearby = [{"npc": guard, "guild": 7, "distance": 300}]
     assert guard not in system.crimes.people
     guards = await system.react._guards(HILDA, case)
     assert guards == [guard]
     assert system.crimes.people[guard]["guild"] == 7
-    system.law.called(case["id"], HILDA, guards)
+    await system.law.called(case["id"], HILDA, guards)
     assert system.crimes.known(guard)[0].degree == "heard"
     assert system.chronicle.facts("crime_known")[0]["how"] == "called"
 
@@ -520,9 +526,9 @@ async def test_called_guard_who_sided_with_the_hero_is_not_sent_to_fight(system)
         {"npc": GUARD, "guild": 2, "distance": 100},
         {"npc": OTHER_GUARD, "guild": 2, "distance": 500},
     ]
-    case = crime(system, npc=CITIZEN, owner=MATTEO, guild=3)
-    system.chronicle.record({"fact": "crime_side", "npc": GUARD, "crime": case["id"], "why": "hostile"})
-    system.link.receive(held().model_copy(update={"npc": CITIZEN}))
+    case = await crime(system, npc=CITIZEN, owner=MATTEO, guild=3)
+    await system.chronicle.record({"fact": "crime_side", "npc": GUARD, "crime": case["id"], "why": "hostile"})
+    await system.link.receive(held().model_copy(update={"npc": CITIZEN}))
     row = await finish(system)
     assert row["reaction"] == "call_guards"
     assert system.crimes.known(GUARD) == []
@@ -598,7 +604,7 @@ async def test_identity_read_preserves_home_loaded_while_vm_reply_is_pending(sys
 
 
 async def test_restitution_only_moves_existing_goods_after_proven_unconsciousness(system):
-    case = crime(system)
+    case = await crime(system)
     system.link.eval_values = [1, 0, 0, 1, 0, 1]
     await system.react._reclaim(case, LOBART, 0)
     assert system.link.effects == [(LOBART, [{
@@ -608,7 +614,7 @@ async def test_restitution_only_moves_existing_goods_after_proven_unconsciousnes
 
 
 async def test_second_fighter_returns_goods_when_first_fighter_leaves_the_fight(system):
-    case = crime(system, npc=MATTEO, owner=MATTEO, guild=3)
+    case = await crime(system, npc=MATTEO, owner=MATTEO, guild=3)
     owner_left = asyncio.Event()
     owner_reads = 0
 
@@ -635,7 +641,7 @@ async def test_second_fighter_returns_goods_when_first_fighter_leaves_the_fight(
 
 
 async def test_two_fighters_observing_same_defeat_return_only_the_stolen_amount(system):
-    case = crime(system, npc=MATTEO, owner=MATTEO, guild=3)
+    case = await crime(system, npc=MATTEO, owner=MATTEO, guild=3)
     observed = set()
     both_observed, transfer_started, finish_transfer = (asyncio.Event() for _ in range(3))
 
@@ -667,7 +673,7 @@ async def test_two_fighters_observing_same_defeat_return_only_the_stolen_amount(
 
 
 async def test_session_change_cancels_all_fighters_waiting_to_return_goods(system):
-    case = crime(system, npc=MATTEO, owner=MATTEO, guild=3)
+    case = await crime(system, npc=MATTEO, owner=MATTEO, guild=3)
     observed = set()
     both_observed = asyncio.Event()
     pending_reply = asyncio.Event()
@@ -684,7 +690,7 @@ async def test_session_change_cancels_all_fighters_waiting_to_return_goods(syste
     system.react._track_reclaim(case, GUARD, 0)
     tasks = tuple(system.react._tasks)
     await asyncio.wait_for(both_observed.wait(), 1.0)
-    system.link.receive(system.link.session.model_copy(update={"branch": "B"}))
+    await system.link.receive(system.link.session.model_copy(update={"branch": "B"}))
     await asyncio.gather(*tasks, return_exceptions=True)
     assert all(task.cancelled() for task in tasks)
     assert not system.react._reclaiming and not system.react._restitution_started
@@ -694,7 +700,7 @@ async def test_session_change_cancels_all_fighters_waiting_to_return_goods(syste
 @pytest.mark.parametrize("values", [[1, 1, 0, 1, 1, 0], [1, 0, 1, 1, 1, 0], [1, 0, 0, 0, 1, 0]])
 async def test_dead_hero_dead_witness_or_missing_goods_never_restitute(system, values):
     system.link.eval_values = values
-    await system.react._reclaim(crime(system), LOBART, 0)
+    await system.react._reclaim((await crime(system)), LOBART, 0)
     assert not system.link.effects and not system.chronicle.facts("crime_restitution")
 
 
@@ -702,13 +708,13 @@ async def test_low_hp_or_unrelated_state_does_not_count_as_a_defeated_thief(syst
     system.link.eval_values = [0, 0, 0, 1, 1, 0]
     moments = iter([0.0, 0.0, 181.0])
     system.react.clock = lambda: next(moments)
-    await system.react._reclaim(crime(system), LOBART, 0)
+    await system.react._reclaim((await crime(system)), LOBART, 0)
     assert not system.link.effects
 
 
 async def test_world_change_cancels_pending_hold_without_writing_into_loaded_branch(system):
-    system.link.receive(held())
+    await system.link.receive(held())
     await asyncio.sleep(0)
-    system.link.receive(system.link.session.model_copy(update={"branch": "B"}))
+    await system.link.receive(system.link.session.model_copy(update={"branch": "B"}))
     await asyncio.gather(*tuple(system.react._tasks), return_exceptions=True)
     assert not system.react.history and not verdicts(system)

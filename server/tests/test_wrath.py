@@ -6,6 +6,7 @@ from gothic_ai.persona import PersonaProvider
 from gothic_ai.wrath import TAKE_OFFENSE, TEMPERS, Wrath
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 
 def offense(severity: int, what: str, unforgivable: bool = False, cid: str = "c1") -> ToolCall:
@@ -15,7 +16,8 @@ def offense(severity: int, what: str, unforgivable: bool = False, cid: str = "c1
 async def _setup(fake: FakeGame, llm: FakeBackend):
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
-    dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=MemoryStore(":memory:"))
+    dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:"))
+    await dialogue.initialize()
     wrath = Wrath(link, dialogue)
     dialogue.extensions.append(wrath)
     await link.attach(XARDAS)
@@ -40,8 +42,8 @@ async def test_insults_fill_the_scales_until_they_tip():
     )
     link_cm, dialogue, wrath = await _setup(fake, llm)
     try:
-        dialogue.open(XARDAS, "Ксардас")
-        assert TAKE_OFFENSE in [t.name for t in dialogue._offered(XARDAS)]
+        await dialogue.open(XARDAS, "Ксардас")
+        assert TAKE_OFFENSE in [t.name for t in await dialogue._offered(XARDAS)]
         assert "осталось 5 из 5" in wrath.situation(XARDAS)
         await dialogue.say_as_player(XARDAS, "Эй, старик!")
         await _until(lambda: wrath.of(XARDAS).took == 2)
@@ -57,7 +59,7 @@ async def test_insults_fill_the_scales_until_they_tip():
         assert msg["card"]["image"].endswith("xardas-end.jpg")
         assert "Чаша твоего терпения переполнена" in llm.calls[3][1][-1].output  # the last word knows
         assert wrath.of(XARDAS).tipped and wrath.situation(XARDAS) is None
-        assert TAKE_OFFENSE not in [t.name for t in dialogue._offered(XARDAS)]
+        assert TAKE_OFFENSE not in [t.name for t in await dialogue._offered(XARDAS)]
         assert dialogue.conversations[XARDAS].intent.attitude == "hostile"
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -69,7 +71,7 @@ async def test_the_unforgivable_tips_them_at_once():
     link_cm, dialogue, wrath = await _setup(fake, llm)
     try:
         assert "матери" in wrath.situation(XARDAS)
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Твоя мама...")
         await _until(lambda: _raised(fake) != [])
         assert wrath.of(XARDAS).took == TEMPERS[XARDAS].patience

@@ -57,57 +57,81 @@ class NpcCrimeLaw:
         return [crime for crime in self.npc_crimes.facts()
                 if crime.get("community") == community and crime.get("id") in ids]
 
-    def inform(self, crime: Fact, *, via: str, at: int) -> Fact | None:
-        community = crime.get("community")
-        if not self.enabled or community not in LAW_COMMUNITIES:
-            return None
-        if any(f.get("id") == crime["id"] for f in self.known(community)):
-            return None
-        fact: Fact = {
-            "fact": "npc_crime_known", "crime": crime["id"], "community": community,
-            "via": via.upper(), "at": at,
-        }
-        self.chronicle.record(fact)
-        return fact
+    async def inform(self, crime: Fact, *, via: str, at: int) -> Fact | None:
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
 
-    def deliver(self, now: int) -> list[Fact]:
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            community = crime.get("community")
+            if not self.enabled or community not in LAW_COMMUNITIES:
+                return None
+            if any(f.get("id") == crime["id"] for f in self.known(community)):
+                return None
+            fact: Fact = {
+                "fact": "npc_crime_known", "crime": crime["id"], "community": community,
+                "via": via.upper(), "at": at,
+            }
+            await self.chronicle.record(fact)
+            return fact
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def deliver(self, now: int) -> list[Fact]:
         """A guard reports immediately; an ordinary witness needs the hero law's same delay.
 
         Only direct witnesses from the victim's community can report. Neither hero crime facts nor
         rumors addressed to the hero can turn into an NPC case (or the other way round).
         """
-        law = self.npc_crimes.law
-        if not self.enabled or law is None:
-            return []
-        crimes = {crime["id"]: crime for crime in self.npc_crimes.facts()}
-        routes = []
-        for seen in self.chronicle.facts("npc_crime_seen"):
-            crime = crimes.get(seen.get("crime"))
-            if crime is None or crime.get("community") not in LAW_COMMUNITIES:
-                continue
-            npc, community = str(seen.get("npc") or "").upper(), crime["community"]
-            at = game_minutes(crime)
-            if not npc or at is None or crime.get("kind") not in REPORT_DELAYS:
-                continue
-            guard = law.is_guard(npc, community)
-            if not guard and law.community_of(npc) != community:
-                continue
-            due = at if guard else at + REPORT_DELAYS[crime["kind"]]
-            if due > now:
-                continue
-            if not guard and any(
-                f.get("npc", "").upper() == npc and (dead := game_minutes(f)) is not None
-                and dead < due for f in self.chronicle.facts("died")
-            ):
-                continue
-            routes.append((due, npc, crime))
-        out = []
-        for due, npc, crime in sorted(routes, key=lambda route: (route[0], route[1])):
-            if fact := self.inform(crime, via=npc, at=due):
-                out.append(fact)
-        return out
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
 
-    def _on_message(self, message: GameMessage) -> None:
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            law = self.npc_crimes.law
+            if not self.enabled or law is None:
+                return []
+            crimes = {crime["id"]: crime for crime in self.npc_crimes.facts()}
+            routes = []
+            for seen in self.chronicle.facts("npc_crime_seen"):
+                crime = crimes.get(seen.get("crime"))
+                if crime is None or crime.get("community") not in LAW_COMMUNITIES:
+                    continue
+                npc, community = str(seen.get("npc") or "").upper(), crime["community"]
+                at = game_minutes(crime)
+                if not npc or at is None or crime.get("kind") not in REPORT_DELAYS:
+                    continue
+                guard = law.is_guard(npc, community)
+                if not guard and law.community_of(npc) != community:
+                    continue
+                due = at if guard else at + REPORT_DELAYS[crime["kind"]]
+                if due > now:
+                    continue
+                if not guard and any(
+                    f.get("npc", "").upper() == npc and (dead := game_minutes(f)) is not None
+                    and dead < due for f in self.chronicle.facts("died")
+                ):
+                    continue
+                routes.append((due, npc, crime))
+            out = []
+            for due, npc, crime in sorted(routes, key=lambda route: (route[0], route[1])):
+                if fact := await self.inform(crime, via=npc, at=due):
+                    out.append(fact)
+            return out
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def _on_message(self, message: GameMessage) -> None:
         if isinstance(message, (Loading, Session)):
             self._generation += 1
             self._pending.clear()
@@ -117,9 +141,9 @@ class NpcCrimeLaw:
         elif isinstance(message, (NpcViews, NpcRoster)):
             self._kick()
         elif isinstance(message, NpcIdle) and message.act:
-            self._finished(message)
+            await self._finished(message)
 
-    def _on_fact(self, fact: Fact) -> None:
+    async def _on_fact(self, fact: Fact) -> None:
         kind = fact.get("fact")
         if kind == "npc_crime_seen":
             # A direct guard's knowledge is true at the original observation, even before a clock
@@ -129,14 +153,14 @@ class NpcCrimeLaw:
             npc = str(fact.get("npc") or "").upper()
             if crime is not None and law is not None and law.is_guard(npc, crime.get("community")):
                 if (at := game_minutes(crime)) is not None:
-                    self.inform(crime, via=npc, at=at)
+                    await self.inform(crime, via=npc, at=at)
         elif kind == "npc_crime_reaction" and fact.get("reaction") == "fight":
             if fact.get("role") in {"guard", "law"} and fact.get("act"):
                 self._pending[str(fact["crime"])] = (str(fact["npc"]), str(fact["act"]))
         elif kind == "npc_crime_defense":
             crime = self.npc_crimes.crime(str(fact.get("crime") or ""))
             if crime is not None and self._guard_action(crime, str(fact.get("act") or "")):
-                self._settle(
+                await self._settle(
                     crime, str(fact.get("fighter") or ""), str(fact.get("outcome") or "fight"),
                     far=bool(fact.get("far")),
                 )
@@ -177,24 +201,38 @@ class NpcCrimeLaw:
                      and reaction.get("role") in {"guard", "law"}
                      and (not action or reaction.get("act") == action)), None)
 
-    def _settle(self, crime: Fact, guard: str, how: str, *, far: bool = False) -> Fact | None:
-        if not self.enabled or self.npc_crimes.settled(crime["id"]):
-            return None
-        fact: Fact = {
-            "fact": "npc_crime_settled", "crime": crime["id"], "by": guard, "how": how,
-            **({"far": True} if far else {}),
-        }
-        self.chronicle.record(fact)
-        self._pending.pop(crime["id"], None)
-        return fact
+    async def _settle(self, crime: Fact, guard: str, how: str, *, far: bool = False) -> Fact | None:
+        world_generation = self.link.world_generation
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
 
-    def _finished(self, message: NpcIdle) -> None:
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            if not self.enabled or self.npc_crimes.settled(crime["id"]):
+                return None
+            fact: Fact = {
+                "fact": "npc_crime_settled", "crime": crime["id"], "by": guard, "how": how,
+                **({"far": True} if far else {}),
+            }
+            await self.chronicle.record(fact)
+            if self.link.world_generation == world_generation and self.link.session is _memory_session:
+                self._pending.pop(crime["id"], None)
+            return fact
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def _finished(self, message: NpcIdle) -> None:
         for cid, (guard, action) in tuple(self._pending.items()):
             if action != message.act or guard != message.npc.upper():
                 continue
             crime = self.npc_crimes.crime(cid)
             if crime is not None and crime.get("kind") == "attack":
-                self._settle(crime, guard, message.detail or message.reason or "fight")
+                await self._settle(crime, guard, message.detail or message.reason or "fight")
 
     async def tick(self, now: int | None = None) -> None:
         if not self.enabled or self.chronicle.branch is None:
@@ -223,7 +261,7 @@ class NpcCrimeLaw:
                     continue
                 if generation != self._generation:
                     return
-            self.deliver(now)
+            await self.deliver(now)
             for community in LAW_COMMUNITIES:
                 for crime in self.known(community):
                     if generation != self._generation:
@@ -239,7 +277,7 @@ class NpcCrimeLaw:
                         ) if fact.get("crime") == crime["id"] and fact.get("act") == existing.get("act")
                             and fact.get("fighter") == existing.get("npc")), None)
                         if defense is not None:
-                            self._settle(
+                            await self._settle(
                                 crime, existing["npc"], str(defense.get("outcome") or "fight"),
                                 far=bool(defense.get("far")),
                             )
@@ -248,7 +286,7 @@ class NpcCrimeLaw:
                         completed = (self.npc_crimes._completed.get(str(existing.get("act") or ""))
                                      if pending else None)
                         if completed is not None:
-                            self._finished(completed)
+                            await self._finished(completed)
                         elif not pending:
                             # Loading cancels the old body watcher. A later honest meeting closes
                             # that one interrupted intervention; it must never order a second fight.
@@ -256,7 +294,7 @@ class NpcCrimeLaw:
                                 existing["npc"], crime["culprit"], self.will._generation,
                             )
                             if mode is not None and generation == self._generation:
-                                self._settle(crime, existing["npc"], "interrupted", far=mode == "far")
+                                await self._settle(crime, existing["npc"], "interrupted", far=mode == "far")
                         continue
                     if not crime.get("far") and now <= (game_minutes(crime) or 0):
                         continue  # the original on-scene reaction has first use of these bodies
@@ -291,10 +329,10 @@ class NpcCrimeLaw:
             candidates.update(npc for npc in world.all_names() if world.social.guilds.get(npc) in guilds)
         return candidates
 
-    def _restitution_claimed(self, crime: Fact, guard: str, *, far: bool) -> bool:
+    async def _restitution_claimed(self, crime: Fact, guard: str, *, far: bool) -> bool:
         cid = crime["id"]
         if any(f.get("crime") == cid for f in self.chronicle.facts("npc_crime_restitution")):
-            self._settle(crime, guard, "already_returned", far=far)
+            await self._settle(crime, guard, "already_returned", far=far)
             return True
         return (self.npc_crimes._generation, cid) in self.npc_crimes._restitution_started
 
@@ -319,7 +357,7 @@ class NpcCrimeLaw:
                 item=item, mission=bool(crime.get("mission")),
             ):
                 return
-            if self._restitution_claimed(crime, guard, far=mode == "far"):
+            if (await self._restitution_claimed(crime, guard, far=mode == "far")):
                 return
             values = await self.link.story_eval(culprit, [
                 ["call", "NPC_HASITEMS", ["inst", "SELF"], ["sym", item]],
@@ -329,7 +367,7 @@ class NpcCrimeLaw:
             count = values[0]
             if type(count) is not int or count <= 0:
                 return
-            if self._restitution_claimed(crime, guard, far=mode == "far"):
+            if (await self._restitution_claimed(crime, guard, far=mode == "far")):
                 return
             card = self.will.cards.get(culprit)
             if card is None or card.courage <= 3:
@@ -355,17 +393,17 @@ class NpcCrimeLaw:
                     if not transfer_started:
                         self.npc_crimes._restitution_started.discard(reservation)
                 if generation == self._generation:
-                    self.chronicle.record({
+                    await self.chronicle.record({
                         "fact": "npc_crime_restitution", "crime": cid, "npc": owner,
                         "culprit": culprit, "fighter": guard, "item": item, "count": amount,
                         "how": "surrendered", **({"far": True} if mode == "far" else {}),
                     })
-                    self._settle(crime, guard, "surrendered", far=mode == "far")
+                    await self._settle(crime, guard, "surrendered", far=mode == "far")
                 return
         if mode == "far":
             result = await self.will.fight_far(crime, guard, self.will._generation, role="law")
             if result is not None and generation == self._generation:
-                self._settle(crime, guard, str(result.get("outcome") or "fight"), far=True)
+                await self._settle(crime, guard, str(result.get("outcome") or "fight"), far=True)
         else:
             action = await self.npc_crimes._fight(
                 crime, guard, self.npc_crimes._generation, role="law",
@@ -374,4 +412,4 @@ class NpcCrimeLaw:
             if generation == self._generation:
                 self._pending[cid] = (guard, action)
                 if completed := self.npc_crimes._completed.get(action):
-                    self._finished(completed)
+                    await self._finished(completed)

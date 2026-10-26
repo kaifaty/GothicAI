@@ -22,6 +22,7 @@ from tests.test_authoring import BOOK, graph  # noqa: F401 - the graph fixture
 from tests.test_dialogue import _until
 from tests.test_director import HILDA, LOBART, NAMES, SYMBOLS
 from tests.test_director import QUEST as VANILLA_QUEST
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 THIEF = "DIR_NPC_2"
 GOODS = "ITFO_WINE"
@@ -478,7 +479,9 @@ async def _book(fake: FakeGame, store: MemoryStore, graph) -> tuple[Any, QuestBo
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
     patches = StoryPatches(link, store)
+    await patches.initialize()
     chronicle = Chronicle(link, store)
+    await chronicle.initialize()
     director = Director(
         link,
         graph,
@@ -495,7 +498,7 @@ async def _book(fake: FakeGame, store: MemoryStore, graph) -> tuple[Any, QuestBo
 
 async def test_the_books_ground_knows_waypoints_and_freepoints(graph):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, _, _ = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, _, _ = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         book.places = PlaceBook({**BOOK, "points": {**BOOK["points"], FREEPOINT: 2}})
         ground = await book.ground(_quest())
@@ -516,10 +519,10 @@ async def test_the_books_ground_knows_waypoints_and_freepoints(graph):  # noqa: 
 
 async def test_the_book_makes_a_quest_and_follows_it(graph):  # noqa: F811
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, book, patches, chronicle = await _book(fake, store, graph)
     try:
-        assert book.next_id() == "DIR_Q1"
+        assert await book.next_id() == "DIR_Q1"
         q = _quest()
         assert await book.make(q) == []
         # one patch: the changes, the record stays on the server
@@ -534,16 +537,16 @@ async def test_the_book_makes_a_quest_and_follows_it(graph):  # noqa: F811
             "trigger",
             "add_node",
         ]
-        assert [r["quest"]["id"] for r in patches.records(QUEST)] == ["DIR_Q1"]
-        assert all(op["op"] != QUEST for op in patches.ops()) and len(patches.ops()) == 7
-        assert book.all() == {"DIR_Q1": q} and book.next_id() == "DIR_Q2"
+        assert [r["quest"]["id"] for r in await patches.records(QUEST)] == ["DIR_Q1"]
+        assert all(op["op"] != QUEST for op in await patches.ops()) and len(await patches.ops()) == 7
+        assert await book.all() == {"DIR_Q1": q} and await book.next_id() == "DIR_Q2"
         assert book.progress("DIR_Q1") == questbook.Progress("open", 0)
 
         # given, the stages through their triggers, done
         await fake.send(type="dialog_chosen", npc=HILDA, node="DIR_Q1_GIVE", made=True)
         await _until(lambda: book.progress("DIR_Q1").state == "given")
         assert "Ты дал герою поручение «Украденное вино» (id DIR_Q1): найти вора и вернуть вино." in (
-            book.situation(HILDA) or ""
+            await book.situation(HILDA) or ""
         )
         await fake.send(type="trigger_fired", id="DIR_Q1_S1G1", count=1, npc="PC_HERO", other="PC_HERO")
         await fake.send(type="trigger_fired", id="DIR_Q1_S1", count=1, npc="PC_HERO", other="PC_HERO")
@@ -552,7 +555,7 @@ async def test_the_book_makes_a_quest_and_follows_it(graph):  # noqa: F811
         await _until(lambda: book.progress("DIR_Q1").state == "done")
         assert (
             "Поручение «Украденное вино» герой выполнил, ты заплатил: 20 золотых, опыт +40."
-            == book.situation(HILDA)
+            == await book.situation(HILDA)
         )
         facts = [f["fact"] for f in chronicle.facts() if f["fact"].startswith("story_quest")]
         assert facts == ["story_quest", "story_quest_given", "story_quest_stage", "story_quest_done"]
@@ -569,7 +572,7 @@ async def test_the_book_makes_a_quest_and_follows_it(graph):  # noqa: F811
 
 async def test_vanilla_requirements_and_goals_survive_the_branch_log_and_load(graph):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, patches, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, patches, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         fake.vars[VANILLA_QUEST] = 0
         fake.symbols["DIA_LOBART_WORKNOW"] = "info"
@@ -582,16 +585,16 @@ async def test_vanilla_requirements_and_goals_survive_the_branch_log_and_load(gr
             ],
         )
         assert await book.make(q) == []
-        assert patches.records(QUEST) == [{"op": QUEST, "quest": q.to_dict()}]
+        assert await patches.records(QUEST) == [{"op": QUEST, "quest": q.to_dict()}]
         assert book.progress(q.id) == questbook.Progress("open", 0)
-        original_ops = patches.ops()
-        saved_seq = patches.memory.head("A")  # the quest's chronicle fact belongs to the save too
+        original_ops = await patches.ops()
+        saved_seq = await patches.memory.head("A")  # the quest's chronicle fact belongs to the save too
         await _until(lambda: fake.heads[-1:] == [("A", saved_seq)])
         await fake.send(type="session", branch="B", parent="A", parent_seq=saved_seq, reason="load")
         await _until(lambda: patches.branch == "B" and chronicle.branch == "B")
-        assert book.all() == {q.id: q}
-        assert patches.records(QUEST) == [{"op": QUEST, "quest": q.to_dict()}]
-        assert patches.ops() == original_ops
+        assert await book.all() == {q.id: q}
+        assert await patches.records(QUEST) == [{"op": QUEST, "quest": q.to_dict()}]
+        assert await patches.ops() == original_ops
         assert book.progress(q.id) == questbook.Progress("open", 0)
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -599,7 +602,7 @@ async def test_vanilla_requirements_and_goals_survive_the_branch_log_and_load(gr
 
 async def test_a_book_quest_cannot_write_a_scripts_variable(graph, monkeypatch):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, patches, _ = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, patches, _ = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         original_build = questbook.build
 
@@ -613,7 +616,7 @@ async def test_a_book_quest_cannot_write_a_scripts_variable(graph, monkeypatch):
         before = len(fake.graph)
         errors = await book.make(_quest())
         assert any("квест книги не меняет переменную скриптов" in error for error in errors), errors
-        assert book.all() == {} and patches.records(QUEST) == [] and patches.ops() == []
+        assert await book.all() == {} and await patches.records(QUEST) == [] and await patches.ops() == []
         assert len(fake.graph) == before
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -636,7 +639,7 @@ def _chain() -> list[Quest]:
 
 async def test_a_chain_is_checked_with_its_predecessors_and_sent_in_one_patch(graph, monkeypatch):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, patches, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, patches, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         await _until(lambda: bool(fake.graph))
         before = len(fake.graph)
@@ -653,8 +656,8 @@ async def test_a_chain_is_checked_with_its_predecessors_and_sent_in_one_patch(gr
         assert checked == [("DIR_Q1", set()), ("DIR_Q2", {"DIR_Q1"})]
         assert len(fake.graph) == before + 1
         assert fake.graph[-1]["ops"] == [op for q in quests for op in build(q)]
-        assert book.all() == {q.id: q for q in quests}
-        assert [record["quest"]["id"] for record in patches.records(QUEST)] == ["DIR_Q1", "DIR_Q2"]
+        assert await book.all() == {q.id: q for q in quests}
+        assert [record["quest"]["id"] for record in await patches.records(QUEST)] == ["DIR_Q1", "DIR_Q2"]
         assert [fact["id"] for fact in chronicle.facts("story_quest")] == ["DIR_Q1", "DIR_Q2"]
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -671,7 +674,7 @@ async def test_a_chain_is_checked_with_its_predecessors_and_sent_in_one_patch(gr
 )
 async def test_a_bad_later_quest_prevents_the_entire_chain(graph, change, error):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, patches, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, patches, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         await _until(lambda: bool(fake.graph))
         before = len(fake.graph)
@@ -680,7 +683,7 @@ async def test_a_bad_later_quest_prevents_the_entire_chain(graph, change, error)
         made, errors = await book.make_chain(quests)
         assert made is None and any(error in e for e in errors)
         assert len(fake.graph) == before
-        assert book.all() == {} and patches.records(QUEST) == [] and patches.ops() == []
+        assert await book.all() == {} and await patches.records(QUEST) == [] and await patches.ops() == []
         assert chronicle.facts("story_quest") == []
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -688,11 +691,11 @@ async def test_a_bad_later_quest_prevents_the_entire_chain(graph, change, error)
 
 async def test_a_refused_chain_keeps_only_the_previous_quests(graph, monkeypatch):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, patches, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, patches, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         old = _quest(id="DIR_Q0", title="Прежнее поручение")
         assert await book.make(old) == []
-        before = patches.ops()
+        before = await patches.ops()
         original_patch = book.link.patch_graph
 
         async def refuse_late(ops, **kwargs):
@@ -704,9 +707,9 @@ async def test_a_refused_chain_keeps_only_the_previous_quests(graph, monkeypatch
         monkeypatch.setattr(book.link, "patch_graph", refuse_late)
         made, errors = await book.make_chain(_chain())
         assert made is None and any("no dialog BAD" in error for error in errors)
-        assert book.all() == {old.id: old}
-        assert [record["quest"]["id"] for record in patches.records(QUEST)] == [old.id]
-        assert patches.ops() == before
+        assert await book.all() == {old.id: old}
+        assert [record["quest"]["id"] for record in await patches.records(QUEST)] == [old.id]
+        assert await patches.ops() == before
         assert fake.graph[-1]["replace"] is True and fake.graph[-1]["ops"] == before
         assert [fact["id"] for fact in chronicle.facts("story_quest")] == [old.id]
     finally:
@@ -724,7 +727,7 @@ def test_the_next_quest_opens_only_when_the_previous_one_succeeded(graph, previo
 
 async def test_the_save_has_the_truth_the_book_catches_up(graph):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, _, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, _, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         assert await book.make(_quest()) == []
         # the messages were lost (the server was away): the game's variables say where it stands
@@ -734,14 +737,14 @@ async def test_the_save_has_the_truth_the_book_catches_up(graph):  # noqa: F811
         fake.vars["DIR_Q1"] = 3
         await book.settle()
         assert book.progress("DIR_Q1").state == "failed"
-        assert book.situation(HILDA) == "Поручение «Украденное вино» герой не выполнил в срок."
+        assert await book.situation(HILDA) == "Поручение «Украденное вино» герой не выполнил в срок."
     finally:
         await link_cm.__aexit__(None, None, None)
 
 
 async def test_a_refused_change_is_taken_back(graph):  # noqa: F811
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, _, patches, _ = await _book(fake, store, graph)
     try:
         await patches.apply({"op": "disable", "node": "DIA_X"})
@@ -753,7 +756,9 @@ async def test_a_refused_change_is_taken_back(graph):  # noqa: F811
         # nothing of it is remembered, and the game gets the branch's changes as they were
         await _until(lambda: fake.graph[-1].get("replace") is True)
         assert fake.graph[-1]["ops"] == [{"op": "disable", "node": "DIA_X"}]
-        assert patches.records(QUEST) == [] and patches.ops() == [{"op": "disable", "node": "DIA_X"}]
+        assert await patches.records(QUEST) == [] and await patches.ops() == [
+            {"op": "disable", "node": "DIA_X"}
+        ]
     finally:
         await link_cm.__aexit__(None, None, None)
 
@@ -788,13 +793,13 @@ def _middle_dialog() -> Quest:
 )
 async def test_dead_ends_are_unfinished_dialogs_in_stage_order(graph, quest, stage, completed, expected):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, _, _ = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, _, _ = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         assert await book.make(quest) == []
         fake.vars.update({quest.id: 1, "DIR_Q1_STAGE": stage, **completed})
         fake.npc_states[HILDA]["state"] = "dead"
         fake.npc_states[THIEF]["state"] = "dead"
-        ends = book.dead_ends(await book.world())
+        ends = await book.dead_ends(await book.world())
         assert [(end.stage, end.goal, end.node) for end in ends] == expected
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -802,20 +807,23 @@ async def test_dead_ends_are_unfinished_dialogs_in_stage_order(graph, quest, sta
 
 async def test_the_book_uses_progress_without_save_variables_and_skips_told_dialogs(graph):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, patches, _ = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, patches, _ = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         q = _middle_dialog()
         assert await book.make(q) == []
         state = WorldState(npcs={HILDA: "dead", LOBART: "alive"})
-        assert book.dead_ends(state) == []  # not given
-        book._fact(q, "story_quest_given")
-        book._fact(q, "story_quest_stage", stage=2)
-        assert book.dead_ends(state) == [questbook.DeadEnd(q.id, 2, 1, "DIR_Q1_S2G1_D", HILDA)]
-        patches._record({"op": "told", "node": "DIR_Q1_S2G1_D"})
-        assert book.dead_ends(state) == []
+        assert await book.dead_ends(state) == []  # not given
+        await book._fact(q, "story_quest_given")
+        await book._fact(q, "story_quest_stage", stage=2)
+        assert await book.dead_ends(state) == [questbook.DeadEnd(q.id, 2, 1, "DIR_Q1_S2G1_D", HILDA)]
+        await patches._record(
+            '{"op": "told", "node": "DIR_Q1_S2G1_D"}',
+            patches.branch, patches._generation, patches.link.session,
+        )
+        assert await book.dead_ends(state) == []
         # The save knows better than a missed chronicle message.
         state.vars[q.id] = LOG_OBSOLETE
-        assert book.dead_ends(state) == []
+        assert await book.dead_ends(state) == []
     finally:
         await link_cm.__aexit__(None, None, None)
 
@@ -824,8 +832,8 @@ async def _repair_context(book: QuestBook, fake: FakeGame, q: Quest) -> tuple[Br
     fake.vars.update({q.id: 1, "DIR_Q1_STAGE": 2})
     fake.npc_states[HILDA]["state"] = "dead"
     state = (await book.director.world()).merge(await book.world())
-    story = Story(book.graph, state, Patches.of(book.patches.ops()))
-    dead = book.dead_ends(state)[0]
+    story = Story(book.graph, state, Patches.of(await book.patches.ops()))
+    dead = (await book.dead_ends(state))[0]
     node = story.patches.nodes[dead.node]
     offers = []
     for effect in node["effects"]:
@@ -867,7 +875,7 @@ def _handover(brief: Brief, **change: Any) -> Proposal:
 
 async def test_handover_replaces_the_same_node_and_keeps_the_required_effects(graph):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, patches, _ = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, patches, _ = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         q = _quest()
         assert await book.make(q) == []
@@ -876,7 +884,7 @@ async def test_handover_replaces_the_same_node_and_keeps_the_required_effects(gr
         done, errors = await book.repair(proposal, brief, story)
         assert errors == [] and done is not None
         assert done.node == "DIR_Q1_DONE" and done.npc == LOBART
-        node = Patches.of(patches.ops()).nodes[done.node]
+        node = Patches.of(await patches.ops()).nodes[done.node]
         assert node["npc"] == LOBART and node["condition"] == story.patches.nodes[done.node]["condition"]
         assert {"do": "give", "item": GOODS, "count": 2, "to": "self"} in node["effects"]
         assert {"do": "set", "var": q.id, "value": 2} in node["effects"]
@@ -885,15 +893,15 @@ async def test_handover_replaces_the_same_node_and_keeps_the_required_effects(gr
         assert not any(effect["do"] == "xp" for effect in node["effects"])
         journal = next(effect for effect in node["effects"] if effect["do"] == "journal")
         assert journal["text"] == proposal.journal_done and journal["status"] == "LOG_SUCCESS"
-        assert len(patches.records(QUEST)) == 2
-        repaired = book.all()[q.id]
+        assert len(await patches.records(QUEST)) == 2
+        repaired = (await book.all())[q.id]
         assert repaired.turn_in().npc == LOBART and repaired.gold == q.gold and repaired.xp == 0
         assert repaired.repairs == [
             {"goal": "DIR_Q1_S3G1", "dead": HILDA, "npc": LOBART, "reason": proposal.reason}
         ]
-        assert book.dead_ends(await book.world()) == []
+        assert await book.dead_ends(await book.world()) == []
         await book.settle(LOBART)
-        assert "принял поручение умершего (Хильда)" in book.situation(LOBART)
+        assert "принял поручение умершего (Хильда)" in await book.situation(LOBART)
         # The original stage triggers still bring the quest to its original turn-in id.
         fake.vars["DIR_Q1_STAGE"] = 3
         await book.settle(LOBART)
@@ -901,7 +909,8 @@ async def test_handover_replaces_the_same_node_and_keeps_the_required_effects(gr
         await fake.send(type="dialog_chosen", npc=LOBART, node=done.node, made=True)
         await _until(lambda: book.progress(q.id).state == "done")
         assert (
-            book.situation(LOBART) == "Поручение «Украденное вино» герой выполнил, ты заплатил: 20 золотых."
+            await book.situation(LOBART)
+            == "Поручение «Украденное вино» герой выполнил, ты заплатил: 20 золотых."
         )
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -909,18 +918,18 @@ async def test_handover_replaces_the_same_node_and_keeps_the_required_effects(gr
 
 async def test_a_middle_stage_handover_keeps_the_goal_variable_and_the_later_turn_in(graph):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, patches, _ = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, patches, _ = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         q = _middle_dialog()
         assert await book.make(q) == []
         brief, story = await _repair_context(book, fake, q)
         done, errors = await book.repair(_handover(brief, effects=[]), brief, story)
         assert errors == [] and done is not None and done.node == "DIR_Q1_S2G1_D"
-        node = Patches.of(patches.ops()).nodes[done.node]
+        node = Patches.of(await patches.ops()).nodes[done.node]
         assert {"do": "set", "var": "DIR_Q1_S2G1", "value": 1} in node["effects"]
         assert {"do": "give", "item": GOODS, "count": 2, "to": "self"} in node["effects"]
-        assert book.all()[q.id].gold == q.gold and book.all()[q.id].xp == q.xp
-        assert Patches.of(patches.ops()).nodes["DIR_Q1_DONE"] == story.patches.nodes["DIR_Q1_DONE"]
+        assert (await book.all())[q.id].gold == q.gold and (await book.all())[q.id].xp == q.xp
+        assert Patches.of(await patches.ops()).nodes["DIR_Q1_DONE"] == story.patches.nodes["DIR_Q1_DONE"]
     finally:
         await link_cm.__aexit__(None, None, None)
 
@@ -928,7 +937,7 @@ async def test_a_middle_stage_handover_keeps_the_goal_variable_and_the_later_tur
 @pytest.mark.parametrize(("status", "value"), [("obsolete", LOG_OBSOLETE), ("failed", LOG_FAILED)])
 async def test_closing_a_book_quest_and_settling_it_from_the_save(graph, monkeypatch, status, value):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, _, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, _, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         q = _quest()
         assert await book.make(q) == []
@@ -945,7 +954,7 @@ async def test_closing_a_book_quest_and_settling_it_from_the_save(graph, monkeyp
         )
         assert errors == [] and done is not None and done.kind == "close"
         assert fake.vars[q.id] == value and book.progress(q.id).state == status
-        assert book.dead_ends(await book.world()) == []
+        assert await book.dead_ends(await book.world()) == []
         journal = fake.story[-1]["effects"][-1]
         assert journal["status"] == ("LOG_OBSOLETE" if status == "obsolete" else "LOG_FAILED")
         assert chronicle.facts(f"story_quest_{status}")[-1]["id"] == q.id
@@ -962,12 +971,12 @@ async def test_closing_a_book_quest_and_settling_it_from_the_save(graph, monkeyp
 
 async def test_a_refused_handover_rolls_back_the_description_and_the_node(graph, monkeypatch):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, patches, _ = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, patches, _ = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         q = _quest()
         assert await book.make(q) == []
         brief, story = await _repair_context(book, fake, q)
-        previous = patches.ops()
+        previous = await patches.ops()
         original_patch = book.link.patch_graph
 
         async def refuse(ops, **kwargs):
@@ -978,8 +987,8 @@ async def test_a_refused_handover_rolls_back_the_description_and_the_node(graph,
         monkeypatch.setattr(book.link, "patch_graph", refuse)
         done, errors = await book.repair(_handover(brief), brief, story)
         assert done is None and errors == ["игра не приняла правку: dialog refused"]
-        assert book.all()[q.id] == q and len(patches.records(QUEST)) == 1
-        assert patches.ops() == previous
+        assert (await book.all())[q.id] == q and len(await patches.records(QUEST)) == 1
+        assert await patches.ops() == previous
         assert fake.graph[-1]["replace"] is True and fake.graph[-1]["ops"] == previous
     finally:
         await link_cm.__aexit__(None, None, None)
@@ -1008,15 +1017,15 @@ def test_blame_builds_a_server_variable_without_a_world_truth_trigger():
 @pytest.mark.parametrize("truth", [True, False])
 async def test_givers_blame_completes_the_goal_and_allows_reward_even_when_false(graph, monkeypatch, truth):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, patches, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, patches, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         q = _blame_quest()
-        chronicle.record({"fact": "npc_crime", "id": "NPC_THEFT_1", "culprit": THIEF})
+        await chronicle.record({"fact": "npc_crime", "id": "NPC_THEFT_1", "culprit": THIEF})
         assert await book.make(q) == []
-        ops = patches.ops()
+        ops = await patches.ops()
         stage = next(op for op in ops if op.get("id") == "DIR_Q1_S1")
         fake.vars.update({q.id: LOG_RUNNING, "DIR_Q1_STAGE": 1, "DIR_Q1_S1G1": 0})
-        book._fact(q, "story_quest_given")
+        await book._fact(q, "story_quest_given")
         effects = book.link.story_effect
 
         async def apply(npc, changes, **kwargs):
@@ -1025,13 +1034,13 @@ async def test_givers_blame_completes_the_goal_and_allows_reward_even_when_false
 
         monkeypatch.setattr(book.link, "story_effect", apply)
         # Other people's belief and another deed cannot solve the commission.
-        chronicle.record({"fact": "blamed", "id": "WRONG_PERSON", "npc": LOBART,
+        await chronicle.record({"fact": "blamed", "id": "WRONG_PERSON", "npc": LOBART,
                           "crime": "NPC_THEFT_1", "culprit": THIEF, "truth": truth})
-        chronicle.record({"fact": "blamed", "id": "WRONG_DEED", "npc": HILDA,
+        await chronicle.record({"fact": "blamed", "id": "WRONG_DEED", "npc": HILDA,
                           "crime": "OTHER_THEFT", "culprit": THIEF, "truth": truth})
         await book.settle()
         assert fake.vars["DIR_Q1_S1G1"] == 0 and not fake.evaluate(stage["when"], HILDA)
-        chronicle.record({"fact": "blamed", "id": "BLAME_1", "npc": HILDA,
+        await chronicle.record({"fact": "blamed", "id": "BLAME_1", "npc": HILDA,
                           "crime": "NPC_THEFT_1", "culprit": THIEF, "truth": truth})
         await _until(lambda: bool(chronicle.facts("story_quest_goal")))
         assert fake.vars["DIR_Q1_S1G1"] == 1 and fake.evaluate(stage["when"], HILDA)
@@ -1043,7 +1052,7 @@ async def test_givers_blame_completes_the_goal_and_allows_reward_even_when_false
         fake.npc_items.setdefault(HILDA, {})["ITMI_GOLD"] = q.gold
         assert fake.give({"npc": HILDA, "effects": done["effects"]}) is None
         assert fake.hero_items["ITMI_GOLD"] == q.gold
-        chronicle.record({"fact": "blame_refuted", "blamed": "BLAME_1", "how": "no_goods"})
+        await chronicle.record({"fact": "blame_refuted", "blamed": "BLAME_1", "how": "no_goods"})
         await book.settle()
         assert fake.vars["DIR_Q1_S1G1"] == 1
         assert len(chronicle.facts("story_quest_goal")) == 1
@@ -1054,15 +1063,15 @@ async def test_givers_blame_completes_the_goal_and_allows_reward_even_when_false
 
 async def test_blame_goal_and_its_completion_follow_the_saved_branch_without_duplication(graph, monkeypatch):  # noqa: F811
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, book, patches, chronicle = await _book(fake, store, graph)
     try:
         q = _blame_quest()
-        chronicle.record({"fact": "npc_crime", "id": "NPC_THEFT_1", "culprit": THIEF})
+        await chronicle.record({"fact": "npc_crime", "id": "NPC_THEFT_1", "culprit": THIEF})
         assert await book.make(q) == []
         fake.vars.update({q.id: LOG_RUNNING, "DIR_Q1_STAGE": 1, "DIR_Q1_S1G1": 0})
-        book._fact(q, "story_quest_given")
-        before = store.head("A")
+        await book._fact(q, "story_quest_given")
+        before = await store.head("A")
         effects = book.link.story_effect
 
         async def apply(npc, changes, **kwargs):
@@ -1070,14 +1079,14 @@ async def test_blame_goal_and_its_completion_follow_the_saved_branch_without_dup
             fake.vars.update({e["var"]: e["value"] for e in changes if e["do"] == "set"})
 
         monkeypatch.setattr(book.link, "story_effect", apply)
-        chronicle.record({"fact": "blamed", "id": "BLAME_1", "npc": HILDA,
+        await chronicle.record({"fact": "blamed", "id": "BLAME_1", "npc": HILDA,
                           "crime": "NPC_THEFT_1", "culprit": LOBART, "truth": False})
         await _until(lambda: len(chronicle.facts("story_quest_goal")) == 1)
-        after = store.head("A")
+        after = await store.head("A")
         await _until(lambda: fake.heads[-1:] == [("A", after)])
         await fake.send(type="session", branch="B", parent="A", parent_seq=after, reason="load")
         await _until(lambda: patches.branch == "B" and chronicle.branch == "B")
-        assert book.all()[q.id] == q and fake.vars["DIR_Q1_S1G1"] == 1
+        assert (await book.all())[q.id] == q and fake.vars["DIR_Q1_S1G1"] == 1
         calls = len(fake.story)
         await book.settle()
         assert len(fake.story) == calls and len(chronicle.facts("story_quest_goal")) == 1
@@ -1086,7 +1095,7 @@ async def test_blame_goal_and_its_completion_follow_the_saved_branch_without_dup
         await fake.send(type="session", branch="C", parent="A", parent_seq=before, reason="load")
         await _until(lambda: patches.branch == "C" and chronicle.branch == "C")
         await book.settle()
-        assert book.all()[q.id] == q and fake.vars["DIR_Q1_S1G1"] == 0
+        assert (await book.all())[q.id] == q and fake.vars["DIR_Q1_S1G1"] == 0
         assert not chronicle.facts("blamed") and not chronicle.facts("story_quest_goal")
     finally:
         await book.close()
@@ -1095,7 +1104,7 @@ async def test_blame_goal_and_its_completion_follow_the_saved_branch_without_dup
 
 async def test_amending_advances_the_current_stage_and_survives_the_saved_branch(graph, monkeypatch):  # noqa: F811
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     link_cm, book, patches, chronicle = await _book(fake, store, graph)
     entries = []
     book.journal = Journal(entries.append)
@@ -1103,9 +1112,9 @@ async def test_amending_advances_the_current_stage_and_survives_the_saved_branch
         q = _quest(names={HILDA: "Хильда", GOODS: "Вино"})
         assert await book.make(q) == []
         fake.vars.update({q.id: LOG_RUNNING, "DIR_Q1_STAGE": 1, "DIR_Q1_S1G1": 0})
-        book._fact(q, "story_quest_given")
-        before = store.head("A")
-        stage = next(op for op in patches.ops() if op.get("id") == "DIR_Q1_S1")
+        await book._fact(q, "story_quest_given")
+        before = await store.head("A")
+        stage = next(op for op in await patches.ops() if op.get("id") == "DIR_Q1_S1")
         assert not fake.evaluate(stage["when"], HILDA)
         effects = book.link.story_effect
 
@@ -1132,15 +1141,15 @@ async def test_amending_advances_the_current_stage_and_survives_the_saved_branch
         fake.vars["DIR_Q1_STAGE"] = 2
         await fake.send(type="trigger_fired", id="DIR_Q1_S1", count=1, npc="PC_HERO", other="PC_HERO")
         await _until(lambda: book.progress(q.id).stage == 2)
-        situation = book.situation(HILDA)
+        situation = await book.situation(HILDA)
         assert "Снято тобой: дойти до поля — «Не нужно никуда идти»" in situation
         assert "Можешь снять цели (amend_quest): DIR_Q1_S2G1 — добыть Вино ×2" in situation
         assert "DIR_Q1_S1G1 —" not in situation and "DIR_Q1_S3G1 —" not in situation
-        after = store.head("A")
+        after = await store.head("A")
         await _until(lambda: fake.heads[-1:] == [("A", after)])
         await fake.send(type="session", branch="B", parent="A", parent_seq=after, reason="load")
         await _until(lambda: patches.branch == "B" and chronicle.branch == "B")
-        assert book.situation(HILDA) == situation
+        assert await book.situation(HILDA) == situation
         await fake.send(type="dialog_chosen", npc=HILDA, node="DIR_Q1_DONE", made=True)
         await _until(lambda: book.progress(q.id).state == "done")
         assert chronicle.facts("quest_outcome") == [{
@@ -1152,8 +1161,8 @@ async def test_amending_advances_the_current_stage_and_survives_the_saved_branch
         await fake.send(type="session", branch="C", parent="A", parent_seq=before, reason="load")
         await _until(lambda: patches.branch == "C" and chronicle.branch == "C")
         assert not chronicle.facts("quest_terms") and not chronicle.facts("quest_outcome")
-        assert "Снято тобой:" not in book.situation(HILDA)
-        assert "DIR_Q1_S1G1 — дойти до поля" in book.situation(HILDA)
+        assert "Снято тобой:" not in await book.situation(HILDA)
+        assert "DIR_Q1_S1G1 — дойти до поля" in await book.situation(HILDA)
     finally:
         await book.close()
         await link_cm.__aexit__(None, None, None)
@@ -1162,7 +1171,7 @@ async def test_amending_advances_the_current_stage_and_survives_the_saved_branch
 @pytest.mark.parametrize("completion", ["trigger", "dialog_var"])
 async def test_completed_goals_of_the_current_stage_cannot_be_amended(graph, completion):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, _, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, _, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         q = _quest()
         if completion == "dialog_var":
@@ -1170,7 +1179,7 @@ async def test_completed_goals_of_the_current_stage_cannot_be_amended(graph, com
         q.stages[0].goals.append(Goal("wait", days=1))
         assert await book.make(q) == []
         fake.vars.update({q.id: LOG_RUNNING, "DIR_Q1_STAGE": 1, "DIR_Q1_S1G1": 0})
-        book._fact(q, "story_quest_given")
+        await book._fact(q, "story_quest_given")
         if completion == "trigger":
             Triggers(book.link, chronicle)
             await fake.send(type="trigger_fired", id="DIR_Q1_S1G1", count=1, npc="PC_HERO", other="PC_HERO")
@@ -1179,7 +1188,7 @@ async def test_completed_goals_of_the_current_stage_cannot_be_amended(graph, com
             fake.vars["DIR_Q1_S1G1"] = 1
             await book.prepare(HILDA)
         assert book.progress(q.id).stage == 1
-        situation = book.situation(HILDA)
+        situation = await book.situation(HILDA)
         assert "DIR_Q1_S1G1 —" not in situation
         assert "DIR_Q1_S1G2 — подождать 1 дн." in situation
         conv = SimpleNamespace(npc=HILDA, persona=SimpleNamespace(name="Хильда"))
@@ -1210,12 +1219,12 @@ async def test_completed_goals_of_the_current_stage_cannot_be_amended(graph, com
 ])
 async def test_vanilla_turn_in_and_unknown_goals_cannot_be_removed(graph, goal, reason):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, _, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, _, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         q = _quest()
         q.stages[0].goals = [Goal("vanilla", quest=VANILLA_QUEST, state="running")]
         assert await book.make(q) == []
-        book._fact(q, "story_quest_given")
+        await book._fact(q, "story_quest_given")
         conv = SimpleNamespace(npc=HILDA, persona=SimpleNamespace(name="Хильда"))
         result = await book.handle(
             None, conv, ToolCall("amend_quest", {"quest": q.id, "drop": [goal], "why": "Передумала"}, "a1"),
@@ -1230,19 +1239,19 @@ async def test_vanilla_turn_in_and_unknown_goals_cannot_be_removed(graph, goal, 
 
 async def test_only_a_given_quest_and_its_current_or_future_goals_can_be_amended(graph):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, _, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, _, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         q = _quest()
         assert await book.make(q) == []
         conv = SimpleNamespace(npc=HILDA, persona=SimpleNamespace(name="Хильда"))
         call = ToolCall("amend_quest", {"quest": q.id, "drop": ["DIR_Q1_S1G1"], "why": "Передумала"}, "a1")
         assert (await book.handle(None, conv, call, None)).status == "rejected"
-        book._fact(q, "story_quest_given")
-        book._fact(q, "story_quest_stage", stage=2)
+        await book._fact(q, "story_quest_given")
+        await book._fact(q, "story_quest_stage", stage=2)
         assert (await book.handle(None, conv, call, None)).status == "rejected"
         call.arguments["drop"] = ["DIR_Q1_S2G1"]
         assert (await book.handle(None, conv, call, None)).status == "accepted"
-        assert {t.name for t in book.tools(HILDA)} == {"drop_quest"}
+        assert {t.name for t in await book.tools(HILDA)} == {"drop_quest"}
         assert not chronicle.facts("quest_outcome")
     finally:
         await book.close()
@@ -1252,15 +1261,15 @@ async def test_only_a_given_quest_and_its_current_or_future_goals_can_be_amended
 @pytest.mark.parametrize("npc", [HILDA, LOBART])
 async def test_the_giver_or_repair_successor_can_amend_and_drop_a_given_quest(graph, monkeypatch, npc):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, _, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, _, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     entries = []
     book.journal = Journal(entries.append)
     try:
         q = _quest(repairs=[{"goal": "DIR_Q1_S3G1", "dead": HILDA, "npc": LOBART, "reason": "Принял"}])
         assert await book.make(q) == []
         fake.vars.update({q.id: LOG_RUNNING, "DIR_Q1_STAGE": 1})
-        book._fact(q, "story_quest_given")
-        assert {t.name for t in book.tools(npc)} == {"amend_quest", "drop_quest"}
+        await book._fact(q, "story_quest_given")
+        assert {t.name for t in await book.tools(npc)} == {"amend_quest", "drop_quest"}
         stranger = SimpleNamespace(npc=THIEF, persona=SimpleNamespace(name="Вор"))
         call = ToolCall("drop_quest", {"quest": q.id, "why": "Вино нашлось"}, "d1")
         assert (await book.handle(None, stranger, call, None)).status == "rejected"
@@ -1309,7 +1318,7 @@ async def test_the_giver_or_repair_successor_can_amend_and_drop_a_given_quest(gr
         await book.settle(npc)
         assert book.progress(q.id).state == "obsolete"
         assert len(chronicle.facts("story_quest_obsolete")) == 1
-        assert book.tools(npc) == []
+        assert await book.tools(npc) == []
     finally:
         await book.close()
         await link_cm.__aexit__(None, None, None)
@@ -1318,11 +1327,11 @@ async def test_the_giver_or_repair_successor_can_amend_and_drop_a_given_quest(gr
 @pytest.mark.parametrize("error", [GameError("no game"), TimeoutError("no answer")])
 async def test_a_failed_drop_can_be_retried(graph, monkeypatch, error):  # noqa: F811
     fake = FakeGame(branch="A")
-    link_cm, book, _, chronicle = await _book(fake, MemoryStore(":memory:"), graph)
+    link_cm, book, _, chronicle = await _book(fake, await MemoryStore.open(":memory:"), graph)
     try:
         q = _quest()
         assert await book.make(q) == []
-        book._fact(q, "story_quest_given")
+        await book._fact(q, "story_quest_given")
         conv = SimpleNamespace(npc=HILDA, persona=SimpleNamespace(name="Хильда"))
         pending = []
         dialogue = SimpleNamespace(after_speech=lambda conv, job: pending.append(job))

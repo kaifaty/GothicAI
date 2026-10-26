@@ -7,12 +7,14 @@ from gothic_ai.beasts import BeastDesk, chances, rules_tone
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.llm import FakeBackend
 from gothic_ai.llm.base import QUICK_SLOT
+from gothic_ai.memory import MemoryStore
 from gothic_ai.orders import Orders
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import BeastEntry
 from gothic_ai.talk import TalkDesk
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_orders import GORN, _follows, fights
 from tests.test_talk import person
 
@@ -57,7 +59,8 @@ async def _desk(fake: FakeGame, *rolls: float, quick=None, llm=None):
     cm = connected(fake)
     link = await cm.__aenter__()
     llm = llm or FakeBackend("Что?", delay=0)
-    dialogue = DialogueManager(link, llm, PersonaProvider(None))
+    dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:"))
+    await dialogue.initialize()
     talk = TalkDesk(link, dialogue, end_silence_s=0.2)
     talk.orders = Orders(link, talk, dialogue)
     talk.beasts = BeastDesk(link, quick=quick, rng=Rolls(*rolls))  # type: ignore[arg-type]
@@ -304,7 +307,7 @@ async def test_a_plural_greeting_to_people_is_not_heard_by_a_wolf():
     cm, dialogue, talk, _ = await _desk(fake, quick=quick)
     try:
         await _follows(fake, dialogue, person(XARDAS, "Ксардас", 6, True))
-        talk.begin(GORN, "Горн")
+        await talk.begin(GORN, "Горн")
         await fake.beasts(wolf())
         await _until(lambda: "WOLF#1" in talk.beasts.wolves)
         await fake.send(type="player_text", text="Пацаны, здорово!")

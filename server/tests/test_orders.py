@@ -2,16 +2,19 @@ import asyncio
 
 import pytest
 
+from gothic_ai.commands import Order
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.executor import Intent
 from gothic_ai.llm import FakeBackend, FakeStep, ToolCall
+from gothic_ai.memory import MemoryStore
 from gothic_ai.orders import Orders
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.places import PlaceBook
-from gothic_ai.protocol import NpcView
+from gothic_ai.protocol import Loading, NpcView
 from gothic_ai.talk import TalkDesk
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import LOBART, XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_talk import person
 
 GORN = "PC_FIGHTER"
@@ -35,14 +38,15 @@ def test_long_attack_parser_ignores_negation_and_reported_speech(text):
 async def _desk(fake: FakeGame, llm, **orders):
     cm = connected(fake)
     link = await cm.__aenter__()
-    dialogue = DialogueManager(link, llm, PersonaProvider(None))
+    dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:"))
+    await dialogue.initialize()
     talk = TalkDesk(link, dialogue, end_silence_s=0.2)
     talk.orders = Orders(link, talk, dialogue, **orders)
     return cm, dialogue, talk
 
 
-def companion(dialogue: DialogueManager, npc: str, name: str) -> None:
-    dialogue.open(npc, name).intent = Intent("follow_hero", "PLAYER", "friendly")
+async def companion(dialogue: DialogueManager, npc: str, name: str) -> None:
+    (await dialogue.open(npc, name)).intent = Intent("follow_hero", "PLAYER", "friendly")
 
 
 def acts(fake: FakeGame) -> list[tuple[str, str]]:
@@ -55,7 +59,7 @@ async def test_a_companion_stops_at_once_and_follows_again_later():
     cm, dialogue, talk = await _desk(fake, llm, halt_s=0.1)
     try:
         await fake.roster(person(GORN, "Горн", 4), person(XARDAS, "Ксардас", 3, True))
-        companion(dialogue, GORN, "Горн")
+        await companion(dialogue, GORN, "Горн")
         await fake.send(type="player_text", text="Стой!", focus=XARDAS)
         await _until(lambda: (GORN, "stop") in acts(fake))
         assert talk.orders.standing[GORN].kind == "halt"
@@ -101,7 +105,7 @@ async def test_long_follow_requests_move_an_existing_companion_without_a_model(t
     cm, dialogue, talk = await _desk(fake, llm)
     try:
         await fake.roster(person(GORN, "Горн", 4))
-        companion(dialogue, GORN, "Горн")
+        await companion(dialogue, GORN, "Горн")
         await fake.send(type="player_text", text=text)
         await _until(lambda: (GORN, "follow") in acts(fake))
         assert llm.calls == [] and talk.last[0].why == "order"
@@ -114,7 +118,7 @@ async def test_reported_follow_words_do_not_order_an_existing_companion():
     cm, dialogue, talk = await _desk(fake, FakeBackend("Что он сказал?", delay=0))
     try:
         await fake.roster(person(GORN, "Горн", 4))
-        companion(dialogue, GORN, "Горн")
+        await companion(dialogue, GORN, "Горн")
         await fake.send(type="player_text", text="Он мне сказал. Иди за мной.", focus=GORN)
         await _until(lambda: fake.said == ["Что он сказал?"])
         assert talk.last[0].why != "order"
@@ -129,7 +133,7 @@ async def test_attack_whom_the_hero_looks_at_then_back_to_him():
     cm, dialogue, talk = await _desk(fake, FakeBackend("На кого?", delay=0))
     try:
         await fake.roster(person(GORN, "Горн", 4), person(BANDIT, "Бандит", 9, True))
-        companion(dialogue, GORN, "Горн")
+        await companion(dialogue, GORN, "Горн")
         await fake.send(type="player_text", text="В атаку!", focus=BANDIT)
         await _until(lambda: (GORN, "follow") in acts(fake))
     finally:
@@ -146,7 +150,7 @@ async def test_attack_with_nobody_to_attack_is_a_question_for_the_model():
     cm, dialogue, talk = await _desk(fake, llm)
     try:
         await fake.roster(person(GORN, "Горн", 4, True))
-        companion(dialogue, GORN, "Горн")
+        await companion(dialogue, GORN, "Горн")
         await fake.send(type="player_text", text="В атаку!", focus=GORN)
         await _until(lambda: fake.said == ["На кого?"])
     finally:
@@ -155,13 +159,13 @@ async def test_attack_with_nobody_to_attack_is_a_question_for_the_model():
     assert (GORN, "fight") not in acts(fake)
 
 
-async def test_a_name_picks_one_companion_out_of_two():
+async def test_a_name_picks_one_companion_out_of_two(monkeypatch):
     fake = FakeGame()
     cm, dialogue, talk = await _desk(fake, FakeBackend("-", delay=0), wait_s=60)
     try:
         await fake.roster(person(GORN, "Горн", 4), person(LOBART, "Лобарт", 6))
-        companion(dialogue, GORN, "Горн")
-        companion(dialogue, LOBART, "Лобарт")
+        await companion(dialogue, GORN, "Горн")
+        await companion(dialogue, LOBART, "Лобарт")
         await fake.send(type="player_text", text="Лобарт, жди здесь!")
         await _until(lambda: (LOBART, "stop") in acts(fake))
         assert set(talk.orders.standing) == {LOBART}
@@ -178,6 +182,20 @@ async def test_a_name_picks_one_companion_out_of_two():
         )
         assert talk.orders.standing[LOBART].kind == "wait"
         await _until(lambda: GORN not in talk.held)  # held only to draw: free again once it is out
+
+        remembered = dialogue.remember
+
+        async def remember_then_load(*args, **kwargs):
+            await remembered(*args, **kwargs)
+            await dialogue.link._dispatch(Loading(type="loading"))
+
+        monkeypatch.setattr(dialogue, "remember", remember_then_load)
+        before = acts(fake)
+        await talk.orders._obey(GORN, "Горн", Order("draw", "коружию", "К оружию!"), None, None, None)
+        assert acts(fake) == before  # the accepted note must not move an NPC in the next world
+        await talk.orders._stand_up(GORN, BANDIT, "attacked the hero", struck=True)
+        assert GORN not in talk.orders.fights
+        assert acts(fake) == before
     finally:
         await cm.__aexit__(None, None, None)
 
@@ -187,7 +205,7 @@ async def test_dismissed_it_goes_back_to_its_business():
     cm, dialogue, talk = await _desk(fake, FakeBackend("-", delay=0))
     try:
         await fake.roster(person(GORN, "Горн", 4))
-        companion(dialogue, GORN, "Горн")
+        await companion(dialogue, GORN, "Горн")
         await fake.send(type="player_text", text="За мной!")
         await _until(lambda: (GORN, "follow") in acts(fake))
         assert GORN in fake.attached
@@ -209,7 +227,7 @@ def fights(fake: FakeGame) -> list[str]:
 async def _follows(fake: FakeGame, dialogue: DialogueManager, *people: dict) -> None:
     """Gorn goes with the hero (attached, following), the people around."""
     await fake.roster(person(GORN, "Горн", 4), *people)
-    companion(dialogue, GORN, "Горн")
+    await companion(dialogue, GORN, "Горн")
     await fake.send(type="player_text", text="За мной!")
     await _until(lambda: (GORN, "follow") in acts(fake))
 
@@ -387,7 +405,7 @@ async def test_halt_said_looking_at_whoever_strikes_the_hero_is_words_to_him():
     cm, dialogue, talk = await _desk(fake, llm)
     try:
         await fake.roster(person(GORN, "Горн", 4), person(BANDIT, "Бандит", 3, True))
-        companion(dialogue, GORN, "Горн")
+        await companion(dialogue, GORN, "Горн")
         await fake.perception(GORN, "ASSESSOTHERSDAMAGE", BANDIT, victim="PLAYER")
         await fake.send(type="player_text", text="Стой, стой!", focus=BANDIT)
         await _until(lambda: fake.said == ["Стоять? Ещё чего!"])
@@ -614,8 +632,8 @@ async def test_a_companion_sent_ahead_hears_its_name_from_afar():
     cm, dialogue, talk = await _desk(fake, FakeBackend("-", delay=0))
     try:
         await fake.roster(person(GORN, "Горн", 35), person(LOBART, "Лобарт", 6))
-        companion(dialogue, GORN, "Горн")
-        companion(dialogue, LOBART, "Лобарт")
+        await companion(dialogue, GORN, "Горн")
+        await companion(dialogue, LOBART, "Лобарт")
         await fake.send(type="player_text", text="Горн, за мной!")  # too far for talk, not for a shout
         await _until(lambda: (GORN, "follow") in acts(fake))
     finally:
@@ -687,12 +705,12 @@ async def test_one_who_turns_on_the_hero_is_fought_before_its_first_blow():
         await _follows(fake, dialogue, person(BANDIT, "Бандит", 8))
         await fake.roster(person(GORN, "Горн", 40), person(BANDIT, "Бандит", 8))
         await _until(lambda: talk.people[GORN].distance == 4000)
-        dialogue.on_attack[0](BANDIT)  # its model's own attack (dialogue._attack_hero)
+        await dialogue.on_attack[0](BANDIT)  # its model's own attack (dialogue._attack_hero)
         await asyncio.sleep(0.1)
         assert fights(fake) == [] and talk.orders.foe(BANDIT)  # too far off to hear the fight
         await fake.roster(person(GORN, "Горн", 25), person(BANDIT, "Бандит", 8))
         await _until(lambda: talk.people[GORN].distance == 2500)
-        dialogue.on_attack[0](BANDIT)
+        await dialogue.on_attack[0](BANDIT)
         await _until(lambda: fights(fake) == [BANDIT])
     finally:
         await cm.__aexit__(None, None, None)

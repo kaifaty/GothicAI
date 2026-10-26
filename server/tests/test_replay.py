@@ -10,11 +10,13 @@ import pytest
 from gothic_ai import cli
 from gothic_ai.dialogue import QUICK_HINT, REACT_HINT, SOUND_SAID, DialogueManager, svm_hint
 from gothic_ai.llm import FakeBackend, FakeStep, LLMError, Message, TextDelta, ToolCall, ToolResult
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.replay import replay, replay_first_words, replay_svm_lines
 from gothic_ai.trace import TraceWriter, find_turn, item_json
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 NPC = "BDT_1013_BANDIT_L"
 PHRASE = "Твоё оружие меня не пугает."
@@ -519,10 +521,11 @@ async def test_replay_quotes_the_dialogue_lines_instead_of_raw_step_text(
             llm,
             PersonaProvider(None),
             quick=FakeBackend("Ишь ты!", delay=0),
-            trace=writer,
+            trace=writer, memory=await MemoryStore.open(":memory:"),
         )
+        await dialogue.initialize()
         await link.attach(XARDAS)
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Дай мне свиток.")
         await _until(lambda: fake.statuses[-1:] == ["idle"])
 

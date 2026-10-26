@@ -15,9 +15,10 @@ v12): the rules that find lies out look at that.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -46,29 +47,59 @@ class Chronicle:
         self.memory = memory
         self.branch: str | None = None
         self.tags: dict[str, Tag] = {}
-        self.on_fact: list[Callable[[Fact], None]] = []  # every new fact, after it is written
+        self.on_fact: list[Callable[[Fact], Awaitable[None] | None]] = []
         self._hero_kills: dict[str, bool] = {}  # hero_kill precedes npc_died; its explicit monster flag
         self._background: set[asyncio.Task[Any]] = set()
-        # the branch's facts as read so far: each read takes only the newer rows (by seq), since trust,
-        # deals and the rumors read them on every turn
+        # Session loads the existing branch cache; pure consumers never wait for SQLite.
+        self._generation = 0
+        self._prepared_session: Session | None = None
         self._cached: str | None = None
         self._seq = 0
         self._all: list[Fact] = []
         self._by_kind: dict[str | None, list[Fact]] = {}
         link.listeners.append(self._on_message)
-        if link.session is not None:
-            self._on_session(link.session)
 
-    def record(self, fact: Fact) -> None:
-        if self.branch is None:
+    async def initialize(self) -> None:
+        async def prepare_current() -> None:
+            session = self.link.session
+            if session is not None and session is not self._prepared_session:
+                await self._on_session(session)
+
+        await self.memory.complete(prepare_current)
+
+    async def record(self, fact: Fact) -> None:
+        branch, generation, session = self.branch, self._generation, self.link.session
+        if branch is None:
             log.warning("no session: fact not kept %s", fact)
             return
-        seq = self.memory.add_fact(self.branch, json.dumps(fact, ensure_ascii=False))
-        log.info("fact: %s", fact)
-        # the head goes into the next save, so a load brings this fact back
-        self._spawn(self.link.send(MemoryCmd(branch=self.branch, seq=seq)))
-        for listener in self.on_fact:
-            listener(fact)
+        content = json.dumps(fact, ensure_ascii=False)
+
+        async def persist() -> None:
+            if generation != self._generation or branch != self.branch or session is not self.link.session:
+                raise GameError("session changed while recording a fact")
+            seq = await self.memory.add_fact(branch, content)
+            if generation != self._generation or branch != self.branch or session is not self.link.session:
+                raise GameError("session changed while recording a fact")
+            committed = json.loads(content)
+            self._all.append(committed)
+            self._by_kind.setdefault(committed.get("fact"), []).append(committed)
+            self._seq = seq
+            log.info("fact: %s", committed)
+            # The head goes into the next save, after the fact has committed.
+            try:
+                await self.link.send(MemoryCmd(branch=branch, seq=seq))
+            except GameError:
+                pass  # the game is gone; it learns the head again on reconnect
+            for listener in self.on_fact:
+                if (
+                    generation != self._generation or branch != self.branch
+                    or session is not self.link.session
+                ):
+                    raise GameError("session changed while publishing a fact")
+                if inspect.isawaitable(result := listener(committed)):
+                    await result
+
+        await self.memory.complete(persist)
 
     def facts(self, kind: str | None = None) -> list[Fact]:
         """The branch's facts (of one `kind`), oldest first. The list is the caller's own, but the dicts
@@ -76,13 +107,7 @@ class Chronicle:
         if self.branch is None:
             return []
         if self._cached != self.branch:
-            self._cached, self._seq, self._all, self._by_kind = self.branch, 0, [], {}
-        # facts written straight into the store (tests, another chronicle) are seen too
-        for seq, content in self.memory.facts_since(self.branch, self._seq):
-            f = json.loads(content)
-            self._all.append(f)
-            self._by_kind.setdefault(f.get("fact"), []).append(f)
-            self._seq = seq
+            raise RuntimeError("chronicle facts are not prepared for the current session")
         return list(self._all) if kind is None else list(self._by_kind.get(kind, ()))
 
     def killed(self, tag: str, by: str | None = None) -> int:
@@ -102,17 +127,17 @@ class Chronicle:
         state = self.tags.get(tag)
         return state.seen.get(npc.upper()) if state else None
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         match msg:
             case Session():
-                self._on_session(msg)
+                await self._on_session(msg)
             case HeroKill():
                 # Only humans and tagged monsters also produce npc_died. Do not retain every wild kill.
                 self._hero_kills.clear()
                 self._hero_kills[msg.npc] = msg.monster
             case NpcDied():
                 monster = self._hero_kills.pop(msg.npc, None)
-                self.record(
+                await self.record(
                     {
                         "fact": "died",
                         "npc": msg.npc,
@@ -133,19 +158,27 @@ class Chronicle:
                     for t in msg.tags
                 }
 
-    def _on_session(self, session: Session) -> None:
+    async def _on_session(self, session: Session) -> None:
+        self._prepared_session = None
         self.branch = session.branch
-        self.memory.ensure_branch(session.branch, session.parent, session.parent_seq)
+        self._generation += 1
+        generation = self._generation
+        self._cached, self._seq, self._all, self._by_kind = None, 0, [], {}
         self.tags.clear()  # the game reports them again for this world
         self._hero_kills.clear()
 
-    def _spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
-        async def run() -> None:
-            try:
-                await coro
-            except GameError:
-                pass  # the game is gone; it learns the head again on reconnect
+        async def load() -> None:
+            await self.memory.ensure_branch(session.branch, session.parent, session.parent_seq)
+            rows = await self.memory.facts_since(session.branch, 0)
+            if generation != self._generation or session is not self.link.session:
+                return
+            facts = [json.loads(content) for _, content in rows]
+            self._all = facts
+            self._by_kind = {}
+            for fact in facts:
+                self._by_kind.setdefault(fact.get("fact"), []).append(fact)
+            self._seq = rows[-1][0] if rows else 0
+            self._cached = session.branch
+            self._prepared_session = session
 
-        task = asyncio.create_task(run())
-        self._background.add(task)
-        task.add_done_callback(self._background.discard)
+        await self.memory.complete(load)

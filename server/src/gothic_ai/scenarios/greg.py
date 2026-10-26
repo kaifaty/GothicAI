@@ -76,7 +76,7 @@ async def greg(
             return False
         conv = dialogue.conversations.get(GREG)
         before = conv.reply if conv else None
-        talk.hear(text, GREG, {"via": "scenario"})
+        await talk.hear(text, GREG, {"via": "scenario"})
 
         def answered() -> bool:
             conv = dialogue.conversations.get(GREG)

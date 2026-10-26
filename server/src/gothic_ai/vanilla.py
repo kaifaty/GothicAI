@@ -516,7 +516,7 @@ class VanillaQuests:
             o.targets = [_target(d, people.get(d) or {}) for d in o.claim.dead]
             for target in o.targets:
                 if target.seen and not target.alive:
-                    self._remember_dead(npc, target.npc, "saw_body")
+                    await self._remember_dead(npc, target.npc, "saw_body")
                 target.remembered = self.seen_dead.get((npc, target.npc))
             self._needs(o)
 
@@ -697,7 +697,7 @@ class VanillaQuests:
                 return ToolOutcome("Отклонено: квест главного сюжета нельзя менять или отменять.", "rejected")
             why = str(call.arguments.get("why", ""))
             if call.name == AMEND:
-                return self._amend(offer, conv, call.arguments.get("drop", []), why)
+                return await self._amend(offer, conv, call.arguments.get("drop", []), why)
             offers.pop(quest, None)
 
             async def drop() -> tuple[str, bool]:
@@ -739,7 +739,7 @@ class VanillaQuests:
             return f"Отклонено: {self.trust.of(npc).broken_reason()}. {WORD_BROKEN}{hint}"
         return None
 
-    def _amend(self, offer: Offer, conv: Conversation, drop: Any, why: str) -> ToolOutcome:
+    async def _amend(self, offer: Offer, conv: Conversation, drop: Any, why: str) -> ToolOutcome:
         if not isinstance(drop, list) or not drop or not all(isinstance(d, str) for d in drop):
             return ToolOutcome("Отклонено: укажи id снимаемых пунктов из обстановки.", "rejected")
         ids = list(dict.fromkeys(d.upper() for d in drop))
@@ -756,7 +756,7 @@ class VanillaQuests:
             "drop": ids,
             "why": why,
         }
-        self.chronicle.record(fact)
+        await self.chronicle.record(fact)
         self.journal.add("quest_amended", **{k: v for k, v in fact.items() if k != "fact"})
         self._apply_terms(offer)
         next_step = (
@@ -771,8 +771,8 @@ class VanillaQuests:
             "accepted",
         )
 
-    def _outcome(self, offer: Offer, how: str, pay: str, why: str | None = None) -> None:
-        self.chronicle.record(
+    async def _outcome(self, offer: Offer, how: str, pay: str, why: str | None = None) -> None:
+        await self.chronicle.record(
             {
                 "fact": "quest_outcome",
                 "quest": offer.quest,
@@ -795,7 +795,7 @@ class VanillaQuests:
             await self.link.story_effect(offer.npc, effects)
         except (GameError, TimeoutError) as err:
             return f"Ты не смог отменить поручение «{offer.title}»: {err}", False
-        self._outcome(offer, "dropped", "none", why)
+        await self._outcome(offer, "dropped", "none", why)
         self.journal.add(
             "quest_dropped",
             npc=offer.npc,
@@ -989,7 +989,7 @@ class VanillaQuests:
             log.warning("vanilla: %s not given: %s", start.quest, err)
             return f"Ты не смог дать герою поручение «{start.title}»: {err}", False
         name = conv.persona.name
-        self.chronicle.record(
+        await self.chronicle.record(
             {
                 "fact": "quest_given",
                 "quest": start.quest,
@@ -1087,8 +1087,8 @@ class VanillaQuests:
             "title": offer.title,
             "reward": reward,
         }
-        self.chronicle.record({**claim, "believed": True, "truth": bool(truth), "checked": checked})
-        self.chronicle.record(
+        await self.chronicle.record({**claim, "believed": True, "truth": bool(truth), "checked": checked})
+        await self.chronicle.record(
             {
                 "fact": "belief",
                 "npc": offer.npc,
@@ -1112,7 +1112,7 @@ class VanillaQuests:
             truth_text = had or (
                 "alive: " + ", ".join(told.targets) if told.targets else "the claim is false"
             )
-            self.chronicle.record(
+            await self.chronicle.record(
                 {
                     "fact": "lie",
                     "quest": offer.quest,
@@ -1131,7 +1131,7 @@ class VanillaQuests:
             )
             self.journal.add("lie", npc=offer.npc, name=name, quest=offer.quest, truth=truth_text)
         self.told[offer.quest] = told
-        self._outcome(offer, "amended" if offer.terms else "done", pay)
+        await self._outcome(offer, "amended" if offer.terms else "done", pay)
         if pay == "full":
             await self._pay_bonus(offer.quest, offer.npc)
         await self._watch()
@@ -1169,7 +1169,7 @@ class VanillaQuests:
             ]
             await self.link.story_effect(npc, effects, check=True)
             if branch == self.chronicle.branch:
-                self.chronicle.record({"fact": "vanilla_reward", "quest": quest, "npc": npc})
+                await self.chronicle.record({"fact": "vanilla_reward", "quest": quest, "npc": npc})
 
     def _on_fact(self, fact: Fact) -> None:
         if fact.get("fact") == "quest_outcome":
@@ -1203,10 +1203,19 @@ class VanillaQuests:
 
         task.add_done_callback(finished)
 
-    def _remember_dead(self, npc: str, dead: str, how: str) -> None:
+    async def _remember_dead(self, npc: str, dead: str, how: str) -> None:
         """One observation of this pair, kept in the save branch."""
-        if (npc, dead) not in self.seen_dead:
-            self.chronicle.record({"fact": "seen_dead", "npc": npc, "dead": dead, "how": how})
+        branch, session = self.chronicle.branch, self.link.session
+        world_generation = self.link.world_generation
+
+        async def remember() -> None:
+            if (branch != self.chronicle.branch or session is not self.link.session
+                    or world_generation != self.link.world_generation):
+                return
+            if (npc, dead) not in self.seen_dead:
+                await self.chronicle.record({"fact": "seen_dead", "npc": npc, "dead": dead, "how": how})
+
+        await self.chronicle.memory.complete(remember)
 
     async def _see_death(self, fact: Fact, branch: str | None) -> None:
         """The giver's own kills and deaths before its eyes, even before its first conversation turn."""
@@ -1237,7 +1246,7 @@ class VanillaQuests:
             if not any(state.get("vars", {}).get(q, 0) not in (2, 3, 4) for q in quests):
                 continue
             if killed or _target(dead, state.get("npcs", {}).get(dead) or {}).seen:
-                self._remember_dead(npc, dead, "killed" if killed else "saw_die")
+                await self._remember_dead(npc, dead, "killed" if killed else "saw_die")
 
     async def _check(self, offer: Offer, target: Target, conv: Conversation) -> tuple[str, bool]:
         """The npc goes to see for itself, then comes back to the hero to say what it saw: he lied to it, or
@@ -1371,7 +1380,7 @@ class VanillaQuests:
             if any(state.get("vars", {}).get(q) == LOG_SUCCESS for q in t.follow):
                 # a later step got the goods after all
                 t.found_out = True
-                self.chronicle.record({"fact": "lie_mended", "quest": t.quest, "npc": t.npc})
+                await self.chronicle.record({"fact": "lie_mended", "quest": t.quest, "npc": t.npc})
                 continue
             await self.found_out(
                 t, f"наутро хватился того, что герой будто бы принёс ({t.items}), — а этого нет"

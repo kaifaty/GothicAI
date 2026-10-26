@@ -9,11 +9,12 @@ The game only reports the key (`ptt_start` / `ptt_stop` / `ptt_cancel`); no audi
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import time
 import wave
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -328,7 +329,7 @@ class _Utterance:
 
 
 # the hero's recognized phrase: (text, focus, details for the journal)
-Heard = Callable[[str, str | None, dict[str, Any]], None]
+Heard = Callable[[str, str | None, dict[str, Any]], Awaitable[None] | None]
 
 
 class VoiceInput:
@@ -464,11 +465,13 @@ class VoiceInput:
         if not result.text:
             await self._status("notice", "Не расслышал. Удерживайте T, пока говорите")
             return
-        self.heard(
+        completion = self.heard(
             result.text,
             utt.focus,
             {"via": "voice", "asr": result.provider, "latency_s": round(result.latency_s, 2)},
         )
+        if inspect.isawaitable(completion):
+            await completion
 
     async def _partial(self, utt: _Utterance, text: str) -> None:
         if not utt.finished:

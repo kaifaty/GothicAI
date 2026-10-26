@@ -25,7 +25,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -165,7 +165,7 @@ class ChestDesk:
         self.places = places
         self.journal = journal or Journal()
         self.crimes = crimes
-        self.npc_suspect: Callable[..., list[Mapping[str, Any]]] | None = None
+        self.npc_suspect: Callable[..., Awaitable[list[Mapping[str, Any]]]] | None = None
         self.clock = clock
         self.branch: str | None = link.session.branch if link.session is not None else None
         self._chests: dict[str, tuple[float, list[Chest]]] = {}  # npc -> (when asked, its chests)
@@ -196,7 +196,7 @@ class ChestDesk:
         before it knows as the world's data filled it (its own from the start: what was taken out unseen
         since is missing when it looks), else as it is."""
         npc = npc.upper()
-        generation = self._generation
+        branch, generation, session = self.branch, self._generation, self.link.session
         cached = self._chests.get(npc)
         if cached is not None and not fresh and self.clock() - cached[0] < FRESH_S:
             return cached[1]
@@ -205,22 +205,38 @@ class ChestDesk:
         except (GameError, TimeoutError) as err:
             log.info("chests of %s: %s", npc, err or type(err).__name__)
             return cached[1] if cached is not None else []
-        if generation != self._generation:
+        if generation != self._generation or branch != self.branch or session is not self.link.session:
             return []
-        self._chests[npc] = (self.clock(), found)
-        known = self.known(npc)
+        known = await self._load_known(npc)
+        if generation != self._generation or branch != self.branch or session is not self.link.session:
+            return []
         for c in found:
             if c.id not in known:
-                self._learn(npc, Known(c.id, items_of(c, start=bool(c.start))))
+                await self._learn(npc, Known(c.id, items_of(c, start=bool(c.start))))
+                if (
+                    generation != self._generation or branch != self.branch
+                    or session is not self.link.session
+                ):
+                    return []
+        self._chests[npc] = (self.clock(), found)
         return found
 
     def known(self, npc: str) -> dict[str, Known]:
-        """What the npc knows lies in its chests, read from the save branch the first time."""
+        """What the prepared npc knows lies in its chests; no database work while rendering."""
+        return self._known[npc.upper()]
+
+    async def _load_known(self, npc: str) -> dict[str, Known]:
         npc = npc.upper()
         if (known := self._known.get(npc)) is not None:
             return known
+        branch, generation, session = self.branch, self._generation, self.link.session
+        records = await self.memory.chests(branch, npc) if branch is not None else []
+        if generation != self._generation or branch != self.branch or session is not self.link.session:
+            raise GameError("world changed while loading chest memories")
+        if (known := self._known.get(npc)) is not None:
+            return known
         known = {}
-        for raw in self.memory.chests(self.branch, npc) if self.branch is not None else []:
+        for raw in records:
             try:
                 k = Known.of(json.loads(raw))
             except (ValueError, TypeError, KeyError) as err:
@@ -230,12 +246,21 @@ class ChestDesk:
         self._known[npc] = known
         return known
 
-    def _learn(self, npc: str, k: Known) -> None:
-        self.known(npc)[k.chest] = k
-        if self.branch is None:
-            return
-        seq = self.memory.add_chest(self.branch, npc, json.dumps(k.record(), ensure_ascii=False))
-        self._spawn(self.link.send(MemoryCmd(branch=self.branch, seq=seq)))  # into the next save
+    async def _learn(self, npc: str, k: Known) -> None:
+        branch, generation, session = self.branch, self._generation, self.link.session
+        record = json.dumps(k.record(), ensure_ascii=False)
+
+        async def persist() -> None:
+            if generation != self._generation or branch != self.branch or session is not self.link.session:
+                raise GameError("world changed while remembering a chest")
+            seq = await self.memory.add_chest(branch, npc, record) if branch is not None else None
+            if generation != self._generation or branch != self.branch or session is not self.link.session:
+                raise GameError("world changed while remembering a chest")
+            self.known(npc)[k.chest] = Known.of(json.loads(record))
+            if seq is not None:
+                await self.link.send(MemoryCmd(branch=branch, seq=seq))  # into the next save
+
+        await self.memory.complete(persist)
 
     def in_chests(self, npc: str) -> Items:
         """What the npc knows it keeps in its chests, all of them (deals.py: a thing it offers is there)."""
@@ -352,11 +377,22 @@ class ChestDesk:
     ) -> tuple[str, bool]:
         """The walk to the chest, and (`back`) to the hero again: it went from him to fetch something."""
         npc = conv.npc
+        branch, generation, session = self.branch, self._generation, self.link.session
         try:
             if not await dialogue.borrow_body(conv, CHEST):
                 return "Тело не смогло сходить к сундуку: ты занят", False
             try:
+                if (
+                    generation != self._generation or branch != self.branch
+                    or session is not self.link.session
+                ):
+                    raise GameError("world changed before opening a chest")
                 res = await self.link.act(npc, "use_chest", chest=chest, take=take, put=put, timeout=CHEST_S)
+                if (
+                    generation != self._generation or branch != self.branch
+                    or session is not self.link.session
+                ):
+                    raise GameError("world changed while opening a chest")
                 if res.status == "done" and back:
                     await self._back(npc)
             except (GameError, TimeoutError) as err:
@@ -366,6 +402,8 @@ class ChestDesk:
             if res.status != "done":
                 log.info("%s at its chest %s: %s %s", npc, chest, res.status, res.detail)
                 return f"Не вышло открыть сундук ({res.detail or res.status})", False
+            if generation != self._generation or branch != self.branch or session is not self.link.session:
+                raise GameError("world changed while opening a chest")
             return await self.looked(npc, chest, res.detail), True
         finally:
             self._going.discard(npc)
@@ -373,11 +411,16 @@ class ChestDesk:
     async def _back(self, npc: str) -> None:
         """Back to the hero: by the waynet to the point nearest him (out of a house there is no straight
         way: 2026-10-14 Lobart stood by his bed a minute), then up to him."""
+        branch, generation, session = self.branch, self._generation, self.link.session
         snap = await self.link.snapshot(npc, fresh=True)
+        if generation != self._generation or branch != self.branch or session is not self.link.session:
+            raise GameError("world changed while returning from a chest")
         if snap.player is not None and snap.player.distance > BACK_CM * 2:
             pos = list(snap.player.pos)
             way = await self.link.act(npc, "go_to_waypoint", waypoint="", pos=pos, timeout=CHEST_S)
             log.info("%s back from its chest by the waynet: %s %s", npc, way.status, way.detail or "")
+        if generation != self._generation or branch != self.branch or session is not self.link.session:
+            raise GameError("world changed while returning from a chest")
         came = await self.link.act(npc, "go_to_npc", npc="PLAYER", radius=BACK_CM, timeout=CHEST_S)
         log.info("%s back from its chest to the hero: %s", npc, came.status)
 
@@ -385,11 +428,14 @@ class ChestDesk:
         """The npc has opened its chest: it sees what is there now. What it took and put, and what is gone
         that it believed was there (taken unseen). Its note."""
         npc = npc.upper()
-        generation = self._generation
-        before = self.known(npc).get(chest, Known(chest)).items
+        branch, generation, session = self.branch, self._generation, self.link.session
+        known = await self._load_known(npc)
+        if generation != self._generation or branch != self.branch or session is not self.link.session:
+            raise GameError("world changed while opening a chest")
+        before = known.get(chest, Known(chest)).items
         took, put = parse_moved(detail)
         now = next((c for c in await self.chests(npc, fresh=True) if c.id == chest), None)
-        if generation != self._generation:
+        if generation != self._generation or branch != self.branch or session is not self.link.session:
             raise GameError("мир сменился во время осмотра сундука")
         after = items_of(now) if now is not None else {}
         names = {i: n for i, (_, n) in {**before, **after}.items()}
@@ -399,7 +445,9 @@ class ChestDesk:
             gone = expected - after.get(item, (0, ""))[0]
             if gone > 0:
                 missing[item] = gone
-        self._learn(npc, Known(chest, after))
+        await self._learn(npc, Known(chest, after))
+        if generation != self._generation or branch != self.branch or session is not self.link.session:
+            raise GameError("world changed while remembering a chest")
 
         def text(moved: dict[str, int]) -> str:
             return ", ".join(f"{names.get(i, i)}{f' ×{n}' if n > 1 else ''}" for i, n in moved.items())
@@ -413,21 +461,31 @@ class ChestDesk:
         if missing:
             note += f" Из сундука пропало: {text(missing)} — кто-то в нём рылся."
             if self.npc_suspect is not None:
-                suspects = self.npc_suspect(
+                suspects = await self.npc_suspect(
                     npc, chest, missing, waypoint=now.waypoint if now is not None else "",
                 )
+                if (
+                    generation != self._generation or branch != self.branch
+                    or session is not self.link.session
+                ):
+                    raise GameError("world changed while inspecting missing chest items")
                 if suspects:
                     note += (
                         " Ты вспоминаешь людей рядом около времени пропажи; "
                         "это подозрение, не доказательство."
                     )
             if self.crimes is not None:
-                suspicions = self.crimes.suspect_chest(
+                suspicions = await self.crimes.suspect_chest(
                     npc,
                     chest,
                     missing,
                     waypoint=now.waypoint if now is not None else "",
                 )
+                if (
+                    generation != self._generation or branch != self.branch
+                    or session is not self.link.session
+                ):
+                    raise GameError("world changed while inspecting missing chest items")
                 if any(f.get("suspect") == "PLAYER" for f in suspicions):
                     note += (
                         " Ты вспоминаешь героя рядом около времени пропажи и подозреваешь его; "

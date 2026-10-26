@@ -15,6 +15,7 @@ from tests.fake_game import FakeGame, connected
 from tests.test_authoring import BOOK, _quest, graph  # noqa: F401 - the graph fixture
 from tests.test_dialogue import _until
 from tests.test_director import HILDA, NAMES, SYMBOLS
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 TOWNSMAN = "VLK_4000_BUERGER"
 
@@ -81,11 +82,14 @@ async def test_the_director_brings_in_a_character_who_gives_a_quest(graph):  # n
         ],
         delay=0,
     )
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     async with connected(fake) as link:
         patches = StoryPatches(link, store)
+        await patches.initialize()
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         cast = Cast(link, patches, chronicle)
+        await cast.prepare()
         places = PlaceBook(BOOK)
         casting = Casting(link, cast, llm, places, chronicle)
         await _until(lambda: patches.branch is not None and chronicle.branch is not None)
@@ -173,11 +177,14 @@ async def test_a_named_bandit_keeps_the_authors_role_and_carried_goods():
         ],
         delay=0,
     )
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     async with connected(fake) as link:
         patches = StoryPatches(link, store)
+        await patches.initialize()
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         cast = Cast(link, patches, chronicle)
+        await cast.prepare()
         casting = Casting(link, cast, llm, PlaceBook(BOOK), chronicle)
         await _until(lambda: patches.branch is not None and chronicle.branch is not None)
         spec = await casting.character(
@@ -196,11 +203,14 @@ async def test_a_bandit_group_uses_distinct_points_of_one_place_without_a_model(
     fake = FakeGame(branch="A")
     _bandit_world(fake)
     llm = FakeBackend(script=[], delay=0)
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     async with connected(fake) as link:
         patches = StoryPatches(link, store)
+        await patches.initialize()
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         cast = Cast(link, patches, chronicle)
+        await cast.prepare()
         places = PlaceBook(BOOK)
         casting = Casting(link, cast, llm, places, chronicle)
         await _until(lambda: patches.branch is not None and chronicle.branch is not None)
@@ -214,36 +224,39 @@ async def test_a_bandit_group_uses_distinct_points_of_one_place_without_a_model(
             assert [(r.start, r.end) for r in spec.routine] == [("06:00", "21:00"), ("21:00", "06:00")]
             assert [i.item for i in spec.items] == ["ITMI_SAW"]
             assert cast.person(spec.npc) is None
-        assert len(cast.characters()) == 2
+        assert len(await cast.characters()) == 2
         assert (await casting.bandits("FARM1_FIELD", 3))[0] == []
-        assert len(cast.characters()) == 2
+        assert len(await cast.characters()) == 2
 
 
 async def test_a_bandit_group_returns_already_introduced_characters_on_refusal(monkeypatch):
     fake = FakeGame(branch="A")
     _bandit_world(fake)
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     async with connected(fake) as link:
         patches = StoryPatches(link, store)
+        await patches.initialize()
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         cast = Cast(link, patches, chronicle)
+        await cast.prepare()
         casting = Casting(link, cast, FakeBackend(script=[], delay=0), PlaceBook(BOOK), chronicle)
         await _until(lambda: patches.branch is not None and chronicle.branch is not None)
         introduce = cast.introduce
 
         async def first_only(spec, person=None):
-            if cast.characters():
+            if await cast.characters():
                 return None, ["игра не сделала второго бандита"]
             return await introduce(spec, person)
 
         monkeypatch.setattr(cast, "introduce", first_only)
         group, errors = await casting.bandits("FARM1_FIELD", 2)
         assert len(group) == 1 and errors == ["игра не сделала второго бандита"]
-        assert [c.npc for c in cast.characters()] == [group[0].npc]
+        assert [c.npc for c in await cast.characters()] == [group[0].npc]
         monkeypatch.setattr(cast, "introduce", introduce)
         rest, errors = await casting.bandits("FARM1_FIELD", 1, occupied_points=[group[0].at])
         assert errors == [] and len(rest) == 1 and rest[0].at != group[0].at
-        assert len(cast.characters()) == 2
+        assert len(await cast.characters()) == 2
 
 
 async def test_a_director_card_applies_to_delayed_deceit_and_greedy_deeds():
@@ -253,11 +266,14 @@ async def test_a_director_card_applies_to_delayed_deceit_and_greedy_deeds():
     fake = FakeGame(branch="A")
     _bandit_world(fake)
     llm = FakeBackend(script=[FakeStep("", [_character(honesty=1, greed=5)])], delay=0)
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     async with connected(fake) as link:
         patches = StoryPatches(link, store)
+        await patches.initialize()
         chronicle = Chronicle(link, store)
+        await chronicle.initialize()
         cast = Cast(link, patches, chronicle)
+        await cast.prepare()
         casting = Casting(link, cast, llm, PlaceBook(BOOK), chronicle)
         await _until(lambda: patches.branch is not None and chronicle.branch is not None)
         spec = await casting.character("FARM1_ENTRANCE")
@@ -265,6 +281,6 @@ async def test_a_director_card_applies_to_delayed_deceit_and_greedy_deeds():
         cards = Cards({}, cast.cards)
         card = cards[spec.npc]
         assert (card.honesty, card.greed) == (1, 5)
-        intent = decide(chronicle, spec.npc, "DIRECTOR_DEAL", ["npc_later"], cards=cards)
+        intent = await decide(chronicle, spec.npc, "DIRECTOR_DEAL", ["npc_later"], cards=cards)
         assert intent is not None and intent["keeps"] is False and intent["why"] == "dishonesty"
         assert MOTIVES["greed"].action(card) == "steal"

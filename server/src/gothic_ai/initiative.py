@@ -160,7 +160,7 @@ class ImportantApproach:
                 return False
             if walk.done() and walk.result().status != "done":
                 if walk.result().status == "gone" and told():
-                    self._record_important(npc, entry.name, key, state)
+                    await self._record_important(npc, entry.name, key, state)
                     return True  # native TALK took over an approach already under way
                 return False
             # AI_GotoNpc aims for melee range and can stop against terrain before that distance.
@@ -172,7 +172,7 @@ class ImportantApproach:
                 talk_deadline: float | None = None
                 while world == self._world and valid() and not replaced:
                     if told():
-                        self._record_important(npc, entry.name, key, state)
+                        await self._record_important(npc, entry.name, key, state)
                         return True
                     current = self.talk.people.get(npc)
                     talking = current is not None and current.activity == "dialog"
@@ -210,8 +210,8 @@ class ImportantApproach:
             if self.active == npc:
                 self.active = None
 
-    def _record_important(self, npc: str, name: str, key: str, state: dict[str, Any]) -> None:
-        self.chronicle.record({
+    async def _record_important(self, npc: str, name: str, key: str, state: dict[str, Any]) -> None:
+        await self.chronicle.record({
             "fact": "initiative", "npc": npc, "name": name, "occasion": key,
             "why": "требует возместить ущерб", "seen_by": ["PLAYER"],
             **{k: state[k] for k in ("day", "hour", "minute") if k in state},
@@ -382,7 +382,7 @@ class InitiativeDesk:
         if self._partner(npc):
             walk.cancel()
             if occ is not None:  # he spoke first: it knows what it came for
-                self.dialogue.remember(npc, name, f"Ты сам шёл к герою: {occ.ru}")
+                await self.dialogue.remember(npc, name, f"Ты сам шёл к герою: {occ.ru}")
             return
         outcome = walk.result()
         entry = self.talk.people.get(npc)
@@ -399,7 +399,7 @@ class InitiativeDesk:
             if world != self._world:
                 return
             if self._partner(npc):  # he spoke to it while it waited
-                self.dialogue.remember(npc, name, f"Ты сам шёл к герою: {occ.ru}")
+                await self.dialogue.remember(npc, name, f"Ты сам шёл к герою: {occ.ru}")
                 return
             if self.floor_busy():
                 return self._skip(npc, name, "рядом болтают")
@@ -414,10 +414,10 @@ class InitiativeDesk:
             return self._skip(npc, name, "budget")
         if not await self.talk.listen(npc):
             return self._skip(npc, name, "not held")
-        if not self.talk.begin(npc, name, posture="listen"):
+        if not await self.talk.begin(npc, name, posture="listen"):
             self.talk.free(npc, "listen")
             return self._skip(npc, name, "the hero talks to another")
-        self._record(npc, name, occ)
+        await self._record(npc, name, occ)
         self.journal.add("initiative", npc=npc, name=name, occasion=occ.key)
         self.dialogue.event_turn(
             npc,
@@ -452,7 +452,7 @@ class InitiativeDesk:
         values = await self.link.story_eval(npc, [n.condition or ["int", 1] for n in waiting])
         return any(v is None or bool(v) for v in values)
 
-    def _record(self, npc: str, name: str, occ: Occasion) -> None:
+    async def _record(self, npc: str, name: str, occ: Occasion) -> None:
         now = self.now or 0
         self.spoken[(npc, occ.key)] = now
         where = None
@@ -464,7 +464,7 @@ class InitiativeDesk:
             seen_by += sorted(
                 v.npc.upper() for v in self.perception.views() if any(o.id == npc for o in v.sees)
             )
-        self.chronicle.record(
+        await self.chronicle.record(
             {
                 "fact": "initiative",
                 "npc": npc,

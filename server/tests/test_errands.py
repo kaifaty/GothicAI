@@ -11,11 +11,13 @@ from gothic_ai.gates import Gates
 from gothic_ai.journal import Journal
 from gothic_ai.llm import ToolCall
 from gothic_ai.meetings import DAY
+from gothic_ai.memory import MemoryStore
 from gothic_ai.protocol import InventoryItem, RosterEntry
 from gothic_ai.social import Rumor, Spot
 from tests.test_dialogue import _until
 from tests.test_gates import CITY, GatesFake, setup_gate
 from tests.test_guide import BOOK
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 LOBART, ANDRE, PECK, HILDA = "BAU_950_LOBART", "MIL_311_ANDRE", "MIL_332_PECK", "BAU_951_HILDA"
 MIL, FARMER = 2, 5
@@ -25,9 +27,23 @@ BARRACKS = (60000.0, 0.0, 0.0)  # 600 m from the farm: 300 game minutes of a wal
 
 
 @pytest.fixture(autouse=True)
-def quick(monkeypatch):
+async def quick(monkeypatch, close_memory_stores):
+    desks = []
+    original_desk = _desk
+
+    async def tracked_desk(*args, **kwargs):
+        result = await original_desk(*args, **kwargs)
+        desks.append(result[0])
+        return result
+
+    monkeypatch.setitem(globals(), "_desk", tracked_desk)
     monkeypatch.setattr(gothic_ai.errands, "TICK_S", 0.01)
     monkeypatch.setattr(gothic_ai.errands, "TELL_EVERY_S", 0.01)
+    yield
+    tasks = {task for desk in desks for task in desk._tasks}
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _all_day(state: str, waypoint: str, pos: tuple[float, float, float]) -> Spot:
@@ -61,7 +77,7 @@ class _Rumors:
         self.rumors = {lie.key: lie}
         self.told: list[tuple[str, str]] = []
 
-    def tell(self, r: Rumor, a: str, b: str) -> str:
+    async def tell(self, r: Rumor, a: str, b: str) -> str:
         if b in r.known:
             return "no"
         self.told.append((a, b))
@@ -72,6 +88,8 @@ class _Rumors:
 class _Link:
     def __init__(self) -> None:
         self.listeners: list[Any] = []
+        self.session = None
+        self.world_generation = 0
         gold = InventoryItem(item="ITMI_GOLD", name="Золото", count=30)
         letter = InventoryItem(item="ITWR_CANTHARS_KOMPROBRIEF_MIS", name="Письмо", count=1, mission=True)
         beet = InventoryItem(item="ITPL_BEET", name="Репа", count=5)
@@ -108,10 +126,12 @@ class _Bodies:
 
 
 class _Chronicle:
-    def __init__(self, facts: list[dict[str, Any]] | None = None) -> None:
+    def __init__(self, memory: MemoryStore, facts: list[dict[str, Any]] | None = None) -> None:
+        self.memory = memory
+        self.branch = "A"
         self.all = list(facts or [])
 
-    def record(self, fact: dict[str, Any]) -> None:
+    async def record(self, fact: dict[str, Any]) -> None:
         self.all.append(fact)
 
     def facts(self, kind: str | None = None) -> list[dict[str, Any]]:
@@ -125,11 +145,16 @@ class _Guide:
         return "тебе нельзя уходить отсюда (сюжетный: только слова)" if npc.startswith("NONE_") else None
 
 
-def _desk(facts: list[dict[str, Any]] | None = None, graph: Any = None):
-    link, bodies, rumors, chronicle = _Link(), _Bodies(), _Rumors(), _Chronicle(facts)
+async def _desk(facts: list[dict[str, Any]] | None = None, graph: Any = None):
+    memory = await MemoryStore.open(":memory:")
+    link, bodies, rumors, chronicle = _Link(), _Bodies(), _Rumors(), _Chronicle(memory, facts)
     talk = SimpleNamespace(people={LOBART: RosterEntry(id=LOBART, name="Лобарт", distance=300)}, partner=None)
     notes: list[str] = []
-    dialogue = SimpleNamespace(journal=Journal(), remember=lambda npc, name, text: notes.append(text))
+
+    async def remember(npc, name, text):
+        notes.append(text)
+
+    dialogue = SimpleNamespace(journal=Journal(), remember=remember)
     errands = Errands(
         link,
         dialogue,
@@ -144,7 +169,7 @@ def _desk(facts: list[dict[str, Any]] | None = None, graph: Any = None):
 
 
 async def test_what_an_errand_may_be():
-    errands, link, *_ = _desk()
+    errands, link, *_ = await _desk()
     snap = link.snapshots[LOBART]
     goal, why = await errands.plan(LOBART, "Лобарт", DAWN, snap)
     assert goal is not None and why == ""
@@ -155,7 +180,7 @@ async def test_what_an_errand_may_be():
     )
     busy = (await errands.plan(LOBART, "Лобарт", {**DAWN, "who": "Пек"}, snap))[1]
     assert busy.startswith("у тебя уже есть поручение")
-    other, *_ = _desk()
+    other, *_ = await _desk()
     assert (await other.plan(LOBART, "Лобарт", {**DAWN, "who": "Ворон"}, snap))[
         1
     ] == "ты не знаешь, кто такой «Ворон»"
@@ -170,14 +195,14 @@ async def test_what_an_errand_may_be():
 
 
 async def test_in_front_of_the_hero_it_walks_there_and_tells_him():
-    errands, link, talk, bodies, rumors, chronicle, notes = _desk()
+    errands, link, talk, bodies, rumors, chronicle, notes = await _desk()
     goal, _ = await errands.plan(LOBART, "Лобарт", DAWN, link.snapshots[LOBART])
     assert goal is not None
-    errands.tick(goal.start - 1)
+    await errands.tick(goal.start - 1)
     assert goal.state == "agreed" and bodies.acts == []
     link.player = SimpleNamespace(pos=(59000.0, 0.0, 0.0))  # the hero waits by the barracks
     talk.people.clear()
-    errands.tick(goal.start)  # it sets off
+    await errands.tick(goal.start)  # it sets off
     await _until(lambda: bodies.end is not None)
     npc, action, args = bodies.acts[0]
     assert (npc, action, args["waypoint"], args["arrive"]) == (
@@ -198,10 +223,10 @@ async def test_in_front_of_the_hero_it_walks_there_and_tells_him():
 
 
 async def test_the_fork_another_militiaman_hears_it_instead():
-    errands, link, _, bodies, rumors, chronicle, _ = _desk()
+    errands, link, _, bodies, rumors, chronicle, _ = await _desk()
     goal, _ = await errands.plan(LOBART, "Лобарт", DAWN, link.snapshots[LOBART])
     assert goal is not None
-    errands.tick(goal.start)
+    await errands.tick(goal.start)
     await _until(lambda: bodies.end is not None)
     link.nearby[LOBART] = [{"npc": PECK, "name": "Пек", "distance": 400, "guild": MIL}]  # no Andre
     assert bodies.end is not None
@@ -212,52 +237,52 @@ async def test_the_fork_another_militiaman_hears_it_instead():
 
 
 async def test_nobody_there_it_waits_and_gives_up():
-    errands, link, _, bodies, _, chronicle, notes = _desk()
+    errands, link, _, bodies, _, chronicle, notes = await _desk()
     goal, _ = await errands.plan(LOBART, "Лобарт", DAWN, link.snapshots[LOBART])
     assert goal is not None
-    errands.tick(goal.start)
+    await errands.tick(goal.start)
     await _until(lambda: bodies.end is not None)
     assert bodies.end is not None
     bodies.end.set_result("arrived")
     await _until(lambda: goal.state == "there")
-    errands.tick(goal.start + 30)  # 30 minutes later, still nobody
+    await errands.tick(goal.start + 30)  # 30 minutes later, still nobody
     await _until(lambda: goal.state == "failed")
     assert chronicle.facts("goal_failed")[0]["why"] == "не застал на месте: Андре"
     assert notes[-1].startswith("Поручение не вышло: рассказать о герое (репа в амбаре) — кому: Андре")
 
 
 async def test_far_from_the_hero_nothing_walks_the_fact_comes_when_it_would_be_there():
-    errands, link, talk, bodies, rumors, chronicle, _ = _desk()
+    errands, link, talk, bodies, rumors, chronicle, _ = await _desk()
     goal, _ = await errands.plan(LOBART, "Лобарт", DAWN, link.snapshots[LOBART])
     assert goal is not None
     link.player = SimpleNamespace(pos=(-90000.0, 0.0, 0.0))  # the hero is far from both
     talk.people.clear()
-    errands.tick(goal.start)
+    await errands.tick(goal.start)
     await _until(lambda: goal.state == "away")
     assert goal.arrive == goal.start + 300
-    errands.tick(goal.start + 299)
+    await errands.tick(goal.start + 299)
     assert rumors.told == []
-    errands.tick(goal.start + 300)
+    await errands.tick(goal.start + 300)
     assert rumors.told == [(LOBART, ANDRE)] and bodies.acts == []
     assert chronicle.facts("goal_done")[0]["how"] == "far"
 
 
 async def test_far_the_fork_by_the_routines():
-    errands, link, talk, bodies, rumors, chronicle, _ = _desk()
+    errands, link, talk, bodies, rumors, chronicle, _ = await _desk()
     rumors.social.days[ANDRE] = _all_day("ZS_SLEEP", "NW_CITY_KASERN_01", BARRACKS)
     goal, _ = await errands.plan(LOBART, "Лобарт", DAWN, link.snapshots[LOBART])
     assert goal is not None
     link.player = SimpleNamespace(pos=(-90000.0, 0.0, 0.0))
     talk.people.clear()
-    errands.tick(goal.start)
+    await errands.tick(goal.start)
     await _until(lambda: goal.state == "away")
-    errands.tick(goal.arrive)
+    await errands.tick(goal.arrive)
     assert rumors.told == [(LOBART, PECK)] and chronicle.facts("goal_done")[0]["instead_of"] == ANDRE
 
 
 @pytest.mark.parametrize("how", ["near", "far"])
 async def test_gate_news_uses_the_existing_plan_and_saved_goal(how):
-    errands, link, _, _, rumors, chronicle, _ = _desk()
+    errands, link, _, _, rumors, chronicle, _ = await _desk()
     delivered = []
     errands.gate_news = lambda npc, to: ("gate:vouch:lothar:1", "Я поручился за героя")
 
@@ -268,15 +293,15 @@ async def test_gate_news_uses_the_existing_plan_and_saved_goal(how):
     goal, why = await errands.plan(LOBART, "Лобарт", DAWN, link.snapshots[LOBART])
     assert goal is not None and not why
     assert (goal.rumor, goal.title) == ("gate:vouch:lothar:1", "Я поручился за героя")
-    restored, *_ = _desk(chronicle.facts())
+    restored, *_ = await _desk(chronicle.facts())
     assert restored.goals[goal.id].rumor == goal.rumor
     if how == "near":
         await errands._near(goal, ANDRE)
     else:
         goal.arrive = goal.start + 300
         goal.state = "away"
-        errands.tick(goal.arrive)
-        errands.tick(goal.arrive + 1)
+        await errands.tick(goal.arrive)
+        await errands.tick(goal.arrive + 1)
         await _until(lambda: goal.state == "done")
     assert delivered == [(goal.rumor, LOBART, ANDRE)]
     assert rumors.told == []
@@ -286,7 +311,7 @@ async def test_gate_news_uses_the_existing_plan_and_saved_goal(how):
 
 async def test_delivered_vouch_does_not_hide_vouchers_other_news_to_that_guard():
     guard = "MIL_310_STADTWACHE"
-    errands, link, _, _, rumors, chronicle, _ = _desk([
+    errands, link, _, _, rumors, chronicle, _ = await _desk([
         {"fact": "gate_vouch", "id": "andre-vouch", "npc": ANDRE, "name": "Андре",
          "at": NOW, "expires": NOW + 2 * DAY},
         {"fact": "gate_vouch_heard", "vouch": "andre-vouch", "from": ANDRE, "to": guard},
@@ -323,7 +348,7 @@ async def test_vouch_and_plan_in_one_reply_deliver_the_vouch_before_after_speech
         errands.now = DAY + 8 * 60
         jobs = []
         monkeypatch.setattr(dialogue, "after_speech", lambda conv, job: jobs.append(job))
-        conv = dialogue.open(lothar, "Лотар")
+        conv = await dialogue.open(lothar, "Лотар")
 
         outcome = await gates.handle(
             dialogue, conv, ToolCall("vouch_for_hero", {"note": "Я отвечаю за него."}, "vouch"), None,
@@ -345,7 +370,7 @@ async def test_vouch_and_plan_in_one_reply_deliver_the_vouch_before_after_speech
 
 
 async def test_gate_news_near_waits_for_its_exact_addressee_instead_of_another_guard():
-    errands, link, _, bodies, rumors, chronicle, _ = _desk()
+    errands, link, _, bodies, rumors, chronicle, _ = await _desk()
     delivered = []
     errands.gate_news = lambda npc, to: ("gate:claim:guard:1", "Герой сослался на тебя")
 
@@ -355,19 +380,19 @@ async def test_gate_news_near_waits_for_its_exact_addressee_instead_of_another_g
     errands.gate_told = gate_told
     goal, _ = await errands.plan(LOBART, "Лобарт", DAWN, link.snapshots[LOBART])
     assert goal is not None
-    errands.tick(goal.start)
+    await errands.tick(goal.start)
     await _until(lambda: bodies.end is not None)
     link.nearby[LOBART] = [{"npc": PECK, "name": "Пек", "distance": 400, "guild": MIL}]
     assert bodies.end is not None
     bodies.end.set_result("arrived")
     await _until(lambda: goal.state == "there")
-    errands.tick(goal.start + 30)
+    await errands.tick(goal.start + 30)
     await _until(lambda: goal.state == "failed")
     assert not delivered and not rumors.told and not chronicle.facts("goal_done")
 
 
 async def test_gate_news_far_cannot_be_delivered_to_a_substitute_guard():
-    errands, link, talk, _, rumors, chronicle, _ = _desk()
+    errands, link, talk, _, rumors, chronicle, _ = await _desk()
     delivered = []
     errands.gate_news = lambda npc, to: ("gate:vouch:lothar:1", "Я поручился за героя")
 
@@ -380,9 +405,9 @@ async def test_gate_news_far_cannot_be_delivered_to_a_substitute_guard():
     assert goal is not None
     link.player = SimpleNamespace(pos=(-90000.0, 0.0, 0.0))
     talk.people.clear()
-    errands.tick(goal.start)
+    await errands.tick(goal.start)
     await _until(lambda: goal.state == "away")
-    errands.tick(goal.arrive)
+    await errands.tick(goal.arrive)
     assert goal.state == "failed"
     assert not delivered and not rumors.told and not chronicle.facts("goal_done")
 
@@ -395,7 +420,7 @@ async def test_hilda_takes_lobart_the_gold_and_never_a_mission_item():
         )},
         npc=lambda name: name,
     )  # fmt: skip
-    errands, link, talk, bodies, _, chronicle, _ = _desk(graph=graph)
+    errands, link, talk, bodies, _, chronicle, _ = await _desk(graph=graph)
     snap = link.snapshots[HILDA]
     give = {"do": "give", "who": "Лобарт", "item": "ITMI_GOLD", "count": 25, "day": 0, "hour": 0, "minute": 0}
     letter = (
@@ -413,7 +438,7 @@ async def test_hilda_takes_lobart_the_gold_and_never_a_mission_item():
     assert goal is not None and why == ""
     talk.people[HILDA] = RosterEntry(id=HILDA, name="Хильда", distance=400)
     link.nearby[HILDA] = [{"npc": LOBART, "name": "Лобарт", "distance": 500, "guild": FARMER}]
-    errands.tick(NOW)  # now: Lobart is right by her, no walk first
+    await errands.tick(NOW)  # now: Lobart is right by her, no walk first
     await _until(lambda: bodies.end is not None)
     assert bodies.acts[0] == (
         HILDA,
@@ -429,15 +454,15 @@ async def test_hilda_takes_lobart_the_gold_and_never_a_mission_item():
 
 
 async def test_a_give_far_from_the_hero_is_the_bridge_s_effect():
-    errands, link, talk, _, _, chronicle, _ = _desk()
+    errands, link, talk, _, _, chronicle, _ = await _desk()
     give = {"do": "give", "who": "Андре", "item": "ITMI_GOLD", "count": 10, "day": 0, "hour": 0, "minute": 0}
     goal, _ = await errands.plan(HILDA, "Хильда", give, link.snapshots[HILDA])
     assert goal is not None
     link.player = SimpleNamespace(pos=(-90000.0, 0.0, 0.0))
     talk.people.clear()
-    errands.tick(NOW)
+    await errands.tick(NOW)
     await _until(lambda: goal.state == "away")
-    errands.tick(goal.arrive)
+    await errands.tick(goal.arrive)
     await _until(lambda: goal.state == "done")
     effect = {"do": "give", "item": "ITMI_GOLD", "count": 10, "to": "npc", "npc": ANDRE}
     assert link.effects == [(HILDA, [effect], True)]
@@ -445,13 +470,13 @@ async def test_a_give_far_from_the_hero_is_the_bridge_s_effect():
 
 
 async def test_a_load_brings_the_goals_back():
-    errands, link, *_ = _desk()
+    errands, link, *_ = await _desk()
     goal, _ = await errands.plan(LOBART, "Лобарт", DAWN, link.snapshots[LOBART])
     assert goal is not None
-    again, *_ = _desk(errands.chronicle.facts())  # type: ignore[attr-defined]
+    again, *_ = await _desk(errands.chronicle.facts())  # type: ignore[attr-defined]
     back = again.goals[goal.id]
     assert (back.state, back.to, back.start, back.rumor) == ("agreed", ANDRE, goal.start, goal.rumor)
-    done, *_ = _desk([*errands.chronicle.facts(), {"fact": "goal_done", "goal": goal.id}])  # type: ignore[attr-defined]
+    done, *_ = await _desk([*errands.chronicle.facts(), {"fact": "goal_done", "goal": goal.id}])  # type: ignore[attr-defined]
     assert done.goals[goal.id].state == "done"
 
 

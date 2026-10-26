@@ -91,56 +91,68 @@ class Bounty:
         return next((f for f in reversed(self.chronicle.facts("bounty_fight"))
                      if f.get("npc") == npc.upper()), None)
 
-    def _state(self, npc: str, state: str) -> None:
-        previous = self._fight(npc)
-        if previous is None or previous["state"] != state:
-            self.chronicle.record({"fact": "bounty_fight", "npc": npc.upper(), "state": state})
+    async def _state(self, npc: str, state: str) -> None:
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
 
-    def _hurt(self, npc: str, *, down: bool = False) -> None:
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            previous = self._fight(npc)
+            if previous is None or previous["state"] != state:
+                await self.chronicle.record({"fact": "bounty_fight", "npc": npc.upper(), "state": state})
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def _hurt(self, npc: str, *, down: bool = False) -> None:
         fight = self._fight(npc)
         snap = self.link.snapshots.get(npc.upper())
         if fight and fight["state"] == "hit" and (
             down or (snap and snap.npc.hp < snap.npc.hp_max / 2)
         ):
-            self._state(npc, "lost")
+            await self._state(npc, "lost")
 
-    def _hit(self, npc: str) -> None:
+    async def _hit(self, npc: str) -> None:
         if self.tier(npc):
             if not (fight := self._fight(npc)) or fight["state"] != "lost":
-                self._state(npc, "hit")
-            self._hurt(npc)
+                await self._state(npc, "hit")
+            await self._hurt(npc)
 
-    def _calmed(self, npc: str) -> None:
-        self._hurt(npc)
+    async def _calmed(self, npc: str) -> None:
+        await self._hurt(npc)
         if (fight := self._fight(npc)) and fight["state"] == "lost":
-            self._state(npc, "calm")
+            await self._state(npc, "calm")
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         match msg:
             case Loading() | Session():
                 self._friend = False
             case Perception(perc="ASSESSDAMAGE", other="PLAYER"):
-                self._hit(msg.npc)
+                await self._hit(msg.npc)
             case HeroDeed(kind="attack"):
-                self._hit(msg.victim)
+                await self._hit(msg.victim)
             case NpcEvent(kind="attack", other="PLAYER"):
                 if msg.detail in (None, "you") or msg.victim == msg.npc:
-                    self._hit(msg.npc)
+                    await self._hit(msg.npc)
             case Perception(perc="ASSESSDAMAGE") | NpcEvent(kind="attack" | "npc_attack"):
                 if (fight := self._fight(msg.npc)) and fight["state"] in {"hit", "lost"}:
-                    self._state(msg.npc, "ended")
+                    await self._state(msg.npc, "ended")
             case Snapshot():
                 if ((fight := self._fight(msg.npc.id)) and fight["state"] == "lost"
                         and msg.npc.hp == msg.npc.hp_max):
-                    self._state(msg.npc.id, "ended")
+                    await self._state(msg.npc.id, "ended")
                 else:
-                    self._hurt(msg.npc.id)
+                    await self._hurt(msg.npc.id)
             case Detached(reason="down"):
-                self._hurt(msg.npc, down=True)
+                await self._hurt(msg.npc, down=True)
             case NpcRoster():
                 for npc in msg.npcs:
                     if npc.activity == "down":
-                        self._hurt(npc.id, down=True)
+                        await self._hurt(npc.id, down=True)
 
     async def prepare(self, npc: str) -> None:
         if npc.upper() == LURE and self.tier(npc):
@@ -209,6 +221,8 @@ class Bounty:
     ) -> ToolOutcome | None:
         if call.name != "tell_secret":
             return None
+        branch, session = self.chronicle.branch, self.link.session
+        world_generation = self.link.world_generation
         npc, secret = conv.npc.upper(), call.arguments.get("secret")
         tier = self.tier(npc)
         if not tier or secret not in tier["secrets"]:
@@ -232,6 +246,8 @@ class Bounty:
             if not self.chronicle.facts("bounty_secret"):
                 # Read the native guard too: an earlier request may have applied but timed out.
                 state = await self.link.story_state(vars=["BDT13_DEXTER_VERRATEN", "MIS_STECKBRIEFE"])
+                if self.link.world_generation != world_generation or self.link.session is not session:
+                    raise GameError("world changed while revealing a bounty secret")
                 variables = state.get("vars", {})
                 if variables.get("BDT13_DEXTER_VERRATEN", 0) != 1:
                     effects = [{"do": "set", "var": "BDT13_DEXTER_VERRATEN", "value": 1}]
@@ -245,13 +261,18 @@ class Bounty:
             return ToolOutcome(
                 f"Отклонено: игра не подтвердила раскрытие ({str(err) or type(err).__name__}).", "rejected",
             )
-        self.chronicle.record({"fact": "bounty_secret", "npc": npc, "name": conv.persona.name,
-                               "secret": secret, "leverage": leverage})
-        if not any(f.get("npc") == npc for f in self.chronicle.facts("bounty_betrayal")):
-            witnesses = self._witnesses(npc)
-            self.chronicle.record({
-                "fact": "bounty_betrayal", "id": f"bounty:{npc}", "npc": npc,
-                "name": conv.persona.name, "witnesses": list(witnesses), "witness_names": witnesses,
-                "day": snap.world.day if snap else 0,
-            })
+        async def persist() -> None:
+            if (branch != self.chronicle.branch or session is not self.link.session
+                    or world_generation != self.link.world_generation):
+                raise GameError("world changed while revealing a bounty secret")
+            await self.chronicle.record({"fact": "bounty_secret", "npc": npc, "name": conv.persona.name,
+                                   "secret": secret, "leverage": leverage})
+            if not any(f.get("npc") == npc for f in self.chronicle.facts("bounty_betrayal")):
+                witnesses = self._witnesses(npc)
+                await self.chronicle.record({
+                    "fact": "bounty_betrayal", "id": f"bounty:{npc}", "npc": npc,
+                    "name": conv.persona.name, "witnesses": list(witnesses), "witness_names": witnesses,
+                    "day": snap.world.day if snap else 0,
+                })
+        await self.chronicle.memory.complete(persist)
         return ToolOutcome(f"Раскрыто ({leverage}): {text}.", "accepted")

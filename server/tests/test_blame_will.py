@@ -23,17 +23,17 @@ class MemoryDialogue:
         self.system = system
         self.conversations: dict[str, Any] = {}
 
-    def open(self, npc: str, name: str) -> Any:
+    async def open(self, npc: str, name: str) -> Any:
         return self.conversations.setdefault(npc, SimpleNamespace(
             persona=SimpleNamespace(name=name), intent=SimpleNamespace(attitude="neutral"),
         ))
 
-    def remember(self, npc: str, name: str, text: str) -> None:
-        self.open(npc, name)
-        self.system.memory.append(self.system.chronicle.branch, npc, "system", text)
+    async def remember(self, npc: str, name: str, text: str) -> None:
+        await self.open(npc, name)
+        await self.system.memory.append(self.system.chronicle.branch, npc, "system", text)
 
-    def change_intent(self, npc: str, name: str, **fields: Any) -> None:
-        conv = self.open(npc, name)
+    async def change_intent(self, npc: str, name: str, **fields: Any) -> None:
+        conv = await self.open(npc, name)
         for key, value in fields.items():
             setattr(conv.intent, key, value)
 
@@ -50,7 +50,7 @@ async def system(will_system):
     await blame.close()
 
 
-def believe(system, crime, *, culprit=HILDA, because="hero_words"):
+async def believe(system, crime, *, culprit=HILDA, because="hero_words"):
     fact = {
         "fact": "blamed", "id": f"BLAME_{len(system.chronicle.facts('blamed')) + 1}",
         "npc": LOBART, "name": NAMES[LOBART], "culprit": culprit,
@@ -60,7 +60,7 @@ def believe(system, crime, *, culprit=HILDA, because="hero_words"):
     }
     if because == "hero_words":
         fact["said"] = f"Это {NAMES[culprit]} взял хлеб."
-    system.chronicle.record(fact)
+    await system.chronicle.record(fact)
     return fact
 
 
@@ -75,8 +75,8 @@ async def settle(system):
     pytest.fail("crime and belief callbacks did not settle")
 
 
-def far_scene(system, *, target=HILDA):
-    base.scene(system, target=target, distance=10000)
+async def far_scene(system, *, target=HILDA):
+    await base.scene(system, target=target, distance=10000)
     social = Social([
         {"npc": npc, "name": NAMES[npc], "guild": 12, "routine": [
             {"start": 0, "end": 0, "state": "ZS_STAND", "waypoint": "FARM1_IN",
@@ -95,10 +95,10 @@ def far_scene(system, *, target=HILDA):
 async def test_belief_launches_reclaim_without_original_knowledge_using_character_courage(
     system, courage, action,
 ):
-    crime = base.theft(system)
-    belief = believe(system, crime)
+    crime = await base.theft(system)
+    belief = await believe(system, crime)
     system.cards[LOBART] = base.character(LOBART, courage=courage)
-    base.scene(system, target=HILDA)
+    await base.scene(system, target=HILDA)
     await system.will.tick(base.NOW)
     await settle(system)
     [motive] = system.chronicle.facts("npc_motive")
@@ -115,10 +115,10 @@ async def test_belief_launches_reclaim_without_original_knowledge_using_characte
 
 
 async def test_hero_crime_can_launch_reclaim_against_accused_without_changing_truth(system):
-    crime = system.crimes.record(hero_deed(owner=LOBART, chest="CHEST_LOBART", chest_owner=LOBART))
+    crime = await system.crimes.record(hero_deed(owner=LOBART, chest="CHEST_LOBART", chest_owner=LOBART))
     assert crime is not None
-    believe(system, crime, culprit=THIEF)
-    base.scene(system)
+    await believe(system, crime, culprit=THIEF)
+    await base.scene(system)
     await system.will.tick(base.NOW)
     await settle(system)
     assert [(npc, command, args["npc"]) for npc, command, args in system.link.actions] == [
@@ -130,11 +130,11 @@ async def test_hero_crime_can_launch_reclaim_against_accused_without_changing_tr
 
 @pytest.mark.parametrize("because", ["hero_words", "testimony:TESTIMONY_1", "own", "hunch"])
 async def test_no_goods_refutes_belief_and_only_hero_words_expose_a_lie(system, because):
-    crime = base.theft(system)
-    belief = believe(system, crime, because=because)
+    crime = await base.theft(system)
+    belief = await believe(system, crime, because=because)
     assert ("said" in belief) is (because == "hero_words")
     system.link.values = [1, 0, 0, 0, 1, 0, 0]
-    base.scene(system, target=HILDA)
+    await base.scene(system, target=HILDA)
     await system.will.tick(base.NOW)
     await settle(system)
     await system.will.tick(base.NOW + 60)
@@ -147,22 +147,22 @@ async def test_no_goods_refutes_belief_and_only_hero_words_expose_a_lie(system, 
     )
     assert system.blame.active(LOBART, crime["id"]) is None and system.will.pending() == []
     assert len(system.link.actions) == 1 and system.link.effects == []
-    memories = [entry.content for entry in system.memory.load("A", LOBART).entries]
+    memories = [entry.content for entry in (await system.memory.load("A", LOBART)).entries]
     assert any("Хильда" in text and "вещи не оказалось" in text for text in memories)
     assert len(system.chronicle.facts("caught")) == int(because == "hero_words")
     assert bool(Trust(system.chronicle).of(LOBART).lied) is (because == "hero_words")
     if because == "hero_words":
         [caught] = system.chronicle.facts("caught")
         assert caught["title"] == belief["said"] and "со слов:" not in caught["title"]
-        assert system.dialogue.open(LOBART, NAMES[LOBART]).intent.attitude == "wary"
+        assert (await system.dialogue.open(LOBART, NAMES[LOBART])).intent.attitude == "wary"
 
 
 @pytest.mark.parametrize("because", ["hero_words", "testimony:TESTIMONY_1", "hunch"])
 async def test_true_accusation_returns_real_goods_and_credits_only_the_hero_claim(system, because):
-    crime = base.theft(system)
-    belief = believe(system, crime, culprit=THIEF, because=because)
+    crime = await base.theft(system)
+    belief = await believe(system, crime, culprit=THIEF, because=because)
     assert ("said" in belief) is (because == "hero_words")
-    base.scene(system)
+    await base.scene(system)
     await system.will.tick(base.NOW)
     await settle(system)
     await system.will.tick(base.NOW + 60)
@@ -186,17 +186,19 @@ async def test_true_accusation_returns_real_goods_and_credits_only_the_hero_clai
 
 @pytest.mark.parametrize("completed", ["waiting", "reclaimed", "refuted"])
 async def test_loading_keeps_one_belief_motive_and_does_not_repeat_a_finished_fight(system, completed):
-    crime = base.theft(system)
+    crime = await base.theft(system)
     culprit = THIEF if completed == "reclaimed" else HILDA
-    believe(system, crime, culprit=culprit)
+    await believe(system, crime, culprit=culprit)
     if completed == "refuted":
         system.link.values = [1, 0, 0, 0, 1, 0, 0]
-    base.scene(system, target=culprit, distance=4000 if completed == "waiting" else 500)
+    await base.scene(system, target=culprit, distance=4000 if completed == "waiting" else 500)
     await system.will.tick(base.NOW)
     await settle(system)
-    saved = system.memory.head("A")
-    system.link.receive(Session(type="session", branch="loaded", parent="A", parent_seq=saved, reason="load"))
-    base.scene(system, target=culprit, now=base.NOW + 60)
+    saved = await system.memory.head("A")
+    await system.link.receive(Session(
+        type="session", branch="loaded", parent="A", parent_seq=saved, reason="load",
+    ))
+    await base.scene(system, target=culprit, now=base.NOW + 60)
     await system.will.tick(base.NOW + 60)
     await settle(system)
     await system.will.tick(base.NOW + 120)
@@ -211,10 +213,10 @@ async def test_loading_keeps_one_belief_motive_and_does_not_repeat_a_finished_fi
 
 @pytest.mark.parametrize("courage", [2, 3])
 async def test_distant_empty_accused_refutes_belief_even_without_courage_to_fight(system, courage):
-    crime = base.theft(system)
-    believe(system, crime)
+    crime = await base.theft(system)
+    await believe(system, crime)
     system.cards[LOBART] = base.character(LOBART, courage=courage)
-    far_scene(system)
+    await far_scene(system)
     system.link.values = [0]
     await system.will.tick(base.NOW)
     await settle(system)

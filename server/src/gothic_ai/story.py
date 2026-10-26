@@ -72,26 +72,34 @@ class StoryPatches:
         self.static = static or []  # changes on every branch, never recorded
         self.branch: str | None = None
         self.version = 0  # grows with every change of the log or of the branch: for readers that cache it
+        self._generation = 0
+        self._prepared_session: Session | None = None
         self._background: set[asyncio.Task[Any]] = set()
         link.listeners.append(self._on_message)
-        if link.session is not None:
-            self._on_session(link.session)
 
-    def ops(self) -> list[Op]:
+    async def initialize(self) -> None:
+        async def prepare_current() -> None:
+            session = self.link.session
+            if session is not None and session is not self._prepared_session:
+                await self._on_session(session)
+
+        await self.memory.complete(prepare_current)
+
+    async def ops(self) -> list[Op]:
         """The changes of the graph on the current branch, oldest first."""
-        return [op for op in self._log() if op.get("op") not in RECORDS]
+        return [op for op in await self._log() if op.get("op") not in RECORDS]
 
-    def records(self, kind: str) -> list[Op]:
+    async def records(self, kind: str) -> list[Op]:
         """The records of one kind on the current branch (NPC, QUEST), oldest first."""
-        return [op for op in self._log() if op.get("op") == kind]
+        return [op for op in await self._log() if op.get("op") == kind]
 
-    def characters(self) -> list[NpcSpec]:
+    async def characters(self) -> list[NpcSpec]:
         """The director's characters on the current branch, in the order they came."""
-        return [NpcSpec.model_validate(op["spec"]) for op in self.cast()]
+        return [NpcSpec.model_validate(op["spec"]) for op in await self.cast()]
 
-    def cast(self) -> list[Op]:
+    async def cast(self) -> list[Op]:
         """The records of the director's characters on the current branch: {"op", "spec", "person"?}."""
-        return self.records(NPC)
+        return await self.records(NPC)
 
     async def introduce(self, spec: NpcSpec, person: dict[str, Any] | None = None) -> dict[str, Any]:
         """A character of the director's: the game makes it (or GameError says why not), then the branch
@@ -99,22 +107,30 @@ class StoryPatches:
         index}."""
         if self.branch is None:
             raise GameError("the game has not reported a session yet")
-        made = await self.link.story_npc(spec)
+        branch, generation, session = self.branch, self._generation, self.link.session
         record: Op = {"op": NPC, "spec": spec.model_dump(exclude_none=True)}
         if person is not None:
             record["person"] = person
-        self._record(record)
+        content = json.dumps(record, ensure_ascii=False)
+        made = await self.link.story_npc(spec)
+        await self._record(content, branch, generation, session)
         return made
 
-    def _log(self) -> list[Op]:
-        return [json.loads(op) for op in self.memory.patches(self.branch)] if self.branch else []
+    async def _log(self) -> list[Op]:
+        branch, generation, session = self.branch, self._generation, self.link.session
+        records = await self.memory.patches(branch) if branch is not None else []
+        if generation != self._generation or branch != self.branch or session is not self.link.session:
+            raise GameError("session changed while reading story patches")
+        return [json.loads(op) for op in records]
 
     async def apply(self, op: Op) -> None:
         """One change: the game takes it (or GameError says why not), then the branch remembers it."""
         if self.branch is None:
             raise GameError("the game has not reported a session yet")
+        branch, generation, session = self.branch, self._generation, self.link.session
+        content = json.dumps(op, ensure_ascii=False)
         await self.link.patch_graph([op])
-        self._record(op)
+        await self._record(content, branch, generation, session)
 
     async def make(self, record: Op | list[Op], ops: list[Op]) -> None:
         """Something of the director's built of changes (one quest or a chain): the game takes all of them,
@@ -122,54 +138,97 @@ class StoryPatches:
         others are taken back: it gets the branch's changes anew, as they were."""
         if self.branch is None:
             raise GameError("the game has not reported a session yet")
+        branch, generation, session = self.branch, self._generation, self.link.session
+        entries = [
+            json.dumps(entry, ensure_ascii=False)
+            for entry in [*([record] if isinstance(record, dict) else record), *ops]
+        ]
         try:
             await self.link.patch_graph(ops)
         except GameError:
-            await self._replay(self.characters(), self.ops())
+            if generation == self._generation and session is self.link.session:
+                await self._replay(await self.characters(), await self.ops(), generation, session)
             raise
-        for entry in [record] if isinstance(record, dict) else record:
-            self._record(entry)
-        for op in ops:
-            self._record(op)
+        async def persist() -> None:
+            for content in entries:
+                await self._record(content, branch, generation, session)
 
-    def _on_message(self, msg: GameMessage) -> None:
+        await self.memory.complete(persist)
+
+    async def _on_message(self, msg: GameMessage) -> None:
         match msg:
             case Session():
-                self._on_session(msg)
+                await self._on_session(msg)
             case DialogChosen(made=True):
                 # the hero chose an added dialog: it is not offered again, also after a load
-                self._record({"op": "told", "node": msg.node})
+                await self._record(
+                    json.dumps({"op": "told", "node": msg.node}, ensure_ascii=False),
+                    self.branch, self._generation, self.link.session,
+                )
             case DialogChosen():
                 log.info("dialog chosen: %s %s", msg.npc, msg.node)
 
-    def _on_session(self, session: Session) -> None:
+    async def _on_session(self, session: Session) -> None:
+        self._prepared_session = None
         self.branch = session.branch
         self.version += 1
-        self.memory.ensure_branch(session.branch, session.parent, session.parent_seq)
-        ops, cast = self.ops(), self.characters()
+        self._generation += 1
+        generation = self._generation
+
+        async def load() -> tuple[list[Op], list[NpcSpec]]:
+            await self.memory.ensure_branch(session.branch, session.parent, session.parent_seq)
+            records = [json.loads(op) for op in await self.memory.patches(session.branch)]
+            return (
+                [op for op in records if op.get("op") not in RECORDS],
+                [NpcSpec.model_validate(op["spec"]) for op in records if op.get("op") == NPC],
+            )
+
+        ops, cast = await self.memory.complete(load)
+        if generation != self._generation or session is not self.link.session:
+            return
+        self._prepared_session = session
         if ops or cast:
             log.info(
                 "story graph: %d change(s), %d character(s) on branch %s", len(ops), len(cast), session.branch
             )
-        self._spawn(self._replay(cast, ops))
+        self._spawn(self._replay(cast, ops, generation, session))
 
-    async def _replay(self, cast: list[NpcSpec], ops: list[Op]) -> None:
+    async def _replay(
+        self, cast: list[NpcSpec], ops: list[Op], generation: int, session: Session | None,
+    ) -> None:
         # the characters first, the graph's dialogs name them; one the save has stays as it is
         for spec in cast:
+            if generation != self._generation or session is not self.link.session:
+                return
             try:
                 await self.link.story_npc(spec)
             except (GameError, TimeoutError) as err:
                 log.warning("story: %s: %s", spec.npc, err)
         # also when there are none: whatever the game had belongs to another line of play
+        if generation != self._generation or session is not self.link.session:
+            return
         await self.link.patch_graph([*self.static, *ops], replace=True)
 
-    def _record(self, op: Op) -> None:
-        if self.branch is None:
+    async def _record(
+        self, record: str, branch: str | None, generation: int, session: Session | None,
+    ) -> None:
+        if branch is None:
             return
-        seq = self.memory.add_patch(self.branch, json.dumps(op, ensure_ascii=False))
-        self.version += 1
-        # the head goes into the next save: a load must bring this change back
-        self._spawn(self.link.send(MemoryCmd(branch=self.branch, seq=seq)))
+
+        async def persist() -> None:
+            if generation != self._generation or branch != self.branch or session is not self.link.session:
+                raise GameError("session changed while recording a story patch")
+            seq = await self.memory.add_patch(branch, record)
+            if generation != self._generation or branch != self.branch or session is not self.link.session:
+                raise GameError("session changed while recording a story patch")
+            self.version += 1
+            # the head goes into the next save: a load must bring this change back
+            try:
+                await self.link.send(MemoryCmd(branch=branch, seq=seq))
+            except (GameError, TimeoutError) as err:
+                log.warning("story graph: %s", err)
+
+        await self.memory.complete(persist)
 
     def _spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
         async def run() -> None:

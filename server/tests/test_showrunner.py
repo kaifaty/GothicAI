@@ -40,6 +40,7 @@ from tests.fakes import Clock
 from tests.test_authoring import BOOK, _author
 from tests.test_director import HILDA, LOBART, NAMES, VINO, XARDAS
 from tests.test_director import QUEST as SCRIPT_QUEST
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_occasions import load
 
 HOME, YARD, FIELD = "FARM1_INHOUSE", "FARM1_ENTRANCE", "FARM1_FIELD"
@@ -133,10 +134,10 @@ class World:
     async def keep(self, *quests):
         await self.author.patches.make([{"op": QUEST_RECORD, "quest": q.to_dict()} for q in quests], [])
 
-    def finish(self, *ids, state="done"):
+    async def finish(self, *ids, state="done"):
         suffix = {"done": "done", "failed": "failed", "obsolete": "obsolete"}[state]
         for id in ids:
-            self.chronicle.record({"fact": f"story_quest_{suffix}", "id": id})
+            await self.chronicle.record({"fact": f"story_quest_{suffix}", "id": id})
 
 
 @asynccontextmanager
@@ -147,7 +148,7 @@ async def world(story_graph, *proposals, gather_s=0):
         script=[FakeStep("", [ToolCall(PROPOSE, p, f"line{i}")]) for i, p in enumerate(proposals)],
         delay=0,
     )
-    link_cm, author, chronicle = await _author(fake, llm, story_graph, MemoryStore(":memory:"))
+    link_cm, author, chronicle = await _author(fake, llm, story_graph, await MemoryStore.open(":memory:"))
     try:
         data = deepcopy(BOOK)
         for place, kind in zip(data["places"], ["house", "yard", "field", "street"], strict=True):
@@ -187,6 +188,7 @@ async def world(story_graph, *proposals, gather_s=0):
             3,
         )
         cast = Cast(author.link, author.patches, chronicle)
+        await cast.prepare()
         casting = SimpleNamespace(cast=cast, character=AsyncMock())
         chains = SimpleNamespace(chain=AsyncMock())
         occasions = Occasions(
@@ -204,15 +206,15 @@ async def world(story_graph, *proposals, gather_s=0):
             npc, *, new_people=False, premise="", max_people=None, requires=None, follows="",
             quest_count=None, crime="",
         ):
-            first = quest(id=author.book.next_id(), giver=npc)
+            first = quest(id=await author.book.next_id(), giver=npc)
             quests = [first]
             if quest_count != 1:
-                quests.append(quest(id=author.book.next_id({first.id}), giver=npc, title="След пилы"))
+                quests.append(quest(id=await author.book.next_id({first.id}), giver=npc, title="След пилы"))
             await state.keep(*quests)
             return quests
 
         async def make_character(place, *, about="", premise="", **kwargs):
-            person = spec(npc=cast.next_id())
+            person = spec(npc=await cast.next_id())
             await author.patches.introduce(person)
             fake.npc_states[person.npc] = {"state": "alive", "name": person.name, "distance": 300}
             return person
@@ -230,19 +232,19 @@ async def test_budget_denies_before_the_model_and_records_why(graph, rule):
     async with world(graph, proposal()) as w:
         if rule == "open":
             for i in range(MAX_OPEN_LINES):
-                w.chronicle.record(line(giver=f"GIVER_{i}", quests=[f"DIR_Q{i + 1}"]))
+                await w.chronicle.record(line(giver=f"GIVER_{i}", quests=[f"DIR_Q{i + 1}"]))
         elif rule == "chapter":
             for i in range(MAX_LINES_PER_CHAPTER):
-                w.chronicle.record(line(quests=[f"DIR_Q{i + 1}"]))
-                w.finish(f"DIR_Q{i + 1}")
+                await w.chronicle.record(line(quests=[f"DIR_Q{i + 1}"]))
+                await w.finish(f"DIR_Q{i + 1}")
         else:
             previous = line(
                 day=9 if rule == "game_time" else 8,
                 hour=8,
                 wall_time=w.clock.t - (MIN_REAL_SECONDS if rule == "game_time" else MIN_REAL_SECONDS - 1),
             )
-            w.chronicle.record(previous)
-            w.finish("DIR_Q1")
+            await w.chronicle.record(previous)
+            await w.finish("DIR_Q1")
             if rule == "game_time":
                 w.fake.hour, w.fake.minute = 7, 59
         result = await w.showrunner.decide(occasion())
@@ -258,7 +260,7 @@ async def test_budget_denies_before_the_model_and_records_why(graph, rule):
 async def test_giver_and_people_budget_can_skip_when_no_builder_kind_fits(graph):
     async with world(graph, proposal()) as w:
         # Hilda has an unfinished line; all eight newcomers were already introduced by it.
-        w.chronicle.record(line(characters=[f"DIR_NPC_{i}" for i in range(8)]))
+        await w.chronicle.record(line(characters=[f"DIR_NPC_{i}" for i in range(8)]))
         for npc in (LOBART, VINO):
             w.fake.npc_states[npc]["state"] = "dead"
         budget = w.showrunner.budget(1, occasion())
@@ -279,23 +281,23 @@ async def arrive(w):
     return arrival
 
 
-def close_budget(w, rule):
+async def close_budget(w, rule):
     if rule == "open":
         for i in range(MAX_OPEN_LINES):
-            w.chronicle.record(line(giver=f"GIVER_{i}", quests=[f"DIR_Q{i + 1}"]))
+            await w.chronicle.record(line(giver=f"GIVER_{i}", quests=[f"DIR_Q{i + 1}"]))
     elif rule == "chapter":
         for i in range(MAX_LINES_PER_CHAPTER):
-            w.chronicle.record(line(quests=[f"DIR_Q{i + 1}"]))
-            w.finish(f"DIR_Q{i + 1}")
+            await w.chronicle.record(line(quests=[f"DIR_Q{i + 1}"]))
+            await w.finish(f"DIR_Q{i + 1}")
     else:
-        w.chronicle.record(
+        await w.chronicle.record(
             line(
                 day=9 if rule == "game_time" else 8,
                 minute=1 if rule == "game_time" else 0,
                 wall_time=w.clock.t - MIN_REAL_SECONDS + (1 if rule == "wall_time" else 0),
             )
         )
-        w.finish("DIR_Q1")
+        await w.finish("DIR_Q1")
     # Completing old test quests is setup, not another new occasion for the hero.
     w.showrunner.occasions._events.clear()
 
@@ -304,7 +306,7 @@ def close_budget(w, rule):
 async def test_run_keeps_an_arrival_until_its_budget_opens(graph, monkeypatch, rule):
     async with world(graph, proposal(kind="none")) as w:
         arrival = await arrive(w)
-        close_budget(w, rule)
+        await close_budget(w, rule)
         checked, finished = asyncio.Event(), asyncio.Event()
         original_ready = w.showrunner._ready
 
@@ -321,7 +323,9 @@ async def test_run_keeps_an_arrival_until_its_budget_opens(graph, monkeypatch, r
             assert w.showrunner.occasions.pending == [arrival]
             assert w.chronicle.facts("line_skipped") == [] and w.llm.calls == []
             if rule == "open":
-                w.finish(*(f"DIR_Q{i + 1}" for i in range(MAX_OPEN_LINES)))
+                await w.finish(*(f"DIR_Q{i + 1}" for i in range(MAX_OPEN_LINES)))
+                # As in close_budget, these old quests only prepare the budget under test.
+                w.showrunner.occasions._events.clear()
             elif rule == "chapter":
                 w.fake.vars["KAPITEL"] = 2
             elif rule == "game_time":
@@ -342,7 +346,7 @@ async def test_run_keeps_an_arrival_until_its_budget_opens(graph, monkeypatch, r
 async def test_an_arrival_expires_while_the_run_waits_for_budget(graph, monkeypatch, expired_by):
     async with world(graph, proposal(kind="none")) as w:
         arrival = await arrive(w)
-        close_budget(w, "open")
+        await close_budget(w, "open")
         checked = asyncio.Event()
         original_ready = w.showrunner._ready
 
@@ -372,7 +376,7 @@ async def test_an_arrival_expires_while_the_run_waits_for_budget(graph, monkeypa
 
 async def test_budget_readiness_uses_one_state_per_poll_and_counts_real_wait_locally(graph, monkeypatch):
     async with world(graph) as w:
-        close_budget(w, "wall_time")
+        await close_budget(w, "wall_time")
         state = AsyncMock(wraps=w.showrunner._state)
         monkeypatch.setattr(w.showrunner, "_state", state)
         assert not await w.showrunner._ready()
@@ -396,15 +400,15 @@ async def test_budget_state_cache_is_reset_by_a_session_or_loading(graph, monkey
         assert await w.showrunner._ready()
         assert state.await_count == 1
         if loading:
-            w.showrunner.link._dispatch(Loading(type="loading"))
+            await w.showrunner.link._dispatch(Loading(type="loading"))
         else:
             branch = w.chronicle.branch
-            w.showrunner.link._dispatch(
+            await w.showrunner.link._dispatch(
                 Session(
                     type="session",
                     branch="loaded",
                     parent=branch,
-                    parent_seq=w.chronicle.memory.head(branch),
+                    parent_seq=await w.chronicle.memory.head(branch),
                     reason="load",
                 )
             )
@@ -429,7 +433,7 @@ async def test_run_returns_its_bundle_when_another_writer_spends_budget_after_ha
         arrival = await arrive(w)
         deed = {"fact": "found_out", "reason": "Герой раскрыл обман с пилой."}
         w.clock.t += 5
-        w.chronicle.record(deed)
+        await w.chronicle.record(deed)
         await occasions.poll()
         w.clock.t += occasions.gather_s
         originals = list(occasions.pending)
@@ -462,8 +466,10 @@ async def test_run_returns_its_bundle_when_another_writer_spends_budget_after_ha
             # Another writer commits its receipts after handoff's readiness check. Both cooldowns
             # are near their boundary, so reopening them will leave the arrival fresh.
             async with w.showrunner._lock:
-                w.chronicle.record(line(day=9, minute=1, wall_time=w.clock.t - MIN_REAL_SECONDS + 1))
-                w.finish("DIR_Q1")
+                await w.chronicle.record(line(day=9, minute=1, wall_time=w.clock.t - MIN_REAL_SECONDS + 1))
+                await w.finish("DIR_Q1")
+                # The competing writer spends budget; completing its old quest is setup only.
+                occasions._events.clear()
                 resume.set()
             await asyncio.wait_for(returned.wait(), 1)
             assert occasions.pending == originals
@@ -488,8 +494,8 @@ async def test_run_returns_its_bundle_when_another_writer_spends_budget_after_ha
 async def test_both_cooldown_boundaries_allow_a_model_call(graph):
     async with world(graph, proposal(kind="none")) as w:
         previous = line(day=9, wall_time=w.clock.t - MIN_REAL_SECONDS)
-        w.chronicle.record(previous)
-        w.finish("DIR_Q1")
+        await w.chronicle.record(previous)
+        await w.finish("DIR_Q1")
         assert MIN_GAME_MINUTES == 24 * 60
         assert w.showrunner.budget(1, occasion()).reasons == []
         result = await w.showrunner.decide(occasion())
@@ -500,24 +506,24 @@ async def test_both_cooldown_boundaries_allow_a_model_call(graph):
 async def test_a_line_stays_open_until_every_quest_is_finished(graph, state):
     async with world(graph) as w:
         await w.keep(quest(), quest(id="DIR_Q2"))
-        w.finish("DIR_Q1")
+        await w.finish("DIR_Q1")
         if state != "open":
             suffix = {"given": "given", "done": "done", "failed": "failed", "obsolete": "obsolete"}[state]
-            w.chronicle.record({"fact": f"story_quest_{suffix}", "id": "DIR_Q2"})
+            await w.chronicle.record({"fact": f"story_quest_{suffix}", "id": "DIR_Q2"})
         assert w.showrunner.is_open(line(quests=["DIR_Q1", "DIR_Q2"])) is (state in {"open", "given"})
         assert not w.showrunner.is_open(line(quests=[]))
 
 
 async def test_budget_is_chapter_local_but_open_lines_and_cooldown_cross_chapters(graph):
     async with world(graph) as w:
-        w.chronicle.record(line(chapter=1, characters=[f"DIR_NPC_{i}" for i in range(8)]))
+        await w.chronicle.record(line(chapter=1, characters=[f"DIR_NPC_{i}" for i in range(8)]))
         budget = w.showrunner.budget(2, occasion())
         assert budget.open_left == MAX_OPEN_LINES - 1
         assert budget.lines_left == MAX_LINES_PER_CHAPTER
         assert budget.people_left == MAX_PEOPLE_PER_CHAPTER
         assert budget.busy_givers == {HILDA}
-        w.chronicle.record(line(chapter=2, quests=[], characters=[OWN, "DIR_NPC_2", "DIR_NPC_3"]))
-        w.chronicle.record(line(chapter=2, quests=[], characters=[OWN]))
+        await w.chronicle.record(line(chapter=2, quests=[], characters=[OWN, "DIR_NPC_2", "DIR_NPC_3"]))
+        await w.chronicle.record(line(chapter=2, quests=[], characters=[OWN]))
         assert w.showrunner.budget(2, occasion()).people_left == MAX_PEOPLE_PER_CHAPTER - 3
 
 
@@ -525,10 +531,10 @@ async def test_brief_has_local_cards_time_quests_deeds_history_and_only_free_liv
     async with world(graph) as w:
         await w.keep(quest(title="Уже было"))
         await w.keep(quest(id="DIR_Q2", title="Старое поручение строителя"))
-        w.finish("DIR_Q2")
-        w.chronicle.record(line(characters=[OWN]))
-        w.chronicle.record({"fact": "story_quest_given", "id": "DIR_Q1"})
-        w.chronicle.record({"fact": "story_quest_stage", "id": "DIR_Q1", "stage": 2})
+        await w.finish("DIR_Q2")
+        await w.chronicle.record(line(characters=[OWN]))
+        await w.chronicle.record({"fact": "story_quest_given", "id": "DIR_Q1"})
+        await w.chronicle.record({"fact": "story_quest_stage", "id": "DIR_Q1", "stage": 2})
         w.fake.vars[SCRIPT_QUEST] = 1
         newcomer = spec().model_copy(update={"routine": []})
         person = Person(
@@ -543,9 +549,10 @@ async def test_brief_has_local_cards_time_quests_deeds_history_and_only_free_liv
             voice="A calm middle aged man with a low voice.",
         )
         await w.author.patches.introduce(newcomer, person.model_dump())
+        await w.casting.cast.prepare()
         w.fake.npc_states[OWN] = {"state": "alive", "name": newcomer.name, "distance": 300}
         deed = {"fact": "found_out", "quest": "MIS_LIE", "npc": LOBART, "reason": "Герой солгал."}
-        w.chronicle.record(deed)
+        await w.chronicle.record(deed)
         current = occasion(kind="deed", deed=deed)
         brief = await w.showrunner.brief(current)
         assert brief.occasion == current
@@ -625,7 +632,7 @@ async def test_an_arrival_and_a_deed_five_seconds_later_make_one_decision(graph)
             assert w.llm.calls == [] and w.showrunner.occasions.pending == [arrival]
             w.clock.t += 5
             deed = {"fact": "died", "npc": "BANDIT", "killer": "PLAYER", "monster": False}
-            w.chronicle.record(deed)
+            await w.chronicle.record(deed)
             await w.showrunner.occasions.poll()
             await w.showrunner.occasions.poll()
             assert len(w.showrunner.occasions.pending) == 2 and w.llm.calls == []
@@ -686,7 +693,7 @@ async def test_brief_includes_vanilla_event_giver_known_journal_and_no_future_en
             "giver": LOBART,
         }
         for i in range(12):
-            w.chronicle.record({**event, "minute": i})
+            await w.chronicle.record({**event, "minute": i})
         brief = await w.showrunner.brief(occasion(kind="vanilla", vanilla=event))
         text = brief.text()
         assert len(brief.vanilla) == 10
@@ -706,8 +713,8 @@ async def test_vanilla_summary_includes_latest_quest_outcome_when_present(graph,
             "from": "running", "to": "success", "giver": LOBART,
         }
         started = {**event, "from": "open", "to": "running"}
-        w.chronicle.record(started)
-        w.chronicle.record(event)
+        await w.chronicle.record(started)
+        await w.chronicle.record(event)
         expected = dict(event)
         if has_outcome:
             outcome = {
@@ -717,9 +724,9 @@ async def test_vanilla_summary_includes_latest_quest_outcome_when_present(graph,
             }
             w.fake.item_names["ITPL_BEET"] = "Репа"
             graph.nodes["DIA_LOBART_WORKNOW"].description = "Я хочу поработать."
-            w.chronicle.record({**outcome, "how": "done", "drop": [], "pay": "full"})
-            w.chronicle.record(outcome)
-            w.chronicle.record({**outcome, "quest": "MIS_OTHER", "how": "dropped"})
+            await w.chronicle.record({**outcome, "how": "done", "drop": [], "pay": "full"})
+            await w.chronicle.record(outcome)
+            await w.chronicle.record({**outcome, "quest": "MIS_OTHER", "how": "dropped"})
             expected["outcome"] = {
                 "how": "amended", "drop": [NAMES[VINO], "Репа", "Я хочу поработать."],
                 "why": outcome["why"], "pay": "none",
@@ -745,7 +752,7 @@ def test_proposal_parses_follows_and_all_three_requirements_and_keeps_old_defaul
     assert {"follows", "requires"} <= set(PROPOSE_TOOL.parameters["required"])
 
 
-def enable_crime(w, **change):
+async def enable_crime(w, **change):
     crimes = Crimes(w.author.link, w.chronicle, places=w.author.places, names=lambda n: NAMES.get(n, n))
     crimes.people[HILDA] = {"guild": 8, "npctype": 0}
     w.showrunner.crimes, w.showrunner.law = crimes, CrimeLaw(crimes)
@@ -755,21 +762,23 @@ def enable_crime(w, **change):
         "chest": "LOBART_CHEST", "waypoint": "NW_FARM1_INHOUSE_01",
         "day": 10, "hour": 7, "minute": 45, "witnesses": [HILDA], **change,
     }
-    w.chronicle.record(crime)
+    await w.chronicle.record(crime)
     return crime
 
 
 @pytest.mark.parametrize("status", ["pending", "known", "paid"])
 async def test_crime_brief_separates_truth_beliefs_and_read_only_law(graph, status):
     async with world(graph) as w:
-        crime = enable_crime(w)
+        crime = await enable_crime(w)
         cid = crime["id"]
-        w.chronicle.record({"fact": "crime_seen", "npc": HILDA, "crime": cid})
-        w.chronicle.record({"fact": "rumor", "from": HILDA, "to": VINO, "crime": cid, "hops": 2})
+        await w.chronicle.record({"fact": "crime_seen", "npc": HILDA, "crime": cid})
+        await w.chronicle.record({"fact": "rumor", "from": HILDA, "to": VINO, "crime": cid, "hops": 2})
         if status in {"known", "paid"}:
-            w.chronicle.record({"fact": "crime_known", "crime": cid, "community": "farm"})
+            await w.chronicle.record({"fact": "crime_known", "crime": cid, "community": "farm"})
         if status == "paid":
-            w.chronicle.record({"fact": "absolved", "crimes": [cid], "community": "farm", "how": "paid"})
+            await w.chronicle.record(
+                {"fact": "absolved", "crimes": [cid], "community": "farm", "how": "paid"}
+            )
         before = w.chronicle.facts()
         brief = await w.showrunner.brief(occasion(kind="deed", crime=cid, deed=crime))
         case = brief.crimes[cid]
@@ -792,10 +801,10 @@ async def test_crime_brief_separates_truth_beliefs_and_read_only_law(graph, stat
 @pytest.mark.parametrize("cover", [True, False])
 async def test_old_cover_testimony_enters_crime_brief_when_cover_is_disabled(graph, cover):
     async with world(graph) as w:
-        crime = enable_crime(w)
+        crime = await enable_crime(w)
         cid = crime["id"]
         w.showrunner.crimes.cover = cover
-        w.chronicle.record({
+        await w.chronicle.record({
             "fact": "testimony", "npc": VINO, "witness": HILDA, "cover": "D1",
             "crime_saw": [cid], "crime_told": [],
         })
@@ -822,14 +831,16 @@ async def test_crime_giver_canon_uses_personal_knowledge_or_missing_property(
     graph, kind, giver, degree, allowed
 ):
     async with world(graph) as w:
-        crime = enable_crime(w, kind=kind)
+        crime = await enable_crime(w, kind=kind)
         cid = crime["id"]
         if degree == "seen":
-            w.chronicle.record({"fact": "crime_seen", "npc": giver, "crime": cid})
+            await w.chronicle.record({"fact": "crime_seen", "npc": giver, "crime": cid})
         elif degree == "heard":
-            w.chronicle.record({"fact": "rumor", "from": VINO, "to": giver, "crime": cid})
+            await w.chronicle.record({"fact": "rumor", "from": VINO, "to": giver, "crime": cid})
         elif degree == "suspects":
-            w.chronicle.record({"fact": "crime_suspected", "npc": giver, "crime": cid, "suspect": "PLAYER"})
+            await w.chronicle.record(
+                {"fact": "crime_suspected", "npc": giver, "crime": cid, "suspect": "PLAYER"}
+            )
         brief = await w.showrunner.brief(occasion(kind="deed", crime=cid, deed=crime))
         errors = w.showrunner.canon(Proposal.of(proposal(giver=giver, crime=cid)), brief)
         assert (not errors) is allowed
@@ -839,7 +850,7 @@ async def test_crime_giver_canon_uses_personal_knowledge_or_missing_property(
 
 async def test_a_crime_line_keeps_its_id_through_the_builder_and_load_without_forgiving(graph):
     async with world(graph, proposal(giver=LOBART, crime="A/deed-1")) as w:
-        crime = enable_crime(w, witnesses=[])
+        crime = await enable_crime(w, witnesses=[])
         result = await w.showrunner.decide(occasion(kind="deed", crime=crime["id"], deed=crime))
         assert result["fact"] == "line" and result["crime"] == crime["id"]
         assert w.chains.chain.await_args.kwargs["crime"] == crime["id"]
@@ -851,7 +862,7 @@ async def test_a_crime_line_keeps_its_id_through_the_builder_and_load_without_fo
 
 async def test_crime_canon_rejects_unknown_ids_and_requires_id_for_a_deed_line(graph):
     async with world(graph) as w:
-        crime = enable_crime(w)
+        crime = await enable_crime(w)
         brief = await w.showrunner.brief(occasion(kind="deed", crime=crime["id"], deed=crime))
         assert "нет такого дела" in str(w.showrunner.canon(Proposal.of(proposal(crime="invented")), brief))
         assert "id в crime" in str(w.showrunner.canon(Proposal.of(proposal()), brief))
@@ -865,7 +876,7 @@ async def test_crime_canon_rejects_unknown_ids_and_requires_id_for_a_deed_line(g
 async def test_a_crime_can_receive_none_with_a_reason(graph):
     reason = "Сейчас у фермеров нет нового поручения; свидетель сам решит, говорить ли."
     async with world(graph, proposal(kind="none", reason=reason)) as w:
-        crime = enable_crime(w)
+        crime = await enable_crime(w)
         result = await w.showrunner.decide(occasion(kind="deed", crime=crime["id"], deed=crime))
         assert result["fact"] == "line_none" and result["reason"] == reason
         assert len(w.llm.calls) == 1
@@ -874,22 +885,22 @@ async def test_a_crime_can_receive_none_with_a_reason(graph):
 
 async def test_no_crimes_does_not_reintroduce_saved_crimes_in_the_brief(graph):
     async with world(graph) as w:
-        crime = enable_crime(w)
+        crime = await enable_crime(w)
         w.showrunner.crimes, w.showrunner.law = None, None
         brief = await w.showrunner.brief(occasion())
         assert brief.crimes == {} and crime not in brief.deeds
         assert crime["id"] not in brief.text()
 
 
-def enable_npc_crime(w, **change):
-    enable_crime(w)
+async def enable_npc_crime(w, **change):
+    await enable_crime(w)
     crime = {
         "fact": "npc_crime", "id": "A/npc-deed-1", "kind": "theft", "culprit": VINO,
         "victim": LOBART, "owner": LOBART, "community": "farm", "item": "ITFO_BREAD",
         "count": 2, "place": HOME, "waypoint": "NW_FARM1_INHOUSE_01",
         "day": 10, "hour": 7, "minute": 45, "witnesses": [HILDA], **change,
     }
-    w.chronicle.record(crime)
+    await w.chronicle.record(crime)
     return crime
 
 
@@ -903,7 +914,7 @@ def npc_rumor(crime, to, **change):
 
 async def test_npc_crime_brief_keeps_truth_and_live_property_separate_from_each_person(graph):
     async with world(graph) as w:
-        crime = enable_npc_crime(w, far=True)
+        crime = await enable_npc_crime(w, far=True)
         cid = crime["id"]
         for fact in [
             {"fact": "npc_crime_seen", "npc": HILDA, "crime": cid},
@@ -917,7 +928,7 @@ async def test_npc_crime_brief_keeps_truth_and_live_property_separate_from_each_
             {"fact": "exposed", "npc": LOBART, "liar": HILDA, "testimony": "T1"},
             {"fact": "betrayed", "npc": DEAD, "deal": "unrelated", "to": "OTHER"},
         ]:
-            w.chronicle.record(fact)
+            await w.chronicle.record(fact)
         evaluate = w.fake.evaluate
 
         def with_inventory(expr, npc):
@@ -953,20 +964,20 @@ async def test_npc_crime_brief_keeps_truth_and_live_property_separate_from_each_
 @pytest.mark.parametrize("via", ["seen", "heard", "testimony", "blames", "suspects", "unknown"])
 async def test_npc_crime_canon_uses_own_knowledge_belief_or_the_victims_loss(graph, via):
     async with world(graph) as w:
-        crime = enable_npc_crime(w)
+        crime = await enable_npc_crime(w)
         cid = crime["id"]
         if via == "seen":
-            w.chronicle.record({"fact": "npc_crime_seen", "npc": HILDA, "crime": cid})
+            await w.chronicle.record({"fact": "npc_crime_seen", "npc": HILDA, "crime": cid})
         elif via == "heard":
-            w.chronicle.record(npc_rumor(crime, HILDA, **{"from": LOBART}))
+            await w.chronicle.record(npc_rumor(crime, HILDA, **{"from": LOBART}))
         elif via == "testimony":
-            w.chronicle.record({"fact": "testimony", "id": "T1", "npc": HILDA,
+            await w.chronicle.record({"fact": "testimony", "id": "T1", "npc": HILDA,
                                 "witness": LOBART, "about": VINO, "crime_told": [cid]})
         elif via == "blames":
-            w.chronicle.record({"fact": "blamed", "id": "B1", "npc": HILDA,
+            await w.chronicle.record({"fact": "blamed", "id": "B1", "npc": HILDA,
                                 "culprit": VINO, "crime": cid, "because": "hunch", "truth": True})
         elif via == "suspects":
-            w.chronicle.record({"fact": "npc_crime_suspected", "npc": HILDA,
+            await w.chronicle.record({"fact": "npc_crime_suspected", "npc": HILDA,
                                 "crime": cid, "suspect": VINO})
         brief = await w.showrunner.brief(occasion(kind="deed", crime=cid, deed=crime))
         assert not w.showrunner.canon(Proposal.of(proposal(giver=LOBART, crime=cid)), brief)
@@ -981,8 +992,8 @@ async def test_npc_crime_canon_uses_own_knowledge_belief_or_the_victims_loss(gra
 
 async def test_npc_crime_line_and_its_knowledge_survive_load_without_entering_hero_cases(graph):
     async with world(graph, proposal(giver=LOBART, crime="A/npc-deed-1")) as w:
-        crime = enable_npc_crime(w)
-        w.chronicle.record({"fact": "npc_crime_seen", "npc": HILDA, "crime": crime["id"]})
+        crime = await enable_npc_crime(w)
+        await w.chronicle.record({"fact": "npc_crime_seen", "npc": HILDA, "crime": crime["id"]})
         current = occasion(kind="deed", crime=crime["id"], deed=crime)
         result = await w.showrunner.decide(current)
         assert result["fact"] == "line" and result["crime"] == crime["id"]
@@ -997,15 +1008,15 @@ async def test_npc_crime_line_and_its_knowledge_survive_load_without_entering_he
 @pytest.mark.parametrize("how", ["unpaid", "no_show"])
 async def test_broken_npc_promise_brief_names_promise_failure_and_hearers_without_a_false_giver(graph, how):
     async with world(graph) as w:
-        enable_crime(w)
+        await enable_crime(w)
         await w.showrunner.occasions.poll()
         await w.showrunner.occasions.next()
         promise = {"fact": "deal", "deal": "D1", "npc": HILDA, "name": "Хильда",
                    "npc_later": {"items": {"ITMI_GOLD": 10}, "day": 12}}
         failure = {"fact": "npc_broken", "deal": "D1", "npc": HILDA, "how": how,
                    "witnesses": [LOBART] if how == "unpaid" else [], "day": 12, "hour": 8, "minute": 0}
-        w.chronicle.record(promise)
-        w.chronicle.record(failure)
+        await w.chronicle.record(promise)
+        await w.chronicle.record(failure)
         await w.showrunner.occasions.poll()
         assert w.showrunner.occasions.pending == []
         assert not w.llm.calls
@@ -1029,12 +1040,12 @@ async def test_broken_npc_promise_brief_names_promise_failure_and_hearers_withou
 ])
 async def test_broken_npc_promise_context_follows_people_of_the_current_occasion(graph, current):
     async with world(graph) as w:
-        enable_crime(w)
+        await enable_crime(w)
         # Keep an older relevant breach despite unrelated recent breaches elsewhere.
-        w.chronicle.record({"fact": "npc_broken", "deal": "D1", "npc": HILDA,
+        await w.chronicle.record({"fact": "npc_broken", "deal": "D1", "npc": HILDA,
                             "how": "unpaid", "witnesses": [LOBART]})
         for i in range(12):
-            w.chronicle.record({"fact": "npc_broken", "deal": f"AWAY_{i}", "npc": VINO,
+            await w.chronicle.record({"fact": "npc_broken", "deal": f"AWAY_{i}", "npc": VINO,
                                 "how": "no_show"})
         brief = await w.showrunner.brief(current)
         assert set(brief.npc_broken) == {"D1"}
@@ -1044,7 +1055,7 @@ async def test_broken_npc_promise_context_follows_people_of_the_current_occasion
 async def test_npc_director_switch_hides_saved_npc_cases_and_allows_none_with_reason(graph):
     reason = "Лобарт занят своим делом; сейчас новая линия не нужна."
     async with world(graph, proposal(kind="none", reason=reason)) as w:
-        crime = enable_npc_crime(w)
+        crime = await enable_npc_crime(w)
         result = await w.showrunner.decide(occasion(kind="deed", crime=crime["id"], deed=crime))
         assert result["fact"] == "line_none" and result["reason"] == reason
         w.chains.chain.assert_not_awaited()
@@ -1063,9 +1074,10 @@ async def test_director_cast_card_keeps_dishonesty_and_greed_for_npc_rules(graph
             voice="A rough middle aged man with a low voice.",
         )
         await w.author.patches.introduce(spec(), person.model_dump())
+        await w.casting.cast.prepare()
         cards = w.casting.cast.cards()
         assert (cards[OWN].honesty, cards[OWN].greed) == (1, 5)
-        intent = decide(w.chronicle, OWN, "D1", ["contract"], cards=cards)
+        intent = await decide(w.chronicle, OWN, "D1", ["contract"], cards=cards)
         assert intent["keeps"] is False
 
 
@@ -1145,7 +1157,7 @@ async def test_canon_refusal_returns_reasons_to_one_second_attempt(graph, bad, r
 
 async def test_occupied_giver_is_rejected_even_with_another_free_candidate(graph):
     async with world(graph, proposal(), proposal(giver=LOBART)) as w:
-        w.chronicle.record(line())
+        await w.chronicle.record(line())
         result = await w.showrunner.decide(occasion())
         assert result["fact"] == "line" and result["giver"] == LOBART
         assert len(w.llm.calls) == 2 and len(w.chronicle.facts("line_rejected")) == 1
@@ -1164,8 +1176,8 @@ async def test_new_people_canon_respects_remaining_slots_but_existing_quest_can_
         ),
         proposal(),
     ) as w:
-        w.chronicle.record(line(characters=[f"DIR_NPC_{i}" for i in range(8)]))
-        w.finish("DIR_Q1")
+        await w.chronicle.record(line(characters=[f"DIR_NPC_{i}" for i in range(8)]))
+        await w.finish("DIR_Q1")
         result = await w.showrunner.decide(occasion())
         assert result["fact"] == "line" and len(w.llm.calls) == 2
         assert w.chronicle.facts("line_rejected")[0]["why"]
@@ -1257,7 +1269,7 @@ async def test_each_kind_passes_the_premise_and_records_the_made_objects(graph, 
         assert result["occasion"] == occasion() and result["premise"] == PREMISE
         assert (result["chapter"], result["day"], result["hour"], result["minute"]) == (1, 10, 8, 0)
         assert result["wall_time"] == w.clock.t
-        assert set(result["quests"]) == set(w.author.book.all())
+        assert set(result["quests"]) == set(await w.author.book.all())
         assert len(result["quests"]) == (2 if kind == "chain" else 1)
         call = w.chains.chain.await_args
         assert call.args[0] == (OWN if kind == "stranger" else HILDA)
@@ -1280,8 +1292,8 @@ async def test_each_kind_passes_the_premise_and_records_the_made_objects(graph, 
 @pytest.mark.parametrize("kind", ["quest", "chain"])
 async def test_new_people_builder_receives_the_remaining_chapter_budget(graph, kind):
     async with world(graph, proposal(kind=kind, new_people=True)) as w:
-        w.chronicle.record(line(characters=[f"DIR_NPC_{i}" for i in range(3)]))
-        w.finish("DIR_Q1")
+        await w.chronicle.record(line(characters=[f"DIR_NPC_{i}" for i in range(3)]))
+        await w.finish("DIR_Q1")
         result = await w.showrunner.decide(occasion())
         assert result["fact"] == "line"
         assert w.chains.chain.await_args.kwargs["max_people"] == MAX_PEOPLE_PER_CHAPTER - 3
@@ -1361,25 +1373,25 @@ async def test_partial_bandit_group_counts_every_character_after_a_failed_chain(
 async def test_loading_restores_lines_progress_and_the_budget_from_the_saved_branch(graph):
     async with world(graph, proposal(kind="stranger", giver="", place=HOME)) as w:
         result = await w.showrunner.decide(occasion())
-        saved = w.chronicle.memory.head(w.chronicle.branch)
+        saved = await w.chronicle.memory.head(w.chronicle.branch)
         before = w.showrunner.budget(1, occasion())
         assert w.showrunner.is_open(result)
-        w.finish(*result["quests"])
-        w.chronicle.record(line(giver=LOBART, quests=[], characters=["DIR_NPC_999"]))
+        await w.finish(*result["quests"])
+        await w.chronicle.record(line(giver=LOBART, quests=[], characters=["DIR_NPC_999"]))
         assert w.showrunner.budget(1, occasion()) != before
         await load(w.fake, w.chronicle, head=saved)
         assert w.showrunner.lines == [result]
         assert w.showrunner.is_open(result)
         assert w.showrunner.budget(1, occasion()) == before
-        assert set(w.author.book.all()) == set(result["quests"])
-        assert [person.npc for person in w.casting.cast.characters()] == [OWN]
+        assert set(await w.author.book.all()) == set(result["quests"])
+        assert [person.npc for person in await w.casting.cast.characters()] == [OWN]
         assert await w.showrunner.decide(occasion()) == result
         assert len(w.llm.calls) == 1
 
 
 async def test_loading_while_the_model_thinks_discards_its_old_branch_decision(graph):
     async with world(graph) as w:
-        saved = w.chronicle.memory.head(w.chronicle.branch)
+        saved = await w.chronicle.memory.head(w.chronicle.branch)
         started, resume = asyncio.Event(), asyncio.Event()
 
         async def delayed(*args, **kwargs):
@@ -1411,7 +1423,7 @@ async def test_loading_records_partial_build_synchronously_on_the_old_branch_and
         await w.author.patches.introduce(spec(npc="DIR_NPC_99"))
         await w.keep(quest(id="DIR_OLD"))
         old_branch = w.chronicle.branch
-        saved = w.chronicle.memory.head(old_branch)
+        saved = await w.chronicle.memory.head(old_branch)
         started, resume = asyncio.Event(), asyncio.Event()
 
         async def partial(*args, **kwargs):
@@ -1427,8 +1439,8 @@ async def test_loading_records_partial_build_synchronously_on_the_old_branch_and
         try:
             await asyncio.wait_for(started.wait(), 1)
             link = w.showrunner.link
-            link._dispatch(Loading(type="loading"))
-            # No await: the cancelled builder has not resumed, and Session may immediately follow.
+            await link._dispatch(Loading(type="loading"))
+            # Loading's receipt is durable before the following Session switches branches.
             [failed] = w.chronicle.facts("line_failed")
             assert failed["occasion"] == occasion() and "загрузк" in failed["why"][0]
             assert failed["characters"] == ([OWN] if built in {"people", "both"} else [])
@@ -1439,7 +1451,7 @@ async def test_loading_records_partial_build_synchronously_on_the_old_branch_and
             assert budget.open_left == MAX_OPEN_LINES - bool(failed["quests"])
             assert budget.game_wait == (MIN_GAME_MINUTES if failed["quests"] else 0)
             assert budget.real_wait == (MIN_REAL_SECONDS if failed["quests"] else 0)
-            link._dispatch(
+            await link._dispatch(
                 Session(type="session", branch="loaded", parent=old_branch, parent_seq=saved, reason="load")
             )
             assert w.chronicle.branch == "loaded" and w.chronicle.facts("line_failed") == []
@@ -1557,7 +1569,7 @@ async def test_server_shutdown_cancellation_propagates_even_if_loading_cancelled
         try:
             await asyncio.wait_for(started.wait(), 1)
             if loading:
-                w.showrunner.link._dispatch(Loading(type="loading"))
+                await w.showrunner.link._dispatch(Loading(type="loading"))
             running.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(running, 1)
@@ -1572,7 +1584,7 @@ async def test_run_does_not_write_a_late_old_builder_failure_into_the_loaded_bra
 ):
     async with world(graph, proposal()) as w:
         started, resume = asyncio.Event(), asyncio.Event()
-        old_branch, saved = w.chronicle.branch, w.chronicle.memory.head(w.chronicle.branch)
+        old_branch, saved = w.chronicle.branch, await w.chronicle.memory.head(w.chronicle.branch)
         original_next = w.showrunner.occasions.next
         first = True
 
@@ -1586,10 +1598,12 @@ async def test_run_does_not_write_a_late_old_builder_failure_into_the_loaded_bra
         async def late_failure(*args, **kwargs):
             await w.keep(quest())
             started.set()
-            try:
-                await resume.wait()
-            except asyncio.CancelledError:
-                await resume.wait()
+            # Loading and Session may each cancel this deliberately uncooperative builder.
+            while not resume.is_set():
+                try:
+                    await resume.wait()
+                except asyncio.CancelledError:
+                    pass
             raise RuntimeError("late old failure")
 
         monkeypatch.setattr(w.showrunner.occasions, "next", next_occasion)
@@ -1597,10 +1611,10 @@ async def test_run_does_not_write_a_late_old_builder_failure_into_the_loaded_bra
         running = asyncio.create_task(w.showrunner.run())
         try:
             await asyncio.wait_for(started.wait(), 1)
-            w.showrunner.link._dispatch(Loading(type="loading"))
+            await w.showrunner.link._dispatch(Loading(type="loading"))
             [failed] = w.chronicle.facts("line_failed")
             assert failed["quests"] == ["DIR_Q1"]
-            w.showrunner.link._dispatch(
+            await w.showrunner.link._dispatch(
                 Session(type="session", branch="loaded", parent=old_branch, parent_seq=saved, reason="load")
             )
             resume.set()
@@ -1627,7 +1641,7 @@ async def test_pitch_uses_the_heros_place_and_budget_without_consuming_the_queue
         assert result["fact"] == "line_none"
         assert result["occasion"]["place"] == HOME
         assert w.showrunner.occasions.pending == [queued]
-        w.chronicle.record(line(day=10, wall_time=w.clock.t))
+        await w.chronicle.record(line(day=10, wall_time=w.clock.t))
         w.clock.t += 1
         result = await w.showrunner.pitch()
         assert result["fact"] == "line_skipped"

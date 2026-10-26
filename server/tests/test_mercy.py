@@ -19,6 +19,7 @@ from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import CombatHit, NpcRoster, NpcViews, Session
 from gothic_ai.talk import TalkDesk, fights
 from tests.fake_game import FakeGame, connected
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 NPC, FRIEND = "BAU_950_LOBART", "PC_THIEF"
 CALL = ToolCall("surrender", {"words": "Хватит! Сдаюсь!"})
@@ -86,12 +87,14 @@ class MercyGame(FakeGame):
 async def rig():
     fake = MercyGame()
     async with connected(fake) as link:
-        memory = MemoryStore(":memory:")
+        memory = await MemoryStore.open(":memory:")
         llm = FakeBackend(script=[FakeStep(tool_calls=[CALL]), FakeStep()], delay=0)
         dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        await dialogue.initialize()
         talk = TalkDesk(link, dialogue)
         orders = talk.orders = Orders(link, talk, dialogue)
         chronicle = Chronicle(link, memory)
+        await chronicle.initialize()
         crimes = Crimes(link, chronicle)
         law = CrimeLaw(crimes)
         parley = Parley(link, dialogue, chronicle, companion=orders.companion)
@@ -102,27 +105,32 @@ async def rig():
         dialogue.on_calm.append(orders.truce)
         rows = [dict(id=NPC, name="Лобарт", guild=8, distance=100, in_view=True, state="ZS_ATTACK"),
                 dict(id=FRIEND, name="Диего", guild=0, distance=150)]
-        link._dispatch(NpcRoster(type="npc_roster", t=1000, npcs=rows))
+        await link._dispatch(NpcRoster(type="npc_roster", t=1000, npcs=rows))
         await link.snapshot(NPC, fresh=True)
         snap = link.snapshots[NPC]
         link.snapshots[NPC] = snap.model_copy(update={
             "player": snap.player.model_copy(update={"armor": "ITAR_PAL_H"}),
         })
-        link._dispatch(NpcViews(type="npc_views", t=1000, views=[dict(
+        await link._dispatch(NpcViews(type="npc_views", t=1000, views=[dict(
             npc=NPC, name="Лобарт", hp=100, hp_max=100, time=1920,
             hero=dict(id="PLAYER", name="Герой", distance=100, weapon="melee"),
         )]))
-        yield SimpleNamespace(fake=fake, link=link, dialogue=dialogue, llm=llm, talk=talk,
-                              orders=orders, memory=memory, chronicle=chronicle, parley=parley, mercy=mercy,
-                              crimes=crimes, law=law)
-        await crimes.close()
-        if chronicle._background:
-            await asyncio.gather(*chronicle._background)
-        memory.close()
+        try:
+            yield SimpleNamespace(
+                fake=fake, link=link, dialogue=dialogue, llm=llm, talk=talk,
+                orders=orders, memory=memory, chronicle=chronicle, parley=parley, mercy=mercy,
+                crimes=crimes, law=law,
+            )
+        finally:
+            await dialogue.close()
+            await crimes.close()
+            if chronicle._background:
+                await asyncio.gather(*chronicle._background)
+            await memory.close()
 
 
-def hit(rig, **fields):
-    rig.link._dispatch(CombatHit(**{
+async def hit(rig, **fields):
+    await rig.link._dispatch(CombatHit(**{
         "type": "combat_hit", "npc": NPC, "by": "PLAYER", "damage": 10,
         "hp": 25, "hp_max": 100, "down": False, "dead": False, "kind": "melee", **fields,
     }))
@@ -140,7 +148,7 @@ async def finish(rig):
 @pytest.mark.parametrize("reason", ["low_hp", "balance", "balance_stale", "companion"])
 async def test_opportunity_uses_conversational_model_once_and_sets_native_outcome(rig, reason):
     if reason == "companion":
-        rig.dialogue.change_intent(FRIEND, "Диего", body=False, goal="follow_hero", target="PLAYER")
+        await rig.dialogue.change_intent(FRIEND, "Диего", body=False, goal="follow_hero", target="PLAYER")
         rig.fake.target = FRIEND
         rig.orders.fights[FRIEND] = Fight(NPC)
         rig.orders.standing[FRIEND] = Standing("follow")
@@ -156,11 +164,11 @@ async def test_opportunity_uses_conversational_model_once_and_sets_native_outcom
             })
             assert "он опасен" not in rig.parley.combat_balance(NPC)
         rig.fake.hp = 700  # current health is 70%, while a cached snapshot still has full HP
-        hit(rig, hp=80)
+        await hit(rig, hp=80)
         assert not rig.llm.calls
-        hit(rig, hp=70)
+        await hit(rig, hp=70)
     else:
-        hit(rig, by=FRIEND if reason == "companion" else "PLAYER")
+        await hit(rig, by=FRIEND if reason == "companion" else "PLAYER")
     await finish(rig)
     assert rig.llm.calls and not quick.calls
     assert "surrender" in {t.name for t in rig.llm.calls[0][2]}
@@ -177,7 +185,7 @@ async def test_opportunity_uses_conversational_model_once_and_sets_native_outcom
     assert rig.dialogue.conversations[NPC].intent.goal != "fight"
     assert FRIEND not in rig.orders.fights
     assert rig.mercy.tools(NPC) == []
-    hit(rig, hp=20)
+    await hit(rig, hp=20)
     await finish(rig)
     assert len(rig.chronicle.facts("mercy_offer")) == 1
     assert all("surrender" not in {t.name for t in call[2]} for call in rig.llm.calls[1:])
@@ -187,7 +195,7 @@ async def test_opportunity_uses_conversational_model_once_and_sets_native_outcom
 async def test_native_outcome_failure_rejects_without_surrender_or_truce(rig, failure):
     rig.fake.emit_trigger = failure != "timeout"
     rig.fake.trigger_error = "injected native write failure" if failure == "error" else None
-    hit(rig)
+    await hit(rig)
     await finish(rig)
     result = next(item for item in rig.llm.calls[1][1] if isinstance(item, ToolResult))
     assert "Отклонено: игра не подтвердила исход сдачи" in result.output
@@ -197,20 +205,20 @@ async def test_native_outcome_failure_rejects_without_surrender_or_truce(rig, fa
 
 
 async def test_no_opportunity_without_trigger_or_for_npc_only_combat(rig):
-    rig.dialogue.open(NPC, "Лобарт", warm=False)
-    assert "surrender" not in {t.name for t in rig.dialogue._offered(NPC)}
-    hit(rig, hp=90)
-    hit(rig, by="SOMEONE_ELSE")
+    await rig.dialogue.open(NPC, "Лобарт", warm=False)
+    assert "surrender" not in {t.name for t in await rig.dialogue._offered(NPC)}
+    await hit(rig, hp=90)
+    await hit(rig, by="SOMEONE_ELSE")
     await finish(rig)
     assert not rig.llm.calls and not rig.chronicle.facts("mercy_offer")
 
 
 async def test_ignoring_opportunity_keeps_fighting_and_does_not_offer_again(rig):
     rig.llm.script = [FakeStep("Не дождёшься!")]
-    hit(rig)
+    await hit(rig)
     await finish(rig)
     assert not rig.chronicle.facts("surrender")
-    hit(rig, hp=20)
+    await hit(rig, hp=20)
     await finish(rig)
     assert len(rig.llm.calls) == 1
 
@@ -220,11 +228,11 @@ async def test_invalid_surrenders_are_explained_to_model(rig, state):
     if state in {"already", "new_target"}:
         if state == "new_target":
             rig.fake.target = "UNRELATED_NPC"
-        hit(rig)
+        await hit(rig)
         await finish(rig)
     if state == "dead":
-        hit(rig, hp=0, dead=True)
-    conv = rig.dialogue.open(NPC, "Лобарт", warm=False)
+        await hit(rig, hp=0, dead=True)
+    conv = await rig.dialogue.open(NPC, "Лобарт", warm=False)
     result = await rig.mercy.handle(rig.dialogue, conv, CALL, rig.link.snapshots[NPC])
     assert result.status == "rejected" and "Отклонено:" in result.output
     assert ("уже сдался" in result.output) is (state == "already")
@@ -234,26 +242,26 @@ async def test_invalid_surrenders_are_explained_to_model(rig, state):
 async def test_bandit_surrender_sets_one_game_hour_truce(rig):
     row = rig.talk.people[NPC]
     rig.talk.people[NPC] = row.model_copy(update={"guild": 9})
-    hit(rig)
+    await hit(rig)
     await finish(rig)
-    truce = rig.parley.truce(NPC)
+    truce = await rig.parley.truce(NPC)
     assert truce and truce["hours"] == 1 and truce["until"] == 1980
 
 
 @pytest.mark.parametrize("accept", ["weapon", "words", "timeout"])
 async def test_acceptance_memory_yielding_expiry_and_load(rig, accept):
-    hit(rig)
+    await hit(rig)
     await finish(rig)
     assert rig.mercy.situation(NPC) is None
     if accept == "words":
         await rig.dialogue.say_as_player(NPC, "Живи.")
     elif accept == "weapon":
-        rig.link._dispatch(NpcViews(type="npc_views", t=1500, views=[dict(
+        await rig.link._dispatch(NpcViews(type="npc_views", t=1500, views=[dict(
             npc=NPC, name="Лобарт", hp=25, time=1920,
             hero=dict(id="PLAYER", name="Герой", distance=100, weapon="none"),
         )]))
     else:
-        rig.link._dispatch(NpcRoster(type="npc_roster", t=21000, npcs=[]))
+        await rig.link._dispatch(NpcRoster(type="npc_roster", t=21000, npcs=[]))
     assert rig.mercy._latest(NPC)["status"] == "spared"
     assert any(PARDON in m.content for m in rig.dialogue.conversations[NPC].history)
     situation, _, _ = await rig.dialogue._situation(rig.dialogue.conversations[NPC], None)
@@ -262,19 +270,19 @@ async def test_acceptance_memory_yielding_expiry_and_load(rig, accept):
     assert rig.mercy.situation(NPC) == YIELDING
     rig.mercy._minute = 4320
     assert rig.mercy.situation(NPC) is None
-    rig.link._dispatch(Session(type="session", branch="other", reason="new_game"))
+    await rig.link._dispatch(Session(type="session", branch="other", reason="new_game"))
     rig.mercy._minute = 1920
     assert rig.mercy.situation(NPC) is None and not rig.chronicle.facts("surrender")
-    assert PARDON not in str(rig.dialogue.open(NPC, "Лобарт", warm=False).history)
+    assert PARDON not in str((await rig.dialogue.open(NPC, "Лобарт", warm=False)).history)
 
 
 async def test_hit_after_surrender_is_urgent_and_never_becomes_automatic_pardon(rig):
-    hit(rig)
+    await hit(rig)
     await finish(rig)
-    hit(rig, hp=15)
+    await hit(rig, hp=15)
     await finish(rig)
     assert "Ты сдался, а он бьёт" in rig.llm.calls[-1][1][-1].content
-    rig.link._dispatch(NpcRoster(type="npc_roster", t=31000, npcs=[]))
+    await rig.link._dispatch(NpcRoster(type="npc_roster", t=31000, npcs=[]))
     assert rig.mercy._latest(NPC)["status"] == "attacked"
     assert not any(PARDON in m.content for m in rig.dialogue.conversations[NPC].history)
     barks = CombatBarks(rig.dialogue)
@@ -308,7 +316,7 @@ async def hero_yields(rig, take):
     rig.llm.script = [FakeStep(tool_calls=[ToolCall("accept_surrender", {
         "take": take, "words": "Ладно, живи. Я заберу своё.", "humiliate": False,
     })]), FakeStep()]
-    rig.dialogue.open(NPC, "Лобарт", warm=False)
+    await rig.dialogue.open(NPC, "Лобарт", warm=False)
     await rig.dialogue.say_as_player(NPC, "Сдаюсь, забирай золото, только не бей", overlay=True)
     await finish(rig)
     return next(item.output for item in rig.llm.calls[-1][1] if isinstance(item, ToolResult))
@@ -317,8 +325,8 @@ async def hero_yields(rig, take):
 @pytest.mark.parametrize("state", ["fighting", "native_only", "no_fight", "other_target",
                                    "dead", "surrendered", "ambient"])
 async def test_accept_tool_only_after_hero_phrase_in_fight(rig, state):
-    conv = rig.dialogue.open(NPC, "Лобарт", warm=False)
-    assert "accept_surrender" not in {t.name for t in rig.dialogue._offered(NPC)}
+    conv = await rig.dialogue.open(NPC, "Лобарт", warm=False)
+    assert "accept_surrender" not in {t.name for t in await rig.dialogue._offered(NPC)}
     if state == "no_fight":
         rig.fake.attack_state = False
     elif state == "native_only":
@@ -326,9 +334,9 @@ async def test_accept_tool_only_after_hero_phrase_in_fight(rig, state):
     elif state == "other_target":
         rig.fake.target = FRIEND
     elif state == "dead":
-        hit(rig, hp=0, dead=True)
+        await hit(rig, hp=0, dead=True)
     elif state == "surrendered":
-        hit(rig)
+        await hit(rig)
         await finish(rig)
     rig.llm.calls.clear()
     rig.llm.script = [FakeStep("Не дождёшься!")]
@@ -343,7 +351,7 @@ async def test_accept_tool_only_after_hero_phrase_in_fight(rig, state):
     context = str(rig.llm.calls[0][1])
     assert ("Сейчас ты в бою с героем" in context) is eligible
     assert not rig.chronicle.facts("hero_yield")
-    assert "accept_surrender" not in {t.name for t in rig.dialogue._offered(conv.npc)}
+    assert "accept_surrender" not in {t.name for t in await rig.dialogue._offered(conv.npc)}
 
 
 @pytest.mark.parametrize("take,expected", [
@@ -355,7 +363,7 @@ async def test_accept_tool_only_after_hero_phrase_in_fight(rig, state):
 ])
 async def test_hero_ransom_transfers_real_items_calm_and_native_victory(rig, take, expected):
     before = dict(rig.fake.hero_items)
-    rig.dialogue.change_intent(FRIEND, "Диего", body=False, goal="follow_hero", target="PLAYER")
+    await rig.dialogue.change_intent(FRIEND, "Диего", body=False, goal="follow_hero", target="PLAYER")
     rig.orders.fights[FRIEND] = Fight(NPC)
     rig.orders.standing[FRIEND] = Standing("follow")
     rig.orders._resume = AsyncMock()
@@ -383,8 +391,8 @@ async def test_hero_ransom_transfers_real_items_calm_and_native_victory(rig, tak
 async def test_hero_yield_fine_uses_law_debt(rig, take, guard, debt, gold, accepted):
     rig.crimes.people[NPC] = {"guild": 1 if guard else 8, "npctype": 0}
     if debt:
-        rig.chronicle.record({"fact": "crime", "id": "attack-1", "kind": "attack", "community": "city"})
-        rig.chronicle.record({"fact": "crime_known", "crime": "attack-1", "community": "city"})
+        await rig.chronicle.record({"fact": "crime", "id": "attack-1", "kind": "attack", "community": "city"})
+        await rig.chronicle.record({"fact": "crime_known", "crime": "attack-1", "community": "city"})
     rig.fake.hero_items[GOLD] = gold
     output = await hero_yields(rig, take)
     assert output.startswith("Принято:" if accepted else "Отклонено:")
@@ -417,10 +425,10 @@ async def test_hero_yield_band_truce_betrayal_and_memory_branch(rig, elapsed):
     rig.link.snapshots[NPC] = snap.model_copy(update={"nearby_npcs": [
         *snap.nearby_npcs, snap.nearby_npcs[0].model_copy(update={"id": gang, "guild": 9}),
     ]})
-    rig.dialogue.change_intent(gang, "Бандит", body=False, goal="fight", target="PLAYER")
+    await rig.dialogue.change_intent(gang, "Бандит", body=False, goal="fight", target="PLAYER")
     await hero_yields(rig, [])
-    assert rig.parley.truce(NPC)["until"] == 1980
-    assert gang in rig.parley.truce(NPC)["members"]
+    assert (await rig.parley.truce(NPC))["until"] == 1980
+    assert gang in (await rig.parley.truce(NPC))["members"]
     assert rig.dialogue.conversations[gang].intent.goal != "fight"
     assert any(row.get("npc") == gang and {"do": "calm", "attitude": "ATT_NEUTRAL"}
                in row.get("effects", []) for row in rig.fake.story)
@@ -428,22 +436,22 @@ async def test_hero_yield_band_truce_betrayal_and_memory_branch(rig, elapsed):
                for m in rig.dialogue.conversations[NPC].history)
     situation, _, _ = await rig.dialogue._situation(rig.dialogue.conversations[NPC], None)
     assert VICTOR in situation
-    rig.link._dispatch(NpcRoster(type="npc_roster", t=1000 + elapsed,
+    await rig.link._dispatch(NpcRoster(type="npc_roster", t=1000 + elapsed,
                                 npcs=[rig.talk.people[NPC].model_dump()]))
-    hit(rig, hp=80)
+    await hit(rig, hp=80)
     await finish(rig)
     assert bool(rig.chronicle.facts("yield_broken")) is (elapsed < 60000)
-    assert (rig.parley.truce(NPC) is None) is (elapsed < 60000)
+    assert (await rig.parley.truce(NPC) is None) is (elapsed < 60000)
     if elapsed < 60000:
         assert "Он сдался тебе и ударил" in rig.llm.calls[-1][1][-1].content
     rig.mercy._minute = 4319
     assert rig.mercy.situation(NPC) == VICTOR
     rig.mercy._minute = 4320
     assert rig.mercy.situation(NPC) is None
-    rig.link._dispatch(Session(type="session", branch="other", reason="new_game"))
+    await rig.link._dispatch(Session(type="session", branch="other", reason="new_game"))
     rig.mercy._minute = 1920
     assert rig.mercy.situation(NPC) is None and not rig.chronicle.facts("hero_yield")
-    assert "Герой сдался тебе" not in str(rig.dialogue.open(NPC, "Лобарт", warm=False).history)
+    assert "Герой сдался тебе" not in str((await rig.dialogue.open(NPC, "Лобарт", warm=False)).history)
 
 
 @pytest.mark.parametrize("guild,guard,approach", [
@@ -483,7 +491,7 @@ async def test_humiliate_scene_law_memory_and_branch(rig, guild, guard, approach
     rig.llm.script = [FakeStep(tool_calls=[ToolCall("accept_surrender", {
         "take": ["gold"], "words": "Живи.", "humiliate": True,
     })]), FakeStep()]
-    rig.dialogue.open(NPC, "Лобарт", warm=False)
+    await rig.dialogue.open(NPC, "Лобарт", warm=False)
     await rig.dialogue.say_as_player(NPC, "Обоссыте, но не бейте", overlay=True)
     await finish(rig)
     output = next(item.output for item in rig.llm.calls[-1][1] if isinstance(item, ToolResult))
@@ -524,8 +532,8 @@ async def test_humiliate_scene_law_memory_and_branch(rig, guild, guard, approach
     [fact] = rig.chronicle.facts("humiliated")
     assert fact["npc"] == NPC and fact["hero"] == "PLAYER" and fact["witnesses"] == [FRIEND]
     assert fact["place"] == "NW_XARDAS_TOWER_IN1_31" and fact["time"] is not None
-    own = rig.dialogue.open(NPC, "Лобарт", warm=False)
-    witness = rig.dialogue.open(FRIEND, "Диего", warm=False)
+    own = await rig.dialogue.open(NPC, "Лобарт", warm=False)
+    witness = await rig.dialogue.open(FRIEND, "Диего", warm=False)
     assert "Ты обмочил сдавшегося героя:" in str(own.history)
     assert "Лобарт обмочил сдавшегося героя у" in str(witness.history)
     rig.mercy._minute = 999999  # unlike the fresh victory, humiliation has no expiry
@@ -533,9 +541,9 @@ async def test_humiliate_scene_law_memory_and_branch(rig, guild, guard, approach
                            (witness, "Ты помнишь, как Лобарт обмочил его, когда он сдался.")]:
         situation, _, _ = await rig.dialogue._situation(conv, None)
         assert expected in situation
-    rig.link._dispatch(Session(type="session", branch="other", reason="new_game"))
+    await rig.link._dispatch(Session(type="session", branch="other", reason="new_game"))
     assert not rig.chronicle.facts("humiliated")
     for who in (NPC, FRIEND):
-        conv = rig.dialogue.open(who, who, warm=False)
+        conv = await rig.dialogue.open(who, who, warm=False)
         situation, _, _ = await rig.dialogue._situation(conv, None)
         assert "Ты помнишь, как" not in situation and "обмочил" not in str(conv.history)

@@ -8,9 +8,10 @@ import json
 import logging
 import secrets
 from collections import deque
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass
 from http import HTTPStatus
+from inspect import isawaitable
 from typing import Any, Literal
 
 from pydantic import ValidationError
@@ -123,7 +124,7 @@ _Request = (
     | StoryPeopleCmd
 )
 
-Listener = Callable[[GameMessage], None]
+Listener = Callable[[GameMessage], Awaitable[None] | None]
 RawBodyListener = Callable[[dict[str, Any]], None]
 
 
@@ -168,6 +169,11 @@ class GameLink:
         self.hello: Hello | None = None
         self.world: str | None = None
         self.session: Session | None = None
+        self.world_generation = 0
+        self._session_ready = asyncio.Event()
+        self._session_ready.set()
+        self._session_error: BaseException | None = None
+        self.save_barrier: Callable[[Callable[[], Awaitable[None]]], Awaitable[None]] | None = None
         self.snapshots: dict[str, Snapshot] = {}
         self.player: PlayerState | None = None  # the hero, as the latest snapshot of any npc had him
         # the last `party` effect sent to each npc, by anyone: its number and value (orders.py unmarks only
@@ -210,16 +216,21 @@ class GameLink:
                 raw_body_packet = None
                 if isinstance(msg, BodyObservations) and self.raw_body_listeners:
                     raw_body_packet = json.loads(raw)["packet"]
-                self._dispatch(msg, raw_body_packet=raw_body_packet)
+                pending = self._dispatch(msg, raw_body_packet=raw_body_packet)
+                if pending is not None:
+                    await pending
         except ConnectionClosed:
             pass
         finally:
             self._clear_body_observations()
             self._roster_bodies.clear()
             self.closed.set()
+            self._session_ready.set()
             self._fail_pending(GameDisconnected("game disconnected"))
 
-    def _dispatch(self, msg: GameMessage, *, raw_body_packet: dict[str, Any] | None = None) -> None:
+    def _dispatch(
+        self, msg: GameMessage, *, raw_body_packet: dict[str, Any] | None = None,
+    ) -> Awaitable[None] | None:
         match msg:
             case Hello():
                 self._clear_body_observations()
@@ -232,7 +243,11 @@ class GameLink:
                 self._world_ready.set()
             case Session():
                 self.session = msg
+                self.world_generation += 1
+                self._session_error = None
+                self._session_ready.clear()
             case Loading():
+                self.world_generation += 1
                 self._clear_body_observations()
                 self._roster_bodies.clear()
                 self.world = None
@@ -273,8 +288,31 @@ class GameLink:
                 self.snapshots.pop(msg.npc, None)
             case NpcActResult(status="rejected"):
                 log.debug("npc_act %s for %s rejected: %s", msg.id, msg.npc, msg.detail)
-        for listener in self.listeners:
-            listener(msg)
+        listeners = iter(self.listeners)
+        for listener in listeners:
+            pending = listener(msg)
+            if isawaitable(pending):
+                return self._finish_dispatch(msg, pending, listeners)
+        if isinstance(msg, Session):
+            self._session_ready.set()
+        return None
+
+    async def _finish_dispatch(
+        self, msg: GameMessage, pending: Awaitable[None], listeners: Iterator[Listener],
+    ) -> None:
+        try:
+            await pending
+            for listener in listeners:
+                pending = listener(msg)
+                if isawaitable(pending):
+                    await pending
+        except BaseException as error:
+            if isinstance(msg, Session) and self.session is msg:
+                self._session_error = error
+                self._session_ready.set()
+            raise
+        if isinstance(msg, Session) and self.session is msg:
+            self._session_ready.set()
 
     def _clear_body_observations(self) -> None:
         for pending in (*self._body_acquisitions.values(), *self._body_acquire_waiters.values()):
@@ -419,7 +457,19 @@ class GameLink:
             reason = await self.npc_crime_check(cmd.npc, cmd.action, cmd.args)
             if reason is not None:
                 raise GameError(reason)
-        await self._conn.send(cmd.to_json())
+        payload = cmd.to_json()
+        if isinstance(cmd, DebugCmd) and cmd.cmd == "save" and self.save_barrier is not None:
+            await self.save_barrier(lambda: self._conn.send(payload))
+        else:
+            await self._conn.send(payload)
+
+    async def wait_session_ready(self) -> Session | None:
+        await self._session_ready.wait()
+        if self.closed.is_set():
+            raise GameDisconnected("game disconnected")
+        if self._session_error is not None:
+            raise GameError("session initialization failed") from self._session_error
+        return self.session
 
     async def wait_world(self, timeout: float | None = None) -> str:
         await asyncio.wait_for(self._world_ready.wait(), timeout)
@@ -1155,6 +1205,8 @@ class GameServer:
         session = asyncio.create_task(self.on_link(link)) if self.on_link else None
         if session is not None:
             session.add_done_callback(_log_session_error)
+            # The session installs its listeners before its first await.
+            await asyncio.sleep(0)
         try:
             await link.run()
         finally:

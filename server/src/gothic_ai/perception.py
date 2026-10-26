@@ -33,8 +33,9 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from inspect import isawaitable
 from typing import TYPE_CHECKING
 
 from .game import GameError, GameLink
@@ -244,7 +245,7 @@ class PerceptionDesk:
         link: GameLink,
         *,
         social: Callable[[], Social | None] = lambda: None,
-        knows_hero: Callable[[str], bool] = lambda npc: False,
+        knows_hero: Callable[[str], bool | Awaitable[bool]] = lambda npc: False,
         places: PlaceBook | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -255,16 +256,16 @@ class PerceptionDesk:
         self.clock = clock
         self._views: dict[str, tuple[float, NpcView]] = {}
         self._recent: dict[str, dict[str, tuple[float, Look]]] = {}  # npc -> whom it saw, when
-        self.on_view: list[Callable[[NpcView], None]] = []  # every view that comes, pushed or asked
+        self.on_view: list[Callable[[NpcView], Awaitable[None] | None]] = []
         # whom it saw lately and does not see now (sightings.py, step M2): id -> how it knows him
         self.remembered: Callable[[str], dict[str, str]] = lambda npc: {}
         link.listeners.append(self._on_message)
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         match msg:
             case NpcViews():
                 for v in msg.views:
-                    self._store(v)
+                    await self._store(v)
             case Session() | Loading():
                 self._views.clear()
                 self._recent.clear()
@@ -283,10 +284,10 @@ class PerceptionDesk:
         """Its view asked from the game now (a free npc far from the hero is not pushed)."""
         views = await self.link.npc_view([npc])
         for v in views:
-            self._store(v)
+            await self._store(v)
         return self.view(npc)
 
-    def _store(self, view: NpcView) -> None:
+    async def _store(self, view: NpcView) -> None:
         hello = getattr(self.link, "hello", None)
         if hello is not None and hello.protocol < TRACE_PROTOCOL and view.traces:
             view = view.model_copy(update={"traces": []})
@@ -299,12 +300,14 @@ class PerceptionDesk:
             recent[o.id.upper()] = (now, o)
         for who in [w for w, (t, _) in recent.items() if now - t > RECENT_S]:
             del recent[who]
-        self._seen(view)
+        await self._seen(view)
 
-    def _seen(self, view: NpcView) -> None:
+    async def _seen(self, view: NpcView) -> None:
         for listener in self.on_view:
             try:
-                listener(view)
+                pending = listener(view)
+                if isawaitable(pending):
+                    await pending
             except Exception:
                 log.exception("a view listener failed")
 
@@ -333,13 +336,13 @@ class PerceptionDesk:
 
     # --- the conversational model ---------------------------------------------------------------
 
-    def sight(self, npc: str, snap: Snapshot | None = None) -> Sight | None:
+    async def sight(self, npc: str, snap: Snapshot | None = None) -> Sight | None:
         view = self.view(npc)
         if view is None:
             return None
         return Sight(
             self._place(view),
-            self._hero(view, snap),
+            await self._hero(view, snap),
             self._people(view),
             self.targets(view),
             ground=_ground(view.items),
@@ -410,7 +413,7 @@ class PerceptionDesk:
             line += f" В руках у тебя: {view.in_hands.name}."
         return line
 
-    def _hero(self, view: NpcView, snap: Snapshot | None) -> str | None:
+    async def _hero(self, view: NpcView, snap: Snapshot | None) -> str | None:
         hero = view.hero
         if hero is None:
             return None
@@ -420,6 +423,8 @@ class PerceptionDesk:
                 return f"Героя ты сейчас не видишь, но слышишь: он в {metres} м."
             return f"Героя не видно, он в {metres} м."
         known = self.knows_hero(view.npc)
+        if isawaitable(known):
+            known = await known
         line = f"Герой в {metres} м" + (
             ", смотрит на тебя" if hero.faces_you or hero.focus == view.npc else ""
         )
@@ -555,7 +560,7 @@ class PerceptionDesk:
 
     # --- the behavioral model -------------------------------------------------------------------
 
-    def english(self, npc: str) -> tuple[str, ...]:
+    async def english(self, npc: str) -> tuple[str, ...]:
         """A few lines of what it perceives, the most telling first: for NpcContext.view."""
         view = self.view(npc)
         if view is None:
@@ -573,7 +578,10 @@ class PerceptionDesk:
                 lines.append("You cannot see the hero.")
             else:
                 said = []
-                if not self.knows_hero(view.npc):
+                known = self.knows_hero(view.npc)
+                if isawaitable(known):
+                    known = await known
+                if not known:
                     look = armor_look(hero.armor.item if hero.armor else None)
                     said.append("you do not know him" + (f", he looks like {look[1]}" if look else ""))
                 if hero.weapon in WEAPON:

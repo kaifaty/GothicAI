@@ -292,14 +292,29 @@ class CrimeMeet:
     async def _act(self, npc: str, action: str, /, **args: Any) -> bool:
         return await self._queue(npc, action, **args) is not None
 
-    def _record(self, npc: str, active: Active, **details: Any) -> None:
-        encounter = active.encounter
-        self._done.add((npc, encounter.crime["id"], encounter.reaction, active.event))
-        self.chronicle.record({
-            "fact": "crime_meet", "npc": npc, "crime": encounter.crime["id"],
-            "reaction": encounter.reaction, "event": active.event, "source": encounter.source,
-            "role": encounter.role, **details,
-        })
+    async def _record(self, npc: str, active: Active, **details: Any) -> None:
+        _memory_branch, _memory_generation, _memory_session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        world_generation = self.link.world_generation
+
+        async def persist():
+            if (
+                _memory_branch != self.chronicle.branch or _memory_generation != self.chronicle._generation
+                or _memory_session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording crime state")
+            encounter = active.encounter
+            await self.chronicle.record({
+                "fact": "crime_meet", "npc": npc, "crime": encounter.crime["id"],
+                "reaction": encounter.reaction, "event": active.event, "source": encounter.source,
+                "role": encounter.role, **details,
+            })
+            if self.link.world_generation == world_generation and self.link.session is _memory_session:
+                self._done.add((npc, encounter.crime["id"], encounter.reaction, active.event))
+
+        return await self.chronicle.memory.complete(persist)
 
     def _home_case(self, npc: str) -> tuple[Encounter, str] | None:
         """Public portal ownership is not evidence: use the household's actual sleep routines."""
@@ -387,7 +402,7 @@ class CrimeMeet:
 
     async def _finish_room(self, npc: str, active: Active, outcome: str) -> None:
         if active.generation == self._generation and active.branch == self.chronicle.branch:
-            self._record(npc, active, outcome=outcome)
+            await self._record(npc, active, outcome=outcome)
         await self._clear(npc, active)
         self._rooms.pop(npc, None)
         self._done.discard((npc, active.encounter.crime["id"], "room", "enter_room"))
@@ -403,7 +418,9 @@ class CrimeMeet:
                     await self._finish_room(npc, active, idle.reason)
                     return
                 active.room_warned_at = self.clock()
-                self._record(npc, active, svm="GETOUTOFHERE", outcome="warned")
+                await self._record(npc, active, svm="GETOUTOFHERE", outcome="warned")
+                if not self._valid(npc, active):
+                    return
         values = await self.link.story_eval(npc, [
             ["call", "WLD_GETPLAYERPORTALGUILD"],
             ["call", "NPC_GETNEARESTWP", ["inst", "HERO"]],
@@ -427,7 +444,7 @@ class CrimeMeet:
             if await self._act(npc, "fight", npc="PLAYER", reason="AR_CLEARROOM"):
                 active.room_fighting = True
                 if self._valid(npc, active):
-                    self._record(npc, active, outcome="fight", reason="AR_CLEARROOM")
+                    await self._record(npc, active, outcome="fight", reason="AR_CLEARROOM")
                 else:
                     await self._finish_room(npc, active, "settled")
 
@@ -516,7 +533,7 @@ class CrimeMeet:
             )
             if active.generation == self._generation and active.branch == self.chronicle.branch:
                 if approached:
-                    self._record(npc, active)
+                    await self._record(npc, active)
                 else:
                     # A busy partner can make the soft approach decline. Reuse its existing
                     # storylet on the next poll, without asking the writer for another one.
@@ -565,7 +582,7 @@ class CrimeMeet:
                     key = (npc, active.encounter.crime["id"], "room", "enter_room")
                     if key not in self._done and self._valid(npc, active):
                         self._active[npc] = active
-                        self._record(npc, active)
+                        await self._record(npc, active)
                     return
                 if npc not in self._room_checked:
                     self._room_checked.add(npc)
@@ -632,7 +649,7 @@ class CrimeMeet:
                 if self._valid(npc, active):
                     accepted = await self._act(npc, "turn_away") and accepted
         if self._valid(npc, active) and accepted:
-            self._record(npc, active)
+            await self._record(npc, active)
         else:
             await self._clear(npc, active)
 

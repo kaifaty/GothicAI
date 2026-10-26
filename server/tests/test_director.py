@@ -16,6 +16,7 @@ from gothic_ai.story import StoryPatches
 from gothic_ai.validator import Caps, Patches, Rules, Story, WorldState, validate
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 LOBART, HILDA, VINO, XARDAS = "BAU_950_LOBART", "BAU_951_HILDA", "BAU_952_VINO", "NONE_100_XARDAS"
 QUEST = "MIS_LOBART_RUEBEN"
@@ -324,7 +325,9 @@ async def _director(fake: FakeGame, llm: FakeBackend, graph: StoryGraph, store: 
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
     patches = StoryPatches(link, store)
+    await patches.initialize()
     chronicle = Chronicle(link, store)
+    await chronicle.initialize()
     director = Director(link, graph, patches, chronicle, llm, pacing=Pacing(cooldown_s=0), settle_s=0)
     await _until(lambda: patches.branch is not None and chronicle.branch is not None)
     return link_cm, director, chronicle
@@ -332,7 +335,7 @@ async def _director(fake: FakeGame, llm: FakeBackend, graph: StoryGraph, store: 
 
 async def test_the_director_repairs_after_a_rejected_proposal(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[FakeStep("", [_proposal(LOBART)]), FakeStep("", [_proposal(HILDA)])], delay=0)
     link_cm, director, chronicle = await _director(fake, llm, graph, store)
     try:
@@ -393,7 +396,7 @@ async def test_the_director_repairs_after_a_rejected_proposal(graph):
         repair = chronicle.facts("repair")[0]
         assert (repair["quest"], repair["npc"], repair["from"]) == (QUEST, HILDA, LOBART)
         # the patch belongs to the branch: a load brings it back
-        assert [op["op"] for op in director.patches.ops()] == ["add_node"]
+        assert [op["op"] for op in await director.patches.ops()] == ["add_node"]
         # repaired: the next look finds nothing to do
         assert await director.look() == [] and len(llm.calls) == 2
     finally:
@@ -416,9 +419,9 @@ async def test_repair_keeps_the_dead_givers_item_terms(graph, transfer):
     fake = FakeGame(branch="A")
     fake.item_names["ITPL_BEET"] = "Репа"
     llm = FakeBackend(script=[FakeStep("", [_proposal(HILDA, effects=["E1", "E2"])])], delay=0)
-    link_cm, director, chronicle = await _director(fake, llm, graph, MemoryStore(":memory:"))
+    link_cm, director, chronicle = await _director(fake, llm, graph, await MemoryStore.open(":memory:"))
     try:
-        chronicle.record(
+        await chronicle.record(
             {
                 "fact": "quest_terms",
                 "quest": QUEST,
@@ -459,12 +462,14 @@ async def test_repair_keeps_cavalorns_spared_bandit_out_of_the_helper(graph, wai
     node.condition = ["&&", RUNNING, helper]
     node.effects = [{"do": "set", "var": QUEST, "value": ["int", 2, "LOG_SUCCESS"]}]
     fake = FakeGame(branch="A")
-    link_cm, director, chronicle = await _director(fake, FakeBackend(delay=0), graph, MemoryStore(":memory:"))
+    link_cm, director, chronicle = await _director(
+        fake, FakeBackend(delay=0), graph, await MemoryStore.open(":memory:")
+    )
     fake.npc_states[cavalorn] = {"state": "dead", "name": "Кавалорн"}
     fake.npc_states[bandits[0]] = {"state": "alive", "name": "Бандит у дороги"}
     try:
         if waived:
-            chronicle.record(
+            await chronicle.record(
                 {
                     "fact": "quest_terms",
                     "quest": QUEST,
@@ -497,7 +502,9 @@ async def test_repair_accumulates_only_the_dead_givers_terms_for_this_quest(grap
     node = graph.nodes["DIA_LOBART_RUEBENRUNNING"]
     node.condition = ["&&", node.condition, knows]
     fake = FakeGame(branch="A")
-    link_cm, director, chronicle = await _director(fake, FakeBackend(delay=0), graph, MemoryStore(":memory:"))
+    link_cm, director, chronicle = await _director(
+        fake, FakeBackend(delay=0), graph, await MemoryStore.open(":memory:")
+    )
     try:
         for quest, npc, dropped, why in [
             (QUEST, LOBART, ["ITPL_BEET"], "Репа не нужна"),
@@ -505,7 +512,7 @@ async def test_repair_accumulates_only_the_dead_givers_terms_for_this_quest(grap
             (QUEST, HILDA, ["KAPITEL"], "Чужой уговор"),
             ("MIS_OTHER", LOBART, ["KAPITEL"], "Другое дело"),
         ]:
-            chronicle.record(
+            await chronicle.record(
                 {
                     "fact": "quest_terms",
                     "quest": quest,
@@ -532,7 +539,7 @@ async def test_repair_accumulates_only_the_dead_givers_terms_for_this_quest(grap
 
 async def test_the_director_closes_a_quest_no_one_can_take_over(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     close = ToolCall(
         "propose_repair",
         {**_proposal("").arguments, "kind": "close", "ending": "", "status": "obsolete", "effects": []},
@@ -554,7 +561,7 @@ async def test_the_director_closes_a_quest_no_one_can_take_over(graph):
 
 async def test_a_death_wakes_the_director_and_it_waits_out_a_dialog(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[FakeStep("", [_proposal(HILDA)])], delay=0)
     link_cm, director, chronicle = await _director(fake, llm, graph, store)
     fake.npc_states[LOBART]["state"] = "alive"
@@ -579,7 +586,7 @@ async def test_a_death_wakes_the_director_and_it_waits_out_a_dialog(graph):
 
 async def test_after_a_load_only_the_deaths_the_branch_saw_are_repaired(graph):
     fake = FakeGame(branch="A")
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     llm = FakeBackend(script=[FakeStep("", [_proposal(HILDA)])], delay=0)
     link_cm, director, chronicle = await _director(fake, llm, graph, store)
     run = asyncio.create_task(director.run())
@@ -590,8 +597,8 @@ async def test_after_a_load_only_the_deaths_the_branch_saw_are_repaired(graph):
         assert llm.calls == []
         # the branch saw him die (a save after the death, before the repair): repaired after the load
         death = {"fact": "died", "npc": LOBART, "name": "Лобарт", "tag": None, "killer": ""}
-        store.add_fact("A", json.dumps(death, ensure_ascii=False))
-        director._queue.put_nowait(None)  # as a session does
+        await store.add_fact("A", json.dumps(death, ensure_ascii=False))
+        await fake.send(type="session", branch="A", reason="load")
         await _until(lambda: chronicle.facts("repair") != [], 5)
         assert len(llm.calls) == 1
     finally:
@@ -615,7 +622,7 @@ class _QuestMemory:
         self.extensions: list[Any] = []
         self.remembered: list[tuple[str, str, str]] = []
 
-    def remember(self, npc: str, name: str, text: str) -> None:
+    async def remember(self, npc: str, name: str, text: str) -> None:
         self.remembered.append((npc, name, text))
 
 
@@ -691,9 +698,11 @@ async def _own_director(
     ]
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
-    store = MemoryStore(":memory:")
+    store = await MemoryStore.open(":memory:")
     patches = StoryPatches(link, store)
+    await patches.initialize()
     chronicle = Chronicle(link, store)
+    await chronicle.initialize()
     director = Director(link, graph, patches, chronicle, backend, pacing=Pacing(cooldown_s=0), settle_s=0)
     memory = _QuestMemory()
     book = QuestBook(link, graph, patches, chronicle, director, dialogue=memory)
@@ -715,7 +724,7 @@ async def test_the_director_hands_over_a_book_quest_and_the_book_finishes_it(gra
     )
     link_cm, director, book, chronicle, memory = await _own_director(fake, backend, graph)
     try:
-        original = Patches.of(director.patches.ops()).nodes["DIR_Q1_DONE"]
+        original = Patches.of(await director.patches.ops()).nodes["DIR_Q1_DONE"]
         await fake.send(type="npc_died", npc=HILDA, name="Хильда", killer="PLAYER")
         await _until(lambda: bool(chronicle.facts("died")))
         assert await director.look([HILDA]) == ["DIR_Q1"]
@@ -733,7 +742,7 @@ async def test_the_director_hands_over_a_book_quest_and_the_book_finishes_it(gra
         assert len(chronicle.facts("repair_rejected")) == 1
         assert "Отклонено" in backend.calls[1][1][-1].content
 
-        node = Patches.of(director.patches.ops()).nodes["DIR_Q1_DONE"]
+        node = Patches.of(await director.patches.ops()).nodes["DIR_Q1_DONE"]
         assert node["id"] == original["id"] and node["npc"] == LOBART
         assert node["condition"] == original["condition"]
         assert node["lines"] == [
@@ -754,13 +763,13 @@ async def test_the_director_hands_over_a_book_quest_and_the_book_finishes_it(gra
             assert required in node["effects"]
         assert sum(e.get("count", 0) for e in node["effects"] if e.get("item") == "ITMI_GOLD") == gold
         assert sum(e.get("amount", 0) for e in node["effects"] if e["do"] == "xp") == xp
-        q = book.all()["DIR_Q1"]
+        q = (await book.all())["DIR_Q1"]
         assert (q.gold, q.xp, q.turn_in().npc) == (gold, xp, LOBART)
         assert q.turn_in().talk.description == node["description"]
         assert q.repairs == [
             {"goal": "DIR_Q1_S3G1", "dead": HILDA, "npc": LOBART, "reason": "Лобарт ведёт это хозяйство"}
         ]
-        assert len(director.patches.records("quest")) == 2
+        assert len(await director.patches.records("quest")) == 2
         repair = chronicle.facts("repair")[0]
         assert (repair["quest"], repair["from"], repair["npc"], repair["node"]) == (
             "DIR_Q1",
@@ -769,7 +778,7 @@ async def test_the_director_hands_over_a_book_quest_and_the_book_finishes_it(gra
             "DIR_Q1_DONE",
         )
         assert memory.remembered[-1][0] == LOBART and "Ты принял" in memory.remembered[-1][2]
-        assert "Ты принял поручение умершего (Хильда)" in book.situation(LOBART)
+        assert "Ты принял поручение умершего (Хильда)" in await book.situation(LOBART)
 
         # The same stage triggers and turn-in id keep driving the repaired quest.
         fake.vars["DIR_Q1_STAGE"] = 3
@@ -779,14 +788,14 @@ async def test_the_director_hands_over_a_book_quest_and_the_book_finishes_it(gra
         await fake.send(type="dialog_chosen", npc=LOBART, node="DIR_Q1_DONE", made=True)
         await _until(lambda: book.progress("DIR_Q1").state == "done")
         assert (
-            book.situation(LOBART)
+            await book.situation(LOBART)
             == f"Поручение «Репа для Хильды» герой выполнил, ты заплатил: {q.reward()}."
         )
         assert memory.remembered[-1][:2] == (LOBART, "Лобарт")
         assert memory.remembered[-1][2].startswith("Герой пришёл к тебе с поручением «Репа для Хильды»")
         assert all(
             not fake.evaluate(n["condition"], n["npc"])
-            for n in Patches.of(director.patches.ops()).nodes.values()
+            for n in Patches.of(await director.patches.ops()).nodes.values()
             if n["id"].startswith("DIR_Q1_")
         )
         assert await director.look() == [] and len(backend.calls) == 2
@@ -805,14 +814,14 @@ async def test_the_director_repairs_each_dead_dialog_of_a_book_quest_in_order(gr
     )
     link_cm, director, book, chronicle, _ = await _own_director(fake, backend, graph, middle_dialog=True)
     try:
-        original = Patches.of(director.patches.ops()).nodes["DIR_Q1_S2G1_D"]
+        original = Patches.of(await director.patches.ops()).nodes["DIR_Q1_S2G1_D"]
         assert await director.look([HILDA]) == ["DIR_Q1"]
         assert [r.node for r in director.repairs] == ["DIR_Q1_S2G1_D", "DIR_Q1_DONE"]
         assert [f["endings"] for f in chronicle.facts("dead_end")] == [["DIR_Q1_S2G1_D"], ["DIR_Q1_DONE"]]
-        q = book.all()["DIR_Q1"]
+        q = (await book.all())["DIR_Q1"]
         assert [r["goal"] for r in q.repairs] == ["DIR_Q1_S2G1", "DIR_Q1_S3G1"]
         assert q.stages[1].goals[0].npc == LOBART and q.turn_in().npc == LOBART
-        node = Patches.of(director.patches.ops()).nodes["DIR_Q1_S2G1_D"]
+        node = Patches.of(await director.patches.ops()).nodes["DIR_Q1_S2G1_D"]
         assert node["condition"] == original["condition"]
         assert {"do": "set", "var": "DIR_Q1_S2G1", "value": 1} in node["effects"]
         assert fake.vars["DIR_Q1_S2G1"] == 0 and book.progress("DIR_Q1").stage == 2
@@ -828,16 +837,18 @@ async def test_loading_repairs_only_recorded_deaths_in_the_book_and_does_not_rep
     try:
         await director._look_after_load()
         assert backend.calls == []
-        chronicle.record({"fact": "died", "npc": HILDA, "name": "Хильда", "tag": None, "killer": "PLAYER"})
+        await chronicle.record(
+            {"fact": "died", "npc": HILDA, "name": "Хильда", "tag": None, "killer": "PLAYER"}
+        )
         await director._look_after_load()
-        assert len(backend.calls) == 1 and book.all()["DIR_Q1"].turn_in().npc == LOBART
+        assert len(backend.calls) == 1 and (await book.all())["DIR_Q1"].turn_in().npc == LOBART
         # Loading replays both records of the same id in their original order.
         graph_count = len(fake.graph)
         await fake.send(type="session", branch="A", reason="load")
         await _until(lambda: len(fake.graph) > graph_count and fake.graph[-1].get("replace") is True)
         replayed = Patches.of(fake.graph[-1]["ops"])
         assert replayed.nodes["DIR_Q1_DONE"]["npc"] == LOBART
-        assert book.all()["DIR_Q1"].turn_in().npc == LOBART
+        assert (await book.all())["DIR_Q1"].turn_in().npc == LOBART
         await director._look_after_load()
         assert len(backend.calls) == 1 and len(chronicle.facts("repair")) == 1
     finally:

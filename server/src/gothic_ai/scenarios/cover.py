@@ -341,7 +341,7 @@ async def cover_scenario(
         ):
             return _logged(results)
         await settled()
-        talk.end("gone")
+        await talk.end("gone")
         if not check(
             "deal_released",
             await _until(lambda: HILDA not in talk.attached, 20),
@@ -493,7 +493,7 @@ async def cover_scenario(
             exposed(),
         ):
             return _logged(results)
-        talk.end("gone")
+        await talk.end("gone")
         await settled()
         if subject:
             assert people is not None
@@ -546,7 +546,7 @@ async def cover_scenario(
             hero_trust = trust.of(third)
             rumors.gate = lambda r, a, b: r.key == rumor.key and (a, b) == (LOBART, third)
             # They really meet here, outside their routine's hours; the ordinary staging guard applies.
-            passed = rumors.offer_status(rumor, LOBART, third)
+            passed = await rumors.offer_status(rumor, LOBART, third)
             heard = [
                 f for f in facts("rumor")
                 if f.get("kind") == "cover" and f.get("subject") == HILDA
@@ -611,7 +611,7 @@ async def cover_scenario(
                 ),
                 testimony_rows,
             )
-            talk.end("gone")
+            await talk.end("gone")
             await settled()
             kinds = {
                 "crime", "crime_seen", "deal", "covered", "silenced", "testimony", "caught", "exposed",
@@ -621,7 +621,7 @@ async def cover_scenario(
             before_people = people.of(third)
             before_trust = trust.of(third)
             before_known = dict(rumor.known)
-            head = sightings.memory.head(chronicle.branch) if chronicle.branch else 0
+            head = await sightings.memory.head(chronicle.branch) if chronicle.branch else 0
             saved = await _save(link, slot)
             if saved is None:
                 check("subject_branch", False, "save was refused")
@@ -649,7 +649,7 @@ async def cover_scenario(
             if loaded:
                 check(
                     "subject_no_duplicates",
-                    rumors.offer_status(loaded[0], LOBART, third) == "no"
+                    await rumors.offer_status(loaded[0], LOBART, third) == "no"
                     and [f for f in facts() if f.get("fact") in kinds] == snapshot
                     and len(exposed()) == 1
                     and people.of(third) == before_people,
@@ -658,7 +658,7 @@ async def cover_scenario(
             return _logged(results)
         kinds = {"crime", "crime_seen", "deal", "covered", "silenced", "testimony", "caught", "exposed"}
         snapshot = [f for f in facts() if f.get("fact") in kinds]
-        head = sightings.memory.head(chronicle.branch) if chronicle.branch else 0
+        head = await sightings.memory.head(chronicle.branch) if chronicle.branch else 0
         await asyncio.sleep(0.5)
         saved = await _save(link, slot)
         if saved is None:

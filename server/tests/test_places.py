@@ -90,10 +90,10 @@ async def test_the_model_names_places_and_a_broken_answer_is_asked_again():
         npc="BAU_950_LOBART", name="Лобарт", waypoint="NW_FARM1_OUT_02", state="ZS_STAND_ARMSCROSSED"
     )
     desk._views["BAU_950_LOBART"] = (desk.clock(), view)
-    sight = desk.sight("BAU_950_LOBART")
+    sight = await desk.sight("BAU_950_LOBART")
     assert sight is not None
     assert sight.place == "Ты во дворе фермы Лобарта, под открытым небом. Ты стоишь, скрестив руки."
-    assert desk.english("BAU_950_LOBART")[0] == "You are in Lobart's farmyard."
+    assert (await desk.english("BAU_950_LOBART"))[0] == "You are in Lobart's farmyard."
 
 
 def test_the_places_around_a_spot_nearest_first():

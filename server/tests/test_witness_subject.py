@@ -5,6 +5,7 @@ import pytest
 from gothic_ai.witnesses import Candidate
 from tests.fake_game import FakeGame, connected
 from tests.test_cover import SAID, VOUCH, CoverWorld
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_perception import HILDA, LOBART, MALETH
 
 
@@ -13,10 +14,10 @@ from tests.test_perception import HILDA, LOBART, MALETH
 async def test_known_cover_annotates_candidates_and_testimony_without_changing_evidence(heard, covered):
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = CoverWorld(link, fake)
-        w.saw()
+        w = await CoverWorld.open(link, fake)
+        await w.saw()
         if covered:
-            w.covered(day=1, vouch=VOUCH)
+            await w.covered(day=1, vouch=VOUCH)
         testimony = await w.testify()
         w.witnesses._near[LOBART] = [Candidate(HILDA, "Хильда", "near", 900, True)]
         before = w.witnesses.situation(LOBART) or ""
@@ -24,14 +25,14 @@ async def test_known_cover_annotates_candidates_and_testimony_without_changing_e
         assert evidence is not None
         assert "(Хильда" not in before
         if heard:
-            w.chronicle.record({
+            await w.chronicle.record({
                 "fact": "rumor", "kind": "cover", "subject": HILDA, "subject_name": "Хильда",
                 "about": MALETH, "about_name": "Малет", "from": MALETH, "from_name": "Малет",
                 "to": LOBART, "quest": "cover-other", "hops": 1, "day": 1,
                 "title": "Хильда покрывала героя и солгала человеку по имени Малет",
             })
         else:
-            w.chronicle.record({
+            await w.chronicle.record({
                 "fact": "exposed", "npc": LOBART, "name": "Лобарт", "liar": HILDA,
                 "subject_name": "Хильда", "testimony": testimony.id, "by": "caught-elsewhere",
                 "day": 1, "at": w.witnesses.now,

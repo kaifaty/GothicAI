@@ -125,7 +125,7 @@ class Triggers:
         self.chronicle = chronicle
         link.listeners.append(self._on_message)
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         if isinstance(msg, TriggerFired):
             fact: dict[str, Any] = {"fact": "triggered", "id": msg.id, "count": msg.count}
             if msg.npc:
@@ -135,7 +135,7 @@ class Triggers:
             if msg.error:
                 fact["error"] = msg.error
                 log.warning("trigger %s: its program stopped: %s", msg.id, msg.error)
-            self.chronicle.record(fact)
+            await self.chronicle.record(fact)
 
     def fired(self, id: str) -> int:
         """How many times the trigger fired, as the branch's chronicle has it (the save has the truth)."""

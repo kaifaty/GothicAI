@@ -533,7 +533,7 @@ async def crime_director(
         await link.debug("player_goto", pos=(chest.pos[0], chest.pos[1], chest.pos[2] + 200))
         await link.debug("npc_goto", npc=LOBART, to="PC_HERO", distance=0)
         await link.debug("player_goto", waypoint="NW_FARM1_INHOUSE_02")
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         held = await dialogue.borrow_body(conv, "scenario-crime-chest")
         try:
             opened = await link.act(LOBART, "use_chest", chest=chest.id, take=[], put=[], timeout=90)
@@ -577,7 +577,11 @@ async def crime_director(
         ):
             return _logged(results)
         assert outcome is not None
-        made = [director.book.all()[qid] for qid in outcome.get("quests", []) if qid in director.book.all()]
+        made = [
+            (await director.book.all())[qid]
+            for qid in outcome.get("quests", [])
+            if qid in await director.book.all()
+        ]
         if not check(
             "missing_goals",
             len(made) == 1 and [g.item for s in made[0].stages for g in s.goals] == [item.item, item.item],

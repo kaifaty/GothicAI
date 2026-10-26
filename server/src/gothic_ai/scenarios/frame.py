@@ -159,7 +159,7 @@ async def frame(
         await link.debug("player_goto", pos=(chest.pos[0], chest.pos[1], chest.pos[2] + 200))
         await link.debug("npc_goto", npc=LOBART, to="PC_HERO", distance=0)
         await link.debug("player_goto", waypoint=HOUSE)
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         held = await dialogue.borrow_body(conv, "scenario-frame-chest")
         try:
             opened = await link.act(LOBART, "use_chest", chest=chest.id, take=[], put=[], timeout=90)
@@ -228,7 +228,7 @@ async def frame(
     async def fight(label: str, crime: dict[str, Any], culprit: str) -> bool:
         cid = str(crime["id"])
         preparing.add(LOBART)
-        talk.end("gone")
+        await talk.end("gone")
         if not check(f"{label}_released", await _until(lambda: LOBART not in talk.attached, 20)):
             return False
         await link.debug("player_goto", waypoint=ROAD)

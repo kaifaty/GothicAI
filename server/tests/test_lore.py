@@ -127,8 +127,8 @@ async def test_the_model_writes_an_npcs_facts_and_a_broken_answer_is_asked_again
     assert data["world"] == "NEWWORLD.ZEN" and data["names"] == {}  # no one in its facts
 
 
-def _lore(graph, *, sees: list[Look] = ()) -> Lore:  # noqa: F811
-    knowledge, _ = _view(graph)  # chapter 1, the hero has heard nothing yet
+async def _lore(graph, *, sees: list[Look] = ()) -> Lore:  # noqa: F811
+    knowledge, _ = await _view(graph)  # chapter 1, the hero has heard nothing yet
     hero = PlayerState(name="Я", pos=(0, 0, 0), ahead=(1, 0), right=(0, -1), distance=0)
     snap = SimpleNamespace(npc=SimpleNamespace(pos=(0.0, 0.0, 0.0)))
     link = SimpleNamespace(snapshots={LOBART: snap}, player=hero)
@@ -137,30 +137,30 @@ def _lore(graph, *, sees: list[Look] = ()) -> Lore:  # noqa: F811
     return Lore(FACTS, BOOK, knowledge, link=link, desk=desk)  # type: ignore[arg-type]
 
 
-def test_an_npc_knows_the_facts_of_dialogs_the_story_lets_it_tell(graph):  # noqa: F811
-    lore = _lore(graph)
+async def test_an_npc_knows_the_facts_of_dialogs_the_story_lets_it_tell(graph):  # noqa: F811
+    lore = await _lore(graph)
     assert [f.dialog for f in lore.known(LOBART)] == ["DIA_LOBART_WORKNOW", "DIA_LOBART_HALLO"]
     # not RUEBENRUNNING: it waits for the hero to bring the turnips; not ANDRE: another npc's dialog the hero
     # has not heard; not KAP3: chapter 3
     assert lore.known("DIR_NPC_GUARD_01") == [] and lore.known(HILDA) == []  # not in the book: nothing
 
 
-def test_the_situation_tells_the_facts_of_the_places_around_and_the_people_in_sight(graph):  # noqa: F811
+async def test_the_situation_tells_the_facts_of_the_places_around_and_the_people_in_sight(graph):  # noqa: F811
     assert (
-        _lore(graph).situation(LOBART)
+        (await _lore(graph)).situation(LOBART)
         == "Что ты знаешь о местах и людях вокруг:\n- Репа растёт на поле за амбаром."
     )
     vino = Look(id=VINO, name="Вино", distance=900)
-    shown = _lore(graph, sees=[vino]).situation(LOBART)
+    shown = (await _lore(graph, sees=[vino])).situation(LOBART)
     assert shown is not None and shown.splitlines()[1] == "- Вино работает на поле."  # in sight: first
     assert (
-        _lore(graph).recall(LOBART, "где растёт репа?")
+        (await _lore(graph)).recall(LOBART, "где растёт репа?")
         == "Ты знаешь о местах и людях:\n- Репа растёт на поле за амбаром."
     )
 
 
-def test_where_tells_what_it_knows_of_a_place_and_of_someone_not_seen(graph):  # noqa: F811
-    lore = _lore(graph)
+async def test_where_tells_what_it_knows_of_a_place_and_of_someone_not_seen(graph):  # noqa: F811
+    lore = await _lore(graph)
     hero = PlayerState(name="Я", pos=(0, 0, 0), ahead=(1, 0), right=(0, -1), distance=0)
     link = SimpleNamespace(snapshots=lore.link.snapshots, player=hero)  # type: ignore[union-attr]
     where = Whereabouts(link, BOOK, lore=lore)  # type: ignore[arg-type]

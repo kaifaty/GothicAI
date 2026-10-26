@@ -17,6 +17,7 @@ from gothic_ai.npc_crime_law import NpcCrimeLaw
 from gothic_ai.npc_crimes import NpcCrimes
 from gothic_ai.protocol import Loading, NpcIdle, RosterEntry, Session
 from tests.test_crimes import HILDA, LOBART
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_npc_crimes import GUARD, THIEF, NpcLink, deed
 
 NOW = 3 * 1440 + 9 * 60 + 15
@@ -85,7 +86,7 @@ class Will:
     ) -> dict[str, Any]:
         self.fights.append((crime["id"], fighter))
         self.fight_roles.append(role)
-        self.chronicle.record({
+        await self.chronicle.record({
             "fact": "npc_crime_reaction", "crime": crime["id"], "npc": fighter,
             "reaction": "fight", "role": role, "act": "far:1", "far": True,
         })
@@ -93,14 +94,15 @@ class Will:
             "fact": "npc_crime_defense", "crime": crime["id"], "culprit": crime["culprit"],
             "fighter": fighter, "outcome": self.outcome, "far": True, "act": "far:1",
         }
-        self.chronicle.record(fact)
+        await self.chronicle.record(fact)
         return fact
 
 
 @pytest.fixture
 async def system():
-    link, memory = LawLink(), MemoryStore(":memory:")
+    link, memory = LawLink(), (await MemoryStore.open(":memory:"))
     chronicle = Chronicle(link, memory)
+    await chronicle.initialize()
     hero = Crimes(link, chronicle)
     hero.people = {
         LOBART: {"guild": 3, "npctype": 0}, HILDA: {"guild": 3, "npctype": 0},
@@ -121,16 +123,16 @@ async def system():
     await hero.close()
     if chronicle._background:
         await asyncio.gather(*chronicle._background)
-    memory.close()
+    await memory.close()
 
 
-def crime(system, *, kind: str = "theft", witness: str = HILDA, **fields: Any):
+async def crime(system, *, kind: str = "theft", witness: str = HILDA, **fields: Any):
     if kind == "attack":
-        return system.deeds.record(deed(
+        return await system.deeds.record(deed(
             kind="attack", victim=LOBART, victim_guild=3, victim_npctype=0,
             witnesses=[witness] if witness else [], **fields,
         ))
-    return system.deeds.record(deed(
+    return await system.deeds.record(deed(
         owner=LOBART, owner_npc_guild=3, owner_npctype=0,
         witnesses=[witness] if witness else [], **fields,
     ))
@@ -138,42 +140,42 @@ def crime(system, *, kind: str = "theft", witness: str = HILDA, **fields: Any):
 
 @pytest.mark.parametrize("kind", ["theft", "attack"])
 async def test_same_community_witness_reports_at_hero_delay(system, kind):
-    event = crime(system, kind=kind)
+    event = await crime(system, kind=kind)
     due = NOW + REPORT_DELAYS[kind]
-    assert system.law.deliver(due - 1) == []
-    [known] = system.law.deliver(due)
+    assert (await system.law.deliver(due - 1)) == []
+    [known] = await system.law.deliver(due)
     assert known == {
         "fact": "npc_crime_known", "crime": event["id"], "community": "city", "via": HILDA, "at": due,
     }
-    assert system.law.deliver(due + 1000) == []
+    assert (await system.law.deliver(due + 1000)) == []
     assert system.law.known("city") == [event]
 
 
 async def test_guard_witness_knows_immediately_without_a_clock_packet(system):
-    event = crime(system, witness=GUARD)
+    event = await crime(system, witness=GUARD)
     assert system.chronicle.facts("npc_crime_known") == [{
         "fact": "npc_crime_known", "crime": event["id"], "community": "city", "via": GUARD, "at": NOW,
     }]
-    assert system.law.deliver(NOW + REPORT_DELAYS["theft"]) == []
+    assert (await system.law.deliver(NOW + REPORT_DELAYS["theft"])) == []
 
 
 @pytest.mark.parametrize("witness,guild,npctype", [(HILDA, 8, 0), (HILDA, 3, 3), (FARM_GUARD, 7, 0)])
 async def test_outside_witness_or_guard_does_not_report_to_victims_community(system, witness, guild, npctype):
     system.hero.people[witness] = {"guild": guild, "npctype": npctype}
-    crime(system, witness=witness)
-    assert system.law.deliver(NOW + 5000) == []
+    await crime(system, witness=witness)
+    assert (await system.law.deliver(NOW + 5000)) == []
     assert system.law.known("city") == []
 
 
 async def test_dead_witness_cannot_complete_delayed_report(system):
-    crime(system)
-    system.chronicle.record({"fact": "died", "npc": HILDA, "at": NOW + 10})
-    assert system.law.deliver(NOW + 5000) == []
+    await crime(system)
+    await system.chronicle.record({"fact": "died", "npc": HILDA, "at": NOW + 10})
+    assert (await system.law.deliver(NOW + 5000)) == []
 
 
 @pytest.mark.parametrize("mode", ["near", "far"])
 async def test_courage_three_surrenders_real_goods_once(system, mode):
-    event = crime(system)
+    event = await crime(system)
     system.will.mode = mode
     await system.law.tick(NOW + REPORT_DELAYS["theft"])
     assert system.link.inventory == {THIEF: 0, LOBART: 1}
@@ -194,7 +196,7 @@ async def test_courage_three_surrenders_real_goods_once(system, mode):
 
 
 async def test_courage_four_fights_far_and_records_terminal_outcome_once(system):
-    event = crime(system)
+    event = await crime(system)
     system.will.cards[THIEF] = card(THIEF, 4)
     await system.law.tick(NOW + REPORT_DELAYS["theft"])
     assert system.link.effects == []
@@ -207,7 +209,7 @@ async def test_courage_four_fights_far_and_records_terminal_outcome_once(system)
 
 
 async def test_courage_four_near_uses_existing_nonlethal_fight_and_return(system):
-    event = crime(system)
+    event = await crime(system)
     system.will.cards[THIEF] = card(THIEF, 4)
     system.will.mode = "near"
     system.link.values = [1, 0, 0, 1, 1, 0, 0]
@@ -225,7 +227,7 @@ async def test_courage_four_near_uses_existing_nonlethal_fight_and_return(system
 
 @pytest.mark.parametrize("mode", ["near", "far"])
 async def test_attack_receives_one_nonlethal_fight_even_for_courage_one(system, mode):
-    event = crime(system, kind="attack")
+    event = await crime(system, kind="attack")
     system.will.mode = mode
     system.will.cards[THIEF] = card(THIEF, 1)
     await system.law.tick(NOW + REPORT_DELAYS["attack"])
@@ -234,7 +236,7 @@ async def test_attack_receives_one_nonlethal_fight_even_for_courage_one(system, 
             "npc": THIEF, "reason": "AR_NONE", "deed": False, "nonlethal": True, "svm": "HELP",
         })
         assert not system.deeds.settled(event["id"])
-        system.link.receive(NpcIdle(
+        await system.link.receive(NpcIdle(
             type="npc_idle", npc=GUARD, act="a1", reason="done", detail="target_down",
         ))
     assert system.deeds.settled(event["id"])
@@ -244,7 +246,7 @@ async def test_attack_receives_one_nonlethal_fight_even_for_courage_one(system, 
 
 
 async def test_no_item_or_no_meeting_does_not_invent_settlement(system):
-    crime(system)
+    await crime(system)
     system.link.inventory[THIEF] = 0
     await system.law.tick(NOW + 5000)
     system.link.inventory[THIEF] = 1
@@ -256,7 +258,7 @@ async def test_no_item_or_no_meeting_does_not_invent_settlement(system):
 
 @pytest.mark.parametrize("protection", ["plot", "post", "mission", "owner_post"])
 async def test_storyguard_protects_plot_posts_and_mission_items(system, protection):
-    event = crime(system)
+    event = await crime(system)
     if protection == "plot":
         system.deeds.guard.plot = lambda npc: npc == THIEF
     elif protection == "post":
@@ -269,9 +271,9 @@ async def test_storyguard_protects_plot_posts_and_mission_items(system, protecti
         )
     else:
         # Mission status is part of the rule's protected truth, never a new hero fact.
-        system.chronicle.record({**event, "id": "protected", "mission": True})
-        system.chronicle.record({"fact": "npc_crime_seen", "crime": "protected", "npc": HILDA})
-        system.chronicle.record({
+        await system.chronicle.record({**event, "id": "protected", "mission": True})
+        await system.chronicle.record({"fact": "npc_crime_seen", "crime": "protected", "npc": HILDA})
+        await system.chronicle.record({
             "fact": "npc_crime_settled", "crime": event["id"], "by": "OTHER", "how": "done",
         })
     await system.law.tick(NOW + 5000)
@@ -280,11 +282,11 @@ async def test_storyguard_protects_plot_posts_and_mission_items(system, protecti
 
 async def test_disabled_law_writes_no_new_facts_or_actions(system):
     system.deeds.enabled = False
-    system.chronicle.record({
+    await system.chronicle.record({
         "fact": "npc_crime", "id": "saved", "kind": "attack", "culprit": THIEF, "victim": LOBART,
         "community": "city", "day": 3, "hour": 9, "minute": 15,
     })
-    system.chronicle.record({"fact": "npc_crime_seen", "crime": "saved", "npc": GUARD})
+    await system.chronicle.record({"fact": "npc_crime_seen", "crime": "saved", "npc": GUARD})
     await system.law.tick(NOW + 5000)
     assert system.chronicle.facts("npc_crime_known") == []
     assert system.chronicle.facts("npc_crime_settled") == []
@@ -292,28 +294,36 @@ async def test_disabled_law_writes_no_new_facts_or_actions(system):
 
 
 async def test_known_and_settled_follow_saved_branch_without_replay(system):
-    event = crime(system)
+    event = await crime(system)
     await system.law.tick(NOW + 5000)
     assert system.deeds.settled(event["id"])
-    head = system.memory.head("A")
-    system.link.receive(Session(type="session", branch="saved", parent="A", parent_seq=head, reason="load"))
+    head = await system.memory.head("A")
+    await system.link.receive(
+        Session(type="session", branch="saved", parent="A", parent_seq=head, reason="load")
+    )
     assert system.law.known("city")[0]["id"] == event["id"]
     assert system.deeds.settled(event["id"])
     await system.law.tick(NOW + 6000)
     assert len(system.link.effects) == 1
-    system.link.receive(Session(type="session", branch="before", parent="A", parent_seq=0, reason="load"))
+    await system.link.receive(
+        Session(type="session", branch="before", parent="A", parent_seq=0, reason="load")
+    )
     assert system.law.known("city") == []
     assert not system.deeds.settled(event["id"])
 
 
 async def test_loaded_fight_is_not_replayed_or_settled_by_reused_action_id(system):
-    event = crime(system, kind="attack")
+    event = await crime(system, kind="attack")
     system.will.mode = "near"
     await system.law.tick(NOW + 5000)
-    head = system.memory.head("A")
-    system.link.receive(Loading(type="loading"))
-    system.link.receive(Session(type="session", branch="saved", parent="A", parent_seq=head, reason="load"))
-    system.link.receive(NpcIdle(type="npc_idle", npc=GUARD, act="a1", reason="done", detail="target_down"))
+    head = await system.memory.head("A")
+    await system.link.receive(Loading(type="loading"))
+    await system.link.receive(
+        Session(type="session", branch="saved", parent="A", parent_seq=head, reason="load")
+    )
+    await system.link.receive(
+        NpcIdle(type="npc_idle", npc=GUARD, act="a1", reason="done", detail="target_down")
+    )
     assert not system.deeds.settled(event["id"])
     system.will.mode = None
     await system.law.tick(NOW + 6000)
@@ -326,14 +336,14 @@ async def test_loaded_fight_is_not_replayed_or_settled_by_reused_action_id(syste
 
 
 async def test_existing_layer_four_guard_fight_is_observed_without_second_fight(system):
-    event = crime(system)
-    system.chronicle.record({
+    event = await crime(system)
+    await system.chronicle.record({
         "fact": "npc_crime_reaction", "crime": event["id"], "npc": GUARD,
         "reaction": "fight", "role": "guard", "act": "scene-fight",
     })
     await system.law.tick(NOW + 5000)
     assert system.link.actions == [] and system.will.fights == []
-    system.chronicle.record({
+    await system.chronicle.record({
         "fact": "npc_crime_defense", "crime": event["id"], "fighter": GUARD,
         "act": "scene-fight", "outcome": "defender_down",
     })
@@ -341,8 +351,10 @@ async def test_existing_layer_four_guard_fight_is_observed_without_second_fight(
 
 
 async def test_settlement_stops_body_reaction_fight_and_pending_restitution(system):
-    event = crime(system, witness=GUARD)
-    system.chronicle.record({"fact": "npc_crime_settled", "crime": event["id"], "by": GUARD, "how": "done"})
+    event = await crime(system, witness=GUARD)
+    await system.chronicle.record(
+        {"fact": "npc_crime_settled", "crime": event["id"], "by": GUARD, "how": "done"}
+    )
     await system.deeds._react(event, system.deeds._generation)
     with pytest.raises(GameError, match="уже завершено"):
         await system.deeds._fight(event, GUARD, system.deeds._generation, role="guard")
@@ -351,10 +363,10 @@ async def test_settlement_stops_body_reaction_fight_and_pending_restitution(syst
 
 
 async def test_npc_news_and_settlement_never_enter_hero_readers(system):
-    event = crime(system)
+    event = await crime(system)
     await system.law.tick(NOW + 5000)
     hero_law = CrimeLaw(system.hero)
-    hero_law.tick(NOW + 6000)
+    await hero_law.tick(NOW + 6000)
     assert system.hero.facts() == [] and system.hero.known(GUARD) == []
     assert hero_law.known("city") == [] and hero_law.debt("city") == 0
     assert hero_law.deliveries() == []
@@ -363,7 +375,7 @@ async def test_npc_news_and_settlement_never_enter_hero_readers(system):
 
 
 async def test_far_guard_is_discovered_from_social_guilds_without_local_roster(system):
-    event = crime(system)
+    event = await crime(system)
     remote_guard = "MIL_099_DISTANT_GUARD"
     system.will.far_world.social.guilds[remote_guard] = 2
     system.will.guard_names = {remote_guard}
@@ -376,10 +388,10 @@ async def test_far_guard_is_discovered_from_social_guilds_without_local_roster(s
 
 @pytest.mark.parametrize("mode", ["near", "far"])
 async def test_returned_goods_do_not_confiscate_spare_items_of_the_same_type(system, mode):
-    event = crime(system)
+    event = await crime(system)
     system.will.mode = mode
     system.link.inventory = {THIEF: 4, LOBART: 1}
-    system.chronicle.record({
+    await system.chronicle.record({
         "fact": "npc_crime_restitution", "crime": event["id"], "npc": LOBART, "culprit": THIEF,
         "fighter": LOBART, "item": ITEM, "count": 1, "how": "defeated_thief",
     })
@@ -392,7 +404,7 @@ async def test_returned_goods_do_not_confiscate_spare_items_of_the_same_type(sys
 
 @pytest.mark.parametrize("mode", ["near", "far"])
 async def test_body_defense_reservation_prevents_law_taking_another_copy(system, mode):
-    event = crime(system)
+    event = await crime(system)
     system.will.mode = mode
     system.link.inventory = {THIEF: 4, LOBART: 0}
     system.deeds._restitution_started.add((system.deeds._generation, event["id"]))
@@ -403,7 +415,7 @@ async def test_body_defense_reservation_prevents_law_taking_another_copy(system,
 
 
 async def test_surrender_claims_the_same_reservation_before_sending_transfer(system):
-    event = crime(system)
+    event = await crime(system)
     original_effect = system.link.story_effect
 
     async def effect(npc, effects, *, check=False):
@@ -418,18 +430,20 @@ async def test_surrender_claims_the_same_reservation_before_sending_transfer(sys
 
 @pytest.mark.parametrize("far", [False, True])
 async def test_saved_defense_without_law_settlement_is_projected_after_load(system, far):
-    event = crime(system, kind="attack")
-    system.chronicle.record({
+    event = await crime(system, kind="attack")
+    await system.chronicle.record({
         "fact": "npc_crime_reaction", "crime": event["id"], "npc": GUARD,
         "reaction": "fight", "role": "guard", "act": "saved-fight",
     })
     # An older process can save its completed body defense before this law subsystem is enabled.
-    system.memory.add_fact("A", json.dumps({
+    await system.memory.add_fact("A", json.dumps({
         "fact": "npc_crime_defense", "crime": event["id"], "fighter": GUARD,
         "act": "saved-fight", "outcome": "defender_down", **({"far": True} if far else {}),
     }))
-    head = system.memory.head("A")
-    system.link.receive(Session(type="session", branch="saved", parent="A", parent_seq=head, reason="load"))
+    head = await system.memory.head("A")
+    await system.link.receive(
+        Session(type="session", branch="saved", parent="A", parent_seq=head, reason="load")
+    )
     await system.law.tick(NOW + REPORT_DELAYS["attack"])
     [settled] = system.chronicle.facts("npc_crime_settled")
     assert settled == {

@@ -77,7 +77,8 @@ class Whereabouts:
     all_tools: tuple[Tool, ...] = (WHERE_TOOL,)
 
     async def prepare(self, npc: str) -> None:
-        return None
+        if self.sightings is not None:
+            await self.sightings.prepare(npc)
 
     def situation(self, npc: str) -> str | None:
         return None
@@ -90,6 +91,7 @@ class Whereabouts:
     ) -> ToolOutcome | None:
         if call.name != WHERE:
             return None
+        await self.prepare(conv.npc)
         what = str(call.arguments.get("what", "")).strip()
         answer = self.where(conv.npc, what)
         log.info("%s: where %r -> %s", conv.npc, what, answer.split("\n", 1)[0])

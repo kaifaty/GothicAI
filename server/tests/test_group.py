@@ -7,11 +7,13 @@ import gothic_ai.dialogue
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.group import ANSWER, ANSWER_CUE, BY_NAME, QUIET_S, GroupTalk, Seat
 from gothic_ai.llm import FakeBackend
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.talk import TalkDesk
 from tests.fake_game import FakeGame, connected
 from tests.fakes import Clock
 from tests.test_dialogue import HILDA, LOBART, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_talk import person
 
 
@@ -24,7 +26,8 @@ def short_lines(monkeypatch):
 async def _desk(fake: FakeGame, llm, clock=None):
     cm = connected(fake)
     link = await cm.__aenter__()
-    dialogue = DialogueManager(link, llm, PersonaProvider(None))
+    dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:"))
+    await dialogue.initialize()
     talk = TalkDesk(link, dialogue, end_silence_s=30)
     group = GroupTalk(link, dialogue, talk, **({"clock": clock} if clock else {}))
     dialogue.extensions.append(group)
@@ -90,7 +93,7 @@ async def test_the_conversation_is_over_when_nobody_speaks_in_it():
         await fake.roster(person(LOBART, "Лобарт", 3, True), person(HILDA, "Хильда", 5, True))
         await fake.send(type="player_text", text="Лобарт, привет")
         await _until(lambda: LOBART in group.participants() and not dialogue.speaking(LOBART))
-        group.on_said(HILDA, "Хильда", "Опять он.", "incident")
+        await group.on_said(HILDA, "Хильда", "Опять он.", "incident")
         assert set(group.participants()) == {LOBART, HILDA}  # she spoke in it near the hero
         assert group.situation(HILDA) == f"В разговоре с героем ещё: Лобарт. {BY_NAME}"
         dialogue.speaking = lambda npc: npc == LOBART  # he answers the hero
@@ -125,7 +128,7 @@ async def test_one_voice_at_a_time(monkeypatch):
         await fake.roster(person(LOBART, "Лобарт", 3, True), person(HILDA, "Хильда", 5, True))
         await fake.send(type="player_text", text="Лобарт, привет")
         await _until(lambda: len(llm.calls) == 1)
-        dialogue.open(HILDA, "Хильда")  # the fast loop's urgent shout of hers, while he thinks
+        await dialogue.open(HILDA, "Хильда")  # the fast loop's urgent shout of hers, while he thinks
         dialogue.event_turn(HILDA, "[Событие: герой сказал рядом: «Лобарт, привет»]", overlay=True)
         await _until(lambda: len(says_of(fake, HILDA)) == 1 and not dialogue.speaking(HILDA), 5)
     finally:
@@ -152,7 +155,7 @@ async def test_three_voices_to_a_phrase_of_the_hero():
         await fake.send(type="player_text", text="Лобарт, привет")
         await _until(lambda: len(llm.calls) == 1)
         for npc, name in ((HILDA, "Хильда"), (MALETH, "Малет"), (VINO, "Вино"), ("BAU_960_FAR", "Дальний")):
-            dialogue.open(npc, name)
+            await dialogue.open(npc, name)
             dialogue.event_turn(npc, "[Событие: герой сказал рядом: «Лобарт, привет»]", overlay=True)
         # one away from the conversation is not on its floor: it does not wait
         await _until(lambda: calls_of(llm, "Дальний") != [], 2)
@@ -177,7 +180,7 @@ async def test_the_heros_voice_cuts_the_floor():
         await fake.roster(person(LOBART, "Лобарт", 3, True), person(HILDA, "Хильда", 5, True))
         await fake.send(type="player_text", text="Лобарт, привет")
         await _until(lambda: len(llm.calls) == 1)
-        dialogue.open(HILDA, "Хильда")
+        await dialogue.open(HILDA, "Хильда")
         dialogue.event_turn(HILDA, "[Событие: герой сказал рядом: «Лобарт, привет»]", overlay=True)
         await asyncio.sleep(0.1)
         assert group.waiting(HILDA)
@@ -290,7 +293,7 @@ async def test_the_one_called_takes_a_voice_of_those_waiting():
         await fake.send(type="player_text", text="Лобарт, привет")
         await _until(lambda: llm.order == ["Лобарт"])
         for npc, name in ((MALETH, "Малет"), (VINO, "Вино")):  # the fast loop's shouts: two voices more
-            dialogue.open(npc, name)
+            await dialogue.open(npc, name)
             dialogue.event_turn(npc, "[Событие: герой сказал рядом: «Лобарт, привет»]", overlay=True)
         await _until(lambda: len(says(fake, MALETH)) == 1 and not dialogue.speaking(MALETH), 5)
         await asyncio.sleep(0.3)
@@ -315,7 +318,7 @@ async def test_whom_a_line_calls():
         )
         await _until(lambda: len(talk.people) == 4)
         assert group.called(brago, "Ну что, бандит, скажешь?") == mate  # of two, the nearer to the hero
-        group.on_said(steps, "Бандит", "А я его знаю!", "incident")
+        await group.on_said(steps, "Бандит", "А я его знаю!", "incident")
         assert group.called(brago, "Ну что, бандит, скажешь?") == steps  # ...but the one who just spoke
         assert group.called(mate, "Браго, глянь на него.") == brago
         assert group.called(mate, "Только троньте его, Браго.") == brago
@@ -351,7 +354,7 @@ async def test_lines_of_a_reply_still_to_be_heard_when_the_next_turn_begins():
     fake = FakeGame()
     cm, dialogue, talk, group = await _desk(fake, FakeBackend("Посмотрим ещё.", delay=0, first=0.3))
     try:
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         dialogue._lines["AIB_X"] = ("Браго, верни то, что взял!", None)  # its voice is being made
         dialogue._sent["AIB_X"] = time.monotonic()
         conv.last_lines = ["AIB_X"]
@@ -382,7 +385,7 @@ async def test_a_seat_waits_for_the_lines_of_those_before_it_not_for_their_next_
             (HILDA, "H2", "Ты бы помолчал.", 2),
             (LOBART, "L3", "Посмотрим ещё.", 3),
         ):
-            dialogue.open(npc, "x").last_lines = [line]
+            (await dialogue.open(npc, "x")).last_lines = [line]
             dialogue._lines[line], dialogue._sent[line], dialogue._line_seats[line] = (text, None), now, seat
         await asyncio.wait_for(group.hear(HILDA, 2), 0.5)  # hers: not after his line of the next turn
         with pytest.raises(TimeoutError):

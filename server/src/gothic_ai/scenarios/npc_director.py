@@ -279,7 +279,7 @@ async def npc_director(
         await link.debug("player_goto", pos=(chest.pos[0], chest.pos[1], chest.pos[2] + 200))
         await link.debug("npc_goto", npc=LOBART, to="PC_HERO", distance=0)
         await link.debug("player_goto", waypoint=HOUSE)
-        conv = dialogue.open(LOBART, "Лобарт")
+        conv = await dialogue.open(LOBART, "Лобарт")
         held = await dialogue.borrow_body(conv, "scenario-npc-director-chest")
         try:
             opened = await link.act(LOBART, "use_chest", chest=CHEST, take=[], put=[], timeout=90)
@@ -339,7 +339,11 @@ async def npc_director(
                      and outcome.get("giver") == LOBART and outcome.get("crime") == cid, outcome):
             return _logged(results)
         assert outcome is not None
-        made = [director.book.all()[qid] for qid in outcome.get("quests", []) if qid in director.book.all()]
+        made = [
+            (await director.book.all())[qid]
+            for qid in outcome.get("quests", [])
+            if qid in await director.book.all()
+        ]
         if not check("blame_goal", len(made) == 1 and made[0].stages[0].goals[0].kind == "blame"
                      and made[0].stages[0].goals[0].crime == cid, outcome.get("quests")):
             return _logged(results)

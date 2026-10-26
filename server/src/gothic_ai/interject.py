@@ -19,8 +19,9 @@ not tell characters apart, it is trained on them (the teacher gpt-6.1-sol, as in
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from .brain.reflex import Reaction, Reflexes
@@ -88,7 +89,7 @@ class Interjections:
         self.trace = trace
         self.journal = journal or dialogue.journal
         # what an npc perceives now, in English (perception.py), as the other questions have it
-        self.view_of: Callable[[str], tuple[str, ...]] = lambda npc: ()
+        self.view_of: Callable[[str], tuple[str, ...] | Awaitable[tuple[str, ...]]] = lambda npc: ()
         self.spoke: set[str] = set()  # who spoke up after the hero's latest phrase
         # each time the others were asked: (who answered the hero, [(npc, P(speak))], who spoke up)
         self.asked: list[tuple[str, list[tuple[str, float]], list[str]]] = []
@@ -153,7 +154,7 @@ class Interjections:
                 log.info("%s: no budget to speak up", r.npc)
                 continue
             self.spoke.add(r.npc)
-            self._speak_up(r, phrase)
+            await self._speak_up(r, phrase)
 
     async def _one(
         self, e: RosterEntry, heard: list[str], clock: str | None, to_all: bool
@@ -161,8 +162,14 @@ class Interjections:
         npc = e.id.upper()
         conv = self.dialogue.conversations.get(npc)
         persona = conv.persona if conv is not None else self.dialogue.personas.get(npc, e.name)
+        session, world_generation = self.talk.link.session, self.talk.link.world_generation
+        view = self.view_of(npc)
+        if inspect.isawaitable(view):
+            view = await view
+        if session is not self.talk.link.session or world_generation != self.talk.link.world_generation:
+            return None
         ctx = NpcContext(
-            npc, e.name, e.guild, e.distance, e.in_view, traits=persona.traits, view=self.view_of(npc)
+            npc, e.name, e.guild, e.distance, e.in_view, traits=persona.traits, view=view
         )
         intent = conv.intent if conv is not None else None
         reaction = await self.reflexes.interject(ctx, heard, intent, clock, to_all=to_all)
@@ -170,7 +177,7 @@ class Interjections:
             self.trace.write(reaction.record())
         return reaction
 
-    def _speak_up(self, r: Reaction, phrase: tuple[Addressee | None, str]) -> None:
+    async def _speak_up(self, r: Reaction, phrase: tuple[Addressee | None, str]) -> None:
         e = self.talk.people.get(r.npc)
         name = e.name if e is not None else r.npc
         step_in = (
@@ -181,7 +188,7 @@ class Interjections:
         self.journal.add(
             "interject", npc=r.npc, name=name, how="step_in" if step_in else "word", p=round(speak_p(r), 2)
         )
-        self.dialogue.open(r.npc, name)
+        await self.dialogue.open(r.npc, name)
         self.dialogue.event_turn(
             r.npc,
             STEP_IN_CUE if step_in else WORD_CUE,

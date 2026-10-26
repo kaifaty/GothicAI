@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from .chronicle import Chronicle, Fact
 from .dialogue import KILLERS
-from .game import GameLink
+from .game import GameError, GameLink
 from .llm import Tool, ToolCall
 from .protocol import (
     GameMessage,
@@ -159,34 +159,51 @@ class Parley:
         )
         return latest if latest and latest.get("status") != "cleared" else None
 
-    def truce(self, npc: str) -> Fact | None:
-        now = self.now()
-        broken = {f.get("truce") for f in self.chronicle.facts("truce_broken")}
-        truce = next(
-            (
-                f
-                for f in reversed(self.chronicle.facts("truce"))
-                if npc.upper() in f.get("members", ())
-                and f.get("id") not in broken
-                and (now is None or now < f["until"])
-            ),
-            None,
+    async def truce(self, npc: str) -> Fact | None:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
         )
-        if truce:
-            fresh = [f for member in truce["members"] for f in self._causes(member, truce)]
-            armed = any(self._armed(member) for member in truce["members"])
-            if fresh or (armed and not truce.get("armed", False)):
-                self.chronicle.record(
-                    {
-                        "fact": "truce_broken",
-                        "truce": truce["id"],
-                        "npc": npc.upper(),
-                        "members": truce["members"],
-                        "reason": fresh[-1].get("kind", "attack") if fresh else "weapon",
-                    }
-                )
-                return None
-        return truce
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            now = self.now()
+            broken = {f.get("truce") for f in self.chronicle.facts("truce_broken")}
+            truce = next(
+                (
+                    f
+                    for f in reversed(self.chronicle.facts("truce"))
+                    if npc.upper() in f.get("members", ())
+                    and f.get("id") not in broken
+                    and (now is None or now < f["until"])
+                ),
+                None,
+            )
+            if truce:
+                fresh = [f for member in truce["members"] for f in self._causes(member, truce)]
+                armed = any(self._armed(member) for member in truce["members"])
+                if fresh or (armed and not truce.get("armed", False)):
+                    await self.chronicle.record(
+                        {
+                            "fact": "truce_broken",
+                            "truce": truce["id"],
+                            "npc": npc.upper(),
+                            "members": truce["members"],
+                            "reason": fresh[-1].get("kind", "attack") if fresh else "weapon",
+                        }
+                    )
+                    if (
+                        branch != self.chronicle.branch or generation != self.chronicle._generation
+                        or session is not self.chronicle.link.session
+                    ):
+                        raise GameError("session changed while recording NPC state")
+                    return None
+            return truce
+
+        return await self.chronicle.memory.complete(persist)
 
     def _armed(self, npc: str) -> bool:
         view = self.perception.view(npc) if self.perception else None
@@ -217,12 +234,12 @@ class Parley:
                     out.append(f)
         return out
 
-    def fight_reason(self, npc: str, snap: Snapshot | None = None) -> str | None:
+    async def fight_reason(self, npc: str, snap: Snapshot | None = None) -> str | None:
         npc = npc.upper()
         if not self.bandit(npc):
             return None
-        self.tick()
-        truce = self.truce(npc)
+        await self.tick()
+        truce = await self.truce(npc)
         if truce:
             return AGREEMENT
         if self._armed(npc) or any(f.get("kind") in {"attack", "murder"} for f in self._causes(npc)):
@@ -255,17 +272,37 @@ class Parley:
                     return None
         return NO_REASON
 
-    def hero_said(self, npc: str) -> None:
-        threat = self.ultimatum(npc)
-        if threat and threat.get("status") == "active" and not threat.get("answered"):
-            self.chronicle.record({**threat, "answered": True})
+    async def hero_said(self, npc: str) -> None:
+        branch, generation, session = (
+            self.chronicle.branch, self.chronicle._generation, self.chronicle.link.session
+        )
+
+        async def persist():
+            if (
+                branch != self.chronicle.branch or generation != self.chronicle._generation
+                or session is not self.chronicle.link.session
+            ):
+                raise GameError("session changed while recording NPC state")
+            threat = self.ultimatum(npc)
+            if threat and threat.get("status") == "active" and not threat.get("answered"):
+                await self.chronicle.record({**threat, "answered": True})
+                if (
+                    branch != self.chronicle.branch or generation != self.chronicle._generation
+                    or session is not self.chronicle.link.session
+                ):
+                    raise GameError("session changed while recording NPC state")
+
+        return await self.chronicle.memory.complete(persist)
 
     async def accept_deal(self, npc: str, hours: int | None = None, *, now: int | None = None) -> None:
+        session, world_generation = self.link.session, self.link.world_generation
         npc = npc.upper()
         if not self.bandit(npc):
             return
         if threat := self.ultimatum(npc):
-            self.chronicle.record({**threat, "status": "cleared", "why": "deal"})
+            await self.chronicle.record({**threat, "status": "cleared", "why": "deal"})
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return
         if hours is None:
             return
         if now is None:
@@ -273,7 +310,7 @@ class Parley:
         if now is None or not 1 <= hours <= 24:
             raise ValueError("truce needs the game clock and 1–24 hours")
         members = self.members(npc)
-        self.chronicle.record(
+        await self.chronicle.record(
             {
                 "fact": "truce",
                 "id": f"truce-{uuid.uuid4().hex[:8]}",
@@ -284,6 +321,8 @@ class Parley:
                 "armed": any(self._armed(member) for member in members),
             }
         )
+        if session is not self.link.session or world_generation != self.link.world_generation:
+            return
         calm = []
         snap = self.link.snapshots.get(npc)
         names = {o.id: o.name for o in snap.nearby_npcs} if snap else {}
@@ -293,14 +332,26 @@ class Parley:
                 if not self.dialogue.fights_hero(member):
                     continue
             name = conv.persona.name if conv else names.get(member, member)
-            self.dialogue.change_intent(member, name, body=False, goal="none", target=None, attitude="wary")
-            conv = self.dialogue.conversations[member]
+            if conv is None:
+                conv = await self.dialogue.open(member, name)
+                if session is not self.link.session or world_generation != self.link.world_generation:
+                    return
+            await self.dialogue.change_intent(
+                member, name, body=False, goal="none", target=None, attitude="wary"
+            )
+            if (session is not self.link.session or world_generation != self.link.world_generation
+                    or self.dialogue.conversations.get(member) is not conv):
+                return
             calm.append((conv, conv.intent))
         # The accepted truce cancels queued attacks and ends existing fights without waiting for speech.
         for conv, intent in calm:
-            await self.dialogue._calm(conv, intent)
+            if session is not self.link.session or world_generation != self.link.world_generation:
+                return
+            if self.dialogue.conversations.get(conv.npc) is conv:
+                await self.dialogue._calm(conv, intent)
 
-    def tick(self) -> None:
+    async def tick(self) -> None:
+        session, world_generation = self.link.session, self.link.world_generation
         if self._loading:
             return
         latest = {f["npc"]: f for f in self.chronicle.facts("parley_ultimatum")}
@@ -309,18 +360,24 @@ class Parley:
                 continue
             distance = self._distance(npc)
             if distance is not None and distance > NEAR_CM:
-                self.chronicle.record({**threat, "status": "cleared", "why": "left"})
+                await self.chronicle.record({**threat, "status": "cleared", "why": "left"})
+                if session is not self.link.session or world_generation != self.link.world_generation:
+                    return
                 continue
             elif threat["status"] == "active" and self._ticks >= threat["deadline"]:
                 threat = {**threat, "status": "expired"}
-                self.chronicle.record(threat)
+                await self.chronicle.record(threat)
+                if session is not self.link.session or world_generation != self.link.world_generation:
+                    return
             if threat.get("status") == "expired" and not threat.get("notified"):
                 conv = self.dialogue.conversations.get(npc)
                 if conv is None:
                     entry = self._roster.get(npc)
                     snap = self.link.snapshots.get(npc)
                     name = entry.name if entry else (snap.npc.name if snap else threat["name"])
-                    conv = self.dialogue.open(npc, name, warm=False)
+                    conv = await self.dialogue.open(npc, name, warm=False)
+                    if session is not self.link.session or world_generation != self.link.world_generation:
+                        return
                 if conv.reply is not None and not conv.reply.done():
                     continue  # event_turn queues only a remark when busy; deliver an actual turn later
                 turn = self.dialogue.event_turn(
@@ -331,7 +388,9 @@ class Parley:
                     kind="ultimatum",
                 )
                 if turn is not None:
-                    self.chronicle.record({**threat, "notified": True})
+                    await self.chronicle.record({**threat, "notified": True})
+                    if session is not self.link.session or world_generation != self.link.world_generation:
+                        return
 
     def _relevant(self, npc: str, key: str) -> bool:
         threat = self.ultimatum(npc)
@@ -346,11 +405,11 @@ class Parley:
 
     async def run(self) -> None:
         while True:
-            self.tick()
+            await self.tick()
             await asyncio.sleep(0.25)
 
     async def prepare(self, npc: str) -> None:
-        self.tick()
+        await self.tick()
 
     def balance(self, npc: str) -> str | None:
         """The quick model's balance, using only snapshots and cached information, without I/O."""
@@ -425,13 +484,13 @@ class Parley:
         """The same comparison for a human fighting the hero, including non-bandits."""
         return self._balance(npc.upper(), combat=True)
 
-    def situation(self, npc: str) -> str | None:
+    async def situation(self, npc: str) -> str | None:
         npc = npc.upper()
         if not self.bandit(npc):
             return None
         lines = [balance] if (balance := self._balance(npc)) else []
-        reason = self.fight_reason(npc)
-        if truce := self.truce(npc):
+        reason = await self.fight_reason(npc)
+        if truce := await self.truce(npc):
             until = truce["until"]
             lines.append(
                 f"У вашей шайки уговор с героем до дня {until // 1440 + 1}, "
@@ -471,7 +530,7 @@ class Parley:
             return ToolOutcome("Отклонено: seconds — целое число от 10 до 60.", "rejected")
         if snap:
             self._ticks = max(self._ticks, snap.t)
-        self.chronicle.record(
+        await self.chronicle.record(
             {
                 "fact": "parley_ultimatum",
                 "id": f"ult-{uuid.uuid4().hex[:8]}",
@@ -496,7 +555,7 @@ class Parley:
         snap = self.link.snapshots.get(npc)
         return next((o.id for o in snap.nearby_npcs if o.name == name), name) if snap else name
 
-    def _cause(self, npc: str, kind: str, culprit: str, victim: str = "") -> None:
+    async def _cause(self, npc: str, kind: str, culprit: str, victim: str = "") -> None:
         npc, culprit, victim = npc.upper(), culprit.upper(), victim.upper()
         if not self.bandit(npc) or (culprit != "PLAYER" and not self.companion(culprit)):
             return
@@ -510,11 +569,11 @@ class Parley:
                 band.update(o.id.upper() for o in view.sees if o.guild in KILLERS)
             if victim not in band:
                 return
-        self.chronicle.record(
+        await self.chronicle.record(
             {"fact": "parley_cause", "npc": npc, "kind": kind, "culprit": culprit, "victim": victim}
         )
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         match msg:
             case Loading():
                 self._loading = True
@@ -523,7 +582,7 @@ class Parley:
                     # No Session means a portal: the hero left the old world's demands behind.
                     for npc in {f["npc"] for f in self.chronicle.facts("parley_ultimatum")}:
                         if threat := self.ultimatum(npc):
-                            self.chronicle.record({**threat, "status": "cleared", "why": "left"})
+                            await self.chronicle.record({**threat, "status": "cleared", "why": "left"})
                 self._ticks, self._minute, self._roster = 0, None, {}
                 self._last_balance.clear()
                 self._roster_complete = False
@@ -552,7 +611,7 @@ class Parley:
                     "ASSESSTHEFT": "theft",
                 }.get(msg.perc)
                 if kind:
-                    self._cause(
+                    await self._cause(
                         msg.npc, kind, msg.other, msg.npc if msg.perc == "ASSESSDAMAGE" else msg.victim or ""
                     )
             case NpcEvent():
@@ -564,7 +623,9 @@ class Parley:
                     "weapon_drawn": "weapon",
                 }.get(msg.kind)
                 if kind:
-                    self._cause(msg.npc, kind, msg.other, msg.victim or self._victim(msg.npc, msg.detail))
+                    await self._cause(
+                        msg.npc, kind, msg.other, msg.victim or self._victim(msg.npc, msg.detail)
+                    )
             case HeroDeed() | NpcDeed():
                 culprit = msg.culprit if isinstance(msg, NpcDeed) else "PLAYER"
                 # Raw item pickup is not proof of theft (own property, dropped items, public rooms).
@@ -572,4 +633,4 @@ class Parley:
                 kind = {"attack": "attack", "murder": "murder"}.get(msg.kind)
                 if kind:
                     for witness in msg.witnesses:
-                        self._cause(witness, kind, culprit, msg.victim)
+                        await self._cause(witness, kind, culprit, msg.victim)

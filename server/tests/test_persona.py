@@ -5,7 +5,8 @@ import pytest
 
 from gothic_ai import persona as persona_module
 from gothic_ai.characters import Card
-from gothic_ai.gamedata.ou import voice_index
+from gothic_ai.gamedata import ou
+from gothic_ai.gamedata.ou import find_ou_file, load_npc_lines, voice_index
 from gothic_ai.persona import (
     BRIEF_SAMPLES,
     DEFAULT_VOICE,
@@ -95,20 +96,53 @@ def test_the_voice_order(game_dir):
 
 
 def test_the_game_lines_are_read_once(game_dir, monkeypatch):
-    calls: list[str] = []
-    load = persona_module.load_npc_lines
+    expected = {npc: load_npc_lines(game_dir, npc) for npc in (BABERA, EDDA, TRADER, HILDA)}
+    expected_samples = {
+        npc: (tuple(persona_module.pick_samples([text for _, text in lines])), voice_index(lines))
+        for npc, lines in expected.items()
+    }
+    reads: list[Path] = []
+    parses: list[bytes] = []
+    read_bytes = Path.read_bytes
+    parse = ou.parse_ou_bin
 
-    def counted(path: Path, npc: str) -> list[tuple[str, str]]:
-        calls.append(npc)
-        return load(path, npc)
+    def counted_read(path: Path) -> bytes:
+        reads.append(path)
+        return read_bytes(path)
 
-    monkeypatch.setattr(persona_module, "load_npc_lines", counted)
+    def counted_parse(data: bytes) -> dict[str, str]:
+        parses.append(data)
+        return parse(data)
+
+    monkeypatch.setattr(Path, "read_bytes", counted_read)
+    monkeypatch.setattr(ou, "parse_ou_bin", counted_parse)
     personas = PersonaProvider(game_dir, {})
+    ou_file = find_ou_file(game_dir)
+    assert reads == [ou_file] and len(parses) == 1  # startup, before any live callback
     personas.get(BABERA, "Бабера")
     personas.get("bau_934_babera", "Бабера")
     personas.brief(BABERA, "Бабера")
     personas.get(BABERA, "Бабера-другая")  # another name: another persona, the same lines
-    assert calls == [BABERA]
+    for npc, voice in (
+        (BABERA, FEMALE_VOICE), (EDDA, FEMALE_VOICE), (TRADER, DEFAULT_VOICE), (HILDA, VOICES[HILDA])
+    ):
+        assert personas._original(npc) == expected_samples[npc]
+        persona = personas.get(npc, npc)
+        assert persona.voice == voice
+        assert "\n".join(f"- {text}" for text in expected_samples[npc][0]) in persona.instructions
+        personas.brief(npc, npc)
+    assert reads == [ou_file] and len(parses) == 1
+
+    # A new provider reads its own startup snapshot, even in the same directory.
+    text = "Новая реплика Эдды для следующего запуска."
+    assert ou_file is not None
+    ou_file.write_bytes(_binsafe_line("DIA_EDDA_NEW_09_00", text))
+    later = PersonaProvider(game_dir, {})
+    assert reads == [ou_file, ou_file] and len(parses) == 2
+    assert later._original(EDDA) == ((text,), "09")
+    assert later.get(EDDA, "Эдда").voice == DEFAULT_VOICE
+    assert personas._original(EDDA) == expected_samples[EDDA]
+    assert reads == [ou_file, ou_file] and len(parses) == 2
 
 
 def test_brief_labels_the_card_as_its_own(game_dir):

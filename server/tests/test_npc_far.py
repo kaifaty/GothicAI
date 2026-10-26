@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,6 +15,7 @@ from gothic_ai.npc_crimes import NpcCrimes
 from gothic_ai.npc_far import FarWorld
 from gothic_ai.protocol import NpcRoster, NpcView, Session, Snapshot
 from gothic_ai.social import Social
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_npc_crimes import NpcLink
 
 THIEF, OWNER, WITNESS = "BAU_FAR_THIEF", "BAU_FAR_OWNER", "BAU_FAR_WITNESS"
@@ -42,8 +43,8 @@ class FarLink(NpcLink):
         self.queries: list[list[str]] = []
         self.snapshot_queries: list[tuple[str, bool]] = []
         self.values = [10, 20, 50, 5, 100, 200, 3]
-        self.after_eval: Callable[[], None] | None = None
-        self.after_effect: Callable[[], None] | None = None
+        self.after_eval: Callable[[], Awaitable[None]] | None = None
+        self.after_effect: Callable[[], Awaitable[None]] | None = None
         self.effect_error: Exception | None = None
 
     async def story_state(self, **args: Any) -> dict[str, Any]:
@@ -62,7 +63,7 @@ class FarLink(NpcLink):
     async def story_eval(self, npc: str, exprs: list[Any]) -> list[Any]:
         self.evaluations.append((npc, exprs))
         if self.after_eval is not None:
-            self.after_eval()
+            await self.after_eval()
         return self.values[:len(exprs)]
 
     async def story_effect(self, npc: str, effects: list[dict[str, Any]], *, check=False) -> None:
@@ -70,13 +71,14 @@ class FarLink(NpcLink):
             raise self.effect_error
         self.effects.append((npc, effects, check))
         if self.after_effect is not None:
-            self.after_effect()
+            await self.after_effect()
 
 
 @pytest.fixture
 async def world():
-    link, memory = FarLink(), MemoryStore(":memory:")
+    link, memory = FarLink(), (await MemoryStore.open(":memory:"))
     chronicle = Chronicle(link, memory)
+    await chronicle.initialize()
     crimes = Crimes(link, chronicle)
     deeds = NpcCrimes(link, chronicle, crimes=crimes)
     social = Social([person(THIEF, 10000), person(OWNER, 14000), person(WITNESS, 10200)])
@@ -91,7 +93,7 @@ async def world():
     await crimes.close()
     if chronicle._background:
         await asyncio.gather(*chronicle._background)
-    memory.close()
+    await memory.close()
 
 
 async def test_batch_engine_positions_take_priority_over_routines_and_share_fresh_hero(world):
@@ -160,7 +162,7 @@ async def test_distant_body_still_respects_activity_and_storyguard(world, blocke
     elif blocked == "active":
         world.will._active[THIEF] = "a1"
     else:
-        world.link.receive(NpcRoster(type="npc_roster", t=0, npcs=[{
+        await world.link.receive(NpcRoster(type="npc_roster", t=0, npcs=[{
             "id": THIEF, "name": THIEF, "guild": 12, "distance": 10000,
             "state": "ZS_GUARD_PASSAGE" if blocked == "post" else "ZS_STAND",
             "activity": "fight" if blocked == "fight" else "routine",
@@ -227,13 +229,13 @@ async def test_far_fight_is_lexicographic_deterministic_and_returns_actual_goods
     world, defender, culprit, wins,
 ):
     world.link.values = [*defender, *culprit, 3]
-    result = await world.far.fight(crime(), OWNER, 0)
+    result = await world.far.fight((crime()), OWNER, 0)
     assert result["far"] and result["returned"] == (2 if wins else 0)
     assert result["outcome"] == ("reclaimed" if wins else "defender_down")
     effects = [(THIEF, [{"do": "give", "item": "ITFO_BREAD", "count": 2,
                          "to": "npc", "npc": OWNER}], True)] if wins else []
     assert world.link.effects == effects
-    assert await world.far.fight(crime(), OWNER, 0) == result
+    assert await world.far.fight((crime()), OWNER, 0) == result
     assert world.link.effects == effects
     assert len(world.link.evaluations) == 1
     assert len(world.chronicle.facts("npc_crime_defense")) == 1
@@ -250,21 +252,21 @@ async def test_far_fight_is_lexicographic_deterministic_and_returns_actual_goods
 ])
 async def test_far_fight_missing_goods_partial_return_and_attack(world, kind, goods, outcome, returned):
     world.link.values[-1] = goods
-    result = await world.far.fight(crime(kind=kind), OWNER, 0)
+    result = await world.far.fight((crime(kind=kind)), OWNER, 0)
     assert (result["outcome"], result["returned"]) == (outcome, returned)
     assert len(world.link.effects) == int(returned > 0)
 
 
 @pytest.mark.parametrize("during", ["eval", "effect"])
 async def test_loading_during_far_fight_never_writes_old_world_facts(world, during):
-    def load() -> None:
+    async def load() -> None:
         world.will._generation += 1
-        world.link.receive(Session(type="session", branch="B"))
+        await world.link.receive(Session(type="session", branch="B"))
     if during == "eval":
         world.link.after_eval = load
     else:
         world.link.after_effect = load
-    assert await world.far.fight(crime(), OWNER, 0) is None
+    assert await world.far.fight((crime()), OWNER, 0) is None
     assert world.chronicle.facts("npc_crime_defense") == []
     assert world.chronicle.facts("npc_crime_restitution") == []
 
@@ -279,8 +281,8 @@ async def test_load_discards_positions_from_previous_generation(world):
 
 
 async def test_native_restitution_in_progress_blocks_duplicate_far_transfer(world):
-    world.deeds._restitution_started.add((world.deeds._generation, crime()["id"]))
-    result = await world.far.fight(crime(), OWNER, 0)
+    world.deeds._restitution_started.add((world.deeds._generation, (crime())["id"]))
+    result = await world.far.fight((crime()), OWNER, 0)
     assert result["outcome"] == "resolved_elsewhere"
     assert world.link.effects == []
     assert world.chronicle.facts("npc_crime_restitution") == []
@@ -289,12 +291,12 @@ async def test_native_restitution_in_progress_blocks_duplicate_far_transfer(worl
 async def test_explicit_give_rejection_releases_reservation_for_retry(world):
     world.link.effect_error = GameError("not enough items")
     with pytest.raises(GameError, match="not enough items"):
-        await world.far.fight(crime(), OWNER, 0)
-    assert (world.deeds._generation, crime()["id"]) not in world.deeds._restitution_started
+        await world.far.fight((crime()), OWNER, 0)
+    assert (world.deeds._generation, (crime())["id"]) not in world.deeds._restitution_started
     assert world.chronicle.facts("npc_crime_defense") == []
     assert world.chronicle.facts("npc_crime_restitution") == []
     world.link.effect_error = None
-    result = await world.far.fight(crime(), OWNER, 0)
+    result = await world.far.fight((crime()), OWNER, 0)
     assert result["outcome"] == "reclaimed"
     assert len(world.link.effects) == 1
 
@@ -302,18 +304,18 @@ async def test_explicit_give_rejection_releases_reservation_for_retry(world):
 async def test_unknown_give_result_keeps_reservation_against_duplicate_transfer(world):
     world.link.effect_error = TimeoutError()
     with pytest.raises(TimeoutError):
-        await world.far.fight(crime(), OWNER, 0)
-    assert (world.deeds._generation, crime()["id"]) in world.deeds._restitution_started
+        await world.far.fight((crime()), OWNER, 0)
+    assert (world.deeds._generation, (crime())["id"]) in world.deeds._restitution_started
     world.link.effect_error = None
-    result = await world.far.fight(crime(), OWNER, 0)
+    result = await world.far.fight((crime()), OWNER, 0)
     assert result["outcome"] == "resolved_elsewhere"
     assert world.link.effects == []
 
 
 async def test_settled_case_cannot_start_another_far_fight(world):
-    world.chronicle.record({"fact": "npc_crime_settled", "crime": crime()["id"],
+    await world.chronicle.record({"fact": "npc_crime_settled", "crime": (crime())["id"],
                             "by": WITNESS, "how": "returned"})
-    assert await world.far.fight(crime(), OWNER, 0) is None
+    assert await world.far.fight((crime()), OWNER, 0) is None
     assert world.link.evaluations == []
     assert world.link.effects == []
     assert world.chronicle.facts("npc_crime_defense") == []

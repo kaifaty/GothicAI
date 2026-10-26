@@ -288,7 +288,10 @@ class Knowledge:
     # --- TurnExtension ---------------------------------------------------------------------------
 
     async def prepare(self, npc: str) -> None:
+        await self.link.wait_session_ready()
         npc = npc.upper()
+        session = self.link.session
+        generation = self.link.world_generation
         # its guild and voice (which ambient dialogs are its kind's), the hero's guild (lines wait for it)
         fields = [["field", ["inst", who], name] for who, name in FIELDS]
         values = [v if isinstance(v, int) else None for v in await self.link.story_eval(npc, fields)]
@@ -298,7 +301,7 @@ class Knowledge:
             if v is not None
         }
         guild, voice = known.get(("SELF", "GUILD")), known.get(("SELF", "VOICE"))
-        own = self.dialogs(npc)
+        own = await self.dialogs(npc)
         pool = self.ambient(guild, voice, named=bool(own))
         quests = self.quests(npc)
         atoms = Atoms(vars={"KAPITEL"}, knows={n.id for n in own})
@@ -316,7 +319,9 @@ class Knowledge:
             npcs=dict(raw.get("npcs", {})),
             fields=known,
         )
-        self.views[npc] = self.view(npc, state, guild, own, pool, quests)
+        view = await self.view(npc, state, guild, own, pool, quests)
+        if session is self.link.session and generation == self.link.world_generation:
+            self.views[npc] = view
 
     def situation(self, npc: str) -> str | None:
         view = self.views.get(npc.upper())
@@ -351,15 +356,15 @@ class Knowledge:
 
     # --- the index ----------------------------------------------------------------------------
 
-    def dialogs(self, npc: str) -> list[Node]:
+    async def dialogs(self, npc: str) -> list[Node]:
         """The npc's enabled dialogs that say something: no exits, pickpocketing or trade menus."""
-        disabled = self._disabled()
+        disabled = await self._disabled()
         return [n for n in self.graph.dialogs_of(npc) if n.id not in disabled and not _menu_only(n)]
 
-    def _disabled(self) -> set[str]:
+    async def _disabled(self) -> set[str]:
         if self.patches is None:
             return set()
-        return Patches.of([*self.patches.static, *self.patches.ops()]).disabled
+        return Patches.of([*self.patches.static, *await self.patches.ops()]).disabled
 
     def ambient(self, guild: int | None, voice: int | None, *, named: bool) -> list[Node]:
         """The ambient dialogs of the npc's kind: its own voice for a nameless one, its whole guild's for a
@@ -381,7 +386,7 @@ class Knowledge:
         found.update({v: self.graph.quests[v] for v in reads if v in self.graph.quests})
         return [found[v] for v in sorted(found)]
 
-    def view(
+    async def view(
         self,
         npc: str,
         state: StoryState,
@@ -390,7 +395,7 @@ class Knowledge:
         pool: list[Node],
         quests: list[Quest],
     ) -> View:
-        disabled = self._disabled()
+        disabled = await self._disabled()
         own = [n for n in own if n.id not in disabled]
         pool = [n for n in pool if n.id not in disabled]
         gates: dict[str, bool | None] = {}

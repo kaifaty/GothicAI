@@ -13,7 +13,8 @@ import sys
 import time
 import tomllib
 from array import array
-from contextlib import nullcontext
+from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack, nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -375,8 +376,8 @@ class Console:
             case "memory" if self.state.dialogue is not None:
                 d = self.state.dialogue
                 branch = d.branch or "-"
-                print(f"branch {branch}, head {d.memory.head(branch)}")
-                mem = d.memory.load(branch, (rest[0] if rest else npc).upper())
+                print(f"branch {branch}, head {await d.memory.head(branch)}")
+                mem = await d.memory.load(branch, (rest[0] if rest else npc).upper())
                 if mem.summary:
                     print(f"summary: {mem.summary}")
                 for e in mem.entries:
@@ -472,13 +473,13 @@ class Console:
                 if view is None:
                     print("(no view)")
                 else:
-                    sight = self.state.perception.sight(who, link.snapshots.get(who))
+                    sight = await self.state.perception.sight(who, link.snapshots.get(who))
                     assert sight is not None
                     print("\n".join(line for line in (sight.place, sight.hero, sight.people) if line))
-                    print("\n".join(self.state.perception.english(who)))
+                    print("\n".join(await self.state.perception.english(who)))
             case "seen" if self.state.sightings is not None:
                 who = (rest[0] if rest else npc).upper()
-                print(self.state.sightings.situation(who) or "(saw nothing)")
+                print(await self.state.sightings.situation(who) or "(saw nothing)")
                 if len(rest) > 1:
                     print(self.state.sightings.recall(who, " ".join(rest[1:])) or "(recall: nothing)")
             case "witness" if self.state.witnesses is not None:
@@ -517,7 +518,7 @@ class Console:
                 for old in self.state.author.old.values():
                     print(f"{old.id} {old.name}: «{old.title}» {old.stage}; {old.item_name} {old.where}")
                 book = self.state.author.book
-                for q in book.all().values():
+                for q in (await book.all()).values():
                     p = book.progress(q.id)
                     print(
                         f"{q.id} {q.name(q.giver)}: «{q.title}» {p.state}, stage {p.stage}/{len(q.stages)}; "
@@ -537,7 +538,7 @@ class Console:
                         f"{t['id']} on {t['on']} {t['npc'] or ''} {t['node'] or ''}: {t['count']}×, {holds}"
                     )
             case "cast" if self.state.cast is not None:
-                for c in self.state.cast.characters():
+                for c in await self.state.cast.characters():
                     print(f"{c.npc} «{c.name}» like {c.like} at {c.at}")
             case "character" if self.state.casting is not None and rest:
                 # a new character for the place, and a quest of the author's for him to give
@@ -578,7 +579,7 @@ class Console:
             case "eval" if rest:
                 print(json.dumps(await link.evaluate(json.loads(rest[0]), rest[1] if len(rest) > 1 else npc)))
             case "talk" if rest and self.state.talk is not None:
-                self.state.talk.hear(" ".join(rest), npc, {"via": "console"})
+                await self.state.talk.hear(" ".join(rest), npc, {"via": "console"})
             case _:
                 print(HELP)
 
@@ -784,6 +785,11 @@ async def _native_combat_available(link: GameLink, pilot: BodyPilot | None, npc:
 
 
 async def serve(args: argparse.Namespace) -> int:
+    async with AsyncExitStack() as cleanup:
+        return await _serve(args, cleanup)
+
+
+async def _serve(args: argparse.Namespace, cleanup: AsyncExitStack) -> int:
     soak_control = os.environ.get("GOTHIC_SOAK_CONTROL") == "1"
     if soak_control and args.scenario != "neural-soak":
         log.error("GOTHIC_SOAK_CONTROL requires --scenario neural-soak")
@@ -810,7 +816,8 @@ async def serve(args: argparse.Namespace) -> int:
     llm = _backend(args)
     game_dir = Path(args.game_dir) if args.game_dir else None
     personas = PersonaProvider(game_dir if game_dir and game_dir.is_dir() else None)
-    memory = MemoryStore(args.memory_db)
+    memory = await MemoryStore.open(args.memory_db)
+    cleanup.push_async_callback(memory.close)
     asr = None if args.no_voice else AsrClient(args.asr_url)
     decider = None if args.no_brain or not args.decider_url else DeciderClient(args.decider_url)
     # npc lines in a fight: a local model, in a fraction of a second (dialogue.py)
@@ -847,6 +854,20 @@ async def serve(args: argparse.Namespace) -> int:
     )
 
     async def on_link(link: GameLink) -> None:
+        async def save_barrier(send: Callable[[], Awaitable[None]]) -> None:
+            session, world_generation = link.session, link.world_generation
+
+            async def flush_and_send() -> None:
+                if session is not link.session or world_generation != link.world_generation:
+                    raise GameError("Game world changed while preparing a save")
+                await memory.flush()
+                if session is not link.session or world_generation != link.world_generation:
+                    raise GameError("Game world changed while preparing a save")
+                await send()
+
+            await memory.complete(flush_and_send)
+
+        link.save_barrier = save_barrier
         link.listeners.append(print_event)
         state.dialogue = DialogueManager(
             link,
@@ -860,6 +881,7 @@ async def serve(args: argparse.Namespace) -> int:
             quick=quick,
             svm_lines=not args.no_svm_lines,
         )
+        session_dialogue = state.dialogue
         if not args.no_combat_barks or not args.no_mercy:
             state.combat_barks = CombatBarks(state.dialogue, hits=not args.no_combat_barks)
         # the bandits below Xardas's tower are freed of their scripted ambush: our models decide (story.py)
@@ -925,13 +947,17 @@ async def serve(args: argparse.Namespace) -> int:
             state.knowledge = Knowledge(link, graph, state.story)
             state.dialogue.extensions.append(state.knowledge)
 
-        def knows_hero(npc: str, dialogue: DialogueManager = state.dialogue) -> bool:
+        async def knows_hero(npc: str, dialogue: DialogueManager = state.dialogue) -> bool:
             """It has met the hero: it remembers talks with him, or he has heard its dialogs (knowledge)."""
+            session = link.session if memory.in_completion else await link.wait_session_ready()
             conv = dialogue.conversations.get(npc)
             if conv is not None and (conv.memory.entries or conv.memory.summary):
                 return True
             if dialogue.branch is not None:
-                mem = dialogue.memory.load(dialogue.branch, npc)
+                branch = dialogue.branch
+                mem = await dialogue.memory.load(branch, npc)
+                if link.session is not session or dialogue.branch != branch:
+                    raise asyncio.CancelledError("NPC knowledge belongs to an invalidated session")
                 if mem.entries or mem.summary:
                     return True
             told = state.knowledge.views.get(npc) if state.knowledge is not None else None
@@ -1051,7 +1077,12 @@ async def serve(args: argparse.Namespace) -> int:
             # what lies in its chest, as it knows, and it goes to take it out (docs/npc-tools.md «Сундуки»)
             state.chests = ChestDesk(link, memory, places=place_book, journal=journal, crimes=state.crimes)
             state.dialogue.extensions.append(state.chests)
-            state.deals.in_chests = state.chests.in_chests
+            async def known_chests(npc: str) -> dict[str, tuple[int, str]]:
+                assert state.chests is not None
+                await state.chests.prepare(npc)
+                return state.chests.in_chests(npc)
+
+            state.deals.in_chests = known_chests
         talk.on_talk_end.append(state.deals.end)
         if args.wrath or args.scenario == "wrath":
             # insult Xardas enough and he raises you as a skeleton (on by default, --no-wrath turns it off)
@@ -1092,6 +1123,7 @@ async def serve(args: argparse.Namespace) -> int:
             )
             state.deals.guide = state.guide
             state.dialogue.extensions.append(state.guide)
+        session_guide = state.guide
         meets: asyncio.Task[None] | None = None
         if args.meet and state.guide is not None:
             # a meeting with the hero, a term of a deal: it is there by the hour (docs/npc-tools.md, step 4)
@@ -1109,6 +1141,7 @@ async def serve(args: argparse.Namespace) -> int:
             state.dialogue.extensions.append(state.meetings)
             state.concerns.extra.append(state.meetings.concerns)  # a meeting he did not come to
             meets = asyncio.create_task(state.meetings.run())  # the game's clock, while one is pending
+        session_meetings = state.meetings
         errand_clock: asyncio.Task[None] | None = None
         if args.errands and state.guide is not None:
             # an npc's goal: go and tell someone of the hero, or take it a thing (docs/npc-tools.md, step 5)
@@ -1349,9 +1382,12 @@ async def serve(args: argparse.Namespace) -> int:
             # npc's outside conversations: the bridge reports them (npc_roster, npc_event, protocol v5)
             concerns = state.concerns
 
-            def agenda_of(npc: str, dialogue: DialogueManager = state.dialogue) -> str | None:
+            async def agenda_of(npc: str, dialogue: DialogueManager = state.dialogue) -> str | None:
                 """What it wants of the hero: the conversation's agenda, else its most pressing concern."""
-                saved = memory.intent(dialogue.branch, npc) if dialogue.branch else None
+                branch, session = dialogue.branch, link.session
+                saved = await memory.intent(branch, npc) if branch else None
+                if dialogue.branch != branch or link.session is not session:
+                    return None
                 agenda = Intent.from_json(saved).agenda if saved else None
                 return concerns.current(npc, agenda) or concerns.agenda(npc)
 
@@ -1379,7 +1415,13 @@ async def serve(args: argparse.Namespace) -> int:
                 planner.set_agenda(npc, concerns.current(npc, intent.agenda or None) or concerns.agenda(npc))
 
             state.dialogue.on_intent = on_intent
-            concerns.on_change.append(lambda npc: planner.set_agenda(npc, agenda_of(npc)))
+            async def concern_changed(npc: str) -> None:
+                session = link.session
+                agenda = await agenda_of(npc)
+                if link.session is session:
+                    planner.set_agenda(npc, agenda)
+
+            concerns.on_change.append(concern_changed)
             # an npc with something on its mind comes up to the hero and speaks first (wave 2 step 1)
             state.initiative = InitiativeDesk(
                 link,
@@ -1420,10 +1462,12 @@ async def serve(args: argparse.Namespace) -> int:
             state.talk.orders.on_fight = sides.note_fight
         if (crime_meet_task := _start_crime_meet(state, link, personas.cards)) is not None:
             directing.append(crime_meet_task)
-        await link.send(_perception_control(args, planner=decider is not None))
-        bodypilot = _start_bodypilot(args, link, state.talk)
-        body_task = asyncio.create_task(bodypilot.run()) if bodypilot is not None else None
+        body_task = None
         try:
+            await link.wait_session_ready()
+            await link.send(_perception_control(args, planner=decider is not None))
+            bodypilot = _start_bodypilot(args, link, state.talk)
+            body_task = asyncio.create_task(bodypilot.run()) if bodypilot is not None else None
             await _run_scenario(link, bodypilot)
             await link.closed.wait()  # the session lives while the game is connected
         finally:
@@ -1466,6 +1510,17 @@ async def serve(args: argparse.Namespace) -> int:
                 await state.crime_law.close()
             if brain is not None:
                 brain.cancel()
+            producers = [lies, debts, asks, *directing]
+            producers.extend(t for t in (parley_clock, meets, errand_clock, brain) if t is not None)
+            results = await asyncio.gather(*producers, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    log.error("session producer failed", exc_info=result)
+            if session_meetings is not None:
+                await session_meetings.close()
+            if session_guide is not None:
+                await session_guide.close()
+            await session_dialogue.close()
 
     async def _run_scenario(link: GameLink, bodypilot: BodyPilot | None) -> None:
         nonlocal exit_code
@@ -1473,6 +1528,7 @@ async def serve(args: argparse.Namespace) -> int:
             return
         try:
             await link.wait_world()
+            await link.wait_session_ready()
             log.info("scenario %s: checks started", args.scenario)
             if args.scenario == "memprobe":
                 where = Path(os.environ.get("LOG_DIR") or Path(args.trace_dir).parent)
@@ -2373,10 +2429,21 @@ async def serve(args: argparse.Namespace) -> int:
     tasks = [asyncio.create_task(server.serve_forever()), asyncio.create_task(done.wait())]
     if not args.no_console:
         tasks.append(asyncio.create_task(Console(server, state, args.npc).run()))
-    finished, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    for task in tasks:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        finished, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        stopped = asyncio.gather(*tasks, return_exceptions=True)
+        cancelled = None
+        while True:
+            try:
+                await asyncio.shield(stopped)
+                break
+            except asyncio.CancelledError as error:
+                cancelled = error
+        if cancelled is not None:
+            raise cancelled
     await llm.aclose()
     if asr is not None:
         await asr.aclose()
@@ -2388,7 +2455,6 @@ async def serve(args: argparse.Namespace) -> int:
         await quick.aclose()
     if tone_quick is not None:
         await tone_quick.aclose()
-    memory.close()
     for task in finished:
         if not task.cancelled() and (err := task.exception()) is not None:
             log.error("%s", err)
@@ -2937,20 +3003,23 @@ async def speech_test(args: argparse.Namespace) -> int:
     return 0
 
 
-def show_memory(args: argparse.Namespace) -> int:
-    store = MemoryStore(args.memory_db)
-    if args.branch is None:
-        for b in store.branches():
-            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(b.created))
-            parent = f" from {b.parent}@{b.parent_seq}" if b.parent else ""
-            print(f"{b.id}  {when}  head {b.head}, {b.npcs} npc(s){parent}")
+async def show_memory(args: argparse.Namespace) -> int:
+    store = await MemoryStore.open(args.memory_db)
+    try:
+        if args.branch is None:
+            for b in await store.branches():
+                when = time.strftime("%Y-%m-%d %H:%M", time.localtime(b.created))
+                parent = f" from {b.parent}@{b.parent_seq}" if b.parent else ""
+                print(f"{b.id}  {when}  head {b.head}, {b.npcs} npc(s){parent}")
+            return 0
+        mem = await store.load(args.branch, args.npc.upper())
+        if mem.summary:
+            print(f"summary (up to {mem.summary_seq}): {mem.summary}")
+        for e in mem.entries:
+            print(f"{e.seq:5d} {e.role:9s} {e.content}")
         return 0
-    mem = store.load(args.branch, args.npc.upper())
-    if mem.summary:
-        print(f"summary (up to {mem.summary_seq}): {mem.summary}")
-    for e in mem.entries:
-        print(f"{e.seq:5d} {e.role:9s} {e.content}")
-    return 0
+    finally:
+        await store.close()
 
 
 def lines(args: argparse.Namespace) -> int:
@@ -3435,7 +3504,7 @@ def main() -> None:
             case "speech-test":
                 code = asyncio.run(speech_test(args))
             case "memory":
-                code = show_memory(args)
+                code = asyncio.run(show_memory(args))
             case _:
                 code = 2
     except LLMError as err:

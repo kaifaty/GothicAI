@@ -32,6 +32,7 @@ from gothic_ai.witnesses import Testimony as WitnessTestimony
 from tests.fake_game import FakeGame, connected
 from tests.test_crimes import deed
 from tests.test_dialogue import _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 from tests.test_perception import HILDA, LOBART, MALETH, look
 from tests.test_sightings import BOOK, record_theft
 
@@ -92,7 +93,16 @@ def hildas_view(state: str = "ZS_COOK_CAULDRON") -> dict:
 class World:
     """Lobart's farm at 09:35 of the second day: Hilda 9 m off, Maleth 40 m, Andre in the city."""
 
-    def __init__(self, link, fake: FakeGame, llm, *, budget: Budget | None = None) -> None:
+    @classmethod
+    async def open(cls, link, fake: FakeGame, llm, *, budget: Budget | None = None):
+        world = cls(link, fake, llm, memory=await MemoryStore.open(":memory:"), budget=budget)
+        await world.chronicle.initialize()
+        await world.dialogue.initialize()
+        return world
+
+    def __init__(
+        self, link, fake: FakeGame, llm, *, memory: MemoryStore, budget: Budget | None = None
+    ) -> None:
         fake.day, fake.hour, fake.minute = 1, 9, 35
         fake.npc_states = {
             HILDA: {"state": "alive", "name": "Хильда", "distance": 900},
@@ -100,7 +110,7 @@ class World:
             ANDRE: {"state": "alive", "name": "Андре", "distance": 90000},
         }
         fake.views = {LOBART: lobarts_view(), HILDA: hildas_view()}
-        self.store = MemoryStore(":memory:")
+        self.store = memory
         self.dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=self.store)
         self.chronicle = Chronicle(link, self.store)
         social = Social()
@@ -158,11 +168,11 @@ async def test_ask_witness_reports_its_actual_crime_seen_and_catches_a_denial_by
         hilda=[("спрашивает тебя", FakeStep("Я своими глазами видела, как он взял вещь."))],
     )
     async with connected(fake) as link:
-        w = World(link, fake, llm)
+        w = await World.open(link, fake, llm)
         crimes = Crimes(link, w.chronicle)
         w.seen.crimes = w.witnesses.crimes = crimes
-        record_theft(w.chronicle)
-        w.dialogue.open(LOBART, "Лобарт")
+        await record_theft(w.chronicle)
+        await w.dialogue.open(LOBART, "Лобарт")
         await w.dialogue.say_as_player(LOBART, "Я ничего не брал.")
         await _until(lambda: bool(w.chronicle.facts("caught")), 10)
 
@@ -182,14 +192,14 @@ async def test_ask_witness_reports_its_actual_crime_seen_and_catches_a_denial_by
 async def test_crime_testimony_uses_only_what_witness_saw_before_the_claim_with_exact_evidence_rows():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
+        w = await World.open(link, fake, lobart())
         crimes = Crimes(link, w.chronicle)
         w.seen.crimes = w.witnesses.crimes = crimes
-        record_theft(w.chronicle, id="before", hour=8)
-        record_theft(w.chronicle, id="earlier", hour=7)
-        record_theft(w.chronicle, id="after", hour=10)
-        record_theft(w.chronicle, id="rumor", witness=MALETH, hour=6)
-        w.chronicle.record({
+        await record_theft(w.chronicle, id="before", hour=8)
+        await record_theft(w.chronicle, id="earlier", hour=7)
+        await record_theft(w.chronicle, id="after", hour=10)
+        await record_theft(w.chronicle, id="rumor", witness=MALETH, hour=6)
+        await w.chronicle.record({
             "fact": "rumor", "crime": "rumor", "kind": "theft", "from": MALETH, "to": HILDA,
             "hops": 1,
         })
@@ -210,7 +220,7 @@ async def test_crime_testimony_uses_only_what_witness_saw_before_the_claim_with_
 async def test_testimony_records_askers_own_side_before_knowledge_and_guard_reporting(why, asker, guild):
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
+        w = await World.open(link, fake, lobart())
         crimes = Crimes(link, w.chronicle)
         w.witnesses.crimes = crimes
         crimes.people.update({
@@ -227,7 +237,7 @@ async def test_testimony_records_askers_own_side_before_knowledge_and_guard_repo
             crimes.sides.book = SimpleNamespace(
                 all=lambda: {quest.id: quest}, progress=lambda _: Progress("given", 1),
             )
-        case = crimes.record(deed(
+        case = await crimes.record(deed(
             kind="murder", victim=MALETH, victim_guild=3, day=1, hour=8,
             witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 12}],
         ))
@@ -249,7 +259,7 @@ async def test_testimony_records_askers_own_side_before_knowledge_and_guard_repo
         assert not knows_violence(asker, crimes)
         assert memory_value(crimes, asker) == (0, 0)
         assert law.deliveries() == []
-        assert law.tick(DAY + 12 * 60) == []
+        assert await law.tick(DAY + 12 * 60) == []
         assert w.chronicle.facts("crime_known") == []
         assert w.chronicle.facts("crime_attitude") == []
         await react.close()
@@ -258,7 +268,7 @@ async def test_testimony_records_askers_own_side_before_knowledge_and_guard_repo
 async def test_testimony_preserves_witness_justification_for_only_its_exact_crime():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
+        w = await World.open(link, fake, lobart())
         crimes = Crimes(link, w.chronicle)
         w.witnesses.crimes = crimes
         crimes.people.update({
@@ -268,11 +278,11 @@ async def test_testimony_preserves_witness_justification_for_only_its_exact_crim
             STRANGER: {"guild": 9, "npctype": 0},
         })
         crimes.sides.note_fight(MALETH, HILDA)
-        justified = crimes.record(deed(
+        justified = await crimes.record(deed(
             id="justified", kind="murder", victim=MALETH, victim_guild=3, day=1, hour=8,
             witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 12}],
         ))
-        ordinary = crimes.record(deed(
+        ordinary = await crimes.record(deed(
             id="ordinary", kind="murder", victim=STRANGER, victim_guild=9, day=1, hour=8,
             witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 12}],
         ))
@@ -301,10 +311,10 @@ async def test_a_witness_called_over_tells_what_it_saw_and_the_lie_is_caught_by_
         hilda=[("спрашивает тебя", FakeStep("Видела его утром на пастбище."))],
     )
     async with connected(fake) as link:
-        w = World(link, fake, llm)
+        w = await World.open(link, fake, llm)
         for t in range(AT_8, AT_8 + 21, 5):  # this morning Hilda saw him on the pasture; Lobart did not
-            w.seen.saw(hero_seen_by(HILDA, "Хильда", t))
-        w.dialogue.open(LOBART, "Лобарт")
+            await w.seen.saw(hero_seen_by(HILDA, "Хильда", t))
+        await w.dialogue.open(LOBART, "Лобарт")
         await w.dialogue.say_as_player(LOBART, LIE)
         await _until(lambda: w.chronicle.facts("caught") != [], 10)
 
@@ -360,8 +370,8 @@ async def test_a_witness_that_did_not_see_him_can_not_catch_him():
         ("Ответ:", CATCH), ("город", ASK_HILDA), hilda=[("спрашивает тебя", FakeStep("Не видала я его."))]
     )
     async with connected(fake) as link:
-        w = World(link, fake, llm)
-        w.dialogue.open(LOBART, "Лобарт")
+        w = await World.open(link, fake, llm)
+        await w.dialogue.open(LOBART, "Лобарт")
         await w.dialogue.say_as_player(LOBART, LIE)
         await _until(lambda: any("Ответ:" in str(c[1][-1].content) for c in llm.calls), 10)
         await _until(lambda: not w.dialogue.speaking(LOBART), 5)
@@ -396,9 +406,9 @@ async def test_gate_claim_answer_uses_code_truth_and_survives_the_testimony_fact
         return answer
 
     async with connected(fake) as link:
-        w = World(link, fake, llm)
+        w = await World.open(link, fake, llm)
         w.witnesses.gate_claim = gate_claim
-        w.chronicle.record({
+        await w.chronicle.record({
             "fact": "covered", "npc": HILDA, "deal": "cover-gate", "day": 1,
             "vouch": "Герой был со мной.",
         })
@@ -411,7 +421,7 @@ async def test_gate_claim_answer_uses_code_truth_and_survives_the_testimony_fact
         assert WitnessTestimony.of(fact).gate_claim == answer
         assert answer in (w.witnesses.situation(LOBART) or "")
         assert "героя не видели за сутки до того" not in w.witnesses._told(t)
-        await w.witnesses._speak(w.dialogue.open(HILDA, "Хильда"), t)
+        await w.witnesses._speak(await w.dialogue.open(HILDA, "Хильда"), t)
         cue = str(llm.others.calls[-1][1][-1].content)
         assert answer in cue and "ложное заявление отрицай" in cue
 
@@ -425,10 +435,10 @@ async def test_gate_claim_is_checked_when_a_far_inquiry_reaches_the_named_witnes
         return "Отрицаю: у героя нет связи со мной."
 
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
+        w = await World.open(link, fake, lobart())
         w.witnesses.gate_claim = gate_claim
         q = Inquiry("gate-question", LOBART, "Лобарт", ANDRE, "Андре", "Андре ждёт меня", AT_8, DAY + 18 * 60)
-        w.witnesses._inquire(q)
+        await w.witnesses._inquire(q)
         await w.witnesses.tick()
         assert not heard
         fake.hour = 18
@@ -450,10 +460,10 @@ async def test_gate_claim_error_keeps_far_inquiry_until_an_answer(error):
         return "Отрицаю: у героя нет связи со мной."
 
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
+        w = await World.open(link, fake, lobart())
         w.witnesses.gate_claim = gate_claim
         q = Inquiry("gate-question", LOBART, "Лобарт", ANDRE, "Андре", "Андре ждёт меня", AT_8, DAY + 18 * 60)
-        w.witnesses._inquire(q)
+        await w.witnesses._inquire(q)
         fake.hour = 18
         await w.witnesses.tick()
         assert q.id in w.witnesses.inquiries
@@ -478,7 +488,7 @@ async def test_failed_far_inquiry_does_not_block_next_question_and_lapses_after_
         return "Подтверждаю: у героя есть связь со мной."
 
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
+        w = await World.open(link, fake, lobart())
         w.witnesses.gate_claim = gate_claim
         failed = Inquiry(
             "failed-question", LOBART, "Лобарт", ANDRE, "Андре", "Андре ждёт меня", AT_8,
@@ -488,8 +498,8 @@ async def test_failed_far_inquiry_does_not_block_next_question_and_lapses_after_
             "next-question", LOBART, "Лобарт", ANDRE, "Андре", "Андре меня послал", AT_8,
             DAY + 18 * 60 + 1,
         )
-        w.witnesses._inquire(failed)
-        w.witnesses._inquire(next_question)
+        await w.witnesses._inquire(failed)
+        await w.witnesses._inquire(next_question)
         fake.hour, fake.minute = 18, 5
 
         await w.witnesses.tick()
@@ -515,13 +525,13 @@ async def test_failed_far_inquiry_does_not_block_next_question_and_lapses_after_
 async def test_far_inquiry_with_no_answer_is_removed_when_branch_does_not_change():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
+        w = await World.open(link, fake, lobart())
         w.witnesses.npc_crimes_enabled = False
         q = Inquiry(
             "disabled-npc-question", LOBART, "Лобарт", ANDRE, "Андре", "Хильда взяла кошелёк", AT_8,
             DAY + 18 * 60, about=HILDA, about_name="Хильда",
         )
-        w.witnesses._inquire(q)
+        await w.witnesses._inquire(q)
         fake.hour = 18
 
         await w.witnesses.tick()
@@ -539,11 +549,11 @@ async def test_gate_claim_error_reports_unanswered_near_question(error, tier):
         raise error("Game unavailable")
 
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
+        w = await World.open(link, fake, lobart())
         w.witnesses.gate_claim = gate_claim
         if tier == "walk":
             fake.npc_states[HILDA]["distance"] = 3000
-        conv = w.dialogue.open(LOBART, "Лобарт")
+        conv = await w.dialogue.open(LOBART, "Лобарт")
         await w.witnesses.prepare(LOBART)
         c = next(c for c in w.witnesses._near[LOBART] if c.npc == HILDA)
         assert c.tier == tier
@@ -562,8 +572,8 @@ async def test_gate_claim_error_reports_unanswered_near_question(error, tier):
 async def test_who_may_be_asked_and_when_not():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
-        conv = w.dialogue.open(LOBART, "Лобарт")
+        w = await World.open(link, fake, lobart())
+        conv = await w.dialogue.open(LOBART, "Лобарт")
         conv.trigger = Message("user", LIE)
         await w.witnesses.prepare(LOBART)
         assert [c.name for c in w.witnesses._near[LOBART]] == ["Хильда", "Малет", "Андре"]
@@ -583,7 +593,7 @@ async def test_who_may_be_asked_and_when_not():
         status, text = await ask("Хильда")
         assert (status, text) == ("rejected", "Отклонено: Хильда спит.")
         # the same question to her within the hour: the old answer, no new one
-        w.chronicle.record(
+        await w.chronicle.record(
             {"fact": "testimony", "id": "T1", "npc": LOBART, "name": "Лобарт", "witness": HILDA,
              "witness_name": "Хильда", "said": "всё утро был в городе", "tier": "near", "saw": [], "told": [],
              "minute": DAY + 9 * 60 + 20}
@@ -604,12 +614,12 @@ async def test_who_may_be_asked_and_when_not():
 async def test_a_far_witness_is_asked_at_their_meeting_and_the_answer_is_on_its_mind():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
+        w = await World.open(link, fake, lobart())
         concerns = Concerns(link, w.chronicle, Deals(link, w.dialogue, w.chronicle))
         concerns.extra.append(w.witnesses.concerns)
         for t in (AT_8, AT_8 + 15):  # Andre saw the hero on the pasture this morning too
-            w.seen.saw(hero_seen_by(ANDRE, "Андре", t))
-        conv = w.dialogue.open(LOBART, "Лобарт")
+            await w.seen.saw(hero_seen_by(ANDRE, "Андре", t))
+        conv = await w.dialogue.open(LOBART, "Лобарт")
         conv.trigger = Message("user", LIE)
         await w.witnesses.prepare(LOBART)
         out = await w.witnesses.handle(
@@ -644,10 +654,11 @@ async def test_a_far_witness_is_asked_at_their_meeting_and_the_answer_is_on_its_
             and top.key == f"witness:{t['id']}"
             and "а он говорил тебе «всё утро был в городе»" in top.ru
         )
-        w.chronicle.record(
+        await w.chronicle.record(
             {"fact": "initiative", "npc": LOBART, "occasion": top.key, "day": 1, "hour": 18, "minute": 20}
         )
         assert concerns.top(LOBART) is None
+        await w.seen.prepare(LOBART)
         assert w.seen.tools(LOBART) != []  # catch_lie: a witness saw him
 
 
@@ -655,10 +666,10 @@ async def test_without_budget_the_witness_is_silent_and_the_answer_is_a_remark()
     fake = FakeGame(branch="A")
     llm = lobart(("город", ASK_HILDA), hilda=[("спрашивает тебя", FakeStep("Видела."))])
     async with connected(fake) as link:
-        w = World(link, fake, llm, budget=Budget(per_npc_per_min=0, total_per_min=0))
-        w.seen.saw(hero_seen_by(HILDA, "Хильда", AT_8))
-        w.seen.saw(hero_seen_by(HILDA, "Хильда", AT_8 + 5))
-        w.dialogue.open(LOBART, "Лобарт")
+        w = await World.open(link, fake, llm, budget=Budget(per_npc_per_min=0, total_per_min=0))
+        await w.seen.saw(hero_seen_by(HILDA, "Хильда", AT_8))
+        await w.seen.saw(hero_seen_by(HILDA, "Хильда", AT_8 + 5))
+        await w.dialogue.open(LOBART, "Лобарт")
         await w.dialogue.say_as_player(LOBART, LIE)
         await _until(lambda: w.chronicle.facts("testimony") != [], 10)
         await _until(
@@ -689,11 +700,11 @@ async def test_the_asker_walks_to_a_witness_and_back():
     fake = FakeGame(branch="A")
     llm = lobart(("Ответ:", CATCH), ("город", ASK_HILDA), hilda=[("спрашивает тебя", FakeStep("Видела."))])
     async with connected(fake) as link:
-        w = World(link, fake, llm)
+        w = await World.open(link, fake, llm)
         fake.npc_states[HILDA]["distance"] = 3000  # 30 m: a walk away
         for t in range(AT_8, AT_8 + 11, 5):
-            w.seen.saw(hero_seen_by(HILDA, "Хильда", t))
-        w.dialogue.open(LOBART, "Лобарт")
+            await w.seen.saw(hero_seen_by(HILDA, "Хильда", t))
+        await w.dialogue.open(LOBART, "Лобарт")
         await w.dialogue.say_as_player(LOBART, LIE)
         await _until(lambda: w.chronicle.facts("caught") != [], 10)
 
@@ -711,10 +722,10 @@ async def test_a_witness_cut_off_by_the_hero_still_gets_its_answer_to_the_asker(
     slow = FakeStep("Видела его утром на пастбище, у самых ворот, с утра пораньше, а потом ещё раз у реки.")
     llm = lobart(("Ответ:", CATCH), ("город", ASK_HILDA), hilda=[("спрашивает тебя", slow)])
     async with connected(fake) as link:
-        w = World(link, fake, llm)
+        w = await World.open(link, fake, llm)
         for t in range(AT_8, AT_8 + 11, 5):
-            w.seen.saw(hero_seen_by(HILDA, "Хильда", t))
-        w.dialogue.open(LOBART, "Лобарт")
+            await w.seen.saw(hero_seen_by(HILDA, "Хильда", t))
+        await w.dialogue.open(LOBART, "Лобарт")
         await w.dialogue.say_as_player(LOBART, LIE)
         await _until(
             lambda: (c := w.dialogue.conversations.get(HILDA)) is not None and c.reply is not None, 10
@@ -727,7 +738,7 @@ async def test_a_witness_cut_off_by_the_hero_still_gets_its_answer_to_the_asker(
 async def test_a_meeting_going_on_now_is_no_meeting_to_ask_at():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
+        w = await World.open(link, fake, lobart())
         fake.hour, fake.minute = 18, 30  # Lobart and Andre meet 18:00–19:00: they are far apart all the same
         await w.witnesses.prepare(LOBART)
         andre = next(c for c in w.witnesses._near[LOBART] if c.npc == ANDRE)
@@ -737,14 +748,14 @@ async def test_a_meeting_going_on_now_is_no_meeting_to_ask_at():
 async def test_a_far_answer_leaves_the_mind_with_time_or_once_he_is_caught_for_it():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        w = World(link, fake, lobart())
+        w = await World.open(link, fake, lobart())
         concerns = Concerns(link, w.chronicle, Deals(link, w.dialogue, w.chronicle))
         concerns.extra.append(w.witnesses.concerns)
         w.witnesses.on_change.append(concerns.changed)
-        w.seen.saw(hero_seen_by(ANDRE, "Андре", AT_8))
-        w.seen.saw(hero_seen_by(ANDRE, "Андре", AT_8 + 5))
+        await w.seen.saw(hero_seen_by(ANDRE, "Андре", AT_8))
+        await w.seen.saw(hero_seen_by(ANDRE, "Андре", AT_8 + 5))
         for i, said in enumerate(("всё утро был в городе", "с утра сидел в таверне")):
-            w.witnesses._inquire(
+            await w.witnesses._inquire(
                 Inquiry(f"Q{i}", LOBART, "Лобарт", ANDRE, "Андре", said, DAY + 9 * 60 + 30, DAY + 18 * 60)
             )
         fake.hour, fake.minute = 18, 5
@@ -755,7 +766,7 @@ async def test_a_far_answer_leaves_the_mind_with_time_or_once_he_is_caught_for_i
 
         assert witness() == ["witness:Q0", "witness:Q1"]
         # caught by С1 in other words: that answer is settled
-        w.chronicle.record(
+        await w.chronicle.record(
             {"fact": "caught", "npc": LOBART, "title": "был в городе", "said": True, "testimony": "Q1"}
         )
         assert witness() == ["witness:Q0"]  # (and a caught lie of its own now: concerns.lied)

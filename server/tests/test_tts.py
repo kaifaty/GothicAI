@@ -9,10 +9,12 @@ from websockets.asyncio.server import serve
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.llm import ToolCall
 from gothic_ai.llm.fake import FakeBackend
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import MOOD_DELIVERY, PersonaProvider
 from gothic_ai.tts import TtsClient
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 
 @asynccontextmanager
@@ -44,8 +46,11 @@ async def test_lines_are_voiced_in_order_and_actions_wait_for_them():
     )
     async with fake_tts(delay=0.3) as (url, requests), connected(fake) as link:
         await link.attach(XARDAS)
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), tts=TtsClient(url))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), tts=TtsClient(url), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Дай зелье")
         await _until(lambda: any(m["type"] == "action" for m in fake.received))
 
@@ -68,8 +73,11 @@ async def test_the_mood_of_a_line_steers_its_voice():
     fake = FakeGame()
     llm = FakeBackend("[friendly] Ты вернулся. [angry] Времени мало, слушай! [neutral] Иди.", delay=0)
     async with fake_tts() as (url, requests), connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), tts=TtsClient(url))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), tts=TtsClient(url), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Привет")
         await _until(lambda: len(fake.said) == 3)
 
@@ -84,8 +92,15 @@ async def test_without_a_tts_service_lines_go_out_silent():
     fake = FakeGame()
     llm = FakeBackend("Ты наконец вернулся из храма. Хорошо, теперь слушай меня внимательно.", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), tts=TtsClient("ws://127.0.0.1:9"))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(
+            link,
+            llm,
+            PersonaProvider(None),
+            tts=TtsClient("ws://127.0.0.1:9"),
+            memory=await MemoryStore.open(":memory:"),
+        )
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Привет")
         await _until(lambda: len(fake.said) == 2)
     assert fake.voiced == [False, False]
@@ -96,7 +111,10 @@ async def test_a_line_of_the_director_gets_the_npcs_voice():
     fake = FakeGame()
     llm = FakeBackend("", delay=0)
     async with fake_tts() as (url, requests), connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), tts=TtsClient(url))
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), tts=TtsClient(url), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         await fake.send(type="line_voice", npc=XARDAS, name="Ксардас", line="AIB_G1", text="Выбирай.")
         await fake.send(type="line_voice", npc=XARDAS, name="Ксардас", line="AIB_G2", text="Ну?")
         await _until(lambda: sum(m["type"] == "say_end" for m in fake.received) == 2)
@@ -112,6 +130,9 @@ async def test_a_line_of_the_director_gets_the_npcs_voice():
 async def test_without_a_voice_the_directors_line_stays_a_subtitle():
     fake = FakeGame()
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend("", delay=0), PersonaProvider(None))
+        dialogue = DialogueManager(
+            link, FakeBackend("", delay=0), PersonaProvider(None), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         assert await dialogue.voice_story_line(XARDAS, "Ксардас", "AIB_G1", "Выбирай.") is None
     assert not [m for m in fake.received if m["type"].startswith("say")]

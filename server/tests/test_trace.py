@@ -2,11 +2,13 @@ import asyncio
 
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.llm import FakeBackend, FakeStep, ToolCall
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.replay import replay
 from gothic_ai.trace import TraceWriter, find_turn, read
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 GIVE = {"item": "ITPO_HEALTH_01", "count": 1}
 FOLLOW = {"goal": "follow_hero", "target": None, "attitude": "friendly", "agenda": ""}
@@ -15,9 +17,12 @@ FOLLOW = {"goal": "follow_hero", "target": None, "attitude": "friendly", "agenda
 async def _talk(llm: FakeBackend, writer: TraceWriter, *phrases: str) -> DialogueManager:
     fake = FakeGame()
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None), trace=writer)
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), trace=writer, memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         await link.attach(XARDAS)
-        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.open(XARDAS, "Ксардас")
         for text in phrases:
             await asyncio.wait_for(dialogue.say_as_player(XARDAS, text), 5)
         await _until(lambda: not dialogue.conversations[XARDAS].actions)

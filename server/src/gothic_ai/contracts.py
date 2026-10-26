@@ -525,12 +525,22 @@ class Contracts:
         link.listeners.append(self._on_message)
         self._load()
 
+    def _context(self) -> tuple[str, Session | None, int]:
+        return self.chronicle.branch, self.link.session, self.link.world_generation
+
+    def _check_context(self, context: tuple[str, Session | None, int]) -> None:
+        if (self.chronicle.branch != context[0] or self.link.session is not context[1]
+                or self.link.world_generation != context[2]):
+            raise asyncio.CancelledError
+
     # --- the conversation (TurnExtension) --------------------------------------------------------------
 
     async def prepare(self, npc: str) -> None:
+        context = self._context()
         npc = npc.upper()
         if self.stash.base.get(npc):
             await self.stash.name_all(self.link, npc)
+            self._check_context(context)
         # a done task is paid before the npc speaks; one only to bring, as soon as he has it with him
         for c in self.of(npc):
             if c.state == "done" or (c.state == "open" and not c.kill):
@@ -539,6 +549,7 @@ class Contracts:
                     task = self._paying[c.id] = asyncio.get_running_loop().create_task(self.pay(c))
                 # the turn's wait may run out, the payment may not stop half way
                 await asyncio.shield(task)
+                self._check_context(context)
 
     def situation(self, npc: str) -> str | None:
         npc = npc.upper()
@@ -584,89 +595,119 @@ class Contracts:
 
     # --- a deal with a task is made ---------------------------------------------------------------------
 
-    def add(self, deal: str, npc: str, name: str, task: Task, reward: Reward, day: int | None) -> Contract:
-        cid = f"C{next(self._ids)}"
-        while cid in self.contracts:
+    async def add(
+        self, deal: str, npc: str, name: str, task: Task, reward: Reward, day: int | None
+    ) -> Contract:
+        context = self._context()
+
+        async def persist() -> Contract:
+            self._check_context(context)
             cid = f"C{next(self._ids)}"
-        c = Contract(
-            cid,
-            npc.upper(),
-            name,
-            [Kill(**k.fact()) for k in task.kill],
-            task.bring,
-            task.due,
-            reward,
-            deal=deal,
-        )
-        self.contracts[cid] = c
-        self.chronicle.record(
-            {
-                "fact": "contract",
-                "id": cid,
-                "deal": deal,
-                "npc": c.npc,
-                "name": name,
-                "kill": [k.fact() for k in c.kill],
-                "bring": [g.fact() for g in c.bring],
-                "due": c.due,
-                "reward": reward.fact(),
-                **({"day": day} if day is not None else {}),
-            }
-        )
-        self.journal.add("contract", npc=c.npc, name=name, contract=cid, what=c.what(), reward=reward.text())
-        return c
+            while cid in self.contracts:
+                cid = f"C{next(self._ids)}"
+            c = Contract(
+                cid,
+                npc.upper(),
+                name,
+                [Kill(**k.fact()) for k in task.kill],
+                task.bring,
+                task.due,
+                reward,
+                deal=deal,
+            )
+            await self.chronicle.record(
+                {
+                    "fact": "contract",
+                    "id": cid,
+                    "deal": deal,
+                    "npc": c.npc,
+                    "name": name,
+                    "kill": [k.fact() for k in c.kill],
+                    "bring": [g.fact() for g in c.bring],
+                    "due": c.due,
+                    "reward": reward.fact(),
+                    **({"day": day} if day is not None else {}),
+                }
+            )
+            self._check_context(context)
+            self.contracts[cid] = c
+            self.journal.add(
+                "contract", npc=c.npc, name=name, contract=cid, what=c.what(), reward=reward.text()
+            )
+            return c
+
+        return await self.chronicle.memory.complete(persist)
 
     # --- what the hero does ---------------------------------------------------------------------------
 
-    def on_kill(self, msg: HeroKill) -> None:
-        for c in list(self.contracts.values()):
-            if c.state != "open":
-                continue
-            for i, k in enumerate(c.kill):
-                if k.done < k.count and k.matches(msg):
-                    k.done += 1
-                    self.chronicle.record(
-                        {
-                            "fact": "contract_kill",
-                            "contract": c.id,
-                            "line": i,
-                            "victim": msg.npc,
-                            "name": msg.name,
-                        }
-                    )
-                    break
-            else:
-                continue
-            if c.kill and c.kills_done():
-                c.state = "done"
-                self.chronicle.record({"fact": "contract_done", "contract": c.id, "npc": c.npc})
-                self.journal.add("contract_done", npc=c.npc, name=c.name, contract=c.id)
-                more = f": осталось принести {', '.join(g.text() for g in c.bring)}" if c.bring else ""
-                self._spawn(self._notice(f"Поручение исполнено ({c.name}) — вернись за наградой{more}"))
+    async def on_kill(self, msg: HeroKill) -> None:
+        context = self._context()
 
-    def on_died(self, msg: NpcDied) -> None:
-        """One to be killed died by another hand: the task can't be done."""
-        if msg.killer == "PLAYER":
-            return
-        for c in self.contracts.values():
-            if c.state == "open" and any(
-                k.guild is None and k.target == msg.npc.upper() and k.done < k.count for k in c.kill
-            ):
-                c.state = "void"
-                self.chronicle.record(
-                    {"fact": "contract_void", "contract": c.id, "npc": c.npc, "victim": msg.npc}
-                )
-                self.dialogue.remember(
-                    c.npc,
-                    c.name,
-                    f"{msg.name or msg.npc} погиб не от руки героя: "
-                    f"твоё поручение {c.id} исполнить уже нельзя",
-                )
+        async def persist() -> None:
+            self._check_context(context)
+            for c in list(self.contracts.values()):
+                if c.state != "open":
+                    continue
+                for i, k in enumerate(c.kill):
+                    if k.done < k.count and k.matches(msg):
+                        await self.chronicle.record(
+                            {
+                                "fact": "contract_kill",
+                                "contract": c.id,
+                                "line": i,
+                                "victim": msg.npc,
+                                "name": msg.name,
+                            }
+                        )
+                        self._check_context(context)
+                        k.done += 1
+                        break
+                else:
+                    continue
+                if c.kill and c.kills_done():
+                    await self.chronicle.record({"fact": "contract_done", "contract": c.id, "npc": c.npc})
+                    self._check_context(context)
+                    c.state = "done"
+                    self.journal.add("contract_done", npc=c.npc, name=c.name, contract=c.id)
+                    more = f": осталось принести {', '.join(g.text() for g in c.bring)}" if c.bring else ""
+                    self._spawn(self._notice(f"Поручение исполнено ({c.name}) — вернись за наградой{more}"))
+
+        return await self.chronicle.memory.complete(persist)
+
+    async def on_died(self, msg: NpcDied) -> None:
+        """One to be killed died by another hand: the task cannot be done."""
+        context = self._context()
+
+        async def persist() -> None:
+            self._check_context(context)
+            if msg.killer == "PLAYER":
+                return
+            for c in self.contracts.values():
+                if c.state == "open" and any(
+                    k.guild is None and k.target == msg.npc.upper() and k.done < k.count for k in c.kill
+                ):
+                    await self.chronicle.record(
+                        {"fact": "contract_void", "contract": c.id, "npc": c.npc, "victim": msg.npc}
+                    )
+                    self._check_context(context)
+                    c.state = "void"
+                    await self.dialogue.remember(
+                        c.npc,
+                        c.name,
+                        f"{msg.name or msg.npc} погиб не от руки героя: "
+                        f"твоё поручение {c.id} исполнить уже нельзя",
+                    )
+
+        return await self.chronicle.memory.complete(persist)
 
     # --- the reward -------------------------------------------------------------------------------------
 
     async def pay(self, c: Contract) -> bool:
         """The reward for a done task, and what the hero brings: all or nothing (the deal's check)."""
+        context = self._context()
+        self._check_context(context)
+        if self.contracts.get(c.id) is not c:
+            raise asyncio.CancelledError
         if c.state == "paid":
             return True
         if c.state == "unpaid":
@@ -683,24 +724,33 @@ class Contracts:
                 except (GameError, TimeoutError) as err:
                     log.info("contract %s: cannot check the brought items: %s", c.id, err)
                     return False
+                self._check_context(context)
                 if len(amounts) != len(c.bring) or any(
                     amount is None or int(amount) < g.count
                     for g, amount in zip(c.bring, amounts, strict=True)
                 ):
                     return self._unpaid(c, f"он ещё не принёс: {', '.join(g.text() for g in c.bring)}")
-            c.state, c.missing = "unpaid", ""
-            breach(
-                self.chronicle,
-                c.npc,
-                c.deal,
-                "unpaid",
-                contract=c.id,
-                npc_name=c.name,
-                what=c.what(),
-                reward=c.reward.text(),
-                witnesses=hearers(self.dialogue, c.npc, self.roster()),
-                **await _day(self.link),
-            )
+            day = await _day(self.link)
+            self._check_context(context)
+
+            async def refuse() -> None:
+                self._check_context(context)
+                await breach(
+                    self.chronicle,
+                    c.npc,
+                    c.deal,
+                    "unpaid",
+                    contract=c.id,
+                    npc_name=c.name,
+                    what=c.what(),
+                    reward=c.reward.text(),
+                    witnesses=hearers(self.dialogue, c.npc, self.roster()),
+                    **day,
+                )
+                self._check_context(context)
+                c.state, c.missing = "unpaid", ""
+
+            await self.chronicle.memory.complete(refuse)
             return False
         have = carried(self.link.snapshots.get(c.npc))
         kept = self.stash.left(c.npc)
@@ -712,6 +762,7 @@ class Contracts:
                 return self._unpaid(c, f"тебе нечем заплатить: нет {g.text()}")
             gives.append(got)
         day = await _day(self.link)
+        self._check_context(context)
         effects = [t.effect() for t in c.reward.teach]
         effects += [g.effect("self") for g in c.bring]
         for g in gives:
@@ -722,6 +773,7 @@ class Contracts:
             try:
                 await self.link.story_effect(c.npc, effects, check=True)
             except (GameError, TimeoutError) as err:
+                self._check_context(context)
                 error = str(err)
                 if "missing: hero LP" in error:
                     return self._unpaid(
@@ -733,27 +785,35 @@ class Contracts:
                     return self._unpaid(c, "тебе нечем заплатить: у тебя уже нет того, что ты обещал")
                 log.info("contract %s: %s", c.id, error)
                 return False
-        c.state, c.missing = "paid", ""
-        self.chronicle.record(
-            {
-                "fact": "contract_paid",
-                "contract": c.id,
-                "npc": c.npc,
-                "gives": [g.fact() for g in gives],
-                "bring": [g.fact() for g in c.bring],
-                "xp": c.reward.xp,
-                "teach": [t.fact() for t in c.reward.teach],
-                **day,
-            }
-        )
-        self.journal.add("contract_paid", npc=c.npc, name=c.name, contract=c.id, reward=c.reward.text())
-        log.info("contract %s with %s paid: %s", c.id, c.npc, c.reward.text())
-        brought = f" Он принёс: {', '.join(g.text() for g in c.bring)}." if c.bring else ""
-        self.dialogue.note(
-            c.npc,
-            f"Герой исполнил твоё поручение {c.id} ({c.what()}).{brought} Ты, как уговорились, отдал ему "
-            f"награду: {c.reward.text()}",
-        )
+        self._check_context(context)
+
+        async def paid() -> None:
+            self._check_context(context)
+            await self.chronicle.record(
+                {
+                    "fact": "contract_paid",
+                    "contract": c.id,
+                    "npc": c.npc,
+                    "gives": [g.fact() for g in gives],
+                    "bring": [g.fact() for g in c.bring],
+                    "xp": c.reward.xp,
+                    "teach": [t.fact() for t in c.reward.teach],
+                    **day,
+                }
+            )
+            self._check_context(context)
+            c.state, c.missing = "paid", ""
+            self.journal.add("contract_paid", npc=c.npc, name=c.name, contract=c.id, reward=c.reward.text())
+            log.info("contract %s with %s paid: %s", c.id, c.npc, c.reward.text())
+            brought = f" Он принёс: {', '.join(g.text() for g in c.bring)}." if c.bring else ""
+            await self.dialogue.note(
+                c.npc,
+                f"Герой исполнил твоё поручение {c.id} ({c.what()}).{brought} Ты, как уговорились, отдал ему "
+                f"награду: {c.reward.text()}",
+            )
+
+        await self.chronicle.memory.complete(paid)
+        self._check_context(context)
         await self._notice("Награда получена")
         return True
 
@@ -765,41 +825,48 @@ class Contracts:
 
     # --- the days ---------------------------------------------------------------------------------------
 
-    def overdue(self, day: int) -> list[Contract]:
+    async def overdue(self, day: int) -> list[Contract]:
         """The tasks past their day as of `day`, not done: broken words."""
-        out = []
-        for c in self.contracts.values():
-            if c.state != "open" or c.due is None or day <= c.due:
-                continue
-            if c.kill and c.kills_done():
-                continue  # done, only the things are not brought yet: paid when he comes
-            c.state = "broken"
-            out.append(c)
-            self.chronicle.record(
-                {
-                    "fact": "broken",
-                    "contract": c.id,
-                    "npc": c.npc,
-                    "name": c.name,
-                    "what": c.what(),
-                    "due": c.due,
-                    "day": day,
-                }
-            )
-            self.journal.add("contract_broken", npc=c.npc, name=c.name, contract=c.id)
-            self.dialogue.remember(
-                c.npc, c.name, f"Герой не исполнил твоё поручение в срок: {c.what()}. Он не сдержал слово"
-            )
-        return out
+        context = self._context()
+
+        async def persist() -> list[Contract]:
+            self._check_context(context)
+            out = []
+            for c in self.contracts.values():
+                if c.state != "open" or c.due is None or day <= c.due:
+                    continue
+                if c.kill and c.kills_done():
+                    continue  # done, only the things are not brought yet: paid when he comes
+                await self.chronicle.record(
+                    {
+                        "fact": "broken",
+                        "contract": c.id,
+                        "npc": c.npc,
+                        "name": c.name,
+                        "what": c.what(),
+                        "due": c.due,
+                        "day": day,
+                    }
+                )
+                self._check_context(context)
+                c.state = "broken"
+                out.append(c)
+                self.journal.add("contract_broken", npc=c.npc, name=c.name, contract=c.id)
+                await self.dialogue.remember(
+                    c.npc, c.name, f"Герой не исполнил твоё поручение в срок: {c.what()}. Он не сдержал слово"
+                )
+            return out
+
+        return await self.chronicle.memory.complete(persist)
 
     # --- the save branch ----------------------------------------------------------------------------------
 
-    def _on_message(self, msg: GameMessage) -> None:
+    async def _on_message(self, msg: GameMessage) -> None:
         match msg:
             case HeroKill():
-                self.on_kill(msg)
+                await self.on_kill(msg)
             case NpcDied():
-                self.on_died(msg)
+                await self.on_died(msg)
             case Session():
                 self._load()
 

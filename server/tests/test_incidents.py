@@ -1,5 +1,5 @@
 import asyncio
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -11,21 +11,24 @@ from gothic_ai.dialogue import DialogueManager
 from gothic_ai.executor import Intent
 from gothic_ai.incidents import IncidentDesk
 from gothic_ai.llm import FakeBackend, FakeStep, ToolCall
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.trace import TraceWriter, read
 from tests.fake_game import FakeGame, connected
 from tests.fakes import Clock, FakeDecider
 from tests.test_dialogue import XARDAS, _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 WOLF = {"id": "WOLF", "name": "Волк", "distance": 400.0, "guild": 0, "dead": False}
 
 
 async def _tick_until(planner, predicate) -> None:
-    def done():
-        planner.tick(planner.clock())
-        return predicate() and not planner._tasks
-
-    await _until(done, timeout=10)
+    async with asyncio.timeout(10):
+        while True:
+            await planner.tick(planner.clock())
+            if predicate() and not planner._tasks:
+                return
+            await asyncio.sleep(0.01)
 
 
 class NativeDetachGame(FakeGame):
@@ -118,11 +121,14 @@ async def _scene(decider: FakeDecider | None, llm: FakeBackend, fake: FakeGame, 
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
     trace = TraceWriter(tmp_path)
-    dialogue = DialogueManager(link, llm, PersonaProvider(None), trace=trace)
+    dialogue = DialogueManager(
+        link, llm, PersonaProvider(None), trace=trace, memory=await MemoryStore.open(":memory:")
+    )
+    await dialogue.initialize()
     reflexes = Reflexes(decider) if decider is not None else None
     desk = IncidentDesk(link, dialogue, reflexes, budget or Budget(), trace, settle_s=0.05)
     await link.attach(XARDAS)
-    dialogue.open(XARDAS, "Ксардас")
+    await dialogue.open(XARDAS, "Ксардас")
     await _until(lambda: XARDAS in desk.attached, timeout=10)
     return link_cm, link, dialogue, desk, trace
 
@@ -323,6 +329,7 @@ async def test_the_body_gestures_while_the_npc_thinks_of_an_answer(tmp_path):
     fake = FakeGame()
     llm = FakeBackend("Да, так и есть.", delay=0.1)
     cm, link, dialogue, desk, trace = await _scene(FakeDecider("nod", 0.9), llm, fake, tmp_path)
+    desk.view_of = AsyncMock(return_value=("You see the hero by the tower.",))
     try:
         await dialogue.say_as_player(XARDAS, "Ты ведь Ксардас?")
         await _until(lambda: fake.said, timeout=10)
@@ -336,6 +343,7 @@ async def test_the_body_gestures_while_the_npc_thinks_of_an_answer(tmp_path):
     # the behavioral model is asked about the body only: what is said at once is the quick model's
     phrase = next(c for c in desk.reflexes.decider.calls if c["rid"].startswith("chat:"))
     assert list(phrase["questions"]) == ["gesture"]
+    assert "You see the hero by the tower." in phrase["state"]
 
 
 async def test_a_fight_ends_with_the_incident_and_the_old_intent_comes_back(tmp_path):
@@ -358,10 +366,13 @@ async def test_a_fight_ends_with_the_incident_and_the_old_intent_comes_back(tmp_
     link_cm = connected(fake)
     link = await link_cm.__aenter__()
     try:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         desk = IncidentDesk(link, dialogue, None, Budget(), None, clock=clock, settle_s=0.05, gap_s=0.5)
         await link.attach(XARDAS)
-        conv = dialogue.open(XARDAS, "Ксардас")
+        conv = await dialogue.open(XARDAS, "Ксардас")
         await _until(lambda: XARDAS in desk.attached, timeout=10)
         await link.snapshot(XARDAS, fresh=True)
         await dialogue.say_as_player(XARDAS, "Пойдём со мной")
@@ -389,8 +400,11 @@ async def test_lines_said_on_the_move_wait_for_each_other(tmp_path):
     fake = FakeGame()
     llm = FakeBackend("Волки! Все сюда, на помощь! Бегите к ферме, быстрее!", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
-        dialogue.open(XARDAS, "Ксардас")
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
+        await dialogue.open(XARDAS, "Ксардас")
         t0 = asyncio.get_running_loop().time()
         task = dialogue.event_turn(XARDAS, "[Событие: волки]", overlay=True)
         assert task is not None
@@ -421,7 +435,10 @@ async def test_a_free_npc_speaks_on_the_move_when_the_moment_calls_for_it(tmp_pa
     fake = FakeGame()
     llm = FakeBackend("Волки! Эй, путник, выручай!", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         planner = NpcPlanner(Decider("flee", 0.9), LogApplier(), config=PlannerConfig(ask_attitude=False))
         link.listeners.append(planner.on_message)
         IncidentDesk(link, dialogue, None, Budget(), None, planner=planner)
@@ -468,7 +485,10 @@ async def test_near_the_conversation_the_heros_words_alone_are_its_question(tmp_
     fake, clock = FakeGame(), Clock()
     llm = FakeBackend("Это ты мне?", delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         planner = NpcPlanner(
             Decider("stay", 0.9), LogApplier(), clock=clock, config=PlannerConfig(ask_attitude=False)
         )
@@ -521,7 +541,10 @@ async def test_the_hero_saves_a_free_npc_and_it_thanks_him(tmp_path):
         await _tick_until(planner, lambda: len(fake.said) >= n)
 
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         planner = NpcPlanner(Decider("call_help", 0.9), LogApplier(), clock=clock)
         link.listeners.append(planner.on_message)
         desk = IncidentDesk(link, dialogue, None, Budget(), None, clock=clock, planner=planner)
@@ -584,7 +607,10 @@ async def test_a_free_npc_that_feared_the_wolf_and_killed_it_says_so(tmp_path):
         await _tick_until(planner, lambda: len(fake.said) >= n)
 
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         planner = NpcPlanner(Escalates("call_help", [3.6, 1.7]), LogApplier(), clock=clock)
         link.listeners.append(planner.on_message)
         desk = IncidentDesk(link, dialogue, None, Budget(), None, clock=clock, planner=planner)
@@ -628,7 +654,10 @@ async def test_a_free_npcs_words_and_body_agree(tmp_path):
     llm = FakeBackend(script=[FakeStep("Волк! Бежать!", [ToolCall("set_intent", flee)])], delay=0)
     applier = LogApplier()
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         planner = NpcPlanner(Escalates("continue", [3.6]), applier, clock=clock)
         link.listeners.append(planner.on_message)
         desk = IncidentDesk(link, dialogue, None, Budget(), None, clock=clock, planner=planner)
@@ -667,7 +696,10 @@ async def test_a_stuck_turn_gives_way_to_the_end_of_the_danger(tmp_path, monkeyp
     fake, clock = FakeGame(), Clock()
     llm = Hangs(delay=0)
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), memory=await MemoryStore.open(":memory:")
+        )
+        await dialogue.initialize()
         planner = NpcPlanner(Escalates("continue", [3.6, 3.0]), LogApplier(), clock=clock)
         link.listeners.append(planner.on_message)
         IncidentDesk(link, dialogue, None, Budget(), None, clock=clock, planner=planner)

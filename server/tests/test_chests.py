@@ -8,13 +8,16 @@ from gothic_ai.chests import BACK, CHEST, ChestDesk
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.deals import Deals
 from gothic_ai.dialogue import DialogueManager
+from gothic_ai.game import GameError
 from gothic_ai.llm import ToolCall
 from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
+from gothic_ai.protocol import Loading
 from gothic_ai.talk import TalkDesk
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 BRAGO = "BDT_1014_BANDIT_L"
 CAVE = "MOB_18030_3240_-21880"
@@ -50,11 +53,12 @@ def short_lines(monkeypatch):
 async def _desk(fake: FakeGame, llm, store: MemoryStore):
     cm = connected(fake)
     link = await cm.__aenter__()
-    dialogue = DialogueManager(link, llm, PersonaProvider(None))
+    dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=store)
+    await dialogue.initialize()
     TalkDesk(link, dialogue, end_silence_s=30)  # it holds the body for the walk
     chests = ChestDesk(link, store)
     dialogue.extensions.append(chests)
-    dialogue.open(BRAGO, "Браго")
+    await dialogue.open(BRAGO, "Браго")
     return cm, dialogue, chests
 
 
@@ -75,7 +79,7 @@ async def test_it_knows_what_lies_in_its_chest(tmp_path):
     fake = FakeGame()
     fake.chests[BRAGO] = [chest()]
     llm = FakeBackend("Чего надо?", delay=0)
-    cm, dialogue, chests = await _desk(fake, llm, MemoryStore(tmp_path / "m.sqlite3"))
+    cm, dialogue, chests = await _desk(fake, llm, await MemoryStore.open(tmp_path / "m.sqlite3"))
     try:
         dialogue.say_as_player(BRAGO, "Что у тебя есть?")
         await _until(lambda: len(llm.calls) == 1 and not dialogue.speaking(BRAGO))
@@ -87,25 +91,27 @@ async def test_it_knows_what_lies_in_its_chest(tmp_path):
         "(ITRW_BOW_L_01), Золото (ITMI_GOLD) ×29, Стрела (ITRW_ARROW) ×15."
     ) in situation(llm)
     assert CHEST in [t.name for t in llm.calls[0][2]]  # offered: it has a chest
+    await chests.memory.close()
 
 
 async def test_no_chest_no_tool(tmp_path):
     fake = FakeGame()
     llm = FakeBackend("Чего надо?", delay=0)
-    cm, dialogue, chests = await _desk(fake, llm, MemoryStore(tmp_path / "m.sqlite3"))
+    cm, dialogue, chests = await _desk(fake, llm, await MemoryStore.open(tmp_path / "m.sqlite3"))
     try:
         dialogue.say_as_player(BRAGO, "Что у тебя есть?")
         await _until(lambda: len(llm.calls) == 1 and not dialogue.speaking(BRAGO))
     finally:
         await cm.__aexit__(None, None, None)
     assert "сундук" not in situation(llm).lower() and CHEST not in [t.name for t in llm.calls[0][2]]
+    await chests.memory.close()
 
 
 async def test_it_goes_to_its_chest_and_takes_it_out(tmp_path):
     fake = FakeGame()
     fake.chests[BRAGO] = [chest()]
     llm = FakeBackend(script=[take((BOW, 1)), FakeStep("")])
-    cm, dialogue, chests = await _desk(fake, llm, MemoryStore(tmp_path / "m.sqlite3"))
+    cm, dialogue, chests = await _desk(fake, llm, await MemoryStore.open(tmp_path / "m.sqlite3"))
     try:
         dialogue.say_as_player(BRAGO, "Принеси свой лук.")
         await _until(lambda: len(llm.calls) == 2 and not dialogue.speaking(BRAGO), 5)
@@ -119,6 +125,7 @@ async def test_it_goes_to_its_chest_and_takes_it_out(tmp_path):
     assert BOW not in chests.known(BRAGO)[CAVE].items  # it knows it took it out
     # back from the chest it goes on talking (the bow in hand: a give, a deal), its chest's tool offered too
     assert llm.calls[-1][1][-1].content == BACK and CHEST in [t.name for t in llm.calls[-1][2]]
+    await chests.memory.close()
 
 
 async def test_what_was_taken_unseen_is_missing_when_it_looks(tmp_path):
@@ -126,7 +133,7 @@ async def test_what_was_taken_unseen_is_missing_when_it_looks(tmp_path):
     fake = FakeGame()
     fake.chests[BRAGO] = [chest([i for i in START if i["item"] != GOLD])]
     llm = FakeBackend(script=[take((BOW, 1)), FakeStep("")])
-    cm, dialogue, chests = await _desk(fake, llm, MemoryStore(tmp_path / "m.sqlite3"))
+    cm, dialogue, chests = await _desk(fake, llm, await MemoryStore.open(tmp_path / "m.sqlite3"))
     try:
         dialogue.say_as_player(BRAGO, "Принеси свой лук.")
         await _until(lambda: any("сундуку" in n for n in notes(dialogue)), 5)
@@ -138,17 +145,18 @@ async def test_what_was_taken_unseen_is_missing_when_it_looks(tmp_path):
         "кто-то в нём рылся.]"
     ) in notes(dialogue)
     assert GOLD not in chests.known(BRAGO)[CAVE].items  # it knows now
+    await chests.memory.close()
 
 
 async def test_npc_suspicion_runs_only_after_owner_opens_and_notices_missing(tmp_path):
     fake = FakeGame()
     fake.chests[BRAGO] = [chest([i for i in START if i["item"] != GOLD])]
     observed = []
-    store = MemoryStore(tmp_path / "m.sqlite3")
+    store = await MemoryStore.open(tmp_path / "m.sqlite3")
     async with connected(fake) as link:
         desk = ChestDesk(link, store)
 
-        def suspect(npc, chest_id, missing, **kwargs):
+        async def suspect(npc, chest_id, missing, **kwargs):
             observed.append((npc, chest_id, missing))
             return [{"suspect": "VINO"}]
 
@@ -162,14 +170,14 @@ async def test_npc_suspicion_runs_only_after_owner_opens_and_notices_missing(tmp
         assert len(observed) == 1
         if desk._tasks:
             await asyncio.gather(*desk._tasks)
-    store.close()
+    await store.close()
 
 
 async def test_what_is_not_in_its_chest_it_cannot_take_out(tmp_path):
     fake = FakeGame()
     fake.chests[BRAGO] = [chest()]
     llm = FakeBackend(script=[take(("ITMW_1H_SWORD", 1)), FakeStep("Нет у меня меча.")])
-    cm, dialogue, chests = await _desk(fake, llm, MemoryStore(tmp_path / "m.sqlite3"))
+    cm, dialogue, chests = await _desk(fake, llm, await MemoryStore.open(tmp_path / "m.sqlite3"))
     try:
         dialogue.say_as_player(BRAGO, "Принеси меч.")
         await _until(lambda: len(llm.calls) == 2 and not dialogue.speaking(BRAGO))
@@ -179,10 +187,11 @@ async def test_what_is_not_in_its_chest_it_cannot_take_out(tmp_path):
     result = next(i.output for i in llm.calls[1][1] if getattr(i, "output", None))
     assert result.startswith("Отклонено: ITMW_1H_SWORD нет в сундуке. Там: Короткий лук")
     assert not [m for m in fake.received if m.get("type") == "action" and m["action"] == "use_chest"]
+    await chests.memory.close()
 
 
 async def test_what_it_knows_of_its_chest_is_kept_in_the_save_branch(tmp_path):
-    store = MemoryStore(tmp_path / "m.sqlite3")
+    store = await MemoryStore.open(tmp_path / "m.sqlite3")
     fake = FakeGame()
     fake.chests[BRAGO] = [chest()]
     llm = FakeBackend(script=[take((GOLD, 10)), FakeStep("")])
@@ -198,9 +207,35 @@ async def test_what_it_knows_of_its_chest_is_kept_in_the_save_branch(tmp_path):
     link = await cm2.__aenter__()
     try:
         again = ChestDesk(link, store)
+        await again.prepare(BRAGO)
+        assert again.known(BRAGO)[CAVE].items[GOLD] == (19, "Золото")
+
+        again._forget()
+        entered, release = asyncio.Event(), asyncio.Event()
+        read_chests = store.chests
+
+        async def delayed(branch, npc):
+            records = await read_chests(branch, npc)
+            entered.set()
+            await release.wait()
+            return records
+
+        store.chests = delayed
+        pending = asyncio.create_task(again.prepare(BRAGO))
+        await entered.wait()
+        again._on_message(Loading(type="loading"))  # same branch, a different physical world
+        release.set()
+        with pytest.raises(GameError, match="world changed"):
+            await pending
+        assert again._known == {} and again._chests == {}
+        with pytest.raises(KeyError):
+            again.known(BRAGO)  # pure rendering cannot silently substitute an unprepared memory
+        store.chests = read_chests
+        await again.prepare(BRAGO)
         assert again.known(BRAGO)[CAVE].items[GOLD] == (19, "Золото")
     finally:
         await cm2.__aexit__(None, None, None)
+    await store.close()
 
 
 async def test_a_deal_points_to_what_it_keeps_in_its_chest(tmp_path):
@@ -208,12 +243,20 @@ async def test_a_deal_points_to_what_it_keeps_in_its_chest(tmp_path):
     cm = connected(fake)
     link = await cm.__aenter__()
     try:
-        dialogue = DialogueManager(link, FakeBackend("Ну?", delay=0), PersonaProvider(None))
-        deals = Deals(link, dialogue, Chronicle(link, MemoryStore(tmp_path / "m.sqlite3")))
-        deals.in_chests = lambda npc: {BOW: (1, "Короткий лук")}
+        store = await MemoryStore.open(tmp_path / "m.sqlite3")
+        dialogue = DialogueManager(link, FakeBackend("Ну?", delay=0), PersonaProvider(None), memory=store)
+        await dialogue.initialize()
+        chronicle = Chronicle(link, store)
+        await chronicle.initialize()
+        deals = Deals(link, dialogue, chronicle)
+        async def in_chests(npc):
+            return {BOW: (1, "Короткий лук")}
+
+        deals.in_chests = in_chests
         snap = await link.snapshot(BRAGO)
-        gives, why = deals._npc_gives(BRAGO, [{"item": BOW, "count": 1}], snap)
+        gives, why = await deals._npc_gives(BRAGO, [{"item": BOW, "count": 1}], snap)
     finally:
         await cm.__aexit__(None, None, None)
     assert gives is None
     assert "Короткий лук (ITRW_BOW_L_01) ×1 лежит у тебя в сундуке: сначала достань (инструмент chest)" in why
+    await store.close()

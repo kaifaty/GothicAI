@@ -5,6 +5,7 @@ from gothic_ai.validator import Caps, Rules, Story, WorldState, validate
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
 from tests.test_director import HILDA, SYMBOLS, graph  # noqa: F401 - the graph fixture
+from tests.test_memory import close_memory_stores as close_memory_stores
 
 SAW = "ITMI_SAW"
 WORLD = {**SYMBOLS, SAW: "item", "NPC_GETDISTTOWP": "func", "HLP_GETNPC": "func", "NPC_ISDEAD": "func"}
@@ -85,7 +86,8 @@ def test_the_validator_takes_a_trigger(graph):  # noqa: F811
 async def test_the_chronicle_hears_a_trigger_fire():
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
-        chronicle = Chronicle(link, MemoryStore(":memory:"))
+        chronicle = Chronicle(link, await MemoryStore.open(":memory:"))
+        await chronicle.initialize()
         fired = triggers.Triggers(link, chronicle)
         await _until(lambda: chronicle.branch is not None)
         await fake.send(type="trigger_fired", id="DIR_Q1_GOT", count=1, npc="PC_HERO", other="PC_HERO")

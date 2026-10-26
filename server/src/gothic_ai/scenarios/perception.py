@@ -104,8 +104,8 @@ async def ground_scenario(
         await link.debug("player_goto", to=npc, distance=300)
         if not await _until(lambda: 0 <= dist() <= 15, 20):
             return _logged({"roster": f"failed ({npc} is not around the hero: {dist():.1f} m)"})
-        dialogue.open(npc, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
-        talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
+        (await dialogue.open(npc, "Кавалорн")).intent = Intent("follow_hero", "PLAYER", "friendly")
+        await talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
         if not await _until(lambda: since(0, "follow") and 0 <= dist() <= 5, 20):
             return _logged({"follow": f"failed ({dist():.1f} m)"})
         await asyncio.sleep(2)  # it has stopped by him
@@ -113,12 +113,12 @@ async def ground_scenario(
         await link.debug("player_drop", item=item)
         sees = await _until(lambda: item in things(), 8)
         check("sees", sees, things() or "nothing on the ground")
-        sight = perception.sight(npc)
+        sight = await perception.sight(npc)
         ground = sight.ground if sight is not None else None
         check("situation", ground is not None and item in ground, ground or "no line")
 
         t0 = time.monotonic()
-        talk.hear("Кавалорн, вот твоё письмо, бери.", None, {"via": "scenario"})
+        await talk.hear("Кавалорн, вот твоё письмо, бери.", None, {"via": "scenario"})
         took = await _until(lambda: since(t0, "take_item") or since(t0, "take_item", "failed"), 45)
         check("take", since(t0, "take_item"), [a for t, a, s in calls if t >= t0] if took else "no pick-up")
         snap = await link.snapshot(npc, fresh=True)
@@ -197,8 +197,8 @@ async def cave_scenario(
     await link.debug("player_goto", to=npc, distance=300)
     if not await _until(lambda: 0 <= dist() <= 15, 20):
         return _logged({"roster": f"failed ({npc} is not around the hero: {dist():.1f} m)"})
-    dialogue.open(npc, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
-    talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
+    (await dialogue.open(npc, "Кавалорн")).intent = Intent("follow_hero", "PLAYER", "friendly")
+    await talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
     following = await _until(
         lambda: talk.orders is not None and talk.orders.companion(npc) and dist() <= 5, 20
     )
@@ -240,7 +240,7 @@ async def cave_scenario(
 
     # «зайди в пещеру», no place named
     t0 = len(entries)
-    talk.hear("Кавалорн, зайди в пещеру.", None, {"via": "scenario"})
+    await talk.hear("Кавалорн, зайди в пещеру.", None, {"via": "scenario"})
 
     def sent() -> list[dict[str, Any]]:
         return [e for e in entries[t0:] if e.get("kind") == "action" and e.get("action") == "go_to"]
@@ -317,7 +317,7 @@ async def knows_scenario(
     check("known", bool(cave), cave[0].ru if cave else [f.ru for f in lore.known(npc)])
 
     t0 = len(entries)
-    talk.hear("Кавалорн, что тут поблизости опасного?", npc, {"via": "scenario"})
+    await talk.hear("Кавалорн, что тут поблизости опасного?", npc, {"via": "scenario"})
     answered = await _until(
         lambda: any(e.get("kind") == "npc" and e.get("npc") == npc for e in entries[t0:]), 60
     )
@@ -382,7 +382,7 @@ async def hearing_scenario(
     me, him = talk.people[npc], talk.people[bandit]
     check("free", me.heard is not None and abs(me.earshot - me.distance) < 1, at(npc))
     check("line", him.heard is not None and abs(him.earshot - him.distance) < 1, at(bandit))
-    talk.hear("Можешь отдать за моё обещание помочь тебе с бандитами?", npc, {"via": "scenario"})
+    await talk.hear("Можешь отдать за моё обещание помочь тебе с бандитами?", npc, {"via": "scenario"})
     to = talk.last[0] if talk.last is not None else None
     check("words", to is not None and to.id == npc, f"to {to.id if to else None} ({to.why if to else ''})")
 
@@ -487,15 +487,15 @@ async def remembers_scenario(
         await link.debug("player_goto", to=npc, distance=300)
         if not await _until(lambda: 0 <= dist() <= 15, 20):
             return _logged({"roster": f"failed ({npc} is not around the hero: {dist():.1f} m)"})
-        dialogue.open(npc, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
-        talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
+        (await dialogue.open(npc, "Кавалорн")).intent = Intent("follow_hero", "PLAYER", "friendly")
+        await talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
         await _until(lambda: 0 <= dist() <= 5, 20)
         await link.debug("player_goto", to=steps, distance=400)
         await _until(lambda: 0 <= dist() <= 6, 30)
 
         # in: it goes ahead, looks around and sees them
         t0 = time.monotonic()
-        talk.hear("Кавалорн, иди в пещеру первым.", None, {"via": "scenario"})
+        await talk.hear("Кавалорн, иди в пещеру первым.", None, {"via": "scenario"})
         await _until(lambda: any(c[2] == "done" for c in since(t0, "go_to_waypoint")), 100)
         await _until(lambda: "Тут двое." in [m.content for m in dialogue.conversations[npc].history], 90)
         view = await perception.fresh(npc)
@@ -503,13 +503,13 @@ async def remembers_scenario(
         check("sees_cave", bool(seen), seen or "nobody")
 
         # out: back with the hero, it sees them no more and remembers them
-        talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
+        await talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
         await _until(lambda: 0 <= dist() <= 6, 40)
         await asyncio.sleep(3)
         view = await perception.fresh(npc)
         in_sight = [o.id for o in view.sees if o.id.upper() in cave] if view is not None else []
-        situation = sightings.situation(npc) or ""
-        sight = perception.sight(npc)
+        situation = await sightings.situation(npc) or ""
+        sight = await perception.sight(npc)
         targets = sight.targets if sight is not None else {}
         noted = (
             situation.split("Недавно видел, сейчас не видишь:")[-1] if "Недавно видел" in situation else ""
@@ -522,7 +522,7 @@ async def remembers_scenario(
 
         # set on him: it goes in there first, then fights
         t1 = time.monotonic()
-        talk.hear("Кавалорн, там в пещере бандиты, разберись с ними.", None, {"via": "scenario"})
+        await talk.hear("Кавалорн, там в пещере бандиты, разберись с ними.", None, {"via": "scenario"})
         fought = await _until(
             lambda: any(c[3].get("npc", "").upper() == brago for c in since(t1, "fight")), 120
         )
@@ -598,7 +598,7 @@ async def see_perception(
         return _logged(results)
     await asyncio.sleep(1)
     await perception.fresh(farmer)
-    sight = perception.sight(farmer)
+    sight = await perception.sight(farmer)
     hero = sight.hero or "" if sight else ""
     check("hero_by_look", "ты его не знаешь" in hero, hero)
     # whom the npc's around call by name, whom by look: over the views pushed near the hero, next to
@@ -606,9 +606,9 @@ async def see_perception(
     named: list[str] = []
     strangers: list[str] = []
 
-    def scan() -> None:
+    async def scan() -> None:
         for v in perception.views():
-            people = (perception.sight(v.npc) or Sight("", None, "")).people
+            people = (await perception.sight(v.npc) or Sight("", None, "")).people
             for o in v.sees:
                 if o.kind != "human":
                     continue
@@ -617,7 +617,7 @@ async def see_perception(
                 elif not perception.knows(v.npc, o) and "незнакомец" in people:
                     strangers.append(f"{v.name} → {o.name}")
 
-    scan()
+    await scan()
     social = rumors.social
     for tie in sorted(social.ties.get(farmer, {}) if social is not None else [])[:6]:
         if named:
@@ -627,7 +627,7 @@ async def see_perception(
         except GameError:
             continue
         await asyncio.sleep(1.5)  # a push or two
-        scan()
+        await scan()
     check(
         "acquaintances", bool(named), f"by name: {sorted(set(named))}; by look: {sorted(set(strangers))[:6]}"
     )
@@ -638,7 +638,7 @@ async def see_perception(
     await link.debug("player_equip", item="ITAR_MIL_L")
     await asyncio.sleep(1)
     await perception.fresh(farmer)
-    sight = perception.sight(farmer)
+    sight = await perception.sight(farmer)
     hero = sight.hero or "" if sight else ""
     check("fake_guild", "по виду ополченец" in hero, hero)
 
@@ -661,7 +661,7 @@ async def see_perception(
     # 5. the nearest npc's views come by themselves once a second (the behavioral model reads these)
     perception._views.clear()
     pushed = await _until(lambda: perception.view(farmer) is not None, 5)
-    check("pushed", pushed, "; ".join(perception.english(farmer)))
+    check("pushed", pushed, "; ".join(await perception.english(farmer)))
 
     # 6. the dead: a wolf the hero kills in front of Lobart is a wolf to him still, a dead one («о, мёртвый
     # волк»), with its id; `look` at «мёртвый волк» finds it
@@ -670,7 +670,7 @@ async def see_perception(
     await link.debug("kill", instance="WOLF", near=farmer)
     await asyncio.sleep(1)
     await perception.fresh(farmer)
-    sight = perception.sight(farmer)
+    sight = await perception.sight(farmer)
     people = sight.people if sight else "(no view)"
     looked = perception.look(farmer, "мёртвый волк")
     check("dead_beast", "туша: Волк" in people and looked.startswith("туша: Волк"), f"{people} | {looked}")
@@ -689,7 +689,7 @@ async def see_perception(
         await asyncio.sleep(1)
         view = await perception.fresh(who)
         place = perception.place(view) if view is not None else None
-        sight = perception.sight(who)
+        sight = await perception.sight(who)
         said.append(f"{who}: {sight.place if sight else '(no view)'}" + ("" if place else " [no name]"))
     named = [line for line in said if "[no name]" not in line and "(no view)" not in line and ": " in line]
     check("places", len(named) == 4, " | ".join(said))
@@ -811,7 +811,7 @@ async def seen_memory(
     # 4. the lie: «I was in the city all morning»
     name = talk.people[farmer].name if farmer in talk.people else "Лобарт"
     await desk.fresh(farmer)
-    situation = sightings.situation(farmer) or ""
+    situation = await sightings.situation(farmer) or ""
     sid = next((m.group(1) for m in re.finditer(r"- (В\d): [^\n]*около часа назад", situation)), "В2")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     script = None
@@ -841,7 +841,7 @@ async def seen_memory(
     check("trust", bool(lied), lied)
 
     # 5. the memory follows the save
-    head = sightings.memory.head(link.session.branch) if link.session else 0
+    head = await sightings.memory.head(link.session.branch) if link.session else 0
     await asyncio.sleep(0.5)  # the game has the head by now
     for attempt in range(30):
         try:
@@ -960,7 +960,7 @@ async def trace_memory(
         if isinstance(original, FakeBackend):
             step = FakeStep("Не видел, кто стрелял. Одной стрелы мало, чтобы обвинять тебя.")
             if observation is not None:
-                sid, _ = _trace_evidence_line(sightings.situation(farmer) or "", observation)
+                sid, _ = _trace_evidence_line(await sightings.situation(farmer) or "", observation)
                 step = FakeStep(
                     "Не с прошлой недели! Стрела свежая, и я только что её увидел.",
                     [ToolCall("catch_lie", {"said": age_lie, "seen": sid})],
@@ -1001,8 +1001,8 @@ async def trace_memory(
             if i.get("role") == "developer"
         )
 
-    def evidence(trace_id: str) -> tuple[str, str]:
-        situation = sightings.situation(farmer) or ""
+    async def evidence(trace_id: str) -> tuple[str, str]:
+        situation = await sightings.situation(farmer) or ""
         sid = next(
             (
                 sid
@@ -1173,7 +1173,7 @@ async def trace_memory(
         view.model_dump() if view else "no view",
     ):
         return _logged(results)
-    sid, line = evidence(control.id)
+    sid, line = await evidence(control.id)
     control_observed = sightings.mind(farmer).traces[f"TRACE:{control.id}:arrow"]
     await asyncio.sleep(5)  # the trace predates the hero's first visible arrival by at least a game minute
     row = await deny()
@@ -1184,7 +1184,7 @@ async def trace_memory(
         control_line,
     )
     check("control_no_catch", not calls(row) and not chronicle.facts("caught"), calls(row))
-    talk.end("gone")
+    await talk.end("gone")
 
     # A new hour, a witnessed arrival, then Lobart is too far to see the actual shot.
     await mark("positive_ready")
@@ -1237,7 +1237,7 @@ async def trace_memory(
         "new_trace", arrow is not None and arrow.age is not None, view.model_dump() if view else "no view"
     ):
         return _logged(results)
-    sid, line = evidence(arrow.id)
+    sid, line = await evidence(arrow.id)
     observed = sightings.mind(farmer).traces[f"TRACE:{arrow.id}:arrow"]
     check(
         "trace_memory",
