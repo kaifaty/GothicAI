@@ -8,6 +8,8 @@
 
 #include "graphics/mesh/skeleton.h"
 #include "graphics/visualfx.h"
+#include "graphics/effect.h"
+#include "world/objects/pfxemitter.h"
 #include "game/damagecalculator.h"
 #include "game/herodeed.h"
 #include "game/deedwitness.h"
@@ -4326,6 +4328,7 @@ void Npc::tick(uint64_t dt) {
     return;
     }
   tickAnimationTags();
+  tickPeeStream();
   visual.updateMouth(*this,dt);
   visual.updateGestures(*this,dt);
   visual.updateBlink(*this,dt);
@@ -5239,6 +5242,39 @@ void Npc::emitSoundSVM(std::string_view svm) {
   char name[32]={};
   std::snprintf(name,sizeof(name),frm,int(hnpc->voice));
   emitSoundEffect(name,2500,true);
+  }
+
+void Npc::tickPeeStream() {
+  // a man relieving himself in front of the kneeling hero (mercy.py's humiliation): the game's own stream
+  // (PEE of S_PEE) is aimed at him. Not bound to a bone, whose axes turn with the pose: the emitter stands
+  // at the pelvis and faces where the npc faces
+  const auto* hero   = owner.player();
+  const bool  peeing = visual.pose().isInAnim("S_PEE") || visual.pose().isInAnim("T_STAND_2_PEE");
+  bool        aim    = false;
+  if(peeing && hero!=nullptr && hero!=this && hero->playerKneeling && !isDown() && !isDead()) {
+    const float dx = hero->x-x, dz = hero->z-z;
+    const float d  = std::sqrt(dx*dx+dz*dz);
+    const float da = std::fmod(angleDir(dx,dz)-rotation()+540.f,360.f)-180.f;
+    aim = d<200.f && std::abs(da)<45.f;
+    }
+  visual.setMutedPfx(aim ? "PEE" : "");
+  const bool on = aim && visual.pose().isInAnim("S_PEE");
+  if(on!=bool(peeStream)) {
+    peeStream.reset();
+    if(on) {
+      peeStream = std::make_unique<Effect>(PfxEmitter(owner,"PFX_GAI_PEE"),"");
+      peeStream->setActive(true);
+      peeStream->setLooped(true);
+      }
+    }
+  if(!peeStream)
+    return;
+  Matrix4x4  mt = transform();
+  const Vec3 at = mapBone("BIP01 PELVIS");
+  mt.set(3,0,at.x);
+  mt.set(3,1,at.y);
+  mt.set(3,2,at.z);
+  peeStream->setObjMatrix(mt);
   }
 
 void Npc::startEffect(Npc& to, const VisualFx& vfx) {

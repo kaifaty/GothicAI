@@ -76,6 +76,9 @@ class MdlVisual final {
     void                           startEffect (World& owner, Effect&& pfx, int32_t slot, bool noSlot);
     void                           stopEffect  (const VisualFx& vfx);
     void                           stopEffect  (int32_t slot);
+    // an effect of the animations' events that does not start (the native PEE while an aimed one plays)
+    void                           setMutedPfx(std::string_view name) { muted = name; }
+    std::string_view               mutedPfx() const { return muted; }
     void                           setNpcEffect(World& owner, Npc& npc, std::string_view s, zenkit::NpcFlag flags);
     void                           setFatness  (float f);
     void                           emitBlockEffect(Npc& dst, Npc& src);
@@ -269,6 +272,7 @@ class MdlVisual final {
     std::vector<ArrowPin>          stuckArrows;
 
     std::vector<PfxSlot>           effects;
+    std::string_view               muted;
     PfxSlot                        pfx;
 
     TorchSlot                      torch;

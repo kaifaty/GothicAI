@@ -14840,6 +14840,22 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     n->setExternalControl(true);
     say("freeze " + symName(w,n));
     }
+  else if(c=="ani") {
+    // ani <npc|nearest|player> <name>: it plays that animation, as play_ani does (T_STAND_2_PEE goes on to
+    // its loop S_PEE till something else plays)
+    Npc* n = a.size()>1 && a[1]=="player" ? &pl : findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    if(n==nullptr || a.size()<3 || !n->hasAnim(a[2])) {
+      say("ani: no npc or animation " + line);
+      return;
+      }
+    n->aiPush(AiQueue::aiPlayAnim(a[2]));
+    say("ani " + symName(w,n) + " " + a[2]);
+    }
+  else if(c=="heropose") {
+    // heropose kneel|none: the hero kneels as after a surrender (player_pose), or gets up
+    const bool kneel = a.size()>1 && a[1]=="kneel";
+    say(std::string("heropose ") + (pl.setPlayerPose(kneel) ? (kneel ? "kneel" : "none") : "refused"));
+    }
   else if(c=="place") {
     // place <dist> <angle>: the hero stands that far from the watched npc, at that angle from its facing
     bench.placeDist  = num(a,1,150);
