@@ -222,6 +222,7 @@ def test_raw_body_listener_keeps_original_json_values_after_cache_acceptance():
 @pytest.mark.parametrize("async_session", [False, True])
 async def test_receive_loop_exposes_original_body_packet_without_model_repacking(async_session):
     original = packet()
+    following = packet(observation(2))
     entered, release, body_received, finish = (asyncio.Event() for _ in range(4))
 
     class StreamingConnection(Connection):
@@ -229,42 +230,75 @@ async def test_receive_loop_exposes_original_body_packet_without_model_repacking
             if async_session:
                 yield Session(type="session", branch="numeric-receive").model_dump_json()
             yield json.dumps({"type": "body_observations", "packet": original})
+            yield json.dumps({"type": "body_observations", "packet": following})
+            yield json.dumps({"type": "loading"})
             await finish.wait()
 
     link = GameLink(StreamingConnection())
     received = []
     ordinary = []
+    dispatched = []
+    first_body_ready = asyncio.get_running_loop().create_future()
+    armed = asyncio.Event()
 
-    def raw(packet):
-        received.append(packet)
+    async def observe_first_dispatch():
+        armed.set()
+        await first_body_ready
+        latest = link.body_latest.get(1)
+        first_dispatch = len(received), list(dispatched), latest.observation_seq if latest else None
+        return first_dispatch, [type(message) for message in ordinary]
+
+    def raw(value):
+        received.append(value)
         body_received.set()
+        if len(received) == 1:
+            first_body_ready.set_result(None)
 
     async def initialize(message):
         if isinstance(message, Session):
             entered.set()
             await release.wait()
 
+    def after_dispatch(message):
+        ordinary.append(message)
+        if isinstance(message, BodyObservations):
+            dispatched.append(message.packet.observations[0].observation_seq)
+        elif isinstance(message, Loading):
+            assert not link.body_latest and link.body_generation is None
+            dispatched.append("loading")
+
     if async_session:
         link.listeners.append(initialize)
-    link.listeners.append(ordinary.append)
+    link.listeners.append(after_dispatch)
     link.raw_body_listeners.append(raw)
+    observer = asyncio.create_task(observe_first_dispatch())
+    await armed.wait()
     receiver = asyncio.create_task(link.run())
     try:
         if async_session:
             await asyncio.wait_for(entered.wait(), 1)
-            ready = asyncio.create_task(link.wait_session_ready())
+            session_ready = asyncio.create_task(link.wait_session_ready())
             await asyncio.sleep(0)
-            assert not ready.done() and not ordinary and not received
+            assert not session_ready.done() and not ordinary and not received
             release.set()
-            assert (await asyncio.wait_for(ready, 1)).branch == "numeric-receive"
+            assert (await asyncio.wait_for(session_ready, 1)).branch == "numeric-receive"
         await asyncio.wait_for(body_received.wait(), 1)
+        first_dispatch, first_ordinary = await asyncio.wait_for(observer, 1)
+        assert first_dispatch == (1, [1], 1)
         expected = [Session, BodyObservations] if async_session else [BodyObservations]
-        assert [type(m) for m in ordinary] == expected
+        assert first_ordinary == expected
     finally:
         release.set()
         finish.set()
-        await receiver
-    assert received == [original]
+        try:
+            await receiver
+        finally:
+            observer.cancel()
+            await asyncio.gather(observer, return_exceptions=True)
+    assert received == [original, following] and received[0] is not received[1]
+    assert dispatched == [1, 2, "loading"]
+    expected = ([Session] if async_session else []) + [BodyObservations, BodyObservations, Loading]
+    assert [type(message) for message in ordinary] == expected
     assert isinstance(received[0]["observations"], list)
     assert isinstance(received[0]["observations"][0]["self"]["position_world_cm"], list)
 

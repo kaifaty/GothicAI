@@ -37,6 +37,7 @@ from .common import (
     _until,
     _until_async,
     attach_when_free,
+    prepare_npc_pose,
     wait_message,
 )
 
@@ -926,10 +927,15 @@ async def trace_memory(
                 raise
         if pos is not None:
             hero = (await link.snapshot(who, fresh=True)).player
-            assert hero is not None
-            await link.debug("player_goto", pos=pos)
-            await asyncio.sleep(1)  # settle on walkable ground before copying the position to the frozen NPC
-            await link.debug("npc_goto", npc=who, to="PC_HERO", distance=0)
+            assert hero is not None and hero.ahead is not None
+            anchor = (pos[0] - 150 * hero.ahead[0], pos[1], pos[2] - 150 * hero.ahead[1])
+            await link.debug("player_goto", pos=anchor)
+            await asyncio.sleep(1)  # settle the separate anchor before placing the NPC 150 cm ahead
+            ready, pose = await prepare_npc_pose(
+                link, who, house, to="PC_HERO", distance=150, require_perception_ready=False,
+            )
+            if not ready:
+                raise GameError(f"trace preparation: {pose}")
             await link.debug("player_goto", pos=hero.pos)
         else:
             await link.debug(

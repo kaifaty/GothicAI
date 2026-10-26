@@ -14,7 +14,7 @@ from ..dialogue import DialogueManager
 from ..game import GameError, GameLink
 from ..llm import ToolCall
 from ..llm.fake import FakeBackend, FakeStep
-from ..protocol import GameMessage, LineStarted, NpcSpec, RoutineEntry
+from ..protocol import DebugCmd, GameMessage, LineStarted, NpcSpec, RoutineEntry
 from .common import _ByNpc, _clear_beasts, _m5b_player_weapon, _until, _until_async
 from .neural_load import _policy_resets
 
@@ -210,14 +210,16 @@ async def neural_knockout_segment(
         npc=npc, like="BDT_1002_BANDIT_L", at=arena, name="Мечник", guild="GIL_VLK",
         routine=[RoutineEntry(start="00:00", end="23:59", state="ZS_STAND_ARMSCROSSED", waypoint=arena)],
     ))
+    # Clear this arena's fly independently of the snapshot radius and field of view.
+    fly = await link._request(DebugCmd(
+        req=link._next_id("knockout-arena-"), cmd="npc_los", npc=npc, to="YBLOODFLY",
+    ), 5)
+    distance = (fly.value or {})["distance_cm"]
+    if not 0 <= distance <= 5000:
+        raise GameError(f"neural-talk knockout preparation: bloodfly outside arena ({distance} cm)")
+    await link.debug("kill", instance="YBLOODFLY", near=npc)
     await link.debug("skip_important", near=npc)
     log.info("neural-talk knockout preparation: beasts_cleared=%d", await _clear_beasts(link, npc))
-    ready = await Bodies(link).act(
-        npc, "start_activity", state="ZS_STAND_ARMSCROSSED", waypoint=arena,
-        minutes=60, arrive=True, radius=100, timeout=15,
-    )
-    if ready.status != "arrived":
-        raise GameError(f"neural-talk knockout preparation: {ready.status} {ready.detail}")
     weapon = ["call", "NPC_GETEQUIPPEDMELEEWEAPON", ["inst", "SELF"]]
     symbol, sword = await link.story_eval(npc, [
         ["sym", npc], ["&", ["field", weapon, "FLAGS"], ["var", "ITEM_SWD"]],
@@ -271,6 +273,19 @@ async def neural_knockout_segment(
                 )
 
             log.info("neural-talk knockout before speech: beasts_cleared=%d", await _clear_beasts(link, npc))
+            # B_Attack does not retarget an existing ZS_ATTACK. End cleanup's fight first.
+            ready = await Bodies(link).act(
+                npc, "start_activity", state="ZS_STAND_ARMSCROSSED", waypoint=arena,
+                minutes=60, arrive=True, radius=100, timeout=15,
+            )
+            if ready.status != "arrived":
+                raise GameError(f"neural-talk knockout preparation: {ready.status} {ready.detail}")
+            idle, attacking = await link.story_eval(npc, [
+                ["call", "NPC_ISINSTATE", ["inst", "SELF"], ["sym", "ZS_STAND_ARMSCROSSED"]],
+                ["call", "NPC_ISINSTATE", ["inst", "SELF"], ["sym", "ZS_ATTACK"]],
+            ])
+            if not idle or attacking:
+                raise GameError(f"neural-talk knockout preparation: idle={idle}, attacking={attacking}")
             await link.debug("type", text="Мечник, проверим твою шпагу.")
             ready = await _until(fight_ready, 25)
             fight = pilot.fights.get(npc)

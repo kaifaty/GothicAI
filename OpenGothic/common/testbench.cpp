@@ -16908,7 +16908,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     if(n==nullptr || bench.archerAt==nullptr || n->isDown())
       continue;
     const Vec3 d = bench.archerAt->position()-at;
-    n->setPosition(at);
+    n->setPosition(Vec3(at.x,n->position().y,at.z));
     n->setDirection(Vec3(d.x,0,d.z));
     n->updateTransform();
     n->setTarget(bench.archerAt);

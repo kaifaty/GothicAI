@@ -438,7 +438,7 @@ class BodyPilot:
             previous = self._watch_npcs
             self._watch_npcs = npcs
             try:
-                await self.link.body_watch(npcs, timeout=BRIDGE_TIMEOUT)
+                await self.link.body_watch(npcs, timeout=SETUP_TIMEOUT)
             except GameError:
                 self._watch_npcs = previous
                 raise
@@ -1080,7 +1080,7 @@ class BodyFight:
         if not self._watched:
             started = time.monotonic()
             try:
-                symbol = await self.link.story_eval(self.npc, [["sym", self.npc]], timeout=BRIDGE_TIMEOUT)
+                symbol = await self.link.story_eval(self.npc, [["sym", self.npc]], timeout=SETUP_TIMEOUT)
                 if len(symbol) != 1 or type(symbol[0]) is not int or symbol[0] < 0:
                     raise GameError("NPC script symbol unavailable")
                 self._symbol = symbol[0]
@@ -1856,6 +1856,8 @@ class BodyFight:
                 observed_terminal = observed_terminal or self._latest_terminal(lease)
                 if observed_terminal is not None:
                     reason = observed_terminal
+                elif self._native_release_reason == "target_visibility_lost":
+                    reason = "target_lost"
             # Another fight's poll can deliver native_restored while the policy
             # episode is closing. Recheck before unwatch and orphan registration.
             if not release_confirmed and (

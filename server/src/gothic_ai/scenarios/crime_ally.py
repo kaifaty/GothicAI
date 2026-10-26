@@ -160,8 +160,24 @@ async def crime_ally(
             f"XARDAS_BANDITS; Cavalorn={distance(CAVALORN):.0f} cm, Brago={distance(BRAGO):.0f} cm",
         ):
             return _logged(results)
-        if perception is not None:
-            await perception.fresh(BRAGO)
+        target_sight: dict[str, Any] = {}
+
+        async def target_visible() -> bool:
+            seen = await link.evaluate([
+                "call", "NPC_CANSEENPC", ["inst", BRAGO], ["inst", CAVALORN],
+            ])
+            if perception is not None:
+                view = await perception.fresh(BRAGO)
+            else:
+                views = await link.npc_view([BRAGO])
+                view = views[0] if views else None
+            visible = [who.id for who in view.sees] if view is not None else []
+            target_sight.update(seen=seen, visible=visible, cavalorn_cm=distance(CAVALORN))
+            return bool(seen) and CAVALORN in visible
+
+        # Following the hero into range does not yet put Cavalorn in Brago's sight.
+        if not check("cavalorn_visible", await _until_async(target_visible, bool, 10), target_sight):
+            return _logged(results)
         await link.snapshot(BRAGO, fresh=True)
         await talk.hear("Эй, Браго! Не трогай Кавалорна.", BRAGO, {"via": "scenario"})
 

@@ -1,5 +1,8 @@
+import asyncio
+
 import pytest
 
+from gothic_ai import dialogue as dialogue_module
 from gothic_ai.dialogue import DialogueManager, follow_agreement
 from gothic_ai.executor import Intent
 from gothic_ai.journal import Journal
@@ -68,8 +71,8 @@ async def test_a_spoken_follow_agreement_repairs_the_missing_intent(heard, reply
         conv = await dialogue.open(CAVALORN, "Кавалорн")
         conv.intent = Intent(attitude="friendly", agenda="Help with the bandits")
         await dialogue.say_as_player(CAVALORN, heard)
-        await _until(lambda: any(m.get("action") == "follow" for m in fake.received))
-        await _until(lambda: not conv.actions)
+        await asyncio.gather(*conv.actions)
+        assert any(m.get("action") == "follow" for m in fake.received)
 
     assert conv.intent == Intent("follow_hero", "PLAYER", "friendly", "Help with the bandits")
     note = next(m for m in conv.history if "Ты согласился и идёшь за героем" in m.content)
@@ -126,23 +129,45 @@ async def test_other_words_do_not_make_a_follow_agreement(heard, reply, memory):
     assert not any(m.get("action") == "follow" for m in fake.received)
 
 
-async def test_the_models_follow_intent_is_not_applied_twice(memory):
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("changed_mind", [False, True])
+async def test_the_models_follow_intent_is_not_applied_twice(memory, monkeypatch, resume, changed_mind):
     fake = FakeGame()
+    fake.start_delay = 0.1
+    monkeypatch.setattr(dialogue_module, "line_duration", lambda text: 0.2)
     llm = FakeBackend(
         "Иду, прикроешь мне спину.",
         delay=0,
         tool_calls=[ToolCall("set_intent", {"goal": "follow_hero", "target": "PLAYER"})],
     )
+    held = []
+
+    async def take_body(npc, why):
+        held.append((npc, why))
+        return True
+
     async with connected(fake) as link:
         dialogue = DialogueManager(link, llm, PersonaProvider(None), memory=memory)
+        dialogue.take_body = take_body
         await link.attach(CAVALORN)
         conv = await dialogue.open(CAVALORN, "Кавалорн")
+        if resume:
+            conv.intent = Intent("follow_hero", "PLAYER")
         await dialogue.say_as_player(CAVALORN, "Ну ты идешь, нет?")
-        await _until(lambda: any(m.get("action") == "follow" for m in fake.received))
-        await _until(lambda: not conv.actions)
+        await _until(lambda: bool(fake.says))
+        line = fake.says[0][0]["line"]
+        await _until(lambda: dialogue.started_at(line) is not None)
+        assert dialogue.audible(CAVALORN)
+        assert not link.snapshots[CAVALORN].npc.following
+        assert not held and not any(m.get("action") == "follow" for m in fake.received)
+        if changed_mind:
+            await dialogue.change_intent(CAVALORN, "Кавалорн", goal="none", target=None)
+        await asyncio.gather(*conv.actions)
 
-    assert conv.intent.goal == "follow_hero"
-    assert len([m for m in fake.received if m.get("action") == "follow"]) == 1
+    assert conv.intent.goal == ("none" if changed_mind else "follow_hero")
+    assert len([m for m in fake.received if m.get("action") == "follow"]) == (0 if changed_mind else 1)
+    assert held == ([] if changed_mind else [(CAVALORN, "follow")])
+    assert not any(m.get("action") == "stop" for m in fake.received)
     assert not any("Ты согласился и идёшь за героем" in m.content for m in conv.history)
 
 

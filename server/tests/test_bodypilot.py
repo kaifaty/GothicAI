@@ -3499,7 +3499,8 @@ async def test_native_visibility_restoration_respects_lease_identity(scope):
         assert rig.pilot.last_summary.native_release_reason == "target_visibility_lost"
 
 
-async def test_visibility_restoration_diagnostics_keep_last_ten_actual_policy_decisions(caplog):
+@pytest.mark.parametrize("delivery", ["active", "cleanup"])
+async def test_visibility_restoration_diagnostics_keep_last_ten_actual_policy_decisions(caplog, delivery):
     caplog.set_level("INFO", logger="gothic_ai.bodypilot")
     async with running() as rig:
         await rig.active()
@@ -3519,13 +3520,32 @@ async def test_visibility_restoration_diagnostics_keep_last_ten_actual_policy_de
         rig.bridge.emit(unseen_fighter(19, t_game_ms=2200))
         await eventually(lambda: len(rig.policy.commands("step")) == 17)
         rig.clock.advance(0.35)
-        rig.link._dispatch(events(rig.bridge.control_event(
+        restoration = events(rig.bridge.control_event(
             reason="native_restored", release_reason="target_visibility_lost", owner="native",
             t_game_ms=2400,
-        )))
+        ))
+        restored_during_cleanup = []
+        if delivery == "cleanup":
+            original_call = rig.fight.client.call
+
+            async def restore_during_end_episode(command, **fields):
+                if command == "end_episode":
+                    assert rig.pilot.last_summary is None
+                    assert rig.fight._native_release_reason != "target_visibility_lost"
+                    rig.link._dispatch(restoration)
+                    restored_during_cleanup.append(command)
+                return await original_call(command, **fields)
+
+            rig.fight.client.call = restore_during_end_episode
+            # A newer ownership generation is observed before the old lease's reason arrives.
+            rig.bridge.emit(fighter(20, owned=True, control_generation=8, t_game_ms=2400))
+        else:
+            rig.link._dispatch(restoration)
         await rig.ended()
         summary = rig.pilot.last_summary
         assert summary.reason == "target_lost" and summary.release_confirmed
+        assert summary.end_trigger == "target_lost"
+        assert restored_during_cleanup == (["end_episode"] if delivery == "cleanup" else [])
         assert summary.target_invisible_seconds == pytest.approx(0.8)
         assert summary.target_invisible_game_ms == 800
         assert summary.target_invisible_last_seconds == pytest.approx(0.59)
@@ -3561,6 +3581,9 @@ async def test_native_ownership_or_dialogue_takeover_ends_episode(takeover):
             rig.pilot.unavailable = lambda _: True
             rig.bridge.emit(fighter(4, owned=True))
         await rig.ended()
+        if takeover == "lease_lost":
+            assert rig.pilot.last_summary.reason == rig.pilot.last_summary.end_trigger == "lease_lost"
+            assert rig.pilot.last_summary.native_release_reason != "target_visibility_lost"
 
 
 async def test_pending_release_keeps_watch_until_native_restoration():
@@ -4337,19 +4360,34 @@ async def test_loading_reason_survives_late_heartbeat_failure_while_policy_is_in
         assert not rig.link.body_leases and not rig.link.body_latest
 
 
-@pytest.mark.parametrize("rpc,stage", [("story_eval", "symbol_eval"), ("body_watch", "body_watch")])
-@pytest.mark.parametrize("failure", ["timeout", "rejected"])
-async def test_watch_setup_failure_identifies_rpc_and_failure_type(rpc, stage, failure, caplog):
+@pytest.mark.parametrize("rpc,stage,failure,delay", [
+    pytest.param("story_eval", "symbol_eval", "delayed_success", 0.300, id="symbol_setup_300ms"),
+    pytest.param("body_watch", "body_watch", "delayed_success", 0.300, id="watch_setup_300ms"),
+    pytest.param("story_eval", "symbol_eval", "timeout", 0.600, id="symbol_timeout_600ms"),
+    pytest.param("body_watch", "body_watch", "timeout", 0.600, id="watch_timeout_600ms"),
+    pytest.param("story_eval", "symbol_eval", "rejected", 0, id="symbol_rejected"),
+    pytest.param("body_watch", "body_watch", "rejected", 0, id="watch_rejected"),
+])
+async def test_watch_setup_failure_identifies_rpc_and_failure_type(rpc, stage, failure, delay, caplog):
     caplog.set_level("WARNING", logger="gothic_ai.bodypilot")
     async with running() as rig:
-        if failure == "timeout":
-            rig.bridge.response_delays[rpc] = 0.300
-        else:
+        if failure == "rejected":
             rig.bridge.request_rejections[rpc] = deque([f"fake {rpc} rejected"])
+        else:
+            rig.bridge.response_delays[rpc] = delay
         rig.roster(activity="fight", state="ZS_ATTACK")
         await eventually(lambda: rig.bridge.commands(rpc))
         # The first reply remains delayed, while an unsubscribe may acknowledge promptly.
         rig.bridge.response_delays.clear()
+        if failure == "delayed_success":
+            await eventually(lambda: rig.fight._watch_ready)
+            await eventually(lambda: not rig.bridge._response_tasks)
+            assert rig.fight._symbol == 50 and rig.fight._watched
+            assert rig.pilot.last_summary is None and rig.fight.lease is None
+            assert [command["npcs"] for command in rig.bridge.commands("body_watch")] == [["NPC"]]
+            assert not rig.bridge.commands("body_acquire") and not rig.policy.requests
+            assert not [record for record in caplog.records if "watch setup failed stage=" in record.message]
+            return
         await eventually(lambda: rig.pilot.last_summary is not None)
         await eventually(lambda: not rig.bridge._response_tasks)
         summary = rig.pilot.last_summary
@@ -4377,7 +4415,7 @@ async def test_watch_setup_failure_identifies_rpc_and_failure_type(rpc, stage, f
 
 async def test_watch_timeout_clears_applied_subscription_and_ignores_late_replies():
     async with running() as rig:
-        rig.bridge.response_delays["body_watch"] = 0.300
+        rig.bridge.response_delays["body_watch"] = 0.600
         rig.roster(activity="fight", state="ZS_ATTACK")
         await eventually(lambda: rig.bridge._watched_npc == "NPC")
         # The bridge applies the watch immediately, before its delayed acknowledgement.

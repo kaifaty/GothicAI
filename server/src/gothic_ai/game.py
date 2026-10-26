@@ -219,6 +219,7 @@ class GameLink:
                 pending = self._dispatch(msg, raw_body_packet=raw_body_packet)
                 if pending is not None:
                     await pending
+                await asyncio.sleep(0)
         except ConnectionClosed:
             pass
         finally:

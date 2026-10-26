@@ -2424,7 +2424,9 @@ class DialogueManager:
 
         async def run() -> None:
             if conv.voice is not None:
-                await conv.voice.join()  # the npc says what it said before acting on it
+                await conv.voice.join()  # finish sending the audio before observing its playback
+            while self.audible(conv.npc):  # noqa: ASYNC110 - native line starts and durations govern playback
+                await asyncio.sleep(0.05)
             note, ok = await job()
             if reply is not None and not reply.done() and reply is not asyncio.current_task():
                 await asyncio.wait({reply})  # the note goes after this turn's reply in the history
@@ -3110,6 +3112,8 @@ class DialogueManager:
                     return ToolOutcome("Намерение не изменилось.", "accepted")
 
                 async def follow() -> tuple[str, bool]:
+                    if conv.intent.goal not in executor.COMPANION_GOALS:
+                        return "", True  # it changed its mind before it was done talking
                     if not await self._hold(conv, "follow"):
                         return "Тело не смогло выполнить намерение: ты занят", False
                     return await self._body(conv, [("follow", {"npc": "PLAYER"})])
@@ -3222,6 +3226,8 @@ class DialogueManager:
             why = "follow" if intent.goal == "follow_hero" else "intent"
 
             async def job() -> tuple[str, bool]:
+                if acts != executor.intent_actions(old, conv.intent, following):
+                    return "", True  # it changed its mind before it was done talking
                 if not await self._hold(conv, why):
                     return "Тело не смогло выполнить намерение: ты занят", False
                 try:
