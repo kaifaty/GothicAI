@@ -324,6 +324,8 @@ async def test_run_keeps_an_arrival_until_its_budget_opens(graph, monkeypatch, r
             assert w.chronicle.facts("line_skipped") == [] and w.llm.calls == []
             if rule == "open":
                 await w.finish(*(f"DIR_Q{i + 1}" for i in range(MAX_OPEN_LINES)))
+                # As in close_budget, these old quests only prepare the budget under test.
+                w.showrunner.occasions._events.clear()
             elif rule == "chapter":
                 w.fake.vars["KAPITEL"] = 2
             elif rule == "game_time":
@@ -466,6 +468,8 @@ async def test_run_returns_its_bundle_when_another_writer_spends_budget_after_ha
             async with w.showrunner._lock:
                 await w.chronicle.record(line(day=9, minute=1, wall_time=w.clock.t - MIN_REAL_SECONDS + 1))
                 await w.finish("DIR_Q1")
+                # The competing writer spends budget; completing its old quest is setup only.
+                occasions._events.clear()
                 resume.set()
             await asyncio.wait_for(returned.wait(), 1)
             assert occasions.pending == originals
