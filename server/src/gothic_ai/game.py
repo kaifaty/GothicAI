@@ -211,6 +211,7 @@ class GameLink:
                 if isinstance(msg, BodyObservations) and self.raw_body_listeners:
                     raw_body_packet = json.loads(raw)["packet"]
                 self._dispatch(msg, raw_body_packet=raw_body_packet)
+                await asyncio.sleep(0)
         except ConnectionClosed:
             pass
         finally:

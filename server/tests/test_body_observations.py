@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import json
 from pathlib import Path
@@ -219,16 +220,46 @@ def test_raw_body_listener_keeps_original_json_values_after_cache_acceptance():
 
 async def test_receive_loop_exposes_original_body_packet_without_model_repacking():
     original = packet()
+    following = packet(observation(2))
 
     class StreamingConnection(Connection):
         async def _empty(self):
             yield json.dumps({"type": "body_observations", "packet": original})
+            yield json.dumps({"type": "body_observations", "packet": following})
+            yield json.dumps({"type": "loading"})
 
     link = GameLink(StreamingConnection())
     received = []
-    link.raw_body_listeners.append(received.append)
+    dispatched = []
+    ready = asyncio.get_running_loop().create_future()
+    armed = asyncio.Event()
+
+    async def observe_first_dispatch():
+        armed.set()
+        await ready
+        latest = link.body_latest.get(1)
+        return len(received), list(dispatched), latest.observation_seq if latest else None
+
+    def receive(value):
+        received.append(value)
+        if len(received) == 1:
+            ready.set_result(None)
+
+    def after_dispatch(msg):
+        if isinstance(msg, BodyObservations):
+            dispatched.append(msg.packet.observations[0].observation_seq)
+        elif isinstance(msg, Loading):
+            assert not link.body_latest and link.body_generation is None
+            dispatched.append("loading")
+
+    link.raw_body_listeners.append(receive)
+    link.listeners.append(after_dispatch)
+    observer = asyncio.create_task(observe_first_dispatch())
+    await armed.wait()
     await link.run()
-    assert received == [original]
+    assert await observer == (1, [1], 1)
+    assert received == [original, following] and received[0] is not received[1]
+    assert dispatched == [1, 2, "loading"]
     assert isinstance(received[0]["observations"], list)
     assert isinstance(received[0]["observations"][0]["self"]["position_world_cm"], list)
 
