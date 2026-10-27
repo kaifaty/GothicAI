@@ -204,7 +204,9 @@ def move(src, *, keep_local=False, dry_run=False, cancelled=None,
                     json.dump(attempt, marker)
         if attempt is not None:
             copied_files, copied_directories, copied_links = inventory(destination, exclude_pytest=False)
-            expected = set(files) | directories | set(links) | {".symlinks.tsv", INCOMPLETE_MARKER}
+            expected = set(files) | directories | set(links) | {INCOMPLETE_MARKER}
+            if table is not None:
+                expected.add(".symlinks.tsv")
             stale = (set(copied_files) | copied_directories | set(copied_links)) - expected
             check_attempt(destination, attempt)
             if not nas_mounted(root):
