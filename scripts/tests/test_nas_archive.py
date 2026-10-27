@@ -214,6 +214,9 @@ def test_custom_destination_resumes_only_the_same_unfinished_attempt(archive, ro
     destination = roots.nas / "archive" / "task-20261028"
     options = {"destination_relative": "archive/task-20261028", "attempt_id": "stable-token"}
     run = archive.subprocess.run
+    (roots.source / "removed.txt").write_bytes(b"old result")
+    (roots.source / "removed-dir").mkdir()
+    (roots.source / "removed-dir" / "old.bin").write_bytes(b"old nested result")
 
     def interrupt_copy(*args, **kwargs):
         result = run(*args, **kwargs)
@@ -225,6 +228,17 @@ def test_custom_destination_resumes_only_the_same_unfinished_attempt(archive, ro
     with pytest.raises(archive.ArchiveError, match="rsync failed"):
         archive.move(roots.source, **options)
     assert (destination / archive.INCOMPLETE_MARKER).is_file()
+    (roots.source / "removed.txt").unlink()
+    (roots.source / "removed-dir" / "old.bin").unlink()
+    (roots.source / "removed-dir").rmdir()
+    (destination / "extra.txt").write_bytes(b"incomplete extra")
+    (destination / "extra-dir").mkdir()
+    (destination / "extra-dir" / "extra.txt").write_bytes(b"incomplete nested extra")
+    outside = roots.nas / "unrelated"
+    outside.mkdir()
+    (outside / "precious.txt").write_bytes(b"keep unrelated data")
+    (destination / "extra-link").symlink_to(outside, target_is_directory=True)
+    (destination / ".symlinks.tsv").write_text("keep reserved metadata\n")
     with pytest.raises(archive.ArchiveError, match="already exists"):
         archive.move(roots.source, destination_relative=options["destination_relative"],
                      attempt_id="different-token")
@@ -237,6 +251,9 @@ def test_custom_destination_resumes_only_the_same_unfinished_attempt(archive, ro
     assert not roots.source.exists()
     assert not (destination / archive.INCOMPLETE_MARKER).exists()
     assert (destination / "first.txt").read_bytes() == b"first result\n"
+    assert sorted(path.name for path in destination.iterdir()) == [".symlinks.tsv", "empty", "first.txt", "nested"]
+    assert (destination / ".symlinks.tsv").read_text() == "keep reserved metadata\n"
+    assert (outside / "precious.txt").read_bytes() == b"keep unrelated data"
 
 
 def test_custom_destination_rejects_unsafe_paths(archive, roots):

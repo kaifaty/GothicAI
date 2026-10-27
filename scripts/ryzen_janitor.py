@@ -46,9 +46,13 @@ def latest_mtime(directory, depth, touched=None):
     latest = timestamp(directory)
     if depth:
         for child in directory.iterdir():
-            latest = max(latest, timestamp(child))
-            if not child.is_symlink() and child.is_dir():
-                latest = max(latest, latest_mtime(child, depth - 1, touched))
+            try:
+                child_latest = timestamp(child)
+                if not child.is_symlink() and child.is_dir():
+                    child_latest = max(child_latest, latest_mtime(child, depth - 1, touched))
+            except FileNotFoundError:
+                continue
+            latest = max(latest, child_latest)
     return latest
 
 
@@ -57,7 +61,13 @@ def tree_bytes(path):
     info = path.lstat()
     if not stat.S_ISDIR(info.st_mode):
         return info.st_size
-    return sum(tree_bytes(child) for child in path.iterdir())
+    size = 0
+    for child in path.iterdir():
+        try:
+            size += tree_bytes(child)
+        except FileNotFoundError:
+            continue
+    return size
 
 
 def process_paths(proc_root):
@@ -355,7 +365,11 @@ class Janitor:
         if not due and shutil.disk_usage(self.root).free >= 60 * GIB:
             self.skip(self.uv_cache, "uv cleanup not due")
             return
-        size = tree_bytes(self.uv_cache) if self.uv_cache.exists() else 0
+        try:
+            size = tree_bytes(self.uv_cache) if self.uv_cache.exists() else 0
+        except FileNotFoundError:
+            self.skip(self.uv_cache, "uv cache busy")
+            return
         self.log("would clean" if self.dry_run else "clean", self.uv_cache,
                  "weekly or free space below 60 GiB", size)
         if self.dry_run:
@@ -370,7 +384,11 @@ class Janitor:
             raise RuntimeError(f"uv cache clean failed ({result.returncode}): {detail}")
         atomic_json(marker, {"time": self.now})
         os.utime(marker, (self.now, self.now), follow_symlinks=False)
-        remaining = tree_bytes(self.uv_cache) if self.uv_cache.exists() else 0
+        try:
+            remaining = tree_bytes(self.uv_cache) if self.uv_cache.exists() else 0
+        except FileNotFoundError:
+            self.skip(self.uv_cache, "uv cache busy")
+            return
         self.summary["freed_bytes"] += max(0, size - remaining)
 
     def finish(self, save=True):

@@ -202,6 +202,20 @@ def move(src, *, keep_local=False, dry_run=False, cancelled=None,
             else:
                 with (destination / INCOMPLETE_MARKER).open("x") as marker:
                     json.dump(attempt, marker)
+        if attempt is not None:
+            copied_files, copied_directories, copied_links = inventory(destination, exclude_pytest=False)
+            expected = set(files) | directories | set(links) | {".symlinks.tsv", INCOMPLETE_MARKER}
+            stale = (set(copied_files) | copied_directories | set(copied_links)) - expected
+            check_attempt(destination, attempt)
+            if not nas_mounted(root):
+                raise ArchiveError(f"NAS is no longer mounted as cifs: {root}")
+            # Only this attempt owns these paths; never follow stale directory links.
+            for relative in sorted(stale, key=lambda name: name.count("/"), reverse=True):
+                path = destination / relative
+                if path.is_symlink() or not path.is_dir():
+                    path.unlink()
+                else:
+                    path.rmdir()
         # Repair interrupted copies even when their size and mtime match the source,
         # without a pre-copy checksum read from NAS. SHA-256 verifies the result below.
         result = subprocess.run(

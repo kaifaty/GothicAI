@@ -111,7 +111,7 @@ def host(tmp_path, monkeypatch, janitor):
 
 
 def test_task_protection_keep_globs_and_freshness(host):
-    protected = ["engine-cache", "game", "play", "lib", "bin", "nav-probe",
+    protected = ["e2e", "codex-check", "engine-cache", "game", "play", "lib", "bin", "nav-probe",
                  "body", "body-baseline", "body-training", "gq", "queue", ".hidden"]
     for name in protected:
         host.task(name)
@@ -217,25 +217,44 @@ def test_codex_check_skips_process_and_recent_depth_two(host):
     assert all((host.root / "codex-check" / name).exists() for name in ("cwd", "fd", "recent", "queued"))
 
 
-@pytest.mark.parametrize("kind,reader", [("e2e", "latest_mtime"), ("task", "tree_bytes")])
-def test_concurrent_cleanup_is_a_skip_and_other_folders_continue(host, janitor, monkeypatch, kind, reader):
+@pytest.mark.parametrize("kind", ["e2e", "task"])
+def test_concurrent_cleanup_is_a_skip_and_other_folders_continue(host, janitor, monkeypatch, kind):
     prefix = "e2e/" if kind == "e2e" else ""
     task = host.task(prefix + "gone")
     other = host.task(prefix + "z-other")
-    victim = task if reader == "latest_mtime" else task / "result.bin"
-    original = getattr(janitor, reader)
+    original = janitor.latest_mtime
 
     def disappear(path, *args, **kwargs):
-        if path == victim:
-            shutil.rmtree(path) if path.is_dir() else path.unlink()
+        if path == task:
+            shutil.rmtree(path)
         return original(path, *args, **kwargs)
 
-    monkeypatch.setattr(janitor, reader, disappear)
+    monkeypatch.setattr(janitor, "latest_mtime", disappear)
     cleaner = host.cleaner()
     assert cleaner.run() == 0
-    assert not victim.exists() and not other.exists()
+    assert not task.exists() and not other.exists()
     assert cleaner.summary["errors"] == []
     assert cleaner.summary["skipped"]["disappeared during cleanup"] == 1
+
+
+@pytest.mark.parametrize("operation", ["lstat", "iterdir"])
+def test_size_and_activity_ignore_disappearing_children(host, janitor, monkeypatch, operation):
+    task = host.task("measured")
+    missing = task / "gone"
+    missing.mkdir()
+    (missing / "data").write_bytes(b"disappeared")
+    age_tree(task)
+    os.utime(missing, (NOW, NOW))
+    original = getattr(Path, operation)
+
+    def disappear(path, *args, **kwargs):
+        if path == missing:
+            raise FileNotFoundError("entry disappeared")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, operation, disappear)
+    assert janitor.tree_bytes(task) == len(b"task data")
+    assert janitor.latest_mtime(task, 3) == NOW - 8 * DAY
 
 
 def test_rebuildable_dirs_removed_but_unmarked_build_archived(host, janitor):
@@ -373,6 +392,37 @@ def test_uv_clean_weekly_or_under_sixty_gib_and_busy_retry(host, weekly):
     assert host.cleaner().run() == 0
     assert not (host.uv_cache / "wheel").exists()
     assert host.stamp.stat().st_mtime_ns > original
+
+
+@pytest.mark.parametrize("phase", ["before", "after"])
+def test_changing_uv_cache_is_a_skip_without_errors(host, janitor, monkeypatch, capsys, phase):
+    host.stamp.unlink()
+    (host.uv_cache / "wheel").write_bytes(b"cached")
+    original = janitor.tree_bytes
+
+    def changing_cache(path):
+        if path == host.uv_cache and (phase == "before" or host.calls):
+            raise FileNotFoundError("cache changed during size calculation")
+        return original(path)
+
+    monkeypatch.setattr(janitor, "tree_bytes", changing_cache)
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert cleaner.summary["errors"] == []
+    assert cleaner.summary["skipped"]["uv cache busy"] == 1
+    assert capsys.readouterr().out.count("; uv cache busy)") == 1
+    assert len(host.calls) == (0 if phase == "before" else 1)
+    assert host.stamp.exists() == (phase == "after")
+    if phase == "after":
+        assert host.stamp.stat().st_mtime == NOW
+
+
+def test_uv_cleanup_not_due_at_sixty_gib(host):
+    host.free = 60 * 1024**3
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert host.calls == []
+    assert cleaner.summary["skipped"]["uv cleanup not due"] == 1
 
 
 def test_second_instance_exits_without_mutation(host):
