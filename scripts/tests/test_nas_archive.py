@@ -177,3 +177,70 @@ def test_cancelled_before_deletion_retains_source(archive, roots):
         archive.move(roots.source, cancelled=lambda: next(cancelled))
     assert (roots.source / "first.txt").read_bytes() == b"first result\n"
     assert (roots.destination / "first.txt").read_bytes() == b"first result\n"
+
+
+def test_custom_destination_cli_never_overwrites_existing_data(archive, roots, capsys):
+    (roots.source / "pytest-result.txt").write_bytes(b"irreplaceable test results")
+    roots.destination.mkdir(parents=True)
+    (roots.destination / "first.txt").write_bytes(b"unrelated older data")
+    destination = roots.nas / "archive" / "task-20261028"
+    options = ["move", str(roots.source), "--destination-relative", "archive/task-20261028",
+               "--attempt-id", "janitor-attempt"]
+    assert archive.main([*options, "--dry-run"]) == 0
+    assert str(destination) in capsys.readouterr().out
+    assert not destination.exists()
+    assert archive.main(options) == 0
+    assert not roots.source.exists()
+    assert (destination / "first.txt").read_bytes() == b"first result\n"
+    assert (destination / "pytest-result.txt").read_bytes() == b"irreplaceable test results"
+    assert not (destination / archive.INCOMPLETE_MARKER).exists()
+    assert (roots.destination / "first.txt").read_bytes() == b"unrelated older data"
+
+    roots.source.mkdir()
+    (roots.source / "new.txt").write_bytes(b"new task")
+    for dry_run in (False, True):
+        with pytest.raises(archive.ArchiveError, match="already exists"):
+            archive.move(roots.source, destination_relative="archive/task-20261028",
+                         attempt_id="janitor-attempt", dry_run=dry_run)
+    assert (roots.source / "new.txt").read_bytes() == b"new task"
+    assert not (destination / "new.txt").exists()
+
+
+def test_custom_destination_resumes_only_the_same_unfinished_attempt(archive, roots, monkeypatch):
+    destination = roots.nas / "archive" / "task-20261028"
+    options = {"destination_relative": "archive/task-20261028", "attempt_id": "stable-token"}
+    run = archive.subprocess.run
+
+    def interrupt_copy(*args, **kwargs):
+        result = run(*args, **kwargs)
+        assert result.returncode == 0, result.stderr
+        (destination / "first.txt").write_bytes(b"partial data\n")
+        return subprocess.CompletedProcess(args[0], 12, "", "connection unexpectedly closed")
+
+    monkeypatch.setattr(archive.subprocess, "run", interrupt_copy)
+    with pytest.raises(archive.ArchiveError, match="rsync failed"):
+        archive.move(roots.source, **options)
+    assert (destination / archive.INCOMPLETE_MARKER).is_file()
+    with pytest.raises(archive.ArchiveError, match="already exists"):
+        archive.move(roots.source, destination_relative=options["destination_relative"],
+                     attempt_id="different-token")
+    other = roots.local / "other-task"
+    other.mkdir()
+    with pytest.raises(archive.ArchiveError, match="already exists"):
+        archive.move(other, **options)
+    monkeypatch.setattr(archive.subprocess, "run", run)
+    assert archive.move(roots.source, **options) == roots.size
+    assert not roots.source.exists()
+    assert not (destination / archive.INCOMPLETE_MARKER).exists()
+    assert (destination / "first.txt").read_bytes() == b"first result\n"
+
+
+def test_custom_destination_rejects_unsafe_paths(archive, roots):
+    for relative in ("", ".", "../outside", "archive/../../outside", str(roots.nas)):
+        with pytest.raises(archive.ArchiveError, match="relative path"):
+            archive.move(roots.source, destination_relative=relative, attempt_id="token")
+    with pytest.raises(archive.ArchiveError, match="requires a nonempty attempt_id"):
+        archive.move(roots.source, destination_relative="archive/task")
+    (roots.nas / "alias").symlink_to(roots.local, target_is_directory=True)
+    with pytest.raises(archive.ArchiveError, match="symbolic link"):
+        archive.move(roots.source, destination_relative="alias/task", attempt_id="token")

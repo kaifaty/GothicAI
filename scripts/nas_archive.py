@@ -6,6 +6,7 @@ import argparse
 import csv
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import re
@@ -14,6 +15,9 @@ import signal
 import stat
 import subprocess
 import sys
+
+
+INCOMPLETE_MARKER = ".janitor-incomplete.json"
 
 
 class ArchiveError(Exception):
@@ -54,7 +58,7 @@ def nas_mounted(root):
     return False
 
 
-def inventory(root):
+def inventory(root, *, exclude_pytest=True):
     files, directories, links = {}, set(), {}
 
     def failed(error):
@@ -63,7 +67,7 @@ def inventory(root):
     for directory, dirnames, filenames in os.walk(root, followlinks=False, onerror=failed):
         for name in sorted(dirnames + filenames):
             path = Path(directory) / name
-            if name.startswith("pytest-"):
+            if exclude_pytest and name.startswith("pytest-"):
                 if name in dirnames:
                     dirnames.remove(name)
                 continue
@@ -94,8 +98,8 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").digest()
 
 
-def verify(src, dest, snapshot, table):
-    if inventory(src) != snapshot:
+def verify(src, dest, snapshot, table, *, exclude_pytest=True):
+    if inventory(src, exclude_pytest=exclude_pytest) != snapshot:
         raise ArchiveError("source changed during copying")
     files, directories, links = snapshot
     for relative in directories:
@@ -110,11 +114,26 @@ def verify(src, dest, snapshot, table):
     if table is not None and (dest / ".symlinks.tsv").read_text() != table:
         raise ArchiveError("checksum mismatch: .symlinks.tsv")
     # Detect files created, removed or modified while checksums were being read.
-    if inventory(src) != snapshot:
+    if inventory(src, exclude_pytest=exclude_pytest) != snapshot:
         raise ArchiveError("source changed during verification")
 
 
-def move(src, *, keep_local=False, dry_run=False, cancelled=None):
+def check_attempt(destination, attempt):
+    """Only an interrupted copy with the same source and token may reuse a path."""
+    if not destination.exists():
+        return
+    marker = destination / INCOMPLETE_MARKER
+    try:
+        matches = (destination.is_dir() and not marker.is_symlink()
+                   and json.loads(marker.read_text()) == attempt)
+    except (OSError, ValueError):
+        matches = False
+    if not matches:
+        raise ArchiveError(f"destination already exists without a matching unfinished attempt: {destination}")
+
+
+def move(src, *, keep_local=False, dry_run=False, cancelled=None,
+         destination_relative=None, attempt_id=None):
     """Return verified data bytes; never remove local data before complete verification."""
     size = 0
     try:
@@ -124,14 +143,32 @@ def move(src, *, keep_local=False, dry_run=False, cancelled=None):
         if (source / ".symlinks.tsv").exists() or (source / ".symlinks.tsv").is_symlink():
             raise ArchiveError("source contains reserved file .symlinks.tsv")
         root = Path(os.environ.get("GOTHIC_NAS_ROOT", "/mnt/shared/gothic-ai")).expanduser().absolute()
-        destination = root / source.relative_to(local_root())
+        attempt = None
+        if destination_relative is None:
+            if attempt_id is not None:
+                raise ArchiveError("attempt_id requires destination_relative")
+            destination = root / source.relative_to(local_root())
+        else:
+            relative = Path(destination_relative)
+            if relative.is_absolute() or not relative.parts or ".." in relative.parts:
+                raise ArchiveError("destination_relative must be a nonempty relative path without '..'")
+            if not isinstance(attempt_id, str) or not attempt_id:
+                raise ArchiveError("destination_relative requires a nonempty attempt_id")
+            destination = root / relative
+            attempt = {"source": str(source), "attempt_id": attempt_id}
+            marker = source / INCOMPLETE_MARKER
+            if marker.exists() or marker.is_symlink():
+                raise ArchiveError(f"source contains reserved file {INCOMPLETE_MARKER}")
         if root.resolve().is_relative_to(local_root()) or local_root().is_relative_to(root.resolve()):
             raise ArchiveError("local and NAS roots must not overlap")
         # CIFS cannot store links. Refuse a misleading destination on other filesystems too.
         for path in (destination, *destination.parents):
             if path.is_symlink():
                 raise ArchiveError(f"destination contains a symbolic link: {path}")
-        snapshot = inventory(source)
+        if attempt is not None:
+            check_attempt(destination, attempt)
+        exclude_pytest = attempt is None
+        snapshot = inventory(source, exclude_pytest=exclude_pytest)
         files, directories, links = snapshot
         size = sum(info[0] for info in files.values())
         for relative, target in sorted(links.items()):
@@ -155,12 +192,22 @@ def move(src, *, keep_local=False, dry_run=False, cancelled=None):
             raise ArchiveError(f"not enough NAS space: need {required - existing} bytes")
         if cancelled is not None and cancelled():
             raise ArchiveError("archive cancelled")
-        destination.mkdir(parents=True, exist_ok=True)
+        if attempt is None:
+            destination.mkdir(parents=True, exist_ok=True)
+        else:
+            try:
+                destination.mkdir(parents=True)
+            except FileExistsError:
+                check_attempt(destination, attempt)
+            else:
+                with (destination / INCOMPLETE_MARKER).open("x") as marker:
+                    json.dump(attempt, marker)
         # Repair interrupted copies even when their size and mtime match the source,
         # without a pre-copy checksum read from NAS. SHA-256 verifies the result below.
         result = subprocess.run(
             ["rsync", "--recursive", "--times", "--ignore-times", "--no-links", "--partial",
-             "--exclude=pytest-*", "--", str(source) + "/", str(destination) + "/"],
+             *(["--exclude=pytest-*"] if exclude_pytest else []),
+             "--", str(source) + "/", str(destination) + "/"],
             capture_output=True, text=True,
         )
         if result.returncode:
@@ -168,7 +215,7 @@ def move(src, *, keep_local=False, dry_run=False, cancelled=None):
             raise ArchiveError(f"rsync failed ({result.returncode}): {detail}")
         if table is not None:
             (destination / ".symlinks.tsv").write_text(table)
-        verify(source, destination, snapshot, table)
+        verify(source, destination, snapshot, table, exclude_pytest=exclude_pytest)
         if not nas_mounted(root):
             raise ArchiveError(f"NAS is no longer mounted as cifs: {root}")
         if cancelled is not None and cancelled():
@@ -178,6 +225,8 @@ def move(src, *, keep_local=False, dry_run=False, cancelled=None):
                 shutil.rmtree(source)
             except OSError as error:
                 raise ArchiveError(f"verified on NAS; local cleanup failed: {error}") from None
+        if attempt is not None:
+            (destination / INCOMPLETE_MARKER).unlink()
         return size
     except ArchiveError as error:
         error.bytes = size
@@ -193,9 +242,12 @@ def main(argv=None):
     command.add_argument("src")
     command.add_argument("--keep-local", action="store_true")
     command.add_argument("--dry-run", action="store_true")
+    command.add_argument("--destination-relative")
+    command.add_argument("--attempt-id")
     args = parser.parse_args(argv)
     try:
-        size = move(args.src, keep_local=args.keep_local, dry_run=args.dry_run)
+        size = move(args.src, keep_local=args.keep_local, dry_run=args.dry_run,
+                    destination_relative=args.destination_relative, attempt_id=args.attempt_id)
         if not args.dry_run:
             action = "copied and verified" if args.keep_local else "moved and verified"
             print(f"nas_archive: {action} {args.src} ({size} bytes)")
