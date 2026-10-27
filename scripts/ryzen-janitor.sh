@@ -55,7 +55,7 @@ Persistent=true
 WantedBy=timers.target
 EOF
 chmod 644 "$service" "$timer"
-mv -f -- "$stage/nas_archive.py" "$HOME/gothic-ai/lib/nas_archive.py"
+mv -f -- "$stage/nas_archive.py" "$HOME/gothic-ai/lib/ryzen_janitor_archive.py"
 mv -f -- "$stage/ryzen_janitor.py" "$HOME/gothic-ai/lib/ryzen_janitor.py"
 mv -f -- "$service" "$HOME/.config/systemd/user/gothic-janitor.service"
 mv -f -- "$timer" "$HOME/.config/systemd/user/gothic-janitor.timer"
@@ -69,7 +69,7 @@ REMOTE
     "${SSH[@]}" 'set -eu
 systemctl --user disable --now gothic-janitor.timer
 systemctl --user stop gothic-janitor.service
-rm -f -- "$HOME/.config/systemd/user/gothic-janitor.service" "$HOME/.config/systemd/user/gothic-janitor.timer" "$HOME/gothic-ai/lib/ryzen_janitor.py"
+rm -f -- "$HOME/.config/systemd/user/gothic-janitor.service" "$HOME/.config/systemd/user/gothic-janitor.timer" "$HOME/gothic-ai/lib/ryzen_janitor.py" "$HOME/gothic-ai/lib/ryzen_janitor_archive.py"
 systemctl --user daemon-reload'
     ;;
   status)

@@ -198,7 +198,7 @@ def test_e2e_uses_marker_fallback_and_nonblocking_lock(host):
 
 
 def test_codex_check_skips_process_and_recent_depth_two(host):
-    for name in ("old", "cwd", "fd", "recent"):
+    for name in ("old", "cwd", "fd", "recent", "queued"):
         directory = host.task(f"codex-check/{name}")
         if name in {"cwd", "fd"}:
             host.process(directory if name == "cwd" else directory / "result.bin", name, pid="101" if name == "cwd" else "102")
@@ -208,9 +208,34 @@ def test_codex_check_skips_process_and_recent_depth_two(host):
             fresh.write_text("recent")
             age_tree(directory)
             os.utime(fresh, (NOW, NOW))
+    queue = host.root / "queue"
+    queue.mkdir()
+    (queue / "state.json").write_text(json.dumps({"version": 1, "jobs": [
+        {"status": "queued", "command": ["sh", "-c", "cd codex-check/queued && build"]}]}))
     assert host.cleaner().run() == 0
     assert not (host.root / "codex-check" / "old").exists()
-    assert all((host.root / "codex-check" / name).exists() for name in ("cwd", "fd", "recent"))
+    assert all((host.root / "codex-check" / name).exists() for name in ("cwd", "fd", "recent", "queued"))
+
+
+@pytest.mark.parametrize("kind,reader", [("e2e", "latest_mtime"), ("task", "tree_bytes")])
+def test_concurrent_cleanup_is_a_skip_and_other_folders_continue(host, janitor, monkeypatch, kind, reader):
+    prefix = "e2e/" if kind == "e2e" else ""
+    task = host.task(prefix + "gone")
+    other = host.task(prefix + "z-other")
+    victim = task if reader == "latest_mtime" else task / "result.bin"
+    original = getattr(janitor, reader)
+
+    def disappear(path, *args, **kwargs):
+        if path == victim:
+            shutil.rmtree(path) if path.is_dir() else path.unlink()
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(janitor, reader, disappear)
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert not victim.exists() and not other.exists()
+    assert cleaner.summary["errors"] == []
+    assert cleaner.summary["skipped"]["disappeared during cleanup"] == 1
 
 
 def test_rebuildable_dirs_removed_but_unmarked_build_archived(host, janitor):
@@ -486,3 +511,64 @@ def test_run_prints_summary_when_service_fails(tmp_path, monkeypatch):
                             capture_output=True, text=True)
     assert result.returncode == 1
     assert result.stdout == summary
+
+
+def test_installed_janitor_keeps_private_archive_library(tmp_path, monkeypatch):
+    root = tmp_path / "home" / "gothic-ai"
+    library = root / "lib"
+    library.mkdir(parents=True)
+    shared = library / "nas_archive.py"
+    shared.write_text("raise RuntimeError('shared gq library imported')\n")
+    original_shared = shared.read_bytes()
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    (binaries / "ssh").write_text(
+        '#!/bin/sh\nfor argument do command=$argument; done\nexec /bin/sh -c "$command"\n')
+    (binaries / "systemctl").write_text("#!/bin/sh\nexit 0\n")
+    for executable in binaries.iterdir():
+        executable.chmod(0o755)
+    monkeypatch.setenv("HOME", str(root.parent))
+    monkeypatch.setenv("PATH", str(binaries) + os.pathsep + os.environ["PATH"])
+    wrapper = ["bash", str(SCRIPT.with_name("ryzen-janitor.sh"))]
+    result = subprocess.run([*wrapper, "install"], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert shared.read_bytes() == original_shared
+    private = library / "ryzen_janitor_archive.py"
+    assert private.read_bytes() == SCRIPT.with_name("nas_archive.py").read_bytes()
+    shared.write_text("raise RuntimeError('old gq worktree replaced shared library')\n")
+    task = root / "finished"
+    task.mkdir()
+    (task / "result.bin").write_bytes(b"result")
+    age_tree(task)
+    state = root / ".janitor"
+    state.mkdir()
+    (state / "uv-clean").touch()
+    os.utime(state / "uv-clean", (NOW, NOW))
+    proc, nas, cache = (tmp_path / name for name in ("proc", "nas", "uv"))
+    for directory in (proc, nas, cache):
+        directory.mkdir()
+    mounts = tmp_path / "mounts"
+    mounts.write_text(f"//fake/share {nas} cifs rw 0 0\n")
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    monkeypatch.setenv("GOTHIC_NAS_ROOT", str(nas))
+    monkeypatch.setenv("GOTHIC_NAS_MOUNTS", str(mounts))
+    monkeypatch.delenv("GQ_HOME", raising=False)
+    program = """import runpy, shutil, sys
+from types import SimpleNamespace
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]).parent))
+shutil.disk_usage = lambda _path: SimpleNamespace(free=200 * 1024**3)
+module = runpy.run_path(sys.argv[1])
+raise SystemExit(module['Janitor'](root=sys.argv[2], proc_root=sys.argv[3],
+    uv_cache=sys.argv[4], now=float(sys.argv[5]), dry_run=True).run())
+"""
+    result = subprocess.run([sys.executable, "-B", "-c", program,
+                             str(library / "ryzen_janitor.py"), str(root), str(proc),
+                             str(cache), str(NOW)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert f"would move {task}" in result.stdout
+    result = subprocess.run([*wrapper, "uninstall"], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert not private.exists()
+    assert not (library / "ryzen_janitor.py").exists()
+    assert shared.read_text() == "raise RuntimeError('old gq worktree replaced shared library')\n"

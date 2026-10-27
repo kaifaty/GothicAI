@@ -21,7 +21,10 @@ import uuid
 
 # Importing the sibling library must not create bytecode during --dry-run.
 sys.dont_write_bytecode = True
-import nas_archive
+if Path(__file__).with_name("ryzen_janitor_archive.py").is_file():
+    import ryzen_janitor_archive as nas_archive
+else:
+    import nas_archive
 
 
 HOUR = 3600
@@ -173,7 +176,7 @@ class Janitor:
             if any(target == path or target.is_relative_to(path)
                    for target in process_paths(self.proc_root)):
                 return "process"
-        if kind == "task" and self.queued(path):
+        if kind in {"task", "codex-check"} and self.queued(path):
             return "active gq job"
         return None
 
@@ -239,6 +242,8 @@ class Janitor:
                         self.skip(path, "e2e lock replaced")
                         continue
                     self.remove(path, kind)
+            except FileNotFoundError:
+                self.skip(path, "disappeared during cleanup")
             except Exception as error:
                 self.error(path, error)
 
@@ -337,6 +342,8 @@ class Janitor:
                         break
                 else:
                     self.archive_task(path)
+            except FileNotFoundError:
+                self.skip(path, "disappeared during cleanup")
             except Exception as error:
                 self.error(path, error)
 
