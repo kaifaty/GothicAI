@@ -15,6 +15,10 @@ scripts/ryzen.sh clean
 scripts/ryzen.sh clean-cache
 ```
 
+Окружения задач `body-*` и `nav-*` готовит общий [`scripts/ryzen-venv.sh`](../scripts/ryzen-venv.sh): `source` файла и вызов `ryzen_task_venv <путь к venv> [доп. пакеты...]`. Новый venv использует Python 3.12, `torch==2.14.1` с PyPI без отдельного индекса, `numpy` и `pytest`. На Ryzen это CUDA-сборка `2.14.1+cu130`; одинаковые файлы в venv используют жёсткие ссылки из кэша `uv`. Помощник передаётся вместе со скриптами задачи, отдельная установка на Ryzen не нужна.
+
+Версия torch задана только в `ryzen-venv.sh`. Чтобы поднять её, поменяй `torch_version` в одном месте. Старые venv с другой версией получают предупреждение и остаются со своей версией, пока задача не пересоздаст их; в них ставятся только отсутствующие дополнительные пакеты, без изменения зависимостей. Проверка помощника — `uv run --no-project --with pytest python -m pytest -q scripts/tests/test_ryzen_venv.py`.
+
 **Личная игра пользователя** устанавливается отдельно: с Mac `scripts/ryzen-play.sh install`, после слияний в `main` — `scripts/ryzen-play.sh update`. Клон `~/gothic-ai/play/` и значок **Gothic AI** в GNOME запускают ядро лаунчера в Ptyxis: fullscreen, звук PipeWire, последнее сохранение. Сеанс держит `gq quick --interactive --display-exclusive` до 6 часов (8 потоков, 8 ГБ RAM, 3 ГБ VRAM, `CPUWeight=1000`); ждёт текущие игры, печатая их имена, фоновые заявки старт не задерживают. Установка/сборка и `uv sync` идут отдельной обычной `quick`-заявкой. [Установка, вход ChatGPT, ключи, PortAudio и смоук без моделей](launcher.md#ryzen-linux); [правила интерактивного допуска](compute.md#очередь-gq). Поведение e2e и bench ниже сохраняется.
 
 Для измерения памяти Linux есть `SCENARIO=memprobe LLM=fake MEMPROBE_PHASES=save MEMPROBE_CYCLES=8 scripts/ryzen.sh e2e`. Каждую фазу запускают отдельной игрой. `LOG_DIR/game.pid` содержит PID игры, `memprobe.jsonl` — RSS по шагам и группы `smaps` в конце цикла. `GAME_EXTRA_ENV` добавляет переменные только игре: одна строка `NAME=value` на переменную, без shell-подстановок. Например, `GAME_EXTRA_ENV=$'LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2\nMALLOC_CONF=prof:true'`. Без переменной окружение игры прежнее; `MEMPROBE_*` и `GAME_EXTRA_ENV` проходят через SSH-обёртку.
@@ -89,6 +93,8 @@ E2e с нестандартным размером или явно заданн�
 Игра e2e на Ryzen и Mac по умолчанию ограничена 30 FPS: `scripts/e2e.sh` пишет `[ENGINE] zMaxFps=30` в `Gothic.ini` каталога прогона, сохраняя настройки CharacterVirtual и записи TTS. `E2E_MAX_FPS=0` снимает этот лимит, `E2E_MAX_FPS=60` задаёт 60 FPS; `scripts/ryzen.sh` передаёт значение с Mac на Ryzen. Положительный `[PARAMETERS] FPS_Limit` общего `SystemPack.ini` имеет приоритет, о нём e2e предупреждает; общий файл не меняется. Bench и живая игра сохраняют прежние настройки. Проверки — `scripts/tests/test_e2e.py`, частые сценарии на Ryzen и `stages` на Mac; [приёмка](../reports/compute/2026-10-19-e2e-fps-cap/README.md).
 
 ## План и журнал
+
+27 октября 2026: установка torch для задач Ryzen объединена в `scripts/ryzen-venv.sh`, закреплена версия 2.14.1 с PyPI. Существующие окружения других версий сохраняются.
 
 21 октября 2026: добавлен повтор e2e после SIGKILL игры при загрузке: границу задаёт общий маркер CLI перед вызовом сценария. До четырёх запусков сохраняют отдельные логи и времена убийств; четыре таких исхода подряд завершаются кодом 76. Сценарии и очередь не менялись; проверки используют фейковую игру без настоящего Ryzen.
 

@@ -257,8 +257,8 @@ if free < 26 * 1024**3:
     raise SystemExit(f"Insufficient build space above 20-GiB reserve: {free} bytes free")
 SPACE
 cd "$task/source"
-if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv "$task/.venv"; fi
-uv pip install --python "$task/.venv/bin/python" numpy pytest
+source "$task/source/scripts/ryzen-venv.sh"
+ryzen_task_venv "$task/.venv"
 "$task/.venv/bin/python" -m pytest -q scripts/tests/test_nav_dagger3_detours.py
 cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \

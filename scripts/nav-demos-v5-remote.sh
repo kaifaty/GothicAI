@@ -52,8 +52,8 @@ cd "$task/source"
 df -h "$HOME" /mnt/shared
 python3 -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home()).free >= 20*1024**3, "Less than 20 GiB free"'
 if [[ "$stage" == build-chain ]]; then
-  if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv "$task/.venv"; fi
-  uv pip install --python "$task/.venv/bin/python" numpy pytest
+  source "$task/source/scripts/ryzen-venv.sh"
+  ryzen_task_venv "$task/.venv"
   "$task/.venv/bin/python" -m pytest -q scripts/tests/test_nav_demos_v4_collect.py \
     scripts/tests/test_nav_demos_v5*.py
   cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
