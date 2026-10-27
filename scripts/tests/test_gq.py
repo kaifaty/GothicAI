@@ -9,8 +9,11 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 
 import pytest
@@ -1506,6 +1509,120 @@ def test_execute_keeps_the_user_commands_nonzero_exit_code(gq, host, monkeypatch
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+
+
+@pytest.mark.parametrize("action", ["run", "submit"])
+def test_archive_options_require_absolute_paths_below_local_root(gq, queue, monkeypatch, tmp_path, action):
+    root = tmp_path / "local"
+    root.mkdir()
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    arguments = [action, "--class", "quick", "--threads", "1", "--mem", "1G",
+                 "--max", "1m", "--name", "archive"]
+    args = gq.parser().parse_args(arguments + ["--archive", str(root / "one"),
+                                             "--archive", str(root / "two"), "--", "true"])
+    ident = queue.submit(dict(spec(), archive=args.archive))
+    assert queue.get(ident)["archive"] == [str(root / "one"), str(root / "two")]
+    for invalid in (root, tmp_path / "outside", Path("relative")):
+        with pytest.raises(gq.QueueError, match="absolute|local root"):
+            queue.submit(dict(spec(), archive=[str(invalid)]))
+    assert len(queue.jobs()) == 1
+
+
+@pytest.mark.parametrize("code,first_missing", [(0, False), (7, False), (17, True)])
+def test_archive_after_command_preserves_exit_code_and_logs_each_result(
+        gq, host, monkeypatch, tmp_path, code, first_missing, capsys):
+    root, nas = tmp_path / "local", tmp_path / "nas"
+    root.mkdir()
+    nas.mkdir()
+    mounts = tmp_path / "mounts"
+    mounts.write_text(f"//server/share {nas} cifs rw 0 0\n")
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    monkeypatch.setenv("GOTHIC_NAS_ROOT", str(nas))
+    monkeypatch.setenv("GOTHIC_NAS_MOUNTS", str(mounts))
+    archiver = gq.archive_module()
+    monkeypatch.setattr(archiver.shutil, "disk_usage", lambda _path: type("Usage", (), {"free": 10**9})())
+    first, second = root / "first", root / "second"
+    if not first_missing:
+        first.mkdir()
+        (first / "data").write_bytes(b"first")
+    second.mkdir()
+    q = make_queue(gq, host, monkeypatch)
+    command = [sys.executable, "-c", "from pathlib import Path; "
+               f"Path({str(second / 'data')!r}).write_bytes(b'second'); raise SystemExit({code})"]
+    ident = q.submit(dict(spec(command=command), archive=[str(first), str(second)]))
+    q.tick()
+    assert second.exists() and not (nas / "second").exists()
+    assert gq.execute(q, ident) == code
+    assert second.exists(), "transfer must start after the command completes"
+    q.finish(ident, "success" if code == 0 else "exit-code", "exited", str(code))
+    assert q.get(ident)["code"] == code
+    assert not second.exists() and (nas / "second" / "data").read_bytes() == b"second"
+    outcomes = [record for record in records(q) if record["event"] == "archive"]
+    assert [(record["outcome"], record["bytes"]) for record in outcomes] == [
+        ("error", 0) if first_missing else ("moved", 5), ("moved", 6)]
+    properties = dict(value.removeprefix("--property=").split("=", 1)
+                      for value in calls(host, "systemd-run")[0] if value.startswith("--property="))
+    assert properties["RuntimeMaxSec"] == "75s" and properties["TimeoutStopSec"] == "60"
+    assert properties["NotifyAccess"] == "exec"
+    q.finish(ident, "success")
+    assert len([record for record in records(q) if record["event"] == "archive"]) == 2
+    monkeypatch.setattr(gq, "Queue", lambda: q)
+    assert gq.main(["logs", ident]) == 0
+    output = capsys.readouterr().out
+    assert "6 bytes" in output and str(second) in output
+    assert ("warning: archive" in output) == first_missing
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_cancelled_jobs_do_not_archive(gq, queue, monkeypatch, tmp_path, running):
+    root = tmp_path / "local"
+    source = root / "results"
+    source.mkdir(parents=True)
+    (source / "data").write_bytes(b"keep")
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    ident = queue.submit(dict(spec(), archive=[str(source)]))
+    if running:
+        queue.tick()
+    queue.cancel(ident, "session-a")
+    queue.finish(ident, "signal", "killed", "15")
+    assert source.exists() and (source / "data").read_bytes() == b"keep"
+    assert queue.get(ident)["status"] == "cancelled"
+    assert not any(record["event"] == "archive" for record in records(queue))
+
+
+def test_archive_extends_stop_timeout_only_during_transfer(gq, host, monkeypatch, tmp_path):
+    root = tmp_path / "local"
+    root.mkdir()
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    q = make_queue(gq, host, monkeypatch)
+    plain = q.submit(spec())
+    ident = q.submit(dict(spec(), archive=[str(root / "results")]))
+    q.tick()
+    q.started(plain)
+    q.started(ident)
+    properties = [dict(value.removeprefix("--property=").split("=", 1)
+                       for value in args if value.startswith("--property="))
+                  for args in calls(host, "systemd-run")]
+    assert "NotifyAccess" not in properties[0] and properties[1]["NotifyAccess"] == "exec"
+    with tempfile.TemporaryDirectory(prefix="gq-notify-") as temporary:
+        address = str(Path(temporary) / "notify")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as receiver:
+            receiver.bind(address)
+            receiver.settimeout(2)
+            monkeypatch.setenv("NOTIFY_SOCKET", address)
+            q.finish(plain, "success")
+            receiver.setblocking(False)
+            with pytest.raises(BlockingIOError):
+                receiver.recv(1024)
+            receiver.settimeout(2)
+
+            def transfer(_job):
+                assert receiver.recv(1024) == b"EXTEND_TIMEOUT_USEC=60000000"
+                assert any(thread.name == "gq-archive-timeout" for thread in threading.enumerate())
+
+            monkeypatch.setattr(q, "archive", transfer)
+            q.finish(ident, "success")
+            assert not any(thread.name == "gq-archive-timeout" for thread in threading.enumerate())
 
 
 def test_execute_forwards_term_to_a_command_that_has_already_started(gq, host, monkeypatch):

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import importlib.util
 import json
 import math
 import os
@@ -17,9 +18,11 @@ import re
 import select
 import shutil
 import signal
+import socket
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -48,6 +51,53 @@ RETENTION = 24 * 3600
 
 class QueueError(Exception):
     pass
+
+
+def archive_module():
+    """Load the shared archiver from a checkout or its installed library path."""
+    if "nas_archive" not in sys.modules:
+        path = Path(SCRIPT).with_name("nas_archive.py")
+        if not path.is_file():
+            path = Path(SCRIPT).parent.parent / "lib" / "nas_archive.py"
+        spec = importlib.util.spec_from_file_location("nas_archive", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(spec.name, None)
+            raise
+    return sys.modules["nas_archive"]
+
+
+@contextlib.contextmanager
+def archive_stop_timeout():
+    """Extend only ExecStopPost's transfer, keeping the command's stop grace intact."""
+    address = os.environ.get("NOTIFY_SOCKET")
+    if not address:
+        yield
+        return
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    stopped = threading.Event()
+
+    def heartbeat():
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as channel:
+            channel.settimeout(1)
+            while not stopped.is_set():
+                try:
+                    channel.sendto(b"EXTEND_TIMEOUT_USEC=60000000", address)
+                except OSError:
+                    return
+                stopped.wait(20)
+
+    worker = threading.Thread(target=heartbeat, name="gq-archive-timeout", daemon=True)
+    worker.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        worker.join()
 
 
 def duration(value):
@@ -271,6 +321,13 @@ class Queue:
                 raise QueueError("--max для --interactive не больше 6h")
         if not spec["command"]:
             raise QueueError("после -- нужна команда")
+        if spec.get("archive"):
+            archiver = archive_module()
+            try:
+                spec["archive"] = [str(archiver.validate_source(path, require_absolute=True))
+                                   for path in spec["archive"]]
+            except archiver.ArchiveError as error:
+                raise QueueError(str(error)) from None
 
     def submit(self, spec, waiter=None):
         spec = dict(spec)
@@ -347,6 +404,63 @@ class Queue:
             return False
 
     def finish(self, job_id, result, exit_code="exited", exit_status="0", *, expected=None):
+        job = next((item for item in self.jobs() if item["id"] == job_id), None)
+        if job is None or not job.get("archive"):
+            return self._finish(job_id, result, exit_code, exit_status, expected=expected)
+        # ExecStopPost and recovery may observe the same completion concurrently.
+        # Serialize the slow copy separately; never hold queue.lock while copying.
+        with (self.home / "logs" / f"{job_id}.archive.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            job = self.get(job_id)
+            if (job["status"] in ACTIVE and job.get("start") is not None
+                    and not job.get("retry") and job.get("cancel_reason") != "cancelled"
+                    and (expected is None or (job["status"] == expected["status"]
+                                             and same_attempt(job, expected)))):
+                with archive_stop_timeout():
+                    self.archive(job)
+            self._finish(job_id, result, exit_code, exit_status, expected=expected)
+
+    def archive(self, job):
+        def cancelled():
+            return self.get(job["id"]).get("cancel_reason") == "cancelled"
+
+        # Recovery can run in a different submitter's process. Use this job's roots.
+        names = ("GOTHIC_LOCAL_ROOT", "GOTHIC_NAS_ROOT", "GOTHIC_NAS_MOUNTS")
+        saved = {name: os.environ.get(name) for name in names}
+        try:
+            for name in names:
+                if name in job["env"]:
+                    os.environ[name] = job["env"][name]
+                else:
+                    os.environ.pop(name, None)
+            for directory in job["archive"]:
+                if cancelled():
+                    break
+                size = 0
+                error = None
+                try:
+                    with (self.home / "logs" / f"{job['id']}.log").open("a") as output:
+                        with contextlib.redirect_stdout(output):
+                            size = archive_module().move(directory, cancelled=cancelled)
+                except Exception as exc:
+                    size = getattr(exc, "bytes", 0)
+                    error = " ".join(str(exc).splitlines())
+                outcome = "error" if error is not None else "moved"
+                line = (f"gq: warning: archive {directory}: {error} ({size} bytes)" if error is not None
+                        else f"gq: archived {directory} ({size} bytes)")
+                self.append_log(job["id"], line + "\n")
+                with self.transaction() as state:
+                    current = next(item for item in state["jobs"] if item["id"] == job["id"])
+                    self.event(current, "archive", directory=directory, outcome=outcome,
+                               bytes=size, error=error)
+        finally:
+            for name, value in saved.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+    def _finish(self, job_id, result, exit_code="exited", exit_status="0", *, expected=None):
         with self.transaction() as state:
             for job in state["jobs"]:
                 if job["id"] != job_id or job["status"] not in ACTIVE:
@@ -586,6 +700,9 @@ class Queue:
             "StandardOutput": "append:" + str(self.home / "logs" / f"{job['id']}.log"),
             "StandardError": "inherit",
         }
+        if job.get("archive"):
+            # ExecStopPost extends its own timeout while verifying the transfer.
+            props["NotifyAccess"] = "exec"
         if job.get("cpu_quota") is not None:
             props["CPUQuota"] = job["cpu_quota"]
         args = ["systemd-run", "--user", "--quiet", "--unit", "gq-" + job["id"]]
@@ -968,6 +1085,8 @@ def parser():
         r.add_argument("--cpu-quota", type=cpu_quota)
         r.add_argument("--max", type=duration, required=True)
         r.add_argument("--name", required=True)
+        r.add_argument("--archive", action="append", default=[], metavar="DIR",
+                       help="move results to NAS with verification after the command finishes")
         if name == "run":
             r.add_argument("--wait-max", type=float)
         r.add_argument("command", nargs=argparse.REMAINDER)
@@ -1014,6 +1133,8 @@ def main(argv=None):
                 "interactive": args.interactive,
                 "cpu_quota": args.cpu_quota, "max": args.max,
                 "name": args.name, "owner": owner(), "command": command}
+            if args.archive:
+                request["archive"] = args.archive
             if args.action == "submit":
                 return submit_job(queue, request)
             job_id = queue.submit(request, waiter)

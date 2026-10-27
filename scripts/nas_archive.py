@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Copy finished task directories to CIFS, verify contents, then remove the source."""
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import io
+import os
+from pathlib import Path
+import re
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+
+
+class ArchiveError(Exception):
+    def __init__(self, message, *, bytes=0):
+        super().__init__(message)
+        self.bytes = bytes
+
+
+def local_root():
+    return Path(os.environ.get("GOTHIC_LOCAL_ROOT", "~/gothic-ai")).expanduser().resolve()
+
+
+def validate_source(src, *, require_absolute=False):
+    path = Path(src)
+    if require_absolute and not path.is_absolute():
+        raise ArchiveError("source must be an absolute path inside the local root")
+    if path.expanduser().is_symlink():
+        raise ArchiveError("source must be a directory, not a symbolic link")
+    path = path.expanduser().resolve()
+    root = local_root()
+    if path == root or not path.is_relative_to(root):
+        raise ArchiveError(f"source must be below the local root: {root}")
+    return path
+
+
+def nas_mounted(root):
+    # Opening the directory first makes autofs mount CIFS before /proc/mounts is read.
+    with os.scandir(root):
+        pass
+    mounts = Path(os.environ.get("GOTHIC_NAS_MOUNTS", "/proc/mounts"))
+    for line in mounts.read_text().splitlines():
+        fields = line.split()
+        if len(fields) < 3 or fields[2] != "cifs":
+            continue
+        mount = Path(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), fields[1]))
+        if root == mount or root.is_relative_to(mount):
+            return True
+    return False
+
+
+def inventory(root):
+    files, directories, links = {}, set(), {}
+
+    def failed(error):
+        raise error
+
+    for directory, dirnames, filenames in os.walk(root, followlinks=False, onerror=failed):
+        for name in sorted(dirnames + filenames):
+            path = Path(directory) / name
+            if name.startswith("pytest-"):
+                if name in dirnames:
+                    dirnames.remove(name)
+                continue
+            relative = path.relative_to(root).as_posix()
+            info = path.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                links[relative] = os.readlink(path)
+                if name in dirnames:
+                    dirnames.remove(name)
+            elif stat.S_ISDIR(info.st_mode):
+                directories.add(relative)
+            elif stat.S_ISREG(info.st_mode):
+                files[relative] = (info.st_size, info.st_mtime_ns)
+            else:
+                raise ArchiveError(f"unsupported file type: {path}")
+    return files, directories, links
+
+
+def symlink_table(links):
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, delimiter="\t", lineterminator="\n")
+    writer.writerows(sorted(links.items()))
+    return output.getvalue()
+
+
+def digest(path):
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").digest()
+
+
+def verify(src, dest, snapshot, table):
+    if inventory(src) != snapshot:
+        raise ArchiveError("source changed during copying")
+    files, directories, links = snapshot
+    for relative in directories:
+        path = dest / relative
+        if path.is_symlink() or not path.is_dir():
+            raise ArchiveError(f"directory mismatch: {relative}")
+    for relative, (size, _mtime) in files.items():
+        path = dest / relative
+        if (path.is_symlink() or not path.is_file() or path.stat().st_size != size
+                or digest(src / relative) != digest(path)):
+            raise ArchiveError(f"checksum mismatch: {relative}")
+    if table is not None and (dest / ".symlinks.tsv").read_text() != table:
+        raise ArchiveError("checksum mismatch: .symlinks.tsv")
+    # Detect files created, removed or modified while checksums were being read.
+    if inventory(src) != snapshot:
+        raise ArchiveError("source changed during verification")
+
+
+def move(src, *, keep_local=False, dry_run=False, cancelled=None):
+    """Return verified data bytes; never remove local data before complete verification."""
+    size = 0
+    try:
+        source = validate_source(src)
+        if not source.is_dir():
+            raise ArchiveError(f"source directory does not exist: {source}")
+        if (source / ".symlinks.tsv").exists() or (source / ".symlinks.tsv").is_symlink():
+            raise ArchiveError("source contains reserved file .symlinks.tsv")
+        root = Path(os.environ.get("GOTHIC_NAS_ROOT", "/mnt/shared/gothic-ai")).expanduser().absolute()
+        destination = root / source.relative_to(local_root())
+        if root.resolve().is_relative_to(local_root()) or local_root().is_relative_to(root.resolve()):
+            raise ArchiveError("local and NAS roots must not overlap")
+        # CIFS cannot store links. Refuse a misleading destination on other filesystems too.
+        for path in (destination, *destination.parents):
+            if path.is_symlink():
+                raise ArchiveError(f"destination contains a symbolic link: {path}")
+        snapshot = inventory(source)
+        files, directories, links = snapshot
+        size = sum(info[0] for info in files.values())
+        for relative, target in sorted(links.items()):
+            print(f"nas_archive: symlink {relative!r} -> {target!r}", flush=True)
+        if dry_run:
+            print(f"nas_archive: would move {source} -> {destination} ({size} bytes)", flush=True)
+            return size
+        if not nas_mounted(root):
+            raise ArchiveError(f"NAS is not mounted as cifs: {root}")
+        table = symlink_table(links) if links else None
+        required = size + (len(table.encode()) if table is not None else 0)
+        # Already copied files consume NAS space; rsync can reuse those bytes on retry.
+        existing = 0
+        for relative in (*files, *directories, ".symlinks.tsv"):
+            path = destination / relative
+            if path.is_symlink():
+                raise ArchiveError(f"destination contains a symbolic link: {path}")
+            if relative in files and path.is_file():
+                existing += min(path.stat().st_size, files[relative][0])
+        if shutil.disk_usage(root).free < required - existing:
+            raise ArchiveError(f"not enough NAS space: need {required - existing} bytes")
+        if cancelled is not None and cancelled():
+            raise ArchiveError("archive cancelled")
+        destination.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["rsync", "--recursive", "--times", "--checksum", "--no-links", "--partial",
+             "--exclude=pytest-*", "--", str(source) + "/", str(destination) + "/"],
+            capture_output=True, text=True,
+        )
+        if result.returncode:
+            detail = " ".join((result.stderr or result.stdout).split())
+            raise ArchiveError(f"rsync failed ({result.returncode}): {detail}")
+        if table is not None:
+            (destination / ".symlinks.tsv").write_text(table)
+        verify(source, destination, snapshot, table)
+        if not nas_mounted(root):
+            raise ArchiveError(f"NAS is no longer mounted as cifs: {root}")
+        if cancelled is not None and cancelled():
+            raise ArchiveError("archive cancelled")
+        if not keep_local:
+            try:
+                shutil.rmtree(source)
+            except OSError as error:
+                raise ArchiveError(f"verified on NAS; local cleanup failed: {error}") from None
+        return size
+    except ArchiveError as error:
+        error.bytes = size
+        raise
+    except (OSError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+        raise ArchiveError(str(error) or "interrupted", bytes=size) from None
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    command = commands.add_parser("move")
+    command.add_argument("src")
+    command.add_argument("--keep-local", action="store_true")
+    command.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        size = move(args.src, keep_local=args.keep_local, dry_run=args.dry_run)
+        if not args.dry_run:
+            action = "copied and verified" if args.keep_local else "moved and verified"
+            print(f"nas_archive: {action} {args.src} ({size} bytes)")
+        return 0
+    except ArchiveError as error:
+        detail = " ".join(str(error).split())
+        print(f"nas_archive: {detail} ({error.bytes} bytes)", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    def interrupted(signum, _frame):
+        raise ArchiveError(f"interrupted by {signal.Signals(signum).name}")
+
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGHUP, interrupted)
+    sys.exit(main())
