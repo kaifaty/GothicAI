@@ -416,49 +416,44 @@ class Queue:
                     and not job.get("retry") and job.get("cancel_reason") != "cancelled"
                     and (expected is None or (job["status"] == expected["status"]
                                              and same_attempt(job, expected)))):
-                with archive_stop_timeout():
-                    self.archive(job)
+                if unit_cgroup(job_id):
+                    with archive_stop_timeout():
+                        self.archive(job)
+                else:
+                    error = "skipped after recovery; local data kept"
+                    for directory in job["archive"]:
+                        line = f"gq: warning: archive {directory}: {error} (0 bytes)"
+                        self.append_log(job_id, line + "\n")
+                        with self.transaction() as state:
+                            current = next(item for item in state["jobs"] if item["id"] == job_id)
+                            self.event(current, "archive", directory=directory, outcome="skipped",
+                                       bytes=0, error=error)
             self._finish(job_id, result, exit_code, exit_status, expected=expected)
 
     def archive(self, job):
         def cancelled():
             return self.get(job["id"]).get("cancel_reason") == "cancelled"
 
-        # Recovery can run in a different submitter's process. Use this job's roots.
-        names = ("GOTHIC_LOCAL_ROOT", "GOTHIC_NAS_ROOT", "GOTHIC_NAS_MOUNTS")
-        saved = {name: os.environ.get(name) for name in names}
-        try:
-            for name in names:
-                if name in job["env"]:
-                    os.environ[name] = job["env"][name]
-                else:
-                    os.environ.pop(name, None)
-            for directory in job["archive"]:
-                if cancelled():
-                    break
-                size = 0
-                error = None
-                try:
-                    with (self.home / "logs" / f"{job['id']}.log").open("a") as output:
-                        with contextlib.redirect_stdout(output):
-                            size = archive_module().move(directory, cancelled=cancelled)
-                except Exception as exc:
-                    size = getattr(exc, "bytes", 0)
-                    error = " ".join(str(exc).splitlines())
-                outcome = "error" if error is not None else "moved"
-                line = (f"gq: warning: archive {directory}: {error} ({size} bytes)" if error is not None
-                        else f"gq: archived {directory} ({size} bytes)")
-                self.append_log(job["id"], line + "\n")
-                with self.transaction() as state:
-                    current = next(item for item in state["jobs"] if item["id"] == job["id"])
-                    self.event(current, "archive", directory=directory, outcome=outcome,
-                               bytes=size, error=error)
-        finally:
-            for name, value in saved.items():
-                if value is None:
-                    os.environ.pop(name, None)
-                else:
-                    os.environ[name] = value
+        for directory in job["archive"]:
+            if cancelled():
+                break
+            size = 0
+            error = None
+            try:
+                with (self.home / "logs" / f"{job['id']}.log").open("a") as output:
+                    with contextlib.redirect_stdout(output):
+                        size = archive_module().move(directory, cancelled=cancelled)
+            except Exception as exc:
+                size = getattr(exc, "bytes", 0)
+                error = " ".join(str(exc).splitlines())
+            outcome = "error" if error is not None else "moved"
+            line = (f"gq: warning: archive {directory}: {error} ({size} bytes)" if error is not None
+                    else f"gq: archived {directory} ({size} bytes)")
+            self.append_log(job["id"], line + "\n")
+            with self.transaction() as state:
+                current = next(item for item in state["jobs"] if item["id"] == job["id"])
+                self.event(current, "archive", directory=directory, outcome=outcome,
+                           bytes=size, error=error)
 
     def _finish(self, job_id, result, exit_code="exited", exit_status="0", *, expected=None):
         with self.transaction() as state:

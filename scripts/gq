@@ -99,8 +99,7 @@ mv -f -- "$gq_profile_upload" "$HOME/gothic-ai/bin/gq.profile"
 
 def forward(host, argv):
     assignments = ["GQ_OWNER=" + owner()]
-    for name in ("GQ_HOME", "GQ_LEGACY_LOCK", "GQ_PROFILE",
-                 "GOTHIC_LOCAL_ROOT", "GOTHIC_NAS_ROOT", "GOTHIC_NAS_MOUNTS"):
+    for name in ("GQ_HOME", "GQ_LEGACY_LOCK", "GQ_PROFILE"):
         if name in os.environ:
             assignments.append(name + "=" + os.environ[name])
     command = ("exec env " + shlex.join(assignments)

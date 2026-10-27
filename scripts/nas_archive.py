@@ -156,8 +156,10 @@ def move(src, *, keep_local=False, dry_run=False, cancelled=None):
         if cancelled is not None and cancelled():
             raise ArchiveError("archive cancelled")
         destination.mkdir(parents=True, exist_ok=True)
+        # Repair interrupted copies even when their size and mtime match the source,
+        # without a pre-copy checksum read from NAS. SHA-256 verifies the result below.
         result = subprocess.run(
-            ["rsync", "--recursive", "--times", "--checksum", "--no-links", "--partial",
+            ["rsync", "--recursive", "--times", "--ignore-times", "--no-links", "--partial",
              "--exclude=pytest-*", "--", str(source) + "/", str(destination) + "/"],
             capture_output=True, text=True,
         )

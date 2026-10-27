@@ -1554,6 +1554,7 @@ def test_archive_after_command_preserves_exit_code_and_logs_each_result(
     assert second.exists() and not (nas / "second").exists()
     assert gq.execute(q, ident) == code
     assert second.exists(), "transfer must start after the command completes"
+    monkeypatch.setattr(gq, "unit_cgroup", lambda job_id: f"/gq-{job_id}.service")
     q.finish(ident, "success" if code == 0 else "exit-code", "exited", str(code))
     assert q.get(ident)["code"] == code
     assert not second.exists() and (nas / "second" / "data").read_bytes() == b"second"
@@ -1571,6 +1572,40 @@ def test_archive_after_command_preserves_exit_code_and_logs_each_result(
     output = capsys.readouterr().out
     assert "6 bytes" in output and str(second) in output
     assert ("warning: archive" in output) == first_missing
+
+
+def test_reconcile_missing_unit_skips_archive_from_another_process(gq, host, monkeypatch, tmp_path):
+    root = tmp_path / "local"
+    source = root / "results"
+    source.mkdir(parents=True)
+    (source / "data").write_bytes(b"keep")
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    q = make_queue(gq, host, monkeypatch)
+    ident = q.submit(dict(spec(), archive=[str(source)]))
+    q.tick()
+    assert q.started(ident)
+    with q.transaction() as state:
+        state["jobs"][0]["reserved"] -= 10
+    (host["systemd"] / f"gq-{ident}.json").unlink()
+    moved = tmp_path / "move-called"
+    recovery = (
+        "import gq\nfrom pathlib import Path\n"
+        f"gq.archive_module().move = lambda *args, **kwargs: Path({str(moved)!r}).write_text('called')\n"
+        f"gq.Queue(proc_locks={str(host['locks'])!r}).reconcile()\n"
+    )
+    result = subprocess.run([sys.executable, "-c", recovery], cwd=SCRIPT.parent,
+                            env={**host["env"], "GQ_OWNER": "another-process"},
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert not moved.exists()
+    assert (source / "data").read_bytes() == b"keep"
+    assert q.get(ident)["status"] == "failed"
+    assert q.get(ident)["code"] == 1
+    outcomes = [record for record in records(q) if record["event"] == "archive"]
+    assert [(record["directory"], record["outcome"], record["bytes"]) for record in outcomes] == [
+        (str(source), "skipped", 0)]
+    line = f"gq: warning: archive {source}: skipped after recovery; local data kept (0 bytes)"
+    assert (q.home / "logs" / f"{ident}.log").read_text() == line + "\n"
 
 
 @pytest.mark.parametrize("running", [False, True])
@@ -1621,6 +1656,7 @@ def test_archive_extends_stop_timeout_only_during_transfer(gq, host, monkeypatch
                 assert any(thread.name == "gq-archive-timeout" for thread in threading.enumerate())
 
             monkeypatch.setattr(q, "archive", transfer)
+            monkeypatch.setattr(gq, "unit_cgroup", lambda job_id: f"/gq-{job_id}.service")
             q.finish(ident, "success")
             assert not any(thread.name == "gq-archive-timeout" for thread in threading.enumerate())
 
