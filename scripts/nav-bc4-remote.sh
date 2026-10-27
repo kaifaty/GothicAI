@@ -78,9 +78,8 @@ python3 -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home())
 python="$task/.venv/bin/python"
 if [[ "$stage" == smoke ]]; then
   rm -f -- "$archive/smoke/passed"
-  if [[ ! -x "$python" ]]; then uv venv --python 3.12 "$task/.venv"; fi
-  uv pip install --python "$python" numpy pytest
-  uv pip install --python "$python" 'torch==2.9.1+cu128' --index-url https://download.pytorch.org/whl/cu128
+  source "$task/source/scripts/ryzen-venv.sh"
+  ryzen_task_venv "$task/.venv"
   "$python" -B -m pytest -q -p no:cacheprovider \
     scripts/tests/test_nav_bc_data.py scripts/tests/test_nav_bc_model.py \
     scripts/tests/test_nav_bc_train.py scripts/tests/test_nav_bc_contract.py scripts/tests/test_nav_rl.py
