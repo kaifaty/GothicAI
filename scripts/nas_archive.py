@@ -220,13 +220,15 @@ def move(src, *, keep_local=False, dry_run=False, cancelled=None,
             raise ArchiveError(f"NAS is no longer mounted as cifs: {root}")
         if cancelled is not None and cancelled():
             raise ArchiveError("archive cancelled")
+        if attempt is not None:
+            # Seal verified data before cleanup can remove or partially remove the
+            # source. A later task at the same path must never resume this copy.
+            (destination / INCOMPLETE_MARKER).unlink()
         if not keep_local:
             try:
                 shutil.rmtree(source)
             except OSError as error:
                 raise ArchiveError(f"verified on NAS; local cleanup failed: {error}") from None
-        if attempt is not None:
-            (destination / INCOMPLETE_MARKER).unlink()
         return size
     except ArchiveError as error:
         error.bytes = size

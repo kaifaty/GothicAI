@@ -88,8 +88,10 @@ exit "$result"'
       "${SSH[@]}" 'exec /usr/bin/python3 "$HOME/gothic-ai/lib/ryzen_janitor.py" --dry-run'
     else
       "${SSH[@]}" 'set -eu
-systemctl --user start gothic-janitor.service
-cat "$HOME/gothic-ai/.janitor/last.json"'
+result=0
+systemctl --user start gothic-janitor.service || result=$?
+cat "$HOME/gothic-ai/.janitor/last.json"
+exit "$result"'
     fi
     ;;
   *) usage ;;

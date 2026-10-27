@@ -198,10 +198,14 @@ def test_custom_destination_cli_never_overwrites_existing_data(archive, roots, c
 
     roots.source.mkdir()
     (roots.source / "new.txt").write_bytes(b"new task")
-    for dry_run in (False, True):
-        with pytest.raises(archive.ArchiveError, match="already exists"):
-            archive.move(roots.source, destination_relative="archive/task-20261028",
-                         attempt_id="janitor-attempt", dry_run=dry_run)
+    marker = destination / archive.INCOMPLETE_MARKER
+    for empty_marker in (False, True):
+        if empty_marker:
+            marker.write_text("")
+        for dry_run in (False, True):
+            with pytest.raises(archive.ArchiveError, match="already exists"):
+                archive.move(roots.source, destination_relative="archive/task-20261028",
+                             attempt_id="janitor-attempt", dry_run=dry_run)
     assert (roots.source / "new.txt").read_bytes() == b"new task"
     assert not (destination / "new.txt").exists()
 
@@ -244,3 +248,30 @@ def test_custom_destination_rejects_unsafe_paths(archive, roots):
     (roots.nas / "alias").symlink_to(roots.local, target_is_directory=True)
     with pytest.raises(archive.ArchiveError, match="symbolic link"):
         archive.move(roots.source, destination_relative="alias/task", attempt_id="token")
+
+
+def test_verified_archive_is_sealed_before_interrupted_local_cleanup(archive, roots, monkeypatch):
+    destination = roots.nas / "archive" / "task-20261028"
+    options = {"destination_relative": "archive/task-20261028", "attempt_id": "stable-token"}
+    remove = archive.shutil.rmtree
+
+    def remove_then_fail(path):
+        assert not (destination / archive.INCOMPLETE_MARKER).exists()
+        remove(path)
+        raise OSError("interrupted after source removal")
+
+    monkeypatch.setattr(archive.shutil, "rmtree", remove_then_fail)
+    with pytest.raises(archive.ArchiveError, match="verified on NAS; local cleanup failed"):
+        archive.move(roots.source, **options)
+    assert not roots.source.exists()
+    assert not (destination / archive.INCOMPLETE_MARKER).exists()
+    original = {str(path.relative_to(destination)): path.read_bytes()
+                for path in destination.rglob("*") if path.is_file()}
+
+    roots.source.mkdir()
+    (roots.source / "first.txt").write_bytes(b"new task at the same source path")
+    with pytest.raises(archive.ArchiveError, match="already exists"):
+        archive.move(roots.source, **options)
+    assert (roots.source / "first.txt").read_bytes() == b"new task at the same source path"
+    assert {str(path.relative_to(destination)): path.read_bytes()
+            for path in destination.rglob("*") if path.is_file()} == original

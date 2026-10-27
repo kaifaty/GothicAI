@@ -55,6 +55,7 @@ def host(tmp_path, monkeypatch, janitor):
     monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
     monkeypatch.setenv("GOTHIC_NAS_ROOT", str(nas))
     monkeypatch.setenv("GOTHIC_NAS_MOUNTS", str(mounts))
+    monkeypatch.delenv("GQ_HOME", raising=False)
     host = SimpleNamespace(root=root, nas=nas, uv_cache=uv_cache, proc=proc,
                            mounts=mounts, stamp=stamp, uv=tmp_path / "fake-uv",
                            free=200 * 1024**3, calls=[], uv_busy=False,
@@ -212,7 +213,7 @@ def test_codex_check_skips_process_and_recent_depth_two(host):
     assert all((host.root / "codex-check" / name).exists() for name in ("cwd", "fd", "recent"))
 
 
-def test_rebuildable_dirs_removed_but_unmarked_build_archived(host):
+def test_rebuildable_dirs_removed_but_unmarked_build_archived(host, janitor):
     task = host.task("finished")
     rebuildable = [".venv", "nested/build", "cmake-build-debug", "_deps", "__pycache__",
                    ".pytest_cache", "pytest-123"]
@@ -228,6 +229,7 @@ def test_rebuildable_dirs_removed_but_unmarked_build_archived(host):
     (task / "nested" / ".venv").mkdir()
     (task / "nested" / ".venv" / "data.bin").write_bytes(b"not a venv")
     age_tree(task)
+    original_bytes = janitor.tree_bytes(task)
     cleaner = host.cleaner()
     assert cleaner.run() == 0
     destination = host.nas / "archive" / "finished-20261028"
@@ -237,11 +239,14 @@ def test_rebuildable_dirs_removed_but_unmarked_build_archived(host):
     assert all(not (destination / name).exists() for name in rebuildable)
     assert cleaner.summary["moved"] == 1
     assert cleaner.summary["deleted"] >= len(rebuildable)
+    assert cleaner.summary["freed_bytes"] == original_bytes
     assert json.loads((host.root / ".janitor" / "last.json").read_text())["moved"] == 1
 
 
 def test_archive_never_overwrites_existing_destination_and_continues(host):
     task = host.task("conflict")
+    (task / "__pycache__").mkdir()
+    age_tree(task)
     destination = host.nas / "archive" / "conflict-20261028"
     destination.mkdir(parents=True)
     (destination / "result.bin").write_bytes(b"unrelated")
@@ -252,24 +257,52 @@ def test_archive_never_overwrites_existing_destination_and_continues(host):
     assert (destination / "result.bin").read_bytes() == b"unrelated"
     assert (host.nas / "archive" / "other-20261028" / "result.bin").read_bytes() == b"task data"
     assert len(cleaner.summary["errors"]) == 1
-
-
-def test_interrupted_archive_resumes_same_destination_next_day(host):
-    task = host.task("retry")
-    host.interrupt_copy = True
-    assert host.cleaner().run() == 1
-    destination = host.nas / "archive" / "retry-20261028"
-    assert task.exists() and (destination / ".janitor-incomplete.json").is_file()
+    assert "conflict" not in json.loads((host.root / ".janitor" / "attempts.json").read_text())
     cleaner = host.cleaner()
     cleaner.now = NOW + DAY
     assert cleaner.run() == 0
     assert not task.exists()
-    assert (destination / "result.bin").read_bytes() == b"task data"
+    assert (host.nas / "archive" / "conflict-20261029" / "result.bin").read_bytes() == b"task data"
+    assert (destination / "result.bin").read_bytes() == b"unrelated"
+
+
+@pytest.mark.parametrize("phase", ["copy", "marker"])
+def test_interrupted_archive_resumes_same_destination_next_day(host, monkeypatch, phase):
+    task = host.task("retry")
+    (task / "__pycache__").mkdir()
+    age_tree(task)
+    if phase == "copy":
+        host.interrupt_copy = True
+    else:
+        original_open = Path.open
+
+        def interrupt_marker(path, *args, **kwargs):
+            if path.name == ".janitor-incomplete.json" and args == ("x",):
+                raise OSError("interrupted marker creation")
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", interrupt_marker)
+    assert host.cleaner().run() == 1
+    destination = host.nas / "archive" / "retry-20261028"
+    assert task.exists() and destination.exists()
+    if phase == "copy":
+        assert (destination / ".janitor-incomplete.json").is_file()
+    else:
+        monkeypatch.setattr(Path, "open", original_open)
+        assert not (destination / ".janitor-incomplete.json").exists()
+    cleaner = host.cleaner()
+    cleaner.now = NOW + DAY
+    assert cleaner.run() == 0
+    assert not task.exists()
+    completed = destination if phase == "copy" else host.nas / "archive" / "retry-20261029"
+    assert (completed / "result.bin").read_bytes() == b"task data"
     assert not (destination / ".janitor-incomplete.json").exists()
-    assert not (host.nas / "archive" / "retry-20261029").exists()
+    if phase == "copy":
+        assert not (host.nas / "archive" / "retry-20261029").exists()
 
 
-def test_unmounted_nas_still_removes_rebuildable_and_cleans_uv(host):
+@pytest.mark.parametrize("reactivated", [False, True])
+def test_unmounted_nas_still_removes_rebuildable_and_cleans_uv(host, reactivated):
     task = host.task("offline")
     cache = task / "__pycache__"
     cache.mkdir()
@@ -286,6 +319,17 @@ def test_unmounted_nas_still_removes_rebuildable_and_cleans_uv(host):
     assert not (host.uv_cache / "cached-wheel").exists()
     assert cleaner.summary["moved"] == 0
     assert sum(cleaner.summary["skipped"].values()) >= 1
+    assert cleaner.summary["freed_bytes"] == len(b"cached") + len(b"wheel")
+    host.mounts.write_text(f"//fake/share {host.nas} cifs rw 0 0\n")
+    if reactivated:
+        (task / "new-work").write_text("working again")
+        os.utime(task, (NOW + 3600, NOW + 3600))
+        os.utime(task / "new-work", (NOW + 3600, NOW + 3600))
+    cleaner = host.cleaner()
+    cleaner.now = NOW + 6 * 3600
+    assert cleaner.run() == 0
+    assert task.exists() == reactivated
+    assert cleaner.summary["moved"] == (0 if reactivated else 1)
 
 
 @pytest.mark.parametrize("weekly", [True, False])
@@ -340,9 +384,45 @@ def test_dry_run_prints_plan_and_changes_nothing(host, capsys):
     assert {str(root): snapshot(root) for root in (host.root, host.nas, host.uv_cache)} == before
     assert host.calls == []
     output = capsys.readouterr().out
-    assert "dry-task" in output and "bytes" in output
-    assert "e2e/old" in output and "codex-check/old" in output
-    assert "uv" in output
+    assert f"would delete {cache} (6 bytes; idle task; rebuildable)" in output
+    assert f"would move {task} (9 bytes; idle task -> " in output
+    assert output.count(f"would move {task}") == 1
+    assert f"would delete {host.root / 'e2e/old'} (9 bytes; idle e2e; rebuildable)" in output
+    assert f"would delete {host.root / 'codex-check/old'} (9 bytes; idle codex-check; rebuildable)" in output
+    assert f"would clean {host.uv_cache} (6 bytes; weekly or free space below 60 GiB)" in output
+
+
+@pytest.mark.parametrize("activity", ["fresh", "process", "queue", "modified", "vanished"])
+def test_task_activity_during_transfer_is_a_skip(host, janitor, monkeypatch, activity):
+    task = host.task("resumed-work")
+    original_run = janitor.subprocess.run
+
+    def resume_work(command, **kwargs):
+        result = original_run(command, **kwargs)
+        if command[0] == "rsync":
+            if activity in {"fresh", "vanished"}:
+                os.utime(task, (NOW, NOW))
+            elif activity == "process":
+                host.process(task)
+            elif activity == "queue":
+                queue = host.root / "queue"
+                queue.mkdir()
+                (queue / "state.json").write_text(json.dumps({"version": 1, "jobs": [
+                    {"status": "running", "command": [str(task / "work.py")]}]}))
+            else:
+                (task / "result.bin").write_bytes(b"new work")
+                os.utime(task / "result.bin", (NOW, NOW))
+            if activity == "vanished":
+                return subprocess.CompletedProcess(command, 24, "", "some source files vanished")
+        return result
+
+    monkeypatch.setattr(janitor.subprocess, "run", resume_work)
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert task.exists()
+    assert cleaner.summary["errors"] == []
+    assert cleaner.summary["moved"] == 0
+    assert cleaner.summary["skipped"][{"queue": "active gq job", "modified": "fresh", "vanished": "fresh"}.get(activity, activity)] == 1
 
 
 def test_task_activity_rechecked_before_first_deletion(host, janitor, monkeypatch):
@@ -384,3 +464,25 @@ def test_symlinks_do_not_redirect_cleanup_outside_allowed_roots(host):
     assert (external / "precious.bin").read_bytes() == b"keep outside"
     assert (external / "pyvenv.cfg").exists()
     assert (task / ".venv").is_symlink()
+
+
+def test_run_prints_summary_when_service_fails(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    state = home / "gothic-ai" / ".janitor"
+    state.mkdir(parents=True)
+    summary = '{"errors": ["copy failed"]}\n'
+    (state / "last.json").write_text(summary)
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    ssh = binaries / "ssh"
+    ssh.write_text("#!/bin/sh\nfor argument do command=$argument; done\nexec /bin/sh -c \"$command\"\n")
+    systemctl = binaries / "systemctl"
+    systemctl.write_text('#!/bin/sh\n[ "$*" = "--user start gothic-janitor.service" ] || exit 90\nexit 1\n')
+    for executable in (ssh, systemctl):
+        executable.chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(binaries) + os.pathsep + os.environ["PATH"])
+    result = subprocess.run(["bash", str(SCRIPT.with_name("ryzen-janitor.sh")), "run"],
+                            capture_output=True, text=True)
+    assert result.returncode == 1
+    assert result.stdout == summary

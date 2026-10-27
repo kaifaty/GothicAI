@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import fcntl
 import fnmatch
+import io
 import json
 import os
 from pathlib import Path
@@ -103,6 +104,7 @@ class Janitor:
         self.dry_run = dry_run
         self.state = self.root / ".janitor"
         self.touched = {}
+        self.attempts = {}
         self.summary = dict(freed_bytes=0, deleted=0, moved=0, skipped={}, errors=[], dry_run=dry_run)
 
     def log(self, action, path, reason, size=0):
@@ -126,6 +128,14 @@ class Janitor:
         if kind == "task" and marker.exists():
             latest = max(latest, marker.lstat().st_mtime)
         return latest
+
+    def save_attempts(self):
+        # Ignore only our exact deletion timestamps, including after a restart.
+        self.attempts[".touched"] = {
+            str(path.relative_to(self.root)): times for path, times in self.touched.items()
+            if path.exists() and path.lstat().st_mtime_ns == times[0]
+        }
+        atomic_json(self.state / "attempts.json", self.attempts)
 
     def queued(self, path):
         try:
@@ -179,15 +189,18 @@ class Janitor:
             return False
         self.log("would delete" if self.dry_run else "delete", path, f"idle {kind}; rebuildable", size)
         if not self.dry_run:
-            parent = path.parent
-            before = parent.stat().st_mtime_ns
-            changed, original = self.touched.get(parent, (None, None))
-            if changed == before:
-                before = original
+            if owner is not None:
+                parent = path.parent
+                before = parent.stat().st_mtime_ns
+                changed, original = self.touched.get(parent, (None, None))
+                if changed == before:
+                    before = original
             shutil.rmtree(path)
-            # Our removals change parent mtimes; ignore only these exact timestamps
-            # on subsequent activity checks, without writing old times over real work.
-            self.touched[parent] = (parent.stat().st_mtime_ns, before)
+            self.summary["freed_bytes"] += size
+            if owner is not None:
+                # Never write old times over real work; ignore our exact timestamps.
+                self.touched[parent] = (parent.stat().st_mtime_ns, before)
+                self.save_attempts()
         self.summary["deleted"] += 1
         return True
 
@@ -253,30 +266,52 @@ class Janitor:
         if not mounted:
             self.skip(path, "NAS not mounted")
             return
-        pending = self.state / "attempts.json"
-        attempts = json.loads(pending.read_text()) if pending.exists() else {}
         identity = [path.stat().st_dev, path.stat().st_ino]
-        attempt = attempts.get(path.name)
+        attempt = self.attempts.get(path.name)
+        if attempt is not None and attempt.get("identity") == identity:
+            try:
+                nas_archive.check_attempt(nas_root / attempt["destination_relative"],
+                                          {"source": str(path.resolve()), "attempt_id": attempt["attempt_id"]})
+            except nas_archive.ArchiveError:
+                # An unmarked destination is never ours to overwrite or resume.
+                self.attempts.pop(path.name)
+                if not self.dry_run:
+                    self.save_attempts()
+                attempt = None
         if attempt is None or attempt.get("identity") != identity:
             date = time.strftime("%Y%m%d", time.localtime(self.now))
             attempt = dict(destination_relative=f"archive/{path.name}-{date}",
                            attempt_id=uuid.uuid4().hex, identity=identity)
         size = tree_bytes(path)
+        if self.dry_run:
+            size -= sum(tree_bytes(cache) for cache in self.rebuildable(path))
         reason = self.reason(path, "task")
         if reason:
             self.skip(path, reason)
             return
+        nas_archive.check_attempt(nas_root / attempt["destination_relative"],
+                                  {"source": str(path.resolve()), "attempt_id": attempt["attempt_id"]})
         if not self.dry_run:
-            attempts[path.name] = attempt
-            atomic_json(pending, attempts)
+            self.attempts[path.name] = attempt
+            self.save_attempts()
         self.log("would move" if self.dry_run else "move", path,
                  f"idle task -> {nas_root / attempt['destination_relative']}", size)
-        nas_archive.move(path, destination_relative=attempt["destination_relative"],
-                         attempt_id=attempt["attempt_id"], dry_run=self.dry_run,
-                         cancelled=lambda: self.reason(path, "task") is not None)
+        try:
+            # The archive dry-run sees caches that our deletion plan already excludes.
+            with contextlib.redirect_stdout(io.StringIO()) if self.dry_run else contextlib.nullcontext():
+                nas_archive.move(path, destination_relative=attempt["destination_relative"],
+                                 attempt_id=attempt["attempt_id"], dry_run=self.dry_run,
+                                 cancelled=lambda: self.reason(path, "task") is not None)
+        except nas_archive.ArchiveError:
+            reason = self.reason(path, "task")
+            if reason in {"fresh", "process", "active gq job", ".keep"}:
+                self.skip(path, reason)
+                return
+            raise
         if not self.dry_run:
-            attempts.pop(path.name, None)
-            atomic_json(pending, attempts)
+            self.summary["freed_bytes"] += size
+            self.attempts.pop(path.name, None)
+            self.save_attempts()
         self.summary["moved"] += 1
 
     def tasks(self):
@@ -328,6 +363,8 @@ class Janitor:
             raise RuntimeError(f"uv cache clean failed ({result.returncode}): {detail}")
         atomic_json(marker, {"time": self.now})
         os.utime(marker, (self.now, self.now), follow_symlinks=False)
+        remaining = tree_bytes(self.uv_cache) if self.uv_cache.exists() else 0
+        self.summary["freed_bytes"] += max(0, size - remaining)
 
     def finish(self, save=True):
         if save and not self.dry_run:
@@ -355,15 +392,16 @@ class Janitor:
                     raise ValueError("refusing a symlink for janitor state")
                 if not self.dry_run:
                     self.state.mkdir(exist_ok=True, mode=0o700)
-                free_before = shutil.disk_usage(self.root).free if not self.dry_run else None
+                pending = self.state / "attempts.json"
+                self.attempts = json.loads(pending.read_text()) if pending.exists() else {}
+                self.touched = {self.root / relative: times
+                                for relative, times in self.attempts.pop(".touched", {}).items()}
                 for action in (lambda: self.ephemeral("e2e"), lambda: self.ephemeral("codex-check"),
                                self.tasks, self.clean_uv):
                     try:
                         action()
                     except Exception as error:
                         self.error(self.root, error)
-                if not self.dry_run:
-                    self.summary["freed_bytes"] = max(0, shutil.disk_usage(self.root).free - free_before)
                 return self.finish()
         except Exception as error:
             self.error(self.root, error)
