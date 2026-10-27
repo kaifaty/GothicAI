@@ -114,8 +114,8 @@ if [[ "$phase" == retry-build ]]; then
   exit 0
 fi
 [[ "$phase" == build ]] || { echo "Unknown phase: $phase" >&2; exit 2; }
-source "$task/source/scripts/ryzen-venv.sh"
-ryzen_task_venv "$task/.venv"
+if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv "$task/.venv"; fi
+uv pip install --python "$task/.venv/bin/python" numpy pytest
 cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DOPENGOTHIC_JOLT_X86=x86-64-v3 \

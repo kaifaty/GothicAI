@@ -118,6 +118,7 @@ install_env() {
   remote_script "$REMOTE" <<'REMOTE_SCRIPT'
 set -euo pipefail
 task_root="$HOME/$1"
+[[ -d "$task_root/.venv" ]] || "$HOME/.local/bin/uv" venv --python 3.12 "$task_root/.venv"
 # A private environment; shared cached wheels may be hard-linked without changing
 # any service environment. CUDA stays disabled in all default stage-7 commands.
 export PATH="$HOME/.local/bin:$PATH"

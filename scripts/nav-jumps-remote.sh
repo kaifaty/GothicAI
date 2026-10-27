@@ -70,8 +70,10 @@ export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
 export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
 export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1
 df -h "$HOME"
-source "$task/source/scripts/ryzen-venv.sh"
-ryzen_task_venv "$task/.venv"
+if [[ ! -x "$task/.venv/bin/python" ]]; then
+  uv venv "$task/.venv"
+fi
+uv pip install --python "$task/.venv/bin/python" numpy pytest
 cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DOPENGOTHIC_JOLT_X86=x86-64-v3 \

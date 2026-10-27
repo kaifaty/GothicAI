@@ -86,7 +86,8 @@ def test_existing_environment_preserves_installed_torch(host, tmp_path, version)
         assert result.stderr.count("Warning:") == 1
         assert all(value in result.stderr for value in (str(venv), version, "2.14.1"))
         assert calls(host) == [
-            ["pip", "install", "--python", str(venv / "bin/python"), "--no-deps", "scipy"],
+            ["pip", "install", "--python", str(venv / "bin/python"),
+             "torch==2.9.1+cu128", "scipy"],
         ]
         Path(host["UV_CALLS"]).write_text("")
         assert run(host, venv).stderr.count("Warning:") == 1

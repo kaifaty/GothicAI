@@ -51,8 +51,8 @@ export UV_CACHE_DIR="$HOME/.cache/uv"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 OPENGOTHIC_BODY_TRACE=0
 cd "$task/source"
 if [[ "$stage" == build ]]; then
-  source "$task/source/scripts/ryzen-venv.sh"
-  ryzen_task_venv "$task/.venv"
+  if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv "$task/.venv"; fi
+  uv pip install --python "$task/.venv/bin/python" numpy pytest
   cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DOPENGOTHIC_JOLT_X86=x86-64-v3 \

@@ -28,7 +28,7 @@ version(re.split(r"[<>=!~\[;\s]", sys.argv[1], maxsplit=1)[0])' "$package" >/dev
       fi
     done
     if [[ ${#missing[@]} -gt 0 ]]; then
-      uv pip install --python "$python" --no-deps "${missing[@]}" || return
+      uv pip install --python "$python" "torch==$installed" "${missing[@]}" || return
     fi
     return 0
   fi

@@ -26,8 +26,8 @@ export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
 export OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1
 df -h "$HOME"
 cd "$task/source"
-source "$task/source/scripts/ryzen-venv.sh"
-ryzen_task_venv "$task/.venv"
+if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv "$task/.venv"; fi
+uv pip install --python "$task/.venv/bin/python" numpy pytest
 if [[ "$stage" != prepare && "$stage" != evaluate && "$stage" != visible && "$stage" != oracle-resume ]]; then
   cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
