@@ -10,6 +10,8 @@
 #include <Tempest/Except>
 #include <Tempest/Log>
 
+#include <chrono>
+
 using namespace Tempest;
 
 struct SoundEffect::Impl {
@@ -83,7 +85,13 @@ struct SoundEffect::Impl {
 
   static ALsizei bufferCallback(ALvoid *userptr, ALvoid *sampledata, ALsizei numbytes) noexcept {
     auto& self = *reinterpret_cast<Impl*>(userptr);
+    const auto start = std::chrono::steady_clock::now();
     self.renderSound(reinterpret_cast<int16_t*>(sampledata), numbytes/(sizeof(int16_t)*2));
+    const auto end = std::chrono::steady_clock::now();
+    if(end-start>std::chrono::milliseconds(20) && end>=self.nextSlowRenderLog) {
+      self.nextSlowRenderLog = end+std::chrono::seconds(1);
+      Log::i("audio: render callback took ", std::chrono::duration_cast<std::chrono::milliseconds>(end-start).count(), " ms");
+      }
     return numbytes;
     }
 
@@ -102,6 +110,7 @@ struct SoundEffect::Impl {
   uint32_t                       stream = 0;
 
   std::unique_ptr<SoundProducer> producer;
+  std::chrono::steady_clock::time_point nextSlowRenderLog = std::chrono::steady_clock::time_point::min();
   };
 
 SoundProducer::SoundProducer(uint16_t frequency, uint16_t channels)
