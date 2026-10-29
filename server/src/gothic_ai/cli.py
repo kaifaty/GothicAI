@@ -988,7 +988,7 @@ async def serve(args: argparse.Namespace) -> int:
                 else:
                     artist = Artist()
             state.feats = Feats(
-                link, state.chronicle, llm, journal=journal,
+                link, state.chronicle, llm, journal=journal, places=place_book,
                 gather_s=1 if args.scenario == "feats" else 20,
                 artist=artist, image_wait_s=30 if args.scenario == "feats" else 150,
             )

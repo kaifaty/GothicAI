@@ -19,6 +19,8 @@ from .feat_art import Artist, Picture
 from .game import GameError, GameLink
 from .journal import Journal
 from .llm import LLMBackend, LLMError, Message, Tool, ToolCall
+from .npc_tools import guild_name
+from .places import PlaceBook
 from .protocol import FeatToastCmd, GameMessage, Loading, Session
 
 log = logging.getLogger(__name__)
@@ -32,7 +34,7 @@ CATEGORY_ICONS = Path(__file__).resolve().parent / "assets/feats/categories"
 # internal bookkeeping rather than something the hero saw. All unlisted kinds stay private.
 HERO_FIELDS: dict[str, frozenset[str]] = {
     "died": frozenset(),  # Special case below: only the victim and the hero's own kill.
-    "crime": frozenset({"witnesses"}),  # The hero does not know who witnessed a crime.
+    "crime": frozenset({"witnesses", "place"}),  # Witness knowledge and raw coordinates.
     "contract": frozenset(),
     "contract_kill": frozenset(),
     "contract_done": frozenset(),
@@ -153,7 +155,10 @@ def hero_view(seq: int, fact: Fact) -> Fact | None:
     if kind == "died":
         if fact.get("killer") != "PLAYER":
             return None
-        return {k: v for k, v in fact.items() if k in {"fact", "npc", "name", "monster"}}
+        return {
+            k: v for k, v in fact.items()
+            if k in {"fact", "npc", "name", "monster", "guild", "waypoint"}
+        }
     if kind == "surrender" and fact.get("status") not in {"spared", "attacked"}:
         return None
     return {k: v for k, v in fact.items() if k not in HERO_FIELDS[kind]}
@@ -319,12 +324,14 @@ class Feats:
         self, link: GameLink, chronicle: Chronicle, llm: LLMBackend, *,
         journal: Journal | None = None, gather_s: float = 20,
         artist: Artist | None = None, image_wait_s: float = 150,
+        places: PlaceBook | None = None,
     ) -> None:
         self.link, self.chronicle = link, chronicle
         self.model = ChroniclerModel(llm)
         self.journal = journal or Journal()
         self.gather_s = gather_s
         self.artist, self.image_wait_s = artist, image_wait_s
+        self.places = places
         self._work: asyncio.Task[None] | None = None
         self._drawings: set[asyncio.Task[Picture | None]] = set()
         self._toasts: set[asyncio.Task[None]] = set()
@@ -452,11 +459,23 @@ class Feats:
             log.info("feats: dropped occasion #%s: %s", occasion.seq, reason)
             return
         previous = self.feats
+
+        def describe(fact: Fact) -> str:
+            view = dict(fact)
+            if fact["fact"] == "died" and "guild" in fact:
+                view["кто"] = guild_name(fact["guild"])
+            if fact["fact"] == "crime" and "victim_guild" in fact:
+                view["кто жертва"] = guild_name(fact["victim_guild"])
+            if self.places is not None and (place := self.places.of(fact.get("waypoint"))):
+                view["где"] = place.where_ru
+            return json.dumps(view, ensure_ascii=False)
+
         view = hero_view(occasion.seq, occasion.fact)
+        assert view is not None
         brief = "\n".join([
-            f"Повод: #{occasion.seq} {occasion.fact['fact']} " + json.dumps(view, ensure_ascii=False),
+            f"Повод: #{occasion.seq} {occasion.fact['fact']} " + describe(view),
             "Окно фактов героя:",
-            *[f"#{seq} {f['fact']} " + json.dumps(f, ensure_ascii=False) for seq, f in window],
+            *[f"#{seq} {f['fact']} " + describe(f) for seq, f in window],
             "Прежние достижения этой ветки (название; строка; номер повода):",
             *[f"{f['title']}; {f['text']}; #{f['trigger']}" for f in previous],
         ])
