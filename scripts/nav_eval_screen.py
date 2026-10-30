@@ -9,6 +9,7 @@ from itertools import combinations
 import json
 import math
 from pathlib import Path
+import shutil
 import statistics
 
 import nav_rl as rl
@@ -30,6 +31,32 @@ SOURCE_PATHS = {
 
 def identity(value):
     return value["family"] + "/" + value["id"]
+
+
+def reuse_runner(source, runs, output):
+    """Copy a matching finished runner from this screen's own NAS results."""
+    digest = hashlib.sha256()
+    paths = sorted(path for path in (source / "OpenGothic").rglob("*") if path.is_file())
+    # Include the launcher so any compiler/configuration change invalidates reuse.
+    paths.append(source / "scripts/nav-eval-screen-remote.sh")
+    for path in paths:
+        digest.update(path.relative_to(source).as_posix().encode() + b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    source_sha = digest.hexdigest()
+    for timing in sorted(runs.glob("*/timing.json"), reverse=True):
+        if timing.parent == output or not (timing.parent / "metrics.json").is_file():
+            continue
+        previous = rl.read_json(timing)
+        binary = timing.parent / "gothic-body-runner"
+        if (previous.get("runner_source_sha256") == source_sha and binary.is_file()
+                and hashlib.sha256(binary.read_bytes()).hexdigest() == previous.get("runner_sha256")):
+            destination = output / binary.name
+            shutil.copy2(binary, destination)
+            if hashlib.sha256(destination.read_bytes()).hexdigest() != previous["runner_sha256"]:
+                raise ValueError("Copied evaluation runner checksum differs")
+            destination.chmod(0o755)
+            break
+    return source_sha
 
 
 def export_history(root):
@@ -306,11 +333,27 @@ def report(history, frozen, output, measured=None):
     else:
         actual = rl.read_json(measured / "metrics.json")
         timing = rl.read_json(measured / "timing.json")
+        if timing["screen_sha256"] != hashlib.sha256(frozen.read_bytes()).hexdigest():
+            raise ValueError("Measured HD screen checksum differs")
         keys = {(identity(ep), ep["action_seed"]) for ep in actual["episodes"]}
         if keys != {(identity(ep), ep["action_seed"]) for ep in sample["hd"]} or len(actual["episodes"]) != len(jobs):
             raise ValueError("Measured HD cohort differs from frozen screen")
-        lines += [f"Исполнение: **{timing['elapsed_s']:.3f} с / {timing['elapsed_s'] / 60:.2f} мин**; "
-                  f"{len(jobs)} эпизодов. Выход — стандартный `nav_rl.py summarize`, `metrics.json` на NAS рядом с `timing.json`.", "",
+        repeated = dict(sample, hd=actual["episodes"])
+        live_agreement = [row for row in agreement(history["models"], repeated) if row["significant"]]
+        historical_wins = sum(ep["success"] for ep in sample["hd"])
+        lines += ["Заявка gq `f24f04a5f582`, exit 0. Результат — "
+                  "`/mnt/shared/gothic-ai/nav-eval-screen/runs/20261030T214924Z-e9cc38adb/`: "
+                  "стандартный `nav_rl.py summarize`, `metrics.json`, `timing.json` и `phase.log`.", "",
+                  f"HD: **{actual['all']['arrived']}/{len(jobs)}** успехов против **{historical_wins}/{len(jobs)}** "
+                  "на историческом быстром наборе. Сумма успехов приведена для сверки и не используется как критерий отбора.", "",
+                  "| Фаза | Секунд | Минут |", "|---|---:|---:|",
+                  f"| Сам замер и summarize | {timing['elapsed_s']:.3f} | {timing['elapsed_s'] / 60:.2f} |",
+                  f"| Подготовка, включая сборку | {timing['preparation_s']:.3f} | {timing['preparation_s'] / 60:.2f} |",
+                  f"| Всего без ожидания очереди | {timing['total_s']:.3f} | {timing['total_s'] / 60:.2f} |", "",
+                  f"Сам замер укладывается в 20 минут с запасом {1200 - timing['elapsed_s']:.3f} с. "
+                  "Первый холодный запуск вместе со сборкой занимает больше 20 минут; эти времена не смешиваются. "
+                  "При подстановке настоящего HD вместо исторического быстрого HD согласие остаётся "
+                  f"{sum(row['agrees'] for row in live_agreement)}/{len(live_agreement)} значимых сравнений.", "",
                   "| Метрика | HD полный | HD исторический быстрый | HD настоящий быстрый |", "|---|---:|---:|---:|"]
         for metric in METRICS:
             full = paired_difference(history["models"]["hd"], history["models"]["hd"], metric)["left"]
@@ -318,17 +361,34 @@ def report(history, frozen, output, measured=None):
             observed = paired_difference(actual["episodes"], actual["episodes"], metric)["left"]
             observed_text = f"{100 * observed:.3f}%" if observed is not None else "неполный: нет наблюдения"
             lines.append(f"| {metric} | {100 * full:.3f}% | {100 * expected:.3f}% | {observed_text} |")
+        follow = paired_difference(actual["episodes"], sample["hd"], "follow_below_gate")
+        lines += ["", f"Повтор HD изменил follow на {100 * follow['delta']:+.3f} п.п.; "
+                  f"две парные SE — {200 * follow['se']:.3f} п.п. Разница внутри шума повтора. "
+                  "В follow всего два маршрута: быстрый набор сохраняет исторический порядок, но не даёт точную оценку полного процента.", "",
+                  "В заявке прошли **152 теста за 1,07 с**, сборка `gothic-body-runner` и все 168 эпизодов. "
+                  "Собственные каталоги build, cache, base-cache, base-store, .venv и uv-cache удалены после заявки; "
+                  "отсутствие проверено отдельно.", ""]
     lines += ["", "## Запуск и правило отбора", "", "```bash",
               "bash scripts/nav-eval-screen-remote.sh /absolute/path/to/policy.navbc", "```", "",
-              "Команда подаёт одну заявку gq и возвращает ID без ожидания и опроса очереди. Подготовка, целевые тесты и сборка "
+              "Команда подаёт одну заявку gq и возвращает ID без ожидания и опроса очереди. Подготовка и целевые тесты "
               "идут в собственной папке; замер использует 18 worker, lean, CV, sample, β=0. Веса копируются по переданному пути на Ryzen. "
               "Выход — `/mnt/shared/gothic-ai/nav-eval-screen/runs/<run>/`; build и кэши удаляются при завершении заявки.", "",
+              "**Повторное использование runner:** launcher проверяет только свои завершённые результаты на NAS. "
+              "При совпадении SHA-256 всех исходников OpenGothic и launcher с командой сборки, а также SHA-256 бинарника "
+              "он копирует готовый `gothic-body-runner` в новый результат и пропускает CMake. Иначе собирает runner и сохраняет "
+              "только этот исполняемый файл рядом с результатом; build удаляется. В `timing.json` записываются исходный и бинарный хеши "
+              "и `runner_reused`. Изменение только весов не требует новой сборки. Общий engine-cache, gq и чужие папки не меняются.", "",
+              "Первый HD-прогон ещё не сохранял бинарник, его build уже удалён. Поэтому первый запуск обновлённого launcher "
+              "снова соберёт runner; дальнейшие раунды с теми же исходниками смогут его переиспользовать. "
+              "Проверка совпадения исходников, команды сборки, бинарника и завершённого результата покрыта fixture; "
+              "экономия времени reuse настоящим повторным прогоном не измерялась.", "",
               "Воспроизведение подбора на Ryzen (без новых поездок):", "", "```bash",
               "python3 scripts/nav_eval_screen.py history --output /absolute/task/history.json",
               "python3 scripts/nav_eval_screen.py freeze --history /absolute/task/history.json \\",
               "  --output reports/navigation/2026-10-31-eval-screen/eval-screen.jsonl",
               "python3 scripts/nav_eval_screen.py report --history /absolute/task/history.json \\",
               "  --frozen reports/navigation/2026-10-31-eval-screen/eval-screen.jsonl \\",
+              "  --measured /mnt/shared/gothic-ai/nav-eval-screen/runs/20261030T214924Z-e9cc38adb \\",
               "  --output reports/navigation/2026-10-31-eval-screen/README.md",
               "```", "",
               "После каждого обучения быстрый замер обязателен. Полный validation и nav-live разрешены только если кандидат "

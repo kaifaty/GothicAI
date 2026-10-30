@@ -1633,3 +1633,40 @@ def test_eval_screen_agreement_uses_paired_routes_and_pooled_follow(monkeypatch)
     assert pair["significant"] and not pair["agrees"]
     noise = next(row for row in result if (row["metric"], row["left"], row["right"]) == ("point", "it35", "hd"))
     assert not noise["significant"] and noise["agrees"] is None  # Exactly two SE is not above two SE.
+
+
+def test_eval_screen_reuses_only_matching_finished_runner(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    screen = rl.module("nav_eval_screen")
+    source, runs = tmp_path / "source", tmp_path / "runs"
+    (source / "OpenGothic").mkdir(parents=True)
+    native = source / "OpenGothic/runner.cpp"
+    native.write_text("native source")
+    (source / "scripts").mkdir()
+    launcher = source / "scripts/nav-eval-screen-remote.sh"
+    launcher.write_text("fixed build command")
+    previous, output = runs / "first", runs / "next"
+    previous.mkdir(parents=True)
+    output.mkdir()
+    source_sha = screen.reuse_runner(source, runs, output)
+    binary = previous / "gothic-body-runner"
+    binary.write_bytes(b"finished runner")
+    rl.write_json(previous / "timing.json", dict(runner_source_sha256=source_sha,
+        runner_sha256=hashlib.sha256(binary.read_bytes()).hexdigest()))
+    screen.reuse_runner(source, runs, output)
+    assert not (output / binary.name).exists()  # No successful summary yet.
+    rl.write_json(previous / "metrics.json", {})
+    screen.reuse_runner(source, runs, output)
+    copied = output / binary.name
+    assert copied.read_bytes() == binary.read_bytes() and copied.stat().st_mode & 0o100
+    copied.unlink()
+    binary.write_bytes(b"changed runner")
+    screen.reuse_runner(source, runs, output)
+    assert not copied.exists()  # Damaged artifacts must rebuild.
+    binary.write_bytes(b"finished runner")
+    native.write_text("changed native source")
+    assert screen.reuse_runner(source, runs, output) != source_sha and not copied.exists()
+    native.write_text("native source")
+    launcher.write_text("changed build command")
+    assert screen.reuse_runner(source, runs, output) != source_sha and not copied.exists()

@@ -57,17 +57,31 @@ uv venv --python 3.12 "$runtime/.venv"
 python="$runtime/.venv/bin/python"
 uv pip install --python "$python" numpy pytest
 "$python" -B -m pytest -q -p no:cacheprovider scripts/tests/test_nav_rl.py
-cmake -S OpenGothic -B "$runtime/build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-  -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
-  -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
-cmake --build "$runtime/build" --target gothic-body-runner --parallel 3
+runner_source_sha256="$("$python" -B - "$runtime/source" "$output" <<'REUSE'
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path.cwd() / 'scripts'))
+from nav_eval_screen import reuse_runner
+print(reuse_runner(Path(sys.argv[1]), Path('/mnt/shared/gothic-ai/nav-eval-screen/runs'), Path(sys.argv[2])))
+REUSE
+)"
+runner_reused=true
+if [[ ! -x "$output/gothic-body-runner" ]]; then
+  runner_reused=false
+  cmake -S OpenGothic -B "$runtime/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
+    -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
+  cmake --build "$runtime/build" --target gothic-body-runner --parallel 3
+  cp "$runtime/build/opengothic/gothic-body-runner" "$output/gothic-body-runner"
+fi
+echo "Evaluation runner reused: $runner_reused"
 for mode in ordinary jump; do
   mkdir -p "$runtime/cache/$mode"
   cp /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/"$mode"/*.navmesh "$runtime/cache/$mode/"
 done
 cp "$runtime/input/eval-screen.jsonl" "$output/eval-screen.jsonl"
-"$python" -B - "$runtime" "$output" "$started" <<'DRIVE'
+"$python" -B - "$runtime" "$output" "$started" "$runner_source_sha256" "$runner_reused" <<'DRIVE'
 import hashlib
 import json
 from pathlib import Path
@@ -78,7 +92,7 @@ runtime, output = map(Path, sys.argv[1:3])
 started = int(sys.argv[3])
 command = [sys.executable, '-B', '-I', 'scripts/nav_rl.py', 'drive',
     '--eval-screen', str(output / 'eval-screen.jsonl'),
-    '--runner', str(runtime / 'build/opengothic/gothic-body-runner'),
+    '--runner', str(output / 'gothic-body-runner'),
     '--assets', __import__('os').environ['GOTHIC_DIR'], '--save', str(runtime / 'input/save.sav'),
     '--links', str(runtime / 'input/accepted-links.txt'), '--jump-links', str(runtime / 'input/jump-links.txt'),
     '--roads', str(runtime / 'input/places.json'), '--familiar-map', str(runtime / 'input/familiar.bin'),
@@ -91,6 +105,8 @@ subprocess.run([sys.executable, '-B', '-I', 'scripts/nav_rl.py', 'summarize',
                 '--source', str(output / 'drive'), '--output', str(output)], check=True)
 timing = dict(elapsed_s=time.monotonic() - before, preparation_s=time.time() - started - (time.monotonic() - before),
               total_s=time.time() - started, parallel=18,
+              runner_source_sha256=sys.argv[4], runner_reused=sys.argv[5] == 'true',
+              runner_sha256=hashlib.sha256((output / 'gothic-body-runner').read_bytes()).hexdigest(),
               screen_sha256=hashlib.sha256((output / 'eval-screen.jsonl').read_bytes()).hexdigest(),
               weights_sha256=hashlib.sha256((output / 'policy.navbc').read_bytes()).hexdigest())
 (output / 'timing.json').write_text(json.dumps(timing, indent=2) + '\n')
