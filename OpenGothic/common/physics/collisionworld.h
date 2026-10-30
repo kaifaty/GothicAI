@@ -3,6 +3,7 @@
 #include <Tempest/Matrix4x4>
 #include <Tempest/Vec>
 #include "asset/material.h"
+#include "game/meleeimpact.h"
 
 #include <functional>
 #include <atomic>
@@ -188,7 +189,7 @@ class CollisionWorld final {
     void updateShadowBlade(const Npc* owner, uint64_t swingId,
                            const std::vector<MeleeBladeSegment>& segments, uint64_t timeMs,
                            double activeBeginMs, double activeEndMs, float walkableCos = .7f,
-                           Tempest::Vec3 forward = {});
+                           Tempest::Vec3 forward = {}, MeleeImpact::Weapon weapon = MeleeImpact::Weapon::OneHand);
     std::vector<MeleeBladeContact> takeShadowBladeContacts(const Npc* owner);
     void removeShadowBlade(const Npc* owner);
     void flushShadowBlades();
@@ -200,7 +201,9 @@ class CollisionWorld final {
     void setBuoyancyEnabled(bool enabled);
     bool buoyancyEnabled() const;
     void setItemWakeEnabled(bool enabled);
+    bool itemWakeEnabled() const { return itemWake; }
     void setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback);
+    void wakeItemsInBounds(const Tempest::Vec3& min, const Tempest::Vec3& max);
     struct WaterBodySnapshot {
       const CollisionBody* body = nullptr;
       const Ragdoll* ragdoll = nullptr;
@@ -307,6 +310,7 @@ class CollisionWorld final {
     void stepShadowBlades(float fraction, bool bodiesLocked = false);
     void sampleMeleeBench();
     void wakeItems();
+    void wakeShadowItems();
     void recoverItems();
     void prepareItemSweeps();
     void recoverTunneledItems();
@@ -333,6 +337,7 @@ class CollisionWorld final {
     size_t itemWakeCursor = 0;
     size_t itemSweepCursor = 0;
     std::vector<std::pair<CollisionBody*,Tempest::Vec3>> itemSweeps;
+    size_t itemWakeQueries = 0, itemWakeCreated = 0, itemShadowWakeCursor = 0;
     JPH::Vec3 bboxMin = JPH::Vec3::sZero();
     float accumulatedTime = 0;
     friend class Ragdoll;

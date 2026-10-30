@@ -2312,7 +2312,16 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
       ptr->cb->onCollide(b);
     }
   const bool attachAtWorldStop=!isSpell && b.cb!=nullptr && b.cb->stopsAtWorldHit();
-  const auto hit = world->rayCast(pos,to,visualMask,false);
+  auto hit = world->rayCast(pos,to,visualMask,false);
+  if(!isSpell && world->itemWakeEnabled()) {
+    // Bodyless resting Items must become queryable before the projectile ray.
+    // Stop the wake volume at the solid world hit, so walls shield Items too.
+    const auto end=hit.hasHit ? hit.point : to;
+    const Tempest::Vec3 min(std::min(pos.x,end.x)-50.f,std::min(pos.y,end.y)-50.f,std::min(pos.z,end.z)-50.f);
+    const Tempest::Vec3 max(std::max(pos.x,end.x)+50.f,std::max(pos.y,end.y)+50.f,std::max(pos.z,end.z)+50.f);
+    world->wakeItemsInBounds(min,max);
+    hit=world->rayCast(pos,to,visualMask|(1u<<C_Item),false);
+    }
   const auto matId = hit.hasHit ? hit.material : asset::MaterialGroup::NONE;
   ArrowTrace::write(b,b.cb,"world_query",dt,nullptr,hit.hasHit,hit.fraction,hit.point,hit.normal,
                     unsigned(matId),hit.body!=nullptr ? unsigned(hit.body->category()) : 0);
@@ -2361,6 +2370,10 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
   bool stopBullet = false;
   if(matId != asset::MaterialGroup::NONE) {
     notifyCloth(pos+(to-pos)*hit.fraction);
+    if(!isSpell && world->itemWakeEnabled() && hit.body!=nullptr && hit.body->category()==C_Item) {
+      auto* culprit=b.cb!=nullptr ? b.cb->origin() : nullptr;
+      hit.body->addImpulseAtPoint(b.direction()*1.2f,hit.point,culprit);
+      }
     if(!isSpell && hit.body!=nullptr && hit.body->ptrType()==P_MovableVob) {
       auto& target=*static_cast<BodyData*>(hit.body->payload());
       // Direction is cm/ms; a 120 gram arrow transfers SI momentum at its
@@ -2535,8 +2548,8 @@ void DynamicWorld::updateShadowBody(Npc* owner,const std::vector<MeleeBodyCapsul
 void DynamicWorld::removeShadowBody(const Npc* owner) { world->removeShadowBody(owner); }
 void DynamicWorld::updateShadowBlade(const Npc* owner,uint64_t swingId,const std::vector<MeleeBladeSegment>& segments,
                                      uint64_t timeMs,double activeBeginMs,double activeEndMs,float walkableCos,
-                                     Tempest::Vec3 forward) {
-  world->updateShadowBlade(owner,swingId,segments,timeMs,activeBeginMs,activeEndMs,walkableCos,forward);
+                                     Tempest::Vec3 forward, MeleeImpact::Weapon weapon) {
+  world->updateShadowBlade(owner,swingId,segments,timeMs,activeBeginMs,activeEndMs,walkableCos,forward,weapon);
   }
 std::vector<MeleeBladeContact> DynamicWorld::takeShadowBladeContacts(const Npc* owner) { return world->takeShadowBladeContacts(owner); }
 void DynamicWorld::removeShadowBlade(const Npc* owner) { world->removeShadowBlade(owner); }

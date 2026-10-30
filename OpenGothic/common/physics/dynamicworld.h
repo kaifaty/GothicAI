@@ -1,6 +1,7 @@
 #pragma once
 
 #include "asset/worldmesh.h"
+#include "game/meleeimpact.h"
 #include "physics/physicsnoise.h"
 #include "physics/charactervirtualdiagnostics.h"
 #include "physics/navmesh.h"
@@ -508,7 +509,7 @@ class DynamicWorld final {
     void updateShadowBlade(const Npc* owner, uint64_t swingId,
                            const std::vector<MeleeBladeSegment>& segments, uint64_t timeMs,
                            double activeBeginMs, double activeEndMs, float walkableCos = .7f,
-                           Tempest::Vec3 forward = {});
+                           Tempest::Vec3 forward = {}, MeleeImpact::Weapon weapon = MeleeImpact::Weapon::OneHand);
     std::vector<MeleeBladeContact> takeShadowBladeContacts(const Npc* owner);
     void removeShadowBlade(const Npc* owner);
     void flushShadowBlades();

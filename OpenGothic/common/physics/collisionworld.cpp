@@ -557,8 +557,10 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     float walkableCos = .7f;
     double poseTimeMs = 0, targetTimeMs = 0, activeBeginMs = 0, activeEndMs = 0;
     Tempest::Vec3 forward;
+    MeleeImpact::Weapon weapon=MeleeImpact::Weapon::OneHand;
     std::vector<MeleeBladeSegment> pose, target;
     std::vector<Npc*> hit;
+    std::vector<JPH::BodyID> hitItems;
     std::vector<MeleeBladeContact> contacts;
     };
   std::vector<ShadowBody> shadowBodies;
@@ -1893,6 +1895,9 @@ CollisionWorld::QueryResult CollisionWorld::rayCast(const Tempest::Vec3& from, c
       value.material = mesh->materialId(triangle);
       value.sector = mesh->sectorName(triangle);
       }
+    else if(value.body!=nullptr && value.body->category()==DynamicWorld::C_Item) {
+      value.material=value.body->noiseSurface;
+      }
     if(body.GetObjectLayer()==DynamicWorld::C_Ragdoll)
       fillRagdoll(value,hit.mBodyID);
     return value;
@@ -2299,7 +2304,7 @@ void CollisionWorld::removeShadowBody(const Npc* owner) {
 void CollisionWorld::updateShadowBlade(const Npc* owner, uint64_t swingId,
                                       const std::vector<MeleeBladeSegment>& segments, uint64_t timeMs,
                                       double activeBeginMs, double activeEndMs, float walkableCos,
-                                      Tempest::Vec3 forward) {
+                                      Tempest::Vec3 forward, MeleeImpact::Weapon weapon) {
   if(owner==nullptr || segments.empty()) throw std::runtime_error("Melee shadow blade requires an owner and geometry");
   for(const auto& segment:segments) {
     const auto from=toMeters(segment.from),to=toMeters(segment.to),edge=toMeters(segment.edgeNormal);
@@ -2323,6 +2328,7 @@ void CollisionWorld::updateShadowBlade(const Npc* owner, uint64_t swingId,
     it->blocked=false;
     it->groundRecorded=false;
     it->hit.clear();
+    it->hitItems.clear();
     it->contacts.clear();
     }
   if(it->pose.size()!=segments.size() || double(timeMs)<=it->poseTimeMs) {
@@ -2335,6 +2341,7 @@ void CollisionWorld::updateShadowBlade(const Npc* owner, uint64_t swingId,
   it->activeBeginMs=activeBeginMs;
   it->activeEndMs=activeEndMs;
   it->forward=forward;
+  it->weapon=weapon;
   it->walkableCos=walkableCos;
   impl->hasShadowBlades.store(true,std::memory_order_release);
   }
@@ -2360,6 +2367,7 @@ void CollisionWorld::flushShadowBlades() {
   // Consume poses published after the last physics tick without advancing any
   // native bodies, animation, game clocks or physics side effects.
   const auto started=std::chrono::steady_clock::now();
+  wakeShadowItems();
   stepShadowBlades(1.f);
   const float elapsed=std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-started).count();
   impl->stepMilliseconds += elapsed;
@@ -2443,7 +2451,13 @@ void CollisionWorld::stepShadowBlades(float fraction, bool bodiesLocked) {
     return value.center+value.rotation*JPH::Vec3(0,(2.f*bladeFraction-1.f)*value.halfLength,0);
     };
   for(auto& blade:impl->shadowBlades) {
-    struct TimedContact { float time; MeleeBladeContact contact; };
+    struct TimedContact {
+      float time;
+      MeleeBladeContact contact;
+      JPH::BodyID item;
+      JPH::Vec3 impulse=JPH::Vec3::sZero();
+      bool itemOnly=false;
+      };
     std::vector<TimedContact> contacts;
     // Animation publications have their own clock. Native fixed steps divide
     // that interval, but must not supply its duration (including no-step frames).
@@ -2501,13 +2515,25 @@ void CollisionWorld::stepShadowBlades(float fraction, bool bodiesLocked) {
             JPH::BodyLockRead lock(locks,hit.mBodyID2);
             if(!lock.Succeeded()) continue;
             const auto& body=lock.GetBody();
-            // Small loose objects cannot arrest a human swing.
             const auto layer=body.GetObjectLayer();
             const auto extent=body.GetWorldSpaceBounds().GetSize();
-            if((layer==DynamicWorld::C_Item || layer==DynamicWorld::C_Fragment || layer==DynamicWorld::C_MovableVob) &&
-               std::max({extent.GetX(),extent.GetY(),extent.GetZ()})<.5f) continue;
             record(hit,from.center,nullptr,size_t(-1),0);
             auto& contact=contacts.back().contact;
+            if(itemWake && layer==DynamicWorld::C_Item && body.IsDynamic()) {
+              // Shadow blades are swept queries, not solver bodies. Reuse the
+              // same weapon momentum as physical melee reactions.
+              contacts.back().item=body.GetID();
+              const auto impulse=MeleeImpact::impulse(blade.weapon,contact.velocityCmS,contact.surfaceAngleDeg);
+              contacts.back().impulse={impulse.x,impulse.y,impulse.z};
+              }
+            // Small loose objects receive momentum without arresting the
+            // human swing or entering its damage/contact journal.
+            if((layer==DynamicWorld::C_Item || layer==DynamicWorld::C_Fragment || layer==DynamicWorld::C_MovableVob) &&
+               std::max({extent.GetX(),extent.GetY(),extent.GetZ()})<.5f) {
+              if(!contacts.back().item.IsInvalid())contacts.back().itemOnly=true;
+              else contacts.pop_back();
+              continue;
+              }
             const auto normal=body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2,JPH::RVec3(contact.point.x*.01f,contact.point.y*.01f,contact.point.z*.01f));
             contact.normal={normal.GetX(),normal.GetY(),normal.GetZ()};
             contact.stopsSwing=normal.GetY()<blade.walkableCos || layer==DynamicWorld::C_Item ||
@@ -2559,6 +2585,13 @@ void CollisionWorld::stepShadowBlades(float fraction, bool bodiesLocked) {
       });
     for(auto& value:contacts) {
       auto& contact=value.contact;
+      if(!value.item.IsInvalid() && value.impulse.LengthSq()>0.f &&
+         std::find(blade.hitItems.begin(),blade.hitItems.end(),value.item)==blade.hitItems.end()) {
+        auto& interface=bodiesLocked ? impl->system.GetBodyInterfaceNoLock() : impl->system.GetBodyInterface();
+        interface.AddImpulse(value.item,value.impulse,JPH::RVec3(toMeters(contact.point)));
+        blade.hitItems.push_back(value.item);
+        }
+      if(value.itemOnly)continue;
       if(contact.world) {
         if(contact.stopsSwing) {
           blade.contacts.push_back(contact);
@@ -2678,17 +2711,61 @@ void CollisionWorld::sampleMeleeBench() {
   impl->meleeDiagnosticMs+=std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-started).count();
   }
 
+void CollisionWorld::wakeItemsInBounds(const Tempest::Vec3& min, const Tempest::Vec3& max) {
+  if(!itemWake || !itemWakeCallback || itemWakeQueries>=32 || itemWakeCreated>=8)
+    return;
+  ++itemWakeQueries;
+  itemWakeCreated+=itemWakeCallback(min,max,8-itemWakeCreated);
+  }
+
+void CollisionWorld::wakeShadowItems() {
+  if(!itemWake || !itemWakeCallback || !impl->hasShadowBlades.load(std::memory_order_acquire))
+    return;
+  std::vector<std::pair<Tempest::Vec3,Tempest::Vec3>> bounds;
+  {
+    std::lock_guard<std::mutex> guard(impl->shadowMutex);
+    for(const auto& blade:impl->shadowBlades) {
+      if(blade.blocked || blade.targetTimeMs<=blade.poseTimeMs ||
+         blade.targetTimeMs<=blade.activeBeginMs || blade.poseTimeMs>=blade.activeEndMs)
+        continue;
+      JPH::AABox box;
+      const double duration=blade.targetTimeMs-blade.poseTimeMs;
+      const float first=float(std::clamp((blade.activeBeginMs-blade.poseTimeMs)/duration,0.,1.));
+      const float last=float(std::clamp((blade.activeEndMs-blade.poseTimeMs)/duration,0.,1.));
+      for(size_t i=0;i<blade.pose.size();++i) {
+        // Every rotating endpoint remains inside the longest blade sphere
+        // about its translating grip. This also encloses the fist/forearm.
+        const auto& from=blade.pose[i];const auto& to=blade.target[i];
+        const float reach=std::max((from.to-from.from).length(),(to.to-to.from).length())+
+                          std::max(from.radiusCm,to.radiusCm);
+        const auto radius=JPH::Vec3::sReplicate(reach*.01f);
+        const auto a=toMeters(from.from+(to.from-from.from)*first);
+        const auto b=toMeters(from.from+(to.from-from.from)*last);
+        box.Encapsulate(JPH::AABox(JPH::Vec3::sMin(a,b)-radius,JPH::Vec3::sMax(a,b)+radius));
+        }
+      bounds.emplace_back(toCentimeters(box.mMin)-Tempest::Vec3(50),toCentimeters(box.mMax)+Tempest::Vec3(50));
+      }
+    }
+  if(bounds.empty())return;
+  itemShadowWakeCursor%=bounds.size();
+  for(size_t visited=0;visited<bounds.size() && itemWakeQueries<32 && itemWakeCreated<8;++visited) {
+    const auto& box=bounds[itemShadowWakeCursor];
+    itemShadowWakeCursor=(itemShadowWakeCursor+1)%bounds.size();
+    wakeItemsInBounds(box.first,box.second);
+    }
+  }
+
 void CollisionWorld::wakeItems() {
   if(!itemWake || !itemWakeCallback)
     return;
+  wakeShadowItems();
   JPH::BodyIDVector active;
   impl->system.GetActiveBodies(JPH::EBodyType::RigidBody,active);
   if(active.empty())
     return;
-  constexpr size_t maxQueries=32, maxCreated=8;
-  size_t queries=0,created=0,visited=0;
+  size_t visited=0;
   itemWakeCursor%=active.size();
-  while(visited<active.size() && queries<maxQueries && created<maxCreated) {
+  while(visited<active.size() && itemWakeQueries<32 && itemWakeCreated<8) {
     const auto id=active[itemWakeCursor];
     itemWakeCursor=(itemWakeCursor+1)%active.size();
     ++visited;
@@ -2702,8 +2779,7 @@ void CollisionWorld::wakeItems() {
       min=toCentimeters(bounds.mMin)-Tempest::Vec3(50,50,50);
       max=toCentimeters(bounds.mMax)+Tempest::Vec3(50,50,50);
       }
-    ++queries;
-    created+=itemWakeCallback(min,max,maxCreated-created);
+    wakeItemsInBounds(min,max);
     }
   }
 
@@ -2821,6 +2897,7 @@ void CollisionWorld::tick(uint64_t dt) {
   constexpr float step = 1.f/60.f;
   bool advanced = false;
   std::vector<PhysicsNoise> splashes;
+  wakeShadowItems();
   if(!rigid.empty() || !ragdolls.empty() || impl->meleeSubsteps!=0) {
     accumulatedTime += float(dt)/1000.f;
     int wholeSteps = 0;
@@ -2854,6 +2931,7 @@ void CollisionWorld::tick(uint64_t dt) {
           }
         if(!impl->meleeOutput.empty())
           impl->meleeSteps.push_back({impl->simulationStep,impl->meleeSample.solveMs-solveBefore,impl->meleeSample.castMs-castBefore,impl->meleeSubsteps});
+        itemWakeQueries=0;itemWakeCreated=0;
         recoverTunneledItems();
         advanced=true;
         continue;
@@ -2921,6 +2999,7 @@ void CollisionWorld::tick(uint64_t dt) {
       impl->waterSteps=false;
       finishBuoyancy(step);
       for(auto* body:ragdolls) body->finishKinematicStep();
+      itemWakeQueries=0;itemWakeCreated=0;
       recoverTunneledItems();
       advanced = true;
       }

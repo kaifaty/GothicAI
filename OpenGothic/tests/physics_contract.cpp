@@ -3963,6 +3963,113 @@ namespace {
       }
     }
 
+  void testItemWeaponWake() {
+    Resources resources;
+    ProtoMesh appleMesh(PackedMesh(movableBox({8,8,8}),PackedMesh::PK_Visual),"CONTRACT_WAKE_APPLE.MRM");
+    Bounds appleBounds;
+    appleBounds.assign(appleMesh.bbox());
+    for(const bool enabled:{false,true}) {
+      DynamicWorld world(nullptr,asset::WorldMesh{});
+      world.setItemWakeEnabled(enabled);
+      const auto rest=at(0,100,0);
+      auto apple=world.addDynamicObj(rest,appleBounds,asset::MaterialGroup::WOOD,
+                                     &appleMesh,"CONTRACT_WAKE_APPLE.MRM");
+      apple.restorePhysics(rest,true);
+      auto* arrow=world.bulletObj(nullptr);
+      arrow->setPosition({-40,100,0});
+      arrow->setDirection({3,0,0});
+      world.tick(17);
+      const float transferred=apple.velocity().x*.01f*apple.mass();
+      std::printf("Item arrow wake enabled %d: momentum %.6f Ns, displacement %.6f cm\n",
+                  int(enabled),double(transferred),double((apple.position()-Tempest::Vec3(0,100,0)).length()));
+      if(enabled) {
+        require(!apple.isSleeping() && apple.position().x>1.f,
+                "an arrow must wake and move a sleeping apple");
+        requireNear(transferred,3.6f,.04f,"an Item must receive the furniture arrow momentum at actual flight speed");
+        }
+      else require(apple.isSleeping() && apple.position().x==0.f,
+                   "item_wake OFF must keep sleeping Items outside the arrow collision ray");
+      world.deleteObj(arrow);
+      }
+
+    for(const bool fist:{false,true})for(const bool enabled:{false,true}) {
+      CollisionWorld world;
+      world.setItemWakeEnabled(enabled);
+      std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> items(3);
+      const Tempest::Vec3 rest[]{ {-40,115,0},{0,115,0},{40,115,0} };
+      world.setItemWakeCallback([&](const Tempest::Vec3& min,const Tempest::Vec3& max,size_t budget) {
+        size_t created=0;
+        for(size_t i=0;i<items.size();++i) {
+          const auto& p=rest[i];
+          if(p.x<min.x || p.x>max.x || p.y<min.y || p.y>max.y || p.z<min.z || p.z>max.z)continue;
+          if(items[i]==nullptr && created<budget) {
+            items[i]=world.addDynamicBody(new JPH::BoxShape({.04f,.04f,.04f}),at(p.x,p.y,p.z),.7f,.2f,
+                                           DynamicWorld::C_Item,true);
+            ++created;
+            }
+          if(items[i])items[i]->retainForItemWake();
+          }
+        return created;
+        });
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      const MeleeBladeSegment before{{-100,115,0},{-100,fist?115.f:140.f,0},{0,0,1},fist?6.f:2.f};
+      const MeleeBladeSegment after{{100,115,0},{100,fist?115.f:140.f,0},{0,0,1},fist?6.f:2.f};
+      const auto weapon=fist?MeleeImpact::Weapon::Fist:MeleeImpact::Weapon::OneHand;
+      world.updateShadowBlade(actor,1,{before},0,0,100,.7f,{},weapon);
+      world.updateShadowBlade(actor,1,{after},100,0,100,.7f,{},weapon);
+      world.flushShadowBlades();
+      size_t awake=0;
+      for(const auto& item:items)awake+=item!=nullptr && !item->isSleeping() && item->velocity().x>50.f;
+      require(awake==(enabled?3u:0u),
+              "only item_wake ON must create and push all sleeping Items swept by a blade or fist");
+      require(world.takeShadowBladeContacts(actor).empty(),
+              "small Item hits must not alter the melee damage journal or stop the swing");
+      world.tick(17);
+      size_t moved=0;
+      for(size_t i=0;i<items.size();++i)moved+=items[i] && items[i]->position().x-rest[i].x>1.f;
+      std::printf("Item melee wake fist %d enabled %d: awake %zu/3, moved %zu/3\n",int(fist),int(enabled),awake,moved);
+      require(moved==(enabled?3u:0u),"a shadow contact must physically displace the sleeping Items");
+      }
+    {
+      CollisionWorld world;
+      JPH::VertexList vertices={{.15f,0,-1},{.15f,0,1},{.15f,2,1},{.15f,2,-1}};
+      JPH::IndexedTriangleList triangles={{0,1,2},{0,2,3}};
+      const auto face=JPH::MeshShapeSettings(vertices,triangles).Create();
+      require(!face.HasError(),"the newly woken Item requires a thin sensor face");
+      auto wall=world.addCollisionBody(face.Get(),at(0,0,0),.7f,DynamicWorld::C_Object,false,true);
+      auto item=world.addDynamicBody(new JPH::BoxShape({.04f,.04f,.04f}),at(0,100,0),.7f,.2f,DynamicWorld::C_Item,true);
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      world.updateShadowBlade(actor,1,{{{-10,100,0},{-10,125,0},{0,0,1},2}},0,0,100);
+      world.updateShadowBlade(actor,1,{{{10,100,0},{10,125,0},{0,0,1},2}},100,0,100);
+      world.tick(17);
+      require(world.rayCount()==1,"the sleeping Item must actually move during the blade's native step");
+      require(item->isSleeping(),"an Item woken by a blade during Update must recover a crossing in that same step");
+      requireNear(item->position().x,0.f,.001f,"a newly woken Item must return to its previous resting position");
+      }
+    {
+      CollisionWorld world;
+      std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> sources;
+      for(int i=0;i<40;++i)
+        sources.push_back(world.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(1000.f*i,1000,0),.7f,1));
+      size_t queries=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t) {++queries;return size_t(0);});
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      world.tick(17);
+      require(queries==32,"projectile and active-body wakes must share thirty-two queries before the native step");
+      world.tick(17);
+      require(queries==64,"the next native step must renew the shared wake budget exactly once");
+      size_t created=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t budget) {
+        created+=budget;return budget;
+        });
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      world.tick(17);
+      require(created==8,"projectile and active-body wakes must share eight new native bodies per step");
+      }
+    }
+
   void testItemWake() {
     for(const bool legacy:{false,true}) {
       CollisionWorld world;
@@ -4730,6 +4837,7 @@ int main() {
     testFixedStepCarry();
     testFixedStepCadence();
     testItemWake();
+    testItemWeaponWake();
     testContracts();
     testCharacterVirtual();
     testVirtualFloorGuard();

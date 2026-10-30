@@ -25,6 +25,17 @@ wait 6000
 item-wake checkpoint
 # Quarter-speed frames are 8/9 ms: sample only frames advancing one native step.
 slowmo 4
+# Real arrows and an authored NPC sword swing across a stock tabletop.
+item-wake setup arrow
+wait 8000
+item-wake begin
+wait 3000
+item-wake checkpoint
+item-wake setup sword
+wait 8000
+item-wake begin
+wait 3000
+item-wake checkpoint
 # Same six corpses/pulses, fifty bodyless Items outside every wake query.
 item-wake setup pile-far
 wait 8000
