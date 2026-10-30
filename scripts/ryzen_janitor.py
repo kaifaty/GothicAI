@@ -13,7 +13,6 @@ from pathlib import Path
 import re
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import time
@@ -30,12 +29,16 @@ else:
 HOUR = 3600
 DAY = 24 * HOUR
 GIB = 1024**3
-PROTECTED = ("e2e", "codex-check", "engine-cache", "game", "play", "lib", "bin",
-             "nav-probe", "body*", "gq", "queue", ".*")
+PROTECTED = ("game", "game-settings", "play", "lib", "bin", "gq", "queue", ".*")
+# Names used by the build and training scripts; never infer disposable data from size.
+REBUILDABLE = ("build*", "*-build", "cmake-build-*", ".venv", "venv", "uv", "uv-cache",
+               ".uv-cache", "_deps", "__pycache__", ".pytest_cache", ".ruff_cache", "pytest-*",
+               "engine-cache", "cache", "hd-cache", "hd-measure-cache", "recording-cache",
+               "validation-main-cache", "validation-detour-cache")
 
 
-def latest_mtime(directory, depth, touched=None):
-    """Read bounded activity without following directory or file symlinks."""
+def latest_mtime(directory, depth=None, touched=None):
+    """Read activity without following directory or file symlinks."""
     touched = touched or {}
 
     def timestamp(path):
@@ -44,12 +47,12 @@ def latest_mtime(directory, depth, touched=None):
         return (original if changed == value else value) / 1e9
 
     latest = timestamp(directory)
-    if depth:
+    if depth is None or depth:
         for child in directory.iterdir():
             try:
                 child_latest = timestamp(child)
                 if not child.is_symlink() and child.is_dir():
-                    child_latest = max(child_latest, latest_mtime(child, depth - 1, touched))
+                    child_latest = max(child_latest, latest_mtime(child, None if depth is None else depth - 1, touched))
             except FileNotFoundError:
                 continue
             latest = max(latest, child_latest)
@@ -68,6 +71,25 @@ def tree_bytes(path):
         except FileNotFoundError:
             continue
     return size
+
+
+def tree_reclaimable(path):
+    """Conservative disk-space estimate; external hardlinks keep their blocks."""
+    inodes = {}
+    def visit(entry):
+        info = entry.lstat()
+        key = (info.st_dev, info.st_ino)
+        count, blocks, links = inodes.get(key, (0, getattr(info, "st_blocks", 0) * 512, info.st_nlink))
+        inodes[key] = (count + 1, blocks, links)
+        if stat.S_ISDIR(info.st_mode):
+            inodes[key] = (links, blocks, links)
+            for child in entry.iterdir():
+                try:
+                    visit(child)
+                except FileNotFoundError:
+                    continue
+    visit(path)
+    return sum(blocks for count, blocks, links in inodes.values() if count >= links)
 
 
 def process_paths(proc_root):
@@ -105,20 +127,62 @@ def atomic_json(path, data):
 
 class Janitor:
     def __init__(self, root=None, uv_cache=None, proc_root="/proc", queue_state=None,
-                 uv=None, now=None, dry_run=False):
-        self.root = Path(root or os.environ.get("GOTHIC_LOCAL_ROOT", "~/gothic-ai")).expanduser().absolute()
+                 now=None, dry_run=False, base_cache=None, system_root="/", du=False):
+        # Only this configured root may be a link (the planned /data migration).
+        self.root = Path(root or os.environ.get("GOTHIC_LOCAL_ROOT", "~/gothic-ai")).expanduser().resolve()
         self.uv_cache = Path(uv_cache or "~/.cache/uv").expanduser().absolute()
+        self.base_cache = Path(base_cache or "~/.cache/gothic-ai/base").expanduser().absolute()
+        self.system_root = Path(system_root)
         self.proc_root = Path(proc_root)
         self.queue_state = Path(queue_state or os.environ.get("GQ_HOME", str(self.root / "queue")))
         if queue_state is None:
             self.queue_state = self.queue_state.expanduser() / "state.json"
-        self.uv = str(uv or Path.home() / ".local/bin/uv")
         self.now = time.time() if now is None else now
-        self.dry_run = dry_run
+        self.du = du
+        self.dry_run = dry_run or du
         self.state = self.root / ".janitor"
         self.touched = {}
         self.attempts = {}
-        self.summary = dict(freed_bytes=0, deleted=0, moved=0, skipped={}, errors=[], dry_run=dry_run)
+        self.rows = []
+        self.actions = []
+        self.outcomes = {}
+        self.projected = {}
+        self.emergency = set()
+        self.idle = 2 * DAY
+        self.summary = dict(freed_bytes=0, deleted_bytes=0, moved_bytes=0, deleted=0,
+                            moved=0, skipped={}, errors=[], dry_run=self.dry_run)
+
+    @staticmethod
+    def device(path):
+        return path.stat().st_dev
+
+    def disks(self):
+        return {name: dict(path=path, device=self.device(path), free=shutil.disk_usage(path).free)
+                for name, path in (("tasks", self.root), ("system", self.system_root))}
+
+    def space(self):
+        readings = self.disks()
+        for name, disk in readings.items():
+            # Count each filesystem once, even when both paths share it.
+            disk["free"] += self.projected.get(disk["device"], 0) if self.dry_run else 0
+        return readings
+
+    def needed(self, path):
+        if not self.emergency:
+            return True
+        device = self.device(path)
+        return any(disk["device"] == device and disk["free"] < 100 * GIB
+                   for disk in self.space().values() if disk["device"] in self.emergency)
+
+    def record(self, action, path, size, rule, owner=None, reclaim=0):
+        self.actions.append(dict(action=action, path=str(path), bytes=size, rule=rule))
+        self.outcomes.setdefault(owner or path, []).append(f"{action} {size / GIB:.2f} GiB")
+        self.summary[action + "d" if action == "move" else "deleted"] += 1
+        self.summary["moved_bytes" if action == "move" else "deleted_bytes"] += size
+        self.summary["freed_bytes"] += size
+        if self.dry_run:
+            device = self.device(owner or path)
+            self.projected[device] = self.projected.get(device, 0) + reclaim
 
     def log(self, action, path, reason, size=0):
         print(f"janitor: {action} {path} ({size} bytes; {reason})", flush=True)
@@ -126,7 +190,9 @@ class Janitor:
     def skip(self, path, reason):
         counts = self.summary["skipped"]
         counts[reason] = counts.get(reason, 0) + 1
-        self.log("skip", path, reason)
+        self.outcomes.setdefault(path, []).append("keep: " + reason)
+        if not self.du:
+            self.log("skip", path, reason)
 
     def error(self, path, error):
         detail = " ".join(str(error).split())
@@ -134,13 +200,21 @@ class Janitor:
         self.log("error", path, detail)
 
     def activity(self, path, kind):
-        marker = path / ".last-used"
-        if kind == "e2e" and marker.exists():
-            return marker.lstat().st_mtime
-        latest = latest_mtime(path, 3 if kind == "task" else 2, self.touched)
-        if kind == "task" and marker.exists():
-            latest = max(latest, marker.lstat().st_mtime)
-        return latest
+        return latest_mtime(path, None, self.touched)
+
+    def kept(self, path):
+        # Keeping a nested directory also prevents archiving/deleting its owner.
+        for parent in (path, *path.parents):
+            marker = parent / ".keep"
+            if marker.exists() or marker.is_symlink():
+                return True
+            if parent == self.root or parent == Path.home():
+                break
+        for directory, children, files in os.walk(path, followlinks=False):
+            if ".keep" in children or ".keep" in files:
+                return True
+            children[:] = [name for name in children if not (Path(directory) / name).is_symlink()]
+        return False
 
     def save_attempts(self):
         # Ignore only our exact deletion timestamps, including after a restart.
@@ -168,7 +242,7 @@ class Janitor:
             for value in [job.get("cwd", ""), *job.get("archive", [])]:
                 if not value:
                     continue
-                reference = Path(value).expanduser()
+                reference = Path(value).expanduser().resolve()
                 if reference == path or reference.is_relative_to(path):
                     return True
         return False
@@ -176,103 +250,81 @@ class Janitor:
     def reason(self, path, kind):
         if path.is_symlink() or not path.is_dir():
             return "symlink or missing directory"
-        if kind == "task":
-            if (path / ".keep").exists() or (path / ".keep").is_symlink():
-                return ".keep"
-        age = 7 * DAY if kind == "task" else 48 * HOUR
-        if self.activity(path, kind) >= self.now - age:
+        if self.kept(path):
+            return ".keep"
+        age = 2 * DAY if kind == "base" else self.idle
+        if self.activity(path, kind) > self.now - age:
             return "fresh"
-        if kind != "e2e":
-            if any(target == path or target.is_relative_to(path)
-                   for target in process_paths(self.proc_root)):
-                return "process"
-        if kind in {"task", "codex-check"} and self.queued(path):
+        if any(target == path or target.is_relative_to(path)
+               for target in process_paths(self.proc_root)):
+            return "process"
+        if self.queued(path):
             return "active gq job"
         return None
 
+    @contextlib.contextmanager
+    def lock_file(self, path):
+        # Do not unlink lock files: a game may be waiting on the same inode.
+        if self.dry_run and not path.exists() and not path.is_symlink():
+            yield
+            return
+        flags = os.O_RDONLY if self.dry_run else os.O_CREAT | os.O_RDWR
+        descriptor = os.open(path, flags | os.O_NOFOLLOW, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if path.stat().st_ino != os.fstat(descriptor).st_ino:
+                raise BlockingIOError("lock replaced")
+            yield
+        finally:
+            os.close(descriptor)
+
     def remove(self, path, kind, owner=None):
-        reason = self.reason(owner or path, kind)
+        owner = owner or path
+        reason = self.reason(owner, kind)
         if reason:
-            self.skip(owner or path, reason)
+            self.skip(owner, reason)
+            return False
+        if not self.needed(path):
+            self.skip(owner, "free-space target reached or different filesystem")
+            return False
+        if path.is_symlink():
+            self.skip(path, "symlink")
             return False
         size = tree_bytes(path)
-        reason = self.reason(owner or path, kind)
+        reclaim = tree_reclaimable(path)
+        reason = self.reason(owner, kind)
         if reason:
-            self.skip(owner or path, reason)
+            self.skip(owner, reason)
             return False
-        self.log("would delete" if self.dry_run else "delete", path, f"idle {kind}; rebuildable", size)
+        rule = f"idle >= {2 * DAY if kind == 'base' else self.idle:g}s; rebuildable {kind}"
+        self.log("would delete" if self.dry_run else "delete", path, rule, size)
         if not self.dry_run:
-            if owner is not None:
-                parent = path.parent
-                before = parent.stat().st_mtime_ns
-                changed, original = self.touched.get(parent, (None, None))
-                if changed == before:
-                    before = original
+            parent = path.parent
+            before = parent.stat().st_mtime_ns
+            changed, original = self.touched.get(parent, (None, None))
+            if changed == before:
+                before = original
             shutil.rmtree(path)
-            self.summary["freed_bytes"] += size
-            if owner is not None:
-                # Never write old times over real work; ignore our exact timestamps.
+            if parent.is_relative_to(self.root):
                 self.touched[parent] = (parent.stat().st_mtime_ns, before)
                 self.save_attempts()
-        self.summary["deleted"] += 1
+        self.record("delete", path, size, rule, owner, reclaim)
         return True
-
-    def ephemeral(self, kind):
-        root = self.root / kind
-        if root.is_symlink():
-            self.skip(root, "symlink")
-            return
-        if not root.exists():
-            return
-        for path in sorted(root.iterdir()):
-            if path.name.startswith(".") or not path.is_dir() or path.is_symlink():
-                continue
-            try:
-                reason = self.reason(path, kind)
-                if reason:
-                    self.skip(path, reason)
-                    continue
-                if kind != "e2e":
-                    self.remove(path, kind)
-                    continue
-                lock_path = root / (path.name + ".lock")
-                # A dry run must not create even a missing lock file.
-                if self.dry_run and not lock_path.exists() and not lock_path.is_symlink():
-                    self.remove(path, kind)
-                    continue
-                flags = os.O_RDONLY if self.dry_run else os.O_CREAT | os.O_WRONLY
-                with os.fdopen(os.open(lock_path, flags | os.O_NOFOLLOW, 0o600),
-                               "r" if self.dry_run else "w") as lock:
-                    try:
-                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    except BlockingIOError:
-                        self.skip(path, "e2e lock busy")
-                        continue
-                    if lock_path.stat().st_ino != os.fstat(lock.fileno()).st_ino:
-                        self.skip(path, "e2e lock replaced")
-                        continue
-                    self.remove(path, kind)
-            except FileNotFoundError:
-                self.skip(path, "disappeared during cleanup")
-            except Exception as error:
-                self.error(path, error)
 
     def rebuildable(self, root):
         for path in sorted(root.iterdir()):
             if path.is_symlink() or not path.is_dir():
                 continue
-            name = path.name
-            disposable = name in {"_deps", "__pycache__", ".pytest_cache"} or name.startswith("pytest-")
-            if name == ".venv":
-                disposable = (path / "pyvenv.cfg").is_file()
-            if name == "build" or name.startswith("cmake-build-"):
-                disposable = any((path / marker).is_file() for marker in ("CMakeCache.txt", "build.ninja"))
-            if disposable:
+            if any(fnmatch.fnmatchcase(path.name, pattern) for pattern in REBUILDABLE):
                 yield path
             else:
                 yield from self.rebuildable(path)
 
-    def archive_task(self, path):
+    def archive_task(self, path, kind="task"):
+        if not self.needed(path):
+            self.skip(path, "free-space target reached or different filesystem")
+            return
+        key = str(path.relative_to(self.root))
         nas_root = Path(os.environ.get("GOTHIC_NAS_ROOT", "/mnt/shared/gothic-ai")).expanduser().absolute()
         try:
             mounted = nas_archive.nas_mounted(nas_root)
@@ -282,116 +334,189 @@ class Janitor:
             self.skip(path, "NAS not mounted")
             return
         identity = [path.stat().st_dev, path.stat().st_ino]
-        attempt = self.attempts.get(path.name)
+        attempt = self.attempts.get(key)
         if attempt is not None and attempt.get("identity") == identity:
             try:
                 nas_archive.check_attempt(nas_root / attempt["destination_relative"],
                                           {"source": str(path.resolve()), "attempt_id": attempt["attempt_id"]})
             except nas_archive.ArchiveError:
                 # An unmarked destination is never ours to overwrite or resume.
-                self.attempts.pop(path.name)
+                self.attempts.pop(key)
                 if not self.dry_run:
                     self.save_attempts()
                 attempt = None
         if attempt is None or attempt.get("identity") != identity:
             date = time.strftime("%Y%m%d", time.localtime(self.now))
-            attempt = dict(destination_relative=f"archive/{path.name}-{date}",
+            attempt = dict(destination_relative=f"archive/{key}-{date}",
                            attempt_id=uuid.uuid4().hex, identity=identity)
         size = tree_bytes(path)
+        reclaim = tree_reclaimable(path)
         if self.dry_run:
-            size -= sum(tree_bytes(cache) for cache in self.rebuildable(path))
-        reason = self.reason(path, "task")
+            caches = list(self.rebuildable(path))
+            size -= sum(tree_bytes(cache) for cache in caches)
+            reclaim = max(0, reclaim - sum(tree_reclaimable(cache) for cache in caches))
+        reason = self.reason(path, kind)
         if reason:
             self.skip(path, reason)
             return
         nas_archive.check_attempt(nas_root / attempt["destination_relative"],
                                   {"source": str(path.resolve()), "attempt_id": attempt["attempt_id"]})
         if not self.dry_run:
-            self.attempts[path.name] = attempt
+            self.attempts[key] = attempt
             self.save_attempts()
-        self.log("would move" if self.dry_run else "move", path,
-                 f"idle task -> {nas_root / attempt['destination_relative']}", size)
+        rule = f"idle >= {self.idle:g}s; verified archive -> {nas_root / attempt['destination_relative']}"
+        self.log("would move" if self.dry_run else "move", path, rule, size)
         try:
             # The archive dry-run sees caches that our deletion plan already excludes.
             with contextlib.redirect_stdout(io.StringIO()) if self.dry_run else contextlib.nullcontext():
                 nas_archive.move(path, destination_relative=attempt["destination_relative"],
                                  attempt_id=attempt["attempt_id"], dry_run=self.dry_run,
-                                 cancelled=lambda: self.reason(path, "task") is not None)
+                                 cancelled=lambda: self.reason(path, kind) is not None)
         except nas_archive.ArchiveError:
-            reason = self.reason(path, "task")
+            reason = self.reason(path, kind)
             if reason in {"fresh", "process", "active gq job", ".keep"}:
                 self.skip(path, reason)
                 return
             raise
         if not self.dry_run:
-            self.summary["freed_bytes"] += size
-            self.attempts.pop(path.name, None)
+            self.attempts.pop(key, None)
             self.save_attempts()
-        self.summary["moved"] += 1
+        self.record("move", path, size, rule, reclaim=reclaim)
 
-    def tasks(self):
-        patterns = list(PROTECTED)
+    def candidates(self):
+        patterns = []
         keep = self.root / ".janitor-keep"
         if keep.is_symlink():
             raise ValueError("refusing a symlink for .janitor-keep")
         if keep.exists():
             patterns.extend(line.strip() for line in keep.read_text().splitlines() if line.strip())
         for path in sorted(self.root.iterdir()):
-            if not path.is_dir() or path.is_symlink():
+            if not path.is_dir() and not path.is_symlink():
                 continue
-            try:
-                if any(fnmatch.fnmatchcase(path.name, pattern) for pattern in patterns):
-                    self.skip(path, "protected")
+            if any(fnmatch.fnmatchcase(path.name, pattern) for pattern in patterns):
+                yield path, "task", "protected"
+            elif path.name in {"e2e", "codex-check"} and path.is_dir() and not path.is_symlink():
+                if any((parent / ".keep").exists() or (parent / ".keep").is_symlink()
+                       for parent in (path, self.root)):
+                    yield path, "task", ".keep"
+                else:
+                    for session in sorted(path.iterdir()):
+                        if session.is_dir() or session.is_symlink():
+                            yield session, path.name, None
+            elif path.is_dir() or path.is_symlink():
+                protected = any(fnmatch.fnmatchcase(path.name, pattern) for pattern in PROTECTED)
+                if path.name in {".venv", ".uv-cache"}:
+                    protected = False
+                yield path, "task", "protected" if protected else None
+        if self.uv_cache.exists() or self.uv_cache.is_symlink():
+            yield self.uv_cache, "uv", None
+        if self.base_cache.exists() and not self.base_cache.is_symlink():
+            for cache in (self.base_cache, self.base_cache / "videos"):
+                if cache.is_symlink() or not cache.is_dir():
                     continue
-                reason = self.reason(path, "task")
+                for path in sorted(cache.iterdir()):
+                    if re.fullmatch(r"[0-9a-f]{64}", path.name):
+                        yield path, "base", None
+        elif self.base_cache.is_symlink():
+            self.skip(self.base_cache, "symlink")
+
+    def base_retained(self, path):
+        cache = path.parent
+        fingerprints = [child for child in cache.iterdir()
+                        if not child.is_symlink() and child.is_dir()
+                        and re.fullmatch(r"[0-9a-f]{64}", child.name)]
+        freshest = sorted(fingerprints, key=lambda child: child.stat().st_mtime, reverse=True)[:2]
+        if path in freshest:
+            return "two freshest base fingerprints"
+        current = self.base_cache / "current"
+        if current.is_symlink():
+            return "symlink current pointer"
+        if current.is_dir():
+            for pointer in current.glob("*.json"):
+                if pointer.is_symlink():
+                    return "symlink current pointer"
+                data = json.loads(pointer.read_text())
+                for kind in ("base", "videos"):
+                    part = data.get(kind) or {}
+                    if part.get("fingerprint") == path.name:
+                        return "current base fingerprint"
+        return None
+
+    def clean_candidate(self, path, kind):
+        with contextlib.ExitStack() as resources:
+            try:
+                if kind == "e2e":
+                    resources.enter_context(self.lock_file(path.parent / (path.name + ".lock")))
+                if kind == "base":
+                    # Engine selection/import and our pruning must serialize together.
+                    resources.enter_context(self.lock_file(path.parent / ".lock"))
+                    resources.enter_context(self.lock_file(path.with_name(path.name + ".use")))
+                    retained = self.base_retained(path)
+                    if retained:
+                        self.skip(path, retained)
+                        return
+                    nas_root = Path(os.environ.get("GOTHIC_NAS_ROOT", "/mnt/shared/gothic-ai")).expanduser().absolute()
+                    backup = nas_root / "base" / path.relative_to(self.base_cache)
+                    if (not nas_archive.nas_mounted(nas_root) or backup.is_symlink()
+                            or not backup.is_dir()):
+                        self.skip(path, "base copy missing on NAS")
+                        return
+            except BlockingIOError:
+                self.skip(path, "base in use" if kind == "base" else "e2e lock busy")
+                return
+            if kind in {"base", "uv"} or (kind == "task" and any(
+                    fnmatch.fnmatchcase(path.name, pattern) for pattern in REBUILDABLE)):
+                self.remove(path, kind)
+                return
+            for cache in list(self.rebuildable(path)):
+                if not self.remove(cache, kind, path):
+                    return
+            self.archive_task(path, kind)
+
+    def clean(self):
+        candidates = []
+        for path, kind, protected in self.candidates():
+            try:
+                if path.is_symlink():
+                    self.skip(path, "symlink")
+                    continue
+                if protected and not self.du:
+                    self.skip(path, protected)
+                    continue
+                activity = self.activity(path, kind)
+                if self.du:
+                    size = tree_bytes(path)
+                    caches = size if kind in {"base", "uv"} or (kind == "task" and any(
+                        fnmatch.fnmatchcase(path.name, p) for p in REBUILDABLE)) else sum(
+                            tree_bytes(p) for p in self.rebuildable(path))
+                    self.rows.append((path, size, max(0, self.now - activity), caches))
+                reason = protected or self.reason(path, kind)
                 if reason:
                     self.skip(path, reason)
                     continue
-                for cache in list(self.rebuildable(path)):
-                    if not self.remove(cache, "task", path):
-                        break
-                else:
-                    self.archive_task(path)
+                candidates.append((activity, path, kind))
+            except FileNotFoundError:
+                self.skip(path, "disappeared during cleanup")
+            except Exception as error:
+                self.error(path, error)
+        for _, path, kind in sorted(candidates):
+            try:
+                if not self.needed(path):
+                    self.skip(path, "free-space target reached or different filesystem")
+                    continue
+                self.clean_candidate(path, kind)
             except FileNotFoundError:
                 self.skip(path, "disappeared during cleanup")
             except Exception as error:
                 self.error(path, error)
 
-    def clean_uv(self):
-        marker = self.state / "uv-clean"
-        if marker.is_symlink() or self.uv_cache.is_symlink():
-            raise ValueError("refusing a symlink for the uv cache or cleanup marker")
-        due = not marker.exists() or self.now - marker.stat().st_mtime >= 7 * DAY
-        if not due and shutil.disk_usage(self.root).free >= 60 * GIB:
-            self.skip(self.uv_cache, "uv cleanup not due")
-            return
-        try:
-            size = tree_bytes(self.uv_cache) if self.uv_cache.exists() else 0
-        except FileNotFoundError:
-            self.skip(self.uv_cache, "uv cache busy")
-            return
-        self.log("would clean" if self.dry_run else "clean", self.uv_cache,
-                 "weekly or free space below 60 GiB", size)
-        if self.dry_run:
-            return
-        result = subprocess.run([self.uv, "cache", "clean"], capture_output=True, text=True,
-                                env={**os.environ, "UV_CACHE_DIR": str(self.uv_cache), "UV_LOCK_TIMEOUT": "30"})
-        if result.returncode:
-            detail = " ".join((result.stderr or result.stdout).split())
-            if "lock" in detail.lower() and any(word in detail.lower() for word in ("timeout", "timed out", "busy", "acquir")):
-                self.skip(self.uv_cache, "uv cache busy")
-                return
-            raise RuntimeError(f"uv cache clean failed ({result.returncode}): {detail}")
-        atomic_json(marker, {"time": self.now})
-        os.utime(marker, (self.now, self.now), follow_symlinks=False)
-        try:
-            remaining = tree_bytes(self.uv_cache) if self.uv_cache.exists() else 0
-        except FileNotFoundError:
-            self.skip(self.uv_cache, "uv cache busy")
-            return
-        self.summary["freed_bytes"] += max(0, size - remaining)
-
     def finish(self, save=True):
+        self.summary["largest"] = sorted(self.actions, key=lambda action: action["bytes"], reverse=True)[:20]
+        if self.du:
+            print("PATH\tSIZE GiB\tIDLE hours\tREBUILDABLE GiB\tACTION")
+            for path, size, idle, caches in sorted(self.rows, key=lambda row: row[1], reverse=True):
+                action = "; ".join(self.outcomes.get(path, ["keep"]))
+                print(f"{path}\t{size/GIB:.3f}\t{idle/HOUR:.1f}\t{caches/GIB:.3f}\t{action}")
         if save and not self.dry_run:
             try:
                 atomic_json(self.state / "last.json", self.summary)
@@ -402,8 +527,6 @@ class Janitor:
 
     def run(self):
         try:
-            if self.root.is_symlink():
-                raise ValueError("refusing a symlink for the local root")
             # A directory flock is our private lock, requiring no writes in dry-run.
             with contextlib.ExitStack() as resources:
                 lock = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -421,12 +544,13 @@ class Janitor:
                 self.attempts = json.loads(pending.read_text()) if pending.exists() else {}
                 self.touched = {self.root / relative: times
                                 for relative, times in self.attempts.pop(".touched", {}).items()}
-                for action in (lambda: self.ephemeral("e2e"), lambda: self.ephemeral("codex-check"),
-                               self.tasks, self.clean_uv):
-                    try:
-                        action()
-                    except Exception as error:
-                        self.error(self.root, error)
+                readings = self.space()
+                self.emergency = {disk["device"] for disk in readings.values() if disk["free"] < 60 * GIB}
+                self.idle = 12 * HOUR if self.emergency else 2 * DAY
+                for name, disk in readings.items():
+                    self.log("space", disk["path"], f"{name}; device={disk['device']}; free", disk["free"])
+                self.summary["emergency"] = bool(self.emergency)
+                self.clean()
                 return self.finish()
         except Exception as error:
             self.error(self.root, error)
@@ -436,8 +560,9 @@ class Janitor:
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="print the plan without changing files")
+    parser.add_argument("--du", action="store_true", help="show folder sizes, idle time and the read-only cleanup plan")
     args = parser.parse_args(argv)
-    return Janitor(dry_run=args.dry_run).run()
+    return Janitor(dry_run=args.dry_run, du=args.du).run()
 
 
 if __name__ == "__main__":
