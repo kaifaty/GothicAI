@@ -65,6 +65,12 @@ ITEMS = {
     'net-rack': dict(visual='NW_HARBOUR_FISHINGNET_01', script='net_rack.py', cfg='net-rack.json', atlas='net-rack-atlas.json',
                      tiled={'OWN_PROP_NET': ['OWN_NETRACK_HARBOUR_NET', 'own_prop_net_fine', [0.032, 0.027, 0.018]]}, extra_glb='nets.glb'),
 }
+# Built but left out of the set: their visuals stay the original's. `pack` skips them unless named and drops
+# their registry lines; the builders and configs stay for the future row of the plan.
+EXCLUDED = {
+    'net-big': 'six review rounds failed; the user\'s decision 2026-10-30 «Ещё один круг, потом без вороха»',
+    'net-small': 'six review rounds failed; the user\'s decision 2026-10-30 «Ещё один круг, потом без вороха»',
+}
 REGISTRY = ROOT / 'data/content/prop-models.jsonl'
 # the concept each model was built from (content-sources paths, `remaster.py select` of the asset)
 CONCEPTS = {
@@ -231,7 +237,7 @@ def cmd_pack(args) -> int:
         shutil.rmtree(output)
     materials, meshes, records = {}, {}, []
     entry_tail = dict(scale=1.0, antitile='off', antitile_cell=1)
-    for item in args.items or ITEMS:
+    for item in args.items or [i for i in ITEMS if i not in EXCLUDED]:
         spec = ITEMS[item]
         name = f'rigging-{item}'
         mesh_dir = output / 'meshes' / name
@@ -274,7 +280,8 @@ def cmd_pack(args) -> int:
     ids = {r['id'] for r in records}
     old = [json.loads(line) for line in REGISTRY.read_text().splitlines()] if REGISTRY.is_file() else []
     REGISTRY.write_text(''.join(json.dumps(r, ensure_ascii=False, sort_keys=True) + '\n'
-                                for r in [r for r in old if r['id'] not in ids] + records))
+                                for r in [r for r in old if r['id'] not in ids
+                                          and r['id'] not in {f'harbour-rigging-{i}' for i in EXCLUDED}] + records))
     print(f'{args.set}: {len(meshes)} meshes, {len(materials)} materials -> {output}; {len(records)} records in {REGISTRY.relative_to(ROOT)}')
     return 0
 
