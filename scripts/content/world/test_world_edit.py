@@ -178,6 +178,84 @@ def test_check_catches_a_changed_vertex_light(tmp_path):
     assert white.summary['light']['other'] == 3 * (len(tris) - half)
 
 
+def source_chunk(path, tris_per_material=4):
+    """A chunk as the converter writes it, with order, flags and lightmap per triangle: two materials, each a strip
+    of triangles over its own corners. Returns the corners and the primitives."""
+    import chunk_canon
+    corners, prims = [], []
+    for mi in range(2):
+        rows = []
+        for t in range(tris_per_material):
+            tri = []
+            for k in range(3):
+                c = np.zeros((), chunk_canon.CORNER)
+                n = len(corners)
+                c['pos'] = (100.0 * (t + k), 10.0 * mi, 100.0 * (k % 2))
+                c['nrm'] = np.array([0.1 * k, 0.9, 0.3]) / np.linalg.norm([0.1 * k, 0.9, 0.3])
+                c['uv'] = (0.1 * n, 0.2 * k)
+                c['col'] = (50 + n, 60, 70, 255)
+                c['vid'], c['fid'] = n, n
+                corners.append(c)
+                tri.append(n)
+            rows.append(tri)
+        order = np.arange(len(prims) * 100, len(prims) * 100 + len(rows), dtype=np.float32)
+        flags = np.array([[3, 7 + t] for t in range(len(rows))], np.uint16)
+        light = np.full(len(rows), -1 - mi, np.float32)
+        prims.append((mi, rows, order, flags, light))
+    doc = {'asset': {'version': '2.0', 'extras': {'gothic': {'format': 'gothic-world-chunk'}}},
+           'nodes': [{'name': path.stem, 'mesh': 0, 'scale': [.01, .01, .01]}],
+           'materials': [{'name': m['name'], 'extras': {'gothic': {'index': i, **m}}} for i, m in enumerate(MATERIALS)]}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    chunk_canon._write(path, doc, doc, np.array(corners, chunk_canon.CORNER), prims)
+    return np.array(corners, chunk_canon.CORNER), prims
+
+
+def test_canonical_writes_source_triangles_back_exactly(tmp_path):
+    # an export as Blender's: normals and light a hair off, corners rotated, the extras gone; one triangle deleted,
+    # one changed past the round trip, one new
+    import chunk_canon
+    base = tmp_path / 'base/0_0.glb'
+    corners, prims = source_chunk(base)
+    off = corners.copy()
+    off['nrm'] += np.float32(2e-5)
+    off['col'][:, 0] += 1
+    rows = []
+    for mi, tris, *_ in prims:
+        for t, tri in enumerate(tris):
+            if (mi, t) == (0, 0):
+                continue                                   # deleted
+            rows.append((mi, [tri[1], tri[2], tri[0]]))     # rotated
+    off['uv'][prims[1][1][3][0]] += 0.5                    # changed: its UV moved
+    new = np.zeros(3, chunk_canon.CORNER)
+    new['pos'] = [(0, 50, 0), (100, 50, 0), (0, 50, 100)]
+    new['nrm'] = (0, 1, 0)
+    new['vid'] = new['fid'] = -1
+    allc = np.concatenate([off, new])
+    rows.append((1, [len(off), len(off) + 1, len(off) + 2]))
+    exported = [(mi, [r for m, r in rows if m == mi], None, None, None) for mi in range(2)]
+    doc = {'asset': {'version': '2.0'}, 'nodes': [{'name': '0_0', 'mesh': 0, 'scale': [.01, .01, .01]}],
+           'materials': [{'name': m['name'], 'extras': {'gothic': {'index': i, **m}}} for i, m in enumerate(MATERIALS)]}
+    edited = tmp_path / 'edited.glb'
+    chunk_canon._write(edited, doc, doc, allc, exported)
+    exact, bad = chunk_canon.source_violations(base, edited)
+    assert exact == 0 and any('lost its order' in b for b in bad)
+
+    out = tmp_path / 'out.glb'
+    counts = chunk_canon.canonical(base, edited, out)
+    assert counts == {'source': 8, 'kept': 6, 'changed': 2}
+    exact, bad = chunk_canon.source_violations(base, out)
+    assert (exact, bad) == (6, [])
+    _, written = chunk_canon._primitives(out)
+    kept = [p for p in written if p[2] is not None]
+    assert [list(p[2]) for p in kept] == [[1, 2, 3], [100, 101, 102]]
+    assert all(p[3].dtype == np.uint16 and p[4] is not None for p in kept)
+    _, source = chunk_canon._primitives(base)
+    assert kept[0][1].tobytes() == source[0][1][1:].tobytes()
+    assert sum(len(p[1]) for p in written if p[2] is None) == 2
+    report = chunk_glb.check(base, out, world_json=tmp_path / 'none.json')
+    assert report.summary['source'] == {'exact': 6, 'other': 0}
+
+
 # --- Blender
 
 def have_blender():
@@ -302,3 +380,19 @@ def test_a_hole_in_the_new_geometry_is_caught(tmp_path, capsys, record_id, hole)
         args += ['--materials', str(world_edit.STAGING / m)]
     assert world_edit.main(args) == 1
     assert 'FAIL: new open edge' in capsys.readouterr().out
+
+
+def test_a_flat_source_triangle_is_the_same_whatever_its_normal():
+    # the source has triangles with their corners on a line; Blender gives them a normal of its own
+    import chunk_canon
+    tri = np.zeros(3, chunk_canon.CORNER)
+    tri['pos'] = [(-4739.36, -289.138, 2475.97), (-5614.36, -289.13775, 2475.97), (-5489.36, -289.13775, 2475.97)]
+    tri['nrm'] = (0, -1, 0)
+    tri['vid'] = tri['fid'] = [1, 2, 3]
+    flipped = tri[[1, 2, 0]].copy()
+    flipped['nrm'] = (0, 1, 0)
+    assert chunk_canon._same(tri, flipped)
+    tri['pos'][2] = (-5489.36, -250.0, 2475.97)       # not flat: the normal counts
+    flipped = tri[[1, 2, 0]].copy()
+    flipped['nrm'] = (0, 1, 0)
+    assert not chunk_canon._same(tri, flipped)
