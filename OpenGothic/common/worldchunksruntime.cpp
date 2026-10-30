@@ -16,6 +16,8 @@ void retainWorldTriangles(asset::WorldMesh& mesh, std::span<const uint32_t> tria
   const auto count=mesh.polygons.material_indices.size();
   if(chunks!=nullptr && chunks->triangleChunks.size()!=count)
     throw std::runtime_error("world triangles: chunk ownership does not match polygons");
+  if(chunks!=nullptr && (chunks->source || !chunks->triangleSources.empty()) && chunks->triangleSources.size()!=count)
+    throw std::runtime_error("world triangles: chunk source IDs do not match polygons");
   for(size_t i=0;i<triangles.size();++i)
     if(triangles[i]>=count || (i!=0 && triangles[i]<=triangles[i-1]))
       throw std::runtime_error("world triangles: retained IDs must be increasing, unique and in range");
@@ -27,8 +29,11 @@ void retainWorldTriangles(asset::WorldMesh& mesh, std::span<const uint32_t> tria
   retained.vertex_indices.reserve(triangles.size()*3);
   retained.feature_indices.reserve(triangles.size()*3);
   std::vector<uint32_t> ownership;
+  std::vector<uint32_t> sources;
   if(chunks!=nullptr) {
     ownership.reserve(triangles.size());
+    if(!chunks->triangleSources.empty())
+      sources.reserve(triangles.size());
     for(auto& entry:chunks->entries) {
       entry.triangleCount=0;
       entry.min=entry.max={};
@@ -46,6 +51,8 @@ void retainWorldTriangles(asset::WorldMesh& mesh, std::span<const uint32_t> tria
       continue;
     const auto owner=chunks->triangleChunks[triangle];
     ownership.push_back(owner);
+    if(!chunks->triangleSources.empty())
+      sources.push_back(chunks->triangleSources[triangle]);
     auto& entry=chunks->entries.at(owner);
     if(entry.triangleCount++==0)
       entry.min=entry.max=mesh.vertices[mesh.polygons.vertex_indices[triangle*3]];
@@ -58,8 +65,10 @@ void retainWorldTriangles(asset::WorldMesh& mesh, std::span<const uint32_t> tria
       }
     }
   mesh.polygons=std::move(retained);
-  if(chunks!=nullptr)
+  if(chunks!=nullptr) {
     chunks->triangleChunks=std::move(ownership);
+    chunks->triangleSources=std::move(sources);
+    }
   }
 
 std::vector<std::vector<uint32_t>> chunkTriangleLists(const asset::WorldMesh& mesh, const ChunkTable& chunks) {
@@ -156,6 +165,7 @@ struct Triangle {
   int32_t                 lightmap;
   asset::PolygonFlagSet  flags;
   uint32_t                chunk;     // manifest index, retained through source-order stitching
+  uint32_t                source;    // triangle ordinal in this chunk's GLB traversal
   };
 
 struct ReadMaterial {
@@ -169,6 +179,7 @@ class ChunkReader {
     std::vector<Triangle>     triangles;
 
     void read(const std::filesystem::path& path) {
+      triangleStart=triangles.size();
       auto glb = parseGlb(path);
       const auto& d = *glb.data;
       std::vector<const cgltf_node*> pending;
@@ -187,6 +198,7 @@ class ChunkReader {
 
   private:
     size_t  chunk = 0;
+    size_t  triangleStart = 0;
     std::map<int64_t,size_t>     byIndex;
     std::map<std::string,size_t> byRecord;
 
@@ -357,6 +369,7 @@ class ChunkReader {
             tri.lightmap = int32_t(l);
             }
           tri.chunk=uint32_t(chunk);
+          tri.source=uint32_t(triangles.size()-triangleStart);
           triangles.push_back(tri);
           }
         }
@@ -364,6 +377,94 @@ class ChunkReader {
   };
 
 }
+
+struct ChunkMeshSource::Impl {
+  struct File {
+    std::filesystem::path path;
+    uintmax_t size = 0;
+    std::filesystem::file_time_type modified;
+
+    void verify() const {
+      if(std::filesystem::file_size(path)!=size || std::filesystem::last_write_time(path)!=modified)
+        fail("chunk changed after world load: "+path.string());
+      }
+    };
+  std::vector<File> files;
+  std::vector<asset::Material> materials;
+  std::map<int64_t,uint32_t> materialIds;
+  std::map<std::string,uint32_t> addedMaterials;
+  // Only added/split keys need storage; unchanged source keys keep their ID.
+  std::map<VertexKey,uint32_t> vertices;
+  std::map<FeatureKey,uint32_t> features;
+  size_t vertexCount = 0;
+  size_t featureCount = 0;
+  };
+
+size_t ChunkMeshSource::memoryBytes() const {
+  size_t bytes=sizeof(*this)+sizeof(Impl)+impl->files.capacity()*sizeof(Impl::File)+
+               impl->materials.capacity()*sizeof(asset::Material);
+  for(const auto& file:impl->files)
+    bytes+=file.path.native().capacity()*sizeof(std::filesystem::path::value_type);
+  for(const auto& material:impl->materials)
+    bytes+=material.name.capacity()+material.texture.capacity()+material.detail_object.capacity();
+  bytes+=impl->materialIds.size()*(sizeof(decltype(impl->materialIds)::value_type)+sizeof(void*)*4);
+  for(const auto& material:impl->addedMaterials)
+    bytes+=sizeof(material)+sizeof(void*)*4+material.first.capacity();
+  bytes+=impl->vertices.size()*(sizeof(decltype(impl->vertices)::value_type)+sizeof(void*)*4);
+  bytes+=impl->features.size()*(sizeof(decltype(impl->features)::value_type)+sizeof(void*)*4);
+  return bytes;
+  }
+
+WorldChunkMesh ChunkMeshSource::read(size_t chunk, std::span<const uint32_t> sources) const {
+  const auto& file=impl->files.at(chunk);
+  file.verify();
+  ChunkReader reader;
+  reader.read(file.path);
+  file.verify();
+
+  std::vector<uint32_t> materials;
+  materials.reserve(reader.materials.size());
+  for(const auto& material:reader.materials)
+    materials.push_back(material.index>=0 ? impl->materialIds.at(material.index) :
+                                           impl->addedMaterials.at(materialJson(material.material,0)));
+
+  WorldChunkMesh out;
+  out.mesh.materials=impl->materials;
+  auto& q=out.mesh.polygons;
+  q.material_indices.reserve(sources.size());
+  q.lightmap_indices.reserve(sources.size());
+  q.flags.reserve(sources.size());
+  q.vertex_indices.reserve(sources.size()*3);
+  q.feature_indices.reserve(sources.size()*3);
+  std::map<uint32_t,uint32_t> vertices,features;
+  for(const auto source:sources) {
+    const auto& triangle=reader.triangles.at(source);
+    q.material_indices.push_back(materials.at(triangle.material));
+    q.lightmap_indices.push_back(triangle.lightmap);
+    q.flags.push_back(triangle.flags);
+    for(const auto& corner:triangle.corners) {
+      const auto vertex=impl->vertices.find(corner.vertex);
+      const auto feature=impl->features.find(corner.feature);
+      const auto vertexId=vertex!=impl->vertices.end() ? vertex->second : uint32_t(corner.vertex.id);
+      const auto featureId=feature!=impl->features.end() ? feature->second : uint32_t(corner.feature.id);
+      if(vertexId>=impl->vertexCount || featureId>=impl->featureCount)
+        fail("chunk source ID outside the loaded world: "+file.path.string());
+      const auto [vi,newVertex]=vertices.emplace(vertexId,uint32_t(out.mesh.vertices.size()));
+      const auto [fi,newFeature]=features.emplace(featureId,uint32_t(out.mesh.features.size()));
+      if(newVertex) {
+        out.mesh.vertices.push_back(corner.position);
+        out.vertexIds.push_back(vertexId);
+        }
+      if(newFeature) {
+        out.mesh.features.push_back(corner.value);
+        out.featureIds.push_back(featureId);
+        }
+      q.vertex_indices.push_back(vi->second);
+      q.feature_indices.push_back(fi->second);
+      }
+    }
+  return out;
+  }
 
 asset::WorldMesh canonicalWorldMesh(const asset::WorldMesh& mesh) {
   checkPolygons(mesh);
@@ -424,6 +525,7 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
                                  ChunkTable* chunks) {
   const auto manifest = readWorldChunkManifest(dir);
   ChunkTable table;
+  auto source=chunks!=nullptr ? std::make_shared<ChunkMeshSource::Impl>() : nullptr;
   if(chunks!=nullptr) {
     if(manifest.chunkSize!=ChunkId::Size)
       fail("runtime chunks require a 64 m grid");
@@ -446,7 +548,11 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
     auto path = dir/chunk;
     if(!overrideDir.empty() && std::filesystem::exists(overrideDir/chunk))
       path = overrideDir/chunk;
+    if(source!=nullptr)
+      source->files.push_back({path,std::filesystem::file_size(path),std::filesystem::last_write_time(path)});
     reader.read(path);
+    if(source!=nullptr)
+      source->files.back().verify();
     }
 
   // Source triangles in source order, then edited ones in chunk order.
@@ -538,6 +644,16 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
       out.materials.push_back(rm.material);
     matMap[i] = it->second;
     }
+  if(source!=nullptr) {
+    source->materials=out.materials;
+    for(size_t i=0;i<reader.materials.size();++i) {
+      const auto& material=reader.materials[i];
+      if(material.index>=0)
+        source->materialIds.emplace(material.index,matMap[i]);
+      else
+        source->addedMaterials.emplace(materialJson(material.material,0),matMap[i]);
+      }
+    }
 
   std::map<VertexKey,uint32_t>  newVertices;
   std::map<FeatureKey,uint32_t> newFeatures;
@@ -583,8 +699,10 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
   q.flags.reserve(ordered.size());
   q.vertex_indices.reserve(ordered.size()*3);
   q.feature_indices.reserve(ordered.size()*3);
-  if(chunks!=nullptr)
+  if(chunks!=nullptr) {
     table.triangleChunks.reserve(ordered.size());
+    table.triangleSources.reserve(ordered.size());
+    }
   for(const auto t:ordered) {
     const auto& tri = reader.triangles[t];
     q.material_indices.push_back(matMap[tri.material]);
@@ -596,6 +714,7 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
       }
     if(chunks!=nullptr) {
       table.triangleChunks.push_back(tri.chunk);
+      table.triangleSources.push_back(tri.source);
       auto& entry=table.entries[tri.chunk];
       if(entry.triangleCount==0)
         entry.min=entry.max=tri.corners.front().position;
@@ -608,8 +727,14 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
       ++entry.triangleCount;
       }
     }
-  if(chunks!=nullptr)
+  if(chunks!=nullptr) {
+    source->vertices=std::move(newVertices);
+    source->features=std::move(newFeatures);
+    source->vertexCount=out.vertices.size();
+    source->featureCount=out.features.size();
+    table.source=std::shared_ptr<const ChunkMeshSource>(new ChunkMeshSource(std::move(source)));
     *chunks=std::move(table);
+    }
   return out;
   }
 

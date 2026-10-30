@@ -100,8 +100,8 @@ void DrawBuckets::updateBindlessArrays() {
       orm.push_back(i.mat.orm!=nullptr ? i.mat.orm : &Resources::fallbackTexture());
       }
     if(i.staticMesh!=nullptr) {
-      ibo    .push_back(&i.staticMesh->ibo8);
-      vbo    .push_back(&i.staticMesh->vbo);
+      ibo    .push_back(&i.staticMesh->ibo8Buffer());
+      vbo    .push_back(&i.staticMesh->vboBuffer());
       morphId.push_back(i.staticMesh->morph.index);
       morph  .push_back(i.staticMesh->morph.samples);
       } else if(i.animMesh!=nullptr) {

@@ -228,8 +228,11 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     probeT = LoadProbe::now();
     if(streamLandscape)
       wview->startLandscapeStreaming(std::move(worldMesh),*residency,probeViewMs);
-    else
+    else {
       worldMesh = {};
+      chunks.source.reset();
+      std::vector<uint32_t>().swap(chunks.triangleSources);
+      }
     loadProgress(70);
 
     globFx.reset(new GlobalEffects(*this));

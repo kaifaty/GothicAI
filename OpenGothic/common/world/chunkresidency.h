@@ -32,6 +32,10 @@ class ChunkResidency {
       uint64_t published = 0;
       uint64_t released = 0;
       size_t   pending = 0;
+      size_t   landscapePageUsedBytes = 0;
+      size_t   landscapePageFreeBytes = 0;
+      size_t   landscapePageRetiredBytes = 0;
+      size_t   landscapePageCount = 0;
       };
 
     using Clock = std::chrono::steady_clock;
@@ -63,6 +67,12 @@ class ChunkResidency {
     void recordPublication(double ms, bool far);
     void recordRelease() { ++counters.released; }
     void setPending(size_t count) { counters.pending=count; }
+    void setLandscapePages(size_t used, size_t free, size_t retired, size_t count) {
+      counters.landscapePageUsedBytes=used;
+      counters.landscapePageFreeBytes=free;
+      counters.landscapePageRetiredBytes=retired;
+      counters.landscapePageCount=count;
+      }
 
   private:
     const ChunkTable& chunks;

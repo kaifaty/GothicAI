@@ -195,6 +195,7 @@ class Resources final {
     static void recycle(Tempest::Attachment&& img);
     static void recycle(Tempest::ZBuffer&& img);
     static void recycle(Tempest::AccelerationStructure&& rtas);
+    static void recycle(std::shared_ptr<void>&& lifetime);
 
     static bool                      hasWorld(std::string_view name);
     static int                       baseLanguage();
@@ -355,6 +356,7 @@ class Resources final {
       std::vector<Tempest::ZBuffer>         zb;
       std::vector<Tempest::DescriptorArray> arr;
       std::vector<Tempest::AccelerationStructure> rtas;
+      std::vector<std::shared_ptr<void>> lifetime;
       };
     DeleteQueue recycled[MaxFramesInFlight];
     uint8_t     recycledId = 0;

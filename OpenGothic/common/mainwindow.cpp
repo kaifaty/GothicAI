@@ -340,10 +340,10 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   const int64_t radius = std::max<int64_t>({8,std::abs(int64_t(cameraId.x)-center.x)+1,
                                             std::abs(int64_t(cameraId.z)-center.z)+1});
   const int mapSize = std::min(240,std::min(w(),h())/2);
-  const int mapY = y+3*line;
+  const int mapY = y+4*line;
   const float cell = float(mapSize)/float(radius*2+1);
   p.setBrush(Color(0.f,0.f,0.f,0.8f));
-  p.drawRect(x-5,y-5,std::max(400,mapSize+10),mapSize+5*line+10);
+  p.drawRect(x-5,y-5,std::max(500,mapSize+10),mapSize+6*line+10);
 
   const auto& stats = chunks->stats();
   char text[160];
@@ -355,6 +355,10 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   std::snprintf(text,sizeof(text),"Landscape: pending %zu  published %llu  released %llu",stats.pending,
                 static_cast<unsigned long long>(stats.published),static_cast<unsigned long long>(stats.released));
   fnt.drawText(p,x,y+2*line,text);
+  std::snprintf(text,sizeof(text),"Pages %zu: %.2f MiB used  %.2f free  %.2f retired",stats.landscapePageCount,
+                double(stats.landscapePageUsedBytes)/1048576.0,double(stats.landscapePageFreeBytes)/1048576.0,
+                double(stats.landscapePageRetiredBytes)/1048576.0);
+  fnt.drawText(p,x,y+3*line,text);
 
   const auto& entries = chunks->table().entries;
   for(size_t i=0;i<entries.size();++i) {

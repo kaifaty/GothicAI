@@ -10,13 +10,23 @@ using namespace Tempest;
 
 Landscape::Landscape(VisualObjects& visual, const PackedMesh &packed)
   :visual(visual),mesh(packed) {
+  init(packed,true);
+  }
+
+Landscape::Landscape(VisualObjects& visual, const PackedMesh& packed, LandscapePages& pages)
+  :visual(visual),mesh(packed,pages) {
+  init(packed,false);
+  }
+
+void Landscape::init(const PackedMesh& packed, bool wholeWorld) {
   if(packed.indices.empty())
     return;
   auto& device = Resources::device();
 
-  meshletDesc = Resources::ssbo(packed.meshletBounds.data(), packed.meshletBounds.size()*sizeof(packed.meshletBounds[0]));
-  bvhNodes    = Resources::ssbo(packed.bvhNodes.data(),  packed.bvhNodes.size()*sizeof(packed.bvhNodes[0]));
-  //bvhNodes    = Resources::ssbo(packed.bvh8Nodes.data(), packed.bvh8Nodes.size()*sizeof(packed.bvh8Nodes[0]));
+  if(wholeWorld) {
+    meshletDesc = Resources::ssbo(packed.meshletBounds.data(), packed.meshletBounds.size()*sizeof(packed.meshletBounds[0]));
+    bvhNodes    = Resources::ssbo(packed.bvhNodes.data(),  packed.bvhNodes.size()*sizeof(packed.bvhNodes[0]));
+    }
 
   blocks.reserve(packed.subMeshes.size());
   for(size_t i=0; i<packed.subMeshes.size(); ++i) {

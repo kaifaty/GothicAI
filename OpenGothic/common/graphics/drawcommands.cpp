@@ -91,8 +91,8 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     cmd.setBinding(L_Vbo, buckets.vbo());
     }
   else if(bx.staticMesh!=nullptr) {
-    cmd.setBinding(L_Ibo, bx.staticMesh->ibo8);
-    cmd.setBinding(L_Vbo, bx.staticMesh->vbo);
+    cmd.setBinding(L_Ibo, bx.staticMesh->ibo8Buffer());
+    cmd.setBinding(L_Vbo, bx.staticMesh->vboBuffer());
     }
   else {
     cmd.setBinding(L_Ibo, bx.animMesh->ibo8);

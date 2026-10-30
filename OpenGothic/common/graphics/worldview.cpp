@@ -4,6 +4,8 @@
 #include <condition_variable>
 #include <deque>
 #include <mutex>
+#include <numeric>
+#include <stdexcept>
 #include <thread>
 
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -26,9 +28,10 @@ struct WorldView::LandscapeStreaming {
     };
   WorldView& view;
   ChunkResidency& residency;
-  asset::WorldMesh source;
+  std::shared_ptr<const ChunkMeshSource> source;
   std::vector<std::vector<uint32_t>> triangles;
   std::vector<uint32_t> materials;
+  LandscapePages pages;
   std::vector<Chunk> chunks;
   std::mutex mutex;
   std::condition_variable wake;
@@ -44,14 +47,24 @@ struct WorldView::LandscapeStreaming {
   std::thread worker;
 
   LandscapeStreaming(WorldView& view, asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs)
-    :view(view),residency(residency),source(std::move(mesh)),
-     triangles(chunkTriangleLists(source,residency.table())),materials(PackedMesh::landscapeMaterialMap(source)),
+    :view(view),residency(residency),source(residency.table().source),
+     triangles(residency.table().entries.size()),materials(PackedMesh::landscapeMaterialMap(mesh)),
      chunks(triangles.size()),preloadMs(preloadMs) {
-    // Physics and cloth have already consumed these source-only polygon fields.
-    releasedSourceBytes=source.polygons.lightmap_indices.capacity()*sizeof(source.polygons.lightmap_indices[0])+
-                        source.polygons.flags.capacity()*sizeof(source.polygons.flags[0]);
-    std::vector<int32_t>().swap(source.polygons.lightmap_indices);
-    std::vector<asset::PolygonFlagSet>().swap(source.polygons.flags);
+    if(!source)
+      throw std::runtime_error("Landscape streaming requires a file-backed chunk source");
+    const auto& table=residency.table();
+    for(size_t i=0;i<table.triangleChunks.size();++i)
+      triangles.at(table.triangleChunks[i]).push_back(table.triangleSources.at(i));
+    // Physics and cloth have consumed the stitched mesh. Repacking reads only
+    // the selected chunk; no dense world geometry survives on the CPU.
+    releasedSourceBytes=mesh.vertices.capacity()*sizeof(mesh.vertices[0])+
+                        mesh.features.capacity()*sizeof(mesh.features[0])+
+                        mesh.polygons.vertex_indices.capacity()*sizeof(mesh.polygons.vertex_indices[0])+
+                        mesh.polygons.feature_indices.capacity()*sizeof(mesh.polygons.feature_indices[0])+
+                        mesh.polygons.material_indices.capacity()*sizeof(mesh.polygons.material_indices[0])+
+                        mesh.polygons.lightmap_indices.capacity()*sizeof(mesh.polygons.lightmap_indices[0])+
+                        mesh.polygons.flags.capacity()*sizeof(mesh.polygons.flags[0]);
+    mesh={};
     subscription=residency.subscribe([this](ChunkId id, ChunkResidency::State, ChunkResidency::State next) {
       const auto& entries=this->residency.table().entries;
       const auto at=std::find_if(entries.begin(),entries.end(),[&](const auto& e) { return e.id==id; });
@@ -82,7 +95,7 @@ struct WorldView::LandscapeStreaming {
         const auto t=ChunkResidency::Clock::now();
         try {
           if(!packed)
-            packed=std::make_unique<PackedMesh>(source,triangles[i],materials);
+            packed=pack(i);
           }
         catch(...) {
           {
@@ -137,7 +150,7 @@ struct WorldView::LandscapeStreaming {
       std::unique_ptr<PackedMesh> packed;
       std::exception_ptr error;
       try {
-        packed=std::make_unique<PackedMesh>(source,triangles[i],materials);
+        packed=pack(i);
         }
       catch(...) {
         error=std::current_exception();
@@ -176,9 +189,16 @@ struct WorldView::LandscapeStreaming {
       }
     }
 
+  std::unique_ptr<PackedMesh> pack(size_t i) const {
+    auto chunk=source->read(i,triangles[i]);
+    std::vector<uint32_t> selected(chunk.mesh.polygons.material_indices.size());
+    std::iota(selected.begin(),selected.end(),uint32_t(0));
+    return std::make_unique<PackedMesh>(chunk.mesh,selected,materials,chunk.vertexIds,chunk.featureIds);
+    }
+
   void publish(size_t i, const PackedMesh& packed) {
     const auto t=ChunkResidency::Clock::now();
-    chunks[i].gpu=std::make_unique<Landscape>(view.visuals,packed);
+    chunks[i].gpu=std::make_unique<Landscape>(view.visuals,packed,pages);
     const auto ms=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
     residency.recordPublication(ms,residency.desired(i)==ChunkResidency::State::Far);
     if(firstUpdate)
@@ -240,14 +260,11 @@ struct WorldView::LandscapeStreaming {
       }
     }
     residency.setPending(pending);
+    const auto pageStats=pages.stats();
+    residency.setLandscapePages(pageStats.occupiedBytes,pageStats.freeBytes,pageStats.retiredBytes,pageStats.pageCount);
     if(firstUpdate) {
       if(LoadProbe::enabled()) {
-        size_t sourceBytes=source.vertices.capacity()*sizeof(source.vertices[0])+
-                           source.features.capacity()*sizeof(source.features[0])+
-                           source.polygons.vertex_indices.capacity()*sizeof(source.polygons.vertex_indices[0])+
-                           source.polygons.feature_indices.capacity()*sizeof(source.polygons.feature_indices[0])+
-                           source.polygons.material_indices.capacity()*sizeof(source.polygons.material_indices[0])+
-                           materials.capacity()*sizeof(materials[0]);
+        size_t sourceBytes=source->memoryBytes()+materials.capacity()*sizeof(materials[0]);
         for(const auto& list:triangles)
           sourceBytes+=list.capacity()*sizeof(list[0]);
         LoadProbe::mark("landscape_pack",initialPackMs,"near_chunks="+std::to_string(residency.stats().near));

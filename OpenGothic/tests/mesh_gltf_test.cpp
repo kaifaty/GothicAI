@@ -1373,9 +1373,16 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   for(const auto& sub:packed.subMeshes)
     Resources::loadMaterial(sub.material,true);
   Gothic gothic;
+  const auto directory=fixture.root/"landscape-lifetime";
+  writeWorldChunks(world,{"CONTRACT.ZEN",0,0},directory);
   ChunkTable table;
-  table.entries.push_back({{0,0},{},{100,100,100},{200,200,100},1});
-  table.triangleChunks={0};
+  world=readWorldChunks(directory,{},&table);
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  Resources::resetRecycled(0);
+  const auto baseline=tempestProbeGpuBufferCount();
+  {
   ChunkResidency residency(table);
   WorldView view(packed.bbox(),"CONTRACT.ZEN");
   view.startLandscapeStreaming(std::move(world),residency,0);
@@ -1384,39 +1391,67 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
     residency.update(position,position,1000);
     view.finishLandscapeUpdate();
     };
-  device.waitIdle();
-  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
-    Resources::resetRecycled(frame);
-  Resources::resetRecycled(0);
-  const auto baseline=tempestProbeGpuBufferCount();
+  const auto emptyBuffers=tempestProbeGpuBufferCount();
   size_t bucketCount=0;
+  size_t firstMeshlet=0,pageBytes=0;
+  const Tempest::StorageBuffer* vertices=nullptr;
+  const Tempest::StorageBuffer* indices=nullptr;
+  const auto usedBytes=packed.vertices.size()*sizeof(packed.vertices[0])+packed.indices8.size();
   for(size_t cycle=0;cycle<2;++cycle) {
     update({100,100,100});
     device.waitIdle();
     require(residency.desired(size_t(0))==ChunkResidency::State::Near && residency.stats().published==cycle+1,
             "Near must publish the streaming landscape synchronously");
-    require(tempestProbeGpuBufferCount()>baseline,"published landscape must own live GPU buffers");
+    require(tempestProbeGpuBufferCount()>emptyBuffers,"published landscape pages must own live GPU buffers");
+    require(residency.stats().landscapePageCount==1 && residency.stats().landscapePageUsedBytes==usedBytes &&
+            residency.stats().landscapePageRetiredBytes==0,"published landscape must occupy exactly its page range");
     const auto& buckets=view.drawBuckets().buckets();
-    require(std::any_of(buckets.begin(),buckets.end(),[](const auto& bucket) {
+    const auto bucket=std::find_if(buckets.begin(),buckets.end(),[](const auto& bucket) {
       return bucket.staticMesh!=nullptr;
-      }),"published landscape must register its stable mesh in draw buckets");
-    if(cycle==0)
+      });
+    require(bucket!=buckets.end(),"published landscape must register its stable mesh in draw buckets");
+    const auto bucketIndex=size_t(bucket-buckets.begin());
+    const auto* mesh=bucket->staticMesh;
+    if(cycle==0) {
       bucketCount=buckets.size();
-    else
+      vertices=&mesh->vboBuffer();
+      indices=&mesh->ibo8Buffer();
+      firstMeshlet=mesh->firstMeshlet();
+      pageBytes=residency.stats().landscapePageUsedBytes+residency.stats().landscapePageFreeBytes;
+      }
+    else {
       require(buckets.size()==bucketCount,"republishing a landscape must reuse invalidated buckets");
+      require(&mesh->vboBuffer()==vertices && &mesh->ibo8Buffer()==indices && mesh->firstMeshlet()==firstMeshlet,
+              "republishing must reuse the completed page range and its GPU buffers");
+      }
+    update({100,100,100});
+    require(view.drawBuckets().buckets().at(bucketIndex).staticMesh==mesh,
+            "a published landscape's StaticMesh must remain stable between residency updates");
     update({1000000,0,1000000});
     require(residency.desired(size_t(0))==ChunkResidency::State::Outside && residency.stats().released==cycle+1,
             "Outside must release the streaming landscape");
     for(const auto& bucket:view.drawBuckets().buckets())
       require(bucket.staticMesh==nullptr && bucket.animMesh==nullptr,
               "Outside must not leave mesh pointers in draw buckets");
-    require(tempestProbeGpuBufferCount()>baseline,"landscape buffers must survive until their recycle slot completes");
+    require(residency.stats().landscapePageUsedBytes==0 && residency.stats().landscapePageRetiredBytes==usedBytes &&
+            residency.stats().landscapePageFreeBytes+usedBytes==pageBytes,
+            "Outside must retire its occupied range until the consuming frame completes");
     Resources::resetRecycled(1);
-    require(tempestProbeGpuBufferCount()>baseline,"another frame slot must not release retired landscape buffers");
+    view.finishLandscapeUpdate();
+    require(residency.stats().landscapePageRetiredBytes==usedBytes,
+            "another frame slot must not release retired landscape ranges");
     device.waitIdle();
     Resources::resetRecycled(0);
-    require(tempestProbeGpuBufferCount()==baseline,"Outside must return live GPU buffers to baseline");
+    view.finishLandscapeUpdate();
+    require(residency.stats().landscapePageUsedBytes==0 && residency.stats().landscapePageRetiredBytes==0 &&
+            residency.stats().landscapePageFreeBytes==pageBytes && residency.stats().landscapePageCount==1,
+            "the completed recycle slot must return the full page range for reuse");
+    }
   }
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  require(tempestProbeGpuBufferCount()==baseline,"destroying the streaming view must return live page buffers to baseline");
   if(Shaders::options().doBindless) {
     SceneGlobals scene;
     StaticMesh firstMesh(packed),secondMesh(packed);

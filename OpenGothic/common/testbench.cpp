@@ -643,6 +643,7 @@ struct Bench {
     uint64_t nearTransitions = 0, farTransitions = 0;
     std::vector<double> publicationTimesMs;
     uint64_t published = 0, released = 0;
+    size_t pageUsedBytes = 0, pageFreeBytes = 0, pageRetiredBytes = 0, pageCount = 0;
     };
   std::vector<StreamingSample> streamingSamples;
   std::vector<double> streamingWarmupFarMs;
@@ -1715,14 +1716,15 @@ void finish() {
   stopRecording();
   if(!bench.streamingSamples.empty()) {
     if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
-      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released\n");
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count\n");
       for(const auto& row:bench.streamingSamples) {
         std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu,",row.segment.c_str(),
           (unsigned long long)row.frame,row.updateMs,row.workMs,row.near,row.far,row.outside,
           (unsigned long long)row.nearTransitions,(unsigned long long)row.farTransitions);
         for(size_t i=0;i<row.publicationTimesMs.size();++i)
           std::fprintf(file,"%s%.9g",i==0 ? "" : ";",row.publicationTimesMs[i]);
-        std::fprintf(file,",%llu,%llu\n",(unsigned long long)row.published,(unsigned long long)row.released);
+        std::fprintf(file,",%llu,%llu,%zu,%zu,%zu,%zu\n",(unsigned long long)row.published,(unsigned long long)row.released,
+          row.pageUsedBytes,row.pageFreeBytes,row.pageRetiredBytes,row.pageCount);
         }
       std::fclose(file);
       } else event("streaming_error","\"reason\":\"cannot write residency samples\"");
@@ -18330,7 +18332,8 @@ void TestBench::sampleStreaming(const World& world) {
   bench.streamingSamples.push_back({bench.perfSegment,bench.perfFrame,stats.updateMs,stats.workMs,
     stats.near,stats.far,stats.outside,stats.transitionsNear-bench.streamingNearBefore,
     stats.transitionsFar-bench.streamingFarBefore,stats.publicationTimesMs,
-    stats.published-bench.streamingPublishedBefore,stats.released-bench.streamingReleasedBefore});
+    stats.published-bench.streamingPublishedBefore,stats.released-bench.streamingReleasedBefore,
+    stats.landscapePageUsedBytes,stats.landscapePageFreeBytes,stats.landscapePageRetiredBytes,stats.landscapePageCount});
   bench.streamingNearBefore=stats.transitionsNear;bench.streamingFarBefore=stats.transitionsFar;
   bench.streamingPublishedBefore=stats.published;bench.streamingReleasedBefore=stats.released;
   }
