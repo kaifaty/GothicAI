@@ -15,8 +15,8 @@ routine-return case harbour_wall VLK_443_ARBEITER -1385.10803 -176.951096 4372.4
 routine-return case tower_room NONE_100_XARDAS 29741 4389 -16715 house
 # NW_FARM1_FIELD_04; nearest-point blocker: none
 routine-return case farm_field BAU_952_VINO 9044.66602 1095.50256 -12661.0635 field
-# NW_FARM1_INSTABLE_02; nearest-point blocker: landscape
-routine-return case farm_stable BAU_951_HILDA 16370.2266 2375.1958 -17667.0762 slope
+# NW_FARM1_FIELD_09; supported hillside near the farm stable
+routine-return case farm_stable BAU_951_HILDA 14900 2746.37256 -19100 slope
 # NW_FARM1_CITYWALL_01; nearest-point blocker: NW_NATURE_BIGTREE_356P.MRM
 routine-return case forest_tree MIL_310_STADTWACHE 6516.90967 511.533173 -9258.83691 forest
 # NW_SHRINE_MONSTER; nearest-point blocker: NW_NATURE_HOHETANNE_91P.MRM

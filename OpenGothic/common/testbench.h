@@ -24,7 +24,7 @@ struct PhysicsNoise;
 namespace TestBench {
   bool     isActive();
   bool     routineReturnActive(const Npc& npc);
-  void     routinePath(const Npc& npc, const WayPoint& target, const WayMatrix::RoutineEntry& entry,
+  void     routinePath(Npc& npc, const WayPoint& target, const WayMatrix::RoutineEntry& entry,
                         WayPath path, bool enabled);
   // Reinitialize the harness for a fresh runner generation. The caller owns world teardown/load.
   void     configure(std::string scenario, std::string output, int64_t seedOverride = -1);

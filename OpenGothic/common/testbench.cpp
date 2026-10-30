@@ -18915,7 +18915,7 @@ bool TestBench::routineReturnActive(const Npc& npc) {
   return scenarioPath!=nullptr && bench.routinePhase>=3 && bench.routineNpc==&npc;
   }
 
-void TestBench::routinePath(const Npc& npc,const WayPoint& target,const WayMatrix::RoutineEntry& entry,WayPath path,bool enabled) {
+void TestBench::routinePath(Npc& npc,const WayPoint& target,const WayMatrix::RoutineEntry& entry,WayPath path,bool enabled) {
   if(!routineReturnActive(npc))return;
   const auto& c=bench.routineCases[bench.routineIndex];
   const auto* first=path.first();const auto* last=path.last();
@@ -18950,6 +18950,29 @@ void TestBench::routinePath(const Npc& npc,const WayPoint& target,const WayMatri
     ",\"total_in_range\":"+std::to_string(entry.totalInRange)+",\"candidates\":"+candidates+
     ",\"path\":"+points+",\"route_length_cm\":"+(first && last==&target?ragdollNumber(length):"null")+
     ",\"deadline_ms\":"+std::to_string(bench.routineDeadline));
+  if(bench.routineMeasureRoute && entry.checked && !entry.accepted && entry.totalInRange>entry.count) {
+    // The selector stays capped at eight; this one-shot observer checks the rest.
+    const auto center=npc.centerPosition();
+    size_t count=0,reachable=0;std::string probes="[";
+    const auto cachedEnd=entry.candidates.begin()+entry.count;
+    npc.world().forEachWayPoint([&](const WayPoint& point) {
+      if(point.isFreePoint())return;
+      const float distance=(point.pos-center).length();
+      if(distance>3000.f)return;
+      const auto cached=std::find_if(entry.candidates.begin(),cachedEnd,[&](const auto& candidate) {return candidate.point==&point;});
+      const bool passable=cached!=cachedEnd?cached->passable:npc.testMove(point.pos);
+      if(count++)probes+=',';
+      reachable+=passable;
+      probes+="{\"name\":"+jsonStr(point.name)+",\"position_cm\":"+ragdollVector(point.pos)+
+        ",\"distance_cm\":"+ragdollNumber(distance)+",\"passable\":"+(passable?"true":"false")+"}";
+      });
+    probes+=']';
+    event("routine_return_radius_probe","\"case\":"+jsonStr(c.label)+",\"attempt\":"+std::to_string(bench.routineRetry?2:1)+
+      ",\"tick_ms\":"+std::to_string(npc.world().tickCount())+",\"position_cm\":"+ragdollVector(npc.position())+
+      ",\"center_cm\":"+ragdollVector(center)+",\"radius_cm\":3000,\"count\":"+std::to_string(count)+
+      ",\"reachable_count\":"+std::to_string(reachable)+",\"none_reachable\":"+(reachable==0?"true":"false")+
+      ",\"candidates\":"+probes);
+    }
   }
 
 void TestBench::monsterCharacterCollision(const Npc& actor, const Npc* target) {
