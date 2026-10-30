@@ -90,7 +90,7 @@ out, textures = map(path, sys.argv[1:])
 for name, value in sorted(os.environ.items()):
     if not name.startswith(("OPENGOTHIC_", "GOTHIC_", "TEMPEST_")):
         continue
-    if name in ("GOTHIC_DIR", "GOTHIC_AI_URL", "OPENGOTHIC_FRACTURE", "OPENGOTHIC_CONTENT",
+    if name in ("GOTHIC_DIR", "GOTHIC_AI_URL", "OPENGOTHIC_FRACTURE", "OPENGOTHIC_CONTENT", "OPENGOTHIC_BASE",
                 "OPENGOTHIC_BASE_CACHE", "OPENGOTHIC_BASE_STORE"):
         continue
     if not value.startswith(("/", "~/")):
