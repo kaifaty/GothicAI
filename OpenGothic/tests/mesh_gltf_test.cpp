@@ -8,7 +8,8 @@
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
-#include "graphics/mesh/landscape.h"
+#include "graphics/worldview.h"
+#include "world/chunkresidency.h"
 #include "loadprobe.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "physics/fracture.h"
@@ -1371,8 +1372,18 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   require(!packed.indices.empty(),"landscape lifetime fixture must contain meshlets");
   for(const auto& sub:packed.subMeshes)
     Resources::loadMaterial(sub.material,true);
-  SceneGlobals scene;
-  VisualObjects visual(scene,packed.bbox());
+  Gothic gothic;
+  ChunkTable table;
+  table.entries.push_back({{0,0},{},{100,100,100},{200,200,100},1});
+  table.triangleChunks={0};
+  ChunkResidency residency(table);
+  WorldView view(packed.bbox(),"CONTRACT.ZEN");
+  view.startLandscapeStreaming(std::move(world),residency,0);
+  const auto update=[&](const Tempest::Vec3& position) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,1000);
+    view.finishLandscapeUpdate();
+    };
   device.waitIdle();
   for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
     Resources::resetRecycled(frame);
@@ -1380,30 +1391,33 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   const auto baseline=tempestProbeGpuBufferCount();
   size_t bucketCount=0;
   for(size_t cycle=0;cycle<2;++cycle) {
-    {
-      Landscape landscape(visual,packed);
-      device.waitIdle();
-      require(tempestProbeGpuBufferCount()>baseline,"published landscape must own live GPU buffers");
-      const auto& buckets=visual.drawBuckets().buckets();
-      require(std::any_of(buckets.begin(),buckets.end(),[](const auto& bucket) {
-        return bucket.staticMesh!=nullptr;
-        }),"published landscape must register its stable mesh in draw buckets");
-      if(cycle==0)
-        bucketCount=buckets.size();
-      else
-        require(buckets.size()==bucketCount,"republishing a landscape must reuse invalidated buckets");
-    }
-    for(const auto& bucket:visual.drawBuckets().buckets())
+    update({100,100,100});
+    device.waitIdle();
+    require(residency.desired(size_t(0))==ChunkResidency::State::Near && residency.stats().published==cycle+1,
+            "Near must publish the streaming landscape synchronously");
+    require(tempestProbeGpuBufferCount()>baseline,"published landscape must own live GPU buffers");
+    const auto& buckets=view.drawBuckets().buckets();
+    require(std::any_of(buckets.begin(),buckets.end(),[](const auto& bucket) {
+      return bucket.staticMesh!=nullptr;
+      }),"published landscape must register its stable mesh in draw buckets");
+    if(cycle==0)
+      bucketCount=buckets.size();
+    else
+      require(buckets.size()==bucketCount,"republishing a landscape must reuse invalidated buckets");
+    update({1000000,0,1000000});
+    require(residency.desired(size_t(0))==ChunkResidency::State::Outside && residency.stats().released==cycle+1,
+            "Outside must release the streaming landscape");
+    for(const auto& bucket:view.drawBuckets().buckets())
       require(bucket.staticMesh==nullptr && bucket.animMesh==nullptr,
-              "released landscape must not leave mesh pointers in draw buckets");
+              "Outside must not leave mesh pointers in draw buckets");
     require(tempestProbeGpuBufferCount()>baseline,"landscape buffers must survive until their recycle slot completes");
     Resources::resetRecycled(1);
     require(tempestProbeGpuBufferCount()>baseline,"another frame slot must not release retired landscape buffers");
     device.waitIdle();
     Resources::resetRecycled(0);
-    require(tempestProbeGpuBufferCount()==baseline,"landscape publish/release must return live GPU buffers to baseline");
+    require(tempestProbeGpuBufferCount()==baseline,"Outside must return live GPU buffers to baseline");
   }
-  std::cout << "landscape lifetime: 2 publish/release cycles, live_buffers=" << baseline << '\n';
+  std::cout << "landscape streaming lifetime: 2 Near/Outside cycles, live_buffers=" << baseline << '\n';
 }
 
 void maskBc1Policy(const Fixture& fixture) {

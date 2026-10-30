@@ -21,6 +21,7 @@ struct WorldView::LandscapeStreaming {
     std::unique_ptr<Landscape> gpu;
     std::unique_ptr<PackedMesh> ready;
     std::exception_ptr error;
+    bool failed=false;
     uint64_t generation=0;
     };
   WorldView& view;
@@ -32,6 +33,8 @@ struct WorldView::LandscapeStreaming {
   std::mutex mutex;
   std::condition_variable wake;
   std::deque<std::pair<size_t,uint64_t>> jobs;
+  size_t readyCount=0;
+  size_t releasedSourceBytes=0;
   bool stopping=false;
   bool firstUpdate=true;
   double preloadMs=0;
@@ -44,6 +47,11 @@ struct WorldView::LandscapeStreaming {
     :view(view),residency(residency),source(std::move(mesh)),
      triangles(chunkTriangleLists(source,residency.table())),materials(PackedMesh::landscapeMaterialMap(source)),
      chunks(triangles.size()),preloadMs(preloadMs) {
+    // Physics and cloth have already consumed these source-only polygon fields.
+    releasedSourceBytes=source.polygons.lightmap_indices.capacity()*sizeof(source.polygons.lightmap_indices[0])+
+                        source.polygons.flags.capacity()*sizeof(source.polygons.flags[0]);
+    std::vector<int32_t>().swap(source.polygons.lightmap_indices);
+    std::vector<asset::PolygonFlagSet>().swap(source.polygons.flags);
     subscription=residency.subscribe([this](ChunkId id, ChunkResidency::State, ChunkResidency::State next) {
       const auto& entries=this->residency.table().entries;
       const auto at=std::find_if(entries.begin(),entries.end(),[&](const auto& e) { return e.id==id; });
@@ -53,8 +61,7 @@ struct WorldView::LandscapeStreaming {
         {
         std::lock_guard guard(mutex);
         ++chunk.generation;
-        chunk.ready.reset();
-        chunk.error=nullptr;
+        takeReady(chunk);
         }
         if(chunk.gpu) {
           chunk.gpu.reset();
@@ -67,19 +74,32 @@ struct WorldView::LandscapeStreaming {
         std::unique_ptr<PackedMesh> packed;
         {
         std::lock_guard guard(mutex);
+        if(chunk.failed)
+          return;
         ++chunk.generation;
-        packed=std::move(chunk.ready);
-        chunk.error=nullptr;
+        packed=takeReady(chunk);
         }
         const auto t=ChunkResidency::Clock::now();
-        if(!packed)
-          packed=std::make_unique<PackedMesh>(source,triangles[i],materials);
+        try {
+          if(!packed)
+            packed=std::make_unique<PackedMesh>(source,triangles[i],materials);
+          }
+        catch(...) {
+          {
+          std::lock_guard guard(mutex);
+          chunk.failed=true;
+          }
+          reportFailure(i,std::current_exception());
+          return;
+          }
         if(firstUpdate)
           initialPackMs+=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
         publish(i,*packed);
         }
       else if(next==ChunkResidency::State::Far && !chunk.gpu) {
         std::lock_guard guard(mutex);
+        if(chunk.failed)
+          return;
         jobs.emplace_back(i,++chunk.generation);
         wake.notify_one();
         }
@@ -104,12 +124,14 @@ struct WorldView::LandscapeStreaming {
       uint64_t generation;
       {
       std::unique_lock guard(mutex);
-      wake.wait(guard,[&] { return stopping || !jobs.empty(); });
+      // Publishing is limited to one package per frame; do not build an
+      // unbounded second copy of the world while that queue catches up.
+      wake.wait(guard,[&] { return stopping || (!jobs.empty() && readyCount==0); });
       if(stopping)
         return;
       std::tie(i,generation)=jobs.front();
       jobs.pop_front();
-      if(chunks[i].generation!=generation)
+      if(chunks[i].generation!=generation || chunks[i].failed)
         continue;
       }
       std::unique_ptr<PackedMesh> packed;
@@ -124,7 +146,33 @@ struct WorldView::LandscapeStreaming {
       if(chunks[i].generation==generation) {
         chunks[i].ready=std::move(packed);
         chunks[i].error=error;
+        chunks[i].failed=bool(error);
+        readyCount+=chunks[i].ready!=nullptr;
         }
+      }
+    }
+
+  // Called with mutex held. Waking the worker here bounds ready CPU packages
+  // to one, without making the frame wait for any packing work.
+  std::unique_ptr<PackedMesh> takeReady(Chunk& chunk) {
+    auto packed=std::move(chunk.ready);
+    if(packed) {
+      --readyCount;
+      wake.notify_one();
+      }
+    return packed;
+    }
+
+  void reportFailure(size_t i, std::exception_ptr error) {
+    const auto& chunk=residency.table().entries[i];
+    try {
+      std::rethrow_exception(error);
+      }
+    catch(const std::exception& e) {
+      Log::e("Landscape chunk ",chunk.id.x,",",chunk.id.z," (",chunk.file,") packing failed: ",e.what());
+      }
+    catch(...) {
+      Log::e("Landscape chunk ",chunk.id.x,",",chunk.id.z," (",chunk.file,") packing failed: unknown exception");
       }
     }
 
@@ -138,6 +186,17 @@ struct WorldView::LandscapeStreaming {
     }
 
   void prepare() {
+    std::vector<std::pair<size_t,std::exception_ptr>> errors;
+    {
+    std::lock_guard guard(mutex);
+    for(size_t i=0;i<chunks.size();++i)
+      if(chunks[i].error) {
+        errors.emplace_back(i,std::move(chunks[i].error));
+        chunks[i].error=nullptr;
+        }
+    }
+    for(auto& error:errors)
+      reportFailure(error.first,error.second);
     // Exactly one Far publication is admitted each frame. Only complete CPU
     // packages enter the frame queue; it never waits for the packing worker.
     residency.enqueue([this](ChunkResidency::Clock::time_point deadline) {
@@ -149,9 +208,9 @@ struct WorldView::LandscapeStreaming {
         std::unique_ptr<PackedMesh> packed;
         {
         std::lock_guard guard(mutex);
-        if(chunks[i].error)
-          std::rethrow_exception(chunks[i].error);
-        packed=std::move(chunks[i].ready);
+        if(chunks[i].failed)
+          continue;
+        packed=takeReady(chunks[i]);
         }
         if(packed) {
           publish(i,*packed);
@@ -166,14 +225,37 @@ struct WorldView::LandscapeStreaming {
 
   void finish() {
     size_t pending=0;
-    for(size_t i=0;i<chunks.size();++i)
-      pending+=residency.desired(i)!=ChunkResidency::State::Outside && !chunks[i].gpu;
+    size_t readyBytes=0;
+    {
+    std::lock_guard guard(mutex);
+    for(size_t i=0;i<chunks.size();++i) {
+      pending+=residency.desired(i)!=ChunkResidency::State::Outside && !chunks[i].gpu && !chunks[i].failed;
+      if(firstUpdate && chunks[i].ready) {
+        const auto& packed=*chunks[i].ready;
+        readyBytes+=packed.vertices.capacity()*sizeof(packed.vertices[0])+
+                    packed.indices.capacity()*sizeof(packed.indices[0])+
+                    packed.indices8.capacity()*sizeof(packed.indices8[0])+
+                    packed.meshletBounds.capacity()*sizeof(packed.meshletBounds[0]);
+        }
+      }
+    }
     residency.setPending(pending);
     if(firstUpdate) {
       if(LoadProbe::enabled()) {
+        size_t sourceBytes=source.vertices.capacity()*sizeof(source.vertices[0])+
+                           source.features.capacity()*sizeof(source.features[0])+
+                           source.polygons.vertex_indices.capacity()*sizeof(source.polygons.vertex_indices[0])+
+                           source.polygons.feature_indices.capacity()*sizeof(source.polygons.feature_indices[0])+
+                           source.polygons.material_indices.capacity()*sizeof(source.polygons.material_indices[0])+
+                           materials.capacity()*sizeof(materials[0]);
+        for(const auto& list:triangles)
+          sourceBytes+=list.capacity()*sizeof(list[0]);
         LoadProbe::mark("landscape_pack",initialPackMs,"near_chunks="+std::to_string(residency.stats().near));
         LoadProbe::mark("landscape_view",preloadMs+initialPackMs+initialUploadMs,
-                        "streaming=1 published="+std::to_string(residency.stats().published));
+                        "streaming=1 published="+std::to_string(residency.stats().published)+
+                        " source_geometry_bytes="+std::to_string(sourceBytes)+
+                        " ready_geometry_bytes="+std::to_string(readyBytes)+
+                        " released_source_bytes="+std::to_string(releasedSourceBytes));
         }
       firstUpdate=false;
       }
