@@ -2,7 +2,7 @@
  "glb": "rigging-build/net-rack/model.glb",
  "maps_dir": "rigging-tiles",
  "scales": {
-  "OWN_PROP_WOOD_FRAME": 1.67,
+  "OWN_PROP_WOOD_FRAME": 0.8,
   "OWN_PROP_NET_ROLL": 1.0,
   "OWN_PROP_ROPE": 1.0,
   "OWN_PROP_IRON_BAND": 5.0
@@ -55,7 +55,7 @@
  "angle_limit": 66,
  "margin": 0.003,
  "contrast": {
-  "OWN_PROP_WOOD_FRAME": 1.7,
+  "OWN_PROP_WOOD_FRAME": 2.2,
   "OWN_PROP_NET_ROLL": 1.0,
   "OWN_PROP_ROPE": 1.15,
   "OWN_PROP_IRON_BAND": 1.1
@@ -88,7 +88,7 @@
   "zones": [
    "OWN_PROP_WOOD_FRAME"
   ],
-  "cover": 0.55,
+  "cover": 0.45,
   "scale": 0.16,
   "grain": 1.6,
   "top": 0.6,
@@ -107,11 +107,24 @@
    0.042,
    0.009
   ],
-  "detail": 0.9
+  "detail": 0.9,
+  "edges": 0.6,
+  "keep_grain": 1.4,
+  "opacity": 0.75
  },
  "crevice": {
   "distance": 0.035,
   "dirt": 0.55,
+  "colour": [
+   0.006,
+   0.006,
+   0.004
+  ]
+ },
+ "seam": {
+  "radius": 0.012,
+  "gain": 4.0,
+  "dark": 0.35,
   "colour": [
    0.006,
    0.006,

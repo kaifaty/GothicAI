@@ -142,14 +142,9 @@
      "role": "knotted hemp net, alpha-tested meshes"
     },
     {
-     "key": "OWN_PROP_ROPE",
+     "key": "OWN_PROP_NET_UNDER",
      "group": "UNDEF",
-     "role": "twisted hemp rope"
-    },
-    {
-     "key": "OWN_PROP_NET_ROLL",
-     "group": "UNDEF",
-     "role": "rolled-up net bundles, opaque"
+     "role": "lower layers of a net heap, seen through the top ones: darker"
     }
    ],
    "kind": "static_mrm",
@@ -184,14 +179,9 @@
      "role": "knotted hemp net, alpha-tested meshes"
     },
     {
-     "key": "OWN_PROP_ROPE",
+     "key": "OWN_PROP_NET_UNDER",
      "group": "UNDEF",
-     "role": "twisted hemp rope"
-    },
-    {
-     "key": "OWN_PROP_NET_ROLL",
-     "group": "UNDEF",
-     "role": "rolled-up net bundles, opaque"
+     "role": "lower layers of a net heap, seen through the top ones: darker"
     }
    ],
    "kind": "static_mrm",

@@ -102,7 +102,10 @@
    0.042,
    0.009
   ],
-  "detail": 0.8
+  "detail": 0.8,
+  "edges": 1.2,
+  "keep_grain": 0.7,
+  "opacity": 0.9
  },
  "streaks": {
   "length": 0.35,
@@ -124,5 +127,15 @@
    0.004
   ]
  },
- "wet_roughness": 0.7
+ "wet_roughness": 0.7,
+ "seam": {
+  "radius": 0.012,
+  "gain": 4.0,
+  "dark": 0.45,
+  "colour": [
+   0.006,
+   0.006,
+   0.004
+  ]
+ }
 }

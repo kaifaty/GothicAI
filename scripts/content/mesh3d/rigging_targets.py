@@ -33,14 +33,15 @@ FRAME = zone('OWN_PROP_WOOD_FRAME', 'WOOD', 'hewn beams, carriage cheeks, wheels
 IRON = zone('OWN_PROP_IRON_BAND', 'METAL', 'forged straps, caps, pins and bolts')
 NET = zone('OWN_PROP_NET', 'UNDEF', 'knotted hemp net, alpha-tested meshes')
 NET_ROLL = zone('OWN_PROP_NET_ROLL', 'UNDEF', 'rolled-up net bundles, opaque')
+NET_UNDER = zone('OWN_PROP_NET_UNDER', 'UNDEF', 'lower layers of a net heap, seen through the top ones: darker')
 
 TARGETS = [
     {'id': 'rig-crate-broken', 'visual': 'NW_HARBOUR_CRATEBROKEN_01', 'budget_tris': 2500,
      'zones': [PLANK, BRACE, NAIL, ROPE]},
     {'id': 'rig-rope', 'visual': 'NW_HARBOUR_ROPE_01', 'budget_tris': 4200, 'zones': [ROPE]},
     {'id': 'rig-cannon', 'visual': 'NW_HARBOUR_CANON_01', 'budget_tris': 3500, 'zones': [CAST, BORE, FRAME, IRON]},
-    {'id': 'rig-net-big', 'visual': 'NW_HARBOUR_FISHINGNETBIG', 'budget_tris': 3600, 'zones': [NET, ROPE, NET_ROLL]},
-    {'id': 'rig-net-small', 'visual': 'NW_HARBOUR_FISHINGNETSMALL', 'budget_tris': 2400, 'zones': [NET, ROPE, NET_ROLL]},
+    {'id': 'rig-net-big', 'visual': 'NW_HARBOUR_FISHINGNETBIG', 'budget_tris': 3600, 'zones': [NET, NET_UNDER]},
+    {'id': 'rig-net-small', 'visual': 'NW_HARBOUR_FISHINGNETSMALL', 'budget_tris': 2400, 'zones': [NET, NET_UNDER]},
     {'id': 'rig-net-rack', 'visual': 'NW_HARBOUR_FISHINGNET_01', 'budget_tris': 9000,
      'zones': [FRAME, NET, NET_ROLL, ROPE, IRON]},
     {'id': 'rig-bollard-rope', 'visual': 'NW_HARBOUR_IRONROPEHOLDER_WROPE_01', 'budget_tris': 2000, 'zones': [CAST, ROPE]},

@@ -14,7 +14,10 @@ spiral on that cone: from the hole (radius "hole") out to the rim, each turn "pi
 a little lower ("rise" shapes the cone: 1 is straight, < 1 rounder). Neighbouring turns overlap in height,
 so no gap shows under them. The outer end leaves the rim and runs over the ground to the -y end of the
 bbox; the inner end comes up out of the hole, runs over the turns and down to the ground toward +y.
-"outer_tail" and "inner_tail" are [y direction, sideways bend in m]. Every turn wobbles a little
+"outer_tail" and "inner_tail" are [y direction, sideways bend in m]; "outer_leave" (degrees around the
+coil, 0 = +x, -90 = -y) is where the spiral ends and the outer end leaves the rim, as on the original: its end
+leaves at the -y side and runs straight off, so in fishers-mid it shows on the ground beside the coil (fifth
+review: no tail seen there); the end wanders a little sideways, a rope laid by hand, not a bar. Every turn wobbles a little
 ("wobble", m) so the coil is laid by hand, not turned on a lathe. UVs wrap once around the rope and run
 along it in metres over tile_m, so the rope tile's strands follow the rope.
 """
@@ -111,6 +114,8 @@ def surface(r):
 
 
 phase = rng.uniform(0, 2 * math.pi)
+if "outer_leave" in cfg:
+    phase = math.radians(cfg["outer_leave"]) - 2 * math.pi * (r_out - r_hole) / (thick * pitch)
 coil = spiral(phase)
 tube(coil, P.new_part())
 
@@ -138,10 +143,13 @@ tangent.z = 0
 tangent.normalize()
 target = Vector((centre.x + bend, lo.y + rad if y_dir < 0 else hi.y - rad, lo.z + rad))
 pts = []
-for f in np.linspace(0, 1, 14):
-    # a quadratic curve from the rim along the tangent to the target on the ground
-    c1 = start + tangent * 0.45
+lead = cfg.get("outer_lead", 0.45)
+side_dir = Vector((-(target - start).y, (target - start).x, 0)).normalized()
+for f in np.linspace(0, 1, 20):
+    # a quadratic curve from the rim along the tangent to the target on the ground, wandering a little
+    c1 = start + tangent * lead
     p = start * (1 - f) ** 2 + c1 * 2 * f * (1 - f) + target * f * f
+    p += side_dir * 0.035 * math.sin(f * 2.6 * math.pi) * f
     p.z = lo.z + rad + (start.z - lo.z - rad) * (1 - f) ** 2
     pts.append(p)
 tube(pts, P.new_part(), taper=(False, True))

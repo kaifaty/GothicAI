@@ -12,7 +12,8 @@ slight sag between its knots, a fat knot at each crossing. Height gives the norm
 top) and the alpha (cord or knot = opaque). The colour is a dark grey-brown cord whose mean over the opaque
 texels is NET_TARGET (linear RGB), the original net's mean (NW_HARBOUR_FISHINGNET_01, alpha >= 0.5).
 
-own_prop_net/      albedo.png (RGBA, alpha 0/255), normal.png, roughness.png, ao.png, metallic.png, height.png
+own_prop_net/      albedo.png (RGBA, alpha 0/255), normal.png, roughness.png, ao.png, metallic.png, height.png;
+                   the heaps' net, with a thicker cord (HEAP)
 own_prop_net_fine/ the same at 3 cm meshes: the dense net hung on the drying rack
 own_prop_net_roll/ the fine net in four layers over a dark core, opaque: a rolled or bundled net
 Every other tile of the set comes from the market set's tiles (see rigging_tiles in rigging_build.sh).
@@ -32,6 +33,9 @@ CELLS = 12
 CORD_M = 0.011
 KNOT_M = 0.019
 FINE = dict(cells=17, cord_m=0.009, knot_m=0.015, jitter=0.22)     # the dense net hung on the rack: 3 cm meshes
+# the heaps' net: thicker cord, so about 60 % of a cell is cord as on the original's heaps in the frames
+# (fifth review: our 1.1 cm cord over 4 cm meshes read as a pale veil with the pavement through it)
+HEAP = dict(cord_m=0.016, knot_m=0.026)
 NET_TARGET = np.array([0.090, 0.073, 0.044])     # linear RGB of the original net's opaque texels
 ROLL_CORE = np.array([0.012, 0.010, 0.007])
 
@@ -160,7 +164,7 @@ def main() -> int:
         save(out / folder, albedo[iy, ix], alpha, height, np.full_like(height, 0.92), 0.55 + 0.45 * np.clip(height, 0, 1), 6.0)
         return height, tone, mask, alpha, gain, albedo[opaque].mean(0)
 
-    height, tone, mask, alpha, gain, mean = net('own_prop_net')
+    height, tone, mask, alpha, gain, mean = net('own_prop_net', **HEAP)
     fine = net('own_prop_net_fine', **FINE)
     # rolled net: the fine net in four layers over a dark core, low relief, opaque
     layers = [draw(args.size, args.seed + k, (rng.uniform(0, 1), rng.uniform(0, 1)), **FINE) for k in range(4)]
@@ -168,7 +172,7 @@ def main() -> int:
     lit = np.maximum.reduce([(1 - 0.25 * k) * (0.62 + 0.38 * l[1]) * l[2] for k, l in enumerate(layers)])
     roll = ROLL_CORE[None, None] + lit[..., None] * np.array([1.0, 0.86, 0.6]) * gain * 0.6
     save(out / 'own_prop_net_roll', roll, None, h_roll, np.full_like(height, 0.95), 0.5 + 0.5 * np.clip(h_roll, 0, 1), 3.0)
-    meta = {'tile_m': TILE_M, 'cells': CELLS, 'cord_m': CORD_M, 'knot_m': KNOT_M, 'coverage': round(float(alpha.mean()), 4),
+    meta = {'tile_m': TILE_M, 'cells': CELLS, **HEAP, 'coverage': round(float(alpha.mean()), 4),
             'net_mean_linear': [round(float(v), 4) for v in mean], 'fine': {**FINE, 'coverage': round(float(fine[3].mean()), 4)},
             'seed': args.seed, 'size': args.size}
     (out / 'own_prop_net' / 'tile.json').write_text(json.dumps(meta, indent=1) + '\n')

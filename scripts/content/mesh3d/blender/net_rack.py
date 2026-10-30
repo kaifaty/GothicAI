@@ -194,7 +194,7 @@ for panel in cfg.get("panels", []):
 # --- rolled nets: a spindle or a column on a rope loop, bound with rope every 0.6 m ---
 for x, y, top_z, length, radius, shape in cfg.get("rolls", []):
     bend = Vector((rng.uniform(-0.06, 0.06), rng.uniform(-0.06, 0.06), 0))
-    n_seg = 14
+    n_seg = 26
     pts, rads = [], []
     for k in range(n_seg + 1):
         f = k / n_seg
@@ -203,7 +203,10 @@ for x, y, top_z, length, radius, shape in cfg.get("rolls", []):
             r = radius * (0.25 + 0.75 * math.sin(math.pi * f) ** 0.7)
         else:
             r = radius * min(1.0, 0.45 + 3 * f) * (1 - 0.15 * f)
-        rads.append(r * rng.uniform(0.95, 1.05))
+        # the net bulges between the bindings and is drawn in under each: a smooth cylinder read as a
+        # post (fifth review: «гладкий цилиндр в крапинку, а нужно веретено»)
+        r *= 0.9 + 0.14 * abs(math.sin(math.pi * f * length / 0.6))
+        rads.append(r * rng.uniform(0.96, 1.04))
     rads[0], rads[-1] = radius * 0.35, radius * (0.6 if shape == "spindle" else 0.85)
     # a blunt, rounded foot: one more ring a little lower and a little narrower, then the flat cap
     pts.append(pts[-1] - Vector((0, 0, radius * 0.15)))

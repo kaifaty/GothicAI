@@ -246,7 +246,11 @@ def launch(args):
             raise ValueError(f"SHA-256 verification failed: {name}")
         print(f"perf-content: SHA-256 verified {name}: {digest}", flush=True)
     # Copy the selected prepared base into this task. Never import/publish/prune shared bases.
-    remote("python3", source + "/scripts/perf_content.py", "__base", task)
+    # A caller's OPENGOTHIC_BASE_FINGERPRINT picks the base on Ryzen as it does for perf.sh and the captures
+    # (Ryzen's game-base.json may still name a base of an older importer format).
+    pinned = [f"OPENGOTHIC_BASE_FINGERPRINT={os.environ['OPENGOTHIC_BASE_FINGERPRINT']}"] \
+        if os.environ.get("OPENGOTHIC_BASE_FINGERPRINT") else []
+    remote("env", *pinned, "python3", source + "/scripts/perf_content.py", "__base", task)
     commit = subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip()
     dirty = len(subprocess.check_output(["git", "-C", str(ROOT), "status", "--porcelain"], text=True).splitlines())
     metadata = {"a": args.a, "b": args.b, "places": args.places, "order": list(ORDER),
@@ -258,7 +262,7 @@ def launch(args):
     sync(out / "metadata.json", remote_out + "/")
     environment = ["PERF_REMOTE=1", "OPENGOTHIC_BASE=", f"OPENGOTHIC_BASE_CACHE={task}/base-cache",
                    f"OPENGOTHIC_BASE_STORE={task}/base-store", "OPENGOTHIC_VIDEOS_FINGERPRINT=",
-                   f"PERF_COMMIT={commit}", f"PERF_DIRTY={dirty}"]
+                   f"PERF_COMMIT={commit}", f"PERF_DIRTY={dirty}", *pinned]
     environment += [f"{key}={value}" for key, value in metadata["settings"].items()]
     queue = [str(ROOT / "scripts/gq"), "--host", host, "run"]
     jobs = os.environ.get("RYZEN_JOBS", "8")

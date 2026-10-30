@@ -13,10 +13,12 @@ config: {"glb": model with tile UVs in metres and zone-key materials (barrel.py)
          "nodes": [NODE NAME, ...], "tile_normal": {KEY: strength}, "edge_wear": {KEY: share},
          "measure_ao": {KEY: min baked AO},
          "crevice": {"distance": 0.02, "dirt": 0.7, "colour": [r, g, b]},
+         "seam": {"radius": 0.012, "gain": 4.0, "dark": 0.5, "colour": [r, g, b]},
          "streaks": {"length": 0.25, "rust": 0.6, "dirt": 0.35, "rust_colour": [r, g, b], "column": 0.012},
          "wet_roughness": 0.6, "metal_scale": 1.0,
          "moss": {"zones": [KEY, ...], "cover": share or {KEY: share}, "scale": 0.12, "grain": 1.0, "detail": 0.0, "top": 1.0, "bottom": 0.8,
-                  "low": 0.25, "shade": 0.6, "soft": 0.25, "damp": 0.25, "dark": [r, g, b], "light": [r, g, b]}}
+                  "low": 0.25, "shade": 0.6, "edges": 0.0, "soft": 0.25, "damp": 0.25, "dark": [r, g, b], "light": [r, g, b],
+                  "opacity": 1.0, "keep_grain": 0.0}}
 The tiling materials are sampled through the tile UVs and baked into a new atlas
 UV: per-part tone (the builder's "_part" attribute when present, otherwise
 angular sectors around the axis and lid planks along X), dark seams where a part's tile plank ends, worn light edges from the Bevel
@@ -41,6 +43,10 @@ least the given value, the faces open to the outside; the gain still reaches eve
 Weathering placed by the model, as for the roofs made of pieces (docs/remaster-pipeline.md,
 «Материал из модели»); each is off unless its key is set, so older props bake as before:
 - "crevice": dirt (or moss, by its colour) packed in the joints between parts, from a short AO;
+- "seam": dirt along every edge of a part, from a wider Bevel than the worn edges: a slit of a few
+  millimetres between two lid planks darkens no flat top in the AO, and the slit alone broke into a
+  dotted line under a grazing look (crate lids, harbour-rigging fourth review); a band about "radius"
+  wide on both sides of it stays a line in the mips;
 - "streaks": water runs down from the parts above a point; a ray from every texel up along its
   surface finds them. Under iron it leaves rust, under another part dirt, fading over "length"
   metres, in vertical columns about "column" metres wide;
@@ -50,7 +56,10 @@ The weathering darkens before each zone is scaled to its measured mean, like the
   near the ground and in shaded corners, cut out of a smooth 3D noise at "cover" of each zone's open texels,
   with a damp darker halo around them; "grain" > 1 stretches the patches that many times along each part's
   long axis, so they run as strips along boards and beams; "detail" adds a finer unstretched layer that
-  breaks their edges (the strips alone read as regular hatching on the crate lids, fourth review). The harbour crates had a thin dotted line of
+  breaks their edges (the strips alone read as regular hatching on the crate lids, fourth review); "edges"
+  draws it to the "seam" mask, to the gaps and edges of boards, not into camouflage spots on their faces;
+  "opacity" below 1 and "keep_grain" (0-1, how much of the wood's own light and dark the moss keeps) let
+  the grain show through, so a mossy beam is not a flat green fill (fifth review). The harbour crates had a thin dotted line of
   crevice moss and 0-0.2 % green on their lids against 1.2-6 % on the original's; round patches then read
   as stickers (asset harbour-rigging, reviews 2026-10-30).
 "metal_scale" multiplies the metallic of the "metal" zones: rusty, grimy iron is mostly not metal.
@@ -241,6 +250,13 @@ for slot in obj.material_slots:
     links.new(bevel.outputs[0], dot.inputs[0])
     links.new(geo.outputs["True Normal"], dot.inputs[1])
     edge = math_node(nodes, links, "MULTIPLY", math_node(nodes, links, "SUBTRACT", 1.0, dot.outputs["Value"]), 9.0, clamp=True)
+    seam_bevel = node(nodes, "ShaderNodeBevel", samples=16)
+    seam_bevel.inputs["Radius"].default_value = cfg.get("seam", {}).get("radius", 0.012)
+    seam_dot = node(nodes, "ShaderNodeVectorMath", operation="DOT_PRODUCT")
+    links.new(seam_bevel.outputs[0], seam_dot.inputs[0])
+    links.new(geo.outputs["True Normal"], seam_dot.inputs[1])
+    seam_mask = math_node(nodes, links, "MULTIPLY", math_node(nodes, links, "SUBTRACT", 1.0, seam_dot.outputs["Value"]),
+                          cfg.get("seam", {}).get("gain", 4.0), clamp=True)
     sep = node(nodes, "ShaderNodeSeparateXYZ")
     links.new(geo.outputs["Position"], sep.inputs[0])
     z = math_node(nodes, links, "SUBTRACT", sep.outputs["Z"], float(z0))
@@ -324,7 +340,7 @@ for slot in obj.material_slots:
     part_val = node(nodes, "ShaderNodeAttribute", attribute_type="GEOMETRY", attribute_name="part_id").outputs["Fac"]
     passes[mat.name] = dict(nodes=nodes, links=links, output=output, emission=emission, bsdf=bsdf,
                             colour=colour, rough=rough_out, metal=metal_out, zone=zone_val,
-                            position=rel_scaled.outputs[0], facing=facing.outputs[0], part_id=part_val)
+                            position=rel_scaled.outputs[0], facing=facing.outputs[0], part_id=part_val, seam=seam_mask)
     targets[key] = cfg["targets"][key]
 
 
@@ -377,7 +393,7 @@ ao = bake_pass("ao", "AO", samples=cfg.get("ao_samples", 64))[:, :, 0]
 strength = cfg.get("ao_strength", 0.85)
 albedo = colour * (1 - strength * (1 - ao))[..., None]
 weathering = {}
-if any(k in cfg for k in ("crevice", "streaks", "wet_roughness", "moss")):
+if any(k in cfg for k in ("crevice", "streaks", "wet_roughness", "moss", "seam")):
     position = lo + bake_pass("position", "EMIT", "position", samples=1, margin=16) * (hi - lo)
     texel_part = np.rint(bake_pass("part", "EMIT", "part_id", samples=1, margin=16)[:, :, 0]).astype(int)
     facing = bake_pass("facing", "EMIT", "facing", samples=1, margin=16) * 2 - 1
@@ -393,6 +409,14 @@ if any(k in cfg for k in ("crevice", "streaks", "wet_roughness", "moss")):
         dirt = spec.get("dirt", 0.7) * gap
         albedo = albedo * (1 - dirt[..., None]) + np.array(spec.get("colour", [0.008, 0.007, 0.005])) * dirt[..., None]
         weathering["crevice"] = gap
+    seam = np.zeros((size, size))
+    if "seam" in cfg or cfg.get("moss", {}).get("edges"):
+        seam = bake_pass("seam", "EMIT", "seam", samples=cfg.get("seam", {}).get("samples", 16))[:, :, 0] * ~zone_metal
+    if "seam" in cfg:
+        spec = cfg["seam"]
+        dirt = spec.get("dark", 0.5) * seam
+        albedo = albedo * (1 - dirt[..., None]) + np.array(spec.get("colour", [0.008, 0.007, 0.005])) * dirt[..., None]
+        weathering["seam"] = seam
     if "streaks" in cfg:
         from mathutils import Vector
         from mathutils.bvhtree import BVHTree
@@ -517,7 +541,8 @@ if "moss" in cfg:
     up = np.clip(facing[..., 2], 0, 1)
     low = np.clip(1 - (position[..., 2] - z0) / spec.get("low", 0.25), 0, 1)
     shade = np.clip((1 - ao) / 0.4, 0, 1)
-    bias = spec.get("top", 1.0) * up ** 2 + spec.get("bottom", 0.8) * low + spec.get("shade", 0.6) * shade
+    bias = (spec.get("top", 1.0) * up ** 2 + spec.get("bottom", 0.8) * low + spec.get("shade", 0.6) * shade
+            + spec.get("edges", 0.0) * seam)
     field = noise + bias
     moss = np.zeros((size, size))
     cover = {}
@@ -533,9 +558,25 @@ if "moss" in cfg:
         moss = np.maximum(moss, m)
         cover[key] = round(float((m[sel] > 0.5).mean()), 4)
     dark, light = np.array(spec.get("dark", [0.018, 0.028, 0.007])), np.array(spec.get("light", [0.045, 0.06, 0.013]))
-    tone = np.clip(0.5 + 0.5 * np.sin(position @ dirs[0] * freqs[0] * 3.1 + 1.3), 0, 1)[..., None]
+    # the moss's own light and dark from a fine noise in many directions: one plane wave here laid regular
+    # diagonal stripes 6-7 px apart over every beam of the net rack (fifth review)
+    d3 = rng.standard_normal((9, 3))
+    d3 /= np.linalg.norm(d3, axis=1, keepdims=True)
+    f3 = 2 * np.pi / (scale * rng.uniform(0.15, 0.4, 9))
+    tone = sum(np.sin(position @ d * f + ph) for d, f, ph in zip(d3, f3, rng.uniform(0, 2 * np.pi, 9))) / np.sqrt(4.5)
+    tone = np.clip(0.5 + 0.35 * tone, 0, 1)[..., None]
     green = dark * (1 - tone) + light * tone
     green = green * (0.55 + 0.45 * ao)[..., None]
+    if spec.get("keep_grain", 0.0):
+        # the wood's own light and dark, relative to its zone's mean, carried into the moss
+        lum = albedo @ np.array([0.2126, 0.7152, 0.0722])
+        rel = np.ones((size, size))
+        for key in spec.get("zones", keys):
+            sel = (zone_id == keys.index(key) + 1) & inside
+            if sel.any():
+                rel[sel] = lum[sel] / max(float(lum[sel].mean()), 1e-6)
+        green = green * np.clip(rel, 0.3, 2.5)[..., None] ** spec["keep_grain"]
+    moss = moss * spec.get("opacity", 1.0)
     halo = np.clip((field - np.quantile(field[inside], 0.5)) / 1.5, 0, 1) * (1 - moss) * inside
     albedo *= (1 - spec.get("damp", 0.25) * halo)[..., None]
     albedo = albedo * (1 - moss[..., None]) + green * moss[..., None]

@@ -1,19 +1,30 @@
-"""Build a loose heap of fishing net (NW_HARBOUR_FISHINGNETBIG, _SMALL) from layered sheets.
+"""Build a heap of fishing net (NW_HARBOUR_FISHINGNETBIG, _SMALL) from layered sheets.
 
 blender -b --factory-startup -P net_heap.py -- net-heap.json OUT_DIR   (run from the repository root)
-config: {"id": "rig-net-big", "target": "data/content/mesh3d-rigging.json", "seed": 6, "grid": [18, 24],
-         "layers": [[1.0, 0, 0], [0.72, 0.12, -0.18]], "folds": [3, [0.05, 0.1], [0.5, 0.9]],
-         "dome": 0.7, "edge": 0.08, "lift": 0.025, "rope": [0.02, 6, 2], "tile_m": 0.42}
-Asset harbour-rigging (intent.md, concept rig-net-heap attempt 1): an oval flat heap of coarse net, highest
-in the middle, the ground showing through the meshes. Each layer is a sheet over an oval of the bbox
-("layers": [scale, x shift, y shift] as shares of the bbox half sizes), its outline wobbling by "edge";
-its height is a dome ("dome" shapes it) plus a few soft folds ("folds": count, amplitude range m,
-wavelength range m) that fade toward the edge, so the edge lies on the ground. An upper layer lies "lift"
-over the one under it. The net is alpha-tested: every face is emitted twice, back to back, so it shows
-from both sides. A thicker border rope ("rope": [thickness, sides, arcs]) may run in loose arcs over the heap (0 arcs in the
-harbour set: an addition the review asked to drop). With "core" (a share of the radius) an opaque core of
-packed net lies under the layers, so the middle reads dense. Net UVs are planar in metres over tile_m (one net tile, net_tiles.py); the rope's wrap once around
-and run along it. The top of the heap touches the bbox top.
+config: {"id": "rig-net-big", "target": "data/content/mesh3d-rigging.json", "seed": 6,
+         "layers": [[1.0, 0, 0], [0.86, 0.05, -0.04], ...], "rings": 9, "segments": 30,
+         "profile": [0.92, 0.6, 0.68, 0.4], "edge": 0.1, "lift": 0.022, "folds": [3, [0.02, 0.05], [0.4, 0.8]],
+         "tile_m": 0.52}
+Asset harbour-rigging (intent.md, item 8): a low dense dome of net, the ground showing only toward the edge.
+The original's heap lies flat on the ground over the outer third of its radius, rises steeply at about 0.7
+of it to a plateau about two thirds of its height, with a crown in the middle (its vertices: rim at the
+bottom of the bbox out from 0.68, plateau 0.65-0.73 of the height at 0.4-0.7, top at 0.2); that is
+"profile" [radius share where the rise starts from the ground, where it reaches the plateau, plateau
+height share, crown radius]. The heap is "layers" sheets of net piled on each other ([scale, x shift, y
+shift] as shares of the bbox half sizes), each smaller than the one under it, each "lift" metres over
+it: through five layers of alpha-tested net the middle reads as dense net in layers, and only the
+outermost one lies over the ground. A layer is a polar grid ("rings" x "segments"), so its outline is a
+soft wobbling curve ("edge": its share), not the staircase a square grid leaves (fifth review: «контур не
+восьмиугольник или зонт, а мягкий и неровный»); near its own edge each layer falls onto the one under it,
+and the lowest onto the ground. "folds" (count, amplitude range m, wavelength range m) ripple each layer,
+fading toward its edge. Every face is emitted twice, back to back, so the net shows from both sides. Net
+UVs are planar in metres over tile_m, each layer turned and shifted at random so the meshes of the layers
+do not line up into a moire. The lower layers are lit like the top one, so through the meshes the heap read
+as even felt; the inner part of every layer under the top "top_layers" is the darker OWN_PROP_NET_UNDER, as
+the shade deep in a heap: only where a layer above covers it with a margin ("covered": share of that
+layer's radius), so a band of a lower layer left open between two rims keeps the net's own tone (choosing
+by a face's place in its own layer left hard dark crescents between the terraces, round 8). The first versions laid two sheets and an opaque core: in the game that read
+as one pale veil over a smooth shell (fifth review, 2026-10-30).
 """
 import math
 import sys
@@ -23,154 +34,152 @@ import numpy as np
 from mathutils import Vector
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from parts import X, Z, Parts, args, load_goal  # noqa: E402
+from parts import Parts, args, load_goal  # noqa: E402
 
 cfg, out = args()
 goal, lo, hi = load_goal(cfg)
 rng = np.random.default_rng(cfg.get("seed", 6))
 keys = [z["key"] for z in goal["zones"]]
-NET, ROPE = keys.index("OWN_PROP_NET"), keys.index("OWN_PROP_ROPE")
-CORE = keys.index("OWN_PROP_NET_ROLL") if "OWN_PROP_NET_ROLL" in keys else None
+NET = keys.index("OWN_PROP_NET")
+UNDER = keys.index("OWN_PROP_NET_UNDER") if "OWN_PROP_NET_UNDER" in keys else NET
 P = Parts(rng, 0.1)
-tile_m = cfg.get("tile_m", 0.42)
-nx, ny = cfg.get("grid", [18, 24])
+tile_m = cfg.get("tile_m", 0.52)
 c = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
 ax, ay = (hi.x - lo.x) / 2 - 0.01, (hi.y - lo.y) / 2 - 0.01
 H = hi.z - lo.z
-dome = cfg.get("dome", 0.7)
-edge = cfg.get("edge", 0.08)
-lift = cfg.get("lift", 0.025)
-n_folds, amp, wave = cfg.get("folds", [3, [0.05, 0.1], [0.5, 0.9]])
+edge = cfg.get("edge", 0.1)
+lift = cfg.get("lift", 0.022)
+n_folds, amp, wave = cfg.get("folds", [3, [0.02, 0.05], [0.4, 0.8]])
+foot, top_r, plateau, crown = cfg.get("profile", [0.92, 0.6, 0.68, 0.4])
+layer_cfg = cfg.get("layers", [[1.0, 0, 0], [0.86, 0.05, -0.04], [0.72, -0.04, 0.05], [0.57, 0.06, 0.02], [0.42, -0.03, -0.05]])
+n_rings, n_seg = cfg.get("rings", 9), cfg.get("segments", 30)
+# the top layer's crown touches the bbox top
+h0 = H - 0.008 - lift * (len(layer_cfg) - 1) - amp[1]
+
+
+def smooth(x):
+    x = min(max(x, 0.0), 1.0)
+    return x * x * (3 - 2 * x)
+
+
+def profile(r):
+    """Height share of the heap at r (0 centre, 1 the outermost layer's rim): a steep rise from the rim to
+    the plateau, then a crown in the middle."""
+    rise = smooth((foot - r) / (foot - top_r))
+    top = 1 - (min(r / crown, 1.0)) ** 2
+    return plateau * rise + (1 - plateau) * top * rise
 
 
 def make_layer(scale, sx, sy):
-    """Height function of one layer: oval mask with a wobbling outline, dome and folds."""
-    harm = rng.uniform(-1, 1, (4, 2))
+    harm = rng.uniform(-1, 1, (5, 2)) / np.arange(1, 6)[:, None] ** 0.5
     folds = [(rng.uniform(*amp), rng.uniform(*wave), rng.uniform(0, math.pi), rng.uniform(0, 2 * math.pi)) for _ in range(n_folds)]
     cx, cy = c.x + sx * ax, c.y + sy * ay
-    rx, ry = ax * scale, ay * scale
 
-    def rho(x, y):
-        th = math.atan2((y - cy) / ry, (x - cx) / rx)
-        wob = 1 + edge * sum(h[0] * math.cos((k + 2) * th) + h[1] * math.sin((k + 2) * th) for k, h in enumerate(harm)) / 2
-        return math.hypot((x - cx) / rx, (y - cy) / ry) / wob
+    def wobble(th):
+        return 1 + edge * sum(h[0] * math.cos((k + 2) * th) + h[1] * math.sin((k + 2) * th) for k, h in enumerate(harm)) / 1.6
+    ths = np.linspace(0, 2 * math.pi, 360, endpoint=False)
+    rc = np.array([wobble(th) * math.cos(th) for th in ths])
+    rs = np.array([wobble(th) * math.sin(th) for th in ths])
+    # the outline fitted to "scale" of the half sizes on both axes: its extents span exactly the layer
+    kx, ky = 2 / (rc.max() - rc.min()), 2 / (rs.max() - rs.min())
+    ox, oy = (rc.max() + rc.min()) / 2, (rs.max() + rs.min()) / 2
 
-    def height(x, y):
-        r = rho(x, y)
-        if r >= 1:
-            return None
-        base = (1 - r * r) ** dome
-        f = sum(a * math.sin(2 * math.pi * ((x - cx) * math.cos(d) + (y - cy) * math.sin(d)) / w + ph)
-                for a, w, d, ph in folds)
-        return base, f * (1 - r) ** 0.6
-    return height, scale
+    def point(th, f):
+        """A point of the layer at angle th, f of the way out to its rim."""
+        return (cx + ax * scale * (wobble(th) * math.cos(th) * f - ox * f) * kx,
+                cy + ay * scale * (wobble(th) * math.sin(th) * f - oy * f) * ky)
 
+    def radius(th):
+        """The layer's rim at angle th, as a share of the heap's half sizes (for layer_f)."""
+        return scale * wobble(th) * (kx + ky) / 2
 
-layers = [make_layer(*l) for l in cfg.get("layers", [[1.0, 0, 0], [0.72, 0.12, -0.18]])]
-# heights: the first layer's dome reaches h0, every layer above adds its lift; the top touches the bbox
-h0 = H - 0.01 - lift * (len(layers) - 1) - amp[1] * 0.5
-
-
-def layer_z(i, x, y):
-    """Height of layer i at (x, y): on the layers below it or on the ground."""
-    z = lo.z
-    for k in range(i + 1):
-        hv = layers[k][0](x, y)
-        if hv is None:
-            continue
-        base, f = hv
-        z = max(z, lo.z + 0.006 + base * h0 * layers[k][1] + max(f, -base * h0 * 0.6) + (lift * k if k else 0))
-    return z
+    def fold(x, y):
+        return sum(a * math.sin(2 * math.pi * ((x - cx) * math.cos(d) + (y - cy) * math.sin(d)) / w + ph)
+                   for a, w, d, ph in folds)
+    # rings and segments shrink with the layer, so the small upper layers cost little
+    return dict(cx=cx, cy=cy, radius=radius, point=point, fold=fold, rings=max(3, round(n_rings * scale)),
+                segments=max(12, round(n_seg * scale ** 0.5)))
 
 
-tops = []
-for i, (height, scale) in enumerate(layers):
+layers = [make_layer(*l) for l in layer_cfg]
+r_max = max(layers[0]["radius"](th) for th in np.linspace(0, 2 * math.pi, 90))
+
+
+def heap_r(x, y):
+    """Distance from the heap centre as a share of the outermost rim."""
+    return math.hypot((x - c.x) / ax, (y - c.y) / ay) / r_max
+
+
+def layer_f(i, x, y):
+    """Where (x, y) lies in layer i: 0 at its centre, 1 on its rim, more outside it."""
+    L = layers[i]
+    dx, dy = (x - L["cx"]) / ax, (y - L["cy"]) / ay
+    return math.hypot(dx, dy) / L["radius"](math.atan2(dy, dx))
+
+
+def layer_z(i, x, y, f=None):
+    """Height of layer i at (x, y), at f (0 centre, 1 its rim) of its own radius: on the dome, or falling
+    near its rim onto the layer under it (the lowest onto the ground)."""
+    L = layers[i]
+    f = layer_f(i, x, y) if f is None else f
+    if i and layer_f(i - 1, x, y) >= 1:
+        under = lo.z + 0.006
+    else:
+        under = layer_z(i - 1, x, y) + 0.008 if i else lo.z + 0.006
+    full = lo.z + 0.006 + h0 * profile(heap_r(x, y)) + lift * i + L["fold"](x, y) * max(1 - f, 0) ** 0.7
+    s = smooth((f - 0.72) / 0.28)
+    return max(full * (1 - s) + under * s, under)
+
+
+for i, L in enumerate(layers):
     part = P.new_part(wound=True)
-    xs = np.linspace(lo.x, hi.x, nx + 1)
-    ys = np.linspace(lo.y, hi.y, ny + 1)
-    verts = {}
-    for a, x in enumerate(xs):
-        for b, y in enumerate(ys):
-            if height(x, y) is not None:
-                verts[a, b] = Vector((x, y, layer_z(i, x, y)))
+    turn, shift = rng.uniform(0, math.pi), rng.uniform(0, tile_m, 2)
+    cos_t, sin_t = math.cos(turn), math.sin(turn)
+    n_rings_i, n_seg_i = L["rings"], L["segments"]
+    thetas = np.linspace(0, 2 * math.pi, n_seg_i + 1)[:-1]
+    grid = {}
+    for a, th in enumerate(thetas):
+        for k in range(1, n_rings_i + 1):
+            f = k / n_rings_i
+            # rings closer together toward the rim, where the layer bends down
+            f = 1 - (1 - f) ** 1.25
+            x, y = L["point"](th, f)
+            grid[a, k] = Vector((x, y, layer_z(i, x, y, f)))
+    centre = Vector((L["cx"], L["cy"], layer_z(i, L["cx"], L["cy"], 0.0)))
+
+    def uv(v):
+        x, y = v.x - lo.x, v.y - lo.y
+        return ((x * cos_t - y * sin_t) / tile_m + shift[0], (x * sin_t + y * cos_t) / tile_m + shift[1])
     up, down = {}, {}
-    for a in range(nx):
-        for b in range(ny):
-            quad = [(a, b), (a + 1, b), (a + 1, b + 1), (a, b + 1)]
-            if not all(q in verts for q in quad):
-                continue
-            for q in quad:
-                if q not in up:
-                    up[q], down[q] = P.vert(verts[q], part), P.vert(verts[q], part)
-            uv = [((verts[q].x - lo.x) / tile_m, (verts[q].y - lo.y) / tile_m) for q in quad]
-            P.poly([up[q] for q in quad], NET, uv)
-            P.poly([down[q] for q in quad[::-1]], NET, uv[::-1])
-    tops.append(verts)
 
-# the dense middle: an opaque core of packed net under the layers, out to "core" of the radius, so the
-# ground shows through only toward the edges (fourth review, 2026-10-30)
-if cfg.get("core") and CORE is not None:
-    part = P.new_part(wound=True)
-    rings = []
-    n_r, n_a = 6, 24
-    for i in range(n_r + 1):
-        f = cfg["core"] * i / n_r
-        ring = []
-        for a in np.linspace(0, 2 * math.pi, n_a + 1)[:-1]:
-            x, y = c.x + f * ax * math.cos(a), c.y + f * ay * math.sin(a)
-            ring.append(P.vert(Vector((x, y, max(layer_z(0, x, y) - 0.03, lo.z + 0.004))), part))
-        rings.append(ring)
-    centre_v = P.vert(Vector((c.x, c.y, max(layer_z(0, c.x, c.y) - 0.03, lo.z + 0.004))), part)
-    uv = lambda v: ((v.co.x - lo.x) / tile_m, (v.co.y - lo.y) / tile_m)
-    for j in range(n_a):
-        j2 = (j + 1) % n_a
-        P.poly([centre_v, rings[1][j], rings[1][j2]], CORE, [uv(centre_v), uv(rings[1][j]), uv(rings[1][j2])])
-    for i in range(1, n_r):
-        for j in range(n_a):
-            j2 = (j + 1) % n_a
-            q = [rings[i][j], rings[i + 1][j], rings[i + 1][j2], rings[i][j2]]
-            P.poly(q, CORE, [uv(v) for v in q])
+    def mat(corners):
+        """The darker under-net where a layer above covers this face, the net's own tone elsewhere."""
+        if i >= len(layers) - cfg.get("top_layers", 1):
+            return NET
+        x = sum(v.x for v in corners) / len(corners)
+        y = sum(v.y for v in corners) / len(corners)
+        covered = any(layer_f(j, x, y) < cfg.get("covered", 0.8) for j in range(i + 1, len(layers)))
+        return UNDER if covered else NET
 
-# border rope: loose arcs over the heap, laid on the top layer's surface
-r_t, sides, arcs = cfg.get("rope", [0.02, 6, 2])
-rad = r_t / 2
-
-
-def tube(points, part):
-    rings, along = [], 0.0
-    for k, p in enumerate(points):
-        t = (points[min(k + 1, len(points) - 1)] - points[max(k - 1, 0)]).normalized()
-        side = t.cross(Z)
-        if side.length < 1e-6:
-            side = t.cross(X)
-        side.normalize()
-        upv = side.cross(t)
-        if k:
-            along += (p - points[k - 1]).length
-        rings.append(([P.vert(p + (side * math.cos(2 * math.pi * s / sides) + upv * math.sin(2 * math.pi * s / sides)) * rad, part)
-                       for s in range(sides)], along))
-    for k in range(len(rings) - 1):
-        (a, va), (b, vb) = rings[k], rings[k + 1]
-        for s in range(sides):
-            s2 = (s + 1) % sides
-            u0, u1 = s / sides * 2 * math.pi * rad / 0.15, (s + 1) / sides * 2 * math.pi * rad / 0.15
-            P.poly((a[s], a[s2], b[s2], b[s]), ROPE, ((u0, va / 0.15), (u1, va / 0.15), (u1, vb / 0.15), (u0, vb / 0.15)))
-    cap = [(0.01 * math.cos(2 * math.pi * s / sides), 0.01 * math.sin(2 * math.pi * s / sides)) for s in range(sides)]
-    P.poly(rings[0][0][::-1], ROPE, cap[::-1])
-    P.poly(rings[-1][0], ROPE, cap)
-
-
-top = len(layers) - 1
-for k in range(int(arcs)):
-    a0 = rng.uniform(0, 2 * math.pi)
-    span = rng.uniform(2.0, 3.2)
-    rr = rng.uniform(0.45, 0.8)
-    pts = []
-    for f in np.linspace(0, 1, 22):
-        th = a0 + span * f
-        r = rr * (1 + 0.15 * math.sin(3 * th + k))
-        x, y = c.x + r * ax * math.cos(th), c.y + r * ay * math.sin(th)
-        pts.append(Vector((x, y, layer_z(top, x, y) + rad * 0.8)))
-    tube(pts, P.new_part())
+    def pair(key, v):
+        if key not in up:
+            up[key], down[key] = P.vert(v, part), P.vert(v, part)
+        return up[key], down[key]
+    pair("c", centre)
+    for a in range(n_seg_i):
+        a2 = (a + 1) % n_seg_i
+        tri = [("c", centre), ((a, 1), grid[a, 1]), ((a2, 1), grid[a2, 1])]
+        for key, v in tri:
+            pair(key, v)
+        m = mat([v for _, v in tri])
+        P.poly([up[k] for k, _ in tri], m, [uv(v) for _, v in tri])
+        P.poly([down[k] for k, _ in tri[::-1]], m, [uv(v) for _, v in tri[::-1]])
+        for k in range(1, n_rings_i):
+            quad = [((a, k), grid[a, k]), ((a, k + 1), grid[a, k + 1]), ((a2, k + 1), grid[a2, k + 1]), ((a2, k), grid[a2, k])]
+            for key, v in quad:
+                pair(key, v)
+            m = mat([v for _, v in quad])
+            P.poly([up[q] for q, _ in quad], m, [uv(v) for _, v in quad])
+            P.poly([down[q] for q, _ in quad[::-1]], m, [uv(v) for _, v in quad[::-1]])
 
 P.finish(goal, out, lo, hi, {"layers": len(layers)})
