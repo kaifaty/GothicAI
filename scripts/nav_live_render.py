@@ -184,7 +184,6 @@ def summarize(directory: Path, metadata: dict, decisions: list[dict], teacher_di
     deep = [row["water_depth_cm"] + 1 >= row["deep_water_threshold_cm"] or row.get("swimming", False) for row in safety]
     falling = [bool(row["falling"]) for row in safety]
     contacts = [row.get("contact", False) for row in decisions]
-    obstacles = [row["body_blocked"] for row in decisions]
     intervention = [row.get("safety_intervention", False) for row in decisions]
     def minimum(field):
         values = [row[field] for row in decisions if row.get(field) is not None]
@@ -207,7 +206,7 @@ def summarize(directory: Path, metadata: dict, decisions: list[dict], teacher_di
         "path_length_m": travelled / 100, "teacher_path_length_m": None if teacher_length is None else teacher_length / 100,
         "path_to_teacher_ratio": travelled / teacher_length if teacher_length else None,
         "standing_seconds": float(dt[standing].sum()), "circling_seconds": float(dt[circling].sum()),
-        "obstacle_contacts": _entries(obstacles), "cv_contact_episodes": _entries(contacts),
+        "obstacle_contacts": _entries(contacts),
         "safety_interventions": _entries(intervention), "stuck_seconds": float(sum(duration for duration, row in zip(dt, decisions) if row["stuck"])),
         "deep_water_entries": _entries(deep) if safety else None,
         "falls": _entries(falling) if safety else None,
@@ -221,7 +220,7 @@ def summarize(directory: Path, metadata: dict, decisions: list[dict], teacher_di
         "metric_sources": {
             "path_length": "episode.travel_cm or recorded trajectory (3D)",
             "standing_and_circling": "decision speed; circling also requires nonzero turn",
-            "obstacle_contacts": "rising edges of native body_blocked at decision frequency",
+            "obstacle_contacts": "rising edges of native CV blocked/steep contact since the previous decision; progress-based stuck is counted separately",
             "deep_water_and_falls": "physical perception-safety frames; null when absent",
             "minimum_distances": "minimum sampled native radial probe clearance; censor=true means >=probe radius; null when unavailable; probe geometry/resolution in clearance_probe",
             "follow_band": "whole elapsed run, including initial gap and target pauses; 3D goal distance",

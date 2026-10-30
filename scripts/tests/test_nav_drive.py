@@ -345,7 +345,7 @@ def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
                               keys=dict(forward=1, strafe=0, turn=1 if index < 2 else 0, walk=True, jump=False, climb=False),
                               teacher_keys={}, probabilities=dict(forward=[.1, .2, .7]), selected=dict(forward=2),
                               chosen_probability=dict(forward=.7), entropy=dict(forward=.801819),
-                              body_blocked=2 <= index < 4, stuck=2 <= index < 5, contact=False, safety_intervention=index == 6,
+                              body_blocked=2 <= index < 4, stuck=2 <= index < 5, contact=index in (6, 9), safety_intervention=index == 6,
                               edge_clearance_cm=500, edge_clearance_censored=True,
                               water_clearance_cm=250 if index == 5 else 500, water_clearance_censored=index != 5))
     (root / "live-decisions.jsonl").write_text("".join(json.dumps(row)+"\n" for row in decisions))
@@ -384,7 +384,8 @@ def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
     assert report["decision_count"] == 12 and report["observation_frames"] == 3
     assert report["standing_seconds"] == pytest.approx(.2)
     assert report["circling_seconds"] == pytest.approx(.2)
-    assert report["obstacle_contacts"] == 1 and report["deep_water_entries"] == 2 and report["falls"] == 1
+    assert report["obstacle_contacts"] == 2 and report["deep_water_entries"] == 2 and report["falls"] == 1
+    assert report["stuck_seconds"] == pytest.approx(.3)
     assert report["minimum_edge_distance_cm"] == 500 and report["minimum_edge_distance_censored"] is True
     assert report["minimum_water_distance_cm"] == 250 and report["minimum_water_distance_censored"] is False
     assert report["path_to_teacher_ratio"] is None
