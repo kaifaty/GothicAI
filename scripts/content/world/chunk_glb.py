@@ -9,6 +9,8 @@ The checks of an edited chunk:
   place. A copy of it at another place, or none left where it was, opens a crack between the chunks;
 - open edges: an edge with one triangle (vertices welded by position) is new only if the base chunk did not have
   it open and no edit declared it (world_edit_blender.Context.allow_open);
+- source triangles: a triangle the edits left as it was is the base triangle byte for byte, with its order, flags
+  and lightmap (chunk_canon.py writes them back after the Blender export);
 - materials: each material is in the base world's list (world.json) or its texture is a key of a given
   materials.json;
 - report: triangles and area per material, base and edited.
@@ -302,6 +304,12 @@ def check(base_path: Path | str, edited_path: Path | str, *, allowed_open: set[t
     if len(light) > 20:
         problems.append(f'... {len(light) - 20} more corners with another vertex light')
 
+    from chunk_canon import source_violations
+    source_exact, source = source_violations(base_path, edited_path)
+    problems += source[:20]
+    if len(source) > 20:
+        problems.append(f'... {len(source) - 20} more source triangles not as the base has them')
+
     base_open = open_edges(base)
     out_open = open_edges(edited)
     new_open = out_open - base_open - set(allowed_open)
@@ -337,6 +345,7 @@ def check(base_path: Path | str, edited_path: Path | str, *, allowed_open: set[t
                        'new': len(new_open)},
         'materials': rows,
         'light': {'checked': light_checked, 'other': len(light)},
+        'source': {'exact': source_exact, 'other': len(source)},
     }
     return Report(problems, summary)
 
@@ -346,7 +355,8 @@ def format_report(report: Report) -> str:
     lines = [f'triangles {s["triangles"][0]} -> {s["triangles"][1]} ({s["triangles"][1] - s["triangles"][0]:+d}); '
              f'border vertices {s["border_vertices"]}; open edges base {s["open_edges"]["base"]}, edited '
              f'{s["open_edges"]["edited"]}, declared by the edits {s["open_edges"]["declared"]}, new {s["open_edges"]["new"]}; '
-             f'vertex light of {s["light"]["checked"]} base corners, {s["light"]["other"]} changed']
+             f'vertex light of {s["light"]["checked"]} base corners, {s["light"]["other"]} changed; '
+             f'source triangles exact {s.get("source", {}).get("exact", 0)}, other {s.get("source", {}).get("other", 0)}']
     for name, row in s['materials'].items():
         (t0, t1), (a0, a1) = row['triangles'], row['area_m2']
         lines.append(f'  {name:32} triangles {t0:6d} -> {t1:6d} ({t1 - t0:+6d})   area {a0:9.3f} -> {a1:9.3f} m² '

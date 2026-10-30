@@ -15,8 +15,9 @@ each other. build <id> of an existing record rebuilds it, --edit appends to its 
 another record's (the same chunk in another set).
 
 build: copies the base chunk to a work folder outside git (~/.local/share/gothic-ai/world-edit/<id>/), runs
-Blender (world_edit_blender.py) with the original as an underlay, checks the result (chunk_glb.check: border
-vertices, open edges, materials, triangles and area per material) and exits non-zero with the reasons when a check
+Blender (world_edit_blender.py) with the original as an underlay, writes the result back in the converter's form
+with the untouched source triangles byte for byte as in the base (chunk_canon.py), checks it (chunk_glb.check:
+border vertices, open edges, vertex light, source triangles, materials, triangles and area per material) and exits non-zero with the reasons when a check
 fails. A passing chunk goes to <staging>/<set>/worlds/<WORLD>/chunks/<x>_<z>.glb and its record to the registry:
 the base chunk and its SHA-256, the edits with the SHA-256 of their scripts and data, the output's SHA-256. A
 chunk equal to the one already published (same triangles, UV, normals, colours, materials) is left as it is: the
@@ -40,6 +41,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import chunk_canon  # noqa: E402
 import chunk_glb  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
@@ -247,6 +249,9 @@ def cmd_build(a) -> int:
     run_blender(job, work, gui=a.gui)
     if a.gui:
         return 0
+    canon = chunk_canon.canonical(base_copy, out, out)
+    print(f'source triangles written back from the base: {canon["kept"]} of {canon["source"]}; new or changed: '
+          f'{canon["changed"]}')
 
     allowed = json.loads((work / 'allowed.json').read_text())
     materials = list(a.materials or [])
