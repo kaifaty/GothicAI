@@ -230,6 +230,7 @@ def read_streaming(directory):
 def streaming_stats(rows):
     publications = [value for row in rows for value in row["publication_ms"]]
     warmup = [value for row in rows for value in row.get("warmup_far_publication_ms", [])]
+    pages = [row for row in rows if "page_used_bytes" in row]
     return {
         "updates": len(rows),
         "near_transitions": int(sum(row["near_transitions"] for row in rows)),
@@ -248,6 +249,12 @@ def streaming_stats(rows):
         "published": int(sum(row.get("published", 0) for row in rows)),
         "released": int(sum(row.get("released", 0) for row in rows)),
         "gpu_end_mb": next((row["gpu_mb"] for row in reversed(rows) if "gpu_mb" in row), None),
+        "page_used_end_bytes": int(pages[-1]["page_used_bytes"]) if pages else None,
+        "page_free_end_bytes": int(pages[-1]["page_free_bytes"]) if pages else None,
+        "page_retired_end_bytes": int(pages[-1]["page_retired_bytes"]) if pages else None,
+        "page_count_end": int(pages[-1]["page_count"]) if pages else None,
+        "page_capacity_peak_bytes": int(max(row["page_used_bytes"]+row["page_free_bytes"]+row["page_retired_bytes"]
+                                            for row in pages)) if pages else None,
     }
 
 
@@ -325,15 +332,20 @@ def summary_table(report):
                          + " | ".join(number(frame[key]) for key in ("mean", "p50", "p95", "p99", "max")) + " |")
     streaming = report["places"].get("streaming-flythrough")
     if streaming and "streaming" in streaming["summary"]:
-        lines.extend(["", "| Pass | Near transitions | Far transitions | Peak Near | Update p99 ms | Work p99 / max ms | Publish p99 / max ms | Published / released | GPU end MiB |",
-                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|"])
+        lines.extend(["", "| Pass | Near transitions | Far transitions | Peak Near | Update p99 ms | Work p99 / max ms | Publish p99 / max ms | Published / released | GPU end MiB | Pages end | Page used / free / retired end MiB | Page capacity peak MiB |",
+                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():
             data = stats["streaming"]
             publication = data["publication_ms"] or {"p99": None, "max": None}
+            page_end = " / ".join(number(None if data[key] is None else data[key]/1048576.0, 2)
+                                  for key in ("page_used_end_bytes", "page_free_end_bytes", "page_retired_end_bytes"))
+            capacity = data["page_capacity_peak_bytes"]
             lines.append(f"| {view} | {data['near_transitions']} | {data['far_transitions']} | {data['peak_near']} | "
                          f"{data['update_ms']['p99']:.6f} | {data['work_ms']['p99']:.6f} / {data['work_ms']['max']:.6f} | "
                          f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
-                         f"{data['published']} / {data['released']} | {number(data['gpu_end_mb'], 1)} |")
+                         f"{data['published']} / {data['released']} | {number(data['gpu_end_mb'], 1)} | "
+                         f"{number(data['page_count_end'], 0)} | {page_end} | "
+                         f"{number(None if capacity is None else capacity/1048576.0, 2)} |")
         lines.extend(["", "| Warmup before pass | Far published | Publish p99 / max ms | Max Far per frame | Queue max ms |",
                       "|---|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():

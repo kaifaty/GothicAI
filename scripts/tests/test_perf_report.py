@@ -177,14 +177,17 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
         report.build_report(streaming)
     with (streaming / "streaming.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, ["segment", "frame", "update_ms", "work_ms", "near", "far", "outside",
-                                         "near_transitions", "far_transitions", "publication_ms", "published", "released"])
+                                         "near_transitions", "far_transitions", "publication_ms", "published", "released",
+                                         "page_used_bytes", "page_free_bytes", "page_retired_bytes", "page_count"])
         writer.writeheader()
         writer.writerows({"segment": f"streaming-flythrough/{name}", "frame": frame,
                           "update_ms": .001 * (frame + 1), "work_ms": .0001,
                           "near": 20 + frame, "far": 300, "outside": 3,
                           "near_transitions": frame, "far_transitions": frame + 1,
                           "publication_ms": ("", ".25;.5", ".75")[frame] if name == "run" else "",
-                          "published": (0, 2, 1)[frame] if name == "run" else 0, "released": int(frame == 2)}
+                          "published": (0, 2, 1)[frame] if name == "run" else 0, "released": int(frame == 2),
+                          "page_used_bytes": (8-frame)*1048576, "page_free_bytes": (2+frame)*1048576,
+                          "page_retired_bytes": frame*1048576, "page_count": 2}
                          for name in ("run", "fly") for frame in range(3))
     (streaming / "events.jsonl").write_text("\n".join(
         json.dumps(event) for event in [
@@ -212,6 +215,11 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert data["fly"]["streaming"]["gpu_end_mb"] == 330.5
     assert data["fly"]["streaming"]["publication_ms"] is None
     assert data["fly"]["streaming"]["published"] == 0
+    assert data["run"]["streaming"]["page_used_end_bytes"] == 6*1048576
+    assert data["run"]["streaming"]["page_free_end_bytes"] == 4*1048576
+    assert data["run"]["streaming"]["page_retired_end_bytes"] == 2*1048576
+    assert data["run"]["streaming"]["page_count_end"] == 2
+    assert data["run"]["streaming"]["page_capacity_peak_bytes"] == 12*1048576
     warmup = data["run"]["streaming"]
     assert warmup["warmup_far_count"] == 2
     assert warmup["warmup_far_publication_ms"]["p99"] == pytest.approx(.597)
@@ -220,6 +228,17 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert warmup["warmup_queue_max_ms"] == .8
     assert data["fly"]["streaming"]["warmup_far_count"] == 0
     assert data["fly"]["streaming"]["warmup_far_publication_ms"] is None
+    assert report.main(["run", str(streaming)]) == 0
+    assert "| 2 | 6.00 / 4.00 / 2.00 | 12.00 |" in (streaming / "report.md").read_text()
+    with (streaming / "streaming.csv").open(newline="") as stream:
+        legacy_rows = [{key: value for key, value in row.items() if not key.startswith("page_")}
+                       for row in csv.DictReader(stream)]
+    with (streaming / "streaming.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, legacy_rows[0])
+        writer.writeheader()
+        writer.writerows(legacy_rows)
+    legacy = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]["run"]["streaming"]
+    assert legacy["page_used_end_bytes"] is None and legacy["page_capacity_peak_bytes"] is None
     assert report.main(["run", str(streaming)]) == 0
 
 
