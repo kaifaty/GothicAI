@@ -68,6 +68,9 @@ HEARD_S = 3.0  # ...and once he has stopped, this long for it to be recognized (
 RESERVED_S = 5.0  # the addressee's seat waits this long for its turn (it may never come: he turned away)
 POLL_S = 0.05
 ANSWER = "answer"  # the turn of one another npc spoke to
+# a witness's answer to the one who asked it (witnesses.py): that one reacts on a turn of its own, with
+# catch_lie (2026-10-29: an answer turn, set_intent only, took Lobart's «соврал», and the catch never came)
+TESTIMONY = "testimony"
 ANSWER_CUE = (
     "[{name} обращается к тебе. Ответь тому, кто к тебе обращается, а не герою — коротко, как сказал бы ты.]"
 )
@@ -117,6 +120,9 @@ class GroupTalk:
         self.hero_speaks_until = float("-inf")  # he has begun to speak: new seats wait for his phrase
         self.to_all: str | None = None  # his last phrase was to several: who answers first
         self._calls: dict[str, str] = {}  # whom an npc's turn has called by name, the last one
+        # the npc waits for a witness's answer (witnesses.py): it reacts to it on a turn of its own, not
+        # on an answer turn to the one who named it (2026-10-29: Hilda's «Лобарт, …» before her testimony)
+        self.asks: Callable[[str], bool] = lambda npc: False
         self._ids = itertools.count(1)
         self._tasks: set[asyncio.Task[Any]] = set()
         link.listeners.append(self.on_message)
@@ -185,7 +191,7 @@ class GroupTalk:
                 heard = "тебе" if other == to else whom
                 self.dialogue.heard(other, e.name if e is not None else other, name, text, heard)
         self._spawn(self._heard(npc, name, text, whom, told))
-        if to is not None and called == to:
+        if to is not None and called == to and kind != TESTIMONY and not self.asks(to):
             self._give_word(npc, name, to)
 
     def participants(self) -> dict[str, Member]:

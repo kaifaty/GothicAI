@@ -112,6 +112,7 @@ class MdlVisual final {
     // the animation of that name plays k times as fast from its next start (1: as it is)
     void                           setAnimSpeed(std::string_view name, float k);
     void                           setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now);
+    void                           hitStop(uint64_t until, float k);
     bool                           updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint64_t dt, bool force,
                                                     bool pausePose=false);
     bool                           updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedToGround);

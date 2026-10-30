@@ -1,0 +1,41 @@
+# Fresh NEWWORLD. scripts/vob_layer_fixture.py puts its cube at
+# (30213,5186,-15710), 300 cm along +X from START_GOTHIC2.
+# Run twice with temporary OPENGOTHIC_CONTENT: --collision mesh and none.
+# Add --emitters to the fixture for the day/night base-PFX and light captures.
+# `pos` records native hero coordinates in events.jsonl before/after walking.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+release all
+goto pos 29913 5186 -15710
+clear 1800
+wait 1000
+face 0
+walkmode walk
+cam follow 450 240 90
+pos
+shot vob-layer-start
+cam follow 450 240 120
+cam look 240
+wait 2500
+shot vob-layer-day
+wait 100
+set time 0 0
+wait 2500
+shot vob-layer-night
+wait 100
+set time 12 0
+cam follow 450 240 90
+cam look 90
+press forward
+wait 2000
+pos
+wait 2000
+pos
+release forward
+wait 100
+shot vob-layer-contact
+wait 100

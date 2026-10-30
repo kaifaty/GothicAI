@@ -856,6 +856,14 @@ void Camera::tick(uint64_t dt) {
     shake = shake + (sh-shake)*std::min(1.f, dtF*1000.f);
     }
 
+  if(kickT<0.4f) {
+    // up in about 12 ms, gone in about a tenth of a second, no swing back
+    kickT  += dtF;
+    kickOff = kickAmp*((1.f-std::exp(-kickT/0.012f))*std::exp(-kickT/0.07f));
+    } else {
+    kickOff = Vec3();
+    }
+
   {
     //NOTE: in vanilla output of velocity is garbage in general, but zero for static camera
     targetVelo = (origin - prev).length()/dtF;
@@ -1205,11 +1213,20 @@ Matrix4x4 Camera::viewProj() const {
   }
 
 Matrix4x4 Camera::view() const {
-  return mkView(origin+shake, angles);
+  return mkView(origin+shake, angles+kickOff);
   }
 
 Matrix4x4 Camera::viewLwc() const {
-  return mkView(Vec3(0), angles);
+  return mkView(Vec3(0), angles+kickOff);
+  }
+
+void Camera::impact(const Vec3& dir, float deg) {
+  const float k    = float(M_PI/180.0);
+  const Vec3  left = {std::sin(-angles.y*k), 0, std::cos(-angles.y*k)};
+  const float len  = dir.length();
+  const float side = len>0.f ? Vec3::dotProduct(dir,left)/len : 0.f;
+  kickAmp = kickOff + Vec3(deg, side*deg*0.6f, 0);
+  kickT   = 0;
   }
 
 Matrix4x4 Camera::viewProjLwc() const {

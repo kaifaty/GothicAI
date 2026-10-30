@@ -7,6 +7,7 @@
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
+#include <Tempest/Log>
 
 #include <cstdlib>
 
@@ -33,6 +34,7 @@
 #include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 
 #include <algorithm>
@@ -54,6 +56,30 @@
 namespace {
   bool waterThing(int category) {
     return category==DynamicWorld::C_Item || category==DynamicWorld::C_MovableVob || category==DynamicWorld::C_Fragment;
+    }
+
+  JPH::AABox itemCollisionBounds(const JPH::Body& body) {
+    auto leaf=body.GetTransformedShape();
+    JPH::SubShapeID remainder;
+    while(leaf.mShape->GetType()==JPH::EShapeType::Decorated)
+      leaf=leaf.GetSubShapeTransformedShape(JPH::SubShapeID(),remainder);
+    if(leaf.mShape->GetType()!=JPH::EShapeType::Convex)
+      throw std::runtime_error("Item collision bounds require a convex shape");
+    const auto& shape=static_cast<const JPH::ConvexShape&>(*leaf.mShape);
+    JPH::ConvexShape::SupportBuffer buffer;
+    const auto* support=shape.GetSupportFunction(JPH::ConvexShape::ESupportMode::Default,buffer,leaf.GetShapeScale());
+    const float radius=support->GetConvexRadius();
+    JPH::AABox bounds;
+    for(JPH::uint axis=0;axis<3;++axis) {
+      JPH::Vec3 worldDirection=JPH::Vec3::sZero();
+      worldDirection.SetComponent(axis,1.f);
+      const auto localDirection=leaf.mShapeRotation.Conjugated()*worldDirection;
+      const auto min=leaf.mShapePositionCOM+leaf.mShapeRotation*support->GetSupport(-localDirection);
+      const auto max=leaf.mShapePositionCOM+leaf.mShapeRotation*support->GetSupport(localDirection);
+      bounds.mMin.SetComponent(axis,float(min[axis])-radius);
+      bounds.mMax.SetComponent(axis,float(max[axis])+radius);
+      }
+    return bounds;
     }
 
   void submergedVolume(const JPH::Body& body, const JPH::Shape& shape, float waterY,
@@ -1386,6 +1412,12 @@ CollisionWorld::DynamicBody::DynamicBody(CollisionWorld& owner, JPH::ShapeRefC s
 void CollisionWorld::CollisionBody::setObjMatrix(const Tempest::Matrix4x4& matrix) {
   if(owner==nullptr || id.IsInvalid())
     return;
+  const Tempest::Vec3 position(matrix.at(3,0),matrix.at(3,1),matrix.at(3,2));
+  if(categoryId==DynamicWorld::C_Item &&
+     (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))) {
+    owner->recoverItem(*this,position);
+    return;
+    }
   auto transform = toTransform(matrix);
   if((scale-transform.scale).LengthSq()>1.0e-10f) {
     scale = transform.scale;
@@ -1397,7 +1429,14 @@ void CollisionWorld::CollisionBody::setObjMatrix(const Tempest::Matrix4x4& matri
   }
 
 void CollisionWorld::CollisionBody::restoreTransform(const Tempest::Matrix4x4& matrix, bool sleeping) {
+  const Tempest::Vec3 position(matrix.at(3,0),matrix.at(3,1),matrix.at(3,2));
+  if(categoryId==DynamicWorld::C_Item &&
+     (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))) {
+    owner->recoverItem(*this,position);
+    return;
+    }
   setObjMatrix(matrix);
+  itemRestTransform=matrix;
   // A restored sleeping float is already in equilibrium. Discovering its
   // water surface must not turn load into a fresh water entry or wake it.
   bool restoredSleep=sleeping;
@@ -1432,7 +1471,30 @@ void CollisionWorld::CollisionBody::restoreTransform(const Tempest::Matrix4x4& m
   }
 
 void CollisionWorld::CollisionBody::setPosition(const Tempest::Vec3& position) {
+  if(categoryId==DynamicWorld::C_Item &&
+     (!std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z))) {
+    owner->recoverItem(*this,position);
+    return;
+    }
   owner->impl->system.GetBodyInterface().SetPosition(id,toMeters(position),JPH::EActivation::DontActivate);
+  }
+
+void CollisionWorld::CollisionBody::retainForItemWake() {
+  // Keep an approached sleeper until a later budgeted query can visit it
+  // again. This changes neither its native activation nor its velocity.
+  itemWakeUntilStep=owner->impl->simulationStep+8;
+  }
+
+bool CollisionWorld::CollisionBody::keepSleepingItem(const Tempest::Vec3& positionCm) const {
+  if((owner->buoyancy && inWater) || itemRecovered ||
+     (owner->itemWake && itemWakeUntilStep>=owner->impl->simulationStep && itemWakeUntilStep!=0))
+    return true;
+  const auto position=toMeters(positionCm);
+  const float range=toMeters(DynamicWorld::characterItemRange);
+  for(const auto* character:owner->impl->virtualCharacters)
+    if((position-character->impl->character->GetPosition()).LengthSq()<=range*range)
+      return true;
+  return false;
   }
 
 void CollisionWorld::CollisionBody::setScale(const Tempest::Vec3& value) {
@@ -1592,6 +1654,7 @@ void CollisionWorld::addBody(CollisionBody& body, const Tempest::Matrix4x4& matr
                              bool movable, bool sensor, float mass, bool startSleeping) {
   const auto transform = toTransform(matrix);
   body.scale = transform.scale;
+  body.itemRestTransform = matrix;
   body.scaledShape = ::scaledShape(body.baseShape.GetPtr(),body.scale);
   const auto type = mass>0 ? JPH::EMotionType::Dynamic : movable ? JPH::EMotionType::Kinematic : JPH::EMotionType::Static;
   JPH::BodyCreationSettings settings(body.scaledShape.GetPtr(),transform.position,transform.rotation,type,JPH::ObjectLayer(body.categoryId));
@@ -2614,8 +2677,91 @@ void CollisionWorld::sampleMeleeBench() {
   impl->meleeDiagnosticMs+=std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-started).count();
   }
 
+void CollisionWorld::wakeItems() {
+  if(!itemWake || !itemWakeCallback)
+    return;
+  JPH::BodyIDVector active;
+  impl->system.GetActiveBodies(JPH::EBodyType::RigidBody,active);
+  if(active.empty())
+    return;
+  constexpr size_t maxQueries=32, maxCreated=8;
+  size_t queries=0,created=0,visited=0;
+  itemWakeCursor%=active.size();
+  while(visited<active.size() && queries<maxQueries && created<maxCreated) {
+    const auto id=active[itemWakeCursor];
+    itemWakeCursor=(itemWakeCursor+1)%active.size();
+    ++visited;
+    Tempest::Vec3 min,max;
+    {
+      JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),id);
+      if(!lock.Succeeded() || !lock.GetBody().IsDynamic())
+        continue;
+      const auto& native=lock.GetBody();
+      const auto bounds=native.GetWorldSpaceBounds();
+      min=toCentimeters(bounds.mMin)-Tempest::Vec3(50,50,50);
+      max=toCentimeters(bounds.mMax)+Tempest::Vec3(50,50,50);
+      }
+    ++queries;
+    created+=itemWakeCallback(min,max,maxCreated-created);
+    }
+  }
+
+void CollisionWorld::recoverItems() {
+  for(auto* body:rigid) {
+    if(body->category()!=DynamicWorld::C_Item)
+      continue;
+    bool recover=false;
+    bool sleeping=false;
+    Tempest::Vec3 failedPosition;
+    {
+      JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),body->id);
+      if(!lock.Succeeded())
+        continue;
+      const auto& native=lock.GetBody();
+      const auto p=native.GetPosition();
+      recover=!std::isfinite(p.GetX()) || !std::isfinite(p.GetY()) || !std::isfinite(p.GetZ()) ||
+              p.GetY()<bboxMin.GetY()-100.f;
+      sleeping=!native.IsActive();
+      failedPosition=toCentimeters(p);
+      }
+    if(!recover) {
+      if(sleeping)
+        body->itemRestTransform=body->matrix();
+      continue;
+      }
+    recoverItem(*body,failedPosition);
+    }
+  }
+
+void CollisionWorld::recoverItem(CollisionBody& body, const Tempest::Vec3& failedPosition) {
+  auto& native=impl->system.GetBodyInterface();
+  const auto& restMatrix=body.itemRestTransform;
+  if(!std::isfinite(restMatrix.at(3,0)) || !std::isfinite(restMatrix.at(3,1)) || !std::isfinite(restMatrix.at(3,2))) {
+    // A body created from a nonfinite pose has no place to return to;
+    // setObjMatrix would send it straight back here.
+    native.SetLinearAndAngularVelocity(body.id,JPH::Vec3::sZero(),JPH::Vec3::sZero());
+    native.DeactivateBody(body.id);
+    return;
+    }
+  const auto rest=toTransform(body.itemRestTransform);
+  body.setObjMatrix(body.itemRestTransform);
+  native.SetPositionAndRotation(body.id,rest.position,rest.rotation,JPH::EActivation::DontActivate);
+  native.SetLinearAndAngularVelocity(body.id,JPH::Vec3::sZero(),JPH::Vec3::sZero());
+  native.DeactivateBody(body.id);
+  body.waterInitialized=false;
+  body.waterPreserveSleep=true;
+  body.inWater=false;
+  body.waterRestTime=0;
+  body.itemRecovered=true;
+  Tempest::Log::i("[physics] item recovered: body=",body.nativeId()," from=",failedPosition.x,",",
+                 failedPosition.y,",",failedPosition.z," rest=",body.itemRestTransform.at(3,0),",",
+                 body.itemRestTransform.at(3,1),",",body.itemRestTransform.at(3,2));
+  }
+
 void CollisionWorld::tick(uint64_t dt) {
   const auto started=std::chrono::steady_clock::now();
+  // Bad coordinates must never reach Jolt's integration or water queries.
+  recoverItems();
   if(impl->meleeSubsteps!=0) { impl->meleeSample={};impl->meleeDiagnosticMs=0; }
   if(cloth!=nullptr) cloth->prepareFrame(dt);
   constexpr float step = 1.f/60.f;
@@ -2633,6 +2779,7 @@ void CollisionWorld::tick(uint64_t dt) {
     const int count = std::min(wholeSteps,2);
     for(int i=0;i<count;++i) {
       ++impl->simulationStep;
+      wakeItems();
       if(impl->meleeSubsteps!=0) {
         const float solveBefore=impl->meleeSample.solveMs,castBefore=impl->meleeSample.castMs;
         const float seconds=step/float(impl->meleeSubsteps);
@@ -2889,6 +3036,7 @@ void CollisionWorld::tick(uint64_t dt) {
     }
 
   std::vector<JPH::BodyID> active;
+  recoverItems();
   active.reserve(rigid.size());
   for(auto* body:rigid)
     active.push_back(body->id);
@@ -2919,26 +3067,18 @@ void CollisionWorld::tick(uint64_t dt) {
       m[13] *= 100.f;
       m[14] *= 100.f;
       matrix.setData(m);
-      bool keepSleeping = buoyancy && body->inWater;
-      if(!native.IsActive() && !keepSleeping) {
-        const float range = toMeters(DynamicWorld::characterItemRange);
-        for(const auto* character:impl->virtualCharacters) {
-          if((native.GetPosition()-character->impl->character->GetPosition()).LengthSq()<=range*range) {
-            keepSleeping = true;
-            break;
-            }
-          }
-        }
       // Legacy items lose their body at rest. A nearby virtual character needs
       // that sleeping body to remain queryable so a native contact can wake it.
       // A sleeping water item also retains its native body, independently of
       // characters, so save/load, pickup and a buoyancy toggle remain physical.
-      disable = (!native.IsActive() && !keepSleeping) || native.GetPosition().GetY()<bboxMin.GetY()-100.f;
+      disable = !native.IsActive() && !body->keepSleepingItem(toCentimeters(native.GetPosition()));
       }
     item->setPhysicsMatrix(matrix);
     if(disable)
       item->setPhysicsDisable();
     }
+  for(auto* body:rigid)
+    body->itemRecovered=false;
   impl->stepMilliseconds=std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-started).count()+impl->characterMilliseconds-impl->meleeDiagnosticMs;
   if(!impl->meleeOutput.empty()) {
     auto& sample=impl->meleeSample;
@@ -3094,6 +3234,12 @@ void CollisionWorld::setBuoyancyEnabled(bool enabled) {
   }
 
 bool CollisionWorld::buoyancyEnabled() const { return buoyancy; }
+
+void CollisionWorld::setItemWakeEnabled(bool enabled) { itemWake=enabled; }
+
+void CollisionWorld::setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback) {
+  itemWakeCallback=std::move(callback);
+  }
 
 void CollisionWorld::prepareBuoyancy(std::vector<PhysicsNoise>& splashes) {
   if(!buoyancy || !waterSurface) return;
@@ -3264,6 +3410,10 @@ std::vector<CollisionWorld::WaterBodySnapshot> CollisionWorld::waterBodySnapshot
       const auto bounds=shape->GetWorldSpaceBounds(body.GetCenterOfMassTransform(),JPH::Vec3::sOne());
       entry.worldBounds[0]=toCentimeters(bounds.mMin);
       entry.worldBounds[1]=toCentimeters(bounds.mMax);
+      // The broad-phase box can include empty corners of a rotated hull.
+      const auto collisionBounds=body.GetObjectLayer()==DynamicWorld::C_Item ? itemCollisionBounds(body) : body.GetWorldSpaceBounds();
+      entry.collisionBounds[0]=toCentimeters(collisionBounds.mMin);
+      entry.collisionBounds[1]=toCentimeters(collisionBounds.mMax);
       entry.mass=1.f/body.GetMotionProperties()->GetInverseMass();
       entry.density=entry.mass/shape->GetVolume();
       entry.sleeping=!body.IsActive();

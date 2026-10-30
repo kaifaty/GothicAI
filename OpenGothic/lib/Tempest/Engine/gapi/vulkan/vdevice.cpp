@@ -11,6 +11,9 @@
 #include <Tempest/Log>
 #include <cstring>
 #include <array>
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "frameprofile.h"
+#endif
 
 using namespace Tempest;
 using namespace Tempest::Detail;
@@ -199,6 +202,10 @@ void VDevice::createLogicalDevice(VkPhysicalDevice pdev) {
   deviceFeatures.tessellationShader   = supportedFeatures.tessellationShader;
   deviceFeatures.geometryShader       = supportedFeatures.geometryShader;
   deviceFeatures.fillModeNonSolid     = supportedFeatures.fillModeNonSolid;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  deviceFeatures.pipelineStatisticsQuery = supportedFeatures.pipelineStatisticsQuery;
+  profilePipelineStatistics = supportedFeatures.pipelineStatisticsQuery;
+#endif
 
   deviceFeatures.vertexPipelineStoresAndAtomics = supportedFeatures.vertexPipelineStoresAndAtomics;
   deviceFeatures.fragmentStoresAndAtomics       = supportedFeatures.fragmentStoresAndAtomics;
@@ -1103,6 +1110,13 @@ VkResult VDevice::waitFence(VFence& t, uint64_t timeout) {
 
 void VDevice::waitIdle() {
   waitIdleSync(queues,sizeof(queues)/sizeof(queues[0]));
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  // Publish the final frames before the recorder is flushed at shutdown.
+  std::lock_guard<std::mutex> guard(timeline.sync);
+  for(auto& fence:timeline.timepoint)
+    if(fence!=nullptr && fence->profileQueries!=nullptr)
+      fence->setStatus(vkGetFenceStatus(device.impl,fence->fence));
+#endif
   }
 
 void VDevice::waitIdleSync(VDevice::Queue* q, size_t n) {
@@ -1146,6 +1160,12 @@ std::shared_ptr<VFence> VDevice::submit(VCommandBuffer& cmd) {
     throw DeviceLostException();
 
   VkFence fence = pfence->fence;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  if(cmd.profileQueries!=nullptr) {
+    cmd.profileQueries->record=FrameProfile::geometrySubmitted();
+    pfence->profileQueries=cmd.profileQueries;
+    }
+#endif
 
   if(vkQueueSubmit2!=nullptr) {
     SmallArray<VkSemaphoreSubmitInfoKHR, 32> wait2(waitCnt);

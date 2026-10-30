@@ -1795,13 +1795,16 @@ class DialogueManager:
         tools: Collection[str] | None = None,
         kind: str = "incident",
         to: str | None = None,
+        act: bool = False,
     ) -> asyncio.Task[None] | None:
         """A turn about something that happened (an incident): the npc may speak and change its intent.
         While a turn is running the event waits for the next one's situation instead of interrupting.
         `tools` limits what the model is offered (an npc nobody controls cannot hand over items); the names
         may be of the extensions' tools too (deals.py: an offer declined, the npc may offer again). `kind`
         names the trigger in the turn's trace (an npc that comes up to the hero: "initiative"); `to`: the
-        npc its lines are said to (another spoke to it, group.py), unless one of them calls someone else."""
+        npc its lines are said to (another spoke to it, group.py), unless one of them calls someone else.
+        `act`: its first step must call one of `tools` (a witness's answer: catch_lie, or set_intent if it
+        believes him), so words alone do not stand for a decision of code's."""
         conv = self.conversations.get(npc.upper())
         if conv is None:
             return None
@@ -1814,7 +1817,7 @@ class DialogueManager:
         else:
             offered = [t for t in offered if t.name in tools]
         turn = self._turn(
-            conv, Message("developer", cue), kind, relevant, overlay=overlay, tools=offered, to=to
+            conv, Message("developer", cue), kind, relevant, overlay=overlay, tools=offered, to=to, act=act
         )
         return self._reply(conv, turn)
 
@@ -2359,6 +2362,7 @@ class DialogueManager:
         tools: list[Tool] | None = None,
         body: str | None = None,
         to: str | None = None,
+        act: bool = False,
     ) -> None:
         """A turn on the conversation's floor (group.py): it thinks once those before it have their text
         ready; with no voice left for it (three to a phrase of the hero's) it says nothing."""
@@ -2372,7 +2376,9 @@ class DialogueManager:
                 log.info("%s: no voice left in the conversation, its %s turn is dropped", conv.npc, kind)
                 return
         try:
-            await self._speak(conv, trigger, kind, relevant, overlay=overlay, tools=tools, body=body, to=to)
+            await self._speak(
+                conv, trigger, kind, relevant, overlay=overlay, tools=tools, body=body, to=to, act=act
+            )
         finally:
             if self.floor is not None:
                 self.floor.done(conv.npc)
@@ -2388,6 +2394,7 @@ class DialogueManager:
         tools: list[Tool] | None = None,
         body: str | None = None,
         to: str | None = None,
+        act: bool = False,
     ) -> None:
         """One turn of the conversational model: up to MAX_STEPS calls (see turn.py). Text streams to the
         subtitles and the voice as it comes; tool calls are handled after their step. `body`: what the
@@ -2457,6 +2464,7 @@ class DialogueManager:
             started=time.monotonic(),
             filler=sound,
             to=to.upper() if to else None,
+            act=act and bool(tools),
         )
         conv.reply_id = state.reply
         trace.record["tools"] = [t.name for t in state.tools]
@@ -2572,12 +2580,13 @@ class DialogueManager:
         retries = STEP_RETRIES
         first_said = to_game_text(state.filler)
         for step in range(MAX_STEPS):
-            st = trace.step(added, tool_choice(step), silent=not speak)
+            choice: ToolChoice | None = "required" if state.act and step == 0 else tool_choice(step)
+            st = trace.step(added, choice, silent=not speak)
             while True:
                 said = state.text.strip()
                 try:
                     st.started_s = round(time.time() - trace.started, 3)
-                    done = await self._step(conv, state, request, tool_choice(step), st, speak=speak)
+                    done = await self._step(conv, state, request, choice, st, speak=speak)
                     break
                 except LLMError as err:
                     # asked again only if nothing of this step was said: else the npc would repeat it
@@ -3247,6 +3256,7 @@ class TurnState:
     tools: list[Tool] = field(default_factory=list)  # offered to the model in this turn
     dynamic_tools: bool = False  # no explicit tools: amendments refresh the offered list
     to: str | None = None  # the npc its lines are said to now, None: the hero
+    act: bool = False  # its first step must call a tool (event_turn)
 
     def spoken(
         self,

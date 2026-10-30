@@ -60,6 +60,7 @@ class ProtoMesh {
       std::string                      name;
       bool                             hasNode=false;
       std::unique_ptr<PhysicMeshShape> shape;
+      std::vector<Tempest::Vec3>       hullVertices; // exact indexed visual vertices, centimetres
       };
 
     struct Pos {
@@ -96,6 +97,7 @@ class ProtoMesh {
     size_t                         skinedNodesCount() const;
     size_t                         findNode(std::string_view name,size_t def=size_t(-1)) const;
     const Tempest::Vec3*           bbox() const;
+    void                           appendItemVertices(std::vector<Tempest::Vec3>& vertices) const;
     // Lowest point of the exact indexed body skin, using the renderer's four
     // bone weights and fatness displacement. No GPU access or pose changes.
     bool                           minSkinnedVertex(const Tempest::Matrix4x4* worldBones, size_t count,

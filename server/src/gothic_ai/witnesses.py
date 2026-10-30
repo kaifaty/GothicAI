@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import time
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -44,6 +46,7 @@ from .chronicle import Chronicle, Fact
 from .concerns import RANK, Concern
 from .fear import afraid
 from .game import GameError, GameLink
+from .group import TESTIMONY
 from .journal import Journal
 from .knowledge import roots
 from .llm import Tool, ToolCall
@@ -92,7 +95,8 @@ HERO_ASK_TOOL = Tool(
     ASK,
     "Расспросить знакомого о герое, когда сам ты не видел, а его слова проверить хочешь (кого можно спросить "
     "и где он — в обстановке). Рядом — окликнешь, и он подойдёт; поодаль — сходишь к нему и вернёшься; "
-    "далеко — спросишь при встрече, ответ узнаешь потом. Сначала скажи вслух, кого и о чём спросишь. Ответ "
+    "далеко — спросишь при встрече, ответ узнаешь потом. Сначала скажи вслух, кого и о чём спросишь, и "
+    "вызови: «спрошу» без вызова ничего не делает. Ответ "
     "придёт ремаркой и строкой С1 в «Что тебе рассказали о герое другие»; уличить по ней — catch_lie.",
     {
         "type": "object",
@@ -355,6 +359,15 @@ class Witnesses:
             ]
             parts.append("Кого из знакомых можно расспросить о герое (ask_witness):\n" + "\n".join(lines))
         waiting = [q for q in self.inquiries.values() if q.npc == npc]
+        trigger = conv.trigger if (conv := self.dialogue.conversations.get(npc)) is not None else None
+        phrase = trigger.content if trigger is not None and trigger.role == "user" else ""
+        asked = {q.witness for q in waiting} | {t.witness for t in self.testimonies(npc)}
+        if offered := [c.name for c in _named(near, phrase) if c.npc not in asked]:
+            # 2026-10-29 live: on «спроси Ватраса» Lobart said «Встречу Ватраса — спрошу» and called nothing
+            parts.append(
+                f"Герой предлагает расспросить: {', '.join(offered)}. Решишь расспросить — вызови "
+                "ask_witness: сказать «спрошу» мало, без вызова ты не спросишь."
+            )
         if waiting:
             lines = [
                 f"- {q.witness_name} — "
@@ -464,14 +477,13 @@ class Witnesses:
         if view is not None and (why := _busy(view.state, view.body)) is not None:
             return ToolOutcome(f"Отклонено: {c.name} {why}.", "rejected")
         self._asking.add(npc)
-        asking = conv.reply
         self.journal.add(
             "ask_witness", npc=npc, name=conv.persona.name, witness=c.npc, tier=c.tier, said=said
         )
 
         async def job() -> tuple[str, bool]:
             try:
-                return await self._ask(conv, c, said, now, asking, about, about_name)
+                return await self._ask(conv, c, said, now, about, about_name)
             finally:
                 self._asking.discard(npc)
 
@@ -499,6 +511,10 @@ class Witnesses:
         if (npc, sid) in self._npc_rows:
             return None
         return self._shown.get(npc, {}).get(sid)
+
+    def asking(self, npc: str) -> bool:
+        """It waits for the answer to its question (group.py gives it no answer turn meanwhile)."""
+        return npc.upper() in self._asking
 
     def any(self, npc: str) -> bool:
         """Whether a witness told it of seeing the hero (catch_lie is offered then)."""
@@ -531,8 +547,7 @@ class Witnesses:
     # --- asking -----------------------------------------------------------------------------------
 
     async def _ask(
-        self, conv: Conversation, c: Candidate, said: str, at: int, asking: asyncio.Task[None] | None,
-        about: str = HERO, about_name: str = "",
+        self, conv: Conversation, c: Candidate, said: str, at: int, about: str = HERO, about_name: str = "",
     ) -> tuple[str, bool]:
         """Near: it calls the witness over; a walk: it goes to the witness and back. Then the witness tells
         what it saw (aloud, if the hero hears) and the asker reacts."""
@@ -586,8 +601,12 @@ class Witnesses:
                 self.dialogue.return_body(conv, "witness")
         if t is None:
             return "", False
-        if asking is not None and not asking.done() and asking is not asyncio.current_task():
-            await asyncio.wait({asking}, timeout=WAIT_S)  # the reaction is a turn of its own, not pending
+        # the reaction is a turn of its own, not pending: a cue left for another turn loses catch_lie
+        deadline = time.monotonic() + WAIT_S
+        while (reply := conv.reply) is not None and not reply.done() and reply is not asyncio.current_task():
+            if (left := deadline - time.monotonic()) <= 0:
+                break
+            await asyncio.wait({reply}, timeout=left)
         self._react(npc, t)
         return "", True
 
@@ -636,7 +655,9 @@ class Witnesses:
                 "Подтверждай только установленную кодом правду; ложное заявление отрицай.]"
             )
         # a free witness answers on the move; one held for this stands and talks
-        task = self.dialogue.event_turn(wconv.npc, cue, overlay=not self.controlled(wconv.npc), tools=())
+        task = self.dialogue.event_turn(
+            wconv.npc, cue, overlay=not self.controlled(wconv.npc), tools=(), kind=TESTIMONY, to=t.npc
+        )
         if task is None:
             return
         done, _ = await asyncio.wait({task}, timeout=WAIT_S)
@@ -657,7 +678,9 @@ class Witnesses:
         cue = (
             f"[Ответ: {self._told(t)}. Улики — строки С1… в «Что тебе рассказали о герое другие». "
             "Противоречит ли это "
-            f"словам героя «{t.said}» и что сказать ему — решай сам.]"
+            f"словам героя «{t.said}» и что сказать ему — решай сам. Решишь, что он солгал, — уличи его "
+            "вызовом catch_lie (seen — строка С…), веришь ему — set_intent: одно слово «соврал» его не "
+            "уличает.]"
         )
         if t.about != HERO:
             cue = (
@@ -674,9 +697,8 @@ class Witnesses:
             tools = ("set_intent",) if t.gate_claim else (
                 "catch_lie" if t.about == HERO else "blame", "set_intent"
             )
-            self.dialogue.event_turn(
-                npc, cue, tools=tools, kind="witness"
-            )
+            # it must decide by a call: in 2026-10-29 live runs Lobart said «врёшь» and called nothing
+            self.dialogue.event_turn(npc, cue, tools=tools, kind="witness", act=True)
         else:
             self.dialogue.note(npc, cue.strip("[]"))
 
@@ -1234,6 +1256,16 @@ def _find(near: list[Candidate], who: str) -> Candidate | None:
         if len(c.name) >= 3 and c.name.lower()[: max(3, min(4, len(c.name) - 1))] in w:
             return c
     return None
+
+
+def _named(near: list[Candidate], phrase: str) -> list[Candidate]:
+    """Those the hero's phrase names: a capitalized word of it begins with the root of the name («Ватраса»,
+    «Малета»), so «вино» the drink is not Вино."""
+    words = [w.lower() for w in re.findall(r"\w+", phrase) if w[:1].isupper()]
+    return [
+        c for c in near
+        if (root := max(roots(c.name), key=len, default="")) and any(w.startswith(root) for w in words)
+    ]
 
 
 def _busy(state: str, body: str) -> str | None:

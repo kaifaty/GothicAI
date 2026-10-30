@@ -48,6 +48,8 @@ class Camera final {
 
     void reset();
     void reset(const Npc* pl);
+    // a blow along `dir` (world) nods the view by about `deg` and lets it back within a tenth of a second
+    void impact(const Tempest::Vec3& dir, float deg);
 
     void save(Serialize &s);
     void load(Serialize &s, Npc* pl);
@@ -163,6 +165,9 @@ class Camera final {
     Tempest::Vec3         veloTrans = {};
     float                 userRange  = 0;
     Tempest::Vec3         shake      = {};
+    Tempest::Vec3         kickAmp    = {};  // impact: degrees of pitch and yaw
+    Tempest::Vec3         kickOff    = {};
+    float                 kickT      = 1;   // seconds since the impact
 
     float                 targetVelo = 0;
 

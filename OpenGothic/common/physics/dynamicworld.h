@@ -71,6 +71,7 @@ class DynamicWorld final {
     struct BulletsList;
     struct BBoxList;
     struct MovableVobs;
+    struct ItemHulls;
 
   public:
     static constexpr float gravityMS   = 9.8f; // meters per second^2
@@ -228,6 +229,7 @@ class DynamicWorld final {
         Tempest::Vec3 velocity() const; // centimetres/second; zero without dynamics
         Tempest::Vec3 angularVelocity() const; // world radians/second; zero without dynamics
         bool isSleeping() const;
+        void retainForItemWake();
         bool touchedByNpc() const;
         // World-space newton seconds (kg * metres/second), with native wake.
         bool addImpulse(const Tempest::Vec3& impulseNs, Npc* culprit = nullptr);
@@ -402,12 +404,23 @@ class DynamicWorld final {
     Item           addStaticObj (const PhysicMeshShape *src, const Tempest::Matrix4x4& m, std::string_view label = {});
     Item           addMovableObj(const PhysicMeshShape *src, const Tempest::Matrix4x4& m, std::string_view label = {});
     Item           addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& bbox, asset::MaterialGroup mat);
+    Item           addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& bbox, asset::MaterialGroup mat,
+                                  const ProtoMesh* proto, std::string_view visual, bool hulls = true);
+    struct ItemHull {
+      JPH::ShapeRefC shape, originalShape;
+      std::vector<Tempest::Vec3> vertices; // hull vertices in visual-local centimetres
+      std::string fallbackReason;
+      float volume = 0.f, boundsVolume = 0.f; // cubic metres, before object scale
+      float extraPaddingCm = 0.f; // collision padding beyond the base centimetre
+      };
+    const ItemHull& itemHullShape(const ProtoMesh& proto, std::string_view visual);
     Item           addMovableVob(const ProtoMesh& mesh, std::string_view visual, const Tempest::Matrix4x4& matrix,
                                  float massMultiplier, bool blocksWalking, std::string_view className = {},
                                  bool legacyCollision = true, uint32_t zenId = uint32_t(-1));
     void           setMovableVobsEnabled(bool enabled);
     void           setDestructionEnabled(bool enabled);
     void           setBuoyancyEnabled(bool enabled);
+    void           setItemWakeEnabled(bool enabled);
     bool           buoyancyEnabled() const;
     bool           destructionEnabled() const;
     Cloth&         cloth();
@@ -469,6 +482,7 @@ class DynamicWorld final {
     struct WaterBodySnapshot {
       uintptr_t id = 0, parentId = 0;
       const Ragdoll* ragdoll = nullptr;
+      const ::Item* item = nullptr;
       uint32_t bone = 0;
       float targetFraction = 0;
       uint32_t zenId = uint32_t(-1);
@@ -476,7 +490,7 @@ class DynamicWorld final {
       int category = C_Null;
       std::string visual;
       Tempest::Matrix4x4 transform;
-      Tempest::Vec3 worldBounds[2], velocity;
+      Tempest::Vec3 worldBounds[2], collisionBounds[2], velocity;
       float mass = 0, density = 0, waterY = 0, submergedFraction = 0;
       bool sleeping = true, inWater = false;
       };
@@ -574,6 +588,7 @@ class DynamicWorld final {
       uint64_t rays = 0;
       };
     PhysicsStats physicsStats() const;
+    uint64_t simulationStep() const;
 
     // Called explicitly by the runner; ordinary worlds never build a navmesh.
     NavMesh::Geometry navigationGeometry() const;
@@ -625,6 +640,7 @@ class DynamicWorld final {
     std::unique_ptr<BulletsList>       bulletList;
     std::unique_ptr<BBoxList>          bboxList;
     std::unique_ptr<MovableVobs>       movableVobs;
+    std::unique_ptr<ItemHulls>         itemHulls;
     int64_t                           traceTime = -1;
     Tempest::Vec3                     fragmentObserver;
     bool                              hasFragmentObserver = false;

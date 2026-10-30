@@ -1398,6 +1398,26 @@ async def test_interrupt_releases_the_overlay_wait_for_the_next_reply(with_tts, 
         assert not any(m["text"] == second for m, _ in fake.says)
 
 
+async def test_an_event_turn_that_must_act_requires_a_call_on_its_first_step_only():
+    # a witness's answer (witnesses.py): the npc decides by catch_lie or set_intent, not by words alone
+    intent = ToolCall("set_intent", {"goal": "none", "target": None, "attitude": "wary", "agenda": None})
+    llm = FakeBackend(script=[FakeStep("", [intent]), FakeStep("Ну смотри у меня.")], delay=0)
+    fake = FakeGame()
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue.open(XARDAS, "Ксардас", warm=False)
+        turn = dialogue.event_turn(XARDAS, "[Ответ: …]", tools=("set_intent",), act=True)
+        assert turn is not None
+        await turn
+        assert llm.tool_choices == ["required", None]
+        assert dialogue.conversations[XARDAS].intent.attitude == "wary"
+        # with no tool offered there is nothing to require
+        turn = dialogue.event_turn(XARDAS, "[Событие: …]", tools=(), act=True)
+        assert turn is not None
+        await turn
+        assert llm.tool_choices[2] is None
+
+
 async def test_an_overlay_hushes_at_first_sound_and_drops_only_old_unvoiced_lines():
     old = "Я обещал ему пощаду и сдержу слово."
     urgent, following = "Бандиты уже напали на героя!", "Я обязательно тебя прикрою!"

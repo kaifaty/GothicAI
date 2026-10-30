@@ -20,6 +20,7 @@
 #include "world/triggers/touchdamage.h"
 #include "world/triggers/cscamera.h"
 #include "world/voblight.h"
+#include "world/voblayer.h"
 #include "world/world.h"
 #include "game/serialize.h"
 
@@ -30,7 +31,8 @@ Vob::Vob(World& owner)
   }
 
 Vob::Vob(Vob* parent, World& owner, const asset::VirtualObject& vob, Flags flags)
-  : world(owner), vobType(vob.type), vobObjectID(vob.id), parent(parent) {
+  : world(owner), vobType(vob.type), vobObjectID(vob.id),
+    layerObject(VobLayer::isAdded(vob)), parent(parent) {
   pos   = Tempest::Matrix4x4(vob.rotation.columns[0].x, vob.rotation.columns[1].x, vob.rotation.columns[2].x, vob.position.x,
                              vob.rotation.columns[0].y, vob.rotation.columns[1].y, vob.rotation.columns[2].y, vob.position.y,
                              vob.rotation.columns[0].z, vob.rotation.columns[1].z, vob.rotation.columns[2].z, vob.position.z,
@@ -286,7 +288,9 @@ std::unique_ptr<Vob> Vob::load(Vob* parent, World& world, const asset::VirtualOb
 void Vob::saveVobTree(Serialize& fin) const {
   for(auto& i:child)
     i->saveVobTree(fin);
-  if(vobType==asset::VirtualObjectType::zCVob)
+  // Layer additions are static content, reconstructed once from the current
+  // world on every load, and never enter the base-ID save namespace.
+  if(layerObject || vobType==asset::VirtualObjectType::zCVob)
     return;
   if(vobObjectID!=uint32_t(-1))
     save(fin);
@@ -301,7 +305,7 @@ void Vob::loadVobTree(Serialize& fin) {
 
   for(auto& i:child)
     i->loadVobTree(fin);
-  if(vobObjectID!=uint32_t(-1) && vobType!=asset::VirtualObjectType::zCVob)
+  if(!layerObject && vobObjectID!=uint32_t(-1) && vobType!=asset::VirtualObjectType::zCVob)
     load(fin);
   }
 

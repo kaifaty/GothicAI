@@ -22,11 +22,12 @@ import {DiceChart} from './parts/DiceChart';
 import {CombatOverlay} from './parts/CombatOverlay';
 import {sourceFrame, zoomScale, type Viewport} from './parts/followMath';
 import {enterStyle, exitStyle, flashOpacity, type TransitionType} from './parts/motion';
+import {holdPush} from './parts/timing';
 import {Sight} from './parts/Sight';
 import {Tags} from './parts/Tags';
 import {Hook, Texts} from './parts/Texts';
 import type {Beat, Plan} from './schema';
-import {COLOR, FONT, OUTLINE, WIDE_SAFE} from './theme';
+import {COLOR, FONT, OUTLINE, SAFE, WIDE_SAFE} from './theme';
 
 // the voice speaks in these spans (seconds of the short): the game ducks under them
 type Spans = [number, number][];
@@ -211,6 +212,21 @@ const Moving: React.FC<{beat: Beat; next?: Beat; children: React.ReactNode}> = (
   );
 };
 
+// a held picture pushing in slowly (holdPush): the whole beat with its pins, lines, texts and carry, about the
+// centre of the safe area (where a card is composed), so everything on it stays on its target; the captions and
+// the hook stay still above it. Chrome keeps text sharp by stepping it a whole pixel at a time (about every 0.6 s
+// at full size); `will-change: transform` makes the move smooth but blurs text by a third, so it is not used
+const Push: React.FC<{beat: Beat; children: React.ReactNode}> = ({beat, children}) => {
+  const {fps, width, height} = useVideoConfig();
+  const safe = width > height ? WIDE_SAFE : SAFE;
+  const push = holdPush(beat);
+  const t = useCurrentFrame() / fps;
+  if (!push) return <>{children}</>;
+  const s = interpolate(t, [push.at, push.at + push.dur], [1, push.scale], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const origin = `${(safe.left + width - safe.right) / 2}px ${(safe.top + height - safe.bottom) / 2}px`;
+  return <AbsoluteFill style={{transform: `scale(${s})`, transformOrigin: origin}}>{children}</AbsoluteFill>;
+};
+
 // how long a beat lies under the next one: the next one's transition, except a flash (a hard cut)
 const tail = (next?: Beat) => (next?.enter && next.enter.type !== 'flash' ? next.enter.dur : 0);
 
@@ -250,12 +266,16 @@ export const Explainer: React.FC<Plan> = (plan) => {
           return (
             <Sequence key={beat.id} from={from} durationInFrames={Math.round((t + tail(next)) * fps) - from} name={beat.id}>
               <Moving beat={beat} next={next}>
-                <BeatView beat={beat} next={next} start={start} spans={spans} duck={plan.duck} game={plan.gameVolume} stem={plan.stem} />
+                <Push beat={beat}>
+                  <BeatView beat={beat} next={next} start={start} spans={spans} duck={plan.duck} game={plan.gameVolume} stem={plan.stem} />
+                </Push>
               </Moving>
               {beat.carry && i > 0 && (
                 // over the beat's own entrance, so it does not move with the frame coming in; out with the beat
                 <Moving beat={{...beat, enter: undefined}} next={next}>
-                  <Carry beat={beat} prev={plan.beats[i - 1]} />
+                  <Push beat={beat}>
+                    <Carry beat={beat} prev={plan.beats[i - 1]} />
+                  </Push>
                 </Moving>
               )}
             </Sequence>

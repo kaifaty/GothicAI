@@ -1,32 +1,32 @@
 """Real holes in the shingle roofs NW_CITY_ROOF_01 of a block of the world mesh (pilot: harbour hut B037).
 
-Blender 5.2, run in the background:
+An edit of world_edit.py on the chunk NEWWORLD/0_-1 (set roofholes-2):
 
-    Blender -b --factory-startup --python scripts/content/world/roof_holes.py -- \
-        <base world dir>/chunks/0_-1.glb <content world dir>/chunks/0_-1.glb data/content/world/roof01-holes.json \
-        [--box X0 X1 Z0 Z1] [--preview DIR]
+    python3 scripts/content/world/world_edit.py build harbour-roof-holes-newworld-0-1 \
+        --materials <content dir>/materials/materials.json
 
 The roof texture paints five holes per square where shingles fell out, with the dark attic, a lath and, in
-the big one, a rafter (data/content/world/roof01-holes.json, read from our roofs-8 bake). The roof itself
+the big one, a rafter (data/content/world/roof01-holes.json, read from our roofs-8 bake by roof_holes_layout.py). The roof itself
 is two skins: the shingles NW_CITY_ROOF_01 outside and the boards *_ROOF_INSIDE_01 36-51 cm under them,
-seen from inside the hut. For every hole the texture puts on a roof panel in the box, the script cuts the
+seen from inside the hut. For every hole the texture puts on a roof panel in the box, the edit cuts the
 hole through both skins at the painted place (the painted black goes with the cut), lines its sides with
 dark wood across the roof's thickness, and lays the lath under the shingles and the rafter under the lath,
 so the hole shows depth from the street and the sky from inside. U and V of a hole map onto its panel by
-the panel's own texture mapping. Everything else in the chunk stays as it was imported.
+the panel's own texture mapping. Everything else in the chunk stays as it was imported. The materials
+OWN_ROOF_HOLE_SHADE and OWN_ROOF_HOLE_WALL come from roof_hole_shade.py.
 
 The converted chunk is Gothic content (a derivative, user's decision 2026-10-24): it stays outside git.
 """
-import argparse
 import json
-import math
-import sys
+from pathlib import Path
 
 import bmesh
 import bpy
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 from mathutils.geometry import tessellate_polygon
+
+from world_bpy import gothic_name, to_gothic
 
 ROOF = 'NW_CITY_ROOF_01'
 INSIDE = 'ROOF_INSIDE_01'      # the inside skin's material ends with this (sector prefixes differ per hut)
@@ -42,16 +42,10 @@ MIN_SHARE = .3                 # a hole clipped by its panel's edge to less than
 WOOD_UV = 150.0                # cm of wood per texture repeat along the grain
 SHADE = 'OWN_ROOF_HOLE_SHADE'  # multiply face at the bottom of a hole, facing out (roof_hole_shade.py)
 WALL = 'OWN_ROOF_HOLE_WALL'    # sides of a hole: the roof's timber darkened, the cavity under the shingles
-
-
-def to_gothic(v):
-    # glTF stores (-x, y, z) cm; Blender's importer turns glTF (x, y, z) into (x, -z, y).
-    return Vector((-v.x, v.z, -v.y))
-
-
-def gothic_name(material):
-    record = material.get('gothic') if material else None
-    return record.get('name') if record else (material.name if material else '')
+HOLES = Path(__file__).resolve().parents[3] / 'data/content/world/roof01-holes.json'
+INPUTS = [HOLES]
+PARAMETERS = {'box_cm': list(BOX), 'lath_cm': list(LATH), 'rafter_cm': list(RAFTER), 'reach_cm': REACH,
+              'shade': SHADE, 'wall': WALL}
 
 
 def area2(poly):
@@ -120,12 +114,10 @@ class Panel:
         return max([self] + self.mates, key=lambda q: q.inside(t)).affine(t)
 
 
-def main(src, dst, holes_path, box, preview):
-    holes = json.load(open(holes_path))['holes']
-    bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.ops.import_scene.gltf(filepath=src)
-    obj = next(o for o in bpy.context.scene.objects if o.type == 'MESH')
-    me = obj.data
+def edit(ctx, box=BOX):
+    holes = json.loads(HOLES.read_text())['holes']
+    obj = ctx.obj
+    me = ctx.mesh
     names = [gothic_name(m) for m in me.materials]
     roof_slot = names.index(ROOF)
     wood_slot = names.index(WOOD)
@@ -247,6 +239,9 @@ def main(src, dst, holes_path, box, preview):
 
     # --- put the cut roof back: original vertices where positions match, new ones marked -1
     old_planes = [(f.normal.copy(), f.calc_center_median().copy()) for f in roof_faces]
+    # the skins come back cut: their old outline may open where the cut moved it
+    ctx.allow_open(roof_faces, 'outline of the roof skins before the cut')
+    built = []
     bmesh.ops.delete(bm, geom=list(roof_faces), context='FACES_ONLY')
     bm.verts.ensure_lookup_table()
     existing = {pos_key(v.co): v for v in bm.verts if v.is_valid}
@@ -294,6 +289,7 @@ def main(src, dst, holes_path, box, preview):
         if len(vs) < 3 or bm.faces.get(vs):
             continue
         g = bm.faces.new(vs)
+        built.append(g)
         g.material_index = f.material_index
         for a, b in zip(g.loops, [lp for _, lp in pairs]):
             a[uv].uv = b[ruv].uv
@@ -320,6 +316,7 @@ def main(src, dst, holes_path, box, preview):
     def quad(pts, uvs, facing, slot=None):
         vs = [new_vert(q) for q in pts]
         f = bm.faces.new(vs)
+        built.append(f)
         f.normal_update()
         if f.normal.dot(facing) < 0:
             f.normal_flip()
@@ -389,6 +386,8 @@ def main(src, dst, holes_path, box, preview):
             top_off = LATH[1] + SINK
             beam(start - n * top_off, down_v, across_u, -n, length, RAFTER[0], min(RAFTER[1], depth_room - LATH[1]))
 
+    # the edges of the holes, the sides standing on their own, the free laths and rafters
+    ctx.allow_open(built, 'cut edges of the holes, their sides, laths and rafters')
     bm.to_mesh(me)
     bm.free()
     me.validate()
@@ -409,48 +408,4 @@ def main(src, dst, holes_path, box, preview):
         bpy.data.objects.remove(o)
 
     tris = sum(len(poly.vertices) - 2 for poly in me.polygons)
-    print(f'chunk: {len(me.polygons)} faces, {tris} triangles after the edit')
-    bpy.ops.object.select_all(action='DESELECT')
-    obj.select_set(True)
-    bpy.ops.export_scene.gltf(filepath=dst, export_format='GLB', use_selection=True, export_extras=True,
-                              export_attributes=True, export_vertex_color='ACTIVE', export_all_vertex_colors=True)
-    if preview:
-        render_preview(obj, cutters, preview)
-
-
-def render_preview(obj, cutters, folder):
-    import os
-    os.makedirs(folder, exist_ok=True)
-    scene = bpy.context.scene
-    scene.render.engine = 'BLENDER_WORKBENCH'
-    scene.display.shading.light = 'STUDIO'
-    scene.display.shading.color_type = 'MATERIAL'
-    scene.display.shading.show_shadows = True
-    scene.render.resolution_x, scene.render.resolution_y = 1024, 768
-    colours = {ROOF: (.55, .5, .4, 1), WOOD: (.35, .22, .12, 1)}
-    for m in obj.data.materials:
-        if m:
-            name = gothic_name(m)
-            m.diffuse_color = colours.get(name, (.3, .5, .8, 1) if name.endswith(INSIDE) else (.6, .6, .6, 1))
-    cam = bpy.data.objects.new('cam', bpy.data.cameras.new('cam'))
-    scene.collection.objects.link(cam)
-    scene.camera = cam
-    cam.data.lens = 28
-    big = max(cutters, key=lambda c: len(c[0]))
-    M = obj.matrix_world
-    centre = M @ (sum(big[0], Vector()) / len(big[0]))
-    n = (M.to_3x3() @ big[2].normal).normalized()
-    for name, offset in (('outside', n * 4.0 + Vector((0, 0, 1.0))), ('inside', -n * 2.5 - Vector((0, 0, 1.2)))):
-        cam.location = centre + offset
-        cam.rotation_euler = (centre - cam.location).to_track_quat('-Z', 'Y').to_euler()
-        scene.render.filepath = os.path.join(folder, f'{name}.png')
-        bpy.ops.render.render(write_still=True)
-
-
-if __name__ == '__main__':
-    ap = argparse.ArgumentParser()
-    ap.add_argument('src'), ap.add_argument('dst'), ap.add_argument('holes')
-    ap.add_argument('--box', type=float, nargs=4, default=BOX)
-    ap.add_argument('--preview')
-    a = ap.parse_args(sys.argv[sys.argv.index('--') + 1:])
-    main(a.src, a.dst, a.holes, a.box, a.preview)
+    print(f'chunk: {len(me.polygons)} faces, {tris} triangles after the roof holes')

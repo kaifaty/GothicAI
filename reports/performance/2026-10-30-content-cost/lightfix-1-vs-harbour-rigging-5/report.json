@@ -1,0 +1,102 @@
+{
+  "metadata": {
+    "a": "lightfix-1",
+    "b": "harbour-rigging-5",
+    "places": [
+      "harbour"
+    ],
+    "order": [
+      "A",
+      "B",
+      "B",
+      "A"
+    ],
+    "git_commit": "5dda102e8cf1084179d514618fe2b505d5068dfc",
+    "dirty_files": 33,
+    "content_sha256": {
+      "harbour-rigging-5": "645bbd710ccadc1539990e29c866bee9afeaff08cc66ba18991dfaf1b866edc3",
+      "lightfix-1": "c457ebf4cfbb7b924db18b201698f1ad6c45898d3eb86aad80f67cb9e1f1cbbb"
+    },
+    "archive": "/mnt/shared/gothic-ai/perf-content-worktrees/runs/perf-content-20261030T102901Z-32597",
+    "settings": {
+      "PERF_WINDOW": "1728x1117",
+      "PERF_VID_RES": "0",
+      "PERF_ARGS": "",
+      "PERF_ENV": "",
+      "PERF_INI": ""
+    }
+  },
+  "noise_p95_pct": 2.0,
+  "threshold_p95_pct": 5.0,
+  "drawable": [
+    1728,
+    1117
+  ],
+  "timing": "Frame intervals are differences between consecutive submitted attempt begin_ns timestamps in the same contiguous perf-PLACE/view-N segment. Intervening FenceBusy attempts count toward elapsed time and zone costs, never as rendered frames. Partial time before the first and after the last submitted attempt of each segment is omitted. FPS is interval count / measured wall time; percentiles use linear interpolation. appcadence.csv is retained as a clock diagnostic, not used for these statistics.",
+  "noise_method": "Absolute p95 delta <= calibrated noise band in percent. Repeat max-min spread is descriptive only. Percentiles pool frame intervals from both repeats.",
+  "places": {
+    "harbour": {
+      "p50": {
+        "a": 9.632727,
+        "b": 9.644169,
+        "delta": 0.011442000000000618,
+        "delta_pct": 0.11878256281944478,
+        "spread_a_ms": 0.11649450000000172,
+        "spread_b_ms": 0.13738400000000084
+      },
+      "p95": {
+        "a": 10.5306482,
+        "b": 10.819890099999999,
+        "delta": 0.2892418999999986,
+        "delta_pct": 2.7466675793043644,
+        "spread_a_ms": 0.2401395500000021,
+        "spread_b_ms": 0.7760924999999972
+      },
+      "within_threshold": true,
+      "p95_verdict": "в пороге",
+      "counters": {
+        "A": {
+          "triangles": 1265534.4883791585,
+          "draw_calls": 83.07018076864651,
+          "completed_frames": 6583,
+          "submitted_frames": 6583
+        },
+        "B": {
+          "triangles": 1593394.6473820792,
+          "draw_calls": 83.07724011601282,
+          "completed_frames": 6551,
+          "submitted_frames": 6551
+        }
+      },
+      "repeats": {
+        "A": [
+          {
+            "p50_ms": 9.692555500000001,
+            "p95_ms": 10.64553175,
+            "frames": 3262
+          },
+          {
+            "p50_ms": 9.576061,
+            "p95_ms": 10.405392199999998,
+            "frames": 3313
+          }
+        ],
+        "B": [
+          {
+            "p50_ms": 9.583815,
+            "p95_ms": 10.390965000000001,
+            "frames": 3311
+          },
+          {
+            "p50_ms": 9.721199,
+            "p95_ms": 11.167057499999999,
+            "frames": 3232
+          }
+        ]
+      }
+    }
+  },
+  "conclusions": [
+    "harbour: +328 тыс. треугольников (+25.9%) и +0.0 вызова отрисовки на кадр; время кадра — в пороге (Δ p95 +2.75%)."
+  ]
+}

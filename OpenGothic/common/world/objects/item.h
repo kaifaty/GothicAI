@@ -49,6 +49,7 @@ class Item : public Vob {
 
     virtual void setPhysicsEnable(World& w);
     void    setPhysicsDisable();
+    bool    wakePhysics();
     bool    isDynamic() const override;
     float   physicsMass() const { return physic.mass(); }
     Tempest::Vec3 physicsVelocity() const { return physic.velocity(); } // cm/s

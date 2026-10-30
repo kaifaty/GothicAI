@@ -59,6 +59,8 @@ class CollisionWorld final {
         Tempest::Vec3        velocity() const; // centimetres/second
         Tempest::Vec3        angularVelocity() const; // world radians/second
         bool                isSleeping() const;
+        bool                keepSleepingItem(const Tempest::Vec3& positionCm) const;
+        void                retainForItemWake();
         // World-space newton seconds. Rejects non-dynamic, zero or nonfinite input.
         bool                addImpulse(const Tempest::Vec3& impulseNs, Npc* culprit = nullptr,
                                        const Tempest::Vec3* pointCm = nullptr);
@@ -110,6 +112,9 @@ class CollisionWorld final {
         uint64_t            nextNoiseStep = 0;
         std::string         traceCause;
         std::string         debugLabel;
+        Tempest::Matrix4x4  itemRestTransform;
+        uint64_t            itemWakeUntilStep = 0;
+        bool                itemRecovered = false;
 
       friend class CollisionWorld;
       friend class DynamicBody;
@@ -193,13 +198,15 @@ class CollisionWorld final {
     void setWaterSurfaceCallback(std::function<bool(const Tempest::Vec3&,float,float&)> callback);
     void setBuoyancyEnabled(bool enabled);
     bool buoyancyEnabled() const;
+    void setItemWakeEnabled(bool enabled);
+    void setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback);
     struct WaterBodySnapshot {
       const CollisionBody* body = nullptr;
       const Ragdoll* ragdoll = nullptr;
       uint32_t bone = 0, nativeId = 0;
       float targetFraction = 0;
       Tempest::Matrix4x4 transform;
-      Tempest::Vec3 worldBounds[2], velocity;
+      Tempest::Vec3 worldBounds[2], collisionBounds[2], velocity;
       float mass = 0, density = 0, waterY = 0, submergedFraction = 0;
       bool sleeping = true, inWater = false;
       };
@@ -297,6 +304,9 @@ class CollisionWorld final {
     void stepMeleeBlades(float seconds, float fraction);
     void stepShadowBlades(float fraction, bool bodiesLocked = false);
     void sampleMeleeBench();
+    void wakeItems();
+    void recoverItems();
+    void recoverItem(CollisionBody& body, const Tempest::Vec3& failedPosition);
     void fillMaterial(QueryResult& result, const JPH::Shape& shape, JPH::SubShapeID subShape) const;
     void fillRagdoll(QueryResult& result, JPH::BodyID body) const;
     JPH::PhysicsSystem& physicsSystem();
@@ -314,6 +324,9 @@ class CollisionWorld final {
     std::function<bool(const Tempest::Vec3&,float,float&)> waterSurface;
     Cloth* cloth = nullptr;
     bool buoyancy = true;
+    bool itemWake = true;
+    std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> itemWakeCallback;
+    size_t itemWakeCursor = 0;
     JPH::Vec3 bboxMin = JPH::Vec3::sZero();
     float accumulatedTime = 0;
     friend class Ragdoll;

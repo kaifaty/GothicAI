@@ -21,7 +21,7 @@ const char* names[Zones]={"tick","finish_step","camera","observations","bench","
   "bodynet","cloth","water","destruction","ai_bridge","sound",
   "encode_shadows","encode_main","encode_water","encode_post","encode_ui"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
-  "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes"};
+  "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }
@@ -38,6 +38,8 @@ struct Record {
   std::atomic<uint64_t> amounts[Amounts]{};
   std::atomic<uint64_t> gpuNs{0};
   std::atomic<uint32_t> gpuBuffers{0}, gpuCompleted{0}, gpuValid{0};
+  std::atomic<uint64_t> triangles{0};
+  std::atomic<uint32_t> geometryBuffers{0}, geometryCompleted{0}, geometryValid{0};
   };
 struct Recorder {
   std::string path;
@@ -61,7 +63,7 @@ struct Recorder {
       std::fprintf(file,"attempt,cmd_id,dt,segment,frame,begin_ns,observer_ns,end_ns,outcome,flags,overflow");
       for(const auto* name:names) std::fprintf(file,",%s_ns,%s_calls,%s_first_ns,%s_last_ns",name,name,name,name);
       for(const auto* name:amountNames) std::fprintf(file,",%s",name);
-      std::fprintf(file,",gpu_ns,gpu_done,gpu_buffers\n");
+      std::fprintf(file,",gpu_ns,gpu_done,gpu_buffers,triangles,geometry_done\n");
       for(size_t i=0;i<count;++i) {
         const auto& r=records[i];
         std::fprintf(file,"%zu,%u,%llu,%s,%llu,%llu,%llu,%llu,%u,%u,%zu",i,unsigned(r.commandId),
@@ -73,8 +75,13 @@ struct Recorder {
         const auto completed=r.gpuCompleted.load(std::memory_order_acquire);
         const auto buffers=r.gpuBuffers.load(std::memory_order_relaxed);
         const bool done=buffers>0 && completed==buffers && r.gpuValid.load(std::memory_order_relaxed)==buffers;
-        std::fprintf(file,",%llu,%u,%u\n",(unsigned long long)(done ? r.gpuNs.load(std::memory_order_relaxed) : 0),
+        std::fprintf(file,",%llu,%u,%u",(unsigned long long)(done ? r.gpuNs.load(std::memory_order_relaxed) : 0),
                      unsigned(done),unsigned(buffers));
+        const auto geometryCompleted=r.geometryCompleted.load(std::memory_order_acquire);
+        const auto geometryBuffers=r.geometryBuffers.load(std::memory_order_relaxed);
+        const bool geometryDone=geometryBuffers>0 && geometryCompleted==geometryBuffers &&
+                                r.geometryValid.load(std::memory_order_relaxed)==geometryBuffers;
+        std::fprintf(file,",%llu,%u\n",(unsigned long long)r.triangles.load(std::memory_order_relaxed),unsigned(geometryDone));
         }
       std::fclose(file);
       }
@@ -172,6 +179,23 @@ void FrameProfile::gpuCompleted(void* record, double startSeconds, double endSec
   // Publish the sum only after every captured buffer has completed. The records
   // live for the process lifetime, including callbacks arriving after flush.
   r.gpuCompleted.fetch_add(1,std::memory_order_release);
+  }
+
+void* FrameProfile::geometrySubmitted() {
+  if(!enabled()) return nullptr;
+  auto* record=recorder().current.load(std::memory_order_relaxed);
+  if(record!=nullptr) record->geometryBuffers.fetch_add(1,std::memory_order_relaxed);
+  return record;
+  }
+
+void FrameProfile::geometryCompleted(void* record, uint64_t triangles, bool valid) {
+  if(record==nullptr) return;
+  auto& r=*static_cast<Record*>(record);
+  if(valid) {
+    r.triangles.fetch_add(triangles,std::memory_order_relaxed);
+    r.geometryValid.fetch_add(1,std::memory_order_relaxed);
+    }
+  r.geometryCompleted.fetch_add(1,std::memory_order_release);
   }
 
 #endif

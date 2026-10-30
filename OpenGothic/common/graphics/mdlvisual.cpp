@@ -1208,6 +1208,10 @@ void MdlVisual::setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t 
   skInst->setLayerSpeed(seq,k,now);
   }
 
+void MdlVisual::hitStop(uint64_t until, float k) {
+  skInst->hitStop(until,k);
+  }
+
 void MdlVisual::setAnimSpeed(std::string_view name, float k) {
   skInst->setAnimSpeed(name,k);
   }

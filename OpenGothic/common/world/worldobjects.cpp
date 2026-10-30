@@ -648,12 +648,17 @@ void WorldObjects::detectNpc(const float x, const float y, const float z,
 
 void WorldObjects::detectItem(const float x, const float y, const float z,
                               const float r, const std::function<void(Item&)>& f) {
-  float maxDist=r*r;
-  for(auto& i:itemArr) {
-    auto qDist = (i->position()-Vec3(x,y,z)).quadLength();
+  const Vec3 center(x,y,z);
+  const float maxDist=r*r;
+  std::vector<Item*> nearby;
+  items.find(center,r,[&](Item& item) {
+    const auto qDist = (item.position()-center).quadLength();
     if(qDist<maxDist)
-      f(*i);
-    }
+      nearby.push_back(&item);
+    });
+  // Spell callbacks can create bodies and invalidate this same spatial index.
+  for(auto* item:nearby)
+    f(*item);
   }
 
 void WorldObjects::detectMover(const std::function<void(MoveTrigger&)>& f) {

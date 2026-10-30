@@ -9,8 +9,38 @@
 
 #include <string>
 #include <cassert>
+#include <cstdlib>
+#include <cstring>
 
 using namespace Tempest;
+
+#if defined(TEMPEST_BUILD_METAL)
+size_t tempestProbeMetalGpuBytes();
+#endif
+#if defined(TEMPEST_BUILD_VULKAN)
+size_t tempestProbeVulkanGpuBytes();
+#endif
+
+bool tempestLoadProbeEnabled() {
+  static const bool enabled = []() {
+    const auto* value = std::getenv("OPENGOTHIC_LOADPROBE");
+    return value!=nullptr && std::strcmp(value,"1")==0;
+    }();
+  return enabled;
+  }
+
+size_t tempestProbeGpuBytes() {
+  if(!tempestLoadProbeEnabled())
+    return 0;
+  size_t bytes = 0;
+#if defined(TEMPEST_BUILD_METAL)
+  bytes += tempestProbeMetalGpuBytes();
+#endif
+#if defined(TEMPEST_BUILD_VULKAN)
+  bytes += tempestProbeVulkanGpuBytes();
+#endif
+  return bytes;
+  }
 
 static uint32_t mipCount(uint32_t w, uint32_t h) {
   uint32_t s = std::max(w,h);

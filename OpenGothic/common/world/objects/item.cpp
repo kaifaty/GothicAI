@@ -230,11 +230,24 @@ void Item::setPhysicsDisable() {
   world.invalidateVobIndex();
   }
 
+bool Item::wakePhysics() {
+  const bool missing = !isDynamic();
+  if(missing) {
+    setPhysicsEnable(world);
+    if(!isDynamic())
+      return false;
+    physic.restorePhysics(transform(),true);
+    }
+  physic.retainForItemWake();
+  return missing;
+  }
+
 void Item::setPhysicsEnable(const MeshObjects::Mesh& view) {
   if(view.nodesCount()==0)
     return;
   auto& p = *world.physic();
-  physic = p.addDynamicObj(transform(),view.bounds(),physicsMaterial(hitem->material));
+  physic = p.addDynamicObj(transform(),view.bounds(),physicsMaterial(hitem->material),
+                           view.protoMesh(),hitem->visual,Gothic::physicsFlags().itemHulls);
   physic.setItem(this);
   }
 
@@ -244,7 +257,8 @@ void Item::setPhysicsEnable(const ProtoMesh* mesh) {
   auto& p = *world.physic();
   Bounds b;
   b.assign(mesh->bboxMesh);
-  physic = p.addDynamicObj(transform(),b,physicsMaterial(hitem->material));
+  physic = p.addDynamicObj(transform(),b,physicsMaterial(hitem->material),
+                           mesh,hitem->visual,Gothic::physicsFlags().itemHulls);
   physic.setItem(this);
   }
 

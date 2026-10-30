@@ -67,6 +67,15 @@
       "date": "2026-10-26",
       "quote": "Короче, меня все устраивает.",
       "note": null
+    },
+    {
+      "gate": "enable",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-29",
+      "quote": "Включить",
+      "note": "working-8 = working-7 + roofholes-2",
+      "set": null
     }
   ],
   "build": null,

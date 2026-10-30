@@ -20,6 +20,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
@@ -332,17 +333,24 @@ namespace {
     cube.assign(std::pair(Tempest::Vec3(-20,-20,-20),Tempest::Vec3(20,20,20)));
     Bounds arrow;
     arrow.assign(std::pair(Tempest::Vec3(-1,-1,-30),Tempest::Vec3(1,1,30)));
-    auto wood=world.addDynamicObj(at(100,110,0),cube,asset::MaterialGroup::WOOD);
-    auto metal=world.addDynamicObj(at(300,110,0),cube,asset::MaterialGroup::METAL);
-    auto stone=world.addDynamicObj(at(500,110,0),cube,asset::MaterialGroup::STONE);
+    ProtoMesh itemCube(PackedMesh(movableBox({40,40,40}),PackedMesh::PK_Visual),"CONTRACT_WATER_ITEM.MRM");
+    ProtoMesh itemArrow(PackedMesh(movableBox({2,2,60}),PackedMesh::PK_Visual),"CONTRACT_WATER_ARROW.MRM");
+    auto wood=world.addDynamicObj(at(100,110,0),cube,asset::MaterialGroup::WOOD,&itemCube,"CONTRACT_WATER_ITEM.MRM");
+    auto metal=world.addDynamicObj(at(300,110,0),cube,asset::MaterialGroup::METAL,&itemCube,"CONTRACT_WATER_ITEM.MRM");
+    auto stone=world.addDynamicObj(at(500,110,0),cube,asset::MaterialGroup::STONE,&itemCube,"CONTRACT_WATER_ITEM.MRM");
     auto woodenArrow=world.addDynamicObj(at(700,110,0),arrow,asset::MaterialGroup::WOOD);
     auto metalBlade=world.addDynamicObj(at(900,110,0),arrow,asset::MaterialGroup::METAL);
-    const std::array<DynamicWorld::Item*,11> objects={&barrel,&heavyBarrel,&table,&crate,&cupboard,&otherWood,
-                                                    &wood,&metal,&stone,&woodenArrow,&metalBlade};
-    const std::array<const char*,11> names={"barrel","heavier barrel","wooden table","wooden crate","wooden cupboard",
+    auto woodenArrowHull=world.addDynamicObj(at(1100,110,0),arrow,asset::MaterialGroup::WOOD,&itemArrow,"CONTRACT_WATER_ARROW.MRM");
+    auto metalBladeHull=world.addDynamicObj(at(1300,110,0),arrow,asset::MaterialGroup::METAL,&itemArrow,"CONTRACT_WATER_ARROW.MRM");
+    requireNear(wood.mass(),.4f*.4f*.4f*700.f,.001f,"a wood hull must retain its density-derived physical mass in water");
+    requireNear(woodenArrowHull.mass(),.02f*.02f*.6f*700.f,.000001f,
+                "a thin wood hull must displace its real hull volume without the legacy thirty-centimetre box");
+    const std::array<DynamicWorld::Item*,13> objects={&barrel,&heavyBarrel,&table,&crate,&cupboard,&otherWood,
+                                                    &wood,&metal,&stone,&woodenArrow,&metalBlade,&woodenArrowHull,&metalBladeHull};
+    const std::array<const char*,13> names={"barrel","heavier barrel","wooden table","wooden crate","wooden cupboard",
                                            "other wooden vob","wood item","metal item","stone item",
-                                           "thin wooden arrow","thin metal blade"};
-    std::array<int,11> firstSleep;
+                                           "thin wooden arrow","thin metal blade","thin wooden arrow hull","thin metal blade hull"};
+    std::array<int,13> firstSleep;
     firstSleep.fill(-1);
     for(auto* object:objects)
       require(object->mass()>0 && object->addImpulse({0,-object->mass()*.1f,0}),
@@ -385,6 +393,8 @@ namespace {
     requireNear(woodenArrow.position().y,1.f-2.f*.7f,1.f,"a thin wooden item must use its actual shell for water draft");
     require(metal.position().y<-350.f && stone.position().y<-350.f && metalBlade.position().y<-350.f,
             "metal, stone and a padded thin metal item must sink to the bottom instead of floating");
+    requireNear(woodenArrowHull.position().y,1.f-2.f*.7f,1.f,"a thin wooden item must use its actual shell for water draft");
+    require(metalBladeHull.position().y<-350.f,"a thin metal hull must sink to the bottom instead of floating");
     require(!splashes.empty(),"entering water must emit a water noise through the existing NPC noise callback");
     require(std::all_of(splashes.begin(),splashes.end(),[](const auto& splash) {
       return splash.volume>0.f && splash.volume<=1.f && splash.radius>0.f;
@@ -3915,6 +3925,243 @@ namespace {
       }
     }
 
+  void testItemWake() {
+    for(const bool legacy:{false,true}) {
+      CollisionWorld world;
+      std::vector<JPH::Vec3> points={{0,0,0},{1,0,0},{0,1,0},{0,0,1}};
+      JPH::ShapeRefC shape;
+      if(legacy) {
+        points.clear();
+        for(unsigned corner=0;corner<8;++corner)
+          points.emplace_back(corner&1 ? .8f : .2f,corner&2 ? .3f : -.1f,corner&4 ? .1f : -.3f);
+        shape=new JPH::RotatedTranslatedShape({.5f,.1f,-.1f},JPH::Quat::sIdentity(),
+                                               new JPH::BoxShape({.3f,.2f,.2f}));
+        }
+      else {
+        const auto hull=JPH::ConvexHullShapeSettings(points.data(),int(points.size()),0.f).Create();
+        require(!hull.HasError(),"tight item bounds fixture requires an asymmetric convex hull");
+        shape=hull.Get();
+        }
+      auto matrix=at(100,200,300);
+      matrix.rotateOZ(225);
+      matrix.scale(1.2f,.7f,1.1f);
+      auto item=world.addDynamicBody(shape,matrix,.7f,1,DynamicWorld::C_Item,true);
+      Tempest::Vec3 min(std::numeric_limits<float>::infinity()),max(-std::numeric_limits<float>::infinity());
+      for(const auto& vertex:points) {
+        auto point=CollisionWorld::toCentimeters(vertex);
+        matrix.project(point);
+        min.x=std::min(min.x,point.x); min.y=std::min(min.y,point.y); min.z=std::min(min.z,point.z);
+        max.x=std::max(max.x,point.x); max.y=std::max(max.y,point.y); max.z=std::max(max.z,point.z);
+        }
+      const auto snapshot=world.waterBodySnapshot();
+      require(snapshot.size()==1,"tight item bounds must describe the existing native body");
+      const auto actualMin=CollisionWorld::toMeters(snapshot[0].collisionBounds[0]);
+      const auto actualMax=CollisionWorld::toMeters(snapshot[0].collisionBounds[1]);
+      const auto expectedMin=CollisionWorld::toMeters(min),expectedMax=CollisionWorld::toMeters(max);
+      for(size_t axis=0;axis<3;++axis) {
+        requireNear(actualMin[axis],expectedMin[axis],.00003f,
+                    "item collision minima must match transformed support points including COM and scale");
+        requireNear(actualMax[axis],expectedMax[axis],.00003f,
+                    "item collision maxima must match transformed support points including COM and scale");
+        }
+      JPH::Vec3 broadMin,broadMax;
+      item->getAabb(broadMin,broadMax);
+      requireNear(snapshot[0].worldBounds[0].y,broadMin.GetY()*100.f,.003f,
+                  "tight item diagnostics must leave the existing water bounds unchanged");
+      if(!legacy)
+        require(snapshot[0].collisionBounds[0].y-broadMin.GetY()*100.f>20.f,
+                "a rotated asymmetric hull's empty broad-phase corner must not count as physical penetration");
+      }
+    Resources resources;
+    ProtoMesh proto(PackedMesh(movableBox({30,30,30}),PackedMesh::PK_Visual),"CONTRACT_WAKE_ITEM.MRM");
+    DynamicWorld shapes(nullptr,{});
+    const auto& hull=shapes.itemHullShape(proto,"CONTRACT_WAKE_ITEM.MRM");
+    require(hull.shape!=nullptr,"item wake must exercise a genuine mesh hull");
+    for(const bool hulls:{false,true}) {
+      const JPH::ShapeRefC shape=hulls ? hull.shape : JPH::ShapeRefC(new JPH::BoxShape({.15f,.15f,.15f}));
+      for(const int category:{DynamicWorld::C_Ragdoll,DynamicWorld::C_Fragment,DynamicWorld::C_Item,
+                              DynamicWorld::C_MovableVob}) {
+        for(const bool enabled:{false,true}) {
+          CollisionWorld world;
+          world.setItemWakeEnabled(enabled);
+          auto floor=world.addCollisionBody(new JPH::BoxShape({20,.5f,20}),at(0,-50,0),.7f,
+                                            DynamicWorld::C_Landscape);
+          std::unique_ptr<CollisionWorld::DynamicBody> item;
+          const Tempest::Vec3 rest(0,16,0);
+          world.setItemWakeCallback([&](const Tempest::Vec3& min,const Tempest::Vec3& max,size_t budget) {
+            require(budget>0 && budget<=8,"item wake must bound new bodies per native step");
+            if(rest.x<min.x || rest.x>max.x || rest.y<min.y || rest.y>max.y || rest.z<min.z || rest.z>max.z)
+              return size_t(0);
+            const bool missing=item==nullptr;
+            if(missing)
+              item=world.addDynamicBody(shape,at(rest.x,rest.y,rest.z),.7f,1,
+                                         DynamicWorld::C_Item,true);
+            const auto id=item->nativeId();
+            const auto velocity=item->velocity();
+            const bool sleeping=item->isSleeping();
+            item->retainForItemWake();
+            require(item->nativeId()==id && item->mass()==1.f && item->isSleeping()==sleeping &&
+                    (item->velocity()-velocity).quadLength()==0.f,
+                    "item wake retention must preserve existing mass, sleep, velocity and identity");
+            return size_t(missing);
+            });
+          auto moving=world.addDynamicBody(new JPH::BoxShape({.2f,.2f,.2f}),at(-100,20,0),.7f,10,category);
+          moving->setVelocity({500,0,0},{});
+          for(int i=0;i<120;++i)
+            world.tick(17);
+          const float displacement=item ? (item->position()-rest).length() : 0.f;
+          std::printf("Item wake hulls %d layer %d enabled %d: created %d, displacement %.6f cm\n",
+                      int(hulls),category,int(enabled),int(item!=nullptr),double(displacement));
+          require(enabled ? item!=nullptr && displacement>5.f : item==nullptr,
+                  "every active dynamic body kind must create and displace a bodyless item only with item_wake ON");
+          }
+        }
+    }
+    {
+      CollisionWorld world;
+      std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> sources;
+      for(int i=0;i<40;++i)
+        sources.push_back(world.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(1000.f*i,1000,0),.7f,1));
+      size_t queries=0;
+      std::vector<float> centers;
+      world.setItemWakeCallback([&](const Tempest::Vec3& min,const Tempest::Vec3& max,size_t) {
+        ++queries;
+        requireNear(max.x-min.x,120,.01f,"wake bounds must pad the native AABB by fifty centimetres on each side");
+        centers.push_back((min.x+max.x)*.5f);
+        return size_t(0);
+        });
+      world.tick(17);
+      require(queries==32,"a native step must issue no more than thirty-two item queries");
+      world.tick(17);
+      std::sort(centers.begin(),centers.end());
+      centers.erase(std::unique(centers.begin(),centers.end()),centers.end());
+      require(queries==64 && centers.size()==40,"bounded wake queries must rotate through all active bodies");
+      size_t created=0;
+      queries=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t budget) {
+        ++queries;
+        created+=budget;
+        return budget;
+        });
+      world.tick(17);
+      require(queries==1 && created==8,"the per-step creation budget must be shared by all wake queries");
+      }
+    for(const bool enabled:{false,true}) {
+      CollisionWorld world;
+      world.setItemWakeEnabled(enabled);
+      world.setBBox({-20,-1,-20},{20,20,20});
+      auto initial=at(100,500,0);
+      initial.rotateOY(30);
+      auto item=world.addDynamicBody(new JPH::BoxShape({.1f,.2f,.3f}),initial,.7f,1);
+      world.tick(17);
+      item->setPosition({0,-10200,0});
+      item->setVelocity({100,-200,300},{1,2,3});
+      world.tick(17);
+      requireMatrix(item->matrix(),initial,"an item that never slept must recover its creation transform");
+      require(item->isSleeping() && item->velocity().quadLength()==0.f && item->angularVelocity().quadLength()==0.f,
+              "underworld recovery must zero both velocities and sleep independently of item_wake");
+      auto rest=at(300,400,200);
+      rest.rotateOX(45);
+      item->setObjMatrix(rest);
+      world.tick(17);
+      item->addImpulse({1,1,1});
+      world.tick(17);
+      item->setPosition({0,-10200,0});
+      world.tick(17);
+      requireMatrix(item->matrix(),rest,"recovery must use the last sleeping full transform instead of creation");
+      const auto loaded=at(600,700,800);
+      item->restoreTransform(loaded,false);
+      item->setPosition({0,-10200,0});
+      world.tick(17);
+      requireMatrix(item->matrix(),loaded,"a loaded awake item's fallback must be its loaded transform");
+      item->addImpulse({1,2,3});
+      item->setPosition({std::numeric_limits<float>::quiet_NaN(),0,0});
+      world.tick(17);
+      requireMatrix(item->matrix(),loaded,"nonfinite item coordinates must recover before reaching the native broad phase");
+      require(item->isSleeping() && item->velocity().quadLength()==0.f && item->angularVelocity().quadLength()==0.f,
+              "nonfinite recovery must sleep and zero the restored body");
+      item->restoreTransform(at(0,std::numeric_limits<float>::infinity(),0),false);
+      world.tick(17);
+      requireMatrix(item->matrix(),loaded,"rejecting a nonfinite restore must not replace the valid recovery transform");
+      require(item->isSleeping(),"rejecting a nonfinite restore must preserve recovery sleep");
+      auto broken=world.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(0,std::numeric_limits<float>::quiet_NaN(),0),.7f,1);
+      world.tick(17);
+      broken->setPosition({std::numeric_limits<float>::quiet_NaN(),0,0});
+      world.tick(17);
+      require(broken->isSleeping(),"an item created from a nonfinite pose must sleep instead of recursing into recovery");
+      }
+    for(const bool hulls:{false,true}) {
+      DynamicWorld world(nullptr,{});
+      Bounds bounds;
+      bounds.assign(proto.bbox());
+      const auto loaded=at(100,200,300);
+      auto item=world.addDynamicObj(loaded,bounds,asset::MaterialGroup::WOOD,&proto,"CONTRACT_WAKE_ITEM.MRM",hulls);
+      const float mass=item.mass();
+      const auto id=world.waterBodySnapshot()[0].id;
+      item.restorePhysics(loaded,true);
+      item.retainForItemWake();
+      require(item.isSleeping() && item.mass()==mass && item.velocity().quadLength()==0.f,
+              "retaining either item shape must preserve its mass, sleep and zero velocity");
+      item.restorePhysics(loaded,false,{100,200,300},{1,2,3});
+      const auto velocity=item.velocity(),angular=item.angularVelocity();
+      item.retainForItemWake();
+      require(!item.isSleeping() && item.mass()==mass && world.waterBodySnapshot()[0].id==id &&
+              (item.velocity()-velocity).quadLength()==0.f && (item.angularVelocity()-angular).quadLength()==0.f,
+              "retaining either moving item shape must preserve body identity, mass and both velocities");
+      item.setObjMatrix(at(0,-10200,0));
+      world.tick(17);
+      requireMatrix(item.matrix(),loaded,"either item shape must recover its loaded awake position");
+      require(item.isSleeping() && item.velocity().quadLength()==0.f && item.angularVelocity().quadLength()==0.f,
+              "either recovered item shape must sleep with zero velocities");
+      item.restorePhysics(at(0,std::numeric_limits<float>::infinity(),0),false,{100,200,300},{1,2,3});
+      requireMatrix(item.matrix(),loaded,"the Item restore wrapper must retain its last valid loaded transform");
+      require(item.isSleeping() && item.velocity().quadLength()==0.f && item.angularVelocity().quadLength()==0.f,
+              "the Item restore wrapper must not restore saved motion after recovering invalid coordinates");
+      }
+    {
+      CollisionWorld world;
+      world.setWaterSurfaceCallback([](const Tempest::Vec3&,float,float& surface) { surface=0; return true; });
+      const auto floating=at(0,-8,0),dry=at(100,100,0);
+      auto wetItem=world.addDynamicBody(new JPH::BoxShape({.2f,.2f,.2f}),floating,.7f,44.8f,
+                                       DynamicWorld::C_Item,true);
+      auto dryItem=world.addDynamicBody(new JPH::BoxShape({.2f,.2f,.2f}),dry,.7f,44.8f,
+                                       DynamicWorld::C_Item,true);
+      wetItem->restoreTransform(floating,true);
+      dryItem->restoreTransform(dry,true);
+      for(const bool enabled:{false,true}) {
+        world.setItemWakeEnabled(enabled);
+        for(int frame=0;frame<12;++frame)
+          world.tick(frame%3==2 ? 16 : 17);
+        require(wetItem->isSleeping() && wetItem->keepSleepingItem(wetItem->position()),
+                "the production retirement rule must retain a sleeping water item with item_wake ON or OFF");
+        require(dryItem->isSleeping() && !dryItem->keepSleepingItem(dryItem->position()),
+                "a dry sleeper without a nearby character or wake request must still retire");
+        requireMatrix(wetItem->matrix(),floating,"item_wake must not move an already sleeping water item");
+        require(wetItem->velocity().quadLength()==0.f,"item_wake must preserve a sleeping water item's zero velocity");
+        }
+      }
+    for(const bool hulls:{false,true}) {
+      DynamicWorld world(nullptr,waterBasin(-15000));
+      world.setItemWakeEnabled(true);
+      Bounds bounds;
+      bounds.assign(proto.bbox());
+      auto item=world.addDynamicObj(at(0,110,0),bounds,asset::MaterialGroup::METAL,
+                                    &proto,"CONTRACT_WAKE_ITEM.MRM",hulls);
+      bool belowSurfaceHundredMeters=false;
+      for(int frame=0;frame<1800;++frame) {
+        world.tick(frame%3==2 ? 16 : 17);
+        const auto y=item.position().y;
+        if(belowSurfaceHundredMeters)
+          require(y<-10000,"a sinking item inside a deep world must not return to its surface creation position");
+        belowSurfaceHundredMeters|=y<-10100;
+        }
+      std::printf("Item wake deep water hulls %d: final %.6f cm, sleeping %d\n",
+                  int(hulls),double(item.position().y),int(item.isSleeping()));
+      require(belowSurfaceHundredMeters && item.position().y<-14950 && item.position().y>-15050 && item.isSleeping(),
+              "a metal item must reach the deep basin floor beyond one hundred metres without underworld recovery");
+      }
+    }
+
   void testContracts() {
     {
       using MeleeImpact::Weapon;
@@ -4118,6 +4365,20 @@ namespace {
     require(!Npc::canAccumulateMeleePosture(true,true,false,false),"a blocked hit must leave posture unchanged");
     require(!Npc::canAccumulateMeleePosture(true,false,true,false),"a knockdown must not accumulate another knockdown");
     require(!Npc::canAccumulateMeleePosture(true,false,false,true),"death or unconsciousness must retain the old path");
+
+    {
+      // Tip heights of T_2HSFINISH and T_1HSFINISH at 30 fps, sampled in the game: the stroke down
+      // starts at the top it falls from (not the higher wind-up before the swing round the side)
+      // and ends where the tip rests at its lowest; the axe's old window closed 56 cm above the ground.
+      const std::vector<float> axe = {164,177,184,188,188,185,182,184,185,177,163,160,175,156,118,109,131,158,
+                                      183,193,193,184,168,146,122,99,78,56,38,25,20,19,19,18,19,19};
+      const std::vector<float> sword = {28,38,56,91,140,182,200,205,207,198,181,178,197,169,115,103,130,162,
+                                        189,198,196,185,164,136,109,86,62,39,21,8,3,3,2,3,3,4};
+      const auto axeStroke = Npc::meleeFinishStroke(axe), swordStroke = Npc::meleeFinishStroke(sword);
+      require(axeStroke && axeStroke->first==19 && axeStroke->second==30,"the axe's chop must be windowed on its stroke down");
+      require(swordStroke && swordStroke->first==19 && swordStroke->second==30,"a higher wind-up must not start the chop's stroke");
+      require(!Npc::meleeFinishStroke({50,50,50,50}),"a blade that never drops has no stroke");
+      }
 
     require(FightAlgo::resolveDownTactics(true,true,false,false,true)==FightAlgo::MV_MOVE,
             "a distant lying target must be approached");
@@ -4395,6 +4656,7 @@ int main() {
     testNpcSeparatedContactResponse();
     testFixedStepCarry();
     testFixedStepCadence();
+    testItemWake();
     testContracts();
     testCharacterVirtual();
     testVirtualFloorGuard();

@@ -36,12 +36,34 @@ static std::vector<Tempest::Vec3> pointsOf(const PackedMesh& pm) {
   return pt;
   }
 
+// Keep collision-disabled faces too: Item bodies follow the rendered mesh.
+static std::vector<Tempest::Vec3> hullVerticesOf(const PackedMesh& pm) {
+  std::vector<Tempest::Vec3> vertices;
+  std::vector<bool> used(pm.vertices.size(),false);
+  for(size_t i=0;i+2<pm.indices.size();i+=3) {
+    // Meshlet padding is encoded as degenerate triangles that may refer to
+    // unused zero vertices. They are not part of the rendered surface.
+    if(pm.indices[i]==pm.indices[i+1] || pm.indices[i+1]==pm.indices[i+2] || pm.indices[i]==pm.indices[i+2])
+      continue;
+    for(size_t j=0;j<3;++j) {
+      const auto index=pm.indices[i+j];
+      if(index>=pm.vertices.size() || used[index])
+        continue;
+      used[index]=true;
+      const auto& point=pm.vertices[index];
+      vertices.emplace_back(point.pos[0],point.pos[1],point.pos[2]);
+      }
+    }
+  return vertices;
+  }
+
 ProtoMesh::ProtoMesh(PackedMesh&& pm, std::string_view fname)
   :fname(fname) {
   attach.emplace_back(pm);
   submeshId.resize(attach[0].sub.size());
   points = pointsOf(pm);
   auto&  att   = attach[0];
+  att.hullVertices = hullVerticesOf(pm);
   att.shape.reset(PhysicMeshShape::load(std::move(pm)));
 
   size_t count = 0;
@@ -124,6 +146,7 @@ ProtoMesh::ProtoMesh(const asset::ModelHierarchy& hierarchy, const asset::ModelM
     attach.emplace_back(pack);
     auto& att = attach.back();
     att.name = m.first;
+    att.hullVertices = hullVerticesOf(pack);
     att.shape.reset(PhysicMeshShape::load(std::move(pack)));
     }
 
@@ -245,6 +268,7 @@ ProtoMesh::ProtoMesh(const asset::ModelMesh& library, std::unique_ptr<Skeleton>&
     attach.emplace_back(pack);
     auto& att = attach.back();
     att.name = m.first;
+    att.hullVertices = hullVerticesOf(pack);
     att.shape.reset(PhysicMeshShape::load(std::move(pack)));
     }
 
@@ -351,6 +375,49 @@ ProtoMesh::ProtoMesh(const Material& mat, std::vector<Resources::Vertex> vbo, st
   }
 
 ProtoMesh::~ProtoMesh() {
+  }
+
+void ProtoMesh::appendItemVertices(std::vector<Tempest::Vec3>& vertices) const {
+  for(size_t i=0;i<attach.size();++i) {
+    auto local=Tempest::Matrix4x4::mkIdentity();
+    for(size_t node=0;node<nodes.size();++node) {
+      if(nodes[node].attachId!=i)
+        continue;
+      if(skeleton!=nullptr && node<skeleton->tr.size()) {
+        local=skeleton->tr[node];
+        }
+      else {
+        local=nodes[node].transform;
+        size_t parent=nodes[node].parentId;
+        for(size_t depth=0;parent<nodes.size() && depth<nodes.size();++depth) {
+          auto transform=nodes[parent].transform;
+          transform.mul(local);
+          local=transform;
+          parent=nodes[parent].parentId;
+          }
+        }
+      break;
+      }
+    for(auto point:attach[i].hullVertices) {
+      local.project(point);
+      vertices.push_back(point);
+      }
+    }
+  for(const auto& vertex:skinVertices) {
+    Tempest::Vec3 point;
+    float weight=0.f;
+    for(size_t i=0;i<4;++i) {
+      if(vertex.weights[i]<=0.f)
+        continue;
+      Tempest::Vec3 part(vertex.pos[i][0],vertex.pos[i][1],vertex.pos[i][2]);
+      if(skeleton!=nullptr && vertex.boneId[i]<skeleton->tr.size())
+        skeleton->tr[vertex.boneId[i]].project(part);
+      point+=part*vertex.weights[i];
+      weight+=vertex.weights[i];
+      }
+    if(weight>0.f)
+      vertices.push_back(point);
+    }
   }
 
 void ProtoMesh::shapeOfAttach(const std::vector<std::vector<Tempest::Vec3>>& pt) {

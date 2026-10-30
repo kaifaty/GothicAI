@@ -24,7 +24,7 @@ enum class Zone : size_t {
   EncodeShadows, EncodeMain, EncodeWater, EncodePost, EncodeUi, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
-  PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, Count };
+  PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };
@@ -40,6 +40,8 @@ void flush();
 // Capture the attempt at submission, never look up a reused cmdId on completion.
 void* gpuSubmitted();
 void gpuCompleted(void* record, double startSeconds, double endSeconds);
+void* geometrySubmitted();
+void geometryCompleted(void* record, uint64_t triangles, bool valid);
 
 class Scope final {
   public:
@@ -77,6 +79,8 @@ constexpr void add(Amount, uint64_t) noexcept {}
 constexpr void flush() noexcept {}
 constexpr void* gpuSubmitted() noexcept { return nullptr; }
 constexpr void gpuCompleted(void*, double, double) noexcept {}
+constexpr void* geometrySubmitted() noexcept { return nullptr; }
+constexpr void geometryCompleted(void*, uint64_t, bool) noexcept {}
 
 class Scope final {
   public:

@@ -150,6 +150,8 @@ async def test_responses_keep_every_tool_and_allow_some_of_them():
         ([], None),
         (None, None),
         (["set_intent"], "none"),
+        (["set_intent"], "required"),
+        (None, "required"),
     ):
         async for _ in backend.stream(
             instructions="i",
@@ -170,6 +172,8 @@ async def test_responses_keep_every_tool_and_allow_some_of_them():
         "none",  # none of them
         None,
         "none",
+        {"type": "allowed_tools", "mode": "required", "tools": [{"type": "function", "name": "set_intent"}]},
+        "required",  # a witness's answer: it must decide by a call
     ]
 
 

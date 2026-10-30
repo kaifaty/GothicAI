@@ -1,0 +1,31 @@
+# Numeric-only native Item physics: run ITEM_HULLS=1 and ITEM_HULLS=0 on a fresh NEWWORLD.
+# Each support is real collision geometry, checked with native landRay before insertion.
+# events.jsonl records census, each drop, all results and 50-item native physics p95.
+# Compare sleep_ms ON <= OFF on flat/table; slope/stairs allow sleep or escaped_edge.
+# Final pivots outside the support footprint count as escaped_edge, not passed_through.
+# Flat/slope/table/load use 1 m cells; giant_quad retains the original report-only support.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+item-hulls census
+item-hulls setup flat
+wait 7000
+item-hulls report
+# Let rounded items finish rolling off the 24 m sloped support.
+item-hulls setup slope
+wait 20000
+item-hulls report
+item-hulls setup stairs
+wait 7000
+item-hulls report
+item-hulls setup table
+wait 7000
+item-hulls report
+item-hulls setup load
+wait 8000
+item-hulls report
+item-hulls setup giant_quad
+wait 8000
+item-hulls report
+item-hulls clear

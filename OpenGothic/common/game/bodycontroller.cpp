@@ -924,7 +924,7 @@ bool BodyController::tick(Npc& actor,uint64_t dt) {
     c.started=true; c.beforeIdentity=before; c.identity=after; c.comboLength=actor.visual.pose().comboLength();
     for(const auto& layer:actor.visual.pose().combatLayers(actor.world().tickCount())) {
       const auto unchanged=std::find_if(previousLayers.begin(),previousLayers.end(),[&](const Pose::CombatLayer& old) {
-        return old.sequence==layer.sequence && old.start==layer.start && old.combination==layer.combination && old.state==layer.state;
+        return old.sequence==layer.sequence && old.origin==layer.origin && old.combination==layer.combination && old.state==layer.state;
         });
       if(unchanged==previousLayers.end()) c.layers.push_back(layer);
       }
@@ -965,7 +965,7 @@ void BodyController::postStep() {
     for(const auto& original:c.layers) {
       if(!original.sequence) continue;
       const auto found=std::find_if(current.begin(),current.end(),[&](const Pose::CombatLayer& layer) {
-        return layer.sequence==original.sequence && layer.start==original.start && layer.combination==original.combination;
+        return layer.sequence==original.sequence && layer.origin==original.origin && layer.combination==original.combination;
         });
       if(found!=current.end()) {
         if(!found->sequence->isFinished(found->time,found->start,c.comboLength)) unfinished=true;

@@ -115,10 +115,12 @@ Gothic::Gothic() {
   defaults->set("GAME", "arrow_sticking",      1);
   defaults->set("GAME", "spell_physics",       1);
   defaults->set("GAME", "movable_vobs",        1);
+  defaults->set("GAME", "item_hulls",          1);
   defaults->set("GAME", "physics_noise",       1);
   defaults->set("GAME", "destruction",         1);
   defaults->set("GAME", "buoyancy",            1);
   defaults->set("GAME", "cloth",               1);
+  defaults->set("GAME", "item_wake",           1);
   defaults->set("GAME", "character_virtual",   1);
   defaults->set("GAME", "npc_character_virtual",1);
   defaults->set("GAME", "monster_character_virtual",1);
@@ -127,6 +129,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_reactions",       1);
   defaults->set("GAME", "melee_posture",         1);
   defaults->set("GAME", "melee_down_tactics",    1);
+  defaults->set("GAME", "melee_hitstop",         1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -887,6 +890,7 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","destruction")!=0,
     settingsGetI("GAME","buoyancy")!=0,
     settingsGetI("GAME","cloth")!=0,
+    settingsGetI("GAME","item_wake")!=0,
     settingsGetI("GAME","character_virtual")!=0,
     settingsGetI("GAME","npc_character_virtual")!=0,
     settingsGetI("GAME","monster_character_virtual")!=0,
@@ -894,7 +898,9 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_physics_hits")!=0,
     settingsGetI("GAME","melee_reactions")!=0,
     settingsGetI("GAME","melee_posture")!=0,
-    settingsGetI("GAME","melee_down_tactics")!=0
+    settingsGetI("GAME","melee_down_tactics")!=0,
+    settingsGetI("GAME","item_hulls")!=0,
+    settingsGetI("GAME","melee_hitstop")!=0
     };
   }
 
@@ -911,6 +917,7 @@ void Gothic::setupSettings() {
     activeWorld->physic()->setDestructionEnabled(physicsFlagsCache.destruction);
     activeWorld->physic()->setBuoyancyEnabled(physicsFlagsCache.buoyancy);
     activeWorld->physic()->setClothEnabled(physicsFlagsCache.cloth);
+    activeWorld->physic()->setItemWakeEnabled(physicsFlagsCache.itemWake);
     }
 
   const float soundVolume = settingsSoundVolume();

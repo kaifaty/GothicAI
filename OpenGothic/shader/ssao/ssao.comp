@@ -56,7 +56,8 @@ uint pyramidId(vec3 direction) {
 
 uint  hits   = 0;
 uint  anySmp = 0;
-float hitV[gridQSize];
+// Per-thread cells in shared memory: a dynamically indexed private array spills to the stack on Apple GPUs.
+shared float hitV[gridQSize][gl_WorkGroupSize.x*gl_WorkGroupSize.y];
 
 void addHit(vec3 dir, float v) {
   uint uv = pyramidId(dir);
@@ -64,11 +65,11 @@ void addHit(vec3 dir, float v) {
   hits   = hits   | (1u << uv);
   anySmp = anySmp | (1u << uv);
 
-  float value   = hitV[uv];
+  float value   = hitV[uv][gl_LocalInvocationIndex];
   occlusionAll -= value;
   occlusionAll += max(value,v);
 
-  hitV[uv] = max(value, v);
+  hitV[uv][gl_LocalInvocationIndex] = max(value, v);
   }
 
 void addMis(vec3 dir) {
@@ -205,7 +206,7 @@ vec3 reconstructNormal(const vec3 at0, in vec2 uv){
 
 void main() {
   for(int i=0; i<gridQSize; ++i)
-    hitV[i] = 0;
+    hitV[i][gl_LocalInvocationIndex] = 0;
 
   shMaxSteps = 0;
   barrier();

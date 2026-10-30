@@ -18,6 +18,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
@@ -155,6 +156,10 @@ struct DynamicWorld::MovableVobs {
   bool finalized = false;
   bool enabled = true;
   bool destructionEnabled = true;
+  };
+
+struct DynamicWorld::ItemHulls {
+  std::unordered_map<std::string,ItemHull> shapes;
   };
 
 struct DynamicWorld::BodyData {
@@ -724,6 +729,7 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
   clothWorld=std::make_unique<Cloth>(*world);
   bodies.reset(new WorldBodies());
   movableVobs.reset(new MovableVobs());
+  itemHulls=std::make_unique<ItemHulls>();
   world->setWaterSurfaceCallback([this](const Tempest::Vec3& center,float bottom,float& surface) {
     // Start below the entire envelope: the centre of a floating barrel is
     // usually above water. Only solids can separate an underwater body from
@@ -805,6 +811,19 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
   bboxList  .reset(new BBoxList   (*this));
 
   if(owner!=nullptr) {
+    world->setItemWakeCallback([owner](const Tempest::Vec3& min,const Tempest::Vec3& max,size_t budget) {
+      const auto center=(min+max)*.5f;
+      const float radius=(max-min).length()*.5f;
+      size_t created=0;
+      owner->detectItem(center,radius,[&](::Item& item) {
+        const auto p=item.position();
+        if(p.x<min.x || p.x>max.x || p.y<min.y || p.y>max.y || p.z<min.z || p.z>max.z)
+          return;
+        if(item.isDynamic() || created<budget)
+          created+=item.wakePhysics() ? 1 : 0;
+        });
+      return created;
+      });
     world->setItemHitCallback([owner](::Item& itm, asset::MaterialGroup mat, float impulse, float mass) {
       auto  snd = owner->addLandHitEffect(ItemMaterial(itm.handle().material),mat,itm.transform());
       float v   = impulse/mass;
@@ -1025,6 +1044,179 @@ DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, co
   return Item(this,obj.release());
   }
 
+const DynamicWorld::ItemHull& DynamicWorld::itemHullShape(const ProtoMesh& proto, std::string_view visual) {
+  std::string key(visual);
+  std::transform(key.begin(),key.end(),key.begin(),[](unsigned char c) { return char(std::toupper(c)); });
+  auto [cached,inserted]=itemHulls->shapes.try_emplace(key);
+  auto& hull=cached->second;
+  if(!inserted)
+    return hull;
+  const auto extent=CollisionWorld::toMeters(proto.bbox()[1]-proto.bbox()[0]);
+  hull.boundsVolume=extent.GetX()*extent.GetY()*extent.GetZ();
+  proto.appendItemVertices(hull.vertices);
+  std::vector<JPH::Vec3> points;
+  points.reserve(hull.vertices.size());
+  for(const auto& point:hull.vertices) {
+    if(!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+      hull.fallbackReason="nonfinite mesh vertex";
+      return hull;
+      }
+    points.push_back(CollisionWorld::toMeters(point));
+    }
+  std::sort(points.begin(),points.end(),[](const auto& a,const auto& b) {
+    if(a.GetX()!=b.GetX()) return a.GetX()<b.GetX();
+    if(a.GetY()!=b.GetY()) return a.GetY()<b.GetY();
+    return a.GetZ()<b.GetZ();
+    });
+  points.erase(std::unique(points.begin(),points.end()),points.end());
+  if(points.size()<4) {
+    hull.fallbackReason="fewer than four mesh vertices";
+    return hull;
+    }
+  // Find the mesh's broad plane, including tilted leaves and scrolls. A flat
+  // surface gets 4 mm of symmetric thickness, while a line stays a fallback.
+  const auto origin=points.front();
+  auto longest=JPH::Vec3::sZero();
+  for(const auto& point:points)
+    if((point-origin).LengthSq()>longest.LengthSq())
+      longest=point-origin;
+  auto normal=JPH::Vec3::sZero();
+  for(const auto& point:points) {
+    const auto candidate=longest.Cross(point-origin);
+    if(candidate.LengthSq()>normal.LengthSq())
+      normal=candidate;
+    }
+  if(longest.LengthSq()<=1.e-12f || normal.LengthSq()<=1.e-12f*longest.LengthSq()) {
+    hull.fallbackReason="collinear mesh vertices";
+    return hull;
+    }
+  normal=normal.Normalized();
+  float low=std::numeric_limits<float>::infinity(),high=-low;
+  for(const auto& point:points) {
+    const float projection=normal.Dot(point-origin);
+    low=std::min(low,projection);
+    high=std::max(high,projection);
+    }
+  constexpr float minimumThickness=.004f;
+  if(high-low<minimumThickness) {
+    const auto padding=normal*((minimumThickness-(high-low))*.5f);
+    const auto size=points.size();
+    points.reserve(2*size);
+    for(size_t i=0;i<size;++i) {
+      points.push_back(points[i]+padding);
+      points[i]-=padding;
+      }
+    }
+  Physics::initialize();
+  // Jolt subtracts this radius internally; it does not inflate the envelope.
+  // A small hull tolerance preserves millimetre-scale detail on coins/leaves.
+  JPH::ConvexHullShapeSettings settings(points.data(),int(points.size()),.00025f);
+  settings.mHullTolerance=.0001f;
+  settings.mMaxErrorConvexRadius=.0001f;
+  const auto result=settings.Create();
+  if(result.HasError()) {
+    hull.fallbackReason="Jolt: "+std::string(result.GetError().c_str());
+    return hull;
+    }
+  const float volume=result.Get()->GetVolume();
+  if(!std::isfinite(volume) || volume<=0.f) {
+    hull.fallbackReason="zero or nonfinite hull volume";
+    return hull;
+    }
+  const auto& shape=static_cast<const JPH::ConvexHullShape&>(*result.Get());
+  std::vector<JPH::Vec3> directions;
+  directions.reserve(14);
+  for(int x=-1;x<=1;++x)
+    for(int y=-1;y<=1;++y)
+      for(int z=-1;z<=1;++z) {
+        const int nonzero=int(x!=0)+int(y!=0)+int(z!=0);
+        if(nonzero==1 || nonzero==3)
+          directions.push_back(JPH::Vec3(float(x),float(y),float(z)).Normalized());
+        }
+  std::vector<JPH::Vec3> inflated;
+  inflated.reserve(shape.GetNumPoints()*14);
+  const auto inflate=[&](float padding) {
+    inflated.clear();
+    for(JPH::uint i=0;i<shape.GetNumPoints();++i) {
+      const auto point=shape.GetPoint(i)+shape.GetCenterOfMass();
+      for(const auto& direction:directions)
+        inflated.push_back(point+direction*padding);
+      }
+    JPH::ConvexHullShapeSettings inflatedSettings(inflated.data(),int(inflated.size()),.00025f);
+    inflatedSettings.mHullTolerance=.0001f;
+    inflatedSettings.mMaxErrorConvexRadius=.0001f;
+    return inflatedSettings.Create();
+    };
+  // One centimetre centres the visible envelope in Jolt's unchanged 2 cm slop.
+  // Keep the source envelope for visible support measurements, mass and water.
+  float padding=.01f;
+  auto inflatedResult=inflate(padding);
+  if(inflatedResult.HasError()) {
+    hull.fallbackReason="Jolt inflated hull: "+std::string(inflatedResult.GetError().c_str());
+    return hull;
+    }
+  // Inner radius is the shortest COM-to-support-plane distance, including
+  // tilted thin meshes. Rebuilding also accounts for centroid movement.
+  constexpr float minimumInnerRadius=.03f;
+  if(inflatedResult.Get()->GetInnerRadius()<minimumInnerRadius) {
+    float lower=padding,upper=.04f;
+    auto upperResult=inflate(upper);
+    for(int i=0;i<4 && !upperResult.HasError() && upperResult.Get()->GetInnerRadius()<minimumInnerRadius;++i) {
+      lower=upper;upper*=2.f;upperResult=inflate(upper);
+      }
+    if(upperResult.HasError()) {
+      hull.fallbackReason="Jolt inflated hull: "+std::string(upperResult.GetError().c_str());
+      return hull;
+      }
+    if(upperResult.Get()->GetInnerRadius()<minimumInnerRadius) {
+      hull.fallbackReason="inflated hull cannot reach the minimum inner radius";
+      return hull;
+      }
+    for(int i=0;i<16 && upper-lower>.000001f;++i) {
+      const float middle=(lower+upper)*.5f;
+      auto middleResult=inflate(middle);
+      if(middleResult.HasError()) {
+        hull.fallbackReason="Jolt inflated hull: "+std::string(middleResult.GetError().c_str());
+        return hull;
+        }
+      if(middleResult.Get()->GetInnerRadius()>=minimumInnerRadius) {
+        upper=middle;upperResult=std::move(middleResult);
+        }
+      else lower=middle;
+      }
+    padding=upper;inflatedResult=std::move(upperResult);
+    }
+  hull.originalShape=result.Get();
+  hull.shape=inflatedResult.Get();
+  hull.volume=volume;
+  hull.extraPaddingCm=(padding-.01f)*100.f;
+  hull.vertices.clear();
+  hull.vertices.reserve(shape.GetNumPoints());
+  for(JPH::uint i=0;i<shape.GetNumPoints();++i)
+    hull.vertices.push_back(CollisionWorld::toCentimeters(shape.GetPoint(i)+shape.GetCenterOfMass()));
+  return hull;
+  }
+
+DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& bounds,
+                                               asset::MaterialGroup mat, const ProtoMesh* proto,
+                                               std::string_view visual, bool hulls) {
+  if(!hulls || proto==nullptr)
+    return addDynamicObj(pos,bounds,mat);
+  const auto& hull=itemHullShape(*proto,visual);
+  if(hull.shape==nullptr)
+    return addDynamicObj(pos,bounds,mat);
+  const float mass=std::max(.05f,float(materialDensity(mat)*hull.volume*volumeScale(pos)));
+  auto obj=std::make_unique<BodyData>();
+  obj->body=world->addDynamicBody(hull.shape,pos,materialFriction(mat),mass);
+  // Express the original envelope in the inflated body's COM frame. Inflation
+  // may shift the centroid of an asymmetric mesh, but must not move its water shape.
+  obj->body->setBuoyancyShape(new JPH::OffsetCenterOfMassShape(hull.originalShape,
+    hull.shape->GetCenterOfMass()-hull.originalShape->GetCenterOfMass()));
+  // Dynamic bodies already use LinearCast, including the smallest items.
+  obj->body->setNoiseProfile(impactMaterial(mat),mat,"item");
+  return Item(this,obj.release());
+  }
+
 DynamicWorld::Item DynamicWorld::addMovableVob(const ProtoMesh& proto, std::string_view visual,
                                               const Tempest::Matrix4x4& matrix, float massMultiplier,
                                               bool blocksWalking, std::string_view className,
@@ -1228,6 +1420,10 @@ void DynamicWorld::setMovableVobsEnabled(bool enabled) {
 
 void DynamicWorld::setBuoyancyEnabled(bool enabled) {
   world->setBuoyancyEnabled(enabled);
+  }
+
+void DynamicWorld::setItemWakeEnabled(bool enabled) {
+  world->setItemWakeEnabled(enabled);
   }
 
 bool DynamicWorld::buoyancyEnabled() const {
@@ -1808,6 +2004,10 @@ std::vector<DynamicWorld::WaterBodySnapshot> DynamicWorld::waterBodySnapshot() c
     entry.transform=native.transform;
     entry.worldBounds[0]=native.worldBounds[0];
     entry.worldBounds[1]=native.worldBounds[1];
+    entry.collisionBounds[0]=native.collisionBounds[0];
+    entry.collisionBounds[1]=native.collisionBounds[1];
+    if(native.body!=nullptr && native.body->ptrType()==P_Item)
+      entry.item=static_cast<const ::Item*>(native.body->payload());
     entry.velocity=native.velocity;
     entry.mass=native.mass;
     entry.density=native.density;
@@ -2314,6 +2514,7 @@ DynamicWorld::PhysicsStats DynamicWorld::physicsStats() const {
   return {world->stepMilliseconds(),world->bodyCount(),world->rayCount()};
   }
 
+uint64_t DynamicWorld::simulationStep() const { return world->simulationStep(); }
 void DynamicWorld::configureMeleeBench(int substeps) { world->configureMeleeBench(substeps); }
 void DynamicWorld::updateMeleeBlade(const Npc* owner,const Tempest::Matrix4x4& hand,float lengthCm) { world->updateMeleeBlade(owner,hand,lengthCm); }
 void DynamicWorld::removeMeleeBlade(const Npc* owner) { world->removeMeleeBlade(owner); }
@@ -2948,7 +3149,9 @@ void DynamicWorld::Item::restorePhysics(const Tempest::Matrix4x4& matrix, bool s
                                       const Tempest::Vec3& velocity, const Tempest::Vec3& angular) {
   if(obj==nullptr || obj->body==nullptr) return;
   obj->body->restoreTransform(matrix,sleeping);
-  if(!sleeping) obj->body->setVelocity(velocity,angular);
+  // A nonfinite restore recovered to rest; do not overwrite its zero velocity.
+  if(!sleeping && std::isfinite(matrix.at(3,0)) && std::isfinite(matrix.at(3,1)) && std::isfinite(matrix.at(3,2)))
+    obj->body->setVelocity(velocity,angular);
   }
 
 float DynamicWorld::Item::mass() const {
@@ -2965,6 +3168,11 @@ Tempest::Vec3 DynamicWorld::Item::angularVelocity() const {
 
 bool DynamicWorld::Item::isSleeping() const {
   return obj==nullptr || obj->body==nullptr || obj->body->isSleeping();
+  }
+
+void DynamicWorld::Item::retainForItemWake() {
+  if(obj!=nullptr && obj->body!=nullptr)
+    obj->body->retainForItemWake();
   }
 
 bool DynamicWorld::Item::touchedByNpc() const {

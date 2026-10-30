@@ -2,10 +2,12 @@
 """Motion check of a rendered explainer: a strip of frames for every movement in the plan, and the frame-to-frame
 change of the whole render with the jumps nobody planned.
 
-    python3 scripts/strips.py "$W/render/draft.mp4" "$W/plan.json" "$W/render/strips"
+    python3 scripts/strips.py "$W/render/draft.mp4" "$W/plan.json" "$W/render/strips" [--still 3]
  -> strips/NN-<beat>-<what>.png   consecutive frames of one movement, left to right (every frame up to 14)
     strips/report.md              every strip with its time, and the jumps: a change much bigger than the frames
-                                  around it, away from a planned cut, and one-frame flashes (a jump straight back)
+                                  around it, away from a planned cut, and one-frame flashes (a jump straight back);
+                                  the motion language of the plan (durations off the set, two things entering at
+                                  once); and the stretches where the picture holds still longer than `--still`
 
 A strip shows what one still cannot: whether a thing eases in or snaps, overshoots, flickers for a frame, or
 arrives on the word. The render may be a `--scale 0.5` draft. Only ffmpeg runs here.
@@ -41,6 +43,121 @@ def carry_dur(beat: dict, prev: dict) -> float:
         tag = prev["tags"][src["tag"]]
         src = (tag["x"], tag["y"] - TAG_LINE_ABOVE_PIN)
     return travel_dur(math.dist(src, c["to"]))
+# the series' durations (parts/timing.ts MOTION: fast, base, frame, slow) and the gap between two entrances
+DURATIONS = (0.2, 0.35, 0.5, 0.6)
+STAGGER = 0.08
+
+
+# timing.ts holdPush: a held picture of 2 s or more pushes in by itself, 1 % a second, 3-5 %
+HOLD_PUSH = 2.0
+PUSH_MIN, PUSH_MAX = 0.03, 0.05
+
+
+def hold_push(beat: dict) -> tuple[float, float] | None:
+    """(from, scale) of the beat's own slow push, as timing.ts holdPush, or None."""
+    if beat.get("zoom") or beat.get("push") == 0 or beat.get("kind") == "split":
+        return None
+    at = beat.get("freeze") if beat.get("kind") == "footage" else 0.0
+    if at is None or beat["dur"] - at < HOLD_PUSH:
+        return None
+    return at, 1 + beat.get("push", min(PUSH_MAX, max(PUSH_MIN, 0.01 * (beat["dur"] - at))))
+
+
+def _fits(dur: float) -> bool:
+    return any(abs(dur - d) < 1e-6 for d in DURATIONS)
+
+
+def language(plan: dict) -> list[str]:
+    """Rows of the motion-language check (references/motion.md): a duration the plan sets off the series' set, a
+    line drawn longer than `slow`, a linear zoom that is not a push across its beat, two things of one beat
+    entering less than a stagger apart, a thing entering under its beat's own transition. Durations the plan leaves
+    to the schema's defaults are the series' own and are not checked."""
+    rows = []
+    t = 0.0
+    for bi, beat in enumerate(plan["beats"]):
+        bid = beat["id"]
+        row = lambda what, value, rule: rows.append(f"| {bid} | {t:.2f} | {what} | {value} | {rule} |")  # noqa: E731
+        enter = beat.get("enter")
+        if enter and "dur" in enter and not _fits(enter["dur"]):
+            row(f"enter-{enter['type']}", f"{enter['dur']:g} s", "not from the set: 0.35 fade/flash/zoom, 0.5 slide/wipe")
+        for kind in ("strokes", "fans", "paths"):
+            for i, x in enumerate(beat.get(kind, [])):
+                if "dur" not in x:
+                    continue
+                if x["dur"] > DURATIONS[-1]:
+                    row(f"{kind[:-1]}{i}", f"{x['dur']:g} s", "longer than slow 0.6: only a line following a real flight")
+                elif not _fits(x["dur"]):
+                    row(f"{kind[:-1]}{i}", f"{x['dur']:g} s", "not from the set: 0.2 / 0.35 / 0.5 / 0.6")
+        zoom = beat.get("zoom")
+        if zoom:
+            if zoom.get("ease") == "linear":
+                if zoom["dur"] < 0.8 * beat["dur"]:
+                    row("zoom", f"{zoom['dur']:g} s of {beat['dur']:g}", "a linear zoom is a slow push across the beat; ease it otherwise")
+            elif zoom["dur"] > 0.04 and not _fits(zoom["dur"]):  # up to a frame: a punch-in, as good as a cut
+                row("zoom", f"{zoom['dur']:g} s", "an eased zoom takes slow 0.6, or is a linear push across the beat")
+        push = beat.get("push")
+        if push and push < PUSH_MIN - 1e-6:
+            row("push", f"{push:g}", "below 0.03 the push does not read: 0.03-0.05, or 0 for none")
+        carry = beat.get("carry")
+        if carry and "dur" in carry and not (DURATIONS[1] - 1e-6 <= carry["dur"] <= DURATIONS[-1] + 1e-6):
+            row("carry", f"{carry['dur']:g} s", "a carry takes 0.35-0.6 s by its travel; leave dur out")
+        # entrances of the beat, by time: two closer than a stagger compete for the eye
+        entries = [(x.get("at", 0), f"{kind[:-1]}{i}") for kind in ("texts", "tags", "strokes", "fans", "paths")
+                   for i, x in enumerate(beat.get(kind, []))]
+        if zoom and zoom["dur"] > 0.04:
+            entries.append((zoom["at"], "zoom"))
+        entries.sort()
+        for (a, what_a), (b, what_b) in zip(entries, entries[1:]):
+            if b - a < STAGGER - 1e-6:
+                row(f"{what_a} + {what_b}", f"{b - a:.2f} s apart", "two things at once: stagger by 0.08 in reading order")
+        if enter and enter["type"] != "flash":
+            dur = enter.get("dur", TRANSITION_DUR[enter["type"]])
+            for at, what in entries:
+                if at < dur - 1e-6:
+                    row(what, f"at {at:g} s", f"enters under the {enter['type']} ({dur:g} s): after it, or a cut")
+        t += beat["dur"]
+    return rows
+
+
+STILL = 3.0  # seconds of a picture that does not change at all, past which the report lists it
+# mean grey change per pixel (of 255) below which two frames count as the same picture: a card or a frozen frame
+# changes by 0.000-0.001, a hero standing idle in footage by 0.05-0.1 (measured on the bow short)
+STILL_CHANGE = 0.03
+# the voice's caption band, left out of the stillness: a word turning gold is not the picture moving
+CAPTION_BAND = {"tall": (0.59, 0.77), "wide": (0.79, 0.96)}
+
+
+def stills(frames: list[bytes], fps: float, band: tuple[float, float], least: float = STILL) -> list[tuple[int, int]]:
+    """(first, last) frames of every stretch of at least `least` seconds where the picture outside the caption
+    band changes by less than STILL_CHANGE from frame to frame."""
+    w, h = SMALL
+    keep = [r for r in range(h) if not band[0] * h <= r < band[1] * h]
+    rows = lambda f: b"".join(f[r * w:(r + 1) * w] for r in keep)  # noqa: E731
+    picture = [rows(f) for f in frames]
+    out = []
+    start = 0
+    for i in range(1, len(picture) + 1):
+        if i == len(picture) or change(picture[i - 1], picture[i]) >= STILL_CHANGE:
+            if (i - 1 - start) / fps >= least:
+                out.append((start, i - 1))
+            start = i
+    return out
+
+
+def hold_beats(plan: dict, a: float, b: float) -> tuple[str, str]:
+    """The beats a still stretch from a to b s lies in, and whether their own slow push runs there: "yes" for all
+    of them, "part" for some, "no" for none. A push keeps the hold alive, not new: the voice still carries it."""
+    ids, pushed = [], []
+    t = 0.0
+    for beat in plan["beats"]:
+        if t < b and a < t + beat["dur"]:
+            ids.append(beat["id"])
+            push = hold_push(beat)
+            pushed.append(bool(push) and t + push[0] < b)
+        t += beat["dur"]
+    return ", ".join(ids), "yes" if pushed and all(pushed) else "part" if any(pushed) else "no"
+
+
 PAD_BEFORE = 0.1
 PAD_AFTER = 0.15
 
@@ -134,9 +251,14 @@ def jumps(frames: list[bytes], planned: list[tuple[int, int]], fps: float) -> li
 
 
 def main() -> None:
-    if len(sys.argv) != 4:
+    args = sys.argv[1:]
+    least = STILL
+    if len(args) == 5 and args[3] == "--still":
+        least = float(args[4])
+        args = args[:3]
+    if len(args) != 3:
         sys.exit(__doc__)
-    video, plan_path, out = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+    video, plan_path, out = Path(args[0]), Path(args[1]), Path(args[2])
     plan = json.loads(plan_path.read_text())
     fps = probe_fps(video)
     out.mkdir(parents=True, exist_ok=True)
@@ -151,14 +273,27 @@ def main() -> None:
     # the end of the content: the brand sting starts with a cut
     end = round(sum(b["dur"] for b in plan["beats"]) * fps)
     planned.append((end, end))
-    found = jumps(thumbnails(video)[:end + 1], planned, fps)  # the brand sting after `end` is not the plan's
+    frames = thumbnails(video)[:end + 1]  # the brand sting after `end` is not the plan's
+    found = jumps(frames, planned, fps)
+    lang = language(plan)
+    held = stills(frames, fps, CAPTION_BAND[plan.get("format", "tall")], least)
     report = ["# Motion strips", "", f"{video.name}, {fps:g} fps. Strips run left to right.", "",
               "| strip | at, s | dur, s | frames |", "|---|---|---|---|", *rows, "",
               "## Jumps nobody planned", ""]
     report += (["| frame | s | change | around | what |", "|---|---|---|---|---|", *found]
                if found else ["None."])
+    report += ["", "## Motion language", "",
+               "The plan against references/motion.md: a row is a choice to justify or fix, not always a defect.", ""]
+    report += (["| beat | beat at, s | what | value | rule |", "|---|---|---|---|---|", *lang] if lang else ["None."])
+    report += ["", f"## Still longer than {least:g} s", "",
+               "Nothing new outside the caption band (a slow push alone changes too little to count): a hold the voice "
+               "must carry, or a place for the next move. `push` says whether the beat's own push runs there.", ""]
+    report += (["| from, s | to, s | length, s | beats | push |", "|---|---|---|---|---|",
+                *[f"| {a / fps:.2f} | {b / fps:.2f} | {(b - a) / fps:.1f} | {' | '.join(hold_beats(plan, a / fps, b / fps))} |"
+                  for a, b in held]] if held else ["None."])
     (out / "report.md").write_text("\n".join(report) + "\n")
-    print(f"{len(rows)} strips, {len(found)} jumps nobody planned -> {out / 'report.md'}")
+    print(f"{len(rows)} strips, {len(found)} jumps nobody planned, {len(lang)} motion-language notes, "
+          f"{len(held)} stills over {least:g} s -> {out / 'report.md'}")
 
 
 if __name__ == "__main__":

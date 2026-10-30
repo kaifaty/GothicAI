@@ -1,0 +1,50 @@
+# Native contacts with genuinely settled and retired Items beyond CV range.
+# Run ITEM_WAKE=0 and 1; default ITEM_HULLS=1, legacy boxes ITEM_HULLS=0.
+seed 73013
+cheat god
+set time 12 0
+movable on
+living on
+destruction on
+overlay off
+view full
+item-wake setup ragdoll
+wait 8000
+item-wake begin
+wait 6000
+item-wake checkpoint
+item-wake setup debris
+wait 8000
+item-wake begin
+wait 6000
+item-wake checkpoint
+item-wake setup item
+wait 8000
+item-wake begin
+wait 6000
+item-wake checkpoint
+# Quarter-speed frames are 8/9 ms: sample only frames advancing one native step.
+slowmo 4
+# Same six corpses/pulses, fifty bodyless Items outside every wake query.
+item-wake setup pile-far
+wait 8000
+item-wake begin
+wait 12025
+item-wake checkpoint
+# Ordinary sequential events retain the same fifty settled Items.
+item-wake setup event
+wait 8000
+item-wake begin
+wait 3000
+item-wake checkpoint
+item-wake event-debris
+wait 3000
+item-wake checkpoint
+# Sustained artificial contact pile is diagnostic and cannot fail acceptance.
+item-wake setup pile
+wait 8000
+item-wake begin
+wait 12000
+item-wake checkpoint
+slowmo 1
+physics stats

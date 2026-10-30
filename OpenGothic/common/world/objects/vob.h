@@ -70,6 +70,7 @@ class Vob {
     // Physics poses are transient: pos/local retain the authored save identity.
     Tempest::Matrix4x4                pos, local, physicsPos;
     bool                              hasPhysicsPos = false;
+    bool                              layerObject = false;
     Vob*                              parent = nullptr;
 
     void          recalculateTransform();

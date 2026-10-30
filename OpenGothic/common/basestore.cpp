@@ -72,14 +72,6 @@ bool fingerprintName(std::string_view name) {
   return name.size()==64 && name.find_first_not_of("0123456789abcdef")==std::string_view::npos;
   }
 
-fs::path cacheRoot() {
-  fs::path cache;
-  if(const auto* env=std::getenv("OPENGOTHIC_BASE_CACHE")) cache=env;
-  else if(const auto* home=std::getenv("HOME")) cache=fs::path(home)/".cache/gothic-ai/base";
-  if(cache.empty()) throw std::runtime_error("base cache path is empty");
-  return fs::weakly_canonical(fs::absolute(cache));
-  }
-
 fs::path storeRoot() {
   if(const auto* env=std::getenv("OPENGOTHIC_BASE_STORE")) return env;
 #ifdef __APPLE__
@@ -338,6 +330,14 @@ void prune(const fs::path& cache, const fs::path& current, const std::atomic_boo
 }
 
 void BaseStore::setPublication(bool enabled) { publicationEnabled=enabled; }
+
+fs::path BaseStore::cacheRoot() {
+  fs::path cache;
+  if(const auto* env=std::getenv("OPENGOTHIC_BASE_CACHE")) cache=env;
+  else if(const auto* home=std::getenv("HOME")) cache=fs::path(home)/".cache/gothic-ai/base";
+  if(cache.empty()) throw std::runtime_error("base cache path is empty");
+  return fs::weakly_canonical(fs::absolute(cache));
+  }
 
 BaseStore::Selection BaseStore::resolve(const fs::path& gothic, const BaseImport::Files& mounted, const BaseImport::Progress& log, const Import& import) {
   const auto start=std::chrono::steady_clock::now();

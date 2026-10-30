@@ -3,7 +3,7 @@ import test from 'node:test';
 import {CombatData, Plan} from '../src/schema.ts';
 import {inCone, interpolatePath, quadraticParameterAtLength, quadraticPoint} from '../src/parts/diagramMath.ts';
 import {arcPoint, settledText, tagLineCentre} from '../src/parts/carryMath.ts';
-import {travelDur} from '../src/parts/timing.ts';
+import {holdPush, travelDur} from '../src/parts/timing.ts';
 import {sampleHp, selectAction, smoothedTrack, sourceFrame, transformPoint, zoomScale} from '../src/parts/followMath.ts';
 
 const source = 'reports/example.md';
@@ -656,4 +656,25 @@ test('carry: длительность растёт с расстоянием в 
   assert.equal(travelDur(300), 0.35);
   assert.ok(Math.abs(travelDur(600) - 0.35 * Math.SQRT2) < 1e-9, 'вдвое дальше — на ~40% дольше');
   assert.equal(travelDur(2000), 0.6);
+});
+
+test('push: долгая карточка, стоп-кадр и заморозка наезжают сами, медленнее при долгом стоянии', () => {
+  assert.deepEqual(holdPush({kind: 'card', dur: 2}), {at: 0, dur: 2, scale: 1.03});
+  assert.deepEqual(holdPush({kind: 'still', dur: 4}), {at: 0, dur: 4, scale: 1.04});
+  assert.deepEqual(holdPush({kind: 'card', dur: 10}), {at: 0, dur: 10, scale: 1.05});
+  assert.deepEqual(holdPush({kind: 'footage', dur: 5, freeze: 1}), {at: 1, dur: 4, scale: 1.04});
+  assert.deepEqual(holdPush({kind: 'card', dur: 6, push: 0.03}), {at: 0, dur: 6, scale: 1.03});
+});
+
+test('push: живое видео, короткое стояние, свой zoom и push 0 — без наезда', () => {
+  assert.equal(holdPush({kind: 'footage', dur: 8}), null);
+  assert.equal(holdPush({kind: 'footage', dur: 3, freeze: 1.5}), null);
+  assert.equal(holdPush({kind: 'card', dur: 1.9}), null);
+  assert.equal(holdPush({kind: 'split', dur: 6}), null);
+  assert.equal(holdPush({kind: 'card', dur: 6, zoom: {at: 0, dur: 6, scale: 1.1, x: 0, y: 0}}), null);
+  assert.equal(holdPush({kind: 'card', dur: 6, push: 0}), null);
+  const both = {lang: 'ru', hook: {text: 'x', until: 1},
+    beats: [{id: 'a', kind: 'still', src: 'a.png', dur: 4, push: 0.04, zoom: {at: 0, dur: 4, scale: 1.1, x: 0, y: 0}}]};
+  assert.match(carryIssues(both).join(), /beats\.0\.push: push и zoom в одном бите/);
+  assert.match(carryIssues({...both, beats: [{id: 'a', kind: 'card', dur: 4, push: 0.2}]}).join(), /beats\.0\.push/);
 });

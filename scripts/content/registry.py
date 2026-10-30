@@ -124,6 +124,7 @@ def verify_sources(entry: Any, source_root: Path) -> None:
 
 
 WORLD_CHUNK = re.compile(r"[A-Z0-9_]+/-?[0-9]+_-?[0-9]+\Z")
+WORLD_EDIT_TOOL = "scripts/content/world/world_edit.py"
 
 
 def _validate_world_chunk(entry: dict[str, Any], content_root: Path | None) -> None:
@@ -131,7 +132,9 @@ def _validate_world_chunk(entry: dict[str, Any], content_root: Path | None) -> N
 
     No generator is involved: the edit is a script run on the base chunk. ``replaces`` names the
     chunk as ``<WORLD>/<x>_<z>``, ``inputs`` records it as ``converted world mesh <WORLD>/<x>_<z>``
-    with the base file's digest, ``files.glb`` is the edited chunk with its digest."""
+    with the base file's digest, ``files.glb`` is the edited chunk with its digest. A chunk built by
+    ``scripts/content/world/world_edit.py`` lists its ``edits`` in order, each a script with its digest
+    and the digests of the data files it read."""
     if entry["status"] != "draft":
         raise RegistryError("status: expected 'draft'")
     replaces = entry["replaces"]
@@ -148,6 +151,24 @@ def _validate_world_chunk(entry: dict[str, Any], content_root: Path | None) -> N
         raise RegistryError("worldchunk.tool: expected script and a full commit hash")
     if not isinstance(entry["parameters"], dict):
         raise RegistryError("parameters: expected an object")
+    if "edits" in entry:
+        edits = entry["edits"]
+        if tool["script"] != WORLD_EDIT_TOOL or not isinstance(edits, list) or not edits:
+            raise RegistryError(f"worldchunk.edits: expected a nonempty list built by {WORLD_EDIT_TOOL}")
+        seen = set()
+        for index, edit in enumerate(edits):
+            field = f"worldchunk.edits[{index}]"
+            if not isinstance(edit, dict) or not _nonempty(edit.get("script")) or \
+                    not SHA256.fullmatch(str(edit.get("sha256", ""))):
+                raise RegistryError(f"{field}: expected script and sha256")
+            if edit["script"] in seen:
+                raise RegistryError(f"{field}: {edit['script']} appears twice")
+            seen.add(edit["script"])
+            _safe_path(edit["script"], f"{field}.script")
+            for item in edit.get("inputs", []):
+                if not isinstance(item, dict) or not _nonempty(item.get("path")) or \
+                        not SHA256.fullmatch(str(item.get("sha256", ""))):
+                    raise RegistryError(f"{field}.inputs: expected path and sha256")
     inputs = entry.get("inputs")
     expected = f"converted world mesh {replaces[0]}"
     if not isinstance(inputs, list) or len(inputs) != 1 or not isinstance(inputs[0], dict) or \
