@@ -29,7 +29,8 @@ else:
 HOUR = 3600
 DAY = 24 * HOUR
 GIB = 1024**3
-PROTECTED = ("game", "game-settings", "play", "lib", "bin", "gq", "queue", ".*")
+PROTECTED = ("game", "game-settings", "play", "lib", "bin", "body*", "nav-probe",
+             "gq", "queue", ".*")
 # Names used by the build and training scripts; never infer disposable data from size.
 REBUILDABLE = ("build*", "*-build", "cmake-build-*", ".venv", "venv", "uv", "uv-cache",
                ".uv-cache", "_deps", "__pycache__", ".pytest_cache", ".ruff_cache", "pytest-*",
@@ -97,7 +98,7 @@ def process_paths(proc_root):
     for process in proc_root.iterdir():
         if not process.name.isdigit():
             continue
-        links = [process / "cwd"]
+        links = [process / "cwd", process / "exe"]
         try:
             links.extend((process / "fd").iterdir())
         except (FileNotFoundError, PermissionError):

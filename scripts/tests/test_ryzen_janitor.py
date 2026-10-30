@@ -91,7 +91,7 @@ def host(tmp_path, monkeypatch, janitor):
     def process(path, kind="cwd", pid="101"):
         process = proc / pid
         process.mkdir(parents=True, exist_ok=True)
-        link = process / "cwd" if kind == "cwd" else process / "fd" / "7"
+        link = process / kind if kind in {"cwd", "exe"} else process / "fd" / "7"
         link.parent.mkdir(exist_ok=True)
         link.symlink_to(path)
 
@@ -133,6 +133,28 @@ def test_task_protection_keep_globs_and_freshness(host):
     assert sum(cleaner.summary["skipped"].values()) >= len(protected) + 3
 
 
+def test_body_and_nav_probe_are_protected_in_emergency(host, capsys):
+    protected = [host.task(name) for name in ("body", "body-net", "nav-probe")]
+    for task in protected:
+        for name in (".venv", "build"):
+            directory = task / name
+            directory.mkdir()
+            (directory / "data.bin").write_bytes(b"preserve")
+        age_tree(task)
+    host.free = 59 * GIB
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert cleaner.summary["emergency"]
+    assert cleaner.summary["skipped"]["protected"] >= len(protected)
+    assert cleaner.summary["deleted"] == cleaner.summary["moved"] == 0
+    output = capsys.readouterr().out
+    for task in protected:
+        assert f"skip {task} (0 bytes; protected)" in output
+        assert (task / "result.bin").exists()
+        assert (task / ".venv/data.bin").read_bytes() == b"preserve"
+        assert (task / "build/data.bin").read_bytes() == b"preserve"
+
+
 @pytest.mark.parametrize("prefix", ["", "e2e/", "codex-check/"])
 def test_nested_keep_protects_entire_owner(host, prefix):
     task = host.task(prefix + "kept")
@@ -150,13 +172,26 @@ def test_nested_keep_protects_entire_owner(host, prefix):
         assert not sibling.exists()
 
 
-@pytest.mark.parametrize("prefix,kind", [("", "cwd"), ("", "fd"), ("e2e/", "cwd"), ("e2e/", "fd"),
+@pytest.mark.parametrize("prefix,kind", [("", "cwd"), ("", "fd"), ("", "exe"), ("e2e/", "cwd"), ("e2e/", "fd"),
                                       ("codex-check/", "fd")])
 def test_task_with_process_is_skipped(host, prefix, kind):
     task = host.task(prefix + "running")
-    host.process(task if kind == "cwd" else task / "result.bin", kind)
-    assert host.cleaner().run() == 0
+    if kind == "exe":
+        binary = task / "build" / "Gothic2Notr"
+        binary.parent.mkdir()
+        binary.write_bytes(b"running executable")
+        age_tree(task)
+        host.process(host.root.parent, "cwd")
+        host.process(host.root.parent / "unrelated.log", "fd")
+        host.process(binary, "exe")
+    else:
+        host.process(task if kind == "cwd" else task / "result.bin", kind)
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert cleaner.summary["skipped"]["process"] == 1
     assert (task / "result.bin").exists()
+    if kind == "exe":
+        assert binary.read_bytes() == b"running executable"
     assert not (host.nas / "archive").exists()
 
 
