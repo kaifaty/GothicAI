@@ -1,0 +1,23 @@
+{
+  "id": "rig-crate-broken",
+  "target": "data/content/mesh3d-rigging.json",
+  "seed": 3,
+  "post": [0.085, 0.035],
+  "batten": [0.07, 0.025],
+  "plank": 0.022,
+  "gap": [0.004, 0.01],
+  "plank_width": 0.19,
+  "tilt_deg": 0.8,
+  "proud": 0.003,
+  "rope": [0.014, 6, 10],
+  "nail_radius": 0.009,
+  "nail": 0.004,
+  "stave_tile": 0.4,
+  "planks_per_tile": 4,
+  "notch": [0.4, 0.34],
+  "side_break": [0.2, 0.74],
+  "floor_hole": [-0.45, 0.15],
+  "floor_corner": 0.3,
+  "splinter": [0.04, 0.12],
+  "loose": true
+}

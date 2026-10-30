@@ -1,0 +1,402 @@
+{
+  "asset": "harbour-rigging",
+  "title": "Снасти порта: ящики, бухты, пушки, сети",
+  "kind": "props",
+  "created": "2026-10-30",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "harbour-rigging"
+  ],
+  "sources": [
+    {
+      "file": "harbour-rigging/concept-rig-cannon-attempt-1.png",
+      "role": "concept",
+      "texture": "rig-cannon",
+      "attempt": 1,
+      "sha256": "2a3d6e54b5aaf05fdb1d8cbe923724f43ad8e2d7dc47625cde7341b9b11914ef",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:09:24Z",
+      "thread": "01a18c11-b5ce-7eb3-8991-305ade7843ea",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-cannon-attempt-2.png",
+      "role": "concept",
+      "texture": "rig-cannon",
+      "attempt": 2,
+      "sha256": "390f631e8c2f35bba6f1f17292cc30c0a4596ac9300102b84c47def2702cbf01",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:09:49Z",
+      "thread": "01a18c11-b5ce-7eb3-8991-305ade7843ea",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-cannon-attempt-3.png",
+      "role": "concept",
+      "texture": "rig-cannon",
+      "attempt": 3,
+      "sha256": "5822dad7ca0288258854b4227751df3ad50a10abd6f4c4cdbadbe0182adecf83",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:10:13Z",
+      "thread": "01a18c11-b5ce-7eb3-8991-305ade7843ea",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-crate-broken-attempt-1.png",
+      "role": "concept",
+      "texture": "rig-crate-broken",
+      "attempt": 1,
+      "sha256": "afe1031abe0fb0e875f355d5b4f151bcfb1e118b5ef721547f9f5aebf7d2fe73",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:09:22Z",
+      "thread": "01a18c11-c2a6-70f0-8ac4-a7aae17dcf8a",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-crate-broken-attempt-2.png",
+      "role": "concept",
+      "texture": "rig-crate-broken",
+      "attempt": 2,
+      "sha256": "a7e4888853f8e6fe2b41d482428d2e9e04afc3ab85f4777df53579dd654fbccd",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:09:54Z",
+      "thread": "01a18c11-c2a6-70f0-8ac4-a7aae17dcf8a",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-crate-broken-attempt-3.png",
+      "role": "concept",
+      "texture": "rig-crate-broken",
+      "attempt": 3,
+      "sha256": "3cb5f84901291ed7287ce78a280acf44b7169516cf1fdaf91730ddeae91884fa",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:10:24Z",
+      "thread": "01a18c11-c2a6-70f0-8ac4-a7aae17dcf8a",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-net-heap-attempt-1.png",
+      "role": "concept",
+      "texture": "rig-net-heap",
+      "attempt": 1,
+      "sha256": "8e0f67781d3522dab77620705f99f8ca9cb9489baa2137130ac047f188b06d53",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:09:21Z",
+      "thread": "01a18c11-d006-7331-9277-91de43634c57",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-net-heap-attempt-2.png",
+      "role": "concept",
+      "texture": "rig-net-heap",
+      "attempt": 2,
+      "sha256": "74f849e186c8d6489859050eb9cfe097015426f5ed2ff2874f8e38e08d7d5171",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:10:02Z",
+      "thread": "01a18c11-d006-7331-9277-91de43634c57",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-net-heap-attempt-3.png",
+      "role": "concept",
+      "texture": "rig-net-heap",
+      "attempt": 3,
+      "sha256": "301cc9b3a8f97eccced755eb2aef4f862aaf4106822de54047852b3e01e5b04a",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:10:32Z",
+      "thread": "01a18c11-d006-7331-9277-91de43634c57",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-net-rack-attempt-1.png",
+      "role": "concept",
+      "texture": "rig-net-rack",
+      "attempt": 1,
+      "sha256": "437dd96e2254557f8dd91e7f97f425c6fd71128952acb03e45d69c7008627285",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:09:35Z",
+      "thread": "01a18c11-dd0b-7d33-9c5e-d00b697244a5",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-net-rack-attempt-2.png",
+      "role": "concept",
+      "texture": "rig-net-rack",
+      "attempt": 2,
+      "sha256": "e2ad494a86e97ade5e868e5922c74bf68f4fc0d568afc2463fb5e471cbccd1dd",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:10:06Z",
+      "thread": "01a18c11-dd0b-7d33-9c5e-d00b697244a5",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-net-rack-attempt-3.png",
+      "role": "concept",
+      "texture": "rig-net-rack",
+      "attempt": 3,
+      "sha256": "af8f59fe52524cbcf1f8dd1ff14de56b7760db90caa673b1709d3c5d42f177ef",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:10:34Z",
+      "thread": "01a18c11-dd0b-7d33-9c5e-d00b697244a5",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-bollard-rope-attempt-1.png",
+      "role": "concept",
+      "texture": "rig-bollard-rope",
+      "attempt": 1,
+      "sha256": "dcf8cf98048c505d1dd05223f2d81201788970a698dea89d62d52ed45216454a",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:09:46Z",
+      "thread": "01a18c11-ea75-7f10-a462-c6c8e880cec4",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-bollard-rope-attempt-2.png",
+      "role": "concept",
+      "texture": "rig-bollard-rope",
+      "attempt": 2,
+      "sha256": "db5eeea03e5cf50212550e39184b18de9759a940e4a62e3c424685fdacee2d97",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:10:19Z",
+      "thread": "01a18c11-ea75-7f10-a462-c6c8e880cec4",
+      "parent": null
+    },
+    {
+      "file": "harbour-rigging/concept-rig-bollard-rope-attempt-3.png",
+      "role": "concept",
+      "texture": "rig-bollard-rope",
+      "attempt": 3,
+      "sha256": "059d7f4c39b1ef8b82731fe05a2cd6b2b1fe08a73cfc82c1452e2d102981fff9",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T09:10:45Z",
+      "thread": "01a18c11-ea75-7f10-a462-c6c8e880cec4",
+      "parent": null
+    }
+  ],
+  "selected": {
+    "concept-rig-cannon": {
+      "file": "harbour-rigging/concept-rig-cannon-attempt-1.png",
+      "reason": "тёмный ствол с поясами на ступенчатом лафете, клин под казной; ствол ровнее и длиннее оригинала — длину и толщину берём с обмера",
+      "date": "2026-10-30"
+    },
+    "concept-rig-crate-broken": {
+      "file": "harbour-rigging/concept-rig-crate-broken-attempt-1.png",
+      "reason": "ящик порта со стойками и верёвочной ручкой, рваные изломы, доска внутри; излом по оригиналу — U-пролом в торце",
+      "date": "2026-10-30"
+    },
+    "concept-rig-net-heap": {
+      "file": "harbour-rigging/concept-rig-net-heap-attempt-1.png",
+      "reason": "плоский ворох со складками, сквозь ячейки видна земля, верёвка по краю петлями",
+      "date": "2026-10-30"
+    },
+    "concept-rig-net-rack": {
+      "file": "harbour-rigging/concept-rig-net-rack-attempt-1.png",
+      "reason": "Г-образная рама, скатки сетей с перевязками у угла, полотна сети на перекладинах",
+      "date": "2026-10-30"
+    },
+    "concept-rig-bollard-rope": {
+      "file": "harbour-rigging/concept-rig-bollard-rope-attempt-2.png",
+      "reason": "литой кнехт на плите-восьмиграннике, витки каната и конец к плите; у варианта 1 ржавчина рыжее сцены",
+      "date": "2026-10-30"
+    }
+  },
+  "reviews": [
+    {
+      "id": "r1-cannon",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r1-crate-broken",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r1-net-heap",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r1-net-rack",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r1-bollard",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-quay-far",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-quay-wide",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-cannon-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-rope-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-pile-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-hut-yard",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-crates-path",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-crate-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-fishers-mid",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-broken-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-net-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-crane-yard",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-rack-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-bollard-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    }
+  ],
+  "gates": [],
+  "build": null,
+  "backup": null
+}

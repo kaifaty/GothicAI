@@ -1,0 +1,21 @@
+{
+  "id": "rig-rope",
+  "target": "data/content/mesh3d-rigging.json",
+  "seed": 2,
+  "thick": 0.08,
+  "sides": 6,
+  "segment": 0.12,
+  "hole": 0.1,
+  "rise": 0.8,
+  "wobble": 0.012,
+  "tile_m": 0.15,
+  "outer_tail": [
+    -1.0,
+    0.25
+  ],
+  "inner_tail": [
+    1.0,
+    -0.2
+  ],
+  "pitch": 0.88
+}

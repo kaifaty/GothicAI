@@ -1,0 +1,98 @@
+{
+ "glb": "rigging-build/cannon/model.glb",
+ "maps_dir": "rigging-tiles",
+ "scales": {
+  "OWN_PROP_IRON_CAST": 2.0,
+  "OWN_PROP_IRON_BORE": 2.0,
+  "OWN_PROP_WOOD_FRAME": 2.5,
+  "OWN_PROP_IRON_BAND": 5.0
+ },
+ "targets": {
+  "OWN_PROP_IRON_CAST": [
+   0.026,
+   0.024,
+   0.012
+  ],
+  "OWN_PROP_IRON_BORE": [
+   0.004,
+   0.0036,
+   0.003
+  ],
+  "OWN_PROP_WOOD_FRAME": [
+   0.034,
+   0.03,
+   0.014
+  ],
+  "OWN_PROP_IRON_BAND": [
+   0.02,
+   0.019,
+   0.016
+  ]
+ },
+ "slots": {
+  "OWN_PROP_IRON_CAST": [
+   "OWN_CANNON_HARBOUR_IRON",
+   "METAL"
+  ],
+  "OWN_PROP_IRON_BORE": [
+   "OWN_CANNON_HARBOUR_IRON",
+   "METAL"
+  ],
+  "OWN_PROP_WOOD_FRAME": [
+   "OWN_CANNON_HARBOUR_WOOD",
+   "WOOD"
+  ],
+  "OWN_PROP_IRON_BAND": [
+   "OWN_CANNON_HARBOUR_IRON",
+   "METAL"
+  ]
+ },
+ "metal": [
+  "OWN_PROP_IRON_CAST",
+  "OWN_PROP_IRON_BAND"
+ ],
+ "size": 2048,
+ "seed": 1,
+ "angle_limit": 66,
+ "margin": 0.003,
+ "contrast": {
+  "OWN_PROP_IRON_CAST": 1.15,
+  "OWN_PROP_IRON_BORE": 1.0,
+  "OWN_PROP_WOOD_FRAME": 1.15,
+  "OWN_PROP_IRON_BAND": 1.1
+ },
+ "metal_scale": 0.0,
+ "wet_height": 0.18,
+ "algae": 0.7,
+ "bleach": 0.0,
+ "tone_spread": 0.14,
+ "edge_wear": {
+  "OWN_PROP_WOOD_FRAME": 0.25,
+  "OWN_PROP_IRON_CAST": 0.3,
+  "OWN_PROP_IRON_BORE": 0.0
+ },
+ "measure_ao": {
+  "OWN_PROP_IRON_CAST": 0.5,
+  "OWN_PROP_WOOD_FRAME": 0.5
+ },
+ "streaks": {
+  "length": 0.25,
+  "rust": 0.6,
+  "dirt": 0.35,
+  "rust_colour": [
+   0.06,
+   0.03,
+   0.012
+  ],
+  "column": 0.012
+ },
+ "crevice": {
+  "distance": 0.02,
+  "dirt": 0.7,
+  "colour": [
+   0.012,
+   0.014,
+   0.008
+  ]
+ }
+}
