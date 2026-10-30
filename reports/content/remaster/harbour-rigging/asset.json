@@ -394,6 +394,13 @@
       "mode": "blind",
       "verdict": "pending",
       "date": "2026-10-30"
+    },
+    {
+      "id": "r1-rope",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "pending",
+      "date": "2026-10-30"
     }
   ],
   "gates": [],
