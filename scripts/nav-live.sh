@@ -264,7 +264,7 @@ for shard in "${shards[@]}"; do
   display=()
   [[ "$stage" == smoke || "$stage" == baseline ]] && display=(--display --display-shared)
   identifier=$("$ROOT/scripts/gq" submit --class quick --threads 16 --cpu-quota 1200% --mem 10G --max 59m \
-    "${display[@]}" --archive "$log_dir" --name "nav live $round $stage $shard" -- \
+    ${display[@]+"${display[@]}"} --archive "$log_dir" --name "nav live $round $stage $shard" -- \
     bash "$source/phase.sh" "$source" "$task" "$output" "$weights" "$stage" "$snapshot" "$log_dir" "$shard")
   printf '%s shard %s: %s\n' "$stage" "$shard" "$identifier"
 done
