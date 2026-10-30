@@ -1,5 +1,6 @@
 #include "waymatrix.h"
 #include "wayheights.h"
+#include "basestore.h"
 
 #include <Tempest/Log>
 #include <algorithm>
@@ -39,14 +40,17 @@ void WayMatrix::buildIndex() {
   const auto started = std::chrono::steady_clock::now();
   stats = {};
   std::filesystem::path cacheRoot;
-  if(const auto* root = std::getenv("OPENGOTHIC_BASE_CACHE"))
-    cacheRoot = root;
-  else if(const auto* home = std::getenv("HOME"))
-    cacheRoot = std::filesystem::path(home)/".cache/gothic-ai/base";
   Resources::WayHeightInputs inputs;
   const auto* cacheEnabled = std::getenv("OPENGOTHIC_WAYHEIGHT_CACHE");
-  if(cacheEnabled==nullptr || std::string_view(cacheEnabled)!="0")
+  if(cacheEnabled==nullptr || std::string_view(cacheEnabled)!="0") {
+    try {
+      cacheRoot = BaseStore::cacheRoot();
+      }
+    catch(const std::exception&) {
+      // An unavailable derived cache must not prevent the original ray queries.
+      }
     inputs = Resources::wayHeightInputs(world.name());
+    }
   const auto& flags = Gothic::physicsFlags();
   WayHeights heights(cacheRoot,{inputs.baseFingerprint,std::filesystem::path(world.name()).stem().string(),
                                inputs.contentFingerprint,uint32_t(flags.cloth) | (uint32_t(flags.movableVobs)<<1)});

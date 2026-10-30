@@ -228,6 +228,14 @@ struct WayHeightsContract {
     compare(rays,hit,"hit");
     require(hit.stats.keyMs<=20,"NEWWORLD cache key must take at most 20 ms");
     require(hit.stats.totalMs<=100,"NEWWORLD warm buildIndex must take at most 100 ms");
+    write(root/"blocked-cache","not a directory");
+    for(const auto& path:{std::string(),(root/"blocked-cache/child").string()}) {
+      Environment unavailableRoot("OPENGOTHIC_BASE_CACHE",path);
+      const auto unavailable=load(gothic,path.empty() ? "empty cache root" : "unavailable cache root");
+      require(unavailable.stats.hits==0 && unavailable.stats.misses==5249,
+              "empty or unavailable cache root must cast 5249 rays");
+      compare(rays,unavailable,"unavailable cache root");
+      }
     }
   };
 
