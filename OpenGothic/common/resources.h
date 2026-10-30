@@ -210,6 +210,11 @@ class Resources final {
 
     static std::filesystem::path      worldBaseDir(std::string_view world);
     static std::filesystem::path      worldOverrideDir(std::string_view world);
+    struct WayHeightInputs {
+      std::string baseFingerprint;
+      std::string contentFingerprint;
+      };
+    static WayHeightInputs           wayHeightInputs(std::string_view world);
     static void                      censusFile(std::u16string_view path);
     static void                      censusProfile(std::string_view game, std::string_view outputUnits, int language);
     static void                      loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name,
@@ -244,6 +249,7 @@ class Resources final {
     std::vector<std::pair<std::string,uintmax_t>> baseArchives;
     std::set<std::string> baseWorlds;
     BaseStore::Selection automaticBase;
+    std::string          baseFingerprint;
     struct VideoBase;
     std::shared_ptr<VideoBase> videoBase;
     std::mutex videoStartSync;
@@ -370,6 +376,7 @@ class Resources final {
     struct MeshOverride {
       std::filesystem::path file;
       std::string replacement;
+      std::string initialStamp;
       bool loaded = false;
       size_t sourceSize = 0;
       uint32_t sourceCrc32 = 0;

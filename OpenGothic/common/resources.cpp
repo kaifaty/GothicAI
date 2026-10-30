@@ -22,6 +22,7 @@
 #include <cctype>
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -79,6 +80,20 @@ struct Resources::VideoBase {
 
 namespace {
 thread_local bool preparingVideo = false;
+
+std::string wayHeightFileStamp(const std::filesystem::path& file) {
+  try {
+    namespace fs = std::filesystem;
+    if(!fs::exists(file)) return "missing";
+    if(!fs::is_regular_file(file)) return "other";
+    return std::to_string(fs::file_size(file))+":"+
+           std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            fs::last_write_time(file).time_since_epoch()).count());
+    }
+  catch(const std::filesystem::filesystem_error&) {
+    return {};
+    }
+  }
 
 std::string censusSourcePath(const std::filesystem::path& source) {
   auto relative = source;
@@ -232,6 +247,7 @@ void Resources::loadBase() {
     inst->indexBaseContent();
     BaseImport::Files identityLoose;
     const auto identity=BaseImport::readIdentity(inst->automaticBase.path);
+    inst->baseFingerprint=identity.fingerprint;
     rapidjson::Document metadata;
     metadata.Parse(identity.json.data(),identity.json.size());
     inst->baseArchives.clear();
@@ -897,6 +913,67 @@ std::filesystem::path Resources::worldOverrideDir(std::string_view world) {
   return {};
   }
 
+Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
+  if(inst==nullptr || inst->baseFingerprint.empty())
+    return {};
+  try {
+    namespace fs = std::filesystem;
+    std::string inputs;
+    const auto field=[&](std::string_view value) {
+      inputs+=std::to_string(value.size())+":";
+      inputs.append(value);
+      };
+    const auto metadata=[&](const fs::path& file) {
+      field(fs::absolute(file).lexically_normal().generic_string());
+      const auto stamp=wayHeightFileStamp(file);
+      if(stamp.empty()) throw std::runtime_error("cannot read way height input metadata");
+      field(stamp);
+      };
+    const auto contentWorld=worldOverrideDir(world);
+    field(contentWorld.empty() ? "" : fs::absolute(contentWorld).lexically_normal().generic_string());
+    const auto* layers=std::getenv("OPENGOTHIC_VOB_LAYERS");
+    field(layers!=nullptr && std::string_view(layers)=="0" ? "layers=0" : "layers=1");
+    field(isHeadless() ? "headless=1" : "headless=0");
+    std::vector<fs::path> files;
+    if(!contentWorld.empty()) {
+      if(fs::is_directory(contentWorld))
+        for(const auto& entry:fs::recursive_directory_iterator(contentWorld)) {
+          // The world loader follows directory links. Avoid an incomplete key
+          // rather than reusing heights when such a directory changes.
+          if(entry.is_symlink() && entry.is_directory()) return {};
+          if(entry.is_regular_file()) files.push_back(entry.path());
+          }
+      files.push_back(contentWorld.parent_path().parent_path()/"meshes/meshes.json");
+      }
+    // Indexed replacements may be shared by several worlds. The key must not
+    // depend on which of them this process has already loaded.
+    std::vector<std::string> meshKeys;
+    for(const auto& [key,mesh]:inst->meshOverrides) {
+      (void)mesh;
+      meshKeys.push_back(key);
+      }
+    std::sort(meshKeys.begin(),meshKeys.end());
+    for(const auto& key:meshKeys) {
+      const auto& mesh=inst->meshOverrides.at(key);
+      const auto stamp=wayHeightFileStamp(mesh.file);
+      // Cached successful or failed loads may predate an edit on disk. Use
+      // rays until a new Resources owner can load the current replacements.
+      if(stamp.empty() || stamp!=mesh.initialStamp) return {};
+      field(key);
+      field(fs::absolute(mesh.file).lexically_normal().generic_string());
+      field(stamp);
+      }
+    std::sort(files.begin(),files.end());
+    files.erase(std::unique(files.begin(),files.end()),files.end());
+    for(const auto& file:files) metadata(file);
+    return {inst->baseFingerprint,BaseImport::sha256(inputs)};
+    }
+  catch(const std::exception& error) {
+    Log::e("way heights: input fingerprint unavailable: ",error.what());
+    return {};
+    }
+  }
+
 void Resources::indexMeshOverrides() {
   std::filesystem::path root;
   if(const char* dir = std::getenv("OPENGOTHIC_CONTENT")) {
@@ -941,9 +1018,11 @@ void Resources::indexMeshOverrides() {
       }
     for(auto& c:key)
       c = char(std::toupper(uint8_t(c)));
+    const auto meshFile=(root/relative).lexically_normal();
     meshOverrides[std::move(key)] = {
-      (root/relative).lexically_normal(),
-      (std::filesystem::path("meshes")/relative).lexically_normal().generic_string()
+      meshFile,
+      (std::filesystem::path("meshes")/relative).lexically_normal().generic_string(),
+      wayHeightFileStamp(meshFile)
       };
     }
   Log::i("meshes: ",meshOverrides.size()," entries from \"",root.string(),"\"");

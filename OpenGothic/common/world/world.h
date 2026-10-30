@@ -235,6 +235,7 @@ class World final {
 
   private:
     friend struct WorldDataContract;
+    friend struct WayHeightsContract;
     double               worldLoadMs = 0;
     const zenkit::IFocus& searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const;
     std::string                           wname;
