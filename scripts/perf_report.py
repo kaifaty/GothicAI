@@ -179,7 +179,15 @@ def read_metadata(directory):
 
 
 def read_streaming(directory):
+    events = [json.loads(line) for line in (directory / "events.jsonl").read_text().splitlines()]
+    completed = [event for event in events if event.get("kind") == "route_end" and event.get("pass")]
+    if sorted(event.get("speed_cm_s") for event in completed) != [500, 2000]:
+        raise ValueError(f"{directory}: both route passes must reach their endpoints")
     path = directory / "streaming.csv"
+    if not path.exists():
+        if any(event.get("kind") == "perf_segment" and event.get("residency_manager") is True for event in events):
+            raise ValueError(f"{path}: residency manager was enabled but samples are missing")
+        return None
     with path.open(newline="") as stream:
         rows = list(csv.DictReader(stream))
     grouped = {}
@@ -194,10 +202,6 @@ def read_streaming(directory):
             grouped.setdefault(parts[1], []).append(sample)
     if set(grouped) != {"run", "fly"} or any(len(rows) < 2 for rows in grouped.values()):
         raise ValueError(f"{path}: both run and fly require complete residency samples")
-    events = [json.loads(line) for line in (directory / "events.jsonl").read_text().splitlines()]
-    completed = [event for event in events if event.get("kind") == "route_end" and event.get("pass")]
-    if sorted(event.get("speed_cm_s") for event in completed) != [500, 2000]:
-        raise ValueError(f"{directory}: both route passes must reach their endpoints")
     warmup = None
     for event in events:
         if event.get("kind") == "streaming_ready":
@@ -283,10 +287,11 @@ def build_report(directory):
             if place == "streaming-flythrough":
                 if set(views) != {"run", "fly"}:
                     raise ValueError(f"{directory}/{repeat}: both run and fly frame segments are required")
-                for view, stats in repeat_reports[-1]["views"].items():
-                    stats["streaming"] = streaming_stats(streaming[repeat][view])
-                repeat_reports[-1]["summary"]["streaming"] = streaming_stats(
-                    [row for rows in streaming[repeat].values() for row in rows])
+                if streaming[repeat] is not None:
+                    for view, stats in repeat_reports[-1]["views"].items():
+                        stats["streaming"] = streaming_stats(streaming[repeat][view])
+                    repeat_reports[-1]["summary"]["streaming"] = streaming_stats(
+                        [row for rows in streaming[repeat].values() for row in rows])
             for view, rows in views.items():
                 view_samples.setdefault(view, []).extend(rows)
         places[place] = {
@@ -294,12 +299,13 @@ def build_report(directory):
             "views": {view: summarize(rows) for view, rows in sorted(view_samples.items())},
             "repeats": repeat_reports,
         }
-        if place == "streaming-flythrough":
+        measured = [repeat for repeat in repeats if streaming.get(repeat) is not None]
+        if place == "streaming-flythrough" and measured:
             for view, stats in places[place]["views"].items():
                 stats["streaming"] = streaming_stats(
-                    [row for repeat in repeats for row in streaming[repeat][view]])
+                    [row for repeat in measured for row in streaming[repeat][view]])
             places[place]["summary"]["streaming"] = streaming_stats(
-                [row for repeat in repeats for rows in streaming[repeat].values() for row in rows])
+                [row for repeat in measured for rows in streaming[repeat].values() for row in rows])
     return {"schema_version": 1, "directory": str(directory), "metadata": read_metadata(directory),
             "timing": TIMING, "warnings": warnings, "sources": sources, "places": places}
 
@@ -318,7 +324,7 @@ def summary_table(report):
             lines.append(f"| {name} | {stats['frames']} | {stats['fps']:.2f} | "
                          + " | ".join(number(frame[key]) for key in ("mean", "p50", "p95", "p99", "max")) + " |")
     streaming = report["places"].get("streaming-flythrough")
-    if streaming:
+    if streaming and "streaming" in streaming["summary"]:
         lines.extend(["", "| Pass | Near transitions | Far transitions | Peak Near | Update p99 ms | Work p99 / max ms | Publish p99 / max ms | Published / released | GPU end MiB |",
                       "|---|---:|---:|---:|---:|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():

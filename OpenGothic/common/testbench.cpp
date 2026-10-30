@@ -13555,7 +13555,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         }
       FrameProfile::setActors(bench.crew);
       event("perf_segment","\"segment\":"+jsonStr(bench.perfSegment)+
-        ",\"camera_cm\":"+ragdollVector(bench.camPos)+",\"actors\":"+std::to_string(bench.crew.size()));
+        ",\"camera_cm\":"+ragdollVector(bench.camPos)+",\"actors\":"+std::to_string(bench.crew.size())+
+        ",\"residency_manager\":"+(w.chunkResidency()!=nullptr ? "true" : "false"));
       }
     else if(a.size()==2 && a[1]=="stop") {
       if(bench.perfSegment.starts_with("streaming-flythrough/"))
@@ -18318,7 +18319,7 @@ void TestBench::sampleStreaming(const World& world) {
   const bool measuring=bench.perfSegment.starts_with("streaming-flythrough/");
   if(!measuring && std::filesystem::path(scenarioPath).filename()!="streaming-flythrough.bench")return;
   const auto* residency=world.chunkResidency();
-  if(residency==nullptr) {arenaAbort("streaming perf sample requires the residency manager");return;}
+  if(residency==nullptr)return;
   const auto& stats=residency->stats();
   if(!measuring) {
     bench.streamingWarmupFarMs.insert(bench.streamingWarmupFarMs.end(),stats.farPublicationTimesMs.begin(),stats.farPublicationTimesMs.end());

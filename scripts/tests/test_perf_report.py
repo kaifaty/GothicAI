@@ -164,6 +164,17 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     streaming = profile(tmp_path / "streaming", [
         {"segment": f"streaming-flythrough/{name}", "begin_ns": (offset + frame * step) * 1_000_000}
         for name, offset, step in (("run", 0, 10), ("fly", 100, 20)) for frame in range(3)])
+    completed = [{"kind": "route_end", "speed_cm_s": speed, "pass": True} for speed in (500, 2000)]
+    (streaming / "events.jsonl").write_text("\n".join(json.dumps(event) for event in completed))
+    frames_only = report.build_report(streaming)["places"]["streaming-flythrough"]
+    assert frames_only["views"]["run"]["frame_ms"]["p50"] == 10
+    assert frames_only["views"]["fly"]["frame_ms"]["p99"] == 20
+    assert "streaming" not in frames_only["summary"]
+    assert report.main(["run", str(streaming)]) == 0
+    (streaming / "events.jsonl").write_text("\n".join(json.dumps(event) for event in [
+        {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True}, *completed]))
+    with pytest.raises(ValueError, match="residency manager was enabled but samples are missing"):
+        report.build_report(streaming)
     with (streaming / "streaming.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, ["segment", "frame", "update_ms", "work_ms", "near", "far", "outside",
                                          "near_transitions", "far_transitions", "publication_ms", "published", "released"])
@@ -179,11 +190,11 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
         json.dumps(event) for event in [
             {"kind": "streaming_ready", "far_publication_ms": [9], "far_max_per_frame": 1, "queue_max_ms": 10},
             {"kind": "streaming_ready", "far_publication_ms": [.3, .6], "far_max_per_frame": 1, "queue_max_ms": .8},
-            {"kind": "perf_segment", "segment": "streaming-flythrough/run"},
+            {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True},
             {"kind": "route_end", "speed_cm_s": 500, "pass": True},
             {"kind": "streaming_end", "segment": "streaming-flythrough/run", "gpu_mb": 320.5},
             {"kind": "streaming_ready", "far_publication_ms": [], "far_max_per_frame": 0, "queue_max_ms": .001},
-            {"kind": "perf_segment", "segment": "streaming-flythrough/fly"},
+            {"kind": "perf_segment", "segment": "streaming-flythrough/fly", "residency_manager": True},
             {"kind": "route_end", "speed_cm_s": 2000, "pass": True},
             {"kind": "streaming_end", "segment": "streaming-flythrough/fly", "gpu_mb": 330.5}]))
     data = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]
