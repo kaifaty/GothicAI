@@ -21,6 +21,7 @@
 #include <cctype>
 #include <array>
 #include <cmath>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -916,7 +917,8 @@ Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
         return;
         }
       field(std::to_string(fs::file_size(file)));
-      field(std::to_string(fs::last_write_time(file).time_since_epoch().count()));
+      field(std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            fs::last_write_time(file).time_since_epoch()).count()));
       };
     const auto contentWorld=worldOverrideDir(world);
     field(contentWorld.empty() ? "" : fs::absolute(contentWorld).lexically_normal().generic_string());
