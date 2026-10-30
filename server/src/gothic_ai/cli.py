@@ -41,6 +41,7 @@ from .budget import Budget
 from .cast import Cast
 from .casting import Casting
 from .chains import ChainAuthor
+from .challenges import Challenges
 from .characters import Cards, Traits
 from .chests import ChestDesk
 from .chronicle import Chronicle
@@ -259,6 +260,7 @@ class ServerState:
         self.questlog: QuestLog | None = None
         self.showrunner: Showrunner | None = None
         self.feats: Feats | None = None
+        self.feat_challenges: Challenges | None = None
         self.vanilla: VanillaQuests | None = None
         self.gates: Gates | None = None
         self.trust: Trust | None = None
@@ -1291,6 +1293,8 @@ async def serve(args: argparse.Namespace) -> int:
                 journal=journal,
             )
             state.director.book = state.book
+            if not args.no_feats and not args.no_feat_challenges:
+                state.feat_challenges = Challenges(state.chronicle, state.book)
             state.author = Author(
                 link,
                 graph,
@@ -1318,6 +1322,7 @@ async def serve(args: argparse.Namespace) -> int:
                         llm,
                         crimes=state.crimes,
                         law=state.crime_law.law if state.crime_law is not None else None,
+                        feat_challenges=not args.no_feats and not args.no_feat_challenges,
                     )
                     if (task := _start_showrunner(args, state.showrunner)) is not None:
                         directing.append(task)
@@ -1494,6 +1499,8 @@ async def serve(args: argparse.Namespace) -> int:
                 task.cancel()
             if state.feats is not None:
                 await state.feats.close()
+            if state.feat_challenges is not None:
+                state.feat_challenges.close()
             if feat_image_root is not None:
                 feat_image_root.cleanup()
             if state.questlog is not None:
@@ -3297,6 +3304,11 @@ def main() -> None:
         "--no-feats",
         action="store_true",
         help="disable the chronicler's feats (enabled by default outside scenarios and in feats)",
+    )
+    p.add_argument(
+        "--no-feat-challenges",
+        action="store_true",
+        help="disable the director's hidden line challenges (enabled by default)",
     )
     p.add_argument(
         "--no-feat-images",

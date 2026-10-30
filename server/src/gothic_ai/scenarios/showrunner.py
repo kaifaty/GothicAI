@@ -61,6 +61,7 @@ class ShowrunnerScript:
             "new_people": False,
             "premise": PREMISE if n <= 2 else "",
             "reason": "надо убрать дрянь с дороги" if n <= 2 else "герою пока хватает поручений",
+            "challenge": {"kind": "no_blood"} if n <= 2 else None,
         }
         call = ToolCall("propose_line", args, f"showrunner{n}")
         yield call
@@ -288,6 +289,23 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
             giver,
         )
         quests = line.get("quests", [])
+        line_seq = next(seq for seq, fact in director.chronicle.entries("line") if fact == line)
+        challenge = next(
+            (
+                (seq, fact)
+                for seq, fact in director.chronicle.entries("challenge")
+                if fact.get("line") == line_seq
+            ),
+            None,
+        )
+        check(
+            "challenge",
+            challenge is not None
+            and challenge[1].get("kind") == "no_blood"
+            and challenge[1].get("quests") == quests
+            and giver in challenge[1].get("people", []),
+            challenge,
+        )
         made = [director.book.all()[q] for q in quests if q in director.book.all()]
         check(
             "book",
@@ -430,6 +448,34 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         results.update({f"passage_{key}": value for key, value in played.items()})
         await director.book.settle(giver)
         check("completed", bool(made) and all(director.book.progress(q.id).state == "done" for q in made))
+
+        def challenge_met() -> dict[str, Any] | None:
+            return next(
+                (
+                    fact
+                    for fact in director.chronicle.facts("challenge_met")
+                    if challenge is not None and fact.get("challenge") == challenge[0]
+                ),
+                None,
+            )
+
+        await _until(challenge_met, 5)
+        met = challenge_met()
+        evidence = met.get("evidence", []) if met is not None else []
+        facts = dict(director.chronicle.entries())
+        check(
+            "challenge_met",
+            met is not None
+            and met.get("kind") == "no_blood"
+            and met.get("line") == line_seq
+            and bool(evidence)
+            and all(seq in facts for seq in evidence)
+            and any(
+                facts[seq].get("fact") == "quest_outcome" and facts[seq].get("quest") in quests
+                for seq in evidence if seq in facts
+            ),
+            met,
+        )
     finally:
         director.clock = real_clock
     return _logged(results)
