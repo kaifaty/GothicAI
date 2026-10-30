@@ -16161,8 +16161,16 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="mark") {
     const auto text=rest(line);
     event("mark","\"text\":" + jsonStr(text));
-    if(LoadProbe::enabled() && ((text=="stream_warm" && w.chunkResidency()!=nullptr) || text=="stream_warm_5s"))
-      LoadProbe::mark(text);
+    if(LoadProbe::enabled() && ((text=="stream_warm" && w.chunkResidency()!=nullptr) || text=="stream_warm_5s")) {
+      std::string pages;
+      if(auto* chunks=w.chunkResidency()) {
+        const auto& s=chunks->stats();
+        pages="landscape_used_bytes="+std::to_string(s.landscapePageUsedBytes)+
+              " landscape_free_bytes="+std::to_string(s.landscapePageFreeBytes)+
+              " landscape_retired_bytes="+std::to_string(s.landscapePageRetiredBytes);
+        }
+      LoadProbe::mark(text,-1,pages);
+      }
     }
   else if(c=="ai") {
     std::string reply;

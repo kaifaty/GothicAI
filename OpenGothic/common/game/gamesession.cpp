@@ -11,6 +11,7 @@
 #include "worldstatestorage.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
+#include "world/chunkresidency.h"
 #include "sound/soundfx.h"
 #include "serialize.h"
 #include "camera.h"
@@ -139,7 +140,14 @@ GameSession::GameSession(std::string file) {
   ticks = 1;
   // wrld->setDayTime(8,0);
   if(LoadProbe::enabled()) {
-    LoadProbe::mark("session_end");
+    std::string pages;
+    if(auto* chunks=wrld->chunkResidency()) {
+      const auto& s=chunks->stats();
+      pages="landscape_used_bytes="+std::to_string(s.landscapePageUsedBytes)+
+            " landscape_free_bytes="+std::to_string(s.landscapePageFreeBytes)+
+            " landscape_retired_bytes="+std::to_string(s.landscapePageRetiredBytes);
+      }
+    LoadProbe::mark("session_end",-1,pages);
     if(wrld->chunkResidency()==nullptr)
       LoadProbe::mark("stream_warm");
     }
