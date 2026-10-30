@@ -36,6 +36,16 @@ static MTL::LanguageVersion languageVersion() {
   return std::min<MTL::LanguageVersion>(MTL::LanguageVersion3_1, opt->languageVersion());
   }
 
+static std::mutex probeDeviceSync;
+static MTL::Device* probeDevice = nullptr;
+
+bool tempestLoadProbeEnabled();
+
+size_t tempestProbeMetalGpuBytes() {
+  std::lock_guard<std::mutex> guard(probeDeviceSync);
+  return probeDevice ? probeDevice->currentAllocatedSize() : 0;
+  }
+
 MtDevice::MtDevice(std::string_view name, bool validation)
   : impl(mkDevice(name)), samplers(*impl), validation(validation) {
   if(impl.get()==nullptr)
@@ -62,9 +72,18 @@ MtDevice::MtDevice(std::string_view name, bool validation)
     prop.transposedRtMatrix = true;
     }
   deductProps(prop,*impl);
+  if(tempestLoadProbeEnabled()) {
+    std::lock_guard<std::mutex> guard(probeDeviceSync);
+    probeDevice = impl.get();
+    }
   }
 
 MtDevice::~MtDevice() {
+  if(!tempestLoadProbeEnabled())
+    return;
+  std::lock_guard<std::mutex> guard(probeDeviceSync);
+  if(probeDevice==impl.get())
+    probeDevice = nullptr;
   }
 
 void MtDevice::onSubmit() {

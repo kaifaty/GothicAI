@@ -1,0 +1,7 @@
+# Load probe: fresh world (WORLD=...), stand 5 s after loading.
+seed 73028
+cheat god
+set time 12 0
+rec idle novideo
+wait 5000
+stop
