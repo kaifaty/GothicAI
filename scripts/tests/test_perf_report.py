@@ -147,7 +147,7 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     first = market["views"]["view-1"]
     assert first["frames"] == 3
     assert first["fps"] == pytest.approx(50)
-    assert first["frame_ms"] == {"mean": 20, "p50": 20, "p95": 29, "p99": pytest.approx(29.8)}
+    assert first["frame_ms"] == {"mean": 20, "p50": 20, "p95": 29, "p99": pytest.approx(29.8), "max": 30}
     assert market["views"]["view-2"]["frames"] == 1
     assert first["gpu"] is None
     assert [zone["name"] for zone in first["zones"]] == ["p30", "encode"]
@@ -159,6 +159,31 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert report.main(["run", str(directory)]) == 0
     assert (directory / "report.md").exists()
     assert json.loads((directory / "report.json").read_text())["places"]["market"]["summary"]["frames"] == 4
+
+
+    streaming = profile(tmp_path / "streaming", [
+        {"segment": f"streaming-flythrough/{name}", "begin_ns": (offset + frame * step) * 1_000_000}
+        for name, offset, step in (("run", 0, 10), ("fly", 100, 20)) for frame in range(3)])
+    with (streaming / "streaming.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, ["segment", "frame", "update_ms", "work_ms", "near", "far", "outside",
+                                         "near_transitions", "far_transitions"])
+        writer.writeheader()
+        writer.writerows({"segment": f"streaming-flythrough/{name}", "frame": frame,
+                          "update_ms": .001 * (frame + 1), "work_ms": .0001,
+                          "near": 20 + frame, "far": 300, "outside": 3,
+                          "near_transitions": frame, "far_transitions": frame + 1}
+                         for name in ("run", "fly") for frame in range(3))
+    (streaming / "events.jsonl").write_text("\n".join(
+        json.dumps({"kind": "route_end", "speed_cm_s": speed, "pass": True}) for speed in (500, 2000)))
+    data = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]
+    assert data["run"]["frame_ms"]["p50"] == 10
+    assert data["fly"]["frame_ms"]["p99"] == data["fly"]["frame_ms"]["max"] == 20
+    assert data["run"]["streaming"]["near_transitions"] == 3
+    assert data["run"]["streaming"]["far_transitions"] == 6
+    assert data["run"]["streaming"]["peak_near"] == 22
+    assert data["run"]["streaming"]["update_ms"]["p99"] == pytest.approx(.00298)
+    assert data["run"]["streaming"]["work_ms"]["max"] == .0001
+    assert report.main(["run", str(streaming)]) == 0
 
 
 def test_fence_attempts_cost_time_but_do_not_inflate_rendered_fps(tmp_path):

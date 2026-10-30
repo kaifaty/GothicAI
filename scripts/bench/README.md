@@ -21,6 +21,23 @@ or other Mac-only game paths require local execution (`auto` falls back, `ryzen`
 For performance comparisons (before/after or FPS), run both takes on the same machine:
 pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
 
+`streaming-flythrough` is the baseline for runtime chunks before unloading: a god-mode hero
+follows the existing WayMatrix path from `NW_CITY_MERCHANT_TRADE_04` through
+`NW_CITY_HABOUR_BENCH_01` to `NW_FOREST_PATH_16`. `route <speed_cm_s> <wp1> <wp2> ...`
+blocks command execution until the connected path is complete. Each frame places the hero at
+the interpolated path position, including waypoint height, using the normal simulation step.
+The two passes use 500 cm/s (run) and 2000 cm/s (fly), with ten seconds to settle before each.
+It records no video. The engine keeps the entire world loaded.
+
+`scripts/bench.sh streaming-flythrough` starts a fresh `NEWWORLD`, selects `quiet` on Ryzen,
+and enables frame profiling only for this bench's build. Output `frameprofile.csv` contains
+submitted frame intervals; `streaming.csv` contains residency update/work times, counts and
+Near/Far transitions. `report.md` / `report.json` report each pass's frame p50/p99/max,
+Near/Far transitions (entering or leaving that state), peak Near count, and update/work p99.
+The run fails if either route does not finish or either pass lacks metrics. Use the same
+host, resolution and content overrides for later comparisons; `OPENGOTHIC_STREAMING=0`
+disables the manager and deliberately cannot produce this residency baseline.
+
 ## Frame profile
 
 ### Как работает сейчас

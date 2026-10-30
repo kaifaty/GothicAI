@@ -13,6 +13,7 @@
 
 class World;
 class DbgPainter;
+class WayHeights;
 
 class WayMatrix final {
   public:
@@ -39,6 +40,11 @@ class WayMatrix final {
 
   private:
     friend struct WorldDataContract;
+    friend struct WayHeightsContract;
+    struct BuildStats {
+      size_t points = 0, hits = 0, misses = 0;
+      double keyMs = 0, adjustMs = 0, indexMs = 0, laddersMs = 0, totalMs = 0, writeMs = 0;
+      } stats;
     struct WayEdge {
       size_t a = 0;
       size_t b = 0;
@@ -71,7 +77,7 @@ class WayMatrix final {
     mutable uint16_t                      pathGen=0;
     mutable std::vector<const WayPoint*>  stk[2];
 
-    void                   adjustWaypoints(std::vector<WayPoint> &wp);
+    void                   adjustWaypoints(std::vector<WayPoint>& wp, WayHeights& heights);
     void                   calculateLadderPoints();
 
     const FpIndex&         findFpIndex(std::string_view name) const;

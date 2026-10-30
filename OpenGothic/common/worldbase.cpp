@@ -1,6 +1,6 @@
 #include "worldbase.h"
 
-#include "worldchunks.h"
+#include "worldchunksruntime.h"
 #include "world/voblayer.h"
 #include "loadprobe.h"
 
@@ -15,7 +15,8 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
                             std::string_view name, const std::filesystem::path& dir,
                             const std::filesystem::path& overrideDir,
                             const std::vector<std::pair<std::string,uintmax_t>>& baseArchives,
-                            const std::map<std::string,std::filesystem::path>* ownMeshes) {
+                            const std::map<std::string,std::filesystem::path>* ownMeshes,
+                            ChunkTable* chunks) {
   WorldBaseResult result;
   const auto started = std::chrono::steady_clock::now();
   try {
@@ -69,8 +70,9 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
     VobLayer::apply(data,dir,overrideDir,ownMeshes);
     if(LoadProbe::enabled())
       LoadProbe::mark("voblayer",LoadProbe::msSince(probeT));
+    ChunkTable chunkTable;
     probeT = LoadProbe::now();
-    auto mesh = readWorldChunks(dir,overrideDir);
+    auto mesh = readWorldChunks(dir,overrideDir,chunks==nullptr ? nullptr : &chunkTable);
     if(LoadProbe::enabled())
       LoadProbe::mark("mesh_chunks_read",LoadProbe::msSince(probeT),
                       "chunks="+std::to_string(manifest.chunks.size())+" tris="+std::to_string(mesh.polygons.material_indices.size()));
@@ -80,6 +82,8 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
     result.chunks = manifest.chunks.size();
     worldMesh = std::move(mesh);
     world = std::move(data);
+    if(chunks!=nullptr)
+      *chunks=std::move(chunkTable);
     result.replaced = true;
     }
   catch(const std::exception& error) {
