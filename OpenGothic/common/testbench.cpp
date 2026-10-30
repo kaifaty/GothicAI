@@ -645,6 +645,9 @@ struct Bench {
     uint64_t published = 0, released = 0;
     };
   std::vector<StreamingSample> streamingSamples;
+  std::vector<double> streamingWarmupFarMs;
+  size_t streamingWarmupFarMaxPerFrame = 0;
+  double streamingWarmupQueueMaxMs = 0;
   uint64_t streamingNearBefore = 0, streamingFarBefore = 0;
   uint64_t streamingPublishedBefore = 0, streamingReleasedBefore = 0;
   std::vector<Vec3> routePoints;
@@ -16424,7 +16427,18 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
         return;
         }
       bench.waitStreaming=false;
-      event("streaming_ready","\"world\":"+jsonStr(w.name())+",\"pass\":true");
+      std::string publications="[";
+      for(size_t i=0;i<bench.streamingWarmupFarMs.size();++i) {
+        if(i!=0)publications+=',';
+        publications+=std::to_string(bench.streamingWarmupFarMs[i]);
+        }
+      publications+=']';
+      event("streaming_ready","\"world\":"+jsonStr(w.name())+",\"pass\":true,\"far_publication_ms\":"+publications+
+        ",\"far_max_per_frame\":"+std::to_string(bench.streamingWarmupFarMaxPerFrame)+
+        ",\"queue_max_ms\":"+std::to_string(bench.streamingWarmupQueueMaxMs));
+      bench.streamingWarmupFarMs.clear();
+      bench.streamingWarmupFarMaxPerFrame=0;
+      bench.streamingWarmupQueueMaxMs=0;
       }
     if(bench.waitRagdollNpc!=nullptr) {
       const auto* npc=bench.waitRagdollNpc;
@@ -18300,10 +18314,18 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   }
 
 void TestBench::sampleStreaming(const World& world) {
-  if(scenarioPath==nullptr || bench.done || !bench.perfSegment.starts_with("streaming-flythrough/"))return;
+  if(scenarioPath==nullptr || bench.done)return;
+  const bool measuring=bench.perfSegment.starts_with("streaming-flythrough/");
+  if(!measuring && std::filesystem::path(scenarioPath).filename()!="streaming-flythrough.bench")return;
   const auto* residency=world.chunkResidency();
   if(residency==nullptr) {arenaAbort("streaming perf sample requires the residency manager");return;}
   const auto& stats=residency->stats();
+  if(!measuring) {
+    bench.streamingWarmupFarMs.insert(bench.streamingWarmupFarMs.end(),stats.farPublicationTimesMs.begin(),stats.farPublicationTimesMs.end());
+    bench.streamingWarmupFarMaxPerFrame=std::max(bench.streamingWarmupFarMaxPerFrame,stats.farPublicationTimesMs.size());
+    bench.streamingWarmupQueueMaxMs=std::max(bench.streamingWarmupQueueMaxMs,stats.workMs);
+    return;
+    }
   bench.streamingSamples.push_back({bench.perfSegment,bench.perfFrame,stats.updateMs,stats.workMs,
     stats.near,stats.far,stats.outside,stats.transitionsNear-bench.streamingNearBefore,
     stats.transitionsFar-bench.streamingFarBefore,stats.publicationTimesMs,

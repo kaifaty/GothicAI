@@ -37,7 +37,11 @@ publication times (semicolon-separated in a frame), counts and
 Near/Far transitions. `report.md` / `report.json` report each pass's frame p50/p99/max,
 Near/Far transitions (entering or leaving that state), peak Near count, update/work p99,
 publication p99/max (one sample per chunk), published/released counts and GPU allocation
-at the end of each pass. Local execution requires `OPENGOTHIC_ENABLE_FRAME_PROFILE=ON` as
+at the end of each pass. An empty route publication sample is `n/a`, not zero. A separate
+warmup table measures Far publications before each pass: count, per-chunk p99/max,
+maximum publications in one frame and maximum queue time. These samples begin before
+the ten-second wait and end at `streaming_ready`; they do not enter route frame or
+publication/release counts. Local execution requires `OPENGOTHIC_ENABLE_FRAME_PROFILE=ON` as
 well as `OPENGOTHIC_ENABLE_APP_CADENCE=ON`; an unsupported build exits before opening a game.
 The run fails if either route does not finish or either pass lacks metrics. Use the same
 host, resolution and content overrides for later comparisons; `OPENGOTHIC_STREAMING=0`

@@ -27,8 +27,8 @@ class ChunkResidency {
       uint64_t peakNear = 0;
       double   updateMs = 0;
       double   workMs = 0;
-      double   publicationMs = 0;
       std::vector<double> publicationTimesMs;
+      std::vector<double> farPublicationTimesMs;
       uint64_t published = 0;
       uint64_t released = 0;
       size_t   pending = 0;
@@ -60,7 +60,7 @@ class ChunkResidency {
     uint64_t subscribe(Listener listener);
     void unsubscribe(uint64_t subscription);
     void enqueue(Work work);
-    void recordPublication(double ms);
+    void recordPublication(double ms, bool far);
     void recordRelease() { ++counters.released; }
     void setPending(size_t count) { counters.pending=count; }
 

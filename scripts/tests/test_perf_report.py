@@ -172,14 +172,19 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                           "update_ms": .001 * (frame + 1), "work_ms": .0001,
                           "near": 20 + frame, "far": 300, "outside": 3,
                           "near_transitions": frame, "far_transitions": frame + 1,
-                          "publication_ms": ("", ".25;.5", ".75")[frame],
-                          "published": (0, 2, 1)[frame], "released": int(frame == 2)}
+                          "publication_ms": ("", ".25;.5", ".75")[frame] if name == "run" else "",
+                          "published": (0, 2, 1)[frame] if name == "run" else 0, "released": int(frame == 2)}
                          for name in ("run", "fly") for frame in range(3))
     (streaming / "events.jsonl").write_text("\n".join(
         json.dumps(event) for event in [
+            {"kind": "streaming_ready", "far_publication_ms": [9], "far_max_per_frame": 1, "queue_max_ms": 10},
+            {"kind": "streaming_ready", "far_publication_ms": [.3, .6], "far_max_per_frame": 1, "queue_max_ms": .8},
+            {"kind": "perf_segment", "segment": "streaming-flythrough/run"},
             {"kind": "route_end", "speed_cm_s": 500, "pass": True},
-            {"kind": "route_end", "speed_cm_s": 2000, "pass": True},
             {"kind": "streaming_end", "segment": "streaming-flythrough/run", "gpu_mb": 320.5},
+            {"kind": "streaming_ready", "far_publication_ms": [], "far_max_per_frame": 0, "queue_max_ms": .001},
+            {"kind": "perf_segment", "segment": "streaming-flythrough/fly"},
+            {"kind": "route_end", "speed_cm_s": 2000, "pass": True},
             {"kind": "streaming_end", "segment": "streaming-flythrough/fly", "gpu_mb": 330.5}]))
     data = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]
     assert data["run"]["frame_ms"]["p50"] == 10
@@ -194,6 +199,16 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert data["run"]["streaming"]["published"] == 3
     assert data["run"]["streaming"]["released"] == 1
     assert data["fly"]["streaming"]["gpu_end_mb"] == 330.5
+    assert data["fly"]["streaming"]["publication_ms"] is None
+    assert data["fly"]["streaming"]["published"] == 0
+    warmup = data["run"]["streaming"]
+    assert warmup["warmup_far_count"] == 2
+    assert warmup["warmup_far_publication_ms"]["p99"] == pytest.approx(.597)
+    assert warmup["warmup_far_publication_ms"]["max"] == .6
+    assert warmup["warmup_far_max_per_frame"] == 1
+    assert warmup["warmup_queue_max_ms"] == .8
+    assert data["fly"]["streaming"]["warmup_far_count"] == 0
+    assert data["fly"]["streaming"]["warmup_far_publication_ms"] is None
     assert report.main(["run", str(streaming)]) == 0
 
 

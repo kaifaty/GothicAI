@@ -132,7 +132,7 @@ struct WorldView::LandscapeStreaming {
     const auto t=ChunkResidency::Clock::now();
     chunks[i].gpu=std::make_unique<Landscape>(view.visuals,packed);
     const auto ms=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
-    residency.recordPublication(ms);
+    residency.recordPublication(ms,residency.desired(i)==ChunkResidency::State::Far);
     if(firstUpdate)
       initialUploadMs+=ms;
     }

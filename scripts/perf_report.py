@@ -198,11 +198,24 @@ def read_streaming(directory):
     completed = [event for event in events if event.get("kind") == "route_end" and event.get("pass")]
     if sorted(event.get("speed_cm_s") for event in completed) != [500, 2000]:
         raise ValueError(f"{directory}: both route passes must reach their endpoints")
+    warmup = None
     for event in events:
-        if event.get("kind") != "streaming_end":
+        if event.get("kind") == "streaming_ready":
+            warmup = event
             continue
         parts = segment_parts(event.get("segment", ""))
-        if parts and parts[0] == "streaming-flythrough":
+        if not parts or parts[0] != "streaming-flythrough":
+            continue
+        if event.get("kind") == "perf_segment" and warmup is not None and "far_publication_ms" in warmup:
+            publications = warmup.get("far_publication_ms", [])
+            maximum = warmup.get("far_max_per_frame", 0)
+            queue_ms = warmup.get("queue_max_ms", 0)
+            if not all(math.isfinite(value) and value >= 0 for value in [*publications, maximum, queue_ms]):
+                raise ValueError(f"{directory}: invalid warmup publication metric")
+            grouped[parts[1]][0].update(warmup_far_publication_ms=publications,
+                                      warmup_far_max_per_frame=maximum, warmup_queue_max_ms=queue_ms)
+            warmup = None
+        elif event.get("kind") == "streaming_end":
             gpu_mb = event["gpu_mb"]
             if not math.isfinite(gpu_mb) or gpu_mb < 0:
                 raise ValueError(f"{directory}: invalid GPU allocation metric")
@@ -211,6 +224,8 @@ def read_streaming(directory):
 
 
 def streaming_stats(rows):
+    publications = [value for row in rows for value in row["publication_ms"]]
+    warmup = [value for row in rows for value in row.get("warmup_far_publication_ms", [])]
     return {
         "updates": len(rows),
         "near_transitions": int(sum(row["near_transitions"] for row in rows)),
@@ -219,7 +234,13 @@ def streaming_stats(rows):
         "update_ms": describe([row["update_ms"] for row in rows]),
         "work_ms": describe([row["work_ms"] for row in rows]),
         # Each timing is one chunk, including synchronous Near publications.
-        "publication_ms": describe([value for row in rows for value in row["publication_ms"]] or [0]),
+        "publication_ms": describe(publications) if publications else None,
+        "warmup_far_publication_ms": describe(warmup) if warmup else None,
+        "warmup_far_count": len(warmup) if any("warmup_far_publication_ms" in row for row in rows) else None,
+        "warmup_far_max_per_frame": max((row["warmup_far_max_per_frame"] for row in rows
+                                         if "warmup_far_max_per_frame" in row), default=None),
+        "warmup_queue_max_ms": max((row["warmup_queue_max_ms"] for row in rows
+                                    if "warmup_queue_max_ms" in row), default=None),
         "published": int(sum(row.get("published", 0) for row in rows)),
         "released": int(sum(row.get("released", 0) for row in rows)),
         "gpu_end_mb": next((row["gpu_mb"] for row in reversed(rows) if "gpu_mb" in row), None),
@@ -302,10 +323,19 @@ def summary_table(report):
                       "|---|---:|---:|---:|---:|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():
             data = stats["streaming"]
+            publication = data["publication_ms"] or {"p99": None, "max": None}
             lines.append(f"| {view} | {data['near_transitions']} | {data['far_transitions']} | {data['peak_near']} | "
                          f"{data['update_ms']['p99']:.6f} | {data['work_ms']['p99']:.6f} / {data['work_ms']['max']:.6f} | "
-                         f"{data['publication_ms']['p99']:.6f} / {data['publication_ms']['max']:.6f} | "
+                         f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
                          f"{data['published']} / {data['released']} | {number(data['gpu_end_mb'], 1)} |")
+        lines.extend(["", "| Warmup before pass | Far published | Publish p99 / max ms | Max Far per frame | Queue max ms |",
+                      "|---|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            data = stats["streaming"]
+            publication = data["warmup_far_publication_ms"] or {"p99": None, "max": None}
+            lines.append(f"| {view} | {number(data['warmup_far_count'], 0)} | "
+                         f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
+                         f"{number(data['warmup_far_max_per_frame'], 0)} | {number(data['warmup_queue_max_ms'], 6)} |")
     return "\n".join(lines)
 
 
