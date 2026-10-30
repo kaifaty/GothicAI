@@ -52,4 +52,4 @@
 
 ## Сборка
 
-Плитки — [`life-tiles.json`](../../../../scripts/content/mesh3d/blender/life-tiles.json): лоза и рыбья кожа — `image_gen` этого ассета, остальное — плитки набора рынка. Атлас на модель запекает `bake_atlas.py` на Ryzen; упаковка — [`life_set.py`](../../../../scripts/content/mesh3d/life_set.py) в набор `life-N`; затем `building_set.py compose harbour-life-N lightfix-2 rigging-26 life-N` и слой — `harbour_life.py layer`.
+Плитки — [`life-tiles.json`](../../../../scripts/content/mesh3d/blender/life-tiles.json): лоза и рыбья кожа — `image_gen` этого ассета, остальное — плитки набора рынка. Атлас на модель запекает `bake_atlas.py` на Ryzen; упаковка — [`life_set.py`](../../../../scripts/content/mesh3d/life_set.py) в набор `life-N` (итог — `life-4`); затем `building_set.py compose harbour-life-N lightfix-2 rigging-26 life-N` и слой — `harbour_life.py layer`.

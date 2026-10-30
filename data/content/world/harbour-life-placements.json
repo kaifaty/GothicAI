@@ -279,14 +279,13 @@
    "sink": 2
   },
   {
-   "key": "life-east-laundry-1",
+   "key": "life-east-bucket-1",
    "zone": "east",
-   "visual": "OWN_HARBOUR_LAUNDRY_01",
-   "x": 4300,
-   "z": -6450,
-   "yaw": -3,
-   "sink": 4,
-   "wall": 150
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": 4010,
+   "z": -6030,
+   "yaw": 25,
+   "sink": 1
   }
  ]
 }

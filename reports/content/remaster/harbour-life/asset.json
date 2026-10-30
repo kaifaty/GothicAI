@@ -246,8 +246,56 @@
       "date": "2026-10-30"
     }
   },
-  "reviews": [],
+  "reviews": [
+    {
+      "id": "r3-fishers",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-crane",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-werft",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-poor-yard",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-alley",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-poor-east",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    }
+  ],
   "gates": [],
   "build": null,
-  "backup": null
+  "backup": {
+    "date": "2026-10-30",
+    "host": "dev-ubuntu",
+    "matched": 28,
+    "mismatched": []
+  }
 }

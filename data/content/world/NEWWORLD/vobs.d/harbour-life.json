@@ -366,15 +366,15 @@
    "collision": "mesh"
   },
   {
-   "key": "life-east-laundry-1",
+   "key": "life-east-bucket-1",
    "kind": "mesh",
-   "visual": "OWN_HARBOUR_LAUNDRY_01",
+   "visual": "OWN_HARBOUR_BUCKET_01",
    "position": [
-    4201.4,
-    -120.1,
-    -6549.2
+    4010.0,
+    -112.7,
+    -6030.0
    ],
-   "yaw_deg": 46.6,
+   "yaw_deg": 25.0,
    "collision": "mesh"
   }
  ]
