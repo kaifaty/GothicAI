@@ -29,8 +29,8 @@ from scipy import ndimage
 
 TILE_M = 0.5
 CELLS = 12
-CORD_M = 0.015
-KNOT_M = 0.024
+CORD_M = 0.011
+KNOT_M = 0.019
 FINE = dict(cells=17, cord_m=0.009, knot_m=0.015, jitter=0.22)     # the dense net hung on the rack: 3 cm meshes
 NET_TARGET = np.array([0.090, 0.073, 0.044])     # linear RGB of the original net's opaque texels
 ROLL_CORE = np.array([0.012, 0.010, 0.007])
@@ -149,7 +149,7 @@ def main() -> int:
         alpha = (mask >= 0.5).astype(np.float32)
         # fibre noise along the cords, a little lighter on the tops, darker in the twist grooves
         fibre = ndimage.gaussian_filter(rng.normal(0, 1, height.shape), 1.2, mode='wrap')
-        tone = (0.62 + 0.38 * twist) * (0.7 + 0.3 * height) * (1 + 0.12 * fibre)
+        tone = (0.4 + 0.6 * twist) * (0.3 + 0.7 * height ** 0.8) * (1 + 0.12 * fibre)   # crisp strands, dark edges
         tone *= ndimage.zoom(rng.uniform(0.85, 1.15, (6, 6)), args.size / 6, order=1, mode='grid-wrap')
         colour = tone[..., None] * np.array([1.0, 0.86, 0.6])[None, None]
         opaque = alpha > 0.5
