@@ -62,6 +62,8 @@ SCEN="$(cd "$(dirname "$SCEN")" && pwd)/$(basename "$SCEN")"
 NAME="$(basename "$SCEN" .bench)"
 if [[ "$NAME" == routine-return ]]; then
   export WORLD="${WORLD:-NEWWORLD.ZEN}"
+  export TIMEOUT="${TIMEOUT:-3600}"
+  export RYZEN_MAX="${RYZEN_MAX:-75m}"
   [[ "$WORLD" == NEWWORLD.ZEN ]] || { echo "bench: routine-return requires WORLD=NEWWORLD.ZEN" >&2; exit 2; }
 fi
 NEEDS_CADENCE=0

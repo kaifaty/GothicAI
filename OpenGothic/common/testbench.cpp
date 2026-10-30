@@ -11091,7 +11091,7 @@ bool prepareCharacterRideSupport(World& world,Npc& player,bool kinematic,bool ro
   }
 
 // This fixture changes only preparation. After the native stand-up is queued,
-// every sample and completion check is passive: no path, state or movement command.
+// NPC samples and completion checks are passive: no path, state or movement command.
 void routineReturnBegin(World& world,Npc& player) {
   world.setDayTime(12,0);
   auto& c=bench.routineCases[bench.routineIndex];
@@ -11106,6 +11106,10 @@ void routineReturnBegin(World& world,Npc& player) {
      !nearest || (c.start-nearest->pos).length()<1000 || (c.start-nearest->pos).length()>2000) {
     arenaAbort("routine-return requires a live human with a daily routine and a 10-20m off-waynet start");return;
     }
+  const auto* skeleton=npc->visualSkeleton();
+  if(!skeleton || skeleton->findNode("BIP01 L FOOT")==size_t(-1) || skeleton->findNode("BIP01 R FOOT")==size_t(-1)) {
+    arenaAbort("routine-return human has no native foot bones");return;
+    }
   npc->setInteraction(nullptr,true);npc->clearAiQueue();npc->clearState(false);
   npc->clearGoTo();npc->stopWalking();npc->closeWeapon(true);npc->setAnim(Npc::Anim::Idle);npc->setExternalControl(true);
   npc->setPosition(c.start);npc->updateTransform();
@@ -11113,10 +11117,20 @@ void routineReturnBegin(World& world,Npc& player) {
   auto direction=target->pos-c.start;direction.y=0;
   if(direction.length()<1)direction={1,0,0};
   direction/=direction.length();
-  auto hero=(target->pos+c.start)*.5f+Vec3(-direction.z,0,direction.x)*4200.f;
-  const auto floor=world.physic()->landRay(hero+Vec3(0,1000,0),5000);
-  if(!floor.hasCol) {arenaAbort("routine-return hero parking has no floor");return;}
-  hero.y=floor.v.y;player.closeWeapon(true);player.setPosition(hero);player.updateTransform();
+  const auto wanted=(target->pos+c.start)*.5f+Vec3(-direction.z,0,direction.x)*4200.f;
+  const auto span=target->pos-c.start;
+  const auto* parking=world.findWayPoint(wanted,[&](const WayPoint& wp) {
+    if(!wp.isConnected() || wp.underWater)return false;
+    const float along=std::clamp(Vec3::dotProduct(wp.pos-c.start,span)/span.quadLength(),0.f,1.f);
+    if((wp.pos-(c.start+span*along)).length()<4000)return false;
+    const auto floor=world.physic()->landRay(wp.pos+Vec3(0,100,0),500);
+    return floor.hasCol && floor.n.y>=.7f && !world.physic()->waterRay(floor.v,15).hasCol;
+    });
+  if(!parking) {arenaAbort("routine-return hero parking has no dry waypoint");return;}
+  const auto hero=world.physic()->landRay(parking->pos+Vec3(0,100,0),500).v;
+  player.closeWeapon(true);player.setPosition(hero);player.updateTransform();
+  // The hero is not the measured actor: keep him from sliding off a remote slope.
+  bench.pinned=&player;bench.pinAt=hero;
   bench.routineNpc=npc;bench.routinePhase=1;bench.routineSince=world.tickCount();
   bench.routineUp=bench.routineFrame=0;bench.routineTravel=bench.routineMaxStep=0;
   bench.routineJumps=bench.routineClamps=0;bench.routineBelow=false;bench.routineMinHero=(npc->position()-hero).length();
@@ -11160,7 +11174,8 @@ void routineReturnResult(World& world,Npc& player,bool arrived,bool preparation=
   const auto* ta=npc.currentTaPoint();
   const auto* visible=world.findWayPoint(npc.position(),[&](const WayPoint& wp) {return npc.canRayHitPoint(wp.pos);});
   const auto path=ta?world.wayTo(npc,*ta):WayPath();
-  const bool pass=preparation && arrived && !bench.routineJumps && !bench.routineBelow && bench.routineMinHero>3000;
+  preparation=preparation && bench.routineMinHero>3000;
+  const bool pass=preparation && arrived && !bench.routineJumps && !bench.routineBelow;
   event("routine_return_result","\"case\":"+jsonStr(c.label)+",\"attempt\":"+std::to_string(bench.routineRetry?2:1)+
     ",\"pass\":"+(pass?"true":"false")+",\"preparation_valid\":"+(preparation?"true":"false")+
     ",\"arrived\":"+(arrived?"true":"false")+",\"elapsed_ms\":"+std::to_string(bench.routineUp?world.tickCount()-bench.routineUp:0)+
@@ -11222,9 +11237,17 @@ void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl) {
   bench.routineReturns=returns;bench.routinePrevious=position;
   bench.routineMinHero=std::min(bench.routineMinHero,(position-player.position()).length());
   const auto floor=world.physic()->landRay(position+Vec3(0,100,0),20000);
-  if(!floor.hasCol || (bench.routinePhase==4 && position.y<floor.v.y-5.f))bench.routineBelow=true;
+  // MOB alignment can legitimately put the actor origin below the visible feet.
+  const auto left=npc->mapBone("BIP01 L FOOT"),right=npc->mapBone("BIP01 R FOOT");
+  const auto leftFloor=world.physic()->landRay(left+Vec3(0,100,0),20000);
+  const auto rightFloor=world.physic()->landRay(right+Vec3(0,100,0),20000);
+  const bool belowLeft=!leftFloor.hasCol || left.y<leftFloor.v.y-5.f;
+  const bool belowRight=!rightFloor.hasCol || right.y<rightFloor.v.y-5.f;
+  if(bench.routinePhase==4 && belowLeft && belowRight)bench.routineBelow=true;
   const auto state=npc->bodyObservationState();
   const auto* ta=npc->currentTaPoint();const auto goal=npc->navigationGoal();const auto* go=npc->currentGoToPoint();
+  auto* mob=npc->interactive();
+  const bool workingMob=mob && !mob->isLadder() && !mob->isTrueDoor(*npc) && mob->isAttached(*npc) && mob->isStaticState();
   size_t ignored=0;const Vec3 bounds[2]={};std::string blocker;
   const auto hit=world.physic()->rayClothCamera(position+Vec3(0,100,0),
     (go?go->pos:ta->pos)+Vec3(0,100,0),"",bounds,ignored,&blocker);
@@ -11232,7 +11255,7 @@ void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl) {
     ",\"from_cm\":"+ragdollVector(npc->ragdollQuestReturnFrom())+",\"to_cm\":"+ragdollVector(position)+
     ",\"hazards\":"+std::to_string(npc->ragdollQuestReturnState().hazards));
   event("routine_return_frame","\"case\":"+jsonStr(c.label)+",\"attempt\":"+std::to_string(bench.routineRetry?2:1)+
-    ",\"frame\":"+std::to_string(bench.routineFrame++)+",\"tick_ms\":"+std::to_string(now)+",\"phase\":"+std::to_string(bench.routinePhase)+
+    ",\"sample_index\":"+std::to_string(bench.routineFrame++)+",\"tick_ms\":"+std::to_string(now)+",\"phase\":"+std::to_string(bench.routinePhase)+
     ",\"position_cm\":"+ragdollVector(position)+",\"step_cm\":"+ragdollNumber(step)+",\"guard\":"+(guard?"true":"false")+
     ",\"guard_from_cm\":"+ragdollVector(npc->ragdollQuestReturnFrom())+",\"floor_y_cm\":"+(floor.hasCol?ragdollNumber(floor.v.y):"null")+
     ",\"state\":"+jsonStr(stateName(world,*npc))+",\"started\":"+(npc->isStateStarted()?"true":"false")+
@@ -11242,6 +11265,11 @@ void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl) {
     ",\"go_to\":"+jsonStr(go?go->name:"")+",\"goal\":"+jsonStr(goal.name)+",\"goal_cm\":"+ragdollVector(goal.position)+
     ",\"target_distance_cm\":"+(ta?ragdollNumber((position-ta->pos).length()):"null")+
     ",\"blocked\":"+(hit.hasCol?"true":"false")+",\"blocker\":"+jsonStr(blocker)+",\"hit_cm\":"+ragdollVector(hit.v)+
+    ",\"go_to_passable\":"+(go?(npc->testMove(go->pos)?"true":"false"):"null")+
+    ",\"left_foot_cm\":"+ragdollVector(left)+",\"right_foot_cm\":"+ragdollVector(right)+
+    ",\"left_floor_y_cm\":"+(leftFloor.hasCol?ragdollNumber(leftFloor.v.y):"null")+
+    ",\"right_floor_y_cm\":"+(rightFloor.hasCol?ragdollNumber(rightFloor.v.y):"null")+
+    ",\"working_mob\":"+(workingMob?"true":"false")+",\"mob\":"+jsonStr(mob?mob->schemeName():"")+
     ",\"external\":"+(npc->isExternalControl()?"true":"false")+",\"in_air\":"+(npc->isInAir()?"true":"false")+
     ",\"hero_distance_cm\":"+ragdollNumber((position-player.position()).length())+
     ",\"target\":"+jsonStr(ta?ta->name:"")+",\"down\":"+(npc->isDown()?"true":"false")+
@@ -11268,7 +11296,7 @@ void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl) {
   if(bench.routinePhase==4) {
     const auto* activity=npc->currentWayPoint();
     const bool atRoutine=npc->isStateStarted() && npc->isInRoutine(npc->currentState()) && !goal.active &&
-      activity && (position-activity->pos).length()<=300 && (npc->interactive() || activity->isFreePoint());
+      (workingMob || (activity && activity->isFreePoint() && (position-activity->pos).length()<=300));
     const bool arrived=now-bench.routineUp<=90000 && !npc->isDown() && ((ta && (position-ta->pos).length()<=300 && npc->isStanding()) || atRoutine);
     if(arrived || now-bench.routineUp>=90000)routineReturnResult(world,player,arrived);
     }
