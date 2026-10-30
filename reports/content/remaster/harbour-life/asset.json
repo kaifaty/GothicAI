@@ -330,6 +330,20 @@
       "mode": "blind",
       "verdict": "pending",
       "date": "2026-10-30"
+    },
+    {
+      "id": "r5-alley",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r5-poor-east",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
     }
   ],
   "gates": [],

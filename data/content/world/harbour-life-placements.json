@@ -133,8 +133,8 @@
    "key": "life-alley-trash-2",
    "zone": "alley",
    "visual": "OC_BARREL_V1_DESTROYED",
-   "x": 860,
-   "z": -6430,
+   "x": 1130,
+   "z": -6480,
    "wall": 12,
    "yaw": 70,
    "sink": 3
@@ -146,8 +146,12 @@
    "x": 1650,
    "z": -6050,
    "wall": 3,
-   "yaw": 14,
-   "sink": 2
+   "yaw": 54,
+   "sink": 2,
+   "tilt": [
+    0,
+    5
+   ]
   },
   {
    "key": "life-alley-trash-4",
@@ -169,16 +173,6 @@
    "sink": 1
   },
   {
-   "key": "life-alley-wood-2",
-   "zone": "alley",
-   "visual": "OC_FIREWOOD_V2",
-   "x": 1820,
-   "z": -6075,
-   "wall": 10,
-   "yaw": -22,
-   "sink": 2
-  },
-  {
    "key": "life-alley-laundry-1",
    "zone": "alley",
    "visual": "OWN_HARBOUR_LAUNDRY_01",
@@ -195,16 +189,6 @@
    "x": 4300,
    "z": -5780,
    "yaw": 30,
-   "sink": 2
-  },
-  {
-   "key": "life-east-wood-2",
-   "zone": "east",
-   "visual": "OC_FIREWOOD_V2",
-   "x": 4120,
-   "z": -6350,
-   "wall": 3,
-   "yaw": -6,
    "sink": 2
   },
   {
