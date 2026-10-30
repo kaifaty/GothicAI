@@ -289,7 +289,8 @@ async def test_complete_path_retries_records_toast_and_journal_then_rolls_back()
     ("UNKNOWN", True, None),
     ("TOWER", False, None),
 ])
-async def test_chronicler_brief_describes_victims_and_places(waypoint, with_places, where):
+async def test_chronicler_brief_describes_victims_and_places(waypoint, with_places, where, caplog):
+    caplog.set_level("INFO", logger="gothic_ai.feats")
     places = PlaceBook({
         "points": {"TOWER": 0},
         "places": [{
@@ -309,6 +310,7 @@ async def test_chronicler_brief_describes_victims_and_places(waypoint, with_plac
         chronicle.record(death)
         await settled(chronicler)
         [(_, messages, _)] = llm.calls
+        assert messages[0].content in caplog.text
         lines = messages[0].content.splitlines()
         occasion, *window = [
             json.loads(line[line.index("{"):])
@@ -456,11 +458,15 @@ async def test_budget_discards_without_a_model_call(history):
 
 @pytest.mark.parametrize("answer", [proposal(title="Кошель!"), proposal(verdict="none")])
 async def test_rejected_or_declined_occasion_does_not_record_a_feat(answer):
-    async with world(answer) as (_, chronicle, chronicler, llm, _):
-        chronicle.record(crime())
+    async with world(answer) as (_, chronicle, chronicler, llm, journal):
+        seq = chronicle.record(crime())
         await settled(chronicler)
         assert len(llm.calls) == (1 if answer["verdict"] == "none" else 2)
         assert chronicle.facts("feat") == []
+        assert [{key: value for key, value in entry.items() if key != "t"}
+                for entry in journal if entry["kind"] == "feat_declined"] == ([{
+            "kind": "feat_declined", "trigger": seq, "reason": answer["reason"],
+        }] if answer["verdict"] == "none" else [])
 
 
 async def test_model_error_loses_the_occasion(caplog):

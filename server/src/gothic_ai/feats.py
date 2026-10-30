@@ -479,6 +479,7 @@ class Feats:
             "Прежние достижения этой ветки (название; строка; номер повода):",
             *[f"{f['title']}; {f['text']}; #{f['trigger']}" for f in previous],
         ])
+        log.info("feats: brief for occasion #%s:\n%s", occasion.seq, brief)
         raw, errors = None, None
         for _ in range(2):
             raw = await self.model.propose(brief, previous=raw, errors=errors)
@@ -493,6 +494,7 @@ class Feats:
                 continue
             if proposal.verdict == "none":
                 log.info("feats: chronicler declined #%s: %s", occasion.seq, proposal.reason)
+                self.journal.add("feat_declined", trigger=occasion.seq, reason=proposal.reason)
                 return
             feat = {
                 "fact": "feat", "id": uuid.uuid4().hex[:12],
