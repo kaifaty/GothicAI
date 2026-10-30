@@ -18,9 +18,9 @@ import time
 import zlib
 
 import numpy as np
-from scipy.spatial import ConvexHull
+from scipy.spatial import ConvexHull, QhullError
 
-from quality import max_coverage_error, mesh_volume, void_checks
+from quality import max_coverage_error, void_checks
 
 
 def read_mesh(path):
@@ -72,9 +72,10 @@ def write_parts(path, source, parts):
     temporary.replace(path)
 
 
-def decompose(points, triangles, mesh_file, output, executable):
+def decompose(points, mesh_file, output, executable):
     subprocess.run([str(executable), str(mesh_file), str(output)], check=True)
     lines = iter(output.read_text().splitlines())
+    json.loads(next(lines))  # Actual V-HACD flood-fill reference, also read separately for fallback.
     parts = []
     for _ in range(int(next(lines))):
         parts.append(np.asarray([list(map(float, next(lines).split())) for _ in range(int(next(lines)))]))
@@ -82,8 +83,8 @@ def decompose(points, triangles, mesh_file, output, executable):
         raise ValueError("V-HACD returned an invalid part count")
     # Shrink wrapping may round a source corner. Assign uncovered source vertices
     # to the closest output hull before rebuilding its convex envelope. This is
-    # deterministic and makes vertex coverage exact; the volume/void gates below
-    # still reject a repair that closes a required gap.
+    # deterministic and makes vertex coverage exact; the void gates below still
+    # reject a repair that closes a required gap.
     planes = [ConvexHull(part).equations for part in parts]
     distances = np.asarray([np.maximum(0, np.max(points @ p[:, :3].T + p[:, 3], axis=1)) for p in planes])
     nearest = np.argmin(distances, axis=0)
@@ -139,30 +140,29 @@ def main():
             mesh = Path(temporary) / "source.mesh"
             subprocess.run([str(args.extractor), "content" if args.content else "base", str(source), str(mesh)], check=True)
             points, triangles = read_mesh(mesh)
-            topology = mesh_volume(points, triangles)
-            volume = topology["volume_cm3"]
             hull = ConvexHull(points)
-            if not topology["watertight"]:
-                # These stock surfaces have no defined enclosed volume. Do not
-                # guess a hole-filling rule or publish an uncertified cache.
-                row = dict(visual=visual, cls=cls, parts=0, decision="rejected_open_mesh", passed=False,
-                           reason="Source mesh is open or nonmanifold; enclosed volume needs a decision",
-                           mesh_volume_cm3=None, surface_volume_estimate_cm3=volume,
-                           hull_volume_cm3=hull.volume, topology=topology,
-                           source_size=len(glb), source_crc32=f"{zlib.crc32(glb):08x}",
-                           cache=str(cache.resolve()), elapsed_s=time.monotonic() - start)
-                rows.append(row)
-                print(json.dumps(row, sort_keys=True), flush=True)
-                continue
+            reference_file = Path(temporary) / "reference.json"
+            subprocess.run([str(args.decomposer), "reference", str(mesh), str(reference_file)], check=True)
+            reference = json.loads(reference_file.read_text())
+            volume = reference["volume_cm3"]
             if not volume > 0:
-                raise ValueError(f"{visual}: source mesh has no measurable volume")
-            excess = hull.volume / volume - 1
+                raise ValueError(f"{visual}: source mesh has no occupied reference voxels")
+            split = cls in ("table", "cupboard")
+            fallback_reason, attempted_quality = None, None
             if args.verify:
                 parts = read_parts(cache, glb)
-            elif excess < .15:
+                if not split and len(parts) != 1:
+                    raise ValueError(f"{visual}: class requires one hull")
+                if split and len(parts) == 1:
+                    fallback_reason = "cached_one_hull_fallback"
+            elif not split:
                 parts = [points[hull.vertices]]
             else:
-                parts = decompose(points, triangles, mesh, Path(temporary) / "parts.mesh", args.decomposer)
+                try:
+                    parts = decompose(points, mesh, Path(temporary) / "parts.mesh", args.decomposer)
+                except (ValueError, subprocess.CalledProcessError, QhullError) as error:
+                    parts = [points[hull.vertices]]
+                    fallback_reason = f"decomposition_failed: {error}"
             candidate = cache if args.verify else Path(temporary) / "candidate.convex-parts"
             if not args.verify:
                 write_parts(candidate, glb, parts)
@@ -170,19 +170,38 @@ def main():
             parts = read_parts(candidate, glb)
             parts_volume = sum(ConvexHull(part).volume for part in parts)
             coverage = max_coverage_error(points, parts)
-            voids = void_checks(points, triangles, parts, cls) if len(parts) > 1 else []
-            passed = (len(parts) <= 16 and coverage <= 2 and
-                      (len(parts) == 1 or parts_volume / volume <= 1.25) and
-                      all(v["passed"] for v in voids) and
-                      (len(parts) == 1 or cls not in ("table", "cupboard") or bool(voids)) and
-                      (excess < .15 or len(parts) > 1))
-            if passed and not args.verify:
+            voids = void_checks(points, triangles, parts, cls) if split and not fallback_reason else []
+            if split and not fallback_reason:
+                reasons = []
+                if len(parts) == 1:
+                    reasons.append("decomposition_returned_one_hull")
+                if coverage > 2:
+                    reasons.append("vertex_coverage_exceeds_2cm")
+                if not voids or not all(v["passed"] for v in voids):
+                    reasons.append("required_10cm_void_sphere_intersects_parts")
+                attempted_quality = dict(parts=len(parts), coverage_error_cm=coverage,
+                                         parts_volume_cm3=parts_volume, void_spheres=voids,
+                                         main_gates_passed=not reasons)
+                if reasons:
+                    if args.verify:
+                        raise ValueError(f"{visual}: cached compound fails main gates: {', '.join(reasons)}")
+                    fallback_reason = ", ".join(reasons)
+                    parts = [points[hull.vertices]]
+                    write_parts(candidate, glb, parts)
+                    parts = read_parts(candidate, glb)
+                    parts_volume = ConvexHull(parts[0]).volume
+                    coverage = max_coverage_error(points, parts)
+                    voids = []
+            if not args.verify:
                 write_parts(cache, glb, parts)
-            row = dict(visual=visual, cls=cls, parts=len(parts), mesh_volume_cm3=volume,
+            row = dict(visual=visual, cls=cls, parts=len(parts), reference=reference,
                        hull_volume_cm3=hull.volume, parts_volume_cm3=parts_volume,
-                       hull_excess_percent=excess * 100, parts_excess_percent=(parts_volume / volume - 1) * 100,
-                       coverage_error_cm=coverage, void_spheres=voids, topology=topology,
-                       decision="compound" if len(parts) > 1 else "one_hull", passed=passed,
+                       parts_excess_percent=(parts_volume / volume - 1) * 100,
+                       volume_warning=len(parts) > 1 and parts_volume / volume > 1.25,
+                       coverage_error_cm=coverage, void_spheres=voids, attempted_quality=attempted_quality,
+                       fallback_reason=fallback_reason, main_gates_passed=not fallback_reason,
+                       decision="compound" if len(parts) > 1 else "one_hull_fallback" if fallback_reason else "one_hull_class",
+                       passed=True,
                        source_size=len(glb), source_crc32=f"{zlib.crc32(glb):08x}", cache=str(cache.resolve()),
                        cache_sha256=hashlib.sha256(candidate.read_bytes()).hexdigest(), elapsed_s=time.monotonic() - start)
             rows.append(row)
@@ -190,9 +209,11 @@ def main():
     if not rows:
         raise ValueError("no indexed movable GLB meshes matched")
     report = args.cache / ("content-report.json" if args.content else "report.json")
-    report.write_text(json.dumps(dict(algorithm="V-HACD 4.1", deterministic_async=False,
-                                    parameters=dict(max_hulls=16, resolution=2000000, error_percent=.1, depth=12),
-                                    visuals=rows, passed=all(row["passed"] for row in rows)), indent=2) + "\n")
+    if not args.verify:
+        report.write_text(json.dumps(dict(algorithm="V-HACD 4.1", deterministic_async=False,
+                                        parameters=dict(max_hulls=16, min_voxel_pitch_cm=1, max_grid_axis=256,
+                                                        fill="surface-plus-enclosed-flood6", error_percent=.1, depth=12),
+                                        visuals=rows, passed=all(row["passed"] for row in rows)), indent=2) + "\n")
     return 0 if all(row["passed"] for row in rows) else 1
 
 

@@ -1,78 +1,8 @@
 """Numeric collision-cache checks in source-visual centimetres."""
 from __future__ import annotations
 
-from collections import defaultdict, deque
-
 import numpy as np
 from scipy.spatial import ConvexHull
-
-
-def mesh_volume(vertices, triangles):
-    """Sum oriented component volumes; keep open/nonmanifold diagnostics visible.
-
-    The signed volume of an open surface is not a proof of enclosed volume. It
-    is still reported, together with the boundary count, instead of silently
-    replacing the source with its convex hull or filling its missing faces.
-    """
-    vertices = np.asarray(vertices, dtype=np.float64)
-    triangles = np.asarray(triangles, dtype=np.int64)
-    welded, indices = np.unique(np.round(vertices, 7), axis=0, return_inverse=True)
-    faces = indices[triangles]
-    points = welded[faces]
-    areas = np.linalg.norm(np.cross(points[:, 1] - points[:, 0],
-                                    points[:, 2] - points[:, 0]), axis=1)
-    faces = faces[areas > 1e-9]
-    edges = defaultdict(list)
-    for index, face in enumerate(faces):
-        for a, b in zip(face, np.roll(face, -1)):
-            edges[(min(a, b), max(a, b))].append((index, 1 if a < b else -1))
-    adjacent = defaultdict(list)
-    for entries in edges.values():
-        # A nonmanifold junction does not provide a unique surface orientation.
-        # Its pairwise constraints still expose inconsistencies in diagnostics.
-        first, first_sign = entries[0]
-        for other, other_sign in entries[1:]:
-            relation = -first_sign * other_sign
-            adjacent[first].append((other, relation))
-            adjacent[other].append((first, relation))
-    signs = np.zeros(len(faces), dtype=np.int8)
-    components, conflicts, volume = 0, 0, 0.0
-    for start in range(len(faces)):
-        if signs[start]:
-            continue
-        components += 1
-        queue = deque([start])
-        signs[start] = 1
-        component = []
-        while queue:
-            index = queue.popleft()
-            component.append(index)
-            for other, relation in adjacent[index]:
-                expected = signs[index] * relation
-                if signs[other] == 0:
-                    signs[other] = expected
-                    queue.append(other)
-                elif signs[other] != expected:
-                    conflicts += 1
-        component = np.asarray(component)
-        surface = welded[faces[component]]
-        origin = surface.mean(axis=(0, 1))
-        relative = surface - origin
-        signed = np.einsum("ij,ij->i", relative[:, 0],
-                           np.cross(relative[:, 1], relative[:, 2])) / 6.0
-        volume += abs(float(np.dot(signed, signs[component])))
-    boundary = sum(len(entries) == 1 for entries in edges.values())
-    nonmanifold = sum(len(entries) > 2 for entries in edges.values())
-    return {
-        "volume_cm3": volume,
-        "watertight": boundary == 0 and nonmanifold == 0 and conflicts == 0,
-        "boundary_edges": boundary,
-        "nonmanifold_edges": nonmanifold,
-        "winding_conflicts": conflicts // 2,
-        "components": components,
-        "degenerate_triangles": int(len(triangles) - len(faces)),
-        "volume_method": "oriented-component-surfaces",
-    }
 
 
 def _triangle_distances(point, triangles):
@@ -211,23 +141,88 @@ def void_checks(vertices, triangles, parts, cls):
             boards[-1]["triangles"].extend(level["triangles"])
     result = []
     gaps = 0
+    closed_candidates = 0
+    gap_footprints = []
     for index, (shelf, above) in enumerate(zip(boards, boards[1:])):
         gaps += 1
         shelf_points = surface[shelf["triangles"]].reshape(-1, 3)
-        center = (shelf_points.min(axis=0) + shelf_points.max(axis=0)) * .5
+        footprint_lower, footprint_upper = shelf_points.min(axis=0), shelf_points.max(axis=0)
+        center = (footprint_lower + footprint_upper) * .5
         center[1] = (shelf["top"] + above["bottom"]) * .5
-        directions = [direction for direction in ((1., 0., 0.), (-1., 0., 0.), (0., 0., 1.), (0., 0., -1.))
-                      if not _ray_hits(center, np.asarray(direction), surface)]
-        if directions:
-            result.append(check(center, f"open-shelf-{index + 1}", shelf_y_cm=float(shelf["top"]),
-                                gap_cm=float(above["bottom"] - shelf["top"]),
-                                source_open_directions=[list(direction) for direction in directions]))
+        # The supporting board can extend beyond the cabinet body. Classify
+        # its outer ledges independently of the requested sphere radius.
+        edge_a = surface.reshape(-1, 3)
+        edge_b = np.roll(surface, -1, axis=1).reshape(-1, 3)
+        dy = edge_b[:, 1] - edge_a[:, 1]
+        crossing = (np.abs(dy) > 1e-9) & ((edge_a[:, 1] - center[1]) * (edge_b[:, 1] - center[1]) <= 0)
+        t = (center[1] - edge_a[crossing, 1]) / dy[crossing]
+        section = edge_a[crossing] + t[:, None] * (edge_b[crossing] - edge_a[crossing])
+        coplanar = (np.abs(edge_a[:, 1] - center[1]) <= 1e-7) & (np.abs(edge_b[:, 1] - center[1]) <= 1e-7)
+        section = np.concatenate((section, edge_a[coplanar], edge_b[coplanar]))
+        section = np.unique(np.round(section[:, [0, 2]], 7), axis=0)
+        if len(section) < 3 or np.linalg.matrix_rank(section - section.mean(axis=0)) < 2:
+            result.append(check(center, f"shelf-{index + 1}-detector-no-cross-section", detector_error=True, passed=False))
+            continue
+        section_hull = ConvexHull(section)
+        axes = []
+        for axis, count in ((0, 9), (2, 5)):
+            if footprint_upper[axis] - footprint_lower[axis] >= 20:
+                axes.append(np.linspace(footprint_lower[axis] + 10, footprint_upper[axis] - 10, count))
+            else:
+                axes.append([center[axis]])
+        candidates = list(dict.fromkeys((round(float(x), 9), round(float(z), 9)) for x in axes[0] for z in axes[1]))
+        center_xz = (round(float(center[0]), 9), round(float(center[2]), 9))
+        if center_xz not in candidates:
+            candidates.append(center_xz)
+        source_open = []
+        supported = 0
+        exterior = 0
+        boundary = 0
+        for x, z in candidates:
+            point = np.asarray((x, center[1], z))
+            if not _ray_hits(point, np.asarray((0., -1., 0.)), surface[shelf["triangles"]]):
+                continue
+            if np.max(section_hull.equations[:, :2] @ (x, z) + section_hull.equations[:, 2]) >= -1e-5:
+                exterior += 1
+                continue
+            source_clearance = float(np.min(_triangle_distances(point, surface)))
+            if source_clearance <= 1e-5:
+                boundary += 1
+                continue
+            supported += 1
+            directions = [direction for direction in ((1., 0., 0.), (-1., 0., 0.), (0., 0., 1.), (0., 0., -1.))
+                          if not _ray_hits(point, np.asarray(direction), surface)]
+            if directions:
+                source_open.append((source_clearance, point, directions))
+        gap_footprints.append({"shelf_y_cm": float(shelf["top"]), "source_footprint_area_cm2": float(section_hull.volume),
+                               "source_interior_candidates": supported, "source_exterior_candidates": exterior,
+                               "source_boundary_candidates": boundary})
+        if source_open:
+            # Choose from source geometry alone; output hulls never influence
+            # the selected cavity or turn a closed opening into a better probe.
+            source_clearance, point, directions = max(source_open, key=lambda candidate: candidate[0])
+            entry = check(point, f"open-shelf-{index + 1}", shelf_y_cm=float(shelf["top"]),
+                          gap_cm=float(above["bottom"] - shelf["top"]),
+                          source_clearance_cm=source_clearance, source_candidates_checked=supported,
+                          source_footprint_area_cm2=float(section_hull.volume), source_exterior_candidates=exterior,
+                          source_boundary_candidates=boundary,
+                          source_open_candidates=len(source_open),
+                          source_open_directions=[list(direction) for direction in directions])
+            entry["passed"] = entry["passed"] and source_clearance >= 10 - 1e-5
+            result.append(entry)
+        elif supported:
+            closed_candidates += supported
+        else:
+            result.append(check(center, f"shelf-{index + 1}-detector-no-support", detector_error=True,
+                                source_candidates_checked=0, passed=False))
     if not result:
         if gaps:
-            # Every detected gap is blocked in all four horizontal directions
-            # by the source surfaces, so the open-shelf condition is inapplicable.
+            # Every supported source candidate in every detected gap is blocked
+            # in all four horizontal directions: no open shelf was detected.
             result.append({"label": "closed-cupboard", "applicable": False,
-                           "source_gaps_checked": gaps, "passed": True})
+                           "source_gaps_checked": gaps, "source_candidates_checked": closed_candidates,
+                           "source_gap_footprints": gap_footprints,
+                           "passed": True})
         else:
             result.append(check((lower + upper) * .5, "shelf-detector-no-gaps", detector_error=True, passed=False))
     return result

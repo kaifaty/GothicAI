@@ -205,6 +205,14 @@ namespace {
     near(oldHull.position().y,10040.f,.001f,"compound save must also load with the flag disabled");
     near(oldHull.mass(),mass,0.f,"save shape selection must retain exact hull-derived mass");
     require(off.movableVobSnapshot()[0].collisionParts==1,"save must not force serialized collision geometry");
+    DynamicWorld barrelWorld(nullptr,asset::WorldMesh{});
+    auto barrel=barrelWorld.addMovableVob(table,visual,origin,.04f,true,"barrel",true,zenId);
+    require(!barrel.isEmpty() && barrelWorld.movableVobSnapshot()[0].collisionParts==1,
+            "non-furniture classes must retain one hull even with a multi-part sidecar");
+    barrelWorld.setFurniturePartsEnabled(false);
+    barrelWorld.setFurniturePartsEnabled(true);
+    require(barrelWorld.movableVobSnapshot()[0].collisionParts==1,
+            "furniture-parts toggle must leave non-furniture classes on one hull");
     std::printf("toggle/save: schema1=passed schema2=passed mass_kg=%.6f\n",double(mass));
     }
   }

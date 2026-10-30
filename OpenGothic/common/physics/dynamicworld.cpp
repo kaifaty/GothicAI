@@ -1327,7 +1327,7 @@ void DynamicWorld::prepareMovableVobShape(BodyData& obj) {
     }
   if(shape.hull!=nullptr)
     obj.movableMass = float(shape.hull->GetVolume()*volumeScale(obj.origin)*materialDensity(shape.material)*obj.massMultiplier);
-  if(obj.className!="fence" && movableVobs->furniturePartsEnabled && !shape.convexPartsAttempted) {
+  if((obj.className=="table" || obj.className=="cupboard") && movableVobs->furniturePartsEnabled && !shape.convexPartsAttempted) {
     shape.convexPartsAttempted = true;
     shape.convexParts = ConvexParts::load(obj.visual);
     }
@@ -1360,7 +1360,8 @@ void DynamicWorld::rebuildMovableVob(BodyData& obj) {
       // only owns destruction identity and the mass used by its future pieces.
       obj.body=world->addCollisionBody(shape.hull,obj.origin,shape.friction,C_MovableVob,false,true);
     else {
-      const bool compound = movableVobs->furniturePartsEnabled && shape.convexParts!=nullptr && shape.convexParts->partCount>1;
+      const bool compound = (obj.className=="table" || obj.className=="cupboard") && movableVobs->furniturePartsEnabled &&
+                            shape.convexParts!=nullptr && shape.convexParts->partCount>1;
       const auto& collision = compound ? shape.convexParts->shape : shape.hull;
       obj.body = world->addDynamicBody(collision,obj.origin,shape.friction,obj.movableMass,C_MovableVob,true);
       if(compound)
@@ -1437,7 +1438,7 @@ void DynamicWorld::setFurniturePartsEnabled(bool enabled) {
     return;
   movableVobs->furniturePartsEnabled = enabled;
   for(auto* obj:movableVobs->bodies) {
-    if(obj->className=="fence" || obj->pose->broken || obj->body==nullptr)
+    if((obj->className!="table" && obj->className!="cupboard") || obj->pose->broken || obj->body==nullptr)
       continue;
     prepareMovableVobShape(*obj);
     const auto& shape = *obj->movableShape;
@@ -1986,7 +1987,7 @@ std::vector<DynamicWorld::MovableVobSnapshot> DynamicWorld::movableVobSnapshot()
     entry.disposition = obj->disposition;
     entry.legacyCollision = obj->legacyCollision;
     entry.enabled = obj->body!=nullptr;
-    entry.collisionParts = movableVobs->furniturePartsEnabled && obj->className!="fence" &&
+    entry.collisionParts = movableVobs->furniturePartsEnabled && (obj->className=="table" || obj->className=="cupboard") &&
       obj->movableShape->convexParts!=nullptr ? obj->movableShape->convexParts->partCount : 1;
     entry.mass = obj->movableMass;
     entry.hullVolume = obj->movableShape->hull!=nullptr ?
