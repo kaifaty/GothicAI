@@ -37,6 +37,7 @@ struct WorldView::LandscapeStreaming {
   std::condition_variable wake;
   std::deque<std::pair<size_t,uint64_t>> jobs;
   size_t readyCount=0;
+  bool packing=false;
   size_t releasedSourceBytes=0;
   bool stopping=false;
   bool firstUpdate=true;
@@ -146,6 +147,7 @@ struct WorldView::LandscapeStreaming {
       jobs.pop_front();
       if(chunks[i].generation!=generation || chunks[i].failed)
         continue;
+      packing=true;
       }
       std::unique_ptr<PackedMesh> packed;
       std::exception_ptr error;
@@ -162,6 +164,9 @@ struct WorldView::LandscapeStreaming {
         chunks[i].failed=bool(error);
         readyCount+=chunks[i].ready!=nullptr;
         }
+      else
+        packed.reset();
+      packing=false;
       }
     }
 
@@ -174,6 +179,16 @@ struct WorldView::LandscapeStreaming {
       wake.notify_one();
       }
     return packed;
+    }
+
+  bool ready() {
+    std::lock_guard guard(mutex);
+    if(packing || readyCount!=0 || !jobs.empty() || !residency.idle())
+      return false;
+    for(size_t i=0;i<chunks.size();++i)
+      if(residency.desired(i)!=ChunkResidency::State::Outside && !chunks[i].gpu)
+        return false;
+    return true;
     }
 
   void reportFailure(size_t i, std::exception_ptr error) {
@@ -311,7 +326,7 @@ void WorldView::finishLandscapeUpdate() {
   }
 
 bool WorldView::landscapeReady() const {
-  return !streaming || streaming->residency.stats().pending==0;
+  return !streaming || streaming->ready();
   }
 
 const LightSource& WorldView::mainLight() const {

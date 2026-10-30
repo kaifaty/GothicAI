@@ -60,6 +60,7 @@ class ChunkResidency {
     bool actualLoaded(size_t index) const { return index<chunks.entries.size(); }
     const ChunkTable& table() const { return chunks; }
     const Stats& stats() const { return counters; }
+    bool idle() const { return work.empty(); }
 
     uint64_t subscribe(Listener listener);
     void unsubscribe(uint64_t subscription);

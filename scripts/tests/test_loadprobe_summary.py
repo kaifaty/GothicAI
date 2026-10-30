@@ -20,12 +20,14 @@ def test_session_and_world_change_csv(tmp_path):
         ("vobs", 1000, 200, 170, 30, 5, 12, 500, "items=23"),
         ("scripts_startup", 4900, 321.6, 220, 50, 12, 22, 1100, "npcs=10"),
         ("session_end", 5100, -1, 210, 50, 12, 22, 1100, ""),
-        ("change_begin", 8000, -1, 210, 50, 12, 22, 1100, "to=OLDWORLD.ZEN"),
-        ("world_begin", 8100, -1, 200, 50, 12, 22, 1100, "world=OLDWORLD.ZEN"),
-        ("vobs", 8500, 90.4, 250, 70, 14, 24, 1400, "items=7"),
-        ("scripts_startup", 9800, 42.3, 230, 75, 15, 25, 1600, "npcs=4"),
-        ("change_end", 10000, -1, 225, 75, 15, 25, 1600, ""),
-        ("world_begin", 11000, -1, 225, 75, 15, 25, 1600, "world=ADDONWORLD.ZEN"),
+        ("stream_warm", 5500, -1, 235, 60, 12, 22, 1100, ""),
+        ("stream_warm_5s", 10500, -1, 230, 58, 12, 22, 1100, ""),
+        ("change_begin", 13000, -1, 210, 50, 12, 22, 1100, "to=OLDWORLD.ZEN"),
+        ("world_begin", 13100, -1, 200, 50, 12, 22, 1100, "world=OLDWORLD.ZEN"),
+        ("vobs", 13500, 90.4, 250, 70, 14, 24, 1400, "items=7"),
+        ("scripts_startup", 14800, 42.3, 230, 75, 15, 25, 1600, "npcs=4"),
+        ("change_end", 15000, -1, 225, 75, 15, 25, 1600, ""),
+        ("world_begin", 16000, -1, 225, 75, 15, 25, 1600, "world=ADDONWORLD.ZEN"),
     ):
         log += (f"[loadprobe] stage={stage} stage_ms={duration} t_ms={elapsed} rss_mb={footprint} "
                 f"footprint_mb={footprint} gpu_mb={gpu} tex_n={count} tex_mb={mb} tex_ms={texture_ms} {extra}\n")
@@ -33,7 +35,7 @@ def test_session_and_world_change_csv(tmp_path):
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
     reader = csv.DictReader(io.StringIO(output))
     rows = list(reader)
-    assert len(reader.fieldnames) == 37
+    assert len(reader.fieldnames) == 43
     assert len(rows) == 2
     assert [(row["seg"], row["world"], row["total_s"]) for row in rows] == [
         ("0", "NEWWORLD", "5.0"), ("1", "OLDWORLD", "2.0")]
@@ -45,3 +47,12 @@ def test_session_and_world_change_csv(tmp_path):
     assert (rows[0]["d_data"], rows[0]["d_vobs"], rows[0]["d_gpu_vobs"], rows[0]["d_startup"]) == (
         "30", "40", "20", "50")
     assert (rows[1]["d_vobs"], rows[1]["d_startup"], rows[1]["d_gpu_startup"]) == ("50", "-20", "5")
+    assert (rows[0]["warm_after_end_s"], rows[0]["fp_warm"], rows[0]["gpu_warm"],
+            rows[0]["warm_5s_after_warm_s"], rows[0]["fp_warm_5s"], rows[0]["gpu_warm_5s"]) == (
+        "0.4", "235", "60", "5.0", "230", "58")
+    assert all(rows[1][key] == "" for key in (
+        "warm_after_end_s", "fp_warm", "gpu_warm", "warm_5s_after_warm_s", "fp_warm_5s", "gpu_warm_5s"))
+
+    (run / "game.log").write_text(log.split("[loadprobe] stage=change_begin")[0])
+    output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
+    assert list(csv.DictReader(io.StringIO(output))) == [rows[0]]

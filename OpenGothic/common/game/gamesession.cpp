@@ -138,8 +138,11 @@ GameSession::GameSession(std::string file) {
   Gothic::inst().setLoadingProgress(96);
   ticks = 1;
   // wrld->setDayTime(8,0);
-  if(LoadProbe::enabled())
+  if(LoadProbe::enabled()) {
     LoadProbe::mark("session_end");
+    if(wrld->chunkResidency()==nullptr)
+      LoadProbe::mark("stream_warm");
+    }
   if(auto& fn = Gothic::inst().sessionStartFn)
     fn(nullptr);
   }

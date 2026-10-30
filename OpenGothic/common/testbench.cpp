@@ -604,6 +604,7 @@ struct Bench {
   uint64_t    step      = 0;    // fixed steps made
 
   uint64_t    waitUntil = 0;
+  std::chrono::steady_clock::time_point realWaitUntil;
   bool        waitArrive = false;
   uint64_t    arriveEnd = 0;
 
@@ -13588,7 +13589,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     bench.waitUntil=bench.time+1;
     }
   else if(c=="wait") {
-    bench.waitUntil = bench.time + uint64_t(num(a,1,1000));
+    if(a.size()>1 && a[1]=="real")
+      bench.realWaitUntil=std::chrono::steady_clock::now()+std::chrono::milliseconds(uint64_t(num(a,2,1000)));
+    else
+      bench.waitUntil = bench.time + uint64_t(num(a,1,1000));
     }
   else if(c=="waitarrive") {
     bench.waitArrive = true;
@@ -16155,7 +16159,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     event("caption","\"text\":" + jsonStr(rest(line)=="off" ? "" : rest(line)));
     }
   else if(c=="mark") {
-    event("mark","\"text\":" + jsonStr(rest(line)));
+    const auto text=rest(line);
+    event("mark","\"text\":" + jsonStr(text));
+    if(LoadProbe::enabled() && ((text=="stream_warm" && w.chunkResidency()!=nullptr) || text=="stream_warm_5s"))
+      LoadProbe::mark(text);
     }
   else if(c=="ai") {
     std::string reply;
@@ -16411,7 +16418,8 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       return;
     }
   while(bench.pc<bench.prog.size() || bench.speaking || bench.waitReply || !bench.waitAiKey.empty() || !bench.bodyLiveWait.empty() ||
-        bench.downNpc!=nullptr || bench.waitRagdollNpc!=nullptr || bench.duelWaiting || bench.waitStreaming) {
+        bench.downNpc!=nullptr || bench.waitRagdollNpc!=nullptr || bench.duelWaiting || bench.waitStreaming ||
+        std::chrono::steady_clock::now()<bench.realWaitUntil) {
     if(bench.speaking) {
       if(bench.time<bench.speakUntil)
         return;
@@ -16497,7 +16505,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     if(bench.pc>=bench.prog.size())
       break;
-    if(bench.time<bench.waitUntil || bench.volleyLeft>0)
+    if(bench.time<bench.waitUntil || std::chrono::steady_clock::now()<bench.realWaitUntil || bench.volleyLeft>0)
       return;
     if(bench.waitArrive) {
       if(!pl.isAiQueueEmpty() && bench.time<bench.arriveEnd)
@@ -16519,7 +16527,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
     if(bench.cadenceWait) return;
 #endif
     }
-  if(bench.time>=bench.waitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.waitStreaming && bench.bodyLiveWait.empty())
+  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.waitStreaming && bench.bodyLiveWait.empty())
     finish();
   }
 
@@ -17529,6 +17537,7 @@ void TestBench::endWait(std::string_view reason) {
   if(scenarioPath==nullptr || bench.done)
     return;
   bench.waitUntil = bench.time;
+  bench.realWaitUntil={};
   say("wait ended: " + std::string(reason));
   }
 

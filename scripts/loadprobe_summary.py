@@ -7,6 +7,7 @@ import sys
 
 
 HEADER = "run,seg,world,total_s,vm,data,chunks,pack,view,physics,cloth,vobs,movable,waynet_idx,dialogs_player,startup,store_old,restore,tex_n,tex_mb,tex_s,fp_end,fp_peak,gpu_end,npcs,items,d_data,d_chunks,d_pack,d_view,d_gpu_view,d_phys,d_vobs,d_gpu_vobs,d_worldend,d_startup,d_gpu_startup".split(",")
+HEADER.extend(("warm_after_end_s", "fp_warm", "gpu_warm", "warm_5s_after_warm_s", "fp_warm_5s", "gpu_warm_5s"))
 
 
 def parse(path):
@@ -28,11 +29,17 @@ def parse(path):
 
 def segments(rows):
     current = []
+    complete = False
     for row in rows:
-        current.append(row)
-        if row["stage"] in ("session_end", "change_end"):
+        if complete and row["stage"] not in ("stream_warm", "stream_warm_5s"):
             yield current
             current = []
+            complete = False
+        current.append(row)
+        if row["stage"] in ("session_end", "change_end"):
+            complete = True
+    if complete:
+        yield current
 
 
 def get(segment, stage, key="stage_ms"):
@@ -51,7 +58,9 @@ def summary_rows(out):
     for run in sorted(Path(out).glob("runs/*/game.log")):
         for index, segment in enumerate(segments(parse(run))):
             worlds = [row["world"] for row in segment if row["stage"] == "world_begin"]
-            end, begin = segment[-1], segment[0]
+            end = next(row for row in reversed(segment) if row["stage"] in ("session_end", "change_end"))
+            begin = segment[0]
+            loaded = segment[:segment.index(end) + 1]
             values = [run.parent.name, index, (worlds[0] if worlds else "?").replace(".ZEN", ""),
                       round((end["t_ms"] - begin["t_ms"]) / 1000, 2)]
             for stage in ("scripts_vm", "world_data_read", "mesh_chunks_read", "landscape_pack", "landscape_view",
@@ -63,7 +72,7 @@ def summary_rows(out):
             values.extend((int(end["tex_n"] - (begin["tex_n"] if index else 0)),
                            round(end["tex_mb"] - (begin["tex_mb"] if index else 0)),
                            round((end["tex_ms"] - (begin["tex_ms"] if index else 0)) / 1000, 2),
-                           round(end["footprint_mb"]), round(max(row["footprint_mb"] for row in segment)),
+                           round(end["footprint_mb"]), round(max(row["footprint_mb"] for row in loaded)),
                            round(end["gpu_mb"]), int(get(segment, "scripts_startup", "npcs")),
                            int(get(segment, "vobs", "items"))))
             values.extend(round(delta(segment, stage, key)) for stage, key in (
@@ -71,6 +80,17 @@ def summary_rows(out):
                 ("landscape_pack", "footprint_mb"), ("landscape_view", "footprint_mb"), ("landscape_view", "gpu_mb"),
                 ("physics_static", "footprint_mb"), ("vobs", "footprint_mb"), ("vobs", "gpu_mb"),
                 ("world_end", "footprint_mb"), ("scripts_startup", "footprint_mb"), ("scripts_startup", "gpu_mb")))
+            previous = end
+            for stage in ("stream_warm", "stream_warm_5s"):
+                marks = [row for row in segment if row["stage"] == stage]
+                if not marks:
+                    values.extend(("", "", ""))
+                    previous = None
+                    continue
+                mark = marks[-1]
+                values.extend((round((mark["t_ms"] - previous["t_ms"]) / 1000, 2) if previous else "",
+                               round(mark["footprint_mb"]), round(mark["gpu_mb"])))
+                previous = mark
             yield values
 
 
