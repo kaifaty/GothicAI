@@ -6,15 +6,18 @@ from types import SimpleNamespace
 
 import pytest
 
+from gothic_ai import challenges as challenges_module
 from gothic_ai.challenges import CLOSED, KINDS, Challenges, line_people
 from gothic_ai.chronicle import Chronicle
+from gothic_ai.game import GameError
 from gothic_ai.memory import MemoryStore
 from gothic_ai.questbook import Goal, Quest, Stage, Talk
+from gothic_ai.social import Social, _chance
 from tests.fake_game import FakeGame, connected
 
 
 @asynccontextmanager
-async def world(kind):
+async def world(kind, *, social=None, people=("GIVER", "FRIEND")):
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
         chronicle = Chronicle(link, MemoryStore(":memory:"))
@@ -28,13 +31,18 @@ async def world(kind):
             return SimpleNamespace(state=state)
 
         book = SimpleNamespace(chronicle=chronicle, progress=progress)
-        observer = Challenges(chronicle, book)
-        line = chronicle.record({"fact": "line", "quests": ["Q1", "Q2"]})
+
+        async def acquaintances():
+            return social if social is not None else Social([])
+
+        observer = Challenges(chronicle, book, social=acquaintances if social is not None else None)
+        line = chronicle.record({"fact": "line", "giver": "GIVER", "quests": ["Q1", "Q2"]})
         challenge = chronicle.record({
             "fact": "challenge", "kind": kind, "line": line,
-            "quests": ["Q1", "Q2"], "people": ["GIVER", "FRIEND"],
+            "quests": ["Q1", "Q2"], "people": list(people),
             "chapter": 1, "day": 1, "hour": 8, "minute": 0,
         })
+        await asyncio.sleep(0)
         try:
             yield fake, chronicle, observer, book, challenge, line
         finally:
@@ -178,3 +186,119 @@ async def test_loading_completed_branch_does_not_repeat_and_old_branch_can_still
         await asyncio.sleep(0)
         assert not chronicle.facts("challenge_met")
         assert chronicle.facts("challenge_failed")[0]["evidence"] == [death]
+
+
+async def test_hint_share_is_deterministic_for_the_challenge_sequence():
+    runs = []
+    for _ in range(2):
+        async with world("no_blood", social=Social([])) as (_, chronicle, observer, _, first, _):
+            challenge = chronicle.facts("challenge")[0]
+            seqs = [first, *(chronicle.record(challenge) for _ in range(99))]
+            await asyncio.sleep(0)
+            hinted = {f["challenge"] for f in chronicle.facts("challenge_hint")}
+            assert hinted == {seq for seq in seqs if _chance("challenge_hint", str(seq)) < 0.5}
+            assert 35 <= len(hinted) <= 65
+            before = chronicle.facts("challenge_hint")
+            for seq in seqs:
+                observer._on_entry(seq, challenge)
+            observer._check()
+            await asyncio.sleep(0)
+            assert chronicle.facts("challenge_hint") == before
+            runs.append((seqs, hinted))
+    assert runs[0] == runs[1]
+
+
+@pytest.mark.parametrize(("people", "acquaintances", "expected"), [
+    (["ZED", "PLAYER", "GIVER", "ANN", "BEA"], ["ZED", "BEA"], "BEA"),
+    (["ZED", "PLAYER", "GIVER", "ANN"], [], "ANN"),
+    (["GIVER", "PLAYER"], [], None),
+    ([], [], None),
+])
+async def test_hint_source_and_branch_reload(monkeypatch, people, acquaintances, expected):
+    monkeypatch.setattr(challenges_module, "_chance", lambda *parts: 0.0)
+    social = Social([{"npc": npc, "name": f"Name {npc}"} for npc in ["GIVER", "ANN", "BEA", "ZED"]])
+    # An empty Tie is not an acquaintance; Social.tie also creates ties for unrelated people.
+    social.tie("GIVER", "ANN")
+    for npc in acquaintances:
+        social.tie("GIVER", npc).bonds.append("neighbors")
+    async with world("no_blood", social=social, people=people) as (
+        fake, chronicle, observer, _, seq, _,
+    ):
+        hints = chronicle.facts("challenge_hint")
+        if expected is None:
+            assert hints == []
+        else:
+            assert len(hints) == 1
+            assert hints[0] == {
+                "fact": "challenge_hint", "id": hints[0]["id"], "challenge": seq, "kind": "no_blood",
+                "npc": "GIVER", "name": "Name GIVER", "witnesses": [expected],
+                "witness_names": {expected: f"Name {expected}"},
+                "chapter": 1, "day": 1, "hour": 8, "minute": 0,
+            }
+            assert hints[0]["id"]
+        head = chronicle.memory.head("A")
+        await fake.send(type="session", branch="loaded", parent="A", parent_seq=head, reason="load")
+        await chronicle.link.story_state()
+        observer._on_entry(seq, chronicle.facts("challenge")[0])
+        observer._check()
+        await asyncio.sleep(0)
+        assert chronicle.facts("challenge_hint") == hints
+
+
+async def test_hint_waits_for_social_refresh_and_is_cancelled_by_loading(monkeypatch):
+    monkeypatch.setattr(challenges_module, "_chance", lambda *parts: 0.0)
+    social = Social([{"npc": npc, "name": f"Name {npc}"} for npc in ["GIVER", "ANN", "ZED"]])
+    social.tie("GIVER", "ZED").bonds.append("neighbors")
+    async with world("no_blood", people=[]) as (fake, chronicle, observer, _, _, line):
+        ready = asyncio.Event()
+
+        async def refresh():
+            await ready.wait()
+            return social
+
+        observer.social = refresh
+        challenge = {**chronicle.facts("challenge")[0], "people": ["GIVER", "ANN", "ZED"]}
+        seq = chronicle.record(challenge)
+        await asyncio.sleep(0)
+        assert not chronicle.facts("challenge_hint")
+        ready.set()
+        await asyncio.sleep(0)
+        assert chronicle.facts("challenge_hint")[0]["witnesses"] == ["ZED"]
+        assert chronicle.facts("challenge_hint")[0]["challenge"] == seq
+        ready.clear()
+        chronicle.record(challenge)
+        await asyncio.sleep(0)
+        await fake.send(type="session", branch="before", parent="A", parent_seq=line, reason="load")
+        await chronicle.link.story_state()
+        ready.set()
+        await asyncio.sleep(0)
+        assert not chronicle.facts("challenge_hint")
+
+
+@pytest.mark.parametrize("error", [GameError, TimeoutError])
+async def test_hint_survives_social_failure_with_an_alphabetical_source(monkeypatch, caplog, error):
+    monkeypatch.setattr(challenges_module, "_chance", lambda *parts: 0.0)
+    async with world("no_blood") as (_, chronicle, observer, _, _, _):
+        async def unavailable():
+            raise error("social unavailable")
+
+        observer.social = unavailable
+        with caplog.at_level("INFO", logger="gothic_ai.challenges"):
+            seq = chronicle.record({
+                **chronicle.facts("challenge")[0], "people": ["ZED", "PLAYER", "GIVER", "ANN"],
+            })
+            await asyncio.sleep(0)
+        [hint] = chronicle.facts("challenge_hint")
+        assert hint["challenge"] == seq and hint["witnesses"] == ["ANN"]
+        assert hint["witness_names"] == {"ANN": "ANN"}
+        assert "social unavailable" in caplog.text
+
+
+async def test_challenges_without_social_write_no_hints_but_still_finish(monkeypatch):
+    monkeypatch.setattr(challenges_module, "_chance", lambda *parts: 0.0)
+    async with world("no_blood") as (_, chronicle, observer, _, seq, _):
+        assert observer.social is None
+        finish(chronicle)
+        await asyncio.sleep(0)
+        assert not chronicle.facts("challenge_hint")
+        assert chronicle.facts("challenge_met")[0]["challenge"] == seq

@@ -1293,8 +1293,6 @@ async def serve(args: argparse.Namespace) -> int:
                 journal=journal,
             )
             state.director.book = state.book
-            if not args.no_feats and not args.no_feat_challenges:
-                state.feat_challenges = Challenges(state.chronicle, state.book)
             state.author = Author(
                 link,
                 graph,
@@ -1358,6 +1356,11 @@ async def serve(args: argparse.Namespace) -> int:
             bonds=state.cast.bonds if state.cast else dict,
             crimes=state.crimes,
         )
+        if state.book is not None and not args.no_feats and not args.no_feat_challenges:
+            state.feat_challenges = Challenges(
+                state.chronicle, state.book,
+                social=state.rumors.prepare_social if state.rumors is not None else None,
+            )
         if state.cast is not None:
             state.cast.on_change.append(state.rumors.people_changed)
         directing.append(asyncio.create_task(state.rumors.run()))
