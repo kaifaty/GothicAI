@@ -1,6 +1,6 @@
 #include "worldbase.h"
 
-#include "worldchunks.h"
+#include "worldchunksruntime.h"
 #include "world/voblayer.h"
 #include "loadprobe.h"
 

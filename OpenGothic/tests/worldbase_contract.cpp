@@ -9,7 +9,7 @@
 #include "physics/worldcloth.h"
 #include "resources.h"
 #include "worldbase.h"
-#include "worldchunks.h"
+#include "worldchunksruntime.h"
 #include "worlddata.h"
 #include "world/chunkresidency.h"
 #include "world/portalrooms.h"

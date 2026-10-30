@@ -48,6 +48,8 @@ file(GLOB_RECURSE BASE_FORMAT_INPUTS CONFIGURE_DEPENDS RELATIVE "${BASE_ROOT}"
   "${BASE_ROOT}/lib/dmusic/src/*" "${BASE_ROOT}/lib/dmusic/include/*"
   "${BASE_ROOT}/lib/Tempest/Engine/io/*" "${BASE_ROOT}/lib/Tempest/Engine/utility/*" "${BASE_ROOT}/lib/Tempest/Engine/exceptions/*")
 # One list for every build topology: the format digest never depends on which targets exist.
+# Runtime chunk reading (worldchunksruntime.*) is deliberately outside this
+# fingerprint: changing residency metadata or reading must not reimport the base.
 list(APPEND BASE_FORMAT_INPUTS ${BASE_SOURCES} ${BASE_NATIVE_IO}
   common/sha256.h common/baseimport.h common/basemusic.h common/worldchunks.h common/worlddata.h common/modeldata.h common/fontdata.h common/programdata.h common/outputunits.h common/audiodata.h common/basemesh.h
   common/gothicglb.h common/gltfmesh.h common/utils/fileutil.h common/dmusic/sourcefile.h common/dmusic/riff.h common/dmusic/segment.h
@@ -78,6 +80,7 @@ list(REMOVE_ITEM BASE_IMPORT_SOURCES ${BASE_RUNTIME_SOURCES})
 list(TRANSFORM BASE_IMPORT_SOURCES PREPEND "${BASE_ROOT}/")
 list(TRANSFORM BASE_RUNTIME_SOURCES PREPEND "${BASE_ROOT}/")
 add_library(gothic-base-runtime STATIC ${BASE_RUNTIME_SOURCES})
+target_sources(gothic-base-runtime PRIVATE "${BASE_ROOT}/common/worldchunksruntime.cpp")
 add_library(gothic-base-import STATIC ${BASE_IMPORT_SOURCES})
 target_include_directories(gothic-base-runtime PUBLIC "${BASE_ROOT}/common" "${BASE_ROOT}/lib/Tempest/Engine/include")
 target_include_directories(gothic-base-runtime PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/baseimport-generated")

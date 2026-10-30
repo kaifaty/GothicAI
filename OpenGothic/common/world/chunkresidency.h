@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 
-#include "worldchunks.h"
+#include "worldchunksruntime.h"
 
 // Desired presentation residency only. World logic and every presentation
 // consumer remain loaded in this step; nothing here changes the world mesh.
