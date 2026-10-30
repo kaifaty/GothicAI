@@ -933,9 +933,75 @@
       "mode": "blind",
       "verdict": "pending",
       "date": "2026-10-30"
+    },
+    {
+      "id": "r10-crates-path",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r10-cannon-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r10-quay-far",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r10-hut-yard",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r10-net-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r10-fishers-mid",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r10-broken-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
     }
   ],
-  "gates": [],
+  "gates": [
+    {
+      "gate": "ingame",
+      "verdict": "changes",
+      "by": "user",
+      "date": "2026-10-30",
+      "quote": "Ещё один круг, потом без вороха (рекомендую)",
+      "note": "Ворох сети (NETBIG, NETSMALL) не прошёл пять кругов подряд. Последняя попытка в круге 6, через материал шнура, а не форму. Если не пройдёт, оба визуала остаются оригиналом и уходят в отдельную будущую строку плана; PR сливается без них."
+    },
+    {
+      "gate": "preserve",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-30",
+      "quote": "Оставить по оригиналу (рекомендую)",
+      "note": "Куча ящиков: раскладка по местам ящиков оригинала остаётся. Раскладка концепта 2026-10-21 снята, отступление из листа замысла убрано."
+    }
+  ],
   "build": null,
   "backup": null
 }

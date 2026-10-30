@@ -15,7 +15,7 @@
   "target": "data/content/mesh3d-rigging.json",
   "edge": 0.1,
   "lift": 0.022,
-  "tile_m": 0.64,
+  "tile_m": 1.04,
   "rings": 9,
   "segments": 30,
   "profile": [
@@ -23,5 +23,6 @@
     0.62,
     0.68,
     0.4
-  ]
+  ],
+  "uv_turn": 0.12
 }

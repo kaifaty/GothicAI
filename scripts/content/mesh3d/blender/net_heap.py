@@ -18,8 +18,8 @@ soft wobbling curve ("edge": its share), not the staircase a square grid leaves 
 восьмиугольник или зонт, а мягкий и неровный»); near its own edge each layer falls onto the one under it,
 and the lowest onto the ground. "folds" (count, amplitude range m, wavelength range m) ripple each layer,
 fading toward its edge. Every face is emitted twice, back to back, so the net shows from both sides. Net
-UVs are planar in metres over tile_m, each layer turned and shifted at random so the meshes of the layers
-do not line up into a moire. The lower layers are lit like the top one, so through the meshes the heap read
+UVs are planar in metres over tile_m, each layer shifted at random and turned by up to "uv_turn" radians,
+so the meshes of the layers run nearly parallel, as the original's, without lining up. The lower layers are lit like the top one, so through the meshes the heap read
 as even felt; the inner part of every layer under the top "top_layers" is the darker OWN_PROP_NET_UNDER, as
 the shade deep in a heap: only where a layer above covers it with a margin ("covered": share of that
 layer's radius), so a band of a lower layer left open between two rims keeps the net's own tone (choosing
@@ -133,7 +133,8 @@ def layer_z(i, x, y, f=None):
 
 for i, L in enumerate(layers):
     part = P.new_part(wound=True)
-    turn, shift = rng.uniform(0, math.pi), rng.uniform(0, tile_m, 2)
+    # the layers' meshes nearly parallel, as the original's: turned at random, they crossed into a tangle
+    turn, shift = rng.uniform(-1, 1) * cfg.get("uv_turn", math.pi), rng.uniform(0, tile_m, 2)
     cos_t, sin_t = math.cos(turn), math.sin(turn)
     n_rings_i, n_seg_i = L["rings"], L["segments"]
     thetas = np.linspace(0, 2 * math.pi, n_seg_i + 1)[:-1]

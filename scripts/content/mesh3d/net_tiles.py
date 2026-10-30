@@ -14,6 +14,7 @@ texels is NET_TARGET (linear RGB), the original net's mean (NW_HARBOUR_FISHINGNE
 
 own_prop_net/      albedo.png (RGBA, alpha 0/255), normal.png, roughness.png, ao.png, metallic.png, height.png;
                    the heaps' net, with a thicker cord (HEAP)
+own_prop_net_heap/ the heaps' net after the original's texture: thin twisted cord, a dark rim, 24 meshes a tile
 own_prop_net_fine/ the same at 3 cm meshes: the dense net hung on the drying rack
 own_prop_net_roll/ the fine net in four layers over a dark core, opaque: a rolled or bundled net
 Every other tile of the set comes from the market set's tiles (see rigging_tiles in rigging_build.sh).
@@ -117,6 +118,60 @@ def draw(size: int, seed: int, shift: tuple[float, float] = (0.0, 0.0), cells: i
     return reduce(height), reduce(twist), reduce(mask.astype(np.float32))
 
 
+def draw_twisted(size: int, seed: int, cells: int = 24, radius: float = 0.14, halo: float = 0.06, twist: float = 0.32,
+                 wave: float = 0.18, spacing: float = 0.2):
+    """A woven net of thin two-ply cord, as the original heaps' texture (NW_HARBOUR_FISHINGNET_01): about 24
+    meshes a tile, each cord round (light middle, dark edges) with its strands as diagonal bands, an opaque
+    dark rim of shadow round it (the original's darkest opaque texels are black: they carry its contrast),
+    at each crossing one cord over the other in a checkerboard, the cords a little wavy and unevenly spaced.
+    Sizes are shares of a mesh. Returns height, tone (0-1) and the opaque mask; everything tiles."""
+    rng = np.random.default_rng(seed)
+    cell = size / cells
+    xs = np.arange(size) + 0.5
+    k = np.arange(1, 4)
+
+    def cords():
+        """Per cord: its offset across (px) as a function of the along coordinate, periodic over the tile."""
+        base = (np.arange(cells) + 0.5 + rng.uniform(-spacing, spacing, cells)) * cell
+        amp = rng.normal(0, wave * cell, (cells, 3)) / k
+        ph = rng.uniform(0, 2 * np.pi, (cells, 3))
+        return base[:, None] + (amp[:, :, None] * np.sin(2 * np.pi * k[None, :, None] * xs[None, None, :] / size + ph[:, :, None])).sum(1)
+
+    def nearest(offsets, across):
+        """Signed distance (px) to the nearest cord, and its index, for every pixel: rows across, columns along."""
+        d = across[None, :, None] - offsets[:, None, :]          # cords x across x along
+        d = (d + size / 2) % size - size / 2
+        i = np.abs(d).argmin(0)
+        return np.take_along_axis(d, i[None], 0)[0], i
+
+    r, rh = radius * cell, (radius + halo) * cell
+    dh, ih = nearest(cords(), xs)            # horizontal cords: rows y, along x
+    dv, iv = nearest(cords(), xs)            # vertical cords: computed as rows x along y, then transposed
+    dv, iv = dv.T, iv.T
+    yy, xx = np.meshgrid(xs, xs, indexing='ij')
+
+    def cord(d, along):
+        on = np.abs(d) < r
+        h = np.sqrt(np.clip(1 - (d / r) ** 2, 0, 1))
+        strands = (0.5 + 0.5 * np.cos(2 * np.pi * (along / (twist * cell) + d / (2 * r)))) ** 1.6   # two plies at a slant
+        return on, h, (0.12 + 0.88 * h ** 0.7) * (0.22 + 0.78 * strands)
+    on_h, h_h, t_h = cord(dh, xx)
+    on_v, h_v, t_v = cord(dv, yy)
+    h_over = ((ih + iv) % 2 == 0)              # checkerboard: which cord lies on top at a crossing
+    top_h = on_h & (~on_v | h_over)
+    top_v = on_v & ~top_h
+    height = np.where(top_h, 0.5 + 0.5 * h_h, np.where(top_v, 0.5 + 0.5 * h_v, 0.0))
+    tone = np.where(top_h, t_h, np.where(top_v, t_v, 0.0))
+    # the under cord darkens beside the one crossing over it
+    under = (on_h & on_v)
+    tone = np.where(under & top_h, tone * (0.55 + 0.45 * np.clip(np.abs(dv) / r, 0, 1)), tone)
+    tone = np.where(under & top_v, tone * (0.55 + 0.45 * np.clip(np.abs(dh) / r, 0, 1)), tone)
+    rim = ((np.abs(dh) < rh) | (np.abs(dv) < rh)) & ~(on_h | on_v)
+    tone = np.where(rim, 0.03, tone)
+    mask = (on_h | on_v | rim)
+    return height, tone, mask
+
+
 def normal_from(height: np.ndarray, strength: float) -> np.ndarray:
     gy, gx = np.gradient(ndimage.gaussian_filter(height, 0.7, mode='wrap'))
     n = np.stack([-gx * strength, gy * strength, np.ones_like(height)], -1)   # PNG +Y up, as the tiles of stage 1
@@ -165,6 +220,19 @@ def main() -> int:
         return height, tone, mask, alpha, gain, albedo[opaque].mean(0)
 
     height, tone, mask, alpha, gain, mean = net('own_prop_net', **HEAP)
+    # the heaps' net as the original's texture: thin twisted cord with a dark rim, 24 meshes a tile
+    h_tw, t_tw, m_tw = draw_twisted(args.size, args.seed)
+    opaque = m_tw
+    fibre = 1 + 0.15 * ndimage.gaussian_filter(rng.normal(0, 1, t_tw.shape), 0.8, mode='wrap')
+    # the original's opaque texels run from black rims to bright crests (L p10 0.00, p90 0.57): a steep tone
+    colour_tw = ((t_tw * fibre) ** 1.7)[..., None] * np.array([1.0, 0.74, 0.38])[None, None]
+    albedo_tw = colour_tw * (NET_TARGET / colour_tw[opaque].mean(0))
+    _, (iy, ix) = ndimage.distance_transform_edt(~opaque, return_indices=True)
+    # matte hemp: a sheen on the cord tops caught the grey sky in the game and washed the gold out of the cord
+    rough_tw = np.where(h_tw > 0.5, 0.97 - 0.1 * (h_tw - 0.5) * 2, 0.97)
+    save(out / 'own_prop_net_heap', albedo_tw[iy, ix], opaque.astype(np.float32), h_tw, rough_tw,
+         0.45 + 0.55 * np.clip(h_tw, 0, 1), 2.0)
+    heap_cov = float(opaque.mean())
     fine = net('own_prop_net_fine', **FINE)
     # rolled net: the fine net in four layers over a dark core, low relief, opaque
     layers = [draw(args.size, args.seed + k, (rng.uniform(0, 1), rng.uniform(0, 1)), **FINE) for k in range(4)]
@@ -174,7 +242,7 @@ def main() -> int:
     save(out / 'own_prop_net_roll', roll, None, h_roll, np.full_like(height, 0.95), 0.5 + 0.5 * np.clip(h_roll, 0, 1), 3.0)
     meta = {'tile_m': TILE_M, 'cells': CELLS, **HEAP, 'coverage': round(float(alpha.mean()), 4),
             'net_mean_linear': [round(float(v), 4) for v in mean], 'fine': {**FINE, 'coverage': round(float(fine[3].mean()), 4)},
-            'seed': args.seed, 'size': args.size}
+            'heap': {'cells': 24, 'coverage': round(heap_cov, 4)}, 'seed': args.seed, 'size': args.size}
     (out / 'own_prop_net' / 'tile.json').write_text(json.dumps(meta, indent=1) + '\n')
     print(json.dumps(meta))
     return 0
