@@ -3773,8 +3773,10 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
   }
 
 void Npc::trackRoutineEntry(const WayPoint& target, const WayPoint* entry) {
-  if(routineEntry.target!=&target) {
+  const auto* routine = &currentRoutine(true);
+  if(routineEntry.target!=&target || routineEntry.routine!=routine) {
     routineEntry = {};
+    routineEntry.routine = routine;
     routineEntry.target = &target;
     }
   if(routineEntry.entry==entry)
@@ -3790,7 +3792,8 @@ bool Npc::rejectedRoutineEntry(const WayPoint& point) const {
 
 void Npc::tickRoutineEntry(uint64_t dt) {
   if(Gothic::settingsGetI("GAME","routine_entry_check")==0 ||
-     (routineEntry.target!=nullptr && routineEntry.target!=currentTaPoint())) {
+     (routineEntry.target!=nullptr &&
+      (routineEntry.target!=currentTaPoint() || routineEntry.routine!=&currentRoutine(true)))) {
     routineEntry = {};
     return;
     }
@@ -8379,6 +8382,7 @@ void Npc::setStateTime(int64_t time) {
   }
 
 void Npc::addRoutine(gtime s, gtime e, uint32_t callback, std::string_view point) {
+  routineEntry = {};
   auto wp = world().findPoint(point,false);
 
   Routine r;
@@ -8396,10 +8400,12 @@ void Npc::addRoutine(gtime s, gtime e, uint32_t callback, std::string_view point
   }
 
 void Npc::clearRoutine() {
+  routineEntry = {};
   routines.clear();
   }
 
 void Npc::excRoutine(size_t callback) {
+  routineEntry = {};
   routines.clear();
   owner.script().invokeState(this,currentOther,currentVictim,callback);
   // aiState.eTime = gtime();

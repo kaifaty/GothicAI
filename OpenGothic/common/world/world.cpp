@@ -1506,7 +1506,8 @@ WayPath World::wayTo(Npc &npc, const WayPoint &end) const {
   const bool routine = !npc.isPlayer() && npc.currentTaPoint()==&end;
   const bool enabled = Gothic::settingsGetI("GAME","routine_entry_check")!=0;
   const bool trace = routine && TestBench::isActive() && TestBench::routineReturnActive(npc);
-  if(!enabled || (routine && npc.routineEntry.target!=&end))
+  if(!enabled || (routine &&
+      (npc.routineEntry.target!=&end || npc.routineEntry.routine!=&npc.currentRoutine(true))))
     npc.routineEntry = {};
   bool approach = false;
   WayMatrix::RoutineEntry entry;

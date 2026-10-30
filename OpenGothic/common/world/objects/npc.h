@@ -1089,6 +1089,7 @@ class Npc final {
     WayPath                        wayPath;
     // Transient approach state; the ordinary way path takes over on entry.
     struct RoutineEntryState final {
+      const Routine*               routine = nullptr;
       const WayPoint*              target = nullptr;
       const WayPoint*              entry = nullptr;
       std::array<const WayPoint*,3> rejected = {};
