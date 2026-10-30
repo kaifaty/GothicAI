@@ -134,6 +134,7 @@ GameSession::GameSession(std::string file) {
   if(LoadProbe::enabled())
     LoadProbe::mark("trigger_start",LoadProbe::msSince(probeT));
   cam->reset(wrld->player());
+  wrld->updateLandscape(*cam);
   Gothic::inst().setLoadingProgress(96);
   ticks = 1;
   // wrld->setDayTime(8,0);
@@ -199,6 +200,7 @@ GameSession::GameSession(Serialize &fin) {
 
   fin.setEntry("game/camera");
   cam->load(fin,wrld->player());
+  wrld->updateLandscape(*cam);
   Gothic::inst().setLoadingProgress(96);
   if(auto& fn = Gothic::inst().sessionStartFn)
     fn(&fin);
@@ -497,6 +499,7 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
       }
 
   cam->reset(wrld->player());
+  wrld->updateLandscape(*cam);
   if(LoadProbe::enabled())
     LoadProbe::mark("change_end");
   Log::i("Done loading world[",world,"]");

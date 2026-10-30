@@ -12,6 +12,7 @@ class PackedMesh;
 class Landscape final {
   public:
     Landscape(VisualObjects& visual, const PackedMesh& wmesh);
+    ~Landscape();
 
     void setVisible(bool visible);
 
@@ -24,9 +25,10 @@ class Landscape final {
       Item mesh;
       };
 
-    std::vector<Block>     blocks;
+    VisualObjects&         visual;
     StaticMesh             mesh;
     Tempest::StorageBuffer meshletDesc;
 
     Tempest::StorageBuffer bvhNodes;
+    std::vector<Block>     blocks;
   };

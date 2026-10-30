@@ -11,8 +11,7 @@
 
 #include "worldchunksruntime.h"
 
-// Desired presentation residency only. World logic and every presentation
-// consumer remain loaded in this step; nothing here changes the world mesh.
+// Desired presentation residency. World logic remains loaded independently.
 class ChunkResidency {
   public:
     enum class State : uint8_t { Outside, Far, Near };
@@ -28,6 +27,11 @@ class ChunkResidency {
       uint64_t peakNear = 0;
       double   updateMs = 0;
       double   workMs = 0;
+      double   publicationMs = 0;
+      std::vector<double> publicationTimesMs;
+      uint64_t published = 0;
+      uint64_t released = 0;
+      size_t   pending = 0;
       };
 
     using Clock = std::chrono::steady_clock;
@@ -56,6 +60,9 @@ class ChunkResidency {
     uint64_t subscribe(Listener listener);
     void unsubscribe(uint64_t subscription);
     void enqueue(Work work);
+    void recordPublication(double ms);
+    void recordRelease() { ++counters.released; }
+    void setPending(size_t count) { counters.pending=count; }
 
   private:
     const ChunkTable& chunks;

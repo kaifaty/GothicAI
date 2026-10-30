@@ -20,11 +20,19 @@ class Camera;
 class ParticleFx;
 class PackedMesh;
 class gtime;
+class ChunkResidency;
+namespace asset { struct WorldMesh; }
 
 class WorldView {
   public:
     WorldView(const PackedMesh& wmesh, std::string_view skyPreset);
+    WorldView(std::pair<Tempest::Vec3,Tempest::Vec3> bounds, std::string_view skyPreset);
     ~WorldView();
+
+    void startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs);
+    void prepareLandscapeWork();
+    void finishLandscapeUpdate();
+    bool landscapeReady() const;
 
     const LightSource&        mainLight() const;
     const Tempest::Vec3&      ambientLight() const;
@@ -82,7 +90,7 @@ class WorldView {
 
     const SceneGlobals& sceneGlobals() const { return sGlobal; }
     const Sky&          sky() const { return gSky; }
-    const Landscape&    landscape() const { return land; }
+    const Landscape&    landscape() const { return *land; }
     const LightGroup&   lights() const { return gLights; }
     const DrawClusters& clusters() const;
     const DrawCommands& drawCommands() const;
@@ -98,8 +106,10 @@ class WorldView {
 
     MeshObjects   objGroup;
     PfxObjects    pfxGroup;
-    Landscape     land;
+    std::unique_ptr<Landscape> land;
     std::unique_ptr<Landscape> originalCloth;
+    struct LandscapeStreaming;
+    std::unique_ptr<LandscapeStreaming> streaming;
 
     bool needToUpdateCmd(uint8_t frameId) const;
     void invalidateCmd();

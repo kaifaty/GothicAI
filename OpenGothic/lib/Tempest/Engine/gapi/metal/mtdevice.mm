@@ -79,6 +79,7 @@ MtDevice::MtDevice(std::string_view name, bool validation)
   }
 
 MtDevice::~MtDevice() {
+  waitIdle();
   if(!tempestLoadProbeEnabled())
     return;
   std::lock_guard<std::mutex> guard(probeDeviceSync);

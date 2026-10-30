@@ -71,6 +71,8 @@ class VisualObjects final {
     Item   get(const StaticMesh& mesh, const Material& mat, size_t iboOffset, size_t iboLength, bool staticDraw);
     Item   get(const AnimMesh& mesh,   const Material& mat, size_t iboOff, size_t iboLen, const InstanceStorage::Id& anim);
     Item   get(const StaticMesh& mesh, const Material& mat, size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster, DrawCommands::Type type);
+    // All Items referencing the mesh must have been released first.
+    void   invalidate(const StaticMesh& mesh);
 
     InstanceStorage::Id alloc(size_t size);
     bool                realloc(InstanceStorage::Id& id, size_t size);

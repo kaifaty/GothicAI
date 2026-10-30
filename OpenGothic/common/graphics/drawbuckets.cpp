@@ -48,6 +48,11 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh) 
   bx.mat        = mat;
 
   bucketsDurtyBit = true;
+  for(size_t i=0;i<bucketsCpu.size();++i)
+    if(bucketsCpu[i].staticMesh==nullptr && bucketsCpu[i].animMesh==nullptr) {
+      bucketsCpu[i] = std::move(bx);
+      return Id(this,i);
+      }
   bucketsCpu.emplace_back(std::move(bx));
   return Id(this, bucketsCpu.size()-1);
   }
@@ -68,7 +73,15 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const AnimMesh& mesh) {
   return Id(this, bucketsCpu.size()-1);
   }
 
-const std::vector<DrawBuckets::Bucket>& DrawBuckets::buckets() {
+void DrawBuckets::invalidate(const StaticMesh& mesh) {
+  for(auto& bucket:bucketsCpu)
+    if(bucket.staticMesh==&mesh) {
+      bucket = Bucket();
+      bucketsDurtyBit = true;
+      }
+  }
+
+const std::vector<DrawBuckets::Bucket>& DrawBuckets::buckets() const {
   return bucketsCpu;
   }
 
@@ -91,9 +104,14 @@ void DrawBuckets::updateBindlessArrays() {
       vbo    .push_back(&i.staticMesh->vbo);
       morphId.push_back(i.staticMesh->morph.index);
       morph  .push_back(i.staticMesh->morph.samples);
-      } else {
+      } else if(i.animMesh!=nullptr) {
       ibo    .push_back(&i.animMesh->ibo8);
       vbo    .push_back(&i.animMesh->vbo);
+      morphId.push_back(nullptr);
+      morph  .push_back(nullptr);
+      } else {
+      ibo    .push_back(nullptr);
+      vbo    .push_back(nullptr);
       morphId.push_back(nullptr);
       morph  .push_back(nullptr);
       }

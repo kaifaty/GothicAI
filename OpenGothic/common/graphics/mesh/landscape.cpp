@@ -9,7 +9,9 @@
 using namespace Tempest;
 
 Landscape::Landscape(VisualObjects& visual, const PackedMesh &packed)
-  :mesh(packed) {
+  :visual(visual),mesh(packed) {
+  if(packed.indices.empty())
+    return;
   auto& device = Resources::device();
 
   meshletDesc = Resources::ssbo(packed.meshletBounds.data(), packed.meshletBounds.size()*sizeof(packed.meshletBounds[0]));
@@ -35,6 +37,19 @@ Landscape::Landscape(VisualObjects& visual, const PackedMesh &packed)
     b.mesh.setObjMatrix(Matrix4x4::mkIdentity());
     blocks.emplace_back(std::move(b));
     }
+  }
+
+Landscape::~Landscape() {
+  blocks.clear();
+  visual.invalidate(mesh);
+  // The recycle slot is released only after the corresponding frame fence.
+  Resources::recycle(std::move(mesh.vbo));
+  Resources::recycle(std::move(mesh.ibo));
+  Resources::recycle(std::move(mesh.ibo8));
+  Resources::recycle(std::move(meshletDesc));
+  Resources::recycle(std::move(bvhNodes));
+  for(auto& sub:mesh.sub)
+    Resources::recycle(std::move(sub.blas));
   }
 
 void Landscape::setVisible(bool visible) {

@@ -376,6 +376,8 @@ void DrawCommands::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
 
   for(size_t i=0; i<ord.size(); ++i) {
     auto& cx = *ord[i];
+    if(cx.maxPayload==0)
+      continue;
     if(cx.alpha!=Material::Solid && cx.alpha!=Material::AlphaTest)
       continue;
     if(cx.pVsm==nullptr)
@@ -425,6 +427,8 @@ void DrawCommands::drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
 
   for(size_t i=0; i<ord.size(); ++i) {
     auto& cx = *ord[i];
+    if(cx.maxPayload==0)
+      continue;
     if(cx.alpha!=Material::Solid && cx.alpha!=Material::AlphaTest)
       continue;
     if(cx.type!=Landscape && cx.type!=Static)

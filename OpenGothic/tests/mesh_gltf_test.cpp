@@ -8,6 +8,8 @@
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/mesh/landscape.h"
+#include "loadprobe.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "physics/fracture.h"
 #include "resources.h"
@@ -1354,6 +1356,56 @@ void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool d
     throw std::runtime_error("unable to write mesh alpha DDS fixture");
   }
 
+void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
+  const auto source=loadGltfMesh(fixture.root/"meshes/test/opaque.glb");
+  asset::WorldMesh world;
+  world.materials={source.sub_meshes[0].mat};
+  world.vertices={{100,100,100},{100,200,100},{200,100,100}};
+  world.features={{{0,0},0xffffffffu,{0,0,1}},{{0,1},0xffffffffu,{0,0,1}},{{1,0},0xffffffffu,{0,0,1}}};
+  world.polygons.vertex_indices={0,1,2};
+  world.polygons.feature_indices={0,1,2};
+  world.polygons.material_indices={0};
+  world.polygons.lightmap_indices={-1};
+  world.polygons.flags.resize(1);
+  PackedMesh packed(world,PackedMesh::PK_VisualLnd);
+  require(!packed.indices.empty(),"landscape lifetime fixture must contain meshlets");
+  for(const auto& sub:packed.subMeshes)
+    Resources::loadMaterial(sub.material,true);
+  SceneGlobals scene;
+  VisualObjects visual(scene,packed.bbox());
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  Resources::resetRecycled(0);
+  const auto baseline=tempestProbeGpuBufferCount();
+  size_t bucketCount=0;
+  for(size_t cycle=0;cycle<2;++cycle) {
+    {
+      Landscape landscape(visual,packed);
+      device.waitIdle();
+      require(tempestProbeGpuBufferCount()>baseline,"published landscape must own live GPU buffers");
+      const auto& buckets=visual.drawBuckets().buckets();
+      require(std::any_of(buckets.begin(),buckets.end(),[](const auto& bucket) {
+        return bucket.staticMesh!=nullptr;
+        }),"published landscape must register its stable mesh in draw buckets");
+      if(cycle==0)
+        bucketCount=buckets.size();
+      else
+        require(buckets.size()==bucketCount,"republishing a landscape must reuse invalidated buckets");
+    }
+    for(const auto& bucket:visual.drawBuckets().buckets())
+      require(bucket.staticMesh==nullptr && bucket.animMesh==nullptr,
+              "released landscape must not leave mesh pointers in draw buckets");
+    require(tempestProbeGpuBufferCount()>baseline,"landscape buffers must survive until their recycle slot completes");
+    Resources::resetRecycled(1);
+    require(tempestProbeGpuBufferCount()>baseline,"another frame slot must not release retired landscape buffers");
+    device.waitIdle();
+    Resources::resetRecycled(0);
+    require(tempestProbeGpuBufferCount()==baseline,"landscape publish/release must return live GPU buffers to baseline");
+  }
+  std::cout << "landscape lifetime: 2 publish/release cycles, live_buffers=" << baseline << '\n';
+}
+
 void maskBc1Policy(const Fixture& fixture) {
   std::filesystem::create_directories(fixture.root/"materials");
   alphaDdsFile(fixture.root/"materials/transparent-bc1.dds",true);
@@ -1508,6 +1560,7 @@ void maskBc1Policy(const Fixture& fixture) {
     require(legacyPolicy.alpha==Material::AlphaTest && forcedPolicy.alpha==Material::AlphaTest,
             "material equality fixture must have the same visible alpha classification");
     require(!(legacyPolicy==forcedPolicy),"material equality must distinguish native and forced MASK policies");
+    landscapeLifetime(fixture,device);
     }
   multiModelGpuCases(fixture,device);
   device.waitIdle();

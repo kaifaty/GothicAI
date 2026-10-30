@@ -352,7 +352,9 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   std::snprintf(text,sizeof(text),"Transitions/s %zu  update %.3f ms  work %.3f ms",
                 stats.transitionsLastSecond,stats.updateMs,stats.workMs);
   fnt.drawText(p,x,y+line,text);
-  fnt.drawText(p,x,y+2*line,"All chunks loaded; desired states only");
+  std::snprintf(text,sizeof(text),"Landscape: pending %zu  published %llu  released %llu",stats.pending,
+                static_cast<unsigned long long>(stats.published),static_cast<unsigned long long>(stats.released));
+  fnt.drawText(p,x,y+2*line,text);
 
   const auto& entries = chunks->table().entries;
   for(size_t i=0;i<entries.size();++i) {
@@ -1426,7 +1428,7 @@ void MainWindow::render(){
       auto hero = Gothic::inst().player();
       auto camera = Gothic::inst().camera();
       if(auto chunks = world->chunkResidency(); chunks!=nullptr && hero!=nullptr && camera!=nullptr) {
-        chunks->update(hero->position(),camera->originLwc(),camera->zFar());
+        world->updateLandscape(*camera);
         TestBench::sampleStreaming(*world);
         }
       }

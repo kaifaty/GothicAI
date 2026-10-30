@@ -26,6 +26,7 @@ class MtBuffer : public Tempest::AbstractGraphicsApi::Buffer {
 
   private:
     void implUpdate(const void *data, size_t off, size_t size);
+    void upload(const void* data, size_t off, size_t size, bool wait);
   };
 
 }

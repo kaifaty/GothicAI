@@ -251,6 +251,13 @@ VisualObjects::VisualObjects(const SceneGlobals& scene, const std::pair<Vec3, Ve
 VisualObjects::~VisualObjects() {
   }
 
+void VisualObjects::invalidate(const StaticMesh& mesh) {
+  assert(std::none_of(objects.begin(),objects.end(),[&](const auto& object) {
+    return !object.isEmpty() && object.bucketId->staticMesh==&mesh;
+    }));
+  bucketsMem.invalidate(mesh);
+  }
+
 void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   auto& obj = objects[id];
   if(obj.type==DrawCommands::Landscape)

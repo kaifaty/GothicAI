@@ -60,7 +60,7 @@ SCEN="${1:?usage: scripts/bench.sh <scenario> [out dir]}"
 [[ -f "$SCEN" ]] || { echo "no scenario: $1" >&2; exit 2; }
 SCEN="$(cd "$(dirname "$SCEN")" && pwd)/$(basename "$SCEN")"
 NAME="$(basename "$SCEN" .bench)"
-if [[ "$NAME" == streaming-flythrough ]]; then
+if [[ "$NAME" == streaming-flythrough || "$NAME" == streaming-shots ]]; then
   export WORLD="${WORLD:-NEWWORLD.ZEN}"
   export RYZEN_BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"
 fi
@@ -151,7 +151,7 @@ fi
 
 # These fixtures use a prepared world and clock; skip the new-game chapter video
 # before their first command on NEWWORLD.
-if [[ "$NAME" == item-wake || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough ]]; then
+if [[ "$NAME" == item-wake || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough || "$NAME" == streaming-shots ]]; then
   START_ARGS+=(-nointro)
 fi
 
@@ -176,6 +176,25 @@ if [[ "${RYZEN_BENCH:-}" != 1 && "$NEEDS_CADENCE" == 1 ]]; then
   done
   if [[ "$CADENCE_SUPPORTED" != 1 ]]; then
     echo 'bench: cadence requires -DOPENGOTHIC_ENABLE_APP_CADENCE=ON; use BENCH_HOST=ryzen to wait for Ryzen' >&2
+    exit 2
+  fi
+fi
+
+# Chunk publication measurements need frame profiling as well as normal cadence.
+if [[ "${RYZEN_BENCH:-}" != 1 && "$NAME" == streaming-flythrough ]]; then
+  PROFILE_BUILD="$(dirname "$GAME_BIN")"
+  PROFILE_SUPPORTED=0
+  for ((i = 0; i < 4; i++)); do
+    if [[ -f "$PROFILE_BUILD/CMakeCache.txt" ]]; then
+      if grep -qx 'OPENGOTHIC_ENABLE_FRAME_PROFILE:BOOL=ON' "$PROFILE_BUILD/CMakeCache.txt"; then
+        PROFILE_SUPPORTED=1
+      fi
+      break
+    fi
+    PROFILE_BUILD="$(dirname "$PROFILE_BUILD")"
+  done
+  if [[ "$PROFILE_SUPPORTED" != 1 ]]; then
+    echo 'bench: streaming-flythrough requires -DOPENGOTHIC_ENABLE_FRAME_PROFILE=ON; use BENCH_HOST=ryzen to wait for Ryzen' >&2
     exit 2
   fi
 fi
@@ -280,7 +299,7 @@ GAME_BIN="$GAME_BIN" bash "$ROOT/scripts/base-ensure.sh" "$GOTHIC_DIR"
 
 BACKGROUND=1
 if [[ "$NAME" == streaming-flythrough ]]; then
-  export OPENGOTHIC_FRAME_PROFILE="$OUT/frameprofile.csv" OPENGOTHIC_BENCH_VISIBLE=1
+  export OPENGOTHIC_FRAME_PROFILE="$OUT/frameprofile.csv" OPENGOTHIC_BENCH_VISIBLE=1 OPENGOTHIC_LOADPROBE=1
   BACKGROUND=0
 fi
 START=$(date +%s)

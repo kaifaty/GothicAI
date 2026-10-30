@@ -3,6 +3,7 @@
 #include "navbench.h"
 #include "navdemos.h"
 #include "frameprofile.h"
+#include "loadprobe.h"
 
 #include <Tempest/Pixmap>
 #include <Tempest/SoundDevice>
@@ -632,15 +633,20 @@ struct Bench {
   std::string perfSegment;
   uint64_t    perfFrame = 0;
   bool        perfArmed = false;
+  bool        waitStreaming = false;
+  std::chrono::steady_clock::time_point streamingDeadline;
   struct StreamingSample {
     std::string segment;
     uint64_t frame = 0;
     double updateMs = 0, workMs = 0;
     size_t near = 0, far = 0, outside = 0;
     uint64_t nearTransitions = 0, farTransitions = 0;
+    std::vector<double> publicationTimesMs;
+    uint64_t published = 0, released = 0;
     };
   std::vector<StreamingSample> streamingSamples;
   uint64_t streamingNearBefore = 0, streamingFarBefore = 0;
+  uint64_t streamingPublishedBefore = 0, streamingReleasedBefore = 0;
   std::vector<Vec3> routePoints;
   size_t      routeNext = 0;
   Vec3        routePosition;
@@ -1706,11 +1712,15 @@ void finish() {
   stopRecording();
   if(!bench.streamingSamples.empty()) {
     if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
-      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions\n");
-      for(const auto& row:bench.streamingSamples)
-        std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu\n",row.segment.c_str(),
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released\n");
+      for(const auto& row:bench.streamingSamples) {
+        std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu,",row.segment.c_str(),
           (unsigned long long)row.frame,row.updateMs,row.workMs,row.near,row.far,row.outside,
           (unsigned long long)row.nearTransitions,(unsigned long long)row.farTransitions);
+        for(size_t i=0;i<row.publicationTimesMs.size();++i)
+          std::fprintf(file,"%s%.9g",i==0 ? "" : ";",row.publicationTimesMs[i]);
+        std::fprintf(file,",%llu,%llu\n",(unsigned long long)row.published,(unsigned long long)row.released);
+        }
       std::fclose(file);
       } else event("streaming_error","\"reason\":\"cannot write residency samples\"");
     }
@@ -13537,16 +13547,39 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       if(auto* residency=w.chunkResidency()) {
         bench.streamingNearBefore=residency->stats().transitionsNear;
         bench.streamingFarBefore=residency->stats().transitionsFar;
+        bench.streamingPublishedBefore=residency->stats().published;
+        bench.streamingReleasedBefore=residency->stats().released;
         }
       FrameProfile::setActors(bench.crew);
       event("perf_segment","\"segment\":"+jsonStr(bench.perfSegment)+
         ",\"camera_cm\":"+ragdollVector(bench.camPos)+",\"actors\":"+std::to_string(bench.crew.size()));
       }
-    else if(a.size()==2 && a[1]=="stop")bench.perfSegment.clear();
+    else if(a.size()==2 && a[1]=="stop") {
+      if(bench.perfSegment.starts_with("streaming-flythrough/"))
+        event("streaming_end","\"segment\":"+jsonStr(bench.perfSegment)+
+          ",\"gpu_mb\":"+std::to_string(double(tempestProbeGpuBytes())/1048576.0));
+      bench.perfSegment.clear();
+      }
     else arenaAbort("perf expects sample <segment under 64 bytes> or stop, after cadence normal");
 #else
     arenaAbort("perf requires OPENGOTHIC_ENABLE_FRAME_PROFILE=ON and OPENGOTHIC_ENABLE_APP_CADENCE=ON");
 #endif
+    }
+  else if(c=="streaming") {
+    if(a.size()<2 || a.size()>3 || a[1]!="wait" || (a.size()==3 && !isNumber(a[2]))) {
+      arenaAbort("streaming expects wait [timeout_ms]");
+      return;
+      }
+    const float timeout=num(a,2,60000);
+    if(!std::isfinite(timeout) || timeout<=0 || timeout>300000) {
+      arenaAbort("streaming wait timeout must be in (0, 300000] ms");
+      return;
+      }
+    bench.waitStreaming=true;
+    bench.streamingDeadline=std::chrono::steady_clock::now()+
+      std::chrono::milliseconds(uint64_t(timeout));
+    // Camera and desired residency are updated after this bench tick.
+    bench.waitUntil=bench.time+1;
     }
   else if(c=="wait") {
     bench.waitUntil = bench.time + uint64_t(num(a,1,1000));
@@ -16372,7 +16405,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       return;
     }
   while(bench.pc<bench.prog.size() || bench.speaking || bench.waitReply || !bench.waitAiKey.empty() || !bench.bodyLiveWait.empty() ||
-        bench.downNpc!=nullptr || bench.waitRagdollNpc!=nullptr || bench.duelWaiting) {
+        bench.downNpc!=nullptr || bench.waitRagdollNpc!=nullptr || bench.duelWaiting || bench.waitStreaming) {
     if(bench.speaking) {
       if(bench.time<bench.speakUntil)
         return;
@@ -16380,6 +16413,19 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     if(waitingForReply() || waitingForAi() || waitingForBodyLive())
       return;
+    if(bench.waitStreaming) {
+      if(bench.time<bench.waitUntil)
+        return;
+      if(!w.landscapeReady()) {
+        if(std::chrono::steady_clock::now()<bench.streamingDeadline)
+          return;
+        bench.waitStreaming=false;
+        arenaAbort("streaming wait timed out before all Near/Far chunks were published");
+        return;
+        }
+      bench.waitStreaming=false;
+      event("streaming_ready","\"world\":"+jsonStr(w.name())+",\"pass\":true");
+      }
     if(bench.waitRagdollNpc!=nullptr) {
       const auto* npc=bench.waitRagdollNpc;
       const auto* body=npc->ragdollBody();
@@ -16449,14 +16495,14 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const std::string line = bench.prog[bench.pc++];
     exec(line,w,pl,ctrl);
-    if(bench.routeActive || NavBench::running() || NavDemos::running()) return;
+    if(bench.routeActive || bench.waitStreaming || NavBench::running() || NavDemos::running()) return;
     if(bench.spellWaitFrozen>=0 || bench.spellEquipPending) return;
     if(bench.questWait || bench.questStandingWait) return;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
     if(bench.cadenceWait) return;
 #endif
     }
-  if(bench.time>=bench.waitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && bench.bodyLiveWait.empty())
+  if(bench.time>=bench.waitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.waitStreaming && bench.bodyLiveWait.empty())
     finish();
   }
 
@@ -18260,8 +18306,10 @@ void TestBench::sampleStreaming(const World& world) {
   const auto& stats=residency->stats();
   bench.streamingSamples.push_back({bench.perfSegment,bench.perfFrame,stats.updateMs,stats.workMs,
     stats.near,stats.far,stats.outside,stats.transitionsNear-bench.streamingNearBefore,
-    stats.transitionsFar-bench.streamingFarBefore});
+    stats.transitionsFar-bench.streamingFarBefore,stats.publicationTimesMs,
+    stats.published-bench.streamingPublishedBefore,stats.released-bench.streamingReleasedBefore});
   bench.streamingNearBefore=stats.transitionsNear;bench.streamingFarBefore=stats.transitionsFar;
+  bench.streamingPublishedBefore=stats.published;bench.streamingReleasedBefore=stats.released;
   }
 
 bool TestBench::withUi() {

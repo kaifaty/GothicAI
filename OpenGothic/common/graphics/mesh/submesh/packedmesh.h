@@ -5,6 +5,7 @@
 #include "asset/material.h"
 
 #include <Tempest/Vec>
+#include <span>
 #include <utility>
 
 #include "resources.h"
@@ -83,7 +84,14 @@ class PackedMesh {
 
     PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false);
     PackedMesh(const asset::WorldMesh& mesh, PkgType type);
+    // Triangle IDs address the unchanged source polygon arrays. Materials and
+    // vertex/feature IDs remain global to mesh, including unused materials.
+    // Chunk landscapes never build the whole-world software ray tracing BVH.
+    PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
+               std::span<const uint32_t> materialMap = {});
     PackedMesh(const asset::SoftSkinMesh& mesh);
+
+    static std::vector<uint32_t> landscapeMaterialMap(const asset::WorldMesh& mesh);
 
     void debug(std::ostream &out) const;
 
@@ -206,6 +214,8 @@ class PackedMesh {
 
     //
     void   packMeshletsLnd(const asset::WorldMesh& mesh);
+    void   packMeshletsLnd(const asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
+                          std::span<const uint32_t> materialMap);
     void   packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
                            const std::vector<SkeletalData>* skeletal);
 

@@ -21,22 +21,34 @@ or other Mac-only game paths require local execution (`auto` falls back, `ryzen`
 For performance comparisons (before/after or FPS), run both takes on the same machine:
 pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
 
-`streaming-flythrough` is the baseline for runtime chunks before unloading: a god-mode hero
+`streaming-flythrough` measures runtime GPU chunk streaming: a god-mode hero
 follows the existing WayMatrix path from `NW_CITY_MERCHANT_TRADE_04` through
 `NW_CITY_HABOUR_BENCH_01` to `NW_FOREST_PATH_16`. `route <speed_cm_s> <wp1> <wp2> ...`
 blocks command execution until the connected path is complete. Each frame places the hero at
 the interpolated path position, including waypoint height, using the normal simulation step.
 The two passes use 500 cm/s (run) and 2000 cm/s (fly), with ten seconds to settle before each.
-It records no video. The engine keeps the entire world loaded.
+It records no video. Each pass waits for all desired Near/Far chunks before measuring;
+Outside chunks can be released along the route.
 
 `scripts/bench.sh streaming-flythrough` starts a fresh `NEWWORLD`, selects `quiet` on Ryzen,
 and enables frame profiling only for this bench's build. Output `frameprofile.csv` contains
-submitted frame intervals; `streaming.csv` contains residency update/work times, counts and
+submitted frame intervals; `streaming.csv` contains residency update/work times, per-chunk
+publication times (semicolon-separated in a frame), counts and
 Near/Far transitions. `report.md` / `report.json` report each pass's frame p50/p99/max,
-Near/Far transitions (entering or leaving that state), peak Near count, and update/work p99.
+Near/Far transitions (entering or leaving that state), peak Near count, update/work p99,
+publication p99/max (one sample per chunk), published/released counts and GPU allocation
+at the end of each pass. Local execution requires `OPENGOTHIC_ENABLE_FRAME_PROFILE=ON` as
+well as `OPENGOTHIC_ENABLE_APP_CADENCE=ON`; an unsupported build exits before opening a game.
 The run fails if either route does not finish or either pass lacks metrics. Use the same
 host, resolution and content overrides for later comparisons; `OPENGOTHIC_STREAMING=0`
-disables the manager and deliberately cannot produce this residency baseline.
+disables the manager and deliberately cannot produce this residency measurement.
+
+`BENCH_HOST=local OPENGOTHIC_STREAMING=0 scripts/bench.sh streaming-shots` and the same
+command with `OPENGOTHIC_STREAMING=1` capture `perf-market.png`, `perf-harbour.png` and
+`perf-forest.png` from the first viewpoints of those performance scenarios. `streaming wait`
+yields a frame for camera/residency updates, then waits until the publication queue is empty
+and all desired Near/Far chunks are published (default timeout 60000 real milliseconds).
+The disabled-streaming path is already ready. Claude compares the resulting frames on Mac.
 
 ## Frame profile
 
@@ -444,6 +456,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `overlay trail [off] [keep ms] [line]` | the arrows' ways in gold (with the zones of `showzones`), no legs, no text; turns the overlay on. A way stays `keep` ms (1500) after its arrow stops; `line`: also the straight line the arrow left along (where the bow pointed), dashed white, as far as the arrow has flown: the drop is the gap between them |
 | `rec <name> [novideo]`, `stop` | record a segment (video and metrics, or metrics only) |
 | `shot <name>` | one PNG |
+| `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
 | `ui on\|off` | the interface in the captured frames, as the player sees it: subtitles, the input line, the deal window (off by default: only the world) |
 | `label <text>` | text on the overlay |
 | `ik on\|off`, `ik param <name> <value>`, `ik params` | foot IK and its parameters, without rebuilding; `ik off` on a four-legged creature brings back the old whole-body tilt |

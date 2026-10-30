@@ -22,6 +22,7 @@
 
 bool tempestLoadProbeEnabled();
 size_t tempestProbeGpuBytes();
+size_t tempestProbeGpuBufferCount();
 
 namespace LoadProbe {
 

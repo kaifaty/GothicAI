@@ -3,12 +3,21 @@
 #include <Tempest/Device>
 #include <Tempest/Except>
 #include <algorithm>
+#include <atomic>
 
 using namespace Tempest;
 using namespace Tempest::Detail;
 
+static std::atomic<size_t> liveBuffers{0};
+
+size_t tempestProbeGpuBufferCount() {
+  return liveBuffers.load(std::memory_order_relaxed);
+  }
+
 VideoBuffer::VideoBuffer(AbstractGraphicsApi::PBuffer&& impl, size_t size)
   :impl(std::move(impl)),sz(size) {
+  if(sz!=0)
+    liveBuffers.fetch_add(1,std::memory_order_relaxed);
   }
 
 VideoBuffer::VideoBuffer(VideoBuffer &&other)
@@ -17,6 +26,8 @@ VideoBuffer::VideoBuffer(VideoBuffer &&other)
   }
 
 VideoBuffer::~VideoBuffer(){
+  if(sz!=0)
+    liveBuffers.fetch_sub(1,std::memory_order_relaxed);
   }
 
 VideoBuffer &VideoBuffer::operator=(VideoBuffer &&other) {

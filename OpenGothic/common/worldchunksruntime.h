@@ -3,6 +3,7 @@
 #include "worldchunks.h"
 
 #include <cmath>
+#include <span>
 
 struct ChunkId {
   // The converter uses a 64 m grid rooted at (0,0), including negative cells.
@@ -27,7 +28,7 @@ struct ChunkTable {
 
   std::vector<Entry> entries;
   // One table index per triangle in readWorldChunks' stitched source-order
-  // mesh, before cloth extraction or GPU/physics packing. Ownership comes
+  // mesh, filtered alongside polygons by retainWorldTriangles. Ownership comes
   // from the chunk file, so edited triangles keep their file's identity.
   std::vector<uint32_t> triangleChunks;
   };
@@ -41,6 +42,17 @@ WorldChunkManifest readWorldChunkManifest(const std::filesystem::path& dir);
 // packing keys on them); geometry an edit added or moved goes after them.
 asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir = {},
                                  ChunkTable* chunks = nullptr);
+
+// Keep an increasing, unique list of source triangle IDs in source order.
+// Only polygon arrays and their corresponding triangleChunks are filtered;
+// material, vertex and feature arrays and their source IDs remain unchanged.
+// If chunks is supplied it must cover every input triangle; bounds/counts are
+// rebuilt from the retained triangles. Reusable by visual and collision passes.
+void retainWorldTriangles(asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
+                          ChunkTable* chunks = nullptr);
+
+// Lists source polygon IDs per table entry without compacting the source mesh.
+std::vector<std::vector<uint32_t>> chunkTriangleLists(const asset::WorldMesh& mesh, const ChunkTable& chunks);
 
 // The fields readWorldChunks fills, copied from a source mesh: materials,
 // vertices, features and polygons. readWorldChunks of unedited chunks equals

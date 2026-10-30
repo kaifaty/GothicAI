@@ -186,9 +186,11 @@ def read_streaming(directory):
     for row in rows:
         parts = segment_parts(row["segment"])
         if parts and parts[0] == "streaming-flythrough":
-            sample = {key: float(value) for key, value in row.items() if key != "segment"}
-            if not all(math.isfinite(value) and value >= 0 for value in sample.values()):
+            sample = {key: float(value) for key, value in row.items() if key not in {"segment", "publication_ms"}}
+            publications = [float(value) for value in row.get("publication_ms", "").split(";") if value]
+            if not all(math.isfinite(value) and value >= 0 for value in [*sample.values(), *publications]):
                 raise ValueError(f"{path}: invalid residency metric")
+            sample["publication_ms"] = publications
             grouped.setdefault(parts[1], []).append(sample)
     if set(grouped) != {"run", "fly"} or any(len(rows) < 2 for rows in grouped.values()):
         raise ValueError(f"{path}: both run and fly require complete residency samples")
@@ -196,6 +198,15 @@ def read_streaming(directory):
     completed = [event for event in events if event.get("kind") == "route_end" and event.get("pass")]
     if sorted(event.get("speed_cm_s") for event in completed) != [500, 2000]:
         raise ValueError(f"{directory}: both route passes must reach their endpoints")
+    for event in events:
+        if event.get("kind") != "streaming_end":
+            continue
+        parts = segment_parts(event.get("segment", ""))
+        if parts and parts[0] == "streaming-flythrough":
+            gpu_mb = event["gpu_mb"]
+            if not math.isfinite(gpu_mb) or gpu_mb < 0:
+                raise ValueError(f"{directory}: invalid GPU allocation metric")
+            grouped[parts[1]][-1]["gpu_mb"] = gpu_mb
     return grouped
 
 
@@ -207,6 +218,11 @@ def streaming_stats(rows):
         "peak_near": int(max(row["near"] for row in rows)),
         "update_ms": describe([row["update_ms"] for row in rows]),
         "work_ms": describe([row["work_ms"] for row in rows]),
+        # Each timing is one chunk, including synchronous Near publications.
+        "publication_ms": describe([value for row in rows for value in row["publication_ms"]] or [0]),
+        "published": int(sum(row.get("published", 0) for row in rows)),
+        "released": int(sum(row.get("released", 0) for row in rows)),
+        "gpu_end_mb": next((row["gpu_mb"] for row in reversed(rows) if "gpu_mb" in row), None),
     }
 
 
@@ -282,12 +298,14 @@ def summary_table(report):
                          + " | ".join(number(frame[key]) for key in ("mean", "p50", "p95", "p99", "max")) + " |")
     streaming = report["places"].get("streaming-flythrough")
     if streaming:
-        lines.extend(["", "| Pass | Near transitions | Far transitions | Peak Near | Update p99 ms | Work p99 / max ms |",
-                      "|---|---:|---:|---:|---:|---:|"])
+        lines.extend(["", "| Pass | Near transitions | Far transitions | Peak Near | Update p99 ms | Work p99 / max ms | Publish p99 / max ms | Published / released | GPU end MiB |",
+                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():
             data = stats["streaming"]
             lines.append(f"| {view} | {data['near_transitions']} | {data['far_transitions']} | {data['peak_near']} | "
-                         f"{data['update_ms']['p99']:.6f} | {data['work_ms']['p99']:.6f} / {data['work_ms']['max']:.6f} |")
+                         f"{data['update_ms']['p99']:.6f} | {data['work_ms']['p99']:.6f} / {data['work_ms']['max']:.6f} | "
+                         f"{data['publication_ms']['p99']:.6f} / {data['publication_ms']['max']:.6f} | "
+                         f"{data['published']} / {data['released']} | {number(data['gpu_end_mb'], 1)} |")
     return "\n".join(lines)
 
 

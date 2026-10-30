@@ -34,6 +34,8 @@ std::unique_ptr<ChunkResidency> ChunkResidency::create(const ChunkTable& table) 
 
 void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& camera, float zFar) {
   const auto started=Clock::now();
+  counters.publicationMs=0;
+  counters.publicationTimesMs.clear();
   const auto heroCell=ChunkId::fromPosition(hero.x,hero.z);
   const auto cameraCell=ChunkId::fromPosition(camera.x,camera.z);
   counters.near=0;
@@ -116,4 +118,10 @@ void ChunkResidency::unsubscribe(uint64_t subscription) {
 
 void ChunkResidency::enqueue(Work task) {
   work.push_back(std::move(task));
+  }
+
+void ChunkResidency::recordPublication(double ms) {
+  counters.publicationMs+=ms;
+  counters.publicationTimesMs.push_back(ms);
+  ++counters.published;
   }

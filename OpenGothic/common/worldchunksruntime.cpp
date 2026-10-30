@@ -12,6 +12,65 @@
 
 #include "gothicglb.h"
 
+void retainWorldTriangles(asset::WorldMesh& mesh, std::span<const uint32_t> triangles, ChunkTable* chunks) {
+  const auto count=mesh.polygons.material_indices.size();
+  if(chunks!=nullptr && chunks->triangleChunks.size()!=count)
+    throw std::runtime_error("world triangles: chunk ownership does not match polygons");
+  for(size_t i=0;i<triangles.size();++i)
+    if(triangles[i]>=count || (i!=0 && triangles[i]<=triangles[i-1]))
+      throw std::runtime_error("world triangles: retained IDs must be increasing, unique and in range");
+
+  asset::PolygonList retained;
+  retained.material_indices.reserve(triangles.size());
+  retained.lightmap_indices.reserve(triangles.size());
+  retained.flags.reserve(triangles.size());
+  retained.vertex_indices.reserve(triangles.size()*3);
+  retained.feature_indices.reserve(triangles.size()*3);
+  std::vector<uint32_t> ownership;
+  if(chunks!=nullptr) {
+    ownership.reserve(triangles.size());
+    for(auto& entry:chunks->entries) {
+      entry.triangleCount=0;
+      entry.min=entry.max={};
+      }
+    }
+  for(const auto triangle:triangles) {
+    retained.material_indices.push_back(mesh.polygons.material_indices[triangle]);
+    retained.lightmap_indices.push_back(mesh.polygons.lightmap_indices[triangle]);
+    retained.flags.push_back(mesh.polygons.flags[triangle]);
+    for(size_t corner=0;corner<3;++corner) {
+      retained.vertex_indices.push_back(mesh.polygons.vertex_indices[triangle*3+corner]);
+      retained.feature_indices.push_back(mesh.polygons.feature_indices[triangle*3+corner]);
+      }
+    if(chunks==nullptr)
+      continue;
+    const auto owner=chunks->triangleChunks[triangle];
+    ownership.push_back(owner);
+    auto& entry=chunks->entries.at(owner);
+    if(entry.triangleCount++==0)
+      entry.min=entry.max=mesh.vertices[mesh.polygons.vertex_indices[triangle*3]];
+    for(size_t corner=0;corner<3;++corner) {
+      const auto& vertex=mesh.vertices[mesh.polygons.vertex_indices[triangle*3+corner]];
+      for(unsigned axis=0;axis<3;++axis) {
+        entry.min[axis]=std::min(entry.min[axis],vertex[axis]);
+        entry.max[axis]=std::max(entry.max[axis],vertex[axis]);
+        }
+      }
+    }
+  mesh.polygons=std::move(retained);
+  if(chunks!=nullptr)
+    chunks->triangleChunks=std::move(ownership);
+  }
+
+std::vector<std::vector<uint32_t>> chunkTriangleLists(const asset::WorldMesh& mesh, const ChunkTable& chunks) {
+  if(chunks.triangleChunks.size()!=mesh.polygons.material_indices.size())
+    throw std::runtime_error("world triangles: chunk ownership does not match polygons");
+  std::vector<std::vector<uint32_t>> result(chunks.entries.size());
+  for(size_t triangle=0;triangle<chunks.triangleChunks.size();++triangle)
+    result.at(chunks.triangleChunks[triangle]).push_back(uint32_t(triangle));
+  return result;
+  }
+
 namespace {
 
 using namespace gothicglb;
