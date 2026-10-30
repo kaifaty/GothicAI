@@ -83,6 +83,7 @@ The complete column set is:
 | `<zone>_ns`, `<zone>_calls`, `<zone>_first_ns`, `<zone>_last_ns` | Elapsed sum in nanoseconds, call count, first start and last end as absolute `steady_clock` nanoseconds; all zero if unused |
 | `palette_calls`, `identical_calls`, `patch_calls`, `patch_blocks` | Counts |
 | `palette_bytes`, `identical_bytes`, `patch_bytes`, `grow_bytes`, `upload_execution_bytes` | Bytes |
+| `draw_calls`, `dispatch_calls` | Encoded draw and compute dispatch counts; dispatch counting currently covers Metal |
 | `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of Metal command buffer `GPUEndTime-GPUStartTime` in nanoseconds; 1 only when all submitted buffers have valid timing; submitted buffer count |
 
 The complete `<zone>` list (each produces all four columns above):
@@ -109,6 +110,13 @@ submitted during the attempt. Slot reuse cannot redirect a late completion to a 
 There are no added waits. Missing/failed/incomplete timing gives `gpu_done=0,gpu_ns=0`;
 `gpu_buffers` still counts captured Metal submissions. Vulkan and other backends currently write three zeros.
 Pending completions at CSV flush are left incomplete. This is diagnostic timing, not a performance stand.
+
+On Metal, `OPENGOTHIC_GPU_PASSES=1` additionally samples native encoder stage boundaries and writes
+`<frames.csv>.gpu.csv`: attempt, slot, segment, frame, encoder index/type, joined pass labels,
+GPU/vertex/fragment nanoseconds, draw/dispatch counts and validity. Passes sharing an encoder stay
+joined; intervals may overlap and must not be summed into total GPU time. Unsupported or invalid
+samples have `valid=0`. Detailed counters have measurable overhead: leave them off for the GPU
+acceptance runs, then enable them separately when a pass breakdown is needed.
 
 ### План и журнал
 
@@ -436,6 +444,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 |---|---|
 | `playvideo <name>` | Marvin command calling the game video player; case-insensitive name, optional `.bik`. Explicitly requests the player even with `-nointro`; the first request starts lazy preparation and is skipped while the part is not ready. Negative `scaleVideos` still disables playback. The scenario pauses during playback and resumes afterwards; `pos` records position, world tick and world time in `events.jsonl`. |
 | `wait <ms>` | game time |
+| `wait real <ms>` | wall time; the game keeps ticking while scenario commands wait |
 | `waitarrive [timeout ms]` | until the player has walked where it was sent |
 | `goto <waypoint>`, `goto pos <x> <y> <z>` | teleport (`pos`: where no waypoint is, a roof, a rock) |
 | `walkto <waypoint>` | walk there (AI path) |
@@ -561,7 +570,7 @@ Talking, for shorts (`shorts/`; needs the AI server, see `shorts/README.md`):
 | `waitai <key> <stage> [timeout ms]` | until a thing of the AI bridge has got that far: `waitai necro fallen` (the necromancer's answer: cast, fallen, raise, risen, card; `ai necro <npc> [spell] [picture]` starts it without the server) |
 | `near <npc> [dist] [deg]`, `approach <npc>`, `face npc <npc>` | the hero in front of an npc (teleport), walks up to it, turns to it |
 | `cam shoulder\|face\|two <npc> [dist] [height] [side\|deg]`, `cam cut`, `cam smooth <k>` | shots of the hero and an npc; they glide from one to the next unless `cut`. `cam face` with an npc's name is this shot, with a number the close-up above. `cam two arena`: the two participants of a body arena, a yellow dot over the primary (`bodyreplay`, `scripts/body_replay_film.py`) |
-| `caption <text>`, `mark <text>` | events for the cut of a short |
+| `caption <text>`, `mark <text>` | events for the cut of a short; `mark stream_warm` and `mark stream_warm_5s` also record load-probe memory after landscape warmup and five real seconds later |
 | `ai <...>` | the AI bridge's console: `ai attach <npc>`, `ai skip <npc>` (its important dialogs count as told: it does not stop the hero), `ai ptt start [<wav>]\|stop\|cancel` |
 
 Every talking command writes `events.jsonl` (what was said when, in frames of the recording). A line of the

@@ -94,7 +94,19 @@ NO_BUILD=1 PERF_VID_RES=1 scripts/perf.sh market forest interior
 NO_BUILD=1 PERF_INI='INTERNAL.halfResAoFog=0' scripts/perf.sh market
 ```
 
-**Цена прохода GPU.** Драйвер Apple склеивает соседние compute-энкодеры, поэтому
+**Нативные GPU-интервалы Metal.** С включённым FrameProfile и явным
+`OPENGOTHIC_GPU_PASSES=1` рядом с основным
+CSV пишется `<frameprofile.csv>.gpu.csv`: интервалы render/compute/blit encoder,
+VS/FS-время и число draw/dispatch. Метки проходов, которые делят один encoder,
+остаются объединёнными. Timestamp снимается на границах стадий, результат
+читается после завершения GPU; дополнительные encoder, барьеры и ожидания
+не добавляются. Интервалы стадий могут перекрываться, поэтому их нельзя
+складывать в общее `gpu_ns`. `valid=0` означает отсутствие достоверного замера.
+Общий `gpu_ns` основного CSV по-прежнему берётся из времени command buffer.
+Подробные сэмплы увеличивают стоимость кадра; для проверки обычного GPU-порога
+этот режим выключают, а для разбивки включают в отдельном диагностическом прогоне.
+
+**Цена отдельного прохода GPU.** Драйвер Apple склеивает соседние compute-энкодеры, поэтому
 Metal System Trace (`xcrun xctrace record --template 'Metal System Trace'
 --attach <pid>`, таблица `metal-gpu-intervals`) показывает SSAO, туман и
 экспозицию одним интервалом. Цена отдельного прохода меряется вычитанием:
