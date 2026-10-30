@@ -41,6 +41,7 @@ def default_log_root() -> Path:
 # sharper textures of the characters, made from the game's own by scripts/hd-textures.sh (never in git)
 HD_TEXTURES = default_hd_textures()
 FRACTURE_CACHE = Path.home() / ".local" / "share" / "gothic-ai" / "fracture"
+CONVEX_PARTS_CACHE = Path.home() / ".local" / "share" / "gothic-ai" / "convex-parts"
 PLAY_CONTENT = Path.home() / ".local" / "share" / "gothic-ai" / "play-content"
 LOG_ROOT = default_log_root()
 KEEP_LOGS = 20
@@ -76,6 +77,7 @@ class Layout:
     fracture_cache: Path | None = None  # pre-cut breakable meshes (OPENGOTHIC_FRACTURE)
     play_content: Path | None = None  # the personal Linux install's content (OPENGOTHIC_CONTENT)
     game_env: dict[str, str] = field(default_factory=dict)
+    convex_parts_cache: Path | None = None  # offline furniture collision (OPENGOTHIC_CONVEX_PARTS)
 
 
 @dataclass(frozen=True)
@@ -166,8 +168,11 @@ def find_layout(config: Config) -> Layout:
         raise LaunchError("\n".join(problems))
     hd = HD_TEXTURES if HD_TEXTURES.is_dir() else None
     fracture = FRACTURE_CACHE if FRACTURE_CACHE.is_dir() else None
+    convex_parts = CONVEX_PARTS_CACHE if CONVEX_PARTS_CACHE.is_dir() else None
     content = PLAY_CONTENT if sys.platform == "linux" else None
-    return Layout(repo, uv, game_bin, game_dir, paths.game_home or GAME_HOME, hd, fracture, content, game_env)
+    return Layout(
+        repo, uv, game_bin, game_dir, paths.game_home or GAME_HOME, hd, fracture, content, game_env, convex_parts
+    )
 
 
 def texture_env(layout: Layout) -> dict[str, str]:
@@ -180,6 +185,15 @@ def fracture_env(layout: Layout) -> dict[str, str]:
     if "OPENGOTHIC_FRACTURE" in os.environ:
         return {"OPENGOTHIC_FRACTURE": os.environ["OPENGOTHIC_FRACTURE"]}
     return {"OPENGOTHIC_FRACTURE": str(layout.fracture_cache)} if layout.fracture_cache is not None else {}
+
+
+def convex_parts_env(layout: Layout) -> dict[str, str]:
+    """An explicit override, including empty, takes precedence over the generated cache."""
+    if "OPENGOTHIC_CONVEX_PARTS" in os.environ:
+        return {"OPENGOTHIC_CONVEX_PARTS": os.environ["OPENGOTHIC_CONVEX_PARTS"]}
+    if layout.convex_parts_cache is not None:
+        return {"OPENGOTHIC_CONVEX_PARTS": str(layout.convex_parts_cache)}
+    return {}
 
 
 def content_env(layout: Layout) -> dict[str, str]:
@@ -304,6 +318,7 @@ def game(config: Config, layout: Layout, ports: Ports, save: str | None = None, 
         "GOTHIC_AI_URL": f"ws://127.0.0.1:{ports.server}",
         **texture_env(layout),
         **fracture_env(layout),
+        **convex_parts_env(layout),
         **content_env(layout),
     }
     if s.chat_scale is not None:

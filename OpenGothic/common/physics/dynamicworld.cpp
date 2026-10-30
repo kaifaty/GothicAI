@@ -5,6 +5,7 @@
 #include "physicvbo.h"
 #include "ragdoll.h"
 #include "cloth.h"
+#include "convexparts.h"
 #include "worldwind.h"
 #include "gothic.h"
 #include "arrowtrace.h"
@@ -147,6 +148,8 @@ struct DynamicWorld::MovableVobs {
     asset::MaterialGroup      material = asset::MaterialGroup::UNDEFINED;
     float                      friction = 0.f;
     bool                       hullAttempted = false;
+    bool                       convexPartsAttempted = false;
+    std::shared_ptr<const ConvexParts> convexParts;
     std::shared_ptr<const FractureMesh> fracture;
     };
   std::unordered_map<std::string,std::shared_ptr<Shape>> shapes;
@@ -155,6 +158,7 @@ struct DynamicWorld::MovableVobs {
   double validationMs = 0;
   bool finalized = false;
   bool enabled = true;
+  bool furniturePartsEnabled = true;
   bool destructionEnabled = true;
   };
 
@@ -1311,8 +1315,8 @@ void DynamicWorld::prepareMovableVobShape(BodyData& obj) {
       part.source->mesh.appendVertices(points,part.local);
     if(points.size()>=4) {
       Physics::initialize();
-      // A single native hull closes cavities such as cup mouths and the space
-      // below a table. Walking and aiming still use the original source faces.
+      // Preserve this envelope for mass, water and fracture, even when native
+      // collision uses the offline compound. Mesh queries keep the source faces.
       JPH::ConvexHullShapeSettings settings(points.data(),int(points.size()),0.001f);
       const auto result = settings.Create();
       if(!result.HasError() && result.Get()->GetVolume()>0.f)
@@ -1323,6 +1327,10 @@ void DynamicWorld::prepareMovableVobShape(BodyData& obj) {
     }
   if(shape.hull!=nullptr)
     obj.movableMass = float(shape.hull->GetVolume()*volumeScale(obj.origin)*materialDensity(shape.material)*obj.massMultiplier);
+  if(obj.className!="fence" && movableVobs->furniturePartsEnabled && !shape.convexPartsAttempted) {
+    shape.convexPartsAttempted = true;
+    shape.convexParts = ConvexParts::load(obj.visual);
+    }
   }
 
 void DynamicWorld::rebuildMovableVob(BodyData& obj) {
@@ -1351,8 +1359,14 @@ void DynamicWorld::rebuildMovableVob(BodyData& obj) {
       // The authored mesh remains the exact static obstacle. This sensor hull
       // only owns destruction identity and the mass used by its future pieces.
       obj.body=world->addCollisionBody(shape.hull,obj.origin,shape.friction,C_MovableVob,false,true);
-    else
-      obj.body = world->addDynamicBody(shape.hull,obj.origin,shape.friction,obj.movableMass,C_MovableVob,true);
+    else {
+      const bool compound = movableVobs->furniturePartsEnabled && shape.convexParts!=nullptr && shape.convexParts->partCount>1;
+      const auto& collision = compound ? shape.convexParts->shape : shape.hull;
+      obj.body = world->addDynamicBody(collision,obj.origin,shape.friction,obj.movableMass,C_MovableVob,true);
+      if(compound)
+        obj.body->setBuoyancyShape(new JPH::OffsetCenterOfMassShape(shape.hull,
+          collision->GetCenterOfMass()-shape.hull->GetCenterOfMass()));
+      }
     }
   if(obj.body!=nullptr) {
     obj.body->setPayload(&obj,P_MovableVob);
@@ -1416,6 +1430,39 @@ void DynamicWorld::setMovableVobsEnabled(bool enabled) {
       rebuildMovableVob(*obj);
   if(enabled && movableVobs->finalized && movableVobs->census.empty())
     validateMovableVobs();
+  }
+
+void DynamicWorld::setFurniturePartsEnabled(bool enabled) {
+  if(movableVobs->furniturePartsEnabled==enabled)
+    return;
+  movableVobs->furniturePartsEnabled = enabled;
+  for(auto* obj:movableVobs->bodies) {
+    if(obj->className=="fence" || obj->pose->broken || obj->body==nullptr)
+      continue;
+    prepareMovableVobShape(*obj);
+    const auto& shape = *obj->movableShape;
+    const bool compound = enabled && shape.convexParts!=nullptr && shape.convexParts->partCount>1;
+    const auto& collision = compound ? shape.convexParts->shape : shape.hull;
+    const auto matrix = obj->body->matrix();
+    const auto velocity = obj->body->velocity();
+    const auto angular = obj->body->angularVelocity();
+    const bool sleeping = obj->body->isSleeping();
+    obj->body.reset();
+    obj->body = world->addDynamicBody(collision,matrix,shape.friction,obj->movableMass,C_MovableVob,sleeping);
+    obj->body->setPayload(obj,P_MovableVob);
+    obj->body->setLabel(obj->visual);
+    obj->body->setNoiseProfile(impactMaterial(shape.material),shape.material,obj->visual);
+    obj->body->setBuoyancyFraction(vobBuoyancyFraction(shape.material,obj->className));
+    if(compound)
+      obj->body->setBuoyancyShape(new JPH::OffsetCenterOfMassShape(shape.hull,
+        collision->GetCenterOfMass()-shape.hull->GetCenterOfMass()));
+    if(!sleeping)
+      obj->body->setVelocity(velocity,angular);
+    }
+  }
+
+bool DynamicWorld::furniturePartsEnabled() const {
+  return movableVobs->furniturePartsEnabled;
   }
 
 void DynamicWorld::setBuoyancyEnabled(bool enabled) {
@@ -1939,6 +1986,8 @@ std::vector<DynamicWorld::MovableVobSnapshot> DynamicWorld::movableVobSnapshot()
     entry.disposition = obj->disposition;
     entry.legacyCollision = obj->legacyCollision;
     entry.enabled = obj->body!=nullptr;
+    entry.collisionParts = movableVobs->furniturePartsEnabled && obj->className!="fence" &&
+      obj->movableShape->convexParts!=nullptr ? obj->movableShape->convexParts->partCount : 1;
     entry.mass = obj->movableMass;
     entry.hullVolume = obj->movableShape->hull!=nullptr ?
       float(obj->movableShape->hull->GetVolume()*volumeScale(obj->origin)) : 0.f;

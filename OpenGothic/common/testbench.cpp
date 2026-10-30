@@ -33,6 +33,9 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#if defined(__unix__) || defined(__APPLE__)
+#include <sys/resource.h>
+#endif
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -729,6 +732,25 @@ struct Bench {
   std::string movablePhase;
   uint64_t movablePhaseStart=0,movableSampleTick=0;
   std::vector<LivingPhysics> movablePhysics;
+  struct FurnitureDrop {
+    Item* item=nullptr;
+    std::string role;
+    std::vector<Vec3> vertices;
+    Vec3 release;
+    float supportY=0;
+    };
+  struct FurnitureParts {
+    uint32_t table=uint32_t(-1),cupboard=uint32_t(-1);
+    std::string tableVisual;
+    Matrix4x4 tableOrigin;
+    Vec3 tableBounds[2],tableCenter,walkStart;
+    std::vector<FurnitureDrop> drops;
+    Npc* corpse=nullptr;
+    bool walking=false;
+    float walkMaxStep=0;
+    Vec3 walkPrevious;
+    uint64_t walkStartTick=0;
+    } furnitureParts;
   uint32_t ownMeshZen=uint32_t(-1);
   Vec3 ownMeshAxis,ownMeshApproach,ownMeshHeroStart,ownMeshBodyStart;
   float ownMeshMaxCrossTrack=0;
@@ -3949,6 +3971,336 @@ void prepareMovableFixture(World& world,Npc& player) {
     ",\"enabled\":"+(world.physic()->movableVobsEnabled()?"true":"false")+
     ",\"walk_start_cm\":"+ragdollVector(laneStart)+",\"walk_end_cm\":"+ragdollVector(laneEnd)+
     ",\"mass_examples\":"+massExamples+"],\"bodies\":"+movableRows(world));
+  }
+
+uint64_t furniturePeakMemory() {
+#if defined(__unix__) || defined(__APPLE__)
+  rusage usage{};
+  if(getrusage(RUSAGE_SELF,&usage)!=0)return 0;
+#if defined(__APPLE__)
+  return uint64_t(usage.ru_maxrss);
+#else
+  return uint64_t(usage.ru_maxrss)*1024;
+#endif
+#else
+  return 0;
+#endif
+  }
+
+std::optional<DynamicWorld::MovableVobSnapshot> furnitureBody(World& world,uint32_t zenId) {
+  for(const auto& body:world.physic()->movableVobSnapshot())if(body.zenId==zenId)return body;
+  return {};
+  }
+
+void furnitureClearDrops(World& world) {
+  for(auto& drop:bench.furnitureParts.drops)world.removeItem(*drop.item);
+  bench.furnitureParts.drops.clear();
+  }
+
+// Intersections of a vertical line with the source mesh's horizontal surfaces,
+// in visual centimetres. This selects real shelves without a visual judgement.
+std::vector<float> furnitureSurfaces(const asset::StaticMesh& mesh,float x,float z) {
+  std::vector<float> result;
+  for(const auto& sub:mesh.sub_meshes)for(const auto& face:sub.triangles) {
+    const auto& a=mesh.positions[sub.wedges[face.wedges[0]].index];
+    const auto& b=mesh.positions[sub.wedges[face.wedges[1]].index];
+    const auto& c=mesh.positions[sub.wedges[face.wedges[2]].index];
+    const float det=(b.x-a.x)*(c.z-a.z)-(c.x-a.x)*(b.z-a.z);
+    if(std::abs(det)<.001f)continue;
+    const Vec3 u(b.x-a.x,b.y-a.y,b.z-a.z),v(c.x-a.x,c.y-a.y,c.z-a.z);
+    const auto normal=Vec3::crossProduct(u,v);
+    if(std::abs(normal.y)<normal.length()*.98f)continue;
+    const float ab=((x-a.x)*(c.z-a.z)-(c.x-a.x)*(z-a.z))/det;
+    const float ac=((b.x-a.x)*(z-a.z)-(x-a.x)*(b.z-a.z))/det;
+    if(ab<-.001f || ac<-.001f || ab+ac>1.001f)continue;
+    result.push_back(a.y+ab*(b.y-a.y)+ac*(c.y-a.y));
+    }
+  std::sort(result.begin(),result.end());
+  result.erase(std::unique(result.begin(),result.end(),[](float a,float b){return std::abs(a-b)<1.f;}),result.end());
+  return result;
+  }
+
+bool furnitureDrop(World& world,Npc& player,std::string role,const char* instance,
+                   const Vec3& bottom,float supportY,const Vec3& speed={}) {
+  const auto symbol=world.script().findSymbolIndex(instance);
+  if(symbol==size_t(-1)) {arenaAbort("furniture preparation: Item instance unavailable");return false;}
+  Item definition(world,symbol,Item::T_Inventory);
+  const auto* mesh=Resources::loadMesh(definition.handle().visual);
+  if(!mesh) {arenaAbort("furniture preparation: Item mesh unavailable");return false;}
+  Bench::FurnitureDrop drop;drop.role=std::move(role);drop.supportY=supportY;
+  mesh->appendItemVertices(drop.vertices);
+  if(drop.vertices.empty()) {arenaAbort("furniture preparation: Item source vertices unavailable");return false;}
+  float low=std::numeric_limits<float>::infinity();
+  for(const auto& point:drop.vertices)low=std::min(low,point.y);
+  auto pose=Matrix4x4::mkIdentity();pose.translate(bottom-Vec3(0,low,0));
+  drop.item=world.addItemDyn(symbol,pose,world.npcId(&player));drop.release=bottom;
+  if(!drop.item || !drop.item->isDynamic()) {arenaAbort("furniture preparation: Item has no native body");return false;}
+  if(speed.quadLength()>0 && !drop.item->addSpellImpulse(speed*(.01f*drop.item->physicsMass()),&player)) {
+    arenaAbort("furniture preparation: native Item throw refused");return false;
+    }
+  event("furniture_parts_drop","\"role\":"+jsonStr(drop.role)+",\"symbol\":"+jsonStr(instance)+
+    ",\"bottom_cm\":"+ragdollVector(bottom)+",\"velocity_cm_s\":"+ragdollVector(speed)+
+    ",\"support_y_cm\":"+ragdollNumber(supportY));
+  bench.furnitureParts.drops.push_back(std::move(drop));return true;
+  }
+
+void furnitureSetup(World& world,Npc& player) {
+  auto& fixture=bench.furnitureParts;
+  Npc* host=nullptr;
+  for(uint32_t id=0;id<world.npcCount();++id) {
+    auto* npc=world.npcById(id);if(!npc)continue;
+    auto name=symName(world,npc);
+    for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
+    if(name.find("CORAGON")!=std::string::npos || name.find("KORAGON")!=std::string::npos) {host=npc;break;}
+    }
+  if(!host) {arenaAbort("furniture preparation: Coragon is absent from NEWWORLD");return;}
+  std::optional<DynamicWorld::MovableVobSnapshot> table;
+  float distance=1400.f*1400.f;
+  for(const auto& body:world.physic()->movableVobSnapshot()) {
+    if(body.className!="table" || !body.enabled || body.zenId==uint32_t(-1))continue;
+    const float candidate=(movablePosition(body.transform)-host->position()).quadLength();
+    if(candidate<distance) {distance=candidate;table=body;}
+    }
+  if(!table || (world.physic()->furniturePartsEnabled() && table->collisionParts<=1)) {
+    arenaAbort("furniture preparation: tavern table needs an enabled native compound and valid cache in ON mode");return;
+    }
+  fixture.table=table->zenId;fixture.tableVisual=table->visual;fixture.tableOrigin=table->transform;
+  for(unsigned i=0;i<2;++i)fixture.tableBounds[i]=table->localBounds[i];
+  fixture.tableCenter=(table->localBounds[0]+table->localBounds[1])*.5f;table->transform.project(fixture.tableCenter);
+  // The observer is outside the Item/CharacterVirtual contact range.
+  player.clearAiQueue();player.stopWalking();player.clearSpeed();player.closeWeapon(true);
+  auto observer=fixture.tableCenter+Vec3(450,0,450);
+  const auto ground=world.physic()->landRay(observer+Vec3(0,200,0),700.f);
+  if(!ground.hasCol) {arenaAbort("furniture preparation: tavern observer has no floor");return;}
+  observer.y=ground.v.y;player.setPosition(observer);player.updateTransform();
+  for(uint32_t id=0;id<world.npcCount();++id) {
+    auto* npc=world.npcById(id);
+    if(npc && npc!=&player && !npc->isDown() && (npc->position()-fixture.tableCenter).length()<1200.f) {
+      npc->clearAiQueue();npc->clearState(false);npc->stopWalking();npc->clearSpeed();npc->setExternalControl(true);
+      }
+    }
+  event("furniture_parts_setup","\"world\":"+jsonStr(world.name())+",\"enabled\":"+
+    (world.physic()->furniturePartsEnabled()?"true":"false")+",\"table_zen_id\":"+std::to_string(table->zenId)+
+    ",\"table_visual\":"+jsonStr(table->visual)+",\"native_collision_parts\":"+std::to_string(table->collisionParts)+
+    ",\"table_transform\":"+ragdollMatrix(table->transform)+",\"table_min_cm\":"+ragdollVector(table->localBounds[0])+
+    ",\"table_max_cm\":"+ragdollVector(table->localBounds[1])+",\"mass_kg\":"+ragdollNumber(table->mass)+
+    ",\"world_load_ms\":"+ragdollNumber(float(world.loadMilliseconds()))+
+    ",\"peak_rss_bytes\":"+std::to_string(furniturePeakMemory()));
+  }
+
+void furnitureTableItems(World& world,Npc& player) {
+  furnitureClearDrops(world);
+  const auto table=furnitureBody(world,bench.furnitureParts.table);
+  if(!table) {arenaAbort("furniture preparation: table setup required");return;}
+  const auto mesh=Resources::loadVisualMesh(table->visual);
+  const auto center=(table->localBounds[0]+table->localBounds[1])*.5f;
+  const auto surfaces=furnitureSurfaces(mesh,center.x,center.z);
+  if(surfaces.empty()) {arenaAbort("furniture preparation: table source has no central tabletop");return;}
+  auto top=Vec3(center.x,surfaces.back(),center.z);table->transform.project(top);
+  auto below=Vec3(center.x,table->localBounds[0].y+15.f,center.z);table->transform.project(below);
+  const auto floor=world.physic()->landRay(below,500.f);
+  if(!floor.hasCol || top.y-floor.v.y<50.f) {arenaAbort("furniture preparation: table has no usable native floor below it");return;}
+  for(unsigned i=0;i<2;++i) {
+    auto under=Vec3(center.x-15.f,table->localBounds[0].y+(surfaces.back()-table->localBounds[0].y)*.35f,
+                    center.z+(i==0?-15.f:15.f));
+    table->transform.project(under);
+    Vec3 speed(15,0,0);table->transform.project(speed);speed-=movablePosition(table->transform);
+    if(!furnitureDrop(world,player,i==0?"under_apple":"under_bottle",i==0?"ITFO_APPLE":"ITFO_BEER",under,floor.v.y,speed))return;
+    }
+  furnitureDrop(world,player,"tabletop","ITFO_APPLE",top+Vec3(0,10,0),top.y);
+  }
+
+void furnitureCupboardItem(World& world,Npc& player) {
+  furnitureClearDrops(world);
+  std::optional<DynamicWorld::MovableVobSnapshot> selected;Vec3 local;
+  float distance=std::numeric_limits<float>::infinity();
+  for(const auto& body:world.physic()->movableVobSnapshot()) {
+    if(body.className!="cupboard" || !body.enabled || body.zenId==uint32_t(-1))continue;
+    if(world.physic()->furniturePartsEnabled() && body.collisionParts<=1)continue;
+    const auto mesh=Resources::loadVisualMesh(body.visual);
+    const auto low=body.localBounds[0],high=body.localBounds[1],center=(low+high)*.5f;
+    bool found=false;Vec3 shelf;
+    for(float depth:{.5f,.3f,.7f}) {
+      const float z=low.z+(high.z-low.z)*depth;
+      const auto surfaces=furnitureSurfaces(mesh,center.x,z);
+      for(size_t i=0;i+1<surfaces.size();++i)
+        if(surfaces[i]>low.y+25.f && surfaces[i]<high.y-25.f && surfaces[i+1]-surfaces[i]>=30.f) {
+          shelf=Vec3(center.x,surfaces[i],z);found=true;break;
+          }
+      if(found)break;
+      }
+    const float candidate=(movablePosition(body.transform)-bench.furnitureParts.tableCenter).quadLength();
+    if(found && candidate<distance) {distance=candidate;selected=body;local=shelf;}
+    }
+  if(!selected) {arenaAbort("furniture preparation: enabled open-shelf cupboard with 30 cm source clearance is absent");return;}
+  bench.furnitureParts.cupboard=selected->zenId;
+  auto support=local;selected->transform.project(support);
+  player.setPosition(support+Vec3(450,0,450));player.updateTransform();
+  event("furniture_parts_shelf_setup","\"zen_id\":"+std::to_string(selected->zenId)+",\"visual\":"+jsonStr(selected->visual)+
+    ",\"source_support_local_cm\":"+ragdollVector(local)+",\"source_support_world_cm\":"+ragdollVector(support)+
+    ",\"native_collision_parts\":"+std::to_string(selected->collisionParts)+",\"transform\":"+ragdollMatrix(selected->transform));
+  furnitureDrop(world,player,"shelf","ITFO_BEER",support+Vec3(0,8,0),support.y);
+  }
+
+void furnitureItemReport(World& world) {
+  const auto table=furnitureBody(world,bench.furnitureParts.table);
+  if(!table || bench.furnitureParts.drops.empty()) {arenaAbort("furniture report requires released Items");return;}
+  const bool enabled=world.physic()->furniturePartsEnabled();bool all=true;
+  for(const auto& drop:bench.furnitureParts.drops) {
+    const auto support=drop.role=="shelf"?furnitureBody(world,bench.furnitureParts.cupboard):table;
+    if(!support) {arenaAbort("furniture report lost its native support body");return;}
+    auto inverse=support->transform;inverse.inverse();
+    float low=std::numeric_limits<float>::infinity(),high=-low;Vec3 center;
+    for(auto point:drop.vertices) {
+      drop.item->transform().project(point);low=std::min(low,point.y);high=std::max(high,point.y);center+=point;
+      }
+    center/=float(drop.vertices.size());auto local=center;inverse.project(local);
+    const bool under=drop.role.starts_with("under_");
+    const bool footprint=local.x>support->localBounds[0].x+5.f && local.x<support->localBounds[1].x-5.f &&
+                         local.z>support->localBounds[0].z+5.f && local.z<support->localBounds[1].z-5.f;
+    const float gap=low-drop.supportY;
+    const bool supported=std::abs(gap)<=5.f;
+    const bool floorUnder=footprint && supported && high<bench.furnitureParts.tableCenter.y+15.f;
+    const bool pass=under?(enabled?floorUnder:!floorUnder):((drop.role=="shelf" && !enabled) || (supported && footprint));
+    all&=pass;
+    event("furniture_parts_item_result","\"enabled\":"+std::string(enabled?"true":"false")+",\"role\":"+jsonStr(drop.role)+
+      ",\"position_cm\":"+ragdollVector(drop.item->position())+",\"center_local_cm\":"+ragdollVector(local)+
+      ",\"bottom_cm\":"+ragdollNumber(low)+",\"top_cm\":"+ragdollNumber(high)+
+      ",\"support_y_cm\":"+ragdollNumber(drop.supportY)+",\"support_gap_cm\":"+ragdollNumber(gap)+
+      ",\"inside_support_footprint\":"+(footprint?"true":"false")+",\"on_floor_under_table\":"+(floorUnder?"true":"false")+
+      ",\"native_dynamic\":"+(drop.item->isDynamic()?"true":"false")+",\"sleeping\":"+(drop.item->physicsSleeping()?"true":"false")+
+      ",\"pass\":"+(pass?"true":"false"));
+    }
+  if(!all)arenaAbort("furniture Item support mechanic failed after native settling");
+  }
+
+void furnitureRagdoll(World& world,Npc& player) {
+  furnitureClearDrops(world);auto& fixture=bench.furnitureParts;
+  const auto table=furnitureBody(world,fixture.table);
+  if(!table) {arenaAbort("furniture preparation: table setup required");return;}
+  auto local=(table->localBounds[0]+table->localBounds[1])*.5f;
+  local.x=table->localBounds[0].x-20.f;local.y=table->localBounds[0].y+10.f;
+  auto at=local;table->transform.project(at);
+  Vec3 direction(1,0,0);table->transform.project(direction);direction-=movablePosition(table->transform);direction.y=0;direction=Vec3::normalize(direction);
+  auto* npc=world.addNpc(world.script().findSymbolIndex("BAU_904_BAUER"),at);
+  if(!npc) {arenaAbort("furniture preparation: falling NPC insertion failed");return;}
+  npc->clearAiQueue();npc->clearState(false);npc->stopWalking();npc->clearSpeed();npc->setExternalControl(true);
+  npc->setDirection(direction);npc->updateTransform();
+  npc->handle().flags=zenkit::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+  npc->setLastHitBy(&player);
+  if(!npc->setRagdollDown(true)) {arenaAbort("furniture preparation: NPC death refused");return;}
+  npc->prepareRagdoll();
+  if(!npc->ragdollBody()) {arenaAbort("furniture preparation: NPC has no native ragdoll");return;}
+  npc->addRagdollImpulse(direction*35.f);fixture.corpse=npc;
+  event("furniture_parts_ragdoll_setup","\"npc_id\":"+std::to_string(world.npcId(npc))+
+    ",\"root_cm\":"+ragdollVector(at)+",\"impulse_ns\":"+ragdollVector(direction*35.f));
+  }
+
+void furnitureRagdollReport(World& world) {
+  auto& fixture=bench.furnitureParts;const auto table=furnitureBody(world,fixture.table);
+  if(!table || !fixture.corpse || !fixture.corpse->ragdollBody()) {arenaAbort("furniture ragdoll setup required");return;}
+  auto inverse=table->transform;inverse.inverse();size_t inside=0,total=0;std::string parts="[";
+  for(const auto& body:world.physic()->waterBodySnapshot()) {
+    if(body.ragdoll!=fixture.corpse->ragdollBody())continue;
+    auto center=(body.collisionBounds[0]+body.collisionBounds[1])*.5f;inverse.project(center);++total;
+    const bool under=center.x>table->localBounds[0].x+5.f && center.x<table->localBounds[1].x-5.f &&
+      center.z>table->localBounds[0].z+5.f && center.z<table->localBounds[1].z-5.f &&
+      center.y>table->localBounds[0].y-5.f && center.y<table->localBounds[1].y-15.f;
+    inside+=under;
+    if(parts.size()>1)parts+=',';
+    parts+="{\"bone\":"+std::to_string(body.bone)+",\"center_local_cm\":"+ragdollVector(center)+
+      ",\"under_tabletop\":"+(under?"true":"false")+"}";
+    }
+  const bool enabled=world.physic()->furniturePartsEnabled(),pass=total>0 && (!enabled || inside>0);
+  event("furniture_parts_ragdoll_result","\"enabled\":"+std::string(enabled?"true":"false")+
+    ",\"native_parts\":"+std::to_string(total)+",\"parts_under_tabletop\":"+std::to_string(inside)+
+    ",\"parts\":"+parts+"],\"pass\":"+(pass?"true":"false"));
+  world.removeNpc(*fixture.corpse);fixture.corpse=nullptr;
+  if(!pass)arenaAbort("furniture ragdoll mechanic failed after native settling");
+  }
+
+void furnitureWalk(World& world,Npc& player) {
+  auto& fixture=bench.furnitureParts;const auto table=furnitureBody(world,fixture.table);
+  if(!table) {arenaAbort("furniture preparation: table setup required");return;}
+  auto center=(table->localBounds[0]+table->localBounds[1])*.5f;table->transform.project(center);
+  bool found=false;Vec3 start;
+  for(unsigned i=0;i<16 && !found;++i) {
+    const float angle=float(i)*float(M_PI)/8.f;const Vec3 direction(std::cos(angle),0,std::sin(angle));
+    start=center+direction*300.f;
+    const auto floor=world.physic()->landRay(start+Vec3(0,100,0),500.f);
+    if(!floor.hasCol || floor.n.y<.8f)continue;
+    start.y=floor.v.y;
+    found=true;
+    for(float distance:{0.f,50.f,100.f}) {
+      const auto point=start-direction*distance;
+      const auto support=world.physic()->landRay(point+Vec3(0,100,0),200.f);
+      found&=support.hasCol && support.n.y>.8f && std::abs(support.v.y-start.y)<20.f;
+      }
+    if(found)found=!world.physic()->ray(start+Vec3(0,100,0),start-direction*100.f+Vec3(0,100,0)).hasCol;
+    }
+  if(!found) {arenaAbort("furniture preparation: hero approach needs a supported native corridor");return;}
+  player.clearAiQueue();player.stopWalking();player.clearSpeed();player.closeWeapon(true);
+  player.setPosition(start);player.setDirection(center-start);player.updateTransform();
+  fixture.walkStart=start;fixture.walkPrevious=start;fixture.walkMaxStep=0;
+  fixture.walkStartTick=world.tickCount();fixture.walking=true;
+  event("furniture_parts_walk_setup","\"start_cm\":"+ragdollVector(start)+",\"table_center_cm\":"+ragdollVector(center));
+  }
+
+void furnitureWalkReport(World& world,Npc& player) {
+  auto& fixture=bench.furnitureParts;fixture.walking=false;
+  const auto delta=player.position()-fixture.walkStart;
+  event("furniture_parts_walk_result","\"enabled\":"+std::string(world.physic()->furniturePartsEnabled()?"true":"false")+
+    ",\"elapsed_ms\":"+std::to_string(world.tickCount()-fixture.walkStartTick)+",\"start_cm\":"+ragdollVector(fixture.walkStart)+
+    ",\"end_cm\":"+ragdollVector(player.position())+",\"travel_cm\":"+ragdollNumber(std::hypot(delta.x,delta.z))+
+    ",\"max_vertical_step_cm\":"+ragdollNumber(fixture.walkMaxStep)+
+    ",\"character_virtual\":"+(Gothic::physicsFlags().characterVirtual?"true":"false"));
+  }
+
+void furniturePerformance(World& world) {
+  const auto* mesh=Resources::loadMesh(bench.furnitureParts.tableVisual);
+  const auto* rule=MovableVobs::classifyVisual(bench.furnitureParts.tableVisual);
+  if(!mesh || !rule) {arenaAbort("furniture performance requires the actual tavern table mesh");return;}
+  asset::WorldMesh floor;floor.materials.resize(1);floor.materials[0].group=asset::MaterialGroup::STONE;
+  for(int x=-1000;x<2000;x+=100)for(int z=-1000;z<2000;z+=100) {
+    const auto index=uint32_t(floor.vertices.size());
+    floor.vertices.insert(floor.vertices.end(),{{float(x),0,float(z)},{float(x),0,float(z+100)},
+      {float(x+100),0,float(z+100)},{float(x+100),0,float(z)}});
+    floor.polygons.vertex_indices.insert(floor.polygons.vertex_indices.end(),{index,index+2,index+1,index,index+3,index+2});
+    floor.polygons.material_indices.insert(floor.polygons.material_indices.end(),{0,0});
+    }
+  DynamicWorld scene(nullptr,floor);scene.setDestructionEnabled(false);
+  scene.setFurniturePartsEnabled(world.physic()->furniturePartsEnabled());
+  std::vector<DynamicWorld::Item> furniture;furniture.reserve(10);
+  for(unsigned i=0;i<10;++i) {
+    auto matrix=Matrix4x4::mkIdentity();
+    matrix.translate(float(i%5)*400.f,-mesh->bbox()[0].y+1.f,float(i/5)*500.f);
+    furniture.push_back(scene.addMovableVob(*mesh,bench.furnitureParts.tableVisual,matrix,rule->massMultiplier,rule->blocksWalking,rule->className,true));
+    if(furniture.back().isEmpty()) {arenaAbort("furniture performance lost a native furniture body");return;}
+    }
+  size_t decomposed=0;for(const auto& row:scene.movableVobSnapshot())decomposed+=row.collisionParts>1;
+  if(scene.furniturePartsEnabled() && decomposed!=10) {arenaAbort("furniture performance requires ten decomposed native furniture bodies");return;}
+  for(unsigned i=0;i<120;++i)scene.tick(i%3==0?16:17);
+  std::vector<float> samples;samples.reserve(600);size_t minimumActive=10;
+  auto* file=std::fopen((outDir+"/furniture-parts-physics.csv").c_str(),"w");
+  if(!file) {arenaAbort("cannot write furniture native timing samples");return;}
+  std::fprintf(file,"frame,dt_ms,active_furniture,step_ms\n");
+  for(unsigned frame=0;frame<600;++frame) {
+    // Alternating horizontal impulses keep each body physically active on its
+    // floor contacts throughout timing, without a fixture-only sleeping override.
+    for(auto& body:furniture)body.addImpulse(Vec3(body.mass()*(frame%2==0?.3f:-.3f),0,0));
+    const uint64_t dt=frame%3==0?16:17;scene.tick(dt);size_t active=0;
+    for(const auto& body:furniture)active+=!body.isSleeping();
+    minimumActive=std::min(minimumActive,active);const float cost=scene.physicsStats().stepMilliseconds;samples.push_back(cost);
+    std::fprintf(file,"%u,%llu,%zu,%.9g\n",frame,(unsigned long long)dt,active,double(cost));
+    }
+  std::fclose(file);std::sort(samples.begin(),samples.end());
+  const float p95=samples[size_t(std::ceil(.95*double(samples.size())))-1];
+  event("furniture_parts_performance","\"enabled\":"+std::string(scene.furniturePartsEnabled()?"true":"false")+
+    ",\"furniture\":10,\"decomposed_furniture\":"+std::to_string(decomposed)+",\"minimum_active_furniture\":"+std::to_string(minimumActive)+
+    ",\"samples\":600,\"simulated_ms\":10000,\"p95_step_ms\":"+ragdollNumber(p95)+
+    ",\"peak_rss_bytes\":"+std::to_string(furniturePeakMemory())+",\"world_load_ms\":"+ragdollNumber(float(world.loadMilliseconds()))+
+    ",\"timing_source\":\"DynamicWorld::physicsStats\",\"pass\":"+(minimumActive==10 && p95<=2.f?"true":"false"));
+  if(minimumActive!=10 || p95>2.f)arenaAbort("furniture native performance exceeded its active-scene budget");
   }
 
 float noiseFacingError(const Npc& npc,const Vec3& point) {
@@ -11817,6 +12169,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       {"spell_physics",&Gothic::PhysicsFlags::spellPhysics},
       {"movable_vobs",&Gothic::PhysicsFlags::movableVobs},
       {"item_hulls",&Gothic::PhysicsFlags::itemHulls},
+      {"furniture_parts",&Gothic::PhysicsFlags::furnitureParts},
       {"cloth",&Gothic::PhysicsFlags::cloth}
       };
     auto& npc=subjectOf(pl);
@@ -12275,6 +12628,16 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="own-mesh" && a.size()==2 && a[1]=="clearance")ownMeshClearance(w,pl);
   else if(c=="own-mesh" && a.size()==2 && a[1]=="walk")ownMeshWalk(w,pl);
   else if(c=="own-mesh" && a.size()==2 && a[1]=="checkpoint")ownMeshCheckpoint(w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="setup") furnitureSetup(w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="table-items") furnitureTableItems(w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="shelf-item") furnitureCupboardItem(w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="items-report") furnitureItemReport(w);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="clear-items") furnitureClearDrops(w);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="ragdoll") furnitureRagdoll(w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="ragdoll-report") furnitureRagdollReport(w);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="walk") furnitureWalk(w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="walk-report") furnitureWalkReport(w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="performance") furniturePerformance(w);
   else if(c=="movable" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
     Gothic::settingsSetI("GAME","movable_vobs",a[1]=="on");
     w.physic()->setMovableVobsEnabled(a[1]=="on");
@@ -17860,6 +18223,11 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     bench.started = true;
     FootIk::setProbing(true);
     say("start");
+    if(std::string_view(scenarioPath).find("furniture-parts")!=std::string_view::npos)
+      event("furniture_parts_loaded","\"world\":"+jsonStr(world->name())+",\"world_load_ms\":"+
+        ragdollNumber(float(world->loadMilliseconds()))+",\"enabled\":"+
+        (Gothic::settingsGetI("GAME","furniture_parts")?"true":"false")+
+        ",\"peak_rss_bytes\":"+std::to_string(furniturePeakMemory()));
     if(std::string_view(scenarioPath).find("movable-vobs")!=std::string_view::npos)
       event("movable_loaded","\"world\":"+jsonStr(world->name())+",\"world_load_ms\":"+
         ragdollNumber(float(world->loadMilliseconds()))+",\"enabled\":"+
@@ -17960,6 +18328,11 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     if(bench.destructionFarmNpcGoal)
       bench.destructionFarmNpcBest=std::min(bench.destructionFarmNpcBest,
         (bench.destructionFarmNpc->position()-bench.destructionFarmNpcGoal->pos).length());
+    }
+  if(bench.furnitureParts.walking) {
+    bench.furnitureParts.walkMaxStep=std::max(bench.furnitureParts.walkMaxStep,
+      std::abs(player->position().y-bench.furnitureParts.walkPrevious.y));
+    bench.furnitureParts.walkPrevious=player->position();
     }
   movableFields(*world);
   ownMeshFields(*world,*player);

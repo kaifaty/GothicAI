@@ -49,6 +49,7 @@ data/
 *.vdf
 *.VDF
 *.fracture
+*.convex-parts
 
 # Claude Code: per-session worktrees and personal settings
 .claude/worktrees/

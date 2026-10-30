@@ -21,6 +21,7 @@
 #                    goes into <segment>.wav instead of the speakers
 #      MOVABLE_VOBS  optional initial GAME movable_vobs setting (0 or 1), before world loading
 #      ITEM_HULLS    optional initial GAME item_hulls setting (0 or 1), for new item bodies
+#      FURNITURE_PARTS optional initial GAME furniture_parts setting (0 or 1)
 #      ARROW_STICKING optional initial GAME arrow_sticking setting (0 or 1), before world loading
 #      PHYSICS_NOISE optional initial GAME physics_noise setting (0 or 1), before world loading
 #      DESTRUCTION optional initial GAME destruction setting (0 or 1), before world loading
@@ -39,6 +40,7 @@
 #      OPENGOTHIC_TEXTURES  sharper textures (default: those of scripts/hd-textures.sh, when made; empty: none)
 #      OPENGOTHIC_CENSUS  session resource JSON (use an absolute path inside out dir for Ryzen)
 #      OPENGOTHIC_FRACTURE  pre-cut meshes (default: ~/.local/share/gothic-ai/fracture, when made; empty: none)
+#      OPENGOTHIC_CONVEX_PARTS furniture collision cache (default: ~/.local/share/gothic-ai/convex-parts; empty: none)
 #      OPENGOTHIC_CONTENT  material/mesh overrides (Ryzen: sync this directory; empty: none; unset: engine default)
 #      OPENGOTHIC_BASE_CACHE, OPENGOTHIC_BASE_STORE  base cache/store on the selected host
 set -euo pipefail
@@ -49,6 +51,7 @@ BIN="$ROOT/OpenGothic/build/opengothic/Gothic2Notr"
 GAME_BIN="${GAME_BIN:-$BIN}"
 HD_TEXTURES="$HOME/.local/share/gothic-ai/hd-textures/textures"
 FRACTURE_CACHE="$HOME/.local/share/gothic-ai/fracture"
+CONVEX_PARTS_CACHE="$HOME/.local/share/gothic-ai/convex-parts"
 BENCH_HOST="${BENCH_HOST:-auto}"
 case "$BENCH_HOST" in
   auto|ryzen|local) ;;
@@ -60,7 +63,7 @@ SCEN="${1:?usage: scripts/bench.sh <scenario> [out dir]}"
 [[ -f "$SCEN" ]] || { echo "no scenario: $1" >&2; exit 2; }
 SCEN="$(cd "$(dirname "$SCEN")" && pwd)/$(basename "$SCEN")"
 NAME="$(basename "$SCEN" .bench)"
-if [[ "$NAME" == streaming-flythrough ]]; then
+if [[ "$NAME" == streaming-flythrough || "$NAME" == furniture-parts ]]; then
   export WORLD="${WORLD:-NEWWORLD.ZEN}"
   export RYZEN_BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"
 fi
@@ -90,7 +93,7 @@ out, textures = map(path, sys.argv[1:])
 for name, value in sorted(os.environ.items()):
     if not name.startswith(("OPENGOTHIC_", "GOTHIC_", "TEMPEST_")):
         continue
-    if name in ("GOTHIC_DIR", "GOTHIC_AI_URL", "OPENGOTHIC_FRACTURE", "OPENGOTHIC_CONTENT", "OPENGOTHIC_BASE",
+    if name in ("GOTHIC_DIR", "GOTHIC_AI_URL", "OPENGOTHIC_FRACTURE", "OPENGOTHIC_CONVEX_PARTS", "OPENGOTHIC_CONTENT", "OPENGOTHIC_BASE",
                 "OPENGOTHIC_BASE_CACHE", "OPENGOTHIC_BASE_STORE"):
         continue
     if not value.startswith(("/", "~/")):
@@ -151,7 +154,7 @@ fi
 
 # These fixtures use a prepared world and clock; skip the new-game chapter video
 # before their first command on NEWWORLD.
-if [[ "$NAME" == item-wake || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough ]]; then
+if [[ "$NAME" == item-wake || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough || "$NAME" == furniture-parts ]]; then
   START_ARGS+=(-nointro)
 fi
 
@@ -196,7 +199,7 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
@@ -205,6 +208,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}$
   if [[ -n "${ITEM_HULLS:-}" ]]; then
     [[ "$ITEM_HULLS" == 0 || "$ITEM_HULLS" == 1 ]] || { echo "ITEM_HULLS must be 0 or 1" >&2; exit 2; }
     printf 'item_hulls=%s\n' "$ITEM_HULLS" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${FURNITURE_PARTS:-}" ]]; then
+    [[ "$FURNITURE_PARTS" == 0 || "$FURNITURE_PARTS" == 1 ]] || { echo "FURNITURE_PARTS must be 0 or 1" >&2; exit 2; }
+    printf 'furniture_parts=%s\n' "$FURNITURE_PARTS" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${ARROW_STICKING:-}" ]]; then
     [[ "$ARROW_STICKING" == 0 || "$ARROW_STICKING" == 1 ]] || { echo "ARROW_STICKING must be 0 or 1" >&2; exit 2; }
@@ -274,6 +281,9 @@ if [[ -z "${OPENGOTHIC_TEXTURES+set}" && -d "$HD_TEXTURES" ]]; then
 fi
 if [[ -z "${OPENGOTHIC_FRACTURE+set}" && -d "$FRACTURE_CACHE" ]]; then
   export OPENGOTHIC_FRACTURE="$FRACTURE_CACHE"
+fi
+if [[ -z "${OPENGOTHIC_CONVEX_PARTS+set}" && -d "$CONVEX_PARTS_CACHE" ]]; then
+  export OPENGOTHIC_CONVEX_PARTS="$CONVEX_PARTS_CACHE"
 fi
 
 GAME_BIN="$GAME_BIN" bash "$ROOT/scripts/base-ensure.sh" "$GOTHIC_DIR"

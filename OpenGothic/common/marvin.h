@@ -92,6 +92,7 @@ class Marvin {
       C_ToggleSpellPhysics,
       C_ToggleMovableVobs,
       C_ToggleItemHulls,
+      C_ToggleFurnitureParts,
       C_TogglePhysicsNoise,
       C_ToggleDestruction,
       C_ToggleBuoyancy,
