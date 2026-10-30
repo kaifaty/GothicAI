@@ -117,6 +117,13 @@ void DrawBuckets::updateBindlessArrays() {
       }
     }
 
+  // The first slots retain bucket IDs for RT and nonanimated materials.
+  // Landscape animations select their frame in the fragment shader so chunks
+  // with the same pipeline share one indirect command.
+  for(const auto& bucket:bucketsCpu)
+    if(bucket.mat.hasFrameAnimation())
+      tex.insert(tex.end(),bucket.mat.frames.begin(),bucket.mat.frames.end());
+
   // avoid shader linking stutter in vulkan
   tex    .resize(roundup(tex.size()));
   vbo    .resize(roundup(vbo.size()));
@@ -152,8 +159,15 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   bucketsDurtyBit = false;
 
   std::vector<BucketGpu> bucket;
+  uint32_t diffuseFrames=uint32_t(bucketsCpu.size());
   for(auto& i:bucketsCpu) {
     BucketGpu bx;
+    if(i.mat.hasFrameAnimation()) {
+      bx.diffuseFrames=diffuseFrames;
+      bx.frameCount=uint32_t(i.mat.frames.size());
+      bx.frameDuration=uint32_t(i.mat.texAniFPSInv);
+      diffuseFrames+=bx.frameCount;
+      }
     bx.texAniMapDirPeriod = i.mat.texAniMapDirPeriod;
     bx.waveMaxAmplitude   = i.mat.waveMaxAmplitude;
     bx.alphaWeight        = i.mat.alphaWeight;

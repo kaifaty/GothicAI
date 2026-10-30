@@ -83,7 +83,9 @@ class DrawBuckets {
       uint32_t       flags            = 0;
       float          uvScale          = 1.f;
       float          antitileCell     = 1.f;
-      uint32_t       padding[3]       = {};
+      uint32_t       diffuseFrames   = 0;
+      uint32_t       frameCount      = 0;
+      uint32_t       frameDuration   = 0;
       };
     static_assert(sizeof(BucketGpu)==80); // GPU array stride of Bucket in scene.glsl
 

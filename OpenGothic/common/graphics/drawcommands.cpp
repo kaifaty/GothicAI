@@ -155,7 +155,7 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
 
 uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId) {
   const bool bindlessSys = Shaders::options().doBindless;
-  const bool bindless    = bindlessSys && !m.hasFrameAnimation();
+  const bool bindless    = bindlessSys && (!m.hasFrameAnimation() || type==Landscape);
 
   auto pMain    = Shaders::inst().materialPipeline(m, type, Shaders::T_Main,   bindless);
   auto pShadow  = Shaders::inst().materialPipeline(m, type, Shaders::T_Shadow, bindless);

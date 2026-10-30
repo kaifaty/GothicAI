@@ -1417,6 +1417,20 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
     Resources::resetRecycled(0);
     require(tempestProbeGpuBufferCount()==baseline,"Outside must return live GPU buffers to baseline");
   }
+  if(Shaders::options().doBindless) {
+    SceneGlobals scene;
+    StaticMesh firstMesh(packed),secondMesh(packed);
+    VisualObjects grouped(scene,packed.bbox());
+    auto animated=Resources::loadMaterial(packed.subMeshes[0].material,true);
+    animated.frames={animated.tex,&Resources::fallbackTexture()};
+    animated.texAniFPSInv=100;
+    const auto& sub=packed.subMeshes[0];
+    auto first=grouped.get(firstMesh,animated,sub.iboOffset,sub.iboLength,packed.meshletBounds.data(),DrawCommands::Landscape);
+    auto second=grouped.get(secondMesh,animated,sub.iboOffset,sub.iboLength,packed.meshletBounds.data(),DrawCommands::Landscape);
+    require(grouped.drawCommands()[0].isBindless() && grouped.drawCommands()[0].maxPayload==2*packed.meshletBounds.size(),
+            "animated landscape chunks must share one bindless draw command across mesh buckets");
+    device.waitIdle();
+    }
   std::cout << "landscape streaming lifetime: 2 Near/Outside cycles, live_buffers=" << baseline << '\n';
 }
 

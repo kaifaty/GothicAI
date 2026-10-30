@@ -14,6 +14,8 @@
 #include <cstdlib>
 
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "frameprofile.h"
+
 // OPENGOTHIC_GPU_SKIP="SSAO,Fog-LUTs": draws and dispatches under these debug markers are dropped,
 // so the GPU time a pass costs shows up in the frame profile (docs/performance.md); the picture breaks
 static bool skipPass(const std::string& label) {
@@ -21,8 +23,10 @@ static bool skipPass(const std::string& label) {
   return !skip.empty() && !label.empty() && skip.find(","+label+",")!=std::string::npos;
   }
 #define T_SKIP_PASS() if(skipPass(activeLabel)) return
+#define T_PROFILE_DRAW() FrameProfile::add(FrameProfile::Amount::DrawCalls,1)
 #else
 #define T_SKIP_PASS()
+#define T_PROFILE_DRAW()
 #endif
 
 using namespace Tempest;
@@ -572,6 +576,7 @@ void MtCommandBuffer::draw(const AbstractGraphicsApi::Buffer* ivbo, size_t strid
 
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
+  T_PROFILE_DRAW();
   encDraw->drawPrimitives(topology,offset,vertexCount,instanceCount,firstInstance);
   }
 
@@ -595,6 +600,7 @@ void MtCommandBuffer::drawIndexed(const AbstractGraphicsApi::Buffer* ivbo, size_
     }
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
+  T_PROFILE_DRAW();
   encDraw->drawIndexedPrimitives(topology,isize,iboType,ibo.impl.get(),
                                  ioffset*mul,instanceCount,voffset,firstInstance);
   }
@@ -604,6 +610,7 @@ void MtCommandBuffer::drawIndirect(const AbstractGraphicsApi::Buffer& indirect, 
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
   auto& ind = reinterpret_cast<const MtBuffer&>(indirect);
+  T_PROFILE_DRAW();
   encDraw->drawPrimitives(topology, ind.impl.get(), offset);
   }
 
@@ -614,6 +621,7 @@ void MtCommandBuffer::dispatchMesh(size_t x, size_t y, size_t z) {
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
   // NOTE: for taskless pipeline `localSize` must be zero
+  T_PROFILE_DRAW();
   encDraw->drawMeshThreadgroups(MTL::Size(x,y,z), localSize, localSizeMesh);
   }
 
@@ -622,6 +630,7 @@ void MtCommandBuffer::dispatchMeshIndirect(const AbstractGraphicsApi::Buffer& in
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
   auto& ind = reinterpret_cast<const MtBuffer&>(indirect);
+  T_PROFILE_DRAW();
   encDraw->drawMeshThreadgroups(ind.impl.get(), offset, localSize, localSizeMesh);
   }
 
