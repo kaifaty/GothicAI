@@ -24,4 +24,8 @@ furniture-parts shelf-item
 wait 6000
 furniture-parts items-report
 furniture-parts clear-items
+slowmo 2
 furniture-parts performance
+wait 12000
+furniture-parts performance-report
+slowmo 1
