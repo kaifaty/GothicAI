@@ -11283,7 +11283,7 @@ void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl) {
   const auto capsule=npc->navigationCapsule();
   const auto physicsPosition=npc->navigationPhysicsPosition();
   const float capsuleBottom=physicsPosition.y+npc->navigationClearance()-capsule.y;
-  const auto capsuleFloor=world.physic()->landRay(physicsPosition+Vec3(0,npc->navigationClearance()+100,0),20000);
+  const auto capsuleFloor=world.physic()->landRay(physicsPosition+Vec3(0,npc->navigationClearance()+1,0),20000);
   const bool belowRoot=floor.hasCol && position.y<floor.v.y-20.f;
   const bool belowCapsule=capsuleFloor.hasCol && capsuleBottom<capsuleFloor.v.y-20.f;
   const bool belowBounds=capsuleBottom<world.view()->bbox().first.y;
