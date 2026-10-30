@@ -254,6 +254,7 @@ PR, который добавляет фичу или выключатель, д
 - `gothic-ai serve --scenario <имя>`, `--journal`, `--voice-files`;
 - HD-текстуры: каталог в `OPENGOTHIC_TEXTURES`, его передаёт лаунчер, когда текстуры сделаны;
 - Перепись оригинальных ресурсов: `OPENGOTHIC_CENSUS=<путь к json>`, запись при выходе и Marvin `census`; `common/contentcensus.*`, наблюдатель VFS, `scripts/content-census.py`; проверки — `smoke` на Ryzen и `scripts/test_content_census.py`, [own-content.md](own-content.md);
+- Зонд загрузки мира (инструмент, выключен по умолчанию): `OPENGOTHIC_LOADPROBE=1` пишет `[loadprobe]` со временем, памятью процесса/GPU и счётчиками текстур; без флага нет замеров. `OPENGOTHIC_LOADPROBE_SERIAL=1` разносит ландшафт и физику только при включённом зонде; `0` и пустое значение выключают режим. `common/loadprobe.h`, `scripts/loadprobe.sh`, `scripts/loadprobe_summary.py`, `loadprobe-{idle,chain}.bench`; проверка — `scripts/tests/test_loadprobe_summary.py` и прогоны Ryzen, [world-streaming.md](world-streaming.md#как-работает-сейчас).
 - `GOTHIC_AI_STORYCHECK=1` — сверка условий скриптов с поднятыми; в `-devmode` включена сама;
 - `OPENGOTHIC_ANIM_SKIP_FAR=1`, `OPENGOTHIC_FOOTIK_WATCHED_ONLY=1` — экономия на дальних NPC для прогонов тела;
 - `OPENGOTHIC_BENCH*`, `OPENGOTHIC_*_LOG`, `OPENGOTHIC_*_TRACE` — стенд, журналы и трассы.

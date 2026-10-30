@@ -12,6 +12,24 @@
 
 using namespace Tempest;
 
+#if defined(TEMPEST_BUILD_METAL)
+size_t tempestProbeMetalGpuBytes();
+#endif
+#if defined(TEMPEST_BUILD_VULKAN)
+size_t tempestProbeVulkanGpuBytes();
+#endif
+
+size_t tempestProbeGpuBytes() {
+  size_t bytes = 0;
+#if defined(TEMPEST_BUILD_METAL)
+  bytes += tempestProbeMetalGpuBytes();
+#endif
+#if defined(TEMPEST_BUILD_VULKAN)
+  bytes += tempestProbeVulkanGpuBytes();
+#endif
+  return bytes;
+  }
+
 static uint32_t mipCount(uint32_t w, uint32_t h) {
   uint32_t s = std::max(w,h);
   uint32_t n = 1;
