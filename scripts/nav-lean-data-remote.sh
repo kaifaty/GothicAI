@@ -3,8 +3,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 stage="${1:-baseline}"
-[[ $# -le 1 && ( "$stage" == baseline || "$stage" == probe ) ]] || {
-  echo 'Usage: bash scripts/nav-lean-data-remote.sh [baseline|probe]' >&2
+[[ $# -le 1 && ( "$stage" == baseline || "$stage" == probe || "$stage" == convert ) ]] || {
+  echo 'Usage: bash scripts/nav-lean-data-remote.sh [baseline|probe|convert]' >&2
   exit 2
 }
 export GQ_OWNER=nav-lean-data
@@ -13,6 +13,10 @@ ssh ryzen "mkdir -p '$task/source/scripts' '$task/input' '$task/scratch' '$task/
 rsync -rt --no-links --exclude=__pycache__ "$ROOT/scripts/" "ryzen:$task/source/scripts/"
 rsync -rt --no-links "$ROOT/reports/navigation/2026-10-22-demos-v5/manifest.json" \
   "ryzen:$task/input/v5-compact.json"
+if [[ "$stage" == convert ]]; then
+  git -C "$ROOT" show 0dd559f12:scripts/nav_bc_data.py | \
+    ssh ryzen "cat > '$task/input/nav_bc_data_before_lean.py'"
+fi
 ssh ryzen "cat > '$task/measure-body.sh'" <<'BODY'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -21,9 +25,47 @@ stage="${1:?stage}"
 results="$task/$stage-results"
 export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+export UV_CACHE_DIR="$task/uv-cache"
 df -h "$HOME" /mnt/shared
 "$HOME/.local/bin/uv" venv --python 3.12 --allow-existing "$task/.venv"
 "$HOME/.local/bin/uv" pip install --python "$task/.venv/bin/python" 'numpy==2.4.2' pytest
+if [[ "$stage" == convert ]]; then
+  "$HOME/.local/bin/uv" pip install --python "$task/.venv/bin/python" 'torch==2.9.1+cpu' \
+    --index-url https://download.pytorch.org/whl/cpu
+  cd "$task/source"
+  "$task/.venv/bin/python" -B -X faulthandler -m pytest -q -p no:cacheprovider \
+    --basetemp "$task/scratch/pytest-convert" scripts/tests/test_nav_demos.py \
+    scripts/tests/test_nav_bc_data.py scripts/tests/test_nav_bc_train.py
+  corpus=/mnt/shared/gothic-ai/nav-demos-v5/recordings
+  compact=/mnt/shared/gothic-ai/nav-lean-data/corpus-v5
+  "$task/.venv/bin/python" -B -X faulthandler -I scripts/nav_lean_data.py convert \
+    --source "$corpus" --manifest "$task/input/v5-compact.json" --output "$compact" \
+    --results "$results/conversion-v5.json" --workers 6
+  "$task/.venv/bin/python" -I - "$results/conversion-v5.json" <<'THRESHOLD'
+import json
+from pathlib import Path
+import sys
+totals = json.loads(Path(sys.argv[1]).read_text())["totals"]
+if min(totals["source_over_xz"], totals["records_and_metadata_ratio"]) < 3:
+    raise SystemExit("Full-corpus lossless reduction is below 3x; stopping before training: " + str(totals))
+THRESHOLD
+  for corpus in v4 v5; do
+    if [[ "$corpus" == v4 ]]; then
+      source=/mnt/shared/gothic-ai/archive/nav-demos-v4-20261029
+      manifest="$source/manifest.json"
+      converted=/mnt/shared/gothic-ai/nav-lean-data/parity-v4
+    else
+      source=/mnt/shared/gothic-ai/nav-demos-v5/recordings
+      manifest="$task/input/v5-compact.json"
+      converted="$compact"
+    fi
+    "$task/.venv/bin/python" -B -X faulthandler -I scripts/nav_data_bench.py parity \
+      --corpus "$corpus" --source "$source" --manifest "$manifest" --converted-source "$converted" \
+      --reference-script "$task/input/nav_bc_data_before_lean.py" \
+      --output "$results/parity-$corpus" --scratch "$task/scratch/parity-$corpus"
+  done
+  exit 0
+fi
 if [[ "$stage" == probe ]]; then
   "$HOME/.local/bin/uv" pip install --python "$task/.venv/bin/python" zstandard
   cd "$task/source"
