@@ -246,7 +246,8 @@ void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
       continue;
     if(v.indirectCmd.byteSize() != sizeof(IndirectCmd)*cmd.size()) {
       Resources::recycle(std::move(v.indirectCmd));
-      v.indirectCmd = device.ssbo(cx.data(), sizeof(IndirectCmd)*cx.size());
+      v.indirectCmd = device.ssbo(Uninitialized,sizeof(IndirectCmd)*cx.size());
+      v.indirectCmd.updateAsync(cx.data(),0,sizeof(IndirectCmd)*cx.size());
       }
     else if(layChg) {
       auto staging = device.ssbo(BufferHeap::Upload, cx.data(), sizeof(IndirectCmd)*cx.size());

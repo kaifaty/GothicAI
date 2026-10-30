@@ -5,6 +5,7 @@
 
 #include <Tempest/Log>
 #include <Foundation/NSProcessInfo.h>
+#include <objc/runtime.h>
 // #include <Metal/MTLPixelFormat.h>
 
 using namespace Tempest;
@@ -40,6 +41,56 @@ static std::mutex probeDeviceSync;
 static MTL::Device* probeDevice = nullptr;
 
 bool tempestLoadProbeEnabled();
+
+static std::atomic_size_t probeBufferCount[3] = {};
+static std::atomic_size_t probeBufferBytes[3] = {};
+static char probeUploadKey;
+
+// Attach to the Metal object itself: completion of its copy alone does not
+// prove that all command-buffer and autorelease owners have released it.
+@interface TempestUploadProbe : NSObject {
+  size_t bytes;
+  size_t kind;
+  }
+- (instancetype)initWithBytes:(size_t)bufferBytes kind:(size_t)bufferKind;
+@end
+
+@implementation TempestUploadProbe
+- (instancetype)initWithBytes:(size_t)bufferBytes kind:(size_t)bufferKind {
+  if((self=[super init])) {
+    bytes=bufferBytes;
+    kind=bufferKind;
+    ++probeBufferCount[kind];
+    probeBufferBytes[kind]+=bytes;
+    }
+  return self;
+  }
+- (void)dealloc {
+  --probeBufferCount[kind];
+  probeBufferBytes[kind]-=bytes;
+  [super dealloc];
+  }
+@end
+
+void Tempest::Detail::probeMetalUploadBuffer(MTL::Buffer* buffer, bool staging) {
+  if(!tempestLoadProbeEnabled() || buffer==nullptr)
+    return;
+  const size_t kind=staging ? 0 : buffer->storageMode()==MTL::StorageModePrivate ? 2 : 1;
+  auto* tracker=[[TempestUploadProbe alloc] initWithBytes:buffer->allocatedSize() kind:kind];
+  objc_setAssociatedObject(reinterpret_cast<id>(buffer),&probeUploadKey,tracker,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  [tracker release];
+  }
+
+void tempestProbeMetalUploadBuffers(size_t& stagingCount, size_t& stagingBytes,
+                                   size_t& sharedCount, size_t& sharedBytes,
+                                   size_t& privateCount, size_t& privateBytes) {
+  stagingCount=probeBufferCount[0].load();
+  stagingBytes=probeBufferBytes[0].load();
+  sharedCount=probeBufferCount[1].load();
+  sharedBytes=probeBufferBytes[1].load();
+  privateCount=probeBufferCount[2].load();
+  privateBytes=probeBufferBytes[2].load();
+  }
 
 size_t tempestProbeMetalGpuBytes() {
   std::lock_guard<std::mutex> guard(probeDeviceSync);

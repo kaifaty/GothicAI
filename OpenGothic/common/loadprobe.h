@@ -23,6 +23,9 @@
 bool tempestLoadProbeEnabled();
 size_t tempestProbeGpuBytes();
 size_t tempestProbeGpuBufferCount();
+void tempestProbeUploadBuffers(size_t& stagingCount, size_t& stagingBytes,
+                                   size_t& sharedCount, size_t& sharedBytes,
+                                   size_t& privateCount, size_t& privateBytes);
 
 namespace LoadProbe {
 
@@ -110,6 +113,8 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
   const double elapsed = msSince(origin());
   double rss=0, fp=0;
   processMb(rss,fp);
+  size_t stagingCount=0, stagingBytes=0, sharedCount=0, sharedBytes=0, privateCount=0, privateBytes=0;
+  tempestProbeUploadBuffers(stagingCount,stagingBytes,sharedCount,sharedBytes,privateCount,privateBytes);
   char buf[512];
   std::snprintf(buf,sizeof(buf),
                 "[loadprobe] stage=%.*s stage_ms=%.1f t_ms=%.1f rss_mb=%.1f footprint_mb=%.1f gpu_mb=%.1f "
@@ -118,6 +123,12 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
                 double(tempestProbeGpuBytes())/1048576.0,
                 (unsigned long long)texCount.load(),double(texBytes.load())/1048576.0,double(texNs.load())/1e6,
                 int(extra.size()),extra.empty() ? "" : extra.data());
+  Tempest::Log::i(buf);
+  std::snprintf(buf,sizeof(buf),
+                "[loadprobe-metal] stage=%.*s t_ms=%.1f staging_n=%zu staging_bytes=%zu "
+                "shared_n=%zu shared_bytes=%zu private_n=%zu private_bytes=%zu",
+                int(stage.size()),stage.data(),elapsed,stagingCount,stagingBytes,
+                sharedCount,sharedBytes,privateCount,privateBytes);
   Tempest::Log::i(buf);
   }
 

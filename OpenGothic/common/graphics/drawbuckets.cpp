@@ -211,7 +211,8 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
 
   auto& device = Resources::device();
   Resources::recycle(std::move(bucketsGpu));
-  bucketsGpu = device.ssbo(bucket);
+  bucketsGpu = device.ssbo(Uninitialized,bucket.size()*sizeof(bucket[0]));
+  bucketsGpu.updateAsync(bucket.data(),0,bucket.size()*sizeof(bucket[0]));
 
   updateBindlessArrays();
   return true;

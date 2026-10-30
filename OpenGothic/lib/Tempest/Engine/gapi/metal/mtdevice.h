@@ -23,6 +23,8 @@ class MTLDevice;
 namespace Tempest {
 namespace Detail {
 
+void probeMetalUploadBuffer(MTL::Buffer* buffer, bool staging);
+
 inline MTL::StorageMode hostVisibleStorageMode(MTL::Device& dev) {
 #ifdef __IOS__
   // Managed storage is unavailable on iOS. The Simulator can still report

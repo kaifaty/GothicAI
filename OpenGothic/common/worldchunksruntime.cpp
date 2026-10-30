@@ -394,8 +394,9 @@ struct ChunkMeshSource::Impl {
   std::map<int64_t,uint32_t> materialIds;
   std::map<std::string,uint32_t> addedMaterials;
   // Only added/split keys need storage; unchanged source keys keep their ID.
-  std::map<VertexKey,uint32_t> vertices;
-  std::map<FeatureKey,uint32_t> features;
+  // Keep immutable keys contiguous instead of retaining reader tree nodes.
+  std::vector<std::pair<VertexKey,uint32_t>> vertices;
+  std::vector<std::pair<FeatureKey,uint32_t>> features;
   size_t vertexCount = 0;
   size_t featureCount = 0;
   };
@@ -410,8 +411,8 @@ size_t ChunkMeshSource::memoryBytes() const {
   bytes+=impl->materialIds.size()*(sizeof(decltype(impl->materialIds)::value_type)+sizeof(void*)*4);
   for(const auto& material:impl->addedMaterials)
     bytes+=sizeof(material)+sizeof(void*)*4+material.first.capacity();
-  bytes+=impl->vertices.size()*(sizeof(decltype(impl->vertices)::value_type)+sizeof(void*)*4);
-  bytes+=impl->features.size()*(sizeof(decltype(impl->features)::value_type)+sizeof(void*)*4);
+  bytes+=impl->vertices.capacity()*sizeof(impl->vertices[0]);
+  bytes+=impl->features.capacity()*sizeof(impl->features[0]);
   return bytes;
   }
 
@@ -443,10 +444,14 @@ WorldChunkMesh ChunkMeshSource::read(size_t chunk, std::span<const uint32_t> sou
     q.lightmap_indices.push_back(triangle.lightmap);
     q.flags.push_back(triangle.flags);
     for(const auto& corner:triangle.corners) {
-      const auto vertex=impl->vertices.find(corner.vertex);
-      const auto feature=impl->features.find(corner.feature);
-      const auto vertexId=vertex!=impl->vertices.end() ? vertex->second : uint32_t(corner.vertex.id);
-      const auto featureId=feature!=impl->features.end() ? feature->second : uint32_t(corner.feature.id);
+      const auto vertex=std::lower_bound(impl->vertices.begin(),impl->vertices.end(),corner.vertex,
+                                         [](const auto& entry,const auto& key) { return entry.first<key; });
+      const auto feature=std::lower_bound(impl->features.begin(),impl->features.end(),corner.feature,
+                                          [](const auto& entry,const auto& key) { return entry.first<key; });
+      const auto vertexId=vertex!=impl->vertices.end() && !(corner.vertex<vertex->first) ?
+                              vertex->second : uint32_t(corner.vertex.id);
+      const auto featureId=feature!=impl->features.end() && !(corner.feature<feature->first) ?
+                               feature->second : uint32_t(corner.feature.id);
       if(vertexId>=impl->vertexCount || featureId>=impl->featureCount)
         fail("chunk source ID outside the loaded world: "+file.path.string());
       const auto [vi,newVertex]=vertices.emplace(vertexId,uint32_t(out.mesh.vertices.size()));
@@ -728,8 +733,8 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
       }
     }
   if(chunks!=nullptr) {
-    source->vertices=std::move(newVertices);
-    source->features=std::move(newFeatures);
+    source->vertices.assign(newVertices.begin(),newVertices.end());
+    source->features.assign(newFeatures.begin(),newFeatures.end());
     source->vertexCount=out.vertices.size();
     source->featureCount=out.features.size();
     table.source=std::shared_ptr<const ChunkMeshSource>(new ChunkMeshSource(std::move(source)));
