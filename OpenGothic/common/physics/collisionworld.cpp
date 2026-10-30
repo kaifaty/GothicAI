@@ -15,6 +15,7 @@
 #include <Jolt/Core/Factory.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Core/UnorderedSet.h>
 #include <Jolt/Geometry/GJKClosestPoint.h>
 #include <Jolt/Geometry/Plane.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -3133,6 +3134,21 @@ void CollisionWorld::unregisterRagdoll(Ragdoll& body) {
   }
 
 size_t CollisionWorld::bodyCount() const { return impl->system.GetNumBodies(); }
+JPH::Shape::Stats CollisionWorld::staticCollisionStats() const {
+  JPH::Shape::Stats result(0,0);
+  JPH::Shape::VisitedShapes visited;
+  for(const auto* body:bodies) {
+    if(body->categoryId!=DynamicWorld::C_Landscape && body->categoryId!=DynamicWorld::C_Object)
+      continue;
+    JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),body->id);
+    if(!lock.Succeeded() || !lock.GetBody().IsStatic())
+      continue;
+    const auto stats=lock.GetBody().GetShape()->GetStatsRecursive(visited);
+    result.mSizeBytes+=stats.mSizeBytes;
+    result.mNumTriangles+=stats.mNumTriangles;
+    }
+  return result;
+  }
 float CollisionWorld::stepMilliseconds() const { return impl->stepMilliseconds; }
 uint64_t CollisionWorld::rayCount() const { return impl->lastRayCount; }
 uint64_t CollisionWorld::simulationStep() const { return impl->simulationStep; }

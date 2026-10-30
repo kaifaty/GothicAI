@@ -2161,6 +2161,44 @@ namespace {
     requireNear(gameHit.point.y,0,.001f,"compatible game mesh ray must report the triangle plane");
     require(!world.rayCast({-.02f,100,50},{-.02f,-100,50},landscapeMask).hasHit,
             "game mesh edge tolerance must reject points beyond its barycentric allowance");
+    {
+      const std::vector<JPH::Vec3> vertices={{-12,0,-9},{-12,0,9},{12,0,9},{12,0,-9}};
+      PhysicVbo source(&vertices);
+      source.addIndex({0,2,1},0,3,asset::MaterialGroup::WOOD,"first-large-face");
+      source.addIndex({0,3,2},0,3,asset::MaterialGroup::STONE,"second-large-face");
+      const auto split=source.shape(true);
+      require(split!=nullptr && source.shape()->GetStats().mNumTriangles==2,
+              "static subdivision must leave the original query and furniture mesh unchanged");
+      require(source.triangleCount()==2 && source.vertexCount()==4,
+              "static subdivision must preserve exact source vertices and triangle metadata");
+      JPH::Shape::GetTrianglesContext context;
+      split->GetTrianglesStart(context,split->GetLocalBounds(),JPH::Vec3::sZero(),
+                               JPH::Quat::sIdentity(),JPH::Vec3::sOne());
+      JPH::Float3 points[96];
+      size_t count=0;
+      float longest=0;
+      for(int batch=split->GetTrianglesNext(context,32,points);batch>0;batch=split->GetTrianglesNext(context,32,points)) {
+        count+=size_t(batch);
+        for(int t=0;t<batch;++t) {
+          JPH::Vec3 triangle[3];
+          for(int v=0;v<3;++v)triangle[v]=JPH::Vec3(points[3*t+v].x,points[3*t+v].y,points[3*t+v].z);
+          require((triangle[1]-triangle[0]).Cross(triangle[2]-triangle[0]).GetY()>0.f,
+                  "static subdivision must preserve source face winding");
+          for(int edge=0;edge<3;++edge)longest=std::max(longest,(triangle[(edge+1)%3]-triangle[edge]).Length());
+          }
+        }
+      require(count>2 && longest<=4.0001f,"every native static collision edge must be at most four metres");
+      auto support=world.addCollisionBody(split,at(0,0,0),.7f,DynamicWorld::C_Object,false,false,&source);
+      const auto first=world.rayCast({-600,100,300},{-600,-100,300},objectMask);
+      const auto second=world.rayCast({600,100,-300},{600,-100,-300},objectMask);
+      require(first.hasHit && second.hasHit && first.body==support.get() && second.body==support.get() &&
+              first.material==asset::MaterialGroup::WOOD && second.material==asset::MaterialGroup::STONE &&
+              std::string(first.sector)=="first-large-face" && std::string(second.sector)=="second-large-face",
+              "split collision faces must retain their original material, sector and exact ray plane");
+      requireNear(first.point.y,0.f,.0001f,"split collision rays must retain the source plane");
+      requireNear(second.point.y,0.f,.0001f,"split collision rays must retain the source plane");
+      std::printf("Static subdivision: %zu triangles, longest edge %.6f m\n",count,double(longest));
+      }
     }
 
   void testCoincidentMaterials() {

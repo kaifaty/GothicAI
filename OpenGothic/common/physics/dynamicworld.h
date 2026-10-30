@@ -588,6 +588,10 @@ class DynamicWorld final {
       uint64_t rays = 0;
       };
     PhysicsStats physicsStats() const;
+    struct StaticCollisionStats {
+      size_t shapeBytes = 0, triangles = 0;
+      };
+    StaticCollisionStats staticCollisionStats() const;
     uint64_t simulationStep() const;
 
     // Called explicitly by the runner; ordinary worlds never build a navmesh.
@@ -628,6 +632,7 @@ class DynamicWorld final {
     std::unique_ptr<CollisionWorld>    world;
     std::unique_ptr<Cloth>             clothWorld;
     World*                            ownerWorld = nullptr;
+    bool                              splitStaticTriangles = true;
 
     std::vector<std::string>           sectors;
 

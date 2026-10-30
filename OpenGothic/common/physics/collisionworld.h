@@ -268,6 +268,7 @@ class CollisionWorld final {
                                                const Tempest::Matrix4x4* worldPose, size_t numBones,
                                                const Tempest::Matrix4x4& objectMatrix);
     size_t bodyCount() const;
+    JPH::Shape::Stats staticCollisionStats() const;
     float stepMilliseconds() const;
     uint64_t rayCount() const;
     uint64_t simulationStep() const;

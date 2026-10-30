@@ -726,6 +726,8 @@ struct DynamicWorld::BBoxList final {
 DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, const asset::WorldMesh* originalCloth) {
   world.reset(new CollisionWorld());
   ownerWorld=owner;
+  if(owner!=nullptr)
+    splitStaticTriangles=Gothic::settingsGetI("GAME","static_collision_split")!=0;
   clothWorld=std::make_unique<Cloth>(*world);
   bodies.reset(new WorldBodies());
   movableVobs.reset(new MovableVobs());
@@ -787,8 +789,8 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
   JPH::Vec3 bbox[2] = {JPH::Vec3::sZero(), JPH::Vec3::sZero()};
   Tempest::Matrix4x4 mt;
   mt.identity();
-  if(!landMesh->isEmpty() && landMesh->shape()!=nullptr) {
-    bodies->landscape = world->addCollisionBody(landMesh->shape(),mt,materialFriction(asset::MaterialGroup::NONE),
+  if(const auto shape=landMesh->shape(splitStaticTriangles); shape!=nullptr) {
+    bodies->landscape = world->addCollisionBody(shape,mt,materialFriction(asset::MaterialGroup::NONE),
                                                C_Landscape,false,false,landMesh.get());
     bodies->landscape->setLabel("landscape");
     JPH::Vec3 min, max;
@@ -1002,20 +1004,26 @@ DynamicWorld::NpcItem DynamicWorld::addGhostObj(const Skeleton* src) {
   }
 
 DynamicWorld::Item DynamicWorld::addStaticObj(const PhysicMeshShape* shape, const Tempest::Matrix4x4& m, std::string_view label) {
-  if(shape==nullptr || shape->shape==nullptr)
+  if(shape==nullptr)
+    return Item();
+  const auto native=shape->mesh.shape(splitStaticTriangles);
+  if(native==nullptr)
     return Item();
   auto obj = std::make_unique<BodyData>();
-  obj->body = world->addCollisionBody(shape->shape,m,shape->friction(),C_Object,false,false,&shape->mesh);
+  obj->body = world->addCollisionBody(native,m,shape->friction(),C_Object,false,false,&shape->mesh);
   obj->body->setLabel(label);
   obj->body->setNoiseProfile(impactMaterial(shape->material),shape->material,"vob");
   return Item(this,obj.release());
   }
 
 DynamicWorld::Item DynamicWorld::addMovableObj(const PhysicMeshShape* shape, const Tempest::Matrix4x4& m, std::string_view label) {
-  if(shape==nullptr || shape->shape==nullptr)
+  if(shape==nullptr)
+    return Item();
+  const auto native=shape->mesh.shape();
+  if(native==nullptr)
     return Item();
   auto obj = std::make_unique<BodyData>();
-  obj->body = world->addCollisionBody(shape->shape,m,shape->friction(),C_Object,true,false,&shape->mesh);
+  obj->body = world->addCollisionBody(native,m,shape->friction(),C_Object,true,false,&shape->mesh);
   obj->body->setLabel(label);
   obj->body->setNoiseProfile(impactMaterial(shape->material),shape->material,"vob");
   return Item(this,obj.release());
@@ -1231,7 +1239,7 @@ DynamicWorld::Item DynamicWorld::addMovableVob(const ProtoMesh& proto, std::stri
     size_t largestAttach = 0;
     for(size_t i=0;i<proto.attach.size();++i) {
       const auto* source = proto.attach[i].shape.get();
-      if(source==nullptr || source->shape==nullptr)
+      if(source==nullptr || source->mesh.shape()==nullptr)
         continue;
       auto local = Tempest::Matrix4x4::mkIdentity();
       for(size_t node=0;node<proto.nodes.size();++node) {
@@ -1367,7 +1375,7 @@ void DynamicWorld::rebuildMovableVob(BodyData& obj) {
     for(const auto& part:shape.parts) {
       auto matrix = obj.origin;
       matrix.mul(part.local);
-      obj.query.push_back(world->addCollisionBody(part.source->shape,matrix,part.source->friction(),category,
+      obj.query.push_back(world->addCollisionBody(part.source->mesh.shape(),matrix,part.source->friction(),category,
                                                  enabled && !fence,enabled && !fence,&part.source->mesh));
       obj.query.back()->setPayload(&obj,P_MovableVob);
       obj.query.back()->setLabel(obj.visual);
@@ -2512,6 +2520,11 @@ std::unique_ptr<Ragdoll> DynamicWorld::createKinematicBody(const Skeleton& skele
 
 DynamicWorld::PhysicsStats DynamicWorld::physicsStats() const {
   return {world->stepMilliseconds(),world->bodyCount(),world->rayCount()};
+  }
+
+DynamicWorld::StaticCollisionStats DynamicWorld::staticCollisionStats() const {
+  const auto stats=world->staticCollisionStats();
+  return {stats.mSizeBytes,stats.mNumTriangles};
   }
 
 uint64_t DynamicWorld::simulationStep() const { return world->simulationStep(); }

@@ -26,6 +26,42 @@ namespace {
 
   using MeshTriangles = std::vector<MeshTriangle>;
 
+  constexpr float maxTriangleEdge = 4.f;
+
+  float longestEdgeSquared(const std::vector<JPH::Vec3>& vertices, const JPH::IndexedTriangle& triangle) {
+    const auto* index=triangle.mIdx;
+    return std::max({(vertices[index[1]]-vertices[index[0]]).LengthSq(),
+                     (vertices[index[2]]-vertices[index[1]]).LengthSq(),
+                     (vertices[index[0]]-vertices[index[2]]).LengthSq()});
+    }
+
+  void splitTriangles(std::vector<JPH::Vec3>& vertices, MeshTriangles& triangles) {
+    std::unordered_map<uint64_t,uint32_t> midpoints;
+    for(size_t i=0;i<triangles.size();) {
+      const auto source=triangles[i];
+      const auto* index=source.triangle.mIdx;
+      size_t edge=0;
+      float lengthSquared=0;
+      for(size_t e=0;e<3;++e) {
+        const float length=(vertices[index[(e+1)%3]]-vertices[index[e]]).LengthSq();
+        if(length>lengthSquared) {lengthSquared=length;edge=e;}
+        }
+      if(lengthSquared<=maxTriangleEdge*maxTriangleEdge) {
+        ++i;
+        continue;
+        }
+      const auto a=index[edge],b=index[(edge+1)%3],c=index[(edge+2)%3];
+      const uint64_t key=(uint64_t(std::min(a,b))<<32)|std::max(a,b);
+      auto [entry,inserted]=midpoints.try_emplace(key,uint32_t(vertices.size()));
+      if(inserted)
+        vertices.push_back((vertices[a]+vertices[b])*.5f);
+      const auto midpoint=entry->second;
+      const auto data=source.triangle.mUserData;
+      triangles[i]={JPH::IndexedTriangle(a,midpoint,c,0,data),source.order};
+      triangles.push_back({JPH::IndexedTriangle(midpoint,b,c,0,data),source.order});
+      }
+    }
+
   // Compare cyclic rotations only: opposite triangle winding remains distinct.
   bool cyclicDuplicate(const std::vector<JPH::Vec3>& vertices, const std::vector<uint32_t>& indices,
                        uint32_t a, uint32_t b) {
@@ -253,6 +289,7 @@ void PhysicVbo::addSegment(size_t indexSize, size_t offset, asset::MaterialGroup
   duplicateGroup.clear();
   rayDuplicates.clear();
   meshShape = nullptr;
+  splitMeshShape = nullptr;
   }
 
 void PhysicVbo::prepareTriangleData() const {
@@ -418,9 +455,10 @@ bool PhysicVbo::isEmpty() const {
   return segments.empty();
   }
 
-JPH::ShapeRefC PhysicVbo::shape() const {
-  if(meshShape!=nullptr || isEmpty())
-    return meshShape;
+JPH::ShapeRefC PhysicVbo::shape(bool splitLargeTriangles) const {
+  auto& cached=splitLargeTriangles ? splitMeshShape : meshShape;
+  if(cached!=nullptr || isEmpty())
+    return cached;
 
   Physics::initialize();
   prepareTriangleData();
@@ -431,6 +469,7 @@ JPH::ShapeRefC PhysicVbo::shape() const {
 
   MeshTriangles triangles;
   triangles.reserve(triangleCount);
+  bool hasLongTriangles=false;
   for(size_t s=0;s<segments.size();++s) {
     auto& segment = segments[s];
     for(size_t t=0;t<segment.size;++t) {
@@ -438,23 +477,36 @@ JPH::ShapeRefC PhysicVbo::shape() const {
       // Retain the source triangle ID across Jolt's tree reordering. The ID
       // resolves to its material and sector and to any exact cyclic copies.
       triangles.push_back({JPH::IndexedTriangle(id[off],id[off+1],id[off+2],0,uint32_t(off/3)),triangles.size()});
+      hasLongTriangles=hasLongTriangles || longestEdgeSquared(vert,triangles.back().triangle)>maxTriangleEdge*maxTriangleEdge;
       }
     }
 
-  if(meshBounds(vert,triangles,0,triangles.size()).GetSize().LengthSq()<=maxMeshDiagonal*maxMeshDiagonal) {
-    meshShape = createMesh(vert,triangles,0,triangles.size(),JPH::Vec3::sZero());
-    return meshShape;
+  std::vector<JPH::Vec3> splitVertices;
+  const auto* vertices=&vert;
+  if(splitLargeTriangles && hasLongTriangles) {
+    // Subdivide only the native mesh. Source vertices, planes, material and
+    // sector IDs remain exact for gameplay rays and legacy movement queries.
+    splitVertices=vert;
+    splitTriangles(splitVertices,triangles);
+    vertices=&splitVertices;
     }
 
-  JPH::StaticCompoundShapeSettings compound;
-  addMeshChunks(vert,triangles,0,triangles.size(),compound);
-  if(compound.mSubShapes.empty())
-    return nullptr;
-  const auto result = compound.Create();
-  if(result.HasError())
-    throw std::runtime_error("Unable to build compound physics mesh: " + std::string(result.GetError().c_str()));
-  meshShape = result.Get();
-  return meshShape;
+  if(meshBounds(*vertices,triangles,0,triangles.size()).GetSize().LengthSq()<=maxMeshDiagonal*maxMeshDiagonal) {
+    cached=createMesh(*vertices,triangles,0,triangles.size(),JPH::Vec3::sZero());
+    }
+  else {
+    JPH::StaticCompoundShapeSettings compound;
+    addMeshChunks(*vertices,triangles,0,triangles.size(),compound);
+    if(compound.mSubShapes.empty())
+      return nullptr;
+    const auto result=compound.Create();
+    if(result.HasError())
+      throw std::runtime_error("Unable to build compound physics mesh: " + std::string(result.GetError().c_str()));
+    cached=result.Get();
+    }
+  if(!hasLongTriangles)
+    meshShape=splitMeshShape=cached;
+  return cached;
   }
 
 std::string_view PhysicVbo::validateSectorName(std::string_view name) const {

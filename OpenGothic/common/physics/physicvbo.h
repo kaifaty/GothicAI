@@ -35,7 +35,7 @@ class PhysicVbo final {
     uint32_t                resolveRayTriangle(uint32_t triangle, JPH::Vec3Arg from, JPH::Vec3Arg to,
                                               bool backfaces=false) const;
     bool                    isEmpty() const;
-    JPH::ShapeRefC          shape() const;
+    JPH::ShapeRefC          shape(bool splitLargeTriangles = false) const;
     // Exact source geometry, before Jolt's triangle BVH quantization.
     void                    appendVertices(std::vector<JPH::Vec3>& points, const Tempest::Matrix4x4& transform) const;
     size_t                  vertexCount() const { return vert.size(); }
@@ -67,4 +67,5 @@ class PhysicVbo final {
     mutable std::unordered_map<uint32_t,uint32_t> duplicateGroup;
     mutable std::vector<std::vector<uint32_t>> rayDuplicates;
     mutable JPH::ShapeRefC        meshShape;
+    mutable JPH::ShapeRefC        splitMeshShape;
   };

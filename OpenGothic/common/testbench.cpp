@@ -3331,6 +3331,7 @@ void itemHullSetup(World& world,Npc& player,std::string_view surface) {
     arenaAbort("item hull setup expects flat, slope, stairs, table, load, terrain or giant_quad");return;
     }
   itemHullClear(world);
+  const auto collisionStats=world.physic()->staticCollisionStats();
   bench.itemHullLoad=surface=="load" || surface=="terrain" || surface=="giant_quad";bench.itemHullSurface=std::string(surface);
   if(bench.itemHullAnchor.y==0)bench.itemHullHero=player.position();
   if(surface=="terrain") {
@@ -3356,7 +3357,7 @@ void itemHullSetup(World& world,Npc& player,std::string_view surface) {
       }
     }
   else if(surface=="giant_quad") {
-    // Retain the former two-triangle load support as a report-only diagnostic.
+    // Keep the two-triangle support to catch small hulls crossing large faces.
     quad({-1200,0,-900},{-1200,0,900},{1200,0,900},{1200,0,-900});
     }
   else {
@@ -3446,6 +3447,8 @@ void itemHullSetup(World& world,Npc& player,std::string_view surface) {
   bench.itemHullStart=world.tickCount();bench.itemHullSample=uint64_t(-1);bench.itemHullCosts.clear();bench.itemHullTracing=true;
   event("item_hulls_setup","\"surface\":"+jsonStr(surface)+",\"items\":"+std::to_string(bench.itemHullDrops.size())+
     ",\"enabled\":"+(Gothic::settingsGetI("GAME","item_hulls")?"true":"false")+",\"hero_cm\":"+ragdollVector(player.position())+
+    ",\"world_load_ms\":"+ragdollNumber(float(world.loadMilliseconds()))+
+    ",\"static_shape_bytes\":"+std::to_string(collisionStats.shapeBytes)+",\"static_triangles\":"+std::to_string(collisionStats.triangles)+
     ",\"support_origin_cm\":"+ragdollVector(anchor)+",\"native_support_verified\":true");
   }
 
@@ -3509,7 +3512,7 @@ float itemHullGap(World& world,const Bench::ItemHullDrop& drop) {
 void itemHullReport(World& world) {
   itemHullSample(world);bench.itemHullTracing=false;
   const bool enabled=Gothic::settingsGetI("GAME","item_hulls")!=0;
-  const bool reportOnly=bench.itemHullSurface=="giant_quad";
+  const bool reportOnly=false;
   bool pass=true;size_t through=0,escaped=0,below=0,jitter=0,unslept=0,unsleptSupported=0;
   for(size_t i=0;i<bench.itemHullDrops.size();++i) {
     const auto& drop=bench.itemHullDrops[i];const float gap=itemHullGap(world,drop);
@@ -3553,7 +3556,7 @@ void itemHullReport(World& world) {
     }
   auto costs=bench.itemHullCosts;std::sort(costs.begin(),costs.end());
   const float p95=costs.empty()?0.f:costs[std::min(costs.size()-1,size_t(std::ceil(float(costs.size())*.95f)-1))];
-  if(bench.itemHullLoad)pass&=p95<=2.f;
+  if(bench.itemHullLoad && bench.itemHullSurface!="giant_quad")pass&=p95<=2.f;
   event("item_hulls_summary","\"surface\":"+jsonStr(bench.itemHullSurface)+",\"items\":"+std::to_string(bench.itemHullDrops.size())+
     ",\"samples\":"+std::to_string(costs.size())+",\"physics_p95_ms\":"+ragdollNumber(p95)+
     ",\"passed_through\":"+std::to_string(through)+",\"escaped_edge\":"+std::to_string(escaped)+
