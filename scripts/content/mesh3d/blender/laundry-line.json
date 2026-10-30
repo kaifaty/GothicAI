@@ -1,0 +1,26 @@
+{
+ "id": "life-laundry",
+ "goal": {"id": "life-laundry", "budget_tris": 3500,
+          "bbox_min": [-1.9, 0.0, -0.3], "bbox_max": [1.9, 2.35, 0.3],
+          "zones": [{"key": "OWN_PROP_BARK", "group": "WOOD", "role": "unbarked poles"},
+                    {"key": "OWN_PROP_ROPE", "group": "UNDEF", "role": "hemp line"},
+                    {"key": "OWN_PROP_LINEN", "group": "UNDEF", "role": "unbleached linen shirt"},
+                    {"key": "OWN_PROP_WOOL", "group": "UNDEF", "role": "grey-brown woollen hose"},
+                    {"key": "OWN_PROP_CLOTH_RED", "group": "UNDEF", "role": "small faded madder-red cloth"},
+                    {"key": "OWN_PROP_SACKING", "group": "UNDEF", "role": "patched sackcloth apron"},
+                    {"key": "OWN_PROP_RAG", "group": "UNDEF", "role": "grey rags"}]},
+ "seed": 5,
+ "span": 3.6,
+ "height": 2.3,
+ "sag": 0.2,
+ "pole_r": [0.05, 0.038],
+ "lean_deg": [5, -4],
+ "cloths": [
+  {"kind": "shirt", "zone": "OWN_PROP_LINEN", "at": 0.17, "width": 0.5, "drop": 0.9, "folds": 3, "depth": 0.025, "rag": 0.03},
+  {"kind": "hose", "zone": "OWN_PROP_WOOL", "at": 0.37, "width": 0.36, "drop": 0.8, "rag": 0.02},
+  {"kind": "sheet", "zone": "OWN_PROP_CLOTH_RED", "at": 0.53, "width": 0.36, "drop": 0.42, "folds": 2, "depth": 0.02, "rag": 0.04},
+  {"kind": "sheet", "zone": "OWN_PROP_SACKING", "at": 0.67, "width": 0.42, "drop": 0.62, "folds": 2, "depth": 0.022, "rag": 0.03},
+  {"kind": "sheet", "zone": "OWN_PROP_RAG", "at": 0.8, "width": 0.18, "drop": 0.45, "folds": 1, "depth": 0.015, "rag": 0.05, "off": 0.014},
+  {"kind": "sheet", "zone": "OWN_PROP_RAG", "at": 0.87, "width": 0.15, "drop": 0.38, "folds": 1, "depth": 0.012, "rag": 0.05, "off": -0.014}
+ ]
+}

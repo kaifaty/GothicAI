@@ -1,0 +1,88 @@
+{
+ "cameras": [
+  {
+   "name": "fishers",
+   "eye": [
+    -8650,
+    -83,
+    -5950
+   ],
+   "target": [
+    -8000,
+    -87,
+    -5650
+   ],
+   "note": "fishers corner from 7 m: rack, net heaps, crates; baskets of fish and buckets"
+  },
+  {
+   "name": "crane",
+   "eye": [
+    -1900,
+    -14,
+    -4000
+   ],
+   "target": [
+    -1350,
+    -121,
+    -3600
+   ],
+   "note": "yard by crane C from 9 m: net rack, bollard, crate piles; basket, bucket, crates"
+  },
+  {
+   "name": "werft",
+   "eye": [
+    0,
+    9,
+    1350
+   ],
+   "target": [
+    760,
+    -123,
+    1620
+   ],
+   "note": "shipyard shed from 8 m: crates by the west wall, crate pile, rope"
+  },
+  {
+   "name": "poor-yard",
+   "eye": [
+    0,
+    -28,
+    -4300
+   ],
+   "target": [
+    650,
+    -126,
+    -4750
+   ],
+   "note": "poor quarter, yard north-west of the huts from 8 m: laundry line, tub, crates"
+  },
+  {
+   "name": "alley",
+   "eye": [
+    700,
+    46,
+    -6200
+   ],
+   "target": [
+    1800,
+    -60,
+    -6330
+   ],
+   "note": "back alley by the town wall, looking east: firewood, trash in the corners, laundry"
+  },
+  {
+   "name": "poor-east",
+   "eye": [
+    4650,
+    175,
+    -5700
+   ],
+   "target": [
+    4150,
+    -57,
+    -6450
+   ],
+   "note": "east end of the poor quarter from 9 m: firewood, laundry"
+  }
+ ]
+}

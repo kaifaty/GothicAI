@@ -1,0 +1,292 @@
+{
+ "about": "Placements of the harbour's traces of life (asset harbour-life, step M4 of docs/world-detail-plan.md); scripts/content/harbour_life.py turns them into the vob layer. x, z: Gothic cm; yaw: degrees; wall: put the item this many cm off the nearest wall, local X along it, yaw added; on: stand on the top of that earlier item; tilt: [about x, about z] degrees; sink/lift: cm.",
+ "items": [
+  {
+   "key": "life-fish-basket-1",
+   "zone": "fishers",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "x": -8185,
+   "z": -5665,
+   "yaw": 20,
+   "sink": 1
+  },
+  {
+   "key": "life-fish-basket-2",
+   "zone": "fishers",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "x": -7955,
+   "z": -5625,
+   "yaw": -35,
+   "sink": 1
+  },
+  {
+   "key": "life-fish-bucket-1",
+   "zone": "fishers",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": -8075,
+   "z": -5590,
+   "yaw": 0,
+   "sink": 1
+  },
+  {
+   "key": "life-fish-bucket-2",
+   "zone": "fishers",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": -7790,
+   "z": -5955,
+   "yaw": 140,
+   "sink": 1
+  },
+  {
+   "key": "life-crane-basket-1",
+   "zone": "crane",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "x": -1560,
+   "z": -3480,
+   "yaw": 70,
+   "sink": 1
+  },
+  {
+   "key": "life-crane-bucket-1",
+   "zone": "crane",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": -1445,
+   "z": -3565,
+   "yaw": 210,
+   "sink": 1
+  },
+  {
+   "key": "life-crane-basket-2",
+   "zone": "crane",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "x": -1250,
+   "z": -3605,
+   "yaw": -20,
+   "sink": 1
+  },
+  {
+   "key": "life-crane-crate-1",
+   "zone": "crane",
+   "visual": "NW_HARBOUR_CRATE_01",
+   "x": -1090,
+   "z": -3830,
+   "yaw": 12,
+   "sink": 2
+  },
+  {
+   "key": "life-crane-crate-2",
+   "zone": "crane",
+   "visual": "NW_HARBOUR_CRATE_01",
+   "x": -1075,
+   "z": -3840,
+   "yaw": 31,
+   "on": "life-crane-crate-1"
+  },
+  {
+   "key": "life-crane-crate-3",
+   "zone": "crane",
+   "visual": "NW_HARBOUR_CRATE_01",
+   "x": -945,
+   "z": -3960,
+   "yaw": -8,
+   "sink": 2
+  },
+  {
+   "key": "life-werft-crate-1",
+   "zone": "werft",
+   "visual": "NW_HARBOUR_CRATE_01",
+   "x": 820,
+   "z": 1470,
+   "wall": 4,
+   "yaw": 3,
+   "sink": 2
+  },
+  {
+   "key": "life-werft-crate-2",
+   "zone": "werft",
+   "visual": "NW_HARBOUR_CRATE_01",
+   "x": 815,
+   "z": 1480,
+   "wall": 8,
+   "yaw": -9,
+   "on": "life-werft-crate-1"
+  },
+  {
+   "key": "life-werft-crate-3",
+   "zone": "werft",
+   "visual": "NW_HARBOUR_CRATE_01",
+   "x": 820,
+   "z": 1350,
+   "wall": 10,
+   "yaw": 7,
+   "sink": 2
+  },
+  {
+   "key": "life-werft-pile-1",
+   "zone": "werft",
+   "visual": "NW_HARBOUR_CRATEPILE_01",
+   "x": 600,
+   "z": 1700,
+   "yaw": 95,
+   "sink": 2
+  },
+  {
+   "key": "life-werft-rope-1",
+   "zone": "werft",
+   "visual": "NW_HARBOUR_ROPE_01",
+   "x": 560,
+   "z": 1250,
+   "yaw": 30,
+   "sink": 1
+  },
+  {
+   "key": "life-poor-laundry-1",
+   "zone": "poor",
+   "visual": "OWN_HARBOUR_LAUNDRY_01",
+   "x": 430,
+   "z": -4560,
+   "yaw": -40,
+   "sink": 4
+  },
+  {
+   "key": "life-poor-bucket-1",
+   "zone": "poor",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": 520,
+   "z": -4610,
+   "yaw": 80,
+   "sink": 1
+  },
+  {
+   "key": "life-poor-fish-1",
+   "zone": "poor",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "x": 330,
+   "z": -5000,
+   "yaw": 40,
+   "sink": 1
+  },
+  {
+   "key": "life-poor-wood-1",
+   "zone": "poor",
+   "visual": "OC_FIREWOOD_V2",
+   "x": 1900,
+   "z": -4700,
+   "wall": 3,
+   "yaw": 5,
+   "sink": 2
+  },
+  {
+   "key": "life-poor-wood-2",
+   "zone": "poor",
+   "visual": "OC_FIREWOOD_V3",
+   "x": 2250,
+   "z": -5200,
+   "wall": 3,
+   "yaw": -2,
+   "sink": 2
+  },
+  {
+   "key": "life-alley-trash-1",
+   "zone": "alley",
+   "visual": "NW_HARBOUR_CRATEBROKEN_01",
+   "x": 1350,
+   "z": -6450,
+   "wall": 6,
+   "yaw": 25,
+   "tilt": [
+    0,
+    8
+   ],
+   "sink": 3
+  },
+  {
+   "key": "life-alley-trash-2",
+   "zone": "alley",
+   "visual": "OC_BARREL_V1_DESTROYED",
+   "x": 1220,
+   "z": -6430,
+   "wall": 10,
+   "yaw": 60,
+   "sink": 3
+  },
+  {
+   "key": "life-alley-trash-3",
+   "zone": "alley",
+   "visual": "NW_MISC_STRAW_01",
+   "x": 1450,
+   "z": -6420,
+   "wall": 2,
+   "yaw": -15,
+   "sink": 10
+  },
+  {
+   "key": "life-alley-wood-1",
+   "zone": "alley",
+   "visual": "OC_FIREWOOD_V3",
+   "x": 1650,
+   "z": -6050,
+   "wall": 3,
+   "yaw": 2,
+   "sink": 2
+  },
+  {
+   "key": "life-alley-trash-4",
+   "zone": "alley",
+   "visual": "NW_HARBOUR_CRATEBROKEN_01",
+   "x": 2290,
+   "z": -6380,
+   "wall": 8,
+   "yaw": -150,
+   "sink": 3
+  },
+  {
+   "key": "life-alley-trash-5",
+   "zone": "alley",
+   "visual": "NW_MISC_STRAW_01",
+   "x": 2170,
+   "z": -6320,
+   "wall": 4,
+   "yaw": 20,
+   "sink": 10
+  },
+  {
+   "key": "life-alley-bucket-1",
+   "zone": "alley",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": 2620,
+   "z": -6170,
+   "yaw": 0,
+   "sink": 1
+  },
+  {
+   "key": "life-east-wood-1",
+   "zone": "east",
+   "visual": "OC_FIREWOOD_V1",
+   "x": 4300,
+   "z": -5780,
+   "yaw": 30,
+   "sink": 2
+  },
+  {
+   "key": "life-east-wood-2",
+   "zone": "east",
+   "visual": "OC_FIREWOOD_V2",
+   "x": 4120,
+   "z": -6350,
+   "wall": 3,
+   "yaw": -6,
+   "sink": 2
+  },
+  {
+   "key": "life-east-laundry-1",
+   "zone": "east",
+   "visual": "OWN_HARBOUR_LAUNDRY_01",
+   "x": 4300,
+   "z": -6450,
+   "yaw": -3,
+   "sink": 4,
+   "wall": 150
+  }
+ ]
+}
