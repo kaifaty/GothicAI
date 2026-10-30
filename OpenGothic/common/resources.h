@@ -33,6 +33,7 @@ class AttachBinder;
 class PfxEmitterMesh;
 class GthFont;
 class ContentCensus;
+struct ChunkTable;
 
 namespace asset { struct WorldMesh; }
 
@@ -216,7 +217,8 @@ class Resources final {
     static WayHeightInputs           wayHeightInputs(std::string_view world);
     static void                      censusFile(std::u16string_view path);
     static void                      censusProfile(std::string_view game, std::string_view outputUnits, int language);
-    static void                      loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name);
+    static void                      loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name,
+                                               ChunkTable* chunks = nullptr);
     static bool                      loadBaseZen(std::string_view name, std::string_view kind, WorldData::ZenFile& out);
     static bool                      writeCensus();
 

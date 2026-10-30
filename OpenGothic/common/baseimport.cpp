@@ -3,7 +3,7 @@
 #include "basemesh.h"
 #include "fontdata.h"
 #include "modeldata.h"
-#include "worldchunks.h"
+#include "worldchunksruntime.h"
 #include "worlddata.h"
 #include "gothicglb.h"
 

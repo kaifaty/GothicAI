@@ -122,9 +122,10 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
   try {
     WorldData::Data world;
     asset::WorldMesh worldMesh;
-    Resources::loadWorld(world,worldMesh,wname);
+    Resources::loadWorld(world,worldMesh,wname,&chunks);
     if(LoadProbe::enabled())
       LoadProbe::mark("world_read_total",LoadProbe::msSince(loadStarted));
+    residency = ChunkResidency::create(chunks);
     loadProgress(20);
     windRooms.reset(world.bsp.mode,std::move(world.rooms));
     auto worldCloth=WorldCloth::extract(worldMesh);
@@ -1540,6 +1541,11 @@ void World::detectNpc(const Tempest::Vec3& p, const float r, const std::function
 
 void World::detectItem(const Tempest::Vec3& p, const float r, const std::function<void(Item&)>& f) {
   wobj.detectItem(p.x,p.y,p.z,r,f);
+  }
+
+WayPath World::wayTo(const WayPoint& begin, const WayPoint& end) const {
+  const auto* first = &begin;
+  return wmatrix->wayTo(&first,1,begin.position(),end);
   }
 
 WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {
