@@ -318,3 +318,84 @@ def test_resume_does_not_reuse_greedy_recording_as_sample(tmp_path, existing):
             drive.indices(args, [pair])
     else:
         assert drive.indices(args, [pair]) == []
+
+
+def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
+    """Exercise the packed trace reader and both graphics on the same tiny run."""
+    import shutil
+    import subprocess
+
+    pytest.importorskip("PIL")
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg is required for the recorded topdown")
+    spec = importlib.util.spec_from_file_location("nav_live_render", Path(__file__).resolve().parents[1] / "nav_live_render.py")
+    live = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(live)
+    root = tmp_path / "live"
+    root.mkdir()
+    maps = {name: dict(shape=[8, 4, 4], channels=["confidence", "free", "wall", "ledge", "drop", "water", "movable", "familiar"],
+                       cell_cm=25, min_forward_cm=-50, min_right_cm=-50, height_channels=[])
+            for name in ("near", "far")}
+    metadata = dict(schema=1, maps=maps, ray_count=1, detour_cm=[[0, 0, 0], [120, 0, 0]])
+    (root / "live-format.json").write_text(json.dumps(metadata))
+    decisions = []
+    for index in range(12):
+        decisions.append(dict(elapsed_ms=index*100, decision_index=index, position_cm=[index*10, 0, 0], yaw_deg=0,
+                              goal_cm=[300, 0, 0], carrot_cm=[250, 0, 0], speed_cm_s=0 if index < 2 else 100,
+                              keys=dict(forward=1, strafe=0, turn=1 if index < 2 else 0, walk=True, jump=False, climb=False),
+                              teacher_keys={}, probabilities=dict(forward=[.1, .2, .7]), selected=dict(forward=2),
+                              chosen_probability=dict(forward=.7), entropy=dict(forward=.801819),
+                              body_blocked=2 <= index < 4, stuck=2 <= index < 5, contact=False, safety_intervention=index == 6,
+                              edge_clearance_cm=500, edge_clearance_censored=True,
+                              water_clearance_cm=250 if index == 5 else 500, water_clearance_censored=index != 5))
+    (root / "live-decisions.jsonl").write_text("".join(json.dumps(row)+"\n" for row in decisions))
+    (root / "episode.json").write_text(json.dumps(dict(success=True, elapsed_ms=1200, travel_cm=110, goal_kind="follow")))
+    safety = [dict(water_depth_cm=value, deep_water_threshold_cm=100, falling=index == 1)
+              for index, value in enumerate((0, 120, 125, 0, 110))]
+    (root / "perception-safety-frames.jsonl").write_text("".join(json.dumps(row)+"\n" for row in safety))
+    memory = np.zeros((8, 4, 4), dtype=np.uint8)
+    memory[0] = 255
+    memory[1] = 255
+    memory[1, 0] = 0
+    memory[2, 0] = 255
+    memory[7, 2, 2] = 255
+    rays = np.zeros(1, dtype=live.RAY_DTYPE)
+    rays["point_cm"][0] = [100, 0, 0]
+    rays["direction"][0] = [1, 0, 0]
+    rays["distance_cm"] = 100
+    rays["hit"] = rays["complete"] = rays["kind"] = 1
+    with gzip.open(root / "live-observations.bin.gz", "wb") as stream:
+        stream.write(live.HEADER.pack(live.MAGIC, 1))
+        for index in (0, 4, 8):
+            stream.write(live.FRAME.pack(index*100, index))
+            stream.write(memory.tobytes())
+            stream.write(memory.tobytes())
+            stream.write(rays.tobytes())
+    assert live.RAY_DTYPE.itemsize == 55
+    classes = live.memory_classes(memory, maps["near"])
+    assert classes[0, 0] == 2 and classes[2, 2] == 5 and classes[3, 3] == 1
+    world = live._world_map(memory, maps["near"], decisions[0], [0, 0], 1, (100, 100))
+    assert world.getpixel((20, 50))[:3] == tuple(live.CLASS_COLORS[2])
+    assert world.getpixel((80, 50))[:3] == tuple(live.CLASS_COLORS[1])
+    rotated = dict(decisions[0], yaw_deg=90)
+    world = live._world_map(memory, maps["near"], rotated, [0, 0], 1, (100, 100))
+    assert world.getpixel((50, 80))[:3] == tuple(live.CLASS_COLORS[2])
+    report = live.render_run(root)
+    assert report["decision_count"] == 12 and report["observation_frames"] == 3
+    assert report["standing_seconds"] == pytest.approx(.2)
+    assert report["circling_seconds"] == pytest.approx(.2)
+    assert report["obstacle_contacts"] == 1 and report["deep_water_entries"] == 2 and report["falls"] == 1
+    assert report["minimum_edge_distance_cm"] == 500 and report["minimum_edge_distance_censored"] is True
+    assert report["minimum_water_distance_cm"] == 250 and report["minimum_water_distance_censored"] is False
+    assert report["path_to_teacher_ratio"] is None
+    assert report["follow_band_fraction"] == pytest.approx(11/12)
+    assert (root / "timeline.png").read_bytes().startswith(b"\x89PNG")
+    probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(root / "topdown.mp4")], capture_output=True, text=True, check=True)
+    assert float(json.loads(probe.stdout)["format"]["duration"]) == pytest.approx(.6, abs=.051)
+    observations = root / "live-observations.bin.gz"
+    with gzip.open(observations, "rb") as stream:
+        truncated = stream.read()[:-1]
+    with gzip.open(observations, "wb") as stream:
+        stream.write(truncated)
+    with pytest.raises(ValueError, match="Truncated"):
+        list(live.observation_frames(root, metadata))

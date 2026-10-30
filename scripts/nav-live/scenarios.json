@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "training_eligible": false,
+  "qualification_status": "pending",
+  "seeds": [18102027, 18102028, 18102029],
+  "inputs": {
+    "save": "/mnt/shared/gothic-ai/nav-demos-v5/input/save.sav",
+    "roads": "/mnt/shared/gothic-ai/nav-demos-v5/input/places.json",
+    "links": "/mnt/shared/gothic-ai/nav-demos-v5/input/accepted-links.txt",
+    "familiar": "/mnt/shared/gothic-ai/nav-demos-v5/input/familiar.bin"
+  },
+  "bc4_weights": "/mnt/shared/gothic-ai/nav-bc4/bc4/policy.navbc",
+  "scenarios": [
+    {
+      "id": "01-maleth-fence", "number": 1, "name": "Maleth at the farm fence",
+      "training_eligible": false, "split": "control", "npc": "BAU_954_MALETH",
+      "start": "cm:14926,1739,-15914", "goal": "FP_ROAM_FARM1_SHEEP_09",
+      "goal_kind": "point", "time": [10, 0], "limit_ms": 90000,
+      "source": "reports/navigation/2026-10-16-stuck/intentional.bench; reported start (14926,1739,-15914), 28867ms stall at NW_FARM1_PATH_01"
+    },
+    {
+      "id": "02-routine-return", "number": 2, "name": "Return from three off-road positions",
+      "training_eligible": false, "split": "new", "npc": "MIL_310_STADTWACHE",
+      "start": "cm:6516.90967,511.533173,-9258.83594", "goal": "NW_CITY_ENTRANCE_GUARD_02",
+      "goal_kind": "point", "time": [12, 0], "limit_ms": 90000,
+      "source": "PR574 entry-on-trace.jsonl routine_return_begin at 971d9cd7ad96f92d07e708b490e818f1e63e2855; only NPC and coordinates copied",
+      "variants": [
+        {"id": "forest-tree", "npc": "MIL_310_STADTWACHE", "start": "cm:6516.90967,511.533173,-9258.83594", "goal": "NW_CITY_ENTRANCE_GUARD_02", "off_waynet_distance_cm": 1165.32324, "seeds": [18102027]},
+        {"id": "farm-field", "npc": "BAU_952_VINO", "start": "cm:9044.66602,1095.50269,-12661.0635", "goal": "NW_FARM1_FIELD_04", "off_waynet_distance_cm": 1121.83862, "seeds": [18102028]},
+        {"id": "harbour-wall", "npc": "VLK_443_ARBEITER", "start": "cm:-1385.10803,-176.951141,4372.43359", "goal": "NW_CITY_HABOUR_08", "off_waynet_distance_cm": 1171.75415, "seeds": [18102029]}
+      ]
+    },
+    {
+      "id": "03-follow-hero", "number": 3, "name": "Follow the hero through the market and streets",
+      "training_eligible": false, "split": "new", "npc": "VLK_497_BUERGERIN",
+      "start": "NW_CITY_MERCHANT_PATH_20", "goal": "MARKT_02", "goal_kind": "follow",
+      "target": "PC_HERO", "live_target": "player", "scenario_seed": 18102027,
+      "route": ["MARKT_02", "NW_CITY_MERCHANT_PATH_20", "NW_CITY_TAVERN_IN_02", "NW_CITY_MERCHANT_PATH_29_B"],
+      "time": [12, 0], "limit_ms": 90000,
+      "source": "New ordered route on native NEWWORLD waypoints; hero pauses, turns and briefly runs; not a moving validation/test route"
+    },
+    {
+      "id": "04-visible-detour", "number": 4, "name": "Visible target beyond terrain",
+      "training_eligible": false, "split": "validation", "npc": "NONE_100_XARDAS",
+      "start": "cm:24427.3535,2875.72144,-13815.457", "goal": "cm:23557,1049,-10265",
+      "goal_kind": "object", "time": [12, 0], "limit_ms": 180000,
+      "source": "detour-val detour-9b91a149919a96a0, XARDAS_TOWER_SECRET; Detour/direct=9.703; v3b journey passed; terrain blocker still requires native qualification"
+    },
+    {
+      "id": "05-wall-pocket", "number": 5, "name": "Leave a wall pocket",
+      "training_eligible": false, "split": "new", "npc": "VLK_442_ARBEITER",
+      "start": "cm:1100,-186,1200", "goal": "FP_PICK_CITY_01",
+      "goal_kind": "point", "time": [12, 0], "limit_ms": 90000,
+      "source": "New coordinate candidate near the harbour shipyard; pending support, wall-pocket geometry and Detour/direct>=2 qualification"
+    },
+    {
+      "id": "06-harbour-water", "number": 6, "name": "Harbour shore with deep water on the direct line",
+      "training_eligible": false, "split": "new", "npc": "VLK_441_GARVELL",
+      "start": "NW_CITY_HABOUR_06_C", "goal": "NW_CITY_HABOUR_HUT_05_BED_01",
+      "goal_kind": "point", "time": [12, 0], "limit_ms": 90000,
+      "source": "New harbour candidate from v5 water-probe waypoints; v5 water-scenarios.jsonl contains only train rows, so this pair must be excluded from those rows and physically qualified"
+    },
+    {
+      "id": "07-cliff-trail", "number": 7, "name": "Trail above the cliff",
+      "training_eligible": false, "split": "validation", "npc": "BAU_982_GRIMBALD",
+      "start": "cm:50217.207,10650.5049,41427.4297", "goal": "cm:50470.1055,10423.124,41162.043",
+      "goal_kind": "point", "time": [12, 0], "limit_ms": 60000,
+      "source": "nav-teacher-v3b/input/fixtures.json cliff-bridge-201-back200, link1230208767; safety validation; pending along-trail replacement if teacher cannot reach safely"
+    },
+    {
+      "id": "08-market-crowd", "number": 8, "name": "Cross the busy market with native routines",
+      "training_eligible": false, "split": "new", "npc": "VLK_497_BUERGERIN",
+      "start": "NW_CITY_MERCHANT_PATH_20", "goal": "NW_CITY_MERCHANT_PATH_29_B",
+      "goal_kind": "point", "time": [19, 59], "limit_ms": 90000,
+      "source": "New market crossing; 2026-10-16-stuck measured21 walking NPCs in evening versus12 in morning; final hour pending24-hour preparation census"
+    },
+    {
+      "id": "09-door-stairs", "number": 9, "name": "Enter the house and climb to the second floor",
+      "training_eligible": false, "split": "validation", "npc": "VLK_405_FERNANDO",
+      "start": "NW_CITY_REICH02_IN", "goal": "NW_CITY_REICH02_07",
+      "goal_kind": "point", "time": [12, 0], "limit_ms": 90000,
+      "source": "CITY_REICH02 is an object validation place in v4/v5; native entrance and upstairs waypoint,900->1303cm; pending teacher qualification"
+    },
+    {
+      "id": "10-local-stranger", "number": 10, "name": "One route for a local and a stranger",
+      "training_eligible": false, "split": "validation", "npc": "VLK_405_FERNANDO",
+      "start": "NW_CITY_REICH02_IN", "goal": "NW_CITY_REICH02_READ",
+      "goal_kind": "point", "time": [12, 0], "limit_ms": 90000,
+      "source": "CITY_REICH02 object validation place; same physical NPC and route; BC4 additionally roads on/stranger; HD and it35 have no familiar input"
+    }
+  ]
+}
