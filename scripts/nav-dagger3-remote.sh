@@ -200,7 +200,7 @@ nvidia-smi
 import shutil
 import sys
 if shutil.disk_usage(sys.argv[1]).free < 22 * 1024**3:
-    raise SystemExit("HD preparation needs 22 GiB free including the 20-GiB reserve")
+    raise SystemExit("HD training needs 22 GiB free including the 20-GiB reserve")
 SPACE
 "$python" -B -m pytest -q -p no:cacheprovider \
   scripts/tests/test_nav_bc_data.py scripts/tests/test_nav_bc_model.py scripts/tests/test_nav_bc_contract.py
@@ -210,13 +210,17 @@ cmake -S "$task/hd-source/OpenGothic" -B "$task/build-hd" -G Ninja \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
 cmake --build "$task/build-hd" --target gothic-navpolicy-contract \
   CMakeFiles/OpenGothic.dir/common/navdemos.cpp.o --parallel 3
-"$python" -X faulthandler -B -I scripts/nav_bc_data.py prepare --source "$corpus" \
-  --manifest "$corpus/manifest.json" --output "$task/hd-cache" --input-variant hd
-"$python" -X faulthandler -B -I - "$bc3/cache/index.json" "$task/hd-cache/index.json" <<'COHORT'
+"$python" -X faulthandler -B -I - "$task" "$corpus" "$bc3" <<'COHORT'
 import json
 from pathlib import Path
 import sys
-compact, hd = [json.loads(Path(path).read_text()) for path in sys.argv[1:]]
+from types import SimpleNamespace
+sys.path.insert(0, str(Path.cwd() / "scripts"))
+from nav_bc_data import training_index
+from nav_bc_train import train_bc3
+task, corpus, bc3 = map(Path, sys.argv[1:])
+compact = json.loads((bc3 / "cache/index.json").read_text())
+hd = training_index(corpus, corpus / "manifest.json", "hd")
 def population(index):
     return sorted((ep["id"], ep["steps"], ep["split"], tuple(ep["pair"])) for ep in index["episodes"])
 if population(compact) != population(hd) or len(hd["episodes"]) != 602:
@@ -228,10 +232,13 @@ steps = sum(ep["steps"] for ep in hd["episodes"])
 if steps != 405626:
     raise ValueError(f"HD training decision count differs: {steps}")
 print(json.dumps(dict(event="hd_cohort_checked", episodes=602, decisions=steps)))
+output = task / "hd-run"
+output.mkdir(parents=True, exist_ok=True)
+train_bc3(SimpleNamespace(command="train", cache=None, source=str(corpus),
+    manifest=str(corpus / "manifest.json"), input_variant="hd", output=str(output),
+    init=str(bc3 / "run/it35/last.pt"), epochs=20, batch=8, segment=64,
+    lr=.0003, seed=17, device="cuda", threads=6, resume=False), hd)
 COHORT
-"$python" -X faulthandler -B -I scripts/nav_bc_train.py train --cache "$task/hd-cache" --output "$task/hd-run" \
-  --init "$bc3/run/it35/last.pt" --epochs 20 --batch 8 --segment 64 \
-  --lr .0003 --seed 17 --device cuda --threads 6
 for version in 1 2 3; do
   case "$version" in
     1) weights="$HOME/gothic-ai/nav-ppo/run/iter-000035/update/policy.navbc" ;;

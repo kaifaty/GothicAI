@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Train/evaluate navigation imitation on cached, pair-disjoint demonstrations.
+"""Train navigation imitation on direct recordings or prepared tensor caches.
 
 Run on Ryzen through gq (batch class). No simulator or server is involved.
 Example: python scripts/nav_bc_train.py train --cache /abs/cache --output /abs/run
+Direct: python scripts/nav_bc_train.py train --source /abs/recordings \
+    --manifest /abs/manifest.json --input-variant hd-familiar --output /abs/run
 Torch is imported only by this training/validation driver, never by the numpy reader.
 """
 from __future__ import annotations
@@ -22,8 +24,9 @@ from torch import nn
 from nav_bc_data import (CACHE_VERSION, BC3_CACHE_VERSION, HD_CACHE_VERSION, BC4_CACHE_VERSION, HEADS, CLASSES, BC3_HEADS,
                          BC3_CLASSES, PREPROCESSING, HD_PREPROCESSING, BC4_PREPROCESSING,
                          HD_NEAR_SHAPE, HD_FAR_SHAPE, BC4_NEAR_SHAPE, BC4_FAR_SHAPE,
-                         VECTOR_SIZE, load_cached, unpack_cached)
+                         VECTOR_SIZE, encode_episode, load_cached, training_index, unpack_cached)
 from nav_bc_model import NavPolicy, export_weights
+import nav_demos
 
 
 def write_json(path, value):
@@ -51,6 +54,12 @@ def read_index(cache):
 
 
 def load(cache, ep, *, packed=False):
+    if ep.get("storage") == "navdemo":
+        samples = cache / ep["file"]
+        arrays = encode_episode(samples, nav_demos.ray_layout(samples), ep["teacher_version"], ep["input_variant"])
+        if len(arrays["labels"]) != ep["steps"]:
+            raise ValueError(f"record count differs from training index: {samples}")
+        return arrays if packed else unpack_cached(arrays)
     return load_cached(cache / ep["file"], packed=packed)
 
 
@@ -181,9 +190,11 @@ def checkpoint_model(path, device):
 
 
 def train(args):
-    cache, out = Path(args.cache), Path(args.output)
+    source = getattr(args, "source", None)
+    cache, out = Path(source or args.cache), Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
-    index = read_index(cache)
+    index = (training_index(cache, Path(args.manifest), args.input_variant)
+             if source else read_index(cache))
     if index["cache_version"] in (BC3_CACHE_VERSION, HD_CACHE_VERSION, BC4_CACHE_VERSION):
         return train_bc3(args, index)
     train_eps = [e for e in index["episodes"] if e["split"] == "train"]
@@ -383,7 +394,7 @@ def bc3_loss(logits, auxiliary, labels, mask, targets, class_weights, change_wei
 
 def train_bc3(args, index):
     """Fixed-epoch BC on manifest train only; selection requires closed-loop validation."""
-    cache, out = Path(args.cache), Path(args.output)
+    cache, out = Path(getattr(args, "source", None) or args.cache), Path(args.output)
     if any(entry["split"] != "train" for entry in index["episodes"]):
         raise ValueError("BC3 cache must contain only manifest training episodes")
     random.seed(args.seed)
@@ -594,7 +605,14 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     for command in ("train", "evaluate", "verify", "plot"):
         p = sub.add_parser(command)
-        p.add_argument("--cache", required=True)
+        if command == "train":
+            recordings = p.add_mutually_exclusive_group(required=True)
+            recordings.add_argument("--cache")
+            recordings.add_argument("--source", help="read NAVDEMO recordings directly without a prepared cache")
+            p.add_argument("--manifest", help="frozen training manifest for --source")
+            p.add_argument("--input-variant", choices=("compact", "hd", "hd-familiar"), default="compact")
+        else:
+            p.add_argument("--cache", required=True)
         p.add_argument("--output", required=True)
         p.add_argument("--threads", type=int, default=6)
         p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -610,8 +628,14 @@ def main():
             p.add_argument("--steps", type=int, default=1000)
             p.add_argument("--iterations", type=int, default=1000)
     args = parser.parse_args()
-    if not Path(args.cache).is_absolute() or not Path(args.output).is_absolute():
-        parser.error("cache and output must be absolute paths")
+    source = getattr(args, "source", None)
+    if not Path(source or args.cache).is_absolute() or not Path(args.output).is_absolute():
+        parser.error("cache/source and output must be absolute paths")
+    if source:
+        if not args.manifest or not Path(args.manifest).is_absolute():
+            parser.error("--source requires an absolute --manifest")
+    elif getattr(args, "manifest", None):
+        parser.error("--manifest requires --source")
     {"train": train, "evaluate": final_evaluate, "verify": verify, "plot": plot}[args.command](args)
 
 

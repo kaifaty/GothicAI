@@ -2,6 +2,7 @@
 
 import gzip
 import json
+import lzma
 from pathlib import Path
 import sys
 
@@ -57,6 +58,29 @@ def test_binary_round_trip_selects_road_schema_and_keeps_layout(version, tmp_pat
     assert chunks[0].dtype.itemsize == demos.RECORD_BYTES_BY_VERSION[version]
     np.testing.assert_array_equal(np.concatenate(chunks), records)
     np.testing.assert_array_equal(demos.load_episode(path), records)
+
+
+@pytest.mark.parametrize('version', [2, 3])
+def test_xz_preserves_record_bits_and_prefers_compact_discovery(version, tmp_path):
+    path = write_episode(tmp_path / f'v{version}', version)
+    original = path / 'samples.bin.gz'
+    with gzip.open(original, 'rb') as stream:
+        legacy = stream.read()
+    rng = np.random.default_rng(17)
+    record_bits = rng.integers(0, 256, 3 * demos.RECORD_BYTES_BY_VERSION[version], dtype=np.uint8).tobytes()
+    compact = path / 'samples.bin.xz'
+    compact.write_bytes(lzma.compress(legacy[:demos.HEADER.size] + record_bits, preset=6))
+
+    assert demos.samples_path(path) == compact
+    assert demos.samples_path(original) == original
+    assert demos.episode_paths(path) == [compact]
+    assert demos.episode_paths(tmp_path) == [compact]
+    assert demos.episode_version(compact) == version
+    chunks = list(demos.iter_chunks(path, chunk_records=2))
+    assert [len(chunk) for chunk in chunks] == [2, 1]
+    assert b''.join(chunk.tobytes() for chunk in chunks) == record_bits
+    assert demos.load_episode(path).tobytes() == record_bits
+    assert demos.load_episode(original).tobytes() == legacy[demos.HEADER.size:]
 
 
 def test_v1_aliases_keep_existing_training_schema():

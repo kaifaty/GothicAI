@@ -184,16 +184,15 @@ elif [[ "$stage" == train ]]; then
   test -x "$python"
   test ! -e "$archive/bc4/last.pt"
   nvidia-smi
-  "$python" -X faulthandler -B -I scripts/nav_bc_data.py prepare --source "$corpus" \
-    --manifest "$task/input/v5-compact.json" --output "$task/cache" --input-variant hd-familiar
-  "$python" -X faulthandler -B -I scripts/nav_bc_train.py train --cache "$task/cache" --output "$archive/bc4" \
+  "$python" -X faulthandler -B -I scripts/nav_bc_train.py train \
+    --source /mnt/shared/gothic-ai/nav-lean-data/corpus-v5 --manifest "$task/input/v5-compact.json" \
+    --input-variant hd-familiar --output "$archive/bc4" \
     --init "$task/input/hd/last.pt" --epochs 20 --batch 8 --segment 64 \
     --lr .0003 --seed 17 --device cuda --threads 6
   "$python" -X faulthandler -B -I scripts/check_nav_policy.py --weights "$archive/bc4/policy.navbc" \
     --source "$corpus" --output "$archive/bc4/parity" --steps 1000 --torch
   "$task/build/opengothic/gothic-navpolicy-contract" \
     "$archive/bc4/policy.navbc" "$archive/bc4/parity/parity.bin.gz"
-  rm -rf -- "$task/cache"
 elif [[ "$stage" == diagnose-quick ]]; then
   rm -f -- "$archive/diagnostics/smoke-passed"
   "$python" -B -m pytest -q -p no:cacheprovider scripts/tests/test_nav_rl.py

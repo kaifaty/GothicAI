@@ -12,6 +12,7 @@ from contextlib import ExitStack
 import faulthandler
 import gzip
 import hashlib
+import importlib.util
 import json
 import lzma
 from pathlib import Path
@@ -465,17 +466,136 @@ def measured_prepare(args, manifest, entries, cache, progress):
                 splits=index["splits"], timings_are_nested=True)
 
 
+def check_direct_training(args, manifest, entries, scratch, progress):
+    """Compare frozen prepare tensors and one real BC epoch with direct reads."""
+    import copy
+    import torch
+    import nav_bc_train as train
+    import nav_lean_data as convert
+
+    families = sorted({entry["family"] for entry in entries})
+    selected_ids = set()
+    for number, family in enumerate(families):
+        count = 50 // len(families) + (number < 50 % len(families))
+        selected_ids.update(entry["id"] for entry in
+                            [value for value in entries if value["family"] == family][:count])
+    selected = [entry for entry in entries if entry["id"] in selected_ids]
+    if len(selected) != 50:
+        raise ValueError(f"Expected 50 parity episodes, found {len(selected)}")
+    variant = "hd-familiar" if args.corpus == "v5" else "hd"
+    new_entries = copy.deepcopy(selected)
+    for old, new in zip(selected, new_entries):
+        new["directory"] = args.converted_source / old["directory"].relative_to(args.source)
+        if args.corpus == "v4":
+            progress.begin("parity.convert_v4", old["id"])
+            convert.convert_episode(old, new["directory"])
+
+    spec = importlib.util.spec_from_file_location("nav_bc_data_before_lean", args.reference_script)
+    reference = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reference)
+    cache = scratch / "reference-cache"
+    progress.begin("parity.reference_prepare")
+    started = time.perf_counter()
+    with patch.object(reference, "load_training_manifest", return_value=(manifest, selected)):
+        old_index = reference.prepare_manifest(args.source, cache, args.manifest,
+                                               CHUNK_RECORDS, variant)
+    prepare_seconds = time.perf_counter() - started
+    progress.begin("parity.direct_index")
+    started = time.perf_counter()
+    with patch.object(data, "load_training_manifest", return_value=(manifest, new_entries)):
+        new_index = data.training_index(args.converted_source, args.manifest, variant)
+    index_seconds = time.perf_counter() - started
+    for key in ("class_counts", "action_change", "action_change_weight", "auxiliary", "splits",
+                "preprocessing", "eye_layout", "heads", "classes", "near_shape", "far_shape"):
+        if old_index[key] != new_index[key]:
+            raise ValueError(f"Direct index differs from frozen prepare: {key}")
+    if [entry["id"] for entry in old_index["episodes"]] != [entry["id"] for entry in new_index["episodes"]]:
+        raise ValueError("Direct index changed episode order")
+
+    checked_arrays, checked_tensors, decisions, familiar_decisions = 0, 0, 0, 0
+    for old, new in zip(old_index["episodes"], new_index["episodes"]):
+        progress.begin("parity.episode_tensors", old["id"])
+        expected = reference.load_cached(cache / old["file"], packed=True)
+        actual = train.load(args.converted_source, new, packed=True)
+        if set(expected) != set(actual):
+            raise ValueError(f"Direct packed array keys differ: {old['id']}")
+        for name, value in expected.items():
+            other = actual[name]
+            if value.dtype != other.dtype or value.shape != other.shape or value.tobytes() != other.tobytes():
+                raise ValueError(f"Direct packed array differs: {old['id']}: {name}")
+            checked_arrays += 1
+        steps = len(expected["labels"])
+        for start in range(0, steps, CHUNK_RECORDS):
+            left = reference.unpack_cached(expected, start, start + CHUNK_RECORDS)
+            right = data.unpack_cached(actual, start, start + CHUNK_RECORDS)
+            for name, value in left.items():
+                other = right[name]
+                if value.dtype != other.dtype or value.shape != other.shape or value.tobytes() != other.tobytes():
+                    raise ValueError(f"Direct training tensor differs: {old['id']}: {name}")
+                checked_tensors += 1
+        if args.corpus == "v5":
+            familiar_decisions += int((expected["near_familiar"].any(axis=(1, 2, 3)) |
+                                       expected["far_familiar"].any(axis=(1, 2, 3))).sum())
+        decisions += steps
+        del expected, actual
+        progress.emit("parity_episode_complete", decisions=steps)
+    if args.corpus == "v5" and not familiar_decisions:
+        raise ValueError("V5 parity did not exercise a nonzero familiar input")
+
+    # CPU, fixed thread count and unchanged training loop avoid CUDA ordering
+    # differences. Compare tensors, not checkpoint file timestamps/containers.
+    torch.use_deterministic_algorithms(True)
+    losses = {}
+    for label, index in (("old", old_index), ("direct", new_index)):
+        progress.begin("parity.bc_epoch_" + label)
+        destination = args.output / f"epoch-{label}"
+        destination.mkdir()
+        options = SimpleNamespace(cache=str(cache) if label == "old" else None,
+            source=str(args.converted_source) if label == "direct" else None,
+            manifest=str(args.manifest), input_variant=variant, output=str(destination),
+            threads=1, device="cpu", epochs=1, batch=4, segment=32, lr=.0003,
+            seed=17, resume=False, init=None)
+        train.train_bc3(options, index)
+        losses[label] = json.loads((destination / "history.json").read_text())[0]["loss"]
+    old_state = torch.load(args.output / "epoch-old/last.pt", map_location="cpu", weights_only=False)
+    new_state = torch.load(args.output / "epoch-direct/last.pt", map_location="cpu", weights_only=False)
+
+    def equal_state(left, right):
+        if isinstance(left, torch.Tensor):
+            return left.dtype == right.dtype and left.shape == right.shape and torch.equal(left, right)
+        if isinstance(left, dict):
+            return left.keys() == right.keys() and all(equal_state(left[key], right[key]) for key in left)
+        if isinstance(left, (tuple, list)):
+            return len(left) == len(right) and all(equal_state(a, b) for a, b in zip(left, right))
+        return left == right
+
+    if losses["old"] != losses["direct"] or not all(equal_state(old_state[key], new_state[key])
+                                                   for key in ("model", "optimizer")):
+        raise ValueError(f"Same-seed BC epoch differs: {losses}")
+    return dict(mode="parity", corpus=args.corpus, episodes=len(selected), decisions=decisions,
+                packed_arrays_bitwise_equal=checked_arrays, training_tensors_bitwise_equal=checked_tensors,
+                familiar_nonzero_decisions=familiar_decisions, reference_prepare_seconds=prepare_seconds,
+                direct_index_seconds=index_seconds, separate_prepare_required=False, seed=17,
+                threads=1, device="cpu", losses=losses, model_and_optimizer_tensors_equal=True,
+                torch=torch.__version__, reference_script_sha256=hashlib.sha256(args.reference_script.read_bytes()).hexdigest())
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("profile", "probe", "replay"))
+    parser.add_argument("mode", choices=("profile", "probe", "replay", "parity"))
     parser.add_argument("--corpus", choices=("v4", "v5"), required=True)
     for name in ("source", "manifest", "output", "scratch"):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--converted-source", type=Path)
+    parser.add_argument("--reference-script", type=Path)
     args = parser.parse_args()
     if any(not getattr(args, name).is_absolute() for name in ("source", "manifest", "output", "scratch")):
         parser.error("All paths must be absolute")
     if args.mode == "replay" and args.corpus != "v4":
         parser.error("Replay uses the historical v4 [200:300] training slice")
+    if args.mode == "parity" and any(path is None or not path.is_absolute()
+                                     for path in (args.converted_source, args.reference_script)):
+        parser.error("Parity requires absolute --converted-source and --reference-script")
     faulthandler.enable()
     faulthandler.dump_traceback_later(TIMEOUT_SECONDS, exit=True)
     progress = Progress(args.output)
@@ -541,7 +661,7 @@ def main():
                     candidate["source_bytes_over_candidate_payload"] = total_source / candidate["payload_bytes"]
                     totals["candidates"][name] = candidate
                 summary["totals"] = totals
-        else:
+        elif args.mode == "replay":
             selected = entries[200:300]
             if len(selected) != 100:
                 raise ValueError(f"Expected 100 replay episodes, found {len(selected)}")
@@ -549,6 +669,8 @@ def main():
                           episode_ids=[entry["id"] for entry in selected])
             summary = dict(mode=args.mode, corpus=args.corpus, start=200, stop=300,
                            prepare=measured_prepare(args, manifest, selected, scratch / "cache", progress))
+        else:
+            summary = check_direct_training(args, manifest, entries, scratch, progress)
         summary["environment"] = dict(python=platform.python_version(), numpy=np.__version__,
                                       zlib=zlib.ZLIB_RUNTIME_VERSION, platform=platform.platform())
         (args.output / "summary.json").write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n")
