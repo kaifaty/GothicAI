@@ -247,7 +247,7 @@ def launch(args):
         print(f"perf-content: SHA-256 verified {name}: {digest}", flush=True)
     # Copy the selected prepared base into this task. Never import/publish/prune shared bases.
     # A caller's OPENGOTHIC_BASE_FINGERPRINT picks the base on Ryzen as it does for perf.sh and the captures
-    # (Ryzen's game-base.json may still name a base of an older importer format).
+    # (Ryzen's game-base.json may name a base of another importer format than this branch's engine).
     pinned = [f"OPENGOTHIC_BASE_FINGERPRINT={os.environ['OPENGOTHIC_BASE_FINGERPRINT']}"] \
         if os.environ.get("OPENGOTHIC_BASE_FINGERPRINT") else []
     remote("env", *pinned, "python3", source + "/scripts/perf_content.py", "__base", task)
