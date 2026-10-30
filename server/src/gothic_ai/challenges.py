@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Iterable
 from uuid import uuid4
 
 from .chronicle import Chronicle, Fact
+from .game import GameError
 from .protocol import GameMessage, Loading, Session
 from .questbook import QuestBook
 from .social import Social, _chance
+
+log = logging.getLogger(__name__)
 
 KINDS = ("no_blood", "no_reward", "secret_kept", "mercy")
 CLOSED = {"done", "failed", "obsolete", "closed"}
@@ -36,7 +40,7 @@ def line_people(book: QuestBook, quests: Iterable[str], giver: str, characters: 
 
 class Challenges:
     def __init__(
-        self, chronicle: Chronicle, book: QuestBook, *, social: Callable[[], Awaitable[Social]],
+        self, chronicle: Chronicle, book: QuestBook, *, social: Callable[[], Awaitable[Social]] | None = None,
     ) -> None:
         self.chronicle, self.book = chronicle, book
         self.social = social
@@ -65,7 +69,7 @@ class Challenges:
             self._schedule()
 
     async def _hint(self, seq: int, challenge: Fact) -> None:
-        if _chance("challenge_hint", str(seq)) >= 0.5:
+        if self.social is None or _chance("challenge_hint", str(seq)) >= 0.5:
             return
         if any(f.get("challenge") == seq for f in self.chronicle.facts("challenge_hint")):
             return
@@ -76,15 +80,19 @@ class Challenges:
         if not candidates:
             return
         branch = self.chronicle.branch
-        social = await self.social()
+        try:
+            social = await self.social()
+        except (GameError, TimeoutError) as err:
+            log.info("challenge hint: social unavailable: %s", err or type(err).__name__)
+            social = None
         if self._loading or self.chronicle.branch != branch:
             return
         if any(f.get("challenge") == seq for f in self.chronicle.facts("challenge_hint")):
             return
-        known = social.ties.get(giver, {})
+        known = social.ties.get(giver, {}) if social is not None else {}
         source = next((npc for npc in candidates if (tie := known.get(npc)) is not None
                        and (tie.meets or tie.deals or tie.bonds)), candidates[0])
-        names = social.names
+        names = social.names if social is not None else {}
         self.chronicle.record({
             "fact": "challenge_hint", "id": uuid4().hex, "challenge": seq, "kind": challenge["kind"],
             "npc": giver, "name": names.get(giver, giver),

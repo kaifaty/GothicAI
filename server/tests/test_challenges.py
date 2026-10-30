@@ -9,6 +9,7 @@ import pytest
 from gothic_ai import challenges as challenges_module
 from gothic_ai.challenges import CLOSED, KINDS, Challenges, line_people
 from gothic_ai.chronicle import Chronicle
+from gothic_ai.game import GameError
 from gothic_ai.memory import MemoryStore
 from gothic_ai.questbook import Goal, Quest, Stage, Talk
 from gothic_ai.social import Social, _chance
@@ -34,7 +35,7 @@ async def world(kind, *, social=None, people=("GIVER", "FRIEND")):
         async def acquaintances():
             return social if social is not None else Social([])
 
-        observer = Challenges(chronicle, book, social=acquaintances)
+        observer = Challenges(chronicle, book, social=acquaintances if social is not None else None)
         line = chronicle.record({"fact": "line", "giver": "GIVER", "quests": ["Q1", "Q2"]})
         challenge = chronicle.record({
             "fact": "challenge", "kind": kind, "line": line,
@@ -190,7 +191,7 @@ async def test_loading_completed_branch_does_not_repeat_and_old_branch_can_still
 async def test_hint_share_is_deterministic_for_the_challenge_sequence():
     runs = []
     for _ in range(2):
-        async with world("no_blood") as (_, chronicle, observer, _, first, _):
+        async with world("no_blood", social=Social([])) as (_, chronicle, observer, _, first, _):
             challenge = chronicle.facts("challenge")[0]
             seqs = [first, *(chronicle.record(challenge) for _ in range(99))]
             await asyncio.sleep(0)
@@ -272,3 +273,32 @@ async def test_hint_waits_for_social_refresh_and_is_cancelled_by_loading(monkeyp
         ready.set()
         await asyncio.sleep(0)
         assert not chronicle.facts("challenge_hint")
+
+
+@pytest.mark.parametrize("error", [GameError, TimeoutError])
+async def test_hint_survives_social_failure_with_an_alphabetical_source(monkeypatch, caplog, error):
+    monkeypatch.setattr(challenges_module, "_chance", lambda *parts: 0.0)
+    async with world("no_blood") as (_, chronicle, observer, _, _, _):
+        async def unavailable():
+            raise error("social unavailable")
+
+        observer.social = unavailable
+        with caplog.at_level("INFO", logger="gothic_ai.challenges"):
+            seq = chronicle.record({
+                **chronicle.facts("challenge")[0], "people": ["ZED", "PLAYER", "GIVER", "ANN"],
+            })
+            await asyncio.sleep(0)
+        [hint] = chronicle.facts("challenge_hint")
+        assert hint["challenge"] == seq and hint["witnesses"] == ["ANN"]
+        assert hint["witness_names"] == {"ANN": "ANN"}
+        assert "social unavailable" in caplog.text
+
+
+async def test_challenges_without_social_write_no_hints_but_still_finish(monkeypatch):
+    monkeypatch.setattr(challenges_module, "_chance", lambda *parts: 0.0)
+    async with world("no_blood") as (_, chronicle, observer, _, seq, _):
+        assert observer.social is None
+        finish(chronicle)
+        await asyncio.sleep(0)
+        assert not chronicle.facts("challenge_hint")
+        assert chronicle.facts("challenge_met")[0]["challenge"] == seq
