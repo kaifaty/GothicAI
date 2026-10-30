@@ -8,7 +8,7 @@ config: {"glb": model with tile UVs in metres and zone-key materials (barrel.py)
          "slots": {KEY: [ATLAS_KEY, GROUP]}, "metal": [KEY, ...],
          "size": 1024, "colour_samples": 16, "seed": 1, "ao_samples": 64, "ao_distance": 0.15, "ao_strength": 0.85,
          "sectors": 20, "tone_spread": 0.28, "light_part": [index, gain],
-         "edge_radius": 0.006, "wet_height": 0.18, "algae": 0.7, "bleach": 0.35,
+         "island_scale": {KEY: share}, "despeckle": {"radius": 6, "below": 0.6, "lift": 0.7}, "edge_radius": 0.006, "wet_height": 0.18, "algae": 0.7, "bleach": 0.35,
          "planks_per_tile": {KEY: n}, "seam_width": 0.07, "seam_dark": 0.75, "contrast": {KEY: gamma},
          "nodes": [NODE NAME, ...], "tile_normal": {KEY: strength}, "edge_wear": {KEY: share},
          "measure_ao": {KEY: min baked AO},
@@ -138,6 +138,23 @@ bpy.ops.object.mode_set(mode="EDIT")
 bpy.ops.mesh.select_all(action="SELECT")
 bpy.ops.uv.smart_project(angle_limit=math.radians(cfg.get("angle_limit", 35)), island_margin=0.0,
                          area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+if cfg.get("island_scale"):
+    # Faces nobody sees (a crate's dark core) shrink before packing, so the open boards get the texels:
+    # the harbour pile gave its cores as much atlas as its planks and its lids read as felt from afar.
+    # Each such face shrinks about its own centre; pack_islands then treats it as its own island.
+    bpy.ops.object.mode_set(mode="OBJECT")
+    uv = mesh.uv_layers["Atlas"].data
+    for poly in mesh.polygons:
+        factor = cfg["island_scale"].get(keys[poly.material_index], 1.0)
+        if factor == 1.0:
+            continue
+        loops = list(poly.loop_indices)
+        cu = sum(uv[i].uv[0] for i in loops) / len(loops)
+        cv = sum(uv[i].uv[1] for i in loops) / len(loops)
+        for i in loops:
+            uv[i].uv = (cu + (uv[i].uv[0] - cu) * factor, cv + (uv[i].uv[1] - cv) * factor)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
 bpy.ops.uv.pack_islands(rotate=True, margin=cfg.get("margin", 0.006))
 bpy.ops.object.mode_set(mode="OBJECT")
 
@@ -392,6 +409,21 @@ ao = bake_pass("ao", "AO", samples=cfg.get("ao_samples", 64))[:, :, 0]
 
 strength = cfg.get("ao_strength", 0.85)
 albedo = colour * (1 - strength * (1 - ao))[..., None]
+if "despeckle" in cfg:
+    # Knots in a plank tile are small, near-black and repeat with the tile: from above a crate lid they read as a
+    # pattern of dark dots (crates-path, fifth review). Texels much darker than their neighbourhood are lifted
+    # toward its mean, so a knot stays a soft trace.
+    spec = cfg["despeckle"]
+    r = spec.get("radius", 6)
+
+    def box(a):
+        c = np.cumsum(np.cumsum(np.pad(a, ((r + 1, r), (r + 1, r), (0, 0)), mode="edge"), 0), 1)
+        return (c[2 * r + 1:, 2 * r + 1:] - c[:-2 * r - 1, 2 * r + 1:] - c[2 * r + 1:, :-2 * r - 1] + c[:-2 * r - 1, :-2 * r - 1]) / (2 * r + 1) ** 2
+    local = box(colour)
+    lum, lum_local = colour @ np.array([0.2126, 0.7152, 0.0722]), local @ np.array([0.2126, 0.7152, 0.0722])
+    dark = np.clip((spec.get("below", 0.6) - lum / np.maximum(lum_local, 1e-6)) / 0.2, 0, 1) * spec.get("lift", 0.7)
+    colour = colour * (1 - dark[..., None]) + local * dark[..., None]
+    albedo = colour * (1 - strength * (1 - ao))[..., None]
 weathering = {}
 if any(k in cfg for k in ("crevice", "streaks", "wet_roughness", "moss", "seam")):
     position = lo + bake_pass("position", "EMIT", "position", samples=1, margin=16) * (hi - lo)
@@ -413,9 +445,6 @@ if any(k in cfg for k in ("crevice", "streaks", "wet_roughness", "moss", "seam")
     if "seam" in cfg or cfg.get("moss", {}).get("edges"):
         seam = bake_pass("seam", "EMIT", "seam", samples=cfg.get("seam", {}).get("samples", 16))[:, :, 0] * ~zone_metal
     if "seam" in cfg:
-        spec = cfg["seam"]
-        dirt = spec.get("dark", 0.5) * seam
-        albedo = albedo * (1 - dirt[..., None]) + np.array(spec.get("colour", [0.008, 0.007, 0.005])) * dirt[..., None]
         weathering["seam"] = seam
     if "streaks" in cfg:
         from mathutils import Vector
@@ -506,6 +535,12 @@ for index, key in enumerate(keys):
                    "contrast": gamma, "mean_before": mean.round(5).tolist(),
                    "gain": gain.round(3).tolist(), "target": targets[key],
                    "tile_normal": tile_normal(key), "edge_wear": edge_wear(key) if key not in metal_keys else None}
+if "seam" in cfg:
+    # After the zones met their targets, like the moss: laid before, the darker seams raised every zone's
+    # gain and washed the damp and the moss off the crate sides (crates-path, fifth review).
+    spec = cfg["seam"]
+    dirt = spec.get("dark", 0.5) * seam
+    albedo = albedo * (1 - dirt[..., None]) + np.array(spec.get("colour", [0.008, 0.007, 0.005])) * dirt[..., None]
 if "moss" in cfg:
     # Moss in patches, laid after each zone met its colour target so its green is the moss's own:
     # on tops (facing up), near the ground and in shaded corners, cut out of a smooth 3D noise so it
@@ -563,7 +598,8 @@ if "moss" in cfg:
     d3 = rng.standard_normal((9, 3))
     d3 /= np.linalg.norm(d3, axis=1, keepdims=True)
     f3 = 2 * np.pi / (scale * rng.uniform(0.15, 0.4, 9))
-    tone = sum(np.sin(position @ d * f + ph) for d, f, ph in zip(d3, f3, rng.uniform(0, 2 * np.pi, 9))) / np.sqrt(4.5)
+    # on the stretched coordinates, so the moss's light and dark runs along the boards like their grain
+    tone = sum(np.sin(stretched @ d * f + ph) for d, f, ph in zip(d3, f3, rng.uniform(0, 2 * np.pi, 9))) / np.sqrt(4.5)
     tone = np.clip(0.5 + 0.35 * tone, 0, 1)[..., None]
     green = dark * (1 - tone) + light * tone
     green = green * (0.55 + 0.45 * ao)[..., None]

@@ -9,16 +9,21 @@ config: {"id": "rig-net-rack", "target": "data/content/mesh3d-rigging.json", "se
          "braces": [[x, y, z_top, axis, sign], ...] knee braces from a post up to the beam over it,
          "cleats": [[x, y, axis], ...] short boards up both faces of a post under the beams (the original's),
          "lashings": [[x, y, z, axis], ...], "panels": [{"bar": [x0, y0, z, x1, y1], "drop": [front, back],
-         "folds": 5, "belly": 0.08, "half": half the bar's width, "sag": droop m}, ...], "rolls": [[x, y, top_z, length, radius, "spindle"|"column"], ...],
-         "loose": [[x, y, z, length], ...], "tile_m": 0.42, "stave_tile": 0.6}
+         "folds": 5, "belly": 0.08, "half": half the bar's width, "sag": droop m}, ...], "rolls": [[x, y, top_z, length, radius, "spindle"|"column", hang_z], ...],
+         "wraps": [[x0, x1, y0, y1, z0, z1], ...], "loose": [[x, y, z, length], ...], "tile_m": 0.42, "stave_tile": 0.6}
 Asset harbour-rigging (intent.md, concept rig-net-rack attempt 1). The construction follows the original
 (its mesh as an underlay: the places of its posts and beams, docs/own-content.md): four posts, pairs of
 top beams that clamp the posts between them on both arms, a second tier of beams, a tie from the corner
 along the long arm overhanging its end, a lower rail; iron bands round the beam pairs at the posts, knee
-braces, rope lashings at the top corners. The first review (2026-10-30) found the first version thin,
+braces ("lashings": rope coils at the top corners, used until the original's rope wraps were built as
+"wraps"; the harbour rack has none: two of them hung under the beams as a lump, sixth review). The first review (2026-10-30) found the first version thin,
 flat and in the wrong places. Net panels hang over a bar on both sides with vertical folds ("folds") and
 a belly ("belly" m), the hem a little uneven. Rolled nets hang on a rope loop: a spindle (thick in the
-middle) or a column (nearly straight, gathered at the top), bound with rope every 0.6 m.
+middle) or a column (nearly straight, gathered at the top), bound with rope every 0.6 m; with "hang_z" the
+roll hangs lower on a rope from that height, as the original's rolls hang from the rope wound round a beam.
+"wraps" are those windings: rope wound round a top beam in tight turns over the box the original's
+ROPEWALL wraps fill (outer bounds, rope included; the beam runs along the longer horizontal side). The
+fifth review found a net lump under the beam where the original has rope wound round it.
 """
 import math
 import sys
@@ -192,7 +197,7 @@ for panel in cfg.get("panels", []):
                 N.poly([down[a][b] for a, b in q[::-1]], NET, uv[::-1])
 
 # --- rolled nets: a spindle or a column on a rope loop, bound with rope every 0.6 m ---
-for x, y, top_z, length, radius, shape in cfg.get("rolls", []):
+for x, y, top_z, length, radius, shape, *hang in cfg.get("rolls", []):
     bend = Vector((rng.uniform(-0.06, 0.06), rng.uniform(-0.06, 0.06), 0))
     n_seg = 26
     pts, rads = [], []
@@ -211,7 +216,7 @@ for x, y, top_z, length, radius, shape in cfg.get("rolls", []):
     # a blunt, rounded foot: one more ring a little lower and a little narrower, then the flat cap
     pts.append(pts[-1] - Vector((0, 0, radius * 0.15)))
     rads.append(rads[-1] * 0.8)
-    tube(P, pts, rads, 16, ROLL, tile_v=tile_m, ref=Y)
+    tube(P, pts, rads, 12, ROLL, tile_v=tile_m, ref=Y)
     for k in range(1, int(length / 0.6) + 1):
         f = k * 0.6 / length
         if f >= 0.95:
@@ -220,7 +225,32 @@ for x, y, top_z, length, radius, shape in cfg.get("rolls", []):
         r = float(np.interp(f, np.linspace(0, 1, n_seg + 1), rads[:n_seg + 1])) * 0.98
         ring = [c + Vector((math.cos(a) * r, math.sin(a) * r, 0.0)) for a in np.linspace(0, 2 * math.pi, 17)[:-1]]
         tube(P, ring, 0.014, 5, ROPE, closed=True)
-    tube(P, [pts[0], Vector((x, y, top_z + 0.02))], 0.014, 5, ROPE)
+    tube(P, [pts[0], Vector((x, y, (hang[0] if hang else top_z + 0.02)))], 0.014, 5, ROPE)
+
+# --- rope wound round the top beams ---
+r_w = 0.02
+for x0, x1, y0, y1, z0, z1 in cfg.get("wraps", []):
+    along_x = (x1 - x0) > (y1 - y0)
+    a0, a1 = (x0, x1) if along_x else (y0, y1)          # along the beam
+    c0, c1 = (y0, y1) if along_x else (x0, x1)          # across it
+    cc, hw = (c0 + c1) / 2, (c1 - c0) / 2 - r_w
+    zc, hh = (z0 + z1) / 2, (z1 - z0) / 2 - r_w
+    corner = 0.035
+    # a rounded rectangle round the beam section, as the rope bends over the beam's edges
+    ring = []
+    for qx, qz in ((1, 1), (-1, 1), (-1, -1), (1, -1)):
+        start = math.atan2(qz, qx) - math.pi / 4
+        for f in (0.0, 0.5):
+            ang = start + f * math.pi / 2
+            ring.append((qx * (hw - corner) + corner * math.cos(ang), qz * (hh - corner) + corner * math.sin(ang)))
+    pitch = r_w * 2.3
+    turns = int(((a1 - a0) - 2 * r_w) / pitch)
+    pts = []
+    for k in range(turns * len(ring) + 1):
+        u, w = ring[k % len(ring)]
+        s = a0 + r_w + pitch * k / len(ring)
+        pts.append(Vector((s, cc + u, zc + w)) if along_x else Vector((cc + u, s, zc + w)))
+    tube(P, pts, r_w, 5, ROPE)
 
 # --- loose ropes hanging from the beams ---
 for x, y, z, length in cfg.get("loose", []):

@@ -50,7 +50,8 @@ ITEMS = {
     'crate-pile': dict(visual='NW_HARBOUR_CRATEPILE_01', script='crate_pile.py', cfg='crate-pile-rig.json', atlas='crate-pile-rig-atlas.json'),
     'crate-broken': dict(visual='NW_HARBOUR_CRATEBROKEN_01', script='crate_broken.py', cfg='crate-broken.json',
                          atlas='crate-broken-atlas.json'),
-    'rope': dict(visual='NW_HARBOUR_ROPE_01', script='rope_coil.py', cfg='rope-coil.json', atlas='rope-coil-atlas.json'),
+    'rope': dict(visual='NW_HARBOUR_ROPE_01', script='rope_coil.py', cfg='rope-coil.json', atlas='rope-coil-atlas.json',
+                 lift_normals=0.65),
     'cannon': dict(visual='NW_HARBOUR_CANON_01', script='cannon.py', cfg='cannon.json', atlas='cannon-atlas.json'),
     'bollard-rope': dict(visual='NW_HARBOUR_IRONROPEHOLDER_WROPE_01', script='bollard.py', cfg='bollard-rope.json',
                          atlas='bollard-rope-atlas.json'),
@@ -190,12 +191,27 @@ def write_maps(write_dds, root: Path, folder: Path, maps: Path, colour: list[flo
     return {name: (folder / f'{name}.dds').relative_to(root).as_posix() for name in ('albedo', 'normal', 'orm')}
 
 
-def glb_edit(path: Path, out: Path, names: dict[str, str], masked: set[str]) -> list[str]:
+def glb_edit(path: Path, out: Path, names: dict[str, str], masked: set[str], lift: float = 0.0) -> list[str]:
     """Rename GLB materials (zone key -> material key) and set alphaMode MASK on the masked ones."""
     data = path.read_bytes()
     length = struct.unpack_from('<I', data, 12)[0]
     doc = json.loads(data[20:20 + length])
     rest = data[20 + length:]
+    if lift:
+        # Bend every vertex normal toward up (glTF +Y) by "lift" and renormalise, as for foliage: the round
+        # turns of the rope coil faced down on their lower half and stood in shade, so dark stripes ran
+        # between all the turns and the whole coil read darker than the original's (sixth review).
+        blob_bin = bytearray(rest[8:])
+        for mesh in doc['meshes']:
+            for prim in mesh['primitives']:
+                acc = doc['accessors'][prim['attributes']['NORMAL']]
+                view = doc['bufferViews'][acc['bufferView']]
+                start = view.get('byteOffset', 0) + acc.get('byteOffset', 0)
+                n = np.frombuffer(bytes(blob_bin[start:start + acc['count'] * 12]), '<f4').reshape(-1, 3).copy()
+                n[:, 1] += lift
+                n /= np.linalg.norm(n, axis=1, keepdims=True)
+                blob_bin[start:start + acc['count'] * 12] = n.astype('<f4').tobytes()
+        rest = rest[:8] + bytes(blob_bin)
     for mat in doc.get('materials', []):
         mat['name'] = names.get(mat['name'], mat['name'])
         if mat['name'] in masked:
@@ -242,7 +258,7 @@ def cmd_pack(args) -> int:
             names[zone] = key
             if alpha:
                 masked.add(key)
-        used = glb_edit(glb, mesh_dir / 'model.glb', names, masked)
+        used = glb_edit(glb, mesh_dir / 'model.glb', names, masked, spec.get('lift_normals', 0.0))
         # an atlas slot or a tiled material without faces (a zone the model no longer uses) gets no entry
         for key in (keys if spec['atlas'] else []) + [k for k, _, _ in spec.get('tiled', {}).values()]:
             if key not in used:

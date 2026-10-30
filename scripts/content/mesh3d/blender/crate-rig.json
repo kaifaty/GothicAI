@@ -24,10 +24,13 @@
   ],
   "rope_ends": "none",
   "nails": true,
-  "nail_radius": 0.009,
+  "nail_radius": 0.007,
   "nail": 0.004,
   "broken": false,
   "lid_shift": 0.015,
   "stave_tile": 0.4,
-  "planks_per_tile": 4
+  "planks_per_tile": 4,
+  "nail_jitter": 0.01,
+  "nail_skip": 0.25,
+  "lid_nails": false
 }
