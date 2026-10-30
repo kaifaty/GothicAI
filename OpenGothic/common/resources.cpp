@@ -1,4 +1,5 @@
 #include "resources.h"
+#include "loadprobe.h"
 #include "basestore.h"
 #include "commandline.h"
 #include "musicnative.h"
@@ -751,7 +752,9 @@ Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forc
   if(it!=texCache.end())
     return it->second.get();
 
+  const auto probeT = LoadProbe::now();
   auto tex = implLoadTextureUncached(cname, forceMips);
+  LoadProbe::countTexture(tex,probeT);
   if(!tex.isEmpty()) {
     std::unique_ptr<Texture2d> t{new Texture2d(std::move(tex))};
     Texture2d* ret=t.get();
@@ -1199,6 +1202,7 @@ const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, boo
   if(auto it = materialTextureCache.find(key); it!=materialTextureCache.end())
     return it->second.get();
   std::unique_ptr<Texture2d> texture;
+  const auto probeT = LoadProbe::now();
   try {
     Pixmap pm(path);
     if(pm.format()!=TextureFormat::DXT5 && (normalMap || pm.format()!=TextureFormat::DXT1)) {
@@ -1211,6 +1215,8 @@ const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, boo
     Log::e("materials: unable to load \"",path,"\"");
     }
   const auto ret = texture.get();
+  if(ret!=nullptr)
+    LoadProbe::countTexture(*ret,probeT);
   materialTextureCache.emplace(key,std::move(texture));
   return ret;
   }
