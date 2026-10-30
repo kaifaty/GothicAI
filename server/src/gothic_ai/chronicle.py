@@ -48,7 +48,7 @@ class Chronicle:
         self.tags: dict[str, Tag] = {}
         self.on_fact: list[Callable[[Fact], None]] = []  # every new fact, after it is written
         self.on_entry: list[Callable[[int, Fact], None]] = []
-        self._hero_kills: dict[str, bool] = {}  # hero_kill precedes npc_died; its explicit monster flag
+        self._hero_kills: dict[str, HeroKill] = {}  # hero_kill precedes npc_died
         self._background: set[asyncio.Task[Any]] = set()
         # the branch's facts as read so far: each read takes only the newer rows (by seq), since trust,
         # deals and the rumors read them on every turn
@@ -117,9 +117,9 @@ class Chronicle:
             case HeroKill():
                 # Only humans and tagged monsters also produce npc_died. Do not retain every wild kill.
                 self._hero_kills.clear()
-                self._hero_kills[msg.npc] = msg.monster
+                self._hero_kills[msg.npc] = msg
             case NpcDied():
-                monster = self._hero_kills.pop(msg.npc, None)
+                kill = self._hero_kills.pop(msg.npc, None)
                 self.record(
                     {
                         "fact": "died",
@@ -127,7 +127,7 @@ class Chronicle:
                         "name": msg.name,
                         "tag": msg.tag,
                         "killer": msg.killer,
-                        **({"monster": monster} if monster is not None else {}),
+                        **({"monster": kill.monster, "guild": kill.guild} if kill is not None else {}),
                     }
                 )
             case StoryWorld():

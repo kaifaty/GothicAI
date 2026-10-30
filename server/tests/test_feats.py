@@ -15,6 +15,7 @@ from gothic_ai.journal import Journal
 from gothic_ai.llm import LLMError, ToolCall
 from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.memory import MemoryStore
+from gothic_ai.places import PlaceBook
 from gothic_ai.protocol import Loading, Session
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
@@ -76,7 +77,9 @@ class FakeArtist(Artist):
 
 
 @asynccontextmanager
-async def world(*answers, gather_s=0, history=(), backend=None, artist=None, image_wait_s=150):
+async def world(
+    *answers, gather_s=0, history=(), backend=None, artist=None, image_wait_s=150, places=None,
+):
     fake = FakeGame(branch="A")
     fake.day = 10
     store = MemoryStore(":memory:")
@@ -91,7 +94,7 @@ async def world(*answers, gather_s=0, history=(), backend=None, artist=None, ima
         chronicle = Chronicle(link, store)
         chronicler = Feats(
             link, chronicle, llm, journal=Journal(journal.append), gather_s=gather_s,
-            artist=artist, image_wait_s=image_wait_s,
+            artist=artist, image_wait_s=image_wait_s, places=places,
         )
         try:
             yield fake, chronicle, chronicler, llm, journal
@@ -116,7 +119,7 @@ def test_hidden_facts_have_no_hero_view(fact):
 
 
 @pytest.mark.parametrize(("fact", "removed"), [
-    (crime(witnesses=["SECRET"]), {"witnesses"}),
+    (crime(witnesses=["SECRET"], place=[1, 2, 3]), {"witnesses", "place"}),
     ({"fact": "hero_yield", "npc": "N", "t": 1, "deadline": 2}, {"t", "deadline"}),
     ({"fact": "yield_broken", "npc": "N", "t": 1}, {"t"}),
     ({"fact": "humiliated", "npc": "N", "t": 1, "witnesses": []}, {"t", "witnesses"}),
@@ -128,7 +131,7 @@ def test_hidden_facts_have_no_hero_view(fact):
     ({"fact": "claim", "believed": True, "blamed": "N", "blame_crime": "C", "checked": True},
      {"believed", "blamed", "blame_crime", "checked"}),
     ({"fact": "died", "killer": "PLAYER", "npc": "N", "name": "Имя", "monster": False,
-      "tag": "SECRET"}, {"killer", "tag"}),
+      "guild": 8, "waypoint": "TOWER", "tag": "SECRET"}, {"killer", "tag"}),
 ])
 def test_hero_view_removes_private_fields_without_mutating_the_fact(fact, removed):
     assert hero_view(1, fact) == {key: value for key, value in fact.items() if key not in removed}
@@ -281,6 +284,50 @@ async def test_complete_path_retries_records_toast_and_journal_then_rolls_back()
         assert len(chronicle.entries()) == 1
 
 
+@pytest.mark.parametrize(("waypoint", "with_places", "where"), [
+    ("TOWER", True, "в башне Ксардаса"),
+    ("UNKNOWN", True, None),
+    ("TOWER", False, None),
+])
+async def test_chronicler_brief_describes_victims_and_places(waypoint, with_places, where, caplog):
+    caplog.set_level("INFO", logger="gothic_ai.feats")
+    places = PlaceBook({
+        "points": {"TOWER": 0},
+        "places": [{
+            "id": "XARDAS", "ru": "башня Ксардаса", "where_ru": "в башне Ксардаса",
+            "en": "Xardas's tower", "where_en": "in Xardas's tower",
+        }],
+    }) if with_places else None
+    theft = crime(victim_guild=12, place=[1, 2, 3], waypoint=waypoint)
+    visit = {"fact": "visited", "waypoint": waypoint}
+    death = {
+        "fact": "died", "npc": "LOBART", "name": "Лобарт", "killer": "PLAYER",
+        "monster": False, "guild": 8, "waypoint": waypoint,
+    }
+    async with world(proposal(verdict="none"), history=[theft, visit], places=places) as (
+        _, chronicle, chronicler, llm, _,
+    ):
+        chronicle.record(death)
+        await settled(chronicler)
+        [(_, messages, _)] = llm.calls
+        assert messages[0].content in caplog.text
+        lines = messages[0].content.splitlines()
+        occasion, *window = [
+            json.loads(line[line.index("{"):])
+            for line in lines if line.startswith(("Повод:", "#"))
+        ]
+        assert occasion == window[-1]
+        assert occasion["кто"] == "крестьянин" and occasion["guild"] == 8
+        assert window[0]["кто жертва"] == "житель окрестностей"
+        assert "place" not in window[0]
+        for view in [occasion, *window]:
+            if where is None:
+                assert "где" not in view
+            else:
+                assert view["где"] == where
+        assert [fact for _, fact in chronicle.entries()] == [theft, visit, death]
+
+
 async def test_picture_arrives_before_toast_without_blocking_the_chronicler(tmp_path):
     artist = FakeArtist(tmp_path)
     async with world(proposal(), artist=artist) as (fake, chronicle, chronicler, _, journal):
@@ -411,11 +458,15 @@ async def test_budget_discards_without_a_model_call(history):
 
 @pytest.mark.parametrize("answer", [proposal(title="Кошель!"), proposal(verdict="none")])
 async def test_rejected_or_declined_occasion_does_not_record_a_feat(answer):
-    async with world(answer) as (_, chronicle, chronicler, llm, _):
-        chronicle.record(crime())
+    async with world(answer) as (_, chronicle, chronicler, llm, journal):
+        seq = chronicle.record(crime())
         await settled(chronicler)
         assert len(llm.calls) == (1 if answer["verdict"] == "none" else 2)
         assert chronicle.facts("feat") == []
+        assert [{key: value for key, value in entry.items() if key != "t"}
+                for entry in journal if entry["kind"] == "feat_declined"] == ([{
+            "kind": "feat_declined", "trigger": seq, "reason": answer["reason"],
+        }] if answer["verdict"] == "none" else [])
 
 
 async def test_model_error_loses_the_occasion(caplog):
