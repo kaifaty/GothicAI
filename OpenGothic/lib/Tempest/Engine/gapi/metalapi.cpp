@@ -220,6 +220,7 @@ std::shared_ptr<AbstractGraphicsApi::Fence> MetalApi::submit(Device* d, CommandB
   MTL::CommandBuffer& cmd = *cx.impl;
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   profileGpu(&cmd);
+  cx.submitGpuProfile();
 #endif
   dx->onSubmit();
   cmd.addCompletedHandler(^(MTL::CommandBuffer* c){

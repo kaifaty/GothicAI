@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace {
@@ -21,7 +22,7 @@ const char* names[Zones]={"tick","finish_step","camera","observations","bench","
   "bodynet","cloth","water","destruction","ai_bridge","sound",
   "encode_shadows","encode_main","encode_water","encode_post","encode_ui"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
-  "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls"};
+  "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }
@@ -40,6 +41,8 @@ struct Record {
   std::atomic<uint32_t> gpuBuffers{0}, gpuCompleted{0}, gpuValid{0};
   std::atomic<uint64_t> triangles{0};
   std::atomic<uint32_t> geometryBuffers{0}, geometryCompleted{0}, geometryValid{0};
+  std::mutex gpuPassMutex;
+  std::vector<FrameProfile::GpuPass> gpuPasses;
   };
 struct Recorder {
   std::string path;
@@ -82,6 +85,27 @@ struct Recorder {
         const bool geometryDone=geometryBuffers>0 && geometryCompleted==geometryBuffers &&
                                 r.geometryValid.load(std::memory_order_relaxed)==geometryBuffers;
         std::fprintf(file,",%llu,%u\n",(unsigned long long)r.triangles.load(std::memory_order_relaxed),unsigned(geometryDone));
+        }
+      std::fclose(file);
+      }
+    // GPU callbacks append only in memory. Write the pass sidecar after rendering
+    // has stopped, just like the main frame profile, without per-frame disk I/O.
+    if(auto* file=std::fopen((path+".gpu.csv").c_str(),"w")) {
+      std::fprintf(file,"attempt,cmd_id,segment,frame,encoder,type,labels,gpu_ns,vertex_ns,fragment_ns,draw_calls,dispatch_calls,valid\n");
+      for(size_t i=0;i<count;++i) {
+        auto& r=records[i];
+        std::lock_guard guard(r.gpuPassMutex);
+        for(size_t j=0;j<r.gpuPasses.size();++j) {
+          const auto& p=r.gpuPasses[j];
+          std::fprintf(file,"%zu,%u,%s,%llu,%zu,%s,\"",i,unsigned(r.commandId),r.segment,(unsigned long long)r.frame,j,p.type.c_str());
+          for(char ch:p.labels) {
+            if(ch=='\"') std::fputc('\"',file);
+            std::fputc(ch,file);
+            }
+          std::fprintf(file,"\",%llu,%llu,%llu,%llu,%llu,%u\n",(unsigned long long)p.gpuNs,
+                       (unsigned long long)p.vertexNs,(unsigned long long)p.fragmentNs,
+                       (unsigned long long)p.drawCalls,(unsigned long long)p.dispatchCalls,unsigned(p.valid));
+          }
         }
       std::fclose(file);
       }
@@ -196,6 +220,22 @@ void FrameProfile::geometryCompleted(void* record, uint64_t triangles, bool vali
     r.geometryValid.fetch_add(1,std::memory_order_relaxed);
     }
   r.geometryCompleted.fetch_add(1,std::memory_order_release);
+  }
+
+void* FrameProfile::gpuPassesSubmitted() {
+  if(!enabled()) return nullptr;
+  return recorder().current.load(std::memory_order_relaxed);
+  }
+
+void FrameProfile::gpuPassesCompleted(void* record, std::vector<GpuPass>&& passes) {
+  if(record==nullptr) return;
+  auto& r=*static_cast<Record*>(record);
+  std::lock_guard guard(r.gpuPassMutex);
+  if(r.gpuPasses.empty())
+    r.gpuPasses=std::move(passes);
+  else
+    for(auto& pass:passes)
+      r.gpuPasses.emplace_back(std::move(pass));
   }
 
 #endif
