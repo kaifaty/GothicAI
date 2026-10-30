@@ -114,6 +114,7 @@ async def settled(chronicler):
     {"fact": "surrender", "status": "offered"},
     {"fact": "feat", "title": "SECRET"},
     {"fact": "challenge", "kind": "no_blood", "people": ["SECRET"]},
+    {"fact": "challenge_hint", "kind": "no_blood", "npc": "SECRET", "witnesses": ["SECRET"]},
     {"fact": "challenge_failed", "kind": "no_blood", "why": "SECRET"},
 ])
 def test_hidden_facts_have_no_hero_view(fact):

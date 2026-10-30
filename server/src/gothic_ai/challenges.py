@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
+from uuid import uuid4
 
 from .chronicle import Chronicle, Fact
 from .protocol import GameMessage, Loading, Session
 from .questbook import QuestBook
+from .social import Social, _chance
 
 KINDS = ("no_blood", "no_reward", "secret_kept", "mercy")
 CLOSED = {"done", "failed", "obsolete", "closed"}
@@ -33,15 +35,21 @@ def line_people(book: QuestBook, quests: Iterable[str], giver: str, characters: 
 
 
 class Challenges:
-    def __init__(self, chronicle: Chronicle, book: QuestBook) -> None:
+    def __init__(
+        self, chronicle: Chronicle, book: QuestBook, *, social: Callable[[], Awaitable[Social]],
+    ) -> None:
         self.chronicle, self.book = chronicle, book
+        self.social = social
         self._pending: asyncio.Handle | None = None
+        self._hints: set[asyncio.Task[None]] = set()
         self._loading = False
         chronicle.on_entry.append(self._on_entry)
         chronicle.link.listeners.append(self._on_message)
         self._schedule()
 
     def close(self) -> None:
+        for task in self._hints:
+            task.cancel()
         if self._pending is not None:
             self._pending.cancel()
             self._pending = None
@@ -49,12 +57,46 @@ class Challenges:
         self.chronicle.link.listeners.remove(self._on_message)
 
     def _on_entry(self, seq: int, fact: Fact) -> None:
+        if not self._loading and fact.get("fact") == "challenge":
+            task = asyncio.create_task(self._hint(seq, fact))
+            self._hints.add(task)
+            task.add_done_callback(self._hints.discard)
         if not self._loading and fact.get("fact") in WATCHED:
             self._schedule()
+
+    async def _hint(self, seq: int, challenge: Fact) -> None:
+        if _chance("challenge_hint", str(seq)) >= 0.5:
+            return
+        if any(f.get("challenge") == seq for f in self.chronicle.facts("challenge_hint")):
+            return
+        line = next((f for n, f in self.chronicle.entries("line") if n == challenge["line"]), None)
+        if line is None or not (giver := line.get("giver")):
+            return
+        candidates = sorted(set(challenge["people"]) - {giver, "PLAYER"})
+        if not candidates:
+            return
+        branch = self.chronicle.branch
+        social = await self.social()
+        if self._loading or self.chronicle.branch != branch:
+            return
+        if any(f.get("challenge") == seq for f in self.chronicle.facts("challenge_hint")):
+            return
+        known = social.ties.get(giver, {})
+        source = next((npc for npc in candidates if (tie := known.get(npc)) is not None
+                       and (tie.meets or tie.deals or tie.bonds)), candidates[0])
+        names = social.names
+        self.chronicle.record({
+            "fact": "challenge_hint", "id": uuid4().hex, "challenge": seq, "kind": challenge["kind"],
+            "npc": giver, "name": names.get(giver, giver),
+            "witnesses": [source], "witness_names": {source: names.get(source, source)},
+            **{key: challenge[key] for key in ("chapter", "day", "hour", "minute")},
+        })
 
     def _on_message(self, message: GameMessage) -> None:
         if isinstance(message, (Loading, Session)):
             self._loading = isinstance(message, Loading)
+            for task in self._hints:
+                task.cancel()
             if self._pending is not None:
                 self._pending.cancel()
                 self._pending = None

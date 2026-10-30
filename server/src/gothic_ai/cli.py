@@ -1294,7 +1294,10 @@ async def serve(args: argparse.Namespace) -> int:
             )
             state.director.book = state.book
             if not args.no_feats and not args.no_feat_challenges:
-                state.feat_challenges = Challenges(state.chronicle, state.book)
+                state.feat_challenges = Challenges(
+                    state.chronicle, state.book,
+                    social=lambda: state.rumors.prepare_social(),
+                )
             state.author = Author(
                 link,
                 graph,
