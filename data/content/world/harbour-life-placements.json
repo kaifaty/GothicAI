@@ -65,88 +65,26 @@
    "sink": 1
   },
   {
-   "key": "life-crane-crate-1",
-   "zone": "crane",
-   "visual": "NW_HARBOUR_CRATE_01",
-   "x": -1090,
-   "z": -3830,
-   "yaw": 12,
-   "sink": 2
-  },
-  {
-   "key": "life-crane-crate-2",
-   "zone": "crane",
-   "visual": "NW_HARBOUR_CRATE_01",
-   "x": -1075,
-   "z": -3840,
-   "yaw": 31,
-   "on": "life-crane-crate-1"
-  },
-  {
-   "key": "life-crane-crate-3",
-   "zone": "crane",
-   "visual": "NW_HARBOUR_CRATE_01",
-   "x": -945,
-   "z": -3960,
-   "yaw": -8,
-   "sink": 2
-  },
-  {
-   "key": "life-werft-crate-1",
+   "key": "life-werft-broken-1",
    "zone": "werft",
-   "visual": "NW_HARBOUR_CRATE_01",
-   "x": 820,
-   "z": 1470,
-   "wall": 4,
-   "yaw": 3,
-   "sink": 2
+   "visual": "NW_HARBOUR_CRATEBROKEN_01",
+   "x": 400,
+   "z": 1800,
+   "yaw": 35,
+   "tilt": [
+    0,
+    6
+   ],
+   "sink": 3
   },
   {
-   "key": "life-werft-crate-2",
+   "key": "life-werft-bucket-1",
    "zone": "werft",
-   "visual": "NW_HARBOUR_CRATE_01",
-   "x": 815,
-   "z": 1480,
-   "wall": 8,
-   "yaw": -9,
-   "on": "life-werft-crate-1"
-  },
-  {
-   "key": "life-werft-crate-3",
-   "zone": "werft",
-   "visual": "NW_HARBOUR_CRATE_01",
-   "x": 820,
-   "z": 1350,
-   "wall": 10,
-   "yaw": 7,
-   "sink": 2
-  },
-  {
-   "key": "life-werft-pile-1",
-   "zone": "werft",
-   "visual": "NW_HARBOUR_CRATEPILE_01",
-   "x": 600,
-   "z": 1700,
-   "yaw": 95,
-   "sink": 2
-  },
-  {
-   "key": "life-werft-rope-1",
-   "zone": "werft",
-   "visual": "NW_HARBOUR_ROPE_01",
-   "x": 560,
-   "z": 1250,
-   "yaw": 30,
-   "sink": 1
-  },
-  {
-   "key": "life-poor-laundry-1",
-   "zone": "poor",
-   "visual": "OWN_HARBOUR_LAUNDRY_01",
-   "x": 430,
-   "z": -4560,
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "x": 530,
+   "z": 1730,
    "yaw": -40,
-   "sink": 4
+   "sink": 1
   },
   {
    "key": "life-poor-bucket-1",
@@ -155,15 +93,6 @@
    "x": 520,
    "z": -4610,
    "yaw": 80,
-   "sink": 1
-  },
-  {
-   "key": "life-poor-fish-1",
-   "zone": "poor",
-   "visual": "OWN_HARBOUR_FISHBASKET_01",
-   "x": 330,
-   "z": -5000,
-   "yaw": 40,
    "sink": 1
   },
   {
@@ -179,24 +108,24 @@
   {
    "key": "life-poor-wood-2",
    "zone": "poor",
-   "visual": "OC_FIREWOOD_V3",
+   "visual": "OC_FIREWOOD_V2",
    "x": 2250,
    "z": -5200,
    "wall": 3,
-   "yaw": -2,
+   "yaw": -12,
    "sink": 2
   },
   {
    "key": "life-alley-trash-1",
    "zone": "alley",
    "visual": "NW_HARBOUR_CRATEBROKEN_01",
-   "x": 1350,
-   "z": -6450,
-   "wall": 6,
+   "x": 1000,
+   "z": -6440,
+   "wall": 18,
    "yaw": 25,
    "tilt": [
     0,
-    8
+    7
    ],
    "sink": 3
   },
@@ -204,30 +133,20 @@
    "key": "life-alley-trash-2",
    "zone": "alley",
    "visual": "OC_BARREL_V1_DESTROYED",
-   "x": 1220,
+   "x": 860,
    "z": -6430,
-   "wall": 10,
-   "yaw": 60,
+   "wall": 12,
+   "yaw": 70,
    "sink": 3
-  },
-  {
-   "key": "life-alley-trash-3",
-   "zone": "alley",
-   "visual": "NW_MISC_STRAW_01",
-   "x": 1450,
-   "z": -6420,
-   "wall": 2,
-   "yaw": -15,
-   "sink": 10
   },
   {
    "key": "life-alley-wood-1",
    "zone": "alley",
-   "visual": "OC_FIREWOOD_V3",
+   "visual": "OC_FIREWOOD_V2",
    "x": 1650,
    "z": -6050,
    "wall": 3,
-   "yaw": 2,
+   "yaw": 14,
    "sink": 2
   },
   {
@@ -241,16 +160,6 @@
    "sink": 3
   },
   {
-   "key": "life-alley-trash-5",
-   "zone": "alley",
-   "visual": "NW_MISC_STRAW_01",
-   "x": 2170,
-   "z": -6320,
-   "wall": 4,
-   "yaw": 20,
-   "sink": 10
-  },
-  {
    "key": "life-alley-bucket-1",
    "zone": "alley",
    "visual": "OWN_HARBOUR_BUCKET_01",
@@ -260,9 +169,29 @@
    "sink": 1
   },
   {
+   "key": "life-alley-wood-2",
+   "zone": "alley",
+   "visual": "OC_FIREWOOD_V2",
+   "x": 1820,
+   "z": -6075,
+   "wall": 10,
+   "yaw": -22,
+   "sink": 2
+  },
+  {
+   "key": "life-alley-laundry-1",
+   "zone": "alley",
+   "visual": "OWN_HARBOUR_LAUNDRY_01",
+   "x": 1450,
+   "z": -6420,
+   "wall": 140,
+   "yaw": 3,
+   "sink": 4
+  },
+  {
    "key": "life-east-wood-1",
    "zone": "east",
-   "visual": "OC_FIREWOOD_V1",
+   "visual": "OC_FIREWOOD_V2",
    "x": 4300,
    "z": -5780,
    "yaw": 30,

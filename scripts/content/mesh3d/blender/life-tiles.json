@@ -1,19 +1,70 @@
 {
  "output": "~/.local/share/gothic-ai/content-staging/life-tiles",
  "tiles": {
-  "own_prop_wicker": {"png": "~/.local/share/gothic-ai/content-sources/harbour-life/OWN_PROP_WICKER-attempt-1.png", "axes": "uv", "roughness": 0.9, "metallic": 0.0},
-  "own_prop_fish_back": {"png": "~/.local/share/gothic-ai/content-sources/harbour-life/OWN_PROP_FISH-attempt-1.png", "axes": "uv", "roughness": 0.5, "metallic": 0.0},
-  "own_prop_fish_belly": {"png": "~/.local/share/gothic-ai/content-sources/harbour-life/OWN_PROP_FISH-attempt-1.png", "axes": "uv", "roughness": 0.45, "metallic": 0.0},
-  "own_prop_kelp": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_leather"},
-  "own_prop_wood_stave": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_wood_stave"},
-  "own_prop_withy": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_bark"},
-  "own_prop_rope": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_rope"},
-  "own_prop_water": {"procedural": {"base": [0.05, 0.06, 0.05], "noise": 0.04, "seed": 3, "relief": 0.05}, "roughness": 0.12, "metallic": 0.0},
-  "own_prop_bark": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_bark"},
-  "own_prop_linen": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_cloth"},
-  "own_prop_wool": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_cloth"},
-  "own_prop_cloth_red": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_cloth"},
-  "own_prop_sacking": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_sacking"},
-  "own_prop_rag": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_canvas"}
+  "own_prop_wicker": {
+   "png": "~/.local/share/gothic-ai/content-sources/harbour-life/OWN_PROP_WICKER-attempt-1.png",
+   "axes": "uv",
+   "roughness": 0.9,
+   "metallic": 0.0
+  },
+  "own_prop_fish_back": {
+   "png": "~/.local/share/gothic-ai/content-sources/harbour-life/OWN_PROP_FISH-attempt-1.png",
+   "axes": "uv",
+   "roughness": 0.5,
+   "metallic": 0.0
+  },
+  "own_prop_fish_belly": {
+   "png": "~/.local/share/gothic-ai/content-sources/harbour-life/OWN_PROP_FISH-attempt-1.png",
+   "axes": "uv",
+   "roughness": 0.45,
+   "metallic": 0.0
+  },
+  "own_prop_kelp": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_leather"
+  },
+  "own_prop_wood_stave": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_wood_stave"
+  },
+  "own_prop_withy": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_bark"
+  },
+  "own_prop_rope": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_rope"
+  },
+  "own_prop_water": {
+   "procedural": {
+    "base": [
+     0.05,
+     0.06,
+     0.05
+    ],
+    "noise": 0.04,
+    "seed": 3,
+    "relief": 0.05
+   },
+   "roughness": 0.12,
+   "metallic": 0.0
+  },
+  "own_prop_bark": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_bark"
+  },
+  "own_prop_linen": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_cloth"
+  },
+  "own_prop_wool": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_cloth"
+  },
+  "own_prop_cloth_red": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_cloth"
+  },
+  "own_prop_sacking": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_sacking"
+  },
+  "own_prop_rag": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_canvas"
+  },
+  "own_prop_cloth_hem": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_sacking"
+  }
  }
 }

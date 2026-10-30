@@ -27,6 +27,7 @@ goal, lo, hi = load_goal(cfg)
 rng = np.random.default_rng(cfg.get("seed", 5))
 keys = [z["key"] for z in goal["zones"]]
 BARK, ROPE = keys.index("OWN_PROP_BARK"), keys.index("OWN_PROP_ROPE")
+HEM = keys.index("OWN_PROP_CLOTH_HEM")  # the wet, dirty bottom band of every cloth
 P = Parts(rng, 0.1)
 span, height, sag = cfg["span"], cfg["height"], cfg["sag"]
 r_bottom, r_top = cfg.get("pole_r", [0.05, 0.04])
@@ -104,9 +105,12 @@ def cloth(x0, width, drop, zone, rag, folds, depth, dy=0.0, splay=0.0, thick=0.0
     """A cloth hanging from the rope between x0 and x0 + width: a thin closed slab with folds."""
     part = P.new_part()
     cols = max(4, int(width / 0.04))
-    rows = 6
+    rows = 7
+    wet_row = rows - 2  # the two lowest rows of faces: the damp, dirty hem
     phase = rng.uniform(0, 2 * math.pi)
-    hem = [drop * (1 + rng.uniform(-1, 1) * rag / drop) for _ in range(cols + 1)]
+    # an uneven hem that sags and frays in a few soft waves, not a random step per column (first review)
+    waves = [(rng.uniform(0.6, 1.6), rng.uniform(0, 2 * math.pi), rng.uniform(0.4, 1.0)) for _ in range(3)]
+    hem = [drop + rag * sum(a * math.sin(2 * math.pi * f * i / cols + ph) for f, ph, a in waves) / 2 for i in range(cols + 1)]
     grid = {}
     for side in (1, -1):
         for i in range(cols + 1):
@@ -125,17 +129,18 @@ def cloth(x0, width, drop, zone, rag, folds, depth, dy=0.0, splay=0.0, thick=0.0
             uv = [(width * i / cols, hem[i] * j / rows), (width * (i + 1) / cols, hem[i + 1] * j / rows),
                   (width * (i + 1) / cols, hem[i + 1] * (j + 1) / rows), (width * i / cols, hem[i] * (j + 1) / rows)]
             front = [grid[-1, i, j], grid[-1, i + 1, j], grid[-1, i + 1, j + 1], grid[-1, i, j + 1]]
-            P.poly(front[::-1], zone, uv[::-1])
+            band = HEM if j >= wet_row else zone
+            P.poly(front[::-1], band, uv[::-1])
             back = [grid[1, i, j], grid[1, i + 1, j], grid[1, i + 1, j + 1], grid[1, i, j + 1]]
-            P.poly(back, zone, uv)
+            P.poly(back, band, uv)
     for i in range(cols):  # top fold over the rope and the hem
         for j in (0, rows):
             q = [grid[-1, i, j], grid[-1, i + 1, j], grid[1, i + 1, j], grid[1, i, j]]
-            P.poly(q if j == 0 else q[::-1], zone, ((0, 0), (0.04, 0), (0.04, thick), (0, thick)))
+            P.poly(q if j == 0 else q[::-1], zone if j == 0 else HEM, ((0, 0), (0.04, 0), (0.04, thick), (0, thick)))
     for i, flip in ((0, False), (cols, True)):  # side edges
         for j in range(rows):
             q = [grid[-1, i, j], grid[1, i, j], grid[1, i, j + 1], grid[-1, i, j + 1]]
-            P.poly(q[::-1] if flip else q, zone, ((0, 0), (thick, 0), (thick, 0.1), (0, 0.1)))
+            P.poly(q[::-1] if flip else q, HEM if j >= wet_row else zone, ((0, 0), (thick, 0), (thick, 0.1), (0, 0.1)))
 
 
 for c in cfg["cloths"]:

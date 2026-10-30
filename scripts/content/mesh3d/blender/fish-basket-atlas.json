@@ -14,14 +14,14 @@
    0.022
   ],
   "OWN_PROP_FISH_BACK": [
-   0.05,
-   0.052,
-   0.04
+   0.038,
+   0.04,
+   0.031
   ],
   "OWN_PROP_FISH_BELLY": [
-   0.16,
-   0.16,
-   0.145
+   0.085,
+   0.086,
+   0.078
   ],
   "OWN_PROP_KELP": [
    0.025,
@@ -59,7 +59,7 @@
  "contrast": {
   "OWN_PROP_WICKER": 1.5,
   "OWN_PROP_FISH_BACK": 1.2,
-  "OWN_PROP_FISH_BELLY": 1.1
+  "OWN_PROP_FISH_BELLY": 1.0
  },
  "edge_wear": {
   "OWN_PROP_WICKER": 0.0,

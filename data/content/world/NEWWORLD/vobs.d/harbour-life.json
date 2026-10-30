@@ -86,109 +86,41 @@
    "collision": "mesh"
   },
   {
-   "key": "life-crane-crate-1",
+   "key": "life-werft-broken-1",
    "kind": "mesh",
-   "visual": "NW_HARBOUR_CRATE_01",
+   "visual": "NW_HARBOUR_CRATEBROKEN_01",
    "position": [
-    -1090.0,
-    -113.5,
-    -3830.0
+    400.0,
+    -127.0,
+    1800.0
    ],
-   "yaw_deg": 12.0,
+   "rotation": [
+    [
+     0.814665,
+     -0.104528,
+     0.570434
+    ],
+    [
+     0.085625,
+     0.994522,
+     0.059955
+    ],
+    [
+     -0.573576,
+     0.0,
+     0.819152
+    ]
+   ],
    "collision": "mesh"
   },
   {
-   "key": "life-crane-crate-2",
+   "key": "life-werft-bucket-1",
    "kind": "mesh",
-   "visual": "NW_HARBOUR_CRATE_01",
+   "visual": "OWN_HARBOUR_BUCKET_01",
    "position": [
-    -1075.0,
-    -13.7,
-    -3840.0
-   ],
-   "yaw_deg": 31.0,
-   "collision": "mesh"
-  },
-  {
-   "key": "life-crane-crate-3",
-   "kind": "mesh",
-   "visual": "NW_HARBOUR_CRATE_01",
-   "position": [
-    -945.0,
-    -111.4,
-    -3960.0
-   ],
-   "yaw_deg": -8.0,
-   "collision": "mesh"
-  },
-  {
-   "key": "life-werft-crate-1",
-   "kind": "mesh",
-   "visual": "NW_HARBOUR_CRATE_01",
-   "position": [
-    841.0,
-    -134.7,
-    1485.5
-   ],
-   "yaw_deg": 4.4,
-   "collision": "mesh"
-  },
-  {
-   "key": "life-werft-crate-2",
-   "kind": "mesh",
-   "visual": "NW_HARBOUR_CRATE_01",
-   "position": [
-    833.4,
-    -34.9,
-    1490.0
-   ],
-   "yaw_deg": -7.6,
-   "collision": "mesh"
-  },
-  {
-   "key": "life-werft-crate-3",
-   "kind": "mesh",
-   "visual": "NW_HARBOUR_CRATE_01",
-   "position": [
-    866.1,
-    -135.3,
-    1460.4
-   ],
-   "yaw_deg": -87.4,
-   "collision": "mesh"
-  },
-  {
-   "key": "life-werft-pile-1",
-   "kind": "mesh",
-   "visual": "NW_HARBOUR_CRATEPILE_01",
-   "position": [
-    600.0,
-    -78.7,
-    1700.0
-   ],
-   "yaw_deg": 95.0,
-   "collision": "mesh"
-  },
-  {
-   "key": "life-werft-rope-1",
-   "kind": "mesh",
-   "visual": "NW_HARBOUR_ROPE_01",
-   "position": [
-    560.0,
-    -153.5,
-    1250.0
-   ],
-   "yaw_deg": 30.0,
-   "collision": "mesh"
-  },
-  {
-   "key": "life-poor-laundry-1",
-   "kind": "mesh",
-   "visual": "OWN_HARBOUR_LAUNDRY_01",
-   "position": [
-    430.0,
-    -189.9,
-    -4560.0
+    530.0,
+    -182.9,
+    1730.0
    ],
    "yaw_deg": -40.0,
    "collision": "mesh"
@@ -206,18 +138,6 @@
    "collision": "mesh"
   },
   {
-   "key": "life-poor-fish-1",
-   "kind": "mesh",
-   "visual": "OWN_HARBOUR_FISHBASKET_01",
-   "position": [
-    330.0,
-    -184.8,
-    -5000.0
-   ],
-   "yaw_deg": 40.0,
-   "collision": "mesh"
-  },
-  {
    "key": "life-poor-wood-1",
    "kind": "mesh",
    "visual": "OC_FIREWOOD_V2",
@@ -232,13 +152,13 @@
   {
    "key": "life-poor-wood-2",
    "kind": "mesh",
-   "visual": "OC_FIREWOOD_V3",
+   "visual": "OC_FIREWOOD_V2",
    "position": [
-    2144.9,
-    -187.7,
-    -5401.9
+    2146.5,
+    -188.0,
+    -5398.8
    ],
-   "yaw_deg": -154.5,
+   "yaw_deg": -164.5,
    "collision": "mesh"
   },
   {
@@ -246,25 +166,25 @@
    "kind": "mesh",
    "visual": "NW_HARBOUR_CRATEBROKEN_01",
    "position": [
-    1355.6,
-    -78.6,
-    -6541.9
+    993.3,
+    -99.0,
+    -6468.8
    ],
    "rotation": [
     [
-     -0.921371,
-     -0.139173,
-     -0.362914
+     -0.780219,
+     -0.121869,
+     -0.61352
     ],
     [
-     -0.12949,
-     0.990268,
-     -0.051004
+     -0.095799,
+     0.992546,
+     -0.075331
     ],
     [
-     0.366481,
+     0.618128,
      0.0,
-     -0.930426
+     -0.786078
     ]
    ],
    "collision": "mesh"
@@ -274,35 +194,23 @@
    "kind": "mesh",
    "visual": "OC_BARREL_V1_DESTROYED",
    "position": [
-    1194.8,
-    -84.1,
-    -6537.4
+    854.0,
+    -120.4,
+    -6455.6
    ],
-   "yaw_deg": -106.8,
-   "collision": "mesh"
-  },
-  {
-   "key": "life-alley-trash-3",
-   "kind": "mesh",
-   "visual": "NW_MISC_STRAW_01",
-   "position": [
-    1457.8,
-    -87.4,
-    -6547.7
-   ],
-   "yaw_deg": 161.5,
+   "yaw_deg": -96.8,
    "collision": "mesh"
   },
   {
    "key": "life-alley-wood-1",
    "kind": "mesh",
-   "visual": "OC_FIREWOOD_V3",
+   "visual": "OC_FIREWOOD_V2",
    "position": [
-    1685.6,
-    -172.6,
-    -5909.8
+    1685.0,
+    -188.3,
+    -5912.3
    ],
-   "yaw_deg": -95.6,
+   "yaw_deg": -83.6,
    "collision": "mesh"
   },
   {
@@ -318,18 +226,6 @@
    "collision": "mesh"
   },
   {
-   "key": "life-alley-trash-5",
-   "kind": "mesh",
-   "visual": "NW_MISC_STRAW_01",
-   "position": [
-    2191.2,
-    -79.8,
-    -6290.8
-   ],
-   "yaw_deg": -124.0,
-   "collision": "mesh"
-  },
-  {
    "key": "life-alley-bucket-1",
    "kind": "mesh",
    "visual": "OWN_HARBOUR_BUCKET_01",
@@ -342,12 +238,36 @@
    "collision": "mesh"
   },
   {
+   "key": "life-alley-wood-2",
+   "kind": "mesh",
+   "visual": "OC_FIREWOOD_V2",
+   "position": [
+    1855.1,
+    -118.8,
+    -6216.9
+   ],
+   "yaw_deg": -75.9,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-alley-laundry-1",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_LAUNDRY_01",
+   "position": [
+    1450.8,
+    -131.3,
+    -6433.0
+   ],
+   "yaw_deg": 179.5,
+   "collision": "mesh"
+  },
+  {
    "key": "life-east-wood-1",
    "kind": "mesh",
-   "visual": "OC_FIREWOOD_V1",
+   "visual": "OC_FIREWOOD_V2",
    "position": [
     4300.0,
-    -64.7,
+    -68.0,
     -5780.0
    ],
    "yaw_deg": 30.0,
