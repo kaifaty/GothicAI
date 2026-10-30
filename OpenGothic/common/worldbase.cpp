@@ -2,6 +2,7 @@
 
 #include "worldchunks.h"
 #include "world/voblayer.h"
+#include "loadprobe.h"
 
 #include <rapidjson/document.h>
 #include <algorithm>
@@ -52,14 +53,27 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
       c = char(std::toupper(static_cast<unsigned char>(c)));
     if(manifest.source.world!=key)
       throw std::runtime_error("ZEN source world mismatch");
+    if(LoadProbe::enabled())
+      LoadProbe::mark("world_index");
+    auto probeT = LoadProbe::now();
     auto data = WorldData::read(dir,overrideDir);
+    if(LoadProbe::enabled())
+      LoadProbe::mark("world_data_read",LoadProbe::msSince(probeT),
+                      "vobs="+std::to_string(data.vobs.size())+" waypoints="+std::to_string(data.waynet ? data.waynet->points.size() : 0));
     if(data.source.world!=manifest.source.world || data.source.size!=manifest.source.size ||
        data.source.crc32!=manifest.source.crc32)
       throw std::runtime_error("world data source differs from world.json");
     if(!data.waynet)
       throw std::runtime_error("world waynet missing");
+    probeT = LoadProbe::now();
     VobLayer::apply(data,dir,overrideDir,ownMeshes);
+    if(LoadProbe::enabled())
+      LoadProbe::mark("voblayer",LoadProbe::msSince(probeT));
+    probeT = LoadProbe::now();
     auto mesh = readWorldChunks(dir,overrideDir);
+    if(LoadProbe::enabled())
+      LoadProbe::mark("mesh_chunks_read",LoadProbe::msSince(probeT),
+                      "chunks="+std::to_string(manifest.chunks.size())+" tris="+std::to_string(mesh.polygons.material_indices.size()));
     mesh.name = data.name;
     mesh.bbox = data.bbox;
     result.triangles = mesh.polygons.material_indices.size();
