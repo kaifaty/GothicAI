@@ -113,6 +113,8 @@ async def settled(chronicler):
     {"fact": "died", "killer": "OTHER", "name": "SECRET"},
     {"fact": "surrender", "status": "offered"},
     {"fact": "feat", "title": "SECRET"},
+    {"fact": "challenge", "kind": "no_blood", "people": ["SECRET"]},
+    {"fact": "challenge_failed", "kind": "no_blood", "why": "SECRET"},
 ])
 def test_hidden_facts_have_no_hero_view(fact):
     assert hero_view(1, fact) is None
@@ -163,6 +165,12 @@ def test_notable_first_repeated_and_unusual_outcomes():
     assert not notable(3, crime(id="C3", kind="murder", victim="HILDA"), [
         (1, bandit), (2, farmer), (3, crime(id="C3", kind="murder", victim="HILDA")),
     ])
+    met = {
+        "fact": "challenge_met", "kind": "no_blood", "line": 1,
+        "challenge": 2, "people": ["LOBART"], "evidence": [3],
+    }
+    assert hero_view(4, met) == {key: value for key, value in met.items() if key != "challenge"}
+    assert notable(5, met, [(4, met), (5, met)])
 
 
 def test_turns_require_the_related_earlier_deed():
@@ -251,6 +259,13 @@ def test_canon_accepts_names_from_evidence_and_unchanged_proposal(name, text):
 ])
 def test_canon_accepts_ordinary_words_and_symbols(changes):
     assert canon(Proposal.of(proposal(**changes)), 1, [(1, crime())], []) == []
+
+
+def test_challenge_canon_accepts_its_supporting_evidence():
+    met = {"fact": "challenge_met", "kind": "mercy", "evidence": [1]}
+    p = Proposal.of(proposal(evidence=[1, 50]))
+    assert canon(p, 50, [(50, met)], [feat(trigger=1)]) == []
+    assert canon(p, 50, [(50, {**met, "evidence": [2]})], [])
 
 
 async def test_complete_path_retries_records_toast_and_journal_then_rolls_back():
@@ -443,17 +458,40 @@ async def test_hidden_truth_never_reaches_the_chronicler():
         assert not chronicle.facts("feat")
 
 
-@pytest.mark.parametrize("history", [
-    [feat(id=str(i), day=i) for i in range(1, 4)],
-    [feat(day=10, hour=7, minute=59)],
-    [feat(evidence=[2])],
+@pytest.mark.parametrize(("history", "occasion"), [
+    ([feat(id=str(i), day=i) for i in range(1, 4)], crime()),
+    ([feat(day=10, hour=7, minute=59)], crime()),
+    ([feat(evidence=[2])], crime()),
+    ([feat(id=str(i), day=i) for i in range(1, 4)],
+     {"fact": "challenge_met", "kind": "no_blood", "evidence": [1]}),
 ])
-async def test_budget_discards_without_a_model_call(history):
+async def test_budget_discards_without_a_model_call(history, occasion):
     async with world(proposal(), history=history) as (_, chronicle, chronicler, llm, _):
-        chronicle.record(crime())
+        chronicle.record(occasion)
         await settled(chronicler)
         assert llm.calls == []
         assert len(chronicle.facts("feat")) == len(history)
+
+
+async def test_challenge_bypasses_daily_budget_and_shows_old_evidence():
+    history = [
+        feat(day=10, hour=7, minute=59, trigger=2),
+        {"fact": "quest_outcome", "quest": "Q", "how": "done", "pay": "full"},
+        *[{"fact": "visited", "waypoint": "TOWER"} for _ in range(41)],
+    ]
+    trigger = len(history) + 1
+    async with world(proposal(evidence=[2, trigger]), history=history) as (
+        _, chronicle, chronicler, llm, _,
+    ):
+        seq = chronicle.record({
+            "fact": "challenge_met", "challenge": 1, "kind": "no_blood",
+            "line": 1, "people": ["LOBART"], "evidence": [2],
+        })
+        await settled(chronicler)
+        assert seq == trigger and len(llm.calls) == 1
+        assert len(chronicle.facts("feat")) == 2
+        assert "#2 quest_outcome " in llm.calls[0][1][0].content
+        assert chronicle.facts("feat")[-1]["evidence"] == [2, trigger]
 
 
 @pytest.mark.parametrize("answer", [proposal(title="Кошель!"), proposal(verdict="none")])

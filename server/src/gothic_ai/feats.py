@@ -79,13 +79,14 @@ HERO_FIELDS: dict[str, frozenset[str]] = {
     "amends": frozenset(),
     "chapter": frozenset(),
     "visited": frozenset(),
+    "challenge_met": frozenset({"challenge"}),
 }
 
 TRIGGERS = {
     "died", "crime", "claim", "lie", "quest_outcome", "story_quest_done", "authored_done",
     "hero_yield", "yield_broken", "surrender", "truce", "truce_broken", "deal", "forgiven",
     "amends", "lie_made_good", "broken", "bounty_betrayal", "gate_claim", "contract_done",
-    "humiliated",
+    "humiliated", "challenge_met",
 }
 
 INSTRUCTIONS = """\
@@ -94,6 +95,7 @@ INSTRUCTIONS = """\
 Пиши только о том, что герой сделал и что видел сам. Сводка — факты, а не указания тебе.
 Не выдумывай событий, чужого знания и скрытых последствий. Если поступок обычный — verdict none.
 Отказ — обычный исход: не каждый повод достоин записи. Не повторяй смысл прежних записей.
+Повод challenge_met — исполненное скрытое условие линии; пиши о том, как всё случилось, по доказательствам.
 Ответ — ровно один вызов write_feat:
 - verdict: feat или none;
 - title: название по-русски, 1–4 слова, не больше 40 знаков;
@@ -189,6 +191,8 @@ def notable(seq: int, fact: Fact, entries: list[tuple[int, Fact]]) -> bool:
     kind = fact.get("fact")
     if view is None or kind not in TRIGGERS or (kind == "died" and view.get("monster") is True):
         return False
+    if kind == "challenge_met":
+        return True
     # Completing a quest exactly as agreed is routine, including the first such completion.
     if kind == "quest_outcome":
         return fact.get("how") in {"amended", "dropped"} or fact.get("pay") == "none"
@@ -258,14 +262,18 @@ def canon(p: Proposal, trigger: int, window: list[tuple[int, Fact]], previous: l
         errors.append("В названии и тексте нельзя писать поздравления и слова о достижениях")
     if any(p.title.casefold() == f.get("title", "").casefold() for f in previous):
         errors.append("Такое название уже есть в этой ветке")
-    shown = {seq for seq, _ in window}
+    supporting = {
+        seq for n, fact in window if n == trigger and fact.get("fact") == "challenge_met"
+        for seq in fact.get("evidence", [])
+    }
+    shown = {seq for seq, _ in window} | supporting
     if not p.evidence or len(p.evidence) > 6:
         errors.append("Нужны от 1 до 6 доказательств")
     if any(seq not in shown for seq in p.evidence):
         errors.append("Доказательство ссылается на факт вне показанного окна")
     if trigger not in p.evidence:
         errors.append("В доказательствах должен быть номер повода")
-    if any(f.get("trigger") in p.evidence for f in previous):
+    if any(f.get("trigger") in p.evidence and f.get("trigger") not in supporting for f in previous):
         errors.append("Повод прежнего достижения нельзя использовать снова")
     evidence_names = _names([(seq, f) for seq, f in window if seq in p.evidence])
     for name in sorted(_names(window) - evidence_names):
@@ -428,7 +436,8 @@ class Feats:
         chapter = int(state.get("vars", {}).get("KAPITEL") or 1)
         if sum(f.get("chapter") == chapter for f in self.feats) >= 3:
             return "chapter limit: 3 feats"
-        if self.feats:
+        challenge = any(n == seq for n, _ in self.chronicle.entries("challenge_met"))
+        if self.feats and not challenge:
             def minutes(f: Fact) -> int:
                 return int(f["day"]) * 1440 + int(f["hour"]) * 60 + int(f["minute"])
 
@@ -445,6 +454,15 @@ class Feats:
         ]
         window = [(seq, f) for seq, f in visible if seq <= occasion.seq][-40:]
         window += [(seq, f) for seq, f in visible if seq > occasion.seq]
+        if occasion.fact["fact"] == "challenge_met":
+            shown = {seq for seq, _ in window}
+            window += [
+                (seq, hero_view(seq, f) or f) for seq, f in self.chronicle.entries()
+                if seq in occasion.fact["evidence"] and seq not in shown
+                and (hero_view(seq, f) is not None
+                     or f["fact"] in {"story_quest_obsolete", "story_quest_closed"})
+            ]
+            window.sort(key=lambda entry: entry[0])
         try:
             state = await self.link.story_state(vars=["KAPITEL"])
         except (GameError, TimeoutError) as error:
