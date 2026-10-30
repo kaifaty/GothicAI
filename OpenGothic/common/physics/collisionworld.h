@@ -9,6 +9,7 @@
 #include <memory>
 #include <vector>
 #include <string_view>
+#include <utility>
 
 #include "physics/physics.h"
 #include "physics/physicsnoise.h"
@@ -307,6 +308,8 @@ class CollisionWorld final {
     void sampleMeleeBench();
     void wakeItems();
     void recoverItems();
+    void prepareItemSweeps();
+    void recoverTunneledItems();
     void recoverItem(CollisionBody& body, const Tempest::Vec3& failedPosition);
     void fillMaterial(QueryResult& result, const JPH::Shape& shape, JPH::SubShapeID subShape) const;
     void fillRagdoll(QueryResult& result, JPH::BodyID body) const;
@@ -328,6 +331,8 @@ class CollisionWorld final {
     bool itemWake = true;
     std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> itemWakeCallback;
     size_t itemWakeCursor = 0;
+    size_t itemSweepCursor = 0;
+    std::vector<std::pair<CollisionBody*,Tempest::Vec3>> itemSweeps;
     JPH::Vec3 bboxMin = JPH::Vec3::sZero();
     float accumulatedTime = 0;
     friend class Ragdoll;

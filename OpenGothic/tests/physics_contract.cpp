@@ -4068,8 +4068,10 @@ namespace {
         centers.push_back((min.x+max.x)*.5f);
         return size_t(0);
         });
+      const auto rays=world.rayCount();
       world.tick(17);
       require(queries==32,"a native step must issue no more than thirty-two item queries");
+      require(world.rayCount()-rays==32,"tunneling must cast at most thirty-two center rays per native step");
       world.tick(17);
       std::sort(centers.begin(),centers.end());
       centers.erase(std::unique(centers.begin(),centers.end()),centers.end());
@@ -4127,6 +4129,39 @@ namespace {
       broken->setPosition({std::numeric_limits<float>::quiet_NaN(),0,0});
       world.tick(17);
       require(broken->isSleeping(),"an item created from a nonfinite pose must sleep instead of recursing into recovery");
+      }
+    for(const bool enabled:{false,true}) {
+      for(const int category:{DynamicWorld::C_Landscape,DynamicWorld::C_Object}) {
+        CollisionWorld world;
+        world.setItemWakeEnabled(enabled);
+        JPH::VertexList vertices={{-2,0,-2},{-2,0,2},{2,0,2},{2,0,-2}};
+        JPH::IndexedTriangleList triangles={{0,1,2},{0,2,3}};
+        const auto mesh=JPH::MeshShapeSettings(vertices,triangles).Create();
+        require(!mesh.HasError(),"tunneling requires a thin upward-facing mesh");
+        // Disable the solver response to inject the missed contact that this
+        // safety net must catch, while retaining the real triangle ray query.
+        auto face=world.addCollisionBody(mesh.Get(),at(0,0,0),.7f,category,false,true);
+        auto movingFace=world.addCollisionBody(mesh.Get(),at(0,5,0),.7f,DynamicWorld::C_Object,true,true);
+        auto movingOverHole=world.addCollisionBody(mesh.Get(),at(300,5,0),.7f,DynamicWorld::C_Object,true,true);
+        auto item=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(0,10,0),.7f,1);
+        item->setVelocity({0,-2000,0},{});
+        world.tick(17);
+        if(enabled) {
+          require(item->isSleeping(),"a thin-face crossing must sleep in the same native step with item_wake ON");
+          requireNear(item->position().y,10.f,.001f,"a thin-face crossing must restore the last resting position");
+          }
+        else require(item->position().y<0.f,"item_wake OFF must not recover a thin-face crossing");
+        auto hole=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(300,10,0),.7f,1);
+        hole->setVelocity({0,-2000,0},{});
+        auto cliff=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(190,10,100),.7f,1);
+        cliff->setVelocity({3000,-2000,0},{});
+        auto back=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(0,-10,100),.7f,1);
+        back->setVelocity({0,2000,0},{});
+        world.tick(17);
+        require(hole->position().y<0.f && cliff->position().y<0.f && back->position().y>0.f &&
+                !hole->isSleeping() && !cliff->isSleeping() && !back->isSleeping(),
+                "a real hole, cliff edge or back-to-front crossing must not recover");
+        }
       }
     for(const bool hulls:{false,true}) {
       DynamicWorld world(nullptr,{});

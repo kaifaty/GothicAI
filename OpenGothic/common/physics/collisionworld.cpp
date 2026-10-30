@@ -2707,6 +2707,59 @@ void CollisionWorld::wakeItems() {
     }
   }
 
+void CollisionWorld::prepareItemSweeps() {
+  itemSweeps.clear();
+  if(!itemWake)
+    return;
+  // A contact or blade can activate a sleeper during this same step.
+  for(auto* body:rigid) {
+    if(body->category()!=DynamicWorld::C_Item)
+      continue;
+    JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),body->id);
+    if(lock.Succeeded() && lock.GetBody().IsDynamic())
+      itemSweeps.emplace_back(body,toCentimeters(lock.GetBody().GetCenterOfMassPosition()));
+    }
+  }
+
+void CollisionWorld::recoverTunneledItems() {
+  if(itemSweeps.empty())return;
+  constexpr uint32_t mask=(1u<<DynamicWorld::C_Landscape)|(1u<<DynamicWorld::C_Object);
+  struct StaticBodies final : JPH::BodyFilter {
+    bool ShouldCollideLocked(const JPH::Body& body) const override { return body.IsStatic(); }
+    } staticBodies;
+  JPH::RayCastSettings settings;
+  settings.mTriangleEdgeTolerance=1.0e-4f;
+  settings.SetBackFaceMode(JPH::EBackFaceMode::CollideWithBackFaces);
+  size_t rays=0;
+  itemSweepCursor%=itemSweeps.size();
+  for(size_t visited=0;visited<itemSweeps.size() && rays<32;++visited) {
+    const auto [body,from]=itemSweeps[itemSweepCursor];
+    itemSweepCursor=(itemSweepCursor+1)%itemSweeps.size();
+    const auto to=body->centerOfMass();
+    if(!std::isfinite(to.x) || !std::isfinite(to.y) || !std::isfinite(to.z)) {
+      recoverItem(*body,body->position());
+      continue;
+      }
+    const auto origin=toMeters(from),end=toMeters(to);
+    if((end-origin).IsNearZero())continue;
+    const JPH::RRayCast ray(origin,end-origin);
+    JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> hits;
+    ++rays;
+    impl->rayCount.fetch_add(1,std::memory_order_relaxed);
+    impl->system.GetNarrowPhaseQuery().CastRay(ray,settings,hits,QueryBroadPhaseFilter(mask),QueryLayerFilter(mask),staticBodies);
+    if(!hits.HadHit())continue;
+    JPH::Vec3 point,normal;
+    {
+      JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),hits.mHit.mBodyID);
+      if(!lock.Succeeded())continue;
+      point=ray.GetPointOnRay(hits.mHit.mFraction);
+      normal=lock.GetBody().GetWorldSpaceSurfaceNormal(hits.mHit.mSubShapeID2,point);
+      }
+    if((origin-point).Dot(normal)>0.f && (end-point).Dot(normal)<0.f)
+      recoverItem(*body,body->position());
+    }
+  }
+
 void CollisionWorld::recoverItems() {
   for(auto* body:rigid) {
     if(body->category()!=DynamicWorld::C_Item)
@@ -2781,6 +2834,7 @@ void CollisionWorld::tick(uint64_t dt) {
     for(int i=0;i<count;++i) {
       ++impl->simulationStep;
       wakeItems();
+      prepareItemSweeps();
       if(impl->meleeSubsteps!=0) {
         const float solveBefore=impl->meleeSample.solveMs,castBefore=impl->meleeSample.castMs;
         const float seconds=step/float(impl->meleeSubsteps);
@@ -2800,6 +2854,7 @@ void CollisionWorld::tick(uint64_t dt) {
           }
         if(!impl->meleeOutput.empty())
           impl->meleeSteps.push_back({impl->simulationStep,impl->meleeSample.solveMs-solveBefore,impl->meleeSample.castMs-castBefore,impl->meleeSubsteps});
+        recoverTunneledItems();
         advanced=true;
         continue;
         }
@@ -2866,6 +2921,7 @@ void CollisionWorld::tick(uint64_t dt) {
       impl->waterSteps=false;
       finishBuoyancy(step);
       for(auto* body:ragdolls) body->finishKinematicStep();
+      recoverTunneledItems();
       advanced = true;
       }
     }
