@@ -8,6 +8,7 @@ import logging
 import re
 import unicodedata
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -344,6 +345,7 @@ class Feats:
         self._drawings: set[asyncio.Task[Picture | None]] = set()
         self._toasts: set[asyncio.Task[None]] = set()
         self._pending: _Occasion | None = None
+        self._pending_challenges: deque[_Occasion] = deque()
         self._generation = 0
         self._loading = False
         chronicle.on_entry.append(self._on_entry)
@@ -362,6 +364,8 @@ class Feats:
         occasion = _Occasion(seq, fact, asyncio.get_running_loop().time() + self.gather_s)
         if self._work is None or self._work.done():
             self._work = asyncio.create_task(self._run(occasion, self._generation))
+        elif fact["fact"] == "challenge_met":
+            self._pending_challenges.append(occasion)
         else:
             self._pending = occasion
 
@@ -370,6 +374,7 @@ class Feats:
             self._loading = isinstance(message, Loading)
             self._generation += 1
             self._pending = None
+            self._pending_challenges.clear()
             if self._work is not None:
                 self._work.cancel()
                 self._work = None
@@ -378,6 +383,7 @@ class Feats:
         self.chronicle.on_entry.remove(self._on_entry)
         self.link.listeners.remove(self._on_message)
         self._pending = None
+        self._pending_challenges.clear()
         self._generation += 1
         if self._work is not None:
             self._work.cancel()
@@ -425,9 +431,14 @@ class Feats:
             while generation == self._generation:
                 await asyncio.sleep(max(0, occasion.ready_at - asyncio.get_running_loop().time()))
                 await self._consider(occasion, generation)
-                if generation != self._generation or self._pending is None:
+                if generation != self._generation:
                     return
-                occasion, self._pending = self._pending, None
+                if self._pending_challenges:
+                    occasion = self._pending_challenges.popleft()
+                elif self._pending is not None:
+                    occasion, self._pending = self._pending, None
+                else:
+                    return
         finally:
             if self._work is asyncio.current_task():
                 self._work = None

@@ -520,7 +520,10 @@ async def test_model_error_loses_the_occasion(caplog):
         assert "test unavailable" in caplog.text
 
 
-async def test_loading_cancels_the_wait_and_an_inflight_model():
+@pytest.mark.parametrize("message", [
+    Loading(type="loading"), Session(type="session", branch="B", reason="load"),
+])
+async def test_loading_cancels_the_wait_and_an_inflight_model(message):
     for gather_s, model_delay in [(60, 0), (0, 60)]:
         backend = FakeBackend(
             script=[FakeStep(tool_calls=[ToolCall("write_feat", proposal())])],
@@ -530,9 +533,11 @@ async def test_loading_cancels_the_wait_and_an_inflight_model():
             chronicle.record(crime())
             if model_delay:
                 await _until(lambda: bool(llm.calls))
-            chronicle.link._dispatch(Loading(type="loading"))
-            chronicle.link._dispatch(Session(type="session", branch="B", reason="load"))
+            chronicle.record({"fact": "challenge_met", "kind": "no_blood", "evidence": [1]})
+            assert len(chronicler._pending_challenges) == 1
+            chronicle.link._dispatch(message)
             await settled(chronicler)
+            assert not chronicler._pending_challenges
             assert chronicle.facts("feat") == []
             assert len(llm.calls) == (1 if model_delay else 0)
 
@@ -553,6 +558,42 @@ async def test_while_busy_only_the_latest_occasion_waits():
         text = llm.calls[1][1][0].content
         assert f"#{latest}" in text and "truce" in text
         assert not chronicle.facts("feat")
+
+
+async def test_pending_challenges_survive_newer_ordinary_occasions(monkeypatch):
+    backend = FakeBackend(
+        script=[FakeStep(tool_calls=[ToolCall("write_feat", proposal(verdict="none"))])], delay=0,
+    )
+    started, release = asyncio.Event(), asyncio.Event()
+    stream = backend.stream
+
+    async def wait_first(**kwargs):
+        if not started.is_set():
+            started.set()
+            await release.wait()
+        async for event in stream(**kwargs):
+            yield event
+
+    monkeypatch.setattr(backend, "stream", wait_first)
+    async with world(backend=backend) as (_, chronicle, chronicler, llm, _):
+        chronicle.record(crime())
+        await _until(started.is_set)
+        first = chronicle.record({"fact": "challenge_met", "kind": "no_blood", "evidence": [1]})
+        chronicle.record({"fact": "hero_yield", "npc": "N"})
+        second = chronicle.record({"fact": "challenge_met", "kind": "mercy", "evidence": [1]})
+        chronicle.record({"fact": "truce", "npc": "N"})
+        for seq, title in [(first, "Тихий путь"), (second, "Мягкая рука")]:
+            backend.script.append(FakeStep(tool_calls=[ToolCall(
+                "write_feat", proposal(title=title, text="Завершил дело.", evidence=[seq]),
+            )]))
+        release.set()
+        await settled(chronicler)
+        assert [fact["trigger"] for fact in chronicle.facts("feat")] == [first, second]
+        assert len(llm.calls) == 3
+        for call, seq in zip(llm.calls[1:], [first, second], strict=True):
+            assert call[1][0].content.startswith(f"Повод: #{seq} challenge_met ")
+        assert not chronicler._pending_challenges
+        assert chronicler._pending is None
 
 
 async def test_story_state_timeout_drops_only_the_active_occasion(monkeypatch, caplog):
