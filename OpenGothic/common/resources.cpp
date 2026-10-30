@@ -231,6 +231,7 @@ void Resources::loadBase() {
     inst->indexBaseContent();
     BaseImport::Files identityLoose;
     const auto identity=BaseImport::readIdentity(inst->automaticBase.path);
+    inst->baseFingerprint=identity.fingerprint;
     rapidjson::Document metadata;
     metadata.Parse(identity.json.data(),identity.json.size());
     inst->baseArchives.clear();
@@ -892,6 +893,75 @@ std::filesystem::path Resources::worldOverrideDir(std::string_view world) {
   if(const char* home = std::getenv("HOME"))
     return worldContentDir(std::filesystem::path(home)/".local/share/gothic-ai/content",world);
   return {};
+  }
+
+Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
+  if(inst==nullptr || inst->baseFingerprint.empty())
+    return {};
+  try {
+    namespace fs = std::filesystem;
+    std::string inputs;
+    const auto field=[&](std::string_view value) {
+      inputs+=std::to_string(value.size())+":";
+      inputs.append(value);
+      };
+    const auto metadata=[&](const fs::path& file) {
+      field(fs::absolute(file).lexically_normal().generic_string());
+      if(!fs::exists(file)) {
+        field("missing");
+        return;
+        }
+      if(!fs::is_regular_file(file)) {
+        field("other");
+        return;
+        }
+      field(std::to_string(fs::file_size(file)));
+      field(std::to_string(fs::last_write_time(file).time_since_epoch().count()));
+      };
+    const auto contentWorld=worldOverrideDir(world);
+    field(contentWorld.empty() ? "" : fs::absolute(contentWorld).lexically_normal().generic_string());
+    const auto* layers=std::getenv("OPENGOTHIC_VOB_LAYERS");
+    field(layers!=nullptr && std::string_view(layers)=="0" ? "layers=0" : "layers=1");
+    field(isHeadless() ? "headless=1" : "headless=0");
+    std::vector<fs::path> files;
+    if(!contentWorld.empty()) {
+      if(fs::is_directory(contentWorld))
+        for(const auto& entry:fs::recursive_directory_iterator(contentWorld)) {
+          // The world loader follows directory links. Avoid an incomplete key
+          // rather than reusing heights when such a directory changes.
+          if(entry.is_symlink() && entry.is_directory()) return {};
+          if(entry.is_regular_file()) files.push_back(entry.path());
+          }
+      files.push_back(contentWorld.parent_path().parent_path()/"meshes/meshes.json");
+      }
+    // Indexed replacements may be shared by several worlds. This small superset
+    // also invalidates heights if an unavailable replacement becomes readable.
+    std::vector<std::string> meshKeys;
+    for(const auto& [key,mesh]:inst->meshOverrides) {
+      meshKeys.push_back(key);
+      files.push_back(mesh.file);
+      }
+    std::sort(meshKeys.begin(),meshKeys.end());
+    for(const auto& key:meshKeys) {
+      const auto& mesh=inst->meshOverrides.at(key);
+      // The map and already cached geometry may predate an edit on disk.
+      field(key);
+      field(fs::absolute(mesh.file).lexically_normal().generic_string());
+      field(mesh.loaded ? "loaded=1" : "loaded=0");
+      if(mesh.loaded) {
+        field(std::to_string(mesh.sourceSize));
+        field(std::to_string(mesh.sourceCrc32));
+        }
+      }
+    std::sort(files.begin(),files.end());
+    files.erase(std::unique(files.begin(),files.end()),files.end());
+    for(const auto& file:files) metadata(file);
+    return {inst->baseFingerprint,BaseImport::sha256(inputs)};
+    }
+  catch(const std::exception& error) {
+    Log::e("way heights: input fingerprint unavailable: ",error.what());
+    return {};
+    }
   }
 
 void Resources::indexMeshOverrides() {
