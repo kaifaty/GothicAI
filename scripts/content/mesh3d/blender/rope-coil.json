@@ -20,5 +20,6 @@
   "pitch": 0.88,
   "plateau": 0.45,
   "centre_y": 0.245,
-  "oval": 1.07
+  "oval": 1.07,
+  "core": true
 }

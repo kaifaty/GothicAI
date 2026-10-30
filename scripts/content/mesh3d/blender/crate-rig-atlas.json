@@ -95,23 +95,45 @@
       "OWN_PROP_WOOD_PLANK",
       "OWN_PROP_WOOD_BRACE"
     ],
-    "cover": 0.07,
-    "scale": 0.1,
+    "cover": 0.16,
+    "scale": 0.12,
+    "grain": 4.0,
     "top": 1.2,
     "bottom": 1.0,
-    "low": 0.25,
-    "shade": 0.5,
-    "soft": 0.25,
-    "damp": 0.25,
+    "low": 0.3,
+    "shade": 0.8,
+    "soft": 0.3,
+    "damp": 0.35,
     "dark": [
-      0.018,
-      0.028,
-      0.007
+      0.012,
+      0.019,
+      0.005
     ],
     "light": [
-      0.045,
-      0.06,
-      0.013
+      0.03,
+      0.042,
+      0.009
     ]
-  }
+  },
+  "streaks": {
+    "length": 0.35,
+    "rust": 0.0,
+    "dirt": 0.55,
+    "rust_colour": [
+      0.06,
+      0.03,
+      0.012
+    ],
+    "column": 0.014
+  },
+  "crevice": {
+    "distance": 0.035,
+    "dirt": 0.55,
+    "colour": [
+      0.006,
+      0.006,
+      0.004
+    ]
+  },
+  "wet_roughness": 0.7
 }

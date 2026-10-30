@@ -7,7 +7,9 @@ config: {"id": "rig-rope", "target": "data/content/mesh3d-rigging.json", "seed":
 Asset harbour-rigging (intent.md): a coil of thick rope about 1.8 m across laid as a mound 0.47 m high:
 the turns step up from the rim to a flat top over the inner "plateau" share of the radius, as the
 original's coil (the first version was a low cone, review 2026-10-30). The coil sits "centre_y" off the
-bbox centre and is "oval" times longer in y, where the original's coil lies, its ends running out both ways. The rope is one tube laid along a
+bbox centre and is "oval" times longer in y, where the original's coil lies, its ends running out both ways.
+With "core" a rope-covered mound sits under the turns, so the steps show rope in shade, not gaps of light
+(review 2026-10-30: «стопка колец с зазорами»). The rope is one tube laid along a
 spiral on that cone: from the hole (radius "hole") out to the rim, each turn "pitch" rope thicknesses wider and
 a little lower ("rise" shapes the cone: 1 is straight, < 1 rounder). Neighbouring turns overlap in height,
 so no gap shows under them. The outer end leaves the rim and runs over the ground to the -y end of the
@@ -112,6 +114,22 @@ phase = rng.uniform(0, 2 * math.pi)
 coil = spiral(phase)
 tube(coil, P.new_part())
 
+if cfg.get("core"):
+    # a core under the turns, in rope: where the turns step up, the gaps show rope in shade, not daylight
+    part = P.new_part()
+    rings = []
+    for k in range(9):
+        r = r_hole + (r_out - r_hole) * k / 8
+        z = max(cone(r) - rad * 0.6, lo.z + 0.002)
+        rings.append([P.vert(centre + Vector((r * math.cos(a), r * oval * math.sin(a), z)), part)
+                      for a in np.linspace(0, 2 * math.pi, 25)[:-1]])
+    for a_ring, b_ring in zip(rings, rings[1:]):
+        for j in range(24):
+            j2 = (j + 1) % 24
+            q = (a_ring[j], b_ring[j], b_ring[j2], a_ring[j2])
+            P.poly(q, ROPE, [((v.co - centre).x / tile_m, (v.co - centre).y / tile_m) for v in q])
+    P.poly(rings[0][::-1], ROPE, [((v.co - centre).x / tile_m, (v.co - centre).y / tile_m) for v in rings[0][::-1]])
+
 # Outer end: leaves the rim turn along its tangent, then bends toward -y and runs to the bbox end.
 y_dir, bend = cfg.get("outer_tail", [-1.0, 0.25])
 start, before = coil[-1], coil[-2]
@@ -131,14 +149,14 @@ tube(pts, P.new_part(), taper=(False, True))
 # Inner end: up out of the hole, over the turns toward +y, down to the ground and out to the bbox end.
 y_dir, bend = cfg.get("inner_tail", [1.0, -0.2])
 first = coil[0]
-pts = [first, first + Vector((0, 0, thick * 0.6))]
+pts = [first]
 for f in np.linspace(0.05, 1, 12):
     r = r_hole + (r_out + thick - r_hole) * f
-    pts.append(centre + Vector((bend * f, r * oval * y_dir, surface(min(r, r_out)) + rad * 0.9)))
+    pts.append(centre + Vector((bend * f, r * oval * y_dir, surface(min(r, r_out)) + rad * 0.55)))
 end_y = hi.y - rad if y_dir > 0 else lo.y + rad
 for f in np.linspace(0.15, 1, 6):
     y = centre.y + y_dir * (r_out * oval + thick) + (end_y - centre.y - y_dir * (r_out * oval + thick)) * f
-    pts.append(Vector((centre.x + bend + 0.08 * math.sin(f * math.pi), y, lo.z + rad + (rad * 1.5) * (1 - f) ** 2)))
+    pts.append(Vector((centre.x + bend + 0.08 * math.sin(f * math.pi), y, lo.z + rad + (rad * 0.8) * (1 - f) ** 3)))
 tube(pts, P.new_part(), taper=(False, True))
 
 P.finish(goal, out, lo, hi, {"turns": round((r_out - r_hole) / (thick * pitch), 2), "rim_radius": round(r_out, 3)})

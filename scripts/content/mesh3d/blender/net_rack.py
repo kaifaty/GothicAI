@@ -7,8 +7,9 @@ config: {"id": "rig-net-rack", "target": "data/content/mesh3d-rigging.json", "se
          "timbers": [[x0, y0, z0, x1, y1, z1], ...]   hewn posts and beams as boxes (m, Blender axes),
          "clamps": [[x, y, z, axis, width, height], ...] iron bands round a pair of beams at a post,
          "braces": [[x, y, z_top, axis, sign], ...] knee braces from a post up to the beam over it,
+         "cleats": [[x, y, axis], ...] short boards up both faces of a post under the beams (the original's),
          "lashings": [[x, y, z, axis], ...], "panels": [{"bar": [x0, y0, z, x1, y1], "drop": [front, back],
-         "folds": 5, "belly": 0.08, "half": half the bar's width}, ...], "rolls": [[x, y, top_z, length, radius, "spindle"|"column"], ...],
+         "folds": 5, "belly": 0.08, "half": half the bar's width, "sag": droop m}, ...], "rolls": [[x, y, top_z, length, radius, "spindle"|"column"], ...],
          "loose": [[x, y, z, length], ...], "tile_m": 0.42, "stave_tile": 0.6}
 Asset harbour-rigging (intent.md, concept rig-net-rack attempt 1). The construction follows the original
 (its mesh as an underlay: the places of its posts and beams, docs/own-content.md): four posts, pairs of
@@ -132,6 +133,13 @@ for x, y, z_top, axis, sign in cfg.get("braces", []):
     b = Vector((x, y, z_top)) + along * (sign * up[0])
     timber(a, b, up[1], up[1], up=Y if axis == "x" else X)
 
+for x, y, axis in cfg.get("cleats", []):
+    # a cleat: a short board nailed up the post's face under the beams, as the original has, not a brace
+    across = X if axis == "y" else Y
+    for s in (-1, 1):
+        c = Vector((x, y, 3.62)) + across * (s * 0.135)
+        P.wood(c, Z, Y if axis == "y" else X, across * s, 0.9, 0.16, 0.05, FRAME, tile)
+
 for x, y, z, axis in cfg.get("lashings", []):
     lashing(Vector((x, y, z)), X if axis == "x" else Y, 0.17, turns=5)
 
@@ -151,7 +159,8 @@ for panel in cfg.get("panels", []):
         grid = []
         for i in range(nu + 1):
             u = i / nu
-            top = start + along * (width * u) + normal * (side * panel.get("half", 0.12)) + Vector((0, 0, 0.03))
+            sag = panel.get("sag", 0.0) * math.sin(math.pi * u)        # the net droops between its ends
+            top = start + along * (width * u) + normal * (side * panel.get("half", 0.12)) + Vector((0, 0, 0.03 - sag * 0.25))
             depth = top.z - (floor + drop) + hem[i]
             col = []
             for j in range(nv + 1):
@@ -160,7 +169,8 @@ for panel in cfg.get("panels", []):
                 bulge = belly * math.sin(math.pi * f) * (0.6 + 0.4 * math.sin(math.pi * u))
                 # the net gathers a little toward the middle as it hangs
                 gather = (0.5 - u) * 0.06 * f
-                col.append(top + Vector((0, 0, -depth * f)) + normal * (side * (bulge + fold)) + along * gather)
+                droop = sag * math.sin(math.pi * f) * 0.75
+                col.append(top + Vector((0, 0, -depth * f - droop)) + normal * (side * (bulge + fold)) + along * gather)
             grid.append(col)
         up = [[N.vert(q, part) for q in col] for col in grid]
         down = [[N.vert(q, part) for q in col] for col in grid]
@@ -184,14 +194,17 @@ for x, y, top_z, length, radius, shape in cfg.get("rolls", []):
         else:
             r = radius * min(1.0, 0.45 + 3 * f) * (1 - 0.15 * f)
         rads.append(r * rng.uniform(0.95, 1.05))
-    rads[0], rads[-1] = radius * 0.2, radius * (0.2 if shape == "spindle" else 0.55)
-    tube(P, pts, rads, 12, ROLL, tile_v=tile_m)
+    rads[0], rads[-1] = radius * 0.3, radius * (0.45 if shape == "spindle" else 0.7)
+    # a rounded foot: one more ring a little lower and narrower, so the bundle does not end in a sharp cone
+    pts.append(pts[-1] - Vector((0, 0, radius * 0.25)))
+    rads.append(rads[-1] * 0.55)
+    tube(P, pts, rads, 16, ROLL, tile_v=tile_m)
     for k in range(1, int(length / 0.6) + 1):
         f = k * 0.6 / length
         if f >= 0.95:
             break
         c = pts[0] + (pts[-1] - pts[0]) * f + bend * math.sin(math.pi * f)
-        r = float(np.interp(f, np.linspace(0, 1, n_seg + 1), rads)) * 0.98
+        r = float(np.interp(f, np.linspace(0, 1, n_seg + 1), rads[:n_seg + 1])) * 0.98
         ring = [c + Vector((math.cos(a) * r, math.sin(a) * r, 0.0)) for a in np.linspace(0, 2 * math.pi, 13)]
         tube(P, ring, 0.014, 5, ROPE)
     tube(P, [pts[0], Vector((x, y, top_z + 0.02))], 0.014, 5, ROPE)

@@ -37,10 +37,10 @@ NET_ROLL = zone('OWN_PROP_NET_ROLL', 'UNDEF', 'rolled-up net bundles, opaque')
 TARGETS = [
     {'id': 'rig-crate-broken', 'visual': 'NW_HARBOUR_CRATEBROKEN_01', 'budget_tris': 2500,
      'zones': [PLANK, BRACE, NAIL, ROPE]},
-    {'id': 'rig-rope', 'visual': 'NW_HARBOUR_ROPE_01', 'budget_tris': 4000, 'zones': [ROPE]},
+    {'id': 'rig-rope', 'visual': 'NW_HARBOUR_ROPE_01', 'budget_tris': 4200, 'zones': [ROPE]},
     {'id': 'rig-cannon', 'visual': 'NW_HARBOUR_CANON_01', 'budget_tris': 3500, 'zones': [CAST, BORE, FRAME, IRON]},
-    {'id': 'rig-net-big', 'visual': 'NW_HARBOUR_FISHINGNETBIG', 'budget_tris': 3000, 'zones': [NET, ROPE]},
-    {'id': 'rig-net-small', 'visual': 'NW_HARBOUR_FISHINGNETSMALL', 'budget_tris': 2000, 'zones': [NET, ROPE]},
+    {'id': 'rig-net-big', 'visual': 'NW_HARBOUR_FISHINGNETBIG', 'budget_tris': 3600, 'zones': [NET, ROPE]},
+    {'id': 'rig-net-small', 'visual': 'NW_HARBOUR_FISHINGNETSMALL', 'budget_tris': 2400, 'zones': [NET, ROPE]},
     {'id': 'rig-net-rack', 'visual': 'NW_HARBOUR_FISHINGNET_01', 'budget_tris': 9000,
      'zones': [FRAME, NET, NET_ROLL, ROPE, IRON]},
     {'id': 'rig-bollard-rope', 'visual': 'NW_HARBOUR_IRONROPEHOLDER_WROPE_01', 'budget_tris': 2000, 'zones': [CAST, ROPE]},

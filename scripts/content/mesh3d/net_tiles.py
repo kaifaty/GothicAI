@@ -6,7 +6,7 @@
 
 Asset harbour-rigging (intent.md, P3: «сеть читается сетью из узловатой верёвки, с ячейками насквозь»).
 image_gen does not give a tileable net with a clean alpha, so the net is drawn here, like the procedural
-wax, glass and bone tiles of the market set. One tile is TILE_M metres: CELLS x CELLS square meshes, each
+wax, glass and bone tiles of the market set. One tile is TILE_M metres: CELLS x CELLS square meshes (4 cm, as the original's heap net), each
 knot jittered a little (the jitter repeats with the tile, so it tiles), every cord a twisted strand with a
 slight sag between its knots, a fat knot at each crossing. Height gives the normal map (round cord, knot on
 top) and the alpha (cord or knot = opaque). The colour is a dark grey-brown cord whose mean over the opaque
@@ -28,16 +28,16 @@ from PIL import Image
 from scipy import ndimage
 
 TILE_M = 0.5
-CELLS = 6
-CORD_M = 0.024
-KNOT_M = 0.04
-FINE = dict(cells=17, cord_m=0.009, knot_m=0.015)     # the dense net hung on the rack: 3 cm meshes
+CELLS = 12
+CORD_M = 0.015
+KNOT_M = 0.024
+FINE = dict(cells=17, cord_m=0.009, knot_m=0.015, jitter=0.22)     # the dense net hung on the rack: 3 cm meshes
 NET_TARGET = np.array([0.090, 0.073, 0.044])     # linear RGB of the original net's opaque texels
 ROLL_CORE = np.array([0.012, 0.010, 0.007])
 
 
 def draw(size: int, seed: int, shift: tuple[float, float] = (0.0, 0.0), cells: int = CELLS, cord_m: float = CORD_M,
-         knot_m: float = KNOT_M) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+         knot_m: float = KNOT_M, jitter: float = 0.09) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Height (0..1 cord radius units), strand shading and a cord mask of one tile, drawn at 2x and reduced."""
     rng = np.random.default_rng(seed)
     big = size * 2
@@ -45,8 +45,8 @@ def draw(size: int, seed: int, shift: tuple[float, float] = (0.0, 0.0), cells: i
     CELLS = cells
     cord_r, knot_r = cord_m / 2 * px, knot_m / 2 * px
     cell = big / CELLS
-    jitter = rng.uniform(-0.09, 0.09, (CELLS, CELLS, 2)) * cell
-    knots = np.array([[(i + 0.5 + shift[0]) * cell + jitter[i, j, 0], (j + 0.5 + shift[1]) * cell + jitter[i, j, 1]]
+    offs = rng.uniform(-jitter, jitter, (CELLS, CELLS, 2)) * cell
+    knots = np.array([[(i + 0.5 + shift[0]) * cell + offs[i, j, 0], (j + 0.5 + shift[1]) * cell + offs[i, j, 1]]
                       for i in range(CELLS) for j in range(CELLS)]).reshape(CELLS, CELLS, 2)
     height = np.zeros((big, big), np.float32)
     twist = np.zeros((big, big), np.float32)
@@ -88,8 +88,8 @@ def draw(size: int, seed: int, shift: tuple[float, float] = (0.0, 0.0), cells: i
             p = knots[i, j]
             right = knots[(i + 1) % CELLS, j] + (np.array([big, 0]) if i == CELLS - 1 else 0)
             down = knots[i, (j + 1) % CELLS] + (np.array([0, big]) if j == CELLS - 1 else 0)
-            cord(p, right, rng.uniform(-0.05, 0.05) * cell, rng.uniform(0, 6.28))
-            cord(p, down, rng.uniform(-0.05, 0.05) * cell, rng.uniform(0, 6.28))
+            cord(p, right, rng.uniform(-1, 1) * cell * max(0.05, jitter * 0.6), rng.uniform(0, 6.28))
+            cord(p, down, rng.uniform(-1, 1) * cell * max(0.05, jitter * 0.6), rng.uniform(0, 6.28))
     # knots: a flattened lump on top of each crossing
     w = int(knot_r * 1.3) + 2
     for i in range(CELLS):

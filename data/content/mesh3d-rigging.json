@@ -52,7 +52,7 @@
   {
    "id": "rig-rope",
    "visual": "NW_HARBOUR_ROPE_01",
-   "budget_tris": 4000,
+   "budget_tris": 4200,
    "zones": [
     {
      "key": "OWN_PROP_ROPE",
@@ -134,7 +134,7 @@
   {
    "id": "rig-net-big",
    "visual": "NW_HARBOUR_FISHINGNETBIG",
-   "budget_tris": 3000,
+   "budget_tris": 3600,
    "zones": [
     {
      "key": "OWN_PROP_NET",
@@ -171,7 +171,7 @@
   {
    "id": "rig-net-small",
    "visual": "NW_HARBOUR_FISHINGNETSMALL",
-   "budget_tris": 2000,
+   "budget_tris": 2400,
    "zones": [
     {
      "key": "OWN_PROP_NET",

@@ -9,8 +9,10 @@ config: {"id": "rig-crate-broken", "target": "data/content/mesh3d-rigging.json",
          "splinter": [0.04, 0.12], "loose": true}
 The same crate as harbour_crate.py (reports/content/2026-10-crates-redesign, variant 2): corner posts
 and a rope handle on each short end, horizontal planks of uneven width with one upright batten on
-the long sides. Broken as the original (asset harbour-rigging, intent.md): no lid; the +x end has a V-shaped breach in
-its middle, notch[0] wide at the top, down to notch[1] of the height. Optional, off for the harbour set
+the long sides. Broken as the original (asset harbour-rigging, intent.md): no lid; with "side_v" (m, its width at the
+top) the -y long wall has a V breach centred at side_break[0], down to side_break[1] of the height: in the
+harbour that wall faces the player (vob 26082 lies tilted), the review of 2026-10-30 found a breach in the
+end unseen. The +x end may have a V breach too, notch[0] wide at the top, down to notch[1] of the height. Optional, off for the harbour set
 after the first review (one wall broken, not three): the -y long side broken off above side_break[1] of
 the height for x > side_break[0]; the middle floor plank broken through over floor_hole (x from, x to,
 metres); the -y floor plank without its last floor_corner metres. "rope_ends": "none" drops the handle. Each
@@ -114,6 +116,7 @@ wall_top = H - 0.006   # no lid: the walls run up to the posts' tops less a hair
 
 # --- long sides: horizontal planks between the posts, an upright batten; -y broken at the top right ---
 sb_x, sb_h = cfg.get("side_break", [0.2, 0.74])
+side_v = cfg.get("side_v", 0.0)      # with a width: the -y wall has a V breach centred at x = sb_x instead
 mid_x = -0.12 * L
 for s in (-1, 1):
     n_w = Y * s
@@ -123,16 +126,21 @@ for s in (-1, 1):
         depth = y_side - pt / 2 + rng.uniform(-proud, proud)
         along = turned(X, n_w) if k else X
         centre = at(0, s * depth, z + w / 2)
-        if s == -1 and z > sb_h * wall_top - 0.02:     # broken off on the right
+        v0 = sb_h * wall_top
+        half = side_v / 2 * (z + w / 2 - v0) / (wall_top - v0) * rng.uniform(0.85, 1.15) if side_v else 0.0
+        if s == -1 and half > 0.04:                    # a V breach in the -y wall, wider at the top
+            plank_span(-x_end, sb_x - half, centre, along, Z, n_w, w, broken_end=1)
+            plank_span(sb_x + half * rng.uniform(0.8, 1.2), x_end, centre, along, Z, n_w, w, broken_end=0)
+        elif s == -1 and z > sb_h * wall_top - 0.02 and not side_v:     # broken off on the right
             stop = sb_x * L + rng.uniform(-0.08, 0.08)
             plank_span(-x_end, stop, centre, along, Z, n_w, w, broken_end=1)
         else:
             plank_span(-x_end, x_end, centre, along, Z, n_w, w)
         for xe in (-x_end + 0.035, x_end - 0.035):
-            if not (s == -1 and z > sb_h * wall_top - 0.02 and xe > 0):
+            if not (s == -1 and z > sb_h * wall_top - 0.02 and (xe > 0 or side_v)):
                 nail(at(xe, s * y_side, z + w / 2), n_w, X)
         z += w + (gaps[k] if k < len(gaps) else 0)
-    top = wall_top - 0.02
+    top = sb_h * wall_top - 0.03 if (s == -1 and side_v) else wall_top - 0.02   # the batten stops under the breach
     P.wood(at(mid_x, s * (W / 2 - bat_t / 2), top / 2 + 0.01), turned(Z, n_w), X, n_w,
            top, bat_w * rng.uniform(0.9, 1.1), bat_t, BRACE, tile)
 

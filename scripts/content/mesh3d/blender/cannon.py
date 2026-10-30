@@ -11,10 +11,10 @@ cascabel knob, base ring, reinforce, a ring before the trunnions, the chase tape
 and the flared muzzle swell; its face has a dark bore "bore" [radius, depth] in its own zone. The
 trunnions [radius, length out of the barrel] sit on the cheeks under iron cap squares. The barrel is
 raised elevation_deg about the trunnions. The carriage is the ship truck carriage of the concept: two
-stepped cheeks of thick plank ("cheek" [thickness, gap from the barrel axis to the cheek's inner face]),
+cheeks of thick plank with one big step (high under the trunnions, low behind) ("cheek" [thickness, gap from the barrel axis to the cheek's inner face]),
 two axletree beams at y "axles", four solid wheels "wheel" [radius, thickness, sides] of two planks
-each on iron pins, a bed plank between the cheeks, a wedge (quoin) under the breech and a low trail
-back to y trail[0]. Sizes and the origin come from the target: the wheels stand on the bbox floor, the
+each on iron pins, a bed plank between the cheeks, a wedge (quoin) under the breech and a long wedge of a
+trail down to the ground at y trail[0]. Sizes and the origin come from the target: the wheels stand on the bbox floor, the
 muzzle touches the bbox front.
 """
 import math
@@ -102,10 +102,10 @@ bottom = axle_z + axle_h / 2 - 0.01
 top_front = axis_z - trun_r + 0.005
 rear = y_rear - axle_w / 2 - 0.04
 front = y_front + axle_w / 2 + 0.05
-steps = [(front, bottom), (front, top_front - 0.06), (y_trun + trun_r + 0.06, top_front - 0.02),
-         (y_trun + trun_r + 0.04, top_front), (y_trun - trun_r - 0.04, top_front),
-         (y_trun - trun_r - 0.06, top_front - 0.05), (-0.25, top_front - 0.05), (-0.25, top_front - 0.13),
-         (rear + 0.18, top_front - 0.13), (rear + 0.18, top_front - 0.21), (rear, top_front - 0.21), (rear, bottom)]
+# one big step as the original's cheek: high under the trunnions, low behind, the top of the rear part
+# falling toward the trail
+steps = [(front, bottom), (front, top_front - 0.04), (front - 0.06, top_front), (y_trun - 0.2, top_front),
+         (y_trun - 0.2, top_front - 0.18), (rear, top_front - 0.2), (rear, bottom)]
 for s in (-1, 1):
     x_in = cx + s * cheek_gap
     x_out = x_in + s * cheek_t
@@ -128,7 +128,9 @@ wedge = [(-0.36 + q_len / 2, q_bot), (-0.36 + q_len / 2, q_bot + 0.03), (-0.36 -
 slab(wedge, cx - q_w / 2, cx + q_w / 2, FRAME)
 trail0, trail_h = cfg.get("trail", [-0.9, 0.12])
 trail_y = lo.y if trail0 is None else max(lo.y, trail0)
-P.wood(Vector((cx, (rear + trail_y) / 2 + 0.05, floor + trail_h / 2 + 0.03)), Y, X, Z, rear - trail_y + 0.1, 0.26, trail_h, FRAME, tile)
+# the trail: a long wedge from under the cheeks' rear down to the ground at the bbox end, as the original's
+wedge = [(rear + 0.12, floor + 0.01), (rear + 0.12, bottom + 0.08), (trail_y, floor + trail_h * 0.35), (trail_y, floor + 0.01)]
+slab(wedge, cx - 0.13, cx + 0.13, FRAME)
 
 # --- the barrel ------------------------------------------------------------------------------------
 profile = cfg.get("barrel")

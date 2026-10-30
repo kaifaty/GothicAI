@@ -15,7 +15,7 @@ config: {"glb": model with tile UVs in metres and zone-key materials (barrel.py)
          "crevice": {"distance": 0.02, "dirt": 0.7, "colour": [r, g, b]},
          "streaks": {"length": 0.25, "rust": 0.6, "dirt": 0.35, "rust_colour": [r, g, b], "column": 0.012},
          "wet_roughness": 0.6, "metal_scale": 1.0,
-         "moss": {"zones": [KEY, ...], "cover": share or {KEY: share}, "scale": 0.12, "top": 1.0, "bottom": 0.8,
+         "moss": {"zones": [KEY, ...], "cover": share or {KEY: share}, "scale": 0.12, "grain": 1.0, "top": 1.0, "bottom": 0.8,
                   "low": 0.25, "shade": 0.6, "soft": 0.25, "damp": 0.25, "dark": [r, g, b], "light": [r, g, b]}}
 The tiling materials are sampled through the tile UVs and baked into a new atlas
 UV: per-part tone (the builder's "_part" attribute when present, otherwise
@@ -48,8 +48,10 @@ Weathering placed by the model, as for the roofs made of pieces (docs/remaster-p
 The weathering darkens before each zone is scaled to its measured mean, like the AO.
 - "moss": patches of moss after the zones met their targets, so the green is the moss's own: on tops,
   near the ground and in shaded corners, cut out of a smooth 3D noise at "cover" of each zone's open texels,
-  with a damp darker halo around them. The harbour crates had a thin dotted line of crevice moss and 0-0.2 %
-  green on their lids against 1.2-6 % on the original's (asset harbour-rigging, review 2026-10-30).
+  with a damp darker halo around them; "grain" > 1 stretches the patches that many times along each part's
+  long axis, so they run as strips along boards and beams. The harbour crates had a thin dotted line of
+  crevice moss and 0-0.2 % green on their lids against 1.2-6 % on the original's; round patches then read
+  as stickers (asset harbour-rigging, reviews 2026-10-30).
 "metal_scale" multiplies the metallic of the "metal" zones: rusty, grimy iron is mostly not metal.
 """
 import json
@@ -489,7 +491,21 @@ if "moss" in cfg:
     dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
     freqs = 2 * np.pi / (scale * rng.uniform(0.6, 1.8, 14))
     phases = rng.uniform(0, 2 * np.pi, 14)
-    noise = sum(np.sin(position @ d * f + ph) for d, f, ph in zip(dirs, freqs, phases)) / np.sqrt(7)
+    # Along the grain: each part's long axis (from its texels), the noise stretched "grain" times along it,
+    # so moss runs in strips along boards and beams, in their gaps and along their edges, not in round dots.
+    stretched = position.copy()
+    grain = spec.get("grain", 1.0)
+    if grain != 1.0:
+        for pid in np.unique(texel_part[inside]):
+            sel_p = inside & (texel_part == pid)
+            pts = position[sel_p]
+            if len(pts) < 16:
+                continue
+            centred = pts - pts.mean(axis=0)
+            axis = np.linalg.svd(centred[:: max(1, len(pts) // 2000)], full_matrices=False)[2][0]
+            along = centred @ axis
+            stretched[sel_p] = pts + np.outer(along, axis) * (1 / grain - 1)
+    noise = sum(np.sin(stretched @ d * f + ph) for d, f, ph in zip(dirs, freqs, phases)) / np.sqrt(7)
     up = np.clip(facing[..., 2], 0, 1)
     low = np.clip(1 - (position[..., 2] - z0) / spec.get("low", 0.25), 0, 1)
     shade = np.clip((1 - ao) / 0.4, 0, 1)
