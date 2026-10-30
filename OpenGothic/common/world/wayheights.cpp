@@ -103,7 +103,7 @@ void WayHeights::read() {
   }
 
 void WayHeights::adjust(WayPoint& point, const DynamicWorld& physics) {
-  const auto key=pointKey(point);
+  auto key=pointKey(point);
   if(const auto found=points.find(key); found!=points.end()) {
     point.groundPos=found->second;
     ++hitCount;
@@ -113,7 +113,7 @@ void WayHeights::adjust(WayPoint& point, const DynamicWorld& physics) {
   point.groundPos=ray.hasCol ? ray.v : point.pos;
   ++missCount;
   if(!file.empty())
-    points.insert_or_assign(key,point.groundPos);
+    baked.emplace_back(std::move(key),point.groundPos);
   }
 
 void WayHeights::save() {
@@ -121,6 +121,9 @@ void WayHeights::save() {
     return;
   fs::path temporary;
   try {
+    for(auto& [key,ground]:baked)
+      points.insert_or_assign(std::move(key),ground);
+    baked.clear();
     std::string payload;
     append(payload,uint32_t(points.size()));
     for(const auto& [key,ground]:points) {

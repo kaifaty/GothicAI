@@ -7,6 +7,7 @@
 #include <map>
 #include <string>
 #include <tuple>
+#include <vector>
 
 class DynamicWorld;
 class WayPoint;
@@ -36,5 +37,6 @@ class WayHeights final {
     std::filesystem::path file;
     std::string identity;
     std::map<PointKey,Tempest::Vec3> points;
+    std::vector<std::pair<PointKey,Tempest::Vec3>> baked;
     size_t hitCount = 0, missCount = 0;
   };

@@ -120,6 +120,11 @@ void smallWorld(const fs::path& root) {
   WayPoint added(Tempest::Vec3(300,150,0),"REPEATED");
   hit.adjust(added,physics);
   require(hit.hits()==3 && hit.misses()==1,"only a missing name/position pair may cast a ray");
+  hit.save();
+  WayHeights merged(root,key);
+  for(auto& point:points) merged.adjust(point,physics);
+  merged.adjust(added,physics);
+  require(merged.hits()==4 && merged.misses()==0,"partial bake must preserve existing entries and save the missing point");
 
   const auto checkMiss=[&](const WayHeights::Key& changed, const char* reason) {
     WayHeights cache(root,changed);
