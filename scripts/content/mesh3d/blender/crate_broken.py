@@ -9,10 +9,11 @@ config: {"id": "rig-crate-broken", "target": "data/content/mesh3d-rigging.json",
          "splinter": [0.04, 0.12], "loose": true}
 The same crate as harbour_crate.py (reports/content/2026-10-crates-redesign, variant 2): corner posts
 and a rope handle on each short end, horizontal planks of uneven width with one upright batten on
-the long sides. Broken as the original (asset harbour-rigging, intent.md): no lid; the +x end has a
-U-shaped breach in its middle down to notch[1] of the height, notch[0] wide; the -y long side is broken
-off above side_break[1] of the height for x > side_break[0]; the floor planks lie inside, the middle one
-is broken through over floor_hole (x from, x to, metres), the -y one lacks its last floor_corner metres. Each
+the long sides. Broken as the original (asset harbour-rigging, intent.md): no lid; the +x end has a V-shaped breach in
+its middle, notch[0] wide at the top, down to notch[1] of the height. Optional, off for the harbour set
+after the first review (one wall broken, not three): the -y long side broken off above side_break[1] of
+the height for x > side_break[0]; the middle floor plank broken through over floor_hole (x from, x to,
+metres); the -y floor plank without its last floor_corner metres. "rope_ends": "none" drops the handle. Each
 broken plank ends in a torn zigzag with splinters of 4–12 cm. One loose plank leans inside. The crate is
 open, so there is no dark core: the inner faces of the planks are the planks themselves.
 """
@@ -92,8 +93,12 @@ def jagged(centre, along, ax_w, n_w, a0, a1, w, thick, sign, material):
     for i in range(m):
         j = (i + 1) % m
         seg = (Vector(outline[j]) - Vector(outline[i])).length
+        # the torn edge takes its own plank's strip of the tile, not a light corner of it
+        u0 = plank * pu + (outline[i][1] / w + 0.5) * pu
+        u1 = plank * pu + (outline[j][1] / w + 0.5) * pu
         P.poly((rings[0][i], rings[0][j], rings[1][j], rings[1][i]), material,
-               ((0, v_off), (seg, v_off), (seg, v_off + thick), (0, v_off + thick)))
+               ((u0, outline[i][0] + v_off), (u1, outline[j][0] + v_off), (u1, outline[j][0] + v_off + 0.01),
+                (u0, outline[i][0] + v_off + 0.01)))
 
 
 def plank_span(a0, a1, centre, along, ax_w, n_w, w, broken_end=None):
@@ -143,8 +148,9 @@ for e in (-1, 1):
         depth = x_end - pt / 2 + rng.uniform(-proud, proud)
         along = turned(Y, n_w) if k else Y
         centre = at(e * depth, 0, z + w / 2)
-        if e == 1 and z > nh_ * wall_top - 0.02:
-            half = nw_ / 2 * rng.uniform(0.85, 1.15)
+        v0 = nh_ * wall_top
+        half = nw_ / 2 * (z + w / 2 - v0) / (wall_top - v0) * rng.uniform(0.85, 1.15)   # a V: wider at the top
+        if e == 1 and half > 0.04:
             plank_span(-span, off - half, centre, along, Z, n_w, w, broken_end=1)
             plank_span(off + half * rng.uniform(0.8, 1.2), span, centre, along, Z, n_w, w, broken_end=0)
         else:
@@ -152,26 +158,26 @@ for e in (-1, 1):
         z += w + (gaps[k] if k < len(gaps) else 0)
     for s in (-1, 1):
         pw = post_w * rng.uniform(0.9, 1.1)
-        P.wood(at(e * (L / 2 - post_t / 2), s * (W / 2 - pw / 2), H / 2), turned(Z, n_w), Y, n_w, H, pw, post_t, BRACE, tile)
+        P.wood(at(e * (L / 2 - post_t / 2), s * (W / 2 - pw / 2), wall_top / 2), turned(Z, n_w), Y, n_w, wall_top, pw, post_t, BRACE, tile)
         for f in (0.15, 0.5, 0.85):
-            nail(at(e * (L / 2), s * (W / 2 - pw / 2), H * f), n_w, Y)
-    if e == -1:
+            nail(at(e * (L / 2), s * (W / 2 - pw / 2), wall_top * f), n_w, Y)
+    if e == -1 and cfg.get("rope_ends", "one") != "none":
         _rope(P, ROPE, lambda x, y, z: at(x, y, z), e, x_end, W, wall_top, cfg)
 
 # --- floor: planks along the length lying inside; the middle one broken through, a corner missing ---
 fl_w = W - 2 * bat_t - 2 * pt - 0.004
 widths, gaps = _widths(rng, fl_w, gap, target * 1.1)
-hole0, hole1 = cfg.get("floor_hole", [-0.45, 0.15])
+hole0, hole1 = cfg.get("floor_hole") or (None, None)
 corner = cfg.get("floor_corner", 0.3)
 y = -fl_w / 2
 x_in = x_end - pt - 0.002
 for k, w in enumerate(widths):
     centre = at(0, y + w / 2, pt / 2 + 0.001)
     along = turned(X, Z)
-    if k == len(widths) // 2 + 1:            # broken through: two pieces with a gap onto the ground
+    if hole0 is not None and k == len(widths) // 2 + 1:   # broken through: two pieces, a gap onto the ground
         plank_span(-x_in, hole0, centre, along, Y, Z, w, broken_end=1)
         plank_span(hole1, x_in, centre, along, Y, Z, w, broken_end=0)
-    elif k == 0:                               # the -y plank lacks its end at +x
+    elif k == 0 and corner > 0:                # the -y plank lacks its end at +x
         plank_span(-x_in, x_in - corner, centre, along, Y, Z, w, broken_end=1)
     else:
         plank_span(-x_in, x_in, centre, along, Y, Z, w)

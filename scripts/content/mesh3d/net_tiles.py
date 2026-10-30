@@ -27,11 +27,11 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-TILE_M = 0.42
-CELLS = 7
-CORD_M = 0.02
-KNOT_M = 0.034
-FINE = dict(cells=14, cord_m=0.009, knot_m=0.015)     # the dense net hung on the rack: 3 cm meshes
+TILE_M = 0.5
+CELLS = 6
+CORD_M = 0.024
+KNOT_M = 0.04
+FINE = dict(cells=17, cord_m=0.009, knot_m=0.015)     # the dense net hung on the rack: 3 cm meshes
 NET_TARGET = np.array([0.090, 0.073, 0.044])     # linear RGB of the original net's opaque texels
 ROLL_CORE = np.array([0.012, 0.010, 0.007])
 

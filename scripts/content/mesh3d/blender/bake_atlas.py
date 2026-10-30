@@ -14,7 +14,9 @@ config: {"glb": model with tile UVs in metres and zone-key materials (barrel.py)
          "measure_ao": {KEY: min baked AO},
          "crevice": {"distance": 0.02, "dirt": 0.7, "colour": [r, g, b]},
          "streaks": {"length": 0.25, "rust": 0.6, "dirt": 0.35, "rust_colour": [r, g, b], "column": 0.012},
-         "wet_roughness": 0.6, "metal_scale": 1.0}
+         "wet_roughness": 0.6, "metal_scale": 1.0,
+         "moss": {"zones": [KEY, ...], "cover": share or {KEY: share}, "scale": 0.12, "top": 1.0, "bottom": 0.8,
+                  "low": 0.25, "shade": 0.6, "soft": 0.25, "damp": 0.25, "dark": [r, g, b], "light": [r, g, b]}}
 The tiling materials are sampled through the tile UVs and baked into a new atlas
 UV: per-part tone (the builder's "_part" attribute when present, otherwise
 angular sectors around the axis and lid planks along X), dark seams where a part's tile plank ends, worn light edges from the Bevel
@@ -44,6 +46,10 @@ Weathering placed by the model, as for the roofs made of pieces (docs/remaster-p
   metres, in vertical columns about "column" metres wide;
 - "wet_roughness": the wet bottom is smoother, down to this roughness; rust and dirt stay matte.
 The weathering darkens before each zone is scaled to its measured mean, like the AO.
+- "moss": patches of moss after the zones met their targets, so the green is the moss's own: on tops,
+  near the ground and in shaded corners, cut out of a smooth 3D noise at "cover" of each zone's open texels,
+  with a damp darker halo around them. The harbour crates had a thin dotted line of crevice moss and 0-0.2 %
+  green on their lids against 1.2-6 % on the original's (asset harbour-rigging, review 2026-10-30).
 "metal_scale" multiplies the metallic of the "metal" zones: rusty, grimy iron is mostly not metal.
 """
 import json
@@ -368,7 +374,7 @@ ao = bake_pass("ao", "AO", samples=cfg.get("ao_samples", 64))[:, :, 0]
 strength = cfg.get("ao_strength", 0.85)
 albedo = colour * (1 - strength * (1 - ao))[..., None]
 weathering = {}
-if any(k in cfg for k in ("crevice", "streaks", "wet_roughness")):
+if any(k in cfg for k in ("crevice", "streaks", "wet_roughness", "moss")):
     position = lo + bake_pass("position", "EMIT", "position", samples=1, margin=16) * (hi - lo)
     texel_part = np.rint(bake_pass("part", "EMIT", "part_id", samples=1, margin=16)[:, :, 0]).astype(int)
     facing = bake_pass("facing", "EMIT", "facing", samples=1, margin=16) * 2 - 1
@@ -473,6 +479,45 @@ for index, key in enumerate(keys):
                    "contrast": gamma, "mean_before": mean.round(5).tolist(),
                    "gain": gain.round(3).tolist(), "target": targets[key],
                    "tile_normal": tile_normal(key), "edge_wear": edge_wear(key) if key not in metal_keys else None}
+if "moss" in cfg:
+    # Moss in patches, laid after each zone met its colour target so its green is the moss's own:
+    # on tops (facing up), near the ground and in shaded corners, cut out of a smooth 3D noise so it
+    # forms patches, not a film. "cover" is the share of each listed zone's open texels it takes.
+    spec = cfg["moss"]
+    scale = spec.get("scale", 0.12)
+    dirs = rng.standard_normal((14, 3))
+    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+    freqs = 2 * np.pi / (scale * rng.uniform(0.6, 1.8, 14))
+    phases = rng.uniform(0, 2 * np.pi, 14)
+    noise = sum(np.sin(position @ d * f + ph) for d, f, ph in zip(dirs, freqs, phases)) / np.sqrt(7)
+    up = np.clip(facing[..., 2], 0, 1)
+    low = np.clip(1 - (position[..., 2] - z0) / spec.get("low", 0.25), 0, 1)
+    shade = np.clip((1 - ao) / 0.4, 0, 1)
+    bias = spec.get("top", 1.0) * up ** 2 + spec.get("bottom", 0.8) * low + spec.get("shade", 0.6) * shade
+    field = noise + bias
+    moss = np.zeros((size, size))
+    cover = {}
+    for key in spec.get("zones", keys):
+        index = keys.index(key) + 1
+        sel = (zone_id == index) & inside & ~down
+        if not sel.any():
+            continue
+        share = spec.get("cover", {}).get(key, 0.06) if isinstance(spec.get("cover"), dict) else spec.get("cover", 0.06)
+        cut = np.quantile(field[sel], 1 - share)
+        soft = spec.get("soft", 0.25)
+        m = np.clip((field - cut) / soft + 0.5, 0, 1) * (zone_id == index) * inside
+        moss = np.maximum(moss, m)
+        cover[key] = round(float((m[sel] > 0.5).mean()), 4)
+    dark, light = np.array(spec.get("dark", [0.018, 0.028, 0.007])), np.array(spec.get("light", [0.045, 0.06, 0.013]))
+    tone = np.clip(0.5 + 0.5 * np.sin(position @ dirs[0] * freqs[0] * 3.1 + 1.3), 0, 1)[..., None]
+    green = dark * (1 - tone) + light * tone
+    green = green * (0.55 + 0.45 * ao)[..., None]
+    halo = np.clip((field - np.quantile(field[inside], 0.5)) / 1.5, 0, 1) * (1 - moss) * inside
+    albedo *= (1 - spec.get("damp", 0.25) * halo)[..., None]
+    albedo = albedo * (1 - moss[..., None]) + green * moss[..., None]
+    rough = np.maximum(rough, moss * 0.95)
+    weathering["moss"] = moss
+    report["moss"] = cover
 albedo = np.clip(albedo, 0, 1)
 
 

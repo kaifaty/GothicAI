@@ -66,7 +66,7 @@ def make_layer(scale, sx, sy):
 
 layers = [make_layer(*l) for l in cfg.get("layers", [[1.0, 0, 0], [0.72, 0.12, -0.18]])]
 # heights: the first layer's dome reaches h0, every layer above adds its lift; the top touches the bbox
-h0 = H - 0.02 - lift * (len(layers) - 1) - amp[1] * 0.8
+h0 = H - 0.01 - lift * (len(layers) - 1) - amp[1] * 0.5
 
 
 def layer_z(i, x, y):

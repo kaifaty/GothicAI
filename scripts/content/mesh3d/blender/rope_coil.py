@@ -4,8 +4,10 @@ blender -b --factory-startup -P rope_coil.py -- rope-coil.json OUT_DIR   (run fr
 config: {"id": "rig-rope", "target": "data/content/mesh3d-rigging.json", "seed": 2, "thick": 0.08, "sides": 6,
          "segment": 0.12, "hole": 0.1, "rise": 0.8, "wobble": 0.012, "pitch": 0.88, "tile_m": 0.15,
          "outer_tail": [-1.0, 0.25], "inner_tail": [1.0, -0.2]}
-Asset harbour-rigging (intent.md): a flat coil of thick rope about 1.8 m across, the turns stepping up
-toward the middle like the original's low stepped cone, 0.47 m high. The rope is one tube laid along a
+Asset harbour-rigging (intent.md): a coil of thick rope about 1.8 m across laid as a mound 0.47 m high:
+the turns step up from the rim to a flat top over the inner "plateau" share of the radius, as the
+original's coil (the first version was a low cone, review 2026-10-30). The coil sits "centre_y" off the
+bbox centre and is "oval" times longer in y, where the original's coil lies, its ends running out both ways. The rope is one tube laid along a
 spiral on that cone: from the hole (radius "hole") out to the rim, each turn "pitch" rope thicknesses wider and
 a little lower ("rise" shapes the cone: 1 is straight, < 1 rounder). Neighbouring turns overlap in height,
 so no gap shows under them. The outer end leaves the rim and runs over the ground to the -y end of the
@@ -33,7 +35,8 @@ thick, sides = cfg.get("thick", 0.08), cfg.get("sides", 6)
 rad = thick / 2
 tile_m = cfg.get("tile_m", 0.15)
 seg = cfg.get("segment", 0.12)
-centre = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z))
+centre = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2 + cfg.get("centre_y", 0.0), lo.z))
+oval = cfg.get("oval", 1.0)                  # the coil's y radius over its x radius
 r_out = (hi.x - lo.x) / 2 - rad            # the rim turn touches the bbox in x
 r_hole = cfg.get("hole", 0.1)
 height = hi.z - lo.z
@@ -44,9 +47,12 @@ pitch = cfg.get("pitch", 0.88)              # turn spacing in rope thicknesses: 
 
 
 def cone(r):
-    """Height of a turn's centre at radius r: the rim turn on the ground, the innermost at `top`."""
+    """Height of a turn's centre at radius r: a mound, flat on top out to "plateau" of the radius, then
+    falling to the ground at the rim ("rise" shapes the fall)."""
     f = min(max((r - r_hole) / (r_out - r_hole), 0.0), 1.0)
-    return rad + (top - rad) * (1 - f) ** rise
+    edge = cfg.get("plateau", 0.0)
+    g = 0.0 if f <= edge else (f - edge) / (1 - edge)
+    return rad + (top - rad) * (1 - g ** rise)
 
 
 def tube(points, part, taper=(False, False)):
@@ -91,7 +97,7 @@ def spiral(phase):
         w = wobble * math.sin(3 * theta / (2 * math.pi) + jitter[int(theta / (2 * math.pi)) % 64])
         rr = min(r + w, r_out)
         a = phase + theta
-        pts.append(centre + Vector((rr * math.cos(a), rr * math.sin(a), cone(r))))
+        pts.append(centre + Vector((rr * math.cos(a), rr * oval * math.sin(a), cone(r))))
         if theta >= end:
             return pts
         theta = min(theta + min(seg / max(r, 1e-3), 2 * math.pi / 10), end)
@@ -128,10 +134,10 @@ first = coil[0]
 pts = [first, first + Vector((0, 0, thick * 0.6))]
 for f in np.linspace(0.05, 1, 12):
     r = r_hole + (r_out + thick - r_hole) * f
-    pts.append(centre + Vector((bend * f, r * y_dir, surface(min(r, r_out)) + rad * 0.9)))
+    pts.append(centre + Vector((bend * f, r * oval * y_dir, surface(min(r, r_out)) + rad * 0.9)))
 end_y = hi.y - rad if y_dir > 0 else lo.y + rad
 for f in np.linspace(0.15, 1, 6):
-    y = centre.y + y_dir * (r_out + thick) + (end_y - centre.y - y_dir * (r_out + thick)) * f
+    y = centre.y + y_dir * (r_out * oval + thick) + (end_y - centre.y - y_dir * (r_out * oval + thick)) * f
     pts.append(Vector((centre.x + bend + 0.08 * math.sin(f * math.pi), y, lo.z + rad + (rad * 1.5) * (1 - f) ** 2)))
 tube(pts, P.new_part(), taper=(False, True))
 

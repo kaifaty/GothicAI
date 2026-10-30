@@ -46,8 +46,8 @@ RYZEN_BLENDER = '~/gothic-ai/mesh3d/blender/blender'
 # item: visual, builder script, config, atlas config (None: not baked), tiled materials of the GLB
 # {zone key: [material name, tile folder, linear colour target or None]}
 ITEMS = {
-    'crate': dict(visual='NW_HARBOUR_CRATE_01', script='crate.py', cfg='crate.json', atlas='crate-rig-atlas.json'),
-    'crate-pile': dict(visual='NW_HARBOUR_CRATEPILE_01', script='crate_pile.py', cfg='crate-pile.json', atlas='crate-pile-rig-atlas.json'),
+    'crate': dict(visual='NW_HARBOUR_CRATE_01', script='crate.py', cfg='crate-rig.json', atlas='crate-rig-atlas.json'),
+    'crate-pile': dict(visual='NW_HARBOUR_CRATEPILE_01', script='crate_pile.py', cfg='crate-pile-rig.json', atlas='crate-pile-rig-atlas.json'),
     'crate-broken': dict(visual='NW_HARBOUR_CRATEBROKEN_01', script='crate_broken.py', cfg='crate-broken.json',
                          atlas='crate-broken-atlas.json'),
     'rope': dict(visual='NW_HARBOUR_ROPE_01', script='rope_coil.py', cfg='rope-coil.json', atlas='rope-coil-atlas.json'),
@@ -243,6 +243,10 @@ def cmd_pack(args) -> int:
             if alpha:
                 masked.add(key)
         used = glb_edit(glb, mesh_dir / 'model.glb', names, masked)
+        if spec['atlas']:   # an atlas slot without faces (a zone the model no longer uses) gets no entry
+            for key in keys:
+                if key not in used:
+                    materials.pop(f'{key}.TGA', None)
         missing = [m for m in used if f'{m}.TGA' not in materials]
         if missing:
             raise SystemExit(f'{item}: GLB materials without an entry: {missing}')

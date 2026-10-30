@@ -6,7 +6,7 @@
   "sides": 6,
   "segment": 0.12,
   "hole": 0.1,
-  "rise": 0.8,
+  "rise": 2.2,
   "wobble": 0.012,
   "tile_m": 0.15,
   "outer_tail": [
@@ -17,5 +17,8 @@
     1.0,
     -0.2
   ],
-  "pitch": 0.88
+  "pitch": 0.88,
+  "plateau": 0.45,
+  "centre_y": 0.245,
+  "oval": 1.07
 }

@@ -9,9 +9,9 @@
  },
  "targets": {
   "OWN_PROP_WOOD_FRAME": [
-   0.03,
-   0.027,
-   0.014
+   0.036,
+   0.031,
+   0.013
   ],
   "OWN_PROP_NET_ROLL": [
    0.028,
@@ -73,15 +73,6 @@
  "measure_ao": {
   "OWN_PROP_WOOD_FRAME": 0.5
  },
- "crevice": {
-  "distance": 0.04,
-  "dirt": 1.0,
-  "colour": [
-   0.026,
-   0.042,
-   0.01
-  ]
- },
  "streaks": {
   "length": 0.4,
   "rust": 0.0,
@@ -92,5 +83,28 @@
    0.012
   ],
   "column": 0.015
+ },
+ "moss": {
+  "zones": [
+   "OWN_PROP_WOOD_FRAME"
+  ],
+  "cover": 0.2,
+  "scale": 0.15,
+  "top": 1.5,
+  "bottom": 1.0,
+  "low": 0.25,
+  "shade": 0.5,
+  "soft": 0.25,
+  "damp": 0.25,
+  "dark": [
+   0.018,
+   0.028,
+   0.007
+  ],
+  "light": [
+   0.045,
+   0.06,
+   0.013
+  ]
  }
 }

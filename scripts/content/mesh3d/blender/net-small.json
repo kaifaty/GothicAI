@@ -39,8 +39,8 @@
     1
   ],
   "target": "data/content/mesh3d-rigging.json",
-  "dome": 0.7,
+  "dome": 0.45,
   "edge": 0.08,
   "lift": 0.025,
-  "tile_m": 0.42
+  "tile_m": 0.5
 }
