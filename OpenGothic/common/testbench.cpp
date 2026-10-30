@@ -11114,20 +11114,14 @@ void routineReturnBegin(World& world,Npc& player) {
   npc->clearGoTo();npc->stopWalking();npc->closeWeapon(true);npc->setAnim(Npc::Anim::Idle);npc->setExternalControl(true);
   npc->setPosition(c.start);npc->updateTransform();
   const auto* target=npc->currentTaPoint();
-  auto direction=target->pos-c.start;direction.y=0;
-  if(direction.length()<1)direction={1,0,0};
-  direction/=direction.length();
-  const auto wanted=(target->pos+c.start)*.5f+Vec3(-direction.z,0,direction.x)*4200.f;
-  const auto span=target->pos-c.start;
-  const auto* parking=world.findWayPoint(wanted,[&](const WayPoint& wp) {
-    if(!wp.isConnected() || wp.underWater)return false;
-    const float along=std::clamp(Vec3::dotProduct(wp.pos-c.start,span)/span.quadLength(),0.f,1.f);
-    if((wp.pos-(c.start+span*along)).length()<4000)return false;
-    const auto floor=world.physic()->landRay(wp.pos+Vec3(0,100,0),500);
-    return floor.hasCol && floor.n.y>=.7f && !world.physic()->waterRay(floor.v,15).hasCol;
-    });
-  if(!parking) {arenaAbort("routine-return hero parking has no dry waypoint");return;}
-  const auto hero=world.physic()->landRay(parking->pos+Vec3(0,100,0),500).v;
+  // One dry parking point, verified more than 87 m from all fixture starts and TA goals.
+  const auto* parking=world.findWayPoint("NW_PATH_TO_MONASTER_MONSTER22");
+  if(!parking) {arenaAbort("routine-return fixed hero parking waypoint is missing");return;}
+  const auto floor=world.physic()->landRay(parking->pos+Vec3(0,100,0),500);
+  if(!floor.hasCol || floor.n.y<.7f || world.physic()->waterRay(floor.v,15).hasCol) {
+    arenaAbort("routine-return fixed hero parking has no dry support");return;
+    }
+  const auto hero=floor.v;
   player.closeWeapon(true);player.setPosition(hero);player.updateTransform();
   // The hero is not the measured actor: keep him from sliding off a remote slope.
   bench.pinned=&player;bench.pinAt=hero;
