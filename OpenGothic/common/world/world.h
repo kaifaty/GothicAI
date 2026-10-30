@@ -98,7 +98,7 @@ class World final {
     void                 detectNpc (const Tempest::Vec3& p, const float r, const std::function<void(Npc&)>& f);
     void                 detectItem(const Tempest::Vec3& p, const float r, const std::function<void(Item&)>& f);
 
-    WayPath              wayTo(const Npc& pos,const WayPoint& end) const;
+    WayPath              wayTo(Npc& pos,const WayPoint& end) const;
 
     WorldView*           view()     const { return wview.get();    }
     WorldSound*          sound()          { return &wsound;        }

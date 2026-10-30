@@ -1501,20 +1501,42 @@ void World::detectItem(const Tempest::Vec3& p, const float r, const std::functio
   wobj.detectItem(p.x,p.y,p.z,r,f);
   }
 
-WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {
+WayPath World::wayTo(Npc &npc, const WayPoint &end) const {
   const auto npcPos = npc.centerPosition();
+  const bool routine = !npc.isPlayer() && npc.currentTaPoint()==&end;
+  const bool enabled = Gothic::settingsGetI("GAME","routine_entry_check")!=0;
+  const bool trace = routine && TestBench::isActive() && TestBench::routineReturnActive(npc);
+  WayMatrix::RoutineEntry entry;
+  const auto result = [&](WayPath path) {
+    if(trace)
+      TestBench::routinePath(npc,end,entry,path,enabled);
+    return path;
+    };
 
   auto begin = npc.currentWayPoint();
   if(begin==&end && MoveAlgo::isClose(npc,end)) {
-    return WayPath();
+    return result(WayPath());
     }
   if(begin==&end && !end.isConnected() && npc.canRayHitPoint(end.position()+Tempest::Vec3(0,10,0))) {
     WayPath ret;
     ret.add(end);
-    return ret;
+    return result(std::move(ret));
     }
   if(begin && begin->isConnected() && MoveAlgo::isClose(npc,*begin)) {
-    return wmatrix->wayTo(&begin,1,npcPos,end);
+    return result(wmatrix->wayTo(&begin,1,npcPos,end));
+    }
+  if(routine && end.isConnected() && (enabled || trace)) {
+    entry = wmatrix->findRoutineEntry(npcPos,[&npc](const WayPoint& point) {
+      return npc.testMove(point.pos);
+      });
+    if(enabled && entry.accepted!=nullptr) {
+      auto near = entry.accepted;
+      if(MoveAlgo::isClose(npc,*near) && near==&end)
+        return result(WayPath());
+      // A single seed keeps visibility-only neighbours from replacing the
+      // entry whose complete native capsule move was checked above.
+      return result(wmatrix->wayTo(&near,1,npcPos,end));
+      }
     }
   auto near = wmatrix->findWayPoint(npcPos, [&npc](const WayPoint &wp) {
     if(!npc.canRayHitPoint(wp.pos))
@@ -1528,7 +1550,7 @@ WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {
     }
 
   if(MoveAlgo::isClose(npc,*near) && near==&end)
-    return WayPath();
+    return result(WayPath());
 
   std::vector<const WayPoint*> wpoint;
   wpoint.push_back(near);
@@ -1538,7 +1560,7 @@ WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {
       wpoint.push_back(i.point);
     }
 
-  return wmatrix->wayTo(wpoint.data(),wpoint.size(),npcPos,end);
+  return result(wmatrix->wayTo(wpoint.data(),wpoint.size(),npcPos,end));
   }
 
 GameScript& World::script() const {

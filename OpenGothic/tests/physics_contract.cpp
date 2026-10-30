@@ -12,6 +12,7 @@
 #include "game/damagecalculator.h"
 #include "game/meleeimpact.h"
 #include "world/objects/npc.h"
+#include "world/waymatrix.h"
 #include "gothic.h"
 
 #include <Tempest/MemReader>
@@ -1819,6 +1820,31 @@ namespace {
               "a cd_dynamic=0 movable hull must wake and push another hull through physical contact");
       require(world.physicsStats().bodies==2,
               "physical contact between cd_dynamic=0 hulls must not require query proxies");
+      }
+
+    {
+      DynamicWorld world(nullptr,movableFloor());
+      ProtoMesh wallShape(PackedMesh(movableCollisionBox({40,200,200}),PackedMesh::PK_Visual),"CONTRACT_ENTRY_WALL.MRM");
+      world.setMovableVobsEnabled(false);
+      auto wall = world.addMovableVob(wallShape,"CONTRACT_ENTRY_WALL.MRM",at(100,100,0),.25f,true,"wall",true);
+      hierarchy.collision_bbox = {{-25,0,-25},{25,140,25}};
+      Skeleton capsule(asset::fromZenKit(hierarchy),nullptr,"CONTRACT_ENTRY_WALKER");
+      auto walker = world.addGhostObj(&capsule);
+      walker.setPosition({0,0,0});
+      const std::array<WayPoint,2> points = {
+        WayPoint({0,0,400},{},"ENTRY_CLEAR",false),
+        WayPoint({200,0,0},{},"ENTRY_BLOCKED",false)
+        };
+      const auto entry = WayMatrix::findRoutineEntry(points,walker.position(),[&](const WayPoint& point) {
+        DynamicWorld::CollisionTest collision;
+        return walker.testMove(point.pos,collision);
+        });
+      require(entry.count==2 && entry.candidates[0].point==&points[1] && !entry.candidates[0].passable,
+              "routine entry selection must test and reject the nearest waypoint behind a wall");
+      require(entry.accepted==&points[0] && entry.candidates[1].passable,
+              "routine entry selection must choose the farther waypoint with a clear native capsule move");
+      requireNear(walker.position().length(),0.f,.001f,
+                  "routine entry probes must preserve the native capsule position");
       }
     }
 

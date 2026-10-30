@@ -130,6 +130,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_posture",         1);
   defaults->set("GAME", "melee_down_tactics",    1);
   defaults->set("GAME", "melee_hitstop",         1);
+  defaults->set("GAME", "routine_entry_check",   1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);

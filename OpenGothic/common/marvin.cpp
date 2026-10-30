@@ -197,6 +197,7 @@ Marvin::Marvin() {
     {"toggle melee_posture",      C_ToggleMeleePosture},
     {"toggle melee_down_tactics", C_ToggleMeleeDownTactics},
     {"toggle melee_hitstop",      C_ToggleMeleeHitStop},
+    {"toggle routine_entry_check",C_ToggleRoutineEntryCheck},
     };
   }
 
@@ -671,6 +672,12 @@ bool Marvin::exec(std::string_view v) {
       const bool enabled = !Gothic::physicsFlags().meleeHitStop;
       Gothic::settingsSetI("GAME","melee_hitstop",enabled ? 1 : 0);
       print(enabled ? "Melee hit stop: ON" : "Melee hit stop: OFF");
+      return true;
+      }
+    case C_ToggleRoutineEntryCheck: {
+      const bool enabled = Gothic::settingsGetI("GAME","routine_entry_check")==0;
+      Gothic::settingsSetI("GAME","routine_entry_check",enabled ? 1 : 0);
+      print(enabled ? "Routine entry check: ON" : "Routine entry check: OFF");
       return true;
       }
     }

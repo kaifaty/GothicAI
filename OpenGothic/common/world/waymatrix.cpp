@@ -75,6 +75,38 @@ const WayPoint *WayMatrix::findWayPoint(const Vec3& at, const std::function<bool
   return ret;
   }
 
+WayMatrix::RoutineEntry WayMatrix::findRoutineEntry(const Vec3& at, const std::function<bool(const WayPoint&)>& passable) const {
+  return findRoutineEntry(wayPoints,at,passable);
+  }
+
+WayMatrix::RoutineEntry WayMatrix::findRoutineEntry(std::span<const WayPoint> points, const Vec3& at,
+                                                   const std::function<bool(const WayPoint&)>& passable) {
+  RoutineEntry ret;
+  ret.checked = true;
+  for(const auto& point:points) {
+    const float distance = (point.pos-at).length();
+    if(point.isFreePoint() || distance>3000.f)
+      continue;
+    ++ret.totalInRange;
+    size_t index = ret.count;
+    while(index>0 && distance<ret.candidates[index-1].distance)
+      --index;
+    if(index==ret.candidates.size())
+      continue;
+    for(size_t i=std::min(ret.count,ret.candidates.size()-1);i>index;--i)
+      ret.candidates[i] = ret.candidates[i-1];
+    ret.candidates[index] = {&point,distance,false};
+    ret.count = std::min(ret.count+1,ret.candidates.size());
+    }
+  for(size_t i=0;i<ret.count;++i) {
+    auto& candidate = ret.candidates[i];
+    candidate.passable = passable(*candidate.point);
+    if(ret.accepted==nullptr && candidate.passable)
+      ret.accepted = candidate.point;
+    }
+  return ret;
+  }
+
 const WayPoint *WayMatrix::findFreePoint(const Vec3& at, std::string_view name, const std::function<bool(const WayPoint&)>& filter) const {
   auto&  index = findFpIndex(name);
   return findFreePoint(at,index,filter);
