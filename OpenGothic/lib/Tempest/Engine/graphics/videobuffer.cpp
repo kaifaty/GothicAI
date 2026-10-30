@@ -43,3 +43,11 @@ void VideoBuffer::update(const void* data, size_t offset, size_t size) {
     throw std::system_error(Tempest::GraphicsErrc::InvalidBufferUpdate);
   impl.handler->update(data,offset,size);
   }
+
+void VideoBuffer::updateAsync(const void* data, size_t offset, size_t size) {
+  if(size==0)
+    return;
+  if(offset+size>sz)
+    throw std::system_error(Tempest::GraphicsErrc::InvalidBufferUpdate);
+  impl.handler->updateAsync(data,offset,size);
+  }

@@ -61,6 +61,14 @@ void MtBuffer::update(const void *data, size_t off, size_t size) {
   upload(data,off,size,true);
   }
 
+void MtBuffer::updateAsync(const void* data, size_t off, size_t size) {
+  if(T_LIKELY(impl->storageMode()!=MTL::StorageModePrivate)) {
+    implUpdate(data,off,size);
+    return;
+    }
+  upload(data,off,size,false);
+  }
+
 void MtBuffer::upload(const void* data, size_t off, size_t size, bool wait) {
   auto pool = NsPtr<NS::AutoreleasePool>::init();
   MTL::ResourceOptions opt   = MTL::ResourceStorageModeShared | MTL::ResourceCPUCacheModeWriteCombined;

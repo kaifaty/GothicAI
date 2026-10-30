@@ -546,6 +546,7 @@ namespace Tempest {
       struct Buffer:Shared   {
         virtual ~Buffer()=default;
         virtual void  update  (const void* data, size_t off, size_t size)=0;
+        virtual void  updateAsync(const void* data, size_t off, size_t size) { update(data,off,size); }
         virtual void  read    (      void* data, size_t off, size_t size)=0;
         };
 
