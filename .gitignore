@@ -25,6 +25,8 @@ data/
 !/data/content/registry.jsonl
 !/data/content/mesh3d-pilot.json
 !/data/content/mesh3d-market.json
+!/data/content/mesh3d-rigging.json
+!/data/content/prop-models.jsonl
 !/data/content/quality-pilot.jsonl
 !/data/content/quality-pilot-2.jsonl
 !/data/content/quality-pilot-3.jsonl
