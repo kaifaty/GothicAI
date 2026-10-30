@@ -29,6 +29,7 @@
 #include "resources.h"
 #include "frameprofile.h"
 #include "testbench.h"
+#include "loadprobe.h"
 #include "physics/physicsnoise.h"
 #include "physics/cloth.h"
 #include "physics/worldcloth.h"
@@ -116,29 +117,46 @@ const char* materialTag(asset::MaterialGroup src) {
 World::World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress)
   :wname(std::move(file)), game(game), wsound(game,*this), wobj(*this) {
   const auto loadStarted = std::chrono::steady_clock::now();
+  if(LoadProbe::enabled())
+    LoadProbe::mark("world_begin",-1,"world="+std::string(wname));
   try {
     WorldData::Data world;
     asset::WorldMesh worldMesh;
-    Resources::loadWorld(world,worldMesh,wname);
+    Resources::loadWorld(world,worldMesh,wname,&chunks);
+    if(LoadProbe::enabled())
+      LoadProbe::mark("world_read_total",LoadProbe::msSince(loadStarted));
+    residency = ChunkResidency::create(chunks);
     loadProgress(20);
     windRooms.reset(world.bsp.mode,std::move(world.rooms));
     auto worldCloth=WorldCloth::extract(worldMesh);
 
-    auto wdynamicFut = std::async(std::launch::async, [&]() {
+    const bool probeSerial = LoadProbe::serial();
+    const auto probeLaunch = probeSerial ? std::launch::deferred : std::launch::async;
+    double probePhysicsMs = 0, probeViewMs = 0;
+    auto wdynamicFut = std::async(probeLaunch, [&]() {
       Workers::setThreadName("Loading: BVH thread");
-      return std::unique_ptr<DynamicWorld>(new DynamicWorld(this,worldMesh,&worldCloth.original));
+      const auto t = LoadProbe::now();
+      auto ret = std::unique_ptr<DynamicWorld>(new DynamicWorld(this,worldMesh,&worldCloth.original));
+      probePhysicsMs = LoadProbe::msSince(t);
+      return ret;
       });
     std::future<std::unique_ptr<WorldView>> wviewFut;
     if(!Resources::isHeadless()) {
-      wviewFut = std::async(std::launch::async, [&]() {
+      wviewFut = std::async(probeLaunch, [&]() {
         Workers::setThreadName("Loading: PackedMesh thread");
+        const auto t = LoadProbe::now();
         PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);
+        if(LoadProbe::enabled())
+          LoadProbe::mark("landscape_pack",LoadProbe::msSince(t),
+                          "vertices="+std::to_string(vmesh.vertices.size())+" indices="+std::to_string(vmesh.indices.size())+
+                          " meshlet_bytes="+std::to_string(vmesh.vertices.size()*sizeof(vmesh.vertices[0])+vmesh.indices.size()*sizeof(vmesh.indices[0])));
         auto view=std::make_unique<WorldView>(vmesh,wname);
         if(!worldCloth.original.polygons.material_indices.empty()) {
           PackedMesh originalCloth(worldCloth.original,PackedMesh::PK_VisualLnd);
           view->setOriginalClothMesh(originalCloth);
           view->setOriginalClothVisible(!Gothic::physicsFlags().cloth);
           }
+        probeViewMs = LoadProbe::msSince(t);
         return view;
         });
       }
@@ -154,11 +172,18 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     }
     loadProgress(50);
 
+    auto probeT = LoadProbe::now();
     if(wviewFut.valid())
       wview = wviewFut.get();
+    if(LoadProbe::enabled())
+      LoadProbe::mark("landscape_view",probeViewMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
     loadProgress(60);
 
+    probeT = LoadProbe::now();
     wdynamic = wdynamicFut.get();
+    if(LoadProbe::enabled())
+      LoadProbe::mark("physics_static",probePhysicsMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
+    probeT = LoadProbe::now();
     wdynamic->cloth().setExposureTest([this](const Tempest::Vec3& point) { return !isIndoor(point); });
     wdynamic->setPhysicsNoiseEnabled(Gothic::physicsFlags().physicsNoise);
     wdynamic->setDestructionEnabled(Gothic::physicsFlags().destruction);
@@ -169,16 +194,31 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     for(auto& surface:worldCloth.surfaces)
       if(auto visual=ClothVisual::createSurface(*this,surface.mesh,surface.pins,surface.visual,surface.id,surface.stiffness,surface.linearDamping))
         clothSurfaces.push_back(std::move(visual));
+    if(LoadProbe::enabled())
+      LoadProbe::mark("cloth_surfaces",LoadProbe::msSince(probeT),"surfaces="+std::to_string(clothSurfaces.size()));
+    probeT = LoadProbe::now();
     worldMesh = {};
     loadProgress(70);
 
     globFx.reset(new GlobalEffects(*this));
     wmatrix.reset(new WayMatrix(*this, *world.waynet));
+    if(LoadProbe::enabled())
+      LoadProbe::mark("waynet",LoadProbe::msSince(probeT));
+    probeT = LoadProbe::now();
     for(auto& vob:world.vobs)
       wobj.addRoot(vob,startup);
+    if(LoadProbe::enabled())
+      LoadProbe::mark("vobs",LoadProbe::msSince(probeT),
+                      "items="+std::to_string(wobj.itmCount())+" mobsi="+std::to_string(wobj.mobsiCount()));
+    probeT = LoadProbe::now();
     wdynamic->finalizeMovableVobs();
+    if(LoadProbe::enabled())
+      LoadProbe::mark("movable_vobs",LoadProbe::msSince(probeT));
 
+    probeT = LoadProbe::now();
     wmatrix->buildIndex();
+    if(LoadProbe::enabled())
+      LoadProbe::mark("waynet_index",LoadProbe::msSince(probeT));
     loadProgress(100);
     }
   catch(...) {
@@ -186,6 +226,8 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     throw;
     }
   worldLoadMs = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-loadStarted).count();
+  if(LoadProbe::enabled())
+    LoadProbe::mark("world_end",worldLoadMs);
   }
 
 World::~World() {
@@ -1499,6 +1541,11 @@ void World::detectNpc(const Tempest::Vec3& p, const float r, const std::function
 
 void World::detectItem(const Tempest::Vec3& p, const float r, const std::function<void(Item&)>& f) {
   wobj.detectItem(p.x,p.y,p.z,r,f);
+  }
+
+WayPath World::wayTo(const WayPoint& begin, const WayPoint& end) const {
+  const auto* first = &begin;
+  return wmatrix->wayTo(&first,1,begin.position(),end);
   }
 
 WayPath World::wayTo(Npc &npc, const WayPoint &end) const {

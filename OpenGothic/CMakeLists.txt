@@ -82,7 +82,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source baseidentity basestoreimport sha256 baseimport basesources worldchunks worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit
+foreach(source baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -475,6 +475,8 @@ if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-worlddata-contract EXCLUDE_FROM_ALL tests/worlddata_contract.cpp)
   target_link_libraries(gothic-worlddata-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-worlddata-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  add_executable(gothic-wayheights-contract EXCLUDE_FROM_ALL tests/wayheights_contract.cpp)
+  target_link_libraries(gothic-wayheights-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   add_executable(gothic-vob-layer-test EXCLUDE_FROM_ALL tests/vob_layer_test.cpp)
   target_link_libraries(gothic-vob-layer-test PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
   target_include_directories(gothic-vob-layer-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
@@ -500,6 +502,7 @@ if(NOT ANDROID AND NOT IOS)
   endif()
   if(NOT MSVC)
     target_compile_options(gothic-worlddata-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-wayheights-contract PRIVATE -Wall -Wconversion -Werror)
     target_compile_options(gothic-basecontent-contract PRIVATE -Wall -Wconversion -Werror)
     target_compile_options(gothic-worldbase-contract PRIVATE -Wall -Wconversion -Werror)
   endif()

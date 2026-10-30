@@ -212,6 +212,21 @@ def test_compose_and_enable_carry_world_chunks(tmp_path, monkeypatch):
         building_set.compose('none', ['roofs-1', 'empty'])
 
 
+def test_compose_and_enable_carry_a_vob_layer(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    layer = tmp_path / 'content-staging/life-1/worlds/NEWWORLD/vobs.d/harbour-life.json'
+    layer.parent.mkdir(parents=True)
+    layer.write_text('{"format": 1, "add": []}\n')
+    (layer.parent / 'notes.txt').write_text('not a layer')
+    result = building_set.compose('city-1', ['roofs-1', 'life-1'])
+    assert result['chunks'] == 1 and result['parts'] == {'roofs-1': 1, 'life-1': 1}
+    out = tmp_path / 'content-staging/city-1/worlds/NEWWORLD/vobs.d'
+    assert sorted(p.name for p in out.iterdir()) == ['harbour-life.json']
+    building_set.enable('city-1')
+    assert (tmp_path / 'content/worlds/NEWWORLD/vobs.d/harbour-life.json').read_text() == layer.read_text()
+
+
 def test_crop_band_drops_grey_margins():
     from PIL import Image
     canvas = Image.new('RGB', (300, 200), (200, 200, 200))

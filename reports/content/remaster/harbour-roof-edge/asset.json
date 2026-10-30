@@ -1,0 +1,65 @@
+{
+  "asset": "harbour-roof-edge",
+  "title": "Кромка гонтовой кровли хижин порта",
+  "kind": "building",
+  "created": "2026-10-30",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "harbour-roof-edge"
+  ],
+  "sources": [],
+  "selected": {},
+  "reviews": [
+    {
+      "id": "r3l-front",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-30",
+      "path": "reviews/r3l-front/merged.json"
+    },
+    {
+      "id": "r3l-eave-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "PASS",
+      "date": "2026-10-30",
+      "path": "reviews/r3l-eave-close/merged.json"
+    },
+    {
+      "id": "r3l-verge-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-30",
+      "path": "reviews/r3l-verge-close/merged.json"
+    },
+    {
+      "id": "r3l-huts-east",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-30",
+      "path": "reviews/r3l-huts-east/merged.json"
+    },
+    {
+      "id": "r4-front",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-30",
+      "path": "reviews/r4-front/merged.json"
+    },
+    {
+      "id": "r4-huts-east",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "PASS",
+      "date": "2026-10-30",
+      "path": "reviews/r4-huts-east/merged.json"
+    }
+  ],
+  "gates": [],
+  "build": null,
+  "backup": null
+}

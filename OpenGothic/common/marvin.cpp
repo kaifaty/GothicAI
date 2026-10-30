@@ -59,6 +59,8 @@ static bool fromString(std::string_view str, float& t) {
   return true;
   }
 
+bool Marvin::showChunks = false;
+
 Marvin::Marvin() {
   /* Legend:
    %c - instance variable from script
@@ -91,6 +93,7 @@ Marvin::Marvin() {
     // rendering
     {"set clipfactor %d",          C_Invalid},
     {"toggle frame",               C_ToggleFrame},
+    {"toggle chunks",              C_ToggleChunks},
     {"zfogzone",                   C_Invalid},
     {"zhighqualityrender",         C_Invalid},
     {"zmark",                      C_Invalid},
@@ -413,6 +416,10 @@ bool Marvin::exec(std::string_view v) {
       }
     case C_ToggleFrame:{
       Gothic::inst().setFRate(!Gothic::inst().doFrate());
+      return true;
+      }
+    case C_ToggleChunks:{
+      showChunks = !showChunks;
       return true;
       }
     case C_ToggleShowRay:{

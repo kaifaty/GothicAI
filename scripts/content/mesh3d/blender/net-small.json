@@ -1,0 +1,28 @@
+{
+  "id": "rig-net-small",
+  "seed": 8,
+  "folds": [
+    3,
+    [
+      0.015,
+      0.035
+    ],
+    [
+      0.3,
+      0.6
+    ]
+  ],
+  "target": "data/content/mesh3d-rigging.json",
+  "edge": 0.1,
+  "lift": 0.022,
+  "tile_m": 0.63,
+  "rings": 7,
+  "segments": 24,
+  "profile": [
+    0.86,
+    0.62,
+    0.68,
+    0.4
+  ],
+  "uv_turn": 0.12
+}

@@ -9,6 +9,8 @@ The checks of an edited chunk:
   place. A copy of it at another place, or none left where it was, opens a crack between the chunks;
 - open edges: an edge with one triangle (vertices welded by position) is new only if the base chunk did not have
   it open and no edit declared it (world_edit_blender.Context.allow_open);
+- source triangles: a triangle the edits left as it was is the base triangle byte for byte, with its order, flags
+  and lightmap (chunk_canon.py writes them back after the Blender export);
 - materials: each material is in the base world's list (world.json) or its texture is a key of a given
   materials.json;
 - report: triangles and area per material, base and edited.
@@ -33,7 +35,8 @@ class Primitive:
     uvs: np.ndarray           # (t, 3, 2) float32
     vertex_ids: np.ndarray    # (t, 3) float32 _VERTEX, -1 for new geometry
     normals: np.ndarray       # (t, 3, 3) float32
-    colors: np.ndarray        # (t, 3, 4) float32, 0..1
+    colors: np.ndarray        # (t, 3, 4) float32, 0..1: the baked vertex light (Gothic's feature light)
+    feature_ids: np.ndarray = None   # (t, 3) float32 _FEATURE, -1 for new geometry
 
 
 @dataclass
@@ -122,10 +125,12 @@ def read_chunk(path: Path | str) -> Chunk:
             nor = accessor(doc, binary, attrs['NORMAL']).astype(np.float32) if 'NORMAL' in attrs \
                 else np.zeros((n, 3), np.float32)
             col = colour(doc, binary, attrs['COLOR_0']) if 'COLOR_0' in attrs else np.ones((n, 4), np.float32)
+            fid = accessor(doc, binary, attrs['_FEATURE']).astype(np.float32) if '_FEATURE' in attrs \
+                else np.full(n, -1, np.float32)
             idx = accessor(doc, binary, prim['indices']).astype(np.int64) if 'indices' in prim else np.arange(n)
             tri = idx.reshape(-1, 3)
             chunk.primitives.append(Primitive(material_record(doc, prim.get('material')), pos[tri], uv[tri], vid[tri],
-                                              nor[tri], col[tri]))
+                                              nor[tri], col[tri], fid[tri]))
     return chunk
 
 
@@ -217,6 +222,31 @@ def _floats(key: tuple) -> str:
     return f'({x:.2f} {y:.2f} {z:.2f})'
 
 
+def light_violations(base: Chunk, edited: Chunk) -> tuple[int, list[str]]:
+    """Corners of the base geometry (_VERTEX and _FEATURE kept) whose vertex light differs from the base's by a
+    byte or more: an export that drops COLOR_0 turns them white (Blender 5.2 did for all but the first material).
+    Returns how many corners were compared and the violations."""
+    def light_bytes(p):
+        return np.rint(np.clip(p.colors.reshape(-1, 4), 0, 1) * 255).astype(np.int16)
+    known = {}
+    for p in base.primitives:
+        for v, f, c in zip(p.vertex_ids.reshape(-1), p.feature_ids.reshape(-1), light_bytes(p)):
+            known[(int(v), int(f))] = c
+    checked, bad = 0, []
+    for p in edited.primitives:
+        for v, f, c in zip(p.vertex_ids.reshape(-1), p.feature_ids.reshape(-1), light_bytes(p)):
+            if v < 0 or f < 0:
+                continue
+            want = known.get((int(v), int(f)))
+            if want is None:
+                continue
+            checked += 1
+            if np.abs(want - c).max() > 1:
+                bad.append(f'vertex light of _VERTEX {int(v)} _FEATURE {int(f)} ({p.material.get("name", "")}): '
+                           f'{c.tolist()} instead of the base {want.tolist()}')
+    return checked, bad
+
+
 def triangle_area(positions: np.ndarray) -> np.ndarray:
     p = positions.astype(np.float64)
     return np.linalg.norm(np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0]), axis=1) / 2
@@ -269,6 +299,17 @@ def check(base_path: Path | str, edited_path: Path | str, *, allowed_open: set[t
     border = border_violations(base, edited, shared)
     problems += border
 
+    light_checked, light = light_violations(base, edited)
+    problems += light[:20]
+    if len(light) > 20:
+        problems.append(f'... {len(light) - 20} more corners with another vertex light')
+
+    from chunk_canon import source_violations
+    source_exact, source = source_violations(base_path, edited_path)
+    problems += source[:20]
+    if len(source) > 20:
+        problems.append(f'... {len(source) - 20} more source triangles not as the base has them')
+
     base_open = open_edges(base)
     out_open = open_edges(edited)
     new_open = out_open - base_open - set(allowed_open)
@@ -303,6 +344,8 @@ def check(base_path: Path | str, edited_path: Path | str, *, allowed_open: set[t
         'open_edges': {'base': len(base_open), 'edited': len(out_open), 'declared': len(allowed_open),
                        'new': len(new_open)},
         'materials': rows,
+        'light': {'checked': light_checked, 'other': len(light)},
+        'source': {'exact': source_exact, 'other': len(source)},
     }
     return Report(problems, summary)
 
@@ -311,7 +354,9 @@ def format_report(report: Report) -> str:
     s = report.summary
     lines = [f'triangles {s["triangles"][0]} -> {s["triangles"][1]} ({s["triangles"][1] - s["triangles"][0]:+d}); '
              f'border vertices {s["border_vertices"]}; open edges base {s["open_edges"]["base"]}, edited '
-             f'{s["open_edges"]["edited"]}, declared by the edits {s["open_edges"]["declared"]}, new {s["open_edges"]["new"]}']
+             f'{s["open_edges"]["edited"]}, declared by the edits {s["open_edges"]["declared"]}, new {s["open_edges"]["new"]}; '
+             f'vertex light of {s["light"]["checked"]} base corners, {s["light"]["other"]} changed; '
+             f'source triangles exact {s.get("source", {}).get("exact", 0)}, other {s.get("source", {}).get("other", 0)}']
     for name, row in s['materials'].items():
         (t0, t1), (a0, a1) = row['triangles'], row['area_m2']
         lines.append(f'  {name:32} triangles {t0:6d} -> {t1:6d} ({t1 - t0:+6d})   area {a0:9.3f} -> {a1:9.3f} m² '

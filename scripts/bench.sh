@@ -67,6 +67,10 @@ if [[ "$NAME" == routine-return ]]; then
   export RYZEN_MAX="${RYZEN_MAX:-75m}"
   [[ "$WORLD" == NEWWORLD.ZEN ]] || { echo "bench: routine-return requires WORLD=NEWWORLD.ZEN" >&2; exit 2; }
 fi
+if [[ "$NAME" == streaming-flythrough ]]; then
+  export WORLD="${WORLD:-NEWWORLD.ZEN}"
+  export RYZEN_BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"
+fi
 NEEDS_CADENCE=0
 if awk '$1 == "cadence" { found=1 } END { exit !found }' "$SCEN"; then NEEDS_CADENCE=1; fi
 OUT="${2:-$ROOT/.bench/$NAME-$(date +%Y%m%d-%H%M%S)}"
@@ -93,7 +97,7 @@ out, textures = map(path, sys.argv[1:])
 for name, value in sorted(os.environ.items()):
     if not name.startswith(("OPENGOTHIC_", "GOTHIC_", "TEMPEST_")):
         continue
-    if name in ("GOTHIC_DIR", "GOTHIC_AI_URL", "OPENGOTHIC_FRACTURE", "OPENGOTHIC_CONTENT",
+    if name in ("GOTHIC_DIR", "GOTHIC_AI_URL", "OPENGOTHIC_FRACTURE", "OPENGOTHIC_CONTENT", "OPENGOTHIC_BASE",
                 "OPENGOTHIC_BASE_CACHE", "OPENGOTHIC_BASE_STORE"):
         continue
     if not value.startswith(("/", "~/")):
@@ -154,7 +158,7 @@ fi
 
 # These fixtures use a prepared world and clock; skip the new-game chapter video
 # before their first command on NEWWORLD.
-if [[ "$NAME" == item-wake || "$NAME" == routine-return || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* ]]; then
+if [[ "$NAME" == item-wake || "$NAME" == routine-return || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough ]]; then
   START_ARGS+=(-nointro)
 fi
 
@@ -285,8 +289,13 @@ fi
 
 GAME_BIN="$GAME_BIN" bash "$ROOT/scripts/base-ensure.sh" "$GOTHIC_DIR"
 
+BACKGROUND=1
+if [[ "$NAME" == streaming-flythrough ]]; then
+  export OPENGOTHIC_FRAME_PROFILE="$OUT/frameprofile.csv" OPENGOTHIC_BENCH_VISIBLE=1
+  BACKGROUND=0
+fi
 START=$(date +%s)
-(cd "$RUN" && exec env TEMPEST_BACKGROUND=1 TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}" \
+(cd "$RUN" && exec env TEMPEST_BACKGROUND="$BACKGROUND" TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}" \
   OPENGOTHIC_BENCH="$SCEN" OPENGOTHIC_BENCH_OUT="$OUT" ${KEEP:+OPENGOTHIC_BENCH_KEEP=1} \
   "$GAME_BIN" -g "$GOTHIC_DIR" -window -devmode "${START_ARGS[@]}") >"$OUT/game.log" 2>&1 &
 PID=$!
@@ -395,6 +404,9 @@ except (OSError, ValueError, KeyError):
 if not valid:
     raise SystemExit('bench: normal-clock timing did not complete; no valid cadence measurement')
 PY
+fi
+if [[ "$NAME" == streaming-flythrough ]]; then
+  python3 "$ROOT/scripts/perf_report.py" run "$OUT" || REPORT_RC=1
 fi
 echo "bench: ran on $HOST"
 echo "$OUT"

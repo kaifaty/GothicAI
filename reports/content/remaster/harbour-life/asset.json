@@ -1,0 +1,357 @@
+{
+  "asset": "harbour-life",
+  "title": "Следы жизни порта",
+  "kind": "building",
+  "created": "2026-10-30",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "harbour-life"
+  ],
+  "sources": [
+    {
+      "file": "harbour-life/concept-life-basket-attempt-1.png",
+      "role": "concept",
+      "texture": "life-basket",
+      "attempt": 1,
+      "sha256": "1eb7b1cde49bcb37a5e1fc05af852cd5cbc9bb1a18817c6d1ad937c5bc872427",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:44:15Z",
+      "thread": "01a18e20-6011-7ff1-9d3c-6f618e26f831",
+      "parent": null
+    },
+    {
+      "file": "harbour-life/concept-life-basket-attempt-2.png",
+      "role": "concept",
+      "texture": "life-basket",
+      "attempt": 2,
+      "sha256": "5bb8aa99f5d68cfc4b6b755257b745f7050816907bf2b6458262e2e90285be5b",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:44:58Z",
+      "thread": "01a18e20-6011-7ff1-9d3c-6f618e26f831",
+      "parent": null
+    },
+    {
+      "file": "harbour-life/concept-life-bucket-attempt-1.png",
+      "role": "concept",
+      "texture": "life-bucket",
+      "attempt": 1,
+      "sha256": "674ecd0c0147e61dede76728803c84ddc37e5eaf60e28b85ce74d4a1f8ae4417",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:44:32Z",
+      "thread": "01a18e20-6e03-7b10-bdc9-bdaa9f5d5835",
+      "parent": null
+    },
+    {
+      "file": "harbour-life/concept-life-bucket-attempt-2.png",
+      "role": "concept",
+      "texture": "life-bucket",
+      "attempt": 2,
+      "sha256": "427571239bdec68ef53d9988a9469bbeb8b382512965cff9c9ec4251001525ca",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:45:03Z",
+      "thread": "01a18e20-6e03-7b10-bdc9-bdaa9f5d5835",
+      "parent": null
+    },
+    {
+      "file": "harbour-life/concept-life-laundry-attempt-1.png",
+      "role": "concept",
+      "texture": "life-laundry",
+      "attempt": 1,
+      "sha256": "b94ad09e1bbfa6ee27bc2b402a1bf8b3241db446db5665bba289a417c9618b8c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:44:38Z",
+      "thread": "01a18e20-7bee-7fa2-bf9a-b596a1f655e2",
+      "parent": null
+    },
+    {
+      "file": "harbour-life/concept-life-laundry-attempt-2.png",
+      "role": "concept",
+      "texture": "life-laundry",
+      "attempt": 2,
+      "sha256": "b5e13404a263587b12940d26dcb0cadc5f3e8403515c2dfd1ffb21074b4cda66",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:44:58Z",
+      "thread": "01a18e20-7bee-7fa2-bf9a-b596a1f655e2",
+      "parent": null
+    },
+    {
+      "file": "harbour-life/concept-life-basket-attempt-3.png",
+      "role": "concept",
+      "texture": "life-basket",
+      "attempt": 3,
+      "sha256": "63fc535f14d6991bb0131c767e706da5f18c5f3b84977343490ecc8725ab9b63",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:47:20Z",
+      "thread": "01a18e20-6011-7ff1-9d3c-6f618e26f831",
+      "parent": "harbour-life/concept-life-basket-attempt-1.png"
+    },
+    {
+      "file": "harbour-life/concept-life-basket-attempt-4.png",
+      "role": "concept",
+      "texture": "life-basket",
+      "attempt": 4,
+      "sha256": "e1510ffbe55aad79f7befa7ff2eec310efa2042ecfc83d419f2d4480d573661c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:47:45Z",
+      "thread": "01a18e20-6011-7ff1-9d3c-6f618e26f831",
+      "parent": "harbour-life/concept-life-basket-attempt-1.png"
+    },
+    {
+      "file": "harbour-life/concept-life-bucket-attempt-3.png",
+      "role": "concept",
+      "texture": "life-bucket",
+      "attempt": 3,
+      "sha256": "0d535aadde79d1374c594dc8d868a8e1a45e56959bd6467297bcb588fb71d06a",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:47:16Z",
+      "thread": "01a18e20-6e03-7b10-bdc9-bdaa9f5d5835",
+      "parent": "harbour-life/concept-life-bucket-attempt-2.png"
+    },
+    {
+      "file": "harbour-life/concept-life-bucket-attempt-4.png",
+      "role": "concept",
+      "texture": "life-bucket",
+      "attempt": 4,
+      "sha256": "e1d94b0baf9011316ad31a0dc5731f114a1fefb83a2d48aab40edcf83d5fb1c7",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:47:42Z",
+      "thread": "01a18e20-6e03-7b10-bdc9-bdaa9f5d5835",
+      "parent": "harbour-life/concept-life-bucket-attempt-2.png"
+    },
+    {
+      "file": "harbour-life/concept-life-laundry-attempt-3.png",
+      "role": "concept",
+      "texture": "life-laundry",
+      "attempt": 3,
+      "sha256": "2b4f4a601335ad1db11d7691628cfa8e88297637b70d186fbf207a3d38110a73",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:47:15Z",
+      "thread": "01a18e20-7bee-7fa2-bf9a-b596a1f655e2",
+      "parent": "harbour-life/concept-life-laundry-attempt-2.png"
+    },
+    {
+      "file": "harbour-life/concept-life-laundry-attempt-4.png",
+      "role": "concept",
+      "texture": "life-laundry",
+      "attempt": 4,
+      "sha256": "6525855b7e3f6ff42f54840882918631b20c9aacf84753f5f017eb148d3f271e",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:47:41Z",
+      "thread": "01a18e20-7bee-7fa2-bf9a-b596a1f655e2",
+      "parent": "harbour-life/concept-life-laundry-attempt-2.png"
+    },
+    {
+      "file": "harbour-life/OWN_PROP_WICKER-attempt-1.png",
+      "role": "texture",
+      "texture": "OWN_PROP_WICKER",
+      "attempt": 1,
+      "sha256": "3585ae677ab378c247dd66516b2a3a2aa49df66f426e1e6cf6cf8bfbce246605",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:48:12Z",
+      "thread": "01a18e23-b269-7142-8436-2b53dde2b126",
+      "parent": null
+    },
+    {
+      "file": "harbour-life/OWN_PROP_FISH-attempt-1.png",
+      "role": "texture",
+      "texture": "OWN_PROP_FISH",
+      "attempt": 1,
+      "sha256": "9ac62cf9a95b380239f9c1c968477e94744a0999a5fa2ee5e32970b504da1c3c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-30T18:48:40Z",
+      "thread": "01a18e23-b269-7142-8436-2b53dde2b126",
+      "parent": null
+    }
+  ],
+  "selected": {
+    "life-basket": {
+      "file": "harbour-life/concept-life-basket-attempt-1.png",
+      "reason": "looser lopsided weave, fish lie every way with heads and tails over the rim; attempt 2 is neater",
+      "date": "2026-10-30"
+    },
+    "life-bucket": {
+      "file": "harbour-life/concept-life-bucket-attempt-2.png",
+      "reason": "narrows upwards as the brief says; attempt 1 is nearly a cylinder",
+      "date": "2026-10-30"
+    },
+    "life-laundry": {
+      "file": "harbour-life/concept-life-laundry-attempt-2.png",
+      "reason": "poles lean each its own way, the shirt reads as a shirt",
+      "date": "2026-10-30"
+    },
+    "OWN_PROP_WICKER": {
+      "file": "harbour-life/OWN_PROP_WICKER-attempt-1.png",
+      "reason": "the only wicker tile: rows over stakes, 9 stakes across",
+      "date": "2026-10-30"
+    },
+    "OWN_PROP_FISH": {
+      "file": "harbour-life/OWN_PROP_FISH-attempt-1.png",
+      "reason": "the only fish skin tile",
+      "date": "2026-10-30"
+    }
+  },
+  "reviews": [
+    {
+      "id": "r3-fishers",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-crane",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-werft",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-poor-yard",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-alley",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r3-poor-east",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r4-fishers",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r4-crane",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r4-werft",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r4-poor-yard",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r4-alley",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r4-poor-east",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r5-alley",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    },
+    {
+      "id": "r5-poor-east",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-30"
+    }
+  ],
+  "gates": [],
+  "build": null,
+  "backup": {
+    "date": "2026-10-30",
+    "host": "dev-ubuntu",
+    "matched": 28,
+    "mismatched": []
+  }
+}

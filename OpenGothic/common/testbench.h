@@ -50,6 +50,8 @@ namespace TestBench {
   void     beforeWorldTick(uint64_t dt);
   // Runs the scenario after the world update; true if this frame has to be captured
   bool     tick(uint64_t dt, PlayerControl& player);
+  // Called after the frame's residency update; deferred metrics for perf route segments.
+  void     sampleStreaming(const World& world);
   // The captured frame: draws the overlay and writes it to the video; uiScale: the interface's (the
   // crosshair is drawn that big)
   void     capture(Tempest::Pixmap& frame, float uiScale);

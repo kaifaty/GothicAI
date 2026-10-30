@@ -22,7 +22,8 @@ MATERIALS = [{'name': 'TEST_A', 'texture': 'TEST_A.TGA'}, {'name': 'TEST_B', 'te
 
 
 def write_glb(path, primitives, materials=MATERIALS):
-    """A chunk as the converter writes it: per primitive POSITION, NORMAL, TEXCOORD_0, _VERTEX, indices."""
+    """A chunk as the converter writes it: per primitive POSITION, NORMAL, TEXCOORD_0, _VERTEX, indices; a
+    primitive with a fifth item, the vertex light (0..1 per vertex), also gets _FEATURE and COLOR_0 (RGBA bytes)."""
     binary = bytearray()
     views, accessors, prims = [], [], []
 
@@ -41,13 +42,18 @@ def write_glb(path, primitives, materials=MATERIALS):
         accessors.append(acc)
         return len(accessors) - 1
 
-    for material, positions, ids, triangles in primitives:
+    for material, positions, ids, triangles, *light in primitives:
         pos = np.array(positions, np.float32)
         n = len(pos)
         attrs = {'POSITION': add(pos, 'VEC3', 5126, 34962, True),
                  'NORMAL': add(np.tile(np.float32([0, 1, 0]), (n, 1)), 'VEC3', 5126, 34962),
                  'TEXCOORD_0': add(pos[:, [0, 2]] / 100, 'VEC2', 5126, 34962),
                  '_VERTEX': add(np.array(ids, np.float32), 'SCALAR', 5126, 34962)}
+        if light:
+            attrs['_FEATURE'] = add(np.array(ids, np.float32), 'SCALAR', 5126, 34962)
+            grey = np.rint(np.array(light[0], np.float32) * 255).astype(np.uint8)
+            attrs['COLOR_0'] = add(np.stack([grey, grey, grey, np.full(n, 255, np.uint8)], 1), 'VEC4', 5121, 34962)
+            accessors[attrs['COLOR_0']]['normalized'] = True
         prims.append({'attributes': attrs, 'indices': add(np.array(triangles, np.uint32).reshape(-1), 'SCALAR', 5125, 34963),
                       'material': material, 'mode': 4})
     doc = {'asset': {'version': '2.0'}, 'scene': 0, 'scenes': [{'nodes': [0]}],
@@ -155,6 +161,101 @@ def test_same_geometry_ignores_order(tmp_path):
     assert chunk_glb.same_geometry(tmp_path / 'a.glb', tmp_path / 'c.glb')
 
 
+def test_check_catches_a_changed_vertex_light(tmp_path):
+    # two materials with their own light; the export that dropped COLOR_0 turned the second one white
+    pos, ids, tris = grid(0, 2)
+    half = len(tris) // 2
+    light = [0.2 + 0.05 * k for k in range(len(pos))]
+    base = tmp_path / 'base/0_0.glb'
+    write_glb(base, [(0, pos, ids, tris[:half], light), (1, pos, ids, tris[half:], light)])
+    write_glb(tmp_path / 'same.glb', [(0, pos, ids, tris[:half], light), (1, pos, ids, tris[half:], light)])
+    same = chunk_glb.check(base, tmp_path / 'same.glb', world_json=tmp_path / 'none.json')
+    assert not any('vertex light' in p for p in same.problems)
+    assert same.summary['light']['checked'] == 3 * len(tris) and same.summary['light']['other'] == 0
+    write_glb(tmp_path / 'white.glb', [(0, pos, ids, tris[:half], light), (1, pos, ids, tris[half:], [1.0] * len(pos))])
+    white = chunk_glb.check(base, tmp_path / 'white.glb', world_json=tmp_path / 'none.json')
+    assert any(p.startswith('vertex light') and '(TEST_B)' in p for p in white.problems)
+    assert white.summary['light']['other'] == 3 * (len(tris) - half)
+
+
+def source_chunk(path, tris_per_material=4):
+    """A chunk as the converter writes it, with order, flags and lightmap per triangle: two materials, each a strip
+    of triangles over its own corners. Returns the corners and the primitives."""
+    import chunk_canon
+    corners, prims = [], []
+    for mi in range(2):
+        rows = []
+        for t in range(tris_per_material):
+            tri = []
+            for k in range(3):
+                c = np.zeros((), chunk_canon.CORNER)
+                n = len(corners)
+                c['pos'] = (100.0 * (t + k), 10.0 * mi, 100.0 * (k % 2))
+                c['nrm'] = np.array([0.1 * k, 0.9, 0.3]) / np.linalg.norm([0.1 * k, 0.9, 0.3])
+                c['uv'] = (0.1 * n, 0.2 * k)
+                c['col'] = (50 + n, 60, 70, 255)
+                c['vid'], c['fid'] = n, n
+                corners.append(c)
+                tri.append(n)
+            rows.append(tri)
+        order = np.arange(len(prims) * 100, len(prims) * 100 + len(rows), dtype=np.float32)
+        flags = np.array([[3, 7 + t] for t in range(len(rows))], np.uint16)
+        light = np.full(len(rows), -1 - mi, np.float32)
+        prims.append((mi, rows, order, flags, light))
+    doc = {'asset': {'version': '2.0', 'extras': {'gothic': {'format': 'gothic-world-chunk'}}},
+           'nodes': [{'name': path.stem, 'mesh': 0, 'scale': [.01, .01, .01]}],
+           'materials': [{'name': m['name'], 'extras': {'gothic': {'index': i, **m}}} for i, m in enumerate(MATERIALS)]}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    chunk_canon._write(path, doc, doc, np.array(corners, chunk_canon.CORNER), prims)
+    return np.array(corners, chunk_canon.CORNER), prims
+
+
+def test_canonical_writes_source_triangles_back_exactly(tmp_path):
+    # an export as Blender's: normals and light a hair off, corners rotated, the extras gone; one triangle deleted,
+    # one changed past the round trip, one new
+    import chunk_canon
+    base = tmp_path / 'base/0_0.glb'
+    corners, prims = source_chunk(base)
+    off = corners.copy()
+    off['nrm'] += np.float32(2e-5)
+    off['col'][:, 0] += 1
+    rows = []
+    for mi, tris, *_ in prims:
+        for t, tri in enumerate(tris):
+            if (mi, t) == (0, 0):
+                continue                                   # deleted
+            rows.append((mi, [tri[1], tri[2], tri[0]]))     # rotated
+    off['uv'][prims[1][1][3][0]] += 0.5                    # changed: its UV moved
+    new = np.zeros(3, chunk_canon.CORNER)
+    new['pos'] = [(0, 50, 0), (100, 50, 0), (0, 50, 100)]
+    new['nrm'] = (0, 1, 0)
+    new['vid'] = new['fid'] = -1
+    allc = np.concatenate([off, new])
+    rows.append((1, [len(off), len(off) + 1, len(off) + 2]))
+    exported = [(mi, [r for m, r in rows if m == mi], None, None, None) for mi in range(2)]
+    doc = {'asset': {'version': '2.0'}, 'nodes': [{'name': '0_0', 'mesh': 0, 'scale': [.01, .01, .01]}],
+           'materials': [{'name': m['name'], 'extras': {'gothic': {'index': i, **m}}} for i, m in enumerate(MATERIALS)]}
+    edited = tmp_path / 'edited.glb'
+    chunk_canon._write(edited, doc, doc, allc, exported)
+    exact, bad = chunk_canon.source_violations(base, edited)
+    assert exact == 0 and any('lost its order' in b for b in bad)
+
+    out = tmp_path / 'out.glb'
+    counts = chunk_canon.canonical(base, edited, out)
+    assert counts == {'source': 8, 'kept': 6, 'changed': 2}
+    exact, bad = chunk_canon.source_violations(base, out)
+    assert (exact, bad) == (6, [])
+    _, written = chunk_canon._primitives(out)
+    kept = [p for p in written if p[2] is not None]
+    assert [list(p[2]) for p in kept] == [[1, 2, 3], [100, 101, 102]]
+    assert all(p[3].dtype == np.uint16 and p[4] is not None for p in kept)
+    _, source = chunk_canon._primitives(base)
+    assert kept[0][1].tobytes() == source[0][1][1:].tobytes()
+    assert sum(len(p[1]) for p in written if p[2] is None) == 2
+    report = chunk_glb.check(base, out, world_json=tmp_path / 'none.json')
+    assert report.summary['source'] == {'exact': 6, 'other': 0}
+
+
 # --- Blender
 
 def have_blender():
@@ -218,6 +319,25 @@ def test_build_adds_edits_up_and_records_them(tmp_path, capsys):
     assert 'left as it is' in capsys.readouterr().out
 
 
+@blender
+def test_build_keeps_the_light_of_every_material(tmp_path, capsys):
+    # Blender 5.2's exporter wrote COLOR_0 for the first material only (world_bpy.keep_vertex_light)
+    base = world(tmp_path)
+    pos, ids, tris = grid(0, 2)
+    half = len(tris) // 2
+    light = [0.2 + 0.05 * k for k in range(len(pos))]
+    write_glb(base / 'worlds/TESTWORLD/chunks/0_0.glb', [(0, pos, ids, tris[:half], light),
+                                                          (1, pos, ids, tris[half:], light)])
+    code, staging, _ = build(tmp_path, base, '--set', 'test-1', '--chunk', 'TESTWORLD/0_0', *edit_args('add_post'))
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert 'changed' in out and ', 0 changed' in out
+    chunk = chunk_glb.read_chunk(staging / 'test-1/worlds/TESTWORLD/chunks/0_0.glb')
+    new = [c for p in chunk.primitives for v, c in zip(p.vertex_ids.reshape(-1), p.colors.reshape(-1, 4)) if v < 0]
+    # the post takes the light of the base around it, neither white nor black
+    assert new and all(0.15 < c[0] < 0.7 for c in new)
+
+
 # --- rebuilds of the published chunks
 
 def published(record_id):
@@ -260,3 +380,19 @@ def test_a_hole_in_the_new_geometry_is_caught(tmp_path, capsys, record_id, hole)
         args += ['--materials', str(world_edit.STAGING / m)]
     assert world_edit.main(args) == 1
     assert 'FAIL: new open edge' in capsys.readouterr().out
+
+
+def test_a_flat_source_triangle_is_the_same_whatever_its_normal():
+    # the source has triangles with their corners on a line; Blender gives them a normal of its own
+    import chunk_canon
+    tri = np.zeros(3, chunk_canon.CORNER)
+    tri['pos'] = [(-4739.36, -289.138, 2475.97), (-5614.36, -289.13775, 2475.97), (-5489.36, -289.13775, 2475.97)]
+    tri['nrm'] = (0, -1, 0)
+    tri['vid'] = tri['fid'] = [1, 2, 3]
+    flipped = tri[[1, 2, 0]].copy()
+    flipped['nrm'] = (0, 1, 0)
+    assert chunk_canon._same(tri, flipped)
+    tri['pos'][2] = (-5489.36, -250.0, 2475.97)       # not flat: the normal counts
+    flipped = tri[[1, 2, 0]].copy()
+    flipped['nrm'] = (0, 1, 0)
+    assert not chunk_canon._same(tri, flipped)

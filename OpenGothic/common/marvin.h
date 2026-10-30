@@ -15,6 +15,8 @@ class Marvin {
     bool autoComplete(std::string& v);
     bool exec(std::string_view v);
 
+    static bool chunksVisible() { return showChunks; }
+
   private:
     enum CmdType {
       C_None,
@@ -28,6 +30,7 @@ class Marvin {
 
       // rendering
       C_ToggleFrame,
+      C_ToggleChunks,
       C_ToggleShowRay,
       C_ToggleVobBox,
       C_ToggleMeleeBladeDraw,
@@ -133,6 +136,7 @@ class Marvin {
     bool   setTime                 (World& world, std::string_view hh, std::string_view mm);
     bool   goToVob                 (World& world, Npc& player, Camera& c, std::string_view name, size_t n);
 
+    static bool showChunks;
     std::vector<Cmd> cmd;
   };
 
