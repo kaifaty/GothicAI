@@ -60,8 +60,8 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
     if(!data.waynet)
       throw std::runtime_error("world waynet missing");
     VobLayer::apply(data,dir,overrideDir,ownMeshes);
-    ChunkTable table;
-    auto mesh = readWorldChunks(dir,overrideDir,chunks==nullptr ? nullptr : &table);
+    ChunkTable chunkTable;
+    auto mesh = readWorldChunks(dir,overrideDir,chunks==nullptr ? nullptr : &chunkTable);
     mesh.name = data.name;
     mesh.bbox = data.bbox;
     result.triangles = mesh.polygons.material_indices.size();
@@ -69,7 +69,7 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
     worldMesh = std::move(mesh);
     world = std::move(data);
     if(chunks!=nullptr)
-      *chunks=std::move(table);
+      *chunks=std::move(chunkTable);
     result.replaced = true;
     }
   catch(const std::exception& error) {
