@@ -825,8 +825,11 @@ async def serve(args: argparse.Namespace) -> int:
         log.error("scenario %s requires --neural-body and, for service policy, GOTHIC_BODY_URL "
                   "(or --body-url)", args.scenario)
         return 2
-    if args.scenario in {"neural-soak", "feats"} and args.llm != "fake":
+    if args.scenario == "neural-soak" and args.llm != "fake":
         log.error("scenario %s requires --llm fake", args.scenario)
+        return 2
+    if args.scenario == "feats" and args.llm not in {"fake", "chatgpt"}:
+        log.error("scenario feats requires --llm fake or chatgpt")
         return 2
     done = asyncio.Event()
     exit_code = 0
@@ -984,13 +987,17 @@ async def serve(args: argparse.Namespace) -> int:
             if not args.no_feat_images:
                 if args.scenario == "feats":
                     feat_image_root = TemporaryDirectory(prefix="feat-images-")
-                    artist = ScenarioArtist(Path(feat_image_root.name), codex="scenario")
+                    artist = (
+                        ScenarioArtist(Path(feat_image_root.name), codex="scenario")
+                        if args.llm == "fake" else Artist(Path(feat_image_root.name))
+                    )
                 else:
                     artist = Artist()
             state.feats = Feats(
-                link, state.chronicle, llm, journal=journal,
-                gather_s=1 if args.scenario == "feats" else 20,
-                artist=artist, image_wait_s=30 if args.scenario == "feats" else 150,
+                link, state.chronicle, llm, journal=journal, places=place_book,
+                gather_s=1 if args.scenario == "feats" and args.llm == "fake" else 20,
+                artist=artist,
+                image_wait_s=30 if args.scenario == "feats" and args.llm == "fake" else 150,
             )
         if not args.no_crimes:
             state.crimes = Crimes(
