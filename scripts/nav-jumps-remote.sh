@@ -90,12 +90,14 @@ if [[ ! -x "$task/.venv/bin/python" ]]; then
   uv venv "$task/.venv"
 fi
 uv pip install --python "$task/.venv/bin/python" numpy pytest
+source "$task/source/scripts/ryzen-build.sh"
 cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
+  "${RYZEN_CMAKE_FLAGS[@]}" \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
-targets=(Gothic2Notr gothic-body-runner check-navmesh)
-if [[ "${1:-}" == record-pilot ]]; then targets=(Gothic2Notr gothic-body-runner check-navkeyteacher); fi
+targets=(gothic-body-runner check-navmesh)
+if [[ "${1:-}" == record-pilot ]]; then targets=(gothic-body-runner check-navkeyteacher); fi
 cmake --build "$task/build" --target "${targets[@]}" --parallel 3
 cd "$task/source"
 tests=(scripts/tests/test_nav_jumps.py)

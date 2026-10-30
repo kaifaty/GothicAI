@@ -70,11 +70,13 @@ if [[ "$stage" == build-chain ]]; then
   uv pip install --python "$task/.venv/bin/python" numpy pytest
   "$task/.venv/bin/python" -m pytest -q scripts/tests/test_nav_demos_v4_collect.py \
     scripts/tests/test_nav_demos_v5*.py
+  source "$task/source/scripts/ryzen-build.sh"
   cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
+    "${RYZEN_CMAKE_FLAGS[@]}" \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
-  cmake --build "$task/build" --target Gothic2Notr gothic-body-runner \
+  cmake --build "$task/build" --target gothic-body-runner \
     check-navmemoryteacher --parallel 3
   next_stage=prepare
 else

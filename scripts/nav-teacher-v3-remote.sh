@@ -43,11 +43,13 @@ cd "$task/source"
 if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv "$task/.venv"; fi
 uv pip install --python "$task/.venv/bin/python" numpy pytest
 if [[ "$stage" != prepare && "$stage" != evaluate && "$stage" != visible && "$stage" != oracle-resume ]]; then
+  source "$task/source/scripts/ryzen-build.sh"
   cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
+    "${RYZEN_CMAKE_FLAGS[@]}" \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
-  targets=(Gothic2Notr gothic-body-runner check-navmemoryteacher check-navkeyteacher)
+  targets=(gothic-body-runner check-navmemoryteacher check-navkeyteacher)
   tests=(scripts/tests/test_nav_teacher_v3.py scripts/tests/test_nav_teacher_v3_campaign.py
     scripts/tests/test_nav_demos.py scripts/tests/test_nav_guidance.py
     scripts/tests/test_nav_drive.py scripts/tests/test_nav_rl.py)

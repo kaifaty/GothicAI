@@ -52,7 +52,9 @@ if shutil.disk_usage(task).free < 22 * 1024**3:
     raise SystemExit("HD measurement needs 22 GiB free including the 20-GiB reserve")
 SPACE
 "$python" -B -m pytest -q -p no:cacheprovider scripts/tests/test_nav_rl.py
+source "$task/source/scripts/ryzen-build.sh"
 cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
+  "${RYZEN_CMAKE_FLAGS[@]}" \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
@@ -204,12 +206,13 @@ if shutil.disk_usage(sys.argv[1]).free < 22 * 1024**3:
 SPACE
 "$python" -B -m pytest -q -p no:cacheprovider \
   scripts/tests/test_nav_bc_data.py scripts/tests/test_nav_bc_model.py scripts/tests/test_nav_bc_contract.py
+source "$task/hd-source/scripts/ryzen-build.sh"
 cmake -S "$task/hd-source/OpenGothic" -B "$task/build-hd" -G Ninja \
+  "${RYZEN_CMAKE_FLAGS[@]}" \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
-cmake --build "$task/build-hd" --target gothic-navpolicy-contract \
-  CMakeFiles/OpenGothic.dir/common/navdemos.cpp.o --parallel 3
+cmake --build "$task/build-hd" --target gothic-navpolicy-contract --parallel 3
 "$python" -B -I scripts/nav_bc_data.py prepare --source "$corpus" \
   --manifest "$corpus/manifest.json" --output "$task/hd-cache" --input-variant hd
 "$python" -B -I - "$bc3/cache/index.json" "$task/hd-cache/index.json" <<'COHORT'
@@ -278,11 +281,13 @@ cd "$task/source"
 source "$task/source/scripts/ryzen-venv.sh"
 ryzen_task_venv "$task/.venv"
 "$task/.venv/bin/python" -m pytest -q scripts/tests/test_nav_dagger3_detours.py
+source "$task/source/scripts/ryzen-build.sh"
 cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
+  "${RYZEN_CMAKE_FLAGS[@]}" \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
-cmake --build "$task/build" --target Gothic2Notr gothic-body-runner check-navmesh --parallel 3
+cmake --build "$task/build" --target gothic-body-runner check-navmesh --parallel 3
 "$task/.venv/bin/python" -I "$task/source/scripts/nav_dagger3_detours.py" \
   --task "$task" --corpus "$HOME/gothic-ai/nav-demos-v4"
 df -h "$HOME"

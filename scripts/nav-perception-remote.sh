@@ -38,12 +38,14 @@ df -h "$HOME"
 cd "$task/source"
 if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv "$task/.venv"; fi
 uv pip install --python "$task/.venv/bin/python" numpy pytest
+source "$task/source/scripts/ryzen-build.sh"
 cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
+  "${RYZEN_CMAKE_FLAGS[@]}" \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
 # Three compiler processes keep the complete build below the 8 GiB job ceiling.
-cmake --build "$task/build" --target Gothic2Notr gothic-body-runner \
+cmake --build "$task/build" --target gothic-body-runner \
   check-navigation-eye check-navigation-memory check-navmemoryteacher --parallel 3
 if [[ "$stage" == safety ]]; then
   "$task/.venv/bin/python" -m pytest -q scripts/tests/test_nav_demos.py scripts/tests/test_nav_perception_safety.py
