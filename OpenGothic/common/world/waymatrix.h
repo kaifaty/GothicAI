@@ -7,12 +7,9 @@
 
 #include <vector>
 #include <functional>
-#include <array>
-#include <span>
 
 #include "waypath.h"
 #include "waypoint.h"
-#include "physics/dynamicworld.h"
 
 class World;
 class DbgPainter;
@@ -25,29 +22,6 @@ class WayMatrix final {
     const WayPoint* findWayPoint (const Tempest::Vec3& at, const std::function<bool(const WayPoint&)>& filter) const;
     const WayPoint* findFreePoint(const Tempest::Vec3& at, std::string_view name, const std::function<bool(const WayPoint&)>& filter) const;
     const WayPoint* findNextPoint(const Tempest::Vec3& at) const;
-
-    struct RoutineEntry final {
-      struct Candidate final {
-        const WayPoint* point = nullptr;
-        float           distance = 0;
-        bool            passable = false;
-        DynamicWorld::WalkResult walk;
-        bool            excluded = false;
-        };
-      std::array<Candidate,8> candidates = {};
-      size_t                 count = 0;
-      size_t                 totalInRange = 0;
-      const WayPoint*        accepted = nullptr;
-      bool                   checked = false;
-      size_t                 reselections = 0;
-      bool                   exhausted = false;
-      };
-    RoutineEntry findRoutineEntry(const Tempest::Vec3& at,
-                                  const std::function<DynamicWorld::WalkResult(const WayPoint&)>& walk,
-                                  const std::function<bool(const WayPoint&)>& excluded = {}) const;
-    static RoutineEntry findRoutineEntry(std::span<const WayPoint> points, const Tempest::Vec3& at,
-                                         const std::function<DynamicWorld::WalkResult(const WayPoint&)>& walk,
-                                         const std::function<bool(const WayPoint&)>& excluded = {});
 
     void            addFreePoint (const Tempest::Vec3& pos, const Tempest::Vec3& dir, std::string_view name);
     void            addStartPoint(const Tempest::Vec3& pos, const Tempest::Vec3& dir, std::string_view name);

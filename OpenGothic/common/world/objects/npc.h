@@ -512,7 +512,6 @@ class Npc final {
     void      multSpeed(float s);
 
     bool      testMove(const Tempest::Vec3& pos);
-    auto      testWalk(const Tempest::Vec3& pos) const -> DynamicWorld::WalkResult;
     bool      tryMove(const Tempest::Vec3& dp);
     bool      tryMove     (const Tempest::Vec3& dp, DynamicWorld::CollisionTest& out);
     bool      tryTranslate(const Tempest::Vec3& to);
@@ -636,6 +635,7 @@ class Npc final {
 
     auto      currentWayPoint() const -> const WayPoint* { return currentFp; }
     auto      currentGoToPoint() const -> const WayPoint* { return go2.wp; }
+    auto      navigationPath() const -> const WayPath& { return wayPath; }
     auto      currentTaPoint() const -> const WayPoint*;
     void      attachToPoint(const WayPoint* p);
     GoToHint  moveHint() const { return go2.flag; }
@@ -804,9 +804,6 @@ class Npc final {
     void      implFaiWait(uint64_t dt);
     void      implSetFightMode(const Animation::EvCount& ev);
     bool      implAiFlee(uint64_t dt);
-    void      tickRoutineEntry(uint64_t dt);
-    void      trackRoutineEntry(const WayPoint& target, const WayPoint* entry);
-    bool      rejectedRoutineEntry(const WayPoint& point) const;
 
     bool      setGoToLadder();
 
@@ -1087,17 +1084,6 @@ class Npc final {
     const WayPoint*                currentFp      =nullptr;
     FpLock                         currentFpLock;
     WayPath                        wayPath;
-    // Transient approach state; the ordinary way path takes over on entry.
-    struct RoutineEntryState final {
-      const Routine*               routine = nullptr;
-      const WayPoint*              target = nullptr;
-      const WayPoint*              entry = nullptr;
-      std::array<const WayPoint*,3> rejected = {};
-      size_t                       retries = 0;
-      Tempest::Vec3                progress = {};
-      uint64_t                     stalled = 0;
-      bool                         fallback = false;
-      } routineEntry;
 
     MoveAlgo                       mvAlgo;
     FightAlgo                      fghAlgo;
@@ -1109,7 +1095,6 @@ class Npc final {
     Sound                          sfxWeapon;
 
   friend class MoveAlgo;
-  friend class World;
   friend class BodyController;
   friend class BodyArena;
   friend class BodyTrajectory;

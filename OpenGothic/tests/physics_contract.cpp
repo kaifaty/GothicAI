@@ -12,7 +12,6 @@
 #include "game/damagecalculator.h"
 #include "game/meleeimpact.h"
 #include "world/objects/npc.h"
-#include "world/waymatrix.h"
 #include "gothic.h"
 
 #include <Tempest/MemReader>
@@ -1820,72 +1819,6 @@ namespace {
               "a cd_dynamic=0 movable hull must wake and push another hull through physical contact");
       require(world.physicsStats().bodies==2,
               "physical contact between cd_dynamic=0 hulls must not require query proxies");
-      }
-
-    {
-      DynamicWorld world(nullptr,movableFloor());
-      ProtoMesh wallShape(PackedMesh(movableCollisionBox({40,200,200}),PackedMesh::PK_Visual),"CONTRACT_ENTRY_WALL.MRM");
-      world.setMovableVobsEnabled(false);
-      auto wall = world.addMovableVob(wallShape,"CONTRACT_ENTRY_WALL.MRM",at(100,100,0),.25f,true,"wall",true);
-      hierarchy.collision_bbox = {{-25,0,-25},{25,140,25}};
-      Skeleton capsule(asset::fromZenKit(hierarchy),nullptr,"CONTRACT_ENTRY_WALKER");
-      auto walker = world.addGhostObj(&capsule);
-      walker.setPosition({0,0,0});
-      const std::array<WayPoint,2> points = {
-        WayPoint({0,0,400},{},"ENTRY_CLEAR",false),
-        WayPoint({200,0,0},{},"ENTRY_BLOCKED",false)
-        };
-      const auto entry = WayMatrix::findRoutineEntry(points,walker.position(),[&](const WayPoint& point) {
-        return walker.testWalk(point.pos,50.f,150.f,std::sqrt(.5f),100.f);
-        });
-      require(entry.count==2 && entry.candidates[0].point==&points[1] && !entry.candidates[0].passable,
-              "routine entry selection must test and reject the nearest waypoint behind a wall");
-      require(entry.candidates[0].walk.reason==DynamicWorld::WalkResult::Reason::blocked,
-              "a wall must reject a ground walk with the blocked reason");
-      require(entry.accepted==&points[0] && entry.candidates[1].passable,
-              "routine entry selection must choose the farther waypoint with a clear native ground capsule walk");
-      requireNear(walker.position().length(),0.f,.001f,
-                  "routine entry probes must preserve the native capsule position");
-      }
-
-    {
-      DynamicWorld world(nullptr,movableFloor());
-      world.setMovableVobsEnabled(false);
-      hierarchy.collision_bbox = {{-25,0,-25},{25,140,25}};
-      Skeleton capsule(asset::fromZenKit(hierarchy),nullptr,"CONTRACT_GROUND_WALKER");
-      auto walker = world.addGhostObj(&capsule);
-      walker.setPosition({0,0,0});
-      std::vector<std::unique_ptr<ProtoMesh>> shapes;
-      std::vector<DynamicWorld::Item> steps;
-      shapes.reserve(5);
-      const float heights[] = {45,90,135,90,45};
-      for(size_t i=0;i<5;++i) {
-        shapes.emplace_back(new ProtoMesh(PackedMesh(movableCollisionBox({80,heights[i],200}),PackedMesh::PK_Visual),
-                                          "CONTRACT_WALK_STEP.MRM"));
-        steps.push_back(world.addMovableVob(*shapes.back(),"CONTRACT_WALK_STEP.MRM",
-                                           at(140+80.f*float(i),heights[i]*.5f,0),.25f,true,"step",true));
-        }
-      DynamicWorld::CollisionTest collision;
-      require(!walker.testMove({600,0,0},collision),
-              "the straight airborne capsule segment must hit the raised stair mound");
-      const auto before = walker.position();
-      const auto physicsBefore = world.physicsStats();
-      const auto walk = walker.testWalk({600,0,0},50.f,150.f,std::sqrt(.5f),100.f);
-      require(bool(walk),"ground following must cross steps smaller than native stepHeight");
-      require((walker.position()-before).quadLength()==0.f && world.physicsStats().bodies==physicsBefore.bodies,
-              "ground walk probes must preserve the native capsule pose and physics bodies");
-
-      auto steepMesh = movableFloor();
-      for(auto& vertex:steepMesh.vertices)
-        vertex.y = vertex.x*std::sqrt(3.f);
-      DynamicWorld steep(nullptr,steepMesh);
-      auto steepWalker = steep.addGhostObj(&capsule);
-      steepWalker.setPosition({0,0,0});
-      const auto slope = steepWalker.testWalk({100,0,0},50.f,150.f,std::sqrt(.5f),100.f);
-      require(!bool(slope) && slope.reason==DynamicWorld::WalkResult::Reason::slope,
-              "ground walk must reject a sixty degree support with the slope reason");
-      requireNear(steepWalker.position().length(),0.f,.001f,
-                  "rejecting a steep support must not move the native capsule");
       }
     }
 

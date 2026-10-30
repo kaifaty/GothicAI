@@ -99,8 +99,6 @@ class MoveAlgo final {
     float   waterDepthKnee()  const;
     float   waterDepthChest() const;
     float   falldownHeight()  const;
-    float   stepHeight() const;
-    float   slideAngle() const;
     bool    canFlyOverWater() const;
     bool    canFallByGravity() const;
 
@@ -149,6 +147,8 @@ class MoveAlgo final {
     void    onMoveFailed(const Tempest::Vec3& dp, const DynamicWorld::CollisionTest& info, uint64_t dt);
     void    onGravityFailed(const DynamicWorld::CollisionTest& info, uint64_t dt);
 
+    float   stepHeight()  const;
+    float   slideAngle()  const;
     float   slideAngle2() const;
     float   edgeMoveFraction(const Tempest::Vec3& from, const Tempest::Vec3& to) const;
 

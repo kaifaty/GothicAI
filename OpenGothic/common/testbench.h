@@ -8,8 +8,6 @@
 #include <vector>
 #include <Tempest/Vec>
 
-#include "world/waymatrix.h"
-
 namespace Tempest {
 class Pixmap;
 }
@@ -23,10 +21,6 @@ struct PhysicsNoise;
 // Inert unless OPENGOTHIC_BENCH is set. Usage: scripts/bench.sh, see scripts/bench/README.md.
 namespace TestBench {
   bool     isActive();
-  bool     routineReturnActive(const Npc& npc);
-  void     routinePath(Npc& npc, const WayPoint& target, const WayMatrix::RoutineEntry& entry,
-                        WayPath path, bool enabled);
-  void     routineReselect(Npc& npc, const WayPoint& entry, size_t retry, bool exhausted);
   // Reinitialize the harness for a fresh runner generation. The caller owns world teardown/load.
   void     configure(std::string scenario, std::string output, int64_t seedOverride = -1);
   // Body runner --fork-prefix: the template stops its scenario before the first line starting with
