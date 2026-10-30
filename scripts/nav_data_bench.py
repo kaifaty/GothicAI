@@ -11,7 +11,9 @@ from collections import defaultdict
 from contextlib import ExitStack
 import faulthandler
 import gzip
+import hashlib
 import json
+import lzma
 from pathlib import Path
 import platform
 import shutil
@@ -29,6 +31,7 @@ import nav_bc_data as data
 
 
 CHUNK_RECORDS = 32
+PROBE_CHUNK_RECORDS = 128
 TIMEOUT_SECONDS = 100 * 60
 
 
@@ -208,6 +211,169 @@ def profile_recording(entry, scratch, progress):
                 timing=dict(timing), fields=fields, familiar=familiar, candidates=candidates)
 
 
+def probe_encode(records, transform):
+    """Reorder exact scalar bits, optionally decorrelating memory neighbours."""
+    if transform == "raw":
+        fields = {name: dict(raw_bytes=values.nbytes, transformed_bytes=values.nbytes,
+                             encode_seconds=0.) for name, values in leaves(records)}
+        return records.tobytes(), fields
+    working = records.copy() if transform.startswith("residual_spatial_") else records
+    if transform.startswith("residual_spatial_"):
+        for name in ("memory_near", "memory_far"):
+            channels = working[name]["channels"]
+            channels[..., 1] ^= channels[..., 0]
+    parts, fields = [], {}
+    for name, values in leaves(working):
+        before = time.perf_counter()
+        raw = np.ascontiguousarray(values).view(np.uint8).reshape(*values.shape, values.dtype.itemsize)
+        if transform.startswith("residual_spatial_") and name.startswith("memory_"):
+            spatial = raw.copy()
+            spatial[:, :, 1:] ^= raw[:, :, :-1]
+            raw = spatial
+        planes = raw.reshape(-1, values.dtype.itemsize).T
+        if transform.endswith("bit_shuffle"):
+            bits = np.unpackbits(planes[..., None], axis=2).transpose(0, 2, 1)
+            payload = np.packbits(bits, axis=2).tobytes()
+        else:
+            payload = planes.tobytes()
+        parts.append(payload)
+        fields[name] = dict(raw_bytes=values.nbytes, transformed_bytes=len(payload),
+                            encode_seconds=time.perf_counter() - before)
+    return b"".join(parts), fields
+
+
+def probe_decode(payload, shape, dtype, transform):
+    """Invert probe_encode using only the fixed record layout and block count."""
+    if transform == "raw":
+        return np.frombuffer(payload, dtype=dtype).reshape(shape)
+    result = np.empty(shape, dtype=dtype)
+    position = 0
+    for name, values in leaves(result):
+        scalar_bytes, count = values.dtype.itemsize, values.size
+        if transform.endswith("bit_shuffle"):
+            packed_count = (count + 7) // 8
+            length = scalar_bytes * 8 * packed_count
+            packed = np.frombuffer(payload, np.uint8, length, position).reshape(scalar_bytes, 8, packed_count)
+            bits = np.unpackbits(packed, axis=2)[..., :count].transpose(0, 2, 1)
+            planes = np.packbits(bits, axis=2)[..., 0]
+        else:
+            length = values.nbytes
+            planes = np.frombuffer(payload, np.uint8, length, position).reshape(scalar_bytes, count)
+        position += length
+        raw = np.ascontiguousarray(planes.T).reshape(*values.shape, scalar_bytes)
+        if transform.startswith("residual_spatial_") and name.startswith("memory_"):
+            raw = np.bitwise_xor.accumulate(raw, axis=2)
+        values[...] = raw.reshape(-1).view(values.dtype).reshape(values.shape)
+    if position != len(payload):
+        raise ValueError("Probe payload length differs from its record layout")
+    if transform.startswith("residual_spatial_"):
+        for name in ("memory_near", "memory_far"):
+            channels = result[name]["channels"]
+            channels[..., 1] ^= channels[..., 0]
+    return result
+
+
+def probe_recording(entry, scratch, progress):
+    """Compare eight fixed lossless recipes; this does not write a new format."""
+    import zstandard
+
+    source = entry["directory"] / "samples.bin.gz"
+    local = scratch / "samples.bin.gz"
+    compressed_hash = hashlib.sha256()
+    compressed_bytes, nas_read_seconds = 0, 0.
+    progress.begin("probe.nas_compressed_read", entry["id"])
+    with source.open("rb") as incoming, local.open("wb") as outgoing:
+        while True:
+            before = time.perf_counter()
+            block = incoming.read(8 * 1024**2)
+            nas_read_seconds += time.perf_counter() - before
+            if not block:
+                break
+            compressed_hash.update(block)
+            compressed_bytes += len(block)
+            outgoing.write(block)
+    if compressed_hash.hexdigest() != entry["samples_sha256"]:
+        raise ValueError(f"Probe source checksum differs: {entry['id']}")
+
+    transforms = ("raw", "field_byte_shuffle", "residual_spatial_byte_shuffle",
+                  "residual_spatial_bit_shuffle")
+    codecs = {"zstd9": (zstandard.ZstdCompressor(level=9).compress,
+                        zstandard.ZstdDecompressor().decompress),
+              "lzma6": (lambda value: lzma.compress(value, preset=6), lzma.decompress)}
+    candidates = {f"{transform}_{codec}": dict(payload_bytes=0, encode_seconds=0.,
+                  inverse_seconds=0., compress_seconds=0., decompress_seconds=0.,
+                  roundtrip_blocks=0, roundtrip_record_bytes=0, fields={})
+                  for transform in transforms for codec in codecs}
+    restored_hashes = {name: hashlib.sha256() for name in candidates}
+    original_hash = hashlib.sha256()
+    decisions, raw_bytes, read_inflate_seconds = 0, 0, 0.
+    version = data.nav_demos.episode_version(local)
+    iterator = iter(data.nav_demos.iter_chunks(local, PROBE_CHUNK_RECORDS))
+    while True:
+        progress.begin("probe.local_read_inflate")
+        before = time.perf_counter()
+        try:
+            records = next(iterator)
+        except StopIteration:
+            read_inflate_seconds += time.perf_counter() - before
+            break
+        read_inflate_seconds += time.perf_counter() - before
+        original = records.tobytes()
+        original_hash.update(original)
+        decisions += len(records)
+        raw_bytes += len(original)
+        for transform in transforms:
+            progress.begin("probe." + transform)
+            before = time.perf_counter()
+            payload, fields = probe_encode(records, transform)
+            encode_seconds = time.perf_counter() - before
+            before = time.perf_counter()
+            restored = probe_decode(payload, records.shape, records.dtype, transform).tobytes()
+            inverse_seconds = time.perf_counter() - before
+            if restored != original:
+                raise ValueError(f"Probe transform lost record bits: {entry['id']}: {transform}")
+            for codec, (compress, decompress) in codecs.items():
+                name = f"{transform}_{codec}"
+                progress.begin("probe." + name)
+                before = time.perf_counter()
+                compressed = compress(payload)
+                compress_seconds = time.perf_counter() - before
+                before = time.perf_counter()
+                expanded = decompress(compressed)
+                decompress_seconds = time.perf_counter() - before
+                if expanded != payload:
+                    raise ValueError(f"Probe codec lost payload bits: {entry['id']}: {name}")
+                candidate = candidates[name]
+                candidate["payload_bytes"] += len(compressed)
+                candidate["encode_seconds"] += encode_seconds
+                candidate["inverse_seconds"] += inverse_seconds
+                candidate["compress_seconds"] += compress_seconds
+                candidate["decompress_seconds"] += decompress_seconds
+                candidate["roundtrip_blocks"] += 1
+                candidate["roundtrip_record_bytes"] += len(restored)
+                restored_hashes[name].update(restored)
+                for field, values in fields.items():
+                    total = candidate["fields"].setdefault(field, dict(raw_bytes=0, transformed_bytes=0,
+                                                                      encode_seconds=0.))
+                    for key, value in values.items():
+                        total[key] += value
+        progress.emit("probe_block_complete", decisions=decisions)
+    if decisions != entry["decisions"]:
+        raise ValueError(f"Probe decision count differs: {entry['id']}: {decisions}")
+    for name, candidate in candidates.items():
+        candidate["payload_bytes_per_decision"] = candidate["payload_bytes"] / decisions
+        candidate["source_bytes_over_candidate_payload"] = compressed_bytes / candidate["payload_bytes"]
+        candidate["record_bytes_sha256"] = restored_hashes[name].hexdigest()
+        if candidate["record_bytes_sha256"] != original_hash.hexdigest():
+            raise ValueError(f"Probe record checksum differs: {entry['id']}: {name}")
+    return dict(id=entry["id"], family=entry["family"], decisions=decisions, navdemo_version=version,
+                source=str(source), source_compressed_bytes=compressed_bytes,
+                source_compressed_sha256=compressed_hash.hexdigest(), record_bytes=raw_bytes,
+                record_bytes_sha256=original_hash.hexdigest(), nas_read_seconds=nas_read_seconds,
+                local_read_inflate_seconds=read_inflate_seconds, candidates=candidates,
+                zstandard_version=zstandard.__version__)
+
+
 def measured_prepare(args, manifest, entries, cache, progress):
     """Instrument the existing prepare without changing its inputs or math."""
     episode_results = []
@@ -301,7 +467,7 @@ def measured_prepare(args, manifest, entries, cache, progress):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("profile", "replay"))
+    parser.add_argument("mode", choices=("profile", "probe", "replay"))
     parser.add_argument("--corpus", choices=("v4", "v5"), required=True)
     for name in ("source", "manifest", "output", "scratch"):
         parser.add_argument("--" + name, type=Path, required=True)
@@ -323,7 +489,7 @@ def main():
         scratch_created = True
         progress.emit("population", corpus=args.corpus, eligible_episodes=len(entries),
                       eligible_decisions=sum(entry["decisions"] for entry in entries))
-        if args.mode == "profile":
+        if args.mode in ("profile", "probe"):
             selected = []
             for family in sorted({entry["family"] for entry in entries}):
                 candidates = [entry for entry in entries if entry["family"] == family]
@@ -336,23 +502,45 @@ def main():
                 episode_scratch = scratch / entry["id"]
                 episode_scratch.mkdir()
                 try:
-                    result = profile_recording(entry, episode_scratch, progress)
-                    result["prepare"] = measured_prepare(args, manifest, [entry], episode_scratch / "cache", progress)
+                    if args.mode == "profile":
+                        result = profile_recording(entry, episode_scratch, progress)
+                        result["prepare"] = measured_prepare(args, manifest, [entry], episode_scratch / "cache", progress)
+                    else:
+                        result = probe_recording(entry, episode_scratch, progress)
                     results.append(result)
-                    progress.emit("profile_episode_result", result=result)
+                    progress.emit(f"{args.mode}_episode_result", result=result)
                 finally:
                     shutil.rmtree(episode_scratch)
-                if (args.corpus == "v5" and not pending
+                if (args.mode == "profile" and args.corpus == "v5" and not pending
                         and not any(item["familiar"]["policy_positive_decisions"] for item in results)):
                     measured = {item["id"] for item in results}
                     remaining = sorted((item for item in entries if item["id"] not in measured
                         and item["scenario"].get("local", item.get("local", False))), key=lambda item: item["id"])
                     if remaining:
                         pending.append(remaining[0])
-            summary = dict(mode=args.mode, corpus=args.corpus, chunk_records=CHUNK_RECORDS,
-                           episodes=results, standalone_field_gzip_streams_are_not_additive_to_source=True,
-                           candidate_sizes_exclude_container_headers=True,
-                           prepare_runs_after_source_copy_and_may_use_warm_nas_cache=True)
+            summary = dict(mode=args.mode, corpus=args.corpus,
+                           chunk_records=PROBE_CHUNK_RECORDS if args.mode == "probe" else CHUNK_RECORDS,
+                           episodes=results, candidate_sizes_exclude_container_headers=True,
+                           nas_reads_may_use_warm_cache=True)
+            if args.mode == "profile":
+                summary.update(standalone_field_gzip_streams_are_not_additive_to_source=True,
+                               prepare_runs_after_source_copy_and_may_use_warm_nas_cache=True)
+            else:
+                total_source = sum(result["source_compressed_bytes"] for result in results)
+                total_decisions = sum(result["decisions"] for result in results)
+                totals = dict(episodes=len(results), decisions=total_decisions,
+                              source_compressed_bytes=total_source,
+                              source_compressed_bytes_per_decision=total_source / total_decisions,
+                              candidates={})
+                for name in results[0]["candidates"]:
+                    candidate = {key: sum(result["candidates"][name][key] for result in results)
+                                 for key in ("payload_bytes", "encode_seconds", "inverse_seconds",
+                                             "compress_seconds", "decompress_seconds",
+                                             "roundtrip_blocks", "roundtrip_record_bytes")}
+                    candidate["payload_bytes_per_decision"] = candidate["payload_bytes"] / total_decisions
+                    candidate["source_bytes_over_candidate_payload"] = total_source / candidate["payload_bytes"]
+                    totals["candidates"][name] = candidate
+                summary["totals"] = totals
         else:
             selected = entries[200:300]
             if len(selected) != 100:
