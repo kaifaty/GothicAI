@@ -6,6 +6,7 @@
 #include "resources.h"
 #include "sha256.h"
 #include "worldbase.h"
+#include "worldchunksruntime.h"
 #include "world/world.h"
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"

@@ -36,21 +36,4 @@ struct WorldChunkManifest {
 WorldChunkManifest writeWorldChunks(const asset::WorldMesh& mesh, const WorldChunkSource& source,
                                     const std::filesystem::path& dir, int32_t chunkSize = 6400);
 
-WorldChunkManifest readWorldChunkManifest(const std::filesystem::path& dir);
-
-// Reads the chunks listed in dir/world.json. A chunk with the same file name
-// under overrideDir (if not empty) replaces the base one. Fills materials,
-// vertices, features and polygons of a fresh mesh. Unedited chunks restore
-// the source arrays exactly, with every source index (the engine's meshlet
-// packing keys on them); geometry an edit added or moved goes after them.
-asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir = {});
-
-// The fields readWorldChunks fills, copied from a source mesh: materials,
-// vertices, features and polygons. readWorldChunks of unedited chunks equals
-// canonicalWorldMesh of the source mesh bit for bit.
-asset::WorldMesh canonicalWorldMesh(const asset::WorldMesh& mesh);
-
-// Empty when equal; otherwise the first difference, for logs and tests.
-std::string compareWorldMeshes(const asset::WorldMesh& expected, const asset::WorldMesh& actual);
-
 uint32_t worldChunkCrc32(const void* data, size_t size, uint32_t crc = 0);

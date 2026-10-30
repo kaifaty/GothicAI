@@ -17,7 +17,7 @@ METADATA_COLUMNS = {
 }
 TIMING = (
     "Frame intervals are differences between consecutive submitted attempt begin_ns "
-    "timestamps in the same contiguous perf-PLACE/view-N segment. Intervening "
+    "timestamps in the same contiguous perf-PLACE/view-N or streaming-flythrough/PASS segment. Intervening "
     "FenceBusy attempts count toward elapsed time and zone costs, never as rendered "
     "frames. Partial time before the first and after the last submitted attempt "
     "of each segment is omitted. FPS is "
@@ -43,6 +43,7 @@ def describe(values):
         "p50": percentile(values, 0.50),
         "p95": percentile(values, 0.95),
         "p99": percentile(values, 0.99),
+        "max": max(values),
     }
 
 
@@ -78,6 +79,8 @@ def read_profile(path):
 
 def segment_parts(segment):
     parts = segment.split("/")
+    if len(parts) == 2 and parts[0] == "streaming-flythrough" and parts[1] in {"run", "fly"}:
+        return tuple(parts)
     if len(parts) == 2 and parts[0].startswith("perf-") and parts[1] in {
             "view-1", "view-2", "view-3", "view-4"}:
         return parts[0][5:], parts[1]
@@ -175,12 +178,45 @@ def read_metadata(directory):
     return json.loads(path.read_text()) if path.exists() else {}
 
 
+def read_streaming(directory):
+    path = directory / "streaming.csv"
+    with path.open(newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    grouped = {}
+    for row in rows:
+        parts = segment_parts(row["segment"])
+        if parts and parts[0] == "streaming-flythrough":
+            sample = {key: float(value) for key, value in row.items() if key != "segment"}
+            if not all(math.isfinite(value) and value >= 0 for value in sample.values()):
+                raise ValueError(f"{path}: invalid residency metric")
+            grouped.setdefault(parts[1], []).append(sample)
+    if set(grouped) != {"run", "fly"} or any(len(rows) < 2 for rows in grouped.values()):
+        raise ValueError(f"{path}: both run and fly require complete residency samples")
+    events = [json.loads(line) for line in (directory / "events.jsonl").read_text().splitlines()]
+    completed = [event for event in events if event.get("kind") == "route_end" and event.get("pass")]
+    if sorted(event.get("speed_cm_s") for event in completed) != [500, 2000]:
+        raise ValueError(f"{directory}: both route passes must reach their endpoints")
+    return grouped
+
+
+def streaming_stats(rows):
+    return {
+        "updates": len(rows),
+        "near_transitions": int(sum(row["near_transitions"] for row in rows)),
+        "far_transitions": int(sum(row["far_transitions"] for row in rows)),
+        "peak_near": int(max(row["near"] for row in rows)),
+        "update_ms": describe([row["update_ms"] for row in rows]),
+        "work_ms": describe([row["work_ms"] for row in rows]),
+    }
+
+
 def build_report(directory):
     directory = Path(directory).resolve()
     profiles = sorted(directory.rglob("frameprofile.csv"))
     if not profiles:
         raise ValueError(f"{directory}: no frameprofile.csv files")
     grouped = {}
+    streaming = {}
     warnings = []
     sources = []
     for path in profiles:
@@ -188,23 +224,32 @@ def build_report(directory):
         warnings.extend(issues)
         relative = str(path.parent.relative_to(directory))
         metadata = read_metadata(path.parent)
+        if any(place == "streaming-flythrough" for place, _ in segments):
+            streaming[relative] = read_streaming(path.parent)
         sources.append({"directory": relative, "metadata": metadata})
         for (place, view), samples in segments.items():
             if not samples:
                 raise ValueError(f"{path}: {place}/{view} has fewer than two submitted frames")
             grouped.setdefault(place, {}).setdefault(relative, {}).setdefault(view, []).extend(samples)
     if not grouped:
-        raise ValueError(f"{directory}: no perf-PLACE/view-N measurement segments")
+        raise ValueError(f"{directory}: no performance measurement segments")
     places = {}
     for place, repeats in grouped.items():
         view_samples = {}
         repeat_reports = []
         for repeat, views in repeats.items():
-            if set(views) != {"view-1", "view-2", "view-3", "view-4"}:
+            if place != "streaming-flythrough" and set(views) != {"view-1", "view-2", "view-3", "view-4"}:
                 warnings.append(f"{place}/{repeat}: expected four views, found {', '.join(sorted(views))}")
             repeat_reports.append({"directory": repeat,
                                    "summary": summarize([sample for rows in views.values() for sample in rows]),
                                    "views": {view: summarize(rows) for view, rows in sorted(views.items())}})
+            if place == "streaming-flythrough":
+                if set(views) != {"run", "fly"}:
+                    raise ValueError(f"{directory}/{repeat}: both run and fly frame segments are required")
+                for view, stats in repeat_reports[-1]["views"].items():
+                    stats["streaming"] = streaming_stats(streaming[repeat][view])
+                repeat_reports[-1]["summary"]["streaming"] = streaming_stats(
+                    [row for rows in streaming[repeat].values() for row in rows])
             for view, rows in views.items():
                 view_samples.setdefault(view, []).extend(rows)
         places[place] = {
@@ -212,6 +257,12 @@ def build_report(directory):
             "views": {view: summarize(rows) for view, rows in sorted(view_samples.items())},
             "repeats": repeat_reports,
         }
+        if place == "streaming-flythrough":
+            for view, stats in places[place]["views"].items():
+                stats["streaming"] = streaming_stats(
+                    [row for repeat in repeats for row in streaming[repeat][view]])
+            places[place]["summary"]["streaming"] = streaming_stats(
+                [row for repeat in repeats for rows in streaming[repeat].values() for row in rows])
     return {"schema_version": 1, "directory": str(directory), "metadata": read_metadata(directory),
             "timing": TIMING, "warnings": warnings, "sources": sources, "places": places}
 
@@ -221,14 +272,22 @@ def number(value, digits=3):
 
 
 def summary_table(report):
-    lines = ["| Place / view | Frames | FPS | Mean ms | p50 ms | p95 ms | p99 ms |",
-             "|---|---:|---:|---:|---:|---:|---:|"]
+    lines = ["| Place / view | Frames | FPS | Mean ms | p50 ms | p95 ms | p99 ms | Max ms |",
+             "|---|---:|---:|---:|---:|---:|---:|---:|"]
     for place, data in report["places"].items():
         for name, stats in [(place, data["summary"])] + [
                 (place + "/" + view, stats) for view, stats in data["views"].items()]:
             frame = stats["frame_ms"]
             lines.append(f"| {name} | {stats['frames']} | {stats['fps']:.2f} | "
-                         + " | ".join(number(frame[key]) for key in ("mean", "p50", "p95", "p99")) + " |")
+                         + " | ".join(number(frame[key]) for key in ("mean", "p50", "p95", "p99", "max")) + " |")
+    streaming = report["places"].get("streaming-flythrough")
+    if streaming:
+        lines.extend(["", "| Pass | Near transitions | Far transitions | Peak Near | Update p99 ms | Work p99 / max ms |",
+                      "|---|---:|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            data = stats["streaming"]
+            lines.append(f"| {view} | {data['near_transitions']} | {data['far_transitions']} | {data['peak_near']} | "
+                         f"{data['update_ms']['p99']:.6f} | {data['work_ms']['p99']:.6f} / {data['work_ms']['max']:.6f} |")
     return "\n".join(lines)
 
 

@@ -236,12 +236,14 @@ e2e_window_position() {
 
 source_digest() {
   # Content and paths include additions/deletions and uncommitted files, not just HEAD.
-  python3 - "$ROOT" <<'PY'
+  python3 - "$ROOT" "${1:-OFF}" <<'PY'
 import hashlib
 import sys
 from pathlib import Path
 root = Path(sys.argv[1])
 digest = hashlib.sha256()
+if sys.argv[2] == 'ON':
+    digest.update(b'OPENGOTHIC_ENABLE_FRAME_PROFILE=ON\0')
 for source in ('OpenGothic', 'scripts/convert'):
     for path in sorted((root / source).rglob('*')):
         if 'build' in path.relative_to(root).parts:
@@ -431,7 +433,9 @@ PY
 remote_probe() {
   local action="$1" state="$2" run="$3" scenario="$4" digest project
   toolchain
-  digest="$(source_digest)"
+  local frame_profile=OFF
+  if [[ "$action" == bench && "$(basename "$scenario")" == streaming-flythrough.bench ]]; then frame_profile=ON; fi
+  digest="$(source_digest "$frame_profile")"
   printf '%s\n' "$digest" >"$state/inputs/$run/source.sha256"
   if [[ "$action" == e2e ]]; then check_protocol || return 2; fi
   engine_ready "$state" "$digest" || return 1
@@ -454,7 +458,9 @@ remote_prepare() {
   toolchain
   digest="$(cat "$state/inputs/$run/source.sha256")"
   if [[ "$action" == e2e ]]; then check_protocol; fi
-  build_engine "$state" "$digest"
+  local frame_profile=OFF
+  if [[ "$action" == bench && "$(basename "$scenario")" == streaming-flythrough.bench ]]; then frame_profile=ON; fi
+  build_engine "$state" "$digest" "$frame_profile"
   if [[ "$action" == e2e ]]; then
     # Probe can stop at the missing engine before scanning the smaller tool tree.
     digest="$(storygraph_digest)"
@@ -494,7 +500,7 @@ game_settings() {
 }
 
 build_engine() {
-  local state="$1" digest="$2" started=$SECONDS
+  local state="$1" digest="$2" frame_profile="${3:-OFF}" started=$SECONDS
   if engine_ready "$state" "$digest"; then
     if [[ "$RYZEN_GAME_BIN" != "$state/build/opengothic/Gothic2Notr" ]]; then
       echo "Ryzen: engine from cache ${digest:0:12} (0s)"
@@ -508,7 +514,7 @@ build_engine() {
     # Reconfigure on tree changes: OpenGothic's source globs need this for new .cpp files.
     cmake -S "$ROOT/OpenGothic" -B "$state/build" -G Ninja \
       -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-      -DOPENGOTHIC_ENABLE_APP_CADENCE=ON \
+      -DOPENGOTHIC_ENABLE_APP_CADENCE=ON -DOPENGOTHIC_ENABLE_FRAME_PROFILE="$frame_profile" \
       -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
       >"$state/build/configure.log" 2>&1 || { local rc=$?; cat "$state/build/configure.log"; return "$rc"; }
     cmake --build "$state/build" --target Gothic2Notr --parallel "$jobs" \
@@ -1160,7 +1166,7 @@ run_quick() {
 
 preparation_needed() {
   local request rc
-  request="$(python3 - "$ACTION" "$RUN" "${SCENARIO:-m0}" <<'PY'
+  request="$(python3 - "$ACTION" "$RUN" "${1:-${SCENARIO:-m0}}" <<'PY'
 import json
 import sys
 print(json.dumps(dict(zip(('action', 'run', 'scenario'), sys.argv[1:]))))
@@ -1224,13 +1230,14 @@ game_queue_args() {
 }
 
 run_game() {
-  local rc name
-  if preparation_needed; then
+  local rc name scenario="${SCENARIO:-m0}"
+  if [[ "$ACTION" == bench ]]; then scenario="$STATE/inputs/$RUN/$(basename "$BENCH_SCENARIO")"; fi
+  if preparation_needed "$scenario"; then
     if [[ "$ACTION" == bench ]]; then name="bench $(basename "$BENCH_SCENARIO" .bench)"; else name="e2e ${SCENARIO:-m0}"; fi
     GQ_ARGS=(--class quick --threads "$JOBS" --mem 12G --max "${RYZEN_MAX:-30m}" --name "build $name")
     QUEUE_RUN="$RUN-build"
     run_quick env "${ENV_ARGS[@]}" bash "$STATE/source/scripts/ryzen.sh" __remote prepare \
-      "$ACTION" "$STATE" "$RUN" "${SCENARIO:-m0}" && rc=0 || rc=$?
+      "$ACTION" "$STATE" "$RUN" "$scenario" && rc=0 || rc=$?
     [[ "$rc" == 0 ]] || return "$rc"
   else
     rc=$?

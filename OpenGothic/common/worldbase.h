@@ -10,6 +10,8 @@
 #include "asset/worldmesh.h"
 #include "worlddata.h"
 
+struct ChunkTable;
+
 struct WorldBaseResult {
   bool        replaced = false;
   size_t      triangles = 0;
@@ -24,4 +26,5 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
                             std::string_view name, const std::filesystem::path& dir,
                             const std::filesystem::path& overrideDir,
                             const std::vector<std::pair<std::string,uintmax_t>>& baseArchives,
-                            const std::map<std::string,std::filesystem::path>* ownMeshes = nullptr);
+                            const std::map<std::string,std::filesystem::path>* ownMeshes = nullptr,
+                            ChunkTable* chunks = nullptr);
