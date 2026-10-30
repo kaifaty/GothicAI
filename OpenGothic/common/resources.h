@@ -374,6 +374,7 @@ class Resources final {
     struct MeshOverride {
       std::filesystem::path file;
       std::string replacement;
+      std::string initialStamp;
       bool loaded = false;
       size_t sourceSize = 0;
       uint32_t sourceCrc32 = 0;

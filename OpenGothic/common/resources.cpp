@@ -80,6 +80,20 @@ struct Resources::VideoBase {
 namespace {
 thread_local bool preparingVideo = false;
 
+std::string wayHeightFileStamp(const std::filesystem::path& file) {
+  try {
+    namespace fs = std::filesystem;
+    if(!fs::exists(file)) return "missing";
+    if(!fs::is_regular_file(file)) return "other";
+    return std::to_string(fs::file_size(file))+":"+
+           std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            fs::last_write_time(file).time_since_epoch()).count());
+    }
+  catch(const std::filesystem::filesystem_error&) {
+    return {};
+    }
+  }
+
 std::string censusSourcePath(const std::filesystem::path& source) {
   auto relative = source;
   if(relative.is_absolute())
@@ -908,17 +922,9 @@ Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
       };
     const auto metadata=[&](const fs::path& file) {
       field(fs::absolute(file).lexically_normal().generic_string());
-      if(!fs::exists(file)) {
-        field("missing");
-        return;
-        }
-      if(!fs::is_regular_file(file)) {
-        field("other");
-        return;
-        }
-      field(std::to_string(fs::file_size(file)));
-      field(std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            fs::last_write_time(file).time_since_epoch()).count()));
+      const auto stamp=wayHeightFileStamp(file);
+      if(stamp.empty()) throw std::runtime_error("cannot read way height input metadata");
+      field(stamp);
       };
     const auto contentWorld=worldOverrideDir(world);
     field(contentWorld.empty() ? "" : fs::absolute(contentWorld).lexically_normal().generic_string());
@@ -936,24 +942,23 @@ Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
           }
       files.push_back(contentWorld.parent_path().parent_path()/"meshes/meshes.json");
       }
-    // Indexed replacements may be shared by several worlds. This small superset
-    // also invalidates heights if an unavailable replacement becomes readable.
+    // Indexed replacements may be shared by several worlds. The key must not
+    // depend on which of them this process has already loaded.
     std::vector<std::string> meshKeys;
     for(const auto& [key,mesh]:inst->meshOverrides) {
+      (void)mesh;
       meshKeys.push_back(key);
-      files.push_back(mesh.file);
       }
     std::sort(meshKeys.begin(),meshKeys.end());
     for(const auto& key:meshKeys) {
       const auto& mesh=inst->meshOverrides.at(key);
-      // The map and already cached geometry may predate an edit on disk.
+      const auto stamp=wayHeightFileStamp(mesh.file);
+      // Cached successful or failed loads may predate an edit on disk. Use
+      // rays until a new Resources owner can load the current replacements.
+      if(stamp.empty() || stamp!=mesh.initialStamp) return {};
       field(key);
       field(fs::absolute(mesh.file).lexically_normal().generic_string());
-      field(mesh.loaded ? "loaded=1" : "loaded=0");
-      if(mesh.loaded) {
-        field(std::to_string(mesh.sourceSize));
-        field(std::to_string(mesh.sourceCrc32));
-        }
+      field(stamp);
       }
     std::sort(files.begin(),files.end());
     files.erase(std::unique(files.begin(),files.end()),files.end());
@@ -1010,9 +1015,11 @@ void Resources::indexMeshOverrides() {
       }
     for(auto& c:key)
       c = char(std::toupper(uint8_t(c)));
+    const auto meshFile=(root/relative).lexically_normal();
     meshOverrides[std::move(key)] = {
-      (root/relative).lexically_normal(),
-      (std::filesystem::path("meshes")/relative).lexically_normal().generic_string()
+      meshFile,
+      (std::filesystem::path("meshes")/relative).lexically_normal().generic_string(),
+      wayHeightFileStamp(meshFile)
       };
     }
   Log::i("meshes: ",meshOverrides.size()," entries from \"",root.string(),"\"");
