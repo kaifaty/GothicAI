@@ -9,6 +9,8 @@
 
 #include <string>
 #include <cassert>
+#include <cstdlib>
+#include <cstring>
 
 using namespace Tempest;
 
@@ -19,7 +21,17 @@ size_t tempestProbeMetalGpuBytes();
 size_t tempestProbeVulkanGpuBytes();
 #endif
 
+bool tempestLoadProbeEnabled() {
+  static const bool enabled = []() {
+    const auto* value = std::getenv("OPENGOTHIC_LOADPROBE");
+    return value!=nullptr && std::strcmp(value,"1")==0;
+    }();
+  return enabled;
+  }
+
 size_t tempestProbeGpuBytes() {
+  if(!tempestLoadProbeEnabled())
+    return 0;
   size_t bytes = 0;
 #if defined(TEMPEST_BUILD_METAL)
   bytes += tempestProbeMetalGpuBytes();

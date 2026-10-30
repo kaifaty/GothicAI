@@ -37,7 +37,8 @@ Keep these when updating a library from upstream.
 - `Tempest/Engine/graphics/device.cpp`, `gapi/metal/mtdevice.mm` and
   `gapi/vulkan/vallocator.cpp`: `tempestProbeGpuBytes()` reports Metal
   `currentAllocatedSize` and live Vulkan allocations (including cached allocator pages).
-  OpenGothic calls it only with `OPENGOTHIC_LOADPROBE=1`; ordinary runs do not sample GPU memory.
+  `tempestLoadProbeEnabled()` caches the exact `OPENGOTHIC_LOADPROBE=1` switch once for the
+  engine and counters; ordinary runs skip GPU sampling and allocation bookkeeping.
 - `cgltf/` `cgltf.h`: removed a tab from an otherwise empty line to pass the repository's
   diff whitespace check; parser code is unchanged.
 - `ZenKit/` `Vfs::set_open_observer` (`Vfs.hh`, `Vfs.cc`): optional successful-open callback

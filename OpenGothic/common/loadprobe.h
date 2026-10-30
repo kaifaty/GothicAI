@@ -20,16 +20,13 @@
 #include <unistd.h>
 #endif
 
+bool tempestLoadProbeEnabled();
 size_t tempestProbeGpuBytes();
 
 namespace LoadProbe {
 
 inline bool enabled() {
-  static const bool value = [] {
-    const char* env = std::getenv("OPENGOTHIC_LOADPROBE");
-    return env!=nullptr && std::strcmp(env,"1")==0;
-    }();
-  return value;
+  return tempestLoadProbeEnabled();
   }
 
 inline bool serial() {

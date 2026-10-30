@@ -16,6 +16,8 @@
 using namespace Tempest;
 using namespace Tempest::Detail;
 
+bool tempestLoadProbeEnabled();
+
 static std::atomic<size_t> probeBytes{0};
 
 size_t tempestProbeVulkanGpuBytes() {
@@ -47,7 +49,8 @@ VDevice* VAllocator::device() {
 VAllocator::Provider::~Provider() {
   if(lastFree!=VK_NULL_HANDLE) {
     vkFreeMemory(device->device.impl,lastFree,nullptr);
-    probeBytes.fetch_sub(lastSize,std::memory_order_relaxed);
+    if(tempestLoadProbeEnabled())
+      probeBytes.fetch_sub(lastSize,std::memory_order_relaxed);
     }
   }
 
@@ -59,7 +62,8 @@ VAllocator::Provider::DeviceMemory VAllocator::Provider::alloc(size_t size, uint
       return memory;
       }
     vkFreeMemory(device->device.impl,lastFree,nullptr);
-    probeBytes.fetch_sub(lastSize,std::memory_order_relaxed);
+    if(tempestLoadProbeEnabled())
+      probeBytes.fetch_sub(lastSize,std::memory_order_relaxed);
     lastFree=VK_NULL_HANDLE;
     }
   VkDeviceMemory memory=VK_NULL_HANDLE;
@@ -81,14 +85,16 @@ VAllocator::Provider::DeviceMemory VAllocator::Provider::alloc(size_t size, uint
   auto code = vkAllocateMemory(device->device.impl,&memoryAllocateInfo,nullptr,&memory);
   if(code!=VK_SUCCESS)
     return VK_NULL_HANDLE;
-  probeBytes.fetch_add(size,std::memory_order_relaxed);
+  if(tempestLoadProbeEnabled())
+    probeBytes.fetch_add(size,std::memory_order_relaxed);
   return memory;
   }
 
 void VAllocator::Provider::free(VAllocator::Provider::DeviceMemory m, size_t size, uint32_t typeId) {
   if(lastFree!=VK_NULL_HANDLE) {
     vkFreeMemory(device->device.impl,lastFree,nullptr);
-    probeBytes.fetch_sub(lastSize,std::memory_order_relaxed);
+    if(tempestLoadProbeEnabled())
+      probeBytes.fetch_sub(lastSize,std::memory_order_relaxed);
     }
 
   lastFree = m;

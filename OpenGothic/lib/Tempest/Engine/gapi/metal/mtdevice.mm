@@ -39,6 +39,8 @@ static MTL::LanguageVersion languageVersion() {
 static std::mutex probeDeviceSync;
 static MTL::Device* probeDevice = nullptr;
 
+bool tempestLoadProbeEnabled();
+
 size_t tempestProbeMetalGpuBytes() {
   std::lock_guard<std::mutex> guard(probeDeviceSync);
   return probeDevice ? probeDevice->currentAllocatedSize() : 0;
@@ -70,11 +72,15 @@ MtDevice::MtDevice(std::string_view name, bool validation)
     prop.transposedRtMatrix = true;
     }
   deductProps(prop,*impl);
-  std::lock_guard<std::mutex> guard(probeDeviceSync);
-  probeDevice = impl.get();
+  if(tempestLoadProbeEnabled()) {
+    std::lock_guard<std::mutex> guard(probeDeviceSync);
+    probeDevice = impl.get();
+    }
   }
 
 MtDevice::~MtDevice() {
+  if(!tempestLoadProbeEnabled())
+    return;
   std::lock_guard<std::mutex> guard(probeDeviceSync);
   if(probeDevice==impl.get())
     probeDevice = nullptr;

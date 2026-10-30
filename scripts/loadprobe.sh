@@ -44,5 +44,11 @@ for tag in "$@"; do
   grep -q '\[loadprobe\] stage=session_end ' "$out/game.log" || {
     echo "loadprobe: incomplete session in $out/game.log" >&2; exit 1;
   }
+  if [[ "$mode" == chain && "$(grep -c '\[loadprobe\] stage=change_end ' "$out/game.log")" != 3 ]]; then
+    echo "loadprobe: incomplete world chain in $out/game.log" >&2; exit 1;
+  fi
+  grep -q '"kind":"rec_stop"' "$out/events.jsonl" || {
+    echo "loadprobe: scenario did not finish in $out/events.jsonl" >&2; exit 1;
+  }
   echo "$(grep -c '\[loadprobe\]' "$out/game.log") probe lines: $out/game.log"
 done
