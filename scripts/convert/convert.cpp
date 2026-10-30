@@ -64,7 +64,7 @@
 #include "audiodata.h"
 #include "musicdata.h"
 #include "musicnative.h"
-#include "worldchunks.h"
+#include "worldchunksruntime.h"
 #include "worlddata.h"
 #include "world/voblayer.h"
 #include "gothicglb.h"

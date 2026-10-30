@@ -40,6 +40,7 @@
 #include <bit>
 #include <cmath>
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -888,6 +889,9 @@ void multiModelGpuCases(const Fixture& fixture, Tempest::Device& device) {
 void resourcePaths(const Fixture& fixture, bool own) {
   Resources resources;
   fixture.mount();
+  const auto heightInputs=Resources::wayHeightInputs("SMALL.ZEN");
+  require(!heightInputs.baseFingerprint.empty() && !heightInputs.contentFingerprint.empty(),
+          "way height inputs must be available before loading replacement geometry");
   const auto* proto = Resources::loadMesh("own_mesh.3ds");
   require(proto!=nullptr,"visual mesh must load");
   const auto* bounds = proto->bbox();
@@ -922,6 +926,17 @@ void resourcePaths(const Fixture& fixture, bool own) {
           "shared loader must retain the selected physical material group");
   require(close(source.bbox.min.x,own ? -400.f : 10.f),"cloth source must select the same geometry");
   checkCensus(fixture,own,3);
+  require(Resources::wayHeightInputs("SMALL.ZEN").contentFingerprint==heightInputs.contentFingerprint,
+          "loading replacement geometry must not change the way height input fingerprint");
+  if(own) {
+    const auto glb=fixture.root/"meshes/test/own.glb";
+    const auto modified=std::filesystem::last_write_time(glb);
+    std::filesystem::last_write_time(glb,modified+std::chrono::seconds(1));
+    const auto changed=Resources::wayHeightInputs("SMALL.ZEN");
+    std::filesystem::last_write_time(glb,modified);
+    require(changed.contentFingerprint.empty(),
+            "changed GLB metadata must disable way height caching for stale Resources");
+    }
   }
 
 void frontFaces(const asset::StaticMesh& mesh) {

@@ -26,6 +26,7 @@ struct Selection {
 // Off: a cache hit never starts the background copy to the store. The headless body runner
 // forks its loaded world, which needs a single thread, and does not live long enough to own it.
 void setPublication(bool enabled);
+std::filesystem::path cacheRoot();
 // A nonempty OPENGOTHIC_BASE selects and validates an explicit base.
 // Otherwise OPENGOTHIC_BASE_FINGERPRINT selects a ready cache/store base without an installation.
 // Empty has the same meaning as unset: automatic resolution.

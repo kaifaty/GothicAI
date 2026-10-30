@@ -1,0 +1,471 @@
+diff --git a/OpenGothic/common/game/gamesession.cpp b/OpenGothic/common/game/gamesession.cpp
+index 8ab71e585..fb8666f70 100644
+--- a/OpenGothic/common/game/gamesession.cpp
++++ b/OpenGothic/common/game/gamesession.cpp
+@@ -16,6 +16,7 @@
+ #include "camera.h"
+ #include "gothic.h"
+ #include "resources.h"
++#include "loadprobe.h"
+ 
+ using namespace Tempest;
+ 
+@@ -77,14 +78,19 @@ GameSession::GameSession(std::string file) {
+   setupSettings();
+   setTime(gtime(8,0));
+ 
++  LoadProbe::mark("session_begin");
++  auto probeT = std::chrono::steady_clock::now();
+   vm.reset(new GameScript(*this));
+   initPerceptions();
++  LoadProbe::mark("scripts_vm",LoadProbe::msSince(probeT));
+ 
+   setWorld(std::unique_ptr<World>(new World(*this,std::move(file),true,[&](int v){
+     Gothic::inst().setLoadingProgress(int(v*0.55));
+     })));
+ 
++  probeT = std::chrono::steady_clock::now();
+   vm->initDialogs();
++  LoadProbe::mark("dialogs",LoadProbe::msSince(probeT));
+   Gothic::inst().setLoadingProgress(70);
+ 
+   const bool testMode=false;
+@@ -107,17 +113,25 @@ GameSession::GameSession(std::string file) {
+   //std::string_view hero = "Bloodfly";
+   //std::string_view hero = "Gobbo_Skeleton";
+   //std::string_view hero = "Swampshark";
++  probeT = std::chrono::steady_clock::now();
+   if(!Gothic::inst().isBenchmarkMode())
+     wrld->createPlayer(hero);
+   wrld->postInit();
++  LoadProbe::mark("player_postinit",LoadProbe::msSince(probeT));
+ 
++  probeT = std::chrono::steady_clock::now();
+   if(!testMode)
+     initScripts(true);
++  LoadProbe::mark("scripts_startup",LoadProbe::msSince(probeT),
++                  "npcs="+std::to_string(wrld->npcCount()));
++  probeT = std::chrono::steady_clock::now();
+   wrld->triggerOnStart(true);
++  LoadProbe::mark("trigger_start",LoadProbe::msSince(probeT));
+   cam->reset(wrld->player());
+   Gothic::inst().setLoadingProgress(96);
+   ticks = 1;
+   // wrld->setDayTime(8,0);
++  LoadProbe::mark("session_end");
+   if(auto& fn = Gothic::inst().sessionStartFn)
+     fn(nullptr);
+   }
+@@ -413,10 +427,21 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
+     return std::move(game);
+     }
+ 
++  LoadProbe::mark("change_begin",-1,"to="+std::string(w));
++  auto probeT = std::chrono::steady_clock::now();
+   HeroStorage hdata;
+   if(auto hero = wrld->player())
+     hdata.save(*hero);
+-  clearWorld();
++  {
++  auto old = clearWorld();
++  size_t stored = 0;
++  for(auto& i:visitedWorlds)
++    stored += i.storage.size();
++  LoadProbe::mark("change_store_old",LoadProbe::msSince(probeT),"stored_bytes="+std::to_string(stored));
++  probeT = std::chrono::steady_clock::now();
++  old.reset();
++  LoadProbe::mark("change_free_old",LoadProbe::msSince(probeT));
++  }
+ 
+   vm->resetVarPointers();
+ 
+@@ -433,11 +458,13 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
+   std::unique_ptr<World> ret = std::unique_ptr<World>(new World(*this,w,wss.isEmpty(),loadProgress));
+   setWorld(std::move(ret));
+ 
++  probeT = std::chrono::steady_clock::now();
+   if(!wss.isEmpty()) {
+     Tempest::MemReader rd {wss.storage.data(),wss.storage.size()};
+     Serialize          fin{rd};
+     wrld->load(fin);
+     }
++  LoadProbe::mark("change_restore_state",LoadProbe::msSince(probeT),"bytes="+std::to_string(wss.storage.size()));
+ 
+   if(1) {
+     // put hero to world
+@@ -446,8 +473,13 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
+   if(auto hero = wrld->player())
+     vm->setInstanceNPC("HERO",*hero);
+ 
++  probeT = std::chrono::steady_clock::now();
+   initScripts(wss.isEmpty());
++  LoadProbe::mark("scripts_startup",LoadProbe::msSince(probeT),
++                  "first="+std::to_string(wss.isEmpty())+" npcs="+std::to_string(wrld->npcCount()));
++  probeT = std::chrono::steady_clock::now();
+   wrld->triggerOnStart(wss.isEmpty());
++  LoadProbe::mark("trigger_start",LoadProbe::msSince(probeT));
+ 
+   for(auto& i:visitedWorlds)
+     if(i.compareName(wrld->name())){
+@@ -457,6 +489,7 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
+       }
+ 
+   cam->reset(wrld->player());
++  LoadProbe::mark("change_end");
+   Log::i("Done loading world[",world,"]");
+   return std::move(game);
+   }
+diff --git a/OpenGothic/common/resources.cpp b/OpenGothic/common/resources.cpp
+index edcef7160..66c5b2ebe 100644
+--- a/OpenGothic/common/resources.cpp
++++ b/OpenGothic/common/resources.cpp
+@@ -1,4 +1,5 @@
+ #include "resources.h"
++#include "loadprobe.h"
+ #include "basestore.h"
+ #include "commandline.h"
+ #include "musicnative.h"
+@@ -735,7 +736,9 @@ Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forc
+   if(it!=texCache.end())
+     return it->second.get();
+ 
++  const auto probeT = std::chrono::steady_clock::now();
+   auto tex = implLoadTextureUncached(cname, forceMips);
++  LoadProbe::countTexture(tex,probeT);
+   if(!tex.isEmpty()) {
+     std::unique_ptr<Texture2d> t{new Texture2d(std::move(tex))};
+     Texture2d* ret=t.get();
+@@ -1120,6 +1123,7 @@ const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, boo
+   if(auto it = materialTextureCache.find(key); it!=materialTextureCache.end())
+     return it->second.get();
+   std::unique_ptr<Texture2d> texture;
++  const auto probeT = std::chrono::steady_clock::now();
+   try {
+     Pixmap pm(path);
+     if(pm.format()!=TextureFormat::DXT5 && (normalMap || pm.format()!=TextureFormat::DXT1)) {
+@@ -1132,6 +1136,8 @@ const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, boo
+     Log::e("materials: unable to load \"",path,"\"");
+     }
+   const auto ret = texture.get();
++  if(ret!=nullptr)
++    LoadProbe::countTexture(*ret,probeT);
+   materialTextureCache.emplace(key,std::move(texture));
+   return ret;
+   }
+diff --git a/OpenGothic/common/world/world.cpp b/OpenGothic/common/world/world.cpp
+index 9611132a0..88ee591e4 100644
+--- a/OpenGothic/common/world/world.cpp
++++ b/OpenGothic/common/world/world.cpp
+@@ -29,6 +29,7 @@
+ #include "resources.h"
+ #include "frameprofile.h"
+ #include "testbench.h"
++#include "loadprobe.h"
+ #include "physics/physicsnoise.h"
+ #include "physics/cloth.h"
+ #include "physics/worldcloth.h"
+@@ -116,29 +117,42 @@ const char* materialTag(asset::MaterialGroup src) {
+ World::World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress)
+   :wname(std::move(file)), game(game), wsound(game,*this), wobj(*this) {
+   const auto loadStarted = std::chrono::steady_clock::now();
++  LoadProbe::mark("world_begin",-1,"world="+std::string(wname));
+   try {
+     WorldData::Data world;
+     asset::WorldMesh worldMesh;
+     Resources::loadWorld(world,worldMesh,wname);
++    LoadProbe::mark("world_read_total",LoadProbe::msSince(loadStarted));
+     loadProgress(20);
+     windRooms.reset(world.bsp.mode,std::move(world.rooms));
+     auto worldCloth=WorldCloth::extract(worldMesh);
+ 
+-    auto wdynamicFut = std::async(std::launch::async, [&]() {
++    const bool probeSerial = std::getenv("OPENGOTHIC_LOADPROBE_SERIAL")!=nullptr;
++    const auto probeLaunch = probeSerial ? std::launch::deferred : std::launch::async;
++    double probePhysicsMs = 0, probeViewMs = 0;
++    auto wdynamicFut = std::async(probeLaunch, [&]() {
+       Workers::setThreadName("Loading: BVH thread");
+-      return std::unique_ptr<DynamicWorld>(new DynamicWorld(this,worldMesh,&worldCloth.original));
++      const auto t = std::chrono::steady_clock::now();
++      auto ret = std::unique_ptr<DynamicWorld>(new DynamicWorld(this,worldMesh,&worldCloth.original));
++      probePhysicsMs = LoadProbe::msSince(t);
++      return ret;
+       });
+     std::future<std::unique_ptr<WorldView>> wviewFut;
+     if(!Resources::isHeadless()) {
+-      wviewFut = std::async(std::launch::async, [&]() {
++      wviewFut = std::async(probeLaunch, [&]() {
+         Workers::setThreadName("Loading: PackedMesh thread");
++        const auto t = std::chrono::steady_clock::now();
+         PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);
++        LoadProbe::mark("landscape_pack",LoadProbe::msSince(t),
++                        "vertices="+std::to_string(vmesh.vertices.size())+" indices="+std::to_string(vmesh.indices.size())+
++                        " meshlet_bytes="+std::to_string(vmesh.vertices.size()*sizeof(vmesh.vertices[0])+vmesh.indices.size()*sizeof(vmesh.indices[0])));
+         auto view=std::make_unique<WorldView>(vmesh,wname);
+         if(!worldCloth.original.polygons.material_indices.empty()) {
+           PackedMesh originalCloth(worldCloth.original,PackedMesh::PK_VisualLnd);
+           view->setOriginalClothMesh(originalCloth);
+           view->setOriginalClothVisible(!Gothic::physicsFlags().cloth);
+           }
++        probeViewMs = LoadProbe::msSince(t);
+         return view;
+         });
+       }
+@@ -154,11 +168,16 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
+     }
+     loadProgress(50);
+ 
++    auto probeT = std::chrono::steady_clock::now();
+     if(wviewFut.valid())
+       wview = wviewFut.get();
++    LoadProbe::mark("landscape_view",probeViewMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
+     loadProgress(60);
+ 
++    probeT = std::chrono::steady_clock::now();
+     wdynamic = wdynamicFut.get();
++    LoadProbe::mark("physics_static",probePhysicsMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
++    probeT = std::chrono::steady_clock::now();
+     wdynamic->cloth().setExposureTest([this](const Tempest::Vec3& point) { return !isIndoor(point); });
+     wdynamic->setPhysicsNoiseEnabled(Gothic::physicsFlags().physicsNoise);
+     wdynamic->setDestructionEnabled(Gothic::physicsFlags().destruction);
+@@ -169,16 +188,26 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
+     for(auto& surface:worldCloth.surfaces)
+       if(auto visual=ClothVisual::createSurface(*this,surface.mesh,surface.pins,surface.visual,surface.id,surface.stiffness,surface.linearDamping))
+         clothSurfaces.push_back(std::move(visual));
++    LoadProbe::mark("cloth_surfaces",LoadProbe::msSince(probeT),"surfaces="+std::to_string(clothSurfaces.size()));
++    probeT = std::chrono::steady_clock::now();
+     worldMesh = {};
+     loadProgress(70);
+ 
+     globFx.reset(new GlobalEffects(*this));
+     wmatrix.reset(new WayMatrix(*this, *world.waynet));
++    LoadProbe::mark("waynet",LoadProbe::msSince(probeT));
++    probeT = std::chrono::steady_clock::now();
+     for(auto& vob:world.vobs)
+       wobj.addRoot(vob,startup);
++    LoadProbe::mark("vobs",LoadProbe::msSince(probeT),
++                    "items="+std::to_string(wobj.itmCount())+" mobsi="+std::to_string(wobj.mobsiCount()));
++    probeT = std::chrono::steady_clock::now();
+     wdynamic->finalizeMovableVobs();
++    LoadProbe::mark("movable_vobs",LoadProbe::msSince(probeT));
+ 
++    probeT = std::chrono::steady_clock::now();
+     wmatrix->buildIndex();
++    LoadProbe::mark("waynet_index",LoadProbe::msSince(probeT));
+     loadProgress(100);
+     }
+   catch(...) {
+@@ -186,6 +215,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
+     throw;
+     }
+   worldLoadMs = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-loadStarted).count();
++  LoadProbe::mark("world_end",worldLoadMs);
+   }
+ 
+ World::~World() {
+diff --git a/OpenGothic/common/worldbase.cpp b/OpenGothic/common/worldbase.cpp
+index acbf8de5e..71ef3176e 100644
+--- a/OpenGothic/common/worldbase.cpp
++++ b/OpenGothic/common/worldbase.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include "worldchunks.h"
+ #include "world/voblayer.h"
++#include "loadprobe.h"
+ 
+ #include <rapidjson/document.h>
+ #include <algorithm>
+@@ -52,14 +53,23 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
+       c = char(std::toupper(static_cast<unsigned char>(c)));
+     if(manifest.source.world!=key)
+       throw std::runtime_error("ZEN source world mismatch");
++    LoadProbe::mark("world_index");
++    auto probeT = std::chrono::steady_clock::now();
+     auto data = WorldData::read(dir,overrideDir);
++    LoadProbe::mark("world_data_read",LoadProbe::msSince(probeT),
++                    "vobs="+std::to_string(data.vobs.size())+" waypoints="+std::to_string(data.waynet ? data.waynet->points.size() : 0));
+     if(data.source.world!=manifest.source.world || data.source.size!=manifest.source.size ||
+        data.source.crc32!=manifest.source.crc32)
+       throw std::runtime_error("world data source differs from world.json");
+     if(!data.waynet)
+       throw std::runtime_error("world waynet missing");
++    probeT = std::chrono::steady_clock::now();
+     VobLayer::apply(data,dir,overrideDir,ownMeshes);
++    LoadProbe::mark("voblayer",LoadProbe::msSince(probeT));
++    probeT = std::chrono::steady_clock::now();
+     auto mesh = readWorldChunks(dir,overrideDir);
++    LoadProbe::mark("mesh_chunks_read",LoadProbe::msSince(probeT),
++                    "chunks="+std::to_string(manifest.chunks.size())+" tris="+std::to_string(mesh.polygons.material_indices.size()));
+     mesh.name = data.name;
+     mesh.bbox = data.bbox;
+     result.triangles = mesh.polygons.material_indices.size();
+diff --git a/OpenGothic/lib/Tempest/Engine/gapi/metal/mtdevice.mm b/OpenGothic/lib/Tempest/Engine/gapi/metal/mtdevice.mm
+index 84bb9e088..28063b778 100644
+--- a/OpenGothic/lib/Tempest/Engine/gapi/metal/mtdevice.mm
++++ b/OpenGothic/lib/Tempest/Engine/gapi/metal/mtdevice.mm
+@@ -36,10 +36,14 @@
+   return std::min<MTL::LanguageVersion>(MTL::LanguageVersion3_1, opt->languageVersion());
+   }
+ 
++static MTL::Device* probeDevice = nullptr;
++size_t tempestProbeGpuBytes() { return probeDevice ? probeDevice->currentAllocatedSize() : 0; }
++
+ MtDevice::MtDevice(std::string_view name, bool validation)
+   : impl(mkDevice(name)), samplers(*impl), validation(validation) {
+   if(impl.get()==nullptr)
+     throw std::system_error(Tempest::GraphicsErrc::NoDevice);
++  probeDevice = impl.get();
+ 
+   if(std::strcmp(impl->name()->utf8String(), "Apple Paravirtual device")==0)
+     throw std::system_error(Tempest::GraphicsErrc::NoDevice, "Apple Paravirtual device is not supported");
+diff --git a/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vallocator.cpp b/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vallocator.cpp
+index dd889866f..dafe5f080 100644
+--- a/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vallocator.cpp
++++ b/OpenGothic/lib/Tempest/Engine/gapi/vulkan/vallocator.cpp
+@@ -1,3 +1,4 @@
++#include <atomic>
+ #if defined(TEMPEST_BUILD_VULKAN)
+ 
+ #include "vallocator.h"
+@@ -41,6 +42,9 @@ VAllocator::Provider::~Provider() {
+     vkFreeMemory(device->device.impl,lastFree,nullptr);
+   }
+ 
++static std::atomic<int64_t> probeBytes{0};
++size_t tempestProbeGpuBytes() { return size_t(probeBytes.load()); }
++
+ VAllocator::Provider::DeviceMemory VAllocator::Provider::alloc(size_t size, uint32_t typeId) {
+   if(lastFree!=VK_NULL_HANDLE){
+     if(lastType==typeId && lastSize==size){
+@@ -49,6 +53,7 @@ VAllocator::Provider::DeviceMemory VAllocator::Provider::alloc(size_t size, uint
+       return memory;
+       }
+     vkFreeMemory(device->device.impl,lastFree,nullptr);
++    probeBytes -= int64_t(lastSize);
+     lastFree=VK_NULL_HANDLE;
+     }
+   VkDeviceMemory memory=VK_NULL_HANDLE;
+@@ -70,12 +75,15 @@ VAllocator::Provider::DeviceMemory VAllocator::Provider::alloc(size_t size, uint
+   auto code = vkAllocateMemory(device->device.impl,&memoryAllocateInfo,nullptr,&memory);
+   if(code!=VK_SUCCESS)
+     return VK_NULL_HANDLE;
++  probeBytes += int64_t(size);
+   return memory;
+   }
+ 
+ void VAllocator::Provider::free(VAllocator::Provider::DeviceMemory m, size_t size, uint32_t typeId) {
+-  if(lastFree!=VK_NULL_HANDLE)
++  if(lastFree!=VK_NULL_HANDLE) {
+     vkFreeMemory(device->device.impl,lastFree,nullptr);
++    probeBytes -= int64_t(lastSize);
++    }
+ 
+   lastFree = m;
+   lastSize = size;
+diff --git a/OpenGothic/common/loadprobe.h b/OpenGothic/common/loadprobe.h
+new file mode 100644
+index 000000000..50d38d551
+--- /dev/null
++++ b/OpenGothic/common/loadprobe.h
+@@ -0,0 +1,102 @@
++#pragma once
++// Temporary load probe for reports/engine/2026-10-seamless-world (not for main).
++#include <algorithm>
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++#include <cstdio>
++#include <string>
++#include <string_view>
++
++#include <Tempest/Log>
++#include <Tempest/Pixmap>
++#include <Tempest/Texture2d>
++
++#if defined(__APPLE__)
++#include <mach/mach.h>
++#else
++#include <unistd.h>
++#endif
++
++size_t tempestProbeGpuBytes();
++
++namespace LoadProbe {
++
++inline std::atomic<uint64_t> texBytes{0};
++inline std::atomic<uint64_t> texNs{0};
++inline std::atomic<uint64_t> texCount{0};
++
++inline std::chrono::steady_clock::time_point& origin() {
++  static auto t = std::chrono::steady_clock::now();
++  return t;
++  }
++
++inline double msSince(std::chrono::steady_clock::time_point t) {
++  return std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t).count();
++  }
++
++// resident and (on macOS) phys_footprint, which also counts Metal allocations of the process
++inline void processMb(double& rss, double& footprint) {
++  rss = footprint = 0;
++#if defined(__APPLE__)
++  task_vm_info_data_t info = {};
++  mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
++  if(task_info(mach_task_self(),TASK_VM_INFO,task_info_t(&info),&count)==KERN_SUCCESS) {
++    rss       = double(info.resident_size)/1048576.0;
++    footprint = double(info.phys_footprint)/1048576.0;
++    }
++#else
++  if(FILE* f = std::fopen("/proc/self/statm","r")) {
++    long size=0, resident=0;
++    if(std::fscanf(f,"%ld %ld",&size,&resident)==2)
++      rss = double(resident)*double(sysconf(_SC_PAGESIZE))/1048576.0;
++    std::fclose(f);
++    }
++  footprint = rss;
++#endif
++  }
++
++inline uint64_t textureBytes(const Tempest::Texture2d& t) {
++  if(t.isEmpty())
++    return 0;
++  uint64_t sum = 0;
++  const auto frm   = t.format();
++  const auto block = Tempest::Pixmap::blockSizeForFormat(frm);
++  for(uint32_t i=0; i<std::max<uint32_t>(1,t.mipCount()); ++i) {
++    const uint32_t w = std::max<uint32_t>(1,uint32_t(t.w())>>i);
++    const uint32_t h = std::max<uint32_t>(1,uint32_t(t.h())>>i);
++    const auto c = Tempest::Pixmap::blockCount(frm,w,h);
++    sum += uint64_t(c.w)*uint64_t(c.h)*block;
++    }
++  return sum;
++  }
++
++inline void countTexture(const Tempest::Texture2d& t, std::chrono::steady_clock::time_point started) {
++  texCount++;
++  texBytes += textureBytes(t);
++  texNs    += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-started).count());
++  }
++
++// one line per stage: name, stage time, wall time since the first mark, memory, textures so far
++inline void mark(std::string_view stage, double stageMs = -1, std::string_view extra = {}) {
++  double rss=0, fp=0;
++  processMb(rss,fp);
++  char buf[512];
++  std::snprintf(buf,sizeof(buf),
++                "[loadprobe] stage=%.*s stage_ms=%.1f t_ms=%.1f rss_mb=%.1f footprint_mb=%.1f gpu_mb=%.1f "
++                "tex_n=%llu tex_mb=%.1f tex_ms=%.1f %.*s",
++                int(stage.size()),stage.data(),stageMs,msSince(origin()),rss,fp,
++                double(tempestProbeGpuBytes())/1048576.0,
++                (unsigned long long)texCount.load(),double(texBytes.load())/1048576.0,double(texNs.load())/1e6,
++                int(extra.size()),extra.data());
++  Tempest::Log::i(buf);
++  }
++
++struct Scope {
++  std::string_view                      name;
++  std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
++  explicit Scope(std::string_view n):name(n) {}
++  ~Scope() { mark(name,msSince(started)); }
++  };
++
++}

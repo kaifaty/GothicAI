@@ -114,8 +114,9 @@ class Pose final {
     void               setAnimSpeed(std::string_view name, float k);
     // the playing layer of seq goes on k times as fast from now, without a jump
     void               setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now);
-    // hit stop: the layers playing now go on k times as fast from the last shown frame until `until`,
-    // then at their own speed again; their events, windows and root motion hold with them
+    // hit stop: the layers playing now go on k times as fast from the last shown frame until `until`;
+    // their events, windows and root motion hold with them. Then the rest of a one-off animation
+    // plays a little faster and ends when it would have without the hold
     void               hitStop(uint64_t until, float k);
     BowDraw&           bowDrawIk() { return bowDraw; }
     AimWalk&           aimWalk() { return walk; }
@@ -187,6 +188,8 @@ class Pose final {
       uint64_t                   sOrigin  = 0;  // sAnim as it began; a speed change moves sAnim only
       float                      speed    = 1;  // plays that many times as fast, from its start (setAnimSpeed)
       float                      stopFrom = 0;  // its speed before a hit stop; 0: not held
+      float                      catchFrom = 0; // its own speed while it makes up a hit stop; 0: on time
+      uint64_t                   dueStart = 0;  // the start it keeps to at its own speed, without the hold
       uint8_t                    comb     = 0;
       BodyState                  bs       = BS_NONE;
       };

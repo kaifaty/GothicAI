@@ -939,7 +939,9 @@ void Pose::addLayer(const Animation::Sequence *seq, BodyState bs, uint8_t comb, 
   }
 
 void Pose::onAddLayer(Pose::Layer& l) {
-  l.speed = speedOf(l.seq);
+  l.speed     = speedOf(l.seq);
+  l.stopFrom  = 0; // a new animation is not held by the last one's hit stop
+  l.catchFrom = 0;
   if(hasLayerEvents(l))
     hasEvents++;
   if(l.seq->isFly())
@@ -1198,8 +1200,17 @@ const Animation::Sequence* Pose::continueCombo(const AnimationSolver &solver, co
     return sq;
     }
 
-  if(combo.len()<d.defHitEnd.size())
-    prev->sAnim = prev->sOrigin = tickCount - d.defHitEnd[combo.len()];
+  if(combo.len()<d.defHitEnd.size()) {
+    // the next blow of the combo is no longer held by the last one's hit stop; it goes on from the
+    // hit end at the layer's own pace
+    if(prev->stopFrom>0.f)
+      prev->speed = prev->stopFrom;
+    else if(prev->catchFrom>0.f)
+      prev->speed = prev->catchFrom;
+    prev->stopFrom = prev->catchFrom = 0;
+    const uint64_t back = uint64_t(double(d.defHitEnd[combo.len()])/double(prev->speed));
+    prev->sAnim = prev->sOrigin = tickCount - std::min(tickCount,back);
+    }
   combo.incLen();
   return prev->seq;
   }
@@ -1313,6 +1324,7 @@ void Pose::setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now) 
       const double played = double(layerTime(l,now)-l.sAnim);
       l.sAnim = now-uint64_t(played/double(k));
       l.speed = k;
+      l.catchFrom = 0; // a speed set on purpose; a hit stop under way still keeps it (endHitStop)
       }
   }
 
@@ -1335,8 +1347,12 @@ bool Pose::rebaseLayer(Layer& l, float k, uint64_t at) {
 void Pose::hitStop(uint64_t until, float k) {
   // from the last shown frame: the time up to it is played and its events are given, none twice
   for(auto& l:lay) {
-    if(l.stopFrom==0.f)
-      l.stopFrom = l.speed;
+    if(l.stopFrom==0.f) {
+      // one still making up an earlier stop keeps that one's schedule
+      l.stopFrom = l.catchFrom>0.f ? l.catchFrom : l.speed;
+      if(l.catchFrom==0.f)
+        l.dueStart = l.sAnim;
+      }
     if(!rebaseLayer(l,l.stopFrom*k,lastUpdate))
       l.stopFrom = 0;
     }
@@ -1346,8 +1362,24 @@ void Pose::hitStop(uint64_t until, float k) {
 void Pose::endHitStop() {
   for(auto& l:lay) {
     // a speed set meanwhile (setLayerSpeed) stays
-    if(l.stopFrom>0.f && l.speed<l.stopFrom)
-      rebaseLayer(l,l.stopFrom,lastUpdate);
+    if(l.stopFrom>0.f && l.speed<l.stopFrom) {
+      // The hold is a loan: the rest of a one-off animation plays faster and ends when it would have
+      // without it (at most 1.5 times as fast), so the fighter's next move comes on time. A held
+      // attacker otherwise struck its next blow ~0.2 s late, after the struck one had raised its guard
+      const float base = l.stopFrom;
+      float       k    = base;
+      if(l.seq->animCls!=Animation::Loop) {
+        const double played = double(layerTime(l,lastUpdate))-double(l.sAnim);
+        const double due    = double(lastUpdate>l.dueStart ? lastUpdate-l.dueStart : 0)*double(base);
+        const double end    = double(l.seq->atkTotalTime(combo.len()));
+        if(due>played && end>played) {
+          const double left = std::max((end-due)/double(base),(end-played)/(1.5*double(base)));
+          k = float((end-played)/left);
+          }
+        }
+      if(rebaseLayer(l,k,lastUpdate))
+        l.catchFrom = k>base ? base : 0.f;
+      }
     l.stopFrom = 0;
     }
   stopUntil = 0;
