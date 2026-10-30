@@ -41,7 +41,7 @@ export OPENGOTHIC_BODY_TRACE=0 PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 python="$task/.venv/bin/python"
 cd "$task/source"
 df -h "$HOME"
-"$python" -B -I - "$task" <<'SPACE'
+"$python" -X faulthandler -B -I - "$task" <<'SPACE'
 from pathlib import Path
 import shutil
 import sys
@@ -58,7 +58,7 @@ cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
 cmake --build "$task/build" --target gothic-body-runner --parallel 3
 # Both formats use the same recorded observations, core and scalar C++ binary.
-"$python" -B -I - "$task" "$bc3" <<'TIMING'
+"$python" -X faulthandler -B -I - "$task" "$bc3" <<'TIMING'
 import gzip
 import hashlib
 import json
@@ -112,10 +112,10 @@ for policy in bc3 hd; do
     bc3) weights="$bc3/run/it35/policy.navbc" ;;
     hd) weights="$task/hd-run/policy.navbc" ;;
   esac
-  "$python" -B -I -c 'import runpy,sys; runpy.run_path(sys.argv[1])["require_room"](sys.argv[2])' \
+  "$python" -X faulthandler -B -I -c 'import runpy,sys; runpy.run_path(sys.argv[1])["require_room"](sys.argv[2])' \
     "$task/source/scripts/nav_dagger3_detours.py" "$task"
   output="$task/hd-validation/$policy"
-  "$python" -B -I scripts/nav_rl.py drive --manifest "$corpus/manifest.json" --lean \
+  "$python" -X faulthandler -B -I scripts/nav_rl.py drive --manifest "$corpus/manifest.json" --lean \
     --runner "$task/build/opengothic/gothic-body-runner" \
     --assets "$GOTHIC_DIR" --save "$corpus/input/save.sav" \
     --cache "$task/hd-measure-cache" --links "$corpus/input/accepted-links.txt" \
@@ -124,19 +124,19 @@ for policy in bc3 hd; do
     --action-mode sample --action-seeds 18102027,18102028,18102029 \
     --safety-fixtures "$HOME/gothic-ai/nav-perception/safety-check-1/fixtures.json" \
     --fence-control --limit-ms 30000 --watchdog-seconds 900 --resume
-  "$python" -B -I scripts/nav_rl.py summarize --source "$output" --output "$output" \
+  "$python" -X faulthandler -B -I scripts/nav_rl.py summarize --source "$output" --output "$output" \
     --object-probes "$corpus/input/object-probes.jsonl"
 done
 # The completed BC3 detour cohort is read, never re-executed.
-"$python" -B -I scripts/nav_rl.py drive --detour-scenarios "$task/detours/detour-val.jsonl" \
+"$python" -X faulthandler -B -I scripts/nav_rl.py drive --detour-scenarios "$task/detours/detour-val.jsonl" \
   --runner "$task/build/opengothic/gothic-body-runner" \
   --assets "$GOTHIC_DIR" --save "$corpus/input/save.sav" \
   --cache "$task/hd-measure-cache" --links "$corpus/input/accepted-links.txt" --roads "$corpus/input/places.json" \
   --weights "$task/hd-run/policy.navbc" --output "$task/hd-detour" --physics cv --parallel 18 \
   --action-mode sample --action-seeds 18102027,18102028,18102029 \
   --limit-ms 240000 --watchdog-seconds 900 --resume
-"$python" -B -I scripts/nav_rl.py summarize --source "$task/hd-detour" --output "$task/hd-detour"
-"$python" -B -I - "$task" "$bc3" <<'CHECK'
+"$python" -X faulthandler -B -I scripts/nav_rl.py summarize --source "$task/hd-detour" --output "$task/hd-detour"
+"$python" -X faulthandler -B -I - "$task" "$bc3" <<'CHECK'
 import json
 from pathlib import Path
 import shutil
@@ -169,7 +169,7 @@ CHECK
 df -h "$HOME"
 MEASURE
   "$ROOT/scripts/gq" submit --class batch --threads 28 --cpu-quota 2800% --mem 20G --max 2h \
-    --name "nav dagger3 HD vs BC3 lean validation" -- env "${game_env[@]}" bash "$task/measure-hd.sh"
+    --name "nav dagger3 HD vs BC3 lean validation" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/measure-hd.sh"
   exit
 fi
 if [[ "$stage" == train-hd ]]; then
@@ -196,7 +196,7 @@ python="$bc3/.venv/bin/python"
 cd "$task/hd-source"
 df -h "$HOME"
 nvidia-smi
-"$python" -B -I - "$task" <<'SPACE'
+"$python" -X faulthandler -B -I - "$task" <<'SPACE'
 import shutil
 import sys
 if shutil.disk_usage(sys.argv[1]).free < 22 * 1024**3:
@@ -210,9 +210,9 @@ cmake -S "$task/hd-source/OpenGothic" -B "$task/build-hd" -G Ninja \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
 cmake --build "$task/build-hd" --target gothic-navpolicy-contract \
   CMakeFiles/OpenGothic.dir/common/navdemos.cpp.o --parallel 3
-"$python" -B -I scripts/nav_bc_data.py prepare --source "$corpus" \
+"$python" -X faulthandler -B -I scripts/nav_bc_data.py prepare --source "$corpus" \
   --manifest "$corpus/manifest.json" --output "$task/hd-cache" --input-variant hd
-"$python" -B -I - "$bc3/cache/index.json" "$task/hd-cache/index.json" <<'COHORT'
+"$python" -X faulthandler -B -I - "$bc3/cache/index.json" "$task/hd-cache/index.json" <<'COHORT'
 import json
 from pathlib import Path
 import sys
@@ -229,7 +229,7 @@ if steps != 405626:
     raise ValueError(f"HD training decision count differs: {steps}")
 print(json.dumps(dict(event="hd_cohort_checked", episodes=602, decisions=steps)))
 COHORT
-"$python" -B -I scripts/nav_bc_train.py train --cache "$task/hd-cache" --output "$task/hd-run" \
+"$python" -X faulthandler -B -I scripts/nav_bc_train.py train --cache "$task/hd-cache" --output "$task/hd-run" \
   --init "$bc3/run/it35/last.pt" --epochs 20 --batch 8 --segment 64 \
   --lr .0003 --seed 17 --device cuda --threads 6
 for version in 1 2 3; do
@@ -238,7 +238,7 @@ for version in 1 2 3; do
     2) weights="$bc3/run/it35/policy.navbc" ;;
     3) weights="$task/hd-run/policy.navbc" ;;
   esac
-  "$python" -B -I scripts/check_nav_policy.py --weights "$weights" \
+  "$python" -X faulthandler -B -I scripts/check_nav_policy.py --weights "$weights" \
     --source "$corpus/recordings" --output "$task/hd-parity/v$version" --steps 1000 --torch \
     | tee "$task/logs/hd-parity-v$version-python.log"
   "$task/build-hd/opengothic/gothic-navpolicy-contract" \
@@ -249,7 +249,7 @@ sha256sum "$bc3/run/it35/policy.navbc" "$task/hd-run/policy.navbc"
 df -h "$HOME"
 HD
   "$ROOT/scripts/gq" submit --class batch --threads 6 --cpu-quota 600% --mem 10G --gpu-mem 4G --max 2h \
-    --name "nav dagger3 HD BC training and contract" -- env "${game_env[@]}" bash "$task/train-hd.sh"
+    --name "nav dagger3 HD BC training and contract" -- python3 -X faulthandler -I "$task/hd-source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/train-hd.sh"
   exit
 fi
 ssh ryzen "mkdir -p '$task/source' '$task/logs'"
@@ -283,13 +283,13 @@ cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
   -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
 cmake --build "$task/build" --target Gothic2Notr gothic-body-runner check-navmesh --parallel 3
-"$task/.venv/bin/python" -I "$task/source/scripts/nav_dagger3_detours.py" \
+"$task/.venv/bin/python" -X faulthandler -I "$task/source/scripts/nav_dagger3_detours.py" \
   --task "$task" --corpus "$HOME/gothic-ai/nav-demos-v4"
 df -h "$HOME"
 PHASE
 if [[ "$stage" == prepare-detours ]]; then
   "$ROOT/scripts/gq" submit --class batch --threads 12 --cpu-quota 1200% --mem 8G --max 2h \
-    --name "nav dagger3 prepare detours" -- env "${game_env[@]}" bash "$task/prepare-detours.sh"
+    --name "nav dagger3 prepare detours" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/prepare-detours.sh"
   exit
 fi
 # Freezing is a small transformation of existing geometry, with no runner,
@@ -309,7 +309,7 @@ python="$task/.venv/bin/python"
 cd "$task/source"
 "$python" -m pytest -q scripts/tests/test_nav_dagger3_detours.py scripts/tests/test_nav_rl.py
 for policy in bc3 it35; do
-  "$python" -I -c 'import runpy,sys; runpy.run_path(sys.argv[1])["require_room"](sys.argv[2])' \
+  "$python" -X faulthandler -I -c 'import runpy,sys; runpy.run_path(sys.argv[1])["require_room"](sys.argv[2])' \
     "$task/source/scripts/nav_dagger3_detours.py" "$task"
   case "$policy" in
     bc3) weights="$HOME/gothic-ai/nav-bc3/run/it35/policy.navbc" ;;
@@ -320,7 +320,7 @@ for policy in bc3 it35; do
   mkdir -p "$cache/ordinary"
   cp -n "$corpus/recording-cache/v3/"*.navmesh "$cache/ordinary/"
   sha256sum "$weights" "$task/detours/detour-val.jsonl" "$task/detours/detour-test.jsonl"
-  "$python" -I scripts/nav_rl.py drive \
+  "$python" -X faulthandler -I scripts/nav_rl.py drive \
     --detour-scenarios "$task/detours/detour-val.jsonl" \
     --runner "$task/build/opengothic/gothic-body-runner" \
     --assets "$GOTHIC_DIR" --save "$corpus/input/save.sav" \
@@ -328,7 +328,7 @@ for policy in bc3 it35; do
     --weights "$weights" --output "$output" --physics cv --parallel 8 \
     --action-mode sample --action-seeds 18102027,18102028,18102029 \
     --limit-ms 240000 --watchdog-seconds 900 --resume
-  "$python" -I scripts/nav_rl.py summarize --source "$output" --output "$output"
+  "$python" -X faulthandler -I scripts/nav_rl.py summarize --source "$output" --output "$output"
   "$python" - "$task/detours/detour-val.jsonl" "$output/metrics.json" <<'CHECK'
 import json
 from pathlib import Path
@@ -347,4 +347,4 @@ done
 df -h "$HOME"
 BASELINE
 "$ROOT/scripts/gq" submit --class batch --threads 24 --cpu-quota 2400% --mem 12G --max 2h \
-  --name "nav dagger3 bc3 it35 detour baseline" -- env "${game_env[@]}" bash "$task/baseline-detours.sh"
+  --name "nav dagger3 bc3 it35 detour baseline" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/baseline-detours.sh"
