@@ -14,7 +14,8 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
                             std::string_view name, const std::filesystem::path& dir,
                             const std::filesystem::path& overrideDir,
                             const std::vector<std::pair<std::string,uintmax_t>>& baseArchives,
-                            const std::map<std::string,std::filesystem::path>* ownMeshes) {
+                            const std::map<std::string,std::filesystem::path>* ownMeshes,
+                            ChunkTable* chunks) {
   WorldBaseResult result;
   const auto started = std::chrono::steady_clock::now();
   try {
@@ -59,13 +60,16 @@ WorldBaseResult tryWorldData(WorldData::Data& world, asset::WorldMesh& worldMesh
     if(!data.waynet)
       throw std::runtime_error("world waynet missing");
     VobLayer::apply(data,dir,overrideDir,ownMeshes);
-    auto mesh = readWorldChunks(dir,overrideDir);
+    ChunkTable table;
+    auto mesh = readWorldChunks(dir,overrideDir,chunks==nullptr ? nullptr : &table);
     mesh.name = data.name;
     mesh.bbox = data.bbox;
     result.triangles = mesh.polygons.material_indices.size();
     result.chunks = manifest.chunks.size();
     worldMesh = std::move(mesh);
     world = std::move(data);
+    if(chunks!=nullptr)
+      *chunks=std::move(table);
     result.replaced = true;
     }
   catch(const std::exception& error) {

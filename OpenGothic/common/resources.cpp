@@ -372,12 +372,12 @@ void Resources::censusProfile(std::string_view game, std::string_view outputUnit
     inst->census->profile(game,outputUnits,language);
   }
 
-void Resources::loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name) {
+void Resources::loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name, ChunkTable* chunks) {
   const auto dir = worldBaseDir(name);
   std::map<std::string,std::filesystem::path> ownMeshes;
   for(const auto& [key,mesh]:inst->meshOverrides)
     ownMeshes.emplace(key,mesh.file);
-  const auto result = tryWorldData(world,worldMesh,name,dir,worldOverrideDir(name),inst->baseArchives,&ownMeshes);
+  const auto result = tryWorldData(world,worldMesh,name,dir,worldOverrideDir(name),inst->baseArchives,&ownMeshes,chunks);
   if(result.replaced) {
     if(inst->census)
       inst->census->replaced(name,(worldContentDir("base",name)/"world.json").generic_string());

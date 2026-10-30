@@ -95,6 +95,7 @@
 #include "graphics/mesh/protomesh.h"
 #include "world/movablevobs.h"
 #include "world/world.h"
+#include "world/chunkresidency.h"
 #include "world/bullet.h"
 #include "world/waypoint.h"
 #include "world/aiqueue.h"
@@ -631,6 +632,23 @@ struct Bench {
   std::string perfSegment;
   uint64_t    perfFrame = 0;
   bool        perfArmed = false;
+  struct StreamingSample {
+    std::string segment;
+    uint64_t frame = 0;
+    double updateMs = 0, workMs = 0;
+    size_t near = 0, far = 0, outside = 0;
+    uint64_t nearTransitions = 0, farTransitions = 0;
+    };
+  std::vector<StreamingSample> streamingSamples;
+  uint64_t streamingNearBefore = 0, streamingFarBefore = 0;
+  std::vector<Vec3> routePoints;
+  size_t      routeNext = 0;
+  Vec3        routePosition;
+  float       routeSpeed = 0;
+  double      routeLength = 0;
+  uint64_t    routeStarted = 0;
+  bool        routeActive = false, routeWasExternal = false;
+
   std::unique_ptr<VideoPipe> video;
   uint32_t    videoW    = 0;
   uint32_t    videoH    = 0;
@@ -1686,6 +1704,16 @@ void finish() {
     bench.speaking = false;
     }
   stopRecording();
+  if(!bench.streamingSamples.empty()) {
+    if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions\n");
+      for(const auto& row:bench.streamingSamples)
+        std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu\n",row.segment.c_str(),
+          (unsigned long long)row.frame,row.updateMs,row.workMs,row.near,row.far,row.outside,
+          (unsigned long long)row.nearTransitions,(unsigned long long)row.farTransitions);
+      std::fclose(file);
+      } else event("streaming_error","\"reason\":\"cannot write residency samples\"");
+    }
   if(!bench.characterFrames.empty()) {
     if(auto* file=std::fopen((outDir+"/character-frames.csv").c_str(),"w")) {
       std::fprintf(file,"route,frame,t_game_ms,dt_ms,x_cm,y_cm,z_cm,move_held,in_air,falling,swimming,cv_enabled,cv_active,ground_vx_cm_s,ground_vy_cm_s,ground_vz_cm_s,step_ms,wall_ms,captured,normal_clock,visual_x_cm,visual_y_cm,visual_z_cm\n");
@@ -8452,6 +8480,63 @@ void face(Npc& pl, const Vec3& dir) {
   pl.updateTransform();
   }
 
+// The bench owns only the hero pose. Path selection and waypoint heights come from WayMatrix.
+void beginRoute(const std::vector<std::string>& args, World& world, Npc& player) {
+  const float speed=num(args,1,0);
+  if(args.size()<4 || !isNumber(args[1]) || !std::isfinite(speed) || speed<=0) {
+    arenaAbort("route expects a positive speed in cm/s and at least two waypoints");return;
+    }
+  std::vector<const WayPoint*> stops;
+  for(size_t i=2;i<args.size();++i) {
+    auto* point=world.findWayPoint(args[i]);
+    if(point==nullptr) {arenaAbort("route waypoint is missing: "+args[i]);return;}
+    stops.push_back(point);
+    }
+  std::vector<Vec3> points{stops.front()->position()};
+  for(size_t i=1;i<stops.size();++i) {
+    auto path=world.wayTo(*stops[i-1],*stops[i]);
+    if(path.last()!=stops[i]) {arenaAbort("route waypoints are not connected: "+stops[i]->name);return;}
+    while(auto* point=path.pop())
+      if((points.back()-point->position()).quadLength()>0)
+        points.push_back(point->position());
+    }
+  if(points.size()<2) {arenaAbort("route has no distance to travel");return;}
+  bench.routeLength=0;
+  for(size_t i=1;i<points.size();++i)
+    bench.routeLength+=(points[i]-points[i-1]).length();
+  bench.routePoints=std::move(points);bench.routeNext=1;bench.routeSpeed=speed;
+  bench.routePosition=bench.routePoints.front();bench.routeStarted=bench.time;
+  bench.routeWasExternal=player.isExternalControl();bench.routeActive=true;
+  player.stopWalking();player.clearAiQueue();player.setExternalControl(true);
+  player.setPosition(bench.routePosition);player.updateTransform();
+  event("route_start","\"speed_cm_s\":"+std::to_string(speed)+",\"length_cm\":"+std::to_string(bench.routeLength)+
+    ",\"points\":"+std::to_string(bench.routePoints.size()));
+  }
+
+void tickRoute(Npc& player, uint64_t dt) {
+  if(!bench.routeActive)return;
+  if(bench.routeNext==bench.routePoints.size()) {
+    // Keep the endpoint for one complete update/render before perf stop advances the DSL.
+    bench.routeActive=false;player.setExternalControl(bench.routeWasExternal);
+    event("route_end","\"speed_cm_s\":"+std::to_string(bench.routeSpeed)+",\"length_cm\":"+std::to_string(bench.routeLength)+
+      ",\"elapsed_ms\":"+std::to_string(bench.time-bench.routeStarted)+",\"pass\":true");
+    return;
+    }
+  float remaining=bench.routeSpeed*float(dt)/1000.f;
+  Vec3 direction;
+  while(remaining>0 && bench.routeNext<bench.routePoints.size()) {
+    const auto delta=bench.routePoints[bench.routeNext]-bench.routePosition;
+    const float distance=delta.length();
+    direction=delta;
+    if(distance<=remaining) {
+      bench.routePosition=bench.routePoints[bench.routeNext++];remaining-=distance;
+      } else {
+      bench.routePosition+=delta*(remaining/distance);remaining=0;
+      }
+    }
+  player.setPosition(bench.routePosition);face(player,direction);player.updateTransform();
+  }
+
 // The migration oracle deliberately uses the public game API. A generated input file is replayed
 // verbatim by the other backend: even waypoint ground adjustment must not change the queries.
 void physicsDump(World& w, const Npc& pl, size_t count, uint32_t seed, const std::string& input) {
@@ -13449,6 +13534,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         bench.perfArmed=true;
         }
       bench.perfSegment=a[2];bench.perfFrame=0;
+      if(auto* residency=w.chunkResidency()) {
+        bench.streamingNearBefore=residency->stats().transitionsNear;
+        bench.streamingFarBefore=residency->stats().transitionsFar;
+        }
       FrameProfile::setActors(bench.crew);
       event("perf_segment","\"segment\":"+jsonStr(bench.perfSegment)+
         ",\"camera_cm\":"+ragdollVector(bench.camPos)+",\"actors\":"+std::to_string(bench.crew.size()));
@@ -13478,6 +13567,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     bench.hasPrev = false;
     say(std::string(ok ? "goto " : "goto failed: ") + rest(line));
     }
+  else if(c=="route")beginRoute(a,w,pl);
   else if(c=="walkto") {
     auto wp = w.findPoint(rest(line));
     if(wp!=nullptr)
@@ -16157,6 +16247,7 @@ bool waitingForBodyLive() {
   }
 
 void run(World& w, Npc& pl, PlayerControl& ctrl) {
+  if(bench.routeActive)return;
   if(NavBench::running() || NavDemos::running()) return;
   if(bench.spellEquipPending) {
     if(pl.drawSpell(bench.spellEquipPending)) {bench.spellCastingId=bench.spellEquipPending;bench.spellEquipPending=0;}
@@ -16358,7 +16449,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const std::string line = bench.prog[bench.pc++];
     exec(line,w,pl,ctrl);
-    if(NavBench::running() || NavDemos::running()) return;
+    if(bench.routeActive || NavBench::running() || NavDemos::running()) return;
     if(bench.spellWaitFrozen>=0 || bench.spellEquipPending) return;
     if(bench.questWait || bench.questStandingWait) return;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
@@ -17991,6 +18082,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     }
 #endif
   itemHullSample(*world);
+  tickRoute(*player,dt);
   run(*world,*player,ctrl);
   renderSound(dt);
   if(bench.done)
@@ -18159,6 +18251,17 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       ++bench.recFrame;
     }
   return capture;
+  }
+
+void TestBench::sampleStreaming(const World& world) {
+  if(scenarioPath==nullptr || bench.done || !bench.perfSegment.starts_with("streaming-flythrough/"))return;
+  const auto* residency=world.chunkResidency();
+  if(residency==nullptr) {arenaAbort("streaming perf sample requires the residency manager");return;}
+  const auto& stats=residency->stats();
+  bench.streamingSamples.push_back({bench.perfSegment,bench.perfFrame,stats.updateMs,stats.workMs,
+    stats.near,stats.far,stats.outside,stats.transitionsNear-bench.streamingNearBefore,
+    stats.transitionsFar-bench.streamingFarBefore});
+  bench.streamingNearBefore=stats.transitionsNear;bench.streamingFarBefore=stats.transitionsFar;
   }
 
 bool TestBench::withUi() {

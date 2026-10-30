@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <charconv>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -124,6 +125,7 @@ struct Triangle {
   std::array<Corner,3>    corners;
   int32_t                 lightmap;
   asset::PolygonFlagSet  flags;
+  uint32_t                chunk;     // manifest index, retained through source-order stitching
   };
 
 struct ReadMaterial {
@@ -324,6 +326,7 @@ class ChunkReader {
               fail("invalid lightmap value");
             tri.lightmap = int32_t(l);
             }
+          tri.chunk=uint32_t(chunk);
           triangles.push_back(tri);
           }
         }
@@ -611,8 +614,27 @@ WorldChunkManifest readWorldChunkManifest(const std::filesystem::path& dir) {
   return m;
   }
 
-asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir) {
+asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::filesystem::path& overrideDir,
+                                 ChunkTable* chunks) {
   const auto manifest = readWorldChunkManifest(dir);
+  ChunkTable table;
+  if(chunks!=nullptr) {
+    if(manifest.chunkSize!=ChunkId::Size)
+      fail("runtime chunks require a 64 m grid");
+    for(const auto& file:manifest.chunks) {
+      const auto name=std::filesystem::path(file).stem().string();
+      const auto separator=name.find('_');
+      ChunkId id;
+      if(separator==std::string::npos)
+        fail("invalid runtime chunk name: "+file);
+      const auto x=std::from_chars(name.data(),name.data()+separator,id.x);
+      const auto z=std::from_chars(name.data()+separator+1,name.data()+name.size(),id.z);
+      if(x.ec!=std::errc{} || x.ptr!=name.data()+separator ||
+         z.ec!=std::errc{} || z.ptr!=name.data()+name.size())
+        fail("invalid runtime chunk name: "+file);
+      table.entries.push_back({id,file});
+      }
+    }
   ChunkReader reader;
   for(const auto& chunk:manifest.chunks) {
     auto path = dir/chunk;
@@ -755,6 +777,8 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
   q.flags.reserve(ordered.size());
   q.vertex_indices.reserve(ordered.size()*3);
   q.feature_indices.reserve(ordered.size()*3);
+  if(chunks!=nullptr)
+    table.triangleChunks.reserve(ordered.size());
   for(const auto t:ordered) {
     const auto& tri = reader.triangles[t];
     q.material_indices.push_back(matMap[tri.material]);
@@ -764,7 +788,22 @@ asset::WorldMesh readWorldChunks(const std::filesystem::path& dir, const std::fi
       q.vertex_indices.push_back(vertexIndex(c));
       q.feature_indices.push_back(featureIndex(c));
       }
+    if(chunks!=nullptr) {
+      table.triangleChunks.push_back(tri.chunk);
+      auto& entry=table.entries[tri.chunk];
+      if(entry.triangleCount==0)
+        entry.min=entry.max=tri.corners.front().position;
+      for(const auto& c:tri.corners) {
+        for(unsigned axis=0;axis<3;++axis) {
+          entry.min[axis]=std::min(entry.min[axis],c.position[axis]);
+          entry.max[axis]=std::max(entry.max[axis],c.position[axis]);
+          }
+        }
+      ++entry.triangleCount;
+      }
     }
+  if(chunks!=nullptr)
+    *chunks=std::move(table);
   return out;
   }
 

@@ -10,6 +10,8 @@
 #include <Tempest/Application>
 #include <Tempest/Log>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -33,6 +35,8 @@
 #include "gothic.h"
 #include "testbench.h"
 #include "frameprofile.h"
+#include "marvin.h"
+#include "world/chunkresidency.h"
 
 using namespace Tempest;
 
@@ -271,6 +275,8 @@ void MainWindow::paintEvent(PaintEvent& event) {
       world->marchInteractives(dbg);
       world->view()->dbgLights(dbg);
       world->marchCsCameras(dbg);
+      if(Marvin::chunksVisible())
+        drawChunks(p,*world,*c);
       }
     }
 
@@ -314,6 +320,68 @@ void MainWindow::paintEvent(PaintEvent& event) {
   if(auto wx = Gothic::inst().worldView()) {
     wx->dbgClusters(p, Vec2(float(w()), float(h())));
     }
+  }
+
+void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera) {
+  auto& fnt = Resources::font(Gothic::interfaceScale(this));
+  const int x = 10, y = 60, line = fnt.pixelSize()+3;
+  const auto chunks = world.chunkResidency();
+  if(chunks==nullptr) {
+    fnt.drawText(p,x,y,"Chunks: streaming manager disabled");
+    return;
+    }
+  auto hero = world.player();
+  if(hero==nullptr)
+    return;
+
+  const auto center = ChunkId::fromPosition(hero->position().x,hero->position().z);
+  const auto cam = camera.originLwc();
+  const auto cameraId = ChunkId::fromPosition(cam.x,cam.z);
+  const int64_t radius = std::max<int64_t>({8,std::abs(int64_t(cameraId.x)-center.x)+1,
+                                            std::abs(int64_t(cameraId.z)-center.z)+1});
+  const int mapSize = std::min(240,std::min(w(),h())/2);
+  const int mapY = y+3*line;
+  const float cell = float(mapSize)/float(radius*2+1);
+  p.setBrush(Color(0.f,0.f,0.f,0.8f));
+  p.drawRect(x-5,y-5,std::max(400,mapSize+10),mapSize+5*line+10);
+
+  const auto& stats = chunks->stats();
+  char text[160];
+  std::snprintf(text,sizeof(text),"Chunks 64 m: Near %zu  Far %zu  Outside %zu",stats.near,stats.far,stats.outside);
+  fnt.drawText(p,x,y,text);
+  std::snprintf(text,sizeof(text),"Transitions/s %zu  update %.3f ms  work %.3f ms",
+                stats.transitionsLastSecond,stats.updateMs,stats.workMs);
+  fnt.drawText(p,x,y+line,text);
+  fnt.drawText(p,x,y+2*line,"All chunks loaded; desired states only");
+
+  const auto& entries = chunks->table().entries;
+  for(size_t i=0;i<entries.size();++i) {
+    const auto id = entries[i].id;
+    const int64_t dx = int64_t(id.x)-center.x, dz = int64_t(id.z)-center.z;
+    if(std::abs(dx)>radius || std::abs(dz)>radius)
+      continue;
+    switch(chunks->desired(i)) {
+      case ChunkResidency::State::Near:    p.setBrush(Color(0.2f,0.8f,0.3f)); break;
+      case ChunkResidency::State::Far:     p.setBrush(Color(0.2f,0.45f,0.9f)); break;
+      case ChunkResidency::State::Outside: p.setBrush(Color(0.3f,0.3f,0.3f)); break;
+      }
+    const int px = x+int(float(dx+radius)*cell);
+    const int py = mapY+int(float(radius-dz)*cell);
+    p.drawRect(px,py,std::max(1,int(cell)-1),std::max(1,int(cell)-1));
+    }
+
+  auto marker = [&](const Vec3& position,const Color& color,std::string_view label) {
+    const float dx = position.x/float(ChunkId::Size)-float(center.x);
+    const float dz = position.z/float(ChunkId::Size)-float(center.z);
+    const int px = x+int((dx+float(radius))*cell);
+    const int py = mapY+int((float(radius)+1.f-dz)*cell);
+    p.setBrush(color);
+    p.drawRect(px-3,py-3,7,7);
+    fnt.drawText(p,px+4,py-4,label);
+    };
+  marker(cam,Color(1.f,0.8f,0.1f),"C");
+  marker(hero->position(),Color(1.f),"H");
+  fnt.drawText(p,x,mapY+mapSize+line,"Green Near  Blue Far  Gray Outside  H hero  C camera");
   }
 
 void MainWindow::resizeEvent(SizeEvent&) {
@@ -1354,6 +1422,14 @@ void MainWindow::render(){
       FrameProfile::Scope timing(FrameProfile::Zone::FinishStep);
       return SimulationStep::finishStep(dt,player,[&] { FrameProfile::Scope cameraTiming(FrameProfile::Zone::Camera); tickCamera(dt); });
       }();
+    if(auto world = Gothic::inst().world()) {
+      auto hero = Gothic::inst().player();
+      auto camera = Gothic::inst().camera();
+      if(auto chunks = world->chunkResidency(); chunks!=nullptr && hero!=nullptr && camera!=nullptr) {
+        chunks->update(hero->position(),camera->originLwc(),camera->zFar());
+        TestBench::sampleStreaming(*world);
+        }
+      }
     if(capture) {
       profile.flag(FrameProfile::Flag::CaptureRequested);
       auto   tex = TestBench::withUi() ? screenshotWithUi() : renderer.screenshoot(cmdId);

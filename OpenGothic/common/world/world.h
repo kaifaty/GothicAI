@@ -19,6 +19,7 @@
 #include "waypoint.h"
 #include "waymatrix.h"
 #include "portalrooms.h"
+#include "chunkresidency.h"
 
 class GameSession;
 class Focus;
@@ -46,6 +47,8 @@ class World final {
     void                 postInit();
     std::string_view     name() const { return wname; }
     double               loadMilliseconds() const { return worldLoadMs; }
+    const ChunkTable&    chunkTable() const { return chunks; }
+    ChunkResidency*      chunkResidency() const { return residency.get(); }
 
     void                 load(Serialize& fin );
     void                 save(Serialize& fout);
@@ -99,6 +102,7 @@ class World final {
     void                 detectItem(const Tempest::Vec3& p, const float r, const std::function<void(Item&)>& f);
 
     WayPath              wayTo(const Npc& pos,const WayPoint& end) const;
+    WayPath              wayTo(const WayPoint& begin, const WayPoint& end) const;
 
     WorldView*           view()     const { return wview.get();    }
     WorldSound*          sound()          { return &wsound;        }
@@ -237,6 +241,8 @@ class World final {
     GameSession&                          game;
 
     std::unique_ptr<WayMatrix>            wmatrix;
+    ChunkTable                            chunks;
+    std::unique_ptr<ChunkResidency>        residency;
 
     struct BspSector final {
       int32_t guild=GIL_NONE;
