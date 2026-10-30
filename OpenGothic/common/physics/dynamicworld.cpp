@@ -351,6 +351,11 @@ struct DynamicWorld::NpcBodyList final {
         continue;
       if(preserveOrder) {
         arr.erase(arr.begin()+ptrdiff_t(i));
+        // Replacing or removing one frozen NPC shifts every later record.
+        // onMove uses this cached index before the next tick can re-sort it.
+        for(size_t j=i;j<arr.size();++j)
+          if(arr[j].body!=nullptr)
+            arr[j].body->frozen=j;
         } else {
         arr[i]=arr.back();
         arr.pop_back();
@@ -2779,6 +2784,57 @@ bool DynamicWorld::NpcItem::testMove(const Tempest::Vec3& to, const Tempest::Vec
   auto code = implTryMove(to,pos0,out);
   implSetPosition(prev);
   return code==MoveCode::MC_OK;
+  }
+
+const char* DynamicWorld::WalkResult::reasonName(Reason reason) {
+  switch(reason) {
+    case Reason::none:      return "none";
+    case Reason::step_up:   return "step_up";
+    case Reason::drop:      return "drop";
+    case Reason::slope:     return "slope";
+    case Reason::blocked:   return "blocked";
+    case Reason::no_ground: return "no_ground";
+    case Reason::water:     return "water";
+    }
+  return "no_ground";
+  }
+
+DynamicWorld::WalkResult DynamicWorld::NpcItem::testWalk(const Tempest::Vec3& to, float stepHeight,
+                                                        float maxDrop, float minNormalY, float waterDepth) const {
+  using Reason = WalkResult::Reason;
+  if(obj==nullptr || obj->stepSz<=0.f)
+    return {Reason::no_ground,0};
+  const auto origin = obj->pos;
+  const auto delta = to-origin;
+  const float distance = std::sqrt(delta.x*delta.x+delta.z*delta.z);
+  const uint32_t count = std::max(1u,uint32_t(std::ceil(distance/obj->stepSz)));
+  // The origin follows the native logical feet; the landscape capsule keeps
+  // its normal offset. No controller, body, broadphase entry or cache is moved.
+  const float rayUp = std::max(stepHeight,obj->groundOffset())+1.f;
+  float supportY = origin.y;
+  for(uint32_t i=0;i<=count;++i) {
+    const auto point = origin+delta*(float(i)/float(count));
+    const Tempest::Vec3 from(point.x,supportY+rayUp,point.z);
+    const auto floor = owner->world->rayCast(from,from-Tempest::Vec3(0,worldHeight,0),landscapeMask,false);
+    if(!floor.hasHit)
+      return {Reason::no_ground,i};
+    if(i>0 && floor.point.y-supportY>stepHeight+.01f)
+      return {Reason::step_up,i};
+    if(i>0 && supportY-floor.point.y>maxDrop+.01f)
+      return {Reason::drop,i};
+    // landRay deliberately clears object normals for animation sliding. This
+    // query needs the actual support normal for furniture and steps as well.
+    if(floor.normal.y+1.e-5f<minNormalY)
+      return {Reason::slope,i};
+    supportY = floor.point.y;
+    const Tempest::Vec3 feet(point.x,supportY,point.z);
+    const auto water = owner->waterRay(feet,stepHeight);
+    if(water.hasCol && water.wdepth-supportY>=waterDepth-.01f)
+      return {Reason::water,i};
+    if(owner->world->intersectsStatic(obj->shape.GetPtr(),feet+Tempest::Vec3(0,obj->groundOffset(),0)))
+      return {Reason::blocked,i};
+    }
+  return {Reason::none,count};
   }
 
 DynamicWorld::MoveCode DynamicWorld::NpcItem::tryMove(const Tempest::Vec3& to, CollisionTest& out) {

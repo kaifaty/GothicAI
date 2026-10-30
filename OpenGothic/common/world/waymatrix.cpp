@@ -75,12 +75,15 @@ const WayPoint *WayMatrix::findWayPoint(const Vec3& at, const std::function<bool
   return ret;
   }
 
-WayMatrix::RoutineEntry WayMatrix::findRoutineEntry(const Vec3& at, const std::function<bool(const WayPoint&)>& passable) const {
-  return findRoutineEntry(wayPoints,at,passable);
+WayMatrix::RoutineEntry WayMatrix::findRoutineEntry(const Vec3& at,
+                                                   const std::function<DynamicWorld::WalkResult(const WayPoint&)>& walk,
+                                                   const std::function<bool(const WayPoint&)>& excluded) const {
+  return findRoutineEntry(wayPoints,at,walk,excluded);
   }
 
 WayMatrix::RoutineEntry WayMatrix::findRoutineEntry(std::span<const WayPoint> points, const Vec3& at,
-                                                   const std::function<bool(const WayPoint&)>& passable) {
+                                                   const std::function<DynamicWorld::WalkResult(const WayPoint&)>& walk,
+                                                   const std::function<bool(const WayPoint&)>& excluded) {
   RoutineEntry ret;
   ret.checked = true;
   for(const auto& point:points) {
@@ -95,13 +98,15 @@ WayMatrix::RoutineEntry WayMatrix::findRoutineEntry(std::span<const WayPoint> po
       continue;
     for(size_t i=std::min(ret.count,ret.candidates.size()-1);i>index;--i)
       ret.candidates[i] = ret.candidates[i-1];
-    ret.candidates[index] = {&point,distance,false};
+    ret.candidates[index] = {&point,distance};
     ret.count = std::min(ret.count+1,ret.candidates.size());
     }
   for(size_t i=0;i<ret.count;++i) {
     auto& candidate = ret.candidates[i];
-    candidate.passable = passable(*candidate.point);
-    if(ret.accepted==nullptr && candidate.passable)
+    candidate.walk = walk(*candidate.point);
+    candidate.passable = bool(candidate.walk);
+    candidate.excluded = excluded && excluded(*candidate.point);
+    if(ret.accepted==nullptr && candidate.passable && !candidate.excluded)
       ret.accepted = candidate.point;
     }
   return ret;

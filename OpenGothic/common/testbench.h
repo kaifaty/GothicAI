@@ -26,6 +26,7 @@ namespace TestBench {
   bool     routineReturnActive(const Npc& npc);
   void     routinePath(Npc& npc, const WayPoint& target, const WayMatrix::RoutineEntry& entry,
                         WayPath path, bool enabled);
+  void     routineReselect(Npc& npc, const WayPoint& entry, size_t retry, bool exhausted);
   // Reinitialize the harness for a fresh runner generation. The caller owns world teardown/load.
   void     configure(std::string scenario, std::string output, int64_t seedOverride = -1);
   // Body runner --fork-prefix: the template stops its scenario before the first line starting with

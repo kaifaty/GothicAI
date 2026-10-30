@@ -2130,6 +2130,26 @@ std::vector<CollisionWorld::RagdollContact> CollisionWorld::ragdollContacts(cons
   return result;
   }
 
+bool CollisionWorld::intersectsStatic(const JPH::Shape* shape, const Tempest::Vec3& center) const {
+  if(shape==nullptr)
+    return false;
+  JPH::CollideShapeSettings settings;
+  settings.mBackFaceMode = JPH::EBackFaceMode::CollideWithBackFaces;
+  settings.mActiveEdgeMode = JPH::EActiveEdgeMode::CollideWithAll;
+  JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+  constexpr uint32_t mask = (1u<<DynamicWorld::C_Landscape)|(1u<<DynamicWorld::C_Object)|
+                            (1u<<DynamicWorld::C_MovableQuery);
+  QueryLayerFilter filter(mask);
+  QueryBroadPhaseFilter broadFilter(mask);
+  const auto position = toMeters(center);
+  impl->system.GetNarrowPhaseQuery().CollideShape(shape,JPH::Vec3::sOne(),JPH::RMat44::sTranslation(position),
+                                               settings,position,collector,broadFilter,filter);
+  for(const auto& hit:collector.mHits)
+    if(hit.mPenetrationDepth>0.001f) // Native movement's one millimetre collision tolerance.
+      return true;
+  return false;
+  }
+
 bool CollisionWorld::hasCollision(const JPH::Shape* shape, const Tempest::Vec3& center,
                                   Tempest::Vec3& normal, Interactive*& vob) const {
   if(shape==nullptr)

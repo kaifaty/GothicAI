@@ -1506,8 +1506,15 @@ WayPath World::wayTo(Npc &npc, const WayPoint &end) const {
   const bool routine = !npc.isPlayer() && npc.currentTaPoint()==&end;
   const bool enabled = Gothic::settingsGetI("GAME","routine_entry_check")!=0;
   const bool trace = routine && TestBench::isActive() && TestBench::routineReturnActive(npc);
+  if(!enabled || (routine && npc.routineEntry.target!=&end))
+    npc.routineEntry = {};
+  bool approach = false;
   WayMatrix::RoutineEntry entry;
   const auto result = [&](WayPath path) {
+    if(approach && routine && enabled && end.isConnected())
+      npc.trackRoutineEntry(end,path.first());
+    entry.reselections = npc.routineEntry.retries;
+    entry.exhausted = npc.routineEntry.fallback;
     if(trace)
       TestBench::routinePath(npc,end,entry,path,enabled);
     return path;
@@ -1515,6 +1522,8 @@ WayPath World::wayTo(Npc &npc, const WayPoint &end) const {
 
   auto begin = npc.currentWayPoint();
   if(begin==&end && MoveAlgo::isClose(npc,end)) {
+    if(routine && enabled)
+      npc.routineEntry = {};
     return result(WayPath());
     }
   if(begin==&end && !end.isConnected() && npc.canRayHitPoint(end.position()+Tempest::Vec3(0,10,0))) {
@@ -1523,18 +1532,23 @@ WayPath World::wayTo(Npc &npc, const WayPoint &end) const {
     return result(std::move(ret));
     }
   if(begin && begin->isConnected() && MoveAlgo::isClose(npc,*begin)) {
+    if(routine && enabled)
+      npc.routineEntry = {};
     return result(wmatrix->wayTo(&begin,1,npcPos,end));
     }
-  if(routine && end.isConnected() && (enabled || trace)) {
+  approach = true;
+  if(routine && end.isConnected() && ((enabled && !npc.routineEntry.fallback) || trace)) {
     entry = wmatrix->findRoutineEntry(npcPos,[&npc](const WayPoint& point) {
-      return npc.testMove(point.pos);
+      return npc.testWalk(point.pos);
+      },[&npc](const WayPoint& point) {
+      return npc.rejectedRoutineEntry(point);
       });
-    if(enabled && entry.accepted!=nullptr) {
+    if(enabled && !npc.routineEntry.fallback && entry.accepted!=nullptr) {
       auto near = entry.accepted;
       if(MoveAlgo::isClose(npc,*near) && near==&end)
         return result(WayPath());
       // A single seed keeps visibility-only neighbours from replacing the
-      // entry whose complete native capsule move was checked above.
+      // entry whose complete ground-following walk was checked above.
       return result(wmatrix->wayTo(&near,1,npcPos,end));
       }
     }

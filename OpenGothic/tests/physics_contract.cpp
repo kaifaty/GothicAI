@@ -1836,15 +1836,56 @@ namespace {
         WayPoint({200,0,0},{},"ENTRY_BLOCKED",false)
         };
       const auto entry = WayMatrix::findRoutineEntry(points,walker.position(),[&](const WayPoint& point) {
-        DynamicWorld::CollisionTest collision;
-        return walker.testMove(point.pos,collision);
+        return walker.testWalk(point.pos,50.f,150.f,std::sqrt(.5f),100.f);
         });
       require(entry.count==2 && entry.candidates[0].point==&points[1] && !entry.candidates[0].passable,
               "routine entry selection must test and reject the nearest waypoint behind a wall");
+      require(entry.candidates[0].walk.reason==DynamicWorld::WalkResult::Reason::blocked,
+              "a wall must reject a ground walk with the blocked reason");
       require(entry.accepted==&points[0] && entry.candidates[1].passable,
-              "routine entry selection must choose the farther waypoint with a clear native capsule move");
+              "routine entry selection must choose the farther waypoint with a clear native ground capsule walk");
       requireNear(walker.position().length(),0.f,.001f,
                   "routine entry probes must preserve the native capsule position");
+      }
+
+    {
+      DynamicWorld world(nullptr,movableFloor());
+      world.setMovableVobsEnabled(false);
+      hierarchy.collision_bbox = {{-25,0,-25},{25,140,25}};
+      Skeleton capsule(asset::fromZenKit(hierarchy),nullptr,"CONTRACT_GROUND_WALKER");
+      auto walker = world.addGhostObj(&capsule);
+      walker.setPosition({0,0,0});
+      std::vector<std::unique_ptr<ProtoMesh>> shapes;
+      std::vector<DynamicWorld::Item> steps;
+      shapes.reserve(5);
+      const float heights[] = {45,90,135,90,45};
+      for(size_t i=0;i<5;++i) {
+        shapes.emplace_back(new ProtoMesh(PackedMesh(movableCollisionBox({80,heights[i],200}),PackedMesh::PK_Visual),
+                                          "CONTRACT_WALK_STEP.MRM"));
+        steps.push_back(world.addMovableVob(*shapes.back(),"CONTRACT_WALK_STEP.MRM",
+                                           at(140+80.f*float(i),heights[i]*.5f,0),.25f,true,"step",true));
+        }
+      DynamicWorld::CollisionTest collision;
+      require(!walker.testMove({600,0,0},collision),
+              "the straight airborne capsule segment must hit the raised stair mound");
+      const auto before = walker.position();
+      const auto physicsBefore = world.physicsStats();
+      const auto walk = walker.testWalk({600,0,0},50.f,150.f,std::sqrt(.5f),100.f);
+      require(bool(walk),"ground following must cross steps smaller than native stepHeight");
+      require((walker.position()-before).quadLength()==0.f && world.physicsStats().bodies==physicsBefore.bodies,
+              "ground walk probes must preserve the native capsule pose and physics bodies");
+
+      auto steepMesh = movableFloor();
+      for(auto& vertex:steepMesh.vertices)
+        vertex.y = vertex.x*std::sqrt(3.f);
+      DynamicWorld steep(nullptr,steepMesh);
+      auto steepWalker = steep.addGhostObj(&capsule);
+      steepWalker.setPosition({0,0,0});
+      const auto slope = steepWalker.testWalk({100,0,0},50.f,150.f,std::sqrt(.5f),100.f);
+      require(!bool(slope) && slope.reason==DynamicWorld::WalkResult::Reason::slope,
+              "ground walk must reject a sixty degree support with the slope reason");
+      requireNear(steepWalker.position().length(),0.f,.001f,
+                  "rejecting a steep support must not move the native capsule");
       }
     }
 
@@ -2378,6 +2419,46 @@ namespace {
     // simplex approximation and excluded it; accepting the exact gap blocks early.
     require(!world.hasCollision(&capsule,{0,0,0},normal,vob),
             "NPC contact eligibility must preserve the bounded query's previous simplex");
+    }
+
+  void testNpcFrozenBodyReplacement() {
+    zenkit::ModelHierarchy hierarchy{};
+    hierarchy.collision_bbox={{-25,0,-25},{25,180,25}};
+    Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"FROZEN_NPC_REPLACEMENT_CONTRACT");
+    DynamicWorld world(nullptr,movableFloor());
+    auto first=world.addGhostObj(&shape);
+    auto middle=world.addGhostObj(&shape);
+    auto last=world.addGhostObj(&shape);
+    first.setPosition({0,0,0});
+    middle.setPosition({200,0,0});
+    last.setPosition({400,0,0});
+    int identity=0;
+    auto* npc=reinterpret_cast<Npc*>(&identity);
+    last.setUserPointer(npc);
+    world.tick(0);
+    world.tick(0); // freeze all three bodies before replacing the first
+
+    // Npc::setVisual, including MdlVisual::load, replaces its existing ghost
+    // this way. Later NPC movement must use the shifted frozen-list index.
+    first=world.addGhostObj(&shape);
+    first.setPosition({-600,0,0});
+    last.setPosition({1000,0,0});
+    last.moveVirtual({},0,50.f,float(M_PI_4),80.f);
+    int hits=0;
+    world.rayArrow({900,90,0},{1100,90,0},[&](Npc& hit,const Tempest::Vec3&,const Tempest::Vec3&,float&) {
+      if(&hit==npc)
+        ++hits;
+      return false;
+      });
+    std::printf("Frozen NPC replacement: moved body records %d (expected 1)\n",hits);
+    require(hits==1,"replacing a frozen NPC body must not duplicate another moving NPC record");
+
+    // A duplicate would survive this deletion and become a dangling rider in
+    // DynamicWorld::tick when that body had a CharacterVirtual controller.
+    last=DynamicWorld::NpcItem();
+    const auto cleared=world.rayNpc({900,90,0},{1100,90,0},nullptr);
+    require(cleared.npcHit==nullptr,"removing a moved NPC must remove its only broad-phase record");
+    world.tick(0);
     }
 
   void testNpcScalarWitness() {
@@ -4678,6 +4759,7 @@ int main() {
     testSphereQueryPrecision();
     testShallowOverlapProjection();
     testNpcContactDistance();
+    testNpcFrozenBodyReplacement();
     testNpcScalarWitness();
     testNpcSeparatedContactResponse();
     testFixedStepCarry();

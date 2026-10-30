@@ -678,7 +678,7 @@ struct Bench {
   Npc* routineNpc=nullptr;
   int routinePhase=0;
   uint64_t routineSince=0, routineUp=0, routineFrame=0, routineDeadline=90000;
-  uint32_t routineReturns=0, routineGuardBase=0, routineJumps=0, routineMobJumps=0, routineClamps=0;
+  uint32_t routineReturns=0, routineGuardBase=0, routineJumps=0, routineMobJumps=0, routineClamps=0, routineReselections=0;
   RagdollSave::QuestReturn routinePreviousGuard;
   Vec3 routinePrevious, routineUpPosition;
   Interactive* routinePreviousMob=nullptr;
@@ -11160,7 +11160,7 @@ void routineReturnBegin(World& world,Npc& player) {
   bench.pinned=&player;bench.pinAt=hero;
   bench.routineNpc=npc;bench.routinePhase=1;bench.routineSince=world.tickCount();
   bench.routineUp=bench.routineFrame=0;bench.routineTravel=bench.routineMaxStep=0;
-  bench.routineJumps=bench.routineMobJumps=bench.routineClamps=0;bench.routineBelow=false;bench.routineMinHero=(npc->position()-hero).length();
+  bench.routineJumps=bench.routineMobJumps=bench.routineClamps=bench.routineReselections=0;bench.routineBelow=false;bench.routineMinHero=(npc->position()-hero).length();
   bench.routinePreviousMob=nullptr;bench.routineMeasureRoute=bench.routineHasRoute=false;
   bench.routineRouteLength=0;bench.routineDeadline=90000;bench.routinePathFirst.clear();bench.routinePathLast.clear();
   bench.routineGuardBase=bench.routineReturns=npc->ragdollQuestReturnCount();
@@ -11213,7 +11213,7 @@ void routineReturnResult(World& world,Npc& player,bool arrived,bool preparation=
     ",\"deadline_ms\":"+std::to_string(bench.routineDeadline)+
     ",\"target_distance_cm\":"+(ta?ragdollNumber((npc.position()-ta->pos).length()):"null")+
     ",\"max_step_cm\":"+ragdollNumber(bench.routineMaxStep)+",\"jumps\":"+std::to_string(bench.routineJumps)+
-    ",\"mob_alignment_jumps\":"+std::to_string(bench.routineMobJumps)+
+    ",\"mob_alignment_jumps\":"+std::to_string(bench.routineMobJumps)+",\"reselections\":"+std::to_string(bench.routineReselections)+
     ",\"below_world\":"+(bench.routineBelow?"true":"false")+",\"min_hero_cm\":"+ragdollNumber(bench.routineMinHero)+
     ",\"guard_clamps\":"+std::to_string(bench.routineClamps)+
     ",\"guard_returns\":"+std::to_string(npc.ragdollQuestReturnCount()-bench.routineGuardBase)+
@@ -11281,12 +11281,14 @@ void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl) {
   bench.routineMinHero=std::min(bench.routineMinHero,(position-player.position()).length());
   const auto floor=world.physic()->landRay(position+Vec3(0,100,0),20000);
   const auto capsule=npc->navigationCapsule();
-  const float capsuleBottom=position.y+npc->navigationClearance()-capsule.y;
+  const auto physicsPosition=npc->navigationPhysicsPosition();
+  const float capsuleBottom=physicsPosition.y+npc->navigationClearance()-capsule.y;
+  const auto capsuleFloor=world.physic()->landRay(physicsPosition+Vec3(0,npc->navigationClearance()+100,0),20000);
   const bool belowRoot=floor.hasCol && position.y<floor.v.y-20.f;
-  const bool belowCapsule=floor.hasCol && capsuleBottom<floor.v.y-20.f;
-  const bool belowBounds=position.y<world.view()->bbox().first.y || capsuleBottom<world.view()->bbox().first.y;
-  if(bench.routinePhase==4 && (belowRoot || belowCapsule || belowBounds))bench.routineBelow=true;
-  // Feet are diagnostic only; an authored MOB pose may place them below support.
+  const bool belowCapsule=capsuleFloor.hasCol && capsuleBottom<capsuleFloor.v.y-20.f;
+  const bool belowBounds=capsuleBottom<world.view()->bbox().first.y;
+  if(bench.routinePhase==4 && (belowCapsule || belowBounds))bench.routineBelow=true;
+  // Animation roots and feet may go below support while the physical capsule is above it.
   const auto left=npc->mapBone("BIP01 L FOOT"),right=npc->mapBone("BIP01 R FOOT");
   const auto leftFloor=world.physic()->landRay(left+Vec3(0,100,0),20000);
   const auto rightFloor=world.physic()->landRay(right+Vec3(0,100,0),20000);
@@ -11306,6 +11308,8 @@ void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl) {
     ",\"position_cm\":"+ragdollVector(position)+",\"step_cm\":"+ragdollNumber(step)+",\"guard\":"+(guard?"true":"false")+
     ",\"mob_alignment\":"+(mobAlignment?"true":"false")+
     ",\"guard_from_cm\":"+ragdollVector(npc->ragdollQuestReturnFrom())+",\"floor_y_cm\":"+(floor.hasCol?ragdollNumber(floor.v.y):"null")+
+    ",\"physics_position_cm\":"+ragdollVector(physicsPosition)+
+    ",\"capsule_floor_y_cm\":"+(capsuleFloor.hasCol?ragdollNumber(capsuleFloor.v.y):"null")+
     ",\"capsule_bottom_y_cm\":"+ragdollNumber(capsuleBottom)+",\"root_below_support\":"+(belowRoot?"true":"false")+
     ",\"capsule_below_support\":"+(belowCapsule?"true":"false")+",\"below_world_bounds\":"+(belowBounds?"true":"false")+
     ",\"state\":"+jsonStr(stateName(world,*npc))+",\"started\":"+(npc->isStateStarted()?"true":"false")+
@@ -11341,8 +11345,13 @@ void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl) {
       bench.routineMeasureRoute=true;
       if(ta)world.wayTo(*npc,*ta);
       bench.routineMeasureRoute=false;
+      const auto& guild=world.script().guildVal();const auto g=npc->guild();
       event("routine_return_up","\"case\":"+jsonStr(c.label)+",\"attempt\":"+std::to_string(bench.routineRetry?2:1)+
         ",\"tick_ms\":"+std::to_string(now)+",\"position_cm\":"+ragdollVector(position)+",\"distance_cm\":"+ragdollNumber(distance)+
+        ",\"walk_step_height_cm\":"+ragdollNumber(guild.step_height[g]>0?float(guild.step_height[g]):50.f)+
+        ",\"walk_max_drop_cm\":"+ragdollNumber(float(guild.falldown_height[g])*.75f)+
+        ",\"walk_max_slope_deg\":"+ragdollNumber(float(guild.slide_angle[g]))+
+        ",\"walk_water_depth_cm\":"+ragdollNumber(float(guild.water_depth_chest[g]))+
         ",\"route_length_cm\":"+(bench.routineHasRoute?ragdollNumber(bench.routineRouteLength):"null")+
         ",\"deadline_ms\":"+std::to_string(bench.routineDeadline)+",\"path_first\":"+jsonStr(bench.routinePathFirst)+
         ",\"path_last\":"+jsonStr(bench.routinePathLast));
@@ -18915,6 +18924,59 @@ bool TestBench::routineReturnActive(const Npc& npc) {
   return scenarioPath!=nullptr && bench.routinePhase>=3 && bench.routineNpc==&npc;
   }
 
+namespace {
+void routineReturnRadius(Npc& npc,const WayMatrix::RoutineEntry* entry,const char* stage) {
+  const auto& c=bench.routineCases[bench.routineIndex];
+  const auto center=npc.centerPosition();
+  size_t count=0,reachable=0;
+  std::array<size_t,7> reasons={};
+  std::string probes="[";
+  npc.world().forEachWayPoint([&](const WayPoint& point) {
+    if(point.isFreePoint())return;
+    const float distance=(point.pos-center).length();
+    if(distance>3000.f)return;
+    auto walk=DynamicWorld::WalkResult{};
+    bool cached=false;
+    if(entry && entry->checked) {
+      for(size_t i=0;i<entry->count;++i)
+        if(entry->candidates[i].point==&point && !entry->candidates[i].excluded) {
+          walk=entry->candidates[i].walk;cached=true;break;
+          }
+      }
+    if(!cached)walk=npc.testWalk(point.pos);
+    if(count++)probes+=',';
+    reachable+=bool(walk);
+    ++reasons[size_t(walk.reason)];
+    probes+="{\"name\":"+jsonStr(point.name)+",\"position_cm\":"+ragdollVector(point.pos)+
+      ",\"distance_cm\":"+ragdollNumber(distance)+",\"passable\":"+(walk?"true":"false")+
+      ",\"reason\":"+jsonStr(DynamicWorld::WalkResult::reasonName(walk.reason))+
+      ",\"step\":"+std::to_string(walk.step)+"}";
+    });
+  probes+=']';
+  std::string frequencies="{";
+  for(size_t i=1;i<reasons.size();++i) {
+    if(i>1)frequencies+=',';
+    frequencies+=jsonStr(DynamicWorld::WalkResult::reasonName(DynamicWorld::WalkResult::Reason(i)))+":"+std::to_string(reasons[i]);
+    }
+  frequencies+='}';
+  event("routine_return_radius_probe","\"case\":"+jsonStr(c.label)+",\"attempt\":"+std::to_string(bench.routineRetry?2:1)+
+    ",\"tick_ms\":"+std::to_string(npc.world().tickCount())+",\"position_cm\":"+ragdollVector(npc.position())+
+    ",\"center_cm\":"+ragdollVector(center)+",\"stage\":"+jsonStr(stage)+",\"radius_cm\":3000,\"count\":"+std::to_string(count)+
+    ",\"reachable_count\":"+std::to_string(reachable)+",\"none_reachable\":"+(reachable==0?"true":"false")+
+    ",\"reasons\":"+frequencies+",\"candidates\":"+probes);
+  }
+}
+
+void TestBench::routineReselect(Npc& npc,const WayPoint& entry,size_t retry,bool exhausted) {
+  if(!routineReturnActive(npc))return;
+  const auto& c=bench.routineCases[bench.routineIndex];
+  bench.routineReselections=uint32_t(retry);
+  event("routine_return_reselect","\"case\":"+jsonStr(c.label)+",\"attempt\":"+std::to_string(bench.routineRetry?2:1)+
+    ",\"tick_ms\":"+std::to_string(npc.world().tickCount())+",\"position_cm\":"+ragdollVector(npc.position())+
+    ",\"rejected\":"+jsonStr(entry.name)+",\"retry\":"+std::to_string(retry)+",\"exhausted\":"+(exhausted?"true":"false"));
+  if(exhausted)routineReturnRadius(npc,nullptr,"exhausted");
+  }
+
 void TestBench::routinePath(Npc& npc,const WayPoint& target,const WayMatrix::RoutineEntry& entry,WayPath path,bool enabled) {
   if(!routineReturnActive(npc))return;
   const auto& c=bench.routineCases[bench.routineIndex];
@@ -18932,7 +18994,9 @@ void TestBench::routinePath(Npc& npc,const WayPoint& target,const WayMatrix::Rou
     const auto& candidate=entry.candidates[i];
     if(i>0)candidates+=',';
     candidates+="{\"name\":"+jsonStr(candidate.point->name)+",\"position_cm\":"+ragdollVector(candidate.point->pos)+
-      ",\"distance_cm\":"+ragdollNumber(candidate.distance)+",\"passable\":"+(candidate.passable?"true":"false")+"}";
+      ",\"distance_cm\":"+ragdollNumber(candidate.distance)+",\"passable\":"+(candidate.passable?"true":"false")+
+      ",\"reason\":"+jsonStr(DynamicWorld::WalkResult::reasonName(candidate.walk.reason))+
+      ",\"step\":"+std::to_string(candidate.walk.step)+",\"excluded\":"+(candidate.excluded?"true":"false")+"}";
     }
   candidates+=']';
   bench.routinePathFirst=first?first->name:"";bench.routinePathLast=last?last->name:"";
@@ -18947,32 +19011,11 @@ void TestBench::routinePath(Npc& npc,const WayPoint& target,const WayMatrix::Rou
     ",\"enabled\":"+(enabled?"true":"false")+",\"checked\":"+(entry.checked?"true":"false")+
     ",\"deadline_sample\":"+(bench.routineMeasureRoute?"true":"false")+",\"target\":"+jsonStr(target.name)+
     ",\"selected\":"+jsonStr(first?first->name:"")+",\"accepted\":"+jsonStr(entry.accepted?entry.accepted->name:"")+
+    ",\"reselections\":"+std::to_string(entry.reselections)+",\"exhausted\":"+(entry.exhausted?"true":"false")+
     ",\"total_in_range\":"+std::to_string(entry.totalInRange)+",\"candidates\":"+candidates+
     ",\"path\":"+points+",\"route_length_cm\":"+(first && last==&target?ragdollNumber(length):"null")+
     ",\"deadline_ms\":"+std::to_string(bench.routineDeadline));
-  if(bench.routineMeasureRoute && entry.checked && !entry.accepted && entry.totalInRange>entry.count) {
-    // The selector stays capped at eight; this one-shot observer checks the rest.
-    const auto center=npc.centerPosition();
-    size_t count=0,reachable=0;std::string probes="[";
-    const auto cachedEnd=entry.candidates.begin()+entry.count;
-    npc.world().forEachWayPoint([&](const WayPoint& point) {
-      if(point.isFreePoint())return;
-      const float distance=(point.pos-center).length();
-      if(distance>3000.f)return;
-      const auto cached=std::find_if(entry.candidates.begin(),cachedEnd,[&](const auto& candidate) {return candidate.point==&point;});
-      const bool passable=cached!=cachedEnd?cached->passable:npc.testMove(point.pos);
-      if(count++)probes+=',';
-      reachable+=passable;
-      probes+="{\"name\":"+jsonStr(point.name)+",\"position_cm\":"+ragdollVector(point.pos)+
-        ",\"distance_cm\":"+ragdollNumber(distance)+",\"passable\":"+(passable?"true":"false")+"}";
-      });
-    probes+=']';
-    event("routine_return_radius_probe","\"case\":"+jsonStr(c.label)+",\"attempt\":"+std::to_string(bench.routineRetry?2:1)+
-      ",\"tick_ms\":"+std::to_string(npc.world().tickCount())+",\"position_cm\":"+ragdollVector(npc.position())+
-      ",\"center_cm\":"+ragdollVector(center)+",\"radius_cm\":3000,\"count\":"+std::to_string(count)+
-      ",\"reachable_count\":"+std::to_string(reachable)+",\"none_reachable\":"+(reachable==0?"true":"false")+
-      ",\"candidates\":"+probes);
-    }
+  if(bench.routineMeasureRoute)routineReturnRadius(npc,&entry,"after_up");
   }
 
 void TestBench::monsterCharacterCollision(const Npc& actor, const Npc* target) {

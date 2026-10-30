@@ -127,6 +127,14 @@ class DynamicWorld final {
       bool          landCol = false;
       };
 
+    struct WalkResult {
+      enum class Reason : uint8_t { none, step_up, drop, slope, blocked, no_ground, water };
+      Reason   reason = Reason::none;
+      uint32_t step = 0;
+      explicit operator bool() const { return reason==Reason::none; }
+      static const char* reasonName(Reason reason);
+      };
+
     struct NpcItem {
       public:
         NpcItem()=default;
@@ -164,6 +172,8 @@ class DynamicWorld final {
 
         bool  testMove(const Tempest::Vec3& to, CollisionTest& out);
         bool  testMove(const Tempest::Vec3& to, const Tempest::Vec3& from, CollisionTest& out);
+        WalkResult testWalk(const Tempest::Vec3& to, float stepHeight, float maxDrop,
+                            float minNormalY, float waterDepth) const;
         auto  tryMove (const Tempest::Vec3& to, CollisionTest& out) -> DynamicWorld::MoveCode;
         bool  hasFloorBelow(const Tempest::Vec3& feet) const;
 

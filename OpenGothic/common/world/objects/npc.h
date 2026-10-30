@@ -512,6 +512,7 @@ class Npc final {
     void      multSpeed(float s);
 
     bool      testMove(const Tempest::Vec3& pos);
+    auto      testWalk(const Tempest::Vec3& pos) const -> DynamicWorld::WalkResult;
     bool      tryMove(const Tempest::Vec3& dp);
     bool      tryMove     (const Tempest::Vec3& dp, DynamicWorld::CollisionTest& out);
     bool      tryTranslate(const Tempest::Vec3& to);
@@ -655,6 +656,7 @@ class Npc final {
     float     navigationClearance() const {
       return physic.groundOffset()+physic.capsuleHeight()*0.5f;
       }
+    auto      navigationPhysicsPosition() const -> Tempest::Vec3 { return physic.position(); }
     // Direct, owned ground-position target for bench-controlled walks; no waypoint graph lookup.
     // Uses a 20 cm arrival radius even after a collision, to preserve navmesh corners.
     // Returns false while airborne or while leaving an interaction, so the caller can retry.
@@ -802,6 +804,9 @@ class Npc final {
     void      implFaiWait(uint64_t dt);
     void      implSetFightMode(const Animation::EvCount& ev);
     bool      implAiFlee(uint64_t dt);
+    void      tickRoutineEntry(uint64_t dt);
+    void      trackRoutineEntry(const WayPoint& target, const WayPoint* entry);
+    bool      rejectedRoutineEntry(const WayPoint& point) const;
 
     bool      setGoToLadder();
 
@@ -1082,6 +1087,16 @@ class Npc final {
     const WayPoint*                currentFp      =nullptr;
     FpLock                         currentFpLock;
     WayPath                        wayPath;
+    // Transient approach state; the ordinary way path takes over on entry.
+    struct RoutineEntryState final {
+      const WayPoint*              target = nullptr;
+      const WayPoint*              entry = nullptr;
+      std::array<const WayPoint*,3> rejected = {};
+      size_t                       retries = 0;
+      Tempest::Vec3                progress = {};
+      uint64_t                     stalled = 0;
+      bool                         fallback = false;
+      } routineEntry;
 
     MoveAlgo                       mvAlgo;
     FightAlgo                      fghAlgo;
@@ -1093,6 +1108,7 @@ class Npc final {
     Sound                          sfxWeapon;
 
   friend class MoveAlgo;
+  friend class World;
   friend class BodyController;
   friend class BodyArena;
   friend class BodyTrajectory;

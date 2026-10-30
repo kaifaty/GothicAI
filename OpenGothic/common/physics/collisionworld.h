@@ -226,6 +226,7 @@ class CollisionWorld final {
     void touchAabbs() const {}
 
     bool hasCollision(const JPH::Shape* shape, const Tempest::Vec3& center, Tempest::Vec3& normal, Interactive*& vob) const;
+    bool intersectsStatic(const JPH::Shape* shape, const Tempest::Vec3& center) const;
 
     // Diagnostic: every contact of the body's own shape at its current pose,
     // including separated ones within marginCm. Depth is positive when penetrating.

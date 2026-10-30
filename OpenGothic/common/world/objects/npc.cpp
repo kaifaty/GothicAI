@@ -518,6 +518,7 @@ void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
   }
 
 void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
+  routineEntry = {};
   meleePosture.reset();
   meleeKnockdown = false;
   meleeGetupForced = false;
@@ -3721,6 +3722,10 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
     return true;
     }
 
+  tickRoutineEntry(dt);
+  if(go2.flag==GT_No)
+    return false;
+
   auto target = go2.target();
   auto dpos   = target - position();
 
@@ -3728,6 +3733,8 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
     // nop
     }
   else if(go2.isClose(*this, destDist)) {
+    if(routineEntry.entry==go2.wp)
+      routineEntry = {};
     bool finished = true;
     if(go2.flag==GT_Way) {
       go2.wp = go2.wp->hasLadderConn(wayPath.first()) ? wayPath.first() : wayPath.pop();
@@ -3763,6 +3770,66 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
     return true;
     }
   return false;
+  }
+
+void Npc::trackRoutineEntry(const WayPoint& target, const WayPoint* entry) {
+  if(routineEntry.target!=&target) {
+    routineEntry = {};
+    routineEntry.target = &target;
+    }
+  if(routineEntry.entry==entry)
+    return;
+  routineEntry.entry = entry;
+  routineEntry.progress = position();
+  routineEntry.stalled = 0;
+  }
+
+bool Npc::rejectedRoutineEntry(const WayPoint& point) const {
+  return std::find(routineEntry.rejected.begin(),routineEntry.rejected.end(),&point)!=routineEntry.rejected.end();
+  }
+
+void Npc::tickRoutineEntry(uint64_t dt) {
+  if(Gothic::settingsGetI("GAME","routine_entry_check")==0 ||
+     (routineEntry.target!=nullptr && routineEntry.target!=currentTaPoint())) {
+    routineEntry = {};
+    return;
+    }
+  if(routineEntry.entry==nullptr || routineEntry.fallback)
+    return;
+  if(MoveAlgo::isClose(*this,*routineEntry.entry)) {
+    routineEntry = {};
+    return;
+    }
+  if(go2.flag!=GT_Way || go2.npc!=nullptr || go2.wp!=routineEntry.entry ||
+     isPlayer() || isDown() || isExternalControl() || currentTarget!=nullptr)
+    return;
+  if((position()-routineEntry.progress).quadLength()>=100.f*100.f) {
+    routineEntry.progress = position();
+    routineEntry.stalled = 0;
+    return;
+    }
+  routineEntry.stalled += dt;
+  if(routineEntry.stalled<8000)
+    return;
+
+  const auto* failed = routineEntry.entry;
+  if(routineEntry.retries<routineEntry.rejected.size()) {
+    routineEntry.rejected[routineEntry.retries++] = failed;
+    } else {
+    // Three alternatives have already been tried; preserve legacy routing.
+    routineEntry.fallback = true;
+    }
+  if(TestBench::isActive() && TestBench::routineReturnActive(*this))
+    TestBench::routineReselect(*this,*failed,routineEntry.retries,routineEntry.fallback);
+  routineEntry.stalled = 0;
+  routineEntry.progress = position();
+  wayPath = owner.wayTo(*this,*routineEntry.target);
+  if(const auto* next=wayPath.pop()) {
+    go2.set(next);
+    attachToPoint(next);
+    } else {
+    clearGoTo();
+    }
   }
 
 bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyAction) {
@@ -8345,6 +8412,12 @@ void Npc::multSpeed(float s) {
 bool Npc::testMove(const Vec3& pos) {
   DynamicWorld::CollisionTest out;
   return physic.testMove(pos,out);
+  }
+
+auto Npc::testWalk(const Vec3& pos) const -> DynamicWorld::WalkResult {
+  // Match the normal NPC walking drop and swimming thresholds in MoveAlgo.
+  return physic.testWalk(pos,mvAlgo.stepHeight(),mvAlgo.falldownHeight()*.75f,
+                         std::clamp(mvAlgo.slideAngle(),0.f,1.f),mvAlgo.waterDepthChest());
   }
 
 bool Npc::tryMove(const Vec3& dp) {
