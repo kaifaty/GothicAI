@@ -145,6 +145,11 @@
      "key": "OWN_PROP_ROPE",
      "group": "UNDEF",
      "role": "twisted hemp rope"
+    },
+    {
+     "key": "OWN_PROP_NET_ROLL",
+     "group": "UNDEF",
+     "role": "rolled-up net bundles, opaque"
     }
    ],
    "kind": "static_mrm",
@@ -182,6 +187,11 @@
      "key": "OWN_PROP_ROPE",
      "group": "UNDEF",
      "role": "twisted hemp rope"
+    },
+    {
+     "key": "OWN_PROP_NET_ROLL",
+     "group": "UNDEF",
+     "role": "rolled-up net bundles, opaque"
     }
    ],
    "kind": "static_mrm",

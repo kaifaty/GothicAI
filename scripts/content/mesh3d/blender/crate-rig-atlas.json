@@ -1,139 +1,140 @@
 {
-  "glb": "market-set/build/crate/model.glb",
-  "maps_dir": "market-set/crate-tiles",
-  "scales": {
-    "OWN_PROP_WOOD_PLANK": 2.5,
-    "OWN_PROP_WOOD_BRACE": 2.5,
-    "OWN_PROP_IRON_NAIL": 5.0,
-    "OWN_PROP_ROPE": 6.6,
-    "OWN_PROP_WOOD_INNER": 2.5
-  },
-  "targets": {
-    "OWN_PROP_WOOD_PLANK": [
-      0.054,
-      0.043,
-      0.019
-    ],
-    "OWN_PROP_WOOD_BRACE": [
-      0.046,
-      0.037,
-      0.016
-    ],
-    "OWN_PROP_IRON_NAIL": [
-      0.02,
-      0.019,
-      0.016
-    ],
-    "OWN_PROP_ROPE": [
-      0.06,
-      0.042,
-      0.02
-    ],
-    "OWN_PROP_WOOD_INNER": [
-      0.009,
-      0.007,
-      0.0035
-    ]
-  },
-  "slots": {
-    "OWN_PROP_WOOD_PLANK": [
-      "OWN_CRATE_HARBOUR_WOOD",
-      "WOOD"
-    ],
-    "OWN_PROP_WOOD_BRACE": [
-      "OWN_CRATE_HARBOUR_WOOD",
-      "WOOD"
-    ],
-    "OWN_PROP_IRON_NAIL": [
-      "OWN_CRATE_HARBOUR_IRON",
-      "METAL"
-    ],
-    "OWN_PROP_ROPE": [
-      "OWN_CRATE_HARBOUR_ROPE",
-      "WOOD"
-    ],
-    "OWN_PROP_WOOD_INNER": [
-      "OWN_CRATE_HARBOUR_WOOD",
-      "WOOD"
-    ]
-  },
-  "metal": [
-    "OWN_PROP_IRON_NAIL"
+ "glb": "market-set/build/crate/model.glb",
+ "maps_dir": "market-set/crate-tiles",
+ "scales": {
+  "OWN_PROP_WOOD_PLANK": 2.5,
+  "OWN_PROP_WOOD_BRACE": 2.5,
+  "OWN_PROP_IRON_NAIL": 5.0,
+  "OWN_PROP_ROPE": 6.6,
+  "OWN_PROP_WOOD_INNER": 2.5
+ },
+ "targets": {
+  "OWN_PROP_WOOD_PLANK": [
+   0.054,
+   0.043,
+   0.019
   ],
-  "size": 2048,
-  "seed": 1,
-  "angle_limit": 66,
-  "margin": 0.003,
-  "wet_height": 0.3,
-  "algae": 1.0,
-  "bleach": 0.0,
-  "planks_per_tile": {
-    "OWN_PROP_WOOD_PLANK": 4,
-    "OWN_PROP_WOOD_BRACE": 4
-  },
-  "contrast": {
-    "OWN_PROP_WOOD_PLANK": 1.6,
-    "OWN_PROP_WOOD_BRACE": 1.6,
-    "OWN_PROP_IRON_NAIL": 1.1,
-    "OWN_PROP_ROPE": 1.1,
-    "OWN_PROP_WOOD_INNER": 1.15
-  },
-  "edge_wear": {
-    "OWN_PROP_WOOD_PLANK": 0.2,
-    "OWN_PROP_WOOD_BRACE": 0.2,
-    "OWN_PROP_WOOD_INNER": 0.0
-  },
-  "tone_spread": 0.24,
-  "seam_dark": 0.3,
-  "seam_width": 0.04,
-  "measure_ao": {
-    "OWN_PROP_WOOD_PLANK": 0.5,
-    "OWN_PROP_WOOD_BRACE": 0.5
-  },
-  "moss": {
-    "zones": [
-      "OWN_PROP_WOOD_PLANK",
-      "OWN_PROP_WOOD_BRACE"
-    ],
-    "cover": 0.16,
-    "scale": 0.12,
-    "grain": 4.0,
-    "top": 1.2,
-    "bottom": 1.0,
-    "low": 0.3,
-    "shade": 0.8,
-    "soft": 0.3,
-    "damp": 0.35,
-    "dark": [
-      0.012,
-      0.019,
-      0.005
-    ],
-    "light": [
-      0.03,
-      0.042,
-      0.009
-    ]
-  },
-  "streaks": {
-    "length": 0.35,
-    "rust": 0.0,
-    "dirt": 0.55,
-    "rust_colour": [
-      0.06,
-      0.03,
-      0.012
-    ],
-    "column": 0.014
-  },
-  "crevice": {
-    "distance": 0.035,
-    "dirt": 0.55,
-    "colour": [
-      0.006,
-      0.006,
-      0.004
-    ]
-  },
-  "wet_roughness": 0.7
+  "OWN_PROP_WOOD_BRACE": [
+   0.046,
+   0.037,
+   0.016
+  ],
+  "OWN_PROP_IRON_NAIL": [
+   0.02,
+   0.019,
+   0.016
+  ],
+  "OWN_PROP_ROPE": [
+   0.06,
+   0.042,
+   0.02
+  ],
+  "OWN_PROP_WOOD_INNER": [
+   0.009,
+   0.007,
+   0.0035
+  ]
+ },
+ "slots": {
+  "OWN_PROP_WOOD_PLANK": [
+   "OWN_CRATE_HARBOUR_WOOD",
+   "WOOD"
+  ],
+  "OWN_PROP_WOOD_BRACE": [
+   "OWN_CRATE_HARBOUR_WOOD",
+   "WOOD"
+  ],
+  "OWN_PROP_IRON_NAIL": [
+   "OWN_CRATE_HARBOUR_IRON",
+   "METAL"
+  ],
+  "OWN_PROP_ROPE": [
+   "OWN_CRATE_HARBOUR_ROPE",
+   "WOOD"
+  ],
+  "OWN_PROP_WOOD_INNER": [
+   "OWN_CRATE_HARBOUR_WOOD",
+   "WOOD"
+  ]
+ },
+ "metal": [
+  "OWN_PROP_IRON_NAIL"
+ ],
+ "size": 2048,
+ "seed": 1,
+ "angle_limit": 66,
+ "margin": 0.003,
+ "wet_height": 0.3,
+ "algae": 1.0,
+ "bleach": 0.0,
+ "planks_per_tile": {
+  "OWN_PROP_WOOD_PLANK": 4,
+  "OWN_PROP_WOOD_BRACE": 4
+ },
+ "contrast": {
+  "OWN_PROP_WOOD_PLANK": 1.6,
+  "OWN_PROP_WOOD_BRACE": 1.6,
+  "OWN_PROP_IRON_NAIL": 1.1,
+  "OWN_PROP_ROPE": 1.1,
+  "OWN_PROP_WOOD_INNER": 1.15
+ },
+ "edge_wear": {
+  "OWN_PROP_WOOD_PLANK": 0.2,
+  "OWN_PROP_WOOD_BRACE": 0.2,
+  "OWN_PROP_WOOD_INNER": 0.0
+ },
+ "tone_spread": 0.24,
+ "seam_dark": 0.3,
+ "seam_width": 0.04,
+ "measure_ao": {
+  "OWN_PROP_WOOD_PLANK": 0.5,
+  "OWN_PROP_WOOD_BRACE": 0.5
+ },
+ "moss": {
+  "zones": [
+   "OWN_PROP_WOOD_PLANK",
+   "OWN_PROP_WOOD_BRACE"
+  ],
+  "cover": 0.16,
+  "scale": 0.12,
+  "grain": 2.0,
+  "top": 1.2,
+  "bottom": 1.0,
+  "low": 0.3,
+  "shade": 0.8,
+  "soft": 0.3,
+  "damp": 0.35,
+  "dark": [
+   0.012,
+   0.019,
+   0.005
+  ],
+  "light": [
+   0.03,
+   0.042,
+   0.009
+  ],
+  "detail": 0.8
+ },
+ "streaks": {
+  "length": 0.35,
+  "rust": 0.0,
+  "dirt": 0.55,
+  "rust_colour": [
+   0.06,
+   0.03,
+   0.012
+  ],
+  "column": 0.014
+ },
+ "crevice": {
+  "distance": 0.035,
+  "dirt": 0.55,
+  "colour": [
+   0.006,
+   0.006,
+   0.004
+  ]
+ },
+ "wet_roughness": 0.7
 }

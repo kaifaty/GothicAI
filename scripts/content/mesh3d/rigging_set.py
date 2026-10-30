@@ -56,10 +56,12 @@ ITEMS = {
                          atlas='bollard-rope-atlas.json'),
     'bollard': dict(visual='NW_HARBOUR_IRONROPEHOLDER_01', script='bollard.py', cfg='bollard.json', atlas='bollard-atlas.json'),
     'net-big': dict(visual='NW_HARBOUR_FISHINGNETBIG', script='net_heap.py', cfg='net-big.json', atlas=None,
-                    tiled={'OWN_PROP_NET': ['OWN_NETBIG_HARBOUR_NET', 'own_prop_net', [0.075, 0.06, 0.036]],
+                    tiled={'OWN_PROP_NET': ['OWN_NETBIG_HARBOUR_NET', 'own_prop_net', [0.05, 0.04, 0.025]],
+                           'OWN_PROP_NET_ROLL': ['OWN_NETBIG_HARBOUR_CORE', 'own_prop_net_roll', [0.03, 0.025, 0.016]],
                            'OWN_PROP_ROPE': ['OWN_NETBIG_HARBOUR_ROPE', 'own_prop_rope', [0.045, 0.036, 0.024]]}),
     'net-small': dict(visual='NW_HARBOUR_FISHINGNETSMALL', script='net_heap.py', cfg='net-small.json', atlas=None,
-                      tiled={'OWN_PROP_NET': ['OWN_NETSMALL_HARBOUR_NET', 'own_prop_net', [0.075, 0.06, 0.036]],
+                      tiled={'OWN_PROP_NET': ['OWN_NETSMALL_HARBOUR_NET', 'own_prop_net', [0.05, 0.04, 0.025]],
+                           'OWN_PROP_NET_ROLL': ['OWN_NETSMALL_HARBOUR_CORE', 'own_prop_net_roll', [0.03, 0.025, 0.016]],
                              'OWN_PROP_ROPE': ['OWN_NETSMALL_HARBOUR_ROPE', 'own_prop_rope', [0.045, 0.036, 0.024]]}),
     'net-rack': dict(visual='NW_HARBOUR_FISHINGNET_01', script='net_rack.py', cfg='net-rack.json', atlas='net-rack-atlas.json',
                      tiled={'OWN_PROP_NET': ['OWN_NETRACK_HARBOUR_NET', 'own_prop_net_fine', [0.032, 0.027, 0.018]]}, extra_glb='nets.glb'),
@@ -243,10 +245,10 @@ def cmd_pack(args) -> int:
             if alpha:
                 masked.add(key)
         used = glb_edit(glb, mesh_dir / 'model.glb', names, masked)
-        if spec['atlas']:   # an atlas slot without faces (a zone the model no longer uses) gets no entry
-            for key in keys:
-                if key not in used:
-                    materials.pop(f'{key}.TGA', None)
+        # an atlas slot or a tiled material without faces (a zone the model no longer uses) gets no entry
+        for key in (keys if spec['atlas'] else []) + [k for k, _, _ in spec.get('tiled', {}).values()]:
+            if key not in used:
+                materials.pop(f'{key}.TGA', None)
         missing = [m for m in used if f'{m}.TGA' not in materials]
         if missing:
             raise SystemExit(f'{item}: GLB materials without an entry: {missing}')
@@ -288,7 +290,7 @@ def record(item: str, set_name: str, output: Path, name: str, used: list[str], m
                         'zones': {k: {'target': v.get('target'), 'gain': v.get('gain')} for k, v in atlas.get('zones', {}).items()}}
     if spec.get('tiled'):
         rec['tiles'] = {key: {'tile': f'rigging-tiles/{tile}', 'albedo_sha256': sha(TILES / tile / 'albedo.png'), 'colour': colour}
-                        for key, tile, colour in spec['tiled'].values()}
+                        for key, tile, colour in spec['tiled'].values() if key in used}
     if spec.get('extra_glb'):
         rec['model']['extra_triangles'] = metrics.get('net_triangles')
     files = {'glb': {'path': f'{set_name}/meshes/{name}/model.glb', 'sha256': sha(output / 'meshes' / name / 'model.glb')}}

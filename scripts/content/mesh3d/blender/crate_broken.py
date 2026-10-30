@@ -14,7 +14,13 @@ top) the "side_wall" long wall (-1: -y, 1: +y) has a V breach centred at side_br
 harbour the +y wall faces the player (vob 26082 lies tilted), the review of 2026-10-30 found a breach in the
 end unseen. The "notch_end" end (1: +x, -1: -x) may have a V breach, notch[0] wide at the top, down to notch[1] of the
 height. In the harbour the camera of the fishers' corner sees the -x end (third review, 2026-10-30), so the
-V is there and the walls are whole. Optional, off for the harbour set
+V is there and the walls are whole. "cuts" breaks walls as the original's are broken: per wall ("-y", "+y" along x, "-x", "+x" along y) a list of
+[from, to, height] zones where its planks above height are gone, the ends torn; a corner post is as high
+as the lower wall at its corner. The harbour crate follows the original's walls measured from its mesh
+(fourth review, 2026-10-30, heights by rays down along each wall of the base mesh): the -y wall left only
+by the -x corner, the +y wall and the -x end broken down to a third at their shared corner, the +x end
+without its -y part and breached in the middle, the floor without its (+x, -y) corner.
+Optional, off for the harbour set
 after the first review (one wall broken, not three): the -y long side broken off above side_break[1] of
 the height for x > side_break[0]; the middle floor plank broken through over floor_hole (x from, x to,
 metres); the -y floor plank without its last floor_corner metres. "rope_ends": "none" drops the handle. Each
@@ -115,6 +121,47 @@ def plank_span(a0, a1, centre, along, ax_w, n_w, w, broken_end=None):
 
 
 wall_top = H - 0.006   # no lid: the walls run up to the posts' tops less a hair
+cuts = cfg.get("cuts", {})   # {"-y"|"+y"|"-x"|"+x": [[from, to, height], ...]}: the wall is broken down to height there
+
+
+def cut_plank(wall, a0, a1, z, w, centre, along, ax_w, n_w):
+    """Lay one plank of a wall from a0 to a1, leaving out every cut whose height is under the plank's top.
+    Returns False when the wall has no cuts (the caller lays the plank its old way)."""
+    if wall not in cuts:
+        return False
+    pieces = [(a0, a1, None, None)]
+    for c0, c1, height in cuts[wall]:
+        if z + w <= height + 0.01:
+            continue
+        c0 += rng.uniform(-0.04, 0.04)
+        c1 += rng.uniform(-0.04, 0.04)
+        out = []
+        for s0, s1, b0, b1 in pieces:
+            if c1 <= s0 or c0 >= s1:
+                out.append((s0, s1, b0, b1))
+                continue
+            if c0 - s0 > 0.06:
+                out.append((s0, c0, b0, True))
+            if s1 - c1 > 0.06:
+                out.append((c1, s1, True, b1))
+        pieces = out
+    for s0, s1, b0, b1 in pieces:
+        if b1:
+            plank_span(s0, s1, centre, along, ax_w, n_w, w, broken_end=1)
+        elif b0:
+            plank_span(s0, s1, centre, along, ax_w, n_w, w, broken_end=0)
+        else:
+            plank_span(s0, s1, centre, along, ax_w, n_w, w)
+    return True
+
+
+def cut_height(wall, at_pos):
+    """The wall's height at a position along it (its lowest cut there), for posts and battens."""
+    h = wall_top
+    for c0, c1, height in cuts.get(wall, []):
+        if c0 <= at_pos <= c1:
+            h = min(h, height)
+    return h
 
 # --- long sides: horizontal planks between the posts, an upright batten; -y broken at the top right ---
 sb_x, sb_h = cfg.get("side_break", [0.2, 0.74])
@@ -131,7 +178,9 @@ for s in (-1, 1):
         centre = at(0, s * depth, z + w / 2)
         v0 = sb_h * wall_top
         half = side_v / 2 * (z + w / 2 - v0) / (wall_top - v0) * rng.uniform(0.85, 1.15) if side_v else 0.0
-        if s == side_wall and half > 0.04:             # a V breach in that wall, wider at the top
+        if cut_plank("+y" if s > 0 else "-y", -x_end, x_end, z, w, centre, along, Z, n_w):
+            pass
+        elif s == side_wall and half > 0.04:             # a V breach in that wall, wider at the top
             plank_span(-x_end, sb_x - half, centre, along, Z, n_w, w, broken_end=1)
             plank_span(sb_x + half * rng.uniform(0.8, 1.2), x_end, centre, along, Z, n_w, w, broken_end=0)
         elif s == -1 and z > sb_h * wall_top - 0.02 and not side_v:     # broken off on the right
@@ -144,6 +193,9 @@ for s in (-1, 1):
                 nail(at(xe, s * y_side, z + w / 2), n_w, X)
         z += w + (gaps[k] if k < len(gaps) else 0)
     top = sb_h * wall_top - 0.03 if (s == side_wall and side_v) else wall_top - 0.02   # the batten stops under the breach
+    top = min(top, cut_height("+y" if s > 0 else "-y", mid_x) - 0.02)
+    if top < 0.1:
+        continue
     P.wood(at(mid_x, s * (W / 2 - bat_t / 2), top / 2 + 0.01), turned(Z, n_w), X, n_w,
            top, bat_w * rng.uniform(0.9, 1.1), bat_t, BRACE, tile)
 
@@ -162,7 +214,9 @@ for e in (-1, 1):
         centre = at(e * depth, 0, z + w / 2)
         v0 = nh_ * wall_top
         half = nw_ / 2 * (z + w / 2 - v0) / (wall_top - v0) * rng.uniform(0.85, 1.15)   # a V: wider at the top
-        if e == notch_end and half > 0.04:
+        if cut_plank("+x" if e > 0 else "-x", -span, span, z, w, centre, along, Z, n_w):
+            pass
+        elif e == notch_end and half > 0.04:
             plank_span(-span, off - half, centre, along, Z, n_w, w, broken_end=1)
             plank_span(off + half * rng.uniform(0.8, 1.2), span, centre, along, Z, n_w, w, broken_end=0)
         else:
@@ -170,9 +224,14 @@ for e in (-1, 1):
         z += w + (gaps[k] if k < len(gaps) else 0)
     for s in (-1, 1):
         pw = post_w * rng.uniform(0.9, 1.1)
-        P.wood(at(e * (L / 2 - post_t / 2), s * (W / 2 - pw / 2), wall_top / 2), turned(Z, n_w), Y, n_w, wall_top, pw, post_t, BRACE, tile)
+        # a corner post is as high as the lower of the two walls broken at its corner
+        ph = min(cut_height("+x" if e > 0 else "-x", s * span), cut_height("+y" if s > 0 else "-y", e * x_end))
+        if ph < 0.08:          # the corner is gone with both walls
+            continue
+        P.wood(at(e * (L / 2 - post_t / 2), s * (W / 2 - pw / 2), ph / 2), turned(Z, n_w), Y, n_w, ph, pw, post_t, BRACE, tile)
         for f in (0.15, 0.5, 0.85):
-            nail(at(e * (L / 2), s * (W / 2 - pw / 2), wall_top * f), n_w, Y)
+            if wall_top * f < ph:
+                nail(at(e * (L / 2), s * (W / 2 - pw / 2), wall_top * f), n_w, Y)
     if e == -notch_end and cfg.get("rope_ends", "one") != "none":
         _rope(P, ROPE, lambda x, y, z: at(x, y, z), e, x_end, W, wall_top, cfg)
 

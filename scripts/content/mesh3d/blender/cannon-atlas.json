@@ -96,7 +96,7 @@
    "OWN_PROP_IRON_CAST": 0.04
   },
   "scale": 0.1,
-  "grain": 4.0,
+  "grain": 2.0,
   "top": 1.2,
   "bottom": 1.0,
   "low": 0.3,
@@ -112,7 +112,8 @@
    0.03,
    0.042,
    0.009
-  ]
+  ],
+  "detail": 0.8
  },
  "crevice": {
   "distance": 0.035,

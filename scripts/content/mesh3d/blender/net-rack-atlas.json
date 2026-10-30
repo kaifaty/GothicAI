@@ -10,8 +10,8 @@
  "targets": {
   "OWN_PROP_WOOD_FRAME": [
    0.034,
-   0.031,
-   0.013
+   0.032,
+   0.012
   ],
   "OWN_PROP_NET_ROLL": [
    0.028,
@@ -55,7 +55,7 @@
  "angle_limit": 66,
  "margin": 0.003,
  "contrast": {
-  "OWN_PROP_WOOD_FRAME": 1.2,
+  "OWN_PROP_WOOD_FRAME": 1.7,
   "OWN_PROP_NET_ROLL": 1.0,
   "OWN_PROP_ROPE": 1.15,
   "OWN_PROP_IRON_BAND": 1.1
@@ -76,7 +76,7 @@
  "streaks": {
   "length": 0.35,
   "rust": 0.0,
-  "dirt": 0.55,
+  "dirt": 0.7,
   "rust_colour": [
    0.06,
    0.03,
@@ -88,13 +88,13 @@
   "zones": [
    "OWN_PROP_WOOD_FRAME"
   ],
-  "cover": 0.5,
-  "scale": 0.2,
-  "grain": 5.0,
-  "top": 1.6,
-  "bottom": 1.2,
+  "cover": 0.55,
+  "scale": 0.16,
+  "grain": 1.6,
+  "top": 0.6,
+  "bottom": 0.8,
   "low": 0.3,
-  "shade": 0.8,
+  "shade": 0.6,
   "soft": 0.3,
   "damp": 0.35,
   "dark": [
@@ -106,7 +106,8 @@
    0.03,
    0.042,
    0.009
-  ]
+  ],
+  "detail": 0.9
  },
  "crevice": {
   "distance": 0.035,

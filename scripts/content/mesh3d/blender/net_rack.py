@@ -63,12 +63,18 @@ def timber(a, b, w, h, up=Z):
     P.wood((a + b) / 2, along, side, n, d.length, w * rng.uniform(0.95, 1.05), h * rng.uniform(0.95, 1.05), FRAME, tile)
 
 
-def tube(Pp, points, rad, sides, material, tile_v=0.15):
+def tube(Pp, points, rad, sides, material, tile_v=0.15, ref=None, closed=False):
+    """A tube along points; "ref" fixes the ring orientation (a vertical roll would otherwise twist its UVs
+    into a screw), "closed" joins the last ring to the first with no caps (a binding round a roll)."""
     rings, along = [], 0.0
     part = Pp.new_part()
+    n = len(points)
     for k, p in enumerate(points):
-        t = (points[min(k + 1, len(points) - 1)] - points[max(k - 1, 0)]).normalized()
-        side = t.cross(Z)
+        if closed:
+            t = (points[(k + 1) % n] - points[(k - 1) % n]).normalized()
+        else:
+            t = (points[min(k + 1, n - 1)] - points[max(k - 1, 0)]).normalized()
+        side = t.cross(ref) if ref is not None else t.cross(Z)
         if side.length < 1e-6:
             side = t.cross(X)
         side.normalize()
@@ -78,12 +84,14 @@ def tube(Pp, points, rad, sides, material, tile_v=0.15):
             along += (p - points[k - 1]).length
         rings.append(([Pp.vert(p + (side * math.cos(2 * math.pi * s / sides) + upv * math.sin(2 * math.pi * s / sides)) * r, part)
                        for s in range(sides)], along, r))
-    for k in range(len(rings) - 1):
-        (a, va, ra), (b, vb, rb) = rings[k], rings[k + 1]
+    for k in range(len(rings) - (0 if closed else 1)):
+        (a, va, ra), (b, vb, rb) = rings[k], rings[(k + 1) % len(rings)]
         for s in range(sides):
             s2 = (s + 1) % sides
             u0, u1 = s / sides * 2 * math.pi * ra / tile_v, (s + 1) / sides * 2 * math.pi * ra / tile_v
             Pp.poly((a[s], a[s2], b[s2], b[s]), material, ((u0, va / tile_v), (u1, va / tile_v), (u1, vb / tile_v), (u0, vb / tile_v)))
+    if closed:
+        return
     for ring, flip in ((rings[0][0], True), (rings[-1][0], False)):
         cap = [(0.05 * math.cos(2 * math.pi * s / sides), 0.05 * math.sin(2 * math.pi * s / sides)) for s in range(sides)]
         Pp.poly(ring[::-1] if flip else ring, material, cap[::-1] if flip else cap)
@@ -121,7 +129,9 @@ for x, y, z, axis, width, height in cfg.get("clamps", []):
     along = X if axis == "x" else Y
     across = Y if axis == "x" else X
     c = Vector((x, y, z))
-    t_band, w_band = 0.012, 0.06
+    t_band, w_band = 0.02, 0.1
+    # a hewn block laid across the pair on top, as the original's
+    P.wood(c + Z * (height / 2 + 0.06), across, along, Z, width + 0.1, 0.18, 0.12, FRAME, tile)
     for s in (-1, 1):
         P.strap(c + Z * (s * height / 2), along, across, Z * s, w_band, width + 2 * t_band, t_band, IRON)
         P.board(c + across * (s * (width / 2 + t_band / 2)), along, Z, across, w_band, height + 2 * t_band, t_band, IRON)
@@ -194,19 +204,19 @@ for x, y, top_z, length, radius, shape in cfg.get("rolls", []):
         else:
             r = radius * min(1.0, 0.45 + 3 * f) * (1 - 0.15 * f)
         rads.append(r * rng.uniform(0.95, 1.05))
-    rads[0], rads[-1] = radius * 0.3, radius * (0.45 if shape == "spindle" else 0.7)
-    # a rounded foot: one more ring a little lower and narrower, so the bundle does not end in a sharp cone
-    pts.append(pts[-1] - Vector((0, 0, radius * 0.25)))
-    rads.append(rads[-1] * 0.55)
-    tube(P, pts, rads, 16, ROLL, tile_v=tile_m)
+    rads[0], rads[-1] = radius * 0.35, radius * (0.6 if shape == "spindle" else 0.85)
+    # a blunt, rounded foot: one more ring a little lower and a little narrower, then the flat cap
+    pts.append(pts[-1] - Vector((0, 0, radius * 0.15)))
+    rads.append(rads[-1] * 0.8)
+    tube(P, pts, rads, 16, ROLL, tile_v=tile_m, ref=Y)
     for k in range(1, int(length / 0.6) + 1):
         f = k * 0.6 / length
         if f >= 0.95:
             break
         c = pts[0] + (pts[-1] - pts[0]) * f + bend * math.sin(math.pi * f)
         r = float(np.interp(f, np.linspace(0, 1, n_seg + 1), rads[:n_seg + 1])) * 0.98
-        ring = [c + Vector((math.cos(a) * r, math.sin(a) * r, 0.0)) for a in np.linspace(0, 2 * math.pi, 13)]
-        tube(P, ring, 0.014, 5, ROPE)
+        ring = [c + Vector((math.cos(a) * r, math.sin(a) * r, 0.0)) for a in np.linspace(0, 2 * math.pi, 17)[:-1]]
+        tube(P, ring, 0.014, 5, ROPE, closed=True)
     tube(P, [pts[0], Vector((x, y, top_z + 0.02))], 0.014, 5, ROPE)
 
 # --- loose ropes hanging from the beams ---

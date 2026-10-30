@@ -10,8 +10,9 @@ in the middle, the ground showing through the meshes. Each layer is a sheet over
 its height is a dome ("dome" shapes it) plus a few soft folds ("folds": count, amplitude range m,
 wavelength range m) that fade toward the edge, so the edge lies on the ground. An upper layer lies "lift"
 over the one under it. The net is alpha-tested: every face is emitted twice, back to back, so it shows
-from both sides. A thicker border rope ("rope": [thickness, sides, arcs]) runs in loose arcs over the
-heap. Net UVs are planar in metres over tile_m (one net tile, net_tiles.py); the rope's wrap once around
+from both sides. A thicker border rope ("rope": [thickness, sides, arcs]) may run in loose arcs over the heap (0 arcs in the
+harbour set: an addition the review asked to drop). With "core" (a share of the radius) an opaque core of
+packed net lies under the layers, so the middle reads dense. Net UVs are planar in metres over tile_m (one net tile, net_tiles.py); the rope's wrap once around
 and run along it. The top of the heap touches the bbox top.
 """
 import math
@@ -29,6 +30,7 @@ goal, lo, hi = load_goal(cfg)
 rng = np.random.default_rng(cfg.get("seed", 6))
 keys = [z["key"] for z in goal["zones"]]
 NET, ROPE = keys.index("OWN_PROP_NET"), keys.index("OWN_PROP_ROPE")
+CORE = keys.index("OWN_PROP_NET_ROLL") if "OWN_PROP_NET_ROLL" in keys else None
 P = Parts(rng, 0.1)
 tile_m = cfg.get("tile_m", 0.42)
 nx, ny = cfg.get("grid", [18, 24])
@@ -104,6 +106,30 @@ for i, (height, scale) in enumerate(layers):
             P.poly([up[q] for q in quad], NET, uv)
             P.poly([down[q] for q in quad[::-1]], NET, uv[::-1])
     tops.append(verts)
+
+# the dense middle: an opaque core of packed net under the layers, out to "core" of the radius, so the
+# ground shows through only toward the edges (fourth review, 2026-10-30)
+if cfg.get("core") and CORE is not None:
+    part = P.new_part(wound=True)
+    rings = []
+    n_r, n_a = 6, 24
+    for i in range(n_r + 1):
+        f = cfg["core"] * i / n_r
+        ring = []
+        for a in np.linspace(0, 2 * math.pi, n_a + 1)[:-1]:
+            x, y = c.x + f * ax * math.cos(a), c.y + f * ay * math.sin(a)
+            ring.append(P.vert(Vector((x, y, max(layer_z(0, x, y) - 0.03, lo.z + 0.004))), part))
+        rings.append(ring)
+    centre_v = P.vert(Vector((c.x, c.y, max(layer_z(0, c.x, c.y) - 0.03, lo.z + 0.004))), part)
+    uv = lambda v: ((v.co.x - lo.x) / tile_m, (v.co.y - lo.y) / tile_m)
+    for j in range(n_a):
+        j2 = (j + 1) % n_a
+        P.poly([centre_v, rings[1][j], rings[1][j2]], CORE, [uv(centre_v), uv(rings[1][j]), uv(rings[1][j2])])
+    for i in range(1, n_r):
+        for j in range(n_a):
+            j2 = (j + 1) % n_a
+            q = [rings[i][j], rings[i + 1][j], rings[i + 1][j2], rings[i][j2]]
+            P.poly(q, CORE, [uv(v) for v in q])
 
 # border rope: loose arcs over the heap, laid on the top layer's surface
 r_t, sides, arcs = cfg.get("rope", [0.02, 6, 2])

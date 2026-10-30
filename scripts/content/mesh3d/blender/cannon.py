@@ -5,7 +5,9 @@ config: {"id": "rig-cannon", "target": "data/content/mesh3d-rigging.json", "seed
          "barrel": [[y, r], ...] profile from the cascabel to the muzzle face (m, y along the barrel),
          "bore": [0.065, 0.3], "trunnion": [0.06, 0.05], "elevation_deg": 4, "axis_height": 0.72,
          "cheek": [0.09, 0.30], "axles": [0.3, -0.58], "axle": [0.14, 0.12], "wheel": [0.16, 0.075, 12],
-         "trail": [-0.9, 0.12], "stave_tile": 0.4}
+         "trail": [-0.9, 0.12], "stave_tile": 0.4,
+         "cheek_profile": [[y, z], ...] the cheek's top from the trail to the front (the original's, measured),
+         "deck": [z, y from, y to] a plank deck between the cheeks}
 Asset harbour-rigging (intent.md, concept rig-cannon attempt 1). The barrel is turned from the profile:
 cascabel knob, base ring, reinforce, a ring before the trunnions, the chase tapering to the muzzle neck
 and the flared muzzle swell; its face has a dark bore "bore" [radius, depth] in its own zone. The
@@ -106,18 +108,39 @@ front = y_front + axle_w / 2 + 0.05
 # falling toward the trail
 steps = [(front, bottom), (front, top_front - 0.04), (front - 0.06, top_front), (y_trun - 0.2, top_front),
          (y_trun - 0.2, top_front - 0.18), (rear, top_front - 0.2), (rear, bottom)]
+if cfg.get("cheek_profile"):
+    # the cheek's top as the original's, measured on its mesh: [y, height above the floor] from the trail to the front
+    prof = cfg["cheek_profile"]
+    low = floor + cfg.get("cheek_bottom", 0.06)     # the cheeks reach down past the axles, the trail near the ground
+    steps = [(prof[0][0], low)] + [(y, floor + z) for y, z in prof] + [(prof[-1][0], low)]
 for s in (-1, 1):
     x_in = cx + s * cheek_gap
     x_out = x_in + s * cheek_t
-    slab(steps, min(x_in, x_out), max(x_in, x_out), FRAME)
+    if cfg.get("cheek_profile"):
+        # one convex slab per stretch of the profile: a concave outline triangulates across its steps
+        for (y0, z0), (y1, z1) in zip(prof, prof[1:]):
+            if y1 - y0 > 1e-3:
+                slab([(y0, low), (y1, low), (y1, floor + z1), (y0, floor + z0)], min(x_in, x_out), max(x_in, x_out), FRAME)
+    else:
+        slab(steps, min(x_in, x_out), max(x_in, x_out), FRAME)
     # cap square over the trunnion and two bolts down the cheek
     cap_c = Vector(((x_in + x_out) / 2, y_trun, top_front + trun_r + 0.012))
     P.board(cap_c, Y, X, Z, 2 * trun_r + 0.08, cheek_t * 1.05, 0.024, IRON)
     for dy in (-trun_r - 0.025, trun_r + 0.025):
         cylinder(Vector(((x_in + x_out) / 2, y_trun + dy, top_front + 0.02)), Z, 0.014, 0.05, 6, IRON)
 
-# bed plank between the cheeks, transom at the front, the quoin under the breech, the trail
-P.wood(Vector((cx, (front + rear) / 2, bottom + 0.025)), Y, X, Z, front - rear, 2 * cheek_gap - 0.004, 0.05, FRAME, tile)
+# bed plank between the cheeks (with "deck": the original's deck [z, y from, y to] instead), transom at the front,
+# the quoin under the breech, the trail
+if cfg.get("deck"):
+    dz, dy0, dy1 = cfg["deck"]
+    widths = [0.17, 0.15, 0.14]
+    xx = -cheek_gap + 0.002
+    for w in widths:           # three planks of the deck along the carriage, a gap between them
+        w = w * (2 * cheek_gap - 0.004) / sum(widths) - 0.006
+        P.wood(Vector((cx + xx + w / 2, (dy0 + dy1) / 2, floor + dz - 0.025)), Y, X, Z, dy1 - dy0, w, 0.05, FRAME, tile)
+        xx += w + 0.006
+else:
+    P.wood(Vector((cx, (front + rear) / 2, bottom + 0.025)), Y, X, Z, front - rear, 2 * cheek_gap - 0.004, 0.05, FRAME, tile)
 P.wood(Vector((cx, front - 0.06, bottom + 0.12)), X, Z, Y, 2 * cheek_gap - 0.004, 0.16, 0.08, FRAME, tile)
 # the quoin: a wedge on the bed under the breech, its thick end to the rear
 q_len, q_w = 0.34, 0.2
@@ -129,8 +152,9 @@ slab(wedge, cx - q_w / 2, cx + q_w / 2, FRAME)
 trail0, trail_h = cfg.get("trail", [-0.9, 0.12])
 trail_y = lo.y if trail0 is None else max(lo.y, trail0)
 # the trail: a long wedge from under the cheeks' rear down to the ground at the bbox end, as the original's
-wedge = [(rear + 0.12, floor + 0.01), (rear + 0.12, bottom + 0.08), (trail_y, floor + trail_h * 0.35), (trail_y, floor + 0.01)]
-slab(wedge, cx - 0.13, cx + 0.13, FRAME)
+if not cfg.get("cheek_profile"):      # the original's cheeks run out to the trail themselves
+    wedge = [(rear + 0.12, floor + 0.01), (rear + 0.12, bottom + 0.08), (trail_y, floor + trail_h * 0.35), (trail_y, floor + 0.01)]
+    slab(wedge, cx - 0.13, cx + 0.13, FRAME)
 
 # --- the barrel ------------------------------------------------------------------------------------
 profile = cfg.get("barrel")
