@@ -12,14 +12,14 @@ while [[ $# -gt 0 ]]; do
     --round) round="${2:?round required}"; shift 2 ;;
     --stage) stage="${2:?stage required}"; shift 2 ;;
     -h|--help)
-      echo 'Usage: scripts/nav-live.sh --weights PATH[,PATH] --round LABEL [--stage prepare|smoke|baseline|report|clean]'
-      echo 'Each invocation submits its phase and exits. Default: prepare, then smoke, then baseline after their gates exist.'
+      echo 'Usage: scripts/nav-live.sh --weights PATH[,PATH] --round LABEL [--stage prepare|qualify|smoke|baseline|report|clean]'
+      echo 'Each invocation submits its phase and exits. Default: prepare, qualify, then baseline after its gate is complete.'
       exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 [[ -n "$weights" && "$round" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo 'Weights and a safe round label are required' >&2; exit 2; }
-case "$stage" in auto|prepare|smoke|baseline|report|clean) ;; *) echo "Unknown stage: $stage" >&2; exit 2 ;; esac
+case "$stage" in auto|prepare|qualify|smoke|baseline|report|clean) ;; *) echo "Unknown stage: $stage" >&2; exit 2 ;; esac
 [[ -f "$suite" ]] || { echo "Missing suite: $suite" >&2; exit 2; }
 suite="$(cd "$(dirname "$suite")" && pwd)/$(basename "$suite")"
 # Inventory the exact submitted code; later invocations never edit queued sources.
@@ -64,10 +64,7 @@ rsync -rt --no-links "$suite" "ryzen:$source/suite.json"
 if [[ "$stage" == auto ]]; then
   stage="$(ssh ryzen "bash -s -- '$task' '$output' '$snapshot'" <<'CHOOSE'
 set -euo pipefail
-if [[ ! -f "$1/build-passed-$3" || "$(cat "$1/build-snapshot" 2>/dev/null)" != "$3" ]]; then
-  echo prepare
-else
-  python3 - "$2/smoke.json" "$1/source/$3/suite.json" "$1/build/opengothic/Gothic2Notr" <<'GATE'
+python3 - "$2" "$1/source/$3/suite.json" "$1/build/opengothic/Gothic2Notr" "$1" "$3" <<'GATE'
 import hashlib
 import json
 from pathlib import Path
@@ -76,14 +73,26 @@ def digest(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 try:
-    gate=json.loads(Path(sys.argv[1]).read_text())
+    output=Path(sys.argv[1])
+    suite=json.loads(Path(sys.argv[2]).read_text())
+    needs_qualification=(suite.get('qualification_status') != 'geometry-qualified'
+                         or bool(suite.get('semantic_confirmation_required')))
+    if needs_qualification:
+        print('qualify' if (output/'preparation/complete.json').is_file() else 'prepare')
+        raise SystemExit(0)
+    runtime, snapshot = Path(sys.argv[4]), sys.argv[5]
+    if (not Path(sys.argv[3]).is_file() or not (runtime/f'build-passed-{snapshot}').is_file()
+            or not (runtime/'build-snapshot').is_file()
+            or (runtime/'build-snapshot').read_text().strip() != snapshot):
+        print('prepare')
+        raise SystemExit(0)
+    gate=json.loads((output/'smoke.json').read_text())
     valid=(gate.get('complete') is True and gate.get('suite_sha256') == digest(sys.argv[2])
            and gate.get('binary_sha256') == digest(sys.argv[3]))
 except (OSError, ValueError):
     valid=False
 print('baseline' if valid else 'smoke')
 GATE
-fi
 CHOOSE
 )"
 fi
@@ -128,8 +137,9 @@ print(min(3300, remaining))
 BUDGET
 )"
   started_at=$(date +%s)
+  deadline_at=$((started_at+allowance))
   result=0
-  timeout --signal=TERM --kill-after=10 "$allowance" env NAVLIVE_BUDGET_CHILD=1 bash "$0" "$@" || result=$?
+  timeout --signal=TERM --kill-after=10 "$allowance" env NAVLIVE_BUDGET_CHILD=1 NAVLIVE_DEADLINE="$deadline_at" bash "$0" "$@" || result=$?
   python3 - "$output/runtime.json" "$started_at" <<'CHARGE'
 import json
 import os
@@ -174,7 +184,7 @@ PY
 )"
   export OPENGOTHIC_BASE
 fi
-if [[ "$phase" == smoke || "$phase" == baseline ]]; then
+if [[ "$phase" == qualify || "$phase" == smoke || "$phase" == baseline ]]; then
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
   desktop_found=0
@@ -204,7 +214,7 @@ if [[ "$phase" == smoke || "$phase" == baseline ]]; then
   command -v ffmpeg >/dev/null
   command -v ffprobe >/dev/null
 fi
-if [[ "$phase" == prepare ]]; then
+if [[ "$phase" == prepare || "$phase" == qualify || "$(cat "$task/build-snapshot" 2>/dev/null)" != "$snapshot" ]]; then
   python3 - <<'PY'
 from pathlib import Path
 import shutil
@@ -243,15 +253,17 @@ ENGINE
   "$task/build/opengothic/gothic-navpolicy-contract" --live-format
   "$task/.venv/bin/python" -B -m pytest -q -p no:cacheprovider "$source/scripts/tests/test_nav_drive.py" -k live_trace_fixture
   qualification="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["qualification_status"])' "$source/suite.json")"
-  if [[ "$qualification" == pending ]]; then
+  if [[ "$phase" == prepare && "$qualification" == pending && ! -f "$output/preparation/complete.json" ]]; then
     "$task/.venv/bin/python" -B "$source/scripts/nav_live_prepare.py" \
       --runtime "$task" --output "$output" --suite "$source/suite.json"
   fi
   touch "$task/build-passed-$snapshot"
   printf '%s\n' "$snapshot" > "$task/build-snapshot"
-else
-  test -f "$task/build-passed-$snapshot"
-  [[ "$(cat "$task/build-snapshot")" == "$snapshot" ]]
+fi
+if [[ "$phase" == qualify ]]; then
+  "$task/.venv/bin/python" -B "$source/scripts/nav_live_prepare.py" --qualify \
+    --runtime "$task" --output "$output" --suite "$source/suite.json" --weights "$weights"
+elif [[ "$phase" != prepare ]]; then
   "$task/.venv/bin/python" -B "$source/scripts/nav_live.py" "$phase" \
     --suite "$source/suite.json" --runtime "$task" --output "$output" --weights "$weights" --shard "$shard"
 fi
@@ -262,7 +274,7 @@ for shard in "${shards[@]}"; do
   log_dir="$log_prefix-$shard"
   ssh ryzen "mkdir -p '$log_dir'"
   display=()
-  [[ "$stage" == smoke || "$stage" == baseline ]] && display=(--display --display-shared)
+  [[ "$stage" == qualify || "$stage" == smoke || "$stage" == baseline ]] && display=(--display --display-shared)
   identifier=$("$ROOT/scripts/gq" submit --class quick --threads 16 --cpu-quota 1200% --mem 10G --max 59m \
     ${display[@]+"${display[@]}"} --archive "$log_dir" --name "nav live $round $stage $shard" -- \
     bash "$source/phase.sh" "$source" "$task" "$output" "$weights" "$stage" "$snapshot" "$log_dir" "$shard")

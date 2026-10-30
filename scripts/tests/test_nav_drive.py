@@ -400,3 +400,32 @@ def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
         stream.write(truncated)
     with pytest.raises(ValueError, match="Truncated"):
         list(live.observation_frames(root, metadata))
+
+
+def test_live_qualification_resumes_partial_probes_and_rejects_blocked_capsule(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    import nav_live_prepare as prepare
+
+    cases = [dict(npc="NPC", probe_label=str(index), start=f"START{index}", goal="GOAL") for index in range(2)]
+    calls = []
+
+    def scenario(name, commands, directory, seed):
+        calls.append(name)
+        (directory / "live-probes.jsonl").write_text("".join(
+            json.dumps(dict(label=row["probe_label"], npc=row["npc"], start=row["start"], goal=row["goal"])) + "\n"
+            for row in cases))
+
+    worker = SimpleNamespace(scenario=scenario)
+    measured = prepare.probe_groups(worker, cases, tmp_path, 7)
+    path = Path(measured["0"]["file"])
+    path.write_text(path.read_text().splitlines()[0] + '\n{"label":')
+    assert len(prepare.probe_groups(worker, cases, tmp_path, 7)) == 2
+    assert len(calls) == 2
+    prepare.probe_groups(worker, cases, tmp_path, 7)
+    assert len(calls) == 2
+
+    support = dict(supported=True, dry=True, capsule_clear=True, ground_known=True,
+                   height_delta_cm=0, ground_snap_cm=0)
+    probe = dict(detour_complete=True, route_sample_count=2, route_deep_water_samples=0,
+                 route_no_floor_samples=0, start_support=dict(support, capsule_clear=False), goal_support=support)
+    assert not prepare.supported_route(probe)

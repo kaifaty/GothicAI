@@ -36,6 +36,11 @@ def sha256(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def phase_deadline():
+    remaining = float(os.environ.get('NAVLIVE_DEADLINE', time.time() + 3300)) - time.time()
+    return time.monotonic() + min(3300, max(0, remaining))
+
+
 def suite_cases(suite):
     if suite.get('schema_version') != 1 or suite.get('training_eligible') is not False:
         raise ValueError('nav-live requires a version 1 evaluation-only suite')
@@ -161,7 +166,8 @@ def commands(case, model, seed, inputs, recorded=True):
               'navdemos hero keep', 'navdemos record off',
               'navdemos oracle off', 'navdemos perception-mode gaze', 'navdemos perception-monitor on',
               f"navdemos live {'on' if recorded else 'off'}",
-              f"navdemos live-target {'player' if case.get('target') == 'PC_HERO' else 'npc'}"]
+              f"navdemos live-target {'player' if case.get('target') == 'PC_HERO' else 'npc'}",
+              f"navdemos live-guide {'player' if case.get('live_guide') == 'player' else 'off'}"]
     result.extend(case.get('prepare_commands', []))
     # Keep native routines alive. The observer starts beside the actor so normal AI
     # stays active through the market; the navigation stand owns only this actor.
@@ -178,17 +184,40 @@ def commands(case, model, seed, inputs, recorded=True):
     return result
 
 
+def behavioral_case(case):
+    fields = ('id', 'npc', 'start', 'goal', 'goal_kind', 'time', 'limit_ms', 'stranger',
+              'route', 'target', 'scenario_seed', 'live_guide', 'prepare_commands')
+    return {field: case[field] for field in fields if field in case}
+
+
+def actual_inputs(args, case, model, seed, recorded=True):
+    if not hasattr(args, 'binary_sha256'):
+        args.binary_sha256 = sha256(args.binary)
+    return dict(case=behavioral_case(case), model_sha256=model['sha256'] if model else None, seed=seed,
+                binary_sha256=args.binary_sha256, input_sha256=args.input_sha256, recorded=recorded)
+
+
+def teacher_directory(args, case):
+    key = actual_inputs(args, case, None, case['seeds'][0])
+    signature = hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:12]
+    return args.output / 'teacher' / f"{case['id']}-{signature}"
+
+
 def run_episode(args, case, model, seed, directory, teacher=None, recorded=True):
     directory = Path(directory)
     case_identity = {key: value for key, value in case.items() if key != 'variants'}
-    identity = dict(case=case_identity, model=model, seed=seed,
-                    suite_sha256=sha256(args.suite), binary_sha256=sha256(args.binary), recorded=recorded)
-    if (directory / 'identity.json').is_file() and read_json(directory / 'identity.json') != identity:
-        raise ValueError(f'Refusing different inputs at {directory}')
+    actual = actual_inputs(args, case, model, seed, recorded)
+    identity = dict(case=case_identity, model=model, seed=seed, actual=actual,
+                    suite_sha256=sha256(args.suite), binary_sha256=actual['binary_sha256'], recorded=recorded)
+    if (directory / 'identity.json').is_file():
+        previous = read_json(directory / 'identity.json')
+        if previous.get('actual') != actual:
+            raise ValueError(f'Refusing different inputs at {directory}')
     if directory.exists() and any(directory.iterdir()) and not (directory / 'identity.json').is_file():
         raise ValueError(f'Refusing an unowned existing run directory: {directory}')
     directory.mkdir(parents=True, exist_ok=True)
-    write_json(directory / 'identity.json', identity)
+    if not (directory / 'identity.json').is_file():
+        write_json(directory / 'identity.json', identity)
     if not raw_complete(directory, recorded):
         # This identity proves that the directory belongs to this exact attempt.
         # A stopped process may have left an old video next to a new trace.
@@ -209,7 +238,7 @@ def run_episode(args, case, model, seed, directory, teacher=None, recorded=True)
         scenario.write_text('\n'.join(commands(case, model, seed, args.inputs, recorded)) + '\n')
         environment = dict(os.environ, BENCH_HOST='local', NO_BUILD='1', GAME_BIN=str(args.binary),
             SAVE=str(args.inputs['save']), GOTHIC_AI='0', TEMPEST_WINDOW_SIZE='640x360',
-            OPENGOTHIC_BODY_TRACE='0', OPENGOTHIC_TEXTURES='', OPENGOTHIC_CONTENT='', MOVABLE_VOBS='0',
+            OPENGOTHIC_BODY_TRACE='0', OPENGOTHIC_NAV_LIVE='1', OPENGOTHIC_TEXTURES='', OPENGOTHIC_CONTENT='', MOVABLE_VOBS='0',
             OPENGOTHIC_BENCH_ENCODER='-c:v libx264 -preset veryfast -crf 30 -maxrate 800k -bufsize 1600k -vf fps=15',
             OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
             TIMEOUT=str(min(600, int(remaining) - 20)))
@@ -235,22 +264,37 @@ def run_episode(args, case, model, seed, directory, teacher=None, recorded=True)
 
 
 def teachers(args, cases):
-    failed = []
-    for case in cases:
-        directory = args.output / 'teacher' / case['id']
+    failures = []
+    # Qualify the newly selected coast before spending time on the fixed places.
+    for case in sorted(cases, key=lambda row: (row['number'] != 6, row['number'], row['id'])):
+        directory = teacher_directory(args, case)
         episode = run_episode(args, case, None, case['seeds'][0], directory)
-        if not episode.get('success'):
-            failed.append(dict(id=case['id'], elapsed_ms=episode.get('elapsed_ms'), failure=episode.get('failure')))
-    if failed:
-        raise ValueError('Teacher v3b did not pass frozen places: ' + json.dumps(failed))
+        summary = read_json(directory / 'summary.json')
+        unsafe = summary.get('deep_water_entries') not in (0, None) or (case['number'] == 7 and summary.get('falls') != 0)
+        if not episode.get('success') or unsafe:
+            failure = dict(
+                id=case['id'], elapsed_ms=episode.get('elapsed_ms'), failure=episode.get('failure'),
+                deep_water_entries=summary.get('deep_water_entries'), falls=summary.get('falls'),
+                output=str(directory))
+            failures.append(failure)
+            print(json.dumps(dict(event='teacher_place_rejected', **failure)), flush=True)
+    return failures
 
 
-def smoke(args, cases, policies):
-    teachers(args, cases)
-    case, model = cases[0], policies[0]
+def smoke(args, cases, policies, unresolved=None):
+    failures = teachers(args, cases)
+    unresolved = [*(unresolved or []), *failures]
+    rejected_ids = {value['id'] for value in failures}
+    passed = [case for case in cases if case['id'] not in rejected_ids]
+    if not passed:
+        write_json(args.output / 'smoke.json', dict(schema_version=1, complete=False,
+            suite_sha256=sha256(args.suite), binary_sha256=sha256(args.binary), unresolved=unresolved,
+            result='Same-seed repetition and recording comparison not run: no accepted teacher placement.'))
+        return False
+    case, model = passed[0], policies[0]
     seed = case['seeds'][0]
-    reference = args.output / 'teacher' / case['id']
-    directories = [args.output / 'smoke' / name for name in ('recorded', 'repeat', 'without-recording')]
+    reference = teacher_directory(args, case)
+    directories = [args.output / 'smoke' / reference.name / name for name in ('recorded', 'repeat', 'without-recording')]
     for directory in directories[:2]:
         run_episode(args, case, model, seed, directory, reference)
     run_episode(args, case, model, seed, directories[2], recorded=False)
@@ -259,11 +303,15 @@ def smoke(args, cases, policies):
     equal_recording = actions[0] == actions[2] if repeatable else None
     line = (f"Same-seed repetition: {'identical' if repeatable else 'different'} actions; "
             f"recording on/off: {'identical' if equal_recording else 'different' if equal_recording is False else 'not deterministic; comparison inconclusive'}.")
-    write_json(args.output / 'smoke.json', dict(schema_version=1, complete=equal_recording is not False,
+    complete = not unresolved and equal_recording is not False
+    write_json(args.output / 'smoke.json', dict(schema_version=1, complete=complete,
         suite_sha256=sha256(args.suite), binary_sha256=sha256(args.binary), repeatable=repeatable,
-        recording_actions_identical=equal_recording, result=line))
+        recording_actions_identical=equal_recording, result=line, unresolved=unresolved,
+        teacher_placements_passed=[row['id'] for row in passed],
+        recorded_runs=[directory.relative_to(args.output).as_posix() for directory in directories[:2]]))
     if repeatable and equal_recording is False:
         raise ValueError('Recording changed actions in a repeatable scenario')
+    return complete
 
 
 def runs(cases, policies, bc4):
@@ -280,6 +328,15 @@ def runs(cases, policies, bc4):
 
 def run_directory(output, case, model, seed):
     return output / model['name'] / case['id'] / f'seed-{seed}'
+
+
+def completed_run(args, case, model, seed):
+    directory = run_directory(args.output, case, model, seed)
+    try:
+        return (processed(directory) and raw_complete(directory) and read_json(directory / 'identity.json').get('actual')
+                == actual_inputs(args, case, model, seed))
+    except (OSError, ValueError):
+        return False
 
 
 def report(args, cases, policies, bc4):
@@ -303,7 +360,7 @@ def report(args, cases, policies, bc4):
             rows = []
             for case, model, seed in selected:
                 directory = run_directory(args.output, case, model, seed)
-                if not processed(directory):
+                if not completed_run(args, case, model, seed):
                     complete = False
                     continue
                 value = read_json(directory / 'summary.json')
@@ -326,19 +383,31 @@ def report(args, cases, policies, bc4):
             cells.append(f'{sum(row[0] for row in rows)}/{len(selected)} arrived; ' + '; '.join(links))
         references = []
         for case in (item for item in cases if item['number'] == number):
-            relative = 'teacher/' + case['id']
-            references.append(f"[teacher {case['id']}]({relative}/topdown.mp4), [actions]({relative}/actions.txt), "
-                              f"[Detour]({relative}/live-format.json)")
+            directory = teacher_directory(args, case)
+            if processed(directory):
+                relative = directory.relative_to(args.output).as_posix()
+                references.append(f"[teacher {case['id']}]({relative}/topdown.mp4), [actions]({relative}/actions.txt), "
+                                  f"[Detour]({relative}/live-format.json)")
+            else:
+                references.append(f"teacher {case['id']}: not recorded")
         lines.append(f"| {number}. {scenario['name']}<br>" + '; '.join(references) + ' | ' + ' | '.join(cells) + ' |')
     lines += ['', 'Models appear in the requested comparison order; each previous model is in the adjacent column.', '']
     gate = args.output / 'smoke.json'
     if gate.is_file():
-        lines += [read_json(gate)['result'], '']
-    lines += [f'Completed runs: {sum(processed(run_directory(args.output, c, m, s)) for c, m, s in all_runs)}/{len(all_runs)}.',
+        comparison = read_json(gate)
+        lines += [comparison['result'], '']
+        for relative in comparison.get('recorded_runs', []):
+            lines += [f"Smoke: [video]({relative}/source.mp4), [topdown]({relative}/topdown.mp4), "
+                      f"[timeline]({relative}/timeline.png), [summary]({relative}/summary.json).", '']
+        if comparison.get('unresolved'):
+            lines += ['Unresolved placements: ' + ', '.join(value['id'] for value in comparison['unresolved']) + '.', '']
+    lines += [f'Completed runs: {sum(completed_run(args, c, m, s) for c, m, s in all_runs)}/{len(all_runs)}.',
               f'Storage: {check_space(args.output)} bytes; limit {MAX_BYTES} bytes.', '']
     temporary = args.output / f'README.md.{os.getpid()}.tmp'
     temporary.write_text('\n'.join(lines))
     temporary.replace(args.output / 'README.md')
+    if not complete:
+        (args.output / 'complete.json').unlink(missing_ok=True)
     return complete
 
 
@@ -355,19 +424,25 @@ def main(argv=None):
         parser.error('Suite, runtime and output paths must be absolute')
     args.output.mkdir(parents=True, exist_ok=True)
     args.binary = args.runtime / 'build/opengothic/Gothic2Notr'
-    args.deadline = time.monotonic() + 55 * 60
+    args.deadline = phase_deadline()
     suite = read_json(args.suite)
     cases = suite_cases(suite)
     if args.stage in ('smoke', 'baseline') and suite.get('qualification_status') != 'geometry-qualified':
         raise ValueError('Freeze geometry-qualified places before smoke or baseline')
+    if args.stage == 'baseline' and suite.get('semantic_confirmation_required'):
+        raise ValueError('Confirm the scene type before baseline: ' + ', '.join(suite['semantic_confirmation_required']))
     policies, bc4 = models(args.weights, suite)
     args.inputs = dict(suite['inputs'], cache=str(args.runtime / 'navmesh-cache'))
     for name in ('save', 'roads', 'familiar', 'links'):
         if not Path(args.inputs[name]).is_file():
             raise ValueError(f'Missing frozen input {name}: {args.inputs[name]}')
+    args.input_sha256 = {name: sha256(args.inputs[name]) for name in ('save', 'roads', 'familiar', 'links')}
     check_space(args.output)
+    smoke_complete = True
     if args.stage == 'smoke':
-        smoke(args, cases, policies)
+        unresolved = [dict(id=identifier, reason='scene type requires confirmation')
+                      for identifier in suite.get('semantic_confirmation_required', [])]
+        smoke_complete = smoke(args, cases, policies, unresolved)
     elif args.stage == 'baseline':
         gate = read_json(args.output / 'smoke.json')
         if not gate.get('complete') or gate['suite_sha256'] != sha256(args.suite) or gate['binary_sha256'] != sha256(args.binary):
@@ -375,17 +450,18 @@ def main(argv=None):
         for index, (case, model, seed) in enumerate(runs(cases, policies, bc4)):
             if index % 3 != args.shard:
                 continue
-            reference = args.output / 'teacher' / case['scenario_id']
             # Scenario variants have an independent teacher path.
             base_id = case['id'].removesuffix('-local').removesuffix('-stranger') if model['name'] == 'bc4' else case['id']
-            reference = args.output / 'teacher' / base_id
+            reference_case = next(row for row in cases if row['id'] == base_id)
+            reference = teacher_directory(args, reference_case)
             run_episode(args, case, model, seed, run_directory(args.output, case, model, seed), reference)
     complete = report(args, cases, policies, bc4)
-    if complete:
+    if complete and not suite.get('semantic_confirmation_required') and read_json(args.output / 'smoke.json').get('complete'):
         write_json(args.output / 'complete.json', dict(schema_version=1, complete=True,
             suite_sha256=sha256(args.suite), weights=[model['sha256'] for model in policies],
             bc4_sha256=bc4['sha256']))
+    return 0 if smoke_complete else 2
 
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

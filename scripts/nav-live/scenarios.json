@@ -2,7 +2,11 @@
   "schema_version": 1,
   "training_eligible": false,
   "qualification_status": "pending",
-  "seeds": [18102027, 18102028, 18102029],
+  "seeds": [
+    18102027,
+    18102028,
+    18102029
+  ],
   "inputs": {
     "save": "/mnt/shared/gothic-ai/nav-demos-v5/input/save.sav",
     "roads": "/mnt/shared/gothic-ai/nav-demos-v5/input/places.json",
@@ -14,79 +18,150 @@
     {
       "id": "01-maleth-fence", "number": 1, "name": "Maleth at the farm fence",
       "training_eligible": false, "split": "control", "npc": "BAU_954_MALETH",
-      "start": "cm:14926,1739,-15914", "goal": "FP_ROAM_FARM1_SHEEP_09",
-      "goal_kind": "point", "time": [10, 0], "limit_ms": 90000,
-      "source": "reports/navigation/2026-10-16-stuck/intentional.bench; reported start (14926,1739,-15914), 28867ms stall at NW_FARM1_PATH_01"
+      "live_guide": "player",
+      "start": "cm:14926,1739,-15914",
+      "goal": "FP_ROAM_FARM1_SHEEP_09",
+      "goal_kind": "point",
+      "time": [10, 0],
+      "limit_ms": 90000,
+      "source": "reports/navigation/2026-10-16-stuck/intentional.bench; reported start (14926,1739,-15914), 28867ms stall at NW_FARM1_PATH_01",
+      "stranger": false
     },
     {
       "id": "02-routine-return", "number": 2, "name": "Return from three off-road positions",
       "training_eligible": false, "split": "new", "npc": "MIL_310_STADTWACHE",
-      "start": "cm:6516.90967,511.533173,-9258.83594", "goal": "NW_CITY_ENTRANCE_GUARD_02",
-      "goal_kind": "point", "time": [12, 0], "limit_ms": 90000,
+      "start": "cm:6516.90967,511.533173,-9258.83594",
+      "goal": "NW_CITY_ENTRANCE_GUARD_02",
+      "goal_kind": "point",
+      "time": [12, 0],
+      "limit_ms": 90000,
       "source": "PR574 entry-on-trace.jsonl routine_return_begin at 971d9cd7ad96f92d07e708b490e818f1e63e2855; only NPC and coordinates copied",
       "variants": [
         {"id": "forest-tree", "npc": "MIL_310_STADTWACHE", "start": "cm:6516.90967,511.533173,-9258.83594", "goal": "NW_CITY_ENTRANCE_GUARD_02", "off_waynet_distance_cm": 1165.32324, "seeds": [18102027]},
         {"id": "farm-field", "npc": "BAU_952_VINO", "start": "cm:9044.66602,1095.50269,-12661.0635", "goal": "NW_FARM1_FIELD_04", "off_waynet_distance_cm": 1121.83862, "seeds": [18102028]},
-        {"id": "harbour-wall", "npc": "VLK_443_ARBEITER", "start": "cm:-1385.10803,-176.951141,4372.43359", "goal": "NW_CITY_HABOUR_08", "off_waynet_distance_cm": 1171.75415, "seeds": [18102029]}
-      ]
+        {"id": "forest-pine", "npc": "VLK_4303_ADDON_EROL", "start": "cm:35946.6836,3958.80811,1981.57922", "goal": "NW_TAVERN_TO_FOREST_03", "off_waynet_distance_cm": 1613.30115, "seeds": [18102029]}
+      ],
+      "stranger": false
     },
     {
       "id": "03-follow-hero", "number": 3, "name": "Follow the hero through the market and streets",
       "training_eligible": false, "split": "new", "npc": "VLK_497_BUERGERIN",
-      "start": "NW_CITY_MERCHANT_PATH_20", "goal": "MARKT_02", "goal_kind": "follow",
-      "target": "PC_HERO", "live_target": "player", "scenario_seed": 18102027,
+      "start": "cm:10166.06445,270.079346,4703.9082",
+      "goal": "MARKT_02",
+      "goal_kind": "follow",
+      "target": "PC_HERO",
+      "live_target": "player",
+      "scenario_seed": 18102027,
       "route": ["MARKT_02", "NW_CITY_MERCHANT_PATH_20", "NW_CITY_TAVERN_IN_02", "NW_CITY_MERCHANT_PATH_29_B"],
-      "time": [12, 0], "limit_ms": 90000,
-      "source": "New ordered route on native NEWWORLD waypoints; hero pauses, turns and briefly runs; not a moving validation/test route"
+      "time": [12, 0],
+      "limit_ms": 90000,
+      "source": "New ordered native NEWWORLD route through the market and narrow streets; follower starts 2.83m from the hero at MARKT_02; hero pauses, turns and briefly runs; no moving validation/test route used",
+      "stranger": false,
+      "qualification_candidates": [
+        {"label": "near-market-north", "start": "cm:10166.06445,270.079346,4703.9082", "goal": "MARKT_02"},
+        {"label": "near-market-south", "start": "cm:10166.06445,270.079346,4303.9082", "goal": "MARKT_02"}
+      ]
     },
     {
       "id": "04-visible-detour", "number": 4, "name": "Visible target beyond terrain",
       "training_eligible": false, "split": "validation", "npc": "NONE_100_XARDAS",
-      "start": "cm:24427.3535,2875.72144,-13815.457", "goal": "cm:23557,1049,-10265",
-      "goal_kind": "object", "time": [12, 0], "limit_ms": 180000,
-      "source": "detour-val detour-9b91a149919a96a0, XARDAS_TOWER_SECRET; Detour/direct=9.703; v3b journey passed; terrain blocker still requires native qualification"
+      "start": "cm:24427.3535,2875.72144,-13815.457",
+      "goal": "cm:23557,1049,-10265",
+      "goal_kind": "object",
+      "time": [12, 0],
+      "limit_ms": 180000,
+      "source": "detour-val detour-9b91a149919a96a0, XARDAS_TOWER_SECRET; Detour/direct=9.703; v3b journey passed; terrain blocker still requires native qualification",
+      "qualification_candidates": [
+        {"label": "detour-9b91a149919a96a0", "start": "cm:24427.3535,2875.72144,-13815.457", "goal": "cm:23557,1049,-10265", "goal_kind": "object", "source": "detour-val detour-9b91a149919a96a0, XARDAS_TOWER_SECRET; historical v3b success; ratio=9.702861"},
+        {"label": "detour-1ccaca897e6d6685", "start": "cm:34256.6836,4187.22314,-30628.791", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-1ccaca897e6d6685, PASS; historical v3b success; ratio=9.343774"},
+        {"label": "detour-83e99961f472018e", "start": "cm:34014.0195,4275.28516,-33048.793", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-83e99961f472018e, PASS; historical v3b success; ratio=8.46397"},
+        {"label": "detour-b01bc3c831fdef04", "start": "cm:34184.0156,4233.03076,-30285.459", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-b01bc3c831fdef04, PASS; historical v3b success; ratio=7.513052"},
+        {"label": "detour-e8df940479f47db1", "start": "cm:32720.6875,4759.20166,-32415.457", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-e8df940479f47db1, PASS; historical v3b success; ratio=6.488767"},
+        {"label": "detour-72f31f464b4b545d", "start": "cm:35360.6836,4167.15625,-31604.791", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-72f31f464b4b545d, PASS; historical v3b success; ratio=6.459866"},
+        {"label": "detour-6b86265ed3346c13", "start": "cm:32814.0195,4813.17432,-32655.457", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-6b86265ed3346c13, PASS; historical v3b success; ratio=6.125241"},
+        {"label": "detour-3ebf9ab42af2d1e5", "start": "cm:35460.6836,4208.646,-31935.459", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-3ebf9ab42af2d1e5, PASS; historical v3b success; ratio=5.881632"},
+        {"label": "detour-3595fbfd82c5d092", "start": "cm:35474.0156,4155.55371,-31082.123", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-3595fbfd82c5d092, PASS; historical v3b success; ratio=5.826246"},
+        {"label": "detour-e8a042f30b5b1c87", "start": "cm:33514.0195,4628.0459,-33405.457", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-e8a042f30b5b1c87, PASS; historical v3b success; ratio=5.746319"},
+        {"label": "detour-b3510bdd2c03114e", "start": "cm:35407.3516,4171.38379,-30715.457", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-b3510bdd2c03114e, PASS; historical v3b success; ratio=5.602077"},
+        {"label": "detour-50c7a28513a9b1f5", "start": "NW_CITY_UPTOWN_PATH_13", "goal": "FP_STAND_WEAPON_03", "goal_kind": "point", "source": "detour-val detour-50c7a28513a9b1f5, None; historical v3b success; ratio=5.519385"}
+      ],
+      "stranger": false
     },
     {
       "id": "05-wall-pocket", "number": 5, "name": "Leave a wall pocket",
       "training_eligible": false, "split": "new", "npc": "VLK_442_ARBEITER",
-      "start": "cm:1100,-186,1200", "goal": "FP_PICK_CITY_01",
-      "goal_kind": "point", "time": [12, 0], "limit_ms": 90000,
-      "source": "New coordinate candidate near the harbour shipyard; pending support, wall-pocket geometry and Detour/direct>=2 qualification"
+      "start": "cm:1500,-186,1200",
+      "goal": "FP_PICK_CITY_01",
+      "goal_kind": "point",
+      "time": [12, 0],
+      "limit_ms": 90000,
+      "source": "New harbour shipyard pocket; preparation pocket-1500-1200: complete Detour52.834m, ratio2.1667, start snap0.171cm, first leg points away from goal; physical wall witness pending",
+      "qualification_candidates": [
+        {"label": "primary", "start": "cm:1500,-186,1200", "goal": "FP_PICK_CITY_01"},
+        {"label": "south", "start": "cm:1500,-186,600", "goal": "FP_PICK_CITY_01"},
+        {"label": "west", "start": "cm:900,-186,600", "goal": "FP_PICK_CITY_01"}
+      ],
+      "stranger": false
     },
     {
       "id": "06-harbour-water", "number": 6, "name": "Harbour shore with deep water on the direct line",
       "training_eligible": false, "split": "new", "npc": "VLK_441_GARVELL",
-      "start": "NW_CITY_HABOUR_06_C", "goal": "NW_CITY_HABOUR_HUT_05_BED_01",
-      "goal_kind": "point", "time": [12, 0], "limit_ms": 90000,
-      "source": "New harbour candidate from v5 water-probe waypoints; v5 water-scenarios.jsonl contains only train rows, so this pair must be excluded from those rows and physically qualified"
+      "start": "NW_CITY_HABOUR_06_C",
+      "goal": "NW_CITY_HABOUR_HUT_05_BED_01",
+      "goal_kind": "point",
+      "time": [12, 0],
+      "limit_ms": 90000,
+      "source": "New harbour candidate from v5 water-probe waypoints; v5 water-scenarios.jsonl contains only train rows, so this pair must be excluded from those rows and physically qualified",
+      "stranger": false
     },
     {
       "id": "07-cliff-trail", "number": 7, "name": "Trail above the cliff",
       "training_eligible": false, "split": "validation", "npc": "BAU_982_GRIMBALD",
-      "start": "cm:50217.207,10650.5049,41427.4297", "goal": "cm:50470.1055,10423.124,41162.043",
-      "goal_kind": "point", "time": [12, 0], "limit_ms": 60000,
-      "source": "nav-teacher-v3b/input/fixtures.json cliff-bridge-201-back200, link1230208767; safety validation; pending along-trail replacement if teacher cannot reach safely"
+      "start": "cm:50217.207,10650.5049,41427.4297",
+      "goal": "cm:50160.6875,10614.0605,40771.207",
+      "goal_kind": "point",
+      "time": [12, 0],
+      "limit_ms": 60000,
+      "source": "Safety cliff-bridge-201-back200, link1230208767; new goal on the upper part of its measured Detour corridor, before the descending final leg; physical edge and teacher qualification pending",
+      "qualification_candidates": [
+        {"label": "upper-trail", "start": "cm:50217.207,10650.5049,41427.4297", "goal": "cm:50160.6875,10614.0605,40771.207"},
+        {"label": "upper-trail-back100", "start": "cm:50286.1953,10628.8691,41355.0391", "goal": "cm:50160.6875,10614.0605,40771.207"}
+      ],
+      "stranger": false
     },
     {
       "id": "08-market-crowd", "number": 8, "name": "Cross the busy market with native routines",
       "training_eligible": false, "split": "new", "npc": "VLK_497_BUERGERIN",
-      "start": "NW_CITY_MERCHANT_PATH_20", "goal": "NW_CITY_MERCHANT_PATH_29_B",
-      "goal_kind": "point", "time": [19, 59], "limit_ms": 90000,
-      "source": "New market crossing; 2026-10-16-stuck measured21 walking NPCs in evening versus12 in morning; final hour pending24-hour preparation census"
+      "start": "NW_CITY_MERCHANT_PATH_20",
+      "goal": "NW_CITY_MERCHANT_PATH_29_B",
+      "goal_kind": "point",
+      "time": [6, 59],
+      "limit_ms": 90000,
+      "prepare_commands": ["wait 4000"],
+      "source": "New market crossing; preparation census of24hourly windows: maximum6 walkingNPCs at06:59 within30m, displacement>=50cm over10s after4s settle; native routines enabled",
+      "stranger": false
     },
     {
       "id": "09-door-stairs", "number": 9, "name": "Enter the house and climb to the second floor",
       "training_eligible": false, "split": "validation", "npc": "VLK_405_FERNANDO",
-      "start": "NW_CITY_REICH02_IN", "goal": "NW_CITY_REICH02_07",
-      "goal_kind": "point", "time": [12, 0], "limit_ms": 90000,
-      "source": "CITY_REICH02 is an object validation place in v4/v5; native entrance and upstairs waypoint,900->1303cm; pending teacher qualification"
+      "start": "NW_CITY_UPTOWN_PATH_08",
+      "goal": "NW_CITY_REICH02_07",
+      "goal_kind": "point",
+      "time": [12, 0],
+      "limit_ms": 90000,
+      "source": "CITY_REICH02 object validation place; start3.65m outside at NW_CITY_UPTOWN_PATH_08, native graph edge through NW_CITY_REICH02_IN, upstairs goal900->1303cm; teacher qualification pending",
+      "stranger": false
     },
     {
       "id": "10-local-stranger", "number": 10, "name": "One route for a local and a stranger",
       "training_eligible": false, "split": "validation", "npc": "VLK_405_FERNANDO",
-      "start": "NW_CITY_REICH02_IN", "goal": "NW_CITY_REICH02_READ",
-      "goal_kind": "point", "time": [12, 0], "limit_ms": 90000,
-      "source": "CITY_REICH02 object validation place; same physical NPC and route; BC4 additionally roads on/stranger; HD and it35 have no familiar input"
+      "start": "NW_CITY_UPTOWN_PATH_08",
+      "goal": "NW_CITY_REICH02_READ",
+      "goal_kind": "point",
+      "time": [12, 0],
+      "limit_ms": 90000,
+      "source": "CITY_REICH02 object validation place; same physical NPC and route; BC4 additionally roads on/stranger; HD and it35 have no familiar input",
+      "stranger": false
     }
   ]
 }

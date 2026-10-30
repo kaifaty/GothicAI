@@ -19,7 +19,7 @@ class NavLiveTrace final {
   public:
     NavLiveTrace(const std::filesystem::path& output,const NavPolicy* policy,
                  const NavMesh::Path& detour,size_t rayCount,bool playerTarget,
-                 const std::vector<NavMesh::Point>& targetRoute):policy(policy) {
+                 const std::vector<NavMesh::Point>& targetRoute,bool playerGuide):policy(policy) {
       decisions.open(output/"live-decisions.jsonl");
       observations=gzopen((output/"live-observations.bin.gz").string().c_str(),"wb1");
       if(!decisions || observations==nullptr)throw std::runtime_error("nav live: cannot open trace");
@@ -65,7 +65,8 @@ class NavLiveTrace final {
         if(i)format<<',';
         const auto& p=targetRoute[i];format<<'['<<p[0]*100.f<<','<<p[1]*100.f<<','<<p[2]*100.f<<']';
       }
-      format<<"]}}\n";
+      format<<"]},\"guide_script\":{\"enabled\":"<<playerGuide
+            <<",\"source\":\"player_delayed_npc_trail\",\"trail_lag_cm\":300,\"walk_animation\":true}}\n";
       if(!format)throw std::runtime_error("nav live: format write failed");
       buffer.insert(buffer.end(),{'N','A','V','L','I','V','E',0});u32(1);write();
     }

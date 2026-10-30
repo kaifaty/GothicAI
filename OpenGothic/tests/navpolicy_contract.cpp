@@ -43,7 +43,7 @@ void liveFormatContract() {
   rays[0].point={100,200,300};rays[0].hit=true;rays[0].kind=NavigationEye::HitKind::World;
   NavDemoWriter::Snapshot sample;sample.gameMs=1000;sample.memory=&memory;sample.eye=&rays;
   NavMesh::Path path;path.complete=true;path.corners={{1,2,3},{4,5,6}};
-  NavLiveTrace trace(temporary.path,nullptr,path,rays.size(),false,{});
+  NavLiveTrace trace(temporary.path,nullptr,path,rays.size(),false,{},false);
   trace.observation(sample,nullptr,0,0);
   sample.gameMs=1100;trace.observation(sample,nullptr,100,1);
   sample.gameMs=1400;trace.observation(sample,nullptr,400,4);trace.finish();

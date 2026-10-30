@@ -11203,7 +11203,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     return;
   }
   if(c=="navdemos") {
-    if(!Resources::isHeadless()) throw std::runtime_error("navdemos is runner-only");
+    const auto* live=std::getenv("OPENGOTHIC_NAV_LIVE");
+    // Only the explicit live stand may record navigation in a rendered bench.
+    if(!Resources::isHeadless() && (live==nullptr || std::string_view(live)!="1"))
+      throw std::runtime_error("navdemos is runner-only");
     bench.navigationOnly = true;
     NavDemos::command(a,w,pl,outDir);
     return;
