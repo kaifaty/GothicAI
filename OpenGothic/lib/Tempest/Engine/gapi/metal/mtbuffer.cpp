@@ -23,7 +23,6 @@ MtBuffer::MtBuffer(MtDevice& dev, const void* data, size_t size, MTL::ResourceOp
     impl = NsPtr<MTL::Buffer>(dev.impl->newBuffer(roundSize,flg));
     if(impl==nullptr)
       throw std::system_error(GraphicsErrc::OutOfVideoMemory);
-    probeMetalUploadBuffer(impl.get(),false);
     return;
     }
 
@@ -31,14 +30,12 @@ MtBuffer::MtBuffer(MtDevice& dev, const void* data, size_t size, MTL::ResourceOp
     impl = NsPtr<MTL::Buffer>(dev.impl->newBuffer(data,roundSize,flg));
     if(impl==nullptr)
       throw std::system_error(GraphicsErrc::OutOfVideoMemory);
-    probeMetalUploadBuffer(impl.get(),false);
     return;
     }
 
   impl = NsPtr<MTL::Buffer>(dev.impl->newBuffer(roundSize,flg));
   if(impl==nullptr)
     throw std::system_error(GraphicsErrc::OutOfVideoMemory);
-  probeMetalUploadBuffer(impl.get(),false);
   if(impl->storageMode()==MTL::StorageModePrivate)
     upload(data,0,size,true); else
     implUpdate(data,0,size);
@@ -78,7 +75,7 @@ void MtBuffer::upload(const void* data, size_t off, size_t size, bool wait) {
   auto                 stage = NsPtr<MTL::Buffer>(dev->impl->newBuffer(size,opt));
   if(stage==nullptr)
     throw std::system_error(GraphicsErrc::OutOfVideoMemory);
-  probeMetalUploadBuffer(stage.get(),true);
+  probeMetalUploadBuffer(stage.get());
   std::memcpy(stage->contents(), data, size);
 
   // Retained references keep both buffers alive after the staging owner exits.
@@ -106,7 +103,7 @@ void MtBuffer::read(void *data, size_t off, size_t size) {
   MTL::ResourceOptions opt   = MTL::ResourceStorageModeShared | MTL::ResourceCPUCacheModeDefaultCache |
                                MTL::ResourceHazardTrackingModeTracked;
   auto                 stage = NsPtr<MTL::Buffer>(dev->impl->newBuffer(size,opt));
-  probeMetalUploadBuffer(stage.get(),true);
+  probeMetalUploadBuffer(stage.get());
   auto cmd = dev->queue->commandBuffer();
   auto enc = cmd->blitCommandEncoder();
   enc->copyFromBuffer(impl.get(),off,stage.get(),0, size);

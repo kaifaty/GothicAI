@@ -8,22 +8,31 @@ import sys
 
 HEADER = "run,seg,world,total_s,vm,data,chunks,pack,view,physics,cloth,vobs,movable,waynet_idx,dialogs_player,startup,store_old,restore,tex_n,tex_mb,tex_s,fp_end,fp_peak,gpu_end,npcs,items,d_data,d_chunks,d_pack,d_view,d_gpu_view,d_phys,d_vobs,d_gpu_vobs,d_worldend,d_startup,d_gpu_startup".split(",")
 HEADER.extend(("warm_after_end_s", "fp_warm", "gpu_warm", "warm_5s_after_warm_s", "fp_warm_5s", "gpu_warm_5s"))
+HEADER.extend(f"malloc_{metric}_{stage}" for stage in ("end", "warm", "warm_5s")
+              for metric in ("in_use", "allocated"))
 
 
 def parse(path):
     rows = []
+    marks = {}
     with open(path, errors="replace") as source:
         for line in source:
-            match = re.search(r"\[loadprobe\] stage=(\S+) (.*)", line)
+            match = re.search(r"\[loadprobe(-malloc)?\] stage=(\S+) (.*)", line)
             if not match:
                 continue
-            row = {"stage": match.group(1)}
-            for key, value in re.findall(r"(\w+)=(\S+)", match.group(2)):
+            row = {"stage": match.group(2)}
+            for key, value in re.findall(r"(\w+)=(\S+)", match.group(3)):
                 try:
                     row[key] = float(value)
                 except ValueError:
                     row[key] = value
-            rows.append(row)
+            key = (row["stage"], row["t_ms"])
+            if match.group(1):
+                if key in marks:
+                    marks[key].update(row)
+            else:
+                rows.append(row)
+                marks[key] = row
     return rows
 
 
@@ -91,6 +100,11 @@ def summary_rows(out):
                 values.extend((round((mark["t_ms"] - previous["t_ms"]) / 1000, 2) if previous else "",
                                round(mark["footprint_mb"]), round(mark["gpu_mb"])))
                 previous = mark
+            for stage in (end["stage"], "stream_warm", "stream_warm_5s"):
+                marks = [row for row in segment if row["stage"] == stage]
+                mark = marks[-1] if marks else {}
+                values.extend(round(mark[key], 3) if key in mark else ""
+                              for key in ("malloc_in_use_mb", "malloc_allocated_mb"))
             yield values
 
 

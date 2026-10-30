@@ -42,54 +42,45 @@ static MTL::Device* probeDevice = nullptr;
 
 bool tempestLoadProbeEnabled();
 
-static std::atomic_size_t probeBufferCount[3] = {};
-static std::atomic_size_t probeBufferBytes[3] = {};
+static std::atomic_size_t probeStagingCount = 0;
+static std::atomic_size_t probeStagingBytes = 0;
 static char probeUploadKey;
 
 // Attach to the Metal object itself: completion of its copy alone does not
 // prove that all command-buffer and autorelease owners have released it.
 @interface TempestUploadProbe : NSObject {
   size_t bytes;
-  size_t kind;
   }
-- (instancetype)initWithBytes:(size_t)bufferBytes kind:(size_t)bufferKind;
+- (instancetype)initWithBytes:(size_t)bufferBytes;
 @end
 
 @implementation TempestUploadProbe
-- (instancetype)initWithBytes:(size_t)bufferBytes kind:(size_t)bufferKind {
+- (instancetype)initWithBytes:(size_t)bufferBytes {
   if((self=[super init])) {
     bytes=bufferBytes;
-    kind=bufferKind;
-    ++probeBufferCount[kind];
-    probeBufferBytes[kind]+=bytes;
+    ++probeStagingCount;
+    probeStagingBytes+=bytes;
     }
   return self;
   }
 - (void)dealloc {
-  --probeBufferCount[kind];
-  probeBufferBytes[kind]-=bytes;
+  --probeStagingCount;
+  probeStagingBytes-=bytes;
   [super dealloc];
   }
 @end
 
-void Tempest::Detail::probeMetalUploadBuffer(MTL::Buffer* buffer, bool staging) {
+void Tempest::Detail::probeMetalUploadBuffer(MTL::Buffer* buffer) {
   if(!tempestLoadProbeEnabled() || buffer==nullptr)
     return;
-  const size_t kind=staging ? 0 : buffer->storageMode()==MTL::StorageModePrivate ? 2 : 1;
-  auto* tracker=[[TempestUploadProbe alloc] initWithBytes:buffer->allocatedSize() kind:kind];
+  auto* tracker=[[TempestUploadProbe alloc] initWithBytes:buffer->allocatedSize()];
   objc_setAssociatedObject(reinterpret_cast<id>(buffer),&probeUploadKey,tracker,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
   [tracker release];
   }
 
-void tempestProbeMetalUploadBuffers(size_t& stagingCount, size_t& stagingBytes,
-                                   size_t& sharedCount, size_t& sharedBytes,
-                                   size_t& privateCount, size_t& privateBytes) {
-  stagingCount=probeBufferCount[0].load();
-  stagingBytes=probeBufferBytes[0].load();
-  sharedCount=probeBufferCount[1].load();
-  sharedBytes=probeBufferBytes[1].load();
-  privateCount=probeBufferCount[2].load();
-  privateBytes=probeBufferBytes[2].load();
+void tempestProbeMetalUploadBuffers(size_t& stagingCount, size_t& stagingBytes) {
+  stagingCount=probeStagingCount.load();
+  stagingBytes=probeStagingBytes.load();
   }
 
 size_t tempestProbeMetalGpuBytes() {

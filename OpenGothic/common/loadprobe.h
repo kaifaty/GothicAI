@@ -16,16 +16,16 @@
 
 #if defined(__APPLE__)
 #include <mach/mach.h>
+#include <malloc/malloc.h>
 #elif defined(__linux__)
+#include <malloc.h>
 #include <unistd.h>
 #endif
 
 bool tempestLoadProbeEnabled();
 size_t tempestProbeGpuBytes();
 size_t tempestProbeGpuBufferCount();
-void tempestProbeUploadBuffers(size_t& stagingCount, size_t& stagingBytes,
-                                   size_t& sharedCount, size_t& sharedBytes,
-                                   size_t& privateCount, size_t& privateBytes);
+void tempestProbeUploadBuffers(size_t& stagingCount, size_t& stagingBytes);
 
 namespace LoadProbe {
 
@@ -83,6 +83,41 @@ inline void processMb(double& rss, double& footprint) {
 #endif
   }
 
+inline void markMalloc(std::string_view stage, double elapsed) {
+  if(stage!="session_end" && stage!="stream_warm" && stage!="stream_warm_5s")
+    return;
+  size_t inUse=0, allocated=0;
+#if defined(__APPLE__)
+  vm_address_t* zones=nullptr;
+  unsigned count=0;
+  if(malloc_get_all_zones(mach_task_self(),nullptr,&zones,&count)!=KERN_SUCCESS) {
+    Tempest::Log::e("[loadprobe-malloc] malloc_get_all_zones failed");
+    return;
+    }
+  for(unsigned i=0; i<count; ++i) {
+    malloc_statistics_t stats={};
+    malloc_zone_statistics(reinterpret_cast<malloc_zone_t*>(zones[i]),&stats);
+    inUse     += stats.size_in_use;
+    allocated += stats.size_allocated;
+    }
+#elif defined(__GLIBC__)
+#if __GLIBC_PREREQ(2,33)
+  const auto stats = mallinfo2();
+  inUse     = stats.uordblks;
+  allocated = stats.arena+stats.hblkhd;
+#else
+  return;
+#endif
+#else
+  return;
+#endif
+  char buf[192];
+  std::snprintf(buf,sizeof(buf),
+                "[loadprobe-malloc] stage=%.*s t_ms=%.1f malloc_in_use_mb=%.3f malloc_allocated_mb=%.3f",
+                int(stage.size()),stage.data(),elapsed,double(inUse)/1048576.0,double(allocated)/1048576.0);
+  Tempest::Log::i(buf);
+  }
+
 inline uint64_t textureBytes(const Tempest::Texture2d& t) {
   if(t.isEmpty())
     return 0;
@@ -113,8 +148,8 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
   const double elapsed = msSince(origin());
   double rss=0, fp=0;
   processMb(rss,fp);
-  size_t stagingCount=0, stagingBytes=0, sharedCount=0, sharedBytes=0, privateCount=0, privateBytes=0;
-  tempestProbeUploadBuffers(stagingCount,stagingBytes,sharedCount,sharedBytes,privateCount,privateBytes);
+  size_t stagingCount=0, stagingBytes=0;
+  tempestProbeUploadBuffers(stagingCount,stagingBytes);
   char buf[512];
   std::snprintf(buf,sizeof(buf),
                 "[loadprobe] stage=%.*s stage_ms=%.1f t_ms=%.1f rss_mb=%.1f footprint_mb=%.1f gpu_mb=%.1f "
@@ -125,11 +160,10 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
                 int(extra.size()),extra.empty() ? "" : extra.data());
   Tempest::Log::i(buf);
   std::snprintf(buf,sizeof(buf),
-                "[loadprobe-metal] stage=%.*s t_ms=%.1f staging_n=%zu staging_bytes=%zu "
-                "shared_n=%zu shared_bytes=%zu private_n=%zu private_bytes=%zu",
-                int(stage.size()),stage.data(),elapsed,stagingCount,stagingBytes,
-                sharedCount,sharedBytes,privateCount,privateBytes);
+                "[loadprobe-metal] stage=%.*s t_ms=%.1f staging_n=%zu staging_bytes=%zu",
+                int(stage.size()),stage.data(),elapsed,stagingCount,stagingBytes);
   Tempest::Log::i(buf);
+  markMalloc(stage,elapsed);
   }
 
 }

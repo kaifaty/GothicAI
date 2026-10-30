@@ -151,7 +151,8 @@ StaticMesh::StaticMesh(const PackedMesh& mesh) {
 StaticMesh::StaticMesh(const PackedMesh& mesh, LandscapePages& pages)
   :pageRange(pages.allocate(mesh)) {
   assert(!Shaders::options().doRtScene);
-  initSubMeshes(mesh);
+  // Landscape takes materials from PackedMesh; RT keeps the whole-mesh path.
+  bbox.assign(mesh.bbox());
   }
 
 StaticMesh::~StaticMesh() {

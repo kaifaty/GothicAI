@@ -34,9 +34,11 @@ struct ChunkTable {
   // One table index per triangle in readWorldChunks' stitched source-order
   // mesh, filtered alongside polygons by retainWorldTriangles. Ownership comes
   // from the chunk file, so edited triangles keep their file's identity.
+  // Streaming releases both arrays after the visual consumer captures its IDs
+  // and the stitched CPU mesh has been destroyed.
   std::vector<uint32_t> triangleChunks;
   // Chunk-local GLB triangle ordinals, in the same stitched/filtered order.
-  // Empty only for tables constructed without a file-backed source.
+  // Empty without a file-backed source or after its loading consumer finishes.
   std::vector<uint32_t> triangleSources;
   std::shared_ptr<const ChunkMeshSource> source;
   };

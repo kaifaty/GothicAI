@@ -226,8 +226,12 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     if(LoadProbe::enabled())
       LoadProbe::mark("cloth_surfaces",LoadProbe::msSince(probeT),"surfaces="+std::to_string(clothSurfaces.size()));
     probeT = LoadProbe::now();
-    if(streamLandscape)
+    if(streamLandscape) {
       wview->startLandscapeStreaming(std::move(worldMesh),*residency,probeViewMs);
+      // The visual consumer owns its selected file IDs; the stitched mesh is gone.
+      std::vector<uint32_t>().swap(chunks.triangleChunks);
+      std::vector<uint32_t>().swap(chunks.triangleSources);
+      }
     else {
       worldMesh = {};
       chunks.source.reset();

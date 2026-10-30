@@ -31,11 +31,14 @@ def test_session_and_world_change_csv(tmp_path):
     ):
         log += (f"[loadprobe] stage={stage} stage_ms={duration} t_ms={elapsed} rss_mb={footprint} "
                 f"footprint_mb={footprint} gpu_mb={gpu} tex_n={count} tex_mb={mb} tex_ms={texture_ms} {extra}\n")
+        if stage in ("session_end", "stream_warm", "stream_warm_5s"):
+            log += (f"[loadprobe-malloc] stage={stage} t_ms={elapsed} "
+                    f"malloc_in_use_mb={footprint - 30.123} malloc_allocated_mb={footprint + 10.234}\n")
     (run / "game.log").write_text(log)
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
     reader = csv.DictReader(io.StringIO(output))
     rows = list(reader)
-    assert len(reader.fieldnames) == 43
+    assert len(reader.fieldnames) == 49
     assert len(rows) == 2
     assert [(row["seg"], row["world"], row["total_s"]) for row in rows] == [
         ("0", "NEWWORLD", "5.0"), ("1", "OLDWORLD", "2.0")]
@@ -52,7 +55,19 @@ def test_session_and_world_change_csv(tmp_path):
         "0.4", "235", "60", "5.0", "230", "58")
     assert all(rows[1][key] == "" for key in (
         "warm_after_end_s", "fp_warm", "gpu_warm", "warm_5s_after_warm_s", "fp_warm_5s", "gpu_warm_5s"))
+    malloc_fields = [f"malloc_{metric}_{stage}" for stage in ("end", "warm", "warm_5s")
+                     for metric in ("in_use", "allocated")]
+    assert [rows[0][key] for key in malloc_fields] == ["179.877", "220.234", "204.877", "245.234", "199.877", "240.234"]
+    assert all(rows[1][key] == "" for key in malloc_fields)
 
     (run / "game.log").write_text(log.split("[loadprobe] stage=change_begin")[0])
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
     assert list(csv.DictReader(io.StringIO(output))) == [rows[0]]
+
+    (run / "game.log").write_text("\n".join(line for line in log.splitlines()
+                                          if not line.startswith("[loadprobe-malloc]")))
+    output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
+    old_rows = list(csv.DictReader(io.StringIO(output)))
+    assert all(row[key] == "" for row in old_rows for key in malloc_fields)
+    assert [{key: value for key, value in row.items() if key not in malloc_fields} for row in old_rows] == [
+        {key: value for key, value in row.items() if key not in malloc_fields} for row in rows]

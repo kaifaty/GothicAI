@@ -16,7 +16,7 @@ using namespace Tempest;
 
 #if defined(TEMPEST_BUILD_METAL)
 size_t tempestProbeMetalGpuBytes();
-void tempestProbeMetalUploadBuffers(size_t&, size_t&, size_t&, size_t&, size_t&, size_t&);
+void tempestProbeMetalUploadBuffers(size_t&, size_t&);
 #endif
 #if defined(TEMPEST_BUILD_VULKAN)
 size_t tempestProbeVulkanGpuBytes();
@@ -43,12 +43,10 @@ size_t tempestProbeGpuBytes() {
   return bytes;
   }
 
-void tempestProbeUploadBuffers(size_t& stagingCount, size_t& stagingBytes,
-                              size_t& sharedCount, size_t& sharedBytes,
-                              size_t& privateCount, size_t& privateBytes) {
-  stagingCount=stagingBytes=sharedCount=sharedBytes=privateCount=privateBytes=0;
+void tempestProbeUploadBuffers(size_t& stagingCount, size_t& stagingBytes) {
+  stagingCount=stagingBytes=0;
 #if defined(TEMPEST_BUILD_METAL)
-  tempestProbeMetalUploadBuffers(stagingCount,stagingBytes,sharedCount,sharedBytes,privateCount,privateBytes);
+  tempestProbeMetalUploadBuffers(stagingCount,stagingBytes);
 #endif
   }
 

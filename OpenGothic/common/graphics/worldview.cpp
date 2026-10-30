@@ -54,6 +54,8 @@ struct WorldView::LandscapeStreaming {
     if(!source)
       throw std::runtime_error("Landscape streaming requires a file-backed chunk source");
     const auto& table=residency.table();
+    for(size_t i=0;i<triangles.size();++i)
+      triangles[i].reserve(table.entries[i].triangleCount);
     for(size_t i=0;i<table.triangleChunks.size();++i)
       triangles.at(table.triangleChunks[i]).push_back(table.triangleSources.at(i));
     // Physics and cloth have consumed the stitched mesh. Repacking reads only
