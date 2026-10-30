@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <algorithm>
+#include <atomic>
 #include "gothic.h"
 
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -25,8 +26,9 @@ struct LandscapePages::State {
     };
 
   std::vector<std::unique_ptr<Page>> pages;
-  size_t occupied = 0;
-  size_t retired = 0;
+  // Old-world retirement can overlap main-thread frame recycling.
+  std::atomic_size_t occupied{0};
+  std::atomic_size_t retired{0};
 
   void release(Page& page, Span span) {
     auto at=std::lower_bound(page.free.begin(),page.free.end(),span.first,
@@ -77,8 +79,8 @@ LandscapePages::~LandscapePages() = default;
 
 LandscapePages::Stats LandscapePages::stats() const {
   Stats ret;
-  ret.occupiedBytes=state->occupied;
-  ret.retiredBytes=state->retired;
+  ret.occupiedBytes=state->occupied.load();
+  ret.retiredBytes=state->retired.load();
   ret.pageCount=state->pages.size();
   for(const auto& page:state->pages)
     ret.freeBytes+=page->capacity*State::MeshletBytes;

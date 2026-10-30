@@ -53,6 +53,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <thread>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1386,14 +1387,14 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   ChunkResidency residency(table);
   WorldView view(packed.bbox(),"CONTRACT.ZEN");
   view.startLandscapeStreaming(std::move(world),residency,0);
-  const auto update=[&](const Tempest::Vec3& position) {
+  const auto update=[&](const Tempest::Vec3& position, float range=1000) {
     view.prepareLandscapeWork();
-    residency.update(position,position,1000);
+    residency.update(position,position,range);
     view.finishLandscapeUpdate();
     };
   const auto emptyBuffers=tempestProbeGpuBufferCount();
   size_t bucketCount=0;
-  size_t firstMeshlet=0,pageBytes=0;
+  size_t firstMeshlet=0,pageBytes=0,releasedBuffers=0;
   const Tempest::StorageBuffer* vertices=nullptr;
   const Tempest::StorageBuffer* indices=nullptr;
   const auto usedBytes=packed.vertices.size()*sizeof(packed.vertices[0])+packed.indices8.size();
@@ -1446,7 +1447,49 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
     require(residency.stats().landscapePageUsedBytes==0 && residency.stats().landscapePageRetiredBytes==0 &&
             residency.stats().landscapePageFreeBytes==pageBytes && residency.stats().landscapePageCount==1,
             "the completed recycle slot must return the full page range for reuse");
+    if(cycle==0)
+      releasedBuffers=tempestProbeGpuBufferCount();
+    else
+      require(tempestProbeGpuBufferCount()==releasedBuffers,
+              "publish/release cycles must not accumulate live buffers while the view remains alive");
     }
+
+  const auto chunkFile=directory/table.entries[0].file;
+  std::filesystem::last_write_time(chunkFile,std::filesystem::last_write_time(chunkFile)+std::chrono::seconds(1));
+  const Tempest::Vec3 farPosition={25600,100,100};
+  update(farPosition,100000);
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  while(!view.landscapeReady() && std::chrono::steady_clock::now()<deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    update(farPosition,100000);
+    }
+  update(farPosition,100000); // Consume the worker's error even if readiness settled first.
+  require(residency.desired(size_t(0))==ChunkResidency::State::Far && view.landscapeReady() &&
+          residency.stats().pending==0 && residency.stats().published==2,
+          "a failed Far chunk must settle readiness without being published or queued again");
+  bool nearFailed=false;
+  try {
+    update({100,100,100});
+    }
+  catch(const std::runtime_error& e) {
+    nearFailed=std::string_view(e.what()).find("reload the world")!=std::string_view::npos;
+    }
+  require(nearFailed,"a failed chunk required Near must fail explicitly instead of leaving a silent hole");
+  }
+  {
+  // A first synchronous Near read must propagate the same source mutation.
+  auto reloadWorld=readWorldChunks(directory);
+  ChunkResidency residency(table);
+  WorldView view(packed.bbox(),"CONTRACT.ZEN");
+  view.startLandscapeStreaming(std::move(reloadWorld),residency,0);
+  bool nearFailed=false;
+  try {
+    residency.update({100,100,100},{100,100,100},1000);
+    }
+  catch(const std::runtime_error& e) {
+    nearFailed=std::string_view(e.what()).find("chunk changed after world load")!=std::string_view::npos;
+    }
+  require(nearFailed,"a synchronous Near packing error must propagate to the caller");
   }
   device.waitIdle();
   for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)

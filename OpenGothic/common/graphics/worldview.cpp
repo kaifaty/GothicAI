@@ -91,7 +91,8 @@ struct WorldView::LandscapeStreaming {
         {
         std::lock_guard guard(mutex);
         if(chunk.failed)
-          return;
+          throw std::runtime_error("Landscape Near chunk is unavailable after a packing failure: "+
+                                   entries[i].file+"; reload the world");
         ++chunk.generation;
         packed=takeReady(chunk);
         }
@@ -106,7 +107,7 @@ struct WorldView::LandscapeStreaming {
           chunk.failed=true;
           }
           reportFailure(i,std::current_exception());
-          return;
+          throw;
           }
         if(firstUpdate)
           initialPackMs+=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
@@ -188,7 +189,7 @@ struct WorldView::LandscapeStreaming {
     if(packing || readyCount!=0 || !jobs.empty() || !residency.idle())
       return false;
     for(size_t i=0;i<chunks.size();++i)
-      if(residency.desired(i)!=ChunkResidency::State::Outside && !chunks[i].gpu)
+      if(residency.desired(i)!=ChunkResidency::State::Outside && !chunks[i].gpu && !chunks[i].failed)
         return false;
     return true;
     }
