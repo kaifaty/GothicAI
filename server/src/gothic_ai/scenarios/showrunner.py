@@ -84,6 +84,7 @@ class ErrandScript:
         self.place, self.where, self.item, self.item_name = place, where, item, name
         self.gold, self.xp = gold, xp
         self.neighbor = neighbor
+        self.title = "Дрянь на дороге"
         self.calls: list[str] = []
 
     @classmethod
@@ -148,7 +149,7 @@ class ErrandScript:
                 "cast": [],
                 "quests": [
                     {
-                        "title": "Дрянь на дороге",
+                        "title": self.title,
                         "give": talk("Что стряслось на дороге?", "Кто-то выбросил там припасы. Надо убрать."),
                         "stages": [
                             {
@@ -476,6 +477,7 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         # accuses the hero, so the original giver and hint source remain available for the next line.
         at = await link.story_state()
         script.crime = f"showrunner-theft-{line_seq}"
+        builder.title = "Пропавшие припасы"
         director.chronicle.record({
             "fact": "crime", "id": script.crime, "kind": "theft", "victim": giver, "owner": giver,
             "item": builder.item, "count": 1, "witnesses": [], "waypoint": waypoint,
