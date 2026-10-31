@@ -923,6 +923,11 @@ The three agreed exceptions preserve that fraction and raw evidence; with the
 CSV the reader passes, with a gated maximum of 74.7259445 cm and zero other
 recoveries. The two swords remain admitted; their thin-body support crossing
 will be investigated separately.
+The first functional ON run reached the walking goal in 2633 ms (limit 2500)
+with 65.71875 cm lateral deviation (limit 25). The Item moved 0.444478 cm and
+registered character contact, but SHADOWBEAST attacked the hero twice during
+the passage. Validation stopped at this failure; OFF, saves and current Mac
+performance remain unverified.
 
 `OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
