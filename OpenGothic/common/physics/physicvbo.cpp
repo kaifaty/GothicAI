@@ -10,6 +10,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <future>
 #include <limits>
 #include <stdexcept>
 #include <unordered_map>
@@ -185,7 +186,7 @@ namespace {
     }
 
   void addMeshChunks(const std::vector<JPH::Vec3>& vertices, MeshTriangles& triangles,
-                     size_t first, size_t last, JPH::StaticCompoundShapeSettings& compound) {
+                     size_t first, size_t last, JPH::StaticCompoundShapeSettings& compound, unsigned parallelDepth) {
     const auto bounds = meshBounds(vertices,triangles,first,last);
     const auto extent = bounds.GetSize();
     if(extent.LengthSq()<=maxMeshDiagonal*maxMeshDiagonal || last-first==1) {
@@ -214,8 +215,22 @@ namespace {
       const float cb = centroid(b);
       return ca<cb || (ca==cb && a.order<b.order);
       });
-    addMeshChunks(vertices,triangles,first,mid,compound);
-    addMeshChunks(vertices,triangles,mid,last,compound);
+    if(parallelDepth>0 && last-first>=16384) {
+      // Each branch owns a disjoint triangle range and its child list. Merge in
+      // the original order so parallel construction does not change child IDs.
+      JPH::StaticCompoundShapeSettings left, right;
+      auto ready = std::async(std::launch::async,[&] {
+        addMeshChunks(vertices,triangles,first,mid,left,parallelDepth-1);
+        });
+      addMeshChunks(vertices,triangles,mid,last,right,parallelDepth-1);
+      ready.get();
+      compound.mSubShapes.insert(compound.mSubShapes.end(),left.mSubShapes.begin(),left.mSubShapes.end());
+      compound.mSubShapes.insert(compound.mSubShapes.end(),right.mSubShapes.begin(),right.mSubShapes.end());
+      }
+    else {
+      addMeshChunks(vertices,triangles,first,mid,compound,0);
+      addMeshChunks(vertices,triangles,mid,last,compound,0);
+      }
     }
   }
 
@@ -496,7 +511,7 @@ JPH::ShapeRefC PhysicVbo::shape(bool splitLargeTriangles) const {
     }
   else {
     JPH::StaticCompoundShapeSettings compound;
-    addMeshChunks(*vertices,triangles,0,triangles.size(),compound);
+    addMeshChunks(*vertices,triangles,0,triangles.size(),compound,splitLargeTriangles ? 2u : 0u);
     if(compound.mSubShapes.empty())
       return nullptr;
     const auto result=compound.Create();
