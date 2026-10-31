@@ -174,7 +174,7 @@ async def lie_found_out(
                                    if fact.get("quest") == q.id), None)
             check("epilogue", epilogue is not None and epilogue.get("quest") == q.id
                   and epilogue.get("trigger") == disclosure_seq and epilogue.get("npc") == npc
-                  and epilogue.get("text") == f"Позже {name} узнал правду.", epilogue)
+                  and epilogue.get("text") == "Позже обман раскрылся.", epilogue)
             distance = talk.people[npc].distance if npc in talk.people else None
             check("epilogue_shown", epilogue is not None and distance is not None and distance < ATTACK_CM
                   and any(f.get("feat") == award["id"] for f in facts("feat_epilogue_shown"))

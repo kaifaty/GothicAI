@@ -154,7 +154,9 @@ WRITE_TOOL = Tool(
 
 EPILOGUE_INSTRUCTIONS = (
     "Допиши к записи летописи одну строку эпилога: что стало известно позже. Пиши просто, "
-    "в духе мира, в прошедшем времени, начни со слова «Позже». Не пересказывай саму запись "
+    "в духе мира, в прошедшем времени, начни со слова «Позже». Пиши со стороны летописи: "
+    "о людях в третьем лице, героя называй «герой» или не называй; поля фактов написаны "
+    "со стороны NPC, их «ты» и «тебе» — это герой. Не пересказывай саму запись "
     "и не придумывай событий сверх показанных фактов."
 )
 EPILOGUE_TOOL = Tool(
@@ -293,6 +295,11 @@ def epilogue_canon(
         errors.append("В эпилоге нельзя использовать эмодзи")
     if re.search(r"поздравля|достижени|ачивк", text, flags=re.IGNORECASE):
         errors.append("В эпилоге нельзя писать поздравления и слова о достижениях")
+    if re.search(
+        r"\b(?:я|меня|мне|мной|мой|моя|моё|мои|ты|тебя|тебе|тобой|твой|твоя|твоё|твои|"
+        r"мы|нас|нам|вы|вас|вам)\b", text, flags=re.IGNORECASE,
+    ):
+        errors.append("Эпилог пишется в третьем лице")
     return errors + _foreign_names(text, _names(evidence), _names(entries))
 
 
@@ -568,7 +575,7 @@ class Feats:
                     "Факты записи и раскрытия:",
                     *[f"#{n} " + json.dumps(f, ensure_ascii=False) for n, f in evidence],
                 ])
-                text = f"Позже {disclosure['name']} узнал правду."
+                text = "Позже обман раскрылся."
                 raw, errors = None, None
                 for _ in range(2):
                     raw = await self.model.epilogue(brief, previous=raw, errors=errors)

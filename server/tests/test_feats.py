@@ -643,18 +643,20 @@ def revelation(**changes):
     }
 
 
-@pytest.mark.parametrize(("kind", "evidence_kind"), [("found_out", "lie"), ("caught", "claim")])
-async def test_epilogue_matches_a_lie_in_evidence_and_stays_hidden_far_away(kind, evidence_kind):
-    history = [lie(fact=evidence_kind), feat(evidence=[1], category="deceit")]
+@pytest.mark.parametrize(("kind", "evidence_kind", "npc", "name"), [
+    ("found_out", "lie", "LOTAR", "Лотар"), ("caught", "claim", "HILDA", "Хильда"),
+])
+async def test_epilogue_matches_a_lie_in_evidence_and_stays_hidden_far_away(kind, evidence_kind, npc, name):
+    history = [lie(fact=evidence_kind, npc=npc, name=name), feat(evidence=[1], category="deceit")]
     async with world(history=history, hero_distance=lambda npc: ATTACK_CM + 1) as (
         fake, chronicle, chronicler, llm, journal,
     ):
-        trigger = chronicle.record(revelation(fact=kind))
+        trigger = chronicle.record(revelation(fact=kind, npc=npc, name=name))
         await _until(lambda: bool(chronicle.facts("feat_epilogue")))
         [epilogue] = chronicle.facts("feat_epilogue")
         assert epilogue == {
-            "fact": "feat_epilogue", "feat": "old", "text": "Позже Лотар узнал правду.",
-            "trigger": trigger, "npc": "LOTAR", "name": "Лотар", "quest": "WOLVES", "day": 10,
+            "fact": "feat_epilogue", "feat": "old", "text": "Позже обман раскрылся.",
+            "trigger": trigger, "npc": npc, "name": name, "quest": "WOLVES", "day": 10,
         }
         assert chronicler.feats == [history[1]] and not llm.calls
         chronicler.hero_talk("STRANGER")
@@ -714,6 +716,15 @@ def test_epilogue_canon_rejects_invalid_text(text):
     assert not epilogue_canon("Позже Лотар нашёл волков живыми.", evidence, entries)
 
 
+def test_epilogue_canon_uses_third_person():
+    evidence = [(1, lie(npc="MATTEO", name="Маттео")), (3, revelation(npc="MATTEO", name="Маттео"))]
+    for pronoun in ("мне", "МНЕ"):
+        assert epilogue_canon(f"Позже Маттео открыл ящик при {pronoun}.", evidence, evidence) == [
+            "Эпилог пишется в третьем лице",
+        ]
+    assert not epilogue_canon("Позже Маттео открыл ящик при герое.", evidence, evidence)
+
+
 async def test_epilogue_model_gets_full_disclosure_and_retries_before_fallback():
     backend = FakeBackend(tool_calls=[ToolCall("write_epilogue", {
         "text": "Лотар нашёл волков.", "reason": "Раскрытие лжи.",
@@ -725,12 +736,14 @@ async def test_epilogue_model_gets_full_disclosure_and_retries_before_fallback()
         chronicle.record(disclosure)
         await _until(lambda: bool(chronicle.facts("feat_epilogue")))
         [epilogue] = chronicle.facts("feat_epilogue")
-        assert epilogue["text"] == "Позже Лотар узнал правду."
+        assert epilogue["text"] == "Позже обман раскрылся."
         assert len(llm.calls) == 2
         instructions, messages, tools = llm.calls[0]
         assert instructions == (
             "Допиши к записи летописи одну строку эпилога: что стало известно позже. "
             "Пиши просто, в духе мира, в прошедшем времени, начни со слова «Позже». "
+            "Пиши со стороны летописи: о людях в третьем лице, героя называй «герой» или не называй; "
+            "поля фактов написаны со стороны NPC, их «ты» и «тебе» — это герой. "
             "Не пересказывай саму запись и не придумывай событий сверх показанных фактов."
         )
         assert [tool.name for tool in tools] == ["write_epilogue"]
@@ -805,7 +818,7 @@ async def test_epilogue_retry_yields_to_an_ordinary_feat(monkeypatch):
 async def test_roster_does_not_read_long_history_without_pending_epilogues(already_shown):
     history = [
         lie(), feat(evidence=[1], category="deceit"), revelation(),
-        {"fact": "feat_epilogue", "feat": "old", "text": "Позже Лотар узнал правду.",
+        {"fact": "feat_epilogue", "feat": "old", "text": "Позже обман раскрылся.",
          "trigger": 3, "npc": "LOTAR", "name": "Лотар", "quest": "WOLVES", "day": 10},
         {"fact": "feat_epilogue_shown", "feat": "old"},
     ] if already_shown else []
@@ -860,12 +873,12 @@ async def test_epilogue_toast_when_near_at_disclosure_or_on_later_approach(
         await _until(lambda: any(msg["type"] == "feat_toast" for msg in fake.received))
         [toast] = [msg for msg in fake.received if msg["type"] == "feat_toast"]
         assert toast["feat"] == "old" and toast["title"] == history[1]["title"]
-        assert toast["text"] == "Позже Лотар узнал правду."
+        assert toast["text"] == "Позже обман раскрылся."
         assert toast["icon"] == str(icon)
         assert chronicle.facts("feat_epilogue_shown") == [{"fact": "feat_epilogue_shown", "feat": "old"}]
         assert [{k: v for k, v in entry.items() if k != "t"} for entry in journal] == [{
             "kind": "feat_epilogue", "feat": "old", "title": history[1]["title"],
-            "text": "Позже Лотар узнал правду.",
+            "text": "Позже обман раскрылся.",
         }]
         chronicler.hero_talk("LOTAR")
         chronicle.link._dispatch(NpcRoster(type="npc_roster", t=2, npcs=[]))
