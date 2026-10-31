@@ -92,3 +92,43 @@ def test_session_and_world_change_csv(tmp_path):
     assert all(row[key] == "" for row in old_rows for key in malloc_fields)
     assert [{key: value for key, value in row.items() if key not in malloc_fields} for row in old_rows] == [
         {key: value for key, value in row.items() if key not in malloc_fields} for row in rows]
+
+
+def test_vobs_breakdown_repeat_medians(tmp_path):
+    for repeat, (duration, own_ms, inclusive_ms) in enumerate(((100, 30, 40), (300, 50, 100), (200, 70, 90))):
+        run = tmp_path / f"repeat-{repeat}" / "runs" / "ryzen-work-NEWWORLD-chain"
+        run.mkdir(parents=True)
+        (run / "game.log").write_text(
+            "[loadprobe] stage=session_begin t_ms=0 stage_ms=-1\n"
+            "[loadprobe] stage=world_begin t_ms=1 stage_ms=-1 world=NEWWORLD.ZEN\n"
+            f"[loadprobe-vobs] kind=type name=static_mesh count=10 ms={own_ms} inclusive_ms={inclusive_ms}\n"
+            f"[loadprobe-vobs] kind=part name=mesh_gpu count=2 ms={own_ms / 2} inclusive_ms={inclusive_ms / 2}\n"
+            f"[loadprobe-vobs] kind=miss_part name=mesh_gpu count=1 ms={own_ms / 4} inclusive_ms={inclusive_ms / 4}\n"
+            f"[loadprobe-vobs] kind=meshes unique={repeat + 2} hits={repeat + 8} misses={repeat + 2}\n"
+            f"[loadprobe] stage=vobs t_ms=400 stage_ms={duration}\n"
+            "[loadprobe] stage=session_end t_ms=500 stage_ms=-1\n"
+            "[loadprobe] stage=change_begin t_ms=600 stage_ms=-1\n"
+            "[loadprobe] stage=world_begin t_ms=601 stage_ms=-1 world=OLDWORLD.ZEN\n"
+            "[loadprobe] stage=vobs t_ms=800 stage_ms=100\n"
+            "[loadprobe] stage=change_end t_ms=900 stage_ms=-1\n"
+            "[loadprobe] stage=world_begin t_ms=1000 stage_ms=-1 world=ADDONWORLD.ZEN\n"
+            "[loadprobe-vobs] kind=type name=static_mesh count=999 ms=999 inclusive_ms=999\n"
+            "[loadprobe] stage=vobs t_ms=1100 stage_ms=999\n")
+    output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path), "--vobs"], text=True)
+    rows = list(csv.DictReader(io.StringIO(output)))
+    assert len(rows) == 12
+    assert all((row["world"], row["seg"], row["repeat_n"]) == ("NEWWORLD", "0", "1") for row in rows)
+    types = [row for row in rows if row["kind"] == "type"]
+    assert [float(row["ms"]) for row in types] == [30, 50, 70]
+    assert [float(row["inclusive_ms"]) for row in types] == [40, 100, 90]
+    output = subprocess.check_output([sys.executable, str(SCRIPT), "--vobs", "--median", str(tmp_path)], text=True)
+    medians = {row["kind"]: row for row in csv.DictReader(io.StringIO(output))}
+    assert len(medians) == 4
+    assert all(row["repeat_n"] == "3" for row in medians.values())
+    assert [float(medians["type"][field]) for field in ("count", "ms", "inclusive_ms", "stage_ms", "share_pct")] == [
+        10, 50, 90, 200, 30]
+    assert [float(medians["part"][field]) for field in ("ms", "inclusive_ms", "share_pct")] == [25, 45, 15]
+    assert medians["part"]["name"] == medians["miss_part"]["name"] == "mesh_gpu"
+    assert [float(medians["miss_part"][field]) for field in ("count", "ms", "inclusive_ms", "share_pct")] == [1, 12.5, 22.5, 7.5]
+    assert [float(medians["meshes"][field]) for field in ("unique", "hits", "misses", "cold_miss_pct")] == [3, 9, 3, 25]
+    assert medians["meshes"]["ms"] == ""

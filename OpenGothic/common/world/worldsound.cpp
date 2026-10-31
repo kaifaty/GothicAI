@@ -1,4 +1,5 @@
 #include "worldsound.h"
+#include "loadprobe.h"
 
 #include <Tempest/SoundEffect>
 
@@ -103,6 +104,7 @@ WorldSound::~WorldSound() {
   }
 
 void WorldSound::setDefaultZone(const asset::VZoneMusic &vob) {
+  LoadProbe::Vobs::Scope probe("sound");
   def.reset(new Zone());
   def->bbox[0] = {vob.bbox.min.x, vob.bbox.min.y, vob.bbox.min.z};
   def->bbox[1] = {vob.bbox.max.x, vob.bbox.max.y, vob.bbox.max.z};
@@ -110,6 +112,7 @@ void WorldSound::setDefaultZone(const asset::VZoneMusic &vob) {
   }
 
 void WorldSound::addZone(const asset::VZoneMusic &vob) {
+  LoadProbe::Vobs::Scope probe("sound");
   Zone z;
   z.bbox[0] = {vob.bbox.min.x, vob.bbox.min.y, vob.bbox.min.z};
   z.bbox[1] = {vob.bbox.max.x, vob.bbox.max.y, vob.bbox.max.z};
@@ -119,6 +122,7 @@ void WorldSound::addZone(const asset::VZoneMusic &vob) {
   }
 
 void WorldSound::addSound(const asset::VSound &vob) {
+  LoadProbe::Vobs::Scope probe("sound");
   WSound s;
   s.vobName   = vob.vob_name;
   s.loop      = vob.mode==asset::SoundMode::LOOP;

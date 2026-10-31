@@ -8,6 +8,7 @@
 #include "graphics/mesh/submesh/animmesh.h"
 #include "gothic.h"
 #include "frameprofile.h"
+#include "loadprobe.h"
 #include "physics/worldwind.h"
 #include "world/chunkresidency.h"
 
@@ -478,6 +479,7 @@ void VisualObjects::updateRtAs(size_t id) {
 VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen,
                                        bool staticDraw) {
+  LoadProbe::Vobs::Scope probe("draw_instance");
   std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets
@@ -529,6 +531,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
 VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen,
                                        const InstanceStorage::Id& anim) {
+  LoadProbe::Vobs::Scope probe("draw_instance");
   std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets
@@ -568,6 +571,7 @@ VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat
 VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster,
                                        DrawCommands::Type type, const Vec3* texturePosition) {
+  LoadProbe::Vobs::Scope probe("draw_instance");
   std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets

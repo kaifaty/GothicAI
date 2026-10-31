@@ -765,6 +765,7 @@ Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forc
       unqueueTexture(record);
       record.pinned=true;
       if(record.tail) {
+        LoadProbe::Vobs::Scope probe("texture_load");
         auto full=decodeBaseTexture(record.source,record.mipmaps);
         auto replacement=dev->texture(full.pixmap,full.useMipmap);
         if(record.resident)
@@ -781,6 +782,7 @@ Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forc
     return it->second.get();
     }
 
+  LoadProbe::Vobs::Scope probe("texture_load");
   const auto probeT = LoadProbe::now();
   TextureData data;
   Texture2d tex;
@@ -1102,6 +1104,7 @@ bool Resources::meshReplacementLoaded(std::string_view name, MeshReplacementSour
   }
 
 asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replaced) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   if(replaced!=nullptr)
     *replaced = false;
@@ -1247,12 +1250,14 @@ void Resources::indexMaterialMaps() {
   }
 
 const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, TextureKind kind) {
+  LoadProbe::Vobs::Scope probe("texture_request");
   if(path.empty())
     return nullptr;
   const auto key = (kind==TextureKind::Normal ? "normal:" : kind==TextureKind::Orm ? "orm:" : "color:")+path;
   if(auto it = materialTextureCache.find(key); it!=materialTextureCache.end())
     return it->second.get();
   std::unique_ptr<Texture2d> texture;
+  LoadProbe::Vobs::Scope loadProbe("texture_load");
   const auto probeT = LoadProbe::now();
   try {
     TextureData data=decodeBaseTexture(path,false,textureStreaming && loadingTextureTail ? textureSkipMips : 0);
@@ -1277,6 +1282,7 @@ const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, Tex
   }
 
 Texture2d Resources::implLoadTextureUncached(std::string_view name, bool forceMips) {
+  LoadProbe::Vobs::Scope probe("texture_load");
   auto decoded=implDecodeTexture(name,forceMips);
   try {
     return decoded.pixmap.isEmpty() ? Texture2d() : device().texture(decoded.pixmap,decoded.useMipmap);
@@ -1603,6 +1609,7 @@ TextureFormat Resources::textureFormat(const Texture2d* texture) {
   }
 
 void Resources::textureDemand(const Material& material, TextureCategory category, bool add, uint32_t distance) {
+  LoadProbe::Vobs::Scope probe("texture_demand");
   if(inst==nullptr || inst->dev==nullptr)
     return;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
@@ -1846,14 +1853,18 @@ void Resources::updateTextures(ChunkResidency* residency) {
   }
 
 ProtoMesh* Resources::implLoadMesh(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("mesh_hit");
   if(name.size()==0)
     return nullptr;
 
   auto cname = std::string(name);
   auto it    = aniMeshCache.find(cname);
+  if(LoadProbe::enabled())
+    LoadProbe::Vobs::mesh(cname,it!=aniMeshCache.end());
   if(it!=aniMeshCache.end())
     return it->second.get();
 
+  probe.rename("mesh_miss");
   auto  t   = implLoadMeshMain(cname);
   auto  ret = t.get();
   aniMeshCache[cname] = std::move(t);
@@ -1864,6 +1875,7 @@ ProtoMesh* Resources::implLoadMesh(std::string_view name) {
 
 bool Resources::replaceModelMesh(asset::ModelMesh& model, std::unique_ptr<Skeleton>& skeleton,
                                  std::string_view visual, std::string_view meshFile) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   auto key = std::string(visual.substr(0,visual.find_last_of('.')));
   for(auto& c:key)
     c = char(std::toupper(uint8_t(c)));
@@ -2389,15 +2401,18 @@ GthFont &Resources::implLoadFont(std::string_view name, FontType type, const flo
   }
 
 Texture2d Resources::loadTextureUncached(std::string_view name, bool forceMips) {
+  LoadProbe::Vobs::Scope probe("texture_request");
   return inst->implLoadTextureUncached(name, forceMips);
   }
 
 const Texture2d* Resources::loadTexture(std::string_view name, bool forceMips, bool pinned) {
+  LoadProbe::Vobs::Scope probe("texture_request");
   std::lock_guard<std::recursive_mutex> g(inst->sync);
   return inst->implLoadTexture(name,forceMips,pinned);
   }
 
 const Texture2d* Resources::loadTexture(Tempest::Color color) {
+  LoadProbe::Vobs::Scope probe("texture_request");
   if(isHeadless() || color==Color())
     return nullptr;
   std::lock_guard<std::recursive_mutex> g(inst->sync);
@@ -2406,6 +2421,7 @@ const Texture2d* Resources::loadTexture(Tempest::Color color) {
   if(it!=cache.end())
     return it->second.get();
 
+  LoadProbe::Vobs::Scope loadProbe("texture_load");
   uint8_t iv[4] = { uint8_t(255.f*color.r()), uint8_t(255.f*color.g()), uint8_t(255.f*color.b()), uint8_t(255.f*color.a()) };
   Pixmap p2(1,1,TextureFormat::RGBA8);
   std::memcpy(p2.data(),iv,4);
@@ -2477,8 +2493,10 @@ std::vector<const Texture2d*> Resources::loadTextureAnim(std::string_view name, 
   }
 
 Texture2d Resources::loadTexturePm(const Pixmap &pm) {
+  LoadProbe::Vobs::Scope probe("texture_request");
   if(isHeadless())
     return Texture2d();
+  LoadProbe::Vobs::Scope loadProbe("texture_load");
   if(pm.isEmpty()) {
     Pixmap p2(1,1,TextureFormat::R8);
     std::memset(p2.data(),0,1);
@@ -2590,6 +2608,7 @@ std::filesystem::path Resources::baseModelFile(std::string_view name) {
   }
 
 bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& out) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
@@ -2605,6 +2624,7 @@ bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& 
   }
 
 bool Resources::loadModelMeshData(std::string_view name, asset::ModelMesh& out) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
@@ -2620,6 +2640,7 @@ bool Resources::loadModelMeshData(std::string_view name, asset::ModelMesh& out) 
   }
 
 bool Resources::loadModelData(std::string_view name, asset::Model& out) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
@@ -2635,6 +2656,7 @@ bool Resources::loadModelData(std::string_view name, asset::Model& out) {
   }
 
 bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& out) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
@@ -2650,6 +2672,7 @@ bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& o
   }
 
 bool Resources::loadAnimationData(std::string_view name, asset::ModelAnimation& out) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
@@ -2665,6 +2688,7 @@ bool Resources::loadAnimationData(std::string_view name, asset::ModelAnimation& 
   }
 
 asset::MorphMesh Resources::loadMorphData(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty()) {
     if(inst->census) inst->census->missing(name,"missing from base index");
