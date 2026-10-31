@@ -214,8 +214,13 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     probeT = LoadProbe::now();
     wdynamic = wdynamicFut.get();
     wdynamic->setFurniturePartsEnabled(Gothic::physicsFlags().furnitureParts);
-    if(LoadProbe::enabled())
-      LoadProbe::mark("physics_static",probePhysicsMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
+    if(LoadProbe::enabled()) {
+      const auto& collision=wdynamic->staticCollisionLoadStats();
+      LoadProbe::mark("physics_static",probePhysicsMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT))+
+                      " collision="+(collision.cacheHit ? "cache" : "build")+
+                      " key_ms="+std::to_string(collision.keyMs)+" read_ms="+std::to_string(collision.readMs)+
+                      " build_ms="+std::to_string(collision.buildMs)+" write_ms="+std::to_string(collision.writeMs));
+      }
     probeT = LoadProbe::now();
     wdynamic->cloth().setExposureTest([this](const Tempest::Vec3& point) { return !isIndoor(point); });
     wdynamic->setPhysicsNoiseEnabled(Gothic::physicsFlags().physicsNoise);

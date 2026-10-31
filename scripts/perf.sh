@@ -43,7 +43,7 @@ PERF_WAIT="${PERF_WAIT:-600}"
 PERF_WAIT=$((10#$PERF_WAIT))
 if [[ $# == 0 ]]; then PLACES=(market harbour forest interior combat); else PLACES=("$@"); fi
 for place in "${PLACES[@]}"; do
-  case "$place" in market|harbour|forest|interior|combat|shot) ;; *) fail "unknown place: $place (market harbour forest interior combat shot)" ;; esac
+  case "$place" in market|harbour|harbour-night|forest|interior|combat|shot) ;; *) fail "unknown place: $place (market harbour harbour-night forest interior combat shot)" ;; esac
 done
 export PERF_WINDOW PERF_REPEAT PERF_WAIT
 export PERF_ARGS="${PERF_ARGS:-}" PERF_ENV="${PERF_ENV:-}" PERF_VID_RES="${PERF_VID_RES:-0}" PERF_INI="${PERF_INI:-}"
