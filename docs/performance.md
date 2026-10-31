@@ -25,6 +25,7 @@
 |---|---|---|
 | `market` | `scripts/bench/perf-market.bench` | рынок Хориниса днём, торговцы и прохожие |
 | `harbour` | `scripts/bench/perf-harbour.bench` | гавань, вода, корабль и город |
+| `harbour-night` | `scripts/bench/perf-harbour-night.bench` | то же место гавани в полночь: горят фонари, жаровни и свет слоя предметов |
 | `forest` | `scripts/bench/perf-forest.bench` | дорога за городом, дальняя прорисовка и растительность |
 | `interior` | `scripts/bench/perf-interior.bench` | интерьер с локальными источниками света |
 | `combat` | `scripts/bench/perf-combat.bench` | восемь бойцов рядом с героем, физика и анимация |
@@ -153,7 +154,7 @@ scripts/perf-content.sh none working-8 harbour market --noise-pct 2 --threshold-
 `scripts/perf-content.sh <A> <B> [места]` сравнивает наборы из
 `~/.local/share/gothic-ai/content-staging/<набор>/` на Mac; `none` задаёт
 игре пустой `OPENGOTHIC_CONTENT=`. По умолчанию места — `harbour market`;
-доступны также `forest`, `interior`, `combat`. Запуск только на Ryzen, без
+доступны также `harbour-night` (порт в полночь, для ночного света), `forest`, `interior`, `combat`. Запуск только на Ryzen, без
 автоматического перехода на Mac. Окно и настройки — те же `PERF_WINDOW`,
 `PERF_VID_RES`, `PERF_ARGS`, `PERF_ENV`, `PERF_INI`, что у `perf.sh`;
 `OPENGOTHIC_CONTENT` всегда определяется аргументом A/B.

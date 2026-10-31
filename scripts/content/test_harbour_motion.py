@@ -1,0 +1,88 @@
+import json
+
+from PIL import Image
+
+import harbour_motion
+
+CAMERAS = [
+    {'name': 'ship', 'eye': [0, 0, 0], 'target': [1000, 500, 0], 'motion': True},
+    {'name': 'quay', 'eye': [0, 0, 0], 'target': [0, 0, 1000]},
+]
+
+
+def test_the_scenario_draws_everything_and_pairs_moving_shots():
+    day = harbour_motion.bench_lines(CAMERAS, night=False)
+    assert 'view full' in day and not any(line.startswith('view hide') for line in day)
+    assert day.count('set time 12 0') == 3  # the header and before each shot
+    shots = [line[5:] for line in day if line.startswith('shot ')]
+    assert shots == ['ship', 'ship-b', 'quay']
+    i = day.index('shot ship')
+    assert day[i + 1] == f'wait {harbour_motion.PAIR_MS}' and day[i + 2] == 'shot ship-b'
+
+
+def test_the_night_scenario_names_its_shots():
+    night = harbour_motion.bench_lines(CAMERAS, night=True)
+    assert 'set time 12 0' not in night and night.count('set time 0 0') == 3
+    assert [line[5:] for line in night if line.startswith('shot ')] == ['ship-night', 'ship-night-b', 'quay-night']
+    assert 'midnight' in night[0] and 'harbour_motion.py' in night[1]
+
+
+def test_emitters_and_lights_keep_their_positions():
+    entries = harbour_motion.layer_entries([
+        {'key': 'smoke', 'kind': 'emitter', 'pfx': 'LIGHTSMOKE', 'position': [1, 2.04, 3]},
+        {'key': 'lamp', 'kind': 'light', 'position': [4, 5, 6], 'range': 600, 'color': [255, 150, 80]},
+        {'key': 'post', 'kind': 'mesh', 'visual': 'FIREPLACE_NW_LAMP_01.ASC', 'position': [7, 8, 9], 'yaw': 30},
+    ])
+    smoke, lamp, post = entries
+    assert smoke == {'key': 'smoke', 'kind': 'emitter', 'position': [1.0, 2.0, 3.0], 'yaw_deg': 0.0, 'pfx': 'LIGHTSMOKE'}
+    assert lamp['range'] == 600.0 and lamp['color'] == [255, 150, 80] and 'pfx' not in lamp
+    assert post['visual'] == 'FIREPLACE_NW_LAMP_01.ASC' and post['collision'] == 'mesh' and post['yaw_deg'] == 30.0
+    json.dumps(entries)
+
+
+def test_duplicate_keys_are_refused():
+    item = {'key': 'a', 'kind': 'emitter', 'pfx': 'FIRE_SMOKE', 'position': [0, 0, 0]}
+    try:
+        harbour_motion.layer_entries([item, dict(item)])
+    except ValueError as error:
+        assert 'duplicate' in str(error)
+    else:
+        raise AssertionError('duplicate keys passed')
+
+
+def test_motion_counts_changed_pixels_per_region():
+    a = Image.new('RGB', (20, 10), (100, 100, 100))
+    b = a.copy()
+    for x in range(10, 20):
+        for y in range(5):
+            b.putpixel((x, y), (140, 140, 140))  # a moving patch: 50 of the right half's 100 pixels
+    result = harbour_motion.pair_motion(a, b, {'cloth': [10, 0, 20, 10], 'still': [0, 0, 10, 10]})
+    assert result['still'] == {'mean': 0.0, 'changed': 0.0}
+    assert result['cloth']['changed'] == 0.5 and abs(result['cloth']['mean'] - 20.0) < 1e-6
+
+
+def test_the_camera_aims_at_the_target_wherever_the_hero_stands():
+    import math
+    for hero in ('near', 'far'):
+        camera = {'name': 'quay', 'eye': [100, 50, 200], 'target': [1100, 450, 2200], 'hero': hero}
+        lines = harbour_motion.bench_lines([camera], night=False)
+        look = float(next(line for line in lines if line.startswith('cam look'))[9:])
+        spot = [float(v) for v in next(line for line in lines if line.startswith('goto pos'))[9:].split()]
+        dist, dy, yaw = (float(v) for v in next(line for line in lines if line.startswith('cam world'))[10:].split())
+        eye = [spot[0] + dist * math.cos(math.radians(yaw)), spot[1] + dy, spot[2] + dist * math.sin(math.radians(yaw))]
+        assert all(abs(eye[i] - camera['eye'][i]) < 0.01 for i in range(3))
+        aim = [spot[0] - eye[0], spot[1] + look - eye[1], spot[2] - eye[2]]
+        ray = [camera['target'][i] - camera['eye'][i] for i in range(3)]
+        cross = [aim[1] * ray[2] - aim[2] * ray[1], aim[2] * ray[0] - aim[0] * ray[2], aim[0] * ray[1] - aim[1] * ray[0]]
+        assert max(abs(c) for c in cross) < 1e-3 * math.dist(aim, [0, 0, 0]) * math.dist(ray, [0, 0, 0])
+    far = harbour_motion.hero_spot({'eye': [0, 0, 0], 'target': [0, 0, 1000]})
+    assert far == [0.0, 2000.0, 6000.0]
+
+
+def test_an_attached_item_follows_its_parent_turn():
+    entries = harbour_motion.layer_entries([
+        {'key': 'post', 'kind': 'mesh', 'visual': 'OC_LOB_LIGHTER_HUGE3', 'position': [100, 0, 200], 'yaw': 90},
+        {'key': 'fire', 'kind': 'emitter', 'pfx': 'FIRE_MEDIUM', 'attach': 'post', 'offset': [10, 324, 0]},
+    ])
+    # yaw 90: local +x goes to world -z (rows [[c, 0, s], [0, 1, 0], [-s, 0, c]])
+    assert entries[1]['position'] == [100.0, 324.0, 190.0]
