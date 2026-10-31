@@ -456,6 +456,8 @@ if(NOT ANDROID AND NOT IOS)
     DEPENDS gothic-aimwalk-contract USES_TERMINAL)
   add_executable(gothic-physics-contract EXCLUDE_FROM_ALL tests/physics_contract.cpp)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-furniture-parts-contract EXCLUDE_FROM_ALL tests/furniture_parts_contract.cpp)
+  target_link_libraries(gothic-furniture-parts-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-physics
     COMMAND $<TARGET_FILE:gothic-physics-contract>
     DEPENDS gothic-physics-contract

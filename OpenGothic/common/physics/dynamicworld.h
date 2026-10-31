@@ -73,6 +73,7 @@ class DynamicWorld final {
     struct BBoxList;
     struct MovableVobs;
     struct ItemHulls;
+    struct ItemTrace;
 
   public:
     static constexpr float gravityMS   = 9.8f; // meters per second^2
@@ -419,6 +420,8 @@ class DynamicWorld final {
                                  float massMultiplier, bool blocksWalking, std::string_view className = {},
                                  bool legacyCollision = true, uint32_t zenId = uint32_t(-1));
     void           setMovableVobsEnabled(bool enabled);
+    void           setFurniturePartsEnabled(bool enabled);
+    bool           furniturePartsEnabled() const;
     void           setDestructionEnabled(bool enabled);
     void           setBuoyancyEnabled(bool enabled);
     void           setItemWakeEnabled(bool enabled);
@@ -454,6 +457,7 @@ class DynamicWorld final {
       uint32_t           zenId = uint32_t(-1);
       std::string        visual, className, disposition;
       bool               blocksWalking = false, legacyCollision = true, enabled = false, sleeping = true, touchedByNpc = false;
+      size_t             collisionParts = 1;
       float              mass = 0;
       float              hullVolume = 0, density = 0, massMultiplier = 1;
       asset::MaterialGroup material = asset::MaterialGroup::UNDEFINED;
@@ -496,6 +500,25 @@ class DynamicWorld final {
       bool sleeping = true, inWater = false;
       };
     std::vector<WaterBodySnapshot> waterBodySnapshot() const;
+    struct ItemTraceContact {
+      uint32_t bodyId = uint32_t(-1), zenId = uint32_t(-1);
+      int category = C_Null;
+      std::string visual;
+      float depth = 0; // centimetres; positive means penetration
+      Tempest::Vec3 normal, point, otherPoint; // normal moves the Item out
+      };
+    struct ItemTraceSample {
+      uint64_t nativeStep = 0, nativeSteps = 0, index = 0;
+      float seconds = 0, stepSeconds = 0;
+      bool beforeStep = true, active = false, sleeping = true;
+      Tempest::Vec3 position, centerOfMass, velocity, bounds[2]; // cm and cm/s
+      std::vector<ItemTraceContact> contacts;
+      };
+    // Opt-in benchmark diagnostics at the ordinary native tick boundaries.
+    // nativeSteps reports batching; a per-step scenario must keep it <= 1.
+    bool startItemTrace(const ::Item& item);
+    std::vector<ItemTraceSample> takeItemTrace();
+    void stopItemTrace();
     void configureMeleeBench(int substeps);
     void updateMeleeBlade(const Npc* owner, const Tempest::Matrix4x4& hand, float lengthCm);
     void removeMeleeBlade(const Npc* owner);
@@ -631,6 +654,7 @@ class DynamicWorld final {
     void           loadDestructionVobs(Serialize& fin);
 
     std::unique_ptr<CollisionWorld>    world;
+    std::unique_ptr<ItemTrace>         itemTrace;
     std::unique_ptr<Cloth>             clothWorld;
     World*                            ownerWorld = nullptr;
     bool                              splitStaticTriangles = true;

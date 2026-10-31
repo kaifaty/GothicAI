@@ -162,18 +162,34 @@ def test_the_game_gets_the_sharper_textures_when_they_are_made(config, tmp_path)
     assert game(config, with_hd, PORTS).env["OPENGOTHIC_TEXTURES"] == str(tmp_path)
 
 
-def test_the_game_gets_the_fracture_cache_when_made(config, tmp_path, monkeypatch):
-    monkeypatch.delenv("OPENGOTHIC_FRACTURE", raising=False)
-    assert "OPENGOTHIC_FRACTURE" not in game(config, LAYOUT, PORTS).env
-    layout = replace(LAYOUT, fracture_cache=tmp_path)
-    assert game(config, layout, PORTS).env["OPENGOTHIC_FRACTURE"] == str(tmp_path)
+@pytest.mark.parametrize(
+    "field,variable",
+    [
+        ("fracture_cache", "OPENGOTHIC_FRACTURE"),
+        ("convex_parts_cache", "OPENGOTHIC_CONVEX_PARTS"),
+    ],
+)
+def test_the_game_gets_the_physics_cache_when_made(config, tmp_path, monkeypatch, field, variable):
+    monkeypatch.delenv(variable, raising=False)
+    assert variable not in game(config, LAYOUT, PORTS).env
+    layout = replace(LAYOUT, **{field: tmp_path})
+    assert game(config, layout, PORTS).env[variable] == str(tmp_path)
 
 
-@pytest.mark.parametrize("override", ["/another/fracture", ""])
-def test_the_game_preserves_an_explicit_fracture_override(config, tmp_path, monkeypatch, override):
-    monkeypatch.setenv("OPENGOTHIC_FRACTURE", override)
-    layout = replace(LAYOUT, fracture_cache=tmp_path)
-    assert game(config, layout, PORTS).env["OPENGOTHIC_FRACTURE"] == override
+@pytest.mark.parametrize(
+    "field,variable",
+    [
+        ("fracture_cache", "OPENGOTHIC_FRACTURE"),
+        ("convex_parts_cache", "OPENGOTHIC_CONVEX_PARTS"),
+    ],
+)
+@pytest.mark.parametrize("override", ["/another/cache", ""])
+def test_the_game_preserves_an_explicit_physics_cache_override(
+    config, tmp_path, monkeypatch, override, field, variable
+):
+    monkeypatch.setenv(variable, override)
+    layout = replace(LAYOUT, **{field: tmp_path})
+    assert game(config, layout, PORTS).env[variable] == override
 
 
 @pytest.mark.parametrize("override", ["/another/content", ""])

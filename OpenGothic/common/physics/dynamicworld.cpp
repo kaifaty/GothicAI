@@ -5,6 +5,7 @@
 #include "physicvbo.h"
 #include "ragdoll.h"
 #include "cloth.h"
+#include "convexparts.h"
 #include "worldwind.h"
 #include "gothic.h"
 #include "arrowtrace.h"
@@ -147,6 +148,8 @@ struct DynamicWorld::MovableVobs {
     asset::MaterialGroup      material = asset::MaterialGroup::UNDEFINED;
     float                      friction = 0.f;
     bool                       hullAttempted = false;
+    bool                       convexPartsAttempted = false;
+    std::shared_ptr<const ConvexParts> convexParts;
     std::shared_ptr<const FractureMesh> fracture;
     };
   std::unordered_map<std::string,std::shared_ptr<Shape>> shapes;
@@ -155,6 +158,7 @@ struct DynamicWorld::MovableVobs {
   double validationMs = 0;
   bool finalized = false;
   bool enabled = true;
+  bool furniturePartsEnabled = true;
   bool destructionEnabled = true;
   };
 
@@ -193,6 +197,56 @@ struct DynamicWorld::BodyData {
   std::vector<int64_t> fragmentSleepTime;
   std::vector<bool> fragmentPermanent;
   std::function<void(bool,const std::vector<Tempest::Matrix4x4>&)> fractureCallback;
+  };
+
+struct DynamicWorld::ItemTrace {
+  const ::Item* item = nullptr;
+  bool enabled = true;
+  uint64_t firstStep = 0, lastStep = 0, index = 0;
+  std::vector<ItemTraceSample> samples;
+
+  bool sample(CollisionWorld& world, bool beforeStep) {
+    const auto step=world.simulationStep();
+    for(const auto& native:world.waterBodySnapshot()) {
+      if(native.body==nullptr || native.body->ptrType()!=P_Item || native.body->payload()!=item)
+        continue;
+      ItemTraceSample result;
+      result.nativeStep=step;
+      result.nativeSteps=step-lastStep;
+      result.index=index++;
+      result.seconds=float(step-firstStep)/60.f;
+      result.stepSeconds=float(result.nativeSteps)/60.f;
+      result.beforeStep=beforeStep;
+      result.position=native.body->position();
+      result.centerOfMass=native.body->centerOfMass();
+      result.velocity=native.velocity;
+      result.active=!native.sleeping;
+      result.sleeping=native.sleeping;
+      result.bounds[0]=native.collisionBounds[0];
+      result.bounds[1]=native.collisionBounds[1];
+      constexpr uint32_t mask=(1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_Item)|(1u<<C_Ragdoll)|
+                              (1u<<C_LivingBody)|(1u<<C_ActiveBody)|(1u<<C_MovableVob)|(1u<<C_Fragment);
+      for(const auto& contact:world.overlaps(*native.body,2.f,mask)) {
+        ItemTraceContact entry;
+        entry.category=contact.category;
+        entry.depth=contact.depth;
+        entry.normal=-contact.axis;
+        entry.point=contact.point1;
+        entry.otherPoint=contact.point2;
+        if(contact.body!=nullptr) {
+          entry.bodyId=contact.body->nativeId();
+          entry.visual=contact.body->label();
+          if(contact.body->ptrType()==P_MovableVob && contact.body->payload()!=nullptr)
+            entry.zenId=static_cast<const BodyData*>(contact.body->payload())->pose->zenId;
+          }
+        result.contacts.push_back(std::move(entry));
+        }
+      samples.push_back(std::move(result));
+      lastStep=step;
+      return true;
+      }
+    return false;
+    }
   };
 
 struct DynamicWorld::WorldBodies {
@@ -1324,8 +1378,8 @@ void DynamicWorld::prepareMovableVobShape(BodyData& obj) {
       part.source->mesh.appendVertices(points,part.local);
     if(points.size()>=4) {
       Physics::initialize();
-      // A single native hull closes cavities such as cup mouths and the space
-      // below a table. Walking and aiming still use the original source faces.
+      // Preserve this envelope for mass, water and fracture, even when native
+      // collision uses the offline compound. Mesh queries keep the source faces.
       JPH::ConvexHullShapeSettings settings(points.data(),int(points.size()),0.001f);
       const auto result = settings.Create();
       if(!result.HasError() && result.Get()->GetVolume()>0.f)
@@ -1336,6 +1390,10 @@ void DynamicWorld::prepareMovableVobShape(BodyData& obj) {
     }
   if(shape.hull!=nullptr)
     obj.movableMass = float(shape.hull->GetVolume()*volumeScale(obj.origin)*materialDensity(shape.material)*obj.massMultiplier);
+  if((obj.className=="table" || obj.className=="cupboard") && movableVobs->furniturePartsEnabled && !shape.convexPartsAttempted) {
+    shape.convexPartsAttempted = true;
+    shape.convexParts = ConvexParts::load(obj.visual);
+    }
   }
 
 void DynamicWorld::rebuildMovableVob(BodyData& obj) {
@@ -1364,8 +1422,15 @@ void DynamicWorld::rebuildMovableVob(BodyData& obj) {
       // The authored mesh remains the exact static obstacle. This sensor hull
       // only owns destruction identity and the mass used by its future pieces.
       obj.body=world->addCollisionBody(shape.hull,obj.origin,shape.friction,C_MovableVob,false,true);
-    else
-      obj.body = world->addDynamicBody(shape.hull,obj.origin,shape.friction,obj.movableMass,C_MovableVob,true);
+    else {
+      const bool compound = (obj.className=="table" || obj.className=="cupboard") && movableVobs->furniturePartsEnabled &&
+                            shape.convexParts!=nullptr && shape.convexParts->partCount>1;
+      const auto& collision = compound ? shape.convexParts->shape : shape.hull;
+      obj.body = world->addDynamicBody(collision,obj.origin,shape.friction,obj.movableMass,C_MovableVob,true);
+      if(compound)
+        obj.body->setBuoyancyShape(new JPH::OffsetCenterOfMassShape(shape.hull,
+          collision->GetCenterOfMass()-shape.hull->GetCenterOfMass()));
+      }
     }
   if(obj.body!=nullptr) {
     obj.body->setPayload(&obj,P_MovableVob);
@@ -1429,6 +1494,39 @@ void DynamicWorld::setMovableVobsEnabled(bool enabled) {
       rebuildMovableVob(*obj);
   if(enabled && movableVobs->finalized && movableVobs->census.empty())
     validateMovableVobs();
+  }
+
+void DynamicWorld::setFurniturePartsEnabled(bool enabled) {
+  if(movableVobs->furniturePartsEnabled==enabled)
+    return;
+  movableVobs->furniturePartsEnabled = enabled;
+  for(auto* obj:movableVobs->bodies) {
+    if((obj->className!="table" && obj->className!="cupboard") || obj->pose->broken || obj->body==nullptr)
+      continue;
+    prepareMovableVobShape(*obj);
+    const auto& shape = *obj->movableShape;
+    const bool compound = enabled && shape.convexParts!=nullptr && shape.convexParts->partCount>1;
+    const auto& collision = compound ? shape.convexParts->shape : shape.hull;
+    const auto matrix = obj->body->matrix();
+    const auto velocity = obj->body->velocity();
+    const auto angular = obj->body->angularVelocity();
+    const bool sleeping = obj->body->isSleeping();
+    obj->body.reset();
+    obj->body = world->addDynamicBody(collision,matrix,shape.friction,obj->movableMass,C_MovableVob,sleeping);
+    obj->body->setPayload(obj,P_MovableVob);
+    obj->body->setLabel(obj->visual);
+    obj->body->setNoiseProfile(impactMaterial(shape.material),shape.material,obj->visual);
+    obj->body->setBuoyancyFraction(vobBuoyancyFraction(shape.material,obj->className));
+    if(compound)
+      obj->body->setBuoyancyShape(new JPH::OffsetCenterOfMassShape(shape.hull,
+        collision->GetCenterOfMass()-shape.hull->GetCenterOfMass()));
+    if(!sleeping)
+      obj->body->setVelocity(velocity,angular);
+    }
+  }
+
+bool DynamicWorld::furniturePartsEnabled() const {
+  return movableVobs->furniturePartsEnabled;
   }
 
 void DynamicWorld::setBuoyancyEnabled(bool enabled) {
@@ -1952,6 +2050,8 @@ std::vector<DynamicWorld::MovableVobSnapshot> DynamicWorld::movableVobSnapshot()
     entry.disposition = obj->disposition;
     entry.legacyCollision = obj->legacyCollision;
     entry.enabled = obj->body!=nullptr;
+    entry.collisionParts = movableVobs->furniturePartsEnabled && (obj->className=="table" || obj->className=="cupboard") &&
+      obj->movableShape->convexParts!=nullptr ? obj->movableShape->convexParts->partCount : 1;
     entry.mass = obj->movableMass;
     entry.hullVolume = obj->movableShape->hull!=nullptr ?
       float(obj->movableShape->hull->GetVolume()*volumeScale(obj->origin)) : 0.f;
@@ -2501,7 +2601,9 @@ void DynamicWorld::tick(uint64_t dt) {
     }
   npcList   ->tickAabbs();
   bulletList->tick(dt);
+  if(itemTrace && itemTrace->enabled) itemTrace->sample(*world,true);
   world     ->tick(dt);
+  if(itemTrace && itemTrace->enabled) itemTrace->sample(*world,false);
   {
     FrameProfile::Scope timing(FrameProfile::Zone::Destruction);
     for(auto* obj:movableVobs->bodies)
@@ -2548,6 +2650,27 @@ DynamicWorld::StaticCollisionStats DynamicWorld::staticCollisionStats() const {
   }
 
 uint64_t DynamicWorld::simulationStep() const { return world->simulationStep(); }
+
+bool DynamicWorld::startItemTrace(const ::Item& item) {
+  auto trace=std::make_unique<ItemTrace>();
+  trace->item=&item;
+  trace->firstStep=trace->lastStep=world->simulationStep();
+  if(!trace->sample(*world,false))return false;
+  itemTrace=std::move(trace);
+  return true;
+  }
+
+std::vector<DynamicWorld::ItemTraceSample> DynamicWorld::takeItemTrace() {
+  std::vector<ItemTraceSample> result;
+  if(itemTrace)result.swap(itemTrace->samples);
+  if(itemTrace && !itemTrace->enabled)itemTrace.reset();
+  return result;
+  }
+
+void DynamicWorld::stopItemTrace() {
+  if(itemTrace)itemTrace->enabled=false;
+  }
+
 void DynamicWorld::configureMeleeBench(int substeps) { world->configureMeleeBench(substeps); }
 void DynamicWorld::updateMeleeBlade(const Npc* owner,const Tempest::Matrix4x4& hand,float lengthCm) { world->updateMeleeBlade(owner,hand,lengthCm); }
 void DynamicWorld::removeMeleeBlade(const Npc* owner) { world->removeMeleeBlade(owner); }
