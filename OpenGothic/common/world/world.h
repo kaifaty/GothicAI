@@ -242,6 +242,7 @@ class World final {
     friend struct WorldDataContract;
     friend struct WayHeightsContract;
     double               worldLoadMs = 0;
+    bool                 textureLoadingPending = true;
     const zenkit::IFocus& searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const;
     std::string                           wname;
     GameSession&                          game;

@@ -97,7 +97,8 @@ MtDevice::MtDevice(std::string_view name, bool validation)
     throw std::system_error(Tempest::GraphicsErrc::NoDevice, "Apple Paravirtual device is not supported");
 
   queue = NsPtr<MTL::CommandQueue>(impl->newCommandQueue());
-  if(queue.get()==nullptr)
+  uploadQueue = NsPtr<MTL::CommandQueue>(impl->newCommandQueue());
+  if(queue.get()==nullptr || uploadQueue.get()==nullptr)
     throw std::system_error(Tempest::GraphicsErrc::NoDevice);
 
   int32_t majorVersion = 0, minorVersion = 0;

@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -40,8 +41,12 @@ void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& came
   const auto started=Clock::now();
   counters.publicationTimesMs.clear();
   counters.farPublicationTimesMs.clear();
-  const auto heroCell=ChunkId::fromPosition(hero.x,hero.z);
-  const auto cameraCell=ChunkId::fromPosition(camera.x,camera.z);
+  const auto nextHeroCell=ChunkId::fromPosition(hero.x,hero.z);
+  const auto nextCameraCell=ChunkId::fromPosition(camera.x,camera.z);
+  const bool focusChanged=!focused || heroCell!=nextHeroCell || cameraCell!=nextCameraCell;
+  heroCell=nextHeroCell;
+  cameraCell=nextCameraCell;
+  focused=true;
   counters.near=0;
   counters.far=0;
   counters.outside=0;
@@ -82,6 +87,12 @@ void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& came
           (*listener.second)(chunk.id,previous,next);
       }
     }
+  if(focusChanged && !focusListeners.empty()) {
+    const auto callbacks=focusListeners;
+    for(const auto& listener:callbacks)
+      if(focusListeners.find(listener.first)!=focusListeners.end())
+        (*listener.second)();
+    }
   counters.peakNear=std::max(counters.peakNear,uint64_t(counters.near));
   if(transitions!=0) {
     recentTransitions.emplace_back(started,transitions);
@@ -115,14 +126,28 @@ size_t ChunkResidency::indexOf(ChunkId id) const {
   return found==indices.end() ? size_t(-1) : found->second;
   }
 
+uint32_t ChunkResidency::textureDistance(ChunkId id) const {
+  if(!focused)
+    return std::numeric_limits<uint32_t>::max();
+  const auto distance=std::min(cellDistance(id,heroCell),cellDistance(id,cameraCell));
+  return uint32_t(std::min<int64_t>(distance,std::numeric_limits<uint32_t>::max()));
+  }
+
 uint64_t ChunkResidency::subscribe(Listener listener) {
   const auto subscription=++nextSubscription;
   listeners.emplace(subscription,std::make_shared<Listener>(std::move(listener)));
   return subscription;
   }
 
+uint64_t ChunkResidency::subscribeFocus(FocusListener listener) {
+  const auto subscription=++nextSubscription;
+  focusListeners.emplace(subscription,std::make_shared<FocusListener>(std::move(listener)));
+  return subscription;
+  }
+
 void ChunkResidency::unsubscribe(uint64_t subscription) {
   listeners.erase(subscription);
+  focusListeners.erase(subscription);
   }
 
 void ChunkResidency::enqueue(Work task) {
