@@ -846,6 +846,8 @@ for every admitted Item. The reader requires at least 95% of the combined sample
 to move less than 5 cm, maximum travel at most 100 cm, and zero `item recovered`
 messages. Every displacement over 10 cm remains in the output with its original
 contact measurements. These limits are fixed; a failed 95% gate requires a decision.
+For linked recoveries the reader also measures the logged pre-reset pose, so a
+reset inside a native tick cannot hide an excursion from the regular samples.
 Pass the previous four run directories with `--previous-runs` to include the
 new facet-slope distributions of their >10 cm outliers, alongside admitted Items,
 in 5° bins. A missing facet normal is counted separately. Recovery messages name
@@ -892,8 +894,9 @@ Acceptance is physics p95 ≤2 ms and ON–OFF ≤0.2 ms. The report also record
 worst entry frame, body counts and complete world loading time including census.
 Compare complete NEWWORLD loading time using the median of three runs per mode.
 
-[Recorded results](../../reports/physics/2026-10-31-placed-items/README.md): the
-first four-world probe reached 88.81% below 5 cm; validation stopped for a decision.
+[Recorded results](../../reports/physics/2026-10-31-placed-items/README.md): after
+`rooted`/`slope`/`on_excluded`, the four-world probe reached 947/998 (94.88978%)
+below 5 cm, maximum 121.61 m and two recoveries; validation stopped for a decision.
 
 `OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines

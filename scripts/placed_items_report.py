@@ -98,6 +98,24 @@ def summarize(runs, previous_runs=()):
         measured = {row["zen_id"]: row for row in probes}
         if len(measured) != len(probes) or measured.keys() != admitted.keys():
             raise ValueError(f"{world}: admitted/probed identities differ ({len(admitted)}/{len(probes)})")
+        recovery_lines = [line for line in (run / "game.log").read_text().splitlines()
+                          if "item recovered" in line]
+        recovery_records = []
+        recovery_shifts = {}
+        for line in recovery_lines:
+            identity = re.search(r"zen_id=(\d+)", line)
+            zen_id = int(identity[1]) if identity else None
+            source = next((row for row in census if row["zen_id"] == zen_id), {})
+            position = re.search(r"\bfrom=([^ ]+) rest=", line)
+            failed = list(map(float, position[1].split(","))) if position else None
+            distance = math.dist(failed, source["origin_cm"]) if failed and source else None
+            if distance is not None and math.isfinite(distance):
+                recovery_shifts[zen_id] = max(recovery_shifts.get(zen_id, 0), distance)
+            else:
+                failed = distance = None
+            recovery_records.append({"zen_id": zen_id, "visual": source.get("visual"),
+                                     "origin_cm": source.get("origin_cm"), "failed_position_cm": failed,
+                                     "shift_before_recovery_cm": distance, "message": line})
         shifts = []
         for zen_id, probe in measured.items():
             shift = probe["max_shift_cm"]
@@ -105,6 +123,9 @@ def summarize(runs, previous_runs=()):
                 raise ValueError(f"{world}/{zen_id}: invalid maximum displacement")
             if probe["elapsed_ms"] < 5000 or probe["native_steps"] < 300:
                 raise ValueError(f"{world}/{zen_id}: probe shorter than five native seconds")
+            # Recovery can reset the pose inside a native tick, before the
+            # regular post-tick sample. Its logged pre-reset pose is also evidence.
+            shift = max(shift, recovery_shifts.get(zen_id, 0))
             shifts.append(shift)
             if shift > 10:
                 source = admitted[zen_id]
@@ -114,15 +135,6 @@ def summarize(runs, previous_runs=()):
                                  "npc_contact": probe["npc_contact"],
                                  "support_item_zen_id": census[support_index]["zen_id"]
                                  if isinstance(support_index, int) and 0 <= support_index < len(census) else None})
-        recovery_lines = [line for line in (run / "game.log").read_text().splitlines()
-                          if "item recovered" in line]
-        recovery_records = []
-        for line in recovery_lines:
-            identity = re.search(r"zen_id=(\d+)", line)
-            zen_id = int(identity[1]) if identity else None
-            source = next((row for row in census if row["zen_id"] == zen_id), {})
-            recovery_records.append({"zen_id": zen_id, "visual": source.get("visual"),
-                                     "origin_cm": source.get("origin_cm"), "message": line})
         log_recovered = len(recovery_lines)
         recovered += log_recovered
         within = sum(shift < 5 for shift in shifts)
@@ -134,6 +146,7 @@ def summarize(runs, previous_runs=()):
                        "eligible": len(admitted), "classification_ms": summary["classification_ms"],
                        "gaps_cm": [summary["gaps_0_1"], summary["gaps_1_2"], summary["gaps_2_4"]],
                        "under_5cm": within, "max_shift_cm": high, "recovered": log_recovered,
+                       "sampled_under_5cm": sum(row["max_shift_cm"] < 5 for row in probes),
                        "recoveries": recovery_records,
                        "admitted_slopes": slope_distribution(admitted.values()),
                        "previous_outlier_slopes": slope_distribution(

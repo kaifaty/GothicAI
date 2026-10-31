@@ -160,7 +160,7 @@
 
 ## Движок: наши подсистемы
 
-Расставленные `Item`: перепись исходных форм после мебели, спящие тела рядом с героем и необязательная связь с ZEN в сейве — `common/world/worldobjects.*`, `objects/item.*`, `physics/dynamicworld.*`; `[GAME] placed_items`, Marvin `toggle placed_items`, `PLACED_ITEMS=0` в стендах. Нативный контракт `gothic-placed-items-contract`, численные стенды `placed-items` / `placed-items-census`; [перепись, пробуждение и замеры](../reports/physics/2026-10-31-placed-items/README.md).
+Расставленные `Item`: перепись исходных форм после мебели, спящие тела рядом с героем и необязательная связь с ZEN в сейве — `common/world/worldobjects.*`, `objects/item.*`, `physics/dynamicworld.*`; `[GAME] placed_items`, Marvin `toggle placed_items`, `PLACED_ITEMS=0` в стендах. Нативный контракт `gothic-placed-items-contract`, численные стенды `placed-items` / `placed-items-census` / `placed-items-reload` / `placed-items-performance`; [перепись, пробуждение и замеры](../reports/physics/2026-10-31-placed-items/README.md).
 
 Слой предметов мира Д1/Д2а: `common/world/voblayer.*` читает `content/worlds/<МИР>/vobs.d/*.json` после базы или целого `vobs.json`. Добавляет статичные меши, свет и эмиттеры существующих PFX (имя без учёта регистра), удаляет и двигает несохраняемые статичные `zCVob` по ID; формат базы не меняется, файлы применяются атомарно по имени. `OPENGOTHIC_VOB_LAYERS=0` выключает слой. Формат и офлайн-команда `content-convert check-vob-layer` — в [описании мира](asset-migration.md#данные-мира); контракт `gothic-vob-layer-test`, сценарий `scripts/bench/vob-layer.bench` и генератор временного контента `scripts/vob_layer_fixture.py`.
 
