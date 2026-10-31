@@ -12,14 +12,14 @@ while [[ $# -gt 0 ]]; do
     --round) round="${2:?round required}"; shift 2 ;;
     --stage) stage="${2:?stage required}"; shift 2 ;;
     -h|--help)
-      echo 'Usage: scripts/nav-live.sh --weights PATH[,PATH] --round LABEL [--stage prepare|qualify|teacher|smoke|baseline|report|clean]'
+      echo 'Usage: scripts/nav-live.sh --weights PATH[,PATH] --round LABEL [--stage prepare|qualify|requalify|teacher|smoke|baseline|report|clean]'
       echo 'Each invocation submits its phase and exits. Default: prepare, qualify, then baseline after its gate is complete.'
       exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 [[ -n "$weights" && "$round" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo 'Weights and a safe round label are required' >&2; exit 2; }
-case "$stage" in auto|prepare|qualify|teacher|smoke|baseline|report|clean) ;; *) echo "Unknown stage: $stage" >&2; exit 2 ;; esac
+case "$stage" in auto|prepare|qualify|requalify|teacher|smoke|baseline|report|clean) ;; *) echo "Unknown stage: $stage" >&2; exit 2 ;; esac
 [[ -f "$suite" ]] || { echo "Missing suite: $suite" >&2; exit 2; }
 suite="$(cd "$(dirname "$suite")" && pwd)/$(basename "$suite")"
 # Inventory the exact submitted code; later invocations never edit queued sources.
@@ -74,10 +74,20 @@ def digest(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 try:
     output=Path(sys.argv[1])
-    suite=json.loads(Path(sys.argv[2]).read_text())
+    suite_path=output/'qualified-suite.json'
+    frozen=suite_path.is_file()
+    if not frozen:
+        suite_path=Path(sys.argv[2])
+    suite=json.loads(suite_path.read_text())
+    if frozen:
+        sys.path.insert(0, str(Path(sys.argv[2]).parent/'scripts'))
+        from nav_live import eligible_cases, suite_cases
+        if len(eligible_cases(suite, suite_cases(suite))) < 10:
+            print('report')
+            raise SystemExit(0)
     needs_qualification=(suite.get('qualification_status') != 'geometry-qualified'
                          or bool(suite.get('semantic_confirmation_required')))
-    if needs_qualification:
+    if needs_qualification and not frozen:
         print('qualify' if (output/'preparation/complete.json').is_file() else 'prepare')
         raise SystemExit(0)
     runtime, snapshot = Path(sys.argv[4]), sys.argv[5]
@@ -87,7 +97,7 @@ try:
         print('prepare')
         raise SystemExit(0)
     gate=json.loads((output/'smoke.json').read_text())
-    valid=(gate.get('complete') is True and gate.get('suite_sha256') == digest(sys.argv[2])
+    valid=(gate.get('complete') is True and gate.get('suite_sha256') == digest(suite_path)
            and gate.get('binary_sha256') == digest(sys.argv[3]))
 except (OSError, ValueError):
     valid=False
@@ -184,7 +194,7 @@ PY
 )"
   export OPENGOTHIC_BASE
 fi
-if [[ "$phase" == qualify || "$phase" == teacher || "$phase" == smoke || "$phase" == baseline ]]; then
+if [[ "$phase" == qualify || "$phase" == requalify || "$phase" == teacher || "$phase" == smoke || "$phase" == baseline ]]; then
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
   desktop_found=0
@@ -260,8 +270,8 @@ ENGINE
   touch "$task/build-passed-$snapshot"
   printf '%s\n' "$snapshot" > "$task/build-snapshot"
 fi
-if [[ "$phase" == qualify ]]; then
-  "$task/.venv/bin/python" -B "$source/scripts/nav_live_prepare.py" --qualify \
+if [[ "$phase" == qualify || "$phase" == requalify ]]; then
+  "$task/.venv/bin/python" -B "$source/scripts/nav_live_prepare.py" "--$phase" \
     --runtime "$task" --output "$output" --suite "$source/suite.json" --weights "$weights"
 elif [[ "$phase" != prepare ]]; then
   "$task/.venv/bin/python" -B "$source/scripts/nav_live.py" "$phase" \
@@ -274,7 +284,7 @@ for shard in "${shards[@]}"; do
   log_dir="$log_prefix-$shard"
   ssh ryzen "mkdir -p '$log_dir'"
   display=()
-  [[ "$stage" == qualify || "$stage" == teacher || "$stage" == smoke || "$stage" == baseline ]] && display=(--display --display-shared)
+  [[ "$stage" == qualify || "$stage" == requalify || "$stage" == teacher || "$stage" == smoke || "$stage" == baseline ]] && display=(--display --display-shared)
   max_time=59m
   threads=16; cpu_quota=1200%; memory=10G
   if [[ "$stage" == teacher ]]; then

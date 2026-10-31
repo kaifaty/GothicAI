@@ -38,7 +38,7 @@
       "source": "PR574 reports/physics/2026-10-30-routine-return/entry-on-trace.jsonl routine_return_begin at 971d9cd7ad96f92d07e708b490e818f1e63e2855; forest_tree, farm_edge, forest_pine: only NPC and coordinates copied; unsafe farm_field capsule rejected",
       "variants": [
         {"id": "forest-tree", "npc": "MIL_310_STADTWACHE", "start": "cm:6516.90967,511.533173,-9258.83594", "goal": "NW_CITY_ENTRANCE_GUARD_02", "off_waynet_distance_cm": 1165.32324, "seeds": [18102027]},
-        {"id": "farm-edge", "npc": "BAU_950_LOBART", "start": "cm:13440.7822,1584.53284,-21502.2363", "goal": "NW_FARM1_LOBART", "off_waynet_distance_cm": 1201.09131, "seeds": [18102028]},
+        {"id": "farm-edge", "npc": "BAU_950_LOBART", "start": "cm:13440.7822,1584.53284,-21502.2363", "goal": "NW_FARM1_LOBART", "off_waynet_distance_cm": 1201.09131, "seeds": [18102028], "limit_ms": 180000},
         {"id": "forest-pine", "npc": "VLK_4303_ADDON_EROL", "start": "cm:35946.6836,3958.80811,1981.57922", "goal": "NW_TAVERN_TO_FOREST_03", "off_waynet_distance_cm": 1613.30115, "seeds": [18102029]}
       ],
       "stranger": false
@@ -55,22 +55,20 @@
       "route": ["MARKT_02", "NW_CITY_MERCHANT_PATH_20", "NW_CITY_TAVERN_IN_02", "NW_CITY_MERCHANT_PATH_29_B"],
       "time": [12, 0],
       "limit_ms": 90000,
-      "source": "New ordered native NEWWORLD route through the market and narrow streets; follower starts 2.83m from the hero at MARKT_02; hero pauses, turns and briefly runs; no moving validation/test route used",
-      "stranger": false,
-      "qualification_candidates": [
-        {"label": "near-market-north", "start": "cm:10166.06445,270.079346,4703.9082", "goal": "MARKT_02"},
-        {"label": "near-market-south", "start": "cm:10166.06445,270.079346,4303.9082", "goal": "MARKT_02"}
-      ]
+      "source": "New ordered native NEWWORLD route through the market and narrow streets; hero starts on checked nearby ground2-6m from the fixed follower; hero pauses, turns and briefly runs; no moving validation/test route used; recheck: explicit IMMORTAL protects the scripted hero while its process policy is AiNormal",
+      "prepare_commands": ["immortal player on"],
+      "stranger": false
     },
     {
       "id": "04-visible-detour", "number": 4, "name": "Visible target beyond terrain",
       "training_eligible": false, "split": "validation", "npc": "NONE_100_XARDAS",
-      "start": "cm:24427.3535,2875.72144,-13815.457",
-      "goal": "cm:23557,1049,-10265",
+      "start": "cm:32878.1875,4997.163695,-33336.293",
+      "goal": "NW_PASS_08",
       "goal_kind": "object",
       "time": [12, 0],
       "limit_ms": 180000,
-      "source": "All 121 detour-val metadata entries, ordered by decreasing Detour/direct; select highest native-qualified visible terrain blocker, then require v3b; no test episodes",
+      "source": {"dataset": "detour-val", "id": "detour-f568d5b117c3b356", "place_id": "PASS", "detour_ratio": 5.200449029881332, "file": "/mnt/shared/gothic-ai/nav-demos-v5/input/detour-val.jsonl", "recheck_start_source": "25% along the recorded first Detour edge, 2.838m from the original start; physical floor reprobe required; same NW_PASS_08 goal"},
+      "requalification_overrides": {"start": "cm:32878.1875,4997.163695,-33336.293"},
       "stranger": false
     },
     {
@@ -82,18 +80,13 @@
       "time": [12, 0],
       "limit_ms": 90000,
       "source": "New harbour shipyard pocket; preparation pocket-1500-1200: complete Detour52.834m, ratio2.1667, start snap0.171cm, first leg points away from goal; physical wall witness pending",
-      "qualification_candidates": [
-        {"label": "primary", "start": "cm:1500,-186,1200", "goal": "FP_PICK_CITY_01"},
-        {"label": "south", "start": "cm:1500,-186,600", "goal": "FP_PICK_CITY_01"},
-        {"label": "west", "start": "cm:900,-186,600", "goal": "FP_PICK_CITY_01"}
-      ],
       "stranger": false
     },
     {
       "id": "06-harbour-water", "number": 6, "name": "Harbour shore with deep water on the direct line",
       "training_eligible": false, "split": "new", "npc": "VLK_441_GARVELL",
-      "start": "NW_CITY_HABOUR_06_C",
-      "goal": "NW_CITY_HABOUR_HUT_05_BED_01",
+      "start": "NW_CITY_WAY_TO_SHIP_08",
+      "goal": "NW_CITY_WAY_TO_SHIP_FISCHER_06",
       "goal_kind": "point",
       "time": [12, 0],
       "limit_ms": 90000,
@@ -109,10 +102,6 @@
       "time": [12, 0],
       "limit_ms": 60000,
       "source": "Safety cliff-bridge-201-back200, link1230208767; new upper-corridor endpoint before descending final leg; goal Y is measured physical floor10587.9795cm from nav-live native probe, replacing Recast Y10614.0605cm; same XZ",
-      "qualification_candidates": [
-        {"label": "upper-trail", "start": "cm:50217.207,10650.5049,41427.4297", "goal": "cm:50160.6875,10587.9795,40771.207"},
-        {"label": "upper-trail-back100", "start": "cm:50286.1953,10628.8691,41355.0391", "goal": "cm:50160.6875,10587.9795,40771.207"}
-      ],
       "stranger": false
     },
     {

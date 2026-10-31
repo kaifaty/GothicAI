@@ -144,7 +144,7 @@ def probe_groups(worker, cases, output, seed):
 
 
 def qualify(args):
-    from nav_live import check_space, phase_deadline, report, teacher_outcome, teachers
+    from nav_live import check_space, eligible_cases, phase_deadline, report, teacher_outcome, teachers
     suite = read_json(args.suite)
     inputs = suite['inputs']
     for name in ('save', 'roads', 'familiar', 'links'):
@@ -271,6 +271,10 @@ def qualify(args):
     frozen['teacher_qualification'] = dict(complete=not failures and not teacher_failures,
         binary_sha256=sha256(live_args.binary), required_placements=len(frozen_cases),
         passed_placements=len(passed), placements=outcomes)
+    eligible = eligible_cases(frozen, frozen_cases)
+    expected_learner_runs = (sum(len(case['seeds']) for case in eligible) * len(args.weights.split(','))
+                             + sum(2 * len(case['seeds']) for case in eligible if case['number'] == 10))
+    live_args.expected_learner_runs = expected_learner_runs
     write_json(destination, frozen)
     report(live_args, frozen_cases, [], None)
     unresolved = [*failures, *teacher_failures,
@@ -285,18 +289,174 @@ def qualify(args):
     return 0
 
 
+def requalify(args):
+    from nav_live import actual_inputs, check_space, eligible_cases, phase_deadline, processed, raw_complete
+    from nav_live import report, teacher_directory, teacher_outcome, teachers
+
+    destination = args.output / 'qualified-suite.json'
+    frozen = read_json(destination)
+    original_cases = {case['id']: case for case in suite_cases(frozen)}
+    current = read_json(args.suite)
+    binary = args.runtime / 'build/opengothic/Gothic2Notr'
+    if frozen['teacher_qualification']['binary_sha256'] != sha256(binary):
+        raise ValueError('Selective requalification requires the same binary as the preserved references')
+    if frozen['inputs'] != current['inputs']:
+        raise ValueError('Selective requalification cannot change frozen input files')
+    identifiers = {'02-routine-return-farm-edge', '03-follow-hero', '04-visible-detour',
+                   '09-door-stairs', '10-local-stranger'}
+    overrides = {case['id']: {field: case[field] for field in ('limit_ms', 'prepare_commands', 'source') if field in case}
+                 for case in suite_cases(current) if case['id'] in identifiers}
+    terrain_id = '04-visible-detour'
+    terrain_override = next(case for case in suite_cases(current) if case['id'] == terrain_id).get('requalification_overrides', {})
+    if set(terrain_override) - {'start'}:
+        raise ValueError('The terrain recheck permits an explicit start override only')
+    overrides[terrain_id].update(terrain_override)
+    if set(overrides) != identifiers or not identifiers <= {case['id'] for case in suite_cases(frozen)}:
+        raise ValueError('Selective requalification requires the five fixed placements')
+    for scenario in frozen['scenarios']:
+        if scenario.get('variants'):
+            for variant in scenario['variants']:
+                variant.update(overrides.get(scenario['id'] + '-' + variant['id'], {}))
+        else:
+            scenario.update(overrides.get(scenario['id'], {}))
+    live_args = SimpleNamespace(suite=destination, runtime=args.runtime, output=args.output, binary=binary,
+        deadline=phase_deadline(), inputs=dict(frozen['inputs'], cache=str(args.runtime / 'navmesh-cache')),
+        input_sha256={name: sha256(frozen['inputs'][name]) for name in ('save', 'roads', 'familiar', 'links')})
+    check_space(args.output)
+    cases = suite_cases(frozen)
+    for case in (row for row in cases if row['id'] not in identifiers):
+        directory = teacher_directory(live_args, case)
+        if (not raw_complete(directory) or not processed(directory)
+                or read_json(directory / 'identity.json').get('actual') != actual_inputs(live_args, case, None, case['seeds'][0])):
+            raise ValueError(f"Preserved reference has different or incomplete inputs: {case['id']}")
+    generation = sha256(args.suite)[:12] + '-' + sha256(binary)[:12]
+    follow_id = '03-follow-hero'
+    follow = next(case for case in suite_cases(frozen) if case['id'] == follow_id)
+    previous_source = original_cases[follow_id].get('target_route_evidence', {}).get('recorded_start_source')
+    previous_follow = (Path(previous_source) if previous_source else
+                       teacher_directory(live_args, original_cases[follow_id]) / 'live-guide-start.json')
+    recorded_start = read_json(previous_follow)['selected_cm']
+    if recorded_start is None:
+        raise ValueError('The preserved hero episode has no accepted observer start')
+    start_token = 'cm:' + ','.join(format(value, '.9g') for value in recorded_start)
+    route = follow['route']
+    target_legs = [dict(follow, npc='PC_HERO', start=start, goal=goal, goal_kind='point', probe_label=f'hero-route-{index}')
+                   for index, (start, goal) in enumerate(zip([start_token, *route[1:]], [*route[1:], route[0]]))]
+    output = Path(frozen['qualification_source']) / ('recheck-' + generation)
+    options = SimpleNamespace(output=args.runtime / 'requalification-worker',
+        runner=args.runtime / 'build/opengothic/gothic-body-runner', assets=Path(os.environ['GOTHIC_DIR']),
+        save=Path(frozen['inputs']['save']), cache=args.runtime / 'navmesh-cache',
+        links=Path(frozen['inputs']['links']), roads=Path(frozen['inputs']['roads']), npc=follow['npc'],
+        ini=None, seed=follow['seeds'][0], physics='cv', watchdog_seconds=900, limit_ms=180000)
+    worker = Worker(options, 3, None)
+    native_failure = None
+    try:
+        excluded = test_pairs(frozen['inputs'])
+        if any(not isolated(leg, excluded) for leg in target_legs):
+            raise ValueError('A fixed hero leg overlaps a protected test route')
+        target_measured = probe_groups(worker, target_legs, output, follow['seeds'][0])
+        target_facts = [dict(target_measured[leg['probe_label']],
+                            supported_route=supported_route(target_measured[leg['probe_label']]['probe'])) for leg in target_legs]
+        next(scenario for scenario in frozen['scenarios'] if scenario['id'] == follow_id)['target_route_evidence'] = dict(
+            complete=all(row['supported_route'] for row in target_facts),
+            recorded_start_cm=recorded_start, recorded_start_source=str(previous_follow),
+            legs=target_facts)
+        if terrain_override:
+            terrain = next(case for case in suite_cases(frozen) if case['id'] == terrain_id)
+            if not isolated(terrain, excluded):
+                raise ValueError('The terrain recheck overlaps a protected test route')
+            initial = probe_groups(worker, [dict(terrain, probe_label=terrain_id + '-authored')],
+                                   output, terrain['seeds'][0])[terrain_id + '-authored']
+            floor = initial['probe']['start_support']['floor_cm']
+            measured = initial
+            if floor is not None:
+                coordinate = [float(value) for value in terrain['start'][3:].split(',')]
+                coordinate[1] = floor[1]
+                terrain['start'] = 'cm:' + ','.join(format(value, '.9g') for value in coordinate)
+                scenario = next(row for row in frozen['scenarios'] if row['id'] == terrain_id)
+                scenario['start'] = terrain['start']
+                scenario['requalification_floor_projection'] = dict(authored_start=terrain_override['start'],
+                    physical_start=terrain['start'], native_evidence=initial)
+                if not isolated(terrain, excluded):
+                    raise ValueError('The physical terrain start overlaps a protected test route')
+                measured = probe_groups(worker, [dict(terrain, probe_label=terrain_id + '-floor')],
+                                        output, terrain['seeds'][0])[terrain_id + '-floor']
+            probe = measured['probe']
+            frozen['unresolved_geometry'] = [row for row in frozen.get('unresolved_geometry', []) if row['id'] != terrain_id]
+            if floor is None or not qualify_probe(4, probe):
+                native_failure = dict(id=terrain_id, reason='rechecked terrain geometry did not qualify',
+                    native_facts=measured['file'], candidates_probed=2 if floor is not None else 1,
+                    complete_detours=int(probe['detour_complete']),
+                    supported_routes=int(supported_route(probe)))
+                frozen['unresolved_geometry'].append(native_failure)
+            else:
+                measured['rock_semantics_confirmed'] = any(token in probe['direct_obstruction']['label'].upper()
+                                                           for token in ('ROCK', 'FELS', 'CLIFF'))
+                next(scenario for scenario in frozen['scenarios'] if scenario['id'] == terrain_id)['qualification_evidence'] = measured
+                frozen['semantic_confirmation_required'] = [identifier for identifier in frozen.get('semantic_confirmation_required', [])
+                                                            if identifier != terrain_id]
+                if not measured['rock_semantics_confirmed']:
+                    frozen['semantic_confirmation_required'].append(terrain_id)
+    finally:
+        worker.close()
+    references = {}
+    for case in (row for row in suite_cases(frozen) if row['id'] in identifiers):
+        base = teacher_directory(live_args, {key: value for key, value in case.items() if key != 'teacher_reference'})
+        references[case['id']] = str(base.with_name(base.name + '-recheck-' + generation))
+    for scenario in frozen['scenarios']:
+        if scenario.get('variants'):
+            for variant in scenario['variants']:
+                identifier = scenario['id'] + '-' + variant['id']
+                if identifier in references:
+                    variant['teacher_reference'] = references[identifier]
+        elif scenario['id'] in references:
+            scenario['teacher_reference'] = references[scenario['id']]
+    frozen['qualification_status'] = 'partial'
+    write_json(destination, frozen)
+    cases = suite_cases(frozen)
+    teachers(live_args, [case for case in cases if case['id'] in identifiers and not (native_failure and case['id'] == terrain_id)])
+    outcomes = [teacher_outcome(live_args, case) if not (native_failure and case['id'] == terrain_id) else
+        dict(id=terrain_id, passed=False, failure=native_failure['reason'], elapsed_ms=0, decisions=0,
+             falls=None, deep_water_entries=None, output=native_failure['native_facts']) for case in cases]
+    passed = [row['id'] for row in outcomes if row['passed']]
+    failures = frozen.get('unresolved_geometry', [])
+    semantic = frozen.get('semantic_confirmation_required', [])
+    complete = not failures and not semantic and len(passed) == len(cases)
+    frozen['qualification_status'] = 'geometry-qualified' if complete else 'partial'
+    frozen['teacher_qualification'] = dict(complete=not failures and len(passed) == len(cases),
+        binary_sha256=sha256(binary), required_placements=len(cases), passed_placements=len(passed), placements=outcomes)
+    eligible = eligible_cases(frozen, cases)
+    write_json(destination, frozen)
+    live_args.expected_learner_runs = (sum(len(case['seeds']) for case in eligible) * len(args.weights.split(','))
+        + sum(2 * len(case['seeds']) for case in eligible if case['number'] == 10))
+    report(live_args, cases, [], None)
+    path = Path(frozen['qualification_source']) / 'result.json'
+    result = read_json(path)
+    result.update(teacher_placements_passed=passed, teacher_placements=outcomes, complete=complete,
+        rechecked_placements=sorted(identifiers), eligible_placements=[case['id'] for case in eligible],
+        expected_baseline_runs=live_args.expected_learner_runs,
+        unresolved=[*failures, *(row for row in outcomes if not row['passed']),
+            *(dict(id=identifier, reason='rock semantics require confirmation') for identifier in semantic)])
+    write_json(path, result)
+    print(json.dumps(dict(event='teacher_requalification', rechecked=len(identifiers), required=len(cases),
+                         passed=len(passed), eligible=len(eligible), minimum_eligible=10,
+                         complete=complete, suite=str(destination))), flush=True)
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--suite', type=Path, required=True)
     parser.add_argument('--qualify', action='store_true')
+    parser.add_argument('--requalify', action='store_true')
     parser.add_argument('--weights')
     args = parser.parse_args(argv)
-    if args.qualify:
+    if args.qualify or args.requalify:
         if not args.weights:
             parser.error('--qualify requires --weights')
-        return qualify(args)
+        return requalify(args) if args.requalify else qualify(args)
     suite = read_json(args.suite)
     cases = suite_cases(suite)
     inputs = suite['inputs']
