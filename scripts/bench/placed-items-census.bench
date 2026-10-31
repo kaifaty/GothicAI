@@ -1,0 +1,9 @@
+# Fresh WORLD=<world>.ZEN, PLACED_ITEMS=1. Numeric census and five seconds
+# of native wake simulation per 12 m section; no captures or render review.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+placed-items census
+placed-items probe
+physics stats

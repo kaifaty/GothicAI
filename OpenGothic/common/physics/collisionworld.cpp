@@ -4,6 +4,7 @@
 #include "ragdoll.h"
 #include "cloth.h"
 #include "frameprofile.h"
+#include "gothic.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
@@ -3226,7 +3227,8 @@ void CollisionWorld::tick(uint64_t dt) {
       // that sleeping body to remain queryable so a native contact can wake it.
       // A sleeping water item also retains its native body, independently of
       // characters, so save/load, pickup and a buoyancy toggle remain physical.
-      disable = !native.IsActive() && !body->keepSleepingItem(toCentimeters(native.GetPosition()));
+      disable = !native.IsActive() && !body->keepSleepingItem(toCentimeters(native.GetPosition())) &&
+                !(Gothic::physicsFlags().placedItems && item->isPlacedItem());
       }
     item->setPhysicsMatrix(matrix);
     if(disable)

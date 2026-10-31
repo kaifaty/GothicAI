@@ -217,6 +217,11 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
       LoadProbe::mark("movable_vobs",LoadProbe::msSince(probeT));
 
     probeT = LoadProbe::now();
+    wobj.finalizePlacedItems();
+    if(LoadProbe::enabled())
+      LoadProbe::mark("placed_items",LoadProbe::msSince(probeT));
+
+    probeT = LoadProbe::now();
     wmatrix->buildIndex();
     if(LoadProbe::enabled())
       LoadProbe::mark("waynet_index",LoadProbe::msSince(probeT));
@@ -312,6 +317,7 @@ void World::save(Serialize &fout) {
   wobj.save(fout);
   wdynamic->saveMovableVobs(fout);
   saveStuckArrows(fout);
+  wobj.savePlacedItems(fout);
   }
 
 uint32_t World::npcId(const Npc *ptr) const {

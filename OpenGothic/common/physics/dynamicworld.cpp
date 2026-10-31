@@ -1284,6 +1284,69 @@ DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, co
   return Item(this,obj.release());
   }
 
+std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
+    const std::vector<PlacedItemCandidate>& candidates) const {
+  constexpr float limitCm = 4.f;
+  constexpr uint32_t mask = (1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_MovableVob)|(1u<<C_Item);
+  std::vector<PlacedItemCensusEntry> result(candidates.size());
+  std::unordered_map<const CollisionWorld::CollisionBody*,size_t> identities;
+  for(size_t i=0;i<candidates.size();++i) {
+    const auto* handle = candidates[i].body;
+    if(handle!=nullptr && handle->obj!=nullptr && handle->obj->body!=nullptr)
+      identities.emplace(handle->obj->body.get(),i);
+    }
+  for(size_t i=0;i<candidates.size();++i) {
+    const auto* handle = candidates[i].body;
+    if(handle==nullptr || handle->obj==nullptr || handle->obj->body==nullptr)
+      continue;
+    const auto& body = *handle->obj->body;
+    JPH::Vec3 min, max;
+    body.getAabb(min,max);
+    const auto hullMin = CollisionWorld::toCentimeters(min);
+    const auto hullMax = CollisionWorld::toCentimeters(max);
+    const float height = std::max(hullMax.y-hullMin.y,1.f);
+    auto& entry = result[i];
+    for(const auto& hit:world->overlaps(body,limitCm,mask)) {
+      const auto other = identities.find(hit.body);
+      if(hit.category==C_Item && other==identities.end())
+        continue;
+      // A downward contact near the bottom of the actual collision envelope
+      // is support. Convert normal separation to its vertical distance.
+      if(hit.axis.y<=-.6f && hit.point1.y<=hullMin.y+.3f*height) {
+        const float gap = std::max(0.f,hit.depth/hit.axis.y);
+        if(gap<entry.supportGapCm) {
+          entry.supportGapCm = gap;
+          entry.supportCategory = hit.category;
+          entry.supportNormal = hit.axis;
+          entry.supportLabel = hit.body!=nullptr ? hit.body->label() : "";
+          entry.supportZenId = hit.body!=nullptr && hit.body->ptrType()==P_MovableVob ?
+              static_cast<const BodyData*>(hit.body->payload())->pose->zenId : uint32_t(-1);
+          entry.supportItemIndex = other!=identities.end() ? other->second : size_t(-1);
+          }
+        }
+      if(hit.category==C_Landscape || hit.category==C_Object)
+        entry.staticDepthCm = std::max(entry.staticDepthCm,hit.depth);
+      else if(hit.category==C_MovableVob)
+        entry.furnitureDepthCm = std::max(entry.furnitureDepthCm,hit.depth);
+      else if(hit.category==C_Item) {
+        entry.itemDepthCm = std::max(entry.itemDepthCm,hit.depth);
+        // Keep the pair symmetric even if the native narrow phase reports
+        // its deepest contact from only one side.
+        auto& neighbour = result[other->second];
+        neighbour.itemDepthCm = std::max(neighbour.itemDepthCm,hit.depth);
+        }
+      }
+    }
+  for(size_t i=0;i<candidates.size();++i) {
+    auto& entry = result[i];
+    entry.disposition = candidates[i].mission ? "quest" : entry.supportGapCm>limitCm ? "hangs" :
+                        entry.staticDepthCm>limitCm ? "static" : entry.furnitureDepthCm>limitCm ? "furniture" :
+                        entry.itemDepthCm>limitCm ? "neighbour" : "ok";
+    entry.enabled = entry.disposition=="ok";
+    }
+  return result;
+  }
+
 DynamicWorld::Item DynamicWorld::addMovableVob(const ProtoMesh& proto, std::string_view visual,
                                               const Tempest::Matrix4x4& matrix, float massMultiplier,
                                               bool blocksWalking, std::string_view className,

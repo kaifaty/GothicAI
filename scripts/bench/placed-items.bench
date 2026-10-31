@@ -1,0 +1,30 @@
+# Native authored Item checks on fresh NEWWORLD; run PLACED_ITEMS=1 and =0.
+# No captures. Output contains census, native contacts, ownership and full save.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+placed-items census
+placed-items floor
+wait 1000
+placed-items walk
+hold forward 3000
+wait 3000
+release all
+placed-items walk-report
+placed-items arrow-ready
+wait 1000
+placed-items arrow
+wait 3000
+placed-items arrow-report
+placed-items table
+wait 1000
+placed-items table-push
+wait 5000
+placed-items table-report
+placed-items save
+placed-items pickup-ready
+wait 2000
+placed-items pickup
+wait 2000
+placed-items pickup-report

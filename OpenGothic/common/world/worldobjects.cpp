@@ -27,6 +27,9 @@
 #include <Tempest/Painter>
 #include <Tempest/Application>
 #include <Tempest/Log>
+#include <chrono>
+#include <stdexcept>
+#include <unordered_set>
 
 using namespace Tempest;
 
@@ -79,6 +82,8 @@ void WorldObjects::load(Serialize &fin) {
   fin.read(v);
   fin.setVersion(v);
   }
+  for(auto& source:placedItems)
+    source.item=nullptr;
   itemArr.clear();
   items.clear();
 
@@ -112,6 +117,7 @@ void WorldObjects::load(Serialize &fin) {
     items.add(itemArr.back().get());
     }
 
+  loadPlacedItems(fin);
   loadItemPhysics(fin);
 
   for(auto& i:rootVobs)
@@ -220,15 +226,154 @@ void WorldObjects::loadItemPhysics(Serialize& fin) {
          !finiteVelocity(state.velocity) || !finiteVelocity(state.angular))
         return;
       }
-    for(const auto& state:states)
-      itemArr[state.index]->restorePhysics(state.matrix,state.velocity,state.angular,state.sleeping);
+    for(const auto& state:states) {
+      auto& item=*itemArr[state.index];
+      // Linked placements use their saved matrix, but always enter the new
+      // proximity set asleep. Their original ZEN census has already run.
+      if(Gothic::physicsFlags().placedItems && item.isPlacedItem())
+        continue;
+      item.restorePhysics(state.matrix,state.velocity,state.angular,state.sleeping);
+      }
     }
   catch(const std::exception& e) {
     Tempest::Log::e("item physics load: ",e.what());
     }
   }
 
+void WorldObjects::linkPlacedItem(PlacedItem& source, Item& item) {
+  source.item=&item;
+  item.placedZenId=source.zenId;
+  item.placedAllowed=source.validation.enabled;
+  if(Gothic::physicsFlags().placedItems)
+    item.setPhysicsDisable();
+  }
+
+void WorldObjects::finalizePlacedItems() {
+  const auto started=std::chrono::steady_clock::now();
+  std::vector<DynamicWorld::PlacedItemCandidate> candidates;
+  candidates.reserve(placedItems.size());
+  // Build all authored shapes before querying any of them. The same Item path
+  // selects item_hulls and applies scale for both the census and live bodies.
+  for(auto& source:placedItems) {
+    source.item->setPhysicsEnable(owner);
+    candidates.push_back({&source.item->physic,source.item->isMission()});
+    }
+  const auto verdicts=owner.physic()->placedItemCensus(candidates);
+  size_t allowed=0;
+  for(size_t i=0;i<placedItems.size();++i) {
+    auto& source=placedItems[i];
+    source.validation=verdicts[i];
+    source.item->placedAllowed=source.validation.enabled;
+    allowed+=source.validation.enabled;
+    source.item->setPhysicsDisable();
+    }
+  placedValidationMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
+  Tempest::Log::i("placed item geometry: ",placedItems.size()," candidates, ",allowed,
+                 " allowed, ",placedValidationMs," ms");
+  }
+
+void WorldObjects::tickPlacedItems() {
+  placedCreatedThisFrame=0;
+  if(!Gothic::physicsFlags().placedItems)
+    return;
+  const auto* hero=owner.player();
+  if(hero==nullptr)
+    return;
+  constexpr float enterSquared=2000.f*2000.f, leaveSquared=2200.f*2200.f;
+  constexpr size_t creationBudget=4;
+  for(auto& source:placedItems) {
+    auto* item=source.item;
+    if(item==nullptr)
+      continue;
+    if(!source.validation.enabled) {
+      if(item->isDynamic())
+        item->setPhysicsDisable();
+      continue;
+      }
+    const float distance=(item->position()-hero->position()).quadLength();
+    if(item->isDynamic()) {
+      if(distance>leaveSquared && item->physicsSleeping())
+        item->setPhysicsDisable();
+      }
+    else if(distance<enterSquared && placedCreatedThisFrame<creationBudget) {
+      placedCreatedThisFrame+=item->wakePhysics() ? 1 : 0;
+      }
+    }
+  }
+
+void WorldObjects::savePlacedItems(Serialize& fout) const {
+  uint32_t count=0;
+  for(const auto& item:itemArr)
+    count+=item->isPlacedItem();
+  // Even an empty entry distinguishes a new save from a legacy save. Dropped
+  // items must not acquire an authored identity merely by landing on its pose.
+  fout.setEntry("worlds/",fout.worldName(),"/placed-items");
+  fout.write(uint32_t(0x314c4950),uint16_t(1),fout.worldName(),uint32_t(itemArr.size()),count);
+  for(size_t i=0;i<itemArr.size();++i)
+    if(itemArr[i]->isPlacedItem())
+      fout.write(uint32_t(i),itemArr[i]->placedZenId);
+  }
+
+void WorldObjects::loadPlacedItems(Serialize& fin) {
+  if(!fin.setEntry("worlds/",fin.worldName(),"/placed-items")) {
+    // Legacy saves have no identity. Only an unchanged instance at its exact
+    // authored pose can be linked; every other item keeps its legacy physics.
+    const auto samePose=[](const PlacedItem& source, const Item& item) {
+      const auto& matrix=item.localTransform();
+      if(!PhysicsSave::validTransform(matrix))
+        return false;
+      if(const auto* box=item.bBox()) {
+        for(unsigned i=0;i<8;++i) {
+          Vec3 original(box[(i&1)!=0].x,box[(i&2)!=0].y,box[(i&4)!=0].z);
+          auto saved=original;
+          source.origin.project(original);
+          matrix.project(saved);
+          if((original-saved).quadLength()>.01f*.01f)
+            return false;
+          }
+        return true;
+        }
+      for(size_t i=0;i<16;++i)
+        if((i<12 || i>14) && std::abs(source.origin.data()[i]-matrix.data()[i])>1.e-6f)
+          return false;
+      const Vec3 distance(source.origin.at(3,0)-matrix.at(3,0),source.origin.at(3,1)-matrix.at(3,1),
+                          source.origin.at(3,2)-matrix.at(3,2));
+      return distance.quadLength()<=.01f*.01f;
+      };
+    for(auto& item:itemArr)
+      for(auto& source:placedItems)
+        if(source.item==nullptr && source.instance==item->clsId() &&
+           samePose(source,*item)) {
+          linkPlacedItem(source,*item);
+          break;
+          }
+    return;
+    }
+  uint32_t magic=0,total=0,count=0;
+  uint16_t schema=0;
+  std::string worldName;
+  fin.read(magic,schema,worldName,total,count);
+  if(magic!=0x314c4950 || schema!=1 || worldName!=fin.worldName() || total!=itemArr.size() || count>total)
+    throw std::runtime_error("Invalid placed item save header");
+  std::unordered_set<uint32_t> linked;
+  uint32_t previous=0;
+  for(uint32_t i=0;i<count;++i) {
+    uint32_t index=0,zenId=0;
+    fin.read(index,zenId);
+    if(index>=total || (i>0 && index<=previous) || !linked.insert(zenId).second)
+      throw std::runtime_error("Invalid placed item save identity");
+    previous=index;
+    auto source=std::find_if(placedItems.begin(),placedItems.end(),[&](const PlacedItem& source) {
+      return source.zenId==zenId;
+      });
+    if(source==placedItems.end() || source->instance!=itemArr[index]->clsId())
+      throw std::runtime_error("Unknown placed item save identity");
+    linkPlacedItem(*source,*itemArr[index]);
+    }
+  }
+
 void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
+  tickPlacedItems();
   auto passive=std::move(sndPerc);
   sndPerc.clear();
 
@@ -750,6 +895,14 @@ Item* WorldObjects::addItem(const asset::VItem& vob) {
                               vob.rotation.columns[0].z, vob.rotation.columns[1].z, vob.rotation.columns[2].z, vob.position.z,
                               0, 0, 0, 1);
   it->setObjMatrix(m);
+  PlacedItem source;
+  source.zenId=vob.id;
+  source.instance=inst;
+  source.visual=it->handle().visual;
+  source.origin=m;
+  source.item=it;
+  it->placedZenId=vob.id;
+  placedItems.push_back(std::move(source));
   return it;
   }
 
@@ -761,6 +914,15 @@ std::unique_ptr<Item> WorldObjects::takeItem(Item &it) {
       itemArr.pop_back();
       items.del(ret.get());
       ret->setPhysicsDisable();
+      if(ret->isPlacedItem()) {
+        for(auto& source:placedItems)
+          if(source.item==ret.get()) {
+            source.item=nullptr;
+            break;
+            }
+        ret->placedZenId=uint32_t(-1);
+        ret->placedAllowed=true;
+        }
       onItemRemoved(*ret);
       return ret;
       }

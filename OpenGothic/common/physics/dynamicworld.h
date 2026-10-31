@@ -244,6 +244,7 @@ class DynamicWorld final {
       private:
         DynamicWorld*       owner  = nullptr;
         BodyData*           obj    = nullptr;
+      friend class DynamicWorld;
       };
 
     struct RayLandResult {
@@ -416,6 +417,24 @@ class DynamicWorld final {
       float extraPaddingCm = 0.f; // collision padding beyond the base centimetre
       };
     const ItemHull& itemHullShape(const ProtoMesh& proto, std::string_view visual);
+    struct PlacedItemCandidate {
+      const Item* body = nullptr;
+      bool mission = false;
+      };
+    struct PlacedItemCensusEntry {
+      std::string disposition;
+      float supportGapCm = std::numeric_limits<float>::infinity();
+      float staticDepthCm = 0, furnitureDepthCm = 0, itemDepthCm = 0;
+      int supportCategory = 0;
+      std::string supportLabel;
+      Tempest::Vec3 supportNormal = {};
+      uint32_t supportZenId = uint32_t(-1);
+      size_t supportItemIndex = size_t(-1);
+      bool enabled = false;
+      };
+    // All handles must still have their authored poses. Decisions preserve the
+    // input order and are made together, before any candidate body is removed.
+    std::vector<PlacedItemCensusEntry> placedItemCensus(const std::vector<PlacedItemCandidate>& candidates) const;
     Item           addMovableVob(const ProtoMesh& mesh, std::string_view visual, const Tempest::Matrix4x4& matrix,
                                  float massMultiplier, bool blocksWalking, std::string_view className = {},
                                  bool legacyCollision = true, uint32_t zenId = uint32_t(-1));
