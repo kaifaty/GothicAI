@@ -25,13 +25,16 @@ enum class Zone : size_t {
   TextureUpdate,
   // Demand elapsed sums include animation workers and can overlap.
   TextureDemand,
+  BindlessRebuild, BindlessPatch,
   EncodeShadows, EncodeMain, EncodeWater, EncodePost, EncodeUi, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
-  PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, DispatchCalls, Count };
+  PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, DispatchCalls,
+  BindlessTextureSlots, BindlessBufferSlots, BindlessPatchedSlots, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };
+enum class TextureActivity : uint8_t { Read, Upload, Complete, Ready, Publish };
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
 bool enabled();
 bool watchedActor(const Npc* actor);
@@ -41,6 +44,18 @@ void observer(uint64_t dt, std::chrono::steady_clock::time_point now);
 void sample(std::string_view segment, uint64_t frame);
 void add(Amount amount, uint64_t value);
 void flush();
+// Separate timestamps preserve worker overlap across submitted-frame boundaries.
+void textureEvent(TextureActivity activity);
+class TextureWork final {
+  public:
+    explicit TextureWork(TextureActivity activity);
+    ~TextureWork();
+    void finish();
+    TextureWork(const TextureWork&)=delete;
+    TextureWork& operator=(const TextureWork&)=delete;
+  private:
+    void* record=nullptr;
+  };
 // Capture the attempt at submission, never look up a reused cmdId on completion.
 void* gpuSubmitted();
 void gpuCompleted(void* record, double startSeconds, double endSeconds);
@@ -92,6 +107,15 @@ constexpr void observer(uint64_t, std::chrono::steady_clock::time_point) noexcep
 constexpr void sample(std::string_view, uint64_t) noexcept {}
 constexpr void add(Amount, uint64_t) noexcept {}
 constexpr void flush() noexcept {}
+constexpr void textureEvent(TextureActivity) noexcept {}
+class TextureWork final {
+  public:
+    constexpr explicit TextureWork(TextureActivity) noexcept {}
+    constexpr ~TextureWork() noexcept {}
+    constexpr void finish() noexcept {}
+    TextureWork(const TextureWork&)=delete;
+    TextureWork& operator=(const TextureWork&)=delete;
+  };
 constexpr void* gpuSubmitted() noexcept { return nullptr; }
 constexpr void gpuCompleted(void*, double, double) noexcept {}
 constexpr void* geometrySubmitted() noexcept { return nullptr; }

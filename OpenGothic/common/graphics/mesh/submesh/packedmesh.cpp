@@ -1,4 +1,5 @@
 #include "packedmesh.h"
+#include "loadprobe.h"
 
 #include <Tempest/Application>
 #include <Tempest/Log>
@@ -436,6 +437,7 @@ PackedMesh::PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> t
   }
 
 PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest) {
+  LoadProbe::Vobs::Scope probe("mesh_pack");
   subMeshes.resize(mesh.sub_meshes.size());
   /* NOTE: some mods do have corrupted content description,
    * using alpha_test==0, for some of vegetation
@@ -459,6 +461,7 @@ PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explici
   }
 
 PackedMesh::PackedMesh(const asset::SoftSkinMesh& skinned) {
+  LoadProbe::Vobs::Scope probe("mesh_pack");
   auto& mesh = skinned.mesh;
   subMeshes.resize(mesh.sub_meshes.size());
   {

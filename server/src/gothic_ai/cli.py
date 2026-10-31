@@ -3559,7 +3559,7 @@ def main() -> None:
         format="%(asctime)s %(levelname).1s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    for noisy in ("httpx", "httpx2", "httpcore", "openai"):
+    for noisy in ("httpx", "httpx2", "httpcore", "openai", "websockets"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     try:
