@@ -174,7 +174,7 @@ class Resources final {
     static constexpr uint32_t TextureAlwaysFull = uint32_t(-1);
     static void                      textureDemand(const Material& material, TextureCategory category, bool add, uint32_t distance = TextureAlwaysFull);
     static void                      updateTextures(ChunkResidency* residency);
-    static void                      configureTextures(std::string_view budget = {}, std::string_view skipMips = {});
+    static void                      configureTextures(std::string_view budget = {}, std::string_view skipMips = {}, std::string_view target = {});
 
     static const AttachBinder*       bindMesh       (const ProtoMesh& anim, const Skeleton& s);
     static const ProtoMesh*          loadMesh       (std::string_view name);
@@ -423,8 +423,9 @@ class Resources final {
       std::chrono::steady_clock::time_point demoteAt{};
       TextureCategory category = TextureCategory::Other;
       TextureSource sourceKind = TextureSource::Other;
-      uint64_t lastDemand = 0, bytes = 0, changedGeneration = 0;
+      uint64_t lastDemand = 0, lastNeededFull = 0, bytes = 0, changedGeneration = 0;
       bool wanted() const;
+      std::tuple<uint32_t,uint64_t,uintptr_t> demotionPriority() const;
       };
     struct TextureReload {
       Tempest::Texture2d* identity = nullptr;
@@ -443,6 +444,7 @@ class Resources final {
     std::set<TextureRecord*> textureMissing;
     std::set<TextureRecord*> texturePromotions;
     std::map<std::pair<std::chrono::steady_clock::time_point,uintptr_t>,TextureRecord*> textureDemotions;
+    std::map<std::tuple<uint32_t,uint64_t,uintptr_t>,TextureRecord*> textureDemotionLru;
     std::set<TextureRecord*> nearTailTextures;
     std::chrono::steady_clock::time_point nearTailUpdated = std::chrono::steady_clock::now();
     double nearTailSeconds = 0;
@@ -452,6 +454,7 @@ class Resources final {
     uint64_t texturesEvicted = 0, texturesReloaded = 0, texturesPromoted = 0, texturesDemoted = 0;
     uint32_t textureSkipMips = 2;
     uint64_t textureBudget = 256*1048576;
+    uint64_t textureTarget = 192*1048576;
     bool textureStreaming = true, textureOverBudget = false, texturePayloadChanged = false;
 
     TextureCache                                                      texCache;

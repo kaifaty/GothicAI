@@ -31,6 +31,7 @@ class Texture2d final {
     bool          isEmpty()  const { return texW<=0 || texH<=0 || texD<=0; }
     TextureFormat format()   const { return frm; }
     uint32_t      mipCount() const;
+    bool          uploadReady() const;
 
     Texture2d     shared() const;
     void          markRetired();

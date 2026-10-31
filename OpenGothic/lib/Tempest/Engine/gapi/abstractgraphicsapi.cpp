@@ -139,3 +139,7 @@ NonUniqResId AbstractGraphicsApi::Swapchain::syncId() const {
 void AbstractGraphicsApi::DescArray::setTexture(size_t, Texture*) {
   throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension,"descriptor array updates");
   }
+
+AbstractGraphicsApi::PTexture AbstractGraphicsApi::createTextureAsync(Device* d, const Pixmap& p, TextureFormat frm, uint32_t mips) {
+  return createTexture(d,p,frm,mips);
+  }

@@ -784,6 +784,7 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
   setenv("OPENGOTHIC_TEXTURE_MIPS","1",1);
   setenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS","2",1);
   setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","256",1);
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","192",1);
   {
   Resources resources(device);
   Shaders shaders;
@@ -874,6 +875,8 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
             "a frame must publish at most one mip replacement and one texture generation");
     require(material.tex->w()>=64 && material.normal->w()>=64 && material.orm->w()>=64,
             "a pending mip replacement must preserve its resident payload without a placeholder");
+    require(material.tex->uploadReady() && material.normal->uploadReady() && material.orm->uploadReady(),
+            "published material maps must have completed their GPU uploads before descriptor binding");
     };
   const auto waitFor=[&](bool wantFull) {
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
@@ -919,11 +922,25 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
   Resources::textureDemand(material,Resources::TextureCategory::Static,true,3);
   Resources::textureDemand(material,Resources::TextureCategory::Static,false,1);
   Resources::textureDemand(material,Resources::TextureCategory::Static,false,2);
+  unsetenv("OPENGOTHIC_TEXTURE_TARGET_MB");
+  Resources::configureTextures({}, {}, "0");
   std::this_thread::sleep_for(std::chrono::milliseconds(5100));
   tick();
   require(full() && Resources::textureStats().demoted==0,
-          "a ring-three owner must retain Full after the five-second hysteresis interval");
+          "a ring-three owner must retain Full under pressure after the five-second hysteresis interval");
   Resources::textureDemand(material,Resources::TextureCategory::Static,false,3);
+
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","192",1);
+  Resources::configureTextures({}, {}, "0");
+  Material protectedOrm, olderColor, newerNormal;
+  protectedOrm.tex=material.orm;
+  olderColor.tex=material.tex;
+  newerNormal.tex=material.normal;
+  Resources::textureDemand(protectedOrm,Resources::TextureCategory::Static,true,1);
+  Resources::textureDemand(olderColor,Resources::TextureCategory::Static,true,2);
+  Resources::textureDemand(olderColor,Resources::TextureCategory::Static,false,2);
+  Resources::textureDemand(newerNormal,Resources::TextureCategory::Static,true,2);
+  Resources::textureDemand(newerNormal,Resources::TextureCategory::Static,false,2);
   tick();
   require(full() && Resources::textureStats().demoted==0,
           "leaving ring three must start a fresh five-second delay before demotion");
@@ -931,6 +948,37 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
   tick();
   require(full() && Resources::textureStats().demoted==0,
           "Far owners must retain Full until the entire five-second hysteresis has elapsed");
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  tick();
+  require(full() && Resources::textureStats().demoted==0 &&
+          Resources::textureStats().liveBytes<192*1048576,
+          "the 192 MiB target environment override must retain eligible Far Full payloads below target");
+
+  unsetenv("OPENGOTHIC_TEXTURE_TARGET_MB");
+  Resources::configureTextures({}, {}, "0");
+  bool oldestObserved=false;
+  const auto pressureDeadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  while(Resources::textureStats().demoted<2 && std::chrono::steady_clock::now()<pressureDeadline) {
+    tick();
+    if(Resources::textureStats().demoted==1 && !oldestObserved) {
+      require(material.tex->w()==64 && material.normal->w()==256 && material.orm->w()==256,
+              "pressure must first demote the eligible texture least recently needed at Full");
+      oldestObserved=true;
+      }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  require(oldestObserved && Resources::textureStats().demoted==2 && material.tex->w()==64 &&
+          material.normal->w()==64 && material.orm->w()==256 && Resources::textureStats().nearTailCount==0,
+          "pressure must demote eligible Far textures in LRU order while protecting a Near Full owner");
+  require(commit(descriptorFrame) && !commit(descriptorFrame),
+          "pressure demotion must refresh only the affected frame-bank descriptors");
+  checkColors(0xff00ff00u);
+
+  Resources::textureDemand(protectedOrm,Resources::TextureCategory::Static,false,1);
+  std::this_thread::sleep_for(std::chrono::milliseconds(4900));
+  tick();
+  require(material.orm->w()==256 && Resources::textureStats().demoted==2,
+          "a texture leaving Near must receive its own full five-second delay under pressure");
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
   waitFor(false);
   const auto fullBytes=uint64_t(color.size()-128+2*(maps.size()-128));
@@ -988,6 +1036,7 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
   unsetenv("OPENGOTHIC_TEXTURE_MIPS");
   unsetenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS");
   unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  unsetenv("OPENGOTHIC_TEXTURE_TARGET_MB");
   }
 }
 

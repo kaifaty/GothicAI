@@ -910,7 +910,8 @@ void Gothic::refreshPhysicsFlags() {
   }
 
 void Gothic::setupSettings() {
-  Resources::configureTextures(settingsGetS("GAME","texture_budget_mb"),settingsGetS("GAME","texture_far_skip_mips"));
+  Resources::configureTextures(settingsGetS("GAME","texture_budget_mb"),settingsGetS("GAME","texture_far_skip_mips"),
+                               settingsGetS("GAME","texture_target_mb"));
   Resources::censusProfile(gameDatDef,ouDef,settingsGetI("GAME","language"));
   // settingsSetI/S/F emit onSettingsChanged synchronously. Publish before any
   // same-dispatch actor creation, prepare or input query can consume the change.

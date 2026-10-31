@@ -288,6 +288,45 @@ def test_fence_attempts_cost_time_but_do_not_inflate_rendered_fps(tmp_path):
     assert stats["cpu_ms"]["mean"] == 3
     assert stats["zones"][0]["mean_ms"] == 1
     assert stats["amounts"]["palette_bytes"]["per_frame"] == 1536
+    assert "texture_activity" not in stats
+
+    directory = profile(tmp_path / "texture", [
+        {"begin_ns": 0},
+        {"begin_ns": 10_000_000, "outcome": 2},
+        {"begin_ns": 30_000_000},
+        {"begin_ns": 50_000_000},
+        {"begin_ns": 90_000_000},
+        {"begin_ns": 100_000_000},
+    ])
+    with (directory / "frameprofile.csv.texture.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, ["event", "kind", "begin_ns", "end_ns", "complete", "overflow"])
+        writer.writeheader()
+        for index, (kind, begin, end) in enumerate((
+            ("read", 12, 15), ("upload", 15, 65), ("complete", 65, 65),
+            ("ready", 90, 90), ("publish", 30, 30), ("publish", 100, 100),
+        )):
+            writer.writerow({"event": index, "kind": kind, "begin_ns": begin*1_000_000,
+                             "end_ns": end*1_000_000, "complete": 1, "overflow": 0})
+    # Both sidecars are separate from the exact frameprofile.csv input glob.
+    (directory / "frameprofile.csv.gpu.csv").write_text("not a frame profile\n")
+    frames = report.samples_from_profile(directory / "frameprofile.csv")[0][("market", "view-1")]
+    assert frames[0]["attempts"] == 2
+    assert [row["texture_activity"] for row in frames] == [
+        dict(worker_active=True, read=True, upload=True, complete=False, ready=False, publish=False),
+        dict(worker_active=True, read=False, upload=True, complete=False, ready=False, publish=True),
+        dict(worker_active=True, read=False, upload=True, complete=True, ready=False, publish=False),
+        dict(worker_active=False, read=False, upload=False, complete=False, ready=True, publish=False),
+    ]
+    result = report.build_report(directory)
+    activity = result["places"]["market"]["summary"]["texture_activity"]
+    assert activity["worker_active"]["with"] == {"frames": 3, "p99_ms": pytest.approx(39.8)}
+    assert activity["worker_active"]["without"] == {"frames": 1, "p99_ms": 10}
+    assert activity["read"]["with"] == {"frames": 1, "p99_ms": 30}
+    assert activity["upload"] == activity["worker_active"]
+    assert activity["complete"]["with"] == {"frames": 1, "p99_ms": 40}
+    assert activity["ready"]["with"] == {"frames": 1, "p99_ms": 10}
+    assert activity["publish"]["with"] == {"frames": 1, "p99_ms": 20}
+    assert "| worker_active | 3 | 39.800 | 1 | 10.000 |" in report.report_markdown(result)
 
 
 def test_gpu_completion_and_matching_cpu_duration(tmp_path):

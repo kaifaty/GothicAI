@@ -2,6 +2,7 @@
 """Summarize frame-profile CSVs and compare repeatable world performance runs."""
 
 import argparse
+from bisect import bisect_left
 import csv
 import json
 import math
@@ -15,6 +16,7 @@ METADATA_COLUMNS = {
     "end_ns", "outcome", "flags", "overflow", "gpu_ns", "gpu_done", "gpu_buffers",
     "drawable_width", "drawable_height", "width", "height",
 }
+TEXTURE_ACTIVITIES = ("read", "upload", "complete", "ready", "publish")
 TIMING = (
     "Frame intervals are differences between consecutive submitted attempt begin_ns "
     "timestamps in the same contiguous perf-PLACE/view-N or streaming-flythrough/PASS segment. Intervening "
@@ -87,8 +89,46 @@ def segment_parts(segment):
     return None
 
 
+def read_texture_activity(path):
+    path = Path(str(path) + ".texture.csv")
+    if not path.exists():
+        return None
+    events = {kind: [] for kind in TEXTURE_ACTIVITIES}
+    with path.open(newline="") as stream:
+        for row in csv.DictReader(stream):
+            kind = row["kind"]
+            begin, end = int(row["begin_ns"]), int(row["end_ns"])
+            if kind not in events or begin < 0 or end < begin:
+                raise ValueError(f"{path}: invalid texture activity")
+            if int(row["overflow"]):
+                raise ValueError(f"{path}: texture profiler overflow; recording is truncated")
+            if kind in ("read", "upload") and begin == end:
+                continue
+            events[kind].append((begin, end))
+    indexed = {}
+    for kind, rows in events.items():
+        rows.sort()
+        starts, ends = [], []
+        for begin, end in rows:
+            starts.append(begin)
+            ends.append(max(ends[-1] if ends else 0, end))
+        indexed[kind] = starts, ends
+    return indexed
+
+
+def texture_activity(events, left, right):
+    flags = {}
+    for kind, (starts, ends) in events.items():
+        before = bisect_left(starts, right)
+        flags[kind] = (before > 0 and ends[before - 1] > left) if kind in ("read", "upload") else (
+            before > bisect_left(starts, left))
+    flags["worker_active"] = flags["read"] or flags["upload"]
+    return flags
+
+
 def samples_from_profile(path):
     rows, zones, amounts, has_gpu = read_profile(path)
+    activity = read_texture_activity(path)
     samples = {}
     start = 0
     while start < len(rows):
@@ -122,6 +162,8 @@ def samples_from_profile(path):
                     "gpu_ms": submitted["gpu_ns"] / 1e6 if gpu_valid else None,
                     "gpu_buffers": submitted.get("gpu_buffers") if gpu_valid else None,
                 })
+                if activity is not None:
+                    target[-1]["texture_activity"] = texture_activity(activity, submitted["begin_ns"], rows[right]["begin_ns"])
         start = end
     warnings = []
     overflow = max((row.get("overflow", 0) for row in rows), default=0)
@@ -158,6 +200,15 @@ def summarize(samples):
         "gpu": None,
     }
     result["zones"].sort(key=lambda item: item["mean_ms"], reverse=True)
+    measured_activity = [row for row in samples if "texture_activity" in row]
+    if measured_activity:
+        result["texture_activity"] = {}
+        for kind in ("worker_active", *TEXTURE_ACTIVITIES):
+            groups = {}
+            for label, active in (("with", True), ("without", False)):
+                intervals = [row["frame_ms"] for row in measured_activity if row["texture_activity"][kind] == active]
+                groups[label] = {"frames": len(intervals), "p99_ms": percentile(intervals, .99)}
+            result["texture_activity"][kind] = groups
     if any(row["has_gpu"] for row in samples):
         completed = [row for row in samples if row["gpu_ms"] is not None]
         buffers = [row["gpu_buffers"] for row in completed if row["gpu_buffers"] is not None]
@@ -456,6 +507,18 @@ def report_markdown(report):
             lines.extend(f"| {amount} | {values['total']} | {values['per_frame']:.3f} |"
                          for amount, values in stats["amounts"].items())
             lines.append("")
+            if "texture_activity" in stats:
+                lines.extend(["Texture activity intersects submitted-frame intervals, including intervening FenceBusy time. "
+                              "Read/upload use interval overlap; complete/ready/publish use point timestamps in [begin, next begin). "
+                              "Complete marks CPU worker completion; ready marks the main thread observing GPU upload completion; "
+                              "publish marks the payload swap. Groups overlap and indicate correlation.", "",
+                              "| Texture activity | Frames with | Frame p99 with ms | Frames without | Frame p99 without ms |",
+                              "|---|---:|---:|---:|---:|"])
+                for kind, groups in stats["texture_activity"].items():
+                    yes, no = groups["with"], groups["without"]
+                    lines.append(f"| {kind} | {yes['frames']} | {number(yes['p99_ms'])} | "
+                                 f"{no['frames']} | {number(no['p99_ms'])} |")
+                lines.append("")
         lines.extend([f"### {place} repeats", "", "| Repeat | FPS | p95 ms |",
                       "|---|---:|---:|"])
         lines.extend(f"| {repeat['directory']} | {repeat['summary']['fps']:.2f} | {repeat['summary']['frame_ms']['p95']:.3f} |"
