@@ -184,9 +184,12 @@ elif [[ "$stage" == train ]]; then
   test -x "$python"
   test ! -e "$archive/bc4/last.pt"
   nvidia-smi
-  "$python" -X faulthandler -B -I scripts/nav_bc_train.py train \
+  trap 'rm -rf -- "$task/cache"' EXIT
+  "$python" -X faulthandler -B -I scripts/nav_bc_data.py prepare \
     --source /mnt/shared/gothic-ai/nav-lean-data/corpus-v5 --manifest "$task/input/v5-compact.json" \
-    --input-variant hd-familiar --output "$archive/bc4" \
+    --input-variant hd-familiar --output "$task/cache"
+  "$python" -X faulthandler -B -I scripts/nav_bc_train.py train \
+    --cache "$task/cache" --output "$archive/bc4" \
     --init "$task/input/hd/last.pt" --epochs 20 --batch 8 --segment 64 \
     --lr .0003 --seed 17 --device cuda --threads 6
   "$python" -X faulthandler -B -I scripts/check_nav_policy.py --weights "$archive/bc4/policy.navbc" \

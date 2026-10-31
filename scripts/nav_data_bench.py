@@ -537,15 +537,16 @@ def measured_prepare(args, manifest, entries, cache, progress):
 
 
 def check_direct_training(args, manifest, entries, scratch, progress):
-    """Compare frozen prepare with direct loading and identical BC updates."""
+    """Compare frozen prepare with XZ preparation or direct BC updates."""
     import copy
-    import torch
-    import nav_bc_train as train
     import nav_lean_data as convert
 
     gpu = args.mode == "loader"
-    if gpu and not torch.cuda.is_available():
-        raise RuntimeError("The loader benchmark requires the admitted Ryzen GPU")
+    if args.mode != "prepare-xz":
+        import torch
+        import nav_bc_train as train
+        if gpu and not torch.cuda.is_available():
+            raise RuntimeError("The loader benchmark requires the admitted Ryzen GPU")
     families = sorted({entry["family"] for entry in entries})
     selected_ids = set()
     for number, family in enumerate(families):
@@ -573,6 +574,10 @@ def check_direct_training(args, manifest, entries, scratch, progress):
         old_index = reference.prepare_manifest(args.source, cache, args.manifest,
                                                CHUNK_RECORDS, variant)
     prepare_seconds = time.perf_counter() - started
+    if args.mode == "prepare-xz":
+        return check_xz_prepare(args, manifest, selected, new_entries, reference, old_index,
+                                cache, scratch / "xz-cache", prepare_seconds, variant, progress)
+
     progress.begin("parity.direct_index")
     started = time.perf_counter()
     with patch.object(data, "load_training_manifest", return_value=(manifest, new_entries)):
@@ -684,6 +689,76 @@ def check_direct_training(args, manifest, entries, scratch, progress):
                 torch=torch.__version__, reference_script_sha256=hashlib.sha256(args.reference_script.read_bytes()).hexdigest())
 
 
+def check_xz_prepare(args, manifest, selected, converted, reference, old_index,
+                     old_cache, new_cache, gzip_seconds, variant, progress):
+    """Compare XZ-backed prepare with frozen gzip prepare, including NPZ bytes."""
+    if any(data.nav_demos.samples_path(entry["directory"]).suffix != ".xz" for entry in converted):
+        raise ValueError("XZ prepare verification requires converted XZ recordings")
+    progress.begin("prepare_xz.current_prepare")
+    started = time.perf_counter()
+    with patch.object(data, "load_training_manifest", return_value=(manifest, converted)):
+        new_index = data.prepare_manifest(args.converted_source, new_cache, args.manifest,
+                                          CHUNK_RECORDS, variant)
+    xz_seconds = time.perf_counter() - started
+    if old_index != new_index:
+        differences = sorted(key for key in old_index.keys() | new_index.keys()
+                             if old_index.get(key) != new_index.get(key))
+        raise ValueError(f"XZ prepare index differs from frozen gzip prepare: {differences}")
+
+    arrays_equal, npz_equal, decisions, familiar_decisions = 0, 0, 0, 0
+    episodes = []
+    for old, new in zip(old_index["episodes"], new_index["episodes"]):
+        progress.begin("prepare_xz.cache_parity", old["id"])
+        left_path, right_path = old_cache / old["file"], new_cache / new["file"]
+        left = reference.load_cached(left_path, packed=True)
+        right = data.load_cached(right_path, packed=True)
+        if left.keys() != right.keys():
+            raise ValueError(f"XZ prepare array keys differ: {old['id']}")
+        for name, value in left.items():
+            other = right[name]
+            if value.dtype != other.dtype or value.shape != other.shape or value.tobytes() != other.tobytes():
+                raise ValueError(f"XZ prepare packed array differs: {old['id']}: {name}")
+            arrays_equal += 1
+        steps = len(left["labels"])
+        decisions += steps
+        if args.corpus == "v5":
+            familiar_decisions += int((left["near_familiar"].any(axis=(1, 2, 3)) |
+                                       left["far_familiar"].any(axis=(1, 2, 3))).sum())
+        with left_path.open("rb") as stream:
+            old_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+        with right_path.open("rb") as stream:
+            new_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+        identical = old_sha == new_sha
+        npz_equal += int(identical)
+        episodes.append(dict(id=old["id"], decisions=steps, npz_bytes_equal=identical,
+                             gzip_prepare_npz_sha256=old_sha, xz_prepare_npz_sha256=new_sha,
+                             gzip_prepare_npz_bytes=left_path.stat().st_size,
+                             xz_prepare_npz_bytes=right_path.stat().st_size))
+        del left, right
+        progress.emit("prepare_cache_episode_complete", decisions=steps, npz_bytes_equal=identical)
+    if len(episodes) != 50 or decisions != sum(entry["decisions"] for entry in selected):
+        raise ValueError("XZ prepare verification population changed")
+    if args.corpus == "v5" and not familiar_decisions:
+        raise ValueError("XZ prepare verification did not exercise nonzero familiar inputs")
+    index_bytes_equal = (old_cache / "index.json").read_bytes() == (new_cache / "index.json").read_bytes()
+    return dict(mode=args.mode, corpus=args.corpus, episodes=len(episodes), decisions=decisions,
+                episode_ids=[entry["id"] for entry in selected], input_variant=variant,
+                navdemo_version=new_index["navdemo_version"],
+                navigation_memory_version=new_index["navigation_memory_version"],
+                packed_arrays_bitwise_equal=arrays_equal, cache_index_equal=True,
+                cache_index_bytes_equal=index_bytes_equal, npz_files_bitwise_equal=npz_equal,
+                cache_files_bitwise_equal=index_bytes_equal and npz_equal == len(episodes),
+                familiar_nonzero_decisions=familiar_decisions,
+                gzip_prepare_seconds=gzip_seconds, xz_prepare_seconds=xz_seconds,
+                xz_over_gzip_prepare_ratio=xz_seconds / gzip_seconds,
+                xz_prepare_slowdown_percent=100 * (xz_seconds / gzip_seconds - 1),
+                xz_prepare_within_20_percent=xz_seconds <= 1.2 * gzip_seconds,
+                cache_medium="local NVMe scratch", source_medium="NAS",
+                nas_reads_may_use_warm_cache=True, separate_prepare_required=True,
+                episode_cache_comparison=episodes,
+                reference_script_sha256=hashlib.sha256(args.reference_script.read_bytes()).hexdigest())
+
+
 def check_loaded_tensors(groups, old_by_id, reference, cache, corpus, progress, segment):
     """Check every ordered worker result before unpacking it for training."""
     checked_arrays, checked_tensors, decisions, familiar_decisions = 0, 0, 0, 0
@@ -719,7 +794,7 @@ def check_loaded_tensors(groups, old_by_id, reference, cache, corpus, progress, 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("profile", "probe", "replay", "parity", "loader"))
+    parser.add_argument("mode", choices=("profile", "probe", "replay", "parity", "loader", "prepare-xz"))
     parser.add_argument("--corpus", choices=("v4", "v5"), required=True)
     for name in ("source", "manifest", "output", "scratch"):
         parser.add_argument("--" + name, type=Path, required=True)
@@ -732,7 +807,7 @@ def main():
         parser.error("All paths must be absolute")
     if args.mode == "replay" and args.corpus != "v4":
         parser.error("Replay uses the historical v4 [200:300] training slice")
-    if args.mode in ("parity", "loader") and any(path is None or not path.is_absolute()
+    if args.mode in ("parity", "loader", "prepare-xz") and any(path is None or not path.is_absolute()
                                      for path in (args.converted_source, args.reference_script)):
         parser.error("Parity requires absolute --converted-source and --reference-script")
     faulthandler.enable()

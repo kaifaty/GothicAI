@@ -5,6 +5,7 @@ Run on Ryzen through gq (batch class). No simulator or server is involved.
 Example: python scripts/nav_bc_train.py train --cache /abs/cache --output /abs/run
 Direct: python scripts/nav_bc_train.py train --source /abs/recordings \
     --manifest /abs/manifest.json --input-variant hd-familiar --output /abs/run
+Optional prefetch: --loader-workers 4 --loader-prefetch 1 (default: synchronous).
 Torch is imported only by this training/validation driver, never by the numpy reader.
 """
 from __future__ import annotations
@@ -82,7 +83,7 @@ class BatchLoader:
     ``prefetch`` following batches are retained; no episode survives across epochs.
     Spawn remains safe after the training process has initialized CUDA.
     """
-    def __init__(self, cache, workers=4, prefetch=1):
+    def __init__(self, cache, workers=0, prefetch=1):
         if not 0 <= workers <= 8 or not 1 <= prefetch <= 3:
             raise ValueError("loader requires 0-8 workers and 1-3 prefetched batches")
         self.cache = Path(cache)
@@ -301,7 +302,7 @@ def train(args):
     write_json(out / "training_config.json", {**vars(args), "architecture": model.architecture(),
                "class_counts": [c.tolist() for c in counts], "class_weights": [w.cpu().tolist() for w in weights],
                "loss_head_weights": [2, 1, 2, 1, 1, 1], "max_dagger_fraction": .5})
-    with BatchLoader(cache, getattr(args, "loader_workers", 4), getattr(args, "loader_prefetch", 1)) as loader:
+    with BatchLoader(cache, getattr(args, "loader_workers", 0), getattr(args, "loader_prefetch", 1)) as loader:
         for epoch in range(len(history), args.epochs):
             started = time.perf_counter()
             model.train()
@@ -515,7 +516,7 @@ def train_bc3(args, index):
         auxiliary_weights=dict(stuck=.1, next_near=.1, detour=.5),
         auxiliary_targets=index["auxiliary"], initialization=initialization,
         selection="fixed final epoch; closed-loop validation pending"))
-    with BatchLoader(cache, getattr(args, "loader_workers", 4), getattr(args, "loader_prefetch", 1)) as loader:
+    with BatchLoader(cache, getattr(args, "loader_workers", 0), getattr(args, "loader_prefetch", 1)) as loader:
         for epoch in range(len(history), args.epochs):
             started = time.perf_counter()
             model.train()
@@ -701,8 +702,8 @@ def main():
             p.add_argument("--epochs", type=int, default=20)
             p.add_argument("--batch", type=int, default=8)
             p.add_argument("--segment", type=int, default=64)
-            p.add_argument("--loader-workers", type=int, choices=range(9), default=4,
-                           help="direct-recording loader processes; 0 loads synchronously")
+            p.add_argument("--loader-workers", type=int, choices=range(9), default=0,
+                           help="optional direct-recording loader processes; default 0 loads synchronously")
             p.add_argument("--loader-prefetch", type=int, choices=(1, 2, 3), default=1,
                            help="following packed batches to prefetch")
             p.add_argument("--lr", type=float, default=3e-4)
