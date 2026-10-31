@@ -22,6 +22,8 @@ V5 = Path("/mnt/shared/gothic-ai/nav-demos-v5")
 V5_RECORDINGS = Path("/mnt/shared/gothic-ai/nav-lean-data/corpus-v5")
 BASELINE = Path("/mnt/shared/gothic-ai/archive/nav-dagger3-20261030")
 SCREEN_HD = Path("/mnt/shared/gothic-ai/nav-eval-screen/runs/20261030T214924Z-e9cc38adb/metrics.json")
+ROUND_BASE_FINGERPRINT = "ea8c24940fb0ddcaf787e842f96babea96a5d639086fda0b69ceb4f765f77220"
+ROUND_VIDEOS_FINGERPRINT = "6ec7b09259522c9da886ba4885424f9fcd5b76a611bc5376e242f0a4a2a613eb"
 REPORT = "2026-10-31-dagger4-r1"
 SEEDS = (18102027, 18102028, 18102029)
 FAMILIES = ("point", "object", "approach", "follow_below_gate", "jump")
@@ -55,6 +57,20 @@ def resources(phase):
 
 def read_json(path):
     return json.loads(path.read_text())
+
+
+def round_environment(task):
+    base = task / "input/base"
+    if (not (base / "base.json").is_file()
+            or read_json(base / "base.json").get("fingerprint") != ROUND_BASE_FINGERPRINT):
+        raise ValueError(f"Round-one base pin is missing or has a different fingerprint: {base}")
+    settings = Path.home() / "gothic-ai/game-settings"
+    if not all((settings / "system" / name).is_file() for name in ("Gothic.ini", "SystemPack.ini")):
+        raise ValueError(f"Prepared round-one game settings are missing: {settings}")
+    return dict(GOTHIC_DIR=str(settings), OPENGOTHIC_BASE=str(base),
+        OPENGOTHIC_BASE_FINGERPRINT=ROUND_BASE_FINGERPRINT,
+        OPENGOTHIC_VIDEOS_FINGERPRINT=ROUND_VIDEOS_FINGERPRINT,
+        OPENGOTHIC_BASE_CACHE=str(task / "base-cache"), OPENGOTHIC_BASE_STORE=str(task / "base-store"))
 
 
 def emit(event, **values):
@@ -509,13 +525,9 @@ def main():
     import nav_demos_v4_chain as queue
     if args.enqueue is not None:
         return enqueue(args.task, args.step, args.enqueue, queue)
-    from ryzen_game import game_environment
-    os.environ.update(game_environment())
-    os.environ.update(OPENGOTHIC_BASE_CACHE=str(args.task / "base-cache"),
-        OPENGOTHIC_BASE_STORE=str(args.task / "base-store"),
-        OPENGOTHIC_BASE="/mnt/shared/gothic-ai/base/" + os.environ["OPENGOTHIC_BASE_FINGERPRINT"])
-    if not (Path(os.environ["OPENGOTHIC_BASE"]) / "base.json").is_file():
-        raise ValueError("Prepared read-only base is missing")
+    os.environ.update(round_environment(args.task))
+    emit("dagger4_round1_base", step=args.step, fingerprint=os.environ["OPENGOTHIC_BASE_FINGERPRINT"],
+         path=os.environ["OPENGOTHIC_BASE"], assets=os.environ["GOTHIC_DIR"])
     os.environ.update(UV_CACHE_DIR=str(Path.home() / ".cache/uv"), TMPDIR=str(args.task / "tmp"),
         OMP_NUM_THREADS="1" if phases()[args.step]["kind"] in ("validate", "screen") else "6",
         OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENGOTHIC_BODY_TRACE="0",

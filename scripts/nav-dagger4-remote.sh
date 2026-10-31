@@ -34,6 +34,10 @@ test -f /mnt/shared/gothic-ai/nav-demos-v5/manifest.json
 test -d /mnt/shared/gothic-ai/nav-lean-data/corpus-v5
 test -f /mnt/shared/gothic-ai/nav-eval-screen/runs/20261030T214924Z-e9cc38adb/metrics.json
 mkdir -p "$task/input" "$task/tmp" "$task/source" "$archive/input/hd" "$archive/logs" "$archive/round1/validation/setup-rejections"
+round_base=/mnt/shared/gothic-ai/base/ea8c24940fb0ddcaf787e842f96babea96a5d639086fda0b69ceb4f765f77220
+test -f "$round_base/base.json"
+if [[ ! -e "$task/input/base" ]]; then ln -s "$round_base" "$task/input/base"; fi
+test "$(readlink "$task/input/base")" = "$round_base"
 copy_input() { if [[ -f "$2" ]]; then cmp "$1" "$2"; else cp "$1" "$2"; fi; }
 for name in last.pt policy.navbc; do copy_input "$hd/hd-run/$name" "$archive/input/hd/$name"; done
 for name in save.sav places.json accepted-links.txt jump-links.txt round1-train.jsonl; do
@@ -88,10 +92,18 @@ export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
 export OMP_NUM_THREADS=6 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 OPENGOTHIC_BODY_TRACE=0
 unset OPENGOTHIC_NAV_JOURNEY_MEMORY OPENGOTHIC_NAV_FAMILIAR_MAP
-eval "$(python3 "$task/source/scripts/ryzen_game.py")"
-export OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
-export OPENGOTHIC_BASE="/mnt/shared/gothic-ai/base/$OPENGOTHIC_BASE_FINGERPRINT"
-test -f "$OPENGOTHIC_BASE/base.json"
+round_exports="$(python3 - "$task" <<'ROUND_ENVIRONMENT'
+from pathlib import Path
+import shlex
+import sys
+task = Path(sys.argv[1])
+sys.path.insert(0, str(task / 'source/scripts'))
+from nav_dagger4_round import round_environment
+for key, value in round_environment(task).items():
+    print(f'export {key}={shlex.quote(value)}')
+ROUND_ENVIRONMENT
+)"
+eval "$round_exports"
 cd "$task/source"
 if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv --python 3.12 "$task/.venv"; fi
 python="$task/.venv/bin/python"

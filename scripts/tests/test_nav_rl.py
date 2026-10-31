@@ -1738,6 +1738,36 @@ def test_eval_screen_agreement_uses_paired_routes_and_pooled_follow(monkeypatch)
     assert not noise["significant"] and noise["agrees"] is None  # Exactly two SE is not above two SE.
 
 
+def test_dagger_round_base_pin_survives_changed_or_missing_global_settings(tmp_path, monkeypatch):
+    round_one = rl.module("nav_dagger4_round")
+    home, task = tmp_path / "home", tmp_path / "task"
+    settings = home / "gothic-ai/game-settings"
+    (settings / "system").mkdir(parents=True)
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (settings / "system" / name).write_text("fixture settings")
+    global_base = home / "gothic-ai/game-base.json"
+    rl.write_json(global_base, dict(base="changed-unavailable-base", videos="changed"))
+    stored_base = tmp_path / "base-store" / round_one.ROUND_BASE_FINGERPRINT
+    rl.write_json(stored_base / "base.json", dict(fingerprint=round_one.ROUND_BASE_FINGERPRINT))
+    pin = task / "input/base"
+    pin.parent.mkdir(parents=True)
+    pin.symlink_to(stored_base, target_is_directory=True)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("GOTHIC_DIR", "/changed/missing/settings")
+    monkeypatch.setenv("OPENGOTHIC_BASE", "/changed/missing/base")
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "changed")
+    expected = dict(GOTHIC_DIR=str(settings), OPENGOTHIC_BASE=str(pin),
+        OPENGOTHIC_BASE_FINGERPRINT=round_one.ROUND_BASE_FINGERPRINT,
+        OPENGOTHIC_VIDEOS_FINGERPRINT=round_one.ROUND_VIDEOS_FINGERPRINT,
+        OPENGOTHIC_BASE_CACHE=str(task / "base-cache"), OPENGOTHIC_BASE_STORE=str(task / "base-store"))
+    assert round_one.round_environment(task) == expected
+    global_base.unlink()
+    assert rl.module("nav_dagger4_round").round_environment(task) == expected
+    rl.write_json(stored_base / "base.json", dict(fingerprint="wrong-base"))
+    with pytest.raises(ValueError, match="base pin"):
+        round_one.round_environment(task)
+
+
 def test_eval_screen_reuses_only_matching_finished_runner(tmp_path, monkeypatch):
     import hashlib
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
