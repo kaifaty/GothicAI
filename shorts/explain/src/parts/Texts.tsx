@@ -2,11 +2,11 @@ import React from 'react';
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {TextT} from '../schema';
 import {COLOR, FONT, OUTLINE, SAFE, WIDE_SAFE} from '../theme';
-import {rise, shown} from './anim';
+import {rise, shown, textUntil} from './anim';
 import {enterTransform, MOTION} from './motion';
 
 // short texts on screen (not captions): a dark band under each, inside the safe area. The band arrives first and
-// its words settle into it `MOTION.follow` later
+// its words settle into it `MOTION.follow` later. A text without `until` gives way to the next one at its place
 export const Texts: React.FC<{texts: TextT[]}> = ({texts}) => {
   const {fps, width, height} = useVideoConfig();
   const wide = width > height;
@@ -16,7 +16,7 @@ export const Texts: React.FC<{texts: TextT[]}> = ({texts}) => {
   return (
     <AbsoluteFill>
       {texts.map((x, i) => {
-        const o = shown(t, x.at, x.until);
+        const o = shown(t, x.at, textUntil(texts, i));
         if (o <= 0) {
           return null;
         }

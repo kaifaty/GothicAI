@@ -1,5 +1,6 @@
 import React from 'react';
 import {AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
+import {enterTransform, MOTION} from './motion';
 import type {BarsCard as Bars, DotsCard as Dots, FormulaCard as Formula, StatsCard as Stats} from '../schema';
 import {CARD_LIFT, COLOR, FONT, OUTLINE, SAFE, SOURCE_TOP, W} from '../theme';
 import {rise, shown} from './anim';
@@ -38,8 +39,9 @@ const grow = (t: number, at: number, dur = 0.6) =>
 // at least 5 at the end)
 export const FormulaView: React.FC<{spec: Formula}> = ({spec}) => {
   const t = useT();
+  const frame = useCurrentFrame();
   const ex = spec.example;
-  const {width, height} = useVideoConfig();
+  const {width, height, fps} = useVideoConfig();
   const wide = width > height;
   const num = (v: number, digits = 0) => v.toFixed(digits).replace('.', spec.decimal);
   const base = ex ? Math.round((ex.bow + ex.dex) * ex.draw) : 0;
@@ -64,6 +66,49 @@ export const FormulaView: React.FC<{spec: Formula}> = ({spec}) => {
               ))}
             </div>
           )}
+        </div>
+        <Source text={spec.source} />
+      </AbsoluteFill>
+    );
+  }
+  // Portrait with the damage formula's five terms and an example: each term's number of the example stands at the
+  // right of its row, so the example fills the width instead of a second column of text, and the results close
+  // the card as tiles, the first (the key number) big and struck
+  if (ex && spec.terms.length === 5) {
+    const values = [String(ex.bow), `+ ${ex.dex}`, `× ${num(ex.draw, 1)}`, `− ${ex.prot}`];
+    const k = (z: {k: number}) => `× ${num(z.k, z.k % 1 ? 1 : 0)}`;
+    const zones = ex.zones.filter((z) => t >= z.at);
+    return (
+      <AbsoluteFill style={{background: COLOR.card}}>
+        <div style={{position: 'absolute', left: LEFT, top: 280, width: WIDTH, display: 'flex', flexDirection: 'column'}}>
+          <div style={{...text(84), fontFamily: FONT.title, marginBottom: 6}}>{spec.title}</div>
+          {spec.terms.map((term, i) => (
+            <div key={i} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', lineHeight: 1.22}}>
+              <span style={{opacity: shown(t, term.at), transform: `translateY(${rise(t, term.at, 14)}px)`, ...text(64, term.color ?? COLOR.text)}}>
+                {term.text}
+              </span>
+              <span style={{opacity: i < 4 ? shown(t, ex.at + i * MOTION.stagger) : shown(t, ex.zones[0]?.at ?? ex.at),
+                ...text(56, term.color ?? COLOR.text)}}>
+                {i < 4 ? values[i] : zones.map(k).join(' · ')}
+              </span>
+            </div>
+          ))}
+          {spec.legend && (
+            <div style={{marginTop: 18, opacity: shown(t, spec.legend.at), ...text(40, COLOR.before, 600), lineHeight: 1.3}}>
+              {spec.legend.text}
+            </div>
+          )}
+          <div style={{marginTop: 26, display: 'flex', gap: 56, alignItems: 'flex-end'}}>
+            {ex.zones.map((z, i) => (
+              <div key={i} style={{opacity: shown(t, z.at, undefined, 0.1), transformOrigin: '0% 100%',
+                transform: enterTransform('pop', t, frame, fps, z.at)}}>
+                <div style={text(40, i === 0 ? COLOR.now : COLOR.text)}>{z.name} {k(z)}</div>
+                <div style={{...text(i === 0 ? 96 : 72, i === 0 ? COLOR.now : COLOR.text), lineHeight: 1}}>
+                  {Math.max(5, Math.round(rest * z.k))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
         <Source text={spec.source} />
       </AbsoluteFill>
@@ -127,6 +172,8 @@ export const BarsView: React.FC<{spec: Bars}> = ({spec}) => {
     ? Math.min(1, 10 ** (Math.ceil(Math.log10(minPositive)) - 1))
     : 1;
   const logBaseLabel = String(logBase).replace('.', spec.decimal);
+  // in tall the value over a bar is a label (at least 44 px): 48, and the biggest value, the one the card is about, 56
+  const valueSize = (v: number) => (v === Math.max(...values) ? 56 : 48);
   return (
     <AbsoluteFill style={{background: COLOR.card}}>
       <div style={{position: 'absolute', left, top: wide ? 150 : 300, width: contentWidth, ...text(60), lineHeight: 1.15}}>{spec.title}</div>
@@ -169,11 +216,11 @@ export const BarsView: React.FC<{spec: Bars}> = ({spec}) => {
                     style={{
                       position: 'absolute',
                       left: x + barW / 2,
-                      top: bottom - h - 56,
+                      top: bottom - h - (wide ? 56 : valueSize(v) + 20),
                       transform: 'translateX(-50%)',
                       opacity: k,
                       whiteSpace: 'nowrap',
-                      ...text(36, color),
+                      ...text(wide ? 36 : valueSize(v), color),
                     }}
                   >
                     {spec.format.replace('{v}', String(Number(v.toFixed(2))).replace('.', spec.decimal))}
@@ -206,7 +253,8 @@ export const BarsView: React.FC<{spec: Bars}> = ({spec}) => {
 // marks filling one by one: the hits of all the shots
 export const DotsView: React.FC<{spec: Dots}> = ({spec}) => {
   const t = useT();
-  const {width, height} = useVideoConfig();
+  const frame = useCurrentFrame();
+  const {width, height, fps} = useVideoConfig();
   const wide = width > height;
   const left = wide ? 220 : LEFT;
   const contentWidth = wide ? 1480 : WIDTH;
@@ -218,6 +266,9 @@ export const DotsView: React.FC<{spec: Dots}> = ({spec}) => {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   })));
+  // the counter follows the grid (its sweep ends at total × 0.01 + 0.1 s), or comes with the filling if that is sooner:
+  // a "0 / 30" over no grid reads as a result before its cause
+  const counterAt = Math.min(spec.at, spec.total * 0.01 + 0.1);
   return (
     <AbsoluteFill style={{background: COLOR.card}}>
       <div style={{position: 'absolute', left: wide ? 96 : LEFT, top: wide ? 150 : 300, width: wide ? 1728 : WIDTH, ...text(60), lineHeight: 1.15}}>{spec.title}</div>
@@ -242,7 +293,8 @@ export const DotsView: React.FC<{spec: Dots}> = ({spec}) => {
           />
         );
       })}
-      <div style={{position: 'absolute', left: wide ? 96 : LEFT, top: wide ? 735 : 1080, width: wide ? 1728 : WIDTH, textAlign: 'center', ...text(72, COLOR.now)}}>
+      <div style={{position: 'absolute', left: wide ? 96 : LEFT, top: wide ? 735 : 1080, width: wide ? 1728 : WIDTH, textAlign: 'center',
+        opacity: shown(t, counterAt, undefined, 0.1), transform: enterTransform('pop', t, frame, fps, counterAt), ...text(72, COLOR.now)}}>
         {spec.caption.replace('{n}', String(filled))}
       </div>
       <Source text={spec.source} />
