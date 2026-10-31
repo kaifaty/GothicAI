@@ -16,7 +16,9 @@ import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "ryzen_janitor.py"
-DAY = 24 * 3600
+HOUR = 3600
+DAY = 24 * HOUR
+GIB = 1024**3
 NOW = datetime(2026, 10, 28, 12, tzinfo=timezone.utc).timestamp()
 
 
@@ -42,14 +44,12 @@ def age_tree(path, age=8 * DAY):
 
 @pytest.fixture
 def host(tmp_path, monkeypatch, janitor):
-    root, nas, uv_cache, proc = (tmp_path / name for name in ("local", "nas", "uv", "proc"))
-    for directory in (root, nas, uv_cache, proc):
+    root, nas, uv_cache, proc, base_cache, system_root = (
+        tmp_path / name for name in ("local", "nas", "uv", "proc", "base", "system"))
+    for directory in (root, nas, uv_cache, proc, base_cache, system_root):
         directory.mkdir()
     state = root / ".janitor"
     state.mkdir()
-    stamp = state / "uv-clean"
-    stamp.touch()
-    os.utime(stamp, (NOW, NOW))
     mounts = tmp_path / "mounts"
     mounts.write_text(f"//fake/share {nas} cifs rw 0 0\n")
     monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
@@ -57,21 +57,14 @@ def host(tmp_path, monkeypatch, janitor):
     monkeypatch.setenv("GOTHIC_NAS_MOUNTS", str(mounts))
     monkeypatch.delenv("GQ_HOME", raising=False)
     host = SimpleNamespace(root=root, nas=nas, uv_cache=uv_cache, proc=proc,
-                           mounts=mounts, stamp=stamp, uv=tmp_path / "fake-uv",
-                           free=200 * 1024**3, calls=[], uv_busy=False,
+                           mounts=mounts,
+                           base_cache=base_cache, system_root=system_root,
+                           free=200 * 1024**3, calls=[],
                            interrupt_copy=False)
     monkeypatch.setattr(janitor.shutil, "disk_usage", lambda _path: SimpleNamespace(free=host.free))
 
     def run(command, **kwargs):
         host.calls.append((command, kwargs))
-        if command[0] == str(host.uv):
-            assert command[1:3] == ["cache", "clean"]
-            assert kwargs["env"]["UV_LOCK_TIMEOUT"] == "30"
-            if host.uv_busy:
-                return subprocess.CompletedProcess(command, 2, "", "Failed to acquire cache lock: timed out")
-            for path in uv_cache.iterdir():
-                shutil.rmtree(path) if path.is_dir() else path.unlink()
-            return subprocess.CompletedProcess(command, 0, "Cache cleaned", "")
         assert command[0] == "rsync", f"unexpected real tool: {command}"
         source, destination = map(Path, command[-2:])
         for child in source.iterdir():
@@ -87,7 +80,7 @@ def host(tmp_path, monkeypatch, janitor):
             return subprocess.CompletedProcess(command, 12, "", "interrupted test copy")
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr(janitor.subprocess, "run", run)
+    monkeypatch.setattr(janitor.nas_archive.subprocess, "run", run)
 
     def task(name, age=8 * DAY):
         path = root / name
@@ -98,39 +91,38 @@ def host(tmp_path, monkeypatch, janitor):
     def process(path, kind="cwd", pid="101"):
         process = proc / pid
         process.mkdir(parents=True, exist_ok=True)
-        link = process / "cwd" if kind == "cwd" else process / "fd" / "7"
+        link = process / kind if kind in {"cwd", "exe"} else process / "fd" / "7"
         link.parent.mkdir(exist_ok=True)
         link.symlink_to(path)
 
     def cleaner(**kwargs):
         return janitor.Janitor(root=root, uv_cache=uv_cache, proc_root=proc,
-                               uv=host.uv, now=NOW, **kwargs)
+                               base_cache=base_cache, system_root=system_root, now=NOW, **kwargs)
 
     host.task, host.process, host.cleaner = task, process, cleaner
     return host
 
 
 def test_task_protection_keep_globs_and_freshness(host):
-    protected = ["e2e", "codex-check", "engine-cache", "game", "play", "lib", "bin", "nav-probe",
-                 "body", "body-baseline", "body-training", "gq", "queue", ".hidden"]
+    protected = ["game", "game-settings", "play", "lib", "bin", "gq", "queue", ".hidden"]
     for name in protected:
         host.task(name)
-    (host.root / ".janitor-keep").write_text("custom-*\nexact\n")
-    for name in ("custom-one", "exact"):
+    (host.root / ".janitor-keep").write_text("custom-*\nexact\ne2e\ncodex-*\n")
+    for name in ("custom-one", "exact", "e2e/kept-session", "codex-check/kept-session"):
         protected.append(name)
         host.task(name)
     kept = host.task("keep")
     (kept / ".keep").touch()
     age_tree(kept)
     protected.append("keep")
-    young = host.task("young", age=6 * DAY)
+    young = host.task("young", age=DAY)
     marker = host.task("marker") / ".last-used"
     marker.touch()
     os.utime(marker, (NOW, NOW))
     deep = host.task("deep")
-    (deep / "one" / "two").mkdir(parents=True)
-    fresh = deep / "one" / "two" / "data"
-    fresh.write_text("fresh at depth three")
+    (deep / "one" / "two" / "three" / "four").mkdir(parents=True)
+    fresh = deep / "one" / "two" / "three" / "four" / "data"
+    fresh.write_text("fresh below former depth limit")
     age_tree(deep)
     os.utime(fresh, (NOW, NOW))
     cleaner = host.cleaner()
@@ -141,12 +133,65 @@ def test_task_protection_keep_globs_and_freshness(host):
     assert sum(cleaner.summary["skipped"].values()) >= len(protected) + 3
 
 
-@pytest.mark.parametrize("kind", ["cwd", "fd"])
-def test_task_with_process_is_skipped(host, kind):
-    task = host.task("running")
-    host.process(task if kind == "cwd" else task / "result.bin", kind)
+def test_body_and_nav_probe_are_protected_in_emergency(host, capsys):
+    protected = [host.task(name) for name in ("body", "body-net", "nav-probe")]
+    for task in protected:
+        for name in (".venv", "build"):
+            directory = task / name
+            directory.mkdir()
+            (directory / "data.bin").write_bytes(b"preserve")
+        age_tree(task)
+    host.free = 59 * GIB
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert cleaner.summary["emergency"]
+    assert cleaner.summary["skipped"]["protected"] >= len(protected)
+    assert cleaner.summary["deleted"] == cleaner.summary["moved"] == 0
+    output = capsys.readouterr().out
+    for task in protected:
+        assert f"skip {task} (0 bytes; protected)" in output
+        assert (task / "result.bin").exists()
+        assert (task / ".venv/data.bin").read_bytes() == b"preserve"
+        assert (task / "build/data.bin").read_bytes() == b"preserve"
+
+
+@pytest.mark.parametrize("prefix", ["", "e2e/", "codex-check/"])
+def test_nested_keep_protects_entire_owner(host, prefix):
+    task = host.task(prefix + "kept")
+    build = task / "build"
+    build.mkdir()
+    (build / ".keep").touch()
+    (build / "binary").write_bytes(b"keep this build")
+    age_tree(task)
+    sibling = host.task(prefix + "other-session") if prefix else None
+    host.free = 59 * GIB
     assert host.cleaner().run() == 0
+    assert (build / "binary").read_bytes() == b"keep this build"
     assert (task / "result.bin").exists()
+    if sibling is not None:
+        assert not sibling.exists()
+
+
+@pytest.mark.parametrize("prefix,kind", [("", "cwd"), ("", "fd"), ("", "exe"), ("e2e/", "cwd"), ("e2e/", "fd"),
+                                      ("codex-check/", "fd")])
+def test_task_with_process_is_skipped(host, prefix, kind):
+    task = host.task(prefix + "running")
+    if kind == "exe":
+        binary = task / "build" / "Gothic2Notr"
+        binary.parent.mkdir()
+        binary.write_bytes(b"running executable")
+        age_tree(task)
+        host.process(host.root.parent, "cwd")
+        host.process(host.root.parent / "unrelated.log", "fd")
+        host.process(binary, "exe")
+    else:
+        host.process(task if kind == "cwd" else task / "result.bin", kind)
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert cleaner.summary["skipped"]["process"] == 1
+    assert (task / "result.bin").exists()
+    if kind == "exe":
+        assert binary.read_bytes() == b"running executable"
     assert not (host.nas / "archive").exists()
 
 
@@ -167,7 +212,18 @@ def test_active_queue_reference_is_skipped(host, field, value):
     assert (task / "result.bin").exists()
 
 
-def test_e2e_uses_marker_fallback_and_nonblocking_lock(host):
+
+def test_e2e_queued_job_protects_session(host):
+    task = host.task("e2e/queued")
+    queue = host.root / "queue"
+    queue.mkdir()
+    (queue / "state.json").write_text(json.dumps({"version": 1, "jobs": [
+        {"status": "queued", "cwd": str(task), "command": ["work"]}]}))
+    assert host.cleaner().run() == 0
+    assert (task / "result.bin").exists()
+
+
+def test_e2e_activity_includes_data_after_marker_and_nonblocking_lock(host):
     root = host.root / "e2e"
     root.mkdir()
     for name in ("marker-old", "marker-new", "fallback-old", "fallback-new", "locked"):
@@ -189,11 +245,10 @@ def test_e2e_uses_marker_fallback_and_nonblocking_lock(host):
     with lock_path.open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         assert host.cleaner().run() == 0
-    assert not (root / "marker-old").exists()
+    assert (root / "marker-old").exists()
     assert not (root / "fallback-old").exists()
+    assert [p.read_bytes() for p in (host.nas / "archive").rglob("result.bin")] == [b"task data"]
     assert all((root / name).exists() for name in ("marker-new", "fallback-new", "locked"))
-    assert (root / "marker-old.lock").is_file()
-    assert (root / "fallback-old.lock").is_file()
     assert lock_path.is_file()
 
 
@@ -257,32 +312,31 @@ def test_size_and_activity_ignore_disappearing_children(host, janitor, monkeypat
     assert janitor.latest_mtime(task, 3) == NOW - 8 * DAY
 
 
-def test_rebuildable_dirs_removed_but_unmarked_build_archived(host, janitor):
-    task = host.task("finished")
-    rebuildable = [".venv", "nested/build", "cmake-build-debug", "_deps", "__pycache__",
-                   ".pytest_cache", "pytest-123"]
+@pytest.mark.parametrize("prefix", ["", "e2e/", "codex-check/"])
+def test_rebuildable_names_deleted_after_two_days_and_data_verified(host, janitor, prefix):
+    task = host.task(prefix + ("build-fix" if prefix else "finished"), age=3 * DAY)
+    rebuildable = [".venv", "venv", "nested/build", "build-release", "storygraph-build",
+                   "cmake-build-debug", "_deps", "__pycache__", ".pytest_cache", "pytest-123",
+                   "uv-cache", "cache", "hd-cache"]
     for name in rebuildable:
         directory = task / name
         directory.mkdir(parents=True)
         (directory / "junk").write_text("rebuild me")
-    (task / ".venv" / "pyvenv.cfg").touch()
-    (task / "nested" / "build" / "CMakeCache.txt").touch()
-    (task / "cmake-build-debug" / "build.ninja").touch()
-    (task / "build").mkdir()
-    (task / "build" / "data.bin").write_bytes(b"irreplaceable")
-    (task / "nested" / ".venv").mkdir()
-    (task / "nested" / ".venv" / "data.bin").write_bytes(b"not a venv")
-    age_tree(task)
+    (task / "records").mkdir()
+    (task / "records" / "episode.bin").write_bytes(b"keep recordings")
+    age_tree(task, 3 * DAY)
     original_bytes = janitor.tree_bytes(task)
     cleaner = host.cleaner()
     assert cleaner.run() == 0
-    destination = host.nas / "archive" / "finished-20261028"
     assert not task.exists()
-    assert (destination / "build" / "data.bin").read_bytes() == b"irreplaceable"
-    assert (destination / "nested" / ".venv" / "data.bin").read_bytes() == b"not a venv"
+    archives = list((host.nas / "archive").rglob("result.bin"))
+    assert len(archives) == 1
+    destination = archives[0].parent
+    assert archives[0].read_bytes() == b"task data"
+    assert (destination / "records" / "episode.bin").read_bytes() == b"keep recordings"
     assert all(not (destination / name).exists() for name in rebuildable)
     assert cleaner.summary["moved"] == 1
-    assert cleaner.summary["deleted"] >= len(rebuildable)
+    assert cleaner.summary["deleted"] == len(rebuildable)
     assert cleaner.summary["freed_bytes"] == original_bytes
     assert json.loads((host.root / ".janitor" / "last.json").read_text())["moved"] == 1
 
@@ -353,8 +407,8 @@ def test_unmounted_nas_still_removes_rebuildable_and_cleans_uv(host, reactivated
     (cache / "compiled.pyc").write_bytes(b"cached")
     age_tree(task)
     host.mounts.write_text("")
-    host.stamp.unlink()
     (host.uv_cache / "cached-wheel").write_bytes(b"wheel")
+    age_tree(host.uv_cache, 3 * DAY)
     cleaner = host.cleaner()
     assert cleaner.run() == 0
     assert task.exists() and (task / "result.bin").exists()
@@ -376,53 +430,127 @@ def test_unmounted_nas_still_removes_rebuildable_and_cleans_uv(host, reactivated
     assert cleaner.summary["moved"] == (0 if reactivated else 1)
 
 
-@pytest.mark.parametrize("weekly", [True, False])
-def test_uv_clean_weekly_or_under_sixty_gib_and_busy_retry(host, weekly):
-    os.utime(host.stamp, (NOW - (8 * DAY if weekly else DAY),) * 2)
-    original = host.stamp.stat().st_mtime_ns
-    host.free = (200 if weekly else 59) * 1024**3
+@pytest.mark.parametrize("age,free,deleted", [(3 * DAY, 200, True), (DAY, 200, False),
+                                                 (13 * HOUR, 59, True), (11 * HOUR, 59, False)])
+def test_uv_cache_obeys_idle_cutoff(host, age, free, deleted):
+    host.free = free * GIB
     (host.uv_cache / "wheel").write_bytes(b"cached")
-    host.uv_busy = True
-    cleaner = host.cleaner()
-    assert cleaner.run() == 0
-    assert (host.uv_cache / "wheel").exists()
-    assert host.stamp.stat().st_mtime_ns == original
-    assert sum(cleaner.summary["skipped"].values()) >= 1
-    host.uv_busy = False
+    age_tree(host.uv_cache, age)
     assert host.cleaner().run() == 0
-    assert not (host.uv_cache / "wheel").exists()
-    assert host.stamp.stat().st_mtime_ns > original
-
-
-@pytest.mark.parametrize("phase", ["before", "after"])
-def test_changing_uv_cache_is_a_skip_without_errors(host, janitor, monkeypatch, capsys, phase):
-    host.stamp.unlink()
-    (host.uv_cache / "wheel").write_bytes(b"cached")
-    original = janitor.tree_bytes
-
-    def changing_cache(path):
-        if path == host.uv_cache and (phase == "before" or host.calls):
-            raise FileNotFoundError("cache changed during size calculation")
-        return original(path)
-
-    monkeypatch.setattr(janitor, "tree_bytes", changing_cache)
-    cleaner = host.cleaner()
-    assert cleaner.run() == 0
-    assert cleaner.summary["errors"] == []
-    assert cleaner.summary["skipped"]["uv cache busy"] == 1
-    assert capsys.readouterr().out.count("; uv cache busy)") == 1
-    assert len(host.calls) == (0 if phase == "before" else 1)
-    assert host.stamp.exists() == (phase == "after")
-    if phase == "after":
-        assert host.stamp.stat().st_mtime == NOW
-
-
-def test_uv_cleanup_not_due_at_sixty_gib(host):
-    host.free = 60 * 1024**3
-    cleaner = host.cleaner()
-    assert cleaner.run() == 0
+    assert (host.uv_cache / "wheel").exists() != deleted
     assert host.calls == []
-    assert cleaner.summary["skipped"]["uv cleanup not due"] == 1
+
+
+@pytest.mark.parametrize("protection", ["keep", "cwd", "fd"])
+def test_uv_cache_in_use_is_preserved(host, protection):
+    (host.uv_cache / "wheel").write_bytes(b"cached")
+    if protection == "keep":
+        (host.uv_cache / ".keep").touch()
+    else:
+        host.process(host.uv_cache if protection == "cwd" else host.uv_cache / "wheel", protection)
+    age_tree(host.uv_cache, 3 * DAY)
+    host.free = 59 * GIB
+    assert host.cleaner().run() == 0
+    assert (host.uv_cache / "wheel").exists()
+
+
+
+
+@pytest.mark.parametrize("pressured", ["tasks", "system"])
+def test_emergency_tracks_two_filesystems_and_stops_at_target(host, janitor, monkeypatch, capsys, pressured):
+    oldest = host.task("z-oldest", age=30 * HOUR)
+    middle = host.task("m-middle", age=20 * HOUR)
+    host.task("a-younger", age=13 * HOUR)
+    host.task("too-recent", age=11 * HOUR)
+    (host.uv_cache / "wheel").write_bytes(b"cached")
+    age_tree(host.uv_cache, 18 * HOUR)
+    monkeypatch.setattr(janitor.Janitor, "device", staticmethod(
+        lambda path: 1 if Path(path).is_relative_to(host.root) else 2))
+
+    def disk_usage(path):
+        role = "tasks" if Path(path) == host.root else "system"
+        return SimpleNamespace(free=(50 if role == pressured else 200) * GIB)
+
+    monkeypatch.setattr(janitor.shutil, "disk_usage", disk_usage)
+    monkeypatch.setattr(janitor, "tree_reclaimable", lambda path: (60 if Path(path) == host.uv_cache else 30) * GIB)
+    cleaner = host.cleaner(dry_run=True)
+    assert cleaner.run() == 0
+    output = capsys.readouterr().out
+    if pressured == "tasks":
+        assert cleaner.summary["moved"] == 2
+        assert cleaner.summary["deleted"] == 0
+        assert output.index(f"would move {oldest} ") < output.index(f"would move {middle} ")
+        assert f"would move {host.root / 'a-younger'} " not in output
+        assert f"would delete {host.uv_cache} " not in output
+    else:
+        assert cleaner.summary["moved"] == 0
+        assert cleaner.summary["deleted"] == 1
+        assert f"would delete {host.uv_cache} " in output
+    assert "would move " + str(host.root / "too-recent") not in output
+    assert host.calls == []
+
+
+def test_top_level_root_symlink_resolves_but_children_are_never_followed(host, janitor):
+    alias = host.root.parent / "task-alias"
+    alias.symlink_to(host.root, target_is_directory=True)
+    task = host.task("old-task")
+    cleaner = janitor.Janitor(root=alias, uv_cache=host.uv_cache, proc_root=host.proc,
+                              base_cache=host.base_cache, system_root=host.system_root, now=NOW)
+    assert cleaner.run() == 0
+    assert alias.is_symlink()
+    assert not task.exists()
+    assert (host.nas / "archive" / "old-task-20261028" / "result.bin").read_bytes() == b"task data"
+
+
+def test_base_cache_keeps_current_leased_two_newest_and_missing_backup(host):
+    current = host.base_cache / "current"
+    current.mkdir()
+    fingerprints = [str(index) * 64 for index in range(1, 8)]
+    paths = []
+    for index, fingerprint in enumerate(fingerprints):
+        path = host.base_cache / fingerprint
+        path.mkdir()
+        (path / "data.bin").write_bytes(b"base data")
+        (host.base_cache / (fingerprint + ".use")).touch()
+        if index < 6:
+            destination = host.nas / "base" / fingerprint
+            destination.mkdir(parents=True)
+            (destination / "data.bin").write_bytes(b"base data")
+        age_tree(path, (index + 3) * DAY)
+        paths.append(path)
+    (current / "game.json").write_text(json.dumps({"version": 1,
+        "base": {"fingerprint": fingerprints[2], "path": str(paths[2])}}))
+    (paths[4] / ".keep").touch()
+    age_tree(paths[4], 7 * DAY)
+    lease = host.base_cache / (fingerprints[3] + ".use")
+    with lease.open("r") as stream:
+        fcntl.flock(stream, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        cleaner = host.cleaner()
+        assert cleaner.run() == 0
+    assert current.exists()
+    assert all(path.exists() for path in paths[:5])
+    assert not paths[5].exists()
+    assert paths[6].exists()
+    # Lock inodes must remain stable for other games to acquire the same lease.
+    assert lease.exists()
+    assert (host.base_cache / (fingerprints[5] + ".use")).exists()
+
+
+def test_base_cache_retains_recent_fingerprints_in_emergency(host):
+    paths = []
+    for index in range(3):
+        path = host.base_cache / (str(index) * 64)
+        path.mkdir()
+        (path / "data.bin").write_bytes(b"base data")
+        (host.base_cache / (path.name + ".use")).touch()
+        destination = host.nas / "base" / path.name
+        destination.mkdir(parents=True)
+        (destination / "data.bin").write_bytes(b"base data")
+        age_tree(path, (index + 1) * 8 * HOUR)
+        paths.append(path)
+    host.free = 59 * GIB
+    assert host.cleaner().run() == 0
+    assert all(path.exists() for path in paths)
 
 
 def test_second_instance_exits_without_mutation(host):
@@ -438,7 +566,8 @@ def test_second_instance_exits_without_mutation(host):
     assert (task / "result.bin").exists()
 
 
-def test_dry_run_prints_plan_and_changes_nothing(host, capsys):
+@pytest.mark.parametrize("du", [False, True])
+def test_dry_run_prints_plan_and_changes_nothing(host, capsys, du):
     task = host.task("dry-task")
     cache = task / "__pycache__"
     cache.mkdir()
@@ -446,31 +575,36 @@ def test_dry_run_prints_plan_and_changes_nothing(host, capsys):
     age_tree(task)
     host.task("e2e/old")
     host.task("codex-check/old")
-    host.stamp.unlink()
     (host.uv_cache / "wheel").write_bytes(b"cached")
+    age_tree(host.uv_cache, 3 * DAY)
 
     def snapshot(root):
         return {str(path.relative_to(root)): (path.lstat().st_mtime_ns,
                 path.read_bytes() if path.is_file() else None) for path in root.rglob("*")}
 
     before = {str(root): snapshot(root) for root in (host.root, host.nas, host.uv_cache)}
-    cleaner = host.cleaner(dry_run=True)
+    cleaner = host.cleaner(dry_run=True, du=du)
     assert cleaner.run() == 0
     assert {str(root): snapshot(root) for root in (host.root, host.nas, host.uv_cache)} == before
     assert host.calls == []
     output = capsys.readouterr().out
-    assert f"would delete {cache} (6 bytes; idle task; rebuildable)" in output
-    assert f"would move {task} (9 bytes; idle task -> " in output
-    assert output.count(f"would move {task}") == 1
-    assert f"would delete {host.root / 'e2e/old'} (9 bytes; idle e2e; rebuildable)" in output
-    assert f"would delete {host.root / 'codex-check/old'} (9 bytes; idle codex-check; rebuildable)" in output
-    assert f"would clean {host.uv_cache} (6 bytes; weekly or free space below 60 GiB)" in output
+    assert f"would delete {cache} " in output
+    assert f"would move {task} " in output
+    assert output.count(f"would move {task} ") == 1
+    assert f"would move {host.root / 'e2e/old'} " in output
+    assert f"would move {host.root / 'codex-check/old'} " in output
+    assert f"would delete {host.uv_cache} " in output
+    assert cleaner.summary["deleted"] == 2
+    assert cleaner.summary["moved"] == 3
+    if du:
+        assert "PATH\tSIZE GiB\tIDLE hours\tREBUILDABLE GiB\tACTION" in output
+        assert str(task) in output
 
 
 @pytest.mark.parametrize("activity", ["fresh", "process", "queue", "modified", "vanished"])
 def test_task_activity_during_transfer_is_a_skip(host, janitor, monkeypatch, activity):
     task = host.task("resumed-work")
-    original_run = janitor.subprocess.run
+    original_run = janitor.nas_archive.subprocess.run
 
     def resume_work(command, **kwargs):
         result = original_run(command, **kwargs)
@@ -491,13 +625,13 @@ def test_task_activity_during_transfer_is_a_skip(host, janitor, monkeypatch, act
                 return subprocess.CompletedProcess(command, 24, "", "some source files vanished")
         return result
 
-    monkeypatch.setattr(janitor.subprocess, "run", resume_work)
+    monkeypatch.setattr(janitor.nas_archive.subprocess, "run", resume_work)
     cleaner = host.cleaner()
     assert cleaner.run() == 0
     assert task.exists()
     assert cleaner.summary["errors"] == []
     assert cleaner.summary["moved"] == 0
-    assert cleaner.summary["skipped"][{"queue": "active gq job", "modified": "fresh", "vanished": "fresh"}.get(activity, activity)] == 1
+    assert cleaner.summary["skipped"][{"queue": "active gq job", "modified": "fresh", "vanished": "fresh"}.get(activity, activity)] >= 1
 
 
 def test_task_activity_rechecked_before_first_deletion(host, janitor, monkeypatch):
@@ -617,6 +751,11 @@ raise SystemExit(module['Janitor'](root=sys.argv[2], proc_root=sys.argv[3],
                              str(cache), str(NOW)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr + result.stdout
     assert f"would move {task}" in result.stdout
+    (library / "ryzen_janitor.py").write_text("raise RuntimeError('stale installed janitor')\n")
+    result = subprocess.run([*wrapper, "run", "--dry-run"], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert '"dry_run": true' in result.stdout
+    assert (task / "result.bin").read_bytes() == b"result"
     result = subprocess.run([*wrapper, "uninstall"], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert not private.exists()

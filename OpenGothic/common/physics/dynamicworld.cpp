@@ -351,6 +351,11 @@ struct DynamicWorld::NpcBodyList final {
         continue;
       if(preserveOrder) {
         arr.erase(arr.begin()+ptrdiff_t(i));
+        // Replacing or removing one frozen NPC shifts every later record.
+        // onMove uses this cached index before the next tick can re-sort it.
+        for(size_t j=i;j<arr.size();++j)
+          if(arr[j].body!=nullptr)
+            arr[j].body->frozen=j;
         } else {
         arr[i]=arr.back();
         arr.pop_back();

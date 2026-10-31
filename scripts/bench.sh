@@ -61,6 +61,12 @@ SCEN="${1:?usage: scripts/bench.sh <scenario> [out dir]}"
 [[ -f "$SCEN" ]] || { echo "no scenario: $1" >&2; exit 2; }
 SCEN="$(cd "$(dirname "$SCEN")" && pwd)/$(basename "$SCEN")"
 NAME="$(basename "$SCEN" .bench)"
+if [[ "$NAME" == routine-return ]]; then
+  export WORLD="${WORLD:-NEWWORLD.ZEN}"
+  export TIMEOUT="${TIMEOUT:-3600}"
+  export RYZEN_MAX="${RYZEN_MAX:-75m}"
+  [[ "$WORLD" == NEWWORLD.ZEN ]] || { echo "bench: routine-return requires WORLD=NEWWORLD.ZEN" >&2; exit 2; }
+fi
 if [[ "$NAME" == streaming-flythrough ]]; then
   export WORLD="${WORLD:-NEWWORLD.ZEN}"
   export RYZEN_BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"
@@ -152,7 +158,7 @@ fi
 
 # These fixtures use a prepared world and clock; skip the new-game chapter video
 # before their first command on NEWWORLD.
-if [[ "$NAME" == item-wake || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough ]]; then
+if [[ "$NAME" == item-wake || "$NAME" == routine-return || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough ]]; then
   START_ARGS+=(-nointro)
 fi
 
@@ -318,6 +324,8 @@ from pathlib import Path
 path = Path(sys.argv[1])
 failures = []
 observed = Counter()
+routine_results = {}
+routine_summaries = []
 if path.exists():
     with path.open() as events:
         for line_number, line in enumerate(events, 1):
@@ -333,6 +341,13 @@ if path.exists():
                 observed[('checkpoint', event.get('label'))] += 1
             elif kind == 'cloth_session_initial' and event.get('rest'):
                 observed[('initial', event.get('label'))] += 1
+            elif kind == 'routine_return_result':
+                key = (event.get('case'), event.get('attempt'))
+                if key in routine_results:
+                    failures.append(f'duplicate routine return result: {key}')
+                routine_results[key] = event
+            elif kind == 'routine_return_summary':
+                routine_summaries.append(event)
             if kind == 'error' or kind.endswith('_error') or event.get('pass') is False:
                 failures.append(f"{kind}: {event.get('reason', event.get('check', 'check failed'))}")
 scenario = Path(sys.argv[2])
@@ -344,6 +359,32 @@ if scenario.name.startswith('cloth'):
             expected[(command[1], command[2])] += 1
     for (command, label), count in (expected - observed).items():
         failures.append(f'missing cloth {command} {label}: {count} result(s)')
+if scenario.name == 'routine-return.bench':
+    commands = [line.split() for line in scenario.read_text().splitlines()]
+    labels = [command[2] for command in commands
+              if len(command) == 8 and command[:2] == ['routine-return', 'case']]
+    if not 10 <= len(labels) <= 12 or len(set(labels)) != len(labels):
+        failures.append('routine return needs 10-12 unique case labels')
+    if commands.count(['routine-return', 'retry-failures']) != 1:
+        failures.append('routine return needs one retry-failures command')
+    initial = {(label, 1) for label in labels}
+    failed = {label for label in labels if (label, 1) in routine_results
+              and routine_results[(label, 1)].get('pass') is not True}
+    expected = initial | {(label, 2) for label in failed}
+    if set(routine_results) != expected:
+        failures.append(f'routine return result mismatch: missing {sorted(expected - set(routine_results))}, '
+                        f'unexpected {sorted(set(routine_results) - expected)}')
+    if any(result.get('preparation_valid') is not True for result in routine_results.values()):
+        failures.append('routine return has invalid or missing preparation proof')
+    if any(result.get('pass') is not True for result in routine_results.values()):
+        failures.append('routine return has failed or incomplete cases')
+    if len(routine_summaries) != 1:
+        failures.append(f'routine return needs one summary, got {len(routine_summaries)}')
+    else:
+        summary = routine_summaries[0]
+        if (summary.get('complete') is not True or summary.get('cases') != len(labels)
+                or summary.get('failed') != len(failed) or summary.get('repeated') != len(failed)):
+            failures.append('routine return summary is incomplete or inconsistent')
 if failures:
     for failure in failures[:10]:
         print(f'bench: failed: {failure}', file=sys.stderr)
