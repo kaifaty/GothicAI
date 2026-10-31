@@ -88,6 +88,7 @@ struct Counter {
   };
 inline std::array<Counter,std::size(typeNames)> types;
 inline std::array<Counter,std::size(partNames)> parts;
+inline std::array<Counter,std::size(partNames)> missParts;
 inline std::atomic<bool> active{false};
 inline std::mutex meshSync;
 inline std::unordered_set<std::string> meshes;
@@ -103,6 +104,8 @@ template<bool IsType> class Timer {
       else
         counter=find(name);
       previous=top;
+      if constexpr(!IsType)
+        inMiss=previous!=nullptr && (previous->inMiss || previous->counter==&parts[1]); // mesh_miss
       top=this;
       started=std::chrono::steady_clock::now();
       }
@@ -122,6 +125,14 @@ template<bool IsType> class Timer {
       counter->count.fetch_add(1,std::memory_order_relaxed);
       counter->ns.fetch_add(ns-childNs,std::memory_order_relaxed);
       counter->inclusiveNs.fetch_add(ns,std::memory_order_relaxed);
+      if constexpr(!IsType) {
+        if(inMiss) {
+          auto& miss=missParts[size_t(counter-parts.data())];
+          miss.count.fetch_add(1,std::memory_order_relaxed);
+          miss.ns.fetch_add(ns-childNs,std::memory_order_relaxed);
+          miss.inclusiveNs.fetch_add(ns,std::memory_order_relaxed);
+          }
+        }
       top=previous;
       if(previous!=nullptr)
         previous->childNs+=ns;
@@ -143,6 +154,7 @@ template<bool IsType> class Timer {
     Timer* previous=nullptr;
     std::chrono::steady_clock::time_point started;
     uint64_t childNs=0;
+    bool inMiss=false;
   };
 using Scope=Timer<false>;
 using TypeScope=Timer<true>;
@@ -162,6 +174,7 @@ class Stage {
         return;
       for(auto& c:types) c.clear();
       for(auto& c:parts) c.clear();
+      for(auto& c:missParts) c.clear();
       {
       std::lock_guard<std::mutex> lock(meshSync);
       meshes.clear();
@@ -188,6 +201,7 @@ class Stage {
         };
       for(size_t i=0;i<types.size();++i) log("type",typeNames[i],types[i]);
       for(size_t i=0;i<parts.size();++i) log("part",partNames[i],parts[i]);
+      for(size_t i=0;i<missParts.size();++i) log("miss_part",partNames[i],missParts[i]);
       {
       std::lock_guard<std::mutex> lock(meshSync);
       char line[192];
