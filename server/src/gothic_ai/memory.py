@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS events (
     PRIMARY KEY (branch, seq)
 );
 CREATE INDEX IF NOT EXISTS events_by_npc ON events (branch, npc, seq);
+CREATE INDEX IF NOT EXISTS events_by_feat ON events (branch, seq)
+WHERE kind='fact'
+AND json_extract(content, '$.fact') IN ('feat', 'feat_epilogue', 'feat_epilogue_shown');
 """
 
 
@@ -271,10 +274,13 @@ class MemoryStore:
         return [row[0] for row in rows]
 
     def branches(self) -> list[BranchInfo]:
+        # Separate NPC ranges let the index skip copied '*' facts and patches.
         rows = self._db.execute(
-            "SELECT b.id, b.parent, b.parent_seq, b.created, COALESCE(MAX(e.seq), 0), "
-            "COUNT(DISTINCT CASE WHEN e.npc != '*' THEN e.npc END) "
-            "FROM branches b LEFT JOIN events e ON e.branch=b.id GROUP BY b.id ORDER BY b.created"
+            "SELECT b.id, b.parent, b.parent_seq, b.created, "
+            "COALESCE((SELECT MAX(seq) FROM events WHERE branch=b.id), 0), "
+            "(SELECT COUNT(DISTINCT npc) FROM events WHERE branch=b.id AND npc<'*') + "
+            "(SELECT COUNT(DISTINCT npc) FROM events WHERE branch=b.id AND npc>'*') "
+            "FROM branches b ORDER BY b.created"
         ).fetchall()
         return [BranchInfo(*row) for row in rows]
 
