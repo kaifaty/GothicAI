@@ -327,6 +327,266 @@
    "source_materials": [
     "MOMEKETTLE01.TGA"
    ]
+  },
+  {
+   "id": "hearth-stove",
+   "visual": "STOVE_NW_CITY_01",
+   "budget_tris": 3000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_CAST",
+     "group": "METAL",
+     "role": "cast-iron stove plates, rusty brown"
+    },
+    {
+     "key": "OWN_HEARTH_RIVET",
+     "group": "METAL",
+     "role": "bands and rivet heads on the iron"
+    },
+    {
+     "key": "OWN_HEARTH_COPPER",
+     "group": "METAL",
+     "role": "the hammered copper hood over the stove"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    },
+    {
+     "key": "OWN_HEARTH_WOOD",
+     "group": "WOOD",
+     "role": "dark hewn sticks, poles and handles"
+    }
+   ],
+   "kind": "mob_model",
+   "bbox_min": [
+    -0.49999,
+    1e-05,
+    -0.50001
+   ],
+   "bbox_max": [
+    0.50001,
+    2.30001,
+    0.49999
+   ],
+   "origin_in_bbox": [
+    0.49999,
+    -4e-06,
+    0.50001
+   ],
+   "source_tris": 116,
+   "source_materials": [
+    "OBJ_CITY_GALLOW_01.TGA",
+    "OBJ_CITY_STOVE_01.TGA",
+    "OBJ_CITY_STOVE_02.TGA"
+   ],
+   "source_pose": "bind",
+   "nodes": {
+    "ZS_POS0": [
+     -0.0,
+     0.9989,
+     -0.7805
+    ]
+   }
+  },
+  {
+   "id": "hearth-fireplace",
+   "visual": "NW_CITY_FIREPLACE_NORMAL_01",
+   "budget_tris": 3000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_MASONRY",
+     "group": "STONE",
+     "role": "rubble and block masonry of a fireplace"
+    },
+    {
+     "key": "OWN_HEARTH_SOOT",
+     "group": "STONE",
+     "role": "the sooted firebox: back wall, hearth floor"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -1.20864,
+    -1.49999,
+    -0.75
+   ],
+   "bbox_max": [
+    1.20866,
+    1.50001,
+    0.75002
+   ],
+   "origin_in_bbox": [
+    0.499996,
+    0.499997,
+    0.499993
+   ],
+   "source_tris": 108,
+   "source_materials": [
+    "OBJ_CITY_BOULDERPOOR_01.TGA"
+   ]
+  },
+  {
+   "id": "hearth-fireplace-large",
+   "visual": "NW_CITY_FIREPLACE_LARGE_01",
+   "budget_tris": 4000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_MASONRY",
+     "group": "STONE",
+     "role": "rubble and block masonry of a fireplace"
+    },
+    {
+     "key": "OWN_HEARTH_SOOT",
+     "group": "STONE",
+     "role": "the sooted firebox: back wall, hearth floor"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -1.81615,
+    -1.82499,
+    -0.69925
+   ],
+   "bbox_max": [
+    1.81617,
+    1.82501,
+    0.69927
+   ],
+   "origin_in_bbox": [
+    0.499997,
+    0.499997,
+    0.499993
+   ],
+   "source_tris": 122,
+   "source_materials": [
+    "OBJ_CITY_BOULDERBIG_01.TGA"
+   ]
+  },
+  {
+   "id": "hearth-fireplace-wide",
+   "visual": "NW_CITY_FIREPLACE_LARGE_02",
+   "budget_tris": 4000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_ASHLAR",
+     "group": "STONE",
+     "role": "pale dressed stone of a rich fireplace"
+    },
+    {
+     "key": "OWN_HEARTH_CARVING",
+     "group": "STONE",
+     "role": "carved mouldings and the hood relief"
+    },
+    {
+     "key": "OWN_HEARTH_SOOT",
+     "group": "STONE",
+     "role": "the sooted firebox: back wall, hearth floor"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -2.71615,
+    -1.825,
+    -0.69926
+   ],
+   "bbox_max": [
+    2.71617,
+    2.26871,
+    0.69926
+   ],
+   "origin_in_bbox": [
+    0.499998,
+    0.445806,
+    0.5
+   ],
+   "source_tris": 122,
+   "source_materials": [
+    "OBJ_CITY_BOULDERBIG_02.TGA"
+   ]
+  },
+  {
+   "id": "hearth-fireplace-wide-low",
+   "visual": "NW_CITY_FIREPLACE_LARGE_021",
+   "budget_tris": 4000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_ASHLAR",
+     "group": "STONE",
+     "role": "pale dressed stone of a rich fireplace"
+    },
+    {
+     "key": "OWN_HEARTH_CARVING",
+     "group": "STONE",
+     "role": "carved mouldings and the hood relief"
+    },
+    {
+     "key": "OWN_HEARTH_SOOT",
+     "group": "STONE",
+     "role": "the sooted firebox: back wall, hearth floor"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -2.71615,
+    -1.825,
+    -0.69926
+   ],
+   "bbox_max": [
+    2.71617,
+    1.27748,
+    0.69926
+   ],
+   "origin_in_bbox": [
+    0.499998,
+    0.588239,
+    0.5
+   ],
+   "source_tris": 122,
+   "source_materials": [
+    "OBJ_CITY_BOULDERBIG_02.TGA"
+   ]
   }
  ]
 }

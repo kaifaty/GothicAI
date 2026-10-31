@@ -667,6 +667,186 @@
       "utc": "2026-10-31T13:25:48Z",
       "thread": "01a19222-7114-7cb2-ab9c-a2495c424f2f",
       "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-stove-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-stove",
+      "attempt": 1,
+      "sha256": "8b1790402c0773c461df2cc5b97571d5172252270cf70310fb67c5e8752b8b0f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:15Z",
+      "thread": "01a1926a-5af8-74e1-939a-457e86f7165c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-stove-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-stove",
+      "attempt": 2,
+      "sha256": "a3bc2ad776bada0fa7a50d6f66f2f300c8242a985fcba4375864c4e83aa87222",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:58Z",
+      "thread": "01a1926a-5af8-74e1-939a-457e86f7165c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-stove-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-stove",
+      "attempt": 3,
+      "sha256": "b9c46bec0676940a523aa7ff9d7738d3be7c2b71d83eab0ccc7e457de6b5b57d",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:45:34Z",
+      "thread": "01a1926a-5af8-74e1-939a-457e86f7165c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-fireplace",
+      "attempt": 1,
+      "sha256": "a2a5bf88729fa1021aaeab7090e0072d823f77bd102d2684703ddb566248af63",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:16Z",
+      "thread": "01a1926a-684d-79c0-a30d-9091ed76b76c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-fireplace",
+      "attempt": 2,
+      "sha256": "80d75b1dabc5fc74301eed590248f6f5247228edf621d1ec60e73b798893e29f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:43Z",
+      "thread": "01a1926a-684d-79c0-a30d-9091ed76b76c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-fireplace",
+      "attempt": 3,
+      "sha256": "5da0dff073956fc4bf522d32b7dc3e261cca55e8353936d4ee5d9c6e6b4b62c0",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:45:04Z",
+      "thread": "01a1926a-684d-79c0-a30d-9091ed76b76c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-large-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-large",
+      "attempt": 1,
+      "sha256": "5e885951971e64a9b4e264a4b69f232bb3d7e75b011a3214d35bf049e32c84ea",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:05Z",
+      "thread": "01a1926a-7765-71c1-ae06-29c22021c4f9",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-large-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-large",
+      "attempt": 2,
+      "sha256": "59d66c28ebea63fdd1cd0f07f0a12289b6392306203559d5e0d60d51db498d2d",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:29Z",
+      "thread": "01a1926a-7765-71c1-ae06-29c22021c4f9",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-large-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-large",
+      "attempt": 3,
+      "sha256": "8f779bc6c1a6b6234004e1e1108f5f0d1f012551984aaf062522cbcca9a63223",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:52Z",
+      "thread": "01a1926a-7765-71c1-ae06-29c22021c4f9",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-wide-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-wide",
+      "attempt": 1,
+      "sha256": "99b4a0e6c470c6c522342ae1c518350c11df85fa37a9f1e0dceea4fa4ac69b4e",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:02Z",
+      "thread": "01a1926a-8444-7d42-b8ad-971781a81a6c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-wide-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-wide",
+      "attempt": 2,
+      "sha256": "b193007704fe2bfe1ca43aada78a0b703f12c3c5170a880cd77dafbd5198d2d1",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:34Z",
+      "thread": "01a1926a-8444-7d42-b8ad-971781a81a6c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-wide-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-wide",
+      "attempt": 3,
+      "sha256": "65a20d6e2f1e3c65251fd85f2fc32ca16035fcca50f6728e0e2c7fb310024a48",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:56Z",
+      "thread": "01a1926a-8444-7d42-b8ad-971781a81a6c",
+      "parent": null
     }
   ],
   "selected": {

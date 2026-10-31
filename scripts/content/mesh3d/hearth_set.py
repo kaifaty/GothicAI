@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, bake and pack the kitchen and hearth set, wave 1: open fire (asset city-hearth).
+"""Build, bake and pack the kitchen and hearth set (asset city-hearth): wave 1 open fire, wave 2 hearths in the houses.
 
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/hearth_set.py models [ITEM ...]
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/hearth_set.py bake [ITEM ...] [--ryzen]
@@ -42,6 +42,15 @@ ITEMS = {
     'tripod': dict(visual='OC_FIREPLACE_V5', script='tripod.py', cfg='tripod.json', atlas='tripod-atlas.json'),
     'campfire': dict(visual='NW_MISC_FIREPLACE_01', script='campfire.py', cfg='campfire.json', atlas='campfire-atlas.json'),
     'brazier': dict(visual='DT_FIREPLACE_V1', script='brazier.py', cfg='brazier.json', atlas='brazier-atlas.json'),
+    # wave 2: hearths in the houses
+    'stove': dict(visual='STOVE_NW_CITY_01', script='stove.py', cfg='stove.json', atlas='stove-atlas.json'),
+    'fireplace': dict(visual='NW_CITY_FIREPLACE_NORMAL_01', script='fireplace.py', cfg='fireplace.json', atlas='fireplace-atlas.json'),
+    'fireplace-large': dict(visual='NW_CITY_FIREPLACE_LARGE_01', script='fireplace.py', cfg='fireplace-large.json',
+                            atlas='fireplace-large-atlas.json'),
+    'fireplace-wide': dict(visual='NW_CITY_FIREPLACE_LARGE_02', script='fireplace.py', cfg='fireplace-wide.json',
+                           atlas='fireplace-wide-atlas.json'),
+    'fireplace-wide-low': dict(visual='NW_CITY_FIREPLACE_LARGE_021', script='fireplace.py', cfg='fireplace-wide-low.json',
+                               atlas='fireplace-wide-low-atlas.json'),
 }
 # what each model takes from a concept: the material and character; its form is the original's mesh
 CONCEPTS = {
@@ -51,6 +60,11 @@ CONCEPTS = {
     'tripod': 'city-hearth/concept-hearth-tripod-attempt-6.png',
     'campfire': 'city-hearth/concept-hearth-tripod-attempt-6.png (the campfire under the tripod)',
     'brazier': 'city-hearth/concept-hearth-brazier-attempt-9.png',
+    'stove': 'city-hearth/concept-hearth-stove-attempt-2.png',
+    'fireplace': 'city-hearth/concept-hearth-fireplace-attempt-1.png',
+    'fireplace-large': 'city-hearth/concept-hearth-fireplace-large-attempt-2.png',
+    'fireplace-wide': 'city-hearth/concept-hearth-fireplace-wide-attempt-2.png',
+    'fireplace-wide-low': 'city-hearth/concept-hearth-fireplace-wide-attempt-2.png (the same fireplace with the low hood)',
 }
 
 

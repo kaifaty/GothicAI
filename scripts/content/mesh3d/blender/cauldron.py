@@ -111,7 +111,7 @@ rings = lathe(outer + inner, IRON, pot)  # outer wall up, across the rim, inner 
 cap(rings[0], IRON, up=False)
 cap(rings[-1], IRON, up=True)  # the inner wall closes under the liquid: the shell stays closed
 # the liquid: a flat disc just above where the inner wall meets it
-surface = P.new_part()
+surface = P.new_part(wound=True)  # an open disc: wound up by hand, the recalculation could turn it down
 lr = [radius(liquid, t) - wall - 0.001 for t in angles]
 liq = [P.vert(point(liquid, t, r), surface) for t, r in zip(angles, lr)]
 cap(liq, LIQUID, up=True)

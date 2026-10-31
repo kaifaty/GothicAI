@@ -1,1 +1,51 @@
-{"id": "hearth-campfire", "target": "data/content/mesh3d-hearth.json", "seed": 13, "ground": -0.38, "stones": 15, "ring": [0.76, 0.86], "stone": [[0.34, 0.44], [0.26, 0.34], [0.24, 0.38]], "logs": 7, "log": [0.06, 0.085], "foot": [0.5, 0.72], "top": [0.15, 0.8], "burnt": 0.45, "bed": [0.66, 0.36], "lumps": [16, 12], "ash": [0.55, 1.0]}
+{
+ "id": "hearth-campfire",
+ "target": "data/content/mesh3d-hearth.json",
+ "seed": 13,
+ "ground": -0.38,
+ "stones": 15,
+ "ring": [
+  0.74,
+  0.84
+ ],
+ "stone": [
+  [
+   0.4,
+   0.5
+  ],
+  [
+   0.3,
+   0.38
+  ],
+  [
+   0.3,
+   0.45
+  ]
+ ],
+ "logs": 7,
+ "log": [
+  0.06,
+  0.085
+ ],
+ "foot": [
+  0.5,
+  0.72
+ ],
+ "top": [
+  0.15,
+  0.8
+ ],
+ "burnt": 0.45,
+ "bed": [
+  0.66,
+  0.36
+ ],
+ "lumps": [
+  16,
+  12
+ ],
+ "ash": [
+  0.55,
+  1.0
+ ]
+}
