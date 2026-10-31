@@ -144,6 +144,32 @@ sleep() { printf 'sleep %s\n' "$1" >> "$CALLS"; }
 
 
 class SoakControlTests(unittest.TestCase):
+    def test_off_is_accepted_and_forwarded_to_server(self):
+        source = SCRIPT.read_text()
+        selection = source[source.index('SCENARIO="${SCENARIO:-m0}"'):source.index('ASR="${ASR:-fake}"')]
+        launch = source[source.index('(cd "$ROOT/server" && exec uv run gothic-ai serve'):
+                        source.index('GAME=""')]
+        for llm in ("off", None):
+            with self.subTest(llm=llm), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                (root / "server").mkdir()
+                uv = root / "uv"
+                uv.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@"\n')
+                uv.chmod(0o755)
+                env = dict(PATH=f"{root}:{os.environ['PATH']}", ROOT=str(root), LOG_DIR=str(root),
+                           PORT="47827", SCENARIO="graph")
+                if llm is not None:
+                    env["LLM"] = llm
+                done = subprocess.run(
+                    ["bash", "-euc", selection + '\nVOICE_ARGS=(--no-voice) TTS_ARGS=(--no-tts) '
+                     'BRAIN_ARGS=(--no-brain) QUICK_ARGS=(--no-quick) SVM_ARGS=() FEAT_ARGS=()\n'
+                     + launch + '\nwait "$SRV"'],
+                    check=False, env=env, capture_output=True, text=True, timeout=5,
+                )
+                self.assertEqual(done.returncode, 0, done.stderr)
+                args = (root / "server.log").read_text().splitlines()
+                self.assertEqual(args[args.index("--llm") + 1], llm or "fake")
+
     def test_control_selects_native_body_without_relaxing_other_launch_requirements(self):
         source = SCRIPT.read_text()
         selection = source[source.index('SCENARIO="${SCENARIO:-m0}"'):source.index('ASR="${ASR:-fake}"')]

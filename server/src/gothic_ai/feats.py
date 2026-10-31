@@ -461,7 +461,7 @@ class ChroniclerModel:
     async def epilogue(
         self, brief: str, previous: dict[str, Any] | None = None, errors: list[str] | None = None,
     ) -> dict[str, Any] | None:
-        if self.llm.name in {"fake", "none"}:
+        if self.llm.name in {"fake", "none", "off"}:
             return None
         return await self._call(
             brief, EPILOGUE_INSTRUCTIONS, EPILOGUE_TOOL, "chronicler_epilogue", previous, errors,
