@@ -11,6 +11,32 @@ from gothic_ai import cli
 from gothic_ai.llm.off import ModelOff, OffBackend
 
 
+@pytest.mark.parametrize(("scenario", "llm", "expected"), [
+    ("m0", "auto", "off"),
+    ("m1", "auto", "fake"),
+    ("haggle", "auto", "scenario haggle is live: set LLM=chatgpt|openai|local"),
+    ("m0", "fake", "scenario m0 requires --llm off"),
+    ("m0", "chatgpt", "scenario m0 requires --llm off"),
+    ("haggle", "off", "scenario haggle is live: set LLM=chatgpt|openai|local"),
+    ("haggle", "fake", "scenario haggle is live: set LLM=chatgpt|openai|local"),
+    (None, "auto", "--llm auto requires --scenario"),
+])
+def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
+    serve = AsyncMock(return_value=0)
+    monkeypatch.setattr(cli, "serve", serve)
+    flags = ["--scenario", scenario] if scenario else []
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--llm", llm, *flags])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    if expected in {"off", "fake"}:
+        assert exit.value.code == 0
+        assert serve.await_args.args[0].llm == expected
+    else:
+        assert exit.value.code == 2
+        assert expected in capsys.readouterr().err
+        serve.assert_not_awaited()
+
+
 def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, monkeypatch, caplog):
     game = tmp_path / "game"
     game.mkdir()
@@ -23,7 +49,6 @@ def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, mo
 
 @pytest.mark.parametrize(("scenario", "backend_kind", "outcome", "code"), [
     (None, "fake", "clean", 0),
-    ("m0", "fake", "clean", 0),
     ("m0", "off", "clean", 0),
     ("m0", "off", "caught", 1),
     ("m0", "off", "uncaught", 1),
@@ -162,7 +187,7 @@ def test_serve_arguments_select_responses_transport(monkeypatch, flags, websocke
     [
         ([], True),
         (["--no-showrunner"], False),
-        (["--scenario", "m0"], False),
+        (["--scenario", "m0", "--llm", "off"], False),
         (["--scenario", "showrunner"], False),
         (["--scenario", "showrunner_live"], False),
     ],
@@ -347,19 +372,18 @@ async def test_encounter_worker_starts_without_a_behavioral_planner(monkeypatch)
 @pytest.mark.parametrize(
     ("scenario", "control", "enabled", "url", "llm", "valid", "policy"),
     [
-        ("neural-soak", "1", False, None, "fake", True, "service"),
-        ("neural-soak", "1", False, "tcp://policy:47835", "fake", True, "service"),
-        ("neural-soak", "1", True, "tcp://policy:47835", "fake", False, "service"),
-        ("neural-soak", "0", False, None, "fake", False, "service"),
-        ("neural-soak", "0", True, None, "fake", True, "engine"),
-        ("neural-soak", "0", True, None, "fake", False, "service"),
-        ("neural-soak", "0", True, "tcp://policy:47835", "fake", True, "service"),
-        ("neural-soak", "0", True, "tcp://policy:47835", "fake", True, "engine"),
-        ("neural-soak", "1", False, None, "chatgpt", False, "service"),
-        ("neural-load", "1", False, None, "fake", False, "service"),
+        ("neural-soak", "1", False, None, "off", True, "service"),
+        ("neural-soak", "1", False, "tcp://policy:47835", "off", True, "service"),
+        ("neural-soak", "1", True, "tcp://policy:47835", "off", False, "service"),
+        ("neural-soak", "0", False, None, "off", False, "service"),
+        ("neural-soak", "0", True, None, "off", True, "engine"),
+        ("neural-soak", "0", True, None, "off", False, "service"),
+        ("neural-soak", "0", True, "tcp://policy:47835", "off", True, "service"),
+        ("neural-soak", "0", True, "tcp://policy:47835", "off", True, "engine"),
+        ("neural-load", "1", False, None, "off", False, "service"),
         (None, "1", False, None, "fake", False, "service"),
-        ("neural", "0", True, None, "fake", True, "engine"),
-        ("neural", "0", True, None, "fake", False, "service"),
+        ("neural", "0", True, None, "off", True, "engine"),
+        ("neural", "0", True, None, "off", False, "service"),
         ("feats", "0", True, None, "fake", True, "engine"),
         ("feats", "0", True, None, "chatgpt", True, "engine"),
         ("feats", "0", True, None, "local", False, "engine"),
