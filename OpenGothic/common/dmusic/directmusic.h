@@ -6,6 +6,7 @@
 #include "style.h"
 
 #include <Tempest/File>
+#include <functional>
 #include <vector>
 
 namespace Dx8 {
@@ -15,7 +16,14 @@ namespace Dx8 {
  */
 class DirectMusic final {
   public:
+    struct Native {
+      std::function<Segment(const char16_t*)> segment;
+      std::function<Style(const char16_t*)> style;
+      std::function<DlsCollection::Parsed(const char16_t*)> dls;
+      };
+
     DirectMusic();
+    explicit DirectMusic(Native source);
 
     using StyleList = std::vector<std::pair<std::u16string,Style>>;
     using DlsList   = std::vector<std::unique_ptr<std::pair<std::u16string,DlsCollection>>>;
@@ -33,11 +41,10 @@ class DirectMusic final {
     const DlsList&       dlsCollection() { return dls;    }
 
   private:
+    Native                      native;
     StyleList                   styles;
     DlsList                     dls;
     std::vector<std::u16string> path;
-
-    Tempest::RFile              implOpen(const char16_t* file);
   };
 
 }

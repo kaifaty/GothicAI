@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import Mock
 
 import pytest
 
@@ -17,6 +18,39 @@ from tests.fakes import Clock, FakeDecider
 from tests.test_dialogue import XARDAS, _until
 
 WOLF = {"id": "WOLF", "name": "Волк", "distance": 400.0, "guild": 0, "dead": False}
+
+
+async def _tick_until(planner, predicate) -> None:
+    def done():
+        planner.tick(planner.clock())
+        return predicate() and not planner._tasks
+
+    await _until(done, timeout=10)
+
+
+class NativeDetachGame(FakeGame):
+    """The bridge emits Detached before the detach request's result."""
+
+    async def handle(self, msg):
+        if msg["type"] != "detach":
+            await super().handle(msg)
+            return
+        self.attached.discard(msg["npc"])
+        await self.send(type="detached", npc=msg["npc"], reason="server")
+        await self.send(type="result", req=msg["req"], ok=True)
+
+
+class PausedBackend(FakeBackend):
+    """Hold the reply until the test has delivered the event that must happen mid-turn."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.resume = asyncio.Event()
+
+    async def stream(self, **kwargs):
+        async for event in super().stream(**kwargs):
+            await self.resume.wait()
+            yield event
 
 
 def test_events_close_together_make_one_incident():
@@ -89,7 +123,7 @@ async def _scene(decider: FakeDecider | None, llm: FakeBackend, fake: FakeGame, 
     desk = IncidentDesk(link, dialogue, reflexes, budget or Budget(), trace, settle_s=0.05)
     await link.attach(XARDAS)
     dialogue.open(XARDAS, "Ксардас")
-    await _until(lambda: XARDAS in desk.attached)
+    await _until(lambda: XARDAS in desk.attached, timeout=10)
     return link_cm, link, dialogue, desk, trace
 
 
@@ -101,7 +135,7 @@ async def test_the_body_reacts_at_once_and_the_words_come_after(tmp_path):
     try:
         await link.snapshot(XARDAS, fresh=True)
         await fake.perception(XARDAS, "ASSESSDAMAGE", "WOLF")
-        await _until(lambda: fake.said, timeout=5)
+        await _until(lambda: fake.said, timeout=10)
     finally:
         await cm.__aexit__(None, None, None)
 
@@ -124,9 +158,9 @@ async def test_a_second_hit_hands_the_npc_to_the_games_scripts(tmp_path):
     try:
         await link.snapshot(XARDAS, fresh=True)
         await fake.perception(XARDAS, "ASSESSDAMAGE", "WOLF")
-        await asyncio.sleep(0.05)
+        await _until(lambda: XARDAS in desk.tracker.current, timeout=10)
         await fake.perception(XARDAS, "ASSESSDAMAGE", "WOLF")
-        await _until(lambda: XARDAS not in fake.attached, timeout=5)
+        await _until(lambda: XARDAS not in fake.attached, timeout=10)
     finally:
         await cm.__aexit__(None, None, None)
 
@@ -140,10 +174,14 @@ async def test_a_threat_frees_a_listening_npc_before_its_model_starts_native_com
     from gothic_ai.brain import LogApplier, NpcPlanner, PlannerConfig
     from gothic_ai.protocol import RosterEntry
 
-    fake = FakeGame()
+    fake = NativeDetachGame()
     cm, link, dialogue, desk, trace = await _scene(None, FakeBackend("Ах ты!", delay=0), fake, tmp_path)
     applier = LogApplier()
-    planner = NpcPlanner(FakeDecider("fight", 0.95), applier, config=PlannerConfig(ask_attitude=False))
+    clock = Clock()
+    desk.clock = clock
+    planner = NpcPlanner(
+        FakeDecider("fight", 0.95), applier, clock=clock, config=PlannerConfig(ask_attitude=False)
+    )
     planner.on_roster(
         [RosterEntry(id=XARDAS, name="Ксардас", distance=500, activity="attached")], planner.clock()
     )
@@ -154,10 +192,14 @@ async def test_a_threat_frees_a_listening_npc_before_its_model_starts_native_com
             await fake.send(type="npc_event", npc=XARDAS, kind="npc_threat", other="CAVALORN", distance=1000)
         else:
             await fake.perception(XARDAS, "ASSESSDAMAGE", "CAVALORN")
-        await _until(lambda: XARDAS not in fake.attached)
-        for _ in range(10):
-            planner.tick(planner.clock())
-            await asyncio.sleep(0)
+        await _until(
+            lambda: XARDAS not in fake.attached
+            and XARDAS not in desk._releasing
+            and planner.npcs[XARDAS].activity == "routine"
+            and any(s.other == "CAVALORN" for s in planner.npcs[XARDAS].stimuli),
+            timeout=10,
+        )
+        await _tick_until(planner, lambda: applier.recent)
         assert [(d.choice, d.target) for d in applier.recent] == [("fight", "CAVALORN")]
         assert not desk.attached and planner.npcs[XARDAS].activity == "routine"
     finally:
@@ -183,13 +225,17 @@ async def test_freeing_a_listener_keeps_only_its_live_intent_about_this_threat(
     from gothic_ai.brain import LogApplier, NpcPlanner, PlannerConfig
     from gothic_ai.protocol import RosterEntry
 
-    fake = FakeGame()
+    fake = NativeDetachGame()
     cm, link, dialogue, desk, trace = await _scene(None, FakeBackend("Ах ты!", delay=0), fake, tmp_path)
     conv = dialogue.conversations[XARDAS]
     conv.intent = Intent(goal, target)
     conv.calm = Intent() if live else None
     applier = LogApplier()
-    planner = NpcPlanner(FakeDecider("comment", 0.95), applier, config=PlannerConfig(ask_attitude=False))
+    clock = Clock()
+    desk.clock = clock
+    planner = NpcPlanner(
+        FakeDecider("comment", 0.95), applier, clock=clock, config=PlannerConfig(ask_attitude=False)
+    )
     planner.on_roster(
         [RosterEntry(id=XARDAS, name="Ксардас", distance=500, activity="attached")], planner.clock()
     )
@@ -197,10 +243,14 @@ async def test_freeing_a_listener_keeps_only_its_live_intent_about_this_threat(
     desk.follow(planner)
     try:
         await fake.send(type="npc_event", npc=XARDAS, kind="npc_threat", other="CAVALORN", distance=1000)
-        await _until(lambda: XARDAS not in fake.attached)
-        for _ in range(10):
-            planner.tick(planner.clock())
-            await asyncio.sleep(0)
+        await _until(
+            lambda: XARDAS not in fake.attached
+            and XARDAS not in desk._releasing
+            and planner.npcs[XARDAS].activity == "routine"
+            and any(s.other == "CAVALORN" for s in planner.npcs[XARDAS].stimuli),
+            timeout=10,
+        )
+        await _tick_until(planner, lambda: applier.recent)
         assert [(d.choice, d.target) for d in applier.recent] == [(expected, "CAVALORN")]
     finally:
         await cm.__aexit__(None, None, None)
@@ -216,9 +266,10 @@ async def test_a_companions_body_in_a_fight_is_left_to_orders_only_its_words_com
     try:
         await link.snapshot(XARDAS, fresh=True)
         await fake.perception(XARDAS, "ASSESSDAMAGE", "WOLF")
-        await asyncio.sleep(0.05)
+        await _until(lambda: XARDAS in desk.tracker.current, timeout=10)
         await fake.perception(XARDAS, "ASSESSDAMAGE", "WOLF")  # a second hit: no handing to the scripts
-        await _until(lambda: fake.said, timeout=5)
+        await _until(lambda: desk.tracker.current[XARDAS].version == 2, timeout=10)
+        await _until(lambda: fake.said and dialogue.conversations[XARDAS].reply.done(), timeout=10)
     finally:
         await cm.__aexit__(None, None, None)
 
@@ -231,14 +282,16 @@ async def test_a_companions_body_in_a_fight_is_left_to_orders_only_its_words_com
 async def test_words_about_an_incident_that_is_over_are_dropped(tmp_path):
     fake = FakeGame()
     fake.nearby.append(WOLF)
-    llm = FakeBackend("Я тебе покажу!", delay=0.3)
+    llm = PausedBackend("Я тебе покажу!", delay=0)
     cm, link, dialogue, desk, trace = await _scene(None, llm, fake, tmp_path)
     try:
         await link.snapshot(XARDAS, fresh=True)
         await fake.perception(XARDAS, "ASSESSDAMAGE", "WOLF")
-        await _until(lambda: llm.calls, timeout=5)
+        await _until(lambda: llm.calls, timeout=10)
         await fake.send(type="detached", npc=XARDAS, reason="down")  # knocked out while the model thinks
-        await _until(lambda: dialogue.conversations[XARDAS].reply.done(), timeout=5)
+        await _until(lambda: XARDAS not in desk.attached, timeout=10)
+        llm.resume.set()
+        await _until(lambda: dialogue.conversations[XARDAS].reply.done(), timeout=10)
     finally:
         await cm.__aexit__(None, None, None)
 
@@ -249,16 +302,18 @@ async def test_words_about_an_incident_that_is_over_are_dropped(tmp_path):
     assert turns[-1]["status"] == "stale"
 
 
-async def test_no_words_without_budget(tmp_path):
+async def test_no_words_without_budget(tmp_path, monkeypatch):
     fake = FakeGame()
     fake.nearby.append(WOLF)
     llm = FakeBackend("Прочь!", delay=0)
     budget = Budget(per_npc_per_min=0, total_per_min=0)
+    allow = Mock(wraps=budget.allow)
+    monkeypatch.setattr(budget, "allow", allow)
     cm, link, dialogue, desk, trace = await _scene(None, llm, fake, tmp_path, budget)
     try:
         await link.snapshot(XARDAS, fresh=True)
         await fake.perception(XARDAS, "ASSESSDAMAGE", "WOLF")
-        await asyncio.sleep(0.3)
+        await _until(lambda: allow.called, timeout=10)
     finally:
         await cm.__aexit__(None, None, None)
     assert llm.calls == []
@@ -270,7 +325,7 @@ async def test_the_body_gestures_while_the_npc_thinks_of_an_answer(tmp_path):
     cm, link, dialogue, desk, trace = await _scene(FakeDecider("nod", 0.9), llm, fake, tmp_path)
     try:
         await dialogue.say_as_player(XARDAS, "Ты ведь Ксардас?")
-        await _until(lambda: fake.said, timeout=5)
+        await _until(lambda: fake.said, timeout=10)
     finally:
         await cm.__aexit__(None, None, None)
 
@@ -284,7 +339,7 @@ async def test_the_body_gestures_while_the_npc_thinks_of_an_answer(tmp_path):
 
 
 async def test_a_fight_ends_with_the_incident_and_the_old_intent_comes_back(tmp_path):
-    fake = FakeGame()
+    fake, clock = FakeGame(), Clock()
     fake.nearby.append(WOLF)
     follow = {
         "goal": "follow_hero",
@@ -304,16 +359,17 @@ async def test_a_fight_ends_with_the_incident_and_the_old_intent_comes_back(tmp_
     link = await link_cm.__aenter__()
     try:
         dialogue = DialogueManager(link, llm, PersonaProvider(None))
-        desk = IncidentDesk(link, dialogue, None, Budget(), None, settle_s=0.05, gap_s=0.5)
+        desk = IncidentDesk(link, dialogue, None, Budget(), None, clock=clock, settle_s=0.05, gap_s=0.5)
         await link.attach(XARDAS)
         conv = dialogue.open(XARDAS, "Ксардас")
-        await _until(lambda: XARDAS in desk.attached)
+        await _until(lambda: XARDAS in desk.attached, timeout=10)
         await link.snapshot(XARDAS, fresh=True)
         await dialogue.say_as_player(XARDAS, "Пойдём со мной")
         await fake.perception(XARDAS, "ASSESSDAMAGE", "WOLF")
-        await _until(lambda: conv.intent.goal == "fight", timeout=5)
+        await _until(lambda: conv.intent.goal == "fight" and conv.reply.done(), timeout=10)
         assert conv.intent.agenda == "wants the hero to see Hagen"
-        await _until(lambda: conv.intent.goal == "follow_hero", timeout=5)  # the wolf is gone
+        clock.t += 1
+        await _until(lambda: conv.intent.goal == "follow_hero", timeout=10)  # the wolf is gone
     finally:
         await link_cm.__aexit__(None, None, None)
     assert conv.intent.attitude == "friendly" and conv.intent.agenda == "wants the hero to see Hagen"
@@ -339,7 +395,7 @@ async def test_lines_said_on_the_move_wait_for_each_other(tmp_path):
         task = dialogue.event_turn(XARDAS, "[Событие: волки]", overlay=True)
         assert task is not None
         await asyncio.wait_for(task, 10)
-        await _until(lambda: len(fake.said) >= 2)
+        await _until(lambda: len(fake.said) >= 2, timeout=10)
         took = asyncio.get_running_loop().time() - t0
     says = [m for m in fake.received if m["type"] == "say"]
     assert all(m["overlay"] for m in says)
@@ -380,11 +436,7 @@ async def test_a_free_npc_speaks_on_the_move_when_the_moment_calls_for_it(tmp_pa
             other_name="Волк",
             distance=600,
         )
-        for _ in range(100):
-            planner.tick(planner.clock())
-            await asyncio.sleep(0.02)
-            if fake.said:
-                break
+        await _tick_until(planner, lambda: fake.said)
 
     assert fake.said[0].startswith("Волки!")
     says = [m for m in fake.received if m["type"] == "say"]
@@ -413,11 +465,13 @@ async def test_near_the_conversation_the_heros_words_alone_are_its_question(tmp_
                 }
             return out
 
-    fake = FakeGame()
+    fake, clock = FakeGame(), Clock()
     llm = FakeBackend("Это ты мне?", delay=0)
     async with connected(fake) as link:
         dialogue = DialogueManager(link, llm, PersonaProvider(None))
-        planner = NpcPlanner(Decider("stay", 0.9), LogApplier(), config=PlannerConfig(ask_attitude=False))
+        planner = NpcPlanner(
+            Decider("stay", 0.9), LogApplier(), clock=clock, config=PlannerConfig(ask_attitude=False)
+        )
         link.listeners.append(planner.on_message)
         desk = IncidentDesk(link, dialogue, None, Budget(), None, planner=planner)
         desk.speaks_up_there = lambda npc: True
@@ -425,9 +479,8 @@ async def test_near_the_conversation_the_heros_words_alone_are_its_question(tmp_
             [RosterEntry(id="SHEPHERD", name="Пастух", guild=8, distance=600, in_view=True)], 0.0
         )
         planner.on_player_text("BAU_950_LOBART", "Лобарт, где твоя репа?", planner.clock())
-        for _ in range(40):
-            planner.tick(planner.clock())
-            await asyncio.sleep(0.02)
+        await _tick_until(planner, lambda: planner.npcs["SHEPHERD"].pending is None)
+        assert not desk._spoke
         quiet = list(fake.said)
         # a wolf is another matter: it shouts
         await fake.send(
@@ -438,11 +491,7 @@ async def test_near_the_conversation_the_heros_words_alone_are_its_question(tmp_
             other_name="Волк",
             distance=600,
         )
-        for _ in range(100):
-            planner.tick(planner.clock())
-            await asyncio.sleep(0.02)
-            if fake.said:
-                break
+        await _tick_until(planner, lambda: fake.said)
 
     assert quiet == [] and fake.said == ["Это ты мне?"]
 
@@ -469,17 +518,13 @@ async def test_the_hero_saves_a_free_npc_and_it_thanks_him(tmp_path):
     llm = FakeBackend(script=[FakeStep("Волк! Помогите!"), FakeStep("Спасибо, путник, выручил.")], delay=0)
 
     async def turns(n: int) -> None:
-        for _ in range(100):
-            planner.tick(clock.t)
-            await asyncio.sleep(0.02)
-            if len(fake.said) >= n:
-                break
+        await _tick_until(planner, lambda: len(fake.said) >= n)
 
     async with connected(fake) as link:
         dialogue = DialogueManager(link, llm, PersonaProvider(None))
         planner = NpcPlanner(Decider("call_help", 0.9), LogApplier(), clock=clock)
         link.listeners.append(planner.on_message)
-        IncidentDesk(link, dialogue, None, Budget(), None, clock=clock, planner=planner)
+        desk = IncidentDesk(link, dialogue, None, Budget(), None, clock=clock, planner=planner)
         planner.on_roster([RosterEntry(id="MALETH", name="Малет", guild=8, distance=700, in_view=True)], 0.0)
         wolf = {"type": "npc_event", "npc": "MALETH", "other_name": "Волк", "distance": 300}
         await fake.send(**wolf, kind="monster_attack", other="WOLF", detail="you")
@@ -489,8 +534,11 @@ async def test_the_hero_saves_a_free_npc_and_it_thanks_him(tmp_path):
         await fake.send(**killed, victim="WOLF", detail="Волк", distance=200)
         await turns(2)
         clock.t += 6
+        spoke_before = dict(desk._spoke)
         await fake.send(**killed, victim="WOLF", detail="Волк", distance=200)  # nothing new
-        await turns(3)
+        await _until(lambda: planner.stats.events == 3, timeout=10)
+        await _tick_until(planner, lambda: planner.npcs["MALETH"].pending is None)
+        assert desk._spoke == spoke_before
 
     assert fake.said == ["Волк! Помогите!", "Спасибо, путник, выручил."]
     first, second = (request[-1].content for _, request, _ in llm.calls)
@@ -527,23 +575,19 @@ async def test_a_free_npc_that_feared_the_wolf_and_killed_it_says_so(tmp_path):
     from gothic_ai.protocol import RosterEntry
 
     fake, clock = FakeGame(), Clock()
-    llm = FakeBackend(
+    llm = PausedBackend(
         script=[FakeStep("Волк! Я с ним не справлюсь!"), FakeStep("Хм… а волк-то был не такой уж страшный.")],
-        delay=0.05,
+        delay=0,
     )
 
     async def turns(n: int) -> None:
-        for _ in range(100):
-            planner.tick(clock.t)
-            await asyncio.sleep(0.02)
-            if len(fake.said) >= n:
-                break
+        await _tick_until(planner, lambda: len(fake.said) >= n)
 
     async with connected(fake) as link:
         dialogue = DialogueManager(link, llm, PersonaProvider(None))
         planner = NpcPlanner(Escalates("call_help", [3.6, 1.7]), LogApplier(), clock=clock)
         link.listeners.append(planner.on_message)
-        IncidentDesk(link, dialogue, None, Budget(), None, clock=clock, planner=planner)
+        desk = IncidentDesk(link, dialogue, None, Budget(), None, clock=clock, planner=planner)
         planner.on_roster(
             [
                 RosterEntry(id="MALETH", name="Малет", guild=12, distance=700, in_view=True),
@@ -553,18 +597,19 @@ async def test_a_free_npc_that_feared_the_wolf_and_killed_it_says_so(tmp_path):
         )
         wolf = {"type": "npc_event", "npc": "MALETH", "other_name": "Волк", "distance": 300}
         await fake.send(**wolf, kind="monster_near", other="WOLF")
-        for _ in range(100):
-            planner.tick(clock.t)
-            await asyncio.sleep(0.02)
-            if llm.calls:
-                break
+        await _tick_until(planner, lambda: llm.calls)
         assert not fake.said  # he is still speaking
         clock.t += 8
         killed = {"type": "npc_event", "kind": "monster_killed", "victim": "WOLF", "detail": "Волк"}
         await fake.send(**killed, npc="MALETH", other="MALETH", other_name="Малет", distance=0)
+        await _until(lambda: planner.stats.events == 2, timeout=10)
+        llm.resume.set()
         await turns(2)
+        spoke_before = dict(desk._spoke)
         await fake.send(**killed, npc="BAUER", other="BAUER", other_name="Крестьянин", distance=0)
-        await turns(3)
+        await _until(lambda: planner.stats.events == 3, timeout=10)
+        await _tick_until(planner, lambda: planner.npcs["BAUER"].pending is None)
+        assert desk._spoke == spoke_before
 
     assert fake.said == ["Волк! Я с ним не справлюсь!", "Хм… а волк-то был не такой уж страшный."]
     second = llm.calls[1][1][-1].content
@@ -592,15 +637,11 @@ async def test_a_free_npcs_words_and_body_agree(tmp_path):
         await fake.send(
             type="npc_event", npc="MALETH", kind="monster_near", other="WOLF", other_name="Волк", distance=300
         )
-        for _ in range(100):
-            planner.tick(clock.t)
-            await asyncio.sleep(0.02)
-            if any(d.choice == "flee" for d in applier.recent):
-                break
+        await _tick_until(planner, lambda: any(d.choice == "flee" for d in applier.recent))
         conv = dialogue.conversations["MALETH"]
         assert conv.intent.goal == "flee"
         clock.t += 60  # the wolf is long gone
-        await _until(lambda: conv.intent.goal == "none", timeout=2)
+        await _until(lambda: conv.intent.goal == "none", timeout=10)
 
     body = [(d.choice, d.target) for d in applier.recent if d.question == "react"]
     assert body == [("flee", "WOLF")]
@@ -633,18 +674,10 @@ async def test_a_stuck_turn_gives_way_to_the_end_of_the_danger(tmp_path, monkeyp
         planner.on_roster([RosterEntry(id="MALETH", name="Малет", guild=12, distance=700, in_view=True)], 0.0)
         wolf = {"type": "npc_event", "npc": "MALETH", "other": "WOLF", "other_name": "Волк", "distance": 300}
         await fake.send(**wolf, kind="monster_near")
-        for _ in range(100):
-            planner.tick(clock.t)
-            await asyncio.sleep(0.02)
-            if llm.calls:
-                break
+        await _tick_until(planner, lambda: llm.calls)
         clock.t += 8
         await fake.send(**wolf, kind="monster_killed", victim="WOLF", detail="Волк")
-        for _ in range(100):
-            planner.tick(clock.t)
-            await asyncio.sleep(0.02)
-            if fake.said:
-                break
+        await _tick_until(planner, lambda: fake.said)
 
     assert fake.said == ["Спасибо, выручил."] and len(llm.calls) == 2
 
@@ -661,7 +694,7 @@ async def test_an_npc_in_a_fight_says_its_line_through_the_quick_model(tmp_path)
         assert not desk.in_fight(XARDAS) and not dialogue.in_fight(XARDAS)
         await link.snapshot(XARDAS, fresh=True)
         await fake.perception(XARDAS, "ASSESSDAMAGE", "WOLF")
-        await _until(lambda: fake.said and quick.prewarms, timeout=5)
+        await _until(lambda: fake.said and quick.prewarms, timeout=10)
         assert desk.in_fight(XARDAS) and dialogue.in_fight(XARDAS)
     finally:
         await cm.__aexit__(None, None, None)

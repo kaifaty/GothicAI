@@ -1,0 +1,37 @@
+# Khorinis harbour cargo lane: water, ships, quays and native harbour population.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+goto pos 5391 320 -5822
+watch player
+cam look 120
+cam world 850 300 0
+# Ten real seconds after the teleport for loading and native simulation.
+wait 10000
+cam hold
+perf sample perf-harbour/view-1
+wait 8000
+perf stop
+cam world 850 300 90
+wait 34
+cam hold
+perf sample perf-harbour/view-2
+wait 8000
+perf stop
+cam world 850 300 180
+wait 34
+cam hold
+perf sample perf-harbour/view-3
+wait 8000
+perf stop
+cam world 850 300 270
+wait 34
+cam hold
+perf sample perf-harbour/view-4
+wait 8000
+perf stop

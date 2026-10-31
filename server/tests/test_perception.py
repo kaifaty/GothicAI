@@ -411,7 +411,130 @@ async def test_it_picks_up_what_the_hero_threw_down_and_follows_him_again():
 
     assert "take_item" in [t.name for t in llm.calls[0][2]]  # offered: it sees something lying there
     rejected = next(i for i in llm.calls[1][1] if isinstance(i, ToolResult))
-    assert rejected.output == f"Отклонено: на земле нет ITPL_BEET; ты видишь там: {LETTER}."
+    assert rejected.output == (
+        f"Отклонено: на земле нет ITPL_BEET; ты видишь там: {LETTER}."
+        " Ты уже сказал вслух: «Это ещё что?». Если отказ этого не меняет — ничего не говори."
+        " Если меняет — поправься одной короткой фразой, не повторяя сказанного."
+    )
     acts = [(m["action"], m["args"]) for m in fake.received if m["type"] == "action"]
     assert acts == [("take_item", {"item": LETTER}), ("follow", {"npc": "PLAYER"})]
     assert "[Ты поднял с земли: Запечатанное послание]" in [m.content for m in conv.history]
+
+
+@pytest.mark.parametrize("mode", ["first_reaction", "quick_line", "quick_fallback"])
+async def test_the_full_view_refreshes_the_turns_dynamic_tools(mode):
+    npc, herb = "NONE_100_XARDAS", "ITPL_HEALTH_HERB_01"
+    brief = {**lobarts_view(), "npc": npc, "name": "Ксардас", "items": []}
+    full = {
+        **brief,
+        "items": [{"item": herb, "name": "Лечебная трава", "distance": 700}],
+    }
+    fake = FakeGame()
+    fake.views[npc] = full
+    quick = FakeBackend("" if mode == "quick_fallback" else "Подниму траву.", delay=0)
+    llm = FakeBackend(
+        "Сейчас подниму.", delay=0, tool_calls=[ToolCall("take_item", {"item": herb})]
+    )
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), quick=quick)
+        dialogue.in_fight = lambda who: mode != "first_reaction"
+        perception = PerceptionDesk(link)
+        perception._store(NpcView.model_validate(brief))
+        dialogue.extensions.append(perception)
+        dialogue.sight = perception.sight
+        await link.attach(npc)
+        conv = dialogue.open(npc, "Ксардас")
+        await dialogue.say_as_player(npc, "Подними траву.")
+        await _until(
+            lambda: any("поднял" in m.content for m in conv.history if m.role == "developer")
+        )
+
+    assert herb not in quick.calls[0][1][-2].content
+    assert "На земле: Лечебная трава (ITPL_HEALTH_HERB_01; 7 м)." in llm.calls[0][1][-2].content
+    assert "take_item" in {t.name for t in llm.calls[0][2]}  # allowed, not just the tool registry
+    assert len(llm.calls) == 1
+    assert [(m["action"], m["args"]) for m in fake.received if m["type"] == "action"] == [
+        ("take_item", {"item": herb})
+    ]
+    assert "[Ты поднял с земли: Лечебная трава]" in [m.content for m in conv.history]
+
+
+@pytest.mark.parametrize("view_change", ["expired", "replaced"])
+@pytest.mark.parametrize("requested", ["ITPL_HEALTH_HERB_01", "ITPL_MUSHROOM_01"])
+async def test_ground_and_take_item_use_the_same_turn_view(view_change, requested, monkeypatch):
+    # Turn 9115efd2152a, 2026-10-21: its situation showed the herb at 7 m, but after the
+    # 4.122 s model call take_item said it saw nothing. Raw npc_views were not recorded;
+    # reconstruct the view from that situation and the recorded hero distance.
+    npc, herb = "BDT_1013_BANDIT_L", "ITPL_HEALTH_HERB_01"
+    fake = FakeGame()
+    snapshot = fake.snapshot(npc)
+    snapshot["t"] = 384107
+    snapshot["world"].update(day=0, hour=9, minute=32)
+    snapshot["npc"].update(
+        name="Бандит", pos=[21408.001953125, 2752.374755859375, -22690.806640625],
+        rot=-50.0, hp=40, hp_max=40, busy=True, inventory=[],
+        waypoint="NW_XARDAS_STAIRS_01", nearest_waypoint="NW_XARDAS_STAIRS_01",
+    )
+    snapshot["player"].update(
+        pos=[21637.2109375, 2786.755859375, -22712.6640625], distance=232.80155175599668,
+        ahead=[-0.9995164275169373, -0.031094633042812347],
+        right=[-0.031094633042812347, 0.9995164275169373], melee="Кинжал",
+    )
+    monkeypatch.setattr(fake, "snapshot", lambda who: snapshot)
+    view = {
+        "npc": npc,
+        "name": "Бандит",
+        "waypoint": "NW_XARDAS_STAIRS_01",
+        "hero": look("PLAYER", "Я", 2.3280155175599668, seen=True, faces_you=True),
+        "sees": [
+            look(
+                "BAU_4300_ADDON_CAVALORN", "Кавалорн", 3.789529113769531,
+                att="hostile", from_hero="behind",
+            )
+        ],
+        "items": [{"item": herb, "name": "Лечебная трава", "distance": 700, "from_hero": "ahead"}],
+    }
+    fake.views[npc] = view
+    clock = Clock()
+    llm = FakeBackend(
+        script=[FakeStep("Полегче, приятель.", [ToolCall("take_item", {"item": requested})]), FakeStep()],
+        delay=0,
+    )
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        perception = PerceptionDesk(link, clock=clock)
+        dialogue.extensions.append(perception)
+        dialogue.sight = perception.sight
+        await link.attach(npc)
+        conv = dialogue.open(npc, "Бандит")
+        original_stream = llm.stream
+
+        async def changed_view(**kwargs):
+            if not llm.calls:
+                clock.t += 4.122
+                if view_change == "replaced":
+                    perception._store(NpcView.model_validate({
+                        **view,
+                        "items": [{"item": "ITPL_MUSHROOM_01", "name": "Гриб", "distance": 700}],
+                    }))
+            async for event in original_stream(**kwargs):
+                yield event
+
+        monkeypatch.setattr(llm, "stream", changed_view)
+        await dialogue.say_as_player(npc, "Привет, чмо!")
+        if requested == herb:
+            await _until(lambda: any("поднял" in m.content for m in conv.history if m.role == "developer"))
+
+    situation = llm.calls[0][1][-2].content
+    assert "На земле: Лечебная трава (ITPL_HEALTH_HERB_01; 7 м, перед героем)." in situation
+    assert "ITPL_MUSHROOM_01" not in situation
+    acts = [(m["action"], m["args"]) for m in fake.received if m["type"] == "action"]
+    if requested == herb:
+        assert acts == [("take_item", {"item": herb})]
+        assert len(llm.calls) == 1
+    else:
+        assert acts == []
+        rejected = next(i for i in llm.calls[1][1] if isinstance(i, ToolResult))
+        assert rejected.output.startswith(
+            f"Отклонено: на земле нет {requested}; ты видишь там: {herb}."
+        )

@@ -1,5 +1,7 @@
 #include "navperceptionsafety.h"
 
+#include "navbench.h"
+#include "physics/navmesh.h"
 #include "physics/dynamicworld.h"
 #include "world/world.h"
 
@@ -34,6 +36,82 @@ DynamicWorld::RayWaterResult waterAbove(World& world,const Vec3& floor) {
 
 bool standingClear(World& world,const Vec3& floor) {
   return !world.physic()->sweep(floor+Vec3(0,50,0),floor+Vec3(0,150,0),30).hasCol;
+}
+
+void waterProbes(const std::vector<std::string>& args,World& world,const std::string& outputDirectory) {
+  std::ifstream input(args[2]);
+  if(!input)throw std::runtime_error("water-probes cannot read candidates");
+  std::ofstream out(std::filesystem::path(outputDirectory)/"water-probes.jsonl");
+  if(!out)throw std::runtime_error("water-probes cannot write candidates");
+  out<<std::setprecision(9)<<std::boolalpha;
+  const auto& mesh=NavBench::navigationMesh(world);
+  std::set<std::string> labels;
+  std::string line;
+  size_t count=0;
+  while(std::getline(input,line)) {
+    std::istringstream row(line);
+    std::string label,from,to,extra;
+    if(!(row>>label>>from>>to) || row>>extra || ++count>12000 || !labels.insert(label).second)
+      throw std::runtime_error("water-probes rows: UNIQUE_LABEL START_WAYPOINT GOAL_WAYPOINT; at most 12000");
+    const auto* startPoint=world.findPoint(from,false);
+    const auto* goalPoint=world.findPoint(to,false);
+    if(!startPoint || !goalPoint)throw std::runtime_error("water-probes missing candidate waypoint");
+    const auto start=startPoint->groundPos,goal=goalPoint->groundPos;
+    const auto delta=goal-start;
+    const float distance=horizontal(delta);
+    const Vec3 side=distance>0?Vec3(-delta.z/distance,0,delta.x/distance):Vec3{};
+    const auto dry=[&](const Vec3& point) {
+      const auto floor=world.physic()->landRay(point+Vec3(0,100,0),300);
+      if(!floor.hasCol || floor.n.y<.65f || std::abs(floor.v.y-point.y)>150.f || !standingClear(world,floor.v))return false;
+      const auto water=waterAbove(world,floor.v);
+      return !water.hasCol || water.wdepth-floor.v.y<=10.f;
+    };
+    const bool dryStart=dry(start),dryGoal=dry(goal);
+    size_t crossed=0,nearby=0,consecutive=0,longest=0;
+    Vec3 firstWater;
+    const int samples=std::max(1,int(std::ceil(distance/100.f)));
+    // This read-only qualification is discarded before ordinary teacher
+    // episodes. Neither the water truth nor the Detour plan enters memory.
+    if(dryStart && dryGoal && distance>=500.f && distance<=8000.f) {
+      for(int index=1;index<samples;++index) {
+        const auto center=start+delta*(float(index)/float(samples));
+        bool close=false;
+        for(float offset:{0.f,-150.f,150.f,-300.f,300.f}) {
+          const auto point=center+side*offset;
+          const auto floor=world.physic()->landRay(point+Vec3(0,3000,0),12000);
+          if(!floor.hasCol)continue;
+          const auto water=waterAbove(world,floor.v);
+          if(!water.hasCol || water.wdepth-floor.v.y<=10.f)continue;
+          if(!crossed && !nearby)firstWater=Vec3(point.x,water.wdepth,point.z);
+          if(offset==0)++crossed;
+          close=true;
+        }
+        if(close) {++nearby;longest=std::max(longest,++consecutive);}
+        else consecutive=0;
+      }
+    }
+    const auto meters=[](const Vec3& point) {return NavMesh::Point{point.x*.01f,point.y*.01f,point.z*.01f};};
+    const auto path=mesh.findPath(meters(start),meters(goal));
+    const bool blocked=!mesh.straightWalkable(meters(start),meters(goal));
+    const auto onEndpoint=[&](const Vec3& point,const NavMesh::Point& snapped) {
+      const auto& p=mesh.params();
+      return std::hypot(point.x-snapped[0]*100.f,point.z-snapped[2]*100.f)<=p.cellSize*100.f+.01f &&
+             std::abs(point.y-snapped[1]*100.f)<=100.f*(p.climb+2*p.cellHeight)+.01f;
+    };
+    const bool endpoints=!path.corners.empty() && onEndpoint(start,path.corners.front()) && onEndpoint(goal,path.corners.back());
+    const bool crossing=crossed>0 && blocked;
+    const bool shore=longest>=3;
+    const bool qualified=dryStart && dryGoal && path.complete && endpoints && (crossing || shore);
+    out<<"{\"label\":"<<std::quoted(label)<<",\"start\":"<<std::quoted(from)<<",\"goal\":"<<std::quoted(to)
+       <<",\"qualified\":"<<qualified<<",\"start_dry_supported\":"<<dryStart<<",\"goal_dry_supported\":"<<dryGoal
+       <<",\"detour_complete\":"<<path.complete<<",\"endpoints_on_surface\":"<<endpoints
+       <<",\"straight_blocked\":"<<blocked<<",\"direct_cm\":"<<distance<<",\"detour_length_cm\":"<<path.length*100.f
+       <<",\"direct_water_samples\":"<<crossed<<",\"near_shore_samples\":"<<nearby<<",\"consecutive_shore_samples\":"<<longest
+       <<",\"water_relation\":"<<std::quoted(crossing?"crossing":"along_shore")<<",\"first_water_cm\":";
+    if(nearby)vector(out,firstWater);else out<<"null";
+    out<<",\"start_cm\":";vector(out,start);out<<",\"goal_cm\":";vector(out,goal);out<<"}\n";
+  }
+  if(!input.eof() || !count || !out)throw std::runtime_error("water-probes incomplete candidate input/output");
 }
 
 void shores(const std::vector<std::string>& args,World& world,const std::string& outputDirectory) {
@@ -120,6 +198,9 @@ void shores(const std::vector<std::string>& args,World& world,const std::string&
 
 void NavPerceptionSafety::command(const std::vector<std::string>& args,World& world,
                                   const std::string& outputDirectory) {
+  if(args.size()==3 && args[1]=="water-probes" && std::filesystem::path(args[2]).is_absolute()) {
+    waterProbes(args,world,outputDirectory);return;
+  }
   if(args.size()==3 && args[1]=="perception-shores" && std::filesystem::path(args[2]).is_absolute()) {
     shores(args,world,outputDirectory);return;
   }

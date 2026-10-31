@@ -2,8 +2,8 @@
 
 #include <Tempest/Vec>
 
-#include <zenkit/Material.hh>
-#include <zenkit/SoftSkinMesh.hh>
+#include "asset/material.h"
+#include "asset/staticmesh.h"
 
 namespace phoenix_compat {
   struct SkeletalVertex
@@ -20,7 +20,7 @@ namespace phoenix_compat {
   {
     struct SubMesh
     {
-      zenkit::Material material;
+      asset::Material material;
       size_t           indexOffset = 0;
       size_t           indexSize   = 0;
     };
@@ -31,7 +31,7 @@ namespace phoenix_compat {
     std::vector<SubMesh>        subMeshes;
   };
   
-  zenkit::AxisAlignedBoundingBox get_total_aabb(const zenkit::SoftSkinMesh&);
+  zenkit::AxisAlignedBoundingBox get_total_aabb(const asset::SoftSkinMesh&);
   
-  PackedSkeletalMesh pack_softskin_mesh(const zenkit::SoftSkinMesh&);
+  PackedSkeletalMesh pack_softskin_mesh(const asset::SoftSkinMesh&);
 }

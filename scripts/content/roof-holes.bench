@@ -1,0 +1,48 @@
+# Real roof holes on harbour hut B037 (scripts/content/world/roof_holes.py): the hut's front, its big hole
+# from the street a little above the eaves, and from inside the hut up through it. Noon, NPC and effects hidden.
+# The big hole of the front slope: centre (3505, 312, -3577) cm, normal (-0.06, 0.86, -0.51).
+cheat god
+set time 12 0
+overlay off
+view hide animated morph pfx
+cam lift off
+
+# front: the hut from 6 m, eye ground + 400 cm (harbour-hut.bench «front»)
+cam look -800.000
+goto pos 3533.163 950.000 -3831.682
+cam world 600.000 -666.515 -104.500000
+wait 34
+cam hold
+wait 6000
+shot front
+wait 300
+
+# hole-street: 4.5 m out from the big hole, eye at 4.5 m, looking down into it
+cam look -638.000
+goto pos 3505.000 950.000 -3577.000
+cam world 450.000 -500.000 -96.700000
+wait 34
+cam hold
+wait 6000
+shot hole-street
+wait 300
+
+# hole-close: 2.2 m, from above the eaves
+cam look -638.000
+goto pos 3505.000 950.000 -3577.000
+cam world 220.000 -470.000 -100.000000
+wait 34
+cam hold
+wait 6000
+shot hole-close
+wait 300
+
+# inside: under the hole, 1.5 m in from it, eye at 2.3 m, looking up through it
+cam look -638.000
+goto pos 3505.000 950.000 -3577.000
+cam world 150.000 -720.000 83.000000
+wait 34
+cam hold
+wait 6000
+shot inside
+wait 300

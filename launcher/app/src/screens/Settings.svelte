@@ -55,8 +55,13 @@
         <Setting key="voice.enabled" kind="toggle" />
         {#if s.voice.enabled}
           <Setting key="voice.provider" kind="choice" options={ASR} />
+          {#if s.voice.provider === "inworld" || s.voice.fallback === "inworld"}
+            <Setting key="secrets.inworld_api_key" kind="secret" />
+          {/if}
           <Setting key="voice.fallback" kind="choice" options={ASR_FALLBACK} />
-          <Setting key="voice.voxtral_url" placeholder="http://127.0.0.1:47830" mono />
+          {#if s.voice.provider === "voxtral" || s.voice.fallback === "voxtral"}
+            <Setting key="voice.voxtral_url" placeholder="http://127.0.0.1:47830" mono />
+          {/if}
           <Reach part={launcher.providers?.voice} />
           <VoiceTest />
         {/if}
@@ -64,8 +69,10 @@
         <Setting key="tts.enabled" kind="toggle" />
         {#if s.tts.enabled}
           <Setting key="tts.provider" kind="choice" options={TTS} />
+          {#if s.tts.provider === "inworld" || s.tts.fallback === "inworld"}
+            <Setting key="secrets.inworld_api_key" kind="secret" />
+          {/if}
           <Setting key="tts.fallback" kind="choice" options={TTS_FALLBACK} />
-          <Setting key="secrets.inworld_api_key" kind="secret" />
           <Setting key="tts.voxcpm_url" placeholder="ws://127.0.0.1:47831" mono />
           <Setting key="tts.loudness" placeholder="как озвучка игры" />
           <Reach part={launcher.providers?.speech} />

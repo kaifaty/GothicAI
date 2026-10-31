@@ -1,0 +1,83 @@
+{
+  "asset": "harbour-roof-holes",
+  "title": "Настоящие провалы в кровле хижин порта",
+  "kind": "building",
+  "created": "2026-10-26",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "harbour-roof-holes"
+  ],
+  "sources": [],
+  "selected": {},
+  "reviews": [
+    {
+      "id": "r3-front",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-26",
+      "path": "reviews/r3-front/merged.json"
+    },
+    {
+      "id": "r3-hole-street",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-26",
+      "path": "reviews/r3-hole-street/merged.json"
+    },
+    {
+      "id": "r3-hole-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-26",
+      "path": "reviews/r3-hole-close/merged.json"
+    },
+    {
+      "id": "r3b-front",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-26",
+      "path": "reviews/r3b-front/merged.json"
+    },
+    {
+      "id": "r3b-hole-street",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-26",
+      "path": "reviews/r3b-hole-street/merged.json"
+    },
+    {
+      "id": "r3b-hole-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-26",
+      "path": "reviews/r3b-hole-close/merged.json"
+    }
+  ],
+  "gates": [
+    {
+      "gate": "ingame",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-26",
+      "quote": "Короче, меня все устраивает.",
+      "note": null
+    },
+    {
+      "gate": "enable",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-29",
+      "quote": "Включить",
+      "note": "working-8 = working-7 + roofholes-2",
+      "set": null
+    }
+  ],
+  "build": null,
+  "backup": null
+}

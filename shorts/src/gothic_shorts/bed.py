@@ -7,6 +7,8 @@ import math
 import subprocess
 from pathlib import Path
 
+from . import levels
+
 MUSIC = Path.home() / ".local/share/gothic-ai/music/game"
 
 
@@ -65,7 +67,9 @@ def render(theme: str, start: float | None, duration: float, out: Path) -> Path:
     done = subprocess.run(
         [
             "ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{start:.9f}", "-i", str(source),
-            "-t", f"{duration:.9f}", "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", str(out),
+            "-t", f"{duration:.9f}", "-af",
+            f"aformat=sample_rates=48000:channel_layouts=stereo,{levels.DUAL_MONO}",
+            "-c:a", "pcm_s16le", str(out),
         ],
         capture_output=True, text=True,
     )

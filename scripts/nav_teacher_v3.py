@@ -458,6 +458,7 @@ def disk_guard(output, limit_ms, max_bytes=MAX_BYTES):
 def checked_paths(args):
     if sys.platform != "linux":
         raise ValueError("Run teacher measurements on Ryzen/Linux inside gq batch")
+    os.environ.update(module("ryzen_game").game_environment(assets=args.assets))
     for name in ("runner", "assets", "save", "cache", "links", "roads"):
         value = getattr(args, name)
         if value is None:

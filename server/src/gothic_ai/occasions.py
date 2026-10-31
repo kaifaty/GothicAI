@@ -49,6 +49,38 @@ def _minutes(fact: Fact) -> int | None:
     return fact["day"] * DAY_MINUTES + fact["hour"] * 60 + fact["minute"]
 
 
+async def with_quest_outcomes(
+    events: list[Fact], facts: list[Fact], link: GameLink, names: dict[str, str],
+) -> list[Fact]:
+    if not events:
+        return events
+    outcomes = {f["quest"]: f for f in facts if f.get("fact") == "quest_outcome"}
+    relevant = [
+        outcomes[e["quest"]] for e in events if e.get("to") != "running" and e.get("quest") in outcomes
+    ]
+    if not relevant:
+        return events
+    dropped = sorted({n for outcome in relevant for n in outcome["drop"]})
+    state = await link.story_state(npcs=dropped, items=dropped) if dropped else {}
+    names = {
+        **names,
+        **state.get("items", {}),
+        **{n: s["name"] for n, s in state.get("npcs", {}).items() if s.get("name")},
+    }
+    return [
+        {
+            **event,
+            "outcome": {
+                "how": outcome["how"],
+                "drop": [names.get(n, n) for n in outcome["drop"]],
+                "why": outcome["why"],
+                "pay": outcome["pay"],
+            },
+        } if event.get("to") != "running" and (outcome := outcomes.get(event.get("quest"))) else event
+        for event in events
+    ]
+
+
 class Occasions:
     def __init__(
         self,
@@ -253,13 +285,20 @@ class Occasions:
                         if previous is not None:
                             self._occasion("chapter", chapter=value)
                     self._chapter_checked = self.clock()
+            events = list(self._events)
+            vanilla = iter(await with_quest_outcomes(
+                [f for f in events if f["fact"] == "vanilla_quest"],
+                self.chronicle.facts("quest_outcome"), self.link, {},
+            ))
+            if generation != self._generation:
+                return
             deaths, self._deaths = self._deaths, []
-            while self._events:
-                fact = self._events.popleft()
+            for fact in events:
+                self._events.popleft()
                 if fact["fact"] in LINES:
                     self._reset_quiet()
                 elif fact["fact"] == "vanilla_quest":
-                    self._occasion("vanilla", vanilla=fact)
+                    self._occasion("vanilla", vanilla=next(vanilla))
                 elif self._is_deed(fact):
                     if self.crimes and self._human_killed(fact):
                         # A death scan may precede the passive perception's crime by a frame. Wait

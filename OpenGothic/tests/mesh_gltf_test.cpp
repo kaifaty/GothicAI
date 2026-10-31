@@ -1,17 +1,38 @@
 #include "commandline.h"
+#include "gothic.h"
+#include "game/constants.h"
+#include "graphics/pfx/particlefx.h"
+#include "graphics/visualfx.h"
 #include "gltfmesh.h"
 #include "graphics/shaders.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/worldview.h"
+#include "world/chunkresidency.h"
+#include "loadprobe.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "physics/fracture.h"
 #include "resources.h"
+#include "asset/fromzenkit.h"
+#include "baseimport.h"
+#include "basemesh.h"
+#include "gothicglb.h"
+#include "musicdata.h"
+#include "sha256.h"
+#include "dmusic/patternlist.h"
+#include "dmusic.h"
+#include "utils/gthfont.h"
 
 #include <Tempest/Device>
 #include <Tempest/Log>
 #include <Tempest/VulkanApi>
 #include <zenkit/Stream.hh>
+#include <zenkit/Font.hh>
+#include <zenkit/Model.hh>
+#include <zenkit/Vfs.hh>
+#include <zenkit/DaedalusVm.hh>
+#include <zenkit/addon/daedalus.hh>
 #include <miniz.h>
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -19,15 +40,20 @@
 
 #include <array>
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <thread>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -293,12 +319,20 @@ struct Fixture {
       throw std::runtime_error("unable to create mesh fixture directory");
     root = directory;
     std::filesystem::create_directories(root/"meshes/test");
-    std::filesystem::create_directories(root/"_work");
+    std::filesystem::create_directories(root/"Data");
+    std::filesystem::create_directories(root/"_work/Data/Scripts/_compiled");
     originalFile(root/"_work/OWN_MESH.MRM");
     glbFile(root/"meshes/test/own.glb");
     setenv("OPENGOTHIC_CONTENT",root.c_str(),1);
     setenv("OPENGOTHIC_TEXTURES","",1);
     setenv("OPENGOTHIC_CENSUS",(root/"census.json").c_str(),1);
+    setenv("OPENGOTHIC_BASE",(root/"base").c_str(),1);
+    // The public importer requires an installation archive; the game uses only the base.
+    const std::byte marker {1};
+    zenkit::Vfs vfs;
+    vfs.mount(zenkit::VfsNode::file("FIXTURE.BIN",{&marker,1,false}),"/");
+    auto archive=zenkit::Write::to(root/"Data/FIXTURE.VDF");
+    vfs.save(archive.get(),zenkit::GameVersion::GOTHIC_2);
     }
   ~Fixture() {
     std::error_code error;
@@ -314,6 +348,47 @@ struct Fixture {
     json.String(path.data(),rapidjson::SizeType(path.size()));
     json.EndObject(); json.EndObject();
     index(std::string_view(buffer.GetString(),buffer.GetSize()));
+    }
+  void mount() const {
+    const auto base=root/"base";
+    for(const auto* kind:{"meshes","textures","zen","models"})
+      std::filesystem::create_directories(base/kind);
+    const auto archives="[{\"name\":\"FIXTURE.VDF\",\"size\":"+
+                        std::to_string(std::filesystem::file_size(root/"Data/FIXTURE.VDF"))+"}]";
+    std::string meshes="{\"format\":\"gothic-meshes\",\"version\":1,\"archives\":"+archives+",\"meshes\":{";
+    bool first=true;
+    for(const auto& file:std::filesystem::directory_iterator(root/"_work")) {
+      if(!file.is_regular_file() || file.path().extension()!=".MRM")
+        continue;
+      auto reader=zenkit::Read::from(file.path());
+      zenkit::MultiResolutionMesh source {};
+      source.load(reader.get());
+      auto name=file.path().stem().string();
+      for(auto& c:name) c=char(std::toupper(static_cast<unsigned char>(c)));
+      writeBaseMesh(asset::fromZenKit(source),name,base/"meshes"/(name+".glb"));
+      meshes+=std::string(first ? "" : ",")+"\""+name+"\":\""+name+".glb\"";
+      first=false;
+      }
+    textFile(base/"meshes/meshes.json",meshes+"}}");
+    std::string textures="{}";
+    if(std::filesystem::is_regular_file(root/"_work/ORIGINAL.FNT")) {
+      std::filesystem::copy_file(root/"materials/transparent-bc1.dds",base/"textures/FONT_ATLAS.dds",
+                                 std::filesystem::copy_options::overwrite_existing);
+      textures=R"({"ORIGINAL":"FONT_ATLAS.dds","ORIGINAL_HI":"FONT_ATLAS.dds"})";
+      }
+    textFile(base/"textures/textures.json","{\"format\":\"gothic-textures\",\"version\":1,\"archives\":"+archives+",\"textures\":"+textures+"}");
+    textFile(base/"zen/zen.json","{\"format\":1,\"archives\":"+archives+",\"loose_files\":[],\"files\":{}}");
+    require(BaseImport::convertModels(root,base/"models",false)==0,"synthetic models must import into their own base");
+    require(BaseImport::convertFonts(root,base/"fonts",false)==0,"synthetic fonts must import into their own base");
+    require(BaseImport::convertPrograms(root,base/"programs",false)==0,"synthetic program index must import into its own base");
+    require(BaseImport::convertOutputUnits(root,base/"outputunits",false)==0,"synthetic output unit index must import into its own base");
+    require(BaseImport::convertAudio(root,base/"audio",false)==0,"synthetic audio index must import into its own base");
+    require(BaseImport::convertMusic(root,base/"music",false)==0,"synthetic music index must import into its own base");
+    // Synthetic installation without remaining-family inputs: a labelled empty manifest.
+    std::filesystem::create_directories(base/"sources");
+    textFile(base/"sources/sources.json","{\"format\":\"gothic-sources\",\"version\":1,\"synthetic\":\"mesh-gltf fixture without remaining-family inputs\"}\n");
+    BaseImport::writeBaseMetadata(base,BaseImport::identify(root));
+    Resources::loadBase();
     }
   rapidjson::Document census() const {
     require(Resources::writeCensus(),"mesh census must be writable");
@@ -332,6 +407,7 @@ void checkCensus(const Fixture& fixture, bool own, uint64_t expectedOpens) {
   const auto document = fixture.census();
   uint64_t originalOpens = 0;
   uint64_t replacementOpens = 0;
+  uint64_t baseOpens = 0;
   for(const auto& item:document["files"].GetArray()) {
     if(std::string_view(item["name"].GetString())=="OWN_MESH.MRM") {
       require(std::string_view(item["kind"].GetString())=="mesh","original MRM census kind must be mesh");
@@ -340,12 +416,21 @@ void checkCensus(const Fixture& fixture, bool own, uint64_t expectedOpens) {
     }
   for(const auto& item:document["replacements"].GetArray()) {
     require(std::string_view(item["name"].GetString())=="OWN_MESH.MRM","mesh census must use the original visual name");
-    require(std::string_view(item["kind"].GetString())=="mesh","replacement census kind must be mesh");
-    require(std::string_view(item["replacement"].GetString())=="meshes/test/own.glb",
-            "replacement census must use its content-relative mesh path");
-    replacementOpens += item["opens"].GetUint64();
+    const auto kind=std::string_view(item["kind"].GetString());
+    if(kind=="basemesh") {
+      require(std::string_view(item["replacement"].GetString())=="base/meshes/OWN_MESH.glb",
+              "base census must name the converted original mesh");
+      baseOpens += item["opens"].GetUint64();
+      }
+    else {
+      require(kind=="mesh","content replacement census kind must be mesh");
+      require(std::string_view(item["replacement"].GetString())=="meshes/test/own.glb",
+              "replacement census must use its content-relative mesh path");
+      replacementOpens += item["opens"].GetUint64();
+      }
     }
-  require(originalOpens==(own ? 0 : expectedOpens),"only fallback may open the original MRM");
+  require(originalOpens==0,"runtime geometry must never open the original MRM");
+  require(baseOpens==(own ? 0 : expectedOpens),"fallback must use the original geometry from the base");
   require(replacementOpens==(own ? expectedOpens : 0),"only successful GLB loads may count as replacements");
   }
 
@@ -504,26 +589,36 @@ std::array<Tempest::Vec3,3> modelGlbPoints(bool twoAttachments, size_t node) {
 
 void modelCensus(const Fixture& fixture, std::string_view file, bool replaced, bool hierarchyOpened) {
   const auto document = fixture.census();
-  bool original = false,mdh = false;
+  uint64_t originalOpens = 0;
   for(const auto& item:document["files"].GetArray()) {
-    if(std::string_view(item["name"].GetString())==file) {
-      original = item["opens"].GetUint64()==1;
-      require(std::string_view(item["kind"].GetString())=="model","opened original model must retain its census kind");
-      }
-    if(std::string_view(item["name"].GetString())=="OWN_MODEL.MDH")
-      mdh = item["opens"].GetUint64()==1;
+    const auto name=std::string_view(item["name"].GetString());
+    const auto ext=std::filesystem::path(name).extension();
+    if(ext==".MRM" || ext==".MDH" || ext==".MDM" || ext==".MDL")
+      originalOpens+=item["opens"].GetUint64();
     }
-  require(original,"model replacement must still open the original model for its hierarchy or attachment names");
-  require(mdh==hierarchyOpened,"MDH must be recorded when its hierarchy was opened");
+  require(originalOpens==0,"model replacement must read hierarchy and attachment names from the base");
+  bool baseModel = false,baseHierarchy = false;
   size_t meshReplacements = 0;
   for(const auto& item:document["replacements"].GetArray()) {
-    if(std::string_view(item["kind"].GetString())!="mesh")
+    const auto kind=std::string_view(item["kind"].GetString());
+    const auto name=std::string_view(item["name"].GetString());
+    if(kind=="basemodel") {
+      require(item["opens"].GetUint64()==1,"each selected model record must be loaded once");
+      require(std::string_view(item["replacement"].GetString())=="base/models/"+std::string(name)+".json",
+              "model base census must name the converted source record");
+      if(name==file) baseModel=true;
+      if(name=="OWN_MODEL.MDH") baseHierarchy=true;
+      continue;
+      }
+    if(kind!="mesh")
       continue; // GPU fixtures also replace the named material's albedo.
     ++meshReplacements;
     require(std::string_view(item["name"].GetString())==file && item["opens"].GetUint64()==1 &&
             std::string_view(item["replacement"].GetString())=="meshes/test/own.glb",
             "model replacement census must name the MDL or MDM mesh file and content-relative GLB");
     }
+  require(baseModel,"model geometry and hierarchy must load from the selected base record");
+  require(baseHierarchy==hierarchyOpened,"paired MDH must load from the base only when needed for replacement");
   require(meshReplacements==(replaced ? 1u : 0u),"only successful model replacement may enter census once");
   }
 
@@ -531,7 +626,7 @@ void modelGeometry(const ProtoMesh& proto, const zenkit::ModelHierarchy& hierarc
                    bool own, const ModelOptions& options = {}, bool skeletonExpected = true) {
   require(proto.attach.size()==(options.twoAttachments ? 2u : 1u),"model must retain its attachment count");
   require(proto.skined.size()==(options.softSkin ? 1u : 0u),"model must retain its original soft skins on fallback");
-  const Skeleton expected(hierarchy,nullptr,"OWN_MODEL.MDL");
+  const Skeleton expected(asset::fromZenKit(hierarchy),nullptr,"OWN_MODEL.MDL");
   require((proto.skeleton!=nullptr)==skeletonExpected,"model must retain its original hierarchy-loading behavior");
   if(skeletonExpected) {
     require(proto.nodes.size()==expected.nodes.size() && proto.skeleton->nodes.size()==expected.nodes.size(),
@@ -605,7 +700,7 @@ void modelCases(const Fixture& fixture) {
   const auto load = [&](std::string_view visual, std::string_view file, bool own,
                         const ModelOptions& options = {}, bool skeletonExpected = true) {
     Resources resources;
-    Resources::mountWork(fixture.root/"_work");
+    fixture.mount();
     const auto* proto = Resources::loadMesh(visual);
     require(proto!=nullptr,"synthetic MOB model must load through real Resources");
     modelGeometry(*proto,hierarchy,own,options,skeletonExpected);
@@ -697,8 +792,8 @@ void modelGpuGeometry(const Fixture& fixture, Tempest::Device& device, std::stri
   const bool multi = hierarchy.nodes.size()==3;
   require(proto!=nullptr && proto->attach.size()==(multi ? 2u : 1u) && proto->nodes.size()==hierarchy.nodes.size(),
           "GPU model replacement must retain its original hierarchy and attachment");
-  const auto source = multi ? zenkit::MultiResolutionMesh{} : loadGltfMesh(glb);
-  const Skeleton expected(hierarchy,nullptr,visual);
+  const auto source = multi ? asset::StaticMesh{} : loadGltfMesh(glb);
+  const Skeleton expected(asset::fromZenKit(hierarchy),nullptr,visual);
   for(size_t attachId=0;attachId<proto->attach.size();++attachId) {
     const auto& attachment = proto->attach[attachId];
     const size_t node = expected.findNode(attachment.name);
@@ -785,7 +880,7 @@ void multiModelGpuCases(const Fixture& fixture, Tempest::Device& device) {
       Resources resources(device);
       Shaders shaders;
       shaders.waitCompiler();
-      Resources::mountWork(fixture.root/"_work");
+      fixture.mount();
       const auto* proto = Resources::loadMesh(visual);
       require(proto!=nullptr,"multi-attachment GPU model must load through real Resources");
       modelGeometry(*proto,hierarchy,true,options);
@@ -795,10 +890,12 @@ void multiModelGpuCases(const Fixture& fixture, Tempest::Device& device) {
     }
   }
 
-void resourcePaths(const Fixture& fixture, bool own, bool mountOriginal = true) {
+void resourcePaths(const Fixture& fixture, bool own) {
   Resources resources;
-  if(mountOriginal)
-    Resources::mountWork(fixture.root/"_work");
+  fixture.mount();
+  const auto heightInputs=Resources::wayHeightInputs("SMALL.ZEN");
+  require(!heightInputs.baseFingerprint.empty() && !heightInputs.contentFingerprint.empty(),
+          "way height inputs must be available before loading replacement geometry");
   const auto* proto = Resources::loadMesh("own_mesh.3ds");
   require(proto!=nullptr,"visual mesh must load");
   const auto* bounds = proto->bbox();
@@ -829,13 +926,24 @@ void resourcePaths(const Fixture& fixture, bool own, bool mountOriginal = true) 
   require(source.sub_meshes.size()==1,"shared cloth geometry source must load");
   require(source.sub_meshes[0].mat.texture==(own ? "OWN_TEST_BARREL_WOOD.TGA" : "ORIGINAL.TGA"),
           "shared loader must retain the selected texture");
-  require(source.sub_meshes[0].mat.group==(own ? zenkit::MaterialGroup::WOOD : zenkit::MaterialGroup::STONE),
+  require(source.sub_meshes[0].mat.group==(own ? asset::MaterialGroup::WOOD : asset::MaterialGroup::STONE),
           "shared loader must retain the selected physical material group");
   require(close(source.bbox.min.x,own ? -400.f : 10.f),"cloth source must select the same geometry");
   checkCensus(fixture,own,3);
+  require(Resources::wayHeightInputs("SMALL.ZEN").contentFingerprint==heightInputs.contentFingerprint,
+          "loading replacement geometry must not change the way height input fingerprint");
+  if(own) {
+    const auto glb=fixture.root/"meshes/test/own.glb";
+    const auto modified=std::filesystem::last_write_time(glb);
+    std::filesystem::last_write_time(glb,modified+std::chrono::seconds(1));
+    const auto changed=Resources::wayHeightInputs("SMALL.ZEN");
+    std::filesystem::last_write_time(glb,modified);
+    require(changed.contentFingerprint.empty(),
+            "changed GLB metadata must disable way height caching for stale Resources");
+    }
   }
 
-void frontFaces(const zenkit::MultiResolutionMesh& mesh) {
+void frontFaces(const asset::StaticMesh& mesh) {
   size_t triangles = 0;
   // Original NW_HARBOUR_BARREL_01.MRM: 180/180 wedge normals in 60 triangles
   // have negative dot(cross(edge1,edge2), normal). PackedMesh retains winding;
@@ -886,7 +994,7 @@ void generatedBarrel(const Fixture& fixture) {
   const auto mesh = loadGltfMesh(output/"meshes/test/nw_harbour_barrel_01.glb");
   frontFaces(mesh);
   require(mesh.sub_meshes.size()==1 && mesh.sub_meshes[0].mat.texture=="OWN_TEST_BARREL_WOOD.TGA" &&
-          mesh.sub_meshes[0].mat.group==zenkit::MaterialGroup::WOOD,
+          mesh.sub_meshes[0].mat.group==asset::MaterialGroup::WOOD,
           "actual generated barrel must use the shared wood material and physical group");
   }
 
@@ -936,11 +1044,11 @@ void converterCases(const Fixture& fixture) {
   for(const auto& wedge:mesh.sub_meshes[0].wedges)
     require(close(wedge.normal.x,0.f) && close(wedge.normal.y,-.8f) && close(wedge.normal.z,.6f),
             "normal must use the inverse transpose of the composed rotation and nonuniform scale");
-  const std::array<std::pair<const char*,zenkit::MaterialGroup>,6> groups = {{
-      {"UNDEF",zenkit::MaterialGroup::UNDEFINED},{"METAL",zenkit::MaterialGroup::METAL},
-      {"STONE",zenkit::MaterialGroup::STONE},{"WOOD",zenkit::MaterialGroup::WOOD},
-      {"EARTH",zenkit::MaterialGroup::EARTH},
-      {"SNOW",zenkit::MaterialGroup::SNOW}}};
+  const std::array<std::pair<const char*,asset::MaterialGroup>,6> groups = {{
+      {"UNDEF",asset::MaterialGroup::UNDEFINED},{"METAL",asset::MaterialGroup::METAL},
+      {"STONE",asset::MaterialGroup::STONE},{"WOOD",asset::MaterialGroup::WOOD},
+      {"EARTH",asset::MaterialGroup::EARTH},
+      {"SNOW",asset::MaterialGroup::SNOW}}};
   for(const auto& group:groups) {
     options = {};
     options.group = group.first;
@@ -955,8 +1063,9 @@ void converterCases(const Fixture& fixture) {
   glbFile(path,options);
   mesh = loadGltfMesh(path);
   require(mesh.sub_meshes.size()==2,"OPAQUE and MASK surfaces must remain separate");
-  require(mesh.sub_meshes[1].mat.group==zenkit::MaterialGroup::UNDEFINED,"missing group must default to UNDEF");
+  require(mesh.sub_meshes[1].mat.group==asset::MaterialGroup::UNDEFINED,"missing group must default to UNDEF");
   Resources resources;
+  fixture.mount();
   PackedMesh packed(mesh,PackedMesh::PK_Visual,true);
   ProtoMesh proto(std::move(packed),"MIXED.MRM");
   require(proto.attach[0].sub.size()==2,"mixed alpha fixture must produce both surfaces");
@@ -1105,7 +1214,7 @@ void fractureCache(const Fixture& fixture) {
   const auto expectFracture = [&](bool own, bool ownPieces = false) {
     Resources resources;
     require(!Resources::meshReplacementLoaded("own_mesh.3ds"),"an index entry alone must not count as a loaded replacement");
-    Resources::mountWork(fixture.root/"_work");
+    fixture.mount();
     // DynamicWorld::addMovableVob receives an already loaded ProtoMesh before
     // asking for its fracture cache, including when restoring saved destruction.
     const auto* proto = Resources::loadMesh("own_mesh.3ds");
@@ -1182,6 +1291,7 @@ void fractureCache(const Fixture& fixture) {
   fractureFile(sidecar,2,bytes.size(),crc);
   {
     Resources resources;
+    fixture.mount();
     const auto loaded = Resources::loadVisualMesh("OWN_MESH.MRM");
     require(!loaded.positions.empty(),"identity fixture must load its replacement");
     // A sidecar must match the bytes already parsed by the engine, even when
@@ -1248,6 +1358,181 @@ void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool d
     throw std::runtime_error("unable to write mesh alpha DDS fixture");
   }
 
+void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
+  const auto source=loadGltfMesh(fixture.root/"meshes/test/opaque.glb");
+  asset::WorldMesh world;
+  world.materials={source.sub_meshes[0].mat};
+  world.vertices={{100,100,100},{100,200,100},{200,100,100}};
+  world.features={{{0,0},0xffffffffu,{0,0,1}},{{0,1},0xffffffffu,{0,0,1}},{{1,0},0xffffffffu,{0,0,1}}};
+  world.polygons.vertex_indices={0,1,2};
+  world.polygons.feature_indices={0,1,2};
+  world.polygons.material_indices={0};
+  world.polygons.lightmap_indices={-1};
+  world.polygons.flags.resize(1);
+  PackedMesh packed(world,PackedMesh::PK_VisualLnd);
+  require(!packed.indices.empty(),"landscape lifetime fixture must contain meshlets");
+  for(const auto& sub:packed.subMeshes)
+    Resources::loadMaterial(sub.material,true);
+  Gothic gothic;
+  const auto directory=fixture.root/"landscape-lifetime";
+  writeWorldChunks(world,{"CONTRACT.ZEN",0,0},directory);
+  ChunkTable table;
+  world=readWorldChunks(directory,{},&table);
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  Resources::resetRecycled(0);
+  const auto baseline=tempestProbeGpuBufferCount();
+  const auto chunkFile=directory/table.entries[0].file;
+  {
+  ChunkResidency residency(table);
+  WorldView view(packed.bbox(),"CONTRACT.ZEN");
+  view.startLandscapeStreaming(std::move(world),residency,0);
+  const auto update=[&](const Tempest::Vec3& position, float range=1000) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,range);
+    view.finishLandscapeUpdate();
+    };
+  const auto emptyBuffers=tempestProbeGpuBufferCount();
+  size_t bucketCount=0;
+  size_t firstMeshlet=0,pageBytes=0,releasedBuffers=0;
+  const Tempest::StorageBuffer* vertices=nullptr;
+  const Tempest::StorageBuffer* indices=nullptr;
+  const auto usedBytes=packed.vertices.size()*sizeof(packed.vertices[0])+packed.indices8.size();
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update({100,100,100});
+    device.waitIdle();
+    require(residency.desired(size_t(0))==ChunkResidency::State::Near && residency.stats().published==cycle+1,
+            "Near must publish the streaming landscape synchronously");
+    require(tempestProbeGpuBufferCount()>emptyBuffers,"published landscape pages must own live GPU buffers");
+    require(residency.stats().landscapePageCount==1 && residency.stats().landscapePageUsedBytes==usedBytes &&
+            residency.stats().landscapePageRetiredBytes==0,"published landscape must occupy exactly its page range");
+    const auto& buckets=view.drawBuckets().buckets();
+    const auto bucket=std::find_if(buckets.begin(),buckets.end(),[](const auto& bucket) {
+      return bucket.staticMesh!=nullptr;
+      });
+    require(bucket!=buckets.end(),"published landscape must register its stable mesh in draw buckets");
+    const auto bucketIndex=size_t(bucket-buckets.begin());
+    const auto* mesh=bucket->staticMesh;
+    if(cycle==0) {
+      bucketCount=buckets.size();
+      vertices=&mesh->vboBuffer();
+      indices=&mesh->ibo8Buffer();
+      firstMeshlet=mesh->firstMeshlet();
+      pageBytes=residency.stats().landscapePageUsedBytes+residency.stats().landscapePageFreeBytes;
+      }
+    else {
+      require(buckets.size()==bucketCount,"republishing a landscape must reuse invalidated buckets");
+      require(&mesh->vboBuffer()==vertices && &mesh->ibo8Buffer()==indices && mesh->firstMeshlet()==firstMeshlet,
+              "republishing must reuse the completed page range and its GPU buffers");
+      }
+    update({100,100,100});
+    require(view.drawBuckets().buckets().at(bucketIndex).staticMesh==mesh,
+            "a published landscape's StaticMesh must remain stable between residency updates");
+    update({1000000,0,1000000});
+    require(residency.desired(size_t(0))==ChunkResidency::State::Outside && residency.stats().released==cycle+1,
+            "Outside must release the streaming landscape");
+    for(const auto& bucket:view.drawBuckets().buckets())
+      require(bucket.staticMesh==nullptr && bucket.animMesh==nullptr,
+              "Outside must not leave mesh pointers in draw buckets");
+    require(residency.stats().landscapePageUsedBytes==0 && residency.stats().landscapePageRetiredBytes==usedBytes &&
+            residency.stats().landscapePageFreeBytes+usedBytes==pageBytes,
+            "Outside must retire its occupied range until the consuming frame completes");
+    Resources::resetRecycled(1);
+    view.finishLandscapeUpdate();
+    require(residency.stats().landscapePageRetiredBytes==usedBytes,
+            "another frame slot must not release retired landscape ranges");
+    device.waitIdle();
+    Resources::resetRecycled(0);
+    view.finishLandscapeUpdate();
+    require(residency.stats().landscapePageUsedBytes==0 && residency.stats().landscapePageRetiredBytes==0 &&
+            residency.stats().landscapePageFreeBytes==pageBytes && residency.stats().landscapePageCount==1,
+            "the completed recycle slot must return the full page range for reuse");
+    if(cycle==0)
+      releasedBuffers=tempestProbeGpuBufferCount();
+    else
+      require(tempestProbeGpuBufferCount()==releasedBuffers,
+              "publish/release cycles must not accumulate live buffers while the view remains alive");
+    }
+
+  std::filesystem::last_write_time(chunkFile,std::filesystem::last_write_time(chunkFile)+std::chrono::seconds(1));
+  const Tempest::Vec3 farPosition={25600,100,100};
+  update(farPosition,100000);
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  while(!view.landscapeReady() && std::chrono::steady_clock::now()<deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    update(farPosition,100000);
+    }
+  update(farPosition,100000); // Consume the worker's error even if readiness settled first.
+  require(residency.desired(size_t(0))==ChunkResidency::State::Far && view.landscapeReady() &&
+          residency.stats().pending==0 && residency.stats().published==2,
+          "a failed Far chunk must settle readiness without being published or queued again");
+  update({100,100,100});
+  require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==3,
+          "a failed Far chunk required Near must retry the current file and publish normally");
+  }
+  {
+  // A first synchronous Near read must also recover from a changed source.
+  auto reloadWorld=readWorldChunks(directory);
+  ChunkResidency residency(table);
+  WorldView view(packed.bbox(),"CONTRACT.ZEN");
+  view.startLandscapeStreaming(std::move(reloadWorld),residency,0);
+  const auto update=[&](const Tempest::Vec3& position) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,1000);
+    view.finishLandscapeUpdate();
+    };
+  update({100,100,100});
+  require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+          "a synchronous Near packing error must retry the current file without throwing");
+  update({1000000,0,1000000});
+  const auto bytes=gothicglb::readFile(chunkFile);
+  textFile(chunkFile,"permanently broken landscape chunk");
+  size_t errors=0;
+  Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+    if(mode==Tempest::Log::Error && std::string_view(text).find("Landscape chunk ")!=std::string_view::npos)
+      ++errors;
+    });
+  try {
+    update({100,100,100});
+    require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+            "a corrupt Near chunk must fail without throwing or blocking readiness");
+    update({100,100,100});
+    update({1000000,0,1000000});
+    update({100,100,100});
+    gothicglb::writeFile(chunkFile,bytes.data(),bytes.size());
+    update({1000000,0,1000000});
+    update({100,100,100});
+    }
+  catch(...) {
+    Tempest::Log::setOutputCallback({});
+    throw;
+    }
+  Tempest::Log::setOutputCallback({});
+  require(errors==1 && view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+          "an exhausted Near retry must log once and never retry on later frames or residency changes");
+  }
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  require(tempestProbeGpuBufferCount()==baseline,"destroying the streaming view must return live page buffers to baseline");
+  if(Shaders::options().doBindless) {
+    SceneGlobals scene;
+    StaticMesh firstMesh(packed),secondMesh(packed);
+    VisualObjects grouped(scene,packed.bbox());
+    auto animated=Resources::loadMaterial(packed.subMeshes[0].material,true);
+    animated.frames={animated.tex,&Resources::fallbackTexture()};
+    animated.texAniFPSInv=100;
+    const auto& sub=packed.subMeshes[0];
+    auto first=grouped.get(firstMesh,animated,sub.iboOffset,sub.iboLength,packed.meshletBounds.data(),DrawCommands::Landscape);
+    auto second=grouped.get(secondMesh,animated,sub.iboOffset,sub.iboLength,packed.meshletBounds.data(),DrawCommands::Landscape);
+    require(grouped.drawCommands()[0].isBindless() && grouped.drawCommands()[0].maxPayload==2*packed.meshletBounds.size(),
+            "animated landscape chunks must share one bindless draw command across mesh buckets");
+    device.waitIdle();
+    }
+  std::cout << "landscape streaming lifetime: 2 Near/Outside cycles, live_buffers=" << baseline << '\n';
+}
+
 void maskBc1Policy(const Fixture& fixture) {
   std::filesystem::create_directories(fixture.root/"materials");
   alphaDdsFile(fixture.root/"materials/transparent-bc1.dds",true);
@@ -1259,6 +1544,20 @@ void maskBc1Policy(const Fixture& fixture) {
     "OPAQUE_BC1.TGA":{"albedo":"opaque-bc1.dds"},
     "OPAQUE_BC3.TGA":{"albedo":"opaque-bc3.dds"}
   })");
+  for(const bool hi:{false,true}) {
+    zenkit::Font font;
+    font.name="METADATA_DOES_NOT_NAME_THE_ATLAS";
+    font.height=hi ? 25u : 17u;
+    font.glyphs.resize(256);
+    for(size_t i=0;i<font.glyphs.size();++i) {
+      auto& glyph=font.glyphs[i];
+      glyph.width=uint8_t(hi ? 2+i%5 : 3+i%11);
+      glyph.uv[0]={-.25f,0.f};
+      glyph.uv[1]={.75f,1.25f};
+      }
+    auto output=zenkit::Write::to(fixture.root/"_work"/(hi ? "ORIGINAL_HI.FNT" : "ORIGINAL.FNT"));
+    font.save(output.get());
+    }
   GlbOptions options;
   options.alpha = "MASK";
   glbFile(fixture.root/"meshes/test/own.glb",options);
@@ -1289,7 +1588,47 @@ void maskBc1Policy(const Fixture& fixture) {
     Resources resources(device);
     Shaders shaders;
     shaders.waitCompiler();
-    Resources::mountWork(fixture.root/"_work");
+    fixture.mount();
+    const auto& font=Resources::font("ORIGINAL.extra.tga",Resources::FontType::Normal,1.25f);
+    require(font.pixelSize()==21 && font.textSize("A B")==Tempest::Size(35,21),
+            "native font must retain scaled source advances and height");
+    require(font.textSize(1,"A B")==Tempest::Size(16,42) && font.lineCount(1,"A B")==2,
+            "font atlas must resolve from the requested first-dot stem, despite unrelated font metadata");
+    require(&font==&Resources::font("ORIGINAL.extra.tga",Resources::FontType::Normal,1.25f),
+            "an exact repeated font request must reuse its cached instance");
+    const auto& red=Resources::font("ORIGINAL.extra.tga",Resources::FontType::Red,1.25f);
+    const auto& unscaled=Resources::font("ORIGINAL.extra.tga",Resources::FontType::Normal,1.f);
+    require(&red!=&font && red.textSize("A B")==font.textSize("A B") &&
+            &unscaled!=&font && unscaled.textSize("A B")==Tempest::Size(29,17),
+            "font cache keys must retain both type and exact scale");
+    const auto& hi=Resources::font("ORIGINAL.extra.tga",Resources::FontType::Hi,1.f);
+    require(hi.textSize(1,"A B")==Tempest::Size(3,50) && hi.textSize("A B")==Tempest::Size(9,25),
+            "Hi requests must use their own native metrics and atlas");
+    const auto& missing=Resources::font("ORIGINAL_HI.tga",Resources::FontType::Hi,3.f);
+    require(missing.pixelSize()==0 && missing.textSize("A")==Tempest::Size(10,0) &&
+            missing.lineCount(1,"A")==0 &&
+            &missing==&Resources::font("ORIGINAL_HI.tga",Resources::FontType::Hi,3.f),
+            "missing Hi font must cache the unscaled empty font without falling back to Normal");
+    const auto fontCensus=fixture.census();
+    size_t nativeFonts=0,missingFonts=0;
+    for(const auto& item:fontCensus["files"].GetArray())
+      require(std::string_view(item["kind"].GetString())!="font","Resources font loading must never open source FNTs");
+    for(const auto& item:fontCensus["replacements"].GetArray()) {
+      if(std::string_view(item["kind"].GetString())!="basefont") continue;
+      const std::string_view name=item["name"].GetString();
+      require(name=="ORIGINAL.FNT" || name=="ORIGINAL_HI.FNT","native font census request name");
+      require(std::string_view(item["replacement"].GetString())=="base/fonts/"+std::string(name)+".json" &&
+              item["opens"].GetUint64()==(name=="ORIGINAL.FNT" ? 3u : 1u),
+              "native font census must distinguish real native reads from cached requests");
+      ++nativeFonts;
+      }
+    for(const auto& item:fontCensus["base_misses"].GetArray()) {
+      if(std::string_view(item["kind"].GetString())!="font") continue;
+      require(std::string_view(item["name"].GetString())=="ORIGINAL_HI_HI.FNT" && item["count"].GetUint64()==1,
+              "missing Hi lookup must be recorded once without a source fallback");
+      ++missingFonts;
+      }
+    require(nativeFonts==2 && missingFonts==1,"font census must contain both native records and the missing Hi lookup");
     const auto* masked = Resources::loadMesh("OWN_MESH.3DS");
     require(masked!=nullptr && masked->attach.size()==1 && masked->attach[0].sub.size()==1,
             "MASK BC1 fixture must load through the ordinary ProtoMesh path");
@@ -1348,19 +1687,263 @@ void maskBc1Policy(const Fixture& fixture) {
     require(legacyPolicy.alpha==Material::AlphaTest && forcedPolicy.alpha==Material::AlphaTest,
             "material equality fixture must have the same visible alpha classification");
     require(!(legacyPolicy==forcedPolicy),"material equality must distinguish native and forced MASK policies");
+    landscapeLifetime(fixture,device);
     }
   multiModelGpuCases(fixture,device);
+  device.waitIdle();
+  }
+
+// Short numeric receipt of a few derived particle and visual effects of the actual installation,
+// through public Gothic, ParticleFx and VisualFx calls only, so the same code builds before and after
+// the definition records change owner. Floats by raw bits, fixed order; no addresses or debug-name
+// pointers. Complete raw-record coverage is the CPU oracle in basecontent, not this receipt.
+std::string receiptBits(float v) {
+  char text[9] = {};
+  std::snprintf(text,sizeof(text),"%08x",std::bit_cast<uint32_t>(v));
+  return text;
+  }
+
+std::string particleReceipt(const ParticleFx& p) {
+  std::string r = p.dbgName;
+  const auto f = [&r](const char* k, float v) { r += std::string(" ")+k+"="+receiptBits(v); };
+  const auto n = [&r](const char* k, uint64_t v) { r += std::string(" ")+k+"="+std::to_string(v); };
+  const auto s = [&r](const char* k, std::string_view v) { r += std::string(" ")+k+"="+std::to_string(v.size())+":"+std::string(v); };
+  f("pps",p.ppsValue); n("ppsKeys",p.ppsScaleKeys.size());
+  if(!p.ppsScaleKeys.empty()) { f("ppsKey0",p.ppsScaleKeys.front()); f("ppsKeyN",p.ppsScaleKeys.back()); }
+  n("looping",p.ppsIsLooping); n("smooth",p.ppsIsSmooth); f("ppsFps",p.ppsFPS);
+  s("createEm",p.ppsCreateEm!=nullptr ? std::string_view(p.ppsCreateEm->dbgName) : std::string_view("-"));
+  n("createEmDelay",p.ppsCreateEmDelay);
+  n("shp",uint64_t(p.shpType)); n("shpFor",uint64_t(p.shpFOR)); f("dimX",p.shpDim.x); f("dimY",p.shpDim.y); f("dimZ",p.shpDim.z);
+  n("shpMesh",p.shpMesh!=nullptr); s("shpMeshName",p.shpMesh_S); n("shpKeys",p.shpScaleKeys.size());
+  n("dir",uint64_t(p.dirMode)); f("head",p.dirAngleHead); f("elev",p.dirAngleElev);
+  f("vel",p.velAvg); f("life",p.lspPartAvg); f("gravityY",p.flyGravity.y);
+  n("alpha",uint64_t(p.visMaterial.alpha)); n("tex",p.visMaterial.tex!=nullptr);
+  if(p.visMaterial.tex!=nullptr) { n("texW",uint64_t(p.visMaterial.tex->w())); n("texH",uint64_t(p.visMaterial.tex->h())); }
+  n("frames",p.visMaterial.frames.size()); n("aniInv",p.visMaterial.texAniFPSInv);
+  f("colorStart",p.visTexColorStart.x); f("colorEnd",p.visTexColorEnd.x);
+  f("sizeX",p.visSizeStart.x); f("sizeY",p.visSizeStart.y); f("sizeEnd",p.visSizeEndScale);
+  f("alphaStart",p.visAlphaStart); f("alphaEnd",p.visAlphaEnd);
+  n("trails",p.hasTrails()); n("decal",p.isDecal()); n("preferred",p.prefferedTime);
+  n("maxLifetime",p.maxLifetime()); n("effectPreferred",p.effectPrefferedTime());
+  f("maxPps",p.maxPps()); f("ppsAt1000",p.ppsScale(1000)); f("shpAt1000",p.shpScale(1000));
+  return r;
+  }
+
+std::string keyReceipt(const VisualFx::Key* k) {
+  if(k==nullptr)
+    return "-";
+  return (k->visName!=nullptr ? k->visName->dbgName : std::string("-"))+","+receiptBits(k->pfx_ppsValue)+","+
+         receiptBits(k->pfx_scTime)+","+receiptBits(k->pfx_visAlphaStart)+","+receiptBits(k->lightRange)+","+
+         k->sfxID+","+std::to_string(k->emCreateFXID!=nullptr)+","+std::to_string(k->emTrjMode.has_value())+","+
+         std::to_string(k->emFXLifeSpan);
+  }
+
+std::string visualReceipt(const VisualFx& v) {
+  std::string r;
+  const auto f = [&r](const char* k, float x) { r += std::string(" ")+k+"="+receiptBits(x); };
+  const auto n = [&r](const char* k, uint64_t x) { r += std::string(" ")+k+"="+std::to_string(x); };
+  const auto s = [&r](const char* k, std::string_view x) { r += std::string(" ")+k+"="+std::to_string(x.size())+":"+std::string(x); };
+  s("vis",v.visName_S); n("trj",uint64_t(v.emTrjMode)); s("origin",v.emTrjOriginNode);
+  r += " numKeys="+std::to_string(v.emTrjNumKeys); f("range",v.emTrjTargetRange); n("loop",uint64_t(v.emTrjLoopMode));
+  n("lifespan",v.emFXLifeSpan); n("investNext",v.emInvestNextKeyDuration); n("trigger",v.emFXTriggerDelay);
+  n("collDyn",uint64_t(v.emActionCollDyn)); n("collStat",uint64_t(v.emActionCollStat));
+  s("create",v.emFXCreate!=nullptr ? std::string_view(v.emFXCreate->visName_S) : std::string_view("-"));
+  if(v.emFXCreate!=nullptr) n("createLifespan",v.emFXCreate->emFXLifeSpan);
+  n("collStatFx",v.emFXCollStat!=nullptr); n("collDynFx",v.emFXCollDyn!=nullptr);
+  s("user0",v.userString[0]); s("sfx",v.sfxID); f("secsPerDamage",v.secsPerDamage);
+  n("preferred",v.effectPrefferedTime());
+  for(int type=0; type<int(SpellFxKey::Count); ++type)
+    r += " key"+std::to_string(type)+"="+keyReceipt(v.key(SpellFxKey(type)));
+  int32_t invest = 0;
+  while(v.key(SpellFxKey::Invest,invest+1)!=nullptr)
+    ++invest;
+  r += " invest="+std::to_string(invest)+" invest1="+keyReceipt(v.key(SpellFxKey::Invest,1));
+  return r;
+  }
+
+// The original records of one definition class, for choosing receipt cases only: the program as
+// Gothic::loadScript returns it, bound to the original ZenKit class in a local VM. Initializers run on
+// the CPU here; no engine effect is constructed and no engine cache changes.
+template<class T>
+std::vector<std::pair<std::string,std::shared_ptr<T>>> originalRecords(Gothic& gothic, std::string_view dat,
+                                                                       std::string_view cls) {
+  auto script = gothic.loadScript(dat,ScriptLang::NONE);
+  T::register_(script);
+  zenkit::DaedalusVm vm(std::move(script),zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  gothic.setupVmCommonApi(vm);
+  std::vector<zenkit::DaedalusSymbol*> symbols;
+  vm.enumerate_instances_by_class_name(cls,[&symbols](zenkit::DaedalusSymbol& sym) { symbols.push_back(&sym); });
+  std::vector<std::pair<std::string,std::shared_ptr<T>>> records;
+  for(auto* sym:symbols) {
+    try { records.emplace_back(sym->name(),vm.init_instance<T>(sym)); }
+    catch(const zenkit::DaedalusScriptError&) {}
+    }
+  return records;
+  }
+
+// GOTHIC_DIR and the caller's OPENGOTHIC_BASE. Runs before the toy fixture exists, so its
+// CommandLine, Resources and Gothic never overlap the fixture's. Prints "p13-effect" lines.
+void effectCases(const std::string& game, const std::string& base) {
+  setenv("OPENGOTHIC_BASE",base.c_str(),1);
+  setenv("OPENGOTHIC_CONTENT","",1);
+  setenv("OPENGOTHIC_TEXTURES","",1);
+  unsetenv("OPENGOTHIC_CENSUS");
+  setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
+  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2"};
+  CommandLine commandLine(4,args);
+  Tempest::VulkanApi api;
+  Tempest::Device device(api);
+  {
+    std::string censusPath=(std::filesystem::temp_directory_path()/"gothic-music-wiring-XXXXXX").string();
+    const int file=mkstemp(censusPath.data());
+    require(file>=0,"music wiring census needs its own temporary file");
+    ::close(file);
+    setenv("OPENGOTHIC_CENSUS",censusPath.c_str(),1);
+    try {
+      {
+      Resources resources(device);
+      Gothic gothic;
+      auto* segment=Resources::loadMusicSegment("NW_DayStd.sgt");
+      require(segment!=nullptr,"native GK music segment must load through Resources");
+      DmSegment_release(segment);
+      const auto patterns=Resources::loadDxMusic("NW_DayStd.sgt");
+      require(patterns.size()>0,"native Dx8 music must produce patterns through Resources");
+      require(Resources::writeCensus(),"music wiring census must be writable");
+      const auto bytes=gothicglb::readFile(censusPath);
+      rapidjson::Document census;
+      census.Parse(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+      require(!census.HasParseError() && census.IsObject(),"music wiring census must contain valid JSON");
+      const auto& music=census["runtime_music"];
+      require(std::string_view(music["coverage"].GetString())=="verified_base_record_reads" && !music["complete_corpus"].GetBool(),
+              "music wiring census must describe actual native reads");
+      for(const auto& row:census["files"].GetArray()) {
+        auto extension=std::filesystem::path(gothicglb::jsonToString(row["name"],"name")).extension().string();
+        for(auto& c:extension) if(c>='a' && c<='z') c=char(c-'a'+'A');
+        require(std::string_view(row["kind"].GetString())!="music" && extension!=".SGT" && extension!=".STY" && extension!=".DLS",
+                "native music wiring must not open original VFS or host music files");
+        }
+      const auto index=MusicData::readIndex(std::filesystem::path(base)/"music");
+      size_t gk=0,dx8=0,replacements=0;
+      for(const auto& row:music["selections"].GetArray()) {
+        if(std::string_view(row["kind"].GetString())!="segment") continue;
+        require(std::string_view(row["request"].GetString())=="NW_DayStd.sgt","music wiring segment request must retain its spelling");
+        const bool isGk=std::string_view(row["provider"].GetString())=="gk";
+        require(isGk || std::string_view(row["provider"].GetString())=="dx8","music wiring provider must be retained");
+        isGk ? ++gk : ++dx8;
+        const auto& imported=row["imported_source"];
+        const auto path=gothicglb::jsonToString(imported["path"],"path");
+        const auto* source=isGk ? index.findGk("NW_DayStd.sgt") : index.findDx8(path);
+        require(source && source->kind=="segment","music wiring must identify its indexed source");
+        const auto& outcome=isGk ? source->gk : source->dx8;
+        const auto descriptor=gothicglb::readFile(index.dir/(outcome.record+".json"));
+        const auto payload=gothicglb::readFile(index.dir/(outcome.record+".bin"));
+        Sha256 digest; digest.update(descriptor.data(),descriptor.size()); digest.update(payload.data(),payload.size());
+        const auto actual=digest.finish();
+        const auto& record=row["record"];
+        require(gothicglb::jsonToString(record["json"],"json")=="base/music/"+outcome.record+".json" &&
+                gothicglb::jsonToString(record["bin"],"bin")=="base/music/"+outcome.record+".bin" &&
+                actual==record["sha256"].GetString() && actual==outcome.identity && index.records.at(outcome.record)==actual,
+                "music wiring must report the actual native JSON and BIN identity");
+        require(path==source->path && std::string_view(imported["origin"].GetString())==source->origin &&
+                imported["size"].GetUint64()==source->size && std::string_view(imported["sha256"].GetString())==source->sha256 &&
+                (source->archive.empty() ? imported["archive"].IsNull() :
+                 imported["archive"].IsString() && std::string_view(imported["archive"].GetString())==source->archive),
+                "music wiring must retain imported source provenance separately from native identity");
+        }
+      for(const auto& row:census["replacements"].GetArray())
+        replacements+=std::string_view(row["kind"].GetString())=="basemusic";
+      require(gk==1 && dx8==1 && replacements==music["selections"].Size(),
+              "both Resources music providers must record one segment and every verified native read");
+      std::cout << "p16-music wiring: both native providers selected NW_DayStd.sgt with zero original music opens\n";
+      }
+      }
+    catch(...) {
+      unsetenv("OPENGOTHIC_CENSUS");
+      std::error_code error;
+      std::filesystem::remove(censusPath,error); std::filesystem::remove(censusPath+".tmp",error);
+      throw;
+      }
+    unsetenv("OPENGOTHIC_CENSUS");
+    std::error_code error;
+    std::filesystem::remove(censusPath,error); std::filesystem::remove(censusPath+".tmp",error);
+    }
+  {
+    Resources resources(device);
+    Shaders shaders;
+    shaders.waitCompiler();
+    Gothic gothic;
+    gothic.isNpcInDialogFn=[](const Npc*) { return false; };
+    gothic.setupGlobalScripts();
+
+    // Cases: the first original record (symbol order) with each property.
+    std::string looping, mesh, keyed, linked;
+    for(const auto& [name,pfx]:originalRecords<zenkit::IParticleEffect>(gothic,"ParticleFx.dat","C_PARTICLEFX")) {
+      if(looping.empty() && pfx->pps_is_looping!=0)
+        looping = name;
+      if(mesh.empty() && pfx->shp_type_s=="MESH" && !pfx->shp_mesh_s.empty())
+        mesh = name;
+      }
+    auto vfxScript = gothic.loadScript("VisualFx.dat",ScriptLang::NONE);
+    const auto has = [&vfxScript](const std::string& sym) { return vfxScript.find_symbol_by_name(sym)!=nullptr; };
+    std::string anyKey;
+    for(const auto& [name,fx]:originalRecords<zenkit::IEffectBase>(gothic,"VisualFx.dat","CFX_BASE")) {
+      const bool key = has(name+"_KEY_OPEN") || has(name+"_KEY_INIT") || has(name+"_KEY_CAST") ||
+                       has(name+"_KEY_INVEST") || has(name+"_KEY_COLLIDE");
+      if(anyKey.empty() && key)
+        anyKey = name;
+      if(keyed.empty() && key && has(name+"_KEY_INVEST_1"))
+        keyed = name;
+      if(linked.empty() && !fx->em_fx_create_s.empty())
+        linked = name;
+      }
+    if(keyed.empty())
+      keyed = anyKey;
+    require(!looping.empty() && !keyed.empty() && !linked.empty(),
+            "effect receipt needs a looping particle, a keyed and a linked visual effect");
+
+    size_t cases = 0;
+    const auto particle = [&](const char* label, const std::string& name) {
+      const auto* p = gothic.loadParticleFx(name);
+      require(p!=nullptr,std::string("receipt particle must load: ")+name);
+      std::cout << "p13-effect pfx " << label << ' ' << name << ' ' << particleReceipt(*p) << '\n';
+      ++cases;
+      };
+    const auto visual = [&](const char* label, const std::string& name) {
+      const auto* v = gothic.loadVisualFx(name);
+      require(v!=nullptr,std::string("receipt visual effect must load: ")+name);
+      std::cout << "p13-effect vfx " << label << ' ' << name << visualReceipt(*v) << '\n';
+      ++cases;
+      };
+    particle("looping",looping);
+    if(!mesh.empty())
+      particle("mesh",mesh);
+    else
+      std::cout << "p13-effect pfx mesh none\n";
+    particle("pee","PFX_GAI_PEE");
+    visual("keyed",keyed);
+    visual("linked",linked);
+    std::cout << "p13-effect summary cases=" << cases << std::endl;
+    }
   device.waitIdle();
   }
 }
 
 int main() {
   try {
-    CommandLine commandLine(0,nullptr);
+    // The effect receipt uses the caller's installation and base: read them before the fixture
+    // points the environment at its own toy installation.
+    const char* gameDir = std::getenv("GOTHIC_DIR");
+    const char* baseDir = std::getenv("OPENGOTHIC_BASE");
+    const std::string game = gameDir!=nullptr ? gameDir : "";
+    const std::string base = baseDir!=nullptr ? baseDir : "";
+    if(!game.empty() && !base.empty())
+      effectCases(game,base);
     Fixture fixture;
+    const auto root=fixture.root.string();
+    const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str()};
+    CommandLine commandLine(3,args);
     fixture.index();
     resourcePaths(fixture,true);
-    resourcePaths(fixture,true,false);
     converterCases(fixture);
     generatedBarrel(fixture);
     rejectionCases(fixture);

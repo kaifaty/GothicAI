@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include <zenkit/world/VobTree.hh>
+#include "asset/worldtypes.h"
 
 class World;
 class Serialize;
@@ -30,9 +30,9 @@ class Vob {
     friend Flags operator ~ (Flags a)          { return Flags(~uint8_t(a));             }
 
     Vob(World& owner);
-    Vob(Vob* parent, World& owner, const zenkit::VirtualObject& vob, Flags flags);
+    Vob(Vob* parent, World& owner, const asset::VirtualObject& vob, Flags flags);
     virtual ~Vob();
-    static std::unique_ptr<Vob> load(Vob* parent, World& world, const zenkit::VirtualObject& vob, Flags flags);
+    static std::unique_ptr<Vob> load(Vob* parent, World& world, const asset::VirtualObject& vob, Flags flags);
 
     void          saveVobTree(Serialize& fin) const;
     virtual void  save(Serialize& fout) const;
@@ -54,7 +54,7 @@ class Vob {
 
   protected:
     World&                            world;
-    zenkit::VirtualObjectType         vobType     = zenkit::VirtualObjectType::UNKNOWN;
+    asset::VirtualObjectType         vobType     = asset::VirtualObjectType::UNKNOWN;
     uint32_t                          vobObjectID = uint32_t(-1);
 
     virtual void  moveEvent();
@@ -64,11 +64,13 @@ class Vob {
     void          setPhysicsTransform(const Tempest::Matrix4x4& p);
 
   private:
+    friend struct WorldDataContract;
     std::vector<std::unique_ptr<Vob>> child;
 
     // Physics poses are transient: pos/local retain the authored save identity.
     Tempest::Matrix4x4                pos, local, physicsPos;
     bool                              hasPhysicsPos = false;
+    bool                              layerObject = false;
     Vob*                              parent = nullptr;
 
     void          recalculateTransform();

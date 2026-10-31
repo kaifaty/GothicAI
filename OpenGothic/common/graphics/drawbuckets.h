@@ -41,11 +41,12 @@ class DrawBuckets {
 
     Id   alloc(const Material& mat, const StaticMesh& mesh);
     Id   alloc(const Material& mat, const AnimMesh&   mesh);
+    void invalidate(const StaticMesh& mesh);
 
     const Bucket& operator[](size_t i) { return bucketsCpu[i]; }
 
     auto ssbo() const -> const Tempest::StorageBuffer& { return bucketsGpu; }
-    auto buckets() -> const std::vector<Bucket>&;
+    auto buckets() const -> const std::vector<Bucket>&;
 
     auto& textures() const { return desc.tex;     }
     auto& normals()  const { return desc.normal;  }
@@ -58,7 +59,7 @@ class DrawBuckets {
     bool commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
   private:
-    void updateBindlessArrays();
+    void updateBindlessArrays(bool updateBuffers);
 
     enum BucketFlg : uint32_t {
       BK_SOLID = 0x1,
@@ -82,7 +83,9 @@ class DrawBuckets {
       uint32_t       flags            = 0;
       float          uvScale          = 1.f;
       float          antitileCell     = 1.f;
-      uint32_t       padding[3]       = {};
+      uint32_t       diffuseFrames   = 0;
+      uint32_t       frameCount      = 0;
+      uint32_t       frameDuration   = 0;
       };
     static_assert(sizeof(BucketGpu)==80); // GPU array stride of Bucket in scene.glsl
 
@@ -99,4 +102,5 @@ class DrawBuckets {
     std::vector<Bucket>      bucketsCpu;
     Tempest::StorageBuffer   bucketsGpu;
     bool                     bucketsDurtyBit = false;
+    uint64_t                 textureGeneration = 0;
   };

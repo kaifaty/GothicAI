@@ -1,0 +1,383 @@
+{
+  "schema_version": 1,
+  "training_eligible": false,
+  "qualification_status": "fixed-partial",
+  "seeds": [
+    18102027,
+    18102028,
+    18102029
+  ],
+  "inputs": {
+    "save": "/mnt/shared/gothic-ai/nav-demos-v5/input/save.sav",
+    "roads": "/mnt/shared/gothic-ai/nav-demos-v5/input/places.json",
+    "links": "/mnt/shared/gothic-ai/nav-demos-v5/input/accepted-links.txt",
+    "familiar": "/mnt/shared/gothic-ai/nav-demos-v5/input/familiar.bin"
+  },
+  "bc4_weights": "/mnt/shared/gothic-ai/nav-bc4/bc4/policy.navbc",
+  "scenarios": [
+    {
+      "id": "01-maleth-fence",
+      "number": 1,
+      "name": "Maleth at the farm fence",
+      "training_eligible": false,
+      "split": "control",
+      "npc": "BAU_954_MALETH",
+      "live_guide": "player",
+      "start": "cm:14926,1739,-15914",
+      "goal": "FP_ROAM_FARM1_SHEEP_09",
+      "goal_kind": "point",
+      "time": [
+        10,
+        0
+      ],
+      "limit_ms": 90000,
+      "source": "reports/navigation/2026-10-16-stuck/intentional.bench; reported start (14926,1739,-15914), 28867ms stall at NW_FARM1_PATH_01",
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
+    },
+    {
+      "id": "02-routine-return",
+      "number": 2,
+      "name": "Return from three off-road positions",
+      "training_eligible": false,
+      "split": "new",
+      "npc": "MIL_310_STADTWACHE",
+      "start": "cm:6516.90967,511.533173,-9258.83594",
+      "goal": "NW_CITY_ENTRANCE_GUARD_02",
+      "goal_kind": "point",
+      "time": [
+        12,
+        0
+      ],
+      "limit_ms": 90000,
+      "source": "PR574 reports/physics/2026-10-30-routine-return/entry-on-trace.jsonl routine_return_begin at 971d9cd7ad96f92d07e708b490e818f1e63e2855; forest_tree, farm_edge, forest_pine: only NPC and coordinates copied; unsafe farm_field capsule rejected",
+      "variants": [
+        {
+          "id": "forest-tree",
+          "npc": "MIL_310_STADTWACHE",
+          "start": "cm:6516.90967,511.533173,-9258.83594",
+          "goal": "NW_CITY_ENTRANCE_GUARD_02",
+          "off_waynet_distance_cm": 1165.32324,
+          "seeds": [
+            18102027
+          ]
+        },
+        {
+          "id": "farm-edge",
+          "npc": "BAU_950_LOBART",
+          "start": "cm:13440.7822,1584.53284,-21502.2363",
+          "goal": "NW_FARM1_LOBART",
+          "off_waynet_distance_cm": 1201.09131,
+          "seeds": [
+            18102028
+          ],
+          "limit_ms": 180000,
+          "source": "PR574 reports/physics/2026-10-30-routine-return/entry-on-trace.jsonl routine_return_begin at 971d9cd7ad96f92d07e708b490e818f1e63e2855; forest_tree, farm_edge, forest_pine: only NPC and coordinates copied; unsafe farm_field capsule rejected"
+        },
+        {
+          "id": "forest-pine",
+          "npc": "VLK_4303_ADDON_EROL",
+          "start": "cm:35946.6836,3958.80811,1981.57922",
+          "goal": "NW_TAVERN_TO_FOREST_03",
+          "off_waynet_distance_cm": 1613.30115,
+          "seeds": [
+            18102029
+          ]
+        }
+      ],
+      "stranger": false
+    },
+    {
+      "id": "03-follow-hero",
+      "number": 3,
+      "name": "Follow the hero through the market and streets",
+      "training_eligible": false,
+      "split": "new",
+      "npc": "VLK_497_BUERGERIN",
+      "start": "cm:10166.06445,270.079346,4703.9082",
+      "goal": "MARKT_02",
+      "goal_kind": "follow",
+      "target": "PC_HERO",
+      "live_target": "player-walk",
+      "scenario_seed": 18102027,
+      "route": [
+        "MARKT_02",
+        "NW_CITY_MERCHANT_PATH_20",
+        "NW_CITY_TAVERN_IN_02",
+        "NW_CITY_MERCHANT_PATH_29_B"
+      ],
+      "time": [
+        12,
+        0
+      ],
+      "limit_ms": 180000,
+      "source": "Fixed market and narrow-street route; hero100cm/s, horizon180s, pauses/turns unchanged; HD,it35,BC4 each3seeds are included by user authorization even though v3b reference is unqualified (28.245734% in2-5m band,14.954769m mean distance,90s standing); pass threshold remains80%",
+      "prepare_commands": [
+        "immortal player on"
+      ],
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ],
+      "teacher_qualification_required": false,
+      "bc4_compare": true
+    },
+    {
+      "id": "04-visible-detour",
+      "number": 4,
+      "name": "Visible target beyond a static obstacle",
+      "training_eligible": false,
+      "split": "validation",
+      "npc": "NONE_100_XARDAS",
+      "start": "cm:32878.1875,4997.163695,-33336.293",
+      "goal": "NW_PASS_08",
+      "goal_kind": "object",
+      "time": [
+        12,
+        0
+      ],
+      "limit_ms": 90000,
+      "source": {
+        "dataset": "detour-val",
+        "file": "/mnt/shared/gothic-ai/nav-demos-v5/input/detour-val.jsonl",
+        "selection": "Three authored detour-val static-obstacle pairs checked; none qualified; retained former rejected coordinates are excluded from learner runs",
+        "previous_rejection": "0ROCK/FELS/CLIFF confirmations among121; rock requirement removed by user"
+      },
+      "stranger": false,
+      "qualification_rejection": {
+        "reason": "No static-obstacle candidate qualified in three bounded teacher runs; search closed by user",
+        "previous_native_facts": "/mnt/shared/gothic-ai/nav-live/baseline/qualification/recheck-1c9a1fde8d40-a2964efaf4f4",
+        "visible_goals": 79,
+        "native_facts": "/mnt/shared/gothic-ai/nav-live/baseline/extension/943431e2590c-a2964efaf4f4/result.json",
+        "validation_candidates": 121,
+        "static_candidates": 25,
+        "teacher_attempts": [
+          {
+            "candidate": "object-3a2801249f2b49f8",
+            "failure": "path_timeout",
+            "elapsed_ms": 90000,
+            "falls": 0,
+            "minimum_edge_distance_cm": 158.046875
+          },
+          {
+            "candidate": "detour-6fe686e1fa271176",
+            "failure": "teacher_edge_clearance_below_threshold",
+            "elapsed_ms": 7733,
+            "falls": 0,
+            "minimum_edge_distance_cm": 53.0078125
+          },
+          {
+            "candidate": "detour-7979c74019067a96",
+            "failure": "teacher_fell",
+            "elapsed_ms": 16367,
+            "falls": 1,
+            "minimum_edge_distance_cm": 6.9921875
+          }
+        ]
+      },
+      "bc4_compare": true
+    },
+    {
+      "id": "05-wall-pocket",
+      "number": 5,
+      "name": "Leave a wall pocket",
+      "training_eligible": false,
+      "split": "new",
+      "npc": "VLK_442_ARBEITER",
+      "start": "cm:1500,-186,1200",
+      "goal": "FP_PICK_CITY_01",
+      "goal_kind": "point",
+      "time": [
+        12,
+        0
+      ],
+      "limit_ms": 90000,
+      "source": "New harbour shipyard pocket; preparation pocket-1500-1200: complete Detour52.834m, ratio2.1667, start snap0.171cm, first leg points away from goal; physical wall witness pending",
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
+    },
+    {
+      "id": "06-harbour-water",
+      "number": 6,
+      "name": "Harbour shore with deep water on the direct line",
+      "training_eligible": false,
+      "split": "new",
+      "npc": "VLK_441_GARVELL",
+      "start": "NW_CITY_WAY_TO_SHIP_08",
+      "goal": "NW_CITY_WAY_TO_SHIP_FISCHER_06",
+      "goal_kind": "point",
+      "time": [
+        12,
+        0
+      ],
+      "limit_ms": 90000,
+      "source": "New harbour candidate from v5 water-probe waypoints; v5 water-scenarios.jsonl contains only train rows, so this pair must be excluded from those rows and physically qualified",
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
+    },
+    {
+      "id": "07-cliff-trail",
+      "number": 7,
+      "name": "Trail above the cliff",
+      "training_eligible": false,
+      "split": "validation",
+      "npc": "BAU_982_GRIMBALD",
+      "start": "cm:50217.207,10650.5049,41427.4297",
+      "goal": "cm:50160.6875,10587.9795,40771.207",
+      "goal_kind": "point",
+      "time": [
+        12,
+        0
+      ],
+      "limit_ms": 60000,
+      "source": "Safety cliff-bridge-201-back200, link1230208767; new upper-corridor endpoint before descending final leg; goal Y is measured physical floor10587.9795cm from nav-live native probe, replacing Recast Y10614.0605cm; same XZ",
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
+    },
+    {
+      "id": "08-market-crowd",
+      "number": 8,
+      "name": "Cross the busy market with native routines",
+      "training_eligible": false,
+      "split": "new",
+      "npc": "VLK_497_BUERGERIN",
+      "start": "NW_CITY_MERCHANT_PATH_20",
+      "goal": "NW_CITY_MERCHANT_PATH_29_B",
+      "goal_kind": "point",
+      "time": [
+        6,
+        59
+      ],
+      "limit_ms": 90000,
+      "prepare_commands": [
+        "wait 4000"
+      ],
+      "source": "New market crossing; preparation census of24hourly windows: maximum6 walkingNPCs at06:59 within30m, displacement>=50cm over10s after4s settle; native routines enabled",
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
+    },
+    {
+      "id": "09-door-stairs",
+      "number": 9,
+      "name": "Door on the ground floor and a separate indoor staircase",
+      "training_eligible": false,
+      "split": "validation",
+      "npc": "VLK_405_FERNANDO",
+      "start": "NW_CITY_UPTOWN_PATH_08",
+      "goal": "NW_CITY_REICH02_01",
+      "goal_kind": "point",
+      "time": [
+        12,
+        0
+      ],
+      "limit_ms": 90000,
+      "source": "CITY_REICH02 validation house, same outside start; ground-floor goal for door only. Indoor-stair ascent is separately reported; validation transition pool has45 off-mesh temple routes, no indoor-stair ascent proof.",
+      "stranger": false,
+      "variants": [
+        {
+          "id": "door",
+          "goal": "NW_CITY_REICH02_01",
+          "source": "CITY_REICH02 same house and door; NW_CITY_UPTOWN_PATH_08 outside900.005cm to NW_CITY_REICH02_01 ground floor900.029cm; no staircase",
+          "npc": "VLK_405_FERNANDO",
+          "start": "NW_CITY_UPTOWN_PATH_08",
+          "goal_kind": "point",
+          "time": [
+            12,
+            0
+          ],
+          "limit_ms": 90000,
+          "stranger": false,
+          "seeds": [
+            18102027,
+            18102028,
+            18102029
+          ]
+        },
+        {
+          "id": "stairs",
+          "goal": "NW_CITY_REICH02_07",
+          "source": "Unqualified indoor-stair reference in CITY_REICH02; validation transition pool has45 temple routes,0 indoor staircase ascent>=200cm; same failed reference coordinates and topdown frame retained",
+          "qualification_rejection": {
+            "reason": "No teacher-passed indoor staircase ascent>=200cm in the validation transition set; REICH02 teacher times out on stairs",
+            "validation_transition_rows": 45,
+            "qualified_indoor_stair_ascents": 0,
+            "start_cm": [
+              11253.9814,
+              900.004761,
+              -3067.74683
+            ],
+            "goal_cm": [
+              10678.1602,
+              1303.14429,
+              -2519.7522
+            ],
+            "diagnostic_reference": "/mnt/shared/gothic-ai/nav-live/baseline/teacher/09-door-stairs-331aeef07997-recheck-7644259bfd62-37df22448498",
+            "topdown_frame": "/mnt/shared/gothic-ai/nav-live/baseline/teacher/09-door-stairs-331aeef07997/topdown-t60.png"
+          }
+        }
+      ]
+    },
+    {
+      "id": "10-local-stranger",
+      "number": 10,
+      "name": "One route for a local and a stranger",
+      "training_eligible": false,
+      "split": "validation",
+      "npc": "VLK_405_FERNANDO",
+      "start": "NW_CITY_UPTOWN_PATH_08",
+      "goal": "NW_CITY_UPTOWN_PATH_12",
+      "goal_kind": "point",
+      "time": [
+        12,
+        0
+      ],
+      "limit_ms": 180000,
+      "source": {
+        "dataset": "new upper-quarter street pair",
+        "graph": "/mnt/shared/gothic-ai/nav-demos-v5/knownroads/roads-graph.json",
+        "direct_cm": 4066.96,
+        "street_graph_length_cm": 5115,
+        "street_nodes": [
+          "NW_CITY_UPTOWN_PATH_08",
+          "NW_CITY_UPTOWN_PATH_08_B",
+          "NW_CITY_UPTOWN_PATH_07",
+          "NW_CITY_UPTOWN_PATH_09",
+          "NW_CITY_UPTOWN_PATH_10",
+          "NW_CITY_UPTOWN_PATH_11",
+          "NW_CITY_UPTOWN_PATH_12"
+        ],
+        "street_graph_height_range_cm": 15.71,
+        "selection": "Same Fernando local/stranger; outdoors,>=40m direct, no stairs; HD and it35 unchanged inputs; BC4 familiar for local and stranger"
+      },
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
+    }
+  ],
+  "places_frozen": true
+}

@@ -92,6 +92,7 @@ class Parley:
         self._roster: dict[str, Any] = {}
         self._roster_complete = False
         self._guilds: dict[str, int] = {}
+        self._last_balance: dict[str, str] = {}
         self._loading = False
         self._generation = 0
         self._background: set[asyncio.Task[Any]] = set()
@@ -100,6 +101,7 @@ class Parley:
         self._far_since: dict[str, int] = {}
         self._attacking: set[str] = set()
         dialogue.fight_reason = self.fight_reason
+        dialogue.balance = self.balance
         dialogue.on_player_said.append(self.hero_said)
         link.listeners.append(self._on_message)
 
@@ -173,6 +175,18 @@ class Parley:
             for f in self.chronicle.facts("truce")
         )
 
+    def quiet(self, npc: str) -> bool:
+        """Keep both sides from starting a fight while the gang is still negotiating."""
+        npc = npc.upper()
+        if not self.negotiable(npc):
+            return False
+        reason = self.fight_reason(npc)
+        members = self.members(npc)
+        active = any((threat := self.ultimatum(who)) and threat["status"] == "active" for who in members)
+        # Answering a demand permits the model to fight; it must still be able to negotiate a payment.
+        negotiating = self._replying(members) or active or any(self.offer_pending(who) for who in members)
+        return reason is not None or negotiating and not self._provoked(members)
+
     async def _held(self, message: PerceptionHeld, generation: int) -> None:
         npc = (message.other if message.kind == "party_enemy" else message.npc).upper()
         self._guilds[npc] = 9  # these signals are emitted only for human GIL_BDT
@@ -180,12 +194,7 @@ class Parley:
             await self.link.send(HoldVerdictCmd(hold=message.hold, to="scripts"))
             return
         truce = self.truce(npc)
-        reason = self.fight_reason(npc)
-        members = self.members(npc)
-        active = any((threat := self.ultimatum(who)) and threat["status"] == "active" for who in members)
-        # Answering a demand permits the model to fight; it must still be able to negotiate a payment.
-        negotiating = self._replying(members) or active or any(self.offer_pending(who) for who in members)
-        quiet = reason is not None or negotiating and not self._provoked(members)
+        quiet = self.quiet(npc)
         if message.kind == "party_enemy":
             await self.link.send(HoldVerdictCmd(
                 hold=message.hold, to="parley" if quiet else "scripts", ms=LEASE_MS if quiet else None,
@@ -481,7 +490,10 @@ class Parley:
         if threat and threat.get("status") == "active" and not threat.get("answered"):
             self.chronicle.record({**threat, "answered": True})
 
-    async def accept_deal(self, npc: str, hours: int | None = None, *, now: int | None = None) -> None:
+    async def accept_deal(
+        self, npc: str, hours: int | None = None, *, now: int | None = None,
+        native_attitude: str = "ATT_NEUTRAL",
+    ) -> None:
         npc = npc.upper()
         if not self.bandit(npc):
             return
@@ -519,7 +531,7 @@ class Parley:
             calm.append((conv, conv.intent))
         # The accepted truce cancels queued attacks and ends existing fights without waiting for speech.
         for conv, intent in calm:
-            await self.dialogue._calm(conv, intent)
+            await self.dialogue._calm(conv, intent, native_attitude=native_attitude)
 
     def tick(self) -> None:
         if self._loading:
@@ -585,18 +597,34 @@ class Parley:
     async def prepare(self, npc: str) -> None:
         self.tick()
 
-    def _balance(self, npc: str) -> str | None:
+    def balance(self, npc: str) -> str | None:
+        """The quick model's balance, using only snapshots and cached information, without I/O."""
+        npc = npc.upper()
+        guild = self.dialogue.guild_of(npc)
+        if guild is None:
+            guild = self._guilds.get(npc)
+        if guild is None:
+            return self._last_balance.get(npc)
+        if guild not in KILLERS:
+            return None
+        return self._balance(npc) or self._last_balance.get(npc)
+
+    def _balance(self, npc: str, *, combat: bool = False) -> str | None:
         snap = self.link.snapshots.get(npc)
         if snap is None or snap.player is None:
             return None
         view = self.perception.view(npc) if self.perception else None
+        guild = self.dialogue.guild_of(npc) or self._guilds.get(npc)
+        allies = {guild} if combat and guild not in KILLERS else KILLERS
         band = {
             npc,
-            *(o.id for o in snap.nearby_npcs if o.guild in KILLERS and not o.dead and o.distance <= NEAR_CM),
+            *(o.id for o in snap.nearby_npcs if o.guild in allies and (not combat or not self.companion(o.id))
+              and not o.dead and o.distance <= NEAR_CM),
         }
         if view:
             band.update(
-                o.id for o in view.sees if o.guild in KILLERS and o.body != "dead" and o.distance <= NEAR_CM
+                o.id for o in view.sees if o.guild in allies and (not combat or not self.companion(o.id))
+                and o.body != "dead" and o.distance <= NEAR_CM
             )
         down = {o.id for o in view.sees if o.body in {"down", "dead"}} if view else set()
         down |= {who for who in band if who in self._roster and self._roster[who].activity == "down"}
@@ -629,12 +657,18 @@ class Parley:
             )
         )
         state = "ранен" if health < 1 else "цел"
-        return (
+        line = (
             f"Силы: {verdict}; вас на ногах {count}, "
             f"спутников у героя {len(companions)}; "
             f"герой {state}, {'в доспехе' if hero.armor else 'без доспеха'}, "
             f"{'с оружием' if armed else 'без оружия'}."
         )
+        self._last_balance[npc] = line
+        return line
+
+    def combat_balance(self, npc: str) -> str | None:
+        """The same comparison for a human fighting the hero, including non-bandits."""
+        return self._balance(npc.upper(), combat=True)
 
     def situation(self, npc: str) -> str | None:
         npc = npc.upper()
@@ -750,6 +784,7 @@ class Parley:
                 self._hails.clear()
                 self._far_since.clear()
                 self._ticks, self._minute, self._roster = 0, None, {}
+                self._last_balance.clear()
                 self._roster_complete = False
                 self._loading = False
             case Snapshot():

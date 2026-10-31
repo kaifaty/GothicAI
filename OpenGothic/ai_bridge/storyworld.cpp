@@ -113,6 +113,7 @@ StoryWorld::StoryWorld(std::function<void(std::string&&)> send, std::function<vo
 void StoryWorld::clear() {
   tags.clear();
   deaths.clear();
+  nextScan = nextReport = 0;
   }
 
 int StoryWorld::spawn(World& world, const rapidjson::Value& msg, std::string& error) {
@@ -471,7 +472,7 @@ std::string StoryWorld::people(World& world) {
 
 void StoryWorld::tick(World& world) {
   const uint64_t now = world.tickCount();
-  if(now>=nextScan) {
+  if(now>=nextScan || nextScan>now+ScanMs) {
     nextScan = now+ScanMs;
     // deaths: of people (a quest giver, a witness) and of the director's creatures
     std::unordered_set<const Npc*> tagged;
@@ -503,7 +504,7 @@ void StoryWorld::tick(World& world) {
       send(j.finish());
       }
     }
-  if(!tags.empty() && now>=nextReport) {
+  if(!tags.empty() && (now>=nextReport || nextReport>now+ReportMs)) {
     nextReport = now+ReportMs;
     report(world);
     }

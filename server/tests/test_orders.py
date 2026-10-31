@@ -87,7 +87,15 @@ async def test_an_order_to_someone_who_is_no_companion_is_words_to_him():
     assert (LOBART, "follow") not in acts(fake)  # he decides in words
 
 
-@pytest.mark.parametrize("text", ["Ну ты идешь, нет?", "Давай за мной к пещере.", "Пошли бандитов бить."])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Ну ты идешь, нет?",
+        "Давай за мной к пещере.",
+        "Пошли бандитов бить.",
+        "Ну, ты, если что, не туда идешь, ты в стену куда-то идешь. Иди за мной.",
+    ],
+)
 async def test_long_follow_requests_move_an_existing_companion_without_a_model(text):
     fake, llm = FakeGame(), FakeBackend("Иду!", delay=0)
     cm, dialogue, talk = await _desk(fake, llm)
@@ -99,6 +107,21 @@ async def test_long_follow_requests_move_an_existing_companion_without_a_model(t
         assert llm.calls == [] and talk.last[0].why == "order"
     finally:
         await cm.__aexit__(None, None, None)
+
+
+async def test_reported_follow_words_do_not_order_an_existing_companion():
+    fake = FakeGame()
+    cm, dialogue, talk = await _desk(fake, FakeBackend("Что он сказал?", delay=0))
+    try:
+        await fake.roster(person(GORN, "Горн", 4))
+        companion(dialogue, GORN, "Горн")
+        await fake.send(type="player_text", text="Он мне сказал. Иди за мной.", focus=GORN)
+        await _until(lambda: fake.said == ["Что он сказал?"])
+        assert talk.last[0].why != "order"
+    finally:
+        await cm.__aexit__(None, None, None)
+
+    assert (GORN, "follow") not in acts(fake)
 
 
 async def test_attack_whom_the_hero_looks_at_then_back_to_him():

@@ -2,7 +2,7 @@
 
 #include <Tempest/Matrix4x4>
 
-#include <zenkit/ModelHierarchy.hh>
+#include "asset/modeltypes.h"
 
 #include <vector>
 
@@ -10,7 +10,7 @@
 
 class Skeleton final {
   public:
-    Skeleton(const zenkit::ModelHierarchy& src, const Animation* anim, std::string_view name);
+    Skeleton(const asset::ModelHierarchy& src, const Animation* anim, std::string_view name);
 
     struct Node final {
       size_t             parent=size_t(-1);

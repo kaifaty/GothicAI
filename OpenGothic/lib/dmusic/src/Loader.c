@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: MIT-Modern-Variant
 #include "_Internal.h"
 
-static void* DmLoader_resolveName(DmLoader* slf, char const* name, size_t* length);
-
 DmResult DmLoader_create(DmLoader** slf, DmLoaderOptions opt) {
 	if (slf == NULL) {
 		return DmResult_INVALID_ARGUMENT;
@@ -56,41 +54,98 @@ void DmLoader_release(DmLoader* slf) {
 	Dm_free(slf);
 }
 
-DmResult DmLoader_addResolver(DmLoader* slf, DmLoaderResolverCallback* resolve, void* ctx) {
-	if (slf == NULL || resolve == NULL) {
+DmResult DmLoader_setFactory(DmLoader* slf, DmLoaderFactory const* factory, void* ctx) {
+	if (slf == NULL) {
 		return DmResult_INVALID_ARGUMENT;
 	}
-
-	DmResolver resolver;
-	resolver.context = ctx;
-	resolver.resolve = resolve;
 
 	if (mtx_lock(&slf->lock) != thrd_success) {
 		return DmResult_MUTEX_ERROR;
 	}
 
-	DmResult rv = DmResolverList_add(&slf->resolvers, resolver);
+	if (factory == NULL) {
+		memset(&slf->factory, 0, sizeof slf->factory);
+		slf->factory_ctx = NULL;
+		slf->has_factory = false;
+	} else {
+		slf->factory = *factory;
+		slf->factory_ctx = ctx;
+		slf->has_factory = true;
+	}
 
 	(void) mtx_unlock(&slf->lock);
-	return rv;
+	return DmResult_SUCCESS;
 }
 
-void* DmLoader_resolveName(DmLoader* slf, const char* name, size_t* length) {
+// Both native and original-source objects enter the same cache/download path. Source callbacks
+// are installed by the import-only addResolver implementation, so runtime users never link parsers.
+static bool DmLoader_makeSegment(DmLoader* slf, char const* name, DmSegment** out, DmResult* rv) {
+	*out = NULL;
 	if (mtx_lock(&slf->lock) != thrd_success) {
-		return NULL;
+		return false;
+	}
+	if (slf->has_factory) {
+		*rv = slf->factory.segment != NULL ? slf->factory.segment(slf->factory_ctx, name, out) : DmResult_NOT_FOUND;
+		(void) mtx_unlock(&slf->lock);
+	} else {
+		DmLoaderFactory source = slf->source_factory;
+		(void) mtx_unlock(&slf->lock);
+		*rv = source.segment != NULL ? source.segment(slf, name, out) : DmResult_NOT_FOUND;
 	}
 
-	void* bytes = NULL;
-	for (size_t i = 0U; i < slf->resolvers.length; ++i) {
-		DmResolver* resolver = &slf->resolvers.data[i];
-		bytes = resolver->resolve(resolver->context, name, length);
-		if (bytes != NULL) {
-			break;
-		}
+	if (*rv == DmResult_SUCCESS && *out == NULL) {
+		*rv = DmResult_FILE_CORRUPT;
+	} else if (*rv != DmResult_SUCCESS && *out != NULL) {
+		DmSegment_release(*out);
+		*out = NULL;
+	}
+	return true;
+}
+
+static bool DmLoader_makeStyle(DmLoader* slf, char const* file, DmStyle** out, DmResult* rv) {
+	*out = NULL;
+	if (mtx_lock(&slf->lock) != thrd_success) {
+		return false;
+	}
+	if (slf->has_factory) {
+		*rv = slf->factory.style != NULL ? slf->factory.style(slf->factory_ctx, file, out) : DmResult_NOT_FOUND;
+		(void) mtx_unlock(&slf->lock);
+	} else {
+		DmLoaderFactory source = slf->source_factory;
+		(void) mtx_unlock(&slf->lock);
+		*rv = source.style != NULL ? source.style(slf, file, out) : DmResult_NOT_FOUND;
 	}
 
-	(void) mtx_unlock(&slf->lock);
-	return bytes;
+	if (*rv == DmResult_SUCCESS && *out == NULL) {
+		*rv = DmResult_FILE_CORRUPT;
+	} else if (*rv != DmResult_SUCCESS && *out != NULL) {
+		DmStyle_release(*out);
+		*out = NULL;
+	}
+	return true;
+}
+
+static bool DmLoader_makeDls(DmLoader* slf, char const* file, DmDls** out, DmResult* rv) {
+	*out = NULL;
+	if (mtx_lock(&slf->lock) != thrd_success) {
+		return false;
+	}
+	if (slf->has_factory) {
+		*rv = slf->factory.dls != NULL ? slf->factory.dls(slf->factory_ctx, file, out) : DmResult_NOT_FOUND;
+		(void) mtx_unlock(&slf->lock);
+	} else {
+		DmLoaderFactory source = slf->source_factory;
+		(void) mtx_unlock(&slf->lock);
+		*rv = source.dls != NULL ? source.dls(slf, file, out) : DmResult_NOT_FOUND;
+	}
+
+	if (*rv == DmResult_SUCCESS && *out == NULL) {
+		*rv = DmResult_FILE_CORRUPT;
+	} else if (*rv != DmResult_SUCCESS && *out != NULL) {
+		DmDls_release(*out);
+		*out = NULL;
+	}
+	return true;
 }
 
 DmResult DmLoader_getSegment(DmLoader* slf, char const* name, DmSegment** segment) {
@@ -98,25 +153,21 @@ DmResult DmLoader_getSegment(DmLoader* slf, char const* name, DmSegment** segmen
 		return DmResult_INVALID_ARGUMENT;
 	}
 
-	size_t length = 0;
-	void* bytes = DmLoader_resolveName(slf, name, &length);
-	if (bytes == NULL) {
-		Dm_report(DmLogLevel_DEBUG, "DmLoader: Segment '%s' not found", name);
+	DmResult rv = DmResult_SUCCESS;
+	DmSegment* made = NULL;
+	if (DmLoader_makeSegment(slf, name, &made, &rv)) {
+		if (rv == DmResult_NOT_FOUND) {
+			Dm_report(DmLogLevel_DEBUG, "DmLoader: Segment '%s' not found", name);
+			return DmResult_NOT_FOUND;
+		}
+		if (rv != DmResult_SUCCESS) {
+			return rv;
+		}
+
+		*segment = made;
+		Dm_report(DmLogLevel_DEBUG, "DmLoader: Loading segment '%s'", name);
+	} else {
 		return DmResult_NOT_FOUND;
-	}
-
-	DmResult rv = DmSegment_create(segment);
-	if (rv != DmResult_SUCCESS) {
-		Dm_free(bytes);
-		return rv;
-	}
-
-	Dm_report(DmLogLevel_DEBUG, "DmLoader: Loading segment '%s'", name);
-
-	rv = DmSegment_parse(*segment, bytes, length);
-	if (rv != DmResult_SUCCESS) {
-		DmSegment_release(*segment);
-		return rv;
 	}
 
 	if (!slf->autodownload) {
@@ -162,26 +213,21 @@ DmResult DmLoader_getDownloadableSound(DmLoader* slf, DmReference const* ref, Dm
 
 	(void) mtx_unlock(&slf->lock);
 
-	// Resolve and parse the DLS
-	size_t length = 0;
-	void* bytes = DmLoader_resolveName(slf, ref->file, &length);
-	if (bytes == NULL) {
-		Dm_report(DmLogLevel_DEBUG, "DmLoader: DLS collection '%s' not found", ref->name);
+	DmResult rv = DmResult_SUCCESS;
+	DmDls* made = NULL;
+	if (DmLoader_makeDls(slf, ref->file, &made, &rv)) {
+		if (rv == DmResult_NOT_FOUND) {
+			Dm_report(DmLogLevel_DEBUG, "DmLoader: DLS collection '%s' not found", ref->name);
+			return DmResult_NOT_FOUND;
+		}
+		if (rv != DmResult_SUCCESS) {
+			return rv;
+		}
+
+		*snd = made;
+		Dm_report(DmLogLevel_DEBUG, "DmLoader: Loading DLS collection '%s'", ref->file);
+	} else {
 		return DmResult_NOT_FOUND;
-	}
-
-	DmResult rv = DmDls_create(snd);
-	if (rv != DmResult_SUCCESS) {
-		Dm_free(bytes);
-		return rv;
-	}
-
-	Dm_report(DmLogLevel_DEBUG, "DmLoader: Loading DLS collection '%s'", ref->file);
-
-	rv = DmDls_parse(*snd, bytes, length);
-	if (rv != DmResult_SUCCESS) {
-		DmDls_release(*snd);
-		return rv;
 	}
 
 	// Add the new item to the cache
@@ -223,26 +269,21 @@ DmResult DmLoader_getStyle(DmLoader* slf, DmReference const* ref, DmStyle** sty)
 
 	(void) mtx_unlock(&slf->lock);
 
-	// Resolve and parse the DLS
-	size_t length = 0;
-	void* bytes = DmLoader_resolveName(slf, ref->file, &length);
-	if (bytes == NULL) {
-		Dm_report(DmLogLevel_DEBUG, "DmLoader: Style '%s' not found", ref->name);
+	DmResult rv = DmResult_SUCCESS;
+	DmStyle* made = NULL;
+	if (DmLoader_makeStyle(slf, ref->file, &made, &rv)) {
+		if (rv == DmResult_NOT_FOUND) {
+			Dm_report(DmLogLevel_DEBUG, "DmLoader: Style '%s' not found", ref->name);
+			return DmResult_NOT_FOUND;
+		}
+		if (rv != DmResult_SUCCESS) {
+			return rv;
+		}
+
+		*sty = made;
+		Dm_report(DmLogLevel_DEBUG, "DmLoader: Loading style '%s'", ref->file);
+	} else {
 		return DmResult_NOT_FOUND;
-	}
-
-	DmResult rv = DmStyle_create(sty);
-	if (rv != DmResult_SUCCESS) {
-		Dm_free(bytes);
-		return rv;
-	}
-
-	Dm_report(DmLogLevel_DEBUG, "DmLoader: Loading style '%s'", ref->file);
-
-	rv = DmStyle_parse(*sty, bytes, length);
-	if (rv != DmResult_SUCCESS) {
-		DmStyle_release(*sty);
-		return rv;
 	}
 
 	// Add the new item to the cache

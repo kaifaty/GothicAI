@@ -1,4 +1,8 @@
-"""A road gang hails the hero, sells peace, and attacks only after a provocation."""
+"""A road gang hails the hero, sells peace, and attacks only after a provocation.
+
+дано: ultimatum for 100 gold, 60 s on the hail; propose_deal for 100 gold
+and a 4 h truce on the payment reply.
+"""
 
 from __future__ import annotations
 

@@ -8,7 +8,6 @@
 #include "project/projectmgr.h"
 #include "ui/projectitemview.h"
 #include "ui/rootview.h"
-#include "resources.h"
 
 #include "assets.h"
 
@@ -149,7 +148,7 @@ struct Shelf::Central : Widget {
     void refreshFileTree() {
       while(owner.subdir.size()>0) {
         auto& it = owner.subdir.back();
-        if(Resources::vdfsIndex().resolve(it.path())==nullptr) {
+        if(ProjectMgr::inst().vdfsIndex().resolve(it.path())==nullptr) {
           owner.subdir.pop_back();
           continue;
           }

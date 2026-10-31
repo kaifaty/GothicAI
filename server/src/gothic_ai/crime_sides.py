@@ -117,13 +117,14 @@ class CrimeSides:
         conv = dialogue.conversations.get(npc) if dialogue is not None else None
         return conv is not None and conv.intent.goal == "follow_hero"
 
-    def reason(self, npc: str, deed: HeroDeed) -> SideReason | None:
+    def reason(self, npc: str, deed: HeroDeed, *, surrendered: bool = False) -> SideReason | None:
         """Keep the bridge's witness metadata and combat snapshot for direct witnesses."""
         npc, victim = self._npc(npc), self._npc(deed.victim)
         friends = {self._npc(p.npc) for p in deed.witnesses_metadata if p.npctype == 2}
         metadata = next((p for p in deed.witnesses_metadata if self._npc(p.npc) == npc), None)
         guild = metadata.guild if metadata is not None else self.crimes.people.get(npc, {}).get("guild", -1)
-        return self._reason(npc, victim, friends, guild, deed.victim_guild, deed.victim_enemy)
+        return self._reason(npc, victim, friends, guild, deed.victim_guild, deed.victim_enemy,
+                            surrendered=surrendered)
 
     def heard_reason(self, npc: str, crime: Fact) -> SideReason | None:
         """A listener can have its own side, independent of the teller's version."""
@@ -137,7 +138,40 @@ class CrimeSides:
             victim_guild = people.get(victim, {}).get("guild")
         if victim_guild is not None and victim_guild < 0:
             victim_guild = None
-        return self._reason(npc, victim, friends, guild, victim_guild)
+        return self._reason(npc, victim, friends, guild, victim_guild,
+                            surrendered=bool(crime.get("surrendered")))
+
+    def _prepare_fights(self) -> None:
+        dialogue = self.crimes.dialogue
+        conversations = dialogue.conversations if dialogue is not None else {}
+        for actor, conv in conversations.items():
+            self.note_intent(actor, conv.intent)
+        if self.orders is not None:
+            for actor, fight in self.orders.fights.items():
+                self.note_fight(actor, fight.target)
+        self._prune()
+
+    def _hero_group(self, friends: set[str]) -> set[str]:
+        group = {"PLAYER", *friends}
+        dialogue = self.crimes.dialogue
+        candidates = set(dialogue.conversations) if dialogue is not None else set()
+        if self.orders is not None:
+            candidates.update(self.orders.standing)
+        group.update(actor for actor in candidates if self._companion(actor, friends))
+        return group
+
+    def fought_hero_group(self, npc: str, deed: HeroDeed) -> bool:
+        """Whether an owner recently fought the hero or a current companion, in either direction."""
+        self._prepare_fights()
+        npc = self._npc(npc)
+        friends = {self._npc(p.npc) for p in deed.witnesses_metadata if p.npctype == 2}
+        friends.update(
+            self._npc(actor) for actor, person in self.crimes.people.items() if person.get("npctype") == 2
+        )
+        return any(
+            (npc, member) in self.fights or (member, npc) in self.fights
+            for member in self._hero_group(friends)
+        )
 
     def _reason(
         self,
@@ -147,27 +181,16 @@ class CrimeSides:
         guild: int,
         victim_guild: int | None,
         victim_enemy: bool = False,
+        surrendered: bool = False,
     ) -> SideReason | None:
-        dialogue = self.crimes.dialogue
-        conversations = dialogue.conversations if dialogue is not None else {}
-        for actor, conv in conversations.items():
-            self.note_intent(actor, conv.intent)
-        if self.orders is not None:
-            for actor, fight in self.orders.fights.items():
-                self.note_fight(actor, fight.target)
-        self._prune()
-        if (npc, victim) in self.fights or (victim, npc) in self.fights:
+        self._prepare_fights()
+        if not surrendered and ((npc, victim) in self.fights or (victim, npc) in self.fights):
             return "fought"
-        if self._companion(npc, friends):
-            group = {"PLAYER", *friends}
-            candidates = set(conversations)
-            if self.orders is not None:
-                candidates.update(self.orders.standing)
-            group.update(actor for actor in candidates if self._companion(actor, friends))
+        if not surrendered and self._companion(npc, friends):
             if (
                 victim_enemy
                 or victim in self.group_threats
-                or any((victim, member) in self.fights for member in group)
+                or any((victim, member) in self.fights for member in self._hero_group(friends))
             ):
                 return "companion"
         if victim_guild is not None and (guild, victim_guild) in self.hostile_guilds:

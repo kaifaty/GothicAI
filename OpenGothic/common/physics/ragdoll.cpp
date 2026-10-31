@@ -14,6 +14,7 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
+#include <Jolt/Physics/Constraints/SixDOFConstraint.h>
 #include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Ragdoll/Ragdoll.h>
@@ -309,7 +310,31 @@ struct Ragdoll::Impl final {
     for(const auto& cap:zones.caps)
       if(cap.owner<owners.size())
         owners[cap.owner]=true;
+    // HitZones never give the skeleton root flesh: for a human it is the floor
+    // point under the pelvis. An insect's root is its thorax (Bloodfly: BIP01
+    // CENTER carries legs, wings, pincers and tail). Without a part there, all
+    // limbs hang off whichever leg segment became part 0 and the chain explodes
+    // on landing. Give such a root a trunk to the owners directly under it.
+    std::vector<size_t> rootChildren;
+    size_t root=noBone;
+    for(size_t i=0;i<owners.size();++i) {
+      if(!owners[i]) continue;
+      size_t top=i;
+      bool nested=false;
+      for(size_t p=sk.nodes[i].parent,limit=0;p<sk.nodes.size() && limit<sk.nodes.size();p=sk.nodes[p].parent,++limit) {
+        if(owners[p]) { nested=true; break; }
+        top=p;
+        }
+      if(nested || top==i) continue;
+      if(root!=noBone && root!=top) { rootChildren.clear(); break; }
+      root=top;
+      size_t child=i;
+      while(sk.nodes[child].parent!=root) child=sk.nodes[child].parent;
+      if(child==i) rootChildren.push_back(i);
+      }
+    if(rootChildren.size()<2) root=noBone;
     std::vector<size_t> pending;
+    if(root!=noBone) pending.push_back(root);
     for(size_t i=0;i<owners.size();++i)
       if(owners[i]) pending.push_back(i);
     auto depth=[&](size_t bone) {
@@ -330,6 +355,10 @@ struct Ragdoll::Impl final {
       for(size_t limit=0;parent<sk.nodes.size() && boneToPart[parent]<0 && limit<sk.nodes.size();++limit)
         parent=sk.nodes[parent].parent;
       part.parent=parent<sk.nodes.size() ? boneToPart[parent] : (result->parts.empty() ? -1 : 0);
+      // Gothic hangs the clavicles from the neck bone. A physical shoulder hung
+      // there follows every nod of the head; it belongs to the chest below it.
+      if(named(part.name,"CLAVICLE") && part.parent>0 && named(result->parts[size_t(part.parent)].name,"NECK"))
+        part.parent=result->parts[size_t(part.parent)].parent;
       const auto inverse=part.bind.InversedRotationTranslation();
       for(const auto& cap:zones.caps) {
         if(cap.owner!=bone || cap.a.bone>=sk.tr.size() || cap.b.bone>=sk.tr.size()) continue;
@@ -338,6 +367,16 @@ struct Ragdoll::Impl final {
         if(!std::isfinite(c.radius) || c.radius<=0.f) continue;
         part.volume+=pi*c.radius*c.radius*(c.b-c.a).Length()+4.f/3.f*pi*c.radius*c.radius*c.radius;
         part.capsules.push_back(c);
+        }
+      if(bone==root) {
+        // HitZones' trunk thickness (12 cm for a 160 cm human) at this creature's size.
+        const float radius=12.f/160.f*zones.size*.01f;
+        for(size_t child:rootChildren) {
+          Capsule c {inverse*sourcePoint(sk,bone,{}),inverse*sourcePoint(sk,child,{}),radius};
+          c.aBone=bone; c.bBone=child; c.aLocal=c.bLocal=Tempest::Vec3();
+          part.volume+=pi*c.radius*c.radius*(c.b-c.a).Length()+4.f/3.f*pi*c.radius*c.radius*c.radius;
+          part.capsules.push_back(c);
+          }
         }
       if(part.capsules.empty()) continue;
       boneToPart[bone]=int(result->parts.size());
@@ -361,6 +400,112 @@ struct Ragdoll::Impl final {
     return result;
     }
 
+  // Model-space directions of a biped, from its bind pose: the thighs give its
+  // left, the toes its front. Other creatures keep the generic joint table.
+  struct BodyAxes { bool valid=false; JPH::Vec3 left,up,forward; };
+
+  static BodyAxes bodyAxes(const Schema& schema) {
+    const auto find=[&](std::string_view name) -> const Part* {
+      for(const auto& p:schema.parts) if(named(p.name,name)) return &p;
+      return nullptr;
+      };
+    const auto at=[](const Part* p) { return p->bind.GetTranslation(); };
+    BodyAxes result;
+    const Part* lt=find(" L THIGH"), *rt=find(" R THIGH"), *lf=find(" L FOOT"), *rf=find(" R FOOT");
+    const Part* ltoe=find(" L TOE"), *rtoe=find(" R TOE"), *head=find("HEAD");
+    if(!lt || !rt || !lf || !rf || !ltoe || !rtoe || !head || !find("PELVIS") || !find(" L UPPERARM") || !find(" R UPPERARM"))
+      return result;
+    const auto left=at(lt)-at(rt);
+    if(left.LengthSq()<1.e-6f || at(head).GetY()<=at(lt).GetY()) return result;
+    result.left=left.Normalized();
+    result.up=perpendicular(result.left,JPH::Vec3::sAxisY());
+    result.forward=result.left.Cross(result.up);
+    if(result.forward.Dot(at(ltoe)-at(lf)+at(rtoe)-at(rf))<0.f) result.forward=-result.forward;
+    result.valid=true;
+    return result;
+    }
+
+  // Degrees: flexion moves the bone towards 'front', abduction towards 'side',
+  // a positive twist turns 'front' towards 'medial'. Passive human ranges,
+  // somewhat inside the extremes a living body reaches only with effort.
+  struct JointRange { float flexMin,flexMax,sideMin,sideMax,twistMin,twistMax; };
+
+  // An elliptic swing cone centred inside an asymmetric range. The parent frame
+  // carries the centre; the child frame is the bind bone reached from it by the
+  // shortest swing, so the bind pose has zero twist and lies inside the cone.
+  static void anatomicalCone(JPH::SwingTwistConstraintSettings& joint, JPH::Vec3Arg bone, JPH::Vec3Arg neutral,
+                             JPH::Vec3Arg front, JPH::Vec3Arg side, JPH::Vec3Arg medial, const JointRange& r) {
+    constexpr float rad=pi/180.f;
+    const auto f=perpendicular(neutral,front);
+    const auto s=perpendicular(f,perpendicular(neutral,side));
+    const auto offset=f*((r.flexMin+r.flexMax)*.5f*rad)+s*((r.sideMin+r.sideMax)*.5f*rad);
+    auto centre=JPH::Quat::sIdentity();
+    if(offset.LengthSq()>1.e-8f)
+      centre=JPH::Quat::sRotation(neutral.Cross(offset).Normalized(),offset.Length());
+    const auto c=(centre*neutral).Normalized(), cf=(centre*f).Normalized();
+    joint.mTwistAxis1=c;
+    joint.mPlaneAxis1=cf;
+    joint.mTwistAxis2=bone;
+    joint.mPlaneAxis2=perpendicular(bone,JPH::Quat::sFromTo(c,bone)*cf);
+    // Jolt: the plane angle bounds the swing towards the plane axis, the normal angle across it.
+    joint.mPlaneHalfConeAngle=(r.flexMax-r.flexMin)*.5f*rad;
+    joint.mNormalHalfConeAngle=(r.sideMax-r.sideMin)*.5f*rad;
+    // A positive native twist turns the plane axis towards twist x plane.
+    const bool positive=c.Cross(cf).Dot(medial)>=0.f;
+    joint.mTwistMinAngle=(positive ? r.twistMin : -r.twistMax)*rad;
+    joint.mTwistMaxAngle=(positive ? r.twistMax : -r.twistMin)*rad;
+    }
+
+  // Joints of a biped other than the knee and elbow hinges. Returns false
+  // for a part the table does not describe (a jaw, a tail).
+  static bool humanJoint(JPH::SwingTwistConstraintSettings& joint, const Schema& schema, const Part& src,
+                         const BodyAxes& axes) {
+    const auto& name=src.name;
+    const auto here=src.bind.GetTranslation();
+    // The bone runs to the child that continues its chain; an end part
+    // (a toe, a finger, the head) continues its parent.
+    JPH::Vec3 bone=(here-schema.parts[size_t(src.parent)].bind.GetTranslation()).NormalizedOr(axes.up);
+    for(const auto& child:schema.parts)
+      if(child.parent>=0 && &schema.parts[size_t(child.parent)]==&src &&
+         !named(child.name,"CLAVICLE") && !named(child.name,"THIGH")) {
+        const auto d=child.bind.GetTranslation()-here;
+        if(d.LengthSq()>1.e-8f) { bone=d.Normalized(); break; }
+        }
+    const float side=named(name," R ") ? -1.f : 1.f;
+    const auto lateral=axes.left*side;
+    if(named(name,"THIGH"))
+      anatomicalCone(joint,bone,-axes.up,axes.forward,lateral,-lateral,{-15,110,-20,40,-40,30});
+    else if(named(name,"FOOT")) // dorsiflexion up (a buckling knee needs a squat's), toe out, inversion
+      anatomicalCone(joint,bone,bone,axes.up,lateral,lateral,{-45,35,-15,15,-15,25});
+    else if(named(name,"TOE"))
+      anatomicalCone(joint,bone,bone,axes.up,lateral,lateral,{-25,45,-10,10,-5,5});
+    else if(named(name,"SPINE"))
+      anatomicalCone(joint,bone,bone,axes.forward,axes.left,axes.left,{-8,25,-10,10,-12,12});
+    else if(named(name,"NECK") || named(name,"HEAD"))
+      anatomicalCone(joint,bone,bone,axes.forward,axes.left,axes.left,{-25,30,-20,20,-35,35});
+    else if(named(name,"CLAVICLE")) // forward and up, from the bind shoulder
+      anatomicalCone(joint,bone,bone,axes.forward,axes.up,axes.up,{-12,12,-8,15,-10,10});
+    else if(named(name,"UPPERARM"))
+      anatomicalCone(joint,bone,-axes.up,axes.forward,lateral,-lateral,{-40,135,-30,120,-70,70});
+    else if(named(name,"HAND"))
+      anatomicalCone(joint,bone,bone,axes.forward,axes.up,axes.up,{-45,45,-45,45,-80,80});
+    else if(named(name,"FINGER"))
+      anatomicalCone(joint,bone,bone,axes.forward,axes.up,axes.up,{-30,30,-30,30,-10,10});
+    else
+      return false;
+    return true;
+    }
+
+  // Passive joint tissue: a dead limb still resists turning, in proportion to
+  // its weight, so it settles short of its limits instead of flopping onto them.
+  static float jointFriction(std::string_view name, float mass) {
+    // Light in the legs: knees that resist give a corpse standing on locked legs.
+    if(named(name,"NECK") || named(name,"HEAD")) return .3f*mass;
+    if(named(name,"THIGH") || named(name,"CALF") || named(name,"FOOT") || named(name,"TOE")) return .2f*mass;
+    if(named(name,"CLAVICLE") || named(name,"ARM") || named(name,"HAND") || named(name,"FINGER")) return .4f*mass;
+    return .6f*mass;
+    }
+
   static JPH::Ref<JPH::RagdollSettings> settings(Schema& schema, float scale) {
     auto found=schema.scaled.find(scale);
     if(found!=schema.scaled.end()) return found->second;
@@ -368,6 +513,7 @@ struct Ragdoll::Impl final {
     result->mSkeleton=new JPH::Skeleton();
     const float totalVolume=std::accumulate(schema.parts.begin(),schema.parts.end(),0.f,[](float v,const Part& p) { return v+p.volume; });
     const float totalMass=schema.totalMass;
+    const auto axes=bodyAxes(schema);
     std::vector<JPH::Mat44> bind;
     for(const auto& src:schema.parts) {
       result->mSkeleton->AddJoint(src.name,src.parent);
@@ -412,6 +558,7 @@ struct Ragdoll::Impl final {
         const auto direction=src.bind.Multiply3x3((src.capsules.front().b-src.capsules.front().a).NormalizedOr(JPH::Vec3::sAxisY()));
         auto twist=direction;
         auto plane=perpendicular(twist,src.bind.GetAxisZ());
+        bool anatomical=false;
         if(named(name,"CALF") || named(name,"FOREARM")) {
           // Gothic's limb bone X runs along the capsule: projecting it onto the
           // lateral plane would normalize a few float ULPs into an arbitrary
@@ -445,9 +592,12 @@ struct Ragdoll::Impl final {
           joint->mPlaneHalfConeAngle=0.f;
           // Constraint zero remains the canonical bind pose. Account for the
           // bind's existing flexion so the anatomical range is still 0..150
-          // degrees: both straightening and positive bending are permitted.
+          // degrees (an elbow 0..145): straightening and bending are permitted.
           joint->mTwistMinAngle=-bend;
-          joint->mTwistMaxAngle=150.f*pi/180.f-bend;
+          joint->mTwistMaxAngle=(named(name,"CALF") ? 150.f : 145.f)*pi/180.f-bend;
+          }
+        else if(axes.valid && humanJoint(*joint,schema,src,axes)) {
+          anatomical=true; // asymmetric limits carry their own frames
           }
         else if(named(name,"SPINE") || named(name,"NECK") || named(name,"PELVIS")) {
           joint->mNormalHalfConeAngle=25.f*pi/180.f;
@@ -462,9 +612,11 @@ struct Ragdoll::Impl final {
           joint->mTwistMinAngle=-40.f*pi/180.f;
           joint->mTwistMaxAngle=40.f*pi/180.f;
           }
-        joint->mTwistAxis1=joint->mTwistAxis2=twist;
-        joint->mPlaneAxis1=joint->mPlaneAxis2=plane;
-        joint->mMaxFrictionTorque=.15f;
+        if(!anatomical) {
+          joint->mTwistAxis1=joint->mTwistAxis2=twist;
+          joint->mPlaneAxis1=joint->mPlaneAxis2=plane;
+          }
+        joint->mMaxFrictionTorque=axes.valid ? jointFriction(name,part.mMassPropertiesOverride.mMass) : .15f;
         part.mToParent=joint;
         }
       bind.push_back(JPH::Mat44::sRotationTranslation(part.mRotation,JPH::Vec3(part.mPosition)));
@@ -625,7 +777,7 @@ struct Ragdoll::Impl final {
     return part;
     }
 
-  size_t startReaction(size_t hitPart, JPH::Vec3Arg point, float strength, JPH::PhysicsSystem& system) {
+  size_t startReaction(size_t hitPart, JPH::Vec3Arg point, float strength, float stiffness, JPH::PhysicsSystem& system) {
     auto& interface=system.GetBodyInterface();
     if(hitPart==0) {
       // The gameplay root is never dynamic. A living pelvis transfers its hit
@@ -664,6 +816,8 @@ struct Ragdoll::Impl final {
       native->GetConstraint(index)->SetEnabled(activeParts[i]);
       }
     native->ResetWarmStart();
+    // a fresh reaction takes the new hit's stiffness; one still running keeps the stiffer
+    reactionStiffness=reactionWeight>0.f ? std::max(reactionStiffness,stiffness) : stiffness;
     reactionAge=0.f;
     reactionStrength=std::max(reactionWeight,strength);
     reactionWeight=reactionStrength;
@@ -673,7 +827,7 @@ struct Ragdoll::Impl final {
   void driveMotors() {
     // Same body-relative orientation convention as DriveToPoseUsingMotors;
     // the already decomposed animation targets avoid another SkeletonPose solve.
-    const float recovery=std::clamp(reactionAge/.35f,0.f,1.f);
+    const float recovery=benchActive ? 1.f : std::clamp(reactionAge/.35f,0.f,1.f);
     const float torqueScale=1.f-.9f*reactionStrength*(1.f-recovery);
     for(size_t i=1;i<activeParts.size();++i) {
       if(!activeParts[i]) continue;
@@ -683,12 +837,16 @@ struct Ragdoll::Impl final {
       auto* joint=static_cast<JPH::SwingTwistConstraint*>(native->GetConstraint(index));
       const float partMass=motorSource->mParts[i].mMassPropertiesOverride.mMass;
       for(auto* motor:{&joint->GetSwingMotorSettings(),&joint->GetTwistMotorSettings()}) {
-        motor->mSpringSettings=JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,4.f+2.f*recovery,1.f);
-        motor->SetTorqueLimit(partMass*8.f*torqueScale);
+        motor->mSpringSettings=JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,(4.f+2.f*recovery)*reactionStiffness,1.f);
+        motor->SetTorqueLimit(partMass*8.f*torqueScale*reactionStiffness*reactionStiffness);
         }
       joint->SetSwingMotorState(JPH::EMotorState::Position);
       joint->SetTwistMotorState(JPH::EMotorState::Position);
       joint->SetTargetOrientationBS(targets[size_t(parent)].GetQuaternion().Conjugated()*targets[i].GetQuaternion());
+      }
+    if(benchHand!=nullptr) {
+      benchHand->SetTargetPositionCS(targets[0].GetTranslation()-benchHandOrigin);
+      benchHand->SetTargetOrientationBS(targets[0].GetQuaternion());
       }
     }
 
@@ -712,6 +870,75 @@ struct Ragdoll::Impl final {
       }
     reactionBones.clear();
     reactionStrength=reactionWeight=reactionAge=0.f;
+    reactionStiffness=1.f;
+    }
+
+  // A body that dies keeps its living shape for a moment and loses it part by
+  // part: the legs give first, then the arms, the trunk and the neck last.
+  // The motors hold the joint angles of the moment of death, never a new pose.
+  // Knocked off the feet, the legs keep their stance while the trunk tips over them
+  // and give on the way down, and the trunk stays whole longer: a fall, not a faint.
+  static void fadeTiming(std::string_view name, bool knockedOff, float& hold, float& fade) {
+    if(named(name,"THIGH") || named(name,"CALF") || named(name,"FOOT") || named(name,"TOE") || named(name,"LEG")) {
+      hold=knockedOff ? .12f : 0.f; fade=knockedOff ? .5f : .15f;
+      }
+    else if(named(name,"SPINE")) { hold=knockedOff ? .25f : .1f; fade=knockedOff ? .8f : .6f; }
+    else if(named(name,"NECK") || named(name,"HEAD")) { hold=.15f; fade=.7f; }
+    else { hold=.05f; fade=.45f; }
+    }
+
+  static float fadeStrength(std::string_view name) {
+    if(named(name,"THIGH") || named(name,"CALF") || named(name,"FOOT") || named(name,"TOE") || named(name,"LEG")) return 4.f;
+    if(named(name,"SPINE")) return 2.f;
+    return 1.f;
+    }
+
+  void startFade(JPH::PhysicsSystem& system) {
+    auto& interface=system.GetBodyInterface();
+    fadeTargets.clear();
+    for(size_t i=0;i<size_t(native->GetBodyCount());++i)
+      fadeTargets.push_back(interface.GetRotation(native->GetBodyID(int(i))));
+    fadeAge=0.f;
+    stepFade(0.f);
+    }
+
+  void stepFade(float deltaSeconds) {
+    if(fadeAge<0.f) return;
+    fadeAge+=deltaSeconds;
+    bool active=false;
+    const auto* settings=native->GetRagdollSettings();
+    for(size_t i=1;i<rig->parts.size();++i) {
+      const int index=settings->GetConstraintIndexForBodyIndex(int(i));
+      const int parent=rig->parts[i].parent;
+      if(index<0 || parent<0) continue;
+      auto* joint=static_cast<JPH::SwingTwistConstraint*>(native->GetConstraint(index));
+      float hold=0,fade=1;
+      fadeTiming(rig->parts[i].name,knockedOff,hold,fade);
+      // a living stance carries the body: thrown, the legs bear it while the trunk tips
+      const float strength=knockedOff ? fadeStrength(rig->parts[i].name) : 1.f;
+      const float t=std::clamp((fadeAge-hold)/fade,0.f,1.f);
+      const float weight=1.f-t*t*(3.f-2.f*t);
+      if(weight<=0.f) {
+        joint->SetSwingMotorState(JPH::EMotorState::Off);
+        joint->SetTwistMotorState(JPH::EMotorState::Off);
+        continue;
+        }
+      active=true;
+      // The living reaction's strength: enough to keep a limb's shape for an
+      // instant, too weak to carry the body, so the knees buckle under it.
+      const float partMass=settings->mParts[i].mMassPropertiesOverride.mMass;
+      for(auto* motor:{&joint->GetSwingMotorSettings(),&joint->GetTwistMotorSettings()}) {
+        motor->mSpringSettings=JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,6.f,1.f);
+        motor->SetTorqueLimit(partMass*8.f*weight*strength);
+        }
+      joint->SetSwingMotorState(JPH::EMotorState::Position);
+      joint->SetTwistMotorState(JPH::EMotorState::Position);
+      joint->SetTargetOrientationBS(fadeTargets[size_t(parent)].Conjugated()*fadeTargets[i]);
+      }
+    if(!active) {
+      fadeAge=-1.f;
+      fadeTargets.clear();
+      }
     }
 
   static std::mutex& cacheMutex() { static std::mutex value; return value; }
@@ -734,13 +961,19 @@ struct Ragdoll::Impl final {
   uint64_t culpritUntilStep=0;
   uint64_t nextNoiseStep=0;
   bool kinematic=false;
-  struct Hit { size_t part; Tempest::Vec3 pointCm,impulseNs; float strength; };
+  struct Hit { size_t part; Tempest::Vec3 pointCm,impulseNs; float strength,stiffness; };
   std::vector<Hit> hits;
   JPH::Ref<JPH::RagdollSettings> motorSource;
   bool motorReady=false;
+  bool benchActive=false;
+  JPH::Ref<JPH::SixDOFConstraint> benchHand;
+  JPH::Vec3 benchHandOrigin=JPH::Vec3::sZero();
   std::vector<bool> activeParts;
   std::vector<size_t> reactionBones;
-  float reactionStrength=0.f,reactionWeight=0.f,reactionAge=0.f,stepSeconds=0.f;
+  float reactionStrength=0.f,reactionWeight=0.f,reactionAge=0.f,reactionStiffness=1.f,stepSeconds=0.f;
+  float fadeAge=-1.f;
+  bool  knockedOff=false;
+  std::vector<JPH::Quat> fadeTargets;
   std::vector<JPH::Mat44> targets, scratch;
   std::vector<bool> dirty;
   std::vector<size_t> changed, moving;
@@ -925,6 +1158,7 @@ Ragdoll::Ragdoll(CollisionWorld& world, const Skeleton& skeleton, const HitZones
   impl->initialObject=objectMatrix;
   impl->initialPelvis=JPH::Vec3(world.physicsSystem().GetBodyInterface().GetPosition(impl->native->GetBodyID(0)));
   impl->native->AddToPhysicsSystem(kinematic ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
+  if(!kinematic) impl->startFade(world.physicsSystem());
   resetBuoyancy();
   }
 
@@ -932,6 +1166,10 @@ Ragdoll::~Ragdoll() { detach(); }
 
 void Ragdoll::detach() {
   impl->waterParts.clear();
+  if(impl->benchHand!=nullptr) {
+    impl->world->physicsSystem().RemoveConstraint(impl->benchHand.GetPtr());
+    impl->benchHand=nullptr;
+    }
   if(impl->native!=nullptr) {
     impl->native->RemoveFromPhysicsSystem();
     impl->native=nullptr;
@@ -944,13 +1182,14 @@ bool Ragdoll::valid() const { return impl->world!=nullptr && impl->native!=nullp
 bool Ragdoll::isKinematic() const { return impl->kinematic && impl->reactionBones.empty(); }
 
 bool Ragdoll::queueHit(size_t bone, const Tempest::Vec3& pointCm,
-                       const Tempest::Vec3& impulseNs, float strength, Npc* culprit) {
+                       const Tempest::Vec3& impulseNs, float strength, Npc* culprit, float stiffness) {
   if(!valid() || !finite(pointCm) || !finite(impulseNs) || !std::isfinite(strength) || strength<=0.f || strength>1.f ||
      std::abs(pointCm.x)>1.e8f || std::abs(pointCm.y)>1.e8f || std::abs(pointCm.z)>1.e8f ||
      impulseNs.quadLength()<=0.f || impulseNs.quadLength()>1.e8f) return false;
   const auto found=std::find(impl->rig->boneIndices.begin(),impl->rig->boneIndices.end(),bone);
   if(found==impl->rig->boneIndices.end()) return false;
-  impl->hits.push_back({size_t(found-impl->rig->boneIndices.begin()),pointCm,impulseNs,strength});
+  if(!std::isfinite(stiffness)) return false;
+  impl->hits.push_back({size_t(found-impl->rig->boneIndices.begin()),pointCm,impulseNs,strength,std::clamp(stiffness,1.f,4.f)});
   setNoiseCulprit(culprit);
   return true;
   }
@@ -1032,6 +1271,136 @@ float Ragdoll::reactionWeight() const { return impl->reactionWeight; }
 
 const std::vector<size_t>& Ragdoll::reactionBones() const { return impl->reactionBones; }
 
+bool Ragdoll::configureBench(BenchMode mode, BenchPelvis pelvis) {
+  const char* flag=std::getenv("OPENGOTHIC_MELEE_BENCH");
+  if(flag==nullptr || flag[0]==0 || std::string_view(flag)=="0" || !valid() || !impl->kinematic || partCount()!=24) return false;
+  auto& system=impl->world->physicsSystem();
+  if(!impl->ensureMotors(system)) return false;
+  clearBench();
+  impl->endReaction(system);
+  auto& interface=system.GetBodyInterface();
+  if(pelvis==BenchPelvis::Dynamic) {
+    JPH::SixDOFConstraintSettings hand;
+    hand.mSpace=JPH::EConstraintSpace::LocalToBodyCOM;
+    impl->benchHandOrigin=impl->targets[0].GetTranslation();
+    hand.mPosition1=impl->benchHandOrigin;
+    hand.mPosition2=-interface.GetShape(impl->native->GetBodyID(0))->GetCenterOfMass();
+    hand.mNumVelocityStepsOverride=12;
+    hand.mNumPositionStepsOverride=10;
+    for(int axis=0;axis<JPH::SixDOFConstraint::EAxis::Num;++axis) {
+      auto& motor=hand.mMotorSettings[axis];
+      motor.mSpringSettings=JPH::SpringSettings(JPH::ESpringMode::FrequencyAndDamping,6.f,1.f);
+      if(axis<JPH::SixDOFConstraint::EAxis::NumTranslation) motor.SetForceLimit(impl->actualMass*50.f);
+      else motor.SetTorqueLimit(impl->actualMass*10.f);
+      }
+    impl->benchHand=static_cast<JPH::SixDOFConstraint*>(interface.CreateConstraint(&hand,JPH::BodyID(),impl->native->GetBodyID(0)));
+    for(int axis=0;axis<JPH::SixDOFConstraint::EAxis::Num;++axis)
+      impl->benchHand->SetMotorState(JPH::SixDOFConstraint::EAxis(axis),JPH::EMotorState::Position);
+    system.AddConstraint(impl->benchHand.GetPtr());
+    }
+  for(size_t i=0;i<partCount();++i) {
+    const auto& name=impl->rig->parts[i].name;
+    const bool arm=named(name," R ") && (named(name,"CLAVICLE") || named(name,"UPPERARM") || named(name,"FOREARM") || named(name,"HAND") || named(name,"FINGER"));
+    const bool dynamic=i==0 ? pelvis==BenchPelvis::Dynamic : mode==BenchMode::Full || named(name,"SPINE") || arm;
+    impl->activeParts[i]=dynamic;
+    const auto id=impl->native->GetBodyID(int(i));
+    interface.SetObjectLayer(id,dynamic ? DynamicWorld::C_ActiveBody : DynamicWorld::C_LivingBody);
+    interface.SetMotionType(id,dynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Kinematic,
+                            dynamic ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+    interface.SetMotionQuality(id,dynamic ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete);
+    JPH::BodyLockWrite lock(system.GetBodyLockInterface(),id);
+    if(lock.Succeeded()) lock.GetBody().SetAllowSleeping(!dynamic);
+    }
+  for(size_t i=1;i<partCount();++i) {
+    const int index=impl->native->GetRagdollSettings()->GetConstraintIndexForBodyIndex(int(i));
+    if(index>=0) impl->native->GetConstraint(index)->SetEnabled(impl->activeParts[i]);
+    }
+  impl->native->ResetWarmStart();
+  impl->benchActive=true;
+  impl->driveMotors();
+  std::fprintf(stderr,"[melee-bench] rig parts=%zu dynamic=%zu mode=%s pelvis=%s\n",partCount(),
+    size_t(std::count(impl->activeParts.begin(),impl->activeParts.end(),true)),
+    mode==BenchMode::Full ? "full" : "chain",pelvis==BenchPelvis::Dynamic ? "dynamic" : "kinematic");
+  return true;
+  }
+
+void Ragdoll::clearBench() {
+  if(!valid() || !impl->benchActive) return;
+  auto& system=impl->world->physicsSystem();
+  auto& interface=system.GetBodyInterface();
+  if(impl->benchHand!=nullptr) {
+    system.RemoveConstraint(impl->benchHand.GetPtr());
+    impl->benchHand=nullptr;
+    }
+  if(impl->activeParts[0]) {
+    const auto id=impl->native->GetBodyID(0);
+    interface.SetMotionType(id,JPH::EMotionType::Kinematic,JPH::EActivation::DontActivate);
+    interface.SetObjectLayer(id,DynamicWorld::C_LivingBody);
+    interface.SetMotionQuality(id,JPH::EMotionQuality::Discrete);
+    interface.SetPositionAndRotation(id,impl->targets[0].GetTranslation(),impl->targets[0].GetQuaternion(),JPH::EActivation::DontActivate);
+    interface.SetLinearAndAngularVelocity(id,JPH::Vec3::sZero(),JPH::Vec3::sZero());
+    impl->activeParts[0]=false;
+    }
+  impl->endReaction(system);
+  for(auto id:impl->native->GetBodyIDs()) {
+    JPH::BodyLockWrite lock(system.GetBodyLockInterface(),id);
+    if(lock.Succeeded()) lock.GetBody().SetAllowSleeping(true);
+    }
+  impl->benchActive=false;
+  }
+
+Ragdoll::BenchStats Ragdoll::benchStats() const {
+  BenchStats result;
+  if(!valid() || !impl->kinematic) return result;
+  auto& system=impl->world->physicsSystem();
+  double squaredError=0;
+  std::vector<JPH::AABox> feet;
+  feet.reserve(4);
+  for(size_t i=0;i<partCount();++i) {
+    JPH::BodyLockRead lock(system.GetBodyLockInterface(),impl->native->GetBodyID(int(i)));
+    if(!lock.Succeeded()) { result.finite=false; continue; }
+    const auto& body=lock.GetBody();
+    const float linear=body.GetLinearVelocity().Length()*100.f;
+    const float angular=body.GetAngularVelocity().Length();
+    const float error=(JPH::Vec3(body.GetPosition())-impl->targets[i].GetTranslation()).Length()*100.f;
+    result.finite=result.finite && std::isfinite(linear) && std::isfinite(angular) && std::isfinite(error);
+    result.maxLinearCmS=std::max(result.maxLinearCmS,linear);
+    result.maxAngularRadS=std::max(result.maxAngularRadS,angular);
+    if(impl->activeParts[i]) {
+      ++result.dynamicParts;
+      squaredError+=double(error)*error;
+      result.poseMaxCm=std::max(result.poseMaxCm,error);
+      }
+    const auto& name=impl->rig->parts[i].name;
+    if(named(name,"FOOT") || named(name,"TOE")) {
+      const auto bounds=body.GetWorldSpaceBounds();
+      const float bottom=bounds.mMin.GetY()*100.f;
+      const auto* shape=body.GetShape();
+      const auto targetCom=impl->targets[i]*JPH::Mat44::sTranslation(shape->GetCenterOfMass());
+      const float targetBottom=shape->GetWorldSpaceBounds(targetCom,JPH::Vec3::sOne()).mMin.GetY()*100.f;
+      result.maxFootDropCm=std::max(result.maxFootDropCm,targetBottom-bottom);
+      const bool validBounds=finite(CollisionWorld::toCentimeters(bounds.mMin)) && finite(CollisionWorld::toCentimeters(bounds.mMax));
+      result.finite=result.finite && validBounds && std::isfinite(targetBottom);
+      if(validBounds) feet.push_back(bounds);
+      }
+    }
+  // World queries take native body locks too. All foot bounds are copied and
+  // their read locks released before looking up the supporting static surface.
+  constexpr uint32_t floorMask=(1u<<DynamicWorld::C_Landscape)|(1u<<DynamicWorld::C_Object);
+  for(const auto& bounds:feet) {
+    const auto center=CollisionWorld::toCentimeters(bounds.GetCenter());
+    const float bottom=bounds.mMin.GetY()*100.f;
+    const Tempest::Vec3 from {center.x,bounds.mMax.GetY()*100.f+100.f,center.z};
+    const Tempest::Vec3 to {center.x,bottom-200.f,center.z};
+    const auto floor=impl->world->rayCast(from,to,floorMask);
+    if(!floor.hasHit) { ++result.footFloorMisses; continue; }
+    ++result.footFloorSamples;
+    result.maxFootPenetrationCm=std::max(result.maxFootPenetrationCm,floor.point.y-bottom);
+    }
+  if(result.dynamicParts!=0) result.poseRmsCm=float(std::sqrt(squaredError/double(result.dynamicParts)));
+  return result;
+  }
+
 bool Ragdoll::moveKinematic(const Tempest::Matrix4x4* worldPose, size_t numBones,
                             const Tempest::Matrix4x4& objectMatrix, float deltaSeconds) {
   if(!valid() || !impl->kinematic || worldPose==nullptr || numBones!=boneCount() ||
@@ -1073,7 +1442,7 @@ bool Ragdoll::moveKinematic(const Tempest::Matrix4x4* worldPose, size_t numBones
   return true;
   }
 
-void Ragdoll::prepareKinematicStep(float deltaSeconds) {
+void Ragdoll::prepareKinematicStep(float deltaSeconds, float targetFraction) {
   if(!valid()) return;
   impl->stepSeconds=deltaSeconds;
   auto& system=impl->world->physicsSystem();
@@ -1083,18 +1452,21 @@ void Ragdoll::prepareKinematicStep(float deltaSeconds) {
     if(ready) {
       for(const auto& hit:impl->hits) {
         const auto point=CollisionWorld::toMeters(hit.pointCm);
-        const size_t part=impl->kinematic ? impl->startReaction(hit.part,point,hit.strength,system) : hit.part;
+        const size_t part=impl->kinematic ? impl->startReaction(hit.part,point,hit.strength,hit.stiffness,system) : hit.part;
         if(part!=noBone)
           interface.AddImpulse(impl->native->GetBodyID(int(part)),JPH::Vec3(hit.impulseNs.x,hit.impulseNs.y,hit.impulseNs.z),point);
         }
       }
     impl->hits.clear();
     }
-  if(!impl->kinematic) return;
-  if(!impl->reactionBones.empty()) impl->driveMotors();
+  if(!impl->kinematic) {
+    impl->stepFade(deltaSeconds);
+    return;
+    }
+  if(impl->benchActive || !impl->reactionBones.empty()) impl->driveMotors();
   for(size_t i=0;i<impl->dirty.size();++i) {
     if(!impl->dirty[i]) continue;
-    impl->dirty[i]=false;
+    impl->dirty[i]=targetFraction<1.f;
     if(impl->activeParts[i]) continue;
     const auto& target=impl->targets[i];
     const auto id=impl->native->GetBodyID(int(i));
@@ -1106,7 +1478,13 @@ void Ragdoll::prepareKinematicStep(float deltaSeconds) {
       interface.SetLinearAndAngularVelocity(id,JPH::Vec3::sZero(),JPH::Vec3::sZero());
       }
     else {
-      interface.MoveKinematic(id,target.GetTranslation(),target.GetQuaternion(),deltaSeconds);
+      if(targetFraction<1.f) {
+        const auto from=interface.GetPosition(id);
+        interface.MoveKinematic(id,from+(JPH::RVec3(target.GetTranslation())-from)*targetFraction,
+                                interface.GetRotation(id).SLERP(target.GetQuaternion(),targetFraction),deltaSeconds);
+        }
+      else
+        interface.MoveKinematic(id,target.GetTranslation(),target.GetQuaternion(),deltaSeconds);
       impl->moving.push_back(i);
       }
     }
@@ -1120,7 +1498,7 @@ void Ragdoll::finishKinematicStep() {
   for(size_t i:impl->moving)
     interface.SetLinearAndAngularVelocity(impl->native->GetBodyID(int(i)),JPH::Vec3::sZero(),JPH::Vec3::sZero());
   impl->moving.clear();
-  if(!impl->reactionBones.empty()) {
+  if(!impl->benchActive && !impl->reactionBones.empty()) {
     // The native rig may remain displaced against an obstacle; its visible
     // influence fades out before the bounded return to the ordinary kin pose.
     constexpr float hold=.12f, duration=1.1f;
@@ -1230,6 +1608,31 @@ void Ragdoll::addImpulse(const Tempest::Vec3& impulse, Npc* culprit) {
     const auto* settings=impl->native->GetRagdollSettings();
     const float ratio=settings->mParts[i].mMassPropertiesOverride.mMass/mass();
     interface.AddImpulse(impl->native->GetBodyID(int(i)),JPH::Vec3(impulse.x,impulse.y,impulse.z)*ratio);
+    }
+  }
+
+void Ragdoll::knockOff(const Tempest::Vec3& direction, float impulseNs, Npc* culprit) {
+  if(!valid() || impl->kinematic || !finite(direction) || !std::isfinite(impulseNs)) return;
+  Tempest::Vec3 d(direction.x,0.f,direction.z);
+  if(d.length()<1e-3f) return;
+  d=Tempest::Vec3::normalize(d);
+  setNoiseCulprit(culprit);
+  impl->knockedOff=true;
+  // The blow alone moves 75 kg by under a metre a second; a man thrown down moves
+  // his trunk at about two. The heavier the blow, the harder he goes down.
+  const float speed=std::clamp(1.4f+1.2f*impulseNs/60.f,1.4f,2.6f);
+  auto& interface=impl->world->physicsSystem().GetBodyInterface();
+  const auto* settings=impl->native->GetRagdollSettings();
+  for(size_t i=0;i<partCount();++i) {
+    const auto& name=impl->rig->parts[i].name;
+    float share=1.f;
+    if(named(name,"THIGH") || named(name,"CALF") || named(name,"FOOT") || named(name,"TOE") || named(name,"LEG"))
+      share=0.f; else
+    if(named(name,"PELVIS"))
+      share=.4f;
+    if(share<=0.f) continue;
+    const float partMass=settings->mParts[i].mMassPropertiesOverride.mMass;
+    interface.AddImpulse(impl->native->GetBodyID(int(i)),JPH::Vec3(d.x,0.f,d.z)*(speed*share*partMass));
     }
   }
 
@@ -1363,6 +1766,9 @@ bool Ragdoll::restore(const State& state) {
   impl->native->RemoveFromPhysicsSystem();
   impl->native=replacement;
   impl->native->AddToPhysicsSystem(JPH::EActivation::DontActivate);
+  // A restored body carries no muscles: the saved state is all there is.
+  impl->fadeAge=-1.f;
+  impl->fadeTargets.clear();
   auto& interface=impl->world->physicsSystem().GetBodyInterface();
   for(size_t i=0;i<state.parts.size();++i) {
     const auto& p=state.parts[i];

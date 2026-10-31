@@ -34,6 +34,11 @@ retained in `BulletCompat.LICENSE`; the Jolt library and its existing code retai
 
 Keep these when updating a library from upstream.
 
+- `Tempest/Engine/graphics/device.cpp`, `gapi/metal/mtdevice.mm` and
+  `gapi/vulkan/vallocator.cpp`: `tempestProbeGpuBytes()` reports Metal
+  `currentAllocatedSize` and live Vulkan allocations (including cached allocator pages).
+  `tempestLoadProbeEnabled()` caches the exact `OPENGOTHIC_LOADPROBE=1` switch once for the
+  engine and counters; ordinary runs skip GPU sampling and allocation bookkeeping.
 - `cgltf/` `cgltf.h`: removed a tab from an otherwise empty line to pass the repository's
   diff whitespace check; parser code is unchanged.
 - `ZenKit/` `Vfs::set_open_observer` (`Vfs.hh`, `Vfs.cc`): optional successful-open callback
@@ -110,3 +115,8 @@ Keep these when updating a library from upstream.
   in the same order before a save's world loads, so the npc's of the save find their symbols by index. The
   code names its own instance (`self` in an instance's body), so `GameScript::initializeInstanceNpc` binds
   that instance to the new npc while the code runs.
+- `ZenKit/` archive writers (`ArchiveAscii.cc`, `ArchiveBinary.cc`, `ArchiveBinsafe.cc`): on `_WIN32` the
+  header date is written with `%#d.%#m` instead of glibc's `%-d.%-m`. The Microsoft CRT has no `-` flag, and
+  its `strftime` sends an invalid format to the invalid-parameter handler, which by default ends the process
+  when an archive is written. The written date is the same; other platforms keep the upstream format. ZenKit sources are base
+  format inputs (`cmake/BaseImport.cmake`), so this patch changes `BaseFormatSha256` on every platform.

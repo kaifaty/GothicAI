@@ -2,6 +2,7 @@
 
 #include <zenkit/DaedalusVm.hh>
 #include <zenkit/addon/daedalus.hh>
+#include "game/definitions/definitiontypes.h"
 
 #include <Tempest/Point>
 #include <optional>
@@ -13,7 +14,7 @@ class World;
 
 class VisualFx final {
   public:
-    VisualFx(const zenkit::IEffectBase& src, zenkit::DaedalusVm& tmpVm, std::string_view name);
+    VisualFx(const Def::EffectBase& src, zenkit::DaedalusVm& tmpVm, std::string_view name);
 
     enum Collision : uint8_t {
       NoCollision = 0,
@@ -57,7 +58,7 @@ class VisualFx final {
     class Key {
       public:
         Key() = default;
-        Key(const zenkit::IParticleEffectEmitKey& k);
+        Key(const Def::ParticleEffectEmitKey& k);
 
         // vars which influence all particles all time
         const ParticleFx* visName = nullptr;
@@ -144,7 +145,7 @@ class VisualFx final {
     uint64_t              emInvestNextKeyDuration = 0;
     float                 emFlyGravity            = 0.f;
     Tempest::Vec3         emSelfRotVel;
-    std::string           userString[zenkit::IEffectBase::user_string_count];
+    std::string           userString[Def::EffectBase::user_string_count];
     std::string           lightPresetName;
     std::string           sfxID;
     bool                  sfxIsAmbient            = false;

@@ -58,8 +58,8 @@ IkMath::Mat3 polarRotation(const Matrix4x4& matrix) {
   return result;
   }
 
-zenkit::AnimationSample physicalSample(const Matrix4x4& local) {
-  zenkit::AnimationSample out;
+asset::AnimationSample physicalSample(const Matrix4x4& local) {
+  asset::AnimationSample out;
   const auto p = IkMath::position(local);
   // MAN samples use the conjugate of the conventional column-vector rotation: mkMatrix writes
   // their rotation transposed. Use the existing post-pass conversion, then undo that convention.
@@ -70,7 +70,7 @@ zenkit::AnimationSample physicalSample(const Matrix4x4& local) {
   return out;
   }
 
-Matrix4x4 physicalStretch(const Matrix4x4& local, const zenkit::AnimationSample& sample) {
+Matrix4x4 physicalStretch(const Matrix4x4& local, const asset::AnimationSample& sample) {
   const auto rigid=mkMatrix(sample);
   double h[3][3] = {};
   for(int c=0;c<3;++c)
@@ -191,7 +191,16 @@ void Pose::save(Serialize &fout) {
   uint8_t sz=uint8_t(lay.size());
   fout.write(sz);
   for(auto& i:lay) {
-    fout.write(i.seq->name,i.sAnim,i.bs,uint64_t(0)); // was the start of a blend
+    // the speed is not saved, a load gives the layer its animation's own (a hit stop or setLayerSpeed
+    // is lost): write the start that shows the same frame at that speed
+    uint64_t    start = i.sAnim;
+    const float k     = speedOf(i.seq);
+    if(i.speed!=k && lastUpdate>i.sAnim) {
+      const double back = double(layerTime(i,lastUpdate)-i.sAnim)/double(k);
+      if(back<double(lastUpdate))
+        start = lastUpdate-uint64_t(back);
+      }
+    fout.write(i.seq->name,start,i.bs,uint64_t(0)); // was the start of a blend
     }
   fout.write(lastUpdate);
   fout.write(combo.bits);
@@ -218,6 +227,7 @@ void Pose::load(Serialize &fin, const AnimationSolver& solver) {
   lay.resize(sz);
   for(auto& i:lay) {
     fin.read(name,i.sAnim,i.bs);
+    i.sOrigin = i.sAnim;
     if(fin.version()>43) {
       uint64_t sBlend = 0;
       fin.read(sBlend);
@@ -296,6 +306,7 @@ void Pose::setSkeleton(const Skeleton* sk) {
   for(auto& i:hasSamples)
     i = S_None;
   blend.reset(numBones);
+  blend.setWeaponBody(skeleton!=nullptr && skeleton->findNode("ZS_RIGHTHAND")<skeleton->nodes.size());
   ik.setSkeleton(skeleton);
   gaze.setSkeleton(skeleton);
   lean.setSkeleton(skeleton);
@@ -356,6 +367,7 @@ bool Pose::startAnim(const AnimationSolver& solver, const Animation::Sequence *s
       onRemoveLayer(i);
       i.seq      = tr ? tr : sq;
       i.sAnim    = tickCount;
+      i.sOrigin  = tickCount;
       i.comb     = comb;
       i.bs       = bs;
       onAddLayer(i);
@@ -449,6 +461,7 @@ void Pose::processLayers(AnimationSolver& solver, uint64_t tickCount) {
             l.bs = BS_NONE;
           l.seq   = next;
           l.sAnim = tickCount;
+          l.sOrigin = tickCount;
           onAddLayer(l);
           ret++;
           }
@@ -469,6 +482,8 @@ void Pose::processLayers(AnimationSolver& solver, uint64_t tickCount) {
   }
 
 bool Pose::update(uint64_t tickCount, bool force) {
+  if(stopUntil!=0 && tickCount>=stopUntil)
+    endHitStop();
   if(lay.size()==0) {
     const bool ret = needToUpdate || !physical.empty() || physicalReturning;
     const bool make = ret || lastUpdate==0;
@@ -495,7 +510,7 @@ bool Pose::update(uint64_t tickCount, bool force) {
       if(numFrames==1 && !needToUpdate)
         continue; //mobsi
 
-      needMkSkeleton |= updateFrame(*seq,i.bs,i.sAnim,layerTime(i,tickCount));
+      needMkSkeleton |= updateFrame(*seq,i.bs,i.sAnim,i.sOrigin,layerTime(i,tickCount));
       }
     // The physical return already owns the transition from the shown pose. A second ordinary
     // offset underneath it would change its target, and is not part of the legacy pose save.
@@ -514,7 +529,7 @@ bool Pose::update(uint64_t tickCount, bool force) {
   return false;
   }
 
-bool Pose::updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTime, uint64_t now) {
+bool Pose::updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTime, uint64_t sOrigin, uint64_t now) {
   auto&        d         = *s.data;
   const size_t idSize    = d.nodeIndex.size();
   const size_t numFrames = d.numFrames;
@@ -562,7 +577,7 @@ bool Pose::updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTim
 
     hasSamples[idx] = S_Valid;
     raw       [idx] = smp;
-    blend.drive(idx,s,sTime,sampleA[i],sampleB[i],fpsRate);
+    blend.drive(idx,s,sOrigin,sampleA[i],sampleB[i],fpsRate);
     }
   return true;
   }
@@ -643,7 +658,7 @@ void Pose::clearRagdollPose(bool blendFromPhysical, uint64_t tickCount) {
       physicalStretchFrom[i] = physicalStretch(local,physicalShown[i]);
       }
     physicalBlend.reset(numBones);
-    std::vector<zenkit::AnimationSample> previous;
+    std::vector<asset::AnimationSample> previous;
     uint64_t previousTime=0;
     if(physicalPreviousWorld.size()==numBones && physicalCurrentTime>physicalPreviousTime &&
        physicalCurrentTime-physicalPreviousTime<=250 && tickCount>=physicalCurrentTime-physicalPreviousTime) {
@@ -914,6 +929,7 @@ void Pose::addLayer(const Animation::Sequence *seq, BodyState bs, uint8_t comb, 
   Layer l;
   l.seq   = seq;
   l.sAnim = tickCount;
+  l.sOrigin = tickCount;
   l.bs    = bs;
   l.comb  = comb;
   lay.push_back(l);
@@ -924,7 +940,9 @@ void Pose::addLayer(const Animation::Sequence *seq, BodyState bs, uint8_t comb, 
   }
 
 void Pose::onAddLayer(Pose::Layer& l) {
-  l.speed = speedOf(l.seq);
+  l.speed     = speedOf(l.seq);
+  l.stopFrom  = 0; // a new animation is not held by the last one's hit stop
+  l.catchFrom = 0;
   if(hasLayerEvents(l))
     hasEvents++;
   if(l.seq->isFly())
@@ -1031,7 +1049,7 @@ auto Pose::combatLayers(uint64_t tickCount) const -> std::vector<CombatLayer> {
   std::vector<CombatLayer> result;
   result.reserve(lay.size());
   for(const auto& i:lay)
-    result.push_back({i.seq,i.sAnim,layerTime(i,tickCount),i.speed,i.comb,i.bs});
+    result.push_back({i.seq,i.sAnim,i.sOrigin,layerTime(i,tickCount),i.speed,i.comb,i.bs});
   return result;
   }
 
@@ -1183,8 +1201,17 @@ const Animation::Sequence* Pose::continueCombo(const AnimationSolver &solver, co
     return sq;
     }
 
-  if(combo.len()<d.defHitEnd.size())
-    prev->sAnim = tickCount - d.defHitEnd[combo.len()];
+  if(combo.len()<d.defHitEnd.size()) {
+    // the next blow of the combo is no longer held by the last one's hit stop; it goes on from the
+    // hit end at the layer's own pace
+    if(prev->stopFrom>0.f)
+      prev->speed = prev->stopFrom;
+    else if(prev->catchFrom>0.f)
+      prev->speed = prev->catchFrom;
+    prev->stopFrom = prev->catchFrom = 0;
+    const uint64_t back = uint64_t(double(d.defHitEnd[combo.len()])/double(prev->speed));
+    prev->sAnim = prev->sOrigin = tickCount - std::min(tickCount,back);
+    }
   combo.incLen();
   return prev->seq;
   }
@@ -1292,8 +1319,79 @@ void Pose::setAnimSpeed(std::string_view name, float k) {
     speeds.emplace_back(std::string(name),k);
   }
 
+void Pose::setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now) {
+  for(auto& l:lay)
+    if(l.seq==seq && k>0.f) {
+      // a layer started this very tick takes the pace from its start
+      if(now>l.sAnim) {
+        const double played = double(layerTime(l,now)-l.sAnim);
+        l.sAnim = now-uint64_t(played/double(k));
+        }
+      l.speed = k;
+      l.catchFrom = 0; // a speed set on purpose; a hit stop under way still keeps it (endHitStop)
+      }
+  }
+
+bool Pose::rebaseLayer(Layer& l, float k, uint64_t at) {
+  if(k<=0.f)
+    return false;
+  if(at<=l.sAnim) {
+    l.speed = k;
+    return true;
+    }
+  const double played = double(layerTime(l,at)-l.sAnim);
+  const double back   = played/double(k);
+  if(back>=double(at))
+    return false; // the start would fall before the game's: the layer keeps its pace
+  l.sAnim = at-uint64_t(back);
+  l.speed = k;
+  return true;
+  }
+
+void Pose::hitStop(uint64_t until, float k) {
+  // from the last shown frame: the time up to it is played and its events are given, none twice
+  for(auto& l:lay) {
+    if(l.stopFrom==0.f) {
+      // one still making up an earlier stop keeps that one's schedule
+      l.stopFrom = l.catchFrom>0.f ? l.catchFrom : l.speed;
+      if(l.catchFrom==0.f)
+        l.dueStart = l.sAnim;
+      }
+    if(!rebaseLayer(l,l.stopFrom*k,lastUpdate))
+      l.stopFrom = 0;
+    }
+  stopUntil = std::max(stopUntil,until);
+  }
+
+void Pose::endHitStop() {
+  for(auto& l:lay) {
+    // a speed set meanwhile (setLayerSpeed) stays
+    if(l.stopFrom>0.f && l.speed<l.stopFrom) {
+      // The hold is a loan: the rest of a one-off animation plays faster and ends when it would have
+      // without it (at most 1.5 times as fast), so the fighter's next move comes on time. A held
+      // attacker otherwise struck its next blow ~0.2 s late, after the struck one had raised its guard
+      const float base = l.stopFrom;
+      float       k    = base;
+      if(l.seq->animCls!=Animation::Loop) {
+        const double played = double(layerTime(l,lastUpdate))-double(l.sAnim);
+        const double due    = double(lastUpdate>l.dueStart ? lastUpdate-l.dueStart : 0)*double(base);
+        const double end    = double(l.seq->atkTotalTime(combo.len()));
+        if(due>played && end>played) {
+          const double left = std::max((end-due)/double(base),(end-played)/(1.5*double(base)));
+          k = float((end-played)/left);
+          }
+        }
+      if(rebaseLayer(l,k,lastUpdate))
+        l.catchFrom = k>base ? base : 0.f;
+      }
+    l.stopFrom = 0;
+    }
+  stopUntil = 0;
+  }
+
 bool Pose::animRelative(std::string_view name, float at, size_t from, size_t to, Tempest::Matrix4x4& out) const {
-  if(skeleton==nullptr || from>=skeleton->nodes.size() || to>=skeleton->nodes.size())
+  // from==size_t(-1) gives the model frame: the chain then includes the root's own sample
+  if(skeleton==nullptr || (from>=skeleton->nodes.size() && from!=size_t(-1)) || to>=skeleton->nodes.size())
     return false;
   const Animation::Sequence* seq = nullptr;
   for(auto& i:lay)
@@ -1380,7 +1478,7 @@ bool Pose::updateFootIk(const FootIk::Input& in) {
   return true;
   }
 
-void Pose::setAnimRotate(const AnimationSolver &solver, Npc &npc, WeaponState fightMode, AnimationSolver::TurnType turn, int dir) {
+void Pose::setAnimRotate(const AnimationSolver &solver, const Npc &npc, WeaponState fightMode, AnimationSolver::TurnType turn, int dir) {
   const Animation::Sequence *sq = nullptr;
   if(dir==0) {
     if(rotation!=nullptr) {
@@ -1437,6 +1535,7 @@ bool Pose::stopItemStateAnim(const AnimationSolver& solver, uint64_t tickCount) 
       onRemoveLayer(i);
       i.seq   = next;
       i.sAnim = tickCount;
+      i.sOrigin = tickCount;
       onAddLayer(i);
       }
   return true;

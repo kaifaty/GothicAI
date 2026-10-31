@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {CombatData, Plan} from '../src/schema.ts';
 import {inCone, interpolatePath, quadraticParameterAtLength, quadraticPoint} from '../src/parts/diagramMath.ts';
+import {arcPoint, settledText, tagLineCentre} from '../src/parts/carryMath.ts';
+import {holdPush, travelDur} from '../src/parts/timing.ts';
 import {sampleHp, selectAction, smoothedTrack, sourceFrame, transformPoint, zoomScale} from '../src/parts/followMath.ts';
 
 const source = 'reports/example.md';
@@ -563,4 +565,116 @@ test('CombatData: размеры кадра должны быть положит
     assert.equal(result.success, false);
     assert.ok(result.error.issues.some(({path}) => path[0] === 'size'));
   }
+});
+
+test('motion: zoom по умолчанию плавный, linear остаётся линейным', () => {
+  const zoom = {at: 0, dur: 4, scale: 2, x: 0, y: 0};
+  assert.ok(zoomScale(zoom, 1) < 1.25, 'начало медленнее линейного');
+  assert.ok(zoomScale(zoom, 3) > 1.75, 'конец медленнее линейного');
+  assert.equal(zoomScale(zoom, 2), 1.5);
+  assert.equal(zoomScale({...zoom, ease: 'linear'}, 1), 1.25);
+});
+
+test('motion: переходы, входы и пути проходят схему с умолчаниями', () => {
+  const plan = Plan.parse({lang: 'ru', hook: {text: 'x', until: 1}, beats: [
+    {id: 'a', kind: 'still', dur: 2, src: 'a.png', texts: [{text: 'x'}]},
+    {id: 'b', kind: 'still', dur: 2, src: 'b.png', enter: {type: 'slide'},
+      texts: [{text: 'y', enter: 'pop'}], paths: [{points: [[0, 0], [100, 50], [200, 0]], color: '#fff', arrow: true}]},
+  ]});
+  assert.equal(plan.beats[0].texts[0].enter, 'rise');
+  assert.equal(plan.beats[1].enter.dur, 0.5, 'slide по умолчанию дольше: едет весь кадр');
+  assert.equal(plan.beats[1].paths[0].curve, true);
+  const enter = (e) => Plan.parse({lang: 'ru', hook: {text: 'x', until: 1},
+    beats: [{id: 'a', kind: 'still', dur: 2}, {id: 'b', kind: 'still', dur: 2, enter: e}]}).beats[1].enter;
+  assert.deepEqual(enter({type: 'fade'}), {type: 'fade', dur: 0.35});
+  assert.deepEqual(enter({type: 'wipe'}), {type: 'wipe', dur: 0.5});
+  assert.deepEqual(enter({type: 'slide', dur: 0.3}), {type: 'slide', dur: 0.3}, 'явная длительность из плана не меняется');
+  assert.throws(() => Plan.parse({lang: 'ru', hook: {text: 'x', until: 1},
+    beats: [{id: 'a', kind: 'still', dur: 2, enter: {type: 'spin'}}]}));
+});
+
+const carryPlan = (carry, tag = {x: 540, y: 900, lines: [{text: 'шанс 25%'}, {text: 'бросок {n}', at: 1, count: {to: 65}}]}) => ({
+  lang: 'ru', hook: {text: 'x', until: 1},
+  beats: [{id: 'a', kind: 'footage', src: 'a.mp4', dur: 2, tags: [tag]}, {id: 'b', kind: 'card', dur: 3, carry}],
+});
+const carryIssues = (input) => {
+  const result = Plan.safeParse(input);
+  assert.equal(result.success, false);
+  return result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+};
+
+test('carry: строка метки по умолчанию, со склейки, с дугой вверх', () => {
+  const carry = Plan.parse(carryPlan({from: {tag: 0}, to: [300, 700]})).beats[1].carry;
+  assert.deepEqual(carry, {from: {tag: 0, line: 0}, to: [300, 700], at: 0, arc: 0.15});
+});
+
+test('carry: метка и строка должны быть в бите перед склейкой', () => {
+  assert.match(carryIssues(carryPlan({from: {tag: 1}, to: [0, 0]})).join(), /beats\.1\.carry\.from\.tag: нет такой метки/);
+  assert.match(carryIssues(carryPlan({from: {tag: 0, line: 2}, to: [0, 0]})).join(), /from\.line: нет такой строки/);
+  const late = carryPlan({from: {tag: 0}, to: [0, 0]}, {x: 0, y: 0, lines: [{text: 'поздно', at: 2}]});
+  assert.match(carryIssues(late).join(), /не успевает появиться до склейки/);
+  const gone = carryPlan({from: {tag: 0}, to: [0, 0]}, {x: 0, y: 0, until: 1, lines: [{text: 'ушла'}]});
+  assert.match(carryIssues(gone).join(), /метка уходит до склейки/);
+});
+
+test('carry: из точки нужен text, на первом бите нечего переносить', () => {
+  assert.match(carryIssues(carryPlan({from: [10, 20], to: [0, 0]})).join(), /beats\.1\.carry\.text: carry из точки: нужен text/);
+  assert.equal(Plan.parse(carryPlan({from: [10, 20], to: [0, 0], text: '40%'})).beats[1].carry.text, '40%');
+  const first = {lang: 'ru', hook: {text: 'x', until: 1}, beats: [{id: 'a', kind: 'card', dur: 2, carry: {from: [0, 0], to: [1, 1], text: 'x'}}]};
+  assert.match(carryIssues(first).join(), /beats\.0\.carry: carry: нужен бит перед этим/);
+});
+
+test('carry: центр строки метки там, где её рисует Tags', () => {
+  const measure = (text) => ({width: text.length * 30, height: 60});
+  const tag = (side, lines = [{text: 'шанс 25%', at: 0}, {text: 'бросок {n}', at: 1, count: {to: 65, dur: 0.8}}]) =>
+    ({x: 540, y: 900, side, lines, at: 0, enter: 'rise'});
+  // box: 2 lines × 60 + 2 gap + 24 padding = 146 high, bottom at 870; widest line 'бросок 65' 270 + 44 = 314
+  assert.deepEqual(tagLineCentre(tag('center'), 0, 2, measure), {x: 540, y: 870 - 146 + 12 + 30});
+  assert.deepEqual(tagLineCentre(tag('center'), 1, 2, measure), {x: 540, y: 870 - 146 + 12 + 62 + 30});
+  assert.deepEqual(tagLineCentre(tag('right'), 0, 2, measure).x, 540 - 36 + 157);
+  assert.deepEqual(tagLineCentre(tag('left'), 0, 2, measure).x, 540 + 36 - 157);
+  // a line not shown by the cut takes no room
+  assert.deepEqual(tagLineCentre(tag('center'), 0, 0.5, measure), {x: 540, y: 870 - 84 + 12 + 30});
+  assert.equal(settledText({text: 'бросок {n}', at: 0, count: {to: 65, dur: 0.8}}), 'бросок 65');
+});
+
+test('carry: дуга от точки к точке, середина выше прямой', () => {
+  const a = {x: 0, y: 1000};
+  const b = {x: 600, y: 200};
+  assert.deepEqual(arcPoint(a, b, 0.15, 0), a);
+  assert.deepEqual(arcPoint(a, b, 0.15, 1), b);
+  const mid = arcPoint(a, b, 0.15, 0.5);
+  // 0.15 × 1000 px off the chord's middle (300, 600), along the upward normal (−0.8, −0.6)
+  assert.ok(Math.abs(mid.x - (300 - 120)) < 1e-9 && Math.abs(mid.y - (600 - 90)) < 1e-9, JSON.stringify(mid));
+  assert.deepEqual(arcPoint(a, b, 0, 0.5), {x: 300, y: 600});
+  const down = arcPoint({x: 0, y: 0}, {x: 0, y: 800}, 0.1, 0.5);
+  assert.ok(down.x > 0, 'вертикальный полёт выгибается вправо');
+});
+
+test('carry: длительность растёт с расстоянием в пределах набора', () => {
+  assert.equal(travelDur(100), 0.35);
+  assert.equal(travelDur(300), 0.35);
+  assert.ok(Math.abs(travelDur(600) - 0.35 * Math.SQRT2) < 1e-9, 'вдвое дальше — на ~40% дольше');
+  assert.equal(travelDur(2000), 0.6);
+});
+
+test('push: долгая карточка, стоп-кадр и заморозка наезжают сами, медленнее при долгом стоянии', () => {
+  assert.deepEqual(holdPush({kind: 'card', dur: 2}), {at: 0, dur: 2, scale: 1.03});
+  assert.deepEqual(holdPush({kind: 'still', dur: 4}), {at: 0, dur: 4, scale: 1.04});
+  assert.deepEqual(holdPush({kind: 'card', dur: 10}), {at: 0, dur: 10, scale: 1.05});
+  assert.deepEqual(holdPush({kind: 'footage', dur: 5, freeze: 1}), {at: 1, dur: 4, scale: 1.04});
+  assert.deepEqual(holdPush({kind: 'card', dur: 6, push: 0.03}), {at: 0, dur: 6, scale: 1.03});
+});
+
+test('push: живое видео, короткое стояние, свой zoom и push 0 — без наезда', () => {
+  assert.equal(holdPush({kind: 'footage', dur: 8}), null);
+  assert.equal(holdPush({kind: 'footage', dur: 3, freeze: 1.5}), null);
+  assert.equal(holdPush({kind: 'card', dur: 1.9}), null);
+  assert.equal(holdPush({kind: 'split', dur: 6}), null);
+  assert.equal(holdPush({kind: 'card', dur: 6, zoom: {at: 0, dur: 6, scale: 1.1, x: 0, y: 0}}), null);
+  assert.equal(holdPush({kind: 'card', dur: 6, push: 0}), null);
+  const both = {lang: 'ru', hook: {text: 'x', until: 1},
+    beats: [{id: 'a', kind: 'still', src: 'a.png', dur: 4, push: 0.04, zoom: {at: 0, dur: 4, scale: 1.1, x: 0, y: 0}}]};
+  assert.match(carryIssues(both).join(), /beats\.0\.push: push и zoom в одном бите/);
+  assert.match(carryIssues({...both, beats: [{id: 'a', kind: 'card', dur: 4, push: 0.2}]}).join(), /beats\.0\.push/);
 });

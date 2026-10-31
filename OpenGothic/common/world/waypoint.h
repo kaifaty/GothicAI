@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/world/WayNet.hh>
+#include "asset/worldtypes.h"
 
 #include <limits>
 #include <Tempest/Vec>
@@ -11,7 +11,7 @@ class Interactive;
 class WayPoint final {
   public:
     WayPoint();
-    WayPoint(const zenkit::WayPoint& dat);
+    WayPoint(const asset::WayPoint& dat);
     WayPoint(const Tempest::Vec3& pos, std::string_view name);
     WayPoint(const Tempest::Vec3& pos, const Tempest::Vec3& dir, std::string_view name, bool isFp);
     WayPoint(const WayPoint&)=default;

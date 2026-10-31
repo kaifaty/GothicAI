@@ -5,14 +5,17 @@
     python3 -I scripts/nav_demos.py summary /absolute/path/nav-demos
     python3 -I scripts/nav_demos.py render /path/episode /path/episode.svg
 
-The gzip payload has a 32-byte HEADER followed by packed records. Versions 1 and
+The gzip or XZ payload has a 32-byte HEADER followed by packed records. Versions 1 and
 2 share the same byte layout; version 2 road guidance describes a forward carrot
-on the familiar route instead of the next graph node. RECORD_DTYPE remains the
-version 1 alias; use RECORD_DTYPES[version] when creating version 2 records.
+on the familiar route instead of the next graph node. Version 3 retains version 2
+roads and adds an eighth memory channel, familiar. RECORD_DTYPE, CELL_DTYPE,
+CHANNELS and RECORD_BYTES remain version 1 aliases for existing learners; use
+RECORD_DTYPES[version] and RECORD_BYTES_BY_VERSION[version] for other formats.
 Memory channels are probabilities quantized by round(255*p); divide by 255.
 episode.json.navigation_memory_version identifies their interpretation independently
 of the binary format: absent means legacy version 1; version 2 uses local terrain
-transitions instead of height relative to the observer's feet.
+transitions instead of height relative to the observer's feet. Version 4 adds
+longer journey memory and familiar-map fallback, marked by the familiar channel.
 ground_height_cm=0,height_valid=0 represents an unknown height (never NaN).
 Body and road vectors use x=right,y=up,z=forward in the current body frame.
 World position/yaw and teacher hints are debug fields, excluded by learner_input().
@@ -27,6 +30,7 @@ import argparse
 import gzip
 import html
 import json
+import lzma
 from pathlib import Path
 import struct
 import sys
@@ -40,6 +44,7 @@ MAGIC = b"NAVDEMO\0"
 VERSION = 1
 RAY_COUNT, NEAR_SIZE, FAR_SIZE, PERIOD_MS = 238, 64, 100, 100
 CHANNELS = ("confidence", "free", "wall", "ledge", "drop", "water", "movable")
+CHANNELS_V3 = CHANNELS + ("familiar",)
 BODY_FLAGS = ("in_air", "falling", "sliding", "climbing", "swimming")
 
 KEY_DTYPE = np.dtype([
@@ -54,6 +59,9 @@ RAY_DTYPE = np.dtype([
 ])
 CELL_DTYPE = np.dtype([
     ("channels", "u1", (7,)), ("ground_height_cm", "<f4"), ("height_valid", "u1"),
+])
+CELL_V3_DTYPE = np.dtype([
+    ("channels", "u1", (8,)), ("ground_height_cm", "<f4"), ("height_valid", "u1"),
 ])
 BODY_DTYPE = np.dtype([
     ("velocity_cm_s", "<f4", (3,)), ("flags", "u1", (5,)),
@@ -73,28 +81,42 @@ ROADS_V2_DTYPE = np.dtype([
 HINT_DTYPE = np.dtype([("next_corner_cm", "<f4", (3,)), ("path_cm", "<f4")])
 
 
-def _record_dtype(roads: np.dtype) -> np.dtype:
+def _record_dtype(roads: np.dtype, cell: np.dtype = CELL_DTYPE) -> np.dtype:
     return np.dtype([
         ("time_ms", "<u8"), ("position_cm", "<f4", (3,)), ("body_yaw_deg", "<f4"),
         ("body", BODY_DTYPE), ("roads", roads),
         ("previous_keys", KEY_DTYPE), ("keys", KEY_DTYPE),
         ("eye", RAY_DTYPE, (RAY_COUNT,)),
-        ("memory_near", CELL_DTYPE, (NEAR_SIZE, NEAR_SIZE)),
-        ("memory_far", CELL_DTYPE, (FAR_SIZE, FAR_SIZE)),
+        ("memory_near", cell, (NEAR_SIZE, NEAR_SIZE)),
+        ("memory_far", cell, (FAR_SIZE, FAR_SIZE)),
         ("teacher_hint", HINT_DTYPE),
     ])
 
 
 RECORD_DTYPE = _record_dtype(ROADS_DTYPE)
 RECORD_V2_DTYPE = _record_dtype(ROADS_V2_DTYPE)
-RECORD_DTYPES = {1: RECORD_DTYPE, 2: RECORD_V2_DTYPE}
+RECORD_V3_DTYPE = _record_dtype(ROADS_V2_DTYPE, CELL_V3_DTYPE)
+RECORD_DTYPES = {1: RECORD_DTYPE, 2: RECORD_V2_DTYPE, 3: RECORD_V3_DTYPE}
 RECORD_BYTES = 173838
-assert all(dtype.itemsize == RECORD_BYTES for dtype in RECORD_DTYPES.values())
+RECORD_BYTES_BY_VERSION = {1: RECORD_BYTES, 2: RECORD_BYTES, 3: 187934}
+assert all(dtype.itemsize == RECORD_BYTES_BY_VERSION[version]
+           for version, dtype in RECORD_DTYPES.items())
 
 
 def _samples_path(path: str | Path) -> Path:
     path = Path(path)
-    return path / "samples.bin.gz" if path.is_dir() else path
+    if path.is_dir():
+        compact = path / "samples.bin.xz"
+        return compact if compact.is_file() else path / "samples.bin.gz"
+    return path
+
+
+samples_path = _samples_path
+
+
+def _open_samples(path: str | Path):
+    source = _samples_path(path)
+    return (lzma.open if source.suffix == ".xz" else gzip.open)(source, "rb")
 
 
 def episode_paths(path: str | Path) -> list[Path]:
@@ -102,11 +124,18 @@ def episode_paths(path: str | Path) -> list[Path]:
     path = Path(path)
     if path.is_file():
         return [path]
-    if (path / "samples.bin.gz").is_file():
-        return [path / "samples.bin.gz"]
+    samples = _samples_path(path)
+    if samples.is_file():
+        return [samples]
     if (path / "episodes").is_dir():
         path = path / "episodes"
-    return sorted(path.rglob("samples.bin.gz"))
+    files = {}
+    for samples in path.rglob("samples.bin.*"):
+        if samples.name not in ("samples.bin.gz", "samples.bin.xz"):
+            continue
+        if samples.parent not in files or samples.suffix == ".xz":
+            files[samples.parent] = samples
+    return sorted(files.values())
 
 
 def _read_header(stream) -> int:
@@ -115,7 +144,8 @@ def _read_header(stream) -> int:
         raise ValueError("truncated navigation demo header")
     fields = HEADER.unpack(header)
     version = fields[1]
-    expected = (MAGIC, version, RECORD_BYTES, RAY_COUNT, NEAR_SIZE, FAR_SIZE, PERIOD_MS)
+    expected = (MAGIC, version, RECORD_BYTES_BY_VERSION.get(version),
+                RAY_COUNT, NEAR_SIZE, FAR_SIZE, PERIOD_MS)
     if version not in RECORD_DTYPES or fields != expected:
         raise ValueError(f"unsupported navigation demo header: {fields!r}")
     return version
@@ -123,7 +153,7 @@ def _read_header(stream) -> int:
 
 def episode_version(path: str | Path) -> int:
     """Read the validated format version without loading sensor records."""
-    with gzip.open(_samples_path(path), "rb") as stream:
+    with _open_samples(path) as stream:
         return _read_header(stream)
 
 
@@ -145,19 +175,20 @@ def iter_chunks(path: str | Path, chunk_records: int = 64) -> Iterator[np.ndarra
     """Stream read-only structured arrays; memory use is bounded by chunk_records."""
     if chunk_records < 1:
         raise ValueError("chunk_records must be positive")
-    with gzip.open(_samples_path(path), "rb") as stream:
+    with _open_samples(path) as stream:
         dtype = RECORD_DTYPES[_read_header(stream)]
+        record_bytes = dtype.itemsize
         while True:
-            raw = stream.read(RECORD_BYTES * chunk_records)
+            raw = stream.read(record_bytes * chunk_records)
             if not raw:
                 break
-            if len(raw) % RECORD_BYTES:
+            if len(raw) % record_bytes:
                 raise ValueError(f"truncated record: {len(raw)} bytes")
             yield np.frombuffer(raw, dtype=dtype)
 
 
 def load_episode(path: str | Path) -> np.ndarray:
-    """Load one episode. A 240 s episode occupies at most 398 MiB before compression."""
+    """Load one episode. A 240 s V3 episode occupies about 430 MiB uncompressed."""
     chunks = list(iter_chunks(path))
     if not chunks:
         return np.empty(0, dtype=RECORD_DTYPES[episode_version(path)])
@@ -258,7 +289,7 @@ def key_masks(keys: np.ndarray) -> dict[str, np.ndarray]:
 def summarize(path: str | Path, validate: bool = False) -> dict:
     files = episode_paths(path)
     if not files:
-        raise ValueError(f"no samples.bin.gz episodes found in {path}")
+        raise ValueError(f"no samples.bin.gz or samples.bin.xz episodes found in {path}")
     counts: dict[str, int] = {}
     total_records = 0
     episodes = []
@@ -361,6 +392,7 @@ def summarize(path: str | Path, validate: bool = False) -> dict:
         compressed_bytes = file.stat().st_size
         episodes.append({"episode": str(file.parent), "decisions": record_count,
                          "format_version": version,
+                         "record_bytes": RECORD_BYTES_BY_VERSION[version],
                          "navigation_memory_version": memory_version,
                          "first_ms": first_ms, "last_ms": last_ms,
                          "compressed_bytes": compressed_bytes, **last_debug})
@@ -372,6 +404,7 @@ def summarize(path: str | Path, validate: bool = False) -> dict:
     dataset_bytes = sum(file.stat().st_size for file in root.rglob("*") if file.is_file()) if root.is_dir() else compressed_bytes
     versions = sorted({episode["format_version"] for episode in episodes})
     memory_versions = sorted({episode["navigation_memory_version"] for episode in episodes})
+    record_sizes = sorted({episode["record_bytes"] for episode in episodes})
     if validate:
         _require(len(memory_versions) == 1,
                  f"mixed navigation memory versions: {memory_versions}; use separate datasets")
@@ -380,7 +413,9 @@ def summarize(path: str | Path, validate: bool = False) -> dict:
         "format_versions": versions, "episodes": len(files), "decisions": total_records,
         "navigation_memory_version": memory_versions[0] if len(memory_versions) == 1 else None,
         "navigation_memory_versions": memory_versions,
-        "record_bytes": RECORD_BYTES, "uncompressed_bytes": total_records * RECORD_BYTES + len(files) * HEADER.size,
+        "record_bytes": record_sizes[0] if len(record_sizes) == 1 else None,
+        "uncompressed_bytes": sum(episode["decisions"] * episode["record_bytes"] + HEADER.size
+                                  for episode in episodes),
         "compressed_samples_bytes": compressed_bytes, "dataset_bytes": dataset_bytes,
         "dataset_gb": dataset_bytes / 1e9,
         "key_counts": counts,

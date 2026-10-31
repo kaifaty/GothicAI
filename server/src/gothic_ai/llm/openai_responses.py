@@ -79,6 +79,7 @@ class _Socket:
     conn: Any  # openai's AsyncResponsesConnection
     opened: float
     used: float
+    open_s: float
     busy: bool = True
     last: tuple[str, list[dict[str, Any]]] | None = None
 
@@ -96,8 +97,10 @@ class _Socket:
 class _Reader:
     """The events of one response as LLMEvents; `done` once it completed."""
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, started: float, timing: dict[str, Any]) -> None:
         self.name = name
+        self.started_at = started
+        self.timing = timing
         self.text = ""
         self.items: list[Item] = []
         self.done: Done | None = None
@@ -105,6 +108,8 @@ class _Reader:
         self.started = False  # text or a call went out: the request cannot be made again
 
     def feed(self, event: Any) -> list[LLMEvent]:
+        if "first_event_s" not in self.timing:
+            self.timing["first_event_s"] = round(time.monotonic() - self.started_at, 3)
         match event.type:
             case "response.output_text.delta":
                 self.text += event.delta
@@ -120,7 +125,12 @@ class _Reader:
                     return [item]
             case "response.completed":
                 self.response_id = getattr(event.response, "id", None)
-                self.done = Done(self.text, tuple(self.items), _usage(getattr(event.response, "usage", None)))
+                self.done = Done(
+                    self.text,
+                    tuple(self.items),
+                    _usage(getattr(event.response, "usage", None)),
+                    self.timing,
+                )
                 return [self.done]
             case "response.failed" | "error":
                 raise _event_error(self.name, event)
@@ -181,6 +191,7 @@ class OpenAIResponsesBackend:
         allowed: Collection[str] | None = None,
         cache_key: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
+        started = time.monotonic()
         body: dict[str, Any] = {
             "model": self.model,
             "instructions": instructions,
@@ -197,7 +208,11 @@ class OpenAIResponsesBackend:
                 body["tool_choice"] = choice
         if cache_key:
             body["prompt_cache_key"] = cache_key
-        events = self._over_ws(body, cache_key) if cache_key and self._ws_on() else self._over_http(body)
+        events = (
+            self._over_ws(body, cache_key, started)
+            if cache_key and self._ws_on()
+            else self._over_http(body, started)
+        )
         async with aclosing(events):  # an answer left unread: the connection reads it to its end
             async for event in events:
                 yield event
@@ -217,9 +232,9 @@ class OpenAIResponsesBackend:
     def _ws_on(self) -> bool:
         return self._websocket and time.monotonic() >= self._ws_off_until
 
-    async def _over_http(self, body: dict[str, Any]) -> AsyncIterator[LLMEvent]:
+    async def _over_http(self, body: dict[str, Any], started: float) -> AsyncIterator[LLMEvent]:
         token = await self._token()
-        reader = _Reader(self.name)
+        reader = _Reader(self.name, started, {"transport": "http"})
         try:
             stream = await self._client.responses.create(
                 **body, extra_headers={"Authorization": f"Bearer {token}"}
@@ -234,7 +249,7 @@ class OpenAIResponsesBackend:
         except openai.APIError as err:
             raise api_error(self.name, err) from err
 
-    async def _over_ws(self, body: dict[str, Any], key: str) -> AsyncIterator[LLMEvent]:
+    async def _over_ws(self, body: dict[str, Any], key: str, started: float) -> AsyncIterator[LLMEvent]:
         """The request over `key`'s connection. A connection found closed before anything came back is
         replaced once (one left idle may have been closed by the server); none opening: over HTTP."""
         for attempt in (1, 2):
@@ -245,14 +260,26 @@ class OpenAIResponsesBackend:
                     raise LLMError(f"{self.name}: authentication failed, sign in again") from err
                 self._ws_off_until = time.monotonic() + WS_OFF_S
                 log.warning("%s: no websocket (%r): over HTTP for %.0f s", self.name, err, WS_OFF_S)
-                async for event in self._over_http(body):
+                async for event in self._over_http(body, started):
                     yield event
                 return
-            reader = _Reader(self.name)
+            now = time.monotonic()
+            reader = _Reader(
+                self.name,
+                started,
+                {
+                    "transport": "websocket",
+                    "connection": "open" if sock.opened <= started else "new",
+                    "connection_opened_at": round(time.time() - (now - sock.opened), 3),
+                    "connection_open_s": round(sock.open_s, 3),
+                    "connection_wait_s": round(now - started, 3),
+                },
+            )
             request = sock.request(body)
             end = "drain"  # how the connection is left: drained, released or dropped
             try:
                 await sock.conn.send_raw(json.dumps({"type": "response.create", **request}))
+                reader.timing["request_sent_s"] = round(time.monotonic() - started, 3)
                 while True:
                     event = await sock.conn.recv()
                     code = _error_code(event)
@@ -306,7 +333,7 @@ class OpenAIResponsesBackend:
             extra_headers={"Authorization": f"Bearer {token}", "OpenAI-Beta": WS_BETA}
         ).enter()
         now = time.monotonic()
-        sock = _Socket(key, conn, now, now)
+        sock = _Socket(key, conn, now, now, now - started)
         self._sockets.setdefault(key, []).append(sock)
         log.info("%s: a websocket for %s opened in %.2f s", self.name, key, now - started)
         return sock
@@ -424,7 +451,7 @@ def _tool_choice(
         return "none"
     return {
         "type": "allowed_tools",
-        "mode": "auto",
+        "mode": "required" if choice == "required" else "auto",
         "tools": [{"type": "function", "name": n} for n in names],
     }
 

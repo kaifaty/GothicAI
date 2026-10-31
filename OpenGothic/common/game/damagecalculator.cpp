@@ -39,6 +39,13 @@ DamageCalculator::Val DamageCalculator::damageValue(Npc& src, Npc& other, const 
   return ret;
   }
 
+float DamageCalculator::meleeMultiplier(float speedCmS, float typicalCmS, float bladeFraction, float surfaceAngleDeg, size_t targetIndex) {
+  const float speed = speedCmS/std::max(typicalCmS,1.f);
+  const float lever = .5f+.5f*std::clamp(bladeFraction,0.f,1.f);
+  const float edge = .5f+.5f*std::sin(std::clamp(surfaceAngleDeg,0.f,90.f)*float(M_PI)/180.f);
+  return std::clamp(speed*lever*edge,.5f,1.5f)*std::pow(.6f,float(targetIndex));
+  }
+
 int32_t DamageCalculator::vanillaChance(const GameScript& script, int32_t hitChance, float dist) {
   // the talent's chance at RANGED_CHANCE_MINDIST, all the way up close; past it from two thirds of it
   // down to none at RANGED_CHANCE_MAXDIST: the line H - H*d/max, it steps there (the exe; the formula the

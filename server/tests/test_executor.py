@@ -112,10 +112,51 @@ async def test_a_rejected_give_comes_back_within_the_turn_and_never_reaches_the_
     assert len(llm.calls) == 2
     result = next(i for i in llm.calls[1][1] if isinstance(i, ToolResult))
     assert result.output.startswith("Отклонено: У тебя нет предмета ITSC_FIREBALL")
+    assert result.output.endswith(
+        " Ты уже сказал вслух: «Держи свиток огненного шара.». "
+        "Если отказ этого не меняет — ничего не говори. "
+        "Если меняет — поправься одной короткой фразой, не повторяя сказанного."
+    )
     assert not [m for m in fake.received if m["type"] == "action"]
     assert fake.said[-1] == "Хотя нет, такого свитка у меня нет."
     history = dialogue.conversations[XARDAS].history
     assert history[-1].content == "Держи свиток огненного шара. Хотя нет, такого свитка у меня нет."
+
+
+async def test_a_rejection_before_any_words_keeps_its_original_output():
+    llm = FakeBackend(
+        script=[
+            FakeStep("", [ToolCall("give_item", {"item": "ITSC_FIREBALL", "count": 1})]),
+            FakeStep("Такого свитка у меня нет."),
+        ],
+        delay=0,
+    )
+    await _turn(llm, FakeGame())
+
+    assert len(llm.calls) == 2
+    result = next(i for i in llm.calls[1][1] if isinstance(i, ToolResult))
+    _, reason = executor.check_give({"item": "ITSC_FIREBALL", "count": 1}, SNAP)
+    assert result.output == f"Отклонено: {reason}"
+
+
+async def test_a_rejection_quotes_all_spoken_steps_without_mood_tags():
+    llm = FakeBackend(
+        script=[
+            FakeStep("[neutral] Хм…", [ToolCall("recall", {"query": "свиток"})]),
+            FakeStep(
+                "[friendly] Держи свиток. Пользуйся.",
+                [ToolCall("give_item", {"item": "ITSC_FIREBALL", "count": 1})],
+            ),
+            FakeStep("Такого свитка у меня нет."),
+        ],
+        delay=0,
+    )
+    await _turn(llm, FakeGame())
+
+    assert len(llm.calls) == 3
+    results = [i for i in llm.calls[2][1] if isinstance(i, ToolResult)]
+    assert "Ты уже сказал вслух" not in results[0].output  # recall is unchanged
+    assert "Ты уже сказал вслух: «Хм… Держи свиток. Пользуйся.»" in results[1].output
 
 
 async def test_rejections_stop_after_three_steps_and_the_last_one_only_talks():
@@ -179,5 +220,6 @@ async def test_recall_brings_back_what_the_summary_lost():
     assert len(llm.calls) == 2
     result = next(i for i in llm.calls[1][1] if isinstance(i, ToolResult))
     assert "[день 1, 09:00] Герой: Меня зовут Ронан, я ищу своего брата Бенно." in result.output
+    assert "Ты уже сказал вслух" not in result.output
     history = dialogue.conversations[XARDAS].history
     assert history[-1].content == "Хм… Ты искал брата, Бенно. Так ты его нашёл?"

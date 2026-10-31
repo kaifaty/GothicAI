@@ -1,8 +1,11 @@
 """Feature privacy, pooling, pair grouping and compact-cache round trips."""
 import gzip
+import hashlib
 import importlib.util
 import json
+import lzma
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -242,3 +245,337 @@ def test_saved_split_rejects_pair_leakage(tmp_path):
     ]}))
     with pytest.raises(ValueError, match="both partitions"):
         data.read_pair_split(split_path)
+
+
+def test_bc3_maneuver_labels_are_exclusive_and_keep_legacy_heads():
+    records, _ = fixture_records(3)
+    records["keys"]["jump"] = [0, 1, 0]
+    records["keys"]["climb"] = [0, 0, 1]
+    labels = data.encode_bc3_labels(records["keys"])
+    np.testing.assert_array_equal(labels[:, 4], [0, 1, 2])
+    assert labels.shape == (3, 5)
+    assert data.encode_labels(records["keys"]).shape == (3, 6)
+    records["keys"]["jump"][2] = 1
+    with pytest.raises(ValueError, match="simultaneous jump and climb"):
+        data.encode_bc3_labels(records["keys"])
+
+
+def test_bc3_global_change_weight_and_press_windows():
+    assert data.action_change_weight(100, 20) == 5
+    assert data.action_change_weight(100, 1) == 10
+    assert data.action_change_weight(100, 0) == 1
+    assert data.action_change_weight(1, 10) == 1
+    labels = np.tile([2, 1, 1, 0, 0], (7, 1))
+    labels[3:5, 4] = 1
+    np.testing.assert_array_equal(data.label_action_changes(labels), [0, 0, 0, 1, 0, 1, 0])
+    # Both window boundaries are included; held jump at t=4 s is not a new press.
+    np.testing.assert_array_equal(data.maneuver_weights(np.arange(7) * 1000, labels[:, 4]),
+                                  [1, 1, 5, 5, 5, 1, 1])
+
+
+def test_bc3_stuck_target_requires_full_horizon_and_requested_movement():
+    stamps = np.arange(6) * 1000
+    labels = np.tile([2, 1, 1, 0, 0], (6, 1))
+    position = np.zeros((6, 3), np.float32)
+    position[3:, 0] = 50
+    target, valid = data.future_stuck(stamps, position, labels)
+    np.testing.assert_array_equal(target, [1, 0, 0, 1, 0, 0])
+    np.testing.assert_array_equal(valid, [1, 1, 1, 1, 0, 0])
+    labels[0, 0] = 1
+    assert data.future_stuck(stamps, position, labels)[0][0] == 0
+    with pytest.raises(ValueError, match="increase strictly"):
+        data.future_stuck(np.zeros(6), position, labels)
+
+
+def test_bc3_detour_target_is_local_supervision_and_excludes_memory_teacher():
+    records, _ = fixture_records(2)
+    records["position_cm"] = [100, 200, 300]
+    records["teacher_hint"]["next_corner_cm"] = [200, 200, 300]
+    records["teacher_hint"]["path_cm"] = [1234, 100000]
+    records["body_yaw_deg"] = [0, 90]
+    target, valid = data.detour_targets(records, 2)
+    np.testing.assert_allclose(target, [[1.234, 0, 0, 1], [50, -1, 0, 0]], atol=1e-6)
+    np.testing.assert_array_equal(valid, [1, 1])
+    unavailable, valid = data.detour_targets(records, 3)
+    assert not unavailable.any() and not valid.any()
+
+
+def write_bc3_manifest(tmp_path, families=("point", "follow_below_gate")):
+    source, output = tmp_path / "source", tmp_path / "cache"
+    records, layout = fixture_records(4)
+    records["time_ms"] = np.arange(4) * 1000
+    records["keys"]["forward"] = [1, 1, 0, 0]
+    entries = []
+    train = {}
+    for number, family in enumerate(families):
+        identity = f"{family}-{number}"
+        success = family != "follow_below_gate"
+        write_episode(source, identity, records, layout, identity, success=success,
+                      navigation_memory_version=3, teacher_version=3)
+        directory = source / "episodes" / identity
+        with (directory / "samples.bin.gz").open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        scenario = {"id": identity, "split": "train", "region": "forest", "start": identity,
+                    "goal": "goal", "goal_kind": "follow" if family == "follow_below_gate" else family,
+                    "navigation_memory_version": 3, "teacher_version": 3, "seed": 7}
+        entries.append({"id": identity, "family": family, "split": "train", "episode": str(directory),
+                        "decisions": len(records), "training_eligible": True,
+                        "teacher_goal_success": success, "samples_sha256": digest, "scenario": scenario})
+        train[family] = [identity]
+    manifest = {"schema_version": 1, "dataset": "nav-demos-v4", "consumer": "nav-bc3", "complete": True,
+                "format": {"name": "NAVDEMO", "version": 2, "navigation_memory_version": 3,
+                           "perception_mode": "gaze", "physics": "cv"},
+                "root": str(source), "episodes": entries, "splits": {"train": train,
+                    "validation": {"point": [{"id": "heldout", "episode": None, "recorded": False}]},
+                    "test": {"point": [{"id": "final-only", "episode": None, "recorded": False}]}},
+                "totals": {"train_episodes": len(entries), "train_decisions": len(entries) * len(records)}}
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    return source, output, path, manifest, records, layout
+
+
+def test_bc3_manifest_uses_exact_train_refs_including_failed_follow(tmp_path, monkeypatch):
+    source, output, path, manifest, records, layout = write_bc3_manifest(tmp_path)
+    # Even a real extra successful recording is not admitted without a train ref.
+    write_episode(source, "not-selected", records, layout, "not-selected", navigation_memory_version=3)
+    index = data.prepare(source, output, manifest=path, chunk_records=1)
+    assert index["cache_version"] == data.BC3_CACHE_VERSION
+    assert index["heads"] == list(data.BC3_HEADS)
+    assert index["classes"] == list(data.BC3_CLASSES)
+    assert index["splits"]["train"] == {"pairs": 2, "episodes": 2, "steps": 8}
+    assert [ep["id"] for ep in index["episodes"]] == [ep["id"] for ep in manifest["episodes"]]
+    assert [ep["success"] for ep in index["episodes"]] == [True, False]
+    assert index["action_change_weight"] == 4
+    assert index["action_change"]["N"] == 8 and index["action_change"]["n_I"] == 2
+    assert index["auxiliary"]["detour"]["available_steps"] == 0
+    assert index["auxiliary"]["true_map"]["available"] is False
+    expected = data.encode_features(demos.learner_input(records), layout)
+    for entry in index["episodes"]:
+        cached = data.load_cached(output / entry["file"])
+        assert cached["labels"].shape == (4, 5)
+        np.testing.assert_array_equal(cached["action_change"], [0, 0, 1, 0])
+        np.testing.assert_array_equal(cached["maneuver_weight"], 1)
+        np.testing.assert_array_equal(cached["stuck_valid"], [1, 1, 0, 0])
+        np.testing.assert_array_equal(cached["next_near_valid"], [1, 1, 1, 0])
+        assert not cached["detour_valid"].any()
+        for name in ("near", "far", "vector"):
+            np.testing.assert_allclose(cached[name], expected[name], atol=1 / 255)
+    direct = data.training_index(source, path)
+    for name in ("class_counts", "action_change", "action_change_weight", "auxiliary", "splits"):
+        assert direct[name] == index[name]
+    relocated = tmp_path / "relocated"
+    for entry in manifest["episodes"]:
+        original = Path(entry["episode"])
+        directory = relocated / original.relative_to(source)
+        directory.mkdir(parents=True)
+        samples = directory / "samples.bin.xz"
+        with gzip.open(original / "samples.bin.gz", "rb") as stream:
+            samples.write_bytes(lzma.compress(stream.read(), preset=6))
+        metadata = json.loads((original / "episode.json").read_text())
+        metadata["navdemo_storage"] = {"source_samples_sha256": entry["samples_sha256"],
+                                       "samples_sha256": hashlib.sha256(samples.read_bytes()).hexdigest()}
+        metadata["nav_bc_stats"] = data.episode_stats(original, 3, chunk_records=2)
+        (directory / "episode.json").write_text(json.dumps(metadata))
+    def unexpected_stats(*_args, **_kwargs):
+        raise AssertionError("Converted metadata must avoid a statistics pass")
+    monkeypatch.setattr(data, "episode_stats", unexpected_stats)
+    converted = data.training_index(relocated, path)
+    for name in ("class_counts", "action_change", "action_change_weight", "auxiliary", "splits"):
+        assert converted[name] == index[name]
+    assert all(entry["file"].endswith(".xz") for entry in converted["episodes"])
+    assert not (relocated / "index.json").exists()
+
+
+@pytest.mark.parametrize("relative", ["point/train/point-0", "../outside", "/outside"])
+def test_compact_v5_manifest_uses_supplied_root_and_only_eligible_train(tmp_path, monkeypatch, relative):
+    source = tmp_path / "relocated-corpus"
+    directory = source / "point/train/point-0"
+    directory.mkdir(parents=True)
+    metadata = {"id": "point-0", "goal_kind": "point", "split": "train", "training_eligible": True,
+                "decisions": 2, "navigation_memory_version": 4, "journey_memory": True,
+                "demo_version": 3, "perception_mode": "gaze", "physics_mode": "cv",
+                "start": "start", "goal": "goal", "region": "forest"}
+    (directory / "episode.json").write_text(json.dumps(metadata))
+    entry = {"id": "point-0", "family": "point", "split": "train", "training_eligible": True,
+             "decisions": 2, "samples_sha256": "a" * 64, "episode": relative}
+    manifest = {"schema_version": 2, "dataset": "nav-demos-v5", "consumer": "nav-bc",
+                "input_variant": "hd", "complete": True, "root": "/original/corpus",
+                "format": {"name": "NAVDEMO", "version": 3, "navigation_memory_version": 4,
+                           "perception_mode": "gaze", "physics": "cv"},
+                "full_manifest": {"path": "/unavailable/full/manifest.json", "sha256": "b" * 64},
+                "episodes": [entry, {**entry, "id": "failed", "training_eligible": False,
+                                     "episode": "missing/failed"},
+                             {**entry, "id": "heldout", "split": "validation",
+                              "episode": "missing/heldout"}],
+                "totals": {"training_episodes": 1, "training_decisions": 2}}
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest, separators=(",", ":")))
+    if relative != "point/train/point-0":
+        with pytest.raises(ValueError, match="outside the corpus"):
+            data.load_training_manifest(path, source)
+        return
+    loaded, selected = data.load_training_manifest(path, source)
+    assert loaded == manifest
+    assert selected == [{**entry, "scenario": metadata, "directory": directory}]
+    assert not (source / "missing").exists()
+    records = np.zeros(2, dtype=demos.RECORD_V3_DTYPE)
+    records["time_ms"] = [100, 200]
+    records["position_cm"][:, 1] = 700
+    records["memory_near"]["height_valid"][:, 3, 4] = 1
+    records["memory_near"]["ground_height_cm"][:, 3, 4] = 940
+    records["memory_near"]["channels"][:, 3, 4, 7] = [255, 128]
+    records["memory_far"]["channels"][:, 60, 70, 7] = [128, 255]
+    layout = np.tile([0., 0., 1000.], (demos.RAY_COUNT, 1)).astype(np.float32)
+    metadata["eye_layout"] = layout.tolist()
+    (directory / "episode.json").write_text(json.dumps(metadata))
+    with gzip.open(directory / "samples.bin.gz", "wb") as stream:
+        stream.write(demos.HEADER.pack(demos.MAGIC, 3, demos.RECORD_BYTES_BY_VERSION[3],
+                                      demos.RAY_COUNT, demos.NEAR_SIZE, demos.FAR_SIZE, demos.PERIOD_MS))
+        stream.write(records.tobytes())
+    entry["samples_sha256"] = hashlib.sha256((directory / "samples.bin.gz").read_bytes()).hexdigest()
+    path.write_text(json.dumps(manifest))
+    output = tmp_path / "cache"
+    original_stat = Path.stat
+    def cache_stat(path, *args, **kwargs):
+        result = original_stat(path, *args, **kwargs)
+        if path.is_relative_to(output):
+            return type(result)((*result[:6], 1024, *result[7:]))
+        return result
+    with monkeypatch.context() as storage:
+        storage.setattr(data.shutil, "disk_usage", lambda path: SimpleNamespace(free=32 * 1024**3))
+        storage.setattr(Path, "stat", cache_stat)
+        index = data.prepare(source, output, manifest=path, input_variant="hd-familiar", chunk_records=1)
+    assert index["cache_version"] == data.BC4_CACHE_VERSION
+    assert index["navigation_memory_version"] == 4 and index["navdemo_version"] == 3
+    assert index["preprocessing"] == data.BC4_PREPROCESSING
+    cached = data.load_cached(tmp_path / "cache" / index["episodes"][0]["file"])
+    assert cached["near"].shape == (2, 11, 64, 64)
+    assert cached["far"].shape == (2, 11, 50, 100)
+    np.testing.assert_allclose(cached["near"][:, 7:10, 3, 4], [[1.2, 1.2, 1]] * 2, atol=1e-3)
+    np.testing.assert_allclose(cached["near"][:, 10, 3, 4], [1, 128 / 255])
+    np.testing.assert_allclose(cached["far"][:, 10, 10, 70], [128 / 255, 1])
+    assert cached["aux_near"].shape == (2, 9, 32, 32)
+    direct = data.training_index(source, path, "hd-familiar")
+    for name in ("class_counts", "action_change", "action_change_weight", "auxiliary", "splits"):
+        assert direct[name] == index[name]
+    with gzip.open(directory / "samples.bin.gz", "rb") as stream:
+        (directory / "samples.bin.xz").write_bytes(lzma.compress(stream.read(), preset=6))
+    metadata["navdemo_storage"] = {"source_samples_sha256": entry["samples_sha256"],
+        "samples_sha256": hashlib.sha256((directory / "samples.bin.xz").read_bytes()).hexdigest()}
+    metadata["nav_bc_stats"] = data.episode_stats(directory / "samples.bin.gz", None)
+    (directory / "episode.json").write_text(json.dumps(metadata))
+    converted = data.training_index(source, path, "hd-familiar")
+    assert converted["class_counts"] == index["class_counts"]
+    packed = data.encode_episode(directory, layout, None, "hd-familiar", chunk_records=1)
+    assert data.nav_demos.samples_path(directory).suffix == ".xz"
+    expanded = data.unpack_cached(packed)
+    for name in cached:
+        assert cached[name].tobytes() == expanded[name].tobytes()
+
+
+@pytest.mark.parametrize("input_variant", ["compact", "hd", "hd-familiar"])
+def test_packed_cache_slices_match_expanded_episode(tmp_path, input_variant):
+    records, layout = fixture_records(4)
+    if input_variant == "hd-familiar":
+        familiar_records = np.zeros(4, dtype=demos.RECORD_V3_DTYPE)
+        for name in records.dtype.names:
+            if name.startswith("memory_"):
+                for field in records[name].dtype.names:
+                    if field == "channels":
+                        familiar_records[name][field][..., :7] = records[name][field]
+                    else:
+                        familiar_records[name][field] = records[name][field]
+                familiar_records[name]["channels"][..., 7] = 128
+            else:
+                familiar_records[name] = records[name]
+        records = familiar_records
+    features = data.encode_features(demos.learner_input(records), layout, input_variant,
+                                    records["position_cm"][:, 1] if input_variant != "compact" else None)
+    if input_variant != "compact":
+        features["aux_near"] = data.encode_features(demos.learner_input(records), layout)["near"]
+    packed = data._pack(features)
+    packed.update(labels=data.encode_bc3_labels(records["keys"]),
+                  baseline=np.zeros((4, 5), np.uint8), situations=np.zeros((4, 3), np.uint8),
+                  action_change=np.array([0, 1, 0, 1], np.uint8),
+                  next_near_valid=np.array([1, 1, 1, 0], np.uint8))
+    path = tmp_path / "episode.npz"
+    np.savez_compressed(path, **packed)
+    expanded = data.load_cached(path)
+    loaded = data.load_cached(path, packed=True)
+    assert "near" not in loaded and "far" not in loaded
+    assert loaded["near_channels"].dtype == np.uint8
+    assert loaded["near_height"].dtype == np.float16
+    assert loaded["vector"].dtype == np.float16
+    for start, stop in ((0, 3), (2, 4), (4, 7)):
+        segment = data.unpack_cached(loaded, start, stop)
+        assert segment.keys() == expanded.keys()
+        for name in expanded:
+            np.testing.assert_array_equal(segment[name], expanded[name][start:stop])
+
+
+@pytest.mark.parametrize("raw_annotations", [False, True])
+def test_bc3_manifest_admits_early_episode_without_collector_annotations(tmp_path, raw_annotations):
+    source, output, path, manifest, _, _ = write_bc3_manifest(tmp_path, ("point",))
+    entry = manifest["episodes"][0]
+    scenario = entry["scenario"]
+    for name in ("id", "split", "region"):
+        scenario.pop(name)
+    scenario["seed"] = 0
+    physical_scenario = scenario.copy()
+    metadata_path = Path(entry["episode"]) / "episode.json"
+    metadata = json.loads(metadata_path.read_text())
+    for name in ("id", "split", "region", "success", "training_eligible"):
+        metadata.pop(name, None)
+    if raw_annotations:
+        metadata.update(success=False, training_eligible=False)
+    metadata_path.write_text(json.dumps(metadata))
+
+    summary_path = source / "recordings" / "collection-metrics.json"
+    summary_path.parent.mkdir()
+    summary_path.write_text(json.dumps({"episodes": [{
+        "id": entry["id"], "family": "point", "split": "train", "region": "forest",
+        "training_eligible": True, "start": "summary-start", "goal": "summary-goal", "seed": 99,
+    }]}))
+    manifest["sources"] = {"recordings/collection-metrics.json": {
+        "path": str(summary_path), "sha256": hashlib.sha256(summary_path.read_bytes()).hexdigest(),
+    }}
+    path.write_text(json.dumps(manifest))
+    original_files = {file: file.read_bytes() for file in source.rglob("*") if file.is_file()}
+
+    _, selected = data.load_training_manifest(path, source)
+    assert selected[0]["scenario"] == {**physical_scenario, "region": "forest"}
+    index = data.prepare(source, output, manifest=path, chunk_records=1)
+    assert index["splits"]["train"] == {"pairs": 1, "episodes": 1, "steps": 4}
+    cached_entry = index["episodes"][0]
+    assert cached_entry["id"] == entry["id"]
+    assert cached_entry["pair"] == [physical_scenario["start"], physical_scenario["goal"]]
+    assert cached_entry["region"] == "forest" and cached_entry["success"] is True
+    assert data.load_cached(output / cached_entry["file"])["labels"].shape == (4, 5)
+    assert {file: file.read_bytes() for file in original_files} == original_files
+
+
+@pytest.mark.parametrize("damage, expected", [
+    ("ineligible", "ineligible"), ("heldout", "ineligible"), ("duplicate", "duplicate training"),
+    ("totals", "totals"), ("checksum", "checksum"), ("memory", "memory-v3"),
+])
+def test_bc3_manifest_rejects_wrong_training_identity(tmp_path, damage, expected):
+    source, output, path, manifest, _, _ = write_bc3_manifest(tmp_path, ("point",))
+    entry = manifest["episodes"][0]
+    if damage == "ineligible":
+        entry["training_eligible"] = False
+    elif damage == "heldout":
+        entry["scenario"]["split"] = "validation"
+    elif damage == "duplicate":
+        manifest["splits"]["train"]["point"].append(entry["id"])
+    elif damage == "totals":
+        manifest["totals"]["train_decisions"] += 1
+    elif damage == "checksum":
+        entry["samples_sha256"] = "0" * 64
+    elif damage == "memory":
+        metadata_path = Path(entry["episode"]) / "episode.json"
+        metadata = json.loads(metadata_path.read_text())
+        metadata["navigation_memory_version"] = 2
+        metadata_path.write_text(json.dumps(metadata))
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match=expected):
+        data.prepare(source, output, manifest=path)

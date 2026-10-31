@@ -1,17 +1,15 @@
 #include "gthfont.h"
 
 #include <Tempest/Size>
-#include "resources.h"
+#include <utility>
 
 using namespace Tempest;
 
-GthFont::GthFont():pfnt(new zenkit::Font("", 16, {})) {
+GthFont::GthFont():pfnt(new asset::Font{"", 16, {}}) {
   }
 
-GthFont::GthFont(zenkit::Read& data, std::string_view ftex, const Color &cl)
-  :pfnt(std::make_shared<zenkit::Font>()), color(cl) {
-  pfnt->load(&data);
-  tex = Resources::loadTexture(ftex);
+GthFont::GthFont(asset::Font data, const Texture2d* texture, const Color &cl)
+  :pfnt(std::make_shared<asset::Font>(std::move(data))), tex(texture), color(cl) {
   setScale(1);
   }
 

@@ -9,6 +9,8 @@ import pytest
 from gothic_ai.characters import Card
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.commands import Order
+from gothic_ai.crime_law import CrimeLaw
+from gothic_ai.crime_sides import FIGHT_MEMORY_SECONDS
 from gothic_ai.crimes import COMMUNITIES, Crimes, pickpocket_outcome
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.executor import Intent
@@ -18,7 +20,7 @@ from gothic_ai.llm.fake import FakeBackend
 from gothic_ai.memory import MemoryStore
 from gothic_ai.orders import Orders
 from gothic_ai.persona import PersonaProvider
-from gothic_ai.protocol import HeroDeed, Loading, NpcEvent, NpcViews, Perception, Session
+from gothic_ai.protocol import HeroDeed, Loading, NpcEvent, NpcRoster, NpcViews, Perception, Session
 from gothic_ai.questbook import Goal, Progress, Quest, Stage, Talk
 
 LOBART = "BAU_950_LOBART"
@@ -26,9 +28,66 @@ HILDA = "BAU_951_HILDA"
 LEE = "SLD_800_LEE"
 
 
+@pytest.mark.parametrize("status", ["pending", "spared", "attacked"])
+async def test_surrendered_murder_has_no_fight_excuse_and_costs_more(system, status):
+    crimes, chronicle = system.crimes, system.chronicle
+    chronicle.record({"fact": "surrender", "npc": LOBART, "until": 5 * 1440, "status": status})
+    crimes.sides.note_fight(HILDA, LOBART)
+    crime = crimes.record(deed(
+        kind="murder", victim=LOBART, victim_guild=8, victim_enemy=True, victim_started_fight=True,
+        witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 8}],
+    ))
+    assert crime["surrendered"] and "lawful_fight" not in crime
+    assert crimes.side(HILDA, crime["id"]) is None
+    assert crimes.sides.heard_reason(HILDA, crime) is None
+    assert "убил того, кто сдался" in crimes.situation(HILDA)
+    chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
+    assert CrimeLaw(crimes).debt("farm") == 800
+
+
+@pytest.mark.parametrize("surrender,enabled", [(False, True), (True, False), ("expired", True)])
+async def test_ordinary_murder_stays_as_before_mercy(system, surrender, enabled):
+    crimes, chronicle = system.crimes, system.chronicle
+    crimes.mercy = enabled
+    if surrender:
+        chronicle.record({"fact": "surrender", "npc": LOBART,
+                          "until": 3 * 1440 if surrender == "expired" else 5 * 1440, "status": "spared"})
+    crimes.sides.note_fight(HILDA, LOBART)
+    crime = crimes.record(deed(
+        kind="murder", victim=LOBART, victim_guild=8, victim_enemy=True,
+        witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 8}],
+    ))
+    assert crime["lawful_fight"] and "surrendered" not in crime
+    assert crimes.side(HILDA, crime["id"])["why"] == "fought"
+    chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
+    assert CrimeLaw(crimes).debt("farm") == 550
+
+
+@pytest.mark.parametrize("enabled,ticks,broken", [(True, 60999, True), (True, 61000, False),
+                                                  (False, 1000, False)])
+async def test_hero_yield_betrayal_reaches_witness_with_ordinary_attack_debt(system, enabled, ticks, broken):
+    crimes, chronicle = system.crimes, system.chronicle
+    crimes.mercy = enabled
+    chronicle.record({"fact": "hero_yield", "id": "yield-1", "npc": LOBART,
+                      "t": 1000, "deadline": 61000, "until": 5 * 1440})
+    system.link.receive(NpcRoster(type="npc_roster", t=ticks, npcs=[]))
+    crime = crimes.record(deed(
+        kind="attack", victim=LOBART, victim_guild=8, victim_started_fight=True,
+        witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 8}],
+    ))
+    if not broken:
+        assert crime is None
+        return
+    assert crime["kind"] == "attack" and crime["yield_broken"] and "surrendered" not in crime
+    assert "сдался в бою" in crimes.situation(HILDA) and "ударил его" in crimes.situation(HILDA)
+    chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
+    assert CrimeLaw(crimes).debt("farm") == 50
+
+
 class Link:
     def __init__(self) -> None:
         self.listeners: list[Any] = []
+        self.hello = None
         self.session = Session(type="session", branch="A")
         self.sent: list[Any] = []
 
@@ -92,6 +151,157 @@ async def test_own_public_and_dropped_items_are_not_crimes(system, ownership):
     assert system.crimes.record(deed(**ownership)) is None
     assert system.crimes.classified_noncrime("deed-1")
     assert system.chronicle.facts() == []
+
+
+@pytest.mark.parametrize("monster_source", ["guild", "death"])
+async def test_monster_loot_with_a_companion_witness_is_not_a_crime(system, monster_source):
+    owner = "YGOBBO_GREEN"
+    if monster_source == "death":
+        system.chronicle.record({"fact": "died", "npc": owner, "killer": "PLAYER", "monster": True})
+    assert system.crimes.record(deed(
+        owner=owner,
+        owner_npc_guild=37 if monster_source == "guild" else -1,
+        witnesses=[HILDA],
+        witnesses_metadata=[{"npc": HILDA, "guild": 8, "npctype": 2}],
+    )) is None
+    assert system.crimes.classified_noncrime("deed-1")
+    for kind in ("crime", "crime_seen", "crime_attitude"):
+        assert system.chronicle.facts(kind) == []
+
+
+@pytest.mark.parametrize("prior_crime", [None, "attack", "murder"])
+async def test_dead_owners_loot_is_lawful_unless_the_hero_murdered_them(system, prior_crime):
+    if prior_crime:
+        result = system.crimes.record(deed(
+            id="violence", kind=prior_crime, victim=LOBART, victim_guild=8,
+        ))
+        assert result is not None and result["kind"] == prior_crime
+    system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": False})
+    result = system.crimes.record(deed(owner=LOBART, owner_npc_guild=8, witnesses=[HILDA]))
+    if prior_crime == "murder":
+        assert result is not None and result["kind"] == "theft"
+        assert system.crimes.facts()[0]["kind"] == "murder"
+    else:
+        assert result is None
+        assert [fact["kind"] for fact in system.crimes.facts()] == ([prior_crime] if prior_crime else [])
+    assert system.crimes.classified_noncrime("deed-1") is (prior_crime != "murder")
+
+
+async def test_monster_death_allows_loot_even_with_an_existing_murder_record(system):
+    system.crimes.record(deed(id="murder", kind="murder", victim=LOBART, victim_guild=8))
+    system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": True})
+    assert system.crimes.record(deed(owner=LOBART, witnesses=[HILDA])) is None
+    assert system.crimes.classified_noncrime("deed-1")
+    assert [fact["kind"] for fact in system.crimes.facts()] == ["murder"]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("member", ["PLAYER", "order", "intent", "metadata", "people"])
+async def test_recent_fight_with_the_hero_or_a_companion_makes_bandit_loot_lawful(system, member, reverse):
+    owner = "BDT_1015_BANDIT_L"
+    fields = {}
+    fighter = "PLAYER" if member == "PLAYER" else HILDA
+    if member == "order":
+        system.crimes.sides.orders = SimpleNamespace(
+            standing={HILDA: SimpleNamespace(kind="follow")}, fights={},
+        )
+    elif member == "intent":
+        system.crimes.dialogue = SimpleNamespace(conversations={
+            HILDA: SimpleNamespace(intent=Intent(goal="follow_hero")),
+        })
+    elif member == "metadata":
+        fields["witnesses_metadata"] = [{"npc": HILDA, "guild": 8, "npctype": 2}]
+    elif member == "people":
+        system.crimes.people[HILDA] = {"guild": 8, "npctype": 2}
+    pair = (fighter, owner) if reverse else (owner, fighter)
+    system.crimes.sides.note_fight(*pair)
+    assert system.crimes.record(deed(owner=owner, owner_npc_guild=9, witnesses=[HILDA], **fields)) is None
+    assert system.crimes.classified_noncrime("deed-1")
+    assert system.crimes.facts() == []
+
+
+@pytest.mark.parametrize("fight", ["missing", "expired", "outsider", "other_owner"])
+async def test_loot_requires_a_recent_fight_between_the_owner_and_the_hero_group(system, fight):
+    owner = "BDT_1015_BANDIT_L"
+    if fight == "expired":
+        system.crimes.sides.clock = lambda: 0.0
+        system.crimes.sides.note_fight(owner, "PLAYER")
+        system.crimes.sides.clock = lambda: FIGHT_MEMORY_SECONDS + 1
+    elif fight == "outsider":
+        system.crimes.sides.note_fight(owner, HILDA)
+    elif fight == "other_owner":
+        system.crimes.sides.note_fight("OTHER_BANDIT", "PLAYER")
+    result = system.crimes.record(deed(owner=owner, owner_npc_guild=9, witnesses=[HILDA]))
+    assert result is not None and result["kind"] == "theft"
+    assert not system.crimes.classified_noncrime("deed-1")
+
+
+@pytest.mark.parametrize("source", ["conversation", "order"])
+async def test_current_fight_sources_are_read_before_classifying_loot(system, source):
+    system.crimes.sides.clock = lambda: 0.0
+    system.crimes.sides.note_fight(LOBART, "PLAYER")
+    system.crimes.sides.clock = lambda: FIGHT_MEMORY_SECONDS + 1
+    if source == "conversation":
+        system.crimes.dialogue = SimpleNamespace(conversations={
+            LOBART: SimpleNamespace(intent=Intent(goal="fight", target="PC_HERO")),
+        })
+    else:
+        system.crimes.sides.orders = SimpleNamespace(
+            standing={HILDA: SimpleNamespace(kind="follow")},
+            fights={HILDA: SimpleNamespace(target=LOBART)},
+        )
+    assert system.crimes.record(deed(owner=LOBART, owner_npc_guild=8)) is None
+    assert system.crimes.classified_noncrime("deed-1")
+
+
+@pytest.mark.parametrize("prior_crime", ["attack", "murder"])
+async def test_loot_after_the_heros_criminal_fight_is_still_theft(system, prior_crime):
+    result = system.crimes.record(deed(
+        id="violence", kind=prior_crime, victim=LOBART, victim_guild=8,
+    ))
+    assert result is not None and result["kind"] == prior_crime
+    system.crimes.sides.note_fight(LOBART, "PLAYER")
+    result = system.crimes.record(deed(owner=LOBART, owner_npc_guild=8))
+    assert result is not None and result["kind"] == "theft"
+    assert not system.crimes.classified_noncrime("deed-1")
+
+
+@pytest.mark.parametrize("owner,guild,context", [
+    ("BDT_1015_BANDIT_L", 9, {}),
+    (LOBART, 8, {"victim_enemy": True}),
+])
+@pytest.mark.parametrize("aftermath", ["dead", "recent_fight"])
+async def test_loot_after_a_lawful_human_kill_preserves_murder_without_theft(
+    system, owner, guild, context, aftermath,
+):
+    murder = system.crimes.record(deed(
+        id="murder", kind="murder", victim=owner, victim_guild=guild, **context,
+    ))
+    assert murder is not None and murder["kind"] == "murder" and murder["lawful_fight"] is True
+    if aftermath == "dead":
+        system.chronicle.record({"fact": "died", "npc": owner, "killer": "PLAYER", "monster": False})
+    else:
+        system.crimes.sides.note_fight(owner, "PLAYER")
+    assert system.crimes.record(deed(
+        owner=owner, owner_npc_guild=guild, witnesses=[HILDA],
+        witnesses_metadata=[{"npc": HILDA, "guild": 8, "npctype": 2}],
+    )) is None
+    assert system.crimes.classified_noncrime("deed-1")
+    assert system.crimes.facts() == [murder]
+    assert system.chronicle.facts("crime_seen") == []
+    assert system.chronicle.facts("crime_attitude") == []
+
+
+@pytest.mark.parametrize("ownership", [
+    {"chest": "CHEST_LOBART", "chest_owner": LOBART, "chest_owner_guild": 8},
+    {"room_owner": LOBART, "room_owner_guild": 8},
+])
+async def test_dead_owners_chest_and_room_remain_private_property(system, ownership):
+    system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": False})
+    system.crimes.sides.note_fight(LOBART, "PLAYER")
+    result = system.crimes.record(deed(**ownership, witnesses=[HILDA]))
+    assert result is not None and result["kind"] == "theft" and result["owner"] == LOBART
+    assert not system.crimes.classified_noncrime("deed-1")
 
 
 @pytest.mark.parametrize("cover", [True, False])
@@ -249,6 +459,34 @@ async def test_human_kill_is_murder_even_after_assault_or_finishing_blow(system)
     assert result["community"] == "farm"
 
 
+@pytest.mark.parametrize("context,lawful", [
+    ({"victim_enemy": True}, True),
+    ({"victim_started_fight": True}, True),
+    ({"victim_tough_guy": True}, True),
+    ({"victim_guild": 6}, True),
+    ({"victim_guild": 7}, True),
+    ({"victim_guild": 9}, True),
+    ({"victim_guild": 13}, True),
+    ({}, False),
+    ({"victim_in_fight": True}, False),
+    ({"victim_npctype": 2}, False),
+])
+async def test_human_murder_marks_only_lawful_combat(system, context, lawful):
+    fields = {"kind": "murder", "victim": LOBART, "victim_guild": 8, **context}
+    result = system.crimes.record(deed(**fields))
+    assert result is not None and result["kind"] == "murder"
+    if lawful:
+        assert result["lawful_fight"] is True
+    else:
+        assert "lawful_fight" not in result
+        system.chronicle.record({"fact": "died", "npc": LOBART, "killer": "PLAYER", "monster": False})
+        loot = system.crimes.record(deed(
+            id="loot", owner=LOBART, owner_npc_guild=8, witnesses=[HILDA],
+        ))
+        assert loot is not None and loot["kind"] == "theft"
+        assert not system.crimes.classified_noncrime("loot")
+
+
 async def test_monster_kill_is_not_human_murder(system):
     assert system.crimes.record(deed(kind="murder", victim="WOLF", victim_guild=22)) is None
 
@@ -327,7 +565,7 @@ async def test_community_uses_lifted_helpers_and_lawkeepers_use_the_graph(system
         functions={
             "C_NPCBELONGSTOFARM": {
                 "params": 1,
-                "body": ["==", field, ["int", 42]],
+                "body": ["==", field, ["int", 10]],
                 "lifted": True,
             }
         },
@@ -336,12 +574,12 @@ async def test_community_uses_lifted_helpers_and_lawkeepers_use_the_graph(system
         quests={},
     )
     system.crimes.graph = graph
-    assert system.crimes.community(42) == "farm"
+    assert system.crimes.community(10) == "farm"
     assert system.crimes.community(8) is None
     assert system.crimes.lawkeepers("farm") == (LEE,)
     assert system.crimes.lawkeepers("bl") == ()
     assert system.crimes.lawkeepers("city") == ()  # no such PETZMASTER in this graph
-    result = system.crimes.record(deed(owner="LOBART", owner_npc_guild=42))
+    result = system.crimes.record(deed(owner="LOBART", owner_npc_guild=10))
     assert result is not None and result["owner"] == LOBART and result["community"] == "farm"
     assert set(COMMUNITIES) == {"city", "farm", "monastery", "oldcamp", "bl"}
 

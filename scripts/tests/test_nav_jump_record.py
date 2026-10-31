@@ -357,20 +357,22 @@ def test_validation_collects_all_original_30_before_failing_70pct_gate(tmp_path,
     assert all(metric["attempts"] == 10 for metric in report["by_type"].values())
 
 
-def test_new_episode_requires_frames_and_ignores_incomplete_100ms_native_flags(tmp_path):
+@pytest.mark.parametrize("format_version", [2, 3])
+def test_new_episode_requires_frames_and_ignores_incomplete_100ms_native_flags(tmp_path, format_version):
     value = route()
-    records = np.zeros(4, dtype=demos.RECORD_V2_DTYPE)
+    records = np.zeros(4, dtype=demos.RECORD_DTYPES[format_version])
     records["time_ms"] = [1000, 1100, 1200, 1300]
     # Deliberately no airborne/climbing flags at the 100ms sample cadence.
     records["keys"]["jump"][0] = 1
     with gzip.open(tmp_path / "samples.bin.gz", "wb") as stream:
-        stream.write(demos.HEADER.pack(demos.MAGIC, 2, demos.RECORD_BYTES, demos.RAY_COUNT,
+        stream.write(demos.HEADER.pack(demos.MAGIC, format_version, demos.RECORD_BYTES_BY_VERSION[format_version], demos.RAY_COUNT,
                                       demos.NEAR_SIZE, demos.FAR_SIZE, demos.PERIOD_MS))
         stream.write(records.tobytes())
     for name in ("actions.txt", "trajectory.txt"):
         (tmp_path / name).write_text("")
     (tmp_path / "teacher-paths.jsonl").write_text("".join(json.dumps(row) + "\n" for row in physical_trace(value)))
-    metadata = dict(physics_mode="cv", frames=60, cv_frames=10, demo_version=2, teacher_version=2,
+    metadata = dict(physics_mode="cv", frames=60, cv_frames=10, demo_version=format_version, teacher_version=2,
+                    navigation_memory_version=4 if format_version == 3 else 3, journey_memory=format_version == 3,
                     decisions=4, success=True, initial_state=dict(hp=100), final_hp=100)
     (tmp_path / "episode.json").write_text(json.dumps(metadata))
     with pytest.raises(RuntimeError, match="transition-frames"):
@@ -387,6 +389,11 @@ def test_new_episode_requires_frames_and_ignores_incomplete_100ms_native_flags(t
     metadata.update(success=True, final_hp=1)
     (tmp_path / "episode.json").write_text(json.dumps(metadata))
     assert recorder.assess_episode(tmp_path, value)["transition_success"]
+    if format_version == 3:
+        for invalid in (dict(navigation_memory_version=3), dict(journey_memory=False)):
+            (tmp_path / "episode.json").write_text(json.dumps(dict(metadata, **invalid)))
+            with pytest.raises(RuntimeError, match="teacher v2/CV evidence"):
+                recorder.assess_episode(tmp_path, value)
 
 
 @pytest.mark.parametrize("component,polygon", [(1, 11), (99, 99), (0, 0)])

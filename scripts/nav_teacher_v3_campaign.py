@@ -15,6 +15,7 @@ import importlib.util
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -219,7 +220,7 @@ def resume_metadata(directory, value, version, require_samples=True):
 def worker_args(options, version, index):
     task = options.task
     return SimpleNamespace(output=task / "workers" / f"v{version}-{index}",
-                           runner=task / "build/opengothic/gothic-body-runner", assets=task.parent / "game",
+                           runner=task / "build/opengothic/gothic-body-runner", assets=Path(os.environ.get("GOTHIC_DIR", Path.home() / "gothic-ai/game-settings")),
                            save=task / "input/save.sav", cache=task / "cache", links=task / "input/accepted-links.txt",
                            roads=task / "input/places.json", npc="BAU_954_MALETH", ini=None, seed=19102026,
                            physics="cv", watchdog_seconds=900, limit_ms=options.limit_ms,

@@ -19,6 +19,7 @@ from test_dub import (
     _streams,
     _tts_sound,
 )
+from test_dub_publication import _assert_dual_mono
 
 from gothic_shorts import cli, compare, dub, levels
 
@@ -137,6 +138,59 @@ def _small_comparison(monkeypatch, brand):
 
     monkeypatch.setattr(compare, "text_image", lambda path, items: overlay(path, items[0][0]))
     monkeypatch.setattr(compare, "caption_image", lambda path, words, current: overlay(path, words[current]))
+
+
+@pytest.mark.parametrize("encoder", ["platform", "ffmpeg-aac-256k"])
+@pytest.mark.parametrize("signal", ["tones", "noise"])
+def test_unvoiced_master_folds_stereo_before_loudnorm(
+    tmp_path, comparison_assets, monkeypatch, encoder, signal,
+):
+    if encoder == "ffmpeg-aac-256k":
+        monkeypatch.setattr(levels, "aac_encoder", lambda: levels.AAC_FALLBACK)
+    source = tmp_path / "panned.wav"
+    sound = (
+        "aevalsrc=0.1*sin(2*PI*440*t)|0.07*sin(2*PI*660*t):s=48000:d=3:c=stereo"
+        if signal == "tones" else
+        "anoisesrc=d=3:c=pink:a=0.2:s=48000:seed=42[left];"
+        "anoisesrc=d=3:c=pink:a=0.1:s=48000:seed=43[right];[left][right]amerge=inputs=2"
+    )
+    _ffmpeg(
+        "-f", "lavfi", "-i", sound,
+        "-af", "afade=t=in:d=0.06,afade=t=out:st=2.94:d=0.06", "-c:a", "pcm_f32le", source,
+    )
+    out = tmp_path / "unvoiced.mp4"
+
+    compare.master(
+        ["-i", str(comparison_assets.placeholder), "-i", str(source)],
+        "[1:a]atrim=duration=3", out, 3,
+    )
+
+    audio, = _streams(out)
+    assert audio["codec_name"] == "aac" and audio["channels"] == 2
+    _assert_dual_mono(out)
+
+
+def test_unvoiced_master_removes_audio_that_fails_dual_mono(
+    tmp_path, comparison_assets, monkeypatch,
+):
+    out = tmp_path / "unvoiced.mp4"
+    real_run = compare.run
+
+    def divergent_channels(cmd):
+        cmd = list(cmd)
+        index = cmd.index("-filter_complex") + 1
+        cmd[index] = cmd[index].replace("[a]", ",pan=stereo|c0=c0|c1=0*c1[a]")
+        real_run(cmd)
+
+    monkeypatch.setattr(compare, "run", divergent_channels)
+    monkeypatch.setattr(levels, "aac_encoder", lambda: levels.AAC_FALLBACK)
+
+    with pytest.raises(levels.LevelsError, match="dual_mono"):
+        compare.master(
+            ["-i", str(comparison_assets.placeholder)], "[0:a]atrim=duration=3", out, 3,
+        )
+
+    assert not out.exists()
 
 
 @pytest.mark.parametrize("brand,music", [(True, True), (False, False)], ids=["brand-and-music", "plain"])

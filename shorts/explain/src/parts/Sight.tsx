@@ -1,7 +1,9 @@
 import React from 'react';
 import {AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
-import type {FanT, StrokeT} from '../schema';
+import {evolvePath, getLength, getPointAtLength, getTangentAtLength} from '@remotion/paths';
+import type {FanT, PathT, StrokeT} from '../schema';
 import {shown} from './anim';
+import {EASE, progress} from './motion';
 
 const grow = (t: number, at: number, dur: number) =>
   interpolate(t, [at, at + dur], [0, 1], {
@@ -95,11 +97,67 @@ const FanView: React.FC<{f: FanT; t: number}> = ({f, t}) => {
   );
 };
 
-// lines of sight and the focus fan over the picture, from the bench's `sight` export
-export const Sight: React.FC<{strokes: StrokeT[]; fans: FanT[]}> = ({strokes, fans}) => {
+// an SVG path through the points: straight segments, or a Catmull-Rom curve through every point
+export const pathThrough = (points: [number, number][], curve: boolean): string => {
+  const [x0, y0] = points[0];
+  if (!curve || points.length === 2) {
+    return `M ${x0} ${y0} ` + points.slice(1).map(([x, y]) => `L ${x} ${y}`).join(' ');
+  }
+  let d = `M ${x0} ${y0}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[Math.max(0, i - 1)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(points.length - 1, i + 2)];
+    const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+    const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    d += ` C ${c1[0]} ${c1[1]} ${c2[0]} ${c2[1]} ${p2[0]} ${p2[1]}`;
+  }
+  return d;
+};
+
+// a path drawing itself: the stroke grows along it (in-out, like the camera), an arrowhead rides the tip
+const PathView: React.FC<{p: PathT; t: number; id: string}> = ({p, t, id}) => {
+  const o = shown(t, p.at, p.until);
+  if (o <= 0) {
+    return null;
+  }
+  const d = pathThrough(p.points, p.curve);
+  const k = progress(t, p.at, p.dur, EASE.inOut);
+  const evolved = evolvePath(k, d);
+  const under = {d, fill: 'none', strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const};
+  const dash = p.dash ? `${p.width * 1.6} ${p.width * 1.8}` : undefined;
+  const len = getLength(d) * k;
+  const tip = getPointAtLength(d, Math.max(len, 0.01)) ?? {x: p.points[0][0], y: p.points[0][1]};
+  const dir = getTangentAtLength(d, Math.max(len, 0.01)) ?? {x: 1, y: 0};
+  const a = Math.atan2(dir.y, dir.x);
+  const r = p.width * 2.4;
+  const head = [
+    [tip.x + Math.cos(a) * r, tip.y + Math.sin(a) * r],
+    [tip.x + Math.cos(a + 2.4) * r, tip.y + Math.sin(a + 2.4) * r],
+    [tip.x + Math.cos(a - 2.4) * r, tip.y + Math.sin(a - 2.4) * r],
+  ].map((q) => q.join(',')).join(' ');
+  return (
+    <g opacity={o}>
+      {p.dash && (
+        <mask id={id} maskUnits="userSpaceOnUse">
+          <path {...under} stroke="#fff" strokeWidth={p.width + 8} {...evolved} />
+        </mask>
+      )}
+      <g mask={p.dash ? `url(#${id})` : undefined}>
+        <path {...under} stroke="rgba(0,0,0,0.6)" strokeWidth={p.width + 6} {...(p.dash ? {strokeDasharray: dash} : evolved)} />
+        <path {...under} stroke={p.color} strokeWidth={p.width} {...(p.dash ? {strokeDasharray: dash} : evolved)} />
+      </g>
+      {p.arrow && k > 0 && <polygon points={head} fill={p.color} stroke="rgba(0,0,0,0.6)" strokeWidth={3} />}
+    </g>
+  );
+};
+
+// lines of sight, drawn paths and the focus fan over the picture, from the bench's exports
+export const Sight: React.FC<{strokes: StrokeT[]; fans: FanT[]; paths?: PathT[]; scope?: string}> = ({strokes, fans, paths = [], scope = ''}) => {
   const {fps, width, height} = useVideoConfig();
   const t = useCurrentFrame() / fps;
-  if (strokes.length === 0 && fans.length === 0) {
+  if (strokes.length === 0 && fans.length === 0 && paths.length === 0) {
     return null;
   }
   return (
@@ -110,6 +168,9 @@ export const Sight: React.FC<{strokes: StrokeT[]; fans: FanT[]}> = ({strokes, fa
         ))}
         {strokes.map((s, i) => (
           <Line key={`s${i}`} s={s} t={t} />
+        ))}
+        {paths.map((p, i) => (
+          <PathView key={`p${i}`} p={p} t={t} id={`path-mask-${scope}-${i}`} />
         ))}
       </svg>
     </AbsoluteFill>

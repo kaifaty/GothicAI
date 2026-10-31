@@ -5,6 +5,11 @@
     gothic-launcher up --no-game        only the services, on their usual ports, until Ctrl-C
     gothic-launcher login               sign in to ChatGPT (once)
     gothic-launcher config show | set KEY [VALUE] | unset KEY | import-env [FILE]
+    gothic-launcher setup [--game-dir DIR] [--change-key]    first run: game folder, remote-only
+                                        profile, Inworld key (hidden input), ChatGPT sign-in
+    gothic-launcher setup --check       what is still missing before `up`, in plain Russian
+    gothic-launcher check [DIR]         check the ready base or installation, without provider requests
+    gothic-launcher prepare [DIR]       prepare the base and videos, without starting services or game
     gothic-launcher control             the launcher window's link to the core (see control.py)
     gothic-launcher play                Ryzen desktop session (also used by the terminal fallback)
 
@@ -23,22 +28,29 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import checks
 from .checks import CHATGPT_TOKENS
 from .commands import (
     LaunchError,
     Ports,
+    base_cache_env,
+    content_converter,
+    default_game_bin,
     find_layout,
     game,
     latest_save,
     load_config,
     new_log_dir,
+    preparation,
     services,
+    storygraph_tool,
     tools,
 )
-from .settings import Config, SettingsError
+from .settings import Config, Secrets, Settings, SettingsError
 from .state import AlreadyRunning, SessionFile
 from .supervisor import Event, Supervisor
 
@@ -61,7 +73,7 @@ def _up(args: argparse.Namespace, session: SessionFile) -> int:
         _smoke_settings(config)
     if args.no_voice:
         config.settings.voice.enabled = False
-    if sys.platform == "linux":
+    if sys.platform in ("linux", "win32"):
         _require_credentials(config)
     layout = find_layout(config)
     ports = DEFAULT_PORTS if args.no_game else Ports.free()
@@ -77,13 +89,17 @@ def _up(args: argparse.Namespace, session: SessionFile) -> int:
         print(f"server health: http://127.0.0.1:{ports.server}/health", flush=True)
     if args.no_game:
         print(f"the game connects to ws://127.0.0.1:{ports.server} (its default)")
+    game_proc = None if args.no_game else game(config, layout, ports, save=save, new=args.new)
     sup = Supervisor(
         services(config, layout, ports, cwd=log_dir),
-        None if args.no_game else game(config, layout, ports, save=save, new=args.new),
+        game_proc,
         log_dir,
         print_event,
         session=session,
         echo=_echo if args.verbose else None,
+        preparation=(
+            preparation(layout.game_bin, layout.game_dir, log_dir, game_proc.env) if game_proc else None
+        ),
     )
     return asyncio.run(_run(sup))
 
@@ -92,14 +108,42 @@ async def _run(sup: Supervisor) -> int:
     loop = asyncio.get_running_loop()
     interrupted: list[int] = []
 
-    def stop(sig: signal.Signals) -> None:
+    def stop(sig: int) -> None:
         interrupted.append(sig)
         sup.stop()
 
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        loop.add_signal_handler(sig, stop, sig)
-    code = await sup.run()
+    restore = on_stop_signals(loop, stop)
+    try:
+        code = await sup.run()
+    finally:
+        restore()
     return 128 + interrupted[0] if interrupted else code
+
+
+def on_stop_signals(loop: asyncio.AbstractEventLoop, callback: Callable[[int], None]) -> Callable[[], None]:
+    """SIGINT, SIGTERM and SIGHUP call `callback(signum)` in the loop; returns what undoes it on Windows.
+
+    Windows has no add_signal_handler: Ctrl-C and Ctrl-Break arrive through signal.signal (the proactor
+    loop wakes up for them) and are handed over to the loop. Closing the console window ends the launcher
+    instead, and the job objects end every process it started."""
+    if sys.platform != "win32":
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            loop.add_signal_handler(sig, callback, sig)
+        return lambda: None
+    stops = (signal.SIGINT, signal.SIGBREAK)
+    previous = {sig: signal.getsignal(sig) for sig in stops}
+
+    def handler(signum: int, _frame: object) -> None:
+        loop.call_soon_threadsafe(callback, signum)
+
+    for sig in stops:
+        signal.signal(sig, handler)
+
+    def restore() -> None:
+        for sig, old in previous.items():
+            signal.signal(sig, old)
+
+    return restore
 
 
 def play(args: argparse.Namespace) -> int:
@@ -117,6 +161,19 @@ def play(args: argparse.Namespace) -> int:
                 print(f"server health: {url}", flush=True)
 
     return asyncio.run(_controlled_session(Control(write), "new" if args.smoke else "continue", args.smoke))
+
+
+def prepare(args: argparse.Namespace) -> int:
+    config = _config()
+    if args.dir is not None:
+        config.settings.game.dir = args.dir
+    layout = find_layout(config)
+    log_dir = new_log_dir()
+    sup = Supervisor(
+        [], None, log_dir, print_event,
+        preparation=preparation(layout.game_bin, layout.game_dir, log_dir, layout.game_env),
+    )
+    return asyncio.run(_run(sup))
 
 
 def session_worker(args: argparse.Namespace) -> int:
@@ -143,8 +200,7 @@ def session_worker(args: argparse.Namespace) -> int:
 async def _controlled_session(control, mode: str, smoke: bool) -> int:
     loop = asyncio.get_running_loop()
     closing = asyncio.Event()
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        loop.add_signal_handler(sig, closing.set)
+    restore = on_stop_signals(loop, lambda _sig: closing.set())
     try:
         await control.session_start(mode=mode, smoke=smoke)
         assert control.task is not None
@@ -157,12 +213,153 @@ async def _controlled_session(control, mode: str, smoke: bool) -> int:
         return control.session["code"] or 0
     finally:
         await control.shutdown()
+        restore()
 
 
 def login(args: argparse.Namespace) -> int:
     repo, uv = tools(Config.load())
     argv = [str(uv), "run", "--project", str(repo / "server"), "gothic-ai", "login", "chatgpt"]
     return subprocess.call(argv)
+
+
+# First-setup profile for a player without their own servers: the brain uses the ChatGPT plan,
+# speech recognition keeps its defaults, and Inworld TTS uses the original NPC voices.
+REMOTE_PROFILE: dict[str, Any] = {
+    "llm.backend": "chatgpt",
+    "llm.quick": False,
+    "llm.decider_url": None,
+    "llm.quick_url": None,
+    "llm.body_url": None,
+    "voice.enabled": True,
+    "tts.enabled": True,
+    "tts.provider": "inworld",
+    "tts.fallback": "none",
+    "tts.original_voices": True,
+}
+NO_GAME_FOLDER = 3  # the Windows setup then shows a folder picker
+
+
+def setup(args: argparse.Namespace) -> int:
+    """First run, for a player: the game folder, the remote-only profile, the Inworld key (hidden input)
+    and the ChatGPT sign-in. Later runs preserve the player's settings and a key already set.
+    `--check` only says what is still missing before `up`."""
+    first_setup = not Config.load().settings_path.exists()
+    config = _config()
+    if args.check:
+        return _preflight(config)
+    replaced = _apply(REMOTE_PROFILE, config) if first_setup else []
+    if first_setup:
+        config.save()
+        print("Мозг NPC: подписка ChatGPT. Распознавание речи и голоса NPC: Inworld, оригинальные голоса.")
+    folder = _choose_game(config, args.game_dir)
+    if folder is None:
+        return NO_GAME_FOLDER
+    replaced.extend(_apply({"game.dir": str(folder)}, config))
+    config.save()
+    print(f"Папка игры: {folder}")
+    if replaced:
+        print("Заменены ваши прежние значения:")
+        for title, old in replaced:
+            print(f"  {title}: было {_shown(old)}")
+    if args.change_key or not config.secrets.inworld_api_key:
+        _ask_inworld_key(config)
+    if not CHATGPT_TOKENS.is_file():
+        print("Сейчас откроется браузер: войдите в ChatGPT и вернитесь в это окно.")
+        if login(args) != 0 or not CHATGPT_TOKENS.is_file():
+            print(f"Вход в ChatGPT не завершён. Запустите {_setup_hint()} ещё раз.")
+    return _preflight(config)
+
+
+def _choose_game(config: Config, given: str | None) -> Path | None:
+    """The given folder, else the one already set, else one found in the Steam libraries. None, with the
+    reasons, when none fits."""
+    if given:
+        candidates, found = [Path(given).expanduser()], False
+    else:
+        current = [config.settings.game.dir] if config.settings.game.dir is not None else []
+        candidates = list(dict.fromkeys([*current, *checks.find_games()]))
+        found = bool(candidates)
+    for folder in candidates:
+        problems = [c for c in checks.game_folder(folder) if not c.ok]
+        if not problems:
+            return folder
+        print(f"Папка {folder} не подходит:")
+        for c in problems:
+            print(f"  {c.title}: {c.detail}")
+    if not found and not given:
+        print("Gothic II с аддоном «Ночь Ворона» не найдена в библиотеках Steam.")
+    print("Укажите папку Gothic II: в ней лежат папки Data и _work.")
+    return None
+
+
+def _apply(values: dict[str, Any], config: Config) -> list[tuple[str, Any]]:
+    """Sets the values; returns (title, old value) of those that replace a value of one's own."""
+    defaults = Config(Settings(), Secrets(), config.dir)
+    replaced = []
+    for key, value in values.items():
+        old = config.get(key)
+        config.set(key, value)
+        if old != config.get(key) and old != defaults.get(key):
+            section, _, field = key.partition(".")
+            model = Settings.model_fields[section].annotation
+            replaced.append((model.model_fields[field].title or key, old))  # type: ignore[union-attr]
+    return replaced
+
+
+def _shown(value: Any) -> str:
+    if value is None:
+        return "пусто"
+    if isinstance(value, bool):
+        return "да" if value else "нет"
+    return str(value)
+
+
+def _ask_inworld_key(config: Config) -> None:
+    """Hidden input, never an argument: the key stays out of the shell history and the process list."""
+    key = getpass.getpass("Вставьте ключ API Inworld (символы не видны) и нажмите Enter: ").strip()
+    if not key:
+        print("Ключ не введён: без него NPC будут молчать, только субтитры.")
+        return
+    config.set("secrets.inworld_api_key", key)
+    config.save()
+    speech = asyncio.run(checks.providers(config))["speech"]["providers"]
+    for c in speech:
+        print(f"{c['title']}: {c['detail']}")
+
+
+def _preflight(config: Config) -> int:
+    """What is still missing before `up`: one plain line each, with what to run; 0 when nothing is."""
+    s, hint, missing = config.settings, _setup_hint(), []
+    if s.game.dir is None or not all(c.ok for c in checks.game_folder(s.game.dir)):
+        missing.append(f"Папка игры не выбрана или не подходит. Запустите {hint}.")
+    try:
+        repo, _ = tools(config)
+    except LaunchError:
+        missing.append(f"Не найден uv или папка проекта. Запустите {hint}.")
+    else:
+        game_bin = s.paths.game_bin or default_game_bin(repo)
+        # `up` prepares the base with the converter beside the game, unless a base is given explicitly
+        prepares = not os.environ.get("OPENGOTHIC_BASE")
+        if not game_bin.is_file() or (prepares and not content_converter(game_bin).is_file()):
+            missing.append(f"Игра ещё не собрана. Запустите {hint}.")
+        if "STORYGRAPH_TOOL" not in os.environ and not storygraph_tool(repo).is_file():
+            missing.append(f"Не собран граф сюжета, без него NPC не знают сюжета. Запустите {hint}.")
+    providers = _providers_in_use(config)
+    if "chatgpt" in providers and not CHATGPT_TOKENS.is_file():
+        missing.append(f"Нет входа в ChatGPT. Запустите {hint}.")
+    if "inworld" in providers and not config.secrets.inworld_api_key:
+        missing.append(f"Не задан ключ Inworld. Запустите {hint}.")
+    if "openai" in providers and not config.secrets.openai_api_key:
+        missing.append("Не задан ключ OpenAI: gothic-launcher config set secrets.openai_api_key")
+    for line in missing:
+        print(line)
+    if not missing:
+        print("Всё готово к игре.")
+    return 2 if missing else 0
+
+
+def _setup_hint() -> str:
+    return "Setup-GothicAI.cmd" if sys.platform == "win32" else "gothic-launcher setup"
 
 
 def config_cmd(args: argparse.Namespace) -> int:
@@ -206,7 +403,7 @@ def _describe(e: Event) -> str | None:
         case "ready":
             return " ".join(filter(None, ["ready", e.detail, _providers(data)]))
         case "status":
-            if e.proc == "microphone":
+            if e.proc in ("microphone", "prepare"):
                 return e.detail
             if not data.get("ok"):
                 return "not answering"
@@ -283,14 +480,19 @@ def _warn_login(config: Config) -> None:
         print("not signed in to ChatGPT: run `gothic-launcher login` first", file=sys.stderr)
 
 
-def _require_credentials(config: Config) -> None:
-    """Fail before spawning Linux services, whose provider constructors need these credentials."""
+def _providers_in_use(config: Config) -> set[str]:
     s = config.settings
     providers = {s.llm.backend}
     if s.voice.enabled:
         providers.update(p.partition(":")[0] for p in (s.voice.provider, s.voice.fallback))
     if s.tts.enabled:
         providers.update(p.partition(":")[0] for p in (s.tts.provider, s.tts.fallback))
+    return providers
+
+
+def _require_credentials(config: Config) -> None:
+    """Fail before spawning Linux or Windows services, whose provider constructors need these credentials."""
+    providers = _providers_in_use(config)
     missing = []
     if "chatgpt" in providers and not CHATGPT_TOKENS.is_file():
         missing.append("not signed in to ChatGPT: run `gothic-launcher login` on this computer")
@@ -307,6 +509,7 @@ def _smoke_settings(config: Config) -> None:
     llm = config.settings.llm
     llm.backend, llm.model, llm.base_url = "fake", None, None
     llm.decider_url, llm.quick_url, llm.body_url, llm.quick = None, None, None, False
+    llm.body_policy, llm.body_net = "service", None
     config.settings.voice.enabled = False
     config.settings.tts.enabled = False
 
@@ -339,6 +542,17 @@ def main() -> None:
 
     sub.add_parser("login", help="sign in to ChatGPT")
     sub.add_parser("control", help="serve the launcher window: JSON lines on stdin and stdout")
+    p = sub.add_parser("check", help="check the ready game base or installation without provider requests")
+    p.add_argument("dir", nargs="?", type=Path, help="game settings directory (default: game.dir)")
+    p = sub.add_parser("prepare", help="prepare the game base and videos without starting game or services")
+    p.add_argument("dir", nargs="?", type=Path, help="game directory (default: game.dir)")
+
+    p = sub.add_parser(
+        "setup", help="first run: game folder, remote-only profile, Inworld key, ChatGPT sign-in"
+    )
+    p.add_argument("--game-dir", help="the Gothic II folder (default: the one set, or found in Steam)")
+    p.add_argument("--change-key", action="store_true", help="enter the Inworld key again (hidden input)")
+    p.add_argument("--check", action="store_true", help="only say what is still missing before `up`")
 
     p = sub.add_parser("config", help="show or change the settings")
     actions = p.add_subparsers(dest="action", required=True)
@@ -352,6 +566,7 @@ def main() -> None:
     a.add_argument("file", nargs="?")
 
     args = parser.parse_args()
+    os.environ.update(base_cache_env())  # Windows: the base readers here and in every child agree
     interrupted = False
     try:
         match args.command:
@@ -359,6 +574,8 @@ def main() -> None:
                 code = up(args)
             case "play":
                 code = play(args)
+            case "prepare":
+                code = prepare(args)
             case "_session":
                 code = session_worker(args)
             case "login":
@@ -369,6 +586,14 @@ def main() -> None:
                 code = control.main()
             case "config":
                 code = config_cmd(args)
+            case "setup":
+                code = setup(args)
+            case "check":
+                from .checks import game_folder
+
+                items = game_folder(args.dir if args.dir is not None else _config().settings.game.dir)
+                print(json.dumps([item.plain() for item in items], ensure_ascii=False))
+                code = 0 if all(item.ok for item in items) else 1
             case _:
                 code = 2
     except (SettingsError, LaunchError, AlreadyRunning) as err:

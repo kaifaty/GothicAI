@@ -88,7 +88,11 @@ struct ObjVisual::FractureView {
       owner->setObjMatrix(owner->renderMatrix);
     for(size_t i=0;i<views.size();++i) {
       const size_t piece = geometry->batches[i].piece;
-      views[i].setObjMatrix(broken && piece<matrices.size() ? matrices[piece] : hiddenFractureMatrix());
+      const bool visible=broken && piece<matrices.size();
+      views[i].setObjMatrix(visible ? matrices[piece] : hiddenFractureMatrix());
+      views[i].setTextureCategory(visible ? Resources::TextureCategory::Dynamic : Resources::TextureCategory::Static);
+      if(!visible)
+        views[i].setTexturePosition(Tempest::Vec3(owner->renderMatrix[3][0],owner->renderMatrix[3][1],owner->renderMatrix[3][2]));
       }
     }
   };
@@ -230,7 +234,7 @@ void ObjVisual::setVisual(const zenkit::IItem& hitem, World& world, bool staticD
     }
   }
 
-void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool staticDraw, bool enablePhysics) {
+void ObjVisual::setVisual(const asset::VirtualObject& vob, World& world, bool staticDraw, bool enablePhysics) {
   cleanup();
 
   const bool       enableCollision = vob.cd_dynamic && enablePhysics; // collide with player
@@ -243,18 +247,19 @@ void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool s
   assert(!FileExt::hasExt(visName,"ZEN"));
 
   switch (vob.visual->type) {
-    case zenkit::VisualType::MESH:
-    case zenkit::VisualType::MULTI_RESOLUTION_MESH: {
+    case asset::VisualType::MESH:
+    case asset::VisualType::MULTI_RESOLUTION_MESH: {
       auto view = Resources::loadMesh(visName);
       if(!view)
         return;
       setType(M_Mesh);
       mesh.proto = view;
-      const bool windy = (vob.anim_mode!=zenkit::AnimationType::NONE && vob.anim_strength>0);
+      const bool windy = (vob.anim_mode!=asset::AnimationType::NONE && vob.anim_strength>0);
       if(vob.show_visual) {
         mesh.view = world.addStaticView(view,staticDraw);
         mesh.view.setWind(vob.anim_mode,vob.anim_strength);
-        cloth = ClothVisual::create(mesh.view,world,vob,enableCollision && !windy);
+        cloth = ClothVisual::create(mesh.view,world,vob,enableCollision && !windy,
+                                    staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic);
         }
 
       if(vob.show_visual && enableCollision && !windy && !cloth) {
@@ -262,8 +267,8 @@ void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool s
         }
       break;
       }
-    case zenkit::VisualType::MODEL:
-    case zenkit::VisualType::MORPH_MESH:{
+    case asset::VisualType::MODEL:
+    case asset::VisualType::MORPH_MESH:{
       // *.MDS; *.ASC; *.MMS
       auto visual = std::string(visName);
       FileExt::exchangeExt(visual,"ASC","MDL");
@@ -273,13 +278,14 @@ void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool s
         return;
       // Authored cloth morph meshes have no skeleton. Keep their normal mesh
       // morph animation as the distant fallback while binding nearby Jolt cloth.
-      if(vob.visual->type==zenkit::VisualType::MORPH_MESH && ClothVisual::supports(visName)) {
+      if(vob.visual->type==asset::VisualType::MORPH_MESH && ClothVisual::supports(visName)) {
         setType(M_Mesh);
         mesh.proto = view;
         if(vob.show_visual) {
           mesh.view = world.addStaticView(view,staticDraw);
           mesh.view.setWind(vob.anim_mode,vob.anim_strength);
-          cloth = ClothVisual::create(mesh.view,world,vob,enableCollision);
+          cloth = ClothVisual::create(mesh.view,world,vob,enableCollision,
+                                      staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic);
           // If a resource fails to bind, retain the native complete collider.
           if(!cloth && enableCollision)
             mesh.physic = PhysicMesh(*view,*world.physic(),true);
@@ -292,9 +298,12 @@ void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool s
       mdl.view.setVisual(view->skeleton.get());
 
       if(vob.show_visual) {
+        MeshObjects::Mesh visual;
         if((view->skeleton==nullptr || view->skeleton->animation()==nullptr) && enableCollision)
-          mdl.view.setVisualBody(world,world.addStaticView(view,true)); else
-          mdl.view.setVisualBody(world,world.addView(view));
+          visual=world.addStaticView(view,true); else
+          visual=world.addView(view);
+        visual.setTextureCategory(staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic);
+        mdl.view.setVisualBody(world,std::move(visual));
         }
 
       if(vob.show_visual && enableCollision) {
@@ -303,21 +312,21 @@ void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool s
         }
       break;
       }
-    case zenkit::VisualType::DECAL: {
+    case asset::VisualType::DECAL: {
       // *.TGA
-      if(vob.sprite_camera_facing_mode!=zenkit::SpriteAlignment::NONE) {
+      if(vob.sprite_camera_facing_mode!=asset::SpriteAlignment::NONE) {
         setType(M_Pfx);
         pfx = PfxEmitter(world,vob);
         pfx.setActive(true);
         pfx.setLooped(true);
         }
-      else if(auto decal = dynamic_cast<const zenkit::VisualDecal*>(vob.visual.get())) {
+      else if(auto decal = dynamic_cast<const asset::VisualDecal*>(vob.visual.get())) {
         setType(M_Mesh);
         mesh.view = world.addDecalView(*decal);
         }
       break;
       }
-    case zenkit::VisualType::PARTICLE_EFFECT: {
+    case asset::VisualType::PARTICLE_EFFECT: {
       // *.PFX
       setType(M_Pfx);
       pfx = PfxEmitter(world,vob);
@@ -325,8 +334,8 @@ void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool s
       pfx.setLooped(true);
       break;
       }
-    case zenkit::VisualType::AI_CAMERA:
-    case zenkit::VisualType::UNKNOWN:
+    case asset::VisualType::AI_CAMERA:
+    case asset::VisualType::UNKNOWN:
       break;
     }
   }
@@ -342,6 +351,10 @@ void ObjVisual::setObjMatrix(const Tempest::Matrix4x4& obj) {
       break;
     case M_Mesh:
       mesh.view.setObjMatrix(fracture && fracture->broken ? hiddenFractureMatrix() : obj);
+      mesh.view.setTexturePosition(Tempest::Vec3(obj[3][0],obj[3][1],obj[3][2]));
+      if(fracture && !fracture->broken)
+        for(auto& view:fracture->views)
+          view.setTexturePosition(Tempest::Vec3(obj[3][0],obj[3][1],obj[3][2]));
       mesh.physic.setObjMatrix(obj);
       if(cloth)
         cloth->setMatrix(obj);
@@ -365,6 +378,8 @@ void ObjVisual::setupFracture(World& world, DynamicWorld::Item& body) {
   for(const auto& batch:fracture->geometry->batches) {
     fracture->views.push_back(world.addView(batch.mesh.get()));
     fracture->views.back().setObjMatrix(hiddenFractureMatrix());
+    fracture->views.back().setTextureCategory(Resources::TextureCategory::Static);
+    fracture->views.back().setTexturePosition(Tempest::Vec3(renderMatrix[3][0],renderMatrix[3][1],renderMatrix[3][2]));
     }
   body.setFractureCallback([view=std::weak_ptr<FractureView>(fracture)](bool broken, const std::vector<Tempest::Matrix4x4>& matrices) {
     if(auto locked = view.lock())

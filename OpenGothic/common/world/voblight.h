@@ -5,7 +5,7 @@
 
 class VobLight : public Vob {
   public:
-    VobLight(Vob* parent, World& world, const zenkit::VLight& vob, Flags flags);
+    VobLight(Vob* parent, World& world, const asset::VLight& vob, Flags flags);
 
   private:
     void  moveEvent() override;

@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <queue>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace {
@@ -19,21 +21,37 @@ constexpr int NearSize = 64, FarSize = 100;
 constexpr int NearCount = NearSize*NearSize, Count = NearCount+FarSize*FarSize;
 constexpr float NearCell = 25, FarCell = 200, NearExtent = 800;
 constexpr float Infinity = std::numeric_limits<float>::infinity();
+constexpr float WaterMarginCm = 75.f;
 
 float length(Point p) { return std::hypot(p.rightCm,p.forwardCm); }
 float distance(Point a,Point b) { return length({a.rightCm-b.rightCm,a.forwardCm-b.forwardCm}); }
 float sign(float v) { return v<0 ? -1.f : 1.f; }
-bool dangerous(const Cell& c) {
-  // Even faded evidence remains an obstacle until the learner's own memory
-  // quantizes it to zero. Confidence/free never erase a dangerous channel.
-  for(size_t k=2;k<c.channels.size();++k)
+bool familiarDanger(const Cell& c) {
+  for(size_t k=2;k<6;++k)
     if(c.channels[k]!=0) return true;
   return false;
   }
-bool knownFree(const Cell& c) {
-  return c.channels[0]>0 && c.channels[1]>0 && !dangerous(c);
+bool dangerous(const Cell& c) {
+  // Movable evidence is always live, including when the static map is familiar.
+  // Live static danger retains its hard veto even after confidence has faded.
+  return c.channels[6]!=0 || (c.familiar==0 && familiarDanger(c));
   }
-float cost(const Cell& c,float unknownCost) {
+bool liveWater(const Cell& c) { return c.familiar==0 && c.channels[5]!=0; }
+bool knownFree(const Cell& c,bool familiarMap) {
+  if(c.familiar!=0 && !familiarMap) return false;
+  return c.channels[0]>0 && c.channels[1]>0 && !familiarDanger(c) && !dangerous(c);
+  }
+float cost(const Cell& c,float unknownCost,bool familiarMap) {
+  // Two-metre familiar tiles mix walls and passages. Their existing familiar
+  // channel selects a soft prior; fresh live observations have already won in
+  // memory. Second/final candidate: familiar free 2, unknown 4, danger 4.25;
+  // the weaker hazard premium avoids overpricing mixed passage tiles.
+  if(c.familiar!=0) {
+    if(!familiarMap) return unknownCost;
+    if(familiarDanger(c)) return unknownCost*1.0625f;
+    if(c.channels[1]!=0) return std::max(1.f,unknownCost*.5f);
+    return unknownCost;
+    }
   // Optimism: an unobserved cell costs four times clear observed ground,
   // rather than becoming an artificial wall at the edge of perception.
   const float knownFree=float(std::min(c.channels[0],c.channels[1]))/255.f;
@@ -59,11 +77,18 @@ class Grid final {
     explicit Grid(const Input& input):Grid(input,DiagnosticsOptions{}) {}
     Grid(const Input& input,const DiagnosticsOptions& parameters)
       :in(input),options(parameters),blocked(Count),active(Count),costs(Count) {
+      const char* enabled=std::getenv("OPENGOTHIC_NAV_FAMILIAR_MAP");
+      familiarMap=enabled && std::string_view(enabled)=="1";
+      waterLayers={std::any_of(in.near.begin(),in.near.end(),liveWater),
+                   std::any_of(in.far.begin(),in.far.end(),liveWater)};
       // Only already occupied near cells touching the current body footprint
       // lose their inflation. Their raw square remains blocked. The exemption
       // cannot propagate to the rest of a wall or to far coarse cells.
       for(int i=0;i<NearCount;++i) {
         if(!dangerous(cell(in,i))) continue;
+        // Water must never use the occupied-start exemption to step deeper
+        // through adjacent wet cells. Stop before entering its safety margin.
+        if(liveWater(cell(in,i))) continue;
         const Point p=center(i);
         const float dx=std::max(0.f,std::abs(p.rightCm)-NearCell*.5f);
         const float dz=std::max(0.f,std::abs(p.forwardCm)-NearCell*.5f);
@@ -76,7 +101,7 @@ class Grid final {
         const Point p=center(i);
         active[size_t(i)]=i<NearCount || (!options.nearOnly && !insideNear(p));
         blocked[size_t(i)]=!clear(p);
-        costs[size_t(i)]=cost(cell(in,i),options.unknownCost);
+        costs[size_t(i)]=cost(cell(in,i),options.unknownCost,familiarMap);
         }
       }
     void statistics(Diagnostics& result) const {
@@ -84,7 +109,7 @@ class Grid final {
       for(int i=0;i<Count;++i) {
         const size_t layer=i<NearCount ? 0 : 1;
         dangerCount[layer]+=dangerous(cell(in,i));
-        freeCount[layer]+=knownFree(cell(in,i));
+        freeCount[layer]+=knownFree(cell(in,i),familiarMap);
         if(active[size_t(i)]) {
           ++activeCount[layer];
           blockedCount[layer]+=blocked[size_t(i)]!=0;
@@ -108,16 +133,18 @@ class Grid final {
         if(!near && options.nearOnly) return true;
         const int size=near ? NearSize : FarSize;
         const float step=near ? NearCell : FarCell;
-        const int x0=std::max(0,int(std::floor((p.rightCm-radius)/step+float(size)*.5f)));
-        const int x1=std::min(size-1,int(std::floor((p.rightCm+radius)/step+float(size)*.5f)));
-        const int z0=std::max(0,int(std::floor((p.forwardCm-radius)/step+float(size)*.5f)));
-        const int z1=std::min(size-1,int(std::floor((p.forwardCm+radius)/step+float(size)*.5f)));
+        const bool waterMargin=radius>0 && waterLayers[near ? 0 : 1];
+        const float searchRadius=waterMargin ? std::max(radius,WaterMarginCm) : radius;
+        const int x0=std::max(0,int(std::floor((p.rightCm-searchRadius)/step+float(size)*.5f)));
+        const int x1=std::min(size-1,int(std::floor((p.rightCm+searchRadius)/step+float(size)*.5f)));
+        const int z0=std::max(0,int(std::floor((p.forwardCm-searchRadius)/step+float(size)*.5f)));
+        const int z1=std::min(size-1,int(std::floor((p.forwardCm+searchRadius)/step+float(size)*.5f)));
         for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x) {
           const int index=z*size+x+(near ? 0 : NearCount);
           const Point q=center(index);
           if(!near && insideNear(q)) continue;
           const auto& evidence=cell(in,index);
-          if(!dangerous(evidence) && (!options.knownFreeOnly || knownFree(evidence))) continue;
+          if(!dangerous(evidence) && (!options.knownFreeOnly || knownFree(evidence,familiarMap))) continue;
           if(near && bodyOverlap[size_t(index)]) {
             if(leavingBodyOverlap) continue;
             // Half-open raw occupancy, matching the memory cell addressing.
@@ -128,7 +155,8 @@ class Grid final {
             }
           const float dx=std::max(0.f,std::abs(p.rightCm-q.rightCm)-step*.5f);
           const float dz=std::max(0.f,std::abs(p.forwardCm-q.forwardCm)-step*.5f);
-          if(dx*dx+dz*dz<=radius*radius) return false;
+          const float margin=waterMargin && liveWater(evidence) ? std::max(radius,WaterMarginCm) : radius;
+          if(dx*dx+dz*dz<=margin*margin) return false;
           }
         return true;
         };
@@ -203,6 +231,8 @@ class Grid final {
   private:
     const Input& in;
     const DiagnosticsOptions options;
+    bool familiarMap = false;
+    std::array<bool,2> waterLayers = {};
     std::array<uint8_t,NearCount> bodyOverlap = {};
     uint32_t overlapCount = 0;
     std::vector<uint8_t> blocked,active;
@@ -306,6 +336,9 @@ void quantize(const NavigationMemory::Layer& from,size_t size,float step,NavMemo
         throw std::runtime_error("memory teacher: invalid learner memory channel");
       out[i].channels[k]=uint8_t(std::lround(channels[k]*255.f));
       }
+    if(!std::isfinite(c.familiar) || c.familiar<0 || c.familiar>1)
+      throw std::runtime_error("memory teacher: invalid learner familiarity");
+    out[i].familiar=uint8_t(std::lround(c.familiar*255.f));
     if(!std::isfinite(c.groundHeightCm) && !std::isnan(c.groundHeightCm))
       throw std::runtime_error("memory teacher: infinite learner memory height");
     out[i].heightValid=std::isfinite(c.groundHeightCm);
@@ -339,7 +372,7 @@ NavMemoryTeacher::Diagnostics NavMemoryTeacher::probe(const Input& input,const D
 
 void NavMemoryTeacher::reset() {
   route.clear();routeLength=0;stuckTicks=0;recoveryTicks=0;recoveryAttempts=0;
-  recoverySide=1;complete=false;observedGoal=false;previousGoal={};movingTicks=0;
+  recoverySide=1;complete=false;observedGoal=false;previousGoal={};movingTicks=0;runningTargetTicks=0;
   latestPlanStatus=PlanStatus{};
   }
 
@@ -361,13 +394,23 @@ NpcKeys::KeyState NavMemoryTeacher::decide(const Input& in) {
     const float c=std::cos(angle),s=std::sin(angle);
     const Point predicted={previousGoal.rightCm*c-previousGoal.forwardCm*s-in.body.velocityCmS[0]*.1f,
                            previousGoal.rightCm*s+previousGoal.forwardCm*c-in.body.velocityCmS[2]*.1f};
-    if(distance(goal,predicted)>8 && distance(goal,predicted)<120) movingTicks=5;
+    const float targetStep=distance(goal,predicted);
+    if(targetStep>8 && targetStep<120) movingTicks=5;
     else if(movingTicks>0) --movingTicks;
+    // This is the target's observed displacement after subtracting our own
+    // movement, not its hidden native gait or world velocity. Retain a running
+    // observation briefly through a turn or the target's next acceleration.
+    if(targetStep>22 && targetStep<120) runningTargetTicks=5;
+    else if(runningTargetTicks>0) --runningTargetTicks;
     }
   observedGoal=true;previousGoal=goal;
-  // Motion is inferred exclusively from learner observations. Static targets
-  // use the same walking gait as v2; a receding target can be caught at a run.
-  if(movingTicks>0 && in.roads.goalDistanceCm>400) out.walk=false;
+  // Motion is inferred exclusively from learner observations. The previous
+  // recorded action carries the gait hysteresis; no scenario mode is read.
+  if(movingTicks>0) {
+    out.walk=in.previous.walk;
+    if(in.roads.goalDistanceCm>400 || (runningTargetTicks>0 && in.roads.goalDistanceCm>300)) out.walk=false;
+    else if(in.roads.goalDistanceCm<300) out.walk=true;
+    }
 
   if(in.body.flags[0] || in.body.flags[1] || in.body.flags[3]) return out;
   if(in.roads.goalDistanceCm<75) {
@@ -398,19 +441,25 @@ NpcKeys::KeyState NavMemoryTeacher::decide(const Input& in) {
       }
     return out;
     }
-  if(movingTicks>0 && in.roads.goalDistanceCm<280) {
+  // Following exposes its stand-off point as the learner's carrot. Approaching
+  // exposes the target itself, so nearby target motion must not prevent contact.
+  if(movingTicks>0 && !in.roads.beyondKnown && targetDistance<50) {
     stuckTicks=0;recoveryTicks=0;
     // A target turning back toward the follower must not push it inside the
     // tracking band. Retreat using only currently clear remembered ground.
     const float angle=std::atan2(goal.rightCm,goal.forwardCm)*180.f/Pi;
     if(std::abs(angle)>10) out.turn=-sign(angle);
     if(in.roads.goalDistanceCm<220) {
-      Point away;
-      if(std::abs(goal.rightCm)>std::abs(goal.forwardCm)) away={-sign(goal.rightCm)*70,0};
-      else away={0,-sign(goal.forwardCm)*70};
-      if(grid.segment({},away,true)) {
-        if(away.rightCm!=0) out.strafe=sign(away.rightCm);
-        else out.forward=sign(away.forwardCm);
+      const bool sidewaysFirst=std::abs(goal.rightCm)>std::abs(goal.forwardCm);
+      for(unsigned attempt=0;attempt<2;++attempt) {
+        const bool sideways=attempt==0 ? sidewaysFirst : !sidewaysFirst;
+        const float component=sideways ? goal.rightCm : goal.forwardCm;
+        if(component==0) continue;
+        const Point away=sideways ? Point{-sign(component)*70,0} : Point{0,-sign(component)*70};
+        if(!grid.segment({},away,true)) continue;
+        if(sideways) out.strafe=-sign(component);
+        else out.forward=-sign(component);
+        break;
         }
       }
     return out;

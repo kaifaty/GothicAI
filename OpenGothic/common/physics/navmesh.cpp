@@ -536,6 +536,10 @@ struct NavMesh::Impl {
   };
 
 NavMesh::NavMesh():impl(std::make_unique<Impl>()){}
+
+uint64_t NavMesh::cacheKey(const Geometry& geometry, const Params& params, const std::string& worldName) {
+  return geometryHash(geometry,params,worldName);
+  }
 NavMesh::~NavMesh() = default;
 NavMesh::NavMesh(NavMesh&&) noexcept = default;
 NavMesh& NavMesh::operator=(NavMesh&&) noexcept = default;
@@ -567,7 +571,7 @@ void NavMesh::buildOrLoad(const Geometry& geometry, const Params& parameters,
   impl->stats.triangles = uint64_t(geometry.triangles.size()/3);
   impl->stats.waterTriangles = uint64_t(geometry.waterTriangles.size()/3);
   const auto hashStart = Clock::now();
-  const uint64_t hash = geometryHash(geometry,parameters,worldName);
+  const uint64_t hash = cacheKey(geometry,parameters,worldName);
   const double hashSeconds = elapsed(hashStart);
   std::ostringstream key;
   key << std::hex << std::setfill('0') << std::setw(16) << hash;
@@ -871,6 +875,69 @@ NavMesh::GroundLocation NavMesh::groundLocation(const Point& position) const {
     result.horizontalDistance=std::hypot(snapped[0]-position[0],snapped[2]-position[2]);
     result.verticalOffset=snapped[1]-position[1];
     }
+  return result;
+  }
+
+std::vector<NavMesh::GroundLocation> NavMesh::nearbyGroundLocations(const Point& position) const {
+  std::vector<GroundLocation> result;
+  if(!impl->query || !impl->mesh) return result;
+  for(float value:position) if(!std::isfinite(value)) return result;
+  // Tile bounds contain the native world height range. Search every local
+  // storey rather than guessing ground Y from the actor's current pose.
+  Point center=position;
+  float low=std::numeric_limits<float>::infinity(),high=-std::numeric_limits<float>::infinity();
+  for(int i=0;i<impl->mesh->getMaxTiles();++i) {
+    const auto* tile=static_cast<const dtNavMesh&>(*impl->mesh).getTile(i);
+    if(tile==nullptr || tile->header==nullptr) continue;
+    low=std::min(low,tile->header->bmin[1]);high=std::max(high,tile->header->bmax[1]);
+    }
+  if(!std::isfinite(low) || !std::isfinite(high)) return result;
+  center[1]=(low+high)*.5f;
+  const float vertical=(high-low)*.5f+impl->params.cellHeight;
+  dtQueryFilter filter;filter.setIncludeFlags(groundOnlyFlag);
+  const float extents[3]={6.f,vertical,6.f};
+  std::array<dtPolyRef,512> polygons={};int count=0;
+  const auto status=impl->query->queryPolygons(center.data(),extents,&filter,polygons.data(),&count,int(polygons.size()));
+  if(dtStatusFailed(status) || dtStatusDetail(status,DT_BUFFER_TOO_SMALL)) return result;
+  const auto source=groundLocation(position);
+  constexpr float Pi=3.14159265358979323846f;
+  for(unsigned ring=2;ring<=6;++ring)for(unsigned angle=0;angle<16;++angle) {
+    const float radians=float(angle)*(2.f*Pi/16.f);
+    const Point sample={position[0]+float(ring)*std::cos(radians),position[1],position[2]+float(ring)*std::sin(radians)};
+    GroundLocation closest;
+    double best=std::numeric_limits<double>::max();bool bestComponent=false;
+    for(int i=0;i<count;++i) {
+      const auto ref=polygons[size_t(i)];
+      const auto component=impl->groundComponents.find(ref);
+      if(component==impl->groundComponents.end()) continue;
+      Point snapped{};bool over=false;
+      if(dtStatusFailed(impl->query->closestPointOnPoly(ref,sample.data(),snapped.data(),&over))) continue;
+      bool finite=true;for(float value:snapped) finite&=std::isfinite(value);
+      if(!finite) continue;
+      const float horizontal=std::hypot(snapped[0]-position[0],snapped[2]-position[2]);
+      if(horizontal<2.f || horizontal>6.f) continue;
+      double squared=0;
+      for(size_t axis=0;axis<3;++axis) squared+=std::pow(double(snapped[axis])-double(sample[axis]),2);
+      const bool same=source.known && component->second==source.component;
+      if(closest.known && ((bestComponent && !same) ||
+         (bestComponent==same && (squared>best || (squared==best && uint64_t(ref)>=closest.polygon))))) continue;
+      closest.known=true;closest.snapped=snapped;closest.polygon=uint64_t(ref);closest.component=component->second;
+      closest.snapDistance=distance(snapped,position);closest.horizontalDistance=horizontal;closest.verticalOffset=snapped[1]-position[1];
+      best=squared;bestComponent=same;
+      }
+    if(!closest.known) continue;
+    const bool duplicate=std::any_of(result.begin(),result.end(),[&](const GroundLocation& value) {
+      return distance(value.snapped,closest.snapped)<.01f;
+      });
+    if(!duplicate) result.push_back(closest);
+    }
+  std::sort(result.begin(),result.end(),[&](const GroundLocation& a,const GroundLocation& b) {
+    const bool aSource=source.known && a.component==source.component,bSource=source.known && b.component==source.component;
+    if(aSource!=bSource) return aSource;
+    if(a.snapDistance!=b.snapDistance) return a.snapDistance<b.snapDistance;
+    if(a.polygon!=b.polygon) return a.polygon<b.polygon;
+    return a.snapped<b.snapped;
+    });
   return result;
   }
 

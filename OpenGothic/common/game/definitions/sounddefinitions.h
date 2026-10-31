@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/addon/daedalus.hh>
+#include "game/definitions/definitiontypes.h"
 
 #include <unordered_map>
 
@@ -8,9 +8,9 @@ class SoundDefinitions final {
   public:
     SoundDefinitions();
 
-    const zenkit::ISoundEffect& operator [](std::string_view name) const;
+    const Def::SoundEffect& operator [](std::string_view name) const;
 
   private:
-    std::unordered_map<std::string, std::shared_ptr<zenkit::ISoundEffect>> sfx;
+    std::unordered_map<std::string, std::shared_ptr<Def::SoundEffect>> sfx;
   };
 

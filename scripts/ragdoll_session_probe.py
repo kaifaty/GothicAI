@@ -57,6 +57,8 @@ def launch(binary, assets, save, output, scenario, timeout):
                  "OPENGOTHIC_PHYSICS_TRACE", "OPENGOTHIC_BODY_TRACE"):
         env.pop(name, None)
     env.update(declared)
+    subprocess.run(["bash", str(Path(__file__).with_name("base-ensure.sh")), str(assets)],
+                   env=dict(env, GAME_BIN=str(binary)), check=True)
     start = time.monotonic()
     before_sha = sha(binary)
     with (output / "game.log").open("w") as log:

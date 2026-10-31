@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Collection, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 Role = Literal["user", "assistant", "developer"]
-ToolChoice = Literal["auto", "none"]
+ToolChoice = Literal["auto", "none", "required"]
+
+# A quick-model request's llama.cpp slot; scoped to its coroutine, including test backends.
+QUICK_SLOT: ContextVar[int | None] = ContextVar("quick_slot", default=None)
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,7 @@ class Done:
     text: str
     items: tuple[Item, ...] = ()  # the response as request items, in order: reasoning, text, calls
     usage: Usage | None = None
+    timing: dict[str, Any] | None = None  # provider transport and raw response event timings
 
 
 LLMEvent = TextDelta | ToolCall | Done
@@ -142,9 +147,13 @@ class LLMBackend(Protocol):
         tool_choice: ToolChoice | None = None,
         allowed: Collection[str] | None = None,
         cache_key: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        grammar: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         """Yield `TextDelta`s and `ToolCall`s as they arrive, then exactly one `Done` with the full text.
         `tool_choice="none"` keeps the tools in the request (and the prompt cache) but forbids calls;
         `allowed` likewise lets only the named ones be called (None: all of them). `cache_key`: requests
-        that share their start (an npc's) and the provider's prompt cache with it."""
+        that share their start (an npc's) and the provider's prompt cache with it.
+        `temperature`, `max_tokens`, `grammar`: quick-model output overrides."""
         ...

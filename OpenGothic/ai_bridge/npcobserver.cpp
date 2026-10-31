@@ -275,7 +275,7 @@ void NpcObserver::tick(World& world) {
     releaseHeld(world,held[i]);  // no verdict in time: the scripts react as they would have
     held.erase(held.begin()+ptrdiff_t(i));
     }
-  if(now<nextRoster)
+  if(now<nextRoster && nextRoster<=now+RosterPeriodMs)
     return;
   nextRoster = now+RosterPeriodMs;
   // Deed keys are unique for every action, unlike the bounded actor-pair cache.
@@ -838,13 +838,18 @@ void NpcObserver::act(World& world, const rapidjson::Value& msg) {
       if(!line.empty()) {
         uint64_t audioMs = 0;
         std::shared_ptr<LipSync::Track> voice;
-        world.addDlgSound(std::string(line)+".WAV",npc->mapHeadBone(),WorldSound::talkRange,audioMs,&voice);
-        if(audioMs>0) {
-          npc->startSpeech(std::move(voice));
+        auto& fn = Gothic::inst().interceptSvm;
+        const bool replaced = fn && fn(*npc,svm,line,target,true);
+        if(replaced)
+          audioMs = world.script().messageTime(line); else
+          world.addDlgSound(std::string(line)+".WAV",npc->mapHeadBone(),WorldSound::talkRange,audioMs,&voice);
+        if(replaced || audioMs>0) {
+          if(!replaced)
+            npc->startSpeech(std::move(voice));
           npc->setAiOutputBarrier(world.script().messageTime(line),true);
           TestBench::npcOutput(*npc,svm,target,audioMs);
           Tempest::Log::i("[ai] ",symbol," combat shout ",svm," audio_ms=",audioMs,
-                         " game_ms=",world.tickCount());
+                         " replaced=",replaced," game_ms=",world.tickCount());
           }
         }
       }
@@ -1111,7 +1116,7 @@ bool NpcObserver::throttled(std::string_view npc, std::string_view kind, uint64_
   key += '/';
   key += kind;
   auto it = lastEvent.find(key);
-  if(it!=lastEvent.end() && now<it->second+periodMs)
+  if(it!=lastEvent.end() && it->second<=now && now<it->second+periodMs)
     return true;
   lastEvent[key] = now;
   return false;

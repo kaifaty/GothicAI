@@ -65,8 +65,8 @@ class DialogMenu : public Tempest::Widget {
       Pipe(DialogMenu& owner):owner(owner){}
 
       bool output   (Npc& npc, std::string_view text) override;
-      bool outputSvm(Npc& npc, std::string_view text) override;
-      bool outputOv (Npc& npc, std::string_view text) override;
+      bool outputSvm(Npc& npc, std::string_view text, std::string_view svm, Npc* target) override;
+      bool outputOv (Npc& npc, std::string_view text, std::string_view svm, Npc* target) override;
       bool printScr (Npc& npc, int time, std::string_view msg, int x, int y, std::string_view font) override;
 
       bool close() override;

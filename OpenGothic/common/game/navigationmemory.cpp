@@ -1,7 +1,10 @@
 #include "navigationmemory.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <stdexcept>
+#include <tuple>
 
 namespace {
 using Tempest::Vec3;
@@ -76,6 +79,94 @@ void NavigationMemory::reset() {
   pathHistory.clear();
   }
 
+void NavigationMemory::setFamiliarMap(const FamiliarMap* map, FamiliarMask mask) {
+  if(map && !map->finished)
+    throw std::invalid_argument("familiar map must be finished before assigning a mask");
+  if(!mask.empty() && (!map || mask.size()!=(map->tiles.size()+63)/64))
+    throw std::invalid_argument("familiar mask does not match the map's tile count");
+  familiarMap = map;
+  familiarMask = std::move(mask);
+  familiarWindow.clear();
+  refreshFamiliarWindow();
+  }
+
+void NavigationMemory::refreshFamiliarWindow() {
+  if(!familiarMap || familiarMask.empty())
+    return;
+  if(!familiarWindow.empty() && familiarMinX==farGrid.minX && familiarMinZ==farGrid.minZ)
+    return;
+  familiarMinX=farGrid.minX;
+  familiarMinZ=farGrid.minZ;
+  familiarWindow.assign(farGrid.size*farGrid.size,nullptr);
+  const auto& tiles=familiarMap->tiles;
+  for(int x=farGrid.minX; x<farGrid.minX+int(farGrid.size); ++x) {
+    auto next=std::lower_bound(tiles.begin(),tiles.end(),std::pair(x,farGrid.minZ),
+                               [](const FamiliarTile& tile,const auto& key) {
+      return std::pair(tile.x,tile.z)<key;
+      });
+    for(; next!=tiles.end() && next->x==x && next->z<farGrid.minZ+int(farGrid.size); ++next) {
+      const size_t index=size_t(next-tiles.begin());
+      if((familiarMask[index/64]&(uint64_t(1)<<(index%64)))!=0)
+        familiarWindow[ringCoordinate(next->z,farGrid.size)*farGrid.size+ringCoordinate(x,farGrid.size)]=&*next;
+      }
+    }
+  }
+
+void NavigationMemory::FamiliarMap::bake(const NavigationMemory& observed, uint32_t source) {
+  if(!observed.posed)
+    return;
+  finished = false;
+  const auto& grid = observed.farGrid;
+  const auto limits = observed.classificationLimits();
+  for(int z=grid.minZ; z<grid.minZ+int(grid.size); ++z)
+    for(int x=grid.minX; x<grid.minX+int(grid.size); ++x) {
+      const auto cell = observed.classify(grid,x,z,limits);
+      FamiliarTile tile;
+      tile.x=x; tile.z=z; tile.referenceHeightCm=observed.body.position.y;
+      tile.groundHeightCm=cell.groundHeightCm;
+      tile.source=source;
+      const float cutoff=Constants::familiarConfidence;
+      if(cell.free>=cutoff) tile.channels|=FamiliarTile::Free;
+      if(cell.wall>=cutoff) tile.channels|=FamiliarTile::Wall;
+      if(cell.ledge>=cutoff) tile.channels|=FamiliarTile::Ledge;
+      if(cell.drop>=cutoff) tile.channels|=FamiliarTile::Drop;
+      if(cell.water>=cutoff) tile.channels|=FamiliarTile::Water;
+      if(tile.channels!=0)
+        tiles.push_back(tile);
+      }
+  }
+
+void NavigationMemory::FamiliarMap::finish() {
+  const auto key = [](const FamiliarTile& tile) {
+    return std::tuple(tile.x,tile.z,tile.source);
+    };
+  std::stable_sort(tiles.begin(),tiles.end(),[&](const auto& a,const auto& b) { return key(a)<key(b); });
+  size_t used=0;
+  for(size_t begin=0; begin<tiles.size();) {
+    auto tile=tiles[begin];
+    size_t end=begin+1;
+    while(end<tiles.size() && key(tiles[end])==key(tile)) {
+      // Combining views from this one eye pose is honest; classifications from
+      // another source are never added to the same canonical tile.
+      tile.channels|=tiles[end].channels;
+      if(std::isfinite(tiles[end].groundHeightCm))
+        tile.groundHeightCm=tiles[end].groundHeightCm;
+      ++end;
+      }
+    if(used>0 && tiles[used-1].x==tile.x && tiles[used-1].z==tile.z) {
+      if(std::popcount(tile.channels)>std::popcount(tiles[used-1].channels))
+        tiles[used-1]=tile;
+      }
+    else {
+      tiles[used++]=tile;
+      }
+    begin=end;
+    }
+  tiles.resize(used);
+  tiles.shrink_to_fit();
+  finished=true;
+  }
+
 float NavigationMemory::pathAt(uint64_t gameMs) const {
   const auto next = std::lower_bound(pathHistory.begin(),pathHistory.end(),gameMs,
                                    [](const PathStamp& stamp, uint64_t time) { return stamp.gameMs<time; });
@@ -105,6 +196,7 @@ void NavigationMemory::update(const std::vector<NavigationEye::Ray>& rays, const
     pathHistory.push_back({pose.gameMs,pathCm});
   nearGrid.center(body.position);
   farGrid.center(body.position);
+  refreshFamiliarWindow();
   if(rayStamps.size()<rays.size())
     rayStamps.resize(rays.size());
 
@@ -309,8 +401,116 @@ void NavigationMemory::reconstructWater(Grid& grid, const std::vector<const Navi
 float NavigationMemory::confidence(const Evidence& evidence, bool movable) const {
   const double age = double(body.gameMs-evidence.gameMs)*.001;
   const double distance = std::max(0.,pathCm-double(evidence.pathCm));
-  const double tau = movable ? Constants::movableTauSeconds : Constants::staticTauSeconds;
-  return float(std::exp(-age/tau-distance/double(Constants::distanceLambdaCm)));
+  const double tau = movable ? Constants::movableTauSeconds : journeyMemory ? Constants::staticTauSeconds : 30.f;
+  const double lambda = journeyMemory ? Constants::distanceLambdaCm : 3000.f;
+  return float(std::exp(-age/tau-distance/lambda));
+  }
+
+NavigationMemory::ClassificationLimits NavigationMemory::classificationLimits() const {
+  ClassificationLimits result;
+  result.step = std::isfinite(body.stepHeightCm) && body.stepHeightCm>0.f ?
+                     body.stepHeightCm : Constants::stepCm;
+  const float slopeDegrees = std::isfinite(body.maxSlopeDegrees) ?
+                             std::clamp(body.maxSlopeDegrees,0.f,89.f) : Constants::maxSlopeDegrees;
+  result.slope = std::tan(slopeDegrees*3.14159265358979323846f/180.f);
+  result.bodyHeight = std::isfinite(body.bodyHeightCm) && body.bodyHeightCm>0.f ?
+                           body.bodyHeightCm : Constants::bodyHeightCm;
+  return result;
+  }
+
+NavigationMemory::Cell NavigationMemory::classify(const Grid& grid, int x, int z, const ClassificationLimits& limits) const {
+  Cell output;
+  const auto& input = grid.at(x,z);
+  if(input.known==0)
+    return output;
+  std::array<float,ChannelCount> c = {};
+  for(size_t channel=0; channel<ChannelCount; ++channel)
+    if((input.known&(1u<<channel))!=0) {
+      c[channel] = confidence(input.evidence[channel],channel==Movable);
+      output.confidence = std::max(output.confidence,c[channel]);
+      }
+  output.free = std::max(output.free,c[Free]);
+  // A hit above an observed walking surface does not prove a wall in the
+  // space occupied by the body. Nearby ground is evidence, not a guess at
+  // the height of unseen terrain. Without it the wall remains conservative.
+  bool overheadWall = false;
+  if(c[Wall]>0.f) {
+    const auto& wall = input.evidence[Wall];
+    float nearest = std::numeric_limits<float>::infinity();
+    for(int nz=z-1; nz<=z+1; ++nz)
+      for(int nx=x-1; nx<=x+1; ++nx) {
+        if(!grid.contains(nx,nz))
+          continue;
+        const auto& neighbour = grid.at(nx,nz);
+        if((neighbour.known&(1u<<Ground))==0)
+          continue;
+        const auto& ground = neighbour.evidence[Ground];
+        const float gx = ground.hitX-wall.hitX, gz = ground.hitZ-wall.hitZ;
+        const float distance = gx*gx+gz*gz;
+        if(distance<nearest) {
+          nearest = distance;
+          overheadWall = wall.heightCm>ground.heightCm+limits.bodyHeight;
+          }
+        }
+    }
+  if(!overheadWall)
+    output.wall = std::max(output.wall,c[Wall]);
+  output.water = std::max(output.water,c[Water]);
+  output.movable = std::max(output.movable,c[Movable]);
+  if(c[Ground]>0.f) {
+    const auto& ground = input.evidence[Ground];
+    output.groundHeightCm = ground.heightCm;
+    output.free = std::max(output.free,c[Ground]);
+    // Height relative to the actor's feet says nothing about traversability
+    // several metres ahead. A hazard needs a locally observed discontinuity
+    // exceeding both the body's step and its maximum walking slope.
+    for(int nz=z-1; nz<=z+1; ++nz)
+      for(int nx=x-1; nx<=x+1; ++nx) {
+        if((nx==x && nz==z) || !grid.contains(nx,nz))
+          continue;
+        const auto& neighbour = grid.at(nx,nz);
+        if((neighbour.known&(1u<<Ground))==0)
+          continue;
+        const auto& other = neighbour.evidence[Ground];
+        const float difference = ground.heightCm-other.heightCm;
+        const float dx = ground.hitX-other.hitX, dz = ground.hitZ-other.hitZ;
+        const float distance = std::sqrt(dx*dx+dz*dz);
+        if(std::abs(difference)<=limits.step || std::abs(difference)<=distance*limits.slope)
+          continue;
+        const float certainty = std::min(c[Ground],confidence(other,false));
+        if(difference>0.f)
+          output.ledge = std::max(output.ledge,certainty);
+        else
+          output.drop = std::max(output.drop,certainty);
+        }
+    }
+  // Empty air below a ray is not a ground measurement: it cannot establish
+  // a drop without a local observed change in the supporting surface.
+  return output;
+  }
+
+NavigationMemory::Cell NavigationMemory::familiarCell(const FamiliarTile& tile, const Cell& live) const {
+  if(live.confidence>=Constants::familiarConfidence)
+    return live;
+  // A measured support surface can disprove this tile's floor. Without one,
+  // retain the same two-dimensional limitation as the live far grid.
+  const float bodyHeight=std::isfinite(body.bodyHeightCm) && body.bodyHeightCm>0.f ?
+                         body.bodyHeightCm : Constants::bodyHeightCm;
+  if(std::isfinite(live.groundHeightCm) && std::isfinite(tile.groundHeightCm) &&
+     std::abs(live.groundHeightCm-tile.groundHeightCm)>bodyHeight)
+    return live;
+  Cell output;
+  output.confidence=Constants::familiarConfidence;
+  output.familiar=1.f;
+  output.groundHeightCm=tile.groundHeightCm;
+  const auto value=[&](uint8_t channel) { return (tile.channels&channel)!=0 ? Constants::familiarConfidence : 0.f; };
+  output.free=value(FamiliarTile::Free);
+  output.wall=value(FamiliarTile::Wall);
+  output.ledge=value(FamiliarTile::Ledge);
+  output.drop=value(FamiliarTile::Drop);
+  output.water=value(FamiliarTile::Water);
+  output.movable=live.movable;
+  return output;
   }
 
 void NavigationMemory::read(const Grid& grid, Layer& result) const {
@@ -319,17 +519,12 @@ void NavigationMemory::read(const Grid& grid, Layer& result) const {
   result.cells.resize(grid.size*grid.size);
   std::fill(result.cells.begin(),result.cells.end(),Cell{});
   const Vec3 right(-body.forward.z,0,body.forward.x);
-  const float step = std::isfinite(body.stepHeightCm) && body.stepHeightCm>0.f ?
-                     body.stepHeightCm : Constants::stepCm;
-  const float slopeDegrees = std::isfinite(body.maxSlopeDegrees) ?
-                             std::clamp(body.maxSlopeDegrees,0.f,89.f) : Constants::maxSlopeDegrees;
-  const float slope = std::tan(slopeDegrees*3.14159265358979323846f/180.f);
-  const float bodyHeight = std::isfinite(body.bodyHeightCm) && body.bodyHeightCm>0.f ?
-                           body.bodyHeightCm : Constants::bodyHeightCm;
+  const auto limits=classificationLimits();
+  const bool hasFamiliar=&grid==&farGrid && !familiarWindow.empty();
   for(int z=grid.minZ; z<grid.minZ+int(grid.size); ++z)
     for(int x=grid.minX; x<grid.minX+int(grid.size); ++x) {
-      const auto& input = grid.at(x,z);
-      if(input.known==0)
+      const auto* familiar=hasFamiliar ? familiarWindow[ringCoordinate(z,grid.size)*grid.size+ringCoordinate(x,grid.size)] : nullptr;
+      if(grid.at(x,z).known==0 && !familiar)
         continue;
       const float dx = (float(x)+.5f)*grid.cellCm-body.position.x;
       const float dz = (float(z)+.5f)*grid.cellCm-body.position.z;
@@ -337,70 +532,30 @@ void NavigationMemory::read(const Grid& grid, Layer& result) const {
       const int vz = cellCoordinate(dx*body.forward.x+dz*body.forward.z+float(grid.size/2)*grid.cellCm,grid.cellCm);
       if(vx<0 || vz<0 || vx>=int(grid.size) || vz>=int(grid.size))
         continue;
-      auto& output = result.cells[size_t(vz)*grid.size+size_t(vx)];
-      std::array<float,ChannelCount> c = {};
-      for(size_t channel=0; channel<ChannelCount; ++channel)
-        if((input.known&(1u<<channel))!=0) {
-          c[channel] = confidence(input.evidence[channel],channel==Movable);
-          output.confidence = std::max(output.confidence,c[channel]);
-          }
-      output.free = std::max(output.free,c[Free]);
-      // A hit above an observed walking surface does not prove a wall in the
-      // space occupied by the body. Nearby ground is evidence, not a guess at
-      // the height of unseen terrain. Without it the wall remains conservative.
-      bool overheadWall = false;
-      if(c[Wall]>0.f) {
-        const auto& wall = input.evidence[Wall];
-        float nearest = std::numeric_limits<float>::infinity();
-        for(int nz=z-1; nz<=z+1; ++nz)
-          for(int nx=x-1; nx<=x+1; ++nx) {
-            if(!grid.contains(nx,nz))
-              continue;
-            const auto& neighbour = grid.at(nx,nz);
-            if((neighbour.known&(1u<<Ground))==0)
-              continue;
-            const auto& ground = neighbour.evidence[Ground];
-            const float gx = ground.hitX-wall.hitX, gz = ground.hitZ-wall.hitZ;
-            const float distance = gx*gx+gz*gz;
-            if(distance<nearest) {
-              nearest = distance;
-              overheadWall = wall.heightCm>ground.heightCm+bodyHeight;
-              }
-            }
+      auto cell=classify(grid,x,z,limits);
+      if(familiar)
+        cell=familiarCell(*familiar,cell);
+      if(cell.confidence<=0.f)
+        continue;
+      auto& output=result.cells[size_t(vz)*grid.size+size_t(vx)];
+      // Rotation can splat two world cells into one body-frame cell. A fresh
+      // live splat takes precedence over every familiar channel in that cell.
+      if(output.confidence>0.f && output.familiar!=cell.familiar) {
+        if(output.familiar==0.f && output.confidence>=Constants::familiarConfidence)
+          continue;
+        if(cell.familiar==0.f && cell.confidence>=Constants::familiarConfidence)
+          output=Cell{};
         }
-      if(!overheadWall)
-        output.wall = std::max(output.wall,c[Wall]);
-      output.water = std::max(output.water,c[Water]);
-      output.movable = std::max(output.movable,c[Movable]);
-      if(c[Ground]>0.f) {
-        const auto& ground = input.evidence[Ground];
-        output.groundHeightCm = ground.heightCm;
-        output.free = std::max(output.free,c[Ground]);
-        // Height relative to the actor's feet says nothing about traversability
-        // several metres ahead. A hazard needs a locally observed discontinuity
-        // exceeding both the body's step and its maximum walking slope.
-        for(int nz=z-1; nz<=z+1; ++nz)
-          for(int nx=x-1; nx<=x+1; ++nx) {
-            if((nx==x && nz==z) || !grid.contains(nx,nz))
-              continue;
-            const auto& neighbour = grid.at(nx,nz);
-            if((neighbour.known&(1u<<Ground))==0)
-              continue;
-            const auto& other = neighbour.evidence[Ground];
-            const float difference = ground.heightCm-other.heightCm;
-            const float dx = ground.hitX-other.hitX, dz = ground.hitZ-other.hitZ;
-            const float distance = std::sqrt(dx*dx+dz*dz);
-            if(std::abs(difference)<=step || std::abs(difference)<=distance*slope)
-              continue;
-            const float certainty = std::min(c[Ground],confidence(other,false));
-            if(difference>0.f)
-              output.ledge = std::max(output.ledge,certainty);
-            else
-              output.drop = std::max(output.drop,certainty);
-            }
-        }
-      // Empty air below a ray is not a ground measurement: it cannot establish
-      // a drop without a local observed change in the supporting surface.
+      output.confidence=std::max(output.confidence,cell.confidence);
+      output.free=std::max(output.free,cell.free);
+      output.wall=std::max(output.wall,cell.wall);
+      output.ledge=std::max(output.ledge,cell.ledge);
+      output.drop=std::max(output.drop,cell.drop);
+      output.water=std::max(output.water,cell.water);
+      output.movable=std::max(output.movable,cell.movable);
+      output.familiar=std::max(output.familiar,cell.familiar);
+      if(std::isfinite(cell.groundHeightCm))
+        output.groundHeightCm=cell.groundHeightCm;
       }
   }
 

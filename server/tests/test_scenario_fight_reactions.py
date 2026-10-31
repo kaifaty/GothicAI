@@ -663,8 +663,11 @@ def test_native_voice_requires_successful_audio_playback(tmp_path):
         "[ai] BANDIT combat shout $WEAPONDOWN audio_ms=0 game_ms=100\n"
         "[ai] OTHER combat shout $WEAPONDOWN audio_ms=500 game_ms=200\n"
         "[ai] BANDIT combat shout $WEAPONDOWN audio_ms=1200 game_ms=300\n"
+        "[ai] BANDIT combat shout $WEAPONDOWN audio_ms=1200 replaced=0 game_ms=400\n"
+        "[ai] BANDIT combat shout $WEAPONDOWN audio_ms=0 replaced=0 game_ms=500\n"
+        "[ai] BANDIT combat shout $WEAPONDOWN audio_ms=1200 replaced=1 game_ms=600\n"
     )
-    assert combat_shouts(game_log, "BANDIT") == [300]
+    assert combat_shouts(game_log, "BANDIT") == [300, 400]
     assert combat_shouts(tmp_path / "absent.log", "BANDIT") == []
 
 

@@ -4,11 +4,13 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -50,7 +52,7 @@ def owned_process(command, payload=None):
 def create_settings(path, source, repo, home):
     """Copy only non-secret settings; no Mac paths or existing Ryzen settings."""
     settings = {key: dict(source.get(key, {})) for key in ("game", "llm", "voice", "tts")}
-    settings["game"]["dir"] = str(home / "gothic-ai/game")
+    settings["game"]["dir"] = str(home / "gothic-ai/game-settings")
     settings["voice"].pop("mic_device", None)
     settings["paths"] = {"repo": str(repo), "uv": str(home / ".local/bin/uv")}
     lines = []
@@ -67,7 +69,22 @@ def create_settings(path, source, repo, home):
         with path.open("x") as stream:
             stream.write("\n".join(lines))
     except FileExistsError:
-        print(f"Keeping existing {path}", flush=True)
+        text = path.read_text()
+        # Change only the installation input; keep all personal settings and comments.
+        section = re.search(r"(?m)^\[game\][ \t]*(?:#.*)?$", text)
+        value = f'dir = {json.dumps(settings["game"]["dir"])}'
+        if section is None:
+            text += f"\n[game]\n{value}\n"
+        else:
+            end = re.search(r"(?m)^\[", text[section.end():])
+            stop = section.end() + end.start() if end else len(text)
+            game = text[section.end():stop]
+            game, replaced = re.subn(r"(?m)^[ \t]*dir[ \t]*=.*$", value, game, count=1)
+            if not replaced:
+                game = f"\n{value}" + game
+            text = text[:section.end()] + game + text[stop:]
+        path.write_text(text)
+        print(f"Updated game.dir in {path} (personal settings kept)", flush=True)
         return False
     print(f"Created {path} (no secrets copied)", flush=True)
     return True
@@ -77,6 +94,17 @@ def build_command(source):
     return [str(Path.home() / "gothic-ai/bin/gq"), "run", "--class", "quick",
             "--threads", "12", "--mem", "12G", "--max", "30m",
             "--name", "Gothic AI install/update", "--", sys.executable, "-c", source, "__prepare"]
+
+
+def sync_content():
+    content = Path.home() / ".local/share/gothic-ai/content"
+    with tempfile.TemporaryDirectory(prefix="gothic-play-content-") as empty:
+        source = content if content.is_dir() else Path(empty)
+        run(["rsync", "-a", "--delete", "--checksum", "--delete-excluded",
+             "--include=/materials/***", "--include=/meshes/***", "--include=/enabled.json", "--exclude=*",
+             "-e", "ssh -o BatchMode=yes -o ConnectTimeout=10",
+             "--rsync-path=mkdir -p ~/.local/share/gothic-ai/play-content.incoming && rsync",
+             f"{source}/", "ryzen:.local/share/gothic-ai/play-content.incoming/"])
 
 
 def prepare():
@@ -89,16 +117,20 @@ def prepare():
             raise ValueError(f"Missing tool: {tool}")
     if not (sdk / "include/vulkan/vulkan.h").is_file() or not (sdk / "lib/libvulkan.so").is_file():
         raise ValueError(f"Incomplete user Vulkan SDK: {sdk}")
+    flags = subprocess.check_output([
+        "bash", "-euc", 'source "$1"; printf "%s\\0" "${RYZEN_CMAKE_FLAGS[@]}"',
+        "ryzen-build", str(repo / "scripts/ryzen-build.sh"),
+    ]).decode().split("\0")[:-1]
     build = repo / "OpenGothic/build"
     run(["cmake", "-S", repo / "OpenGothic", "-B", build, "-G", "Ninja",
-         "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+         "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", *flags,
          "-DOPENGOTHIC_ENABLE_APP_CADENCE=ON", f"-DCMAKE_CXX_FLAGS=-I{sdk}/include",
          f"-DCMAKE_EXE_LINKER_FLAGS=-L{sdk}/lib"])
     run(["cmake", "--build", build, "--target", "Gothic2Notr", "--parallel", "12"])
     # The server's NPC knowledge/director needs this converter on a fresh machine.
     graph = repo / "OpenGothic/ai_bridge/storygraph"
     run(["cmake", "-S", graph, "-B", graph / "build", "-G", "Ninja",
-         "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+         "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", *flags,
          "-DCMAKE_CXX_FLAGS=-include algorithm"])
     run(["cmake", "--build", graph / "build", "--target", "storygraph", "--parallel", "12"])
     for project in ("server", "asr-service", "tts-service", "launcher/core"):
@@ -128,6 +160,9 @@ def desktop_entry(repo, launcher_ready=True):
 
 def remote_install(action, payload, source):
     home = Path.home()
+    helper = {"__name__": "ryzen_game"}
+    exec(compile(payload["game_helper"], "ryzen_game.py", "exec"), helper)
+    helper["game_environment"](home=home)
     repo = home / "gothic-ai/play"
     repo.parent.mkdir(parents=True, exist_ok=True)
     with (repo.parent / "play.install.lock").open("a") as lock:
@@ -143,8 +178,6 @@ def remote_install(action, payload, source):
             raise ValueError("Installed gq lacks --interactive: run scripts/gq install ryzen on the Mac")
         if not (home / ".local/bin/uv").is_file():
             raise ValueError("Missing ~/.local/bin/uv on Ryzen")
-        if not (home / "gothic-ai/game").is_dir():
-            raise ValueError("Missing ~/gothic-ai/game on Ryzen")
         if not repo.exists():
             if action == "update":
                 raise ValueError("No ~/gothic-ai/play: run scripts/ryzen-play.sh install first")
@@ -161,6 +194,16 @@ def remote_install(action, payload, source):
         result = owned_process(build_command(source))
         if result not in (0, 3):
             return result
+        content = home / ".local/share/gothic-ai/play-content"
+        incoming = content.with_name("play-content.incoming")
+        old = content.with_name("play-content.old")
+        if old.exists():
+            shutil.rmtree(old)
+        if content.exists():
+            content.rename(old)
+        incoming.rename(content)
+        if old.exists():
+            shutil.rmtree(old)
         create_settings(home / ".config/gothic-ai/settings.toml", payload["settings"], repo, home)
         applications = home / ".local/share/applications"
         applications.mkdir(parents=True, exist_ok=True)
@@ -185,8 +228,12 @@ def main(argv=None):
             settings = tomllib.load(stream)
         # Never read secrets.toml/chatgpt.json or put private settings in argv/logs.
         source = Path(__file__).read_text()
+        game_helper = Path(__file__).with_name("ryzen_game.py").read_text()
         payload = {"origin": origin, "settings": {key: settings.get(key, {}) for key in ("game", "llm", "voice", "tts")},
-                   "installer": source}
+                   "installer": source, "game_helper": game_helper}
+        run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "ryzen",
+             shlex.join(["python3", "-c", game_helper, "--check"])])
+        sync_content()
         command = shlex.join(["python3", "-c", source, "__remote", args.action])
         return owned_process(["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
                               "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",

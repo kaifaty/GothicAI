@@ -8,6 +8,7 @@
 #include <zenkit/DaedalusVm.hh>
 
 #include "game/gamescript.h"
+#include "game/herodeed.h"
 #include "game/inventory.h"
 #include "world/objects/interactive.h"
 #include "world/objects/npc.h"
@@ -297,12 +298,13 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
     // its attitude to him as the scripts set it (B_SetAttitude), so their B_AssessEnemy sees no enemy in
     // him any more; and a fight with him ends now, the npc back to its routine
     call("B_SETATTITUDE",{Value::instance(npc.handlePtr()),Value::integer(constant(attitude,2))});
-    if(npc.target()==&player && !npc.isDown()) {
+    auto* target = npc.target();
+    if(target!=nullptr && (target==&player || HeroDeed::aivar(*target,"AIV_PARTYMEMBER")!=0) && !npc.isDown()) {
       npc.clearAiQueue();
       npc.clearState(true);
       npc.setTarget(nullptr);
-      npc.aiPush(AiQueue::aiRemoveWeapon());
       npc.resumeAiRoutine();
+      npc.aiPush(AiQueue::aiRemoveWeapon());
       }
     }
   else if(kind=="knows") {

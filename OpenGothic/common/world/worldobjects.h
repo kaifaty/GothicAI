@@ -3,10 +3,11 @@
 #include <vector>
 #include <memory>
 
-#include <zenkit/vobs/Misc.hh>
+#include "asset/worldtypes.h"
 
 #include "bullet.h"
 #include "spaceindex.h"
+#include "physics/dynamicworld.h"
 #include "game/gametime.h"
 #include "game/perceptionmsg.h"
 #include "game/constants.h"
@@ -57,6 +58,19 @@ class WorldObjects final {
     void           prepareRagdolls();
     void           syncRagdolls();
 
+    struct PlacedItem {
+      uint32_t zenId = uint32_t(-1);
+      size_t instance = size_t(-1);
+      std::string visual;
+      Tempest::Matrix4x4 origin;
+      Item* item = nullptr;
+      DynamicWorld::PlacedItemCensusEntry validation;
+      };
+    void           finalizePlacedItems();
+    const std::vector<PlacedItem>& placedItemCensus() const { return placedItems; }
+    double         placedItemValidationMilliseconds() const { return placedValidationMs; }
+    size_t         placedItemsCreatedThisFrame() const { return placedCreatedThisFrame; }
+
     Npc*           addNpc(size_t itemInstance, std::string_view     at);
     Npc*           addNpc(size_t itemInstance, const Tempest::Vec3& at);
     Npc*           insertPlayer(std::unique_ptr<Npc>&& npc, std::string_view at);
@@ -105,7 +119,7 @@ class WorldObjects final {
     void           stopEffect(const VisualFx& vfx);
 
     Item*          addItem   (size_t itemInstance, std::string_view at);
-    Item*          addItem   (const zenkit::VItem &vob);
+    Item*          addItem   (const asset::VItem &vob);
     Item*          addItem   (size_t itemInstance, const Tempest::Vec3& pos);
     Item*          addItem   (size_t itemInstance, const Tempest::Vec3& pos, const Tempest::Vec3& dir);
     Item*          addItemDyn(size_t itemInstance, const Tempest::Matrix4x4& pos, size_t owner);
@@ -118,7 +132,7 @@ class WorldObjects final {
 
     void           addInteractive(Interactive*         obj);
     void           addStatic     (StaticObj*           obj);
-    void           addRoot       (const std::shared_ptr<zenkit::VirtualObject>& vob, bool startup);
+    void           addRoot       (const std::shared_ptr<asset::VirtualObject>& vob, bool startup);
     void           invalidateVobIndex();
     std::vector<Vob::AttachmentSnapshot> vobAttachmentSnapshot(uint32_t zenId) const;
 
@@ -135,6 +149,7 @@ class WorldObjects final {
     void           marchInteractives(DbgPainter& p) const;
     void           marchCsCameras   (DbgPainter& p) const;
     void           drawVobBoxNpcNear(DbgPainter& p) const;
+    void           drawMeleeShadow  (DbgPainter& p) const;
 
     Interactive*   availableMob(const Npc& pl, std::string_view name);
     void           setMobRoutine(gtime time, std::string_view scheme, int32_t state);
@@ -147,8 +162,14 @@ class WorldObjects final {
     void           resetPositionToTA();
 
   private:
+    friend class World;
+    friend struct WorldDataContract;
     void           saveItemPhysics(Serialize& fout) const;
     void           loadItemPhysics(Serialize& fin);
+    void           savePlacedItems(Serialize& fout) const;
+    void           loadPlacedItems(Serialize& fin);
+    void           tickPlacedItems();
+    void           linkPlacedItem(PlacedItem& source, Item& item);
 
     struct MobRoutine {
       gtime   time;
@@ -179,6 +200,9 @@ class WorldObjects final {
 
     std::vector<StaticObj*>            objStatic;
     std::vector<std::unique_ptr<Item>> itemArr;
+    std::vector<PlacedItem>            placedItems;
+    double                            placedValidationMs = 0;
+    size_t                            placedCreatedThisFrame = 0;
     std::list<MobStates>               routines;
 
     std::list<Bullet>                  bullets;

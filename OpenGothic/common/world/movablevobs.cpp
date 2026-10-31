@@ -1,4 +1,5 @@
 #include "movablevobs.h"
+#include "voblayer.h"
 
 #include <algorithm>
 #include <cctype>
@@ -58,12 +59,15 @@ const std::vector<MovableVobs::Rule>& rules() {
 
 }
 
-const MovableVobs::Rule* MovableVobs::classify(const zenkit::VirtualObject& vob) {
-  if(vob.type!=zenkit::VirtualObjectType::zCVob || !vob.show_visual || vob.visual==nullptr)
+const MovableVobs::Rule* MovableVobs::classify(const asset::VirtualObject& vob) {
+  // Layer meshes request either static mesh collision or no collision.
+  if(VobLayer::isAdded(vob))
     return nullptr;
-  if(vob.visual->type!=zenkit::VisualType::MESH && vob.visual->type!=zenkit::VisualType::MULTI_RESOLUTION_MESH)
+  if(vob.type!=asset::VirtualObjectType::zCVob || !vob.show_visual || vob.visual==nullptr)
     return nullptr;
-  if(vob.anim_mode!=zenkit::AnimationType::NONE && vob.anim_strength>0.f)
+  if(vob.visual->type!=asset::VisualType::MESH && vob.visual->type!=asset::VisualType::MULTI_RESOLUTION_MESH)
+    return nullptr;
+  if(vob.anim_mode!=asset::AnimationType::NONE && vob.anim_strength>0.f)
     return nullptr;
   return classifyVisual(vob.visual->name);
   }

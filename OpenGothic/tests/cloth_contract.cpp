@@ -1,3 +1,6 @@
+#include "asset/fromzenkit.h"
+#include <zenkit/world/BspTree.hh>
+#include <zenkit/Mesh.hh>
 #include "physics/cloth.h"
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
@@ -415,17 +418,17 @@ int main() {
   require(cloth.bodyCount()==0 && cloth.snapshots().empty(),"visual RAII releases native body");
   RoomFixture roomFixture;
   PortalRooms::Volumes rooms;
-  rooms.reset(roomFixture.mesh,roomFixture.bsp);
+  rooms.reset(static_cast<asset::BspTreeType>(roomFixture.bsp.mode),asset::roomVolumesFromZenKit(roomFixture.mesh,roomFixture.bsp));
   require(rooms.isIndoor({60,100,0}),"authored room surfaces enclose an indoor point");
   require(rooms.isIndoor({60,100,350}),"an authored portal cap closes the room at its door");
   require(!rooms.isIndoor({60,100,450}),"a point beyond the portal door is outdoors");
   require(!rooms.isIndoor({60,700,0}),"a room's BSP leaf reaching the sky does not shelter a flag above its ceiling");
   require(!rooms.isIndoor({500,150,0}),"a wide world-mesh yard outside room surfaces does not create a room");
   roomFixture.bsp.mode=zenkit::BspTreeType::INDOOR;
-  rooms.reset(roomFixture.mesh,roomFixture.bsp);
+  rooms.reset(static_cast<asset::BspTreeType>(roomFixture.bsp.mode),asset::roomVolumesFromZenKit(roomFixture.mesh,roomFixture.bsp));
   require(rooms.isIndoor({500,150,0}),"an entirely indoor BSP world has no outdoor wind");
   roomFixture.bsp.mode=zenkit::BspTreeType::OUTDOOR;
-  rooms.reset(roomFixture.mesh,roomFixture.bsp);
+  rooms.reset(static_cast<asset::BspTreeType>(roomFixture.bsp.mode),asset::roomVolumesFromZenKit(roomFixture.mesh,roomFixture.bsp));
   cloth.setExposureTest([&](const Tempest::Vec3& point) { return !rooms.isIndoor(point); });
   auto roofMatrix=Tempest::Matrix4x4::mkIdentity();
   roofMatrix.translate(60,500,0);

@@ -51,3 +51,23 @@ def test_bed_without_clean_start_requires_explicit_override(music, tmp_path):
 def test_bed_cannot_silently_end_before_the_body(music, tmp_path):
     with pytest.raises(bed.BedError, match="only 2.75 s.*needs 3.00 s"):
         bed.render("theme", None, 3.0, tmp_path / "bed.wav")
+
+
+def test_stereo_bed_is_averaged_into_identical_channels(music, tmp_path):
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
+         "aevalsrc=0.1*sin(2*PI*440*t)|0.2*sin(2*PI*770*t):s=48000:d=1:c=stereo",
+         str(music / "stereo.flac")],
+        check=True, capture_output=True,
+    )
+    out = bed.render("stereo", 0, 1, tmp_path / "bed.wav")
+    with wave.open(str(out), "rb") as audio:
+        assert audio.getnchannels() == 2
+        samples = struct.unpack(f"<{audio.getnframes() * 2}h", audio.readframes(audio.getnframes()))
+    assert samples[::2] == samples[1::2]
+    expected = [
+        round(32768 * (0.05 * math.sin(2 * math.pi * 440 * i / 48000)
+                       + 0.1 * math.sin(2 * math.pi * 770 * i / 48000)))
+        for i in range(48000)
+    ]
+    assert max(abs(actual - target) for actual, target in zip(samples[::2], expected, strict=True)) <= 2

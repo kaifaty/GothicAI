@@ -1,10 +1,12 @@
 #include "bodycontroller.h"
 #include "bodyobservations.h"
+#include "bodyenginepolicy.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
 #include "world/world.h"
 #include "graphics/mesh/pose.h"
 #include "testbench.h"
+#include "frameprofile.h"
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
@@ -20,6 +22,7 @@
 #include <chrono>
 #include <cmath>
 #include <deque>
+#include <memory>
 #include <stdexcept>
 #include <sstream>
 #include <unordered_map>
@@ -55,11 +58,13 @@ struct Lease final {
   Command active;
   std::deque<Retry> retries;
   std::deque<std::function<void()>> deferred;
+  std::unique_ptr<BodyEnginePolicy> policy;
   };
 struct PendingAcquire final {
   Npc* npc=nullptr;
   uint64_t timeout=500;
   std::string provider,mode;
+  bool enginePolicy=false;
   BodyController::BoundaryRequest boundary;
   };
 struct State final {
@@ -72,6 +77,7 @@ struct State final {
   std::unordered_map<const Npc*,Lease> leases;
   std::unordered_map<const Npc*,PendingAcquire> pending;
   std::deque<std::string> events;
+  std::deque<std::string> policyEvents;
   std::function<void(std::string_view)> sink;
   };
 State& state() { static State* s=new State; return *s; }
@@ -110,6 +116,18 @@ void enqueueEvent(const Json& d) {
   if(state().events.size()==MaxEvents) { state().events.pop_front(); ++state().dropped; }
   state().events.push_back(row);
   if(state().sink) state().sink(row);
+  }
+void policyReport(Lease& l,bool final=false,std::string_view reason={}) {
+  if(!l.policy) return;
+  auto encoded=l.policy->report(final);
+  if(encoded.empty()) return;
+  Json d; d.Parse(encoded.c_str());
+  u(d,"session_epoch",BodyObservations::sessionEpoch()); u(d,"world_epoch",BodyObservations::worldEpoch());
+  u(d,"entity_id",l.entity); u(d,"control_generation",l.generation); u(d,"goal_version",l.goal);
+  u(d,"target_entity_id",l.target); u(d,"t_game_ms",l.npc->world().tickCount()); u(d,"t_wall_ms",wallMs());
+  str(d,"reason",reason);
+  if(state().policyEvents.size()==MaxEvents) state().policyEvents.pop_front();
+  state().policyEvents.push_back(encode(d));
   }
 void event(const Lease& l,std::string_view phase,std::string_view reason,const Command* command=nullptr,
            std::string_view acquireCancelReason={});
@@ -170,6 +188,7 @@ bool movementPrimitive(FightAlgo::Action primitive) {
   }
 void requestRelease(Lease& l,std::string_view reason) {
   if(l.release) return;
+  policyReport(l,true,reason);
   l.release=true; l.releaseReason=reason;
   if(l.active.started && movementPrimitive(l.active.primitive)) l.movementStopPending=true;
   cancel(l,reason);
@@ -223,6 +242,55 @@ void cache(Lease& l,const Command& c,const std::string& response) {
   if(l.retries.size()==MaxRetries) l.retries.pop_front();
   l.retries.push_back({c.id,signature(c),response});
   }
+std::string applyAction(Lease& owner,const rapidjson::Value& req,uint64_t session,uint64_t world,
+                        uint64_t generation,bool sentObservations,bool refreshHeartbeat) {
+  auto l=&owner; auto actor=l->npc;
+  Command c;
+  uint64_t action=0;
+  if(!integer(req,"command_id",c.id) || c.id==0 || !integer(req,"observation_seq",c.observation) || c.observation==0 ||
+     !integer(req,"goal_version",c.goal) || !integer(req,"target_entity_id",c.target) || !integer(req,"action_id",action) || action>=12 ||
+     !integer(req,"issued_game_ms",c.issued) || !integer(req,"ttl_ms",c.ttl) || c.ttl==0 || c.ttl>1000)
+    return result(l,actor,false,"invalid_command");
+  c.action=PolicyAction(action);
+  if(c.id<=l->lastCommand) {
+    for(const auto& retry:l->retries) if(retry.id==c.id) {
+      if(retry.signature!=signature(c)) return result(l,actor,false,"duplicate_conflict",false,c.id);
+      Json cached; cached.Parse(retry.result.c_str()); cached["duplicate"].SetBool(true); return encode(cached);
+      }
+    return result(l,actor,false,"out_of_order",false,c.id);
+    }
+  const auto reject=[&](std::string_view reason) {
+    event(*l,"rejected",reason,&c); auto r=result(l,actor,false,reason,false,c.id); cache(*l,c,r); return r;
+    };
+  if(c.observation<=l->minimumSequence) return reject("stale_observation");
+  BodyController::GateState gate;
+  gate.session=session; gate.world=world; gate.generation=l->generation; gate.goal=l->goal; gate.target=l->target;
+  auto observation=BodyObservations::SentObservation{BodyObservations::latestSequence(*actor),
+                     BodyObservations::latestGameMs(*actor),BodyObservations::latestWallMs(*actor)};
+  if(sentObservations && l->mode=="realtime") observation=BodyObservations::latestSent(*actor);
+  gate.observation=observation.sequence; gate.observedGame=observation.gameMs;
+  gate.gameNow=actor->world().tickCount(); gate.wallAge=wallMs()-observation.wallMs;
+  gate.targetValid=targetValid(*actor,c.target); gate.paused=state().paused; gate.infrastructure=state().infrastructure;
+  gate.busy=l->command || l->movementStopPending; gate.realtime=l->mode=="realtime"; gate.resolver=BodyController::resolverState(*actor);
+  BodyController::GateCommand requested{session,world,generation,c.goal,c.target,c.observation,c.issued,c.ttl,c.action};
+  const auto refusal=BodyController::validate(gate,requested);
+  if(std::string_view(refusal)!="allowed") return reject(refusal);
+  const auto resolution=FightAlgo::resolve(c.action,gate.resolver);
+  c.primitive=resolution.primitive;
+  c.deadline=Clock::time_point(std::chrono::milliseconds(observation.wallMs+c.ttl));
+  if(l->mode=="realtime" && Clock::now()>=c.deadline) return reject("expired_wall");
+  if(refreshHeartbeat) l->heartbeat=Clock::now();
+  if(c.action==PolicyAction::Continue) {
+    c.execution=l->command ? l->active.execution : 0;
+    if(l->command) { c.identity=l->active.identity; c.beforeIdentity=l->active.beforeIdentity; c.started=l->active.started; c.consumed=l->active.consumed; }
+    event(*l,"accepted","accepted",&c); event(*l,"continued",l->command ? "hold_execution" : "hold_idle",&c);
+    event(*l,"completed","continue_acknowledged",&c);
+    auto r=result(l,actor,true,"continued",false,c.id); cache(*l,c,r); return r;
+    }
+  c.execution=++state().nextExecution; l->active=std::move(c); l->command=true;
+  event(*l,"accepted","accepted"); auto r=result(l,actor,true,"accepted"); cache(*l,l->active,r); return r;
+  }
+
 }
 
 void BodyController::setActors(const std::vector<Npc*>& actors) {
@@ -372,6 +440,7 @@ void BodyController::reset(std::string_view reason) {
   // Final reset events have already reached the journal sink. Old-world IPC rows must not
   // be wrapped in the next world epoch; reconnect/load explicitly invalidate that stream.
   state().events.clear();
+  state().policyEvents.clear();
   state().leases.clear(); state().pending.clear(); state().actors.clear(); state().infrastructure=false; state().infrastructureReason.clear();
   state().paused=false;
   state().visibilityDiagnostics=false; state().visibilityCaptureFailed=false;
@@ -417,6 +486,7 @@ void BodyController::pumpWatchdogs() {
     }
   for(auto it=state().leases.begin();it!=state().leases.end();) {
     auto& l=it->second;
+    if(!l.release) policyReport(l);
     const bool isTerminal=terminal(*l.npc);
     if(isTerminal) requestRelease(l,"actor_down");
     if(!l.release && uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(now-l.heartbeat).count())>l.timeout)
@@ -542,6 +612,34 @@ std::string BodyController::drainJson() {
   state().events.clear(); d.AddMember("events",events,d.GetAllocator()); return encode(d);
   }
 
+std::vector<std::string> BodyController::drainPolicyJson() {
+  auto& queue=state().policyEvents;
+  std::vector<std::string> reports;
+  reports.reserve(queue.size());
+  while(!queue.empty()) { reports.push_back(std::move(queue.front())); queue.pop_front(); }
+  return reports;
+  }
+
+void BodyController::onObservation(Npc& actor,std::string_view encoded) {
+  auto l=lease(actor);
+  if(!l || !l->policy || l->release) return;
+  FrameProfile::Scope timing(FrameProfile::Zone::BodyNet);
+  Json row; row.Parse(encoded.data(),encoded.size());
+  const auto reason=l->policy->process(row,actor.world().tickCount(),[&](int action,const rapidjson::Value& observation) {
+    Json request=object();
+    u(request,"command_id",l->lastCommand+1); u(request,"observation_seq",observation["observation_seq"].GetUint64());
+    u(request,"goal_version",l->goal); u(request,"target_entity_id",l->target); u(request,"action_id",uint64_t(action));
+    u(request,"issued_game_ms",observation["t_game_ms"].GetUint64()); u(request,"ttl_ms",100);
+    // Identical acceptance, TTL, resolver and executor as a server action, using the
+    // locally published row rather than waiting for a WebSocket send acknowledgement.
+    Json receipt; receipt.Parse(applyAction(*l,request,BodyObservations::sessionEpoch(),
+                              BodyObservations::worldEpoch(),l->generation,false,false).c_str());
+    return receipt["accepted"].GetBool() ? std::string() : std::string(receipt["reason"].GetString());
+    });
+  if(reason.empty()) { policyReport(*l); return; }
+  requestRelease(*l,reason);
+  }
+
 BodyController::AcquireState BodyController::acquireState(const Npc& actor,uint64_t target) {
   AcquireState acquire;
   acquire.targetValid=targetValid(actor,target); acquire.externalControl=actor.externalCtrl;
@@ -557,12 +655,15 @@ BodyController::AcquireState BodyController::acquireState(const Npc& actor,uint6
   }
 
 void BodyController::grantAcquire(Npc& actor,uint64_t target,uint64_t timeout,const std::string& provider,
-                                  const std::string& mode,uint64_t requestId) {
+                                  const std::string& mode,uint64_t requestId,bool enginePolicy) {
   Lease newLease; newLease.npc=&actor; newLease.entity=BodyObservations::entityId(actor);
   newLease.generation=++state().nextGeneration; newLease.acquireRequestId=requestId;
   newLease.minimumSequence=BodyObservations::latestSequence(actor);
   newLease.provider=provider; newLease.mode=mode; newLease.target=target; newLease.timeout=timeout;
   newLease.heartbeat=Clock::now();
+  if(enginePolicy)
+    newLease.policy=std::make_unique<BodyEnginePolicy>(BodyObservations::sessionEpoch(),BodyObservations::worldEpoch(),
+                                                     newLease.entity,newLease.generation,actor.world().tickCount(),newLease.minimumSequence);
   // The caller validated only this target's replaceable native combat work, on a real
   // safe boundary. Neither pending requests nor refusal paths mutate native execution.
   if(actor.aiQueue.size()!=0) actor.aiQueue.clear();
@@ -583,7 +684,7 @@ void BodyController::pollAcquire(Npc& actor,bool grant) {
   if(std::string_view(outcome)=="waiting") return;
   if(std::string_view(outcome)=="acquired") {
     const auto pending=std::move(it->second); state().pending.erase(it);
-    grantAcquire(actor,pending.boundary.target,pending.timeout,pending.provider,pending.mode,pending.boundary.id);
+    grantAcquire(actor,pending.boundary.target,pending.timeout,pending.provider,pending.mode,pending.boundary.id,pending.enginePolicy);
     } else {
     cancelAcquire(it->second,outcome); state().pending.erase(it);
     }
@@ -616,6 +717,9 @@ std::string BodyController::handleJson(const rapidjson::Value& req,bool sentObse
   if(provider.empty() || provider.size()>64) return result(l,actor,false,"invalid_provider");
   if(type=="body_acquire") {
     if(l) return result(l,actor,false,"already_owned");
+    const auto policyRefusal=BodyEnginePolicy::validateAcquire(req);
+    if(std::string_view(policyRefusal)!="allowed") return result(nullptr,actor,false,policyRefusal);
+    const bool enginePolicy=BodyEnginePolicy::requested(req);
     if(state().paused || state().infrastructure) return result(nullptr,actor,false,"paused_or_failed");
     if(!req.HasMember("body_control") || !req["body_control"].IsBool() || !req["body_control"].GetBool())
       return result(nullptr,actor,false,"body_control_disabled");
@@ -631,7 +735,7 @@ std::string BodyController::handleJson(const rapidjson::Value& req,bool sentObse
     const auto pending=state().pending.find(actor);
     if(pending!=state().pending.end()) {
       const auto& p=pending->second;
-      if(awaitMs>0 && provider==p.provider && mode==p.mode && target==p.boundary.target && timeout==p.timeout &&
+      if(awaitMs>0 && provider==p.provider && mode==p.mode && enginePolicy==p.enginePolicy && target==p.boundary.target && timeout==p.timeout &&
          (requestId==0 || requestId==p.boundary.id)) return pendingResult(p,true);
       return result(nullptr,actor,false,"acquire_pending_busy");
       }
@@ -646,11 +750,12 @@ std::string BodyController::handleJson(const rapidjson::Value& req,bool sentObse
       if(std::string_view(otherRefusal)!="allowed") return result(nullptr,actor,false,otherRefusal);
       if(requestId==0) { requestId=++state().nextAcquireRequest; if(requestId==0) requestId=++state().nextAcquireRequest; }
       PendingAcquire pending; pending.npc=actor; pending.timeout=timeout;
+      pending.enginePolicy=enginePolicy;
       pending.provider=provider; pending.mode=mode; pending.boundary.begin(requestId,target,wallMs(),awaitMs);
       return pendingResult(state().pending.emplace(actor,std::move(pending)).first->second);
       }
     if(awaitMs>0 && requestId==0) { requestId=++state().nextAcquireRequest; if(requestId==0) requestId=++state().nextAcquireRequest; }
-    grantAcquire(*actor,target,timeout,provider,mode,awaitMs>0 ? requestId : 0);
+    grantAcquire(*actor,target,timeout,provider,mode,awaitMs>0 ? requestId : 0,enginePolicy);
     return result(lease(*actor),actor,true,"acquired");
     }
   uint64_t generation=0;
@@ -694,50 +799,7 @@ std::string BodyController::handleJson(const rapidjson::Value& req,bool sentObse
     event(*l,"ownership","goal_changed"); return result(l,actor,true,"goal_updated");
     }
   if(type!="body_action") return result(l,actor,false,"unknown_operation");
-  Command c;
-  uint64_t action=0;
-  if(!integer(req,"command_id",c.id) || c.id==0 || !integer(req,"observation_seq",c.observation) || c.observation==0 ||
-     !integer(req,"goal_version",c.goal) || !integer(req,"target_entity_id",c.target) || !integer(req,"action_id",action) || action>=12 ||
-     !integer(req,"issued_game_ms",c.issued) || !integer(req,"ttl_ms",c.ttl) || c.ttl==0 || c.ttl>1000)
-    return result(l,actor,false,"invalid_command");
-  c.action=PolicyAction(action);
-  if(c.id<=l->lastCommand) {
-    for(const auto& retry:l->retries) if(retry.id==c.id) {
-      if(retry.signature!=signature(c)) return result(l,actor,false,"duplicate_conflict",false,c.id);
-      Json cached; cached.Parse(retry.result.c_str()); cached["duplicate"].SetBool(true); return encode(cached);
-      }
-    return result(l,actor,false,"out_of_order",false,c.id);
-    }
-  const auto reject=[&](std::string_view reason) {
-    event(*l,"rejected",reason,&c); auto r=result(l,actor,false,reason,false,c.id); cache(*l,c,r); return r;
-    };
-  if(c.observation<=l->minimumSequence) return reject("stale_observation");
-  GateState gate;
-  gate.session=session; gate.world=world; gate.generation=l->generation; gate.goal=l->goal; gate.target=l->target;
-  auto observation=BodyObservations::SentObservation{BodyObservations::latestSequence(*actor),
-                     BodyObservations::latestGameMs(*actor),BodyObservations::latestWallMs(*actor)};
-  if(sentObservations && l->mode=="realtime") observation=BodyObservations::latestSent(*actor);
-  gate.observation=observation.sequence; gate.observedGame=observation.gameMs;
-  gate.gameNow=actor->world().tickCount(); gate.wallAge=wallMs()-observation.wallMs;
-  gate.targetValid=targetValid(*actor,c.target); gate.paused=state().paused; gate.infrastructure=state().infrastructure;
-  gate.busy=l->command || l->movementStopPending; gate.realtime=l->mode=="realtime"; gate.resolver=resolverState(*actor);
-  GateCommand requested{session,world,generation,c.goal,c.target,c.observation,c.issued,c.ttl,c.action};
-  const auto refusal=validate(gate,requested);
-  if(std::string_view(refusal)!="allowed") return reject(refusal);
-  const auto resolution=FightAlgo::resolve(c.action,gate.resolver);
-  c.primitive=resolution.primitive;
-  c.deadline=Clock::time_point(std::chrono::milliseconds(observation.wallMs+c.ttl));
-  if(l->mode=="realtime" && Clock::now()>=c.deadline) return reject("expired_wall");
-  l->heartbeat=Clock::now();
-  if(c.action==PolicyAction::Continue) {
-    c.execution=l->command ? l->active.execution : 0;
-    if(l->command) { c.identity=l->active.identity; c.beforeIdentity=l->active.beforeIdentity; c.started=l->active.started; c.consumed=l->active.consumed; }
-    event(*l,"accepted","accepted",&c); event(*l,"continued",l->command ? "hold_execution" : "hold_idle",&c);
-    event(*l,"completed","continue_acknowledged",&c);
-    auto r=result(l,actor,true,"continued",false,c.id); cache(*l,c,r); return r;
-    }
-  c.execution=++state().nextExecution; l->active=std::move(c); l->command=true;
-  event(*l,"accepted","accepted"); auto r=result(l,actor,true,"accepted"); cache(*l,l->active,r); return r;
+  return applyAction(*l,req,session,world,generation,sentObservations,true);
   }
 
 void BodyController::consumed(Npc& actor) { if(auto l=lease(actor); l && l->command) l->active.consumed=true; }
@@ -862,7 +924,7 @@ bool BodyController::tick(Npc& actor,uint64_t dt) {
     c.started=true; c.beforeIdentity=before; c.identity=after; c.comboLength=actor.visual.pose().comboLength();
     for(const auto& layer:actor.visual.pose().combatLayers(actor.world().tickCount())) {
       const auto unchanged=std::find_if(previousLayers.begin(),previousLayers.end(),[&](const Pose::CombatLayer& old) {
-        return old.sequence==layer.sequence && old.start==layer.start && old.combination==layer.combination && old.state==layer.state;
+        return old.sequence==layer.sequence && old.origin==layer.origin && old.combination==layer.combination && old.state==layer.state;
         });
       if(unchanged==previousLayers.end()) c.layers.push_back(layer);
       }
@@ -903,7 +965,7 @@ void BodyController::postStep() {
     for(const auto& original:c.layers) {
       if(!original.sequence) continue;
       const auto found=std::find_if(current.begin(),current.end(),[&](const Pose::CombatLayer& layer) {
-        return layer.sequence==original.sequence && layer.start==original.start && layer.combination==original.combination;
+        return layer.sequence==original.sequence && layer.origin==original.origin && layer.combination==original.combination;
         });
       if(found!=current.end()) {
         if(!found->sequence->isFinished(found->time,found->start,c.comboLength)) unfinished=true;

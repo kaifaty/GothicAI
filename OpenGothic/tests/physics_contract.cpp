@@ -1,13 +1,18 @@
+#include "asset/fromzenkit.h"
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
 #include "physics/physicvbo.h"
 #include "physics/ragdoll.h"
+#include "graphics/mesh/animblend.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/bounds.h"
 #include "game/serialize.h"
+#include "game/damagecalculator.h"
+#include "game/meleeimpact.h"
+#include "world/objects/npc.h"
 #include "gothic.h"
 
 #include <Tempest/MemReader>
@@ -16,6 +21,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
@@ -25,6 +31,8 @@
 #include <Jolt/Physics/Collision/CastSphereVsTriangles.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <zenkit/ModelHierarchy.hh>
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -77,14 +85,14 @@ namespace {
         requireNear(actual.at(c,r),expected.at(c,r),c==3 ? .001f : .00001f,message);
     }
 
-  zenkit::MultiResolutionMesh movableCube() {
-    zenkit::MultiResolutionMesh mesh;
+  asset::StaticMesh movableCube() {
+    asset::StaticMesh mesh;
     mesh.positions = {{-10,-10,-10},{10,-10,-10},{10,10,-10},{-10,10,-10},
                       {-10,-10,10},{10,-10,10},{10,10,10},{-10,10,10}};
     mesh.bbox = {{-10,-10,-10},{10,10,10}};
     mesh.sub_meshes.resize(1);
     auto& part = mesh.sub_meshes[0];
-    part.mat.group = zenkit::MaterialGroup::WOOD;
+    part.mat.group = asset::MaterialGroup::WOOD;
     for(size_t i=0;i<mesh.positions.size();++i)
       part.wedges.push_back({{0,1,0},{0,0},uint16_t(i)});
     part.triangles = {{{0,2,1}},{{0,3,2}},{{4,5,6}},{{4,6,7}},
@@ -93,7 +101,7 @@ namespace {
     return mesh;
     }
 
-  zenkit::MultiResolutionMesh movableBox(const Tempest::Vec3& dimensionsCm) {
+  asset::StaticMesh movableBox(const Tempest::Vec3& dimensionsCm) {
     auto mesh=movableCube();
     for(auto& vertex:mesh.positions) {
       vertex.x*=dimensionsCm.x/20.f;
@@ -105,7 +113,7 @@ namespace {
     return mesh;
     }
 
-  zenkit::MultiResolutionMesh movableCollisionBox(const Tempest::Vec3& dimensionsCm) {
+  asset::StaticMesh movableCollisionBox(const Tempest::Vec3& dimensionsCm) {
     auto mesh=movableBox(dimensionsCm);
     // movableCube's winding is suitable for its hull-only fixtures. Static
     // Gothic source meshes need clockwise faces: PhysicVbo reverses them.
@@ -114,11 +122,11 @@ namespace {
     return mesh;
     }
 
-  zenkit::Mesh movableFloor() {
-    zenkit::Mesh mesh;
+  asset::WorldMesh movableFloor() {
+    asset::WorldMesh mesh;
     mesh.vertices={{-2000,0,-2000},{-2000,0,2000},{2000,0,2000},{2000,0,-2000}};
     mesh.materials.resize(1);
-    mesh.materials[0].group=zenkit::MaterialGroup::STONE;
+    mesh.materials[0].group=asset::MaterialGroup::STONE;
     // Gothic source faces are reversed by PhysicVbo::addIndex.
     mesh.polygons.vertex_indices={0,2,1,0,3,2};
     mesh.polygons.material_indices={0,0};
@@ -139,7 +147,7 @@ namespace {
 
   ImpulseResponse movableImpulseResponse(const ProtoMesh& proto, const Tempest::Vec3& dimensionsCm,
                                          float massMultiplier, const Tempest::Vec3* sameImpulse=nullptr) {
-    DynamicWorld world(nullptr,zenkit::Mesh{});
+    DynamicWorld world(nullptr,asset::WorldMesh{});
     const Tempest::Vec3 center(123,10000,-257);
     const auto origin=at(center.x,center.y,center.z);
     auto object=world.addMovableVob(proto,"CONTRACT_IMPULSE.MRM",origin,massMultiplier,true,"table",true,44);
@@ -202,7 +210,7 @@ namespace {
     // NW_CITY_TABLE_PEASANT_01's source bounds are 200 x 90 x 120 cm.
     const Tempest::Vec3 dimensions(200,90,120);
     constexpr float tableMass=51.81584f;
-    const float multiplier=tableMass/(2.f*.9f*1.2f*DynamicWorld::materialDensity(zenkit::MaterialGroup::WOOD));
+    const float multiplier=tableMass/(2.f*.9f*1.2f*DynamicWorld::materialDensity(asset::MaterialGroup::WOOD));
     ProtoMesh proto(PackedMesh(movableBox(dimensions),PackedMesh::PK_Visual),"CONTRACT_TABLE.MRM");
     const auto origin=at(0,45,0);
     DynamicWorld world(nullptr,movableFloor());
@@ -260,11 +268,11 @@ namespace {
     world.loadMovableVobs(input);
     }
 
-  zenkit::Mesh waterBasin(float floorY=-400.f, bool cave=false) {
-    zenkit::Mesh mesh;
+  asset::WorldMesh waterBasin(float floorY=-400.f, bool cave=false) {
+    asset::WorldMesh mesh;
     mesh.materials.resize(2);
-    mesh.materials[0].group=zenkit::MaterialGroup::STONE;
-    mesh.materials[1].group=zenkit::MaterialGroup::WATER;
+    mesh.materials[0].group=asset::MaterialGroup::STONE;
+    mesh.materials[1].group=asset::MaterialGroup::WATER;
     const auto plane=[&](float y,uint32_t material,bool twoSided) {
       const auto first=uint32_t(mesh.vertices.size());
       mesh.vertices.insert(mesh.vertices.end(),{{-2000,y,-2000},{-2000,y,2000},
@@ -317,7 +325,7 @@ namespace {
     auto heavyBarrel=world.addMovableVob(proto,"CONTRACT_FLOAT.MRM",at(-550,110,0),.8f,true,"barrel",true,605);
     auto cupboard=world.addMovableVob(proto,"CONTRACT_FLOAT.MRM",at(-950,110,0),.8f,true,"cupboard",true,606);
     auto otherWood=world.addMovableVob(proto,"CONTRACT_FLOAT.MRM",at(-1150,110,0),.8f,true,"other",true,607);
-    const float solidMass=.8f*.8f*.8f*DynamicWorld::materialDensity(zenkit::MaterialGroup::WOOD);
+    const float solidMass=.8f*.8f*.8f*DynamicWorld::materialDensity(asset::MaterialGroup::WOOD);
     requireNear(barrel.mass(),solidMass*.2f,.001f,"barrel buoyancy must preserve its hull density and authored mass multiplier");
     requireNear(heavyBarrel.mass(),solidMass*.8f,.001f,"a heavier barrel must preserve its distinct authored physical mass");
     requireNear(heavyBarrel.mass(),barrel.mass()*4.f,.001f,"barrel physical mass must still scale exactly with its mass multiplier");
@@ -326,24 +334,31 @@ namespace {
     cube.assign(std::pair(Tempest::Vec3(-20,-20,-20),Tempest::Vec3(20,20,20)));
     Bounds arrow;
     arrow.assign(std::pair(Tempest::Vec3(-1,-1,-30),Tempest::Vec3(1,1,30)));
-    auto wood=world.addDynamicObj(at(100,110,0),cube,zenkit::MaterialGroup::WOOD);
-    auto metal=world.addDynamicObj(at(300,110,0),cube,zenkit::MaterialGroup::METAL);
-    auto stone=world.addDynamicObj(at(500,110,0),cube,zenkit::MaterialGroup::STONE);
-    auto woodenArrow=world.addDynamicObj(at(700,110,0),arrow,zenkit::MaterialGroup::WOOD);
-    auto metalBlade=world.addDynamicObj(at(900,110,0),arrow,zenkit::MaterialGroup::METAL);
-    const std::array<DynamicWorld::Item*,11> objects={&barrel,&heavyBarrel,&table,&crate,&cupboard,&otherWood,
-                                                    &wood,&metal,&stone,&woodenArrow,&metalBlade};
-    const std::array<const char*,11> names={"barrel","heavier barrel","wooden table","wooden crate","wooden cupboard",
+    ProtoMesh itemCube(PackedMesh(movableBox({40,40,40}),PackedMesh::PK_Visual),"CONTRACT_WATER_ITEM.MRM");
+    ProtoMesh itemArrow(PackedMesh(movableBox({2,2,60}),PackedMesh::PK_Visual),"CONTRACT_WATER_ARROW.MRM");
+    auto wood=world.addDynamicObj(at(100,110,0),cube,asset::MaterialGroup::WOOD,&itemCube,"CONTRACT_WATER_ITEM.MRM");
+    auto metal=world.addDynamicObj(at(300,110,0),cube,asset::MaterialGroup::METAL,&itemCube,"CONTRACT_WATER_ITEM.MRM");
+    auto stone=world.addDynamicObj(at(500,110,0),cube,asset::MaterialGroup::STONE,&itemCube,"CONTRACT_WATER_ITEM.MRM");
+    auto woodenArrow=world.addDynamicObj(at(700,110,0),arrow,asset::MaterialGroup::WOOD);
+    auto metalBlade=world.addDynamicObj(at(900,110,0),arrow,asset::MaterialGroup::METAL);
+    auto woodenArrowHull=world.addDynamicObj(at(1100,110,0),arrow,asset::MaterialGroup::WOOD,&itemArrow,"CONTRACT_WATER_ARROW.MRM");
+    auto metalBladeHull=world.addDynamicObj(at(1300,110,0),arrow,asset::MaterialGroup::METAL,&itemArrow,"CONTRACT_WATER_ARROW.MRM");
+    requireNear(wood.mass(),.4f*.4f*.4f*700.f,.001f,"a wood hull must retain its density-derived physical mass in water");
+    requireNear(woodenArrowHull.mass(),.02f*.02f*.6f*700.f,.000001f,
+                "a thin wood hull must displace its real hull volume without the legacy thirty-centimetre box");
+    const std::array<DynamicWorld::Item*,13> objects={&barrel,&heavyBarrel,&table,&crate,&cupboard,&otherWood,
+                                                    &wood,&metal,&stone,&woodenArrow,&metalBlade,&woodenArrowHull,&metalBladeHull};
+    const std::array<const char*,13> names={"barrel","heavier barrel","wooden table","wooden crate","wooden cupboard",
                                            "other wooden vob","wood item","metal item","stone item",
-                                           "thin wooden arrow","thin metal blade"};
-    std::array<int,11> firstSleep;
+                                           "thin wooden arrow","thin metal blade","thin wooden arrow hull","thin metal blade hull"};
+    std::array<int,13> firstSleep;
     firstSleep.fill(-1);
     for(auto* object:objects)
       require(object->mass()>0 && object->addImpulse({0,-object->mass()*.1f,0}),
               "water fixtures must wake genuine native dynamic bodies");
     std::vector<PhysicsNoise> splashes;
     world.setPhysicsNoiseCallback([&](const PhysicsNoise& noise) {
-      if(noise.surface==zenkit::MaterialGroup::WATER) splashes.push_back(noise);
+      if(noise.surface==asset::MaterialGroup::WATER) splashes.push_back(noise);
       });
     for(int frame=0;frame<1800;++frame) {
       world.tick(frame%3==2 ? 16 : 17);
@@ -379,6 +394,8 @@ namespace {
     requireNear(woodenArrow.position().y,1.f-2.f*.7f,1.f,"a thin wooden item must use its actual shell for water draft");
     require(metal.position().y<-350.f && stone.position().y<-350.f && metalBlade.position().y<-350.f,
             "metal, stone and a padded thin metal item must sink to the bottom instead of floating");
+    requireNear(woodenArrowHull.position().y,1.f-2.f*.7f,1.f,"a thin wooden item must use its actual shell for water draft");
+    require(metalBladeHull.position().y<-350.f,"a thin metal hull must sink to the bottom instead of floating");
     require(!splashes.empty(),"entering water must emit a water noise through the existing NPC noise callback");
     require(std::all_of(splashes.begin(),splashes.end(),[](const auto& splash) {
       return splash.volume>0.f && splash.volume<=1.f && splash.radius>0.f;
@@ -457,15 +474,15 @@ namespace {
   void testWaterDenseVobs() {
     Resources resources;
     auto metalMesh=movableBox({80,80,80}),stoneMesh=movableBox({80,80,80});
-    metalMesh.sub_meshes[0].mat.group=zenkit::MaterialGroup::METAL;
-    stoneMesh.sub_meshes[0].mat.group=zenkit::MaterialGroup::STONE;
+    metalMesh.sub_meshes[0].mat.group=asset::MaterialGroup::METAL;
+    stoneMesh.sub_meshes[0].mat.group=asset::MaterialGroup::STONE;
     ProtoMesh metalProto(PackedMesh(metalMesh,PackedMesh::PK_Visual),"CONTRACT_METAL_WATER.MRM");
     ProtoMesh stoneProto(PackedMesh(stoneMesh,PackedMesh::PK_Visual),"CONTRACT_STONE_WATER.MRM");
     DynamicWorld world(nullptr,waterBasin());
     auto metal=world.addMovableVob(metalProto,"CONTRACT_METAL_WATER.MRM",at(-200,110,0),.03f,true,"barrel",true,608);
     auto stone=world.addMovableVob(stoneProto,"CONTRACT_STONE_WATER.MRM",at(200,110,0),.03f,true,"barrel",true,609);
     const std::array<DynamicWorld::Item*,2> objects={&metal,&stone};
-    const std::array<zenkit::MaterialGroup,2> materials={zenkit::MaterialGroup::METAL,zenkit::MaterialGroup::STONE};
+    const std::array<asset::MaterialGroup,2> materials={asset::MaterialGroup::METAL,asset::MaterialGroup::STONE};
     const std::array<float,2> masses={metal.mass(),stone.mass()};
     for(size_t i=0;i<objects.size();++i) {
       const float expected=.8f*.8f*.8f*DynamicWorld::materialDensity(materials[i])*.03f;
@@ -732,7 +749,7 @@ namespace {
         });
       };
     const auto saved=savedRecord("_",zenId,"CONTRACT_CUBE.MRM",origin);
-    DynamicWorld first(nullptr,zenkit::Mesh{});
+    DynamicWorld first(nullptr,asset::WorldMesh{});
     auto firstObject=first.addMovableVob(proto,"CONTRACT_CUBE.MRM",origin,.25f,true,"table",true,zenId);
     require(!firstObject.isEmpty(),"movable save fixture must have a physical body");
     loadMovables(first,saved);
@@ -743,7 +760,7 @@ namespace {
     requireMatrix(firstState[0].transform,moved,"restore must retain moved translation and rotation");
     const auto roundtrip=saveArchive([&](Serialize& output) { first.saveMovableVobs(output); });
 
-    DynamicWorld second(nullptr,zenkit::Mesh{});
+    DynamicWorld second(nullptr,asset::WorldMesh{});
     auto secondObject=second.addMovableVob(proto,"CONTRACT_CUBE.MRM",origin,.25f,true,"table",true,zenId);
     loadMovables(second,roundtrip);
     require(secondObject.isSleeping(),"a sleeping saved vob must remain asleep after a save roundtrip");
@@ -772,14 +789,14 @@ namespace {
       saveArchive([](Serialize& output) { output.setEntry("old-save"); output.write(uint8_t(1)); })
       };
     for(const auto& bytes:rejected) {
-      DynamicWorld other(nullptr,zenkit::Mesh{});
+      DynamicWorld other(nullptr,asset::WorldMesh{});
       auto object=other.addMovableVob(proto,"CONTRACT_CUBE.MRM",origin,.25f,true,"table",true,zenId);
       loadMovables(other,bytes);
       requireMatrix(other.movableVobSnapshot()[0].transform,origin,
                     "old saves and mismatched world, ZEN id, visual or origin must retain the ZEN pose");
       require(object.isSleeping(),"ignoring an optional record must not wake furniture");
       }
-    DynamicWorld disabled(nullptr,zenkit::Mesh{});
+    DynamicWorld disabled(nullptr,asset::WorldMesh{});
     disabled.setMovableVobsEnabled(false);
     auto disabledObject=disabled.addMovableVob(proto,"CONTRACT_CUBE.MRM",origin,.25f,true,"table",true,zenId);
     loadMovables(disabled,saved);
@@ -792,7 +809,7 @@ namespace {
     ProtoMesh proto(PackedMesh(movableCube(),PackedMesh::PK_Visual),"CONTRACT_CUBE.MRM");
     constexpr uint32_t zenId=43;
     const auto origin=at(0,100,0);
-    DynamicWorld world(nullptr,zenkit::Mesh{});
+    DynamicWorld world(nullptr,asset::WorldMesh{});
     auto object=world.addMovableVob(proto,"CONTRACT_CUBE.MRM",origin,.25f,true,"table",true,zenId);
     require(!object.isEmpty(),"trace fixture must have a movable body");
     world.setTraceTime(1500);
@@ -812,7 +829,7 @@ namespace {
             "later furniture movement must retain the first trace appearance time");
 
     const auto roundtrip=saveArchive([&](Serialize& output) { world.saveMovableVobs(output); });
-    DynamicWorld restored(nullptr,zenkit::Mesh{});
+    DynamicWorld restored(nullptr,asset::WorldMesh{});
     auto restoredObject=restored.addMovableVob(proto,"CONTRACT_CUBE.MRM",origin,.25f,true,"table",true,zenId);
     restored.setTraceTime(2000);
     loadMovables(restored,roundtrip);
@@ -844,7 +861,7 @@ namespace {
         if(schema>=2)
           output.write(true,uint64_t(1501),std::string_view("PLAYER"));
         });
-      DynamicWorld loaded(nullptr,zenkit::Mesh{});
+      DynamicWorld loaded(nullptr,asset::WorldMesh{});
       auto loadedObject=loaded.addMovableVob(proto,"CONTRACT_CUBE.MRM",origin,.25f,true,"table",true,zenId);
       loaded.setTraceTime(2200);
       loadMovables(loaded,saved);
@@ -859,7 +876,7 @@ namespace {
       require(afterImpulse.trace && afterImpulse.traceTime==state.traceTime && afterImpulse.traceCulprit==state.traceCulprit,
               "a later unattributed impulse must not rewrite an existing trace's first time or culprit");
       const auto savedAgain=saveArchive([&](Serialize& output) { loaded.saveMovableVobs(output); });
-      DynamicWorld reloaded(nullptr,zenkit::Mesh{});
+      DynamicWorld reloaded(nullptr,asset::WorldMesh{});
       auto reloadedObject=reloaded.addMovableVob(proto,"CONTRACT_CUBE.MRM",origin,.25f,true,"table",true,zenId);
       reloaded.setTraceTime(2300);
       loadMovables(reloaded,savedAgain);
@@ -881,16 +898,16 @@ namespace {
     auto floor=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,
                                       DynamicWorld::C_Landscape);
     auto cup=world.addDynamicBody(new JPH::BoxShape(JPH::Vec3::sReplicate(.05f)),at(0,100,0),.7f,.15f);
-    cup->setNoiseProfile(MAT_CLAY,zenkit::MaterialGroup::STONE,"cup");
+    cup->setNoiseProfile(MAT_CLAY,asset::MaterialGroup::STONE,"cup");
     auto table=world.addDynamicBody(new JPH::BoxShape(JPH::Vec3::sReplicate(.35f)),at(300,100,0),.7f,50.f,
                                     DynamicWorld::C_MovableVob);
-    table->setNoiseProfile(MAT_WOOD,zenkit::MaterialGroup::WOOD,"table");
+    table->setNoiseProfile(MAT_WOOD,asset::MaterialGroup::WOOD,"table");
     auto soft=world.addDynamicBody(new JPH::BoxShape(JPH::Vec3::sReplicate(.05f)),at(-300,5.1f,0),.7f,.15f);
-    soft->setNoiseProfile(MAT_CLAY,zenkit::MaterialGroup::STONE,"soft");
+    soft->setNoiseProfile(MAT_CLAY,asset::MaterialGroup::STONE,"soft");
     auto wood=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(.3f,.1f,.3f)),at(600,40,0),.7f,DynamicWorld::C_Object);
-    wood->setNoiseProfile(MAT_WOOD,zenkit::MaterialGroup::WOOD,"wood");
+    wood->setNoiseProfile(MAT_WOOD,asset::MaterialGroup::WOOD,"wood");
     auto metal=world.addDynamicBody(new JPH::BoxShape(JPH::Vec3::sReplicate(.05f)),at(600,100,0),.7f,1.f);
-    metal->setNoiseProfile(MAT_METAL,zenkit::MaterialGroup::METAL,"metal");
+    metal->setNoiseProfile(MAT_METAL,asset::MaterialGroup::METAL,"metal");
     for(int i=0;i<120;++i) world.tick(17);
     const auto find=[&](std::string_view what) -> const PhysicsNoise* {
       for(const auto& noise:noises) if(noise.what==what) return &noise;
@@ -906,7 +923,7 @@ namespace {
             "a small fallen cup must retain clay material, local radius and unknown culprit");
     require(tableNoise->material==MAT_WOOD && tableNoise->radius>=600.f && tableNoise->volume>cupNoise->volume,
             "a heavy table must be louder and audible at six metres");
-    require(metalNoise->surface==zenkit::MaterialGroup::WOOD && metalNoise->material==MAT_METAL,
+    require(metalNoise->surface==asset::MaterialGroup::WOOD && metalNoise->material==MAT_METAL,
             "noise must retain both source and struck surface materials");
     requireNear(cupNoise->position.y,0.f,2.f,"noise position must be the contact in world centimetres");
     for(size_t i=0;i<noises.size();++i)
@@ -932,7 +949,7 @@ namespace {
     }
 
   void testRagdollNoise() {
-    zenkit::ModelHierarchy hierarchy;
+    zenkit::ModelHierarchy hierarchy{};
     const char* names[]={"BIP01","BIP01 PELVIS","BIP01 SPINE","BIP01 HEAD"};
     const float offsets[]={0,95,40,40};
     for(int i=0;i<4;++i) {
@@ -943,7 +960,7 @@ namespace {
       std::memcpy(&node.transform,&matrix,sizeof(matrix));
       hierarchy.nodes.push_back(node);
       }
-    Skeleton skeleton(hierarchy,nullptr,"NOISE_HUMAN.MDS");
+    Skeleton skeleton(asset::fromZenKit(hierarchy),nullptr,"NOISE_HUMAN.MDS");
     HitZones zones;
     zones.setSkeleton(&skeleton);
     require(zones.isValid(),"noise ragdoll fixture must contain canonical capsules");
@@ -988,7 +1005,7 @@ namespace {
   void testMovableVobArrowIdentity() {
     Resources resources;
     ProtoMesh proto(PackedMesh(movableCube(),PackedMesh::PK_Visual),"CONTRACT_CUBE.MRM");
-    DynamicWorld world(nullptr,zenkit::Mesh{});
+    DynamicWorld world(nullptr,asset::WorldMesh{});
     auto object=world.addMovableVob(proto,"CONTRACT_CUBE.MRM",at(0,100,0),.25f,true,"table",true,42);
     struct ArrowContact final : DynamicWorld::BulletCallback {
       bool stopsAtWorldHit() const override { return true; }
@@ -1016,20 +1033,19 @@ namespace {
   void testSkinnedMeshMinimum() {
     Resources resources;
     require(!Resources::hasGraphicsDevice(),"skinned minimum geometry contracts must run without a GPU device");
-    zenkit::ModelMesh model;
+    asset::ModelMesh model;
     model.meshes.resize(1);
     auto& skin=model.meshes[0];
     skin.mesh.positions={{0,10,0},{10,-10,0},{0,20,10},{0,-10000,0}};
     skin.mesh.bbox={{0,-10000,0},{10,20,10}};
     skin.mesh.sub_meshes.resize(1);
     auto& surface=skin.mesh.sub_meshes[0];
-    surface.mat.group=zenkit::MaterialGroup::WOOD;
+    surface.mat.group=asset::MaterialGroup::WOOD;
     for(uint16_t i=0;i<skin.mesh.positions.size();++i)
       surface.wedges.push_back({{.6f,-.48f,.64f},{0,0},i});
     surface.triangles={{{0,1,2}}};
     skin.weights={{{.4f,{0,10,0},0},{.3f,{0,10,0},1},{.2f,{0,10,0},2},{.1f,{0,10,0},3}},
                   {{1.f,{10,-10,0},0}},{{1.f,{0,20,10},0}},{{1.f,{0,-10000,0},0}}};
-    skin.nodes={0,1,2,3};
     const PackedMesh packed(skin);
     require(packed.verticesA.size()>3,"the skin fixture must contain actual meshlet vertex padding");
     ProtoMesh mesh(model,nullptr,"CONTRACT_SKIN.MDM");
@@ -1067,7 +1083,7 @@ namespace {
     require(!mesh.minSkinnedVertex(worldBones.data(),3,object,4,minimum),
             "a missing weighted bone must reject the palette instead of approximating the mesh");
     requireNear((minimum-sentinel).length(),0,0,"a rejected minimum query must leave its output unchanged");
-    ProtoMesh empty(zenkit::ModelMesh{},nullptr,"CONTRACT_EMPTY_SKIN.MDM");
+    ProtoMesh empty(asset::ModelMesh{},nullptr,"CONTRACT_EMPTY_SKIN.MDM");
     require(!empty.minSkinnedVertex(worldBones.data(),worldBones.size(),object,4,minimum),
             "a model without rendered skin geometry must have no skinned minimum");
     requireNear((minimum-sentinel).length(),0,0,"an absent skin must leave the minimum output unchanged");
@@ -1125,7 +1141,7 @@ namespace {
                   "one-handed damage must combine weapon damage and strength");
       requireNear(rule.meleeDamage(FractureRule::Melee::TwoHand,40,100),91.f,.001f,
                   "two-handed strikes must use their own CSV multiplier");
-      DynamicWorld world(nullptr,zenkit::Mesh{});
+      DynamicWorld world(nullptr,asset::WorldMesh{});
       auto object=make(world,at(100,1000,0));
       const auto swing=[&](const Tempest::Vec3& from,const Tempest::Vec3& facing,float range) {
         return world.meleeMovableVobs(from,facing,range,40,100,FractureRule::Melee::OneHand);
@@ -1151,7 +1167,7 @@ namespace {
               "destruction=0 must ignore otherwise valid melee strikes");
       }
     {
-      DynamicWorld world(nullptr,zenkit::Mesh{});
+      DynamicWorld world(nullptr,asset::WorldMesh{});
       world.setTraceTime(1500);
       auto object=make(world,at(0,1000,0));
       require(world.destructionEnabled() && object.fractureMesh()!=nullptr && object.fractureMesh()->pieces.size()==8,
@@ -1196,7 +1212,7 @@ namespace {
       require(!world.landRay({0,1100,0},300).hasCol,
               "fragments must never become walking or floor query obstacles");
       const auto saved=saveArchive([&](Serialize& output) { world.saveMovableVobs(output); });
-      DynamicWorld restored(nullptr,zenkit::Mesh{});
+      DynamicWorld restored(nullptr,asset::WorldMesh{});
       restored.setTraceTime(9000);
       auto restoredObject=make(restored,at(0,1000,0));
       loadMovables(restored,saved);
@@ -1226,7 +1242,7 @@ namespace {
             output.write(true,piece.permanent,uint64_t(piece.asleepSince)+1,
                          piece.transform,piece.velocity,piece.angularVelocity,piece.sleeping);
           });
-        DynamicWorld loaded(nullptr,zenkit::Mesh{});
+        DynamicWorld loaded(nullptr,asset::WorldMesh{});
         loaded.setTraceTime(9000);
         auto loadedObject=make(loaded,at(0,1000,0));
         loadMovables(loaded,versioned);
@@ -1235,7 +1251,7 @@ namespace {
                 metadata.traceCulprit==(schema==1 ? "" : "NPC_DESTRUCTION_TEST"),
                 "legacy debris must have unknown age and actor; v2 must retain engine truth");
         const auto savedAgain=saveArchive([&](Serialize& output) { loaded.saveMovableVobs(output); });
-        DynamicWorld reloaded(nullptr,zenkit::Mesh{});
+        DynamicWorld reloaded(nullptr,asset::WorldMesh{});
         auto reloadedObject=make(reloaded,at(0,1000,0));
         loadMovables(reloaded,savedAgain);
         const auto repeated=reloaded.movableVobSnapshot()[0];
@@ -1243,7 +1259,7 @@ namespace {
                 repeated.traceCulprit==metadata.traceCulprit,
                 "saving loaded debris again must preserve both unknown and recorded break metadata");
         }
-      DynamicWorld movementOff(nullptr,zenkit::Mesh{});
+      DynamicWorld movementOff(nullptr,asset::WorldMesh{});
       movementOff.setMovableVobsEnabled(false);
       auto offObject=make(movementOff,at(0,1000,0));
       loadMovables(movementOff,saved);
@@ -1257,7 +1273,7 @@ namespace {
                     "movement OFF loads must preserve awake debris velocity");
         }
       const auto offSave=saveArchive([&](Serialize& output) { movementOff.saveMovableVobs(output); });
-      DynamicWorld offReloaded(nullptr,zenkit::Mesh{});
+      DynamicWorld offReloaded(nullptr,asset::WorldMesh{});
       auto offReloadedObject=make(offReloaded,at(0,1000,0));
       loadMovables(offReloaded,offSave);
       require(offReloadedObject.isBroken() && offReloaded.fragmentSnapshot().size()==pieces.size(),
@@ -1270,7 +1286,7 @@ namespace {
               "awake debris must continue native integration with intact prop movement disabled");
       restored.setMovableVobsEnabled(true);
       require(restoredObject.isBroken(),"enabling movable-vobs must not resurrect broken props either");
-      DynamicWorld disabled(nullptr,zenkit::Mesh{});
+      DynamicWorld disabled(nullptr,asset::WorldMesh{});
       disabled.setDestructionEnabled(false);
       auto disabledObject=make(disabled,at(0,1000,0));
       loadMovables(disabled,saved);
@@ -1285,18 +1301,18 @@ namespace {
       }
     {
       auto source=movableCollisionBox({100,100,100});
-      source.sub_meshes[0].mat.group=zenkit::MaterialGroup::STONE;
+      source.sub_meshes[0].mat.group=asset::MaterialGroup::STONE;
       ProtoMesh barrel(PackedMesh(source,PackedMesh::PK_Visual),"NW_HARBOUR_BARREL_01.MRM");
-      DynamicWorld world(nullptr,zenkit::Mesh{});
+      DynamicWorld world(nullptr,asset::WorldMesh{});
       auto object=world.addMovableVob(barrel,"NW_HARBOUR_BARREL_01.MRM",at(0,1000,0),.03f,true,"barrel");
       std::vector<PhysicsNoise> noises;
       world.setPhysicsNoiseCallback([&](const PhysicsNoise& noise) { noises.push_back(noise); });
-      requireNear(object.mass(),DynamicWorld::materialDensity(zenkit::MaterialGroup::STONE)*.03f,.01f,
+      requireNear(object.mass(),DynamicWorld::materialDensity(asset::MaterialGroup::STONE)*.03f,.01f,
                   "destructible class must not change the authored mesh density");
       object.addImpulse({object.mass()*10.f,0,0});
       world.tick(17);
       require(object.isBroken() && !noises.empty() && noises.back().material==MAT_WOOD &&
-              noises.back().surface==zenkit::MaterialGroup::WOOD,
+              noises.back().surface==asset::MaterialGroup::WOOD,
               "a wooden barrel mislabeled as stone must still emit a wooden break sound");
       }
     for(const bool tilted:{false,true}) for(const float height:{100.f,500.f}) {
@@ -1463,11 +1479,11 @@ namespace {
           require(arrow->position().x>to.x,"a live arrow must cross the entire former obstacle without stopping");
         world.deleteObj(arrow);
 
-        zenkit::ModelHierarchy hierarchy;
+        zenkit::ModelHierarchy hierarchy{};
         // Legacy walking tests the upper capsule, with its feet above the
         // logical root. Keep that capsule overlapping the 100 cm fixture.
         hierarchy.collision_bbox={{-25,0,-25},{25,140,25}};
-        Skeleton shape(hierarchy,nullptr,"DESTRUCTION_PASSAGE_WALKER");
+        Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"DESTRUCTION_PASSAGE_WALKER");
         auto walker=world.addGhostObj(&shape);
         walker.setPosition({0,0,0});
         DynamicWorld::CollisionTest collision;
@@ -1518,7 +1534,7 @@ namespace {
       passage(cleaned,false);
       }
     {
-      DynamicWorld world(nullptr,zenkit::Mesh{});
+      DynamicWorld world(nullptr,asset::WorldMesh{});
       auto object=make(world,at(0,1000,0));
       int arrows=0;
       for(;arrows<8 && !object.isBroken();++arrows) {
@@ -1538,9 +1554,9 @@ namespace {
       DynamicWorld world(nullptr,movableFloor());
       auto object=make(world,at(100,50,0));
       auto walker=world.movableVobSnapshot()[0];
-      zenkit::ModelHierarchy hierarchy;
+      zenkit::ModelHierarchy hierarchy{};
       hierarchy.collision_bbox={{-25,0,-25},{25,180,25}};
-      Skeleton shape(hierarchy,nullptr,"DESTRUCTION_WALKER");
+      Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"DESTRUCTION_WALKER");
       auto hero=world.addGhostObj(&shape);
       hero.setPosition({0,0,0});
       for(int i=0;i<180;++i) {
@@ -1645,7 +1661,7 @@ namespace {
       }
     {
       setenv("OPENGOTHIC_FRACTURE","",1);
-      DynamicWorld world(nullptr,zenkit::Mesh{});
+      DynamicWorld world(nullptr,asset::WorldMesh{});
       auto object=make(world,at(0,1000,0));
       require(object.fractureMesh()==nullptr,"an explicitly empty cache path must disable cache lookup");
       object.addImpulse({object.mass()*20.f,0,0});
@@ -1747,12 +1763,12 @@ namespace {
     // query proxies directly. No game assets or graphics device are required.
     Resources resources;
     ProtoMesh proto(PackedMesh(movableCube(),PackedMesh::PK_Visual),"CONTRACT_CUBE.MRM");
-    zenkit::ModelHierarchy hierarchy;
+    zenkit::ModelHierarchy hierarchy{};
     hierarchy.collision_bbox = {{-5,-10,-5},{5,10,5}};
-    Skeleton walkerShape(hierarchy,nullptr,"CONTRACT_WALKER");
+    Skeleton walkerShape(asset::fromZenKit(hierarchy),nullptr,"CONTRACT_WALKER");
     for(const bool blocksWalking:{false,true}) {
       for(const bool legacyCollision:{false,true}) {
-        DynamicWorld world(nullptr,zenkit::Mesh{});
+        DynamicWorld world(nullptr,asset::WorldMesh{});
         world.setMovableVobsEnabled(false);
         auto object = world.addMovableVob(proto,"CONTRACT_CUBE.MRM",at(0,100,0),.25f,
                                           blocksWalking,blocksWalking ? "table" : "utensil",legacyCollision);
@@ -1790,7 +1806,7 @@ namespace {
           }
         }
 
-      DynamicWorld world(nullptr,zenkit::Mesh{});
+      DynamicWorld world(nullptr,asset::WorldMesh{});
       auto moving = world.addMovableVob(proto,"CONTRACT_CUBE.MRM",at(0,100,0),.25f,
                                         blocksWalking,"impactor",false);
       auto target = world.addMovableVob(proto,"CONTRACT_CUBE.MRM",at(30,100,0),.25f,
@@ -1815,7 +1831,7 @@ namespace {
       };
     const auto hull = JPH::ConvexHullShapeSettings(points,8,0.f).Create();
     require(!hull.HasError(),"movable vob convex hull must be constructible");
-    const float mass = hull.Get()->GetVolume()*DynamicWorld::materialDensity(zenkit::MaterialGroup::WOOD)*.25f;
+    const float mass = hull.Get()->GetVolume()*DynamicWorld::materialDensity(asset::MaterialGroup::WOOD)*.25f;
     requireNear(mass,.008f*700.f*.25f,.00001f,"mass must use convex hull volume and class multiplier");
     auto floor = world.addCollisionBody(new JPH::BoxShape({10,.1f,10}),at(0,-10,0),.65f,DynamicWorld::C_Landscape);
     auto movable = world.addDynamicBody(hull.Get(),at(0,100,0),.5f,mass,DynamicWorld::C_MovableVob,true);
@@ -1854,7 +1870,7 @@ namespace {
     // Source vertices keep attachment-local transforms before hull creation.
     std::vector<JPH::Vec3> source = {{1,2,3},{2,2,3},{1,3,3}};
     PhysicVbo sourceMesh(&source);
-    sourceMesh.addIndex({0,1,2},0,3,zenkit::MaterialGroup::WOOD);
+    sourceMesh.addIndex({0,1,2},0,3,asset::MaterialGroup::WOOD);
     auto local = at(100,200,300);
     local.scale(2,3,4);
     std::vector<JPH::Vec3> transformed;
@@ -2037,7 +2053,7 @@ namespace {
     for(const auto& fixture:fixtures) {
       const std::vector<JPH::Vec3> vertices(fixture.vertices,fixture.vertices+3);
       PhysicVbo mesh(&vertices);
-      mesh.addIndex(indices,0,3,zenkit::MaterialGroup::STONE);
+      mesh.addIndex(indices,0,3,asset::MaterialGroup::STONE);
       JPH::Vec3 normal;
       require(mesh.rayTriangleNormal(0,normal),"source terrain normal must be finite and nonzero");
       for(JPH::uint axis=0;axis<3;++axis)
@@ -2058,7 +2074,7 @@ namespace {
       };
     for(const auto& vertices:invalid) {
       PhysicVbo mesh(&vertices);
-      mesh.addIndex(indices,0,3,zenkit::MaterialGroup::STONE);
+      mesh.addIndex(indices,0,3,asset::MaterialGroup::STONE);
       JPH::Vec3 normal(7,8,9);
       require(!mesh.rayTriangleNormal(0,normal),"unusable source planes must retain native output");
       require(normal==JPH::Vec3(7,8,9),"invalid source normal must not overwrite native output");
@@ -2073,7 +2089,7 @@ namespace {
       };
     const std::vector<uint32_t> indices = {0,2,1};
     PhysicVbo mesh(&vertices);
-    mesh.addIndex(indices,0,3,zenkit::MaterialGroup::STONE);
+    mesh.addIndex(indices,0,3,asset::MaterialGroup::STONE);
     CollisionWorld world;
     auto landscape = world.addCollisionBody(mesh.shape(),at(0,0,0),.75f,
                                             DynamicWorld::C_Landscape,false,false,&mesh);
@@ -2146,6 +2162,44 @@ namespace {
     requireNear(gameHit.point.y,0,.001f,"compatible game mesh ray must report the triangle plane");
     require(!world.rayCast({-.02f,100,50},{-.02f,-100,50},landscapeMask).hasHit,
             "game mesh edge tolerance must reject points beyond its barycentric allowance");
+    {
+      const std::vector<JPH::Vec3> vertices={{-12,0,-9},{-12,0,9},{12,0,9},{12,0,-9}};
+      PhysicVbo source(&vertices);
+      source.addIndex({0,2,1},0,3,asset::MaterialGroup::WOOD,"first-large-face");
+      source.addIndex({0,3,2},0,3,asset::MaterialGroup::STONE,"second-large-face");
+      const auto split=source.shape(true);
+      require(split!=nullptr && source.shape()->GetStats().mNumTriangles==2,
+              "static subdivision must leave the original query and furniture mesh unchanged");
+      require(source.triangleCount()==2 && source.vertexCount()==4,
+              "static subdivision must preserve exact source vertices and triangle metadata");
+      JPH::Shape::GetTrianglesContext context;
+      split->GetTrianglesStart(context,split->GetLocalBounds(),JPH::Vec3::sZero(),
+                               JPH::Quat::sIdentity(),JPH::Vec3::sOne());
+      JPH::Float3 points[96];
+      size_t count=0;
+      float longest=0;
+      for(int batch=split->GetTrianglesNext(context,32,points);batch>0;batch=split->GetTrianglesNext(context,32,points)) {
+        count+=size_t(batch);
+        for(int t=0;t<batch;++t) {
+          JPH::Vec3 triangle[3];
+          for(int v=0;v<3;++v)triangle[v]=JPH::Vec3(points[3*t+v].x,points[3*t+v].y,points[3*t+v].z);
+          require((triangle[1]-triangle[0]).Cross(triangle[2]-triangle[0]).GetY()>0.f,
+                  "static subdivision must preserve source face winding");
+          for(int edge=0;edge<3;++edge)longest=std::max(longest,(triangle[(edge+1)%3]-triangle[edge]).Length());
+          }
+        }
+      require(count>2 && longest<=4.0001f,"every native static collision edge must be at most four metres");
+      auto support=world.addCollisionBody(split,at(0,0,0),.7f,DynamicWorld::C_Object,false,false,&source);
+      const auto first=world.rayCast({-600,100,300},{-600,-100,300},objectMask);
+      const auto second=world.rayCast({600,100,-300},{600,-100,-300},objectMask);
+      require(first.hasHit && second.hasHit && first.body==support.get() && second.body==support.get() &&
+              first.material==asset::MaterialGroup::WOOD && second.material==asset::MaterialGroup::STONE &&
+              std::string(first.sector)=="first-large-face" && std::string(second.sector)=="second-large-face",
+              "split collision faces must retain their original material, sector and exact ray plane");
+      requireNear(first.point.y,0.f,.0001f,"split collision rays must retain the source plane");
+      requireNear(second.point.y,0.f,.0001f,"split collision rays must retain the source plane");
+      std::printf("Static subdivision: %zu triangles, longest edge %.6f m\n",count,double(longest));
+      }
     }
 
   void testCoincidentMaterials() {
@@ -2164,8 +2218,8 @@ namespace {
     const std::vector<uint32_t> wood = {2,1,0,5,4,3};
     const std::vector<uint32_t> stone = {0,2,1,3,5,4};
     PhysicVbo mesh(&vertices);
-    mesh.addIndex(wood,0,wood.size(),zenkit::MaterialGroup::WOOD,"wood-face");
-    mesh.addIndex(stone,0,stone.size(),zenkit::MaterialGroup::STONE,"stone-face");
+    mesh.addIndex(wood,0,wood.size(),asset::MaterialGroup::WOOD,"wood-face");
+    mesh.addIndex(stone,0,stone.size(),asset::MaterialGroup::STONE,"stone-face");
     auto body = world.addCollisionBody(mesh.shape(),at(0,0,0),.75f,
                                        DynamicWorld::C_Landscape,false,false,&mesh);
     const Tempest::Vec3 from[] = {{6477.52686f,1279.26453f,7595.64355f},
@@ -2186,7 +2240,7 @@ namespace {
       require(hit.sector!=nullptr && std::string(hit.sector)==mesh.sectorName(expected[i]),
               "game rays must resolve coincident face sectors with their materials");
       }
-    require(mesh.materialId(0)==zenkit::MaterialGroup::WOOD && mesh.materialId(2)==zenkit::MaterialGroup::STONE,
+    require(mesh.materialId(0)==asset::MaterialGroup::WOOD && mesh.materialId(2)==asset::MaterialGroup::STONE,
             "non-ray callers must retain each original triangle's material");
     }
 
@@ -2201,8 +2255,8 @@ namespace {
       {648.160217f,48.0254517f,146.484192f},
       };
     PhysicVbo mesh(&vertices);
-    mesh.addIndex({0,2,1},0,3,zenkit::MaterialGroup::WOOD,"first-native-face");
-    mesh.addIndex({2,0,3},0,3,zenkit::MaterialGroup::STONE,"first-original-face");
+    mesh.addIndex({0,2,1},0,3,asset::MaterialGroup::WOOD,"first-native-face");
+    mesh.addIndex({2,0,3},0,3,asset::MaterialGroup::STONE,"first-original-face");
     auto body = world.addCollisionBody(mesh.shape(),at(0,0,0),.75f,
                                        DynamicWorld::C_Landscape,false,false,&mesh);
     const Tempest::Vec3 from(64818.9414f,4486.26904f,15276.9766f);
@@ -2210,11 +2264,11 @@ namespace {
     std::vector<CollisionWorld::QueryResult> all;
     const auto first = world.rayCast(from,to,landscapeMask,false,&all);
     require(all.size()==2 && first.body==body.get(),"shared-edge ray must retain both native face hits");
-    require(all[0].material==zenkit::MaterialGroup::WOOD && all[1].material==zenkit::MaterialGroup::STONE &&
+    require(all[0].material==asset::MaterialGroup::WOOD && all[1].material==asset::MaterialGroup::STONE &&
             all[0].fraction<all[1].fraction && first.fraction==all[0].fraction,
             "all-hit queries must preserve native fraction ordering at shared edges");
     const auto closest = world.rayCast(from,to,landscapeMask);
-    require(closest.hasHit && closest.body==body.get() && closest.material==zenkit::MaterialGroup::STONE,
+    require(closest.hasHit && closest.body==body.get() && closest.material==asset::MaterialGroup::STONE,
             "closest shared-edge ray must choose the valid nearest original plane");
     require(std::string(closest.sector)=="first-original-face",
             "shared-edge correction must keep the chosen native face's metadata");
@@ -2232,7 +2286,7 @@ namespace {
     const auto normal = (vertices[1]-vertices[0]).Cross(vertices[2]-vertices[0]).Normalized();
     const auto interior = world.rayCast(CollisionWorld::toCentimeters(center+normal),
                                        CollisionWorld::toCentimeters(center-normal),landscapeMask);
-    require(interior.hasHit && interior.material==zenkit::MaterialGroup::WOOD,
+    require(interior.hasHit && interior.material==asset::MaterialGroup::WOOD,
             "interior mesh rays must retain their closest native face");
     }
 
@@ -2247,7 +2301,7 @@ namespace {
       };
     const std::vector<uint32_t> indices = {0,2,1,3,5,4,6,8,7};
     PhysicVbo mesh(&vertices);
-    mesh.addIndex(indices,0,indices.size(),zenkit::MaterialGroup::STONE,"original-floor");
+    mesh.addIndex(indices,0,indices.size(),asset::MaterialGroup::STONE,"original-floor");
     auto body = world.addCollisionBody(mesh.shape(),at(0,0,0),.75f,
                                        DynamicWorld::C_Landscape,false,false,&mesh);
     const Tempest::Vec3 from(25,5000,25), to(25,-5000,25);
@@ -2257,7 +2311,7 @@ namespace {
     require(std::abs(native.point.y-height*100.f)>.001f,
             "floor fixture must expose the compressed native height through the all-hit API");
     const auto closest = world.rayCast(from,to,landscapeMask);
-    require(closest.hasHit && closest.body==body.get() && closest.material==zenkit::MaterialGroup::STONE,
+    require(closest.hasHit && closest.body==body.get() && closest.material==asset::MaterialGroup::STONE,
             "source-plane projection must preserve the selected native body and material");
     requireNear(closest.point.y,height*100.f,.0005f,
                 "interior floor rays must recover their original geometric height");
@@ -2296,7 +2350,7 @@ namespace {
         };
       PhysicVbo mesh(&vertices);
       const std::vector<uint32_t> indices = {0,1,2,3,4,5};
-      mesh.addIndex(indices,0,indices.size(),zenkit::MaterialGroup::STONE,"contact-test");
+      mesh.addIndex(indices,0,indices.size(),asset::MaterialGroup::STONE,"contact-test");
       auto matrix = at(0,0,0);
       if(rotated)
         matrix.rotateOY(45);
@@ -2327,7 +2381,7 @@ namespace {
       };
     PhysicVbo mesh(&vertices);
     const std::vector<uint32_t> indices = {0,1,2,3,4,5};
-    mesh.addIndex(indices,0,indices.size(),zenkit::MaterialGroup::STONE,"bounded-contact-test");
+    mesh.addIndex(indices,0,indices.size(),asset::MaterialGroup::STONE,"bounded-contact-test");
     auto body = world.addCollisionBody(mesh.shape(),at(0,0,0),.75f,DynamicWorld::C_Landscape,false,false,&mesh);
     JPH::CapsuleShape capsule(.3f,.08f);
     Tempest::Vec3 normal;
@@ -2337,6 +2391,46 @@ namespace {
     // simplex approximation and excluded it; accepting the exact gap blocks early.
     require(!world.hasCollision(&capsule,{0,0,0},normal,vob),
             "NPC contact eligibility must preserve the bounded query's previous simplex");
+    }
+
+  void testNpcFrozenBodyReplacement() {
+    zenkit::ModelHierarchy hierarchy{};
+    hierarchy.collision_bbox={{-25,0,-25},{25,180,25}};
+    Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"FROZEN_NPC_REPLACEMENT_CONTRACT");
+    DynamicWorld world(nullptr,movableFloor());
+    auto first=world.addGhostObj(&shape);
+    auto middle=world.addGhostObj(&shape);
+    auto last=world.addGhostObj(&shape);
+    first.setPosition({0,0,0});
+    middle.setPosition({200,0,0});
+    last.setPosition({400,0,0});
+    int identity=0;
+    auto* npc=reinterpret_cast<Npc*>(&identity);
+    last.setUserPointer(npc);
+    world.tick(0);
+    world.tick(0); // freeze all three bodies before replacing the first
+
+    // Npc::setVisual, including MdlVisual::load, replaces its existing ghost
+    // this way. Later NPC movement must use the shifted frozen-list index.
+    first=world.addGhostObj(&shape);
+    first.setPosition({-600,0,0});
+    last.setPosition({1000,0,0});
+    last.moveVirtual({},0,50.f,float(M_PI_4),80.f);
+    int hits=0;
+    world.rayArrow({900,90,0},{1100,90,0},[&](Npc& hit,const Tempest::Vec3&,const Tempest::Vec3&,float&) {
+      if(&hit==npc)
+        ++hits;
+      return false;
+      });
+    std::printf("Frozen NPC replacement: moved body records %d (expected 1)\n",hits);
+    require(hits==1,"replacing a frozen NPC body must not duplicate another moving NPC record");
+
+    // A duplicate would survive this deletion and become a dangling rider in
+    // DynamicWorld::tick when that body had a CharacterVirtual controller.
+    last=DynamicWorld::NpcItem();
+    const auto cleared=world.rayNpc({900,90,0},{1100,90,0},nullptr);
+    require(cleared.npcHit==nullptr,"removing a moved NPC must remove its only broad-phase record");
+    world.tick(0);
     }
 
   void testNpcScalarWitness() {
@@ -2350,7 +2444,7 @@ namespace {
       {368.358978f,43.3533669f,-322.625275f},
       };
     PhysicVbo mesh(&vertices);
-    mesh.addIndex({0,2,1},0,3,zenkit::MaterialGroup::STONE,"npc-witness-face");
+    mesh.addIndex({0,2,1},0,3,asset::MaterialGroup::STONE,"npc-witness-face");
     auto body = world.addCollisionBody(mesh.shape(),at(0,0,0),.75f,
                                        DynamicWorld::C_Landscape,false,false,&mesh);
     JPH::CapsuleShape capsule(.231234491f,.0817193016f);
@@ -2387,7 +2481,7 @@ namespace {
       {86.245079f,5.06495762f,118.298805f},
       };
     PhysicVbo mesh(&vertices);
-    mesh.addIndex({0,2,1,3,5,4},0,6,zenkit::MaterialGroup::STONE,"npc-fall-contact");
+    mesh.addIndex({0,2,1,3,5,4},0,6,asset::MaterialGroup::STONE,"npc-fall-contact");
     auto body = world.addCollisionBody(mesh.shape(),at(0,0,0),.75f,
                                        DynamicWorld::C_Landscape,false,false,&mesh);
     JPH::CapsuleShape capsule(.231234491f,.0817193016f);
@@ -2444,9 +2538,9 @@ namespace {
   void testCharacterVirtualSkippedMove() {
     Resources resources;
     ProtoMesh wall(PackedMesh(movableCollisionBox({20,400,600}),PackedMesh::PK_Visual),"VIRTUAL_SKIP_WALL.MRM");
-    zenkit::ModelHierarchy hierarchy;
+    zenkit::ModelHierarchy hierarchy{};
     hierarchy.collision_bbox = {{-25,0,-25},{25,180,25}};
-    Skeleton shape(hierarchy,nullptr,"VIRTUAL_SKIP_CONTRACT");
+    Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"VIRTUAL_SKIP_CONTRACT");
     for(bool obstructed:{false,true}) {
       DynamicWorld world(nullptr,movableFloor());
       auto structure=obstructed ? world.addStaticObj(wall.attach[0].shape.get(),at(50,200,0),"VIRTUAL_SKIP_WALL.MRM") :
@@ -3129,10 +3223,10 @@ namespace {
       surface(-2000,0,100,0);
       surface(100,ledge.bottom,100,ledge.rise);
       surface(100,ledge.rise,2000,ledge.rise);
-      zenkit::ModelHierarchy hierarchy;
+      zenkit::ModelHierarchy hierarchy{};
       hierarchy.collision_bbox={{-ledge.radius,0,-ledge.radius},
                                 {ledge.radius,ledge.height,ledge.radius}};
-      Skeleton skeleton(hierarchy,nullptr,ledge.monster);
+      Skeleton skeleton(asset::fromZenKit(hierarchy),nullptr,ledge.monster);
       const float mass=Ragdoll::speciesMass(ledge.monster);
       for(int policy=0;policy<2;++policy) {
         const bool limitStairAdvance=policy!=0;
@@ -3203,9 +3297,9 @@ namespace {
     constexpr int stepCount=12;
     constexpr float riser=10.f;
     Resources resources;
-    zenkit::ModelHierarchy hierarchy;
+    zenkit::ModelHierarchy hierarchy{};
     hierarchy.collision_bbox={{-radius,0,-radius},{radius,height,radius}};
-    Skeleton skeleton(hierarchy,nullptr,"WOLF");
+    Skeleton skeleton(asset::fromZenKit(hierarchy),nullptr,"WOLF");
     const float mass=Ragdoll::speciesMass("WOLF");
     // Both stair pitches are below the fifty-degree limit. Include a narrow
     // tread so the requested stair advance is checked with closely spaced risers too.
@@ -3285,9 +3379,9 @@ namespace {
     constexpr float radius=15.f, height=83.f, stepHeight=60.f;
     constexpr float radians=.01745329252f, maxSlope=50.f*radians;
     Resources resources;
-    zenkit::ModelHierarchy hierarchy;
+    zenkit::ModelHierarchy hierarchy{};
     hierarchy.collision_bbox={{-radius,0,-radius},{radius,height,radius}};
-    Skeleton skeleton(hierarchy,nullptr,"WOLF");
+    Skeleton skeleton(asset::fromZenKit(hierarchy),nullptr,"WOLF");
     const float mass=Ragdoll::speciesMass("WOLF");
     ProtoMesh wall(PackedMesh(movableCollisionBox({20,400,2000}),PackedMesh::PK_Visual),"MONSTER_BOUNCE_WALL.MRM");
     // A 45-degree request retains half its projected advancement while sliding
@@ -3349,7 +3443,7 @@ namespace {
       // excluded from the new blocker and must still receive walking impulses.
       const Tempest::Vec3 dimensions(40,83,400);
       ProtoMesh box(PackedMesh(movableBox(dimensions),PackedMesh::PK_Visual),"MONSTER_BOUNCE_BOX.MRM");
-      const float multiplier=1.f/(.4f*.83f*4.f*DynamicWorld::materialDensity(zenkit::MaterialGroup::WOOD));
+      const float multiplier=1.f/(.4f*.83f*4.f*DynamicWorld::materialDensity(asset::MaterialGroup::WOOD));
       DynamicWorld world(nullptr,movableFloor());
       auto prop=world.addMovableVob(box,"MONSTER_BOUNCE_BOX.MRM",at(100,height*.5f,0),multiplier,true,"crate",true,47);
       require(!prop.isEmpty() && prop.mass()>.9f && prop.mass()<1.1f,
@@ -3412,10 +3506,10 @@ namespace {
     const Monster monsters[]={{"WOLF",15,83,60,50},{"TROLL",68,272,100,50}};
     Resources resources;
     for(const auto& monster:monsters) {
-      zenkit::ModelHierarchy hierarchy;
+      zenkit::ModelHierarchy hierarchy{};
       hierarchy.collision_bbox={{-monster.radius,0,-monster.radius},
                                 {monster.radius,monster.height,monster.radius}};
-      Skeleton skeleton(hierarchy,nullptr,monster.name);
+      Skeleton skeleton(asset::fromZenKit(hierarchy),nullptr,monster.name);
       const float mass=Ragdoll::speciesMass(monster.name);
       const float maxSlope=monster.slopeDegrees*radians;
       {
@@ -3765,10 +3859,10 @@ namespace {
               "all bodies and repeated contacts must share one 450 newton walking budget per move");
     }
     {
-      zenkit::ModelHierarchy hierarchy;
+      zenkit::ModelHierarchy hierarchy{};
       hierarchy.collision_bbox = {{-25,0,-25},{25,180,25}};
-      Skeleton shape(hierarchy,nullptr,"VIRTUAL_NPC_CONTRACT");
-      DynamicWorld world(nullptr,zenkit::Mesh{});
+      Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"VIRTUAL_NPC_CONTRACT");
+      DynamicWorld world(nullptr,asset::WorldMesh{});
       auto hero=world.addGhostObj(&shape);
       auto npc=world.addGhostObj(&shape);
       hero.setPosition({0,0,0});
@@ -3787,9 +3881,9 @@ namespace {
       requireNear(after.position.z,30,.001f,"controller recreation must retain the saved or teleported feet z");
     }
     {
-      zenkit::ModelHierarchy hierarchy;
+      zenkit::ModelHierarchy hierarchy{};
       hierarchy.collision_bbox = {{-25,0,-25},{25,180,25}};
-      Skeleton shape(hierarchy,nullptr,"VIRTUAL_NPC_PAIR_CONTRACT");
+      Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"VIRTUAL_NPC_PAIR_CONTRACT");
       DynamicWorld world(nullptr,movableFloor());
       auto left=world.addGhostObj(&shape);
       auto right=world.addGhostObj(&shape);
@@ -3821,9 +3915,9 @@ namespace {
       require(left.position().x>150.f,"a seated character with disabled collision must not leave a virtual obstacle");
     }
     {
-      zenkit::ModelHierarchy hierarchy;
+      zenkit::ModelHierarchy hierarchy{};
       hierarchy.collision_bbox = {{-25,0,-25},{25,180,25}};
-      Skeleton shape(hierarchy,nullptr,"VIRTUAL_NPC_OVERLAP_CONTRACT");
+      Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"VIRTUAL_NPC_OVERLAP_CONTRACT");
       DynamicWorld world(nullptr,movableFloor());
       auto walker=world.addGhostObj(&shape);
       auto overlapping=world.addGhostObj(&shape);
@@ -3841,9 +3935,9 @@ namespace {
     {
       Resources resources;
       ProtoMesh wall(PackedMesh(movableCollisionBox({20,400,600}),PackedMesh::PK_Visual),"VIRTUAL_NPC_WALL.MRM");
-      zenkit::ModelHierarchy hierarchy;
+      zenkit::ModelHierarchy hierarchy{};
       hierarchy.collision_bbox = {{-25,0,-25},{25,180,25}};
-      Skeleton shape(hierarchy,nullptr,"VIRTUAL_NPC_WALL_CONTRACT");
+      Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"VIRTUAL_NPC_WALL_CONTRACT");
       DynamicWorld world(nullptr,movableFloor());
       auto structure=world.addStaticObj(wall.attach[0].shape.get(),at(50,200,0),"VIRTUAL_NPC_WALL.MRM");
       auto walker=world.addGhostObj(&shape);
@@ -3863,9 +3957,9 @@ namespace {
 
   void testVirtualFloorGuard() {
     constexpr float slope=.785398163f;
-    zenkit::ModelHierarchy hierarchy;
+    zenkit::ModelHierarchy hierarchy{};
     hierarchy.collision_bbox={{-25,0,-25},{25,180,25}};
-    Skeleton shape(hierarchy,nullptr,"VIRTUAL_FLOOR_GUARD_CONTRACT");
+    Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"VIRTUAL_FLOOR_GUARD_CONTRACT");
     auto ledge=movableFloor();
     for(auto& vertex:ledge.vertices)
       vertex.x=vertex.x>0 ? 0.f : vertex.x;
@@ -3910,7 +4004,484 @@ namespace {
       }
     }
 
+  void testItemWeaponWake() {
+    Resources resources;
+    ProtoMesh appleMesh(PackedMesh(movableBox({8,8,8}),PackedMesh::PK_Visual),"CONTRACT_WAKE_APPLE.MRM");
+    Bounds appleBounds;
+    appleBounds.assign(appleMesh.bbox());
+    for(const bool enabled:{false,true}) {
+      DynamicWorld world(nullptr,asset::WorldMesh{});
+      world.setItemWakeEnabled(enabled);
+      const auto rest=at(0,100,0);
+      auto apple=world.addDynamicObj(rest,appleBounds,asset::MaterialGroup::WOOD,
+                                     &appleMesh,"CONTRACT_WAKE_APPLE.MRM");
+      apple.restorePhysics(rest,true);
+      struct ArrowContact final : DynamicWorld::BulletCallback {
+        bool stopsAtWorldHit() const override { return true; }
+        void onWorldHit(const DynamicWorld::BulletWorldHit&) override { ++attachments; }
+        void onCollide(asset::MaterialGroup) override { ++collisions; }
+        void onStop() override { ++stops; }
+        int attachments=0,collisions=0,stops=0;
+        } contact;
+      auto* arrow=world.bulletObj(&contact);
+      arrow->setPosition({-40,100,0});
+      arrow->setDirection({3,0,0});
+      world.tick(17);
+      const float transferred=apple.velocity().x*.01f*apple.mass();
+      std::printf("Item arrow wake enabled %d: momentum %.6f Ns, displacement %.6f cm\n",
+                  int(enabled),double(transferred),double((apple.position()-Tempest::Vec3(0,100,0)).length()));
+      if(enabled) {
+        require(!apple.isSleeping() && apple.position().x>1.f,
+                "an arrow must wake and move a sleeping apple");
+        requireNear(transferred,3.6f,.04f,"an Item must receive the furniture arrow momentum at actual flight speed");
+        require(contact.collisions==1 && contact.stops==1 && contact.attachments==0,
+                "an arrow stopped by a moving Item must not leave an attachment pinned to the world");
+        }
+      else require(apple.isSleeping() && apple.position().x==0.f,
+                   "item_wake OFF must keep sleeping Items outside the arrow collision ray");
+      world.deleteObj(arrow);
+      }
+
+    for(const bool fist:{false,true})for(const bool enabled:{false,true}) {
+      CollisionWorld world;
+      world.setItemWakeEnabled(enabled);
+      std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> items(3);
+      const Tempest::Vec3 rest[]{ {-40,115,0},{0,115,0},{40,115,0} };
+      world.setItemWakeCallback([&](const Tempest::Vec3& min,const Tempest::Vec3& max,size_t budget) {
+        size_t created=0;
+        for(size_t i=0;i<items.size();++i) {
+          const auto& p=rest[i];
+          if(p.x<min.x || p.x>max.x || p.y<min.y || p.y>max.y || p.z<min.z || p.z>max.z)continue;
+          if(items[i]==nullptr && created<budget) {
+            items[i]=world.addDynamicBody(new JPH::BoxShape({.04f,.04f,.04f}),at(p.x,p.y,p.z),.7f,.2f,
+                                           DynamicWorld::C_Item,true);
+            ++created;
+            }
+          if(items[i])items[i]->retainForItemWake();
+          }
+        return created;
+        });
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      const MeleeBladeSegment before{{-100,115,0},{-100,fist?115.f:140.f,0},{0,0,1},fist?6.f:2.f};
+      const MeleeBladeSegment after{{100,115,0},{100,fist?115.f:140.f,0},{0,0,1},fist?6.f:2.f};
+      const auto weapon=fist?MeleeImpact::Weapon::Fist:MeleeImpact::Weapon::OneHand;
+      world.updateShadowBlade(actor,1,{before},0,0,100,.7f,{},weapon);
+      world.updateShadowBlade(actor,1,{after},100,0,100,.7f,{},weapon);
+      world.flushShadowBlades();
+      size_t awake=0;
+      for(const auto& item:items)awake+=item!=nullptr && !item->isSleeping() && item->velocity().x>50.f;
+      require(awake==(enabled?3u:0u),
+              "only item_wake ON must create and push all sleeping Items swept by a blade or fist");
+      require(world.takeShadowBladeContacts(actor).empty(),
+              "small Item hits must not alter the melee damage journal or stop the swing");
+      world.tick(17);
+      size_t moved=0;
+      for(size_t i=0;i<items.size();++i)moved+=items[i] && items[i]->position().x-rest[i].x>1.f;
+      std::printf("Item melee wake fist %d enabled %d: awake %zu/3, moved %zu/3\n",int(fist),int(enabled),awake,moved);
+      require(moved==(enabled?3u:0u),"a shadow contact must physically displace the sleeping Items");
+      }
+    {
+      CollisionWorld world;
+      JPH::VertexList vertices={{.15f,0,-1},{.15f,0,1},{.15f,2,1},{.15f,2,-1}};
+      JPH::IndexedTriangleList triangles={{0,1,2},{0,2,3}};
+      const auto face=JPH::MeshShapeSettings(vertices,triangles).Create();
+      require(!face.HasError(),"the newly woken Item requires a thin sensor face");
+      auto wall=world.addCollisionBody(face.Get(),at(0,0,0),.7f,DynamicWorld::C_Object,false,true);
+      auto item=world.addDynamicBody(new JPH::BoxShape({.04f,.04f,.04f}),at(0,100,0),.7f,.2f,DynamicWorld::C_Item,true);
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      world.updateShadowBlade(actor,1,{{{-10,100,0},{-10,125,0},{0,0,1},2}},0,0,100);
+      world.updateShadowBlade(actor,1,{{{10,100,0},{10,125,0},{0,0,1},2}},100,0,100);
+      world.tick(17);
+      require(world.rayCount()==1,"the sleeping Item must actually move during the blade's native step");
+      require(item->isSleeping(),"an Item woken by a blade during Update must recover a crossing in that same step");
+      requireNear(item->position().x,0.f,.001f,"a newly woken Item must return to its previous resting position");
+      }
+    {
+      CollisionWorld world;
+      std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> sources;
+      for(int i=0;i<40;++i)
+        sources.push_back(world.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(1000.f*i,1000,0),.7f,1));
+      size_t queries=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t) {++queries;return size_t(0);});
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      world.tick(17);
+      require(queries==32,"projectile and active-body wakes must share thirty-two queries before the native step");
+      world.tick(17);
+      require(queries==64,"the next native step must renew the shared wake budget exactly once");
+      size_t created=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t budget) {
+        created+=budget;return budget;
+        });
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      world.tick(17);
+      require(created==8,"projectile and active-body wakes must share eight new native bodies per step");
+      }
+    {
+      CollisionWorld world;
+      size_t queries=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t) {++queries;return size_t(0);});
+      for(size_t i=0;i<33;++i)
+        world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(queries==32,"an empty world must retain the shared limit before its tick");
+      world.tick(17);
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(queries==33,"a bodyless world must renew projectile wake queries after its tick");
+      size_t created=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t budget) {
+        created+=budget;return budget;
+        });
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(created==8,"an empty world must retain the shared creation limit before its tick");
+      world.tick(17);
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(created==16,"a bodyless world must renew the shared creation budget after its tick");
+      }
+    {
+      CollisionWorld world;
+      auto source=world.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(10000,1000,0),.7f,1,
+                                       DynamicWorld::C_Item,true);
+      size_t queries=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t) {++queries;return size_t(0);});
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      world.updateShadowBlade(actor,1,{{{-10,100,0},{-10,125,0},{0,0,1},2}},0,0,100);
+      world.updateShadowBlade(actor,1,{{{10,100,0},{10,125,0},{0,0,1},2}},100,0,100);
+      world.tick(17);
+      require(world.simulationStep()==1,"the blade query fixture must run one native step");
+      require(queries==1,"one active blade must consume only one wake query in the frame");
+      }
+    }
+
+  void testItemWake() {
+    for(const bool legacy:{false,true}) {
+      CollisionWorld world;
+      std::vector<JPH::Vec3> points={{0,0,0},{1,0,0},{0,1,0},{0,0,1}};
+      JPH::ShapeRefC shape;
+      if(legacy) {
+        points.clear();
+        for(unsigned corner=0;corner<8;++corner)
+          points.emplace_back(corner&1 ? .8f : .2f,corner&2 ? .3f : -.1f,corner&4 ? .1f : -.3f);
+        shape=new JPH::RotatedTranslatedShape({.5f,.1f,-.1f},JPH::Quat::sIdentity(),
+                                               new JPH::BoxShape({.3f,.2f,.2f}));
+        }
+      else {
+        const auto hull=JPH::ConvexHullShapeSettings(points.data(),int(points.size()),0.f).Create();
+        require(!hull.HasError(),"tight item bounds fixture requires an asymmetric convex hull");
+        shape=hull.Get();
+        }
+      auto matrix=at(100,200,300);
+      matrix.rotateOZ(225);
+      matrix.scale(1.2f,.7f,1.1f);
+      auto item=world.addDynamicBody(shape,matrix,.7f,1,DynamicWorld::C_Item,true);
+      Tempest::Vec3 min(std::numeric_limits<float>::infinity()),max(-std::numeric_limits<float>::infinity());
+      for(const auto& vertex:points) {
+        auto point=CollisionWorld::toCentimeters(vertex);
+        matrix.project(point);
+        min.x=std::min(min.x,point.x); min.y=std::min(min.y,point.y); min.z=std::min(min.z,point.z);
+        max.x=std::max(max.x,point.x); max.y=std::max(max.y,point.y); max.z=std::max(max.z,point.z);
+        }
+      const auto snapshot=world.waterBodySnapshot();
+      require(snapshot.size()==1,"tight item bounds must describe the existing native body");
+      const auto actualMin=CollisionWorld::toMeters(snapshot[0].collisionBounds[0]);
+      const auto actualMax=CollisionWorld::toMeters(snapshot[0].collisionBounds[1]);
+      const auto expectedMin=CollisionWorld::toMeters(min),expectedMax=CollisionWorld::toMeters(max);
+      for(size_t axis=0;axis<3;++axis) {
+        requireNear(actualMin[axis],expectedMin[axis],.00003f,
+                    "item collision minima must match transformed support points including COM and scale");
+        requireNear(actualMax[axis],expectedMax[axis],.00003f,
+                    "item collision maxima must match transformed support points including COM and scale");
+        }
+      JPH::Vec3 broadMin,broadMax;
+      item->getAabb(broadMin,broadMax);
+      requireNear(snapshot[0].worldBounds[0].y,broadMin.GetY()*100.f,.003f,
+                  "tight item diagnostics must leave the existing water bounds unchanged");
+      if(!legacy)
+        require(snapshot[0].collisionBounds[0].y-broadMin.GetY()*100.f>20.f,
+                "a rotated asymmetric hull's empty broad-phase corner must not count as physical penetration");
+      }
+    Resources resources;
+    ProtoMesh proto(PackedMesh(movableBox({30,30,30}),PackedMesh::PK_Visual),"CONTRACT_WAKE_ITEM.MRM");
+    DynamicWorld shapes(nullptr,{});
+    const auto& hull=shapes.itemHullShape(proto,"CONTRACT_WAKE_ITEM.MRM");
+    require(hull.shape!=nullptr,"item wake must exercise a genuine mesh hull");
+    for(const bool hulls:{false,true}) {
+      const JPH::ShapeRefC shape=hulls ? hull.shape : JPH::ShapeRefC(new JPH::BoxShape({.15f,.15f,.15f}));
+      for(const int category:{DynamicWorld::C_Ragdoll,DynamicWorld::C_Fragment,DynamicWorld::C_Item,
+                              DynamicWorld::C_MovableVob}) {
+        for(const bool enabled:{false,true}) {
+          CollisionWorld world;
+          world.setItemWakeEnabled(enabled);
+          auto floor=world.addCollisionBody(new JPH::BoxShape({20,.5f,20}),at(0,-50,0),.7f,
+                                            DynamicWorld::C_Landscape);
+          std::unique_ptr<CollisionWorld::DynamicBody> item;
+          const Tempest::Vec3 rest(0,16,0);
+          world.setItemWakeCallback([&](const Tempest::Vec3& min,const Tempest::Vec3& max,size_t budget) {
+            require(budget>0 && budget<=8,"item wake must bound new bodies per native step");
+            if(rest.x<min.x || rest.x>max.x || rest.y<min.y || rest.y>max.y || rest.z<min.z || rest.z>max.z)
+              return size_t(0);
+            const bool missing=item==nullptr;
+            if(missing)
+              item=world.addDynamicBody(shape,at(rest.x,rest.y,rest.z),.7f,1,
+                                         DynamicWorld::C_Item,true);
+            const auto id=item->nativeId();
+            const auto velocity=item->velocity();
+            const bool sleeping=item->isSleeping();
+            item->retainForItemWake();
+            require(item->nativeId()==id && item->mass()==1.f && item->isSleeping()==sleeping &&
+                    (item->velocity()-velocity).quadLength()==0.f,
+                    "item wake retention must preserve existing mass, sleep, velocity and identity");
+            return size_t(missing);
+            });
+          auto moving=world.addDynamicBody(new JPH::BoxShape({.2f,.2f,.2f}),at(-100,20,0),.7f,10,category);
+          moving->setVelocity({500,0,0},{});
+          for(int i=0;i<120;++i)
+            world.tick(17);
+          const float displacement=item ? (item->position()-rest).length() : 0.f;
+          std::printf("Item wake hulls %d layer %d enabled %d: created %d, displacement %.6f cm\n",
+                      int(hulls),category,int(enabled),int(item!=nullptr),double(displacement));
+          require(enabled ? item!=nullptr && displacement>5.f : item==nullptr,
+                  "every active dynamic body kind must create and displace a bodyless item only with item_wake ON");
+          }
+        }
+    }
+    {
+      CollisionWorld world;
+      std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> sources;
+      for(int i=0;i<40;++i)
+        sources.push_back(world.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(1000.f*i,1000,0),.7f,1));
+      size_t queries=0;
+      std::vector<float> centers;
+      world.setItemWakeCallback([&](const Tempest::Vec3& min,const Tempest::Vec3& max,size_t) {
+        ++queries;
+        requireNear(max.x-min.x,120,.01f,"wake bounds must pad the native AABB by fifty centimetres on each side");
+        centers.push_back((min.x+max.x)*.5f);
+        return size_t(0);
+        });
+      const auto rays=world.rayCount();
+      world.tick(17);
+      require(queries==32,"a native step must issue no more than thirty-two item queries");
+      require(world.rayCount()-rays==32,"tunneling must cast at most thirty-two center rays per native step");
+      world.tick(17);
+      std::sort(centers.begin(),centers.end());
+      centers.erase(std::unique(centers.begin(),centers.end()),centers.end());
+      require(queries==64 && centers.size()==40,"bounded wake queries must rotate through all active bodies");
+      size_t created=0;
+      queries=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t budget) {
+        ++queries;
+        created+=budget;
+        return budget;
+        });
+      world.tick(17);
+      require(queries==1 && created==8,"the per-step creation budget must be shared by all wake queries");
+      }
+    for(const bool enabled:{false,true}) {
+      CollisionWorld world;
+      world.setItemWakeEnabled(enabled);
+      world.setBBox({-20,-1,-20},{20,20,20});
+      auto initial=at(100,500,0);
+      initial.rotateOY(30);
+      auto item=world.addDynamicBody(new JPH::BoxShape({.1f,.2f,.3f}),initial,.7f,1);
+      world.tick(17);
+      item->setPosition({0,-10200,0});
+      item->setVelocity({100,-200,300},{1,2,3});
+      world.tick(17);
+      requireMatrix(item->matrix(),initial,"an item that never slept must recover its creation transform");
+      require(item->isSleeping() && item->velocity().quadLength()==0.f && item->angularVelocity().quadLength()==0.f,
+              "underworld recovery must zero both velocities and sleep independently of item_wake");
+      auto rest=at(300,400,200);
+      rest.rotateOX(45);
+      item->setObjMatrix(rest);
+      world.tick(17);
+      item->addImpulse({1,1,1});
+      world.tick(17);
+      item->setPosition({0,-10200,0});
+      world.tick(17);
+      requireMatrix(item->matrix(),rest,"recovery must use the last sleeping full transform instead of creation");
+      const auto loaded=at(600,700,800);
+      item->restoreTransform(loaded,false);
+      item->setPosition({0,-10200,0});
+      world.tick(17);
+      requireMatrix(item->matrix(),loaded,"a loaded awake item's fallback must be its loaded transform");
+      item->addImpulse({1,2,3});
+      item->setPosition({std::numeric_limits<float>::quiet_NaN(),0,0});
+      world.tick(17);
+      requireMatrix(item->matrix(),loaded,"nonfinite item coordinates must recover before reaching the native broad phase");
+      require(item->isSleeping() && item->velocity().quadLength()==0.f && item->angularVelocity().quadLength()==0.f,
+              "nonfinite recovery must sleep and zero the restored body");
+      item->restoreTransform(at(0,std::numeric_limits<float>::infinity(),0),false);
+      world.tick(17);
+      requireMatrix(item->matrix(),loaded,"rejecting a nonfinite restore must not replace the valid recovery transform");
+      require(item->isSleeping(),"rejecting a nonfinite restore must preserve recovery sleep");
+      auto broken=world.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(0,std::numeric_limits<float>::quiet_NaN(),0),.7f,1);
+      world.tick(17);
+      broken->setPosition({std::numeric_limits<float>::quiet_NaN(),0,0});
+      world.tick(17);
+      require(broken->isSleeping(),"an item created from a nonfinite pose must sleep instead of recursing into recovery");
+      }
+    for(const bool enabled:{false,true}) {
+      for(const int category:{DynamicWorld::C_Landscape,DynamicWorld::C_Object}) {
+        CollisionWorld world;
+        world.setItemWakeEnabled(enabled);
+        JPH::VertexList vertices={{-2,0,-2},{-2,0,2},{2,0,2},{2,0,-2}};
+        JPH::IndexedTriangleList triangles={{0,1,2},{0,2,3}};
+        const auto mesh=JPH::MeshShapeSettings(vertices,triangles).Create();
+        require(!mesh.HasError(),"tunneling requires a thin upward-facing mesh");
+        // Disable the solver response to inject the missed contact that this
+        // safety net must catch, while retaining the real triangle ray query.
+        auto face=world.addCollisionBody(mesh.Get(),at(0,0,0),.7f,category,false,true);
+        auto movingFace=world.addCollisionBody(mesh.Get(),at(0,5,0),.7f,DynamicWorld::C_Object,true,true);
+        auto movingOverHole=world.addCollisionBody(mesh.Get(),at(300,5,0),.7f,DynamicWorld::C_Object,true,true);
+        auto item=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(0,10,0),.7f,1);
+        item->setVelocity({0,-2000,0},{});
+        world.tick(17);
+        if(enabled) {
+          require(item->isSleeping(),"a thin-face crossing must sleep in the same native step with item_wake ON");
+          requireNear(item->position().y,10.f,.001f,"a thin-face crossing must restore the last resting position");
+          }
+        else require(item->position().y<0.f,"item_wake OFF must not recover a thin-face crossing");
+        auto hole=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(300,10,0),.7f,1);
+        hole->setVelocity({0,-2000,0},{});
+        auto cliff=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(190,10,100),.7f,1);
+        cliff->setVelocity({3000,-2000,0},{});
+        auto back=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(0,-10,100),.7f,1);
+        back->setVelocity({0,2000,0},{});
+        world.tick(17);
+        require(hole->position().y<0.f && cliff->position().y<0.f && back->position().y>0.f &&
+                !hole->isSleeping() && !cliff->isSleeping() && !back->isSleeping(),
+                "a real hole, cliff edge or back-to-front crossing must not recover");
+        }
+      }
+    for(const bool hulls:{false,true}) {
+      DynamicWorld world(nullptr,{});
+      Bounds bounds;
+      bounds.assign(proto.bbox());
+      const auto loaded=at(100,200,300);
+      auto item=world.addDynamicObj(loaded,bounds,asset::MaterialGroup::WOOD,&proto,"CONTRACT_WAKE_ITEM.MRM",hulls);
+      const float mass=item.mass();
+      const auto id=world.waterBodySnapshot()[0].id;
+      item.restorePhysics(loaded,true);
+      item.retainForItemWake();
+      require(item.isSleeping() && item.mass()==mass && item.velocity().quadLength()==0.f,
+              "retaining either item shape must preserve its mass, sleep and zero velocity");
+      item.restorePhysics(loaded,false,{100,200,300},{1,2,3});
+      const auto velocity=item.velocity(),angular=item.angularVelocity();
+      item.retainForItemWake();
+      require(!item.isSleeping() && item.mass()==mass && world.waterBodySnapshot()[0].id==id &&
+              (item.velocity()-velocity).quadLength()==0.f && (item.angularVelocity()-angular).quadLength()==0.f,
+              "retaining either moving item shape must preserve body identity, mass and both velocities");
+      item.setObjMatrix(at(0,-10200,0));
+      world.tick(17);
+      requireMatrix(item.matrix(),loaded,"either item shape must recover its loaded awake position");
+      require(item.isSleeping() && item.velocity().quadLength()==0.f && item.angularVelocity().quadLength()==0.f,
+              "either recovered item shape must sleep with zero velocities");
+      item.restorePhysics(at(0,std::numeric_limits<float>::infinity(),0),false,{100,200,300},{1,2,3});
+      requireMatrix(item.matrix(),loaded,"the Item restore wrapper must retain its last valid loaded transform");
+      require(item.isSleeping() && item.velocity().quadLength()==0.f && item.angularVelocity().quadLength()==0.f,
+              "the Item restore wrapper must not restore saved motion after recovering invalid coordinates");
+      }
+    {
+      CollisionWorld world;
+      world.setWaterSurfaceCallback([](const Tempest::Vec3&,float,float& surface) { surface=0; return true; });
+      const auto floating=at(0,-8,0),dry=at(100,100,0);
+      auto wetItem=world.addDynamicBody(new JPH::BoxShape({.2f,.2f,.2f}),floating,.7f,44.8f,
+                                       DynamicWorld::C_Item,true);
+      auto dryItem=world.addDynamicBody(new JPH::BoxShape({.2f,.2f,.2f}),dry,.7f,44.8f,
+                                       DynamicWorld::C_Item,true);
+      wetItem->restoreTransform(floating,true);
+      dryItem->restoreTransform(dry,true);
+      for(const bool enabled:{false,true}) {
+        world.setItemWakeEnabled(enabled);
+        for(int frame=0;frame<12;++frame)
+          world.tick(frame%3==2 ? 16 : 17);
+        require(wetItem->isSleeping() && wetItem->keepSleepingItem(wetItem->position()),
+                "the production retirement rule must retain a sleeping water item with item_wake ON or OFF");
+        require(dryItem->isSleeping() && !dryItem->keepSleepingItem(dryItem->position()),
+                "a dry sleeper without a nearby character or wake request must still retire");
+        requireMatrix(wetItem->matrix(),floating,"item_wake must not move an already sleeping water item");
+        require(wetItem->velocity().quadLength()==0.f,"item_wake must preserve a sleeping water item's zero velocity");
+        }
+      }
+    for(const bool hulls:{false,true}) {
+      DynamicWorld world(nullptr,waterBasin(-15000));
+      world.setItemWakeEnabled(true);
+      Bounds bounds;
+      bounds.assign(proto.bbox());
+      auto item=world.addDynamicObj(at(0,110,0),bounds,asset::MaterialGroup::METAL,
+                                    &proto,"CONTRACT_WAKE_ITEM.MRM",hulls);
+      bool belowSurfaceHundredMeters=false;
+      for(int frame=0;frame<1800;++frame) {
+        world.tick(frame%3==2 ? 16 : 17);
+        const auto y=item.position().y;
+        if(belowSurfaceHundredMeters)
+          require(y<-10000,"a sinking item inside a deep world must not return to its surface creation position");
+        belowSurfaceHundredMeters|=y<-10100;
+        }
+      std::printf("Item wake deep water hulls %d: final %.6f cm, sleeping %d\n",
+                  int(hulls),double(item.position().y),int(item.isSleeping()));
+      require(belowSurfaceHundredMeters && item.position().y<-14950 && item.position().y>-15050 && item.isSleeping(),
+              "a metal item must reach the deep basin floor beyond one hundred metres without underworld recovery");
+      }
+    }
+
   void testContracts() {
+    {
+      using MeleeImpact::Weapon;
+      const auto fist=MeleeImpact::impulse(Weapon::Fist,{600,800,0},90);
+      requireNear(fist.x,9.f,.0001f,"fist impulse must convert world cm/s into N s");
+      requireNear(fist.y,12.f,.0001f,"impulse must follow the contact velocity direction");
+      requireNear(MeleeImpact::impulse(Weapon::OneHand,{1000,0,0},0).length(),12.5f,.0001f,
+                  "one-hand impulse must use 2.5 kg and the glancing edge factor");
+      requireNear(MeleeImpact::impulse(Weapon::TwoHand,{1000,0,0},30).length(),30.f,.0001f,
+                  "two-hand impulse must use 4 kg and the sine of the blade angle");
+      const auto capped=MeleeImpact::impulse(Weapon::TwoHand,{-6000,0,8000},90);
+      requireNear(capped.length(),60.f,.0001f,"melee impulse magnitude must be capped at 60 N s");
+      requireNear(capped.x,-36.f,.0001f,"the impulse cap must retain contact direction");
+      requireNear(MeleeImpact::impulse(Weapon::Fist,{},90).length(),0.f,.0001f,
+                  "a motionless blade must not add an impulse");
+
+      MeleeImpact::Posture posture;
+      require(!posture.hit(30,75,1000),"a quarter-threshold impulse must not knock down");
+      requireNear(posture.value,25.f,.0001f,"posture must accumulate in units of body-mass-scaled impulse");
+      posture.tick(2500,1500);
+      requireNear(posture.value,25.f,.0001f,"posture must retain the full 1500 ms recovery delay");
+      posture.tick(2750,500);
+      requireNear(posture.value,17.5f,.0001f,"recovery must count only time after the hit grace period");
+      posture.tick(3750,1000);
+      requireNear(posture.value,0.f,.0001f,"posture recovery must stop at zero");
+      require(!posture.hit(60,75,4000),"a full capped impulse must add only half the 75 kg knockdown threshold");
+      requireNear(posture.value,50.f,.0001f,"a 75 kg body must require 120 N s for knockdown");
+      require(!posture.hit(59,75,4000),"posture just below 100 must not knock down");
+      require(posture.hit(1,75,4000),"posture must knock down exactly at 100");
+      requireNear(posture.value,100.f,.0001f,"posture must stop at 100");
+      posture.recover(5000);
+      requireNear(posture.value,0.f,.0001f,"getting up must reset posture");
+      require(!posture.hit(60,75,5000),"getting up must protect against another knockdown");
+      require(!posture.hit(60,75,5000),"successive hits during immunity must not knock down");
+      requireNear(posture.value,60.f,.0001f,"post-rise immunity must cap accumulating posture at 60");
+      require(!posture.hit(60,75,8999),"post-rise immunity must cover the first 3999 ms");
+      require(posture.hit(48,75,9000),"post-rise immunity must expire at 4000 ms");
+      posture.reset();
+      require(!posture.hit(60,150,10000),"a doubled body mass must double the knockdown impulse");
+      requireNear(posture.value,25.f,.0001f,"a 150 kg body must require 240 N s for knockdown");
+      require(!posture.hit(60,150,10000),"two full capped impulses must not knock down a 150 kg body");
+      require(!posture.hit(60,150,10000),"three full capped impulses must not knock down a 150 kg body");
+      require(posture.hit(60,150,10000),"four full capped impulses must knock down a 150 kg body");
+      requireNear(MeleeImpact::skillThresholdScale(60,60,60),1.248f,.0001f,
+                  "two 60% masters of strength 60 must need 1.248 times the base knockdown impulse");
+      require(MeleeImpact::skillThresholdScale(100,100,30)<MeleeImpact::skillThresholdScale(60,60,30),
+              "a trained strong attacker must knock down sooner");
+      require(MeleeImpact::skillThresholdScale(30,40,100)>MeleeImpact::skillThresholdScale(30,40,10),
+              "a trained defender must stand longer");
+      requireNear(MeleeImpact::skillThresholdScale(0,0,0),1.2f*.8f/.58f,.0001f,"an untrained weak attacker keeps a floor of 0.58");
+      requireNear(MeleeImpact::skillThresholdScale(200,500,200),1.2f*1.2f/1.4f,.0001f,"skill inputs must be clamped");
+      MeleeImpact::Posture skilled;
+      require(!skilled.hit(60,75,20000,1.248f),"a full capped impulse must fill 40% of a 60% masters' threshold");
+      requireNear(skilled.value,100.f*60.f/(120.f*1.248f),.0001f,"the skill scale must multiply the body-mass threshold");
+      }
     CollisionWorld world;
     auto ground = world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),
                                          .75f,DynamicWorld::C_Landscape);
@@ -3998,7 +4569,7 @@ namespace {
       }
     PhysicVbo metadataMesh(&vertices);
     for(size_t i=0;i<sectors.size();++i) {
-      const auto material = i%2==0 ? zenkit::MaterialGroup::STONE : zenkit::MaterialGroup::WOOD;
+      const auto material = i%2==0 ? asset::MaterialGroup::STONE : asset::MaterialGroup::WOOD;
       metadataMesh.addIndex(indices,i*3,3,material,sectors[i].c_str());
       }
     auto metadataBody = world.addCollisionBody(metadataMesh.shape(),at(500,-1000,0),.75f,
@@ -4008,16 +4579,524 @@ namespace {
       const auto triangleHit = world.rayCast({x,-900,0},{x,-1100,0},landscapeMask);
       require(triangleHit.hasHit,"translated landscape triangle must be queryable");
       requireNear(triangleHit.point.y,-1000,.01f,"translated compound mesh must preserve its shape origin");
-      const auto material = i%2==0 ? zenkit::MaterialGroup::STONE : zenkit::MaterialGroup::WOOD;
+      const auto material = i%2==0 ? asset::MaterialGroup::STONE : asset::MaterialGroup::WOOD;
       require(triangleHit.material==material,"mesh hit must retain its Gothic material");
       require(triangleHit.sector!=nullptr && sectors[i]==triangleHit.sector,
               "mesh hit must retain its sector beyond 32 segments");
       }
+
+    {
+      std::vector<HitZones::Posed> first{{{0,80,0},{0,140,0},10.f,HitZones::Body,0}};
+      std::vector<HitZones::Posed> second{{{60,90,0},{60,150,0},12.f,HitZones::Body,0}};
+      requireNear(HitZones::horizontalBodyGap(first,second),38.f,.0001f,
+                  "torso gap must subtract both posed capsule radii");
+      requireNear(HitZones::horizontalBodyGap(first,second,{20,0,0}),18.f,.0001f,
+                  "a bounded forward feed must retain the eighteen-centimetre torso clearance");
+      requireNear(HitZones::horizontalBodyGap(first,second,{45,0,0}),-7.f,.0001f,
+                  "overlapping torso capsules must report negative clearance");
+      first.push_back({{60,80,0},{60,140,0},100.f,HitZones::Head,1});
+      second.push_back({{0,90,0},{0,150,0},100.f,HitZones::Limb,1});
+      requireNear(HitZones::horizontalBodyGap(first,second),38.f,.0001f,
+                  "head and limb contacts must not replace the torso safety gap");
+      first={{{-10,80,-10},{10,140,10},2.f,HitZones::Body,0}};
+      second={{{-10,400,10},{10,460,-10},3.f,HitZones::Body,0}};
+      requireNear(HitZones::horizontalBodyGap(first,second),-5.f,.0001f,
+                  "crossed torso axes must overlap in the horizontal projection despite different heights");
+      requireNear(HitZones::horizontalBodyGap(first,second,{-1,0,0}),-5.f,.0001f,
+                  "a retreat can begin on a flat projected-axis overlap without worsening the clearance");
+      require(HitZones::horizontalBodyGap(first,second,{-25,0,0})>-5.f,
+              "continued retreat must be able to leave the projected-axis overlap plateau");
+      }
+
+    require(Npc::skipMeleeAlly(false,false,true,false,true),
+            "an incidental same-guild contact must skip NPC damage even with hostile attitude");
+    require(Npc::skipMeleeAlly(false,false,false,true,true),
+            "an incidental party contact must skip NPC damage even with hostile attitude");
+    require(Npc::skipMeleeAlly(false,false,false,false,false),
+            "an incidental nonhostile contact must skip NPC damage");
+    require(!Npc::skipMeleeAlly(false,false,false,false,true),
+            "an incidental enemy contact must receive NPC damage");
+    require(!Npc::skipMeleeAlly(true,false,true,true,false),
+            "the hero must damage incidental allies");
+    require(!Npc::skipMeleeAlly(false,true,false,false,false),
+            "the selected neutral or angry target must receive NPC damage");
+    require(!Npc::skipMeleeAlly(false,true,true,false,false),
+            "the selected same-guild target must receive NPC damage");
+    require(!Npc::skipMeleeAlly(false,true,false,true,false),
+            "the selected party target must receive NPC damage");
+
+    require(Npc::canAccumulateMeleePosture(true,false,false,false),"an enabled live human hit must accumulate posture");
+    require(!Npc::canAccumulateMeleePosture(false,false,false,false),"posture OFF must retain the old hit path");
+    require(!Npc::canAccumulateMeleePosture(true,true,false,false),"a blocked hit must leave posture unchanged");
+    require(!Npc::canAccumulateMeleePosture(true,false,true,false),"a knockdown must not accumulate another knockdown");
+    require(!Npc::canAccumulateMeleePosture(true,false,false,true),"death or unconsciousness must retain the old path");
+
+    {
+      // Tip heights of T_2HSFINISH and T_1HSFINISH at 30 fps, sampled in the game: the stroke down
+      // starts at the top it falls from (not the higher wind-up before the swing round the side)
+      // and ends where the tip rests at its lowest; the axe's old window closed 56 cm above the ground.
+      const std::vector<float> axe = {164,177,184,188,188,185,182,184,185,177,163,160,175,156,118,109,131,158,
+                                      183,193,193,184,168,146,122,99,78,56,38,25,20,19,19,18,19,19};
+      const std::vector<float> sword = {28,38,56,91,140,182,200,205,207,198,181,178,197,169,115,103,130,162,
+                                        189,198,196,185,164,136,109,86,62,39,21,8,3,3,2,3,3,4};
+      const auto axeStroke = Npc::meleeFinishStroke(axe), swordStroke = Npc::meleeFinishStroke(sword);
+      require(axeStroke && axeStroke->first==19 && axeStroke->second==30,"the axe's chop must be windowed on its stroke down");
+      require(swordStroke && swordStroke->first==19 && swordStroke->second==30,"a higher wind-up must not start the chop's stroke");
+      require(!Npc::meleeFinishStroke({50,50,50,50}),"a blade that never drops has no stroke");
+      }
+
+    {
+      // t_1hAttackR of the master is frames 21..40 of the ASC whose 1..19 are t_1hAttackL, with L's tags:
+      // its DEF_OPT_FRAME counts from its own start (read as a frame of the file, it clamped to 0)
+      Animation::AnimData left,right;
+      left.firstFrame = 1;  left.lastFrame = 19;  left.numFrames = 19;
+      right.firstFrame = 21; right.lastFrame = 40; right.numFrames = 20;
+      require(left.optimalFrame(3)==2 && right.optimalFrame(3)==2,"a side swing's optimal frame must count from its own start");
+      require(right.optimalFrame(25)==4,"a frame of the file must stay that frame");
+      require(right.optimalFrame(60)==19,"a frame past the end must clamp to the last");
+      }
+
+    {
+      // A weapon body's switch into a blow settles within blowTime, however far the arm turns; the usual
+      // 0.3 s for so large a turn pulled t_1hAttackR's arc to the stance and it crossed short of the body
+      constexpr size_t count = 2;
+      asset::AnimationSample stance[count],blow[count],shown[count];
+      for(size_t i=0;i<count;++i) {
+        stance[i].rotation = {1,0,0,0};
+        stance[i].position = {0,float(i*20),0};
+        blow[i].rotation   = {std::cos(1.f),std::sin(1.f),0,0};
+        blow[i].position   = stance[i].position;
+        }
+      Animation::Sequence idle,attack;
+      attack.data = std::make_shared<Animation::AnimData>();
+      asset::MdsEventTag optimal{};
+      optimal.type   = asset::MdsEventType::OPTIMAL_FRAME;
+      optimal.frames = {3};
+      attack.data->events.push_back(optimal);
+      for(const bool weapon:{true,false}) {
+        AnimBlend blend;
+        blend.reset(count);
+        blend.setWeaponBody(weapon);
+        for(size_t i=0;i<count;++i) blend.drive(i,idle,1000,stance[i],stance[i],25);
+        blend.apply(stance,shown,count,1000);
+        blend.apply(stance,shown,count,1033);
+        for(size_t i=0;i<count;++i) blend.drive(i,attack,1033,blow[i],blow[i],25);
+        blend.apply(blow,shown,count,1033);
+        const bool blending = blend.apply(blow,shown,count,1033+uint64_t(AnimBlend::params().blowTime*1000.f)+17);
+        require(blending!=weapon,weapon ? "a weapon body's blow must settle within its blow time" :
+                                          "a body without a weapon must keep the usual blend into a blow");
+        }
+      }
+
+    require(FightAlgo::resolveDownTactics(true,true,false,false,true)==FightAlgo::MV_MOVE,
+            "a distant lying target must be approached");
+    require(FightAlgo::resolveDownTactics(true,true,false,true,true)==FightAlgo::MV_ATTACK,
+            "a lying target in finish range and focus must receive a down strike");
+    require(FightAlgo::resolveDownTactics(true,true,false,true,false)==FightAlgo::MV_TURN2HIT,
+            "a down strike must wait until the attacker faces its target");
+    require(FightAlgo::resolveDownTactics(true,true,true,true,true)==FightAlgo::MV_WAIT,
+            "a rising target in weapon range must be awaited without attacking");
+    require(FightAlgo::resolveDownTactics(true,true,true,false,true)==FightAlgo::MV_MOVE,
+            "a distant rising target must be approached without attacking");
+    require(FightAlgo::resolveDownTactics(true,false,false,true,true)==FightAlgo::MV_NULL,
+            "a standing target must retain native fight instructions");
+    require(FightAlgo::resolveDownTactics(false,true,false,true,true)==FightAlgo::MV_NULL,
+            "down tactics OFF must retain native fight instructions");
+    {
+      const auto bytes = saveArchive([](Serialize& output) {
+        output.setEntry("fight");
+        output.write(int32_t(Def::FightMove::WAIT));
+        for(int i=0;i<FightAlgo::MV_MAX;++i)
+          output.write(uint8_t(FightAlgo::MV_ATTACK));
+        output.write(false);
+        });
+      Tempest::MemReader reader(bytes);
+      Serialize input(reader);
+      input.setEntry("fight");
+      FightAlgo fight;
+      fight.load(input);
+      fight.onTargetKnockdown();
+      for(auto action:fight.queueSnapshot())
+        require(action==FightAlgo::MV_NULL,"target knockdown must discard the entire remaining combo");
+      }
+
+    // The actual melee damage multiplier is bounded before cleave attenuation.
+    requireNear(DamageCalculator::meleeMultiplier(0,1000,0,0,0),.5f,.0001f,"slow grip contacts must respect the lower damage bound");
+    requireNear(DamageCalculator::meleeMultiplier(10000,1000,1,90,0),1.5f,.0001f,"fast tip contacts must respect the upper damage bound");
+    const auto full=DamageCalculator::meleeMultiplier(1000,1000,1,90,0);
+    requireNear(DamageCalculator::meleeMultiplier(1000,1000,1,90,1),full*.6f,.0001f,"second target must receive 0.6 of the physical multiplier");
+    requireNear(DamageCalculator::meleeMultiplier(1000,1000,1,90,2),full*.36f,.0001f,"third target must receive 0.36 of the physical multiplier");
+
+    {
+      CollisionWorld reach;
+      const std::vector<MeleeBladeSegment> blade{{{0,100,0},{100,100,0},{0,0,1},2.f}};
+      const std::vector<MeleeBodyCapsule> target{{{130,90,0},{130,110,0},6.f,0,1}};
+      requireNear(reach.meleeBladeAdvance(blade,target,{1,0,0},40),22.f,.02f,
+                  "blade reach must retain the capsule contact distance");
+      require(!std::isfinite(reach.meleeBladeAdvance(blade,target,{1,0,0},20)),
+              "blade reach must reject a target beyond the allowed advance");
+      require(!std::isfinite(reach.meleeBladeAdvance({{{0,100,30},{100,100,30},{0,0,1},2.f}},target,{1,0,0},60)),
+              "blade reach must reject a lateral miss despite sufficient forward projection");
+      require(!std::isfinite(reach.meleeBladeAdvance({{{0,150,0},{100,150,0},{0,0,1},2.f}},target,{1,0,0},60)),
+              "blade reach must reject a height miss despite sufficient forward projection");
+      const std::vector<MeleeBodyCapsule> behind{{{-30,90,0},{-30,110,0},6.f,0,1}};
+      require(!std::isfinite(reach.meleeBladeAdvance(blade,behind,{1,0,0},40)),
+              "a blade beyond a close target cannot correct by moving forward");
+      requireNear(reach.meleeBladeAdvance(blade,behind,{-1,0,0},40),22.f,.02f,
+                  "backward magnet must retain the signed capsule contact distance");
+      auto targets=target;
+      targets.insert(targets.begin(),{{160,90,0},{160,110,0},6.f,1,1});
+      requireNear(reach.meleeBladeAdvance(blade,targets,{1,0,0},80),22.f,.02f,
+                  "blade reach must choose the nearest actual capsule contact");
+      requireNear(reach.meleeBladeAdvance(blade,{{{100,90,0},{100,110,0},6.f,0,1}},{1,0,0},60),0.f,.0001f,
+                  "a blade already touching its target needs no advance");
+      }
+
+    {
+      CollisionWorld shadow;
+      int attackerId=0,firstId=0,secondId=0,missId=0;
+      auto* attacker=reinterpret_cast<Npc*>(&attackerId);
+      auto* first=reinterpret_cast<Npc*>(&firstId);
+      auto* second=reinterpret_cast<Npc*>(&secondId);
+      auto* miss=reinterpret_cast<Npc*>(&missId);
+      auto ground=shadow.addCollisionBody(new JPH::BoxShape({2,.01f,2}),at(0,-1,0),.7f,DynamicWorld::C_Landscape);
+      shadow.updateShadowBody(first,{{{-30,0,0},{-30,20,0},1.f,0,1}});
+      shadow.updateShadowBody(second,{{{30,0,0},{30,20,0},1.f,0,1}});
+      shadow.updateShadowBody(miss,{{{0,0,50},{0,20,50},1.f,0,1}});
+      const MeleeBladeSegment before{{-100,1,0},{-100,20,0},{1,0,0},2.f};
+      const MeleeBladeSegment after{{100,1,0},{100,20,0},{1,0,0},2.f};
+      shadow.updateShadowBlade(attacker,1,{before},0,0,100);
+      shadow.updateShadowBlade(attacker,1,{after},100,0,100);
+      shadow.flushShadowBlades();
+      const auto hits=shadow.takeShadowBladeContacts(attacker);
+      std::vector<Npc*> bodies;
+      size_t floors=0;
+      for(const auto& hit:hits) {
+        if(hit.world) {
+          require(!hit.stopsSwing && hit.normal.y>.99f,"walkable ground must not arrest the swing");
+          ++floors;
+          }
+        else bodies.push_back(hit.npc);
+        }
+      require(floors==1 && bodies==std::vector<Npc*>{first,second},"blade must hit both crossed bodies in order, miss the offset body and continue through ground");
+      shadow.updateShadowBlade(attacker,1,{before},150,0,200);
+      shadow.flushShadowBlades();
+      require(shadow.takeShadowBladeContacts(attacker).empty(),"floor and targets must not repeat during a swing");
+      }
+
+    // Clip both ends of a published pose interval, including a whole window
+    // between two inactive poses. A target outside that overlap stays untouched.
+    for(const auto window: {std::pair(0.,240.),std::pair(240.,260.),std::pair(235.,245.)}) {
+      CollisionWorld shadow;
+      int attackerIdentity=0,insideIdentity=0,outsideIdentity=0;
+      auto* attacker=reinterpret_cast<Npc*>(&attackerIdentity);
+      auto* inside=reinterpret_cast<Npc*>(&insideIdentity);
+      auto* outside=reinterpret_cast<Npc*>(&outsideIdentity);
+      const float x=window.first==0 ? 5.f : window.first==240 ? 15.f : 10.f;
+      const float excluded=window.first==0 ? 15.f : 2.f;
+      shadow.updateShadowBody(inside,{{{x,95,0},{x,105,0},.01f,1,1}});
+      shadow.updateShadowBody(outside,{{{excluded,95,0},{excluded,105,0},.01f,1,1}});
+      shadow.updateShadowBlade(attacker,1,{{{0,90,0},{0,110,0},{0,0,1},.01f}},230,window.first,window.second);
+      shadow.tick(1);
+      shadow.updateShadowBlade(attacker,1,{{{20,90,0},{20,110,0},{0,0,1},.01f}},250,window.first,window.second);
+      shadow.tick(20);
+      const auto contacts=shadow.takeShadowBladeContacts(attacker);
+      require(contacts.size()==1 && contacts[0].npc==inside,
+              "shadow sweep must cover exactly the overlap with its active window");
+      requireNear(contacts[0].speedCmS,1000.f,.1f,"clipping must retain the published pose velocity");
+      requireNear(contacts[0].velocityCmS.x,1000.f,.1f,"clipping must retain signed world contact velocity");
+      requireNear(contacts[0].velocityCmS.y,0.f,.001f,"contact velocity must retain the world vertical component");
+      }
+
+    // The 8 ms no-step frame already consumes its pose. The following 9 ms
+    // publication has the same velocity with or without an unrelated Jolt body.
+    for(bool native:{false,true}) {
+      CollisionWorld shadow;
+      auto falling=native ? shadow.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(10000,10000,0),.7f,1.f) : nullptr;
+      int attackerIdentity=0,targetIdentity=0;
+      auto* attacker=reinterpret_cast<Npc*>(&attackerIdentity);
+      auto* target=reinterpret_cast<Npc*>(&targetIdentity);
+      shadow.updateShadowBody(target,{{{1.25f,95,0},{1.25f,105,0},.01f,1,1}});
+      shadow.updateShadowBlade(attacker,1,{{{0,90,0},{0,110,0},{0,0,1},.01f}},0,0,100);
+      shadow.updateShadowBlade(attacker,1,{{{.8f,90,0},{.8f,110,0},{0,0,1},.01f}},8,0,100);
+      shadow.tick(8);
+      shadow.updateShadowBlade(attacker,1,{{{1.7f,90,0},{1.7f,110,0},{0,0,1},.01f}},17,0,100);
+      shadow.tick(9);
+      const auto contacts=shadow.takeShadowBladeContacts(attacker);
+      require(contacts.size()==1,"constant-speed shadow probe must cross its thin target");
+      requireNear(contacts[0].speedCmS,100.f,.01f,"contact speed must use published pose time, not the Jolt step");
+      requireNear(contacts[0].velocityCmS.x,100.f,.01f,"world contact velocity must use published pose time");
+      // The frame budget caps a 50 ms interval at two native steps. Each query
+      // still advances its proportional share of animation time.
+      shadow.updateShadowBody(target,{{{5,95,0},{5,105,0},.01f,1,1}});
+      shadow.updateShadowBlade(attacker,2,{{{6.7f,90,0},{6.7f,110,0},{0,0,1},.01f}},67,0,100);
+      shadow.tick(50);
+      const auto capped=shadow.takeShadowBladeContacts(attacker);
+      require(capped.size()==1,"capped physics steps must cover the complete pose interval");
+      requireNear(capped[0].speedCmS,100.f,.01f,"capped steps must preserve animation velocity");
+      }
+
+    // The runner publishes its last animation pose after the physics tick,
+    // then exits without another tick. Flushing queries must consume that
+    // interval without simulating bodies or producing the contact twice.
+    for(bool native:{false,true}) {
+      CollisionWorld shadow;
+      auto falling=native ? shadow.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(10000,10000,0),.7f,1.f) : nullptr;
+      int attackerIdentity=0,targetIdentity=0;
+      auto* attacker=reinterpret_cast<Npc*>(&attackerIdentity);
+      auto* target=reinterpret_cast<Npc*>(&targetIdentity);
+      shadow.updateShadowBody(target,{{{10,95,0},{10,105,0},.01f,1,1}});
+      shadow.updateShadowBlade(attacker,1,{{{0,90,0},{0,110,0},{0,0,1},.01f}},0,0,100);
+      shadow.tick(33);
+      const auto steps=shadow.simulationStep();
+      const auto bodyPosition=falling ? falling->position() : Tempest::Vec3();
+      shadow.updateShadowBlade(attacker,1,{{{20,90,0},{20,110,0},{0,0,1},.01f}},33,0,100);
+      require(shadow.takeShadowBladeContacts(attacker).empty(),"last published pose must still await its query");
+      shadow.flushShadowBlades();
+      const auto contacts=shadow.takeShadowBladeContacts(attacker);
+      require(contacts.size()==1 && contacts[0].npc==target,"episode flush must retain the last physical blade contact");
+      requireNear(contacts[0].speedCmS,20.f/.033f,.01f,"episode flush must retain the pose interval velocity");
+      shadow.flushShadowBlades();
+      require(shadow.takeShadowBladeContacts(attacker).empty(),"flushing the same final pose must not repeat contacts");
+      require(shadow.simulationStep()==steps,"episode flush must not advance the native simulation clock");
+      if(falling)
+        require((falling->position()-bodyPosition).quadLength()==0.f,"episode flush must not move native bodies");
+      }
+
+    // Shadow queries use the supplied HitZones even in a headless world with
+    // no native living rig. A single animation step rotates through this thin
+    // target; neither endpoint pose overlaps it.
+    {
+      CollisionWorld shadow;
+      int attackerIdentity=0,targetIdentity=0;
+      auto* attacker=reinterpret_cast<Npc*>(&attackerIdentity);
+      auto* target=reinterpret_cast<Npc*>(&targetIdentity);
+      const float diagonal=100.f*std::sqrt(.5f);
+      const MeleeBodyCapsule body{{diagonal,95,diagonal},{diagonal,105,diagonal},.05f,7,2};
+      shadow.updateShadowBody(target,{body,body});
+      // An identical capsule owned by the attacker must never be a target.
+      shadow.updateShadowBody(attacker,{body});
+      const MeleeBladeSegment before{{0,100,0},{100,100,0},{0,1,0},.1f};
+      const MeleeBladeSegment after{{0,100,0},{0,100,100},{0,1,0},.1f};
+      shadow.updateShadowBlade(attacker,1,{before},0,0,100);
+      shadow.tick(17);
+      shadow.updateShadowBlade(attacker,1,{after},17,0,100);
+      shadow.tick(17);
+      const auto contacts=shadow.takeShadowBladeContacts(attacker);
+      require(contacts.size()==1 && contacts[0].npc==target && contacts[0].bone==7 && contacts[0].zone==2,
+              "fast rotating blade must cross thin HitZones exactly once per target");
+      require((contacts[0].point-Tempest::Vec3(diagonal,100,diagonal)).length()<6.f,
+              "shadow contact must report the target surface in world centimetres");
+      require(contacts[0].bladeFraction>.8f && contacts[0].bladeFraction<=1.f && contacts[0].speedCmS>100.f &&
+              std::isfinite(contacts[0].surfaceAngleDeg) && contacts[0].surfaceAngleDeg>=0.f && contacts[0].surfaceAngleDeg<=90.f,
+              "shadow contact must retain blade location, point speed and surface angle");
+      shadow.updateShadowBlade(attacker,1,{before},34,0,100);
+      shadow.tick(17);
+      require(shadow.takeShadowBladeContacts(attacker).empty(),
+              "draining shadow contacts must preserve one-hit-per-target swing state");
+      shadow.updateShadowBlade(attacker,2,{after},51,0,100);
+      shadow.tick(17);
+      require(shadow.takeShadowBladeContacts(attacker).size()==1,
+              "a new shadow swing must allow the same target again");
+      require(shadow.bodyCount()==0 && shadow.simulationStep()==0,
+              "shadow queries must not create bodies or add a native simulation step");
+      shadow.removeShadowBlade(attacker);
+      shadow.removeShadowBody(attacker);
+      shadow.removeShadowBody(target);
+      }
+
+    {
+      CollisionWorld shadow;
+      int attackerIdentity=0,nearIdentity=0,farIdentity=0;
+      auto* attacker=reinterpret_cast<Npc*>(&attackerIdentity);
+      auto* nearTarget=reinterpret_cast<Npc*>(&nearIdentity);
+      auto* farTarget=reinterpret_cast<Npc*>(&farIdentity);
+      auto wall=shadow.addCollisionBody(new JPH::BoxShape({.001f,1,1},.0001f),at(0,100,0),.7f,DynamicWorld::C_Object);
+      // Keep an unrelated native body active so this exercises the existing
+      // physics step listener as well as the headless path above.
+      auto falling=shadow.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(10000,10000,0),.7f,1.f);
+      shadow.updateShadowBody(nearTarget,{{{-50,95,0},{-50,105,0},.05f,3,1}});
+      shadow.updateShadowBody(farTarget,{{{50,95,0},{50,105,0},.05f,4,1}});
+      const MeleeBladeSegment before{{-100,80,0},{-100,120,0},{0,0,1},.1f};
+      const MeleeBladeSegment after{{100,80,0},{100,120,0},{0,0,1},.1f};
+      shadow.updateShadowBlade(attacker,1,{before},0,0,100);
+      shadow.tick(17);
+      shadow.updateShadowBlade(attacker,1,{after},17,0,100);
+      shadow.tick(17);
+      const auto contacts=shadow.takeShadowBladeContacts(attacker);
+      require(contacts.size()==2 && contacts[0].npc==nearTarget && contacts[1].world && contacts[1].stopsSwing,
+              "shadow contacts must be ordered and the first wall must hide the later target");
+      requireNear(contacts[1].point.x,-.1f,.02f,"shadow world contact must retain the wall surface point");
+      shadow.updateShadowBlade(attacker,1,{before},34,0,100);
+      shadow.tick(17);
+      require(shadow.takeShadowBladeContacts(attacker).empty(),
+              "a world contact must stop the entire shadow swing across later physics steps");
+      require(shadow.bodyCount()==2,"shadow stepping must not add a sensor body");
+
+      // The same sweep going back from the attacker's facing (a wind-up): the wall is
+      // passed, the target behind it is reached.
+      shadow.updateShadowBlade(attacker,2,{before},51,0,200,.7f,{-1,0,0});
+      shadow.tick(17);
+      shadow.updateShadowBlade(attacker,2,{after},68,0,200,.7f,{-1,0,0});
+      shadow.tick(17);
+      const auto windup=shadow.takeShadowBladeContacts(attacker);
+      require(windup.size()==3 && windup[0].npc==nearTarget && windup[1].world && !windup[1].stopsSwing &&
+              windup[1].windup && windup[2].npc==farTarget,
+              "a wall met by a blade going back must be passed and not hide the later target");
+      }
+    }
+  }
+
+namespace {
+
+  void testCompoundChunkSeams() {
+    // The routes and acceptance limits are the #616 edge/corner matrix. Only
+    // ownership changes: four 64 m MeshShapes are children of one static body.
+    constexpr uint32_t cells=16, side=2*cells+1;
+    std::vector<JPH::Vec3> vertices;
+    for(int x=-int(cells);x<=int(cells);++x)
+      for(int z=-int(cells);z<=int(cells);++z)
+        vertices.emplace_back(float(x)*4.f,0,float(z)*4.f);
+    PhysicVbo mesh(&vertices);
+    std::array<std::vector<uint32_t>,4> indices;
+    const char* sectors[]={"south-west","north-west","south-east","north-east"};
+    for(uint32_t x=0;x<2;++x)
+      for(uint32_t z=0;z<2;++z) {
+        auto& part=indices[x*2+z];
+        for(uint32_t localX=0;localX<cells;++localX)
+          for(uint32_t localZ=0;localZ<cells;++localZ) {
+            const uint32_t a=(x*cells+localX)*side+z*cells+localZ,b=a+1,c=a+side+1,d=a+side;
+            part.insert(part.end(),{a,c,b,a,d,c});
+            }
+        const auto material=(x+z)%2==0 ? asset::MaterialGroup::STONE : asset::MaterialGroup::WOOD;
+        mesh.addIndex(part,0,part.size(),material,sectors[x*2+z]);
+        }
+    CollisionWorld whole,compoundWorld;
+    auto wholeBody=whole.addCollisionBody(mesh.shape(true),at(0,0,0),0,DynamicWorld::C_Landscape,false,false,&mesh);
+    JPH::StaticCompoundShapeSettings settings;
+    for(uint32_t x=0;x<2;++x)
+      for(uint32_t z=0;z<2;++z) {
+        const auto part=x*2+z;
+        const JPH::Vec3 origin(float(int(x)-1)*64.f,0,float(int(z)-1)*64.f);
+        JPH::VertexList childVertices;
+        JPH::IndexedTriangleList triangles;
+        const auto& source=indices[part];
+        for(uint32_t localX=0;localX<=cells;++localX)
+          for(uint32_t localZ=0;localZ<=cells;++localZ)
+            childVertices.emplace_back(float(localX)*4.f,0,float(localZ)*4.f);
+        const auto localIndex=[&](uint32_t index) {
+          return (index/side-x*cells)*(cells+1)+(index%side-z*cells);
+          };
+        // Match PhysicVbo::shape(true): split each 4 m square's long diagonal,
+        // keep its original triangle userdata, and translate to a local origin.
+        for(size_t i=0;i<source.size();i+=6) {
+          const auto midpoint=(vertices[source[i]]+vertices[source[i+1]])*.5f-origin;
+          const auto mid=uint32_t(childVertices.size());
+          childVertices.emplace_back(midpoint.GetX(),midpoint.GetY(),midpoint.GetZ());
+          const auto a=localIndex(source[i]),c=localIndex(source[i+1]),b=localIndex(source[i+2]),d=localIndex(source[i+4]);
+          const auto triangle=part*2*cells*cells+uint32_t(i/3);
+          triangles.emplace_back(c,mid,b,0,triangle);
+          triangles.emplace_back(mid,a,b,0,triangle);
+          triangles.emplace_back(a,mid,d,0,triangle+1);
+          triangles.emplace_back(mid,c,d,0,triangle+1);
+          }
+        JPH::MeshShapeSettings child(std::move(childVertices),std::move(triangles));
+        child.mPerTriangleUserData=true;
+        const auto shape=child.Create();
+        require(!shape.HasError(),"compound seam fixture must create each 64 m MeshShape");
+        settings.AddShape(origin,JPH::Quat::sIdentity(),shape.Get().GetPtr());
+        }
+    const auto shape=settings.Create();
+    require(!shape.HasError(),"compound seam fixture must create one static compound");
+    auto compoundBody=compoundWorld.addCollisionBody(shape.Get(),at(0,0,0),0,DynamicWorld::C_Landscape,false,false,&mesh);
+    require(compoundWorld.bodyCount()==1,"compound seam fixture must publish exactly one landscape body");
+    // Speeds are representative walking/running inputs, not animation metadata.
+    // Every route passes through its edge/corner; shallow approaches have enough
+    // travel to clear the capsule on both sides without reaching an outer edge.
+    constexpr uint64_t seamDt=17;
+    constexpr float seamSeconds=float(seamDt)*.001f, halfRoute=600.f;
+    size_t passedCount=0;
+    std::puts("Compound seam matrix: kind speed_cm_s angle_deg height_mm vertical_m_s airborne stairs_attempted stairs_succeeded speed_loss_pct box_bounce_mm cv_travel_cm box_travel_cm result");
+    for(const bool corner:{false,true})
+      for(const float speed:{180.f,400.f})
+        for(const float angle:{90.f,45.f,10.f}) {
+          const float radians=angle*.01745329252f;
+          const Tempest::Vec3 direction=angle==90.f ? Tempest::Vec3(1,0,0) :
+                                                   Tempest::Vec3(std::sin(radians),0,std::cos(radians));
+          const auto center=Tempest::Vec3(0,0,corner ? 0.f : -1600.f);
+          const auto initial=center-direction*halfRoute;
+          const auto displacement=direction*(speed*seamSeconds);
+          const int frames=int(std::ceil(2.f*halfRoute/(speed*seamSeconds)));
+          auto cv=compoundWorld.createVirtualCharacter(25,180,initial);
+          auto reference=whole.createVirtualCharacter(25,180,initial);
+          cv->setDiagnosticsEnabled(true);
+          CollisionWorld::CharacterMoveResult state,expected;
+          for(int frame=0;frame<30;++frame) {
+            state=cv->move({},seamDt,50,.785398163f,80,nullptr);
+            expected=reference->move({},seamDt,50,.785398163f,80,nullptr);
+            }
+          require(state.grounded && expected.grounded,"seam fixtures must settle on their flat support before measuring");
+          const auto settled=state.position;
+          float height=0,verticalSpeed=0,speedLoss=0;
+          size_t airborne=0,stairsAttempted=0,stairsSucceeded=0;
+          for(int frame=0;frame<frames;++frame) {
+            const auto previous=state.position,previousExpected=expected.position;
+            state=cv->move(displacement,seamDt,50,.785398163f,80,nullptr);
+            expected=reference->move(displacement,seamDt,50,.785398163f,80,nullptr);
+            CharacterVirtualDiagnostics diagnostic;
+            require(cv->diagnostics(diagnostic),"seam measurements must retain native ground and stair diagnostics");
+            height=std::max(height,std::abs(state.position.y-expected.position.y));
+            // Include penetration recovery/stair snaps as actual vertical motion,
+            // as well as the controller's solved velocity.
+            verticalSpeed=std::max({verticalSpeed,std::abs(state.position.y-previous.y)/seamSeconds,
+                                   std::abs(state.velocity.y)});
+            const auto actualDelta=state.position-previous,expectedDelta=expected.position-previousExpected;
+            const float actualAdvance=actualDelta.x*direction.x+actualDelta.z*direction.z;
+            const float expectedAdvance=expectedDelta.x*direction.x+expectedDelta.z*direction.z;
+            require(expected.grounded && expectedAdvance>0,"whole-body seam control must stay grounded and advance each frame");
+            speedLoss=std::max(speedLoss,std::max(0.f,1.f-actualAdvance/expectedAdvance));
+            airborne+=!state.grounded || diagnostic.afterStairs.groundState!=0 ? 1 : 0;
+            stairsAttempted+=diagnostic.stairAttempted ? 1 : 0;
+            stairsSucceeded+=diagnostic.stairSucceeded ? 1 : 0;
+            }
+          const auto cvDelta=state.position-settled;
+          const float cvTravel=cvDelta.x*direction.x+cvDelta.z*direction.z;
+          cv.reset();reference.reset();
+
+          auto box=compoundWorld.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(initial.x,10,initial.z),0,1);
+          auto control=whole.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(initial.x,10,initial.z),0,1);
+          for(int frame=0;frame<120;++frame) {
+            compoundWorld.tick(seamDt);whole.tick(seamDt);
+            }
+          const auto boxStart=box->position();
+          box->setVelocity(direction*speed,{});
+          control->setVelocity(direction*speed,{});
+          float boxBounce=0;
+          for(int frame=0;frame<frames;++frame) {
+            compoundWorld.tick(seamDt);whole.tick(seamDt);
+            boxBounce=std::max({boxBounce,box->position().y-boxStart.y,
+                               std::abs(box->position().y-control->position().y)});
+            }
+          const auto boxDelta=box->position()-boxStart;
+          const float boxTravel=boxDelta.x*direction.x+boxDelta.z*direction.z;
+          const bool passed=height<=.5f && verticalSpeed<=10.f && airborne==0 && stairsSucceeded==0 &&
+                            speedLoss<=.05f && cvTravel>halfRoute+25.f && boxBounce<=.5f && boxTravel>halfRoute+10.f;
+          passedCount+=passed ? 1 : 0;
+          std::printf("Compound seam %s %.0f %.0f %.6f %.6f %zu %zu %zu %.6f %.6f %.6f %.6f %s\n",
+                      corner ? "corner" : "edge",double(speed),double(angle),double(height*10.f),double(verticalSpeed*.01f),
+                      airborne,stairsAttempted,stairsSucceeded,double(speedLoss*100.f),double(boxBounce*10.f),
+                      double(cvTravel),double(boxTravel),passed ? "PASS" : "FAIL");
+          }
+
+    std::printf("Compound seam experiment: %zu/12 passed (measurement only; not a production collision mode)\n",passedCount);
     }
   }
 
 int main() {
   try {
+    testCompoundChunkSeams();
+    if(const auto* only=std::getenv("OPENGOTHIC_COMPOUND_SEAMS_ONLY"); only && std::string_view(only)=="1")
+      return EXIT_SUCCESS;
     testMovableVobImpulseInertia();
     testMovableTableImpulseCouple();
     testMeshRayEdges();
@@ -4029,10 +5108,13 @@ int main() {
     testSphereQueryPrecision();
     testShallowOverlapProjection();
     testNpcContactDistance();
+    testNpcFrozenBodyReplacement();
     testNpcScalarWitness();
     testNpcSeparatedContactResponse();
     testFixedStepCarry();
     testFixedStepCadence();
+    testItemWake();
+    testItemWeaponWake();
     testContracts();
     testCharacterVirtual();
     testVirtualFloorGuard();

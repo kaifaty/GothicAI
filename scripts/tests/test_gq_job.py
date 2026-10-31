@@ -118,6 +118,20 @@ def test_submit_wait_preserves_arguments_environment_and_cwd_at_eof(host):
     assert all(record["cwd"] == str(host["work"]) for record in records)
 
 
+def test_repeated_archive_options_reach_submit_unchanged(host):
+    first, second = host["work"] / "records", host["work"] / "weights"
+    options = ["--archive", str(first), "--archive", str(second)]
+    args = command()
+    separator = args.index("--")
+    args[separator:separator] = options
+    result = subprocess.run(args, cwd=host["work"], env=host["env"],
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    expected = list(ARGS)
+    expected[expected.index("--"):expected.index("--")] = options
+    assert calls(host)[0]["args"] == ["submit", *expected]
+
+
 @pytest.mark.parametrize("exit_code", [0, 17, 143])
 def test_returns_wait_exit_status(host, exit_code):
     host["env"]["FAKE_WAIT_CODE"] = str(exit_code)

@@ -21,6 +21,7 @@ DEFAULT_URL = "ws://127.0.0.1:47831"  # GOTHIC_VOXCPM_URL: the GPU server runnin
 class VoxCPM:
     name = "voxcpm"
     rate = 48000
+    supports_cloning = False
 
     def __init__(
         self, url: str = "", timeout: str | float = 10.0, connect_timeout: str | float = 3.0

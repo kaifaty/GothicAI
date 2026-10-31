@@ -447,8 +447,11 @@ def assess_episode(directory, route, require_frames=True):
     if missing:
         raise RuntimeError(f"Incomplete attempt {directory}: missing {', '.join(missing)}; retained, no retry")
     episode = json.loads((directory / "episode.json").read_text(encoding="utf-8"))
+    recorded_format = (episode.get("demo_version") == 2 or
+        (episode.get("demo_version") == 3 and episode.get("navigation_memory_version") == 4
+         and episode.get("journey_memory") is True))
     if (episode.get("physics_mode") != "cv" or episode.get("frames", 0) <= 0 or
-            episode.get("cv_frames", 0) <= 0 or episode.get("demo_version") != 2 or episode.get("teacher_version") != 2):
+            episode.get("cv_frames", 0) <= 0 or not recorded_format or episode.get("teacher_version") != 2):
         # Native airborne/climbing states temporarily disable actual CV inside
         # MoveAlgo even with the episode's CV forcing active.
         raise RuntimeError(f"Attempt lacks teacher v2/CV evidence: {directory}")

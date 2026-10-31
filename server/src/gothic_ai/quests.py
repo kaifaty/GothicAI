@@ -139,8 +139,8 @@ class QuestBoard:
         return q
 
     def done(self, q: Quest) -> bool:
-        """The truth: the hero killed them all."""
-        return self.chronicle.killed(q.tag, "PLAYER") >= q.count
+        """The truth: all creatures of the tag are dead, whoever killed them."""
+        return self.chronicle.killed(q.tag) >= q.count
 
     def _load(self) -> None:
         """The quests of the branch, from its facts (after a load: as they were at that save)."""
@@ -210,7 +210,9 @@ class QuestBoard:
         if d is not None and d <= SEE_CM:
             return ToolOutcome(f"Отклонено: одно из них живо — у тебя на глазах, в {_m(d)} м.", "rejected")
         if self.trust.broken(q.giver) and not self.done(q):
-            return ToolOutcome(f"Отклонено: он уже лгал тебе. {WORD_BROKEN}", "rejected")
+            return ToolOutcome(
+                f"Отклонено: {self.trust.of(q.giver).broken_reason()}. {WORD_BROKEN}", "rejected"
+            )
         # never more than the giver has
         args, reason = executor.check_give({"item": q.reward_item, "count": q.reward_count}, snap)
         if args is None:
@@ -240,7 +242,7 @@ class QuestBoard:
         if not done:
             # not blocked: written down with the truth, to be found out
             q.lie = True
-            truth = f"killed {self.chronicle.killed(q.tag, 'PLAYER')} of {q.count}"
+            truth = f"killed {self.chronicle.killed(q.tag)} of {q.count}"
             self.chronicle.record({"fact": "lie", "quest": q.id, "npc": q.giver, "truth": truth})
             self.journal.add("lie", npc=q.giver, name=q.giver_name, quest=q.id, truth=truth)
             await self._watch()

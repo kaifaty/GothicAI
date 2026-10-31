@@ -6,6 +6,7 @@
 #include <Tempest/Except>
 
 #include <Metal/Metal.hpp>
+#include <MetalFX/MetalFX.hpp>
 #include <Foundation/Foundation.hpp>
 
 #include "../utility/compiller_hints.h"
@@ -14,10 +15,15 @@
 #include "gapi/metal/mtsamplercache.h"
 #include "nsptr.h"
 
+#include <mutex>
+#include <vector>
+
 class MTLDevice;
 
 namespace Tempest {
 namespace Detail {
+
+void probeMetalUploadBuffer(MTL::Buffer* buffer);
 
 inline MTL::StorageMode hostVisibleStorageMode(MTL::Device& dev) {
 #ifdef __IOS__
@@ -290,6 +296,8 @@ class MtDevice : public AbstractGraphicsApi::Device {
 
     static void handleError(NS::Error* err);
 
+    MTLFX::SpatialScaler&      spatialScaler(MTL::Texture& src, MTL::Texture& dst);
+
     NsPtr<MTL::Device>         impl;
     NsPtr<MTL::CommandQueue>   queue;
 
@@ -302,6 +310,9 @@ class MtDevice : public AbstractGraphicsApi::Device {
     Props                      prop;
     MtSamplerCache             samplers;
     bool                       validation = false;
+
+    std::mutex                 scalerSync;
+    std::vector<NsPtr<MTLFX::SpatialScaler>> scalers;
 
     static void deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev);
   };

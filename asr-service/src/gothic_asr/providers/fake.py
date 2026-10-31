@@ -46,7 +46,13 @@ class FakeProvider:
             raise AsrError("fake provider failure")
         return Transcript(self.text, self.name)
 
-    async def open_stream(self, lang: str, on_partial: PartialCallback | None = None) -> _FakeStream:
+    async def open_stream(
+        self,
+        lang: str,
+        on_partial: PartialCallback | None = None,
+        *,
+        hints: list[str] | None = None,
+    ) -> _FakeStream:
         stream = _FakeStream(self, on_partial)
         self.streams.append(stream)
         return stream

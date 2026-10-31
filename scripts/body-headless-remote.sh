@@ -19,7 +19,11 @@ remote_script() {
       printf -v remote_env '%s %q' "$remote_env" "$key=${!key}"
     fi
   done
-  { cat "$ROOT/scripts/gq-job.sh"; cat; } |
+  {
+    cat "$ROOT/scripts/gq-job.sh"
+    if [[ "$HOST" == ryzen ]]; then cat "$ROOT/scripts/ryzen-build.sh"; else printf 'RYZEN_CMAKE_FLAGS=()\n'; fi
+    cat
+  } |
     ssh -o BatchMode=yes "$HOST" "env$remote_env bash -s --$remote_args"
 }
 
@@ -66,7 +70,8 @@ free_kib=$(df -Pk "$task_root" | awk 'NR==2 {print $4}')
 REMOTE_SCRIPT
   rsync -a --delete --exclude=build/ --exclude=.git/ --exclude=.DS_Store \
     --exclude='*.o' --exclude='*.a' "$ROOT/OpenGothic/" "$HOST:$REMOTE/source/OpenGothic/"
-  rsync -a "$ROOT/scripts/body-headless-remote.sh" "$ROOT/scripts/body_headless_suite.py" \
+  rsync -a --exclude=build/ --exclude=__pycache__/ "$ROOT/scripts/convert" "$HOST:$REMOTE/source/scripts/"
+  rsync -a "$ROOT/scripts/body-headless-remote.sh" "$ROOT/scripts/body_headless_suite.py" "$ROOT/scripts/base-ensure.sh" \
     "$ROOT/scripts/body_headless_ipc_probe.py" \
     "$ROOT/scripts/body_baseline_report.py" "$ROOT/scripts/body_headless_parity.py" \
     "$HOST:$REMOTE/source/scripts/"
@@ -100,10 +105,12 @@ if gq_available; then
   build_command="$(cat <<'GQ_BUILD'
 set -euo pipefail
 task_root="$1"
+shift
+RYZEN_CMAKE_FLAGS=("$@")
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
 export PATH="$VULKAN_SDK/bin:$PATH"
 nice -n 10 cmake -S "$task_root/source/OpenGothic" -B "$task_root/build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"} -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
   > "$task_root/provenance/configure.log" 2>&1
 nice -n 10 cmake --build "$task_root/build" --target gothic-body-runner Gothic2Notr --parallel 2 \
@@ -114,12 +121,12 @@ tail -8 "$task_root/provenance/build.log"
 GQ_BUILD
 )"
   gq_job --class quick --threads 3 --mem 6G --max 30m --name "body-headless-build" -- \
-    bash -c "$build_command" bash "$task_root"
+    bash -c "$build_command" bash "$task_root" ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"}
 else
   export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
   export PATH="$VULKAN_SDK/bin:$PATH"
   nice -n 10 cmake -S "$task_root/source/OpenGothic" -B "$task_root/build" -G Ninja \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"} -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
     > "$task_root/provenance/configure.log" 2>&1
   nice -n 10 cmake --build "$task_root/build" --target gothic-body-runner Gothic2Notr --parallel 2 \
@@ -173,6 +180,9 @@ assets="$HOME/gothic-ai/body-baseline/assets"
 save="$reference/run/save_slot_1.sav"
 cp "$binary" "$out/reference/gothic-body-runner"
 cp "$rendered" "$out/reference/Gothic2Notr"
+if [[ -x "$(dirname "$rendered")/content-convert" ]]; then
+  cp "$(dirname "$rendered")/content-convert" "$out/reference/"
+fi
 cp "$task_root/provenance/source-head.txt" "$task_root/provenance/source.patch" \
    "$task_root/provenance/configure.log" "$task_root/provenance/build.log" "$out/"
 if gq_available; then

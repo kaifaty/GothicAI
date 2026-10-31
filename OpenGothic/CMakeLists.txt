@@ -34,6 +34,9 @@ if(MSVC)
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
   add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
   add_definitions(-D_ITERATOR_DEBUG_LEVEL=0)
+  # std::stable_sort of Jolt's 16-byte aligned contacts (physics/collisionworld.cpp) needs the conforming
+  # aligned_storage; without this MSVC stops with C2338 instead of choosing a layout silently
+  add_definitions(-D_ENABLE_EXTENDED_ALIGNED_STORAGE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4800")
 endif()
 
@@ -82,6 +85,13 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
+foreach(source baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit
+               utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
+               dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/dlscollection dmusic/wave dmusic/soundfont
+               dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
+               videodata videoimport bink/video bink/frame)
+  list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/${source}.cpp")
+endforeach()
 if(NOT OPENGOTHIC_ENABLE_FRAME_PROFILE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/frameprofile.cpp")
 endif()
@@ -155,6 +165,7 @@ include_directories(lib/TinySoundFont)
 
 # Rapidjson
 include_directories(lib/rapidjson/include)
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE lib/rapidjson/include)
 
 # Tempest
 if(WIN32)
@@ -163,6 +174,10 @@ else()
   set(TEMPEST_BUILD_SHARED OFF CACHE INTERNAL "")
 endif()
 add_subdirectory(lib/Tempest/Engine)
+if(OPENGOTHIC_ENABLE_FRAME_PROFILE)
+  target_compile_definitions(Tempest PRIVATE OPENGOTHIC_ENABLE_FRAME_PROFILE=1)
+  target_include_directories(Tempest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/common)
+endif()
 include_directories(lib/Tempest/Engine/include)
 target_link_libraries(${PROJECT_NAME} Tempest)
 
@@ -171,6 +186,22 @@ include_directories(lib/miniz)
 add_definitions(-DMINIZ_NO_STDIO)
 add_library(miniz STATIC EXCLUDE_FROM_ALL "lib/miniz/miniz.h" "lib/miniz/miniz.c")
 target_link_libraries(${PROJECT_NAME} miniz)
+include(cmake/BaseImport.cmake)
+if(MSVC)
+  # musicnative.c (runtime) and basemusic.c/musicnativeimport.c (import) read dmusic's private structs
+  # with C11 _Atomic counters; dmusic opts its own sources in the same way. Set here, not in
+  # BaseImport.cmake: that file is a base format input, and a flag must not change the base fingerprint.
+  target_compile_options(gothic-base-runtime PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+  target_compile_options(gothic-base-import PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+endif()
+include(cmake/VideoImport.cmake)
+target_link_libraries(${PROJECT_NAME} gothic-base-runtime gothic-video-runtime)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/convert/CMakeLists.txt")
+  add_subdirectory(../scripts/convert content-convert)
+  add_dependencies(Gothic2Notr content-convert)
+else()
+  message(STATUS "content-convert is not built: scripts/convert is not available")
+endif()
 target_link_libraries(${PROJECT_NAME} zlibstatic)
 target_include_directories(${PROJECT_NAME} PRIVATE
   lib/Tempest/Engine/thirdparty/zlib ${CMAKE_BINARY_DIR}/lib/Tempest/thirdparty/zlib)
@@ -294,7 +325,7 @@ if(UNIX AND NOT IOS AND NOT ANDROID)
   target_compile_options(gothic-material-texture-test PRIVATE -Wall -Wconversion -Werror)
   # Indexed GLB replacement and fallback, generated assets only; no game or window.
   add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp)
-  target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge gothic-base-import)
   target_include_directories(gothic-mesh-gltf-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_definitions(gothic-mesh-gltf-test PRIVATE
     GOTHIC_TEST_BARREL_SCRIPT="${PROJECT_SOURCE_DIR}/../scripts/meshes/make_test_barrel.py")
@@ -304,12 +335,65 @@ endif()
 # Asset-free contracts; run explicitly with their check-* targets.
 if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-navpolicy-contract EXCLUDE_FROM_ALL
-    tests/navpolicy_contract.cpp common/navpolicy.cpp)
+    tests/navpolicy_contract.cpp common/navpolicy.cpp common/game/navigationmemory.cpp)
   target_include_directories(gothic-navpolicy-contract PRIVATE
     common lib/Tempest/Engine/include lib/Tempest/Engine
     lib/Tempest/Engine/thirdparty/zlib ${CMAKE_BINARY_DIR}/lib/Tempest/thirdparty/zlib)
   target_link_libraries(gothic-navpolicy-contract PRIVATE zlibstatic)
   find_package(Python3 COMPONENTS Interpreter QUIET)
+  add_executable(gothic-bodypolicy-contract EXCLUDE_FROM_ALL
+    tests/bodypolicy_contract.cpp common/game/bodypolicy.cpp common/nets/smallnet.cpp)
+  target_include_directories(gothic-bodypolicy-contract PRIVATE
+    common lib/Tempest/Engine/thirdparty/zlib ${CMAKE_BINARY_DIR}/lib/Tempest/thirdparty/zlib)
+  target_include_directories(gothic-bodypolicy-contract SYSTEM BEFORE PRIVATE lib/rapidjson/include)
+  target_link_libraries(gothic-bodypolicy-contract PRIVATE zlibstatic)
+  find_program(BODY_POLICY_UV_EXECUTABLE NAMES uv HINTS "$ENV{HOME}/.local/bin")
+  if(BODY_POLICY_UV_EXECUTABLE)
+    set(BODY_POLICY_PYTHON ${BODY_POLICY_UV_EXECUTABLE} run --no-project --with numpy python)
+  elseif(Python3_Interpreter_FOUND)
+    set(BODY_POLICY_PYTHON ${Python3_EXECUTABLE})
+  endif()
+  if(BODY_POLICY_PYTHON)
+    add_custom_command(OUTPUT
+        ${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/fixture.bodynet
+        ${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/golden.jsonl.gz
+      COMMAND ${CMAKE_COMMAND} -E env
+        OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+        ${BODY_POLICY_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/body_net.py
+        fixture ${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture
+      DEPENDS ../scripts/body_net.py ../scripts/body_net_numpy.py
+        ../scripts/body_policy_net_check.py ../scripts/body_trajectory_dataset.py
+      VERBATIM)
+    add_custom_target(gothic-body-engine-fixture DEPENDS
+      ${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/fixture.bodynet
+      ${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/golden.jsonl.gz)
+    if(UNIX)
+    add_executable(gothic-body-engine-test EXCLUDE_FROM_ALL tests/body_engine_test.cpp)
+    target_link_libraries(gothic-body-engine-test PRIVATE OpenGothic AiBridge zlibstatic)
+    target_include_directories(gothic-body-engine-test SYSTEM BEFORE PRIVATE lib/rapidjson/include)
+    target_include_directories(gothic-body-engine-test PRIVATE lib/Tempest/Engine/thirdparty/zlib
+      ${CMAKE_BINARY_DIR}/lib/Tempest/thirdparty/zlib)
+    target_compile_options(gothic-body-engine-test PRIVATE -Wall -Wconversion -Werror)
+    target_compile_definitions(gothic-body-engine-test PRIVATE
+      GOTHIC_BODY_ENGINE_NET="${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/fixture.bodynet"
+      GOTHIC_BODY_ENGINE_GOLDEN="${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/golden.jsonl.gz")
+    add_dependencies(gothic-body-engine-test gothic-body-engine-fixture)
+    endif()
+    if(TARGET gothic-body-watch-test)
+      target_compile_definitions(gothic-body-watch-test PRIVATE
+        GOTHIC_BODY_ENGINE_NET="${CMAKE_CURRENT_BINARY_DIR}/body-engine-fixture/fixture.bodynet")
+      add_dependencies(gothic-body-watch-test gothic-body-engine-fixture)
+    endif()
+    add_custom_target(check-bodypolicy
+      COMMAND ${CMAKE_COMMAND} -E env
+        OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1
+        ${BODY_POLICY_PYTHON} -I ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/body_net.py
+        fixture ${CMAKE_CURRENT_BINARY_DIR}/bodypolicy-fixture
+      COMMAND $<TARGET_FILE:gothic-bodypolicy-contract>
+        ${CMAKE_CURRENT_BINARY_DIR}/bodypolicy-fixture/fixture.bodynet
+        ${CMAKE_CURRENT_BINARY_DIR}/bodypolicy-fixture/golden.jsonl.gz
+      DEPENDS gothic-bodypolicy-contract USES_TERMINAL)
+  endif()
   if(Python3_Interpreter_FOUND)
     add_custom_target(check-navpolicy
       COMMAND ${CMAKE_COMMAND} -E env
@@ -371,35 +455,90 @@ if(NOT ANDROID AND NOT IOS)
     COMMAND $<TARGET_FILE:gothic-navoracle-contract>
     DEPENDS gothic-navoracle-contract USES_TERMINAL)
   add_executable(gothic-aim-contract EXCLUDE_FROM_ALL tests/aim_contract.cpp)
-  target_link_libraries(gothic-aim-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-aim-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-aim
     COMMAND $<TARGET_FILE:gothic-aim-contract>
     DEPENDS gothic-aim-contract USES_TERMINAL)
   add_executable(gothic-aimwalk-contract EXCLUDE_FROM_ALL tests/aimwalk_contract.cpp)
-  target_link_libraries(gothic-aimwalk-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-aimwalk-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-aimwalk
     COMMAND $<TARGET_FILE:gothic-aimwalk-contract>
     DEPENDS gothic-aimwalk-contract USES_TERMINAL)
   add_executable(gothic-physics-contract EXCLUDE_FROM_ALL tests/physics_contract.cpp)
-  target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
+  target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-meleestamina-contract EXCLUDE_FROM_ALL
+    tests/meleestamina_contract.cpp common/game/meleestamina.cpp)
+  target_include_directories(gothic-meleestamina-contract PRIVATE common)
+  add_custom_target(check-meleestamina
+    COMMAND $<TARGET_FILE:gothic-meleestamina-contract>
+    DEPENDS gothic-meleestamina-contract USES_TERMINAL)
+  add_executable(gothic-meleeparry-contract EXCLUDE_FROM_ALL
+    tests/meleeparry_contract.cpp common/game/meleeparry.cpp)
+  target_include_directories(gothic-meleeparry-contract PRIVATE common)
+  add_custom_target(check-meleeparry
+    COMMAND $<TARGET_FILE:gothic-meleeparry-contract>
+    DEPENDS gothic-meleeparry-contract USES_TERMINAL)
+  add_executable(gothic-furniture-parts-contract EXCLUDE_FROM_ALL tests/furniture_parts_contract.cpp)
+  target_link_libraries(gothic-furniture-parts-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-physics
     COMMAND $<TARGET_FILE:gothic-physics-contract>
     DEPENDS gothic-physics-contract
     USES_TERMINAL)
   add_executable(gothic-cloth-contract EXCLUDE_FROM_ALL tests/cloth_contract.cpp)
-  target_link_libraries(gothic-cloth-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-cloth-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-clothgeometry-contract EXCLUDE_FROM_ALL
     tests/clothgeometry_contract.cpp common/physics/clothgeometry.cpp)
   target_include_directories(gothic-clothgeometry-contract PRIVATE common)
   add_executable(gothic-worldcloth-contract EXCLUDE_FROM_ALL tests/worldcloth_contract.cpp)
   target_link_libraries(gothic-worldcloth-contract PRIVATE OpenGothic AiBridge)
+  add_executable(gothic-worldbase-contract EXCLUDE_FROM_ALL tests/worldbase_contract.cpp)
+  target_link_libraries(gothic-worldbase-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  add_executable(gothic-asset-digest EXCLUDE_FROM_ALL tests/asset_digest.cpp)
+  target_link_libraries(gothic-asset-digest PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-asset-digest SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  add_executable(gothic-worlddata-contract EXCLUDE_FROM_ALL tests/worlddata_contract.cpp)
+  target_link_libraries(gothic-worlddata-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-worlddata-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  add_executable(gothic-wayheights-contract EXCLUDE_FROM_ALL tests/wayheights_contract.cpp)
+  target_link_libraries(gothic-wayheights-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  add_executable(gothic-vob-layer-test EXCLUDE_FROM_ALL tests/vob_layer_test.cpp)
+  target_link_libraries(gothic-vob-layer-test PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-vob-layer-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_compile_definitions(gothic-vob-layer-test PRIVATE
+    GOTHIC_VOB_FIXTURE_SCRIPT="${PROJECT_SOURCE_DIR}/../scripts/vob_layer_fixture.py"
+    GOTHIC_CONTENT_CONVERT="$<TARGET_FILE:content-convert>"
+    GOTHIC_BASE_FORMAT_SHA256="${BASE_FORMAT_SHA256}")
+  add_dependencies(gothic-vob-layer-test content-convert)
+  if(NOT MSVC)
+    target_compile_options(gothic-vob-layer-test PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_executable(gothic-basecontent-contract EXCLUDE_FROM_ALL tests/basecontent_contract.cpp)
+  target_link_libraries(gothic-basecontent-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+  target_include_directories(gothic-basecontent-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  if(UNIX)
+    add_executable(gothic-video-contract EXCLUDE_FROM_ALL tests/video_contract.cpp)
+    target_link_libraries(gothic-video-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+    target_compile_options(gothic-video-contract PRIVATE -Wall -Wconversion -Werror)
+    add_executable(gothic-base-store-contract EXCLUDE_FROM_ALL tests/basestore_contract.cpp)
+    target_link_libraries(gothic-base-store-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
+    target_include_directories(gothic-base-store-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+    target_compile_options(gothic-base-store-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  if(NOT MSVC)
+    target_compile_options(gothic-worlddata-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-wayheights-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-basecontent-contract PRIVATE -Wall -Wconversion -Werror)
+    target_compile_options(gothic-worldbase-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
   add_custom_target(check-cloth
     COMMAND $<TARGET_FILE:gothic-cloth-contract>
     COMMAND $<TARGET_FILE:gothic-clothgeometry-contract>
     COMMAND $<TARGET_FILE:gothic-worldcloth-contract>
     DEPENDS gothic-cloth-contract gothic-clothgeometry-contract gothic-worldcloth-contract USES_TERMINAL)
   add_executable(gothic-ragdoll-contract EXCLUDE_FROM_ALL tests/physics_ragdoll_contract.cpp)
-  target_link_libraries(gothic-ragdoll-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-ragdoll-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-ragdoll-save-contract EXCLUDE_FROM_ALL tests/ragdoll_save_contract.cpp)
   target_link_libraries(gothic-ragdoll-save-contract PRIVATE OpenGothic AiBridge)
   add_custom_target(check-ragdoll-save
@@ -429,7 +568,7 @@ endif()
 # Navigation eye has an independent contract block to keep parallel navigation work isolated.
 if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-navigation-eye-contract EXCLUDE_FROM_ALL tests/navigation_eye_contract.cpp)
-  target_link_libraries(gothic-navigation-eye-contract PRIVATE OpenGothic AiBridge)
+  target_link_libraries(gothic-navigation-eye-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-navigation-eye
     COMMAND $<TARGET_FILE:gothic-navigation-eye-contract>
     DEPENDS gothic-navigation-eye-contract USES_TERMINAL)
@@ -449,7 +588,7 @@ endif()
 
 target_sources(Spacer PRIVATE ${SPACER_SOURCES} spacer/main.cpp)
 target_include_directories(Spacer PRIVATE "spacer")
-target_link_libraries(Spacer PRIVATE OpenGothic SpacerAssets)
+target_link_libraries(Spacer PRIVATE OpenGothic SpacerAssets gothic-base-import gothic-video-import)
 
 if(ANDROID)
   add_android_apk(OpenGothic-apk

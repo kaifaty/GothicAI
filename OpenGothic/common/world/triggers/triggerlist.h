@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/vobs/Trigger.hh>
+#include "asset/worldtypes.h"
 
 #include "abstracttrigger.h"
 
@@ -8,7 +8,7 @@ class World;
 
 class TriggerList : public AbstractTrigger {
   public:
-    TriggerList(Vob* parent, World &world, const zenkit::VTriggerList& data, Flags flags);
+    TriggerList(Vob* parent, World &world, const asset::VTriggerList& data, Flags flags);
 
     void onTrigger(const TriggerEvent& evt) override;
 
@@ -22,6 +22,6 @@ class TriggerList : public AbstractTrigger {
       LP_RAND = 2
       };
     uint32_t next=0;
-    std::vector<zenkit::VTriggerList::Target> targets;
-    zenkit::TriggerBatchMode                  listProcess;
+    std::vector<asset::VTriggerList::Target> targets;
+    asset::TriggerBatchMode                  listProcess;
   };

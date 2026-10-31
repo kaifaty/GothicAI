@@ -3,6 +3,10 @@ import fcntl
 import importlib.machinery
 import importlib.util
 import io
+import json
+import os
+import shutil
+import subprocess
 import tempfile
 import tomllib
 import unittest
@@ -21,6 +25,19 @@ def load(name, filename):
 
 install = load("ryzen_play", "ryzen-play.sh")
 session = load("ryzen_play_session", "ryzen-play-session.sh")
+GAME_HELPER = (Path(__file__).resolve().parents[1] / "ryzen_game.py").read_text()
+
+
+def prepared_game(home):
+    system = home / "gothic-ai/game-settings/system"
+    system.mkdir(parents=True)
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (system / name).write_text("[GAME]\n")
+    (home / "gothic-ai/game-base.json").write_text(json.dumps({"base": "a" * 64, "videos": ""}))
+
+
+def payload():
+    return {"origin": "origin", "settings": {}, "game_helper": GAME_HELPER}
 
 
 class RyzenPlayTests(unittest.TestCase):
@@ -52,7 +69,7 @@ class RyzenPlayTests(unittest.TestCase):
             self.assertTrue(install.create_settings(path, source, repo, home))
             content = path.read_text()
             result = tomllib.loads(content)
-            self.assertEqual(result["game"]["dir"], str(home / "gothic-ai/game"))
+            self.assertEqual(result["game"]["dir"], str(home / "gothic-ai/game-settings"))
             self.assertEqual(result["paths"], {"repo": str(repo), "uv": str(home / ".local/bin/uv")})
             for section in ("llm", "tts"):
                 self.assertEqual(result[section], source[section])
@@ -64,7 +81,15 @@ class RyzenPlayTests(unittest.TestCase):
             self.assertEqual(list(path.parent.iterdir()), [path])
             path.write_text("# user's settings\n")
             self.assertFalse(install.create_settings(path, source, repo, home))
-            self.assertEqual(path.read_text(), "# user's settings\n")
+            self.assertEqual(path.read_text(), "# user's settings\n\n[game]\ndir = "
+                             + json.dumps(str(home / "gothic-ai/game-settings")) + "\n")
+            path.write_text('[game]\ndir = "/old/install"\ndev_mode = true\n'
+                            '[paths]\ngame_home = "/personal/saves"\n')
+            install.create_settings(path, source, repo, home)
+            self.assertEqual(tomllib.loads(path.read_text()), {
+                "game": {"dir": str(home / "gothic-ai/game-settings"), "dev_mode": True},
+                "paths": {"game_home": "/personal/saves"},
+            })
 
     def test_prepare_keeps_build_and_all_uv_sync_inside_the_queue(self):
         repo = Path("/tmp/play")
@@ -78,6 +103,7 @@ class RyzenPlayTests(unittest.TestCase):
                 patch.object(install.Path, "cwd", return_value=repo), \
                 patch.object(install.shutil, "which", return_value="/tool"), \
                 patch.object(install.Path, "is_file", return_value=True), \
+                patch.object(install.subprocess, "check_output", return_value=b"thin-flags\0"), \
                 patch.object(install, "run") as run:
             install.prepare()
         calls = [call.args[0] for call in run.call_args_list]
@@ -89,6 +115,88 @@ class RyzenPlayTests(unittest.TestCase):
         self.assertTrue(all("--locked" in call for call in calls[4:8]))
         self.assertEqual(calls[8], [repo / "scripts/build-launcher.sh", "--no-install"])
 
+    def test_install_and_update_sync_only_play_content_before_ssh(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            settings = home / ".config/gothic-ai/settings.toml"
+            settings.parent.mkdir(parents=True)
+            settings.write_text("[game]\n")
+            content = home / ".local/share/gothic-ai/content"
+            content.mkdir(parents=True)
+            for action in ("install", "update"):
+                with self.subTest(action=action), patch.object(install.Path, "home", return_value=home), \
+                        patch.object(install.subprocess, "check_output", return_value="origin\n"), \
+                        patch.object(install, "run") as sync, \
+                        patch.object(install, "owned_process") as remote:
+                    def after_sync(command, payload):
+                        self.assertEqual(sync.call_count, 2)
+                        self.assertEqual(command[-2], "ryzen")
+                        return 0
+
+                    remote.side_effect = after_sync
+                    self.assertEqual(install.main([action]), 0)
+                    self.assertIn("--check", sync.call_args_list[0].args[0][-1])
+                    command = sync.call_args.args[0]
+                    self.assertEqual(command[:4], ["rsync", "-a", "--delete", "--checksum"])
+                    self.assertEqual([arg for arg in command if arg.startswith("--include=")],
+                                     ["--include=/materials/***", "--include=/meshes/***", "--include=/enabled.json"])
+                    self.assertIn("--exclude=*", command)
+                    self.assertIn("--delete-excluded", command)
+                    self.assertEqual(command[command.index("-e") + 1],
+                                     "ssh -o BatchMode=yes -o ConnectTimeout=10")
+                    self.assertEqual(command[-2], f"{content}/")
+                    self.assertEqual(command[-1], "ryzen:.local/share/gothic-ai/play-content.incoming/")
+                    self.assertNotIn(".local/share/gothic-ai/content", command[-1])
+                    self.assertNotIn(".local/share/gothic-ai/content",
+                                     next(arg for arg in command if arg.startswith("--rsync-path=")))
+
+    @unittest.skipUnless(shutil.which("rsync"), "needs rsync")
+    def test_content_sync_filters_deletes_checksums_and_handles_missing_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            content = home / ".local/share/gothic-ai/content"
+            materials = content / "materials"
+            materials.mkdir(parents=True)
+            (materials / "materials.json").write_text("{}")
+            texture = materials / "albedo.dds"
+            texture.write_bytes(b"first")
+            (content / "meshes").mkdir()
+            (content / "meshes/meshes.json").write_text("{}")
+            (content / "enabled.json").write_text("{}")
+            (content / "staging").mkdir()
+            (content / "staging/private.log").write_text("not active content")
+            (content / "build.log").touch()
+            incoming = home / "remote/play-content.incoming"
+            (incoming / "materials").mkdir(parents=True)
+            (incoming / "materials/removed.dds").touch()
+            (incoming / "stale.log").touch()
+
+            def local_sync(command):
+                # The remote mkdir command is not a local rsync executable.
+                local = [arg for arg in command[:-1] if not arg.startswith("--rsync-path=")]
+                result = subprocess.run([*local, f"{incoming}/"], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+            with patch.object(install.Path, "home", return_value=home), \
+                    patch.object(install, "run", side_effect=local_sync):
+                install.sync_content()
+                self.assertEqual({str(path.relative_to(incoming)) for path in incoming.rglob("*") if path.is_file()},
+                                 {"materials/materials.json", "materials/albedo.dds", "meshes/meshes.json", "enabled.json"})
+                previous = texture.stat()
+                texture.write_bytes(b"other")
+                os.utime(texture, ns=(previous.st_atime_ns, previous.st_mtime_ns))
+                install.sync_content()
+                self.assertEqual((incoming / "materials/albedo.dds").read_bytes(), b"other")
+                shutil.rmtree(materials)
+                shutil.rmtree(content / "meshes")
+                (content / "enabled.json").unlink()
+                install.sync_content()
+                self.assertEqual(list(incoming.iterdir()), [])
+                (incoming / "stale.log").touch()
+                shutil.rmtree(content)
+                install.sync_content()
+                self.assertEqual(list(incoming.iterdir()), [])
+
     def test_remote_install_preserves_shared_queue_and_profile(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
@@ -97,7 +205,7 @@ class RyzenPlayTests(unittest.TestCase):
             binary = repo / "launcher/app/src-tauri/target/release/gothic-launcher"
             binary.parent.mkdir(parents=True)
             binary.touch(mode=0o755)
-            (home / "gothic-ai/game").mkdir()
+            prepared_game(home)
             uv = home / ".local/bin/uv"
             uv.parent.mkdir(parents=True)
             uv.touch()
@@ -108,25 +216,54 @@ class RyzenPlayTests(unittest.TestCase):
             profile = queue.parent / "gq.profile"
             profile.write_bytes(b"ryzen\n")
             before = [(path.read_bytes(), path.stat().st_mtime_ns) for path in (queue, profile)]
+            content = home / ".local/share/gothic-ai/play-content"
+            content.mkdir(parents=True)
+            default = content.with_name("content")
+            default.mkdir()
+            (default / "other-session").write_text("untouched")
+            incoming = content.with_name("play-content.incoming")
+            old = content.with_name("play-content.old")
+            old.mkdir()
+            (old / "interrupted-update").touch()
+            rename = Path.rename
+
+            def rename_under_lock(path, target):
+                with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return rename(path, target)
+
             for action, result in (("install", 0), ("update", 0), ("update", 3)):
+                (content / "old-file").touch()
+                incoming.mkdir()
+                if result == 0:
+                    (incoming / "enabled.json").write_text(action)
                 with self.subTest(action=action, result=result), patch.dict(install.os.environ), \
                         patch.object(install.Path, "home", return_value=home), \
+                        patch.object(install.Path, "rename", autospec=True, side_effect=rename_under_lock) as swap, \
                         patch.object(install.os, "chdir"), \
                         patch.object(install, "run") as run, \
                         patch.object(install.subprocess, "check_output", side_effect=["main\n", "origin\n", ""]), \
                         patch.object(install, "owned_process", return_value=result) as build:
-                    self.assertEqual(install.remote_install(action, {"origin": "origin", "settings": {}}, "source"), result)
+                    self.assertEqual(install.remote_install(action, payload(), "source"), result)
                     run.assert_called_once_with(["git", "-C", repo, "pull", "--ff-only"])
                     build.assert_called_once()
                     entry = (home / ".local/share/applications/gothic-ai.desktop").read_text()
                     self.assertEqual("Exec=ptyxis" in entry, result == 3)
+                    self.assertEqual([call.args for call in swap.call_args_list], [(content, old), (incoming, content)])
+                self.assertEqual(list(content.iterdir()), [content / "enabled.json"] if result == 0 else [])
+                if result == 0:
+                    self.assertEqual((content / "enabled.json").read_text(), action)
+                self.assertFalse(incoming.exists())
+                self.assertFalse(old.exists())
+                self.assertEqual((default / "other-session").read_text(), "untouched")
                 self.assertEqual([(path.read_bytes(), path.stat().st_mtime_ns) for path in (queue, profile)], before)
 
     def test_remote_install_requires_interactive_queue_before_git(self):
         for queue_source in (None, "#!/bin/sh\nprintf '%s\\n' '--display'\n", "#!/bin/sh\nexit 1\n"):
             with self.subTest(queue_source=queue_source), tempfile.TemporaryDirectory() as directory:
                 home = Path(directory)
-                (home / "gothic-ai/game").mkdir(parents=True)
+                prepared_game(home)
                 uv = home / ".local/bin/uv"
                 uv.parent.mkdir(parents=True)
                 uv.touch()
@@ -140,7 +277,7 @@ class RyzenPlayTests(unittest.TestCase):
                         patch.object(install.subprocess, "check_output") as metadata, \
                         patch.object(install, "owned_process") as build:
                     with self.assertRaisesRegex(ValueError, "scripts/gq install ryzen"):
-                        install.remote_install("install", {"origin": "origin", "settings": {}}, "source")
+                        install.remote_install("install", payload(), "source")
                     run.assert_not_called()
                     metadata.assert_not_called()
                     build.assert_not_called()
@@ -149,8 +286,15 @@ class RyzenPlayTests(unittest.TestCase):
     def test_update_refuses_active_session_before_touching_checkout(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
+            prepared_game(home)
             lock_path = home / "gothic-ai/play.install.lock"
-            lock_path.parent.mkdir(parents=True)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            content = home / ".local/share/gothic-ai/play-content"
+            content.mkdir(parents=True)
+            (content / "old-file").write_text("still playing")
+            incoming = content.with_name("play-content.incoming")
+            incoming.mkdir()
+            (incoming / "new-file").write_text("waiting")
             with lock_path.open("w") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 with patch.object(install.Path, "home", return_value=home), \
@@ -158,10 +302,14 @@ class RyzenPlayTests(unittest.TestCase):
                         patch.object(install.subprocess, "check_output") as metadata, \
                         patch.object(install, "owned_process") as build:
                     with self.assertRaisesRegex(ValueError, "playing"):
-                        install.remote_install("update", {"origin": "origin", "settings": {}}, "source")
+                        install.remote_install("update", payload(), "source")
                     run.assert_not_called()
                     metadata.assert_not_called()
                     build.assert_not_called()
+            self.assertEqual((content / "old-file").read_text(), "still playing")
+            self.assertEqual(list(content.iterdir()), [content / "old-file"])
+            self.assertEqual((incoming / "new-file").read_text(), "waiting")
+            self.assertFalse(content.with_name("play-content.old").exists())
 
     def test_terminal_wrapper_delegates_to_the_same_linux_core_session(self):
         with patch.object(session.os, "execv") as execute:

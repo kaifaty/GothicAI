@@ -1,0 +1,105 @@
+# Khorinis art bible: districts missing from the survey (lighthouse, gates, temple square).
+# Original only; noon, default game FOV, NPCs and effects hidden; world coordinates in cm.
+# Run: QUALITY_PILOT_TASK=gothic-ai/remaster-khorinis-bible scripts/content/capture-quality-pilot.sh --capture original DIR
+cheat god
+clear 1000000
+set time 12 0
+overlay off
+view hide animated morph pfx
+cam lift off
+
+# Lighthouse above the trees, sea behind; eye (1500, 4200, 14000), target (-1650, 3500, 16340).
+set time 12 0
+cam look -2000.000
+goto pos -1650.000 5500.000 16340.000
+cam world 3924.041 -1300.000 -36.607075
+wait 34
+cam hold
+wait 6000
+set time 12 0
+shot lighthouse-high
+wait 300
+
+# Lighthouse at the door; eye (-35, 2412, 15385), target (-1300, 3200, 16150).
+set time 12 0
+cam look -2000.000
+goto pos -1300.000 5200.000 16150.000
+cam world 1478.327 -2788.000 -31.163161
+wait 34
+cam hold
+wait 6000
+set time 12 0
+shot lighthouse-near
+wait 300
+
+# Main gate from outside; eye (7746, 554, -8160), target (8030, 700, -6400).
+set time 12 0
+cam look -2000.000
+goto pos 8030.000 2700.000 -6400.000
+cam world 1782.766 -2146.000 -99.166441
+wait 34
+cam hold
+wait 6000
+set time 12 0
+shot gate-main-out
+wait 300
+
+# Main gate from the main street; eye (8180, 490, -4918), target (8030, 700, -6400).
+set time 12 0
+cam look -2000.000
+goto pos 8030.000 2700.000 -6400.000
+cam world 1489.572 -2210.000 84.220514
+wait 34
+cam hold
+wait 6000
+set time 12 0
+shot gate-main-in
+wait 300
+
+# Back gate from the lighthouse road; eye (12016, 429, 6660), target (10788, 650, 6018).
+set time 12 0
+cam look -2000.000
+goto pos 10788.000 2650.000 6018.000
+cam world 1385.694 -2221.000 27.600627
+wait 34
+cam hold
+wait 6000
+set time 12 0
+shot gate-back-out
+wait 300
+
+# Back gate from the market side; eye (9759, 490, 5437), target (10788, 650, 6018).
+set time 12 0
+cam look -2000.000
+goto pos 10788.000 2650.000 6018.000
+cam world 1181.695 -2160.000 -150.549804
+wait 34
+cam hold
+wait 6000
+set time 12 0
+shot gate-back-in
+wait 300
+
+# Upper quarter gate and ramp above the main street; eye (7600, 1400, -5600), target (9250, 800, -4700).
+set time 12 0
+cam look -2000.000
+goto pos 9250.000 2800.000 -4700.000
+cam world 1879.495 -1400.000 -151.389540
+wait 34
+cam hold
+wait 6000
+set time 12 0
+shot gate-uptown-high
+wait 300
+
+# Temple square from above; eye (8000, 1500, -2200), target (9600, 300, -800).
+set time 12 0
+cam look -2000.000
+goto pos 9600.000 2300.000 -800.000
+cam world 2126.029 -800.000 -138.814075
+wait 34
+cam hold
+wait 6000
+set time 12 0
+shot temple-high
+wait 300

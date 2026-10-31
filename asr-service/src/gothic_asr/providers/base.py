@@ -53,4 +53,10 @@ class AsrProvider(Protocol):
 
 
 class StreamingProvider(AsrProvider, Protocol):
-    async def open_stream(self, lang: str, on_partial: PartialCallback | None = None) -> AsrStream: ...
+    async def open_stream(
+        self,
+        lang: str,
+        on_partial: PartialCallback | None = None,
+        *,
+        hints: list[str] | None = None,
+    ) -> AsrStream: ...

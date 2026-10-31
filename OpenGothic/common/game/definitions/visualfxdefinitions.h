@@ -2,6 +2,7 @@
 
 #include <zenkit/DaedalusVm.hh>
 #include <zenkit/addon/daedalus.hh>
+#include "game/definitions/definitiontypes.h"
 
 #include <unordered_map>
 #include <memory>
@@ -19,5 +20,5 @@ class VisualFxDefinitions final {
     std::unique_ptr<zenkit::DaedalusVm>                       vm;
     std::unordered_map<std::string,std::unique_ptr<VisualFx>> vfx;
 
-    std::shared_ptr<zenkit::IEffectBase> implGet(std::string_view name);
+    std::shared_ptr<Def::EffectBase> implGet(std::string_view name);
   };

@@ -1,8 +1,10 @@
+import asyncio
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 import pytest
 
+import gothic_ai.dialogue
 from gothic_ai.amends import Lie as AmendsLie
 from gothic_ai.budget import Budget
 from gothic_ai.chronicle import Chronicle
@@ -15,6 +17,7 @@ from gothic_ai.deals import Deals, LieRef
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.fear import knows_violence
 from gothic_ai.game import GameError
+from gothic_ai.group import ANSWER_CUE, GroupTalk
 from gothic_ai.llm import Message, ToolCall
 from gothic_ai.llm.fake import FakeStep
 from gothic_ai.memory import MemoryStore
@@ -26,14 +29,16 @@ from gothic_ai.scenarios.common import ClaimScript
 from gothic_ai.sightings import Sightings
 from gothic_ai.social import Tie
 from gothic_ai.storyguard import StoryGuard
+from gothic_ai.talk import TalkDesk
 from gothic_ai.trust import Trust
-from gothic_ai.witnesses import ASK_TOOL, Inquiry, Witnesses
+from gothic_ai.witnesses import ASK_TOOL, Candidate, Inquiry, Witnesses, _named
 from gothic_ai.witnesses import Testimony as WitnessTestimony
 from tests.fake_game import FakeGame, connected
 from tests.test_crimes import deed
 from tests.test_dialogue import _until
 from tests.test_perception import HILDA, LOBART, MALETH, look
 from tests.test_sightings import BOOK, record_theft
+from tests.test_talk import person
 
 ANDRE, STRANGER = "MIL_311_ANDRE", "VLK_999_STRANGER"
 DAY = 1440
@@ -331,6 +336,7 @@ async def test_a_witness_called_over_tells_what_it_saw_and_the_lie_is_caught_by_
     cue = str(hilda[1][-1].content)
     assert "Лобарт спрашивает тебя о герое: тот говорит «всё утро был в городе»" in cue
     assert "Что ты видел сам: сегодня 08:10–08:30" in cue and hilda[2] == []
+    assert "доспех" not in cue  # he wore none: nothing for her to tell
     assert "Видела его утром на пастбище." in fake.said
 
     # Lobart's reaction: the answer is С1, catch_lie is offered for it
@@ -354,6 +360,44 @@ async def test_a_witness_called_over_tells_what_it_saw_and_the_lie_is_caught_by_
     )
 
 
+@pytest.mark.parametrize("wired", [True, False])
+async def test_the_witness_called_aloud_speaks_only_from_its_testimony(wired, monkeypatch):
+    # 2026-10-31 live: Lobart's «Хильда, ты видела его утром?» with ask_witness gave Hilda an answer turn of
+    # the floor's before her testimony came: «Утром его здесь не было…», then «я прежде ошиблась»
+    monkeypatch.setattr(gothic_ai.dialogue, "line_duration", lambda text: 0.2)
+    fake = FakeGame(branch="A")
+    llm = lobart(
+        ("Ответ:", CATCH),
+        ("город", ASK_HILDA),
+        hilda=[("спрашивает тебя", FakeStep("Видела его утром на пастбище."))],
+    )
+    async with connected(fake) as link:
+        w = World(link, fake, llm)
+        talk = TalkDesk(link, w.dialogue, end_silence_s=30)
+        group = GroupTalk(link, w.dialogue, talk)
+        w.dialogue.extensions.append(group)
+        group.asks = w.witnesses.asking
+        if wired:
+            group.witness = w.witnesses.called
+        await fake.roster(person(LOBART, "Лобарт", 3, True), person(HILDA, "Хильда", 4, True))
+        await _until(lambda: HILDA in talk.people and LOBART in talk.people, 5)
+        for t in range(AT_8, AT_8 + 21, 5):
+            w.seen.saw(hero_seen_by(HILDA, "Хильда", t))
+        w.dialogue.open(LOBART, "Лобарт")
+        await w.dialogue.say_as_player(LOBART, LIE)
+        await _until(lambda: w.chronicle.facts("caught") != [], 10)
+        await asyncio.sleep(0.2)
+
+    assert any(m["npc"] == LOBART and m.get("to") == HILDA for m, _ in fake.says)  # he called her aloud
+    cues = [str(c[1][-1].content) for c in llm.others.calls]  # type: ignore[union-attr]
+    answered = [c for c in cues if c == ANSWER_CUE.format(name="Лобарт")]
+    if not wired:  # the floor alone gives her a turn to his question: what went wrong live
+        assert answered
+        return
+    assert not answered and len(cues) == 1 and "Лобарт спрашивает тебя о герое" in cues[0]
+    assert not w.witnesses.called(HILDA)  # the answer is in: she may answer him again
+
+
 async def test_a_witness_that_did_not_see_him_can_not_catch_him():
     fake = FakeGame(branch="A")
     llm = lobart(
@@ -371,7 +415,15 @@ async def test_a_witness_that_did_not_see_him_can_not_catch_him():
     reaction = next(c for c in llm.calls if "Ответ:" in str(c[1][-1].content))
     assert "героя не видели за сутки до того" in str(reaction[1][-1].content)
     # it saw nothing: nothing to catch him with, the lie stands
-    assert any(o == "Отклонено: со слов: Хильда — героя не видели, уличить нечем." for o in llm.outputs)
+    assert any(
+        o.startswith("Отклонено: со слов: Хильда — героя не видели, уличить нечем.")
+        and (
+            " Ты уже сказал вслух: «Так ты врёшь!». "
+            "Если отказ этого не меняет — ничего не говори. "
+            "Если меняет — поправься одной короткой фразой, не повторяя сказанного."
+        ) in o
+        for o in llm.outputs
+    )
     assert w.chronicle.facts("caught") == []
 
 
@@ -540,7 +592,7 @@ async def test_gate_claim_error_reports_unanswered_near_question(error, tier):
         c = next(c for c in w.witnesses._near[LOBART] if c.npc == HILDA)
         assert c.tier == tier
 
-        text, success = await w.witnesses._ask(conv, c, "Хильда ждёт меня", AT_8, None)
+        text, success = await w.witnesses._ask(conv, c, "Хильда ждёт меня", AT_8)
         assert not success and "Хильда" in text and "пока не проверены" in text
         assert not w.chronicle.facts("testimony")
         if tier == "walk":
@@ -549,6 +601,35 @@ async def test_gate_claim_error_reports_unanswered_near_question(error, tier):
                 and m["action"] == "go_to_npc" and m.get("args", {}).get("npc") == "PLAYER"
                 for m in fake.received
             )
+
+
+async def test_whom_the_hero_names_to_ask_is_pointed_out_with_the_call_it_takes():
+    # 2026-10-29 live: on «спроси Ватраса» Lobart said «Встречу Ватраса — спрошу» and called nothing
+    fake = FakeGame(branch="A")
+    async with connected(fake) as link:
+        w = World(link, fake, lobart())
+        conv = w.dialogue.open(LOBART, "Лобарт")
+        await w.witnesses.prepare(LOBART)
+
+        def offered(phrase: str, role: str = "user") -> str:
+            conv.trigger = Message(role, phrase)
+            situation = w.witnesses.situation(LOBART) or ""
+            line = next((x for x in situation.splitlines() if x.startswith("Герой предлагает")), "")
+            return line
+
+        assert offered("Не веришь — спроси Андре, он подтвердит.") == (
+            "Герой предлагает расспросить: Андре. Решишь расспросить — вызови ask_witness: сказать «спрошу» "
+            "мало, без вызова ты не спросишь."
+        )
+        assert offered("Спроси Малета или Хильду.").startswith("Герой предлагает расспросить: Хильда, Малет.")
+        vino = Candidate("BAU_952_VINO", "Вино", "near", 900.0, True)
+        assert _named([vino], "Налей мне вино, хозяин.") == []  # the drink, not Вино
+        assert _named([vino], "Спроси у Вино.") == [vino]
+        assert offered("[Андре спрашивает тебя о герое]", "developer") == ""  # not the hero's words
+        w.witnesses._inquire(
+            Inquiry("q", LOBART, "Лобарт", ANDRE, "Андре", "всё утро был в городе", AT_8, DAY + 18 * 60)
+        )
+        assert offered("Спроси Андре.") == ""  # already going to
 
 
 async def test_who_may_be_asked_and_when_not():
@@ -714,6 +795,60 @@ async def test_a_witness_cut_off_by_the_hero_still_gets_its_answer_to_the_asker(
         w.dialogue.conversations[HILDA].reply.cancel()  # the hero spoke to her meanwhile
         await _until(lambda: w.chronicle.facts("caught") != [], 10)
     assert w.chronicle.facts("caught")[0]["witness"] == HILDA  # Lobart still heard the answer and reacted
+
+
+async def test_the_answer_waits_for_the_askers_turn_under_way_and_keeps_catch_lie(monkeypatch):
+    # 2026-10-29 live: Lobart was in another turn when Hilda's answer came; the reaction cue went to `pending`
+    # of that turn (set_intent only) and the turn with catch_lie never came
+    monkeypatch.setattr(gothic_ai.dialogue, "line_duration", lambda text: 0.2)
+
+    class Thinks(ClaimScript):
+        """Lobart thinks a second over Maleth's shout: his turn is under way when Hilda answers."""
+
+        async def stream(self, **kw):
+            if "по имени Лобарт" in kw["instructions"] and "Малет кричит" in str(kw["messages"][-1].content):
+                await asyncio.sleep(1.0)
+            async for event in super().stream(**kw):
+                yield event
+
+    fake = FakeGame(branch="A")
+    saw = FakeStep("Видела его утром на пастбище.")
+    hilda = ClaimScript([("спрашивает тебя", saw)], [], "Ну.", only="Хильда")
+    llm = Thinks(
+        [("Ответ:", CATCH), ("Малет кричит", FakeStep("Погоди, Малет.")), ("город", FakeStep("Хм."))],
+        [], "Ну?", only="Лобарт", others=hilda,
+    )
+    async with connected(fake) as link:
+        w = World(link, fake, llm)
+        for t in range(AT_8, AT_8 + 21, 5):
+            w.seen.saw(hero_seen_by(HILDA, "Хильда", t))
+        turns: list[dict] = []
+        event_turn = w.dialogue.event_turn
+
+        def recorded(npc, cue, *args, **kw):
+            turns.append({"npc": npc, **kw})
+            return event_turn(npc, cue, *args, **kw)
+
+        w.dialogue.event_turn = recorded  # type: ignore[method-assign]
+        conv = w.dialogue.open(LOBART, "Лобарт")
+        await w.dialogue.say_as_player(LOBART, LIE)
+        await _until(lambda: conv.reply is None or conv.reply.done(), 5)
+        await w.witnesses.prepare(LOBART)
+        c = next(c for c in w.witnesses._near[LOBART] if c.npc == HILDA)
+        assert w.dialogue.event_turn(LOBART, "[Малет кричит тебе с поля.]") is not None
+        text, success = await w.witnesses._ask(conv, c, "всё утро был в городе", AT_8 + 90)
+        await _until(lambda: w.chronicle.facts("caught") != [], 10)
+
+    assert success and not text
+    cues = [str(call[1][-1].content) for call in llm.calls]
+    reaction = next(i for i, cue in enumerate(cues) if "Ответ:" in cue)
+    assert reaction > next(i for i, cue in enumerate(cues) if "Малет кричит" in cue)
+    assert "catch_lie" in [x.name for x in llm.calls[reaction][2]]
+    assert "вызовом catch_lie" in cues[reaction]
+    # it must decide by a call: catch_lie, or set_intent if it believes him
+    assert {"npc": LOBART, "tools": ("catch_lie", "set_intent"), "kind": "witness", "act": True} in turns
+    assert not w.witnesses.asking(LOBART)  # the answer is in: group.py may give him answer turns again
+    assert w.chronicle.facts("caught")[0]["witness"] == HILDA
 
 
 async def test_a_meeting_going_on_now_is_no_meeting_to_ask_at():

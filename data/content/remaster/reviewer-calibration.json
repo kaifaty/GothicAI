@@ -1,0 +1,82 @@
+{
+  "note": "Known verdicts for the remaster reviewer (docs/remaster-pipeline.md). Paths are relative to ~/.local/share/gothic-ai. Rerun after a change of the Claude model, the image model or the reviewer prompt; a miss on a REJECT case changes the questions, not the threshold.",
+  "cases": [
+    {
+      "id": "cal2-mh-front-house2",
+      "asset": "market-house",
+      "mode": "blind",
+      "a": "market-house/captures/original/front.png",
+      "b": "market-house/captures/house-2/front.png",
+      "subject": "Передний фасад дома у рынка с площади, полдень, одна камера",
+      "expected": "PASS",
+      "why": "user approved house-2 in game, 2026-10-21"
+    },
+    {
+      "id": "cal2-mh-facade-house2",
+      "asset": "market-house",
+      "mode": "blind",
+      "a": "market-house/captures/original/facade.png",
+      "b": "market-house/captures/house-2/facade.png",
+      "subject": "Верхний этаж и фронтон дома у рынка крупно, полдень, одна камера",
+      "expected": "PASS",
+      "why": "user approved house-2 in game, 2026-10-21"
+    },
+    {
+      "id": "cal2-mh-front-pilot3b",
+      "asset": "market-house",
+      "mode": "blind",
+      "a": "market-house/captures/original/front.png",
+      "b": "market-house/captures/pilot-3b/front.png",
+      "subject": "Передний фасад дома у рынка с площади, полдень, одна камера",
+      "expected": "REJECT",
+      "expected_items": [
+        "2",
+        "P1"
+      ],
+      "why": "user rejected iteration 3: windows fill the bay, beams too thick, plaster pattern; 2026-10-21"
+    },
+    {
+      "id": "cal2-mh-facade-pilot3b",
+      "asset": "market-house",
+      "mode": "blind",
+      "a": "market-house/captures/original/facade.png",
+      "b": "market-house/captures/pilot-3b/facade.png",
+      "subject": "Верхний этаж и фронтон дома у рынка крупно, полдень, одна камера",
+      "expected": "REJECT",
+      "expected_items": [
+        "2",
+        "P1"
+      ],
+      "why": "user rejected iteration 3, 2026-10-21"
+    },
+    {
+      "id": "cal2-hut-concept-a1",
+      "asset": "harbour-hut",
+      "mode": "reference",
+      "a": "remaster/harbour-hut/reference/original-sheet.png",
+      "b": "content-sources/harbour-hut-concept/harbour-hut-elevations-attempt-1.png",
+      "subject": "Концепт хижины (живопись, два ортогональных вида) против кадров оригинала в игре: длинная сторона, торец, окно, угол",
+      "expected": "REJECT",
+      "expected_items": [
+        "2",
+        "4"
+      ],
+      "why": "user: windows smaller than the original design, hut too straight; 2026-10-21"
+    },
+    {
+      "id": "cal2-hut-concept-a2",
+      "asset": "harbour-hut",
+      "mode": "reference",
+      "a": "remaster/harbour-hut/reference/original-sheet.png",
+      "b": "content-sources/harbour-hut-concept/harbour-hut-elevations-attempt-2.png",
+      "subject": "Концепт хижины (живопись, два ортогональных вида) против кадров оригинала в игре: длинная сторона, торец, окно, угол",
+      "expected": "REJECT",
+      "expected_items": [
+        "2"
+      ],
+      "why": "user first accepted it (with more moss), then asked for the original's larger window: its windows are still small with shutters; 2026-10-21"
+    }
+  ],
+  "round": 4,
+  "status": "passed 2026-10-21 after rounds 1–4 (all six cases as expected; see reports/content/remaster/calibration/README.md)"
+}

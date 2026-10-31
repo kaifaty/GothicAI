@@ -329,12 +329,16 @@ async def test_dishonest_task_refuses_only_when_done_and_never_pays_after_a_load
         assert fake.hero_items == {FUR: 3} and fake.hero_xp == 0
 
         # Another accepted exchange can settle it without reopening the dishonest obligation.
+        fake.hero_items[GOLD] = 50
         before = len(fake.deals)
         out = await deals.propose(
             XARDAS,
             "Ксардас",
-            _terms(npc_gives=[{"item": GOLD, "count": 100}]),
+            _terms(
+                npc_gives=[{"item": GOLD, "count": 100}], hero_gives=[{"item": GOLD, "count": 50}]
+            ),
             link.snapshots[XARDAS],
+            hero_words=("Дай немного золота",),
         )
         assert out.status == "accepted"
         await _until(lambda: len(fake.deals) > before)

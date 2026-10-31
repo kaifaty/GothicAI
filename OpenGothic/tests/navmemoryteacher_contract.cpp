@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -73,7 +74,7 @@ struct Observation final {
   NavMemoryTeacher::Input input;
   NpcKeys::KeyState expected;
 
-  void decode(const std::vector<uint8_t>& bytes) {
+  void decode(const std::vector<uint8_t>& bytes,uint32_t formatVersion) {
     Cursor in(bytes);
     in.skip(8+3*4+4); // time_ms, position_cm, body_yaw_deg: never read.
     input.body.velocityCmS=in.vec();
@@ -88,6 +89,7 @@ struct Observation final {
     const auto memory=[&](auto& cells) {
       for(auto& cell:cells) {
         for(auto& channel:cell.channels) channel=in.u8();
+        cell.familiar=formatVersion==3 ? in.u8() : 0;
         cell.groundHeightCm=in.f32();cell.heightValid=uint8_t(in.bit());
         require(cell.heightValid || cell.groundHeightCm==0,"unknown NAVDEMO height is not zero");
         }
@@ -108,8 +110,9 @@ class Episode final {
         const char magic[8]={'N','A','V','D','E','M','O','\0'};
         require(std::memcmp(header.data(),magic,sizeof(magic))==0,"incorrect NAVDEMO magic");
         Cursor in(header);in.skip(8);
-        require(in.u32()==2,"memory teacher replay requires NAVDEMO v2");
-        require(in.u32()==NavDemoWriter::recordBytes && in.u32()==NavDemoWriter::rayCount &&
+        version=in.u32();
+        require(version==2 || version==3,"memory teacher replay requires NAVDEMO v2 or v3");
+        require(in.u32()==NavDemoWriter::recordBytesForVersion(version) && in.u32()==NavDemoWriter::rayCount &&
                 in.u32()==NavDemoWriter::nearSize && in.u32()==NavDemoWriter::farSize &&
                 in.u32()==100,"unsupported NAVDEMO dimensions or decision period");
         }
@@ -118,9 +121,10 @@ class Episode final {
     ~Episode() { if(stream!=nullptr) gzclose(stream); }
     Episode(const Episode&)=delete;
     Episode& operator=(const Episode&)=delete;
+    uint32_t formatVersion() const { return version; }
 
     bool next(std::vector<uint8_t>& bytes) {
-      bytes.resize(NavDemoWriter::recordBytes);
+      bytes.resize(NavDemoWriter::recordBytesForVersion(version));
       const auto count=read(bytes.data(),bytes.size());
       if(count==0) return false;
       require(count==bytes.size(),"truncated NAVDEMO record");
@@ -140,6 +144,7 @@ class Episode final {
       return size_t(result);
       }
     gzFile stream=nullptr;
+    uint32_t version=0;
   };
 
 struct Totals final {
@@ -162,7 +167,7 @@ void replay(const std::string& path,uint64_t limit,Totals& totals) {
   uint64_t localRecords=0;
   ++totals.episodes;
   while(totals.records<limit && episode.next(bytes)) {
-    observation.decode(bytes);
+    observation.decode(bytes,episode.formatVersion());
     const auto actual=teacher.decide(observation.input);
     const bool previousMismatch=localRecords>0 && !equal(observation.input.previous,last);
     const bool mismatch=previousMismatch || !equal(actual,observation.expected);
@@ -226,6 +231,7 @@ void noNativeAction(const NpcKeys::KeyState& keys) {
   }
 
 void selfTest() {
+  unsetenv("OPENGOTHIC_NAV_FAMILIAR_MAP");
   unsigned tests=0;
   NavMemoryTeacher teacher;
   auto input=target(0,1);
@@ -262,6 +268,90 @@ void selfTest() {
             "danger channel was ignored or not dilated for body radius");
     noNativeAction(keys);++tests;
     }
+
+  // With no opt-in, static familiar evidence is exactly unknown to the teacher,
+  // while the unmodified learner input retains every familiar channel.
+  for(const char* setting:{static_cast<const char*>(nullptr),"0"}) {
+    if(setting) setenv("OPENGOTHIC_NAV_FAMILIAR_MAP",setting,1);
+    else unsetenv("OPENGOTHIC_NAV_FAMILIAR_MAP");
+    input=target(100,2100,std::hypot(100.f,2100.f));
+    for(int x=24;x<40;++x) hazard(input,x,43);
+    auto journey=input;
+    for(size_t i=0;i<input.far.size();++i) {
+      auto& tile=input.far[i];
+      tile.channels[0]=89;tile.channels[1]=89;tile.familiar=255;
+      if(i%2==0) tile.channels[2+i%4]=89;
+      }
+    const auto baseline=NavMemoryTeacher::probe(journey,NavMemoryTeacher::DiagnosticsOptions{});
+    const auto ignored=NavMemoryTeacher::probe(input,NavMemoryTeacher::DiagnosticsOptions{});
+    const auto samePath=[](const auto& a,const auto& b) {
+      return a.size()==b.size() && std::equal(a.begin(),a.end(),b.begin(),[](const auto& x,const auto& y) {
+        return x.rightCm==y.rightCm && x.forwardCm==y.forwardCm;
+        });
+      };
+    require(ignored.planCost==baseline.planCost && ignored.planLengthCm==baseline.planLengthCm &&
+            ignored.actualTargetReached==baseline.actualTargetReached &&
+            ignored.blockedFraction==baseline.blockedFraction &&
+            ignored.knownFreeFraction==baseline.knownFreeFraction && samePath(ignored.path,baseline.path),
+            "disabled familiar evidence differs from journey unknown ground");
+    teacher.reset();NavMemoryTeacher journeyTeacher;
+    for(unsigned tick=0;tick<3;++tick) {
+      keys=teacher.decide(input);
+      require(equal(keys,journeyTeacher.decide(journey)) && samePath(teacher.plan(),journeyTeacher.plan()),
+              "disabled familiar evidence changed production actions or route");
+      input.previous=keys;journey.previous=keys;
+      }
+    require(std::all_of(input.far.begin(),input.far.end(),[](const auto& tile) {
+      return tile.familiar==255 && tile.channels[0]==89 && tile.channels[1]==89;
+      }),"teacher fallback changed the learner familiar input");
+    input.far[60*100+50].channels[6]=1;
+    require(!NavMemoryTeacher::probe(input,NavMemoryTeacher::DiagnosticsOptions{}).targetClear,
+            "disabled familiar static evidence hid live movable danger");
+    ++tests;
+    }
+
+  // Familiar static hazards are an explicitly enabled soft prior, while live evidence
+  // (even at one quantization unit) and live movable evidence retain a veto.
+  setenv("OPENGOTHIC_NAV_FAMILIAR_MAP","1",1);
+  for(size_t channel=2;channel<7;++channel) {
+    input=target(100,2100,std::hypot(100.f,2100.f));
+    auto& tile=input.far[60*100+50];
+    tile.channels[0]=89;tile.channels[1]=89;tile.channels[channel]=89;tile.familiar=255;
+    auto soft=NavMemoryTeacher::probe(input,NavMemoryTeacher::DiagnosticsOptions{});
+    require(soft.targetClear==(channel!=6),"familiar static danger blocked or live movable danger was ignored");
+    if(channel!=6) require(soft.actualTargetReached,"familiar danger must remain traversable");
+    tile.familiar=0;tile.channels[channel]=1;
+    const auto live=NavMemoryTeacher::probe(input,NavMemoryTeacher::DiagnosticsOptions{});
+    require(!live.targetClear,"live danger must remain a hard veto regardless of confidence");
+    ++tests;
+    }
+
+  input=target(100,2100,std::hypot(100.f,2100.f));
+  const auto unknown=NavMemoryTeacher::probe(input,NavMemoryTeacher::DiagnosticsOptions{});
+  for(auto& tile:input.far) { tile.channels[0]=89;tile.channels[1]=89;tile.familiar=255; }
+  const auto familiarFree=NavMemoryTeacher::probe(input,NavMemoryTeacher::DiagnosticsOptions{});
+  for(auto& tile:input.far) tile.channels[2]=89;
+  const auto familiarHazard=NavMemoryTeacher::probe(input,NavMemoryTeacher::DiagnosticsOptions{});
+  require(familiarFree.actualTargetReached && familiarHazard.actualTargetReached &&
+          familiarFree.planCost<unknown.planCost && familiarHazard.planCost>unknown.planCost,
+          "familiar free / unknown / familiar hazard costs are not ordered");
+  ++tests;
+  unsetenv("OPENGOTHIC_NAV_FAMILIAR_MAP");
+
+  // Sparse visible water at the shore cannot borrow the occupied-start wall
+  // exemption or leave a one-cell slit for the next physical walking step.
+  for(const char* setting:{"0","1"}) {
+    setenv("OPENGOTHIC_NAV_FAMILIAR_MAP",setting,1);
+    input=target(0,1);hazard(input,32,33,5);
+    teacher.reset();keys=teacher.decide(input);
+    require(keys.forward==0 && keys.strafe==0,"shore water margin must stop movement before entry");
+    noNativeAction(keys);++tests;
+    input=target(0,1);hazard(input,32,32,5);
+    teacher.reset();keys=teacher.decide(input);
+    require(keys.forward==0 && keys.strafe==0,"raw water must not use an occupied-start escape");
+    noNativeAction(keys);++tests;
+    }
+  unsetenv("OPENGOTHIC_NAV_FAMILIAR_MAP");
 
   // A hazard touching the current footprint must retain raw occupancy but
   // must not inflate back over an otherwise raw-free body origin.
@@ -360,27 +450,70 @@ void selfTest() {
     }
   ++tests;
 
-  input=target(0,1,230);teacher.reset();
+  input=target(0,1,390);teacher.reset();
   keys=teacher.decide(input);input.previous=keys;
-  input.roads.goalDistanceCm=250;input.roads.carrotDistanceCm=250;
+  float previousDistance=390;
+  const std::array<float,9> distances={410,390,350,310,290,310,350,390,410};
+  const std::array<bool,9> walking={false,false,false,false,true,true,true,true,false};
+  for(size_t i=0;i<distances.size();++i) {
+    // A target walking at 100 cm/s; changes in separation also contain the
+    // learner's own translation. Gait must not confuse the two velocities.
+    input.body.velocityCmS={0,0,100.f-(distances[i]-previousDistance)*10.f};
+    input.roads.goalDistanceCm=distances[i];input.roads.carrotDistanceCm=distances[i];
+    keys=teacher.decide(input);noNativeAction(keys);
+    require(keys.walk==walking[i],"moving target gait did not retain the recorded walk/run hysteresis");
+    input.previous=keys;previousDistance=distances[i];
+    }
+  ++tests;
+
+  input=target(0,1,320);teacher.reset();
+  keys=teacher.decide(input);input.previous=keys;
+  input.roads.goalDistanceCm=350;input.roads.carrotDistanceCm=350;
+  keys=teacher.decide(input);noNativeAction(keys);
+  require(!keys.walk,"an observed running target inside four metres must be matched at a run");
+  input.previous=keys;input.roads.goalDistanceCm=280;input.roads.carrotDistanceCm=280;
+  keys=teacher.decide(input);noNativeAction(keys);
+  require(keys.walk,"a running target must not retain running below three metres");
+  teacher.reset();input=target(0,1,350);
+  keys=teacher.decide(input);noNativeAction(keys);
+  require(keys.walk,"an episode reset retained a previous target's running observation");
+  ++tests;
+
+  input=target(0,1,230);input.roads.beyondKnown=false;input.roads.carrotDistanceCm=0;teacher.reset();
+  keys=teacher.decide(input);input.previous=keys;
+  input.roads.goalDistanceCm=250;
   keys=teacher.decide(input);noNativeAction(keys);
   require(keys.forward==0 && keys.strafe==0 && keys.turn==0,"a nearby moving target must retain following distance");
   input.previous=keys;
-  for(unsigned tick=1;tick<=5;++tick) {
+  for(unsigned tick=1;tick<=6;++tick) {
     keys=teacher.decide(input);noNativeAction(keys);
-    if(tick<5)
-      require(keys.forward==0 && keys.strafe==0,"nearby target motion must persist for five decisions");
-    else
-      require(keys.forward>0 && keys.walk,"a now stationary point must resume approach after five decisions");
+    require(keys.forward==0 && keys.strafe==0,"a reached follow carrot must remain stopped when the target pauses");
     input.previous=keys;
     }
   ++tests;
 
-  input=target(0,1,210);teacher.reset();
+  input=target(0,1,210);input.roads.beyondKnown=false;input.roads.carrotDistanceCm=0;teacher.reset();
   keys=teacher.decide(input);input.previous=keys;
-  input.roads.goalDistanceCm=190;input.roads.carrotDistanceCm=190;
+  input.roads.goalDistanceCm=190;
   keys=teacher.decide(input);noNativeAction(keys);
   require(keys.forward<0 || keys.strafe!=0,"a moving target approaching inside two metres must trigger a safe retreat");
+  ++tests;
+
+  input=target(2,1,210);input.roads.beyondKnown=false;input.roads.carrotDistanceCm=0;
+  // Both target components point forward/right. A left-side remembered wall
+  // blocks the first away axis, while straight backwards remains clear.
+  for(int z=30;z<33;++z)hazard(input,29,z);
+  teacher.reset();keys=teacher.decide(input);input.previous=keys;
+  input.roads.goalDistanceCm=190;
+  keys=teacher.decide(input);noNativeAction(keys);
+  require(keys.forward<0 && keys.strafe==0,"following retreat did not try a clear alternate away axis");
+  ++tests;
+
+  input=target(0,1,230);teacher.reset();
+  keys=teacher.decide(input);input.previous=keys;
+  input.roads.goalDistanceCm=250;input.roads.carrotDistanceCm=250;
+  keys=teacher.decide(input);noNativeAction(keys);
+  require(keys.forward>0,"approaching a nearby moving target must not inherit following stand-off");
   ++tests;
 
   input=target(0,1,600);input.body.velocityCmS={0,0,100};teacher.reset();
@@ -418,12 +551,14 @@ void selfTest() {
   memory.near.cells[40*64+33].free=.5f;
   memory.near.cells[40*64+33].groundHeightCm=123.25f;
   memory.far.cells[60*100+50].water=1;
+  memory.far.cells[60*100+50].familiar=1;
   memory.far.cells[60*100+51].movable=.25f;
   input=target(0,1);
   const auto converted=NavMemoryTeacher::Input::fromLearner(input.body,input.roads,input.previous,memory);
   require(converted.near[40*64+32].channels[2]==255 && converted.near[40*64+33].channels[2]==0 &&
           converted.near[40*64+33].channels[1]==128,"adjacent full-resolution near cells were merged or quantized differently");
-  require(converted.far[60*100+50].channels[5]==255 && converted.far[60*100+51].channels[5]==0 &&
+  require(converted.far[60*100+50].channels[5]==255 && converted.far[60*100+50].familiar==255 &&
+          converted.far[60*100+51].familiar==0 && converted.far[60*100+51].channels[5]==0 &&
           converted.far[60*100+51].channels[6]==64,"adjacent full-resolution far cells were merged or quantized differently");
   require(converted.near[40*64+33].groundHeightCm==123.25f && converted.near[40*64+33].heightValid==1 &&
           converted.near[0].groundHeightCm==0 && converted.near[0].heightValid==0,"memory height encoding differs from NAVDEMO");

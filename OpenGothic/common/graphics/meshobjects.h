@@ -65,12 +65,14 @@ class MeshObjects final {
         Mesh& operator = (Mesh&& other);
 
         void   setObjMatrix(const Tempest::Matrix4x4& mt);
+        void   setTexturePosition(const Tempest::Vec3& position);
+        void   setTextureCategory(Resources::TextureCategory category);
         void   setSkeleton (const Skeleton* sk);
         void   setPose     (const Tempest::Matrix4x4& obj, const Pose& p);
         void   setPose     (const Tempest::Matrix4x4& obj, const Tempest::Matrix4x4* bones);
         void   setAsGhost  (bool g);
         void   setFatness  (float f);
-        void   setWind     (zenkit::AnimationType m, float intensity);
+        void   setWind     (asset::AnimationType m, float intensity);
         void   setVisible  (bool visible);
         void   setDeformation(const std::vector<Tempest::Vec4>& vertices);
         // freeOnly: not in place of another anim of the head (a blink gives way to the faces)

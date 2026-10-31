@@ -1,5 +1,6 @@
 {
-  "about": "What an npc keeps but does not carry: it may give these in a deal as if from its inventory (contracts.py, docs/contracts.md). Counts are what it has at the start; what it gives is gone for good.",
+  "about": "What an npc keeps but does not carry: it may give these in a deal as if from its inventory (contracts.py, docs/contracts.md). Counts are what it has at the start; what it gives is gone for good. Purse limits gifts over the save branch, outstanding gold loans, and whether the hero must ask for money in this meeting (purse.py). Remove an npc's purse entry to remove its limits.",
+  "purse": {"NONE_100_XARDAS": {"gift": 50, "loan": 200, "asked": true}},
   "stash": {
     "PIR_1300_ADDON_GREG_NW": [
       {"item": "ITMI_GOLD", "count": 80},

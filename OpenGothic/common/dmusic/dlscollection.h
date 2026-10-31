@@ -50,6 +50,7 @@ class DlsCollection final {
 
     class  Region final {
       public:
+        Region()=default;
         Region(Riff& c);
 
         RegionHeader                head;
@@ -72,6 +73,7 @@ class DlsCollection final {
 
     class Articulator final {
       public:
+        Articulator()=default;
         Articulator(Riff& c);
         std::vector<ConnectionBlock> connectionBlocks;
       };
@@ -88,6 +90,7 @@ class DlsCollection final {
 
     class  Instrument final {
       public:
+        Instrument()=default;
         Instrument(Riff& c);
 
         Info                     info;
@@ -103,6 +106,18 @@ class DlsCollection final {
     GUID                        dlid;
     std::vector<Instrument>     instrument;
 
+    // What the RIFF constructor reads before it builds the sound font: the parse result with the decoded
+    // waves still present. parse() is that part of the old constructor; DlsCollection(Parsed&&) is the
+    // rest (SoundFont::shared, then the waves are cleared), so DlsCollection(Riff&) = DlsCollection(parse(r)).
+    struct Parsed final {
+      uint64_t                version=0;
+      GUID                    dlid;
+      std::vector<Instrument> instrument;
+      std::vector<Wave>       wave;
+      };
+    static Parsed parse(Riff& input);
+    explicit DlsCollection(Parsed&& parsed);
+
     void      dbgDump() const;
     SoundFont toSoundfont(uint32_t dwPatch) const;
     void      save(std::ostream& fout) const;
@@ -110,7 +125,7 @@ class DlsCollection final {
     const Wave* findWave(uint8_t note) const;
 
   private:
-    void implRead(Riff &input);
+    static void implRead(Parsed& out, Riff &input);
 
     std::vector<Wave>                        wave;
     mutable std::shared_ptr<SoundFont::Data> shData; //FIXME: mutable

@@ -12,6 +12,7 @@ from typing import Any
 from .. import programs, questbook, triggers
 from ..authoring import PROPOSE as PROPOSE_QUEST
 from ..authoring import Author
+from ..brain.reflex import Reflexes
 from ..cast import TEMPLATES, Cast, Person, PersonTie
 from ..casting import PROPOSE as PROPOSE_CHARACTER
 from ..casting import Casting
@@ -22,11 +23,13 @@ from ..director import PROPOSE, Director
 from ..game import GameError, GameLink
 from ..gamedata.storygraph import Expr
 from ..llm import Done, Item, LLMEvent, Message, Tool, ToolCall, ToolChoice
-from ..llm.fake import FakeBackend
+from ..llm.fake import FakeBackend, FakeStep
 from ..places import PlaceBook
 from ..protocol import (
     DialogChosen,
+    GameMessage,
     LineStarted,
+    NpcDied,
     NpcLook,
     NpcSpec,
     NpcThing,
@@ -36,11 +39,15 @@ from ..protocol import (
 )
 from ..social import Rumors
 from ..story import StoryPatches
+from ..talk import TalkDesk
 from .common import (
     HILDA,
     LOBART,
     RUEBEN,
     RUEBEN_TO_HILDA,
+    ClaimScript,
+    FixedDecider,
+    _ByNpc,
     _logged,
     _save_or_fail,
     _until,
@@ -443,6 +450,121 @@ class RepairScript:
         call = ToolCall(PROPOSE, args, f"r{len(self.calls)}")
         yield call
         yield Done("", (call,))
+
+
+async def death_load(link: GameLink, director: Director, slot: int = 8) -> dict[str, str]:
+    """Report new human deaths once after loading older world ticks, without repeating saved deaths."""
+    results: dict[str, str] = {}
+    first, second = "BDT_1014_BANDIT_L", "BDT_1013_BANDIT_L"
+    events: list[tuple[float, NpcDied]] = []
+    recorded: list[tuple[float, dict[str, Any]]] = []
+    loaded = asyncio.get_running_loop().create_future()
+    load_requested = False
+    loaded_at: float | None = None
+
+    def receive(message: GameMessage) -> None:
+        nonlocal loaded_at
+        at = time.monotonic()
+        if isinstance(message, NpcDied) and message.npc in (first, second):
+            events.append((at, message))
+        elif isinstance(message, Session) and message.reason == "load" and load_requested:
+            loaded_at = at
+            if not loaded.done():
+                loaded.set_result(message)
+
+    def record(fact: dict[str, Any]) -> None:
+        if fact.get("fact") == "died" and fact.get("npc") in (first, second):
+            recorded.append((time.monotonic(), fact))
+
+    def facts(npc: str) -> list[dict[str, Any]]:
+        return [fact for fact in director.chronicle.facts("died") if fact.get("npc") == npc]
+
+    def check(name: str, ok: bool, detail: str) -> None:
+        results[name] = f"{'done' if ok else 'failed'} ({detail})"
+
+    def deaths(npc: str, start: float, end: float) -> tuple[list[NpcDied], list[dict[str, Any]], int]:
+        seen = [(at, event) for at, event in events if event.npc == npc and start <= at <= end]
+        rows = [(at, fact) for at, fact in recorded if fact.get("npc") == npc and start <= at <= end]
+        elapsed = round((max(seen[0][0], rows[0][0]) - start) * 1000) if seen and rows else -1
+        return [event for _, event in seen], [fact for _, fact in rows], elapsed
+
+    link.listeners.append(receive)
+    director.chronicle.on_fact.append(record)
+    try:
+        await link.wait_world()
+        if link.session is None:
+            await wait_message(link, Session, timeout=10)
+        # A fresh response proves that world ticks started; the same tick primes the death scan.
+        clock_npc = "NONE_100_XARDAS"
+        await link.snapshot(clock_npc, fresh=True)
+        before_at = time.monotonic()
+        await link.debug("kill", instance=first, by="PLAYER")
+        await asyncio.sleep(max(0, before_at + 3 - time.monotonic()))
+        before_events, before_rows, before_ms = deaths(first, before_at, before_at + 3)
+        check(
+            "before",
+            len(before_events) == len(before_rows) == len(facts(first)) == 1
+            and before_events[0].killer == before_rows[0].get("killer") == "PLAYER",
+            f"events={len(before_events)}, facts={len(facts(first))}, "
+            f"player_events={sum(event.killer == 'PLAYER' for event in before_events)}, "
+            f"player_facts={sum(fact.get('killer') == 'PLAYER' for fact in before_rows)}, "
+            f"latency_ms={before_ms}, limit_ms=3000",
+        )
+
+        await _save_or_fail(link, slot)
+        saved_t = (await link.snapshot(clock_npc, fresh=True)).t
+        async with asyncio.timeout(90):
+            while (before_t := (await link.snapshot(clock_npc, fresh=True)).t) - saved_t < 30_000:  # noqa: ASYNC110
+                await asyncio.sleep(0.25)
+        load_requested = True
+        await link.debug("load", slot)
+        await asyncio.wait_for(loaded, 120)
+        await link.wait_world(timeout=120)
+        assert loaded_at is not None
+        # The response lets the initial scan prime before a new death, even when periodic pushes stall.
+        after_t = (await link.snapshot(clock_npc, fresh=True)).t
+        after_at = time.monotonic()
+        await link.debug("kill", instance=second, by="PLAYER")
+        await asyncio.sleep(max(0, after_at + 3 - time.monotonic()))
+        after_events, after_rows, after_ms = deaths(second, after_at, after_at + 3)
+        # Keep both raw events and newly written facts for the next five seconds: inherited facts are old.
+        quiet_at = time.monotonic()
+        await asyncio.sleep(5)
+        quiet_ms = round((time.monotonic() - quiet_at) * 1000)
+        extra_events, extra_rows, _ = deaths(second, after_at + 3, time.monotonic())
+        rewind_ms = before_t - after_t
+        check(
+            "rewound",
+            rewind_ms >= 20_000,
+            f"saved_t={saved_t}, before_t={before_t}, after_t={after_t}, rewind_ms={rewind_ms}, "
+            f"required_ms=20000, advanced_ms={before_t - saved_t}",
+        )
+        check(
+            "after",
+            after_at - loaded_at <= 5
+            and len(after_events) == len(after_rows) == len(facts(second)) == 1
+            and after_events[0].killer == after_rows[0].get("killer") == "PLAYER"
+            and not extra_events
+            and not extra_rows,
+            f"events={len(after_events)}, facts={len(facts(second))}, "
+            f"player_events={sum(event.killer == 'PLAYER' for event in after_events)}, "
+            f"player_facts={sum(fact.get('killer') == 'PLAYER' for fact in after_rows)}, "
+            f"latency_ms={after_ms}, limit_ms=3000, "
+            f"kill_after_load_ms={round((after_at - loaded_at) * 1000)}, "
+            f"extra_events={len(extra_events)}, extra_facts={len(extra_rows)}, watch_ms={quiet_ms}",
+        )
+        repeated_events, repeated_rows, _ = deaths(first, loaded_at, time.monotonic())
+        check(
+            "no_repeat",
+            not repeated_events and not repeated_rows and len(facts(first)) == 1,
+            f"new_events={len(repeated_events)}, new_facts={len(repeated_rows)}, "
+            f"inherited_facts={len(facts(first))}, "
+            f"observed_ms={round((time.monotonic() - loaded_at) * 1000)}",
+        )
+        return _logged(results)
+    finally:
+        link.listeners.remove(receive)
+        director.chronicle.on_fact.remove(record)
 
 
 async def repair_after_death(
@@ -1056,6 +1178,20 @@ async def own_repair(
     return await book_stages(link, book, places, slot, director=director)
 
 
+async def own_amend(
+    link: GameLink,
+    book: questbook.QuestBook,
+    places: PlaceBook,
+    dialogue: DialogueManager,
+    talk: TalkDesk,
+    slot: int = 7,
+) -> dict[str, str]:
+    """Hilda waives the first destination in conversation; the three-stage quest continues and pays."""
+    if not isinstance(dialogue.llm, FakeBackend):
+        return _logged({"scripted_model": "failed (own_amend requires LLM=fake)"})
+    return await book_stages(link, book, places, slot, amend=(dialogue, talk))
+
+
 async def book_stages(
     link: GameLink,
     book: questbook.QuestBook,
@@ -1063,6 +1199,7 @@ async def book_stages(
     slot: int = 7,
     *,
     director: Director | None = None,
+    amend: tuple[DialogueManager, TalkDesk] | None = None,
 ) -> dict[str, str]:
     """Stage 3 of the director as author, layer 2 (docs/director.md): a quest as an object, of three stages.
 
@@ -1201,10 +1338,66 @@ async def book_stages(
     ok = await _until_async(lambda: vars(status, stage), lambda v: v == {status: 1, stage: 1}, 15)
     check("given", ok and book.progress(q.id).state == "given", await vars(status, stage))
 
-    await link.debug("player_goto", waypoint=to)
-    ok = await _until_async(lambda: vars(stage), lambda v: v.get(stage) == 2, 10)
-    await _until(lambda: book.progress(q.id).stage == 2, 5)
-    check("reach", ok and book.progress(q.id).stage == 2, f"{to} ({look.id}): {await vars(stage)}")
+    if amend is None:
+        await link.debug("player_goto", waypoint=to)
+        ok = await _until_async(lambda: vars(stage), lambda v: v.get(stage) == 2, 10)
+        await _until(lambda: book.progress(q.id).stage == 2, 5)
+        check("reach", ok and book.progress(q.id).stage == 2, f"{to} ({look.id}): {await vars(stage)}")
+    else:
+        dialogue, talk = amend
+        gid = questbook.goal_id(q, 1, 1)
+        facts = book.chronicle.facts
+        why = "Не нужно никуда идти: чужак уже ушёл."
+        await come_to_her()
+        distance = await link.evaluate(["call", "NPC_GETDISTTOWP", hero, ["str", to]])
+        before = await vars(status, stage, gid)
+        unvisited = before == {status: 1, stage: 1, gid: 0} and distance >= q.stages[0].goals[0].radius
+        check("unvisited", unvisited, f"{before}; {to}: {distance} cm")
+        if not unvisited:
+            return _logged(results)
+        script = ClaimScript(
+            said=[("не нужно никуда идти", FakeStep("Хорошо, туда идти не надо. Найди то, что он бросил.", [
+                ToolCall("amend_quest", {"quest": q.id, "drop": [gid], "why": why}),
+            ]))],
+            told=[],
+            default="Хм.",
+        )
+        dialogue.llm = _ByNpc({"Хильда": script}, FakeBackend("Хм.", delay=0))
+        talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
+        nearby = await _until(lambda: HILDA in talk.people and talk.people[HILDA].distance <= 600, 20)
+        check("roster", nearby, HILDA)
+        if not nearby:
+            return _logged(results)
+        conv = dialogue.conversations.get(HILDA)
+        before_reply = conv.reply if conv else None
+        talk.hear("Хильда, не нужно никуда идти: чужак уже ушёл.", HILDA, {"via": "scenario"})
+
+        def answered() -> bool:
+            conv = dialogue.conversations.get(HILDA)
+            return bool(conv and conv.reply and conv.reply is not before_reply and conv.reply.done())
+
+        replied = await _until(answered, 60)
+        advanced = await _until_async(lambda: vars(stage), lambda v: v.get(stage) == 2, 10)
+        await _until(lambda: book.progress(q.id).stage == 2, 5)
+        terms = [f for f in facts("quest_terms") if f.get("quest") == q.id]
+        stages = [f for f in facts("story_quest_stage") if f.get("id") == q.id]
+        reached = [f for f in facts("triggered") if f.get("id") == gid]
+        situation = book.situation(HILDA) or ""
+        accepted = bool(
+            replied and advanced and book.progress(q.id).stage == 2
+            and any(f.get("drop") == [gid] and f.get("why") == why for f in terms)
+            and any(f.get("stage") == 2 for f in stages) and not reached
+            and "Снято тобой:" in situation and why in situation
+        )
+        check(
+            "amended", accepted,
+            f"terms={terms}; stages={stages}; reach={reached}; {await vars(stage, gid)}",
+        )
+        talk.end("scenario")
+        released = await _until(lambda: HILDA not in talk.attached, 20)
+        check("released", released, HILDA)
+        if not accepted or not released:
+            return _logged(results)
 
     if director is not None:
         facts = director.chronicle.facts
@@ -1272,6 +1465,15 @@ async def book_stages(
         and mine == {f"{q.id}_S1G1": 1, f"{q.id}_S1": 1, f"{q.id}_S2G1": 0, f"{q.id}_S2": 0},
         f"{await vars(status, stage)}; {mine}",
     )
+    if amend is not None:
+        terms = [f for f in book.chronicle.facts("quest_terms") if f.get("quest") == q.id]
+        situation = book.situation(HILDA) or ""
+        check(
+            "terms_after_load",
+            any(f.get("drop") == [gid] and f.get("why") == why for f in terms)
+            and "Снято тобой:" in situation and why in situation,
+            f"terms={terms}; {situation}",
+        )
     if director is not None:
         q = book.all()[q.id]
         nodes = [
@@ -1322,6 +1524,11 @@ async def book_stages(
     await _until(lambda: book.progress(q.id).state == "done", 5)
     situation = book.situation(successor) or ""
     check("knows", "ты заплатил" in situation, situation)
+    if amend is not None:
+        outcomes = [f for f in book.chronicle.facts("quest_outcome") if f.get("quest") == q.id]
+        check(
+            "outcome", any(f.get("how") == "amended" and f.get("pay") == "full" for f in outcomes), outcomes,
+        )
     if director is not None:
         left = [*left, *await link.offered_dialogs(HILDA)]
         check("once", not any(n.startswith(f"{q.id}_") for n in left), left)

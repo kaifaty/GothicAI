@@ -460,6 +460,32 @@ DMAPI DmResult DmLoader_addResolver(DmLoader* slf, DmLoaderResolverCallback* res
 /// \see #DmLoader_addResolver
 DMAPI DmResult DmLoader_getSegment(DmLoader* slf, char const* name, DmSegment** segment);
 
+/// \brief Represents a DirectMusic Style (opaque).
+typedef struct DmStyle DmStyle;
+
+/// \brief Represents a DirectMusic Downloadable Sound collection (opaque).
+typedef struct DmDls DmDls;
+
+/// \brief Creates already parsed objects in place of resolving and parsing a file.
+///
+/// Each callback receives the requested name (the segment name, or the reference's file for styles and DLS) and
+/// returns #DmResult_SUCCESS with a new object (reference count 1) in `out`, or an error with `out` left `NULL`.
+/// #DmResult_NOT_FOUND means the name is unknown. A `NULL` callback behaves as #DmResult_NOT_FOUND.
+typedef struct DmLoaderFactory {
+	DmResult (*segment)(void* ctx, char const* name, DmSegment** out);
+	DmResult (*style)(void* ctx, char const* file, DmStyle** out);
+	DmResult (*dls)(void* ctx, char const* file, DmDls** out);
+} DmLoaderFactory;
+
+/// \brief Set (or clear with `NULL`) the loader's object factory.
+///
+/// The callback table is copied; \p ctx must outlive the loader or a later call clearing the factory. With a
+/// factory set, the loader calls it exactly where it would otherwise resolve, create and parse a file: for
+/// segments on every request, for styles and DLS after the `NULL` file check and a GUID cache miss. Its
+/// result replaces the resolvers entirely; caching and automatic download stay unchanged. The callbacks run
+/// while the loader's lock is held, like resolvers.
+DMAPI DmResult DmLoader_setFactory(DmLoader* slf, DmLoaderFactory const* factory, void* ctx);
+
 /// \}
 
 /// \addtogroup DmPerformanceGroup

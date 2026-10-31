@@ -10,12 +10,17 @@ import math
 import os
 import shlex
 import sys
+import threading
 import time
+import tomllib
 from array import array
+from contextlib import nullcontext
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from . import (
+    characters,
     lore,
     npc_tools,
     places,
@@ -36,9 +41,11 @@ from .budget import Budget
 from .cast import Cast
 from .casting import Casting
 from .chains import ChainAuthor
+from .challenges import Challenges
 from .characters import Cards, Traits
 from .chests import ChestDesk
 from .chronicle import Chronicle
+from .combat_barks import CombatBarks
 from .concerns import Concerns
 from .consequences import LieConsequences
 from .contracts import symbol_by_name
@@ -50,10 +57,12 @@ from .crime_react import CrimeReact
 from .crimes import COMMUNITIES, Crimes
 from .daylife import DayDesk
 from .deals import Deals
-from .dialogue import DialogueManager
+from .dialogue import REACT_HINT, SVM_HINT, DialogueManager
 from .director import Director
 from .errands import Errands
 from .executor import Intent
+from .feat_art import Artist
+from .feats import Feats
 from .game import GameError, GameLink, GameServer
 from .gamedata import storygraph
 from .gamedata.ou import load_npc_lines
@@ -85,6 +94,7 @@ from .llm.siwc import AuthError, TokenStore, login
 from .meetings import Meetings
 from .memory import DEFAULT_PATH as DEFAULT_MEMORY_DB
 from .memory import MemoryStore
+from .mercy import Mercy
 from .npc_crime_law import NpcCrimeLaw
 from .npc_crimes import NpcCrimes
 from .npc_will import NpcWill
@@ -109,6 +119,8 @@ from .questbook import QuestBook
 from .questlog import QuestLog
 from .quests import QuestBoard
 from .replay import replay as replay_turn
+from .replay import replay_first_words as replay_first_words_turn
+from .replay import replay_svm_lines as replay_svm_lines_turn
 from .scenarios import occasions as scenario_occasions
 from .scenarios import questlog as scenario_questlog
 from .scenarios import showrunner as scenario_showrunner
@@ -117,13 +129,14 @@ from .scenarios.crime_director import crime_director as crime_director_scenario
 from .scenarios.crime_law import crime_law as crime_law_scenario
 from .scenarios.crime_talk import crime_talk as crime_talk_scenario
 from .scenarios.crimes import crimes as crimes_scenario
+from .scenarios.feats import ScenarioArtist
 from .showrunner import Showrunner
 from .sightings import Sightings
 from .social import Rumors
 from .story import StoryPatches, freed
 from .storyguard import StoryGuard
 from .talk import TalkDesk, fights
-from .trace import TraceWriter, find_turn, latest
+from .trace import TraceWriter, find_turn, latest, read
 from .triggers import Triggers
 from .trust import Trust
 from .tts import DEFAULT_TTS_URL, TtsClient, TtsError
@@ -174,6 +187,7 @@ HELP = """commands (npc defaults to the last attached one):
   crimes            the current branch's crimes, witnesses, encounter reactions and communities
   lines             the director's plot lines, their state and remaining budget
   pitch             an occasion here and now, subject to the director's budget
+  feats             the chronicler's feats on the current save branch
   claims            quests of the scripts the hero said were done: believed, lies, found out
   know [npc] [query]  what the npc knows of the world now (M6), and what recall finds for the query
   see [npc]         what the npc perceives now: in Russian for its words, in English for its body
@@ -223,6 +237,8 @@ def print_event(msg: GameMessage) -> None:
 class ServerState:
     def __init__(self) -> None:
         self.dialogue: DialogueManager | None = None
+        self.combat_barks: CombatBarks | None = None
+        self.mercy: Mercy | None = None
         self.voice: VoiceInput | None = None
         self.brain: NpcPlanner | None = None
         self.incidents: IncidentDesk | None = None
@@ -243,6 +259,8 @@ class ServerState:
         self.occasions: Occasions | None = None
         self.questlog: QuestLog | None = None
         self.showrunner: Showrunner | None = None
+        self.feats: Feats | None = None
+        self.feat_challenges: Challenges | None = None
         self.vanilla: VanillaQuests | None = None
         self.gates: Gates | None = None
         self.trust: Trust | None = None
@@ -442,6 +460,18 @@ class Console:
                 else:
                     fact = await showrunner.pitch()
                     print(json.dumps(fact, ensure_ascii=False) if fact else "(no occasion now)")
+            case "feats":
+                if self.state.chronicle is not None:
+                    epilogues = {f["feat"]: f for f in self.state.chronicle.facts("feat_epilogue")}
+                    shown = {f["feat"] for f in self.state.chronicle.facts("feat_epilogue_shown")}
+                    for feat in self.state.chronicle.facts("feat"):
+                        print(
+                            f"{feat['id']}: {feat['title']}; {feat['text']}; "
+                            f"evidence={feat['evidence']}"
+                        )
+                        if epilogue := epilogues.get(feat["id"]):
+                            pending = " (не показан)" if feat["id"] not in shown else ""
+                            print(f"  {epilogue['text']}{pending}")
             case "graph" if self.state.story is not None:
                 await self.graph(rest)
             case "quest" if len(rest) >= 5 and self.state.quests is not None:
@@ -683,7 +713,11 @@ def _story_graph(args: argparse.Namespace, game_dir: Path | None) -> storygraph.
     """The scripts' story graph (storygraph's JSON): a given file, or made from the game's scripts."""
     path = Path(args.story_graph) if args.story_graph else None
     if path is None and game_dir is not None:
-        path = storygraph.ensure(game_dir, DEFAULT_MEMORY_DB.parent / "story.json")
+        try:
+            path = storygraph.ensure(game_dir, DEFAULT_MEMORY_DB.parent / "story.json")
+        except RuntimeError as error:
+            log.warning("story graph unavailable: %s", error)
+            return None
     if path is None or not path.exists():
         log.warning(
             "no story graph, so no director and no npc knowledge "
@@ -718,11 +752,13 @@ def _start_showrunner(args: argparse.Namespace, showrunner: Showrunner) -> async
 
 
 def _start_bodypilot(args: argparse.Namespace, link: GameLink, talk: TalkDesk) -> BodyPilot | None:
-    if not args.neural_body or not args.body_url:
+    policy = getattr(args, "body_policy", "engine")
+    if not args.neural_body or (policy == "service" and not args.body_url):
         return None
     return BodyPilot(
         link,
         args.body_url,
+        body_policy=policy,
         max_fights=args.neural_body_max,
         companion=talk.orders.companion,
         unavailable=lambda npc: npc.upper() in talk.attached,
@@ -790,11 +826,18 @@ async def serve(args: argparse.Namespace) -> int:
         "neural-talk",
         "neural-load",
         "neural-soak",
-    } and not soak_control and (not args.body_url or not args.neural_body):
-        log.error("scenario %s requires GOTHIC_BODY_URL (or --body-url) and --neural-body", args.scenario)
+        "neural-still",
+    } and not soak_control and (
+        not args.neural_body or (args.body_policy == "service" and not args.body_url)
+    ):
+        log.error("scenario %s requires --neural-body and, for service policy, GOTHIC_BODY_URL "
+                  "(or --body-url)", args.scenario)
         return 2
     if args.scenario == "neural-soak" and args.llm != "fake":
-        log.error("scenario neural-soak requires --llm fake")
+        log.error("scenario %s requires --llm fake", args.scenario)
+        return 2
+    if args.scenario == "feats" and args.llm not in {"fake", "chatgpt"}:
+        log.error("scenario feats requires --llm fake or chatgpt")
         return 2
     done = asyncio.Event()
     exit_code = 0
@@ -802,6 +845,7 @@ async def serve(args: argparse.Namespace) -> int:
     llm = _backend(args)
     game_dir = Path(args.game_dir) if args.game_dir else None
     personas = PersonaProvider(game_dir if game_dir and game_dir.is_dir() else None)
+    threading.Thread(target=personas.warm, name="original-lines", daemon=True).start()
     memory = MemoryStore(args.memory_db)
     asr = None if args.no_voice else AsrClient(args.asr_url)
     decider = None if args.no_brain or not args.decider_url else DeciderClient(args.decider_url)
@@ -821,7 +865,10 @@ async def serve(args: argparse.Namespace) -> int:
     log.info("voice: %s", "off" if asr is None else f"{args.voice_file or 'microphone'} -> {args.asr_url}")
     log.info("npc voices: %s", "off" if tts is None else args.tts_url)
     log.info("npc planner: %s", "off" if decider is None else args.decider_url)
-    log.info("neural body: %s", args.body_url if args.neural_body and args.body_url else "off")
+    log.info(
+        "neural body: policy=%s service=%s",
+        args.body_policy if args.neural_body else "off", args.body_url,
+    )
     log.info("lines in a fight: %s", quick_at or "the conversational model")
     log.info("wolves hear the hero: %s", "off" if not args.beasts else f"tone by {quick_at or 'the rules'}")
     graph = (
@@ -850,7 +897,10 @@ async def serve(args: argparse.Namespace) -> int:
             trace=trace,
             budget=budget,
             quick=quick,
+            svm_lines=not args.no_svm_lines,
         )
+        if not args.no_combat_barks or not args.no_mercy:
+            state.combat_barks = CombatBarks(state.dialogue, hits=not args.no_combat_barks)
         # the bandits below Xardas's tower are freed of their scripted ambush: our models decide (story.py)
         static = freed(graph.nodes.__contains__) if graph is not None else freed()
         static = static if args.free_bandits else []
@@ -878,7 +928,9 @@ async def serve(args: argparse.Namespace) -> int:
             state.interject = interject
             state.incidents.speaks_up_there = interject.covers
         state.incidents.companion = state.talk.orders.companion
-        if args.beasts or args.scenario == "wolf":
+        if state.combat_barks is not None:
+            state.combat_barks.companion = state.talk.orders.companion
+        if args.beasts or args.scenario in {"wolf", "wolf_load"}:
             # wolves hear the tone of his words: they let him pass, run or bite (docs/beasts.md)
             state.beasts = BeastDesk(link, quick=tone_quick, journal=journal, trace=trace)
             state.talk.beasts = state.beasts
@@ -899,7 +951,13 @@ async def serve(args: argparse.Namespace) -> int:
         state.dialogue.on_calm.append(orders.truce)
         if asr is not None and source is not None:
             state.voice = VoiceInput(
-                link, state.talk.hear, source, asr, journal=journal, files=args.voice_files
+                link,
+                state.talk.hear,
+                source,
+                asr,
+                journal=journal,
+                files=args.voice_files,
+                hints=state.talk.asr_hints,
             )
         if graph is not None and not args.no_knowledge:
             # what each npc knows of the world as far as the story has got: its dialogs, quests, talk (M6)
@@ -931,6 +989,33 @@ async def serve(args: argparse.Namespace) -> int:
         state.talk.view_of = state.incidents.view_of = perception.english
         # what really happened, the director's quests and the hero's lies about them (story graph, stage 4)
         state.chronicle = Chronicle(link, memory)
+        feat_image_root = None
+        if not args.no_feats and (
+            args.scenario in {None, "feats"}
+            or (args.scenario == "lie" and args.llm == "fake")
+            or (args.scenario == "vanilla_line_live" and os.environ.get("GOTHIC_FORCE_CHALLENGE") == "1")
+        ):
+            artist = None
+            if not args.no_feat_images and args.scenario in {None, "feats"}:
+                if args.scenario == "feats":
+                    feat_image_root = TemporaryDirectory(prefix="feat-images-")
+                    artist = (
+                        ScenarioArtist(Path(feat_image_root.name), codex="scenario")
+                        if args.llm == "fake" else Artist(Path(feat_image_root.name))
+                    )
+                else:
+                    artist = Artist()
+            state.feats = Feats(
+                link, state.chronicle, llm, journal=journal, places=place_book,
+                gather_s=1 if args.scenario == "feats" and args.llm == "fake" else 20,
+                artist=artist,
+                fame=not args.no_feat_fame,
+                hero_distance=lambda npc: (
+                    state.talk.people[npc].distance if npc in state.talk.people else None
+                ),
+                image_wait_s=30 if args.scenario == "feats" and args.llm == "fake" else 150,
+            )
+            state.talk.on_phrase.append(lambda to, text: state.feats.hero_talk(to.id) if to else None)
         if not args.no_crimes:
             state.crimes = Crimes(
                 link,
@@ -940,6 +1025,7 @@ async def serve(args: argparse.Namespace) -> int:
                 places=place_book,
                 names=lambda npc: personas.cards[npc].name if npc in personas.cards else npc,
                 cover=not args.no_cover,
+                mercy=not args.no_mercy,
             )
             state.dialogue.extensions.append(state.crimes)
             if graph is not None:
@@ -993,10 +1079,20 @@ async def serve(args: argparse.Namespace) -> int:
                 perception=perception, companion=orders.companion, places=place_book, lead=state.talk.lead,
                 bodies=state.bodies, talk=state.talk, graph=graph, patches=state.story,
             )
+            orders.parley_quiet = state.parley.quiet
             state.dialogue.extensions.append(state.parley)
         if not args.no_bounty:
             state.bounty = Bounty(link, state.dialogue, state.chronicle, perception=perception)
             state.dialogue.extensions.append(state.bounty)
+        if not args.no_mercy:
+            state.mercy = Mercy(
+                state.dialogue, state.chronicle, orders, state.parley,
+                law=state.crime_law.law if state.crime_law else None,
+                barks=state.combat_barks, places=place_book,
+            )
+            state.dialogue.extensions.append(state.mercy)
+            if state.combat_barks is not None:
+                state.combat_barks.silenced = state.mercy.silent
         # deals the npc's offer the hero in conversation: a window, the player accepts (docs/npc-tools.md)
         if graph is not None and not args.no_gates:
             state.gates = Gates(link, state.dialogue, state.chronicle, graph, crimes=state.crimes)
@@ -1128,6 +1224,8 @@ async def serve(args: argparse.Namespace) -> int:
         if state.gates is not None:
             witnesses.gate_claim = state.gates.claim_heard
         state.dialogue.extensions.insert(state.dialogue.extensions.index(state.sightings) + 1, witnesses)
+        group.asks = witnesses.asking
+        group.witness = witnesses.called
         state.concerns.extra.append(witnesses.concerns)
         witnesses.on_change.append(state.concerns.changed)  # a far answer's time on its mind is over
         asks = asyncio.create_task(witnesses.run())  # far witnesses are asked at their meeting
@@ -1242,6 +1340,7 @@ async def serve(args: argparse.Namespace) -> int:
                         llm,
                         crimes=state.crimes,
                         law=state.crime_law.law if state.crime_law is not None else None,
+                        feat_challenges=not args.no_feats and not args.no_feat_challenges,
                     )
                     if (task := _start_showrunner(args, state.showrunner)) is not None:
                         directing.append(task)
@@ -1277,6 +1376,11 @@ async def serve(args: argparse.Namespace) -> int:
             bonds=state.cast.bonds if state.cast else dict,
             crimes=state.crimes,
         )
+        if state.book is not None and not args.no_feats and not args.no_feat_challenges:
+            state.feat_challenges = Challenges(
+                state.chronicle, state.book,
+                social=state.rumors.prepare_social if state.rumors is not None else None,
+            )
         if state.cast is not None:
             state.cast.on_change.append(state.rumors.people_changed)
         directing.append(asyncio.create_task(state.rumors.run()))
@@ -1416,6 +1520,12 @@ async def serve(args: argparse.Namespace) -> int:
                 errand_clock.cancel()
             for task in directing:
                 task.cancel()
+            if state.feats is not None:
+                await state.feats.close()
+            if state.feat_challenges is not None:
+                state.feat_challenges.close()
+            if feat_image_root is not None:
+                feat_image_root.cleanup()
             if state.questlog is not None:
                 await state.questlog.close()
             if state.book is not None:
@@ -1458,6 +1568,11 @@ async def serve(args: argparse.Namespace) -> int:
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
                 exit_code = 1 if bad else 0
+            elif args.scenario == "load_rewind":
+                results = await scenarios.load_rewind(link)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
+                exit_code = 1 if bad else 0
             elif args.scenario == "neural-soak":
                 results = await scenarios.neural_soak_scenario(
                     link, state.dialogue, bodypilot, log_dir=Path(args.memory_db).parent
@@ -1486,6 +1601,13 @@ async def serve(args: argparse.Namespace) -> int:
                 assert state.guide is not None
                 results = await scenarios.bandit_bounty(
                     link, state.dialogue, state.talk, state.deals, state.bounty, state.guide
+                )
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "neural-still":
+                results = await scenarios.neural_still_scenario(
+                    link, bodypilot, Path(args.memory_db).parent
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
@@ -1568,6 +1690,27 @@ async def serve(args: argparse.Namespace) -> int:
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario m5e: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
+            elif args.scenario == "combat_barks":
+                assert state.dialogue is not None and state.combat_barks is not None
+                results = await scenarios.combat_barks(link, state.dialogue, state.combat_barks)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario in {"mercy", "hero_yield", "humiliate", "surrender_live"}:
+                assert state.dialogue is not None and state.mercy is not None and state.talk is not None
+                scenario = getattr(scenarios, args.scenario)
+                results = await scenario(link, state.dialogue, state.talk, state.mercy)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "svm_lines":
+                assert state.dialogue is not None
+                results = await scenarios.svm_lines(
+                    link, state.dialogue, log_dir=Path(args.memory_db).parent
+                )
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
+                exit_code = 1 if bad else 0
             elif args.scenario == "orders":
                 assert state.dialogue is not None and state.talk is not None
                 results = await scenarios.orders_scenario(link, state.dialogue, state.talk, args.npc)
@@ -1593,10 +1736,28 @@ async def serve(args: argparse.Namespace) -> int:
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario wolf: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
+            elif args.scenario == "wolf_load":
+                assert state.talk is not None and state.beasts is not None
+                results = await scenarios.wolf_load_scenario(link, state.talk, state.beasts)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario wolf_load: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "check_walk":
+                assert state.dialogue is not None
+                results = await scenarios.check_walk(link, state.dialogue)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario check_walk: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "follow_back":
+                assert state.dialogue is not None
+                results = await scenarios.follow_back(link, state.dialogue)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario follow_back: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
             elif args.scenario == "companion":
-                assert state.dialogue is not None and state.talk is not None
+                assert state.dialogue is not None and state.talk is not None and state.parley is not None
                 results = await scenarios.companion_scenario(
-                    link, state.dialogue, state.talk, perception=state.perception
+                    link, state.dialogue, state.talk, parley=state.parley, perception=state.perception
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario companion: %d checks, %d failed", len(results), len(bad))
@@ -1915,8 +2076,10 @@ async def serve(args: argparse.Namespace) -> int:
                 log.info("scenario remembers: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "calm":
-                assert state.dialogue is not None and state.talk is not None
-                results = await scenarios.calm_scenario(link, state.dialogue, state.talk)
+                assert state.dialogue is not None and state.talk is not None and state.parley is not None
+                results = await scenarios.calm_scenario(
+                    link, state.dialogue, state.talk, parley=state.parley
+                )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario calm: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -1995,9 +2158,29 @@ async def serve(args: argparse.Namespace) -> int:
             elif args.scenario == "lie":
                 dialogue, talk, quests = state.dialogue, state.talk, state.quests
                 assert dialogue is not None and talk is not None and quests is not None
-                results = await scenarios.lie_found_out(link, dialogue, talk, quests, args.npc)
+                results = await scenarios.lie_found_out(
+                    link, dialogue, talk, quests, args.npc, chronicler=state.feats,
+                )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario lie: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "death_load":
+                assert state.director is not None
+                results = await scenarios.death_load(link, state.director)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario death_load: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "feats":
+                assert state.feats is not None
+                results = await scenarios.feats(link, state.feats, journal)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario feats: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "feat_fame":
+                assert state.dialogue is not None and state.talk is not None and state.rumors is not None
+                results = await scenarios.feat_fame(link, state.dialogue, state.talk, state.rumors)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario feat_fame: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "repair":
                 assert state.director is not None and state.story is not None
@@ -2037,8 +2220,12 @@ async def serve(args: argparse.Namespace) -> int:
                 exit_code = 1 if bad else 0
             elif args.scenario in {"vanilla_line", "vanilla_line_live"}:
                 assert state.showrunner is not None and state.questlog is not None
-                scenario = getattr(scenario_vanilla_line, args.scenario)
-                results = await scenario(link, state.showrunner, state.questlog)
+                if args.scenario == "vanilla_line_live":
+                    results = await scenario_vanilla_line.vanilla_line_live(
+                        link, state.showrunner, state.questlog, journal
+                    )
+                else:
+                    results = await scenario_vanilla_line.vanilla_line(link, state.showrunner, state.questlog)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -2072,6 +2259,12 @@ async def serve(args: argparse.Namespace) -> int:
                 results = await scenarios.book_stages(link, state.book, place_book)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario stages: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "own_amend":
+                assert state.book is not None and place_book is not None and state.dialogue and state.talk
+                results = await scenarios.own_amend(link, state.book, place_book, state.dialogue, state.talk)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario own_amend: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "requires":
                 assert state.book is not None
@@ -2118,6 +2311,13 @@ async def serve(args: argparse.Namespace) -> int:
                 results = await scenarios.vanilla_given(link, dialogue, talk, vanilla)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario vgive: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "vspare":
+                dialogue, talk, vanilla = state.dialogue, state.talk, state.vanilla
+                assert dialogue is not None and talk is not None and vanilla is not None
+                results = await scenarios.vanilla_spare(link, dialogue, talk, vanilla)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario vspare: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "greg":
                 dialogue, talk, vanilla = state.dialogue, state.talk, state.vanilla
@@ -2169,6 +2369,13 @@ async def serve(args: argparse.Namespace) -> int:
                 results = await scenarios.deal_debt(link, dialogue, talk, deals)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario debt: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "xardas_money":
+                dialogue, talk, deals = state.dialogue, state.talk, state.deals
+                assert dialogue is not None and talk is not None and deals is not None
+                results = await scenarios.xardas_money(link, dialogue, talk, deals)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario xardas_money: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "initiative":
                 dialogue, talk, deals, concerns = state.dialogue, state.talk, state.deals, state.concerns
@@ -2504,7 +2711,10 @@ async def replay(args: argparse.Namespace) -> int:
         instructions = personas.get(record["npc"], args.name).instructions
     llm = _backend(args)
     try:
-        result = await replay_turn(llm, record, instructions)
+        result = await replay_turn(llm, record, instructions, after_step=args.after_step)
+    except ValueError as err:
+        print(err, file=sys.stderr)
+        return 2
     finally:
         await llm.aclose()
     if args.json:
@@ -2513,6 +2723,10 @@ async def replay(args: argparse.Namespace) -> int:
     print(
         f"turn {result['turn']} ({result['npc']}), {result['trigger']['kind']}: {result['trigger']['text']}"
     )
+    if args.after_step:
+        print(f"continuing after recorded step {args.after_step}; already said: {result['said_before']}")
+        for output in result["initial_tool_results"]:
+            print(f"  tool result: {output}")
     for title, steps in (("recorded", result["original"]), (f"{llm.name}", result["replay"])):
         print(f"\n[{title}]")
         for n, st in enumerate(steps, 1):
@@ -2521,8 +2735,166 @@ async def replay(args: argparse.Namespace) -> int:
             )
             timing = f" ({st['first_token_s']:.2f}s / {st['total_s']:.2f}s)" if "total_s" in st else ""
             print(f"  {n}. {st['text'] or '-'}{f'  -> {calls}' if calls else ''}{timing}")
+            for call in st["calls"]:
+                if isinstance(call, dict):
+                    print(f"     {call['output']}")
     if result["diverged"]:
         print("\n(the replay made calls the recorded turn did not: their results are not known)")
+    return 0
+
+
+async def replay_first_words(args: argparse.Namespace) -> int:
+    """Compare quick first reactions to the hero's recorded phrases, without running the game."""
+    if args.runs < 1:
+        print("--runs must be at least 1", file=sys.stderr)
+        return 2
+    quick_at = quick_url(args.quick_url, os.environ.get("GOTHIC_DECIDER_URL"))
+    if not quick_at:
+        settings_path = Path.home() / ".config/gothic-ai/settings.toml"
+        if await asyncio.to_thread(settings_path.is_file):
+            settings = tomllib.loads(await asyncio.to_thread(settings_path.read_text, encoding="utf-8"))
+            llm_settings = settings.get("llm", {})
+            quick_at = quick_url(llm_settings.get("quick_url"), llm_settings.get("decider_url"))
+    if not quick_at:
+        print(
+            "set --quick-url, GOTHIC_QUICK_LLM_URL/GOTHIC_DECIDER_URL or [llm] in settings.toml",
+            file=sys.stderr,
+        )
+        return 2
+    records = await asyncio.to_thread(read, Path(args.file))
+    instructions = {r["hash"]: r["text"] for r in records if r.get("type") == "instructions"}
+    turns = [
+        r
+        for r in records
+        if r.get("type") == "turn"
+        and r.get("trigger", {}).get("kind") == "player"
+        and r.get("steps")
+        and not r["steps"][0].get("llm")
+        and (not args.npc or r["npc"].upper() == args.npc.upper())
+    ]
+    if not turns:
+        print("no matching player turns with a conversational first step", file=sys.stderr)
+        return 2
+    missing = [r["id"] for r in turns if r["instructions"] not in instructions]
+    if missing:
+        print(f"missing recorded instructions for turns: {', '.join(missing)}", file=sys.stderr)
+        return 2
+    hint = (
+        (await asyncio.to_thread(Path(args.hint_file).read_text, encoding="utf-8")).strip()
+        if args.hint_file else REACT_HINT
+    )
+    previous: dict[str, list[str]] = {}
+    branch: str | None = None
+    llm = make_quick(quick_at)
+    try:
+        with (
+            await asyncio.to_thread(Path(args.out).open, "w", encoding="utf-8")
+            if args.out else nullcontext()
+        ) as output:
+            for turn in turns:
+                if turn.get("branch") != branch:
+                    previous.clear()
+                    branch = turn.get("branch")
+                last = previous.setdefault(turn["npc"], [""] * args.runs)
+                result = await replay_first_words_turn(
+                    llm,
+                    turn,
+                    instructions[turn["instructions"]],
+                    hint=hint,
+                    runs=args.runs,
+                    temperature=args.temperature,
+                    previous=last,
+                )
+                rendered = []
+                for n, run in enumerate(result["runs"]):
+                    if run["outcome"] == "said":
+                        last[n] = run["words"]
+                    sound = ", pure_sound" if run["pure_sound"] else ""
+                    rendered.append(
+                        f"{n + 1}: {run['words'] or '—'} [{run['outcome']}{sound}, {run['elapsed_ms']} ms]"
+                    )
+                phrase = " ".join(result["phrase"].split())[:80]
+                print(f"{result['npc']} | {phrase} | {' | '.join(rendered)}", flush=True)
+                if output is not None:
+                    output.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    output.flush()
+    finally:
+        await llm.aclose()
+    return 0
+
+
+async def replay_svm_lines(args: argparse.Namespace) -> int:
+    """Compare SVM lines in the last recorded situation of each NPC, without a game."""
+    if args.runs < 1:
+        print("--runs must be at least 1", file=sys.stderr)
+        return 2
+    quick_at = quick_url(args.quick_url, os.environ.get("GOTHIC_DECIDER_URL"))
+    if not quick_at:
+        settings_path = Path.home() / ".config/gothic-ai/settings.toml"
+        if await asyncio.to_thread(settings_path.is_file):
+            settings = tomllib.loads(await asyncio.to_thread(settings_path.read_text, encoding="utf-8"))
+            llm_settings = settings.get("llm", {})
+            quick_at = quick_url(llm_settings.get("quick_url"), llm_settings.get("decider_url"))
+    if not quick_at:
+        print(
+            "set --quick-url, GOTHIC_QUICK_LLM_URL/GOTHIC_DECIDER_URL or [llm] in settings.toml",
+            file=sys.stderr,
+        )
+        return 2
+    records = await asyncio.to_thread(read, Path(args.file))
+    instructions = {r["hash"]: r["text"] for r in records if r.get("type") == "instructions"}
+    turns = {}
+    names = {npc: card.name for npc, card in characters.load().items()}
+    for record in records:
+        snapshot = record.get("snapshot") or {}
+        for npc in [snapshot.get("npc", {}), *snapshot.get("nearby_npcs", [])]:
+            if npc.get("id") and npc.get("name"):
+                names[npc["id"].upper()] = npc["name"]
+        if (
+            record.get("type") == "turn"
+            and record.get("steps")
+            and any(m.get("role") == "developer" for m in record["steps"][0]["added"])
+            and (not args.npc or record["npc"].upper() == args.npc.upper())
+        ):
+            turns[record["npc"]] = record
+    names.update(PLAYER="герой", PC_HERO="герой")
+    if not turns:
+        print("no matching turns with a recorded situation", file=sys.stderr)
+        return 2
+    missing = [r["id"] for r in turns.values() if r["instructions"] not in instructions]
+    if missing:
+        print(f"missing recorded instructions for turns: {', '.join(missing)}", file=sys.stderr)
+        return 2
+    lines = await asyncio.to_thread(read, Path(args.svm_file))
+    hint = (
+        (await asyncio.to_thread(Path(args.hint_file).read_text, encoding="utf-8")).strip()
+        if args.hint_file else SVM_HINT
+    )
+    llm = make_quick(quick_at)
+    try:
+        with (
+            await asyncio.to_thread(Path(args.out).open, "w", encoding="utf-8")
+            if args.out else nullcontext()
+        ) as output:
+            for turn in turns.values():
+                for line in lines:
+                    [result] = await replay_svm_lines_turn(
+                        llm, turn, instructions[turn["instructions"]], [line],
+                        names=names, hint=hint, history=args.history, runs=args.runs,
+                    )
+                    rendered = [
+                        f"{n + 1}: {run['words'] or '—'} [{run['outcome']}, {run['first_phrase_ms']} ms]"
+                        for n, run in enumerate(result["runs"])
+                    ]
+                    native = " ".join(result["text"].split())
+                    print(
+                        f"{result['npc']} | {result['svm']} | {native} | {' | '.join(rendered)}", flush=True,
+                    )
+                    if output is not None:
+                        output.write(json.dumps(result, ensure_ascii=False) + "\n")
+                        output.flush()
+    finally:
+        await llm.aclose()
     return 0
 
 
@@ -2763,6 +3135,7 @@ def main() -> None:
             "neural-companion",
             "neural-group",
             "neural-talk",
+            "neural-still",
             "bandit_parley",
             "road_bandits",
             "bandit_hold",
@@ -2770,8 +3143,15 @@ def main() -> None:
             "neural-load",
             "neural-soak",
             "memprobe",
+            "load_rewind",
             "m5c",
             "m5e",
+            "svm_lines",
+            "combat_barks",
+            "mercy",
+            "hero_yield",
+            "humiliate",
+            "surrender_live",
             "orders",
             "fight_reactions_wolf",
             "fight_reactions_sight",
@@ -2779,6 +3159,7 @@ def main() -> None:
             "fight_reactions_flee",
             "companion",
             "wolf",
+            "wolf_load",
             "calm",
             "ground",
             "hearing",
@@ -2808,6 +3189,9 @@ def main() -> None:
             "lie",
             "wrath",
             "repair",
+            "death_load",
+            "feats",
+            "feat_fame",
             "authored",
             "occasions",
             "questlog",
@@ -2820,6 +3204,8 @@ def main() -> None:
             "frame",
             "crime_meet",
             "crime_ally",
+            "check_walk",
+            "follow_back",
             "crime_talk",
             "trace_crime",
             "cover",
@@ -2834,6 +3220,7 @@ def main() -> None:
             "own",
             "trigger",
             "stages",
+            "own_amend",
             "requires",
             "chain",
             "own_repair",
@@ -2842,6 +3229,7 @@ def main() -> None:
             "character",
             "vlie",
             "vgive",
+            "vspare",
             "gate",
             "gate_vouch",
             "greg",
@@ -2852,6 +3240,7 @@ def main() -> None:
             "deal_demo",
             "contract",
             "debt",
+            "xardas_money",
             "initiative",
             "gossip",
             "gossip_demo",
@@ -2888,15 +3277,21 @@ def main() -> None:
         help="gothic-decider service for npc decisions outside conversations (without it the planner is off)",
     )
     p.add_argument(
+        "--body-policy",
+        choices=("engine", "service"),
+        default=os.environ.get("GOTHIC_BODY_POLICY", "engine"),
+        help="combat policy location (GOTHIC_BODY_POLICY; default: engine)",
+    )
+    p.add_argument(
         "--body-url",
         default=os.environ.get("GOTHIC_BODY_URL"),
-        help="body policy service at tcp://host:47835 (GOTHIC_BODY_URL; without it the pilot is off)",
+        help="backup body policy service at tcp://host:47835 (GOTHIC_BODY_URL)",
     )
     p.add_argument(
         "--neural-body",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="let the body policy fight the hero or companions with eligible npcs (requires --body-url)",
+        help="let the body policy fight the hero or companions with eligible npcs (default: on)",
     )
     p.add_argument(
         "--neural-body-max",
@@ -2914,6 +3309,11 @@ def main() -> None:
     p.add_argument(
         "--no-quick", action="store_true", help="npc lines in a fight from the conversational model"
     )
+    p.add_argument(
+        "--no-svm-lines", action="store_true", help="keep the humans' native SVM voices and subtitles"
+    )
+    p.add_argument("--no-combat-barks", action="store_true", help="disable quick-model combat cries")
+    p.add_argument("--no-mercy", action="store_true", help="disable NPC and hero surrender and mercy")
     p.add_argument("--no-brain", action="store_true", help="do not plan npc decisions outside conversations")
     p.add_argument("--no-director", action="store_true", help="do not repair quests left without an ending")
     p.add_argument("--no-gates", action="store_true", help="disable conversational gate admission")
@@ -2939,6 +3339,26 @@ def main() -> None:
         "--no-showrunner",
         action="store_true",
         help="disable the director's new plot lines (enabled by default outside scenarios)",
+    )
+    p.add_argument(
+        "--no-feats",
+        action="store_true",
+        help="disable the chronicler's feats (enabled by default outside scenarios and in feats)",
+    )
+    p.add_argument(
+        "--no-feat-challenges",
+        action="store_true",
+        help="disable the director's hidden line challenges (enabled by default)",
+    )
+    p.add_argument(
+        "--no-feat-fame",
+        action="store_true",
+        help="disable rumors about the hero's public feats",
+    )
+    p.add_argument(
+        "--no-feat-images",
+        action="store_true",
+        help="disable generated feat pictures; use category icons for toasts",
     )
     p.add_argument(
         "--no-knowledge", action="store_true", help="npc's do not know the world from the scripts (M6)"
@@ -3036,8 +3456,33 @@ def main() -> None:
     p.add_argument("--trace-dir", default=str(DEFAULT_TRACE_DIR))
     p.add_argument("--name", default="Ксардас", help="npc display name for --persona-now")
     p.add_argument("--persona-now", action="store_true", help="today's persona instead of the recorded one")
+    p.add_argument(
+        "--after-step",
+        type=int,
+        default=0,
+        help="continue after this many recorded steps, keeping their results",
+    )
     p.add_argument("--json", action="store_true", help="one JSON object on stdout")
     _add_llm_args(p)
+
+    p = sub.add_parser("replay-first-words", help="replay quick first reactions to recorded player phrases")
+    p.add_argument("file", help="recorded traces.jsonl")
+    p.add_argument("--hint-file", help="use this file instead of the current first-reaction hint")
+    p.add_argument("--runs", type=int, default=1, help="independent runs per turn (default: 1)")
+    p.add_argument("--temperature", type=float, default=0.6)
+    p.add_argument("--quick-url", default=os.environ.get("GOTHIC_QUICK_LLM_URL"))
+    p.add_argument("--npc", help="only this npc id")
+    p.add_argument("--out", help="write turn results to a JSONL file")
+
+    p = sub.add_parser("replay-svm-lines", help="compare SVM replacements in recorded NPC situations")
+    p.add_argument("file", help="recorded traces.jsonl")
+    p.add_argument("--svm-file", required=True, help="JSONL native SVM lines: svm, text, target id")
+    p.add_argument("--hint-file", help="replacement SVM hint template with {event}, {text} and {to}")
+    p.add_argument("--history", action="store_true", help="include the recorded NPC history for comparison")
+    p.add_argument("--runs", type=int, default=1, help="independent runs per native line (default: 1)")
+    p.add_argument("--quick-url", default=os.environ.get("GOTHIC_QUICK_LLM_URL"))
+    p.add_argument("--npc", help="only this npc id")
+    p.add_argument("--out", help="write comparison results to a JSONL file")
 
     p = sub.add_parser(
         "places", help="the book of places: group a world dump (SCENARIO=places) and name them"
@@ -3108,6 +3553,10 @@ def main() -> None:
                 code = asyncio.run(llm_test(args))
             case "replay":
                 code = asyncio.run(replay(args))
+            case "replay-first-words":
+                code = asyncio.run(replay_first_words(args))
+            case "replay-svm-lines":
+                code = asyncio.run(replay_svm_lines(args))
             case "places":
                 code = asyncio.run(places_cmd(args))
             case "lore":

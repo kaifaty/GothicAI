@@ -1,0 +1,14 @@
+# OPENGOTHIC_MELEE_BENCH=fixture BENCH_HOST=local; change only the setup row for the matrix.
+seed 73013
+cheat god
+set time 12 0
+goto NW_XARDAS_TOWER_VALLEY_091
+wait 500
+melee-physics setup 10 full kinematic 2
+wait 1500
+overlay off
+cadence normal
+wait 34
+melee-physics measure
+cadence wait
+melee-physics report

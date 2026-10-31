@@ -8,6 +8,10 @@
 
 #include "mtdevice.h"
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "gapi/metalapi.h"
+#endif
+
 #ifdef __OSX__
 #import <AppKit/AppKit.h>
 #endif
@@ -184,6 +188,9 @@ void MtSwapchain::present() {
   enc->endEncoding();
   cmd->presentDrawable(drawable);
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileGpu(cmd);
+#endif
   dev.onSubmit();
   cmd->addCompletedHandler(^(MTL::CommandBuffer* c){
     MTL::CommandBufferStatus s = c->status();

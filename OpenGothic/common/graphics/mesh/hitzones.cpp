@@ -384,8 +384,46 @@ void HitZones::posed(const Matrix4x4* tr, size_t numBones, float scale, std::vec
   for(auto& c:caps) {
     if(c.a.bone>=numBones || c.b.bone>=numBones)
       continue;
-    out.push_back({point(tr,c.a),point(tr,c.b),c.r*scale,c.zone});
+    out.push_back({point(tr,c.a),point(tr,c.b),c.r*scale,c.zone,c.owner});
     }
+  }
+
+float HitZones::horizontalBodyGap(const std::vector<Posed>& first, const std::vector<Posed>& second,
+                                 const Vec3& offset) {
+  float gap = std::numeric_limits<float>::infinity();
+  for(const auto& firstCapsule:first) {
+    if(firstCapsule.zone!=Body)
+      continue;
+    const Vec3 a(firstCapsule.a.x+offset.x,0,firstCapsule.a.z+offset.z);
+    const Vec3 u(firstCapsule.b.x-firstCapsule.a.x,0,firstCapsule.b.z-firstCapsule.a.z);
+    const float aa = dot(u,u);
+    for(const auto& secondCapsule:second) {
+      if(secondCapsule.zone!=Body)
+        continue;
+      const Vec3 b(secondCapsule.a.x,0,secondCapsule.a.z);
+      const Vec3 v(secondCapsule.b.x-secondCapsule.a.x,0,secondCapsule.b.z-secondCapsule.a.z);
+      const Vec3 r = a-b;
+      const float ee = dot(v,v), f = dot(v,r);
+      float s = 0, t = 0;
+      if(aa<=1.e-6f)
+        t = ee>1.e-6f ? std::clamp(f/ee,0.f,1.f) : 0.f;
+      else {
+        const float c = dot(u,r);
+        if(ee<=1.e-6f)
+          s = std::clamp(-c/aa,0.f,1.f);
+        else {
+          const float bb = dot(u,v), denominator = aa*ee-bb*bb;
+          if(denominator>1.e-6f)
+            s = std::clamp((bb*f-c*ee)/denominator,0.f,1.f);
+          t = (bb*s+f)/ee;
+          if(t<0) { t = 0; s = std::clamp(-c/aa,0.f,1.f); }
+          else if(t>1) { t = 1; s = std::clamp((bb-c)/aa,0.f,1.f); }
+          }
+        }
+      gap = std::min(gap,length(r+u*s-v*t)-firstCapsule.r-secondCapsule.r);
+      }
+    }
+  return gap;
   }
 
 std::string HitZones::dump(const Matrix4x4* tr, size_t numBones, float scale) const {

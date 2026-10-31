@@ -17,6 +17,7 @@ import html
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -377,7 +378,7 @@ def prepare(args):
 
 def detour(args):
     worker = SimpleNamespace(output=args.output / "detour-work", runner=args.runner or args.task / "build/opengothic/gothic-body-runner",
-                             assets=args.assets or args.task.parent / "game", save=args.save or args.task / "input/save.sav",
+                             assets=args.assets or Path(os.environ.get("GOTHIC_DIR", Path.home() / "gothic-ai/game-settings")), save=args.save or args.task / "input/save.sav",
                              cache=args.cache or args.task / "cache", links=args.links or args.task / "input/accepted-links.txt",
                              roads=args.roads or args.task / "input/places.json", ini=None, npc="BAU_954_MALETH", seed=19102026,
                              physics="cv", watchdog_seconds=900)
@@ -813,6 +814,8 @@ def main():
     for name in ("runner", "assets", "save", "cache", "links", "roads"):
         parser.add_argument("--" + name, type=Path)
     args = parser.parse_args()
+    if args.command == "detour":
+        os.environ.update(v3.module("ryzen_game").game_environment(assets=args.assets))
     for name in ("task", "data", "output"):
         if not getattr(args, name).is_absolute():
             parser.error(f"--{name} must be absolute")

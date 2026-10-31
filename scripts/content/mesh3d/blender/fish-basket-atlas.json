@@ -1,0 +1,88 @@
+{
+ "glb": "life-build/basket/model.glb",
+ "maps_dir": "life-tiles",
+ "scales": {
+  "OWN_PROP_WICKER": 1.0,
+  "OWN_PROP_FISH_BACK": 6.0,
+  "OWN_PROP_FISH_BELLY": 6.0,
+  "OWN_PROP_KELP": 3.0
+ },
+ "targets": {
+  "OWN_PROP_WICKER": [
+   0.04,
+   0.034,
+   0.022
+  ],
+  "OWN_PROP_FISH_BACK": [
+   0.038,
+   0.04,
+   0.031
+  ],
+  "OWN_PROP_FISH_BELLY": [
+   0.085,
+   0.086,
+   0.078
+  ],
+  "OWN_PROP_KELP": [
+   0.025,
+   0.022,
+   0.008
+  ]
+ },
+ "slots": {
+  "OWN_PROP_WICKER": [
+   "OWN_FISHBASKET_HARBOUR_WICKER",
+   "WOOD"
+  ],
+  "OWN_PROP_FISH_BACK": [
+   "OWN_FISHBASKET_HARBOUR_FISH",
+   "UNDEF"
+  ],
+  "OWN_PROP_FISH_BELLY": [
+   "OWN_FISHBASKET_HARBOUR_FISH",
+   "UNDEF"
+  ],
+  "OWN_PROP_KELP": [
+   "OWN_FISHBASKET_HARBOUR_FISH",
+   "UNDEF"
+  ]
+ },
+ "metal": [],
+ "size": 1024,
+ "seed": 1,
+ "angle_limit": 66,
+ "margin": 0.003,
+ "tone_spread": 0.18,
+ "wet_height": 0.1,
+ "algae": 0.6,
+ "bleach": 0.1,
+ "contrast": {
+  "OWN_PROP_WICKER": 1.5,
+  "OWN_PROP_FISH_BACK": 1.2,
+  "OWN_PROP_FISH_BELLY": 1.0
+ },
+ "edge_wear": {
+  "OWN_PROP_WICKER": 0.0,
+  "OWN_PROP_FISH_BACK": 0.0,
+  "OWN_PROP_FISH_BELLY": 0.0,
+  "OWN_PROP_KELP": 0.0
+ },
+ "tile_normal": {
+  "OWN_PROP_WICKER": 0.4,
+  "OWN_PROP_FISH_BACK": 0.15,
+  "OWN_PROP_FISH_BELLY": 0.15,
+  "OWN_PROP_KELP": 0.15
+ },
+ "measure_ao": {
+  "OWN_PROP_WICKER": 0.5
+ },
+ "crevice": {
+  "distance": 0.02,
+  "dirt": 0.5,
+  "colour": [
+   0.006,
+   0.007,
+   0.004
+  ]
+ }
+}

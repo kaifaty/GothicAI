@@ -8,10 +8,17 @@ config: {"glb": model with tile UVs in metres and zone-key materials (barrel.py)
          "slots": {KEY: [ATLAS_KEY, GROUP]}, "metal": [KEY, ...],
          "size": 1024, "colour_samples": 16, "seed": 1, "ao_samples": 64, "ao_distance": 0.15, "ao_strength": 0.85,
          "sectors": 20, "tone_spread": 0.28, "light_part": [index, gain],
-         "edge_radius": 0.006, "wet_height": 0.18, "algae": 0.7, "bleach": 0.35,
+         "island_scale": {KEY: share}, "despeckle": {"radius": 6, "below": 0.6, "lift": 0.7}, "edge_radius": 0.006, "wet_height": 0.18, "algae": 0.7, "bleach": 0.35,
          "planks_per_tile": {KEY: n}, "seam_width": 0.07, "seam_dark": 0.75, "contrast": {KEY: gamma},
          "nodes": [NODE NAME, ...], "tile_normal": {KEY: strength}, "edge_wear": {KEY: share},
-         "measure_ao": {KEY: min baked AO}}
+         "measure_ao": {KEY: min baked AO},
+         "crevice": {"distance": 0.02, "dirt": 0.7, "colour": [r, g, b]},
+         "seam": {"radius": 0.012, "gain": 4.0, "dark": 0.5, "colour": [r, g, b]},
+         "streaks": {"length": 0.25, "rust": 0.6, "dirt": 0.35, "rust_colour": [r, g, b], "column": 0.012},
+         "wet_roughness": 0.6, "metal_scale": 1.0,
+         "moss": {"zones": [KEY, ...], "cover": share or {KEY: share}, "scale": 0.12, "grain": 1.0, "detail": 0.0, "top": 1.0, "bottom": 0.8,
+                  "low": 0.25, "shade": 0.6, "edges": 0.0, "soft": 0.25, "damp": 0.25, "dark": [r, g, b], "light": [r, g, b],
+                  "opacity": 1.0, "keep_grain": 0.0}}
 The tiling materials are sampled through the tile UVs and baked into a new atlas
 UV: per-part tone (the builder's "_part" attribute when present, otherwise
 angular sectors around the axis and lid planks along X), dark seams where a part's tile plank ends, worn light edges from the Bevel
@@ -33,6 +40,29 @@ plank area is plank backs against the dark core, ends under posts and edges in t
 and the visible planks baked 1.9 times lighter than the target (reports/engine/2026-10-21-
 rough-specular). "measure_ao" measures such a zone only over texels whose baked AO is at
 least the given value, the faces open to the outside; the gain still reaches every texel.
+Weathering placed by the model, as for the roofs made of pieces (docs/remaster-pipeline.md,
+«Материал из модели»); each is off unless its key is set, so older props bake as before:
+- "crevice": dirt (or moss, by its colour) packed in the joints between parts, from a short AO;
+- "seam": dirt along every edge of a part, from a wider Bevel than the worn edges: a slit of a few
+  millimetres between two lid planks darkens no flat top in the AO, and the slit alone broke into a
+  dotted line under a grazing look (crate lids, harbour-rigging fourth review); a band about "radius"
+  wide on both sides of it stays a line in the mips;
+- "streaks": water runs down from the parts above a point; a ray from every texel up along its
+  surface finds them. Under iron it leaves rust, under another part dirt, fading over "length"
+  metres, in vertical columns about "column" metres wide;
+- "wet_roughness": the wet bottom is smoother, down to this roughness; rust and dirt stay matte.
+The weathering darkens before each zone is scaled to its measured mean, like the AO.
+- "moss": patches of moss after the zones met their targets, so the green is the moss's own: on tops,
+  near the ground and in shaded corners, cut out of a smooth 3D noise at "cover" of each zone's open texels,
+  with a damp darker halo around them; "grain" > 1 stretches the patches that many times along each part's
+  long axis, so they run as strips along boards and beams; "detail" adds a finer unstretched layer that
+  breaks their edges (the strips alone read as regular hatching on the crate lids, fourth review); "edges"
+  draws it to the "seam" mask, to the gaps and edges of boards, not into camouflage spots on their faces;
+  "opacity" below 1 and "keep_grain" (0-1, how much of the wood's own light and dark the moss keeps) let
+  the grain show through, so a mossy beam is not a flat green fill (fifth review). The harbour crates had a thin dotted line of
+  crevice moss and 0-0.2 % green on their lids against 1.2-6 % on the original's; round patches then read
+  as stickers (asset harbour-rigging, reviews 2026-10-30).
+"metal_scale" multiplies the metallic of the "metal" zones: rusty, grimy iron is mostly not metal.
 """
 import json
 import math
@@ -108,6 +138,23 @@ bpy.ops.object.mode_set(mode="EDIT")
 bpy.ops.mesh.select_all(action="SELECT")
 bpy.ops.uv.smart_project(angle_limit=math.radians(cfg.get("angle_limit", 35)), island_margin=0.0,
                          area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+if cfg.get("island_scale"):
+    # Faces nobody sees (a crate's dark core) shrink before packing, so the open boards get the texels:
+    # the harbour pile gave its cores as much atlas as its planks and its lids read as felt from afar.
+    # Each such face shrinks about its own centre; pack_islands then treats it as its own island.
+    bpy.ops.object.mode_set(mode="OBJECT")
+    uv = mesh.uv_layers["Atlas"].data
+    for poly in mesh.polygons:
+        factor = cfg["island_scale"].get(keys[poly.material_index], 1.0)
+        if factor == 1.0:
+            continue
+        loops = list(poly.loop_indices)
+        cu = sum(uv[i].uv[0] for i in loops) / len(loops)
+        cv = sum(uv[i].uv[1] for i in loops) / len(loops)
+        for i in loops:
+            uv[i].uv = (cu + (uv[i].uv[0] - cu) * factor, cv + (uv[i].uv[1] - cv) * factor)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
 bpy.ops.uv.pack_islands(rotate=True, margin=cfg.get("margin", 0.006))
 bpy.ops.object.mode_set(mode="OBJECT")
 
@@ -145,6 +192,8 @@ if light:
     tones[light[0]] = light[1]
 tone_attr = mesh.attributes.new("tone", "FLOAT", "FACE")
 tone_attr.data.foreach_set("value", tones[part].astype(np.float32))
+part_attr = mesh.attributes.new("part_id", "FLOAT", "FACE")    # which part a texel belongs to, for the streaks
+part_attr.data.foreach_set("value", part.astype(np.float32))
 zone_attr = mesh.attributes.new("zone", "FLOAT", "FACE")
 # Faces pointing down (a barrel's bottom on the ground) are left out of the measured mean, but still
 # get their zone's gain: a canopy's underside is seen. They carry half a step on top of their zone.
@@ -218,6 +267,13 @@ for slot in obj.material_slots:
     links.new(bevel.outputs[0], dot.inputs[0])
     links.new(geo.outputs["True Normal"], dot.inputs[1])
     edge = math_node(nodes, links, "MULTIPLY", math_node(nodes, links, "SUBTRACT", 1.0, dot.outputs["Value"]), 9.0, clamp=True)
+    seam_bevel = node(nodes, "ShaderNodeBevel", samples=16)
+    seam_bevel.inputs["Radius"].default_value = cfg.get("seam", {}).get("radius", 0.012)
+    seam_dot = node(nodes, "ShaderNodeVectorMath", operation="DOT_PRODUCT")
+    links.new(seam_bevel.outputs[0], seam_dot.inputs[0])
+    links.new(geo.outputs["True Normal"], seam_dot.inputs[1])
+    seam_mask = math_node(nodes, links, "MULTIPLY", math_node(nodes, links, "SUBTRACT", 1.0, seam_dot.outputs["Value"]),
+                          cfg.get("seam", {}).get("gain", 4.0), clamp=True)
     sep = node(nodes, "ShaderNodeSeparateXYZ")
     links.new(geo.outputs["Position"], sep.inputs[0])
     z = math_node(nodes, links, "SUBTRACT", sep.outputs["Z"], float(z0))
@@ -263,6 +319,10 @@ for slot in obj.material_slots:
         rough_out = math_node(nodes, links, "ADD", rough, math_node(nodes, links, "MULTIPLY", edge, 0.15), clamp=True)
         metal_out = math_node(nodes, links, "MULTIPLY", metallic, math_node(nodes, links, "SUBTRACT", 1.0,
                               math_node(nodes, links, "MULTIPLY", edge, 0.5)), clamp=True)
+        if "metal_scale" in cfg:
+            # Rusty, grimy iron is mostly not metal: a metal gets no diffuse light, so in shade
+            # the original's mossy hoops, lighter than the staves, came out black.
+            metal_out = math_node(nodes, links, "MULTIPLY", metal_out, cfg["metal_scale"])
     else:
         worn = mix(nodes, links, 1.0, colour, (2.2, 2.05, 1.85, 1.0), "MULTIPLY")
         colour = mix(nodes, links, math_node(nodes, links, "MULTIPLY", edge, edge_wear(key)), colour, worn)
@@ -283,8 +343,21 @@ for slot in obj.material_slots:
     links.new(bevel_n.outputs[0], bsdf.inputs["Normal"])
     emission = node(nodes, "ShaderNodeEmission")
     zone_val = node(nodes, "ShaderNodeAttribute", attribute_type="GEOMETRY", attribute_name="zone").outputs["Fac"]
+    # where a texel lies on the model and which way it faces, for the weathering placed by geometry
+    rel = node(nodes, "ShaderNodeVectorMath", operation="SUBTRACT")
+    links.new(geo.outputs["Position"], rel.inputs[0])
+    rel.inputs[1].default_value = tuple(float(v) for v in lo)
+    rel_scaled = node(nodes, "ShaderNodeVectorMath", operation="DIVIDE")
+    links.new(rel.outputs[0], rel_scaled.inputs[0])
+    rel_scaled.inputs[1].default_value = tuple(float(max(v, 1e-6)) for v in hi - lo)
+    facing = node(nodes, "ShaderNodeVectorMath", operation="MULTIPLY_ADD")
+    links.new(geo.outputs["Normal"], facing.inputs[0])
+    facing.inputs[1].default_value = (0.5, 0.5, 0.5)
+    facing.inputs[2].default_value = (0.5, 0.5, 0.5)
+    part_val = node(nodes, "ShaderNodeAttribute", attribute_type="GEOMETRY", attribute_name="part_id").outputs["Fac"]
     passes[mat.name] = dict(nodes=nodes, links=links, output=output, emission=emission, bsdf=bsdf,
-                            colour=colour, rough=rough_out, metal=metal_out, zone=zone_val)
+                            colour=colour, rough=rough_out, metal=metal_out, zone=zone_val,
+                            position=rel_scaled.outputs[0], facing=facing.outputs[0], part_id=part_val, seam=seam_mask)
     targets[key] = cfg["targets"][key]
 
 
@@ -336,6 +409,105 @@ ao = bake_pass("ao", "AO", samples=cfg.get("ao_samples", 64))[:, :, 0]
 
 strength = cfg.get("ao_strength", 0.85)
 albedo = colour * (1 - strength * (1 - ao))[..., None]
+if "despeckle" in cfg:
+    # Knots in a plank tile are small, near-black and repeat with the tile: from above a crate lid they read as a
+    # pattern of dark dots (crates-path, fifth review). Texels much darker than their neighbourhood are lifted
+    # toward its mean, so a knot stays a soft trace.
+    spec = cfg["despeckle"]
+    r = spec.get("radius", 6)
+
+    def box(a):
+        c = np.cumsum(np.cumsum(np.pad(a, ((r + 1, r), (r + 1, r), (0, 0)), mode="edge"), 0), 1)
+        return (c[2 * r + 1:, 2 * r + 1:] - c[:-2 * r - 1, 2 * r + 1:] - c[2 * r + 1:, :-2 * r - 1] + c[:-2 * r - 1, :-2 * r - 1]) / (2 * r + 1) ** 2
+    local = box(colour)
+    lum, lum_local = colour @ np.array([0.2126, 0.7152, 0.0722]), local @ np.array([0.2126, 0.7152, 0.0722])
+    dark = np.clip((spec.get("below", 0.6) - lum / np.maximum(lum_local, 1e-6)) / 0.2, 0, 1) * spec.get("lift", 0.7)
+    colour = colour * (1 - dark[..., None]) + local * dark[..., None]
+    albedo = colour * (1 - strength * (1 - ao))[..., None]
+weathering = {}
+if any(k in cfg for k in ("crevice", "streaks", "wet_roughness", "moss", "seam")):
+    position = lo + bake_pass("position", "EMIT", "position", samples=1, margin=16) * (hi - lo)
+    texel_part = np.rint(bake_pass("part", "EMIT", "part_id", samples=1, margin=16)[:, :, 0]).astype(int)
+    facing = bake_pass("facing", "EMIT", "facing", samples=1, margin=16) * 2 - 1
+    is_metal = np.array([keys[i] in metal_keys for i in range(len(keys))])
+    zone_index = np.floor(zone + 1e-3).astype(int) - 1
+    zone_metal = (zone_index >= 0) & is_metal[np.clip(zone_index, 0, len(keys) - 1)]
+    if "crevice" in cfg:
+        spec = cfg["crevice"]
+        world.light_settings.distance = spec.get("distance", 0.02)
+        crevice = bake_pass("crevice", "AO", samples=cfg.get("ao_samples", 64))[:, :, 0]
+        world.light_settings.distance = cfg.get("ao_distance", 0.15)
+        gap = np.clip((1 - crevice) / 0.5, 0, 1) * ~zone_metal
+        dirt = spec.get("dirt", 0.7) * gap
+        albedo = albedo * (1 - dirt[..., None]) + np.array(spec.get("colour", [0.008, 0.007, 0.005])) * dirt[..., None]
+        weathering["crevice"] = gap
+    seam = np.zeros((size, size))
+    if "seam" in cfg or cfg.get("moss", {}).get("edges"):
+        seam = bake_pass("seam", "EMIT", "seam", samples=cfg.get("seam", {}).get("samples", 16))[:, :, 0] * ~zone_metal
+    if "seam" in cfg:
+        weathering["seam"] = seam
+    if "streaks" in cfg:
+        from mathutils import Vector
+        from mathutils.bvhtree import BVHTree
+        spec = cfg["streaks"]
+        length = spec.get("length", 0.25)
+        tree = BVHTree.FromObject(obj, bpy.context.evaluated_depsgraph_get())
+        rows, cols = np.nonzero(inside)
+        rust = np.zeros((size, size))
+        drip = np.zeros((size, size))
+        for r, c in zip(rows.tolist(), cols.tolist()):
+            p, n = position[r, c], facing[r, c]
+            # Water runs down along the surface, so its source lies up along the surface: on a barrel
+            # that is up the stave to the hoop sitting on it. Tops and bottoms get no streaks.
+            along = Vector((-n[2] * n[0], -n[2] * n[1], 1 - n[2] * n[2]))
+            if along.length < 0.3:
+                continue
+            along.normalize()
+            origin = Vector((p[0] + n[0] * 0.003, p[1] + n[1] * 0.003, p[2] + n[2] * 0.003))
+            travelled, face = 0.0, None
+            for _ in range(4):                      # a part does not drip on itself: look past it
+                hit, _normal, found, distance = tree.ray_cast(origin, along, length - travelled)
+                if hit is None:
+                    break
+                travelled += distance
+                if part[found] != texel_part[r, c] or mat_index[found] != zone_index[r, c]:
+                    face = found
+                    break
+                origin = hit + along * 0.002
+                travelled += 0.002
+            if face is None or travelled < 0.004:
+                continue
+            distance = travelled
+            fade = (1 - distance / length) ** 1.5
+            if keys[mat_index[face]] in metal_keys:
+                rust[r, c] = fade
+            else:
+                drip[r, c] = fade
+        # streaks run in vertical columns: a noise over the horizontal plane only
+        column = spec.get("column", 0.012)
+        grid = 256
+        field = rng.standard_normal((grid, grid))
+        fy = np.fft.fftfreq(grid)[:, None] * grid
+        fx = np.fft.fftfreq(grid)[None, :] * grid
+        extent = max(hi[0] - lo[0], hi[1] - lo[1])
+        field = np.fft.ifft2(np.fft.fft2(field) * np.exp(-(fx ** 2 + fy ** 2) / (extent / column / 2) ** 2)).real
+        field = (field - field.mean()) / (field.std() + 1e-9)
+        gx = np.clip(((position[..., 0] - lo[0]) / extent * (grid - 1)).astype(int), 0, grid - 1)
+        gy = np.clip(((position[..., 1] - lo[1]) / extent * (grid - 1)).astype(int), 0, grid - 1)
+        columns = np.clip(0.4 + 0.6 * field[gy, gx], 0, 1)
+        rust *= columns * ~zone_metal
+        drip *= columns * ~zone_metal
+        tint = spec.get("rust", 0.6) * rust
+        albedo = albedo * (1 - tint[..., None]) + np.array(spec.get("rust_colour", [0.045, 0.022, 0.010])) * tint[..., None]
+        albedo *= (1 - spec.get("dirt", 0.35) * drip)[..., None]
+        weathering["rust"], weathering["drip"] = rust, drip
+    if "wet_roughness" in cfg:
+        wet = np.clip((cfg.get("wet_height", 0.18) - (position[..., 2] - z0)) / cfg.get("wet_height", 0.18), 0, 1)
+        wet *= inside & ~zone_metal
+        rough = rough - (rough - cfg["wet_roughness"]) * np.clip(wet, 0, 1) * (rough > cfg["wet_roughness"])
+        matte = np.maximum(weathering.get("rust", 0) * 1.5, weathering.get("drip", 0))
+        rough = np.maximum(rough, np.clip(matte, 0, 0.95))
+        weathering["wet"] = wet
 zone_id = np.floor(zone + 1e-3).astype(int)
 down = zone - zone_id > 0.25
 report = {}
@@ -363,6 +535,90 @@ for index, key in enumerate(keys):
                    "contrast": gamma, "mean_before": mean.round(5).tolist(),
                    "gain": gain.round(3).tolist(), "target": targets[key],
                    "tile_normal": tile_normal(key), "edge_wear": edge_wear(key) if key not in metal_keys else None}
+if "seam" in cfg:
+    # After the zones met their targets, like the moss: laid before, the darker seams raised every zone's
+    # gain and washed the damp and the moss off the crate sides (crates-path, fifth review).
+    spec = cfg["seam"]
+    dirt = spec.get("dark", 0.5) * seam
+    albedo = albedo * (1 - dirt[..., None]) + np.array(spec.get("colour", [0.008, 0.007, 0.005])) * dirt[..., None]
+if "moss" in cfg:
+    # Moss in patches, laid after each zone met its colour target so its green is the moss's own:
+    # on tops (facing up), near the ground and in shaded corners, cut out of a smooth 3D noise so it
+    # forms patches, not a film. "cover" is the share of each listed zone's open texels it takes.
+    spec = cfg["moss"]
+    scale = spec.get("scale", 0.12)
+    dirs = rng.standard_normal((14, 3))
+    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+    freqs = 2 * np.pi / (scale * rng.uniform(0.6, 1.8, 14))
+    phases = rng.uniform(0, 2 * np.pi, 14)
+    # Along the grain: each part's long axis (from its texels), the noise stretched "grain" times along it,
+    # so moss runs in strips along boards and beams, in their gaps and along their edges, not in round dots.
+    stretched = position.copy()
+    grain = spec.get("grain", 1.0)
+    if grain != 1.0:
+        for pid in np.unique(texel_part[inside]):
+            sel_p = inside & (texel_part == pid)
+            pts = position[sel_p]
+            if len(pts) < 16:
+                continue
+            centred = pts - pts.mean(axis=0)
+            axis = np.linalg.svd(centred[:: max(1, len(pts) // 2000)], full_matrices=False)[2][0]
+            along = centred @ axis
+            stretched[sel_p] = pts + np.outer(along, axis) * (1 / grain - 1)
+    noise = sum(np.sin(stretched @ d * f + ph) for d, f, ph in zip(dirs, freqs, phases)) / np.sqrt(7)
+    if spec.get("detail", 0.0):
+        # a finer, unstretched layer breaks the strips' edges and spacing: one scale alone read as hatching
+        d2 = rng.standard_normal((10, 3))
+        d2 /= np.linalg.norm(d2, axis=1, keepdims=True)
+        f2 = 2 * np.pi / (scale * rng.uniform(0.2, 0.45, 10))
+        noise = noise + spec["detail"] * sum(np.sin(position @ d * f + ph) for d, f, ph in
+                                             zip(d2, f2, rng.uniform(0, 2 * np.pi, 10))) / np.sqrt(5)
+    up = np.clip(facing[..., 2], 0, 1)
+    low = np.clip(1 - (position[..., 2] - z0) / spec.get("low", 0.25), 0, 1)
+    shade = np.clip((1 - ao) / 0.4, 0, 1)
+    bias = (spec.get("top", 1.0) * up ** 2 + spec.get("bottom", 0.8) * low + spec.get("shade", 0.6) * shade
+            + spec.get("edges", 0.0) * seam)
+    field = noise + bias
+    moss = np.zeros((size, size))
+    cover = {}
+    for key in spec.get("zones", keys):
+        index = keys.index(key) + 1
+        sel = (zone_id == index) & inside & ~down
+        if not sel.any():
+            continue
+        share = spec.get("cover", {}).get(key, 0.06) if isinstance(spec.get("cover"), dict) else spec.get("cover", 0.06)
+        cut = np.quantile(field[sel], 1 - share)
+        soft = spec.get("soft", 0.25)
+        m = np.clip((field - cut) / soft + 0.5, 0, 1) * (zone_id == index) * inside
+        moss = np.maximum(moss, m)
+        cover[key] = round(float((m[sel] > 0.5).mean()), 4)
+    dark, light = np.array(spec.get("dark", [0.018, 0.028, 0.007])), np.array(spec.get("light", [0.045, 0.06, 0.013]))
+    # the moss's own light and dark from a fine noise in many directions: one plane wave here laid regular
+    # diagonal stripes 6-7 px apart over every beam of the net rack (fifth review)
+    d3 = rng.standard_normal((9, 3))
+    d3 /= np.linalg.norm(d3, axis=1, keepdims=True)
+    f3 = 2 * np.pi / (scale * rng.uniform(0.15, 0.4, 9))
+    # on the stretched coordinates, so the moss's light and dark runs along the boards like their grain
+    tone = sum(np.sin(stretched @ d * f + ph) for d, f, ph in zip(d3, f3, rng.uniform(0, 2 * np.pi, 9))) / np.sqrt(4.5)
+    tone = np.clip(0.5 + 0.35 * tone, 0, 1)[..., None]
+    green = dark * (1 - tone) + light * tone
+    green = green * (0.55 + 0.45 * ao)[..., None]
+    if spec.get("keep_grain", 0.0):
+        # the wood's own light and dark, relative to its zone's mean, carried into the moss
+        lum = albedo @ np.array([0.2126, 0.7152, 0.0722])
+        rel = np.ones((size, size))
+        for key in spec.get("zones", keys):
+            sel = (zone_id == keys.index(key) + 1) & inside
+            if sel.any():
+                rel[sel] = lum[sel] / max(float(lum[sel].mean()), 1e-6)
+        green = green * np.clip(rel, 0.3, 2.5)[..., None] ** spec["keep_grain"]
+    moss = moss * spec.get("opacity", 1.0)
+    halo = np.clip((field - np.quantile(field[inside], 0.5)) / 1.5, 0, 1) * (1 - moss) * inside
+    albedo *= (1 - spec.get("damp", 0.25) * halo)[..., None]
+    albedo = albedo * (1 - moss[..., None]) + green * moss[..., None]
+    rough = np.maximum(rough, moss * 0.95)
+    weathering["moss"] = moss
+    report["moss"] = cover
 albedo = np.clip(albedo, 0, 1)
 
 
@@ -396,6 +652,8 @@ for key, (atlas_key, _group) in cfg["slots"].items():
         save_png(folder / "metallic.png", metal)
         save_png(folder / "ao.png", np.ones_like(ao))  # AO is already in the albedo
         save_png(out / "atlas-ao.png", ao)
+        for name, mask in weathering.items():
+            save_png(out / f"atlas-{name}.png", np.clip(mask, 0, 1))
         first = folder
     elif not folder.exists():
         shutil.copytree(first, folder)
@@ -403,6 +661,7 @@ for key, (atlas_key, _group) in cfg["slots"].items():
 # --- export: atlas UV only, zone materials merged into atlas materials ---
 mesh.uv_layers.remove(mesh.uv_layers["Tile"])
 mesh.attributes.remove(mesh.attributes["tone"])
+mesh.attributes.remove(mesh.attributes["part_id"])
 if "_PART" in mesh.attributes:
     mesh.attributes.remove(mesh.attributes["_PART"])
 mesh.attributes.remove(mesh.attributes["zone"])

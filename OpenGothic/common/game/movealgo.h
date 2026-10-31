@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <limits>
 
-#include <zenkit/Material.hh>
+#include "asset/material.h"
 
 #include <Tempest/Point>
 
@@ -58,6 +58,8 @@ class MoveAlgo final {
     void    tick(uint64_t dt, MvFlags fai=NoFlag);
 
     void    multSpeed(float s){ mulSpeed=s; }
+    // Read-only mapping of previewed MAN root motion through native rotation/speed.
+    void    applyRotation(Tempest::Vec3& out, const Tempest::Vec3& in) const;
     void    clearSpeed();
     void    resetCharacterVirtual(bool mobTransition=false);
     void    carryCharacterVirtual(uint64_t dt);
@@ -87,7 +89,7 @@ class MoveAlgo final {
     bool    characterVirtualActive() const { return virtualMovementActive; }
     auto    characterVirtualGroundVelocity() const -> Tempest::Vec3 { return virtualGroundVelocity; }
 
-    zenkit::MaterialGroup groundMaterial() const;
+    asset::MaterialGroup groundMaterial() const;
     auto    groundNormal() const -> Tempest::Vec3;
 
     auto    portalName() -> std::string_view;
@@ -135,7 +137,6 @@ class MoveAlgo final {
     bool    isForward(const Tempest::Vec3& dp) const;
     bool    isBackward(const Tempest::Vec3& dp) const;
     bool    testMoveDirection(const Tempest::Vec3& dp, const Tempest::Vec3& dir) const;
-    void    applyRotation(Tempest::Vec3& out, const Tempest::Vec3& in) const;
     void    applyRotation(Tempest::Vec3& out, const Tempest::Vec3& in, float radians) const;
     auto    animMoveSpeed(uint64_t dt) const -> Tempest::Vec3;
     auto    npcMoveSpeed (uint64_t dt, MvFlags moveFlg) -> Tempest::Vec3;

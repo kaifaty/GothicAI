@@ -531,6 +531,8 @@ def rendered_series(args: argparse.Namespace, manifest: dict[str, Any]) -> dict[
     argv = ["/usr/bin/time", "-v", "-o", str(output / "resources.txt"),
             "/usr/bin/xvfb-run", "-a", "-s", "-screen 0 640x480x24",
             str(args.rendered), "-g", str(args.assets), "-g2", "-window", "-devmode", "-save", "1"]
+    subprocess.run(["bash", str(Path(__file__).with_name("base-ensure.sh")), str(args.assets)],
+                   env=dict(environment, GAME_BIN=str(args.rendered)), check=True)
     started = time.monotonic()
     samples = []
     with (output / "launcher.log").open("wb") as log:

@@ -345,7 +345,8 @@ def _english_stem(dub: Dub, line_slots: list[Slot], recordings: list[Path], name
         trim_start = f"atrim=start={-clip.start:.9f},asetpts=PTS-STARTPTS," if clip.start < 0 else ""
         delay = max(0, round(clip.start * stems.SAMPLE_RATE))
         filters.append(
-            f"[{index}:a]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,"
+            f"[{index}:a]aformat=sample_rates=48000:channel_layouts=stereo,{levels.DUAL_MONO},"
+            "asetpts=PTS-STARTPTS,"
             f"volume={gains[clip.who]:.9f}dB,adeclick=t=1:b=3,"
             f"afade=t=in:d={fade:.9f},afade=t=out:st={duration - fade:.9f}:d={fade:.9f},"
             f"{trim_start}adelay=delays={delay}S:all=1[v{index}]"

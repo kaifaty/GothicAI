@@ -168,13 +168,13 @@ void StoryTriggers::tick(World& world) {
   const uint64_t now = world.tickCount();
   if(v==nullptr || pl==nullptr)
     return;
-  if(now>=nextDeaths) {
+  if(now>=nextDeaths || nextDeaths>now+DeathsMs) {
     nextDeaths = now+DeathsMs;
     // looked for even without death triggers: one put later must not take old deaths for news
     for(auto& d : deaths.look(world))
       onDeath(world,*d.npc,d.killer);
     }
-  if(now<nextState)
+  if(now<nextState && nextState<=now+StateMs)
     return;
   nextState = now+StateMs;
   for(size_t i=0; i<triggers.size(); ++i) {

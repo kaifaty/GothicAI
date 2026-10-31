@@ -4,6 +4,8 @@ import csv
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 from PIL import Image
@@ -63,11 +65,24 @@ def test_historical_captures_allow_seven_but_iteration3_requires_window(tmp_path
         capture.check(*inputs, iteration3=True)
 
 
-def test_iteration3_rejects_opened_window_original(tmp_path):
+def test_prepared_base_originals_are_accepted(tmp_path, capsys):
+    inputs = capture_check_inputs(tmp_path, "original", capture.MATERIALS, original=True)
+    census = inputs[0] / "census.json"
+    data = json.loads(census.read_text())
+    data["replacements"] = [dict(row, kind="basetexture") for row in data["files"]]
+    data["files"] = []
+    census.write_text(json.dumps(data))
+    capture.check(*inputs)
+    assert "pilot_replaced=0 pilot_originals=7" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("source", ("archive", "base"))
+def test_iteration3_rejects_opened_window_original(tmp_path, source):
     inputs = capture_check_inputs(tmp_path, "pilot-3b", capture.ITERATION3_MATERIALS)
     census = inputs[0] / "census.json"
     data = json.loads(census.read_text())
-    data["files"] = [{"kind": "texture", "name": "NW_CITY_WINDOW_03-C.TEX"}]
+    row = {"kind": "texture" if source == "archive" else "basetexture", "name": "NW_CITY_WINDOW_03-C.TEX"}
+    data["files" if source == "archive" else "replacements"].append(row)
     census.write_text(json.dumps(data))
     with pytest.raises(SystemExit, match="pilot originals opened: NW_CITY_WINDOW_03"):
         capture.check(*inputs)
@@ -100,6 +115,39 @@ def test_house_captures_reject_opened_basement_original(tmp_path, variant):
     census.write_text(json.dumps(data))
     with pytest.raises(SystemExit, match="pilot originals opened: NW_CITY_FACHWERKBASEMENT_CHAIN_01"):
         capture.check(*inputs, market_house=True)
+
+
+def test_harbour_game_rebuilds_stale_links_without_removing_real_files(tmp_path):
+    source = tmp_path / "game-settings"
+    old = tmp_path / "old-installation"
+    target = tmp_path / "task/game"
+    for directory in (source / "system", old / "system", target / "system"):
+        directory.mkdir(parents=True)
+    (source / "system/Gothic.ini").write_text("new settings")
+    (source / "system/SystemPack.ini").write_text("[PARAMETERS]\nVerticalFOV=90\n")
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (old / "system" / name).write_text("old settings")
+        (target / "system" / name).symlink_to(old / "system" / name)
+    (target / "Data").symlink_to("/nonexistent/Data")
+    for name in ("_work", "Saves", "vdfs.cfg"):
+        (old / name).touch()
+        (target / name).symlink_to(old / name)
+    kept = (target / "keep.txt", target / "system/personal.ini")
+    for path in kept:
+        path.write_text("personal file")
+    script = Path(__file__).with_name("capture-quality-pilot.sh").read_text()
+    block = script.split("<<'PYGAME'\n", 1)[1].split("\nPYGAME", 1)[0]
+    for _ in range(2):
+        subprocess.run([sys.executable, "-c", block, str(source), str(target)], check=True)
+        assert all(path.read_text() == "personal file" for path in kept)
+        assert (target / "system/Gothic.ini").resolve() == source / "system/Gothic.ini"
+        assert "VerticalFOV=125" in (target / "system/SystemPack.ini").read_text()
+        assert not (target / "system/SystemPack.ini").is_symlink()
+        assert (old / "system/SystemPack.ini").read_text() == "old settings"
+        assert all(not (target / name).exists() and not (target / name).is_symlink()
+                   for name in ("Data", "_work", "Saves", "vdfs.cfg"))
+        links = [path for path in target.rglob("*") if path.is_symlink()]
+        assert links and all(path.exists() and path.resolve().is_relative_to(source) for path in links)
 
 
 def harbour_check_inputs(tmp_path):
@@ -202,11 +250,11 @@ def test_hut_captures_reject_wrong_frame_size(tmp_path):
         capture.check(*inputs, harbour_hut=True)
 
 
-def test_hut_captures_require_original_variant(tmp_path):
+def test_hut_staging_capture_requires_full_material_set(tmp_path):
     inputs = hut_check_inputs(tmp_path)
-    variant = inputs[0].with_name("staging")
+    variant = inputs[0].with_name("hut-1")
     inputs[0].rename(variant)
-    with pytest.raises(SystemExit, match="harbour survey requires original materials"):
+    with pytest.raises(SystemExit, match="expected 0 original or 58 staging materials"):
         capture.check(variant, *inputs[1:], harbour_hut=True)
 
 
@@ -321,3 +369,41 @@ def test_house_boards_keep_three_full_frame_panels_in_order(tmp_path, house2):
             assert board.size == (3 * 768, 432 + 44)
             for panel, colour in enumerate(colours):
                 assert board.getpixel((panel * 768 + 384, 260)) == pytest.approx(colour, abs=3)
+
+
+def remaster_check_inputs(tmp_path, variant, textures):
+    directory = tmp_path / variant
+    directory.mkdir()
+    (directory / "exit.txt").write_text("0\n")
+    spots = ("roofs-harbour", "roofs-upper")
+    scenario = tmp_path / "city-roofs.bench"
+    scenario.write_text("".join(f"goto spot\nshot {spot}\n" for spot in spots))
+    index = tmp_path / "materials.json"
+    index.write_text(json.dumps({texture: {} for texture in textures}))
+    (directory / "game.log").write_text(f"materials: {len(textures)} entries from test\n[bench] goto spot\n"
+        + "".join(f"[bench] shot {spot}\n" for spot in spots) + "[bench] done\n")
+    entries = [{"kind": "texture", "name": texture} for texture in textures]
+    (directory / "census.json").write_text(json.dumps({"files": [], "replacements": entries}))
+    for spot in spots:
+        Image.new("RGB", (1280, 720)).save(directory / f"{spot}.png")
+    return directory, scenario, index
+
+
+def test_remaster_set_checked_against_its_own_index(tmp_path, capsys):
+    inputs = remaster_check_inputs(tmp_path, "roofs-1", ["NW_CITY_ROOF_01.TGA", "NW_CITY_ROOF_04.TGA"])
+    capture.check(*inputs, remaster=True)
+    assert "roofs-1: shots=2 materials=2 pilot_replaced=2 pilot_originals=0" in capsys.readouterr().out
+    census = inputs[0] / "census.json"
+    census.write_text(json.dumps({"files": [{"kind": "texture", "name": "NW_CITY_ROOF_04.TGA"}],
+                                  "replacements": [{"kind": "texture", "name": "NW_CITY_ROOF_01.TGA"}]}))
+    with pytest.raises(SystemExit, match="pilot textures not replaced: NW_CITY_ROOF_04"):
+        capture.check(*inputs, remaster=True)
+
+
+def test_remaster_original_needs_empty_index(tmp_path, capsys):
+    for folder in ("empty", "filled"):
+        (tmp_path / folder).mkdir()
+    capture.check(*remaster_check_inputs(tmp_path / "empty", "original", []), remaster=True)
+    assert "original: shots=2 materials=0" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="original needs an empty index"):
+        capture.check(*remaster_check_inputs(tmp_path / "filled", "original", ["NW_CITY_ROOF_01.TGA"]), remaster=True)

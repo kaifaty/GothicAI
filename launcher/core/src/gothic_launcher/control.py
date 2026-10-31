@@ -37,7 +37,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import signal
 import sys
 import time
 import zipfile
@@ -60,13 +59,18 @@ from .commands import (
     latest_save,
     load_config,
     new_log_dir,
+    preparation,
     services,
     tools,
 )
-from .linux_session import LinuxSession, installation_lock
 from .settings import CONFIG_DIR, Config, Secrets, Settings
 from .state import STATE_DIR, AlreadyRunning, SessionFile
 from .supervisor import Event, NotReady, Supervisor, temporary
+
+if sys.platform != "win32":
+    from .linux_session import LinuxSession, installation_lock
+else:  # the Ryzen desktop session needs fcntl; Windows runs the Supervisor directly
+    LinuxSession = installation_lock = None
 
 log = logging.getLogger(__name__)
 
@@ -384,12 +388,14 @@ class Control:
                 self.session["state"] = "waiting"
                 self.session["services"]["queue"] = {"state": "waiting", "detail": "Ожидаем допуска gq"}
             else:
+                game_proc = game(config, layout, ports, save=save, new=mode == "new")
                 self.supervisor = Supervisor(
                     services(config, layout, ports, cwd=log_dir),
-                    game(config, layout, ports, save=save, new=mode == "new"),
+                    game_proc,
                     log_dir,
                     self._on_event,
                     session=lock,
+                    preparation=preparation(layout.game_bin, layout.game_dir, log_dir, game_proc.env),
                 )
                 if sys.platform == "linux":
                     self.session["voice_enabled"] = config.settings.voice.enabled
@@ -447,7 +453,7 @@ class Control:
             svc.update(state=e.kind, detail=e.detail)
             if e.data:
                 svc["health"] = e.data
-            if e.kind == "failed":
+            if e.kind == "failed" and (e.proc != "queue" or self.session["failed"] is None):
                 self.session["failed"] = {"proc": e.proc, "detail": e.detail}
         self.write({"event": "service", "data": asdict(e)})
 
@@ -515,10 +521,11 @@ async def serve() -> int:
         sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
         sys.stdout.flush()
 
+    from .cli import on_stop_signals
+
     control = Control(write)
     closing = asyncio.Event()
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        loop.add_signal_handler(sig, closing.set)
+    on_stop_signals(loop, lambda _sig: closing.set())
     requests: set[asyncio.Task[None]] = set()
 
     async def read() -> None:

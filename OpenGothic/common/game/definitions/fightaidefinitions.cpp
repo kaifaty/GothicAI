@@ -23,7 +23,7 @@ const FightAi::FA& FightAi::operator[](size_t i) const {
   return tmp;
   }
 
-zenkit::IFightAi FightAi::loadAi(zenkit::DaedalusVm& vm, std::string_view name) {
+Def::FightAi FightAi::loadAi(zenkit::DaedalusVm& vm, std::string_view name) {
   auto id = vm.find_symbol_by_name(name);
   if(id==nullptr)
     return {};
@@ -33,10 +33,10 @@ zenkit::IFightAi FightAi::loadAi(zenkit::DaedalusVm& vm, std::string_view name) 
 
   try {
     auto fai = vm.init_opaque_instance(id);
-    zenkit::IFightAi ret = {};
+    Def::FightAi ret = {};
     // Note: any excessive move will be discarded
-    for(size_t i=0; i<zenkit::IFightAi::move_count && i<move->count(); ++i) {
-      ret.move[i] = zenkit::FightAiMove(move->get_int(uint16_t(i), fai.get()));
+    for(size_t i=0; i<Def::FightAi::move_count && i<move->count(); ++i) {
+      ret.move[i] = Def::FightMove(move->get_int(uint16_t(i), fai.get()));
       }
     return ret;
     }

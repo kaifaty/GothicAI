@@ -1,0 +1,140 @@
+{
+ "mode": "load",
+ "label": "dev-ubuntu-pinned",
+ "host": "dev-ubuntu",
+ "port": 47835,
+ "streams": 4,
+ "duration_s": 600.0,
+ "elapsed_s": 600.0083386669867,
+ "started_at": "2026-10-27T20:02:34.503401Z",
+ "ended_at": "2026-10-27T20:12:34.514590Z",
+ "valid_for_ms": 100,
+ "call_timeout_ms": 1000,
+ "seed": 0,
+ "steps": 43211,
+ "responses": 43195,
+ "decisions": 3807,
+ "fallback": 0,
+ "timeouts": 16,
+ "errors": 0,
+ "reconnects": 16,
+ "stale": 489,
+ "stale_fraction": 0.011320754716981131,
+ "per_stream": [
+  {
+   "stream": 0,
+   "phase_s": 0.8444218515250481,
+   "steps": 10779,
+   "responses": 10775,
+   "decisions": 951,
+   "fallback": 0,
+   "timeouts": 4,
+   "errors": 0,
+   "reconnects": 4,
+   "stale": 139
+  },
+  {
+   "stream": 1,
+   "phase_s": 0.7579544029403025,
+   "steps": 10811,
+   "responses": 10807,
+   "decisions": 951,
+   "fallback": 0,
+   "timeouts": 4,
+   "errors": 0,
+   "reconnects": 4,
+   "stale": 102
+  },
+  {
+   "stream": 2,
+   "phase_s": 0.420571580830845,
+   "steps": 10804,
+   "responses": 10800,
+   "decisions": 953,
+   "fallback": 0,
+   "timeouts": 4,
+   "errors": 0,
+   "reconnects": 4,
+   "stale": 137
+  },
+  {
+   "stream": 3,
+   "phase_s": 0.25891675029296335,
+   "steps": 10817,
+   "responses": 10813,
+   "decisions": 952,
+   "fallback": 0,
+   "timeouts": 4,
+   "errors": 0,
+   "reconnects": 4,
+   "stale": 111
+  }
+ ],
+ "rtt_ms": {
+  "p50": 7.673124899156392,
+  "p95": 28.779792017303407,
+  "p99": 52.23416700027883,
+  "p99.9": 152.11637504398823,
+  "max": 802.118374966085
+ },
+ "age_ms": {
+  "p99": 114.34383306186646,
+  "max": 844.9062089202926
+ },
+ "lag_ms": {
+  "p99": 63.68066614959389,
+  "max": 781.0237089870498
+ },
+ "rtt_by_minute": [
+  {
+   "minute": 0,
+   "steps": 4241,
+   "p99": 59.74579195026308
+  },
+  {
+   "minute": 1,
+   "steps": 4370,
+   "p99": 51.14112491719425
+  },
+  {
+   "minute": 2,
+   "steps": 4335,
+   "p99": 63.31050000153482
+  },
+  {
+   "minute": 3,
+   "steps": 4408,
+   "p99": 58.37929202243686
+  },
+  {
+   "minute": 4,
+   "steps": 4218,
+   "p99": 63.8824999332428
+  },
+  {
+   "minute": 5,
+   "steps": 4100,
+   "p99": 30.20941698923707
+  },
+  {
+   "minute": 6,
+   "steps": 4374,
+   "p99": 46.3559590280056
+  },
+  {
+   "minute": 7,
+   "steps": 4382,
+   "p99": 30.061291065067053
+  },
+  {
+   "minute": 8,
+   "steps": 4346,
+   "p99": 28.31749990582466
+  },
+  {
+   "minute": 9,
+   "steps": 4421,
+   "p99": 35.15383310150355
+  }
+ ]
+}

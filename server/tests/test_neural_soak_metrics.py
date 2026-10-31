@@ -195,6 +195,66 @@ class Summary:
     release_late_seconds: float | None = None
     end_trigger: str = "target_lost"
     accept_wait_timeouts: int = 0
+    policy: str = "service"
+    selected_actions: tuple = ()
+    accepted_actions: tuple = ()
+    policy_fallbacks: tuple = ()
+    policy_memory_resets: int = 0
+    engine_steps: int = 0
+    engine_p99_us: float | None = None
+
+
+@pytest.mark.parametrize(("accepted", "p99_us", "fallbacks", "reason", "release_s", "failed_gate"), [
+    (95, 20_000, (), "target_lost", 2, None),
+    (94, 20_000, (), "target_lost", 2, "accepted_commands"),
+    (95, 20_001, (), "target_lost", 2, "engine_latency"),
+    (95, 20_000, (("policy_error", 1),), "target_lost", 2, "fault_fallbacks"),
+    (95, 20_000, (("command_busy", 5),), "target_lost", 2, None),
+    (95, 20_000, (), "lease_lost", 2, "fault_fallbacks"),
+    (95, 20_000, (), "target_lost", 2.001, "release_clean"),
+])
+def test_engine_summaries_preserve_soak_gates_and_action_diagnostics(
+    tmp_path, monkeypatch, accepted, p99_us, fallbacks, reason, release_s, failed_gate,
+):
+    now = [0.0]
+    monkeypatch.setattr("gothic_ai.scenarios.neural_soak_metrics.rss_bytes", lambda pid: 1000)
+    (tmp_path / "game.pid").write_text("123")
+    (tmp_path / "server.log").write_text("INFO ready\n")
+    pilot = SimpleNamespace(people={}, active_count=0, policy="engine")
+    metrics = SoakMetrics(SimpleNamespace(body_leases={}), pilot, tmp_path, clock=lambda: now[0])
+    metrics.sample(force=True)
+    lease = BodyLease(
+        npc="BANDIT", provider="neural-body", mode="realtime", session_epoch=1,
+        world_epoch=1, entity_id=1, control_generation=1, goal_version=1,
+        target_entity_id=2, acquired_observation_seq=1,
+    )
+    summary = Summary(
+        policy="engine", decisions=accepted, reason=reason, lease=lease, release_seconds=release_s,
+        selected_actions=(("continue", 70), ("wait_200", 30)),
+        accepted_actions=(("continue", accepted - 30), ("wait_200", 30)),
+        policy_memory_resets=1, policy_fallbacks=fallbacks,
+        fallbacks=sum(count for reason, count in fallbacks if reason == "policy_error"),
+        engine_steps=100, engine_p99_us=p99_us,
+    )
+    metrics._completed(None, summary, finish_at=0)
+    now[0] = 180
+
+    checks = metrics.write_result(eligible=100, captured=95)
+
+    assert {name for name, value in checks.items() if value.startswith("failed")} == (
+        {failed_gate} if failed_gate else set()
+    )
+    assert "service_latency" not in checks
+    assert metrics.data["metrics"]["policy_decisions"] == 100
+    assert metrics.data["metrics"]["accepted_commands"] == accepted
+    record = metrics.fight_records[0]
+    assert record["actions"] == {"0": 70, "10": 30}
+    assert record["wait_200_fraction"] == .3
+    assert record["accepted_fraction"] == accepted / 100
+    assert record["accepted_actions"] == {"continue": accepted - 30, "wait_200": 30}
+    assert record["accepted_action_fractions"]["continue"] == (accepted - 30) / 70
+    assert record["summary"]["policy_memory_resets"] == 1
+    assert record["service_calls"] == 0
 
 
 async def test_observers_chain_and_retain_fights_beyond_the_pilot_deque(tmp_path, monkeypatch):

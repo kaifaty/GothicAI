@@ -1,0 +1,50 @@
+# Comparison frames for render settings: two market views, the forest road and the candle-lit interior.
+# `ui on` routes each shot through the swapchain-sized frame, so reduced resolution is upscaled;
+# the eight-second samples let each shot finish and give the frame time of the same view.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui on
+view full
+cam lift off
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+watch player
+cam look 120
+cam world 700 280 90
+wait 10000
+cam hold
+shot market-a
+perf sample perf-shot/view-1
+wait 8000
+perf stop
+cam world 700 280 270
+wait 500
+cam hold
+shot market-b
+perf sample perf-shot/view-2
+wait 8000
+perf stop
+goto NW_FOREST_PATH_16
+watch player
+cam look 150
+cam world 500 230 0
+wait 10000
+cam hold
+shot forest
+perf sample perf-shot/view-3
+wait 8000
+perf stop
+set time 22 0
+goto pos 3924 -73 -6663
+watch player
+cam look 110
+cam world 160 170 0
+wait 10000
+cam hold
+shot interior
+perf sample perf-shot/view-4
+wait 8000
+perf stop

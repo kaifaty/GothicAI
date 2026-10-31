@@ -3,7 +3,7 @@
 #include <string>
 #include <string_view>
 
-#include <zenkit/world/VobTree.hh>
+#include "asset/worldtypes.h"
 
 namespace MovableVobs {
 
@@ -16,7 +16,7 @@ struct Rule {
 
 // Only ordinary, visible mesh vobs are eligible. Interactive objects and other
 // vob types retain their original physics regardless of their visual name.
-const Rule* classify(const zenkit::VirtualObject& vob);
+const Rule* classify(const asset::VirtualObject& vob);
 const Rule* classifyVisual(std::string_view visual);
 
 }

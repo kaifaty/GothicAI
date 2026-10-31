@@ -13,6 +13,8 @@ bool running();
 bool fullSimulation(const Npc& npc);
 // Explicit stand physics mode; ordinary NPC controller radius rules stay unchanged.
 bool forceCharacterVirtual(const Npc& npc);
+// Only the current approach fixture clone is neutral; its physical guild is unchanged.
+bool nonhostileTarget(const Npc& npc);
 void command(const std::vector<std::string>& args, World& world, Npc& player,
              const std::string& output);
 void tick(World& world, uint64_t dt);

@@ -54,6 +54,17 @@ class Record:
     def broken(self) -> bool:
         return bool(self.lied or self.broke or self.crimes)
 
+    def broken_reason(self) -> str:
+        """Why this npc no longer takes the hero's word."""
+        reasons = []
+        if self.lied:
+            reasons.append("он уже лгал тебе")
+        if self.broke:
+            reasons.append("он не сдержал слово")
+        if self.crimes:
+            reasons.append(f"его дела подорвали твоё доверие ({'; '.join(self.crimes)})")
+        return "; ".join(reasons)
+
 
 class Trust:
     """The hero's word in the eyes of each npc: a TurnExtension with situation lines only."""

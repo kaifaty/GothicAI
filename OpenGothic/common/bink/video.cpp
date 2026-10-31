@@ -6,6 +6,7 @@
 #endif
 
 #include <stdexcept>
+#include <cstdio>
 #include <iostream>
 #include <cmath>
 #include <cstring>
@@ -13,6 +14,14 @@
 #include <limits>
 
 using namespace Bink;
+
+namespace {
+class RecoverableVideoError final : public std::runtime_error {
+  public:
+    RecoverableVideoError(const char* reason, size_t position) : std::runtime_error(reason), bit(position) {}
+    size_t bit;
+  };
+}
 
 static const float    sqrthalf = std::sqrt(0.5f);
 
@@ -753,7 +762,7 @@ struct Video::BitStream {
 
   void skip(size_t n) {
     if(at+n>bitCount)
-      throw std::runtime_error("io error");
+      throw RecoverableVideoError("video bitstream underrun",at);
     at+=n;
     }
 
@@ -771,7 +780,7 @@ struct Video::BitStream {
 
   uint32_t getBit() {
     if(at>=bitCount)
-      throw std::runtime_error("io error");
+      throw RecoverableVideoError("video bitstream underrun",at);
     uint8_t d    = data[at >> 3];
     size_t  mask = 1 << (at & 7);
     at++;
@@ -780,7 +789,7 @@ struct Video::BitStream {
 
   uint32_t getBits(int n) {
     if(at+n>bitCount)
-      throw std::runtime_error("io error");
+      throw RecoverableVideoError("video bitstream underrun",at);
     uint32_t v = fetch32();
     at+=n;
     return v & ((uint32_t(1)<<n)-1);
@@ -788,7 +797,7 @@ struct Video::BitStream {
 
   uint32_t showBits(int n) {
     if(at>=bitCount)
-      throw std::runtime_error("io error");
+      throw RecoverableVideoError("video bitstream underrun",at);
     uint32_t v = fetch32();
     return v & ((uint32_t(1)<<n)-1);
     }
@@ -825,7 +834,7 @@ Video::AudioCtx::AudioCtx(uint16_t sampleRate, uint8_t channels, bool isDct)
   :sampleRate(sampleRate), channelsCnt(channels), isDct(isDct) {
   }
 
-Video::Video(Input* file) : fin(file) {
+Video::Video(Input* file, std::string_view filename) : fin(file), sourceName(filename) {
   packet.reserve(4*1024*1024);
 
   uint32_t codec = rl32();
@@ -982,7 +991,20 @@ void Video::readPacket() {
 
   packet.resize(videoSize);
   fin->read(packet.data(),packet.size());
-  parseFrame(packet);
+  try {
+    parseFrame(packet);
+    }
+  catch(const RecoverableVideoError& error) {
+    auto& current=frames[frameCounter%2];
+    const auto& previous=frames[(frameCounter+1)%2];
+    // BIKi keeps the last successful image as its reference when a packet fails, as ffmpeg
+    // does. Repeat that image without discarding this packet's already decoded audio.
+    for(size_t plane=0;plane<4;++plane)
+      current.planes[plane]=previous.planes[plane];
+    ++recoveryCounter;
+    std::fprintf(stderr,"Bink: %s frame %u (zero-based), bit %zu: %s; displaying previous frame, audio retained\n",
+                 sourceName.empty() ? "<unknown>" : sourceName.c_str(),frameCounter,error.bit,error.what());
+    }
   }
 
 void Video::merge(BitStream& gb, uint8_t *dst, uint8_t *src, int size) {
@@ -1315,8 +1337,11 @@ void Video::decodePlane(BitStream& gb, int planeId, bool chroma) {
           bundle[BINK_SRC_COLORS].cur_ptr += 64;
           break;
           }
-        default:
-          throw VideoDecodingException("not implemented block type");
+        default: {
+          char reason[64];
+          std::snprintf(reason,sizeof(reason),"unknown video block type %d",int(blk));
+          throw RecoverableVideoError(reason,gb.position());
+          }
         }
 
       if(isScaled) {

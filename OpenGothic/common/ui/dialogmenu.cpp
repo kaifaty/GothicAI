@@ -18,11 +18,11 @@ bool DialogMenu::Pipe::output(Npc &npc, std::string_view text) {
   return owner.aiOutput(npc,text);
   }
 
-bool DialogMenu::Pipe::outputSvm(Npc &npc, std::string_view text) {
+bool DialogMenu::Pipe::outputSvm(Npc &npc, std::string_view text, std::string_view, Npc*) {
   return owner.aiOutput(npc,text);
   }
 
-bool DialogMenu::Pipe::outputOv(Npc &npc, std::string_view text) {
+bool DialogMenu::Pipe::outputOv(Npc &npc, std::string_view text, std::string_view, Npc*) {
   return owner.aiOutput(npc,text);
   }
 

@@ -1,8 +1,11 @@
+#include "asset/fromzenkit.h"
 #include "graphics/mesh/aim.h"
 #include "graphics/mesh/bowdraw.h"
 #include "graphics/mesh/skeleton.h"
 #include "game/aimstep.h"
 #include "game/aimcamera.h"
+
+#include <zenkit/ModelHierarchy.hh>
 
 #include <algorithm>
 #include <array>
@@ -63,7 +66,7 @@ Matrix4x4 objectAt(const Vec3& origin, float yaw, const Vec3& scale) {
   }
 
 zenkit::ModelHierarchy hierarchy() {
-  zenkit::ModelHierarchy source;
+  zenkit::ModelHierarchy source{};
   struct Bone { const char* name; int16_t parent; Vec3 offset; };
   // Identity joint rotations, realistic segment lengths and slightly asymmetric joint positions.
   // The arrow follows the identity right-hand slot's -X axis.
@@ -94,7 +97,7 @@ zenkit::ModelHierarchy hierarchy() {
   }
 
 struct Fixture final {
-  Skeleton skeleton{hierarchy(),nullptr,"HUMANS.MDS"};
+  Skeleton skeleton{asset::fromZenKit(hierarchy()),nullptr,"HUMANS.MDS"};
 
   std::vector<Matrix4x4> pose(const Vec3& origin, float yaw, const Vec3& pelvis,
                             const Vec3& scale = Vec3(1,1,1), float armDown = 0.f) const {
@@ -131,7 +134,7 @@ struct BowFixture final {
   enum : size_t { BowChest = 4, BowHand = 14, BowSlot = 15 };
 
   static zenkit::ModelHierarchy hierarchy() {
-    zenkit::ModelHierarchy source;
+    zenkit::ModelHierarchy source{};
     struct Bone { const char* name; int16_t parent; Vec3 offset; float roll; };
     const Bone bones[] = {
       {"BIP01",-1,{0,0,0},0}, {"BIP01 PELVIS",0,{0,95,0},0},
@@ -167,7 +170,7 @@ struct BowFixture final {
     return source;
     }
 
-  Skeleton skeleton{hierarchy(),nullptr,"HUMANS.MDS"};
+  Skeleton skeleton{asset::fromZenKit(hierarchy()),nullptr,"HUMANS.MDS"};
 
   std::vector<Matrix4x4> pose(float down) const {
     const Vec3 pivot = position(skeleton.tr[BowChest]);

@@ -189,6 +189,40 @@ _ADDRESS = frozenset(
     "капитан генерал отец сынок учитель хозяин торговец кузнец страж стражник маг".split()
 )
 
+_WORLD_HINTS = (
+    "Иннос", "Инноса", "Инносу", "Аданос", "Аданоса", "Аданосу", "Белиар", "Белиара", "Белиару",
+    "Хоринис", "Хориниса", "Хоринисе", "Долина Рудников", "Долине Рудников", "Долину Рудников",
+    "Яркендар", "Яркендаре",
+)
+
+
+def _asr_name_hints(name: str) -> list[str]:
+    """The complete name, its words and their simple Russian case forms, preserving spelling."""
+    hints = [name]
+    for word in re.findall(r"[^\W\d_]+", name):
+        if len(word) < 3 or word.lower().replace("ё", "е") in _ADDRESS:
+            continue
+        hints.append(word)
+        last = word[-1].lower()
+        if last in "бвгджзклмнпрстфхцчшщ":
+            stem, endings = word, ("а", "у", "ом", "е")
+        elif last == "й":
+            stem, endings = word[:-1], ("я", "ю", "ем", "е")
+        elif last == "а":
+            stem = word[:-1]
+            before = word[-2].lower()
+            endings = ("и" if before in "гкхжшщч" else "ы", "е", "у",
+                       "ей" if before in "жшщчц" else "ой")
+        elif last == "я":
+            stem, endings = word[:-1], ("и", "и" if word.lower().endswith("ия") else "е", "ю", "ей")
+        else:
+            continue
+        hints.extend(stem + (ending.upper() if word.isupper() else ending) for ending in endings)
+    return list(dict.fromkeys(
+        hint for hint in hints
+        if hint and all(c.isalpha() or c.isdigit() or c in " .,'():!?;-" for c in hint)
+    ))
+
 
 # a phrase to several of those around («Пацаны, здорово», «Всем привет», «Эй, вы двое»): to the conversation.
 # A bare «вы» is the polite one to one person as often: only with a count of them («вы все», «вы двое»)
@@ -379,6 +413,35 @@ class TalkDesk:
         dialogue.take_body = self.hold
         dialogue.free_body = self.free
         dialogue.on_end = self.on_npc_end
+
+    def asr_hints(self, focus: str | None) -> list[str]:
+        """Priority names and world words, then nearby names in a stable alphabetical order."""
+        names: list[str] = []
+        if focus and (entry := self.people.get(focus.upper())) is not None and entry.activity != "down":
+            names.append(entry.name)
+        if self.partner is not None:
+            entry = self.people.get(self.partner.npc)
+            if entry is None or entry.activity != "down":
+                names.append(self.partner.name)
+        hints = [hint for name in names for hint in _asr_name_hints(name)]
+        hints.extend(_WORLD_HINTS)
+        hints = list(dict.fromkeys(hints))[:100]
+        selected = set(hints)
+        others: list[tuple[str, list[str]]] = []
+        for entry in sorted(self.people.values(), key=lambda entry: entry.earshot):
+            if len(selected) == 100:
+                break
+            if entry.activity == "down":
+                continue
+            forms = _asr_name_hints(entry.name)
+            others.append((entry.name, forms))
+            for hint in forms:
+                if len(selected) == 100:
+                    break
+                selected.add(hint)
+        for _, forms in sorted(others, key=lambda item: (item[0].casefold(), item[0])):
+            hints.extend(hint for hint in forms if hint in selected)
+        return list(dict.fromkeys(hints))
 
     # --- events ---------------------------------------------------------------------------
 

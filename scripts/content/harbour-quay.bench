@@ -1,0 +1,85 @@
+# Harbour quay: one view of each texture, from scripts/content/city-intent.bench (geometry-selected
+# inspection cameras), noon, NPCs hidden.
+cheat god
+set time 12 0
+overlay off
+view hide animated morph pfx
+cam lift off
+
+# NW_CITY_HAFENKAI_MAUER_01.TGA | NW_CITY_WAY_TO_SHIP_10 | upper quay wall face
+# Camera: Inspection reframe: hero anchored 20 m above the surface to avoid teleport collision; camera eye and target kept in the scene.
+view hide animated morph pfx
+cam look -2000.000
+goto pos -6360 1526 -9360
+cam world 280.264 -1931.363 -9.679
+wait 34
+cam hold
+wait 6000
+shot nw_city_hafenkai_mauer_01
+wait 300
+
+# NW_CITY_HAFENKAI_BODEN_01.TGA | NW_CITY_WAY_TO_SHIP_12 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos -7172 -267 -14113
+cam world 489.600 740.287 122.719
+wait 34
+cam hold
+wait 6000
+shot nw_city_hafenkai_boden_01
+wait 300
+
+# NW_HARBOUR_WOOD_IRON_01.TGA | NW_CITY_SMITH_01_03 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 4990 465 -746
+cam world 177.628 -210.836 21.865
+wait 34
+cam hold
+wait 6000
+shot nw_harbour_wood_iron_01
+wait 300
+
+# NW_HARBOUR_STAIRS_01.TGA | NW_CITY_UPTOWN_PATH_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 8619 438 -4749
+cam world 480.855 335.720 -179.903
+wait 34
+cam hold
+wait 6000
+shot nw_harbour_stairs_01
+wait 300
+
+# NW_CITY_HAFENRANDSTEIN_01.TGA | NW_CITY_WAY_TO_SHIP_05 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos -6553 -249 -4599
+cam world 542.457 409.608 114.812
+wait 34
+cam hold
+wait 6000
+shot nw_city_hafenrandstein_01
+wait 300
+
+# NW_CITY_HAFENKAI_BODEN_TRANS_01.TGA | NW_CITY_HABOUR_KASERN_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1006 -230 2464
+cam world 407.870 632.719 83.306
+wait 34
+cam hold
+wait 6000
+shot nw_city_hafenkai_boden_trans_01
+wait 300
+
+# NW_HARBOUR_STAIRS_03.TGA | NW_TROLLAREA_PORTALTEMPEL_04 | whole-world fallback
+view hide animated morph pfx
+cam look 45.000
+goto pos 77806 3959 23075
+cam world 212.021 198.842 -76.914
+wait 34
+cam hold
+wait 6000
+shot nw_harbour_stairs_03
+wait 300

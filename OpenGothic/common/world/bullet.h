@@ -76,7 +76,7 @@ class Bullet final : public DynamicWorld::BulletCallback {
     void     onSpellWorldHit(const DynamicWorld::BulletWorldHit& hit) override;
     void     onStop() override;
     void     onMove() override;
-    void     onCollide(zenkit::MaterialGroup matId) override;
+    void     onCollide(asset::MaterialGroup matId) override;
     bool     onCollide(Npc& other) override;
     bool     onCollidePrecise(Npc& other, const Tempest::Vec3& from, const Tempest::Vec3& to) override;
 

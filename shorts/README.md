@@ -17,7 +17,11 @@ catalogued. All three Xardas shots use `xardas-tower`.
 The hero and each NPC are levelled by speaker using all their recorded lines. Their combined voice stem
 is cut on the same timeline as the picture and effects. `levels.publish` calibrates the effects, music
 and ending against that voice, masters it to −14 LUFS, and checks the decoded AAC (true peak and clicks
-included). It prints the levels table and writes `short-<lang>.levels.json`; a failed check leaves no
+included). All stems are averaged to dual mono before levelling and loudness measurements, keeping a
+stereo layout. Published AAC has two identical channels; the `dual_mono` gate requires max L−R ≤ −90 dBFS.
+AAC uses AudioToolbox where available; the FFmpeg fallback uses 256k with PNS and intensity stereo
+disabled and M/S forced to keep noisy audio in dual mono.
+It prints the levels table and writes `short-<lang>.levels.json`; a failed check leaves no
 published MP4. Old takes without NPC stems or verified `musicVolume=0` and `worldSounds=0` must be filmed again. `--lang en`
 changes the captions and keeps the same sound.
 
@@ -88,6 +92,7 @@ shots:
 | `cam cut`, `cam smooth <0..1>` | the next shot jumps instead of gliding; how fast the camera glides |
 | `caption <text>`, `caption off` | text at the top of the short from here |
 | `ai attach <npc>`, `ai detach <npc>` | the bridge's console: the npc is held (stands, answers in the game's queue) |
+| `ai skip <npc>` | its important dialogs count as told: it does not stop the hero with the game's own greeting |
 
 ## Making a short (the agent's loop)
 
@@ -112,7 +117,8 @@ Say so in the description.
 - `film` voices the hero's lines once (`tts-service`, `gothic-tts say`, the voice `SHORTS_HERO` designed from
   `hero_voice`; kept in `.shorts/voice/` by text), writes the bench scenario, starts ASR, TTS and the AI
   server like the launcher (with `--voice-files`: a `ptt_start` may name a wav instead of the microphone),
-  and the game with the bench in film mode:
+  and the game with the bench in film mode. TTS always starts with `--no-original-voices`: shorts keep
+  designed NPC voices regardless of the launcher's `tts.original_voices` setting:
   - `TEMPEST_WINDOW_SIZE`: the frame (486x864 points, 972x1728 pixels);
   - `TEMPEST_AUDIO_LOOPBACK=48000`: nothing plays; OpenAL mixes the game's effects when the bench asks, a
     frame's worth per frame, into `main.wav` next to `main.mp4`;
@@ -183,8 +189,11 @@ or the visual model bounds of an item or intact prop; it marks departures from t
   shorts published before it (`bodies`, `archery`, `hits`) say `"brand": false` and cut as they went out: Arial
   and Georgia on black bands, no sting. They are not re-uploaded.
 - `cut.py` stacks each beat, grades both halves the same (a little brighter), takes the sound of the "on"
-  take (with the bed under it), limits the peaks and brings it to -14 LUFS by one gain (loudnorm in two passes,
-  linear: one pass lifts the quiet stretches), fading out over the last 80 ms.
+  take (with the bed under it), folds each stem to dual mono before levelling, limits the peaks and brings
+  it to -14 LUFS by one gain (loudnorm in two passes,
+  linear: one pass lifts the quiet stretches), fading out over the last 80 ms. Parts and the sting use
+  the same AAC encoder at 48 kHz stereo. The unvoiced master also checks decoded AAC with `dual_mono`
+  and removes the output if L−R exceeds −90 dBFS.
 
 ### The brand: the end sting
 
@@ -282,11 +291,14 @@ have the published short's duration (within one frame at 30 fps).
 
 `dub` replaces the Russian voice stem with English and publishes through the same `levels.publish` as the
 Russian short: voice −14 LUFS, true peak at most −1 dBTP after AAC, voice above effects above music, the
-ending at S−6, and no clicks. It writes `dub.en.levels.json` with the checks and prints the levels table,
+ending at S−6, and no clicks. English stems are folded to dual mono before levelling; the `dual_mono`
+gate checks the decoded English AAC for max L−R ≤ −90 dBFS. It writes `dub.en.levels.json` with the checks
+and prints the levels table,
 each line's timing, speed-up and gain, and both languages' mastered voice levels. `dub.en.mp4` copies the
 Russian picture without re-encoding, with the verified English AAC first (default, `eng`) and the original
-Russian audio second (`rus`), with faststart. `dub.en.wav` decodes that English AAC to 48 kHz stereo,
-24-bit PCM, exactly as long as the Russian short's audio (within 1 ms). Input-check refusals leave previous
+Russian audio second (`rus`), with faststart. Published English AAC has two identical channels.
+`dub.en.wav` decodes that English AAC to 48 kHz stereo dual mono, 24-bit PCM, exactly as long as the Russian
+short's audio (within 1 ms). Input-check refusals leave previous
 dub files untouched; old outputs are removed only when assembly starts, after which failures leave neither
 WAV nor MP4, while a failed levels report is kept.
 
@@ -409,4 +421,11 @@ private unless `--privacy public` (or `unlisted`). YouTube no longer locks the u
 its audit to private, and `upload` reads the status back: if YouTube kept the video private, it says so (then
 the project needs YouTube's API audit, and Studio can not change it). `upload` shows the channel, the file and the title and asks before it sends anything; it refuses any
 channel but the project's (GothicAI, `UCbeAoPh3V7yFVpiuWNI-wkw`; `--channel` or `GOTHIC_YOUTUBE_CHANNEL`).
+
+## Plan and log
+
+- 2026-10-22: fold audio stems to dual mono before levelling and measurements; publish identical AAC
+  channels and reject voiced publication when the decoded `dual_mono` gate exceeds −90 dBFS L−R.
+- 2026-10-22: disable PNS and intensity stereo and force M/S in the 256k AAC fallback; use the shared
+  encoder for comparison parts and stings, and check unvoiced comparison AAC with `dual_mono`.
 

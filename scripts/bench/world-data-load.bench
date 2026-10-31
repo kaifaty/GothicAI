@@ -1,0 +1,7 @@
+# SAVE=<world-data output>/session-world-data.sav with the automatic base; observe the authored chest and door.
+own-mesh-chest reload 7654 126 1238 23109
+world-data check
+rec world-data-loaded novideo
+wait 1000
+stop
+census

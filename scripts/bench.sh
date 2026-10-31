@@ -20,18 +20,33 @@
 #      SOUND, MUSIC  volumes 0..1 (default 0); with TEMPEST_AUDIO_LOOPBACK=48000 the sound of a segment
 #                    goes into <segment>.wav instead of the speakers
 #      MOVABLE_VOBS  optional initial GAME movable_vobs setting (0 or 1), before world loading
+#      ITEM_HULLS    optional initial GAME item_hulls setting (0 or 1), for new item bodies
+#      FURNITURE_PARTS optional initial GAME furniture_parts setting (0 or 1)
 #      ARROW_STICKING optional initial GAME arrow_sticking setting (0 or 1), before world loading
 #      PHYSICS_NOISE optional initial GAME physics_noise setting (0 or 1), before world loading
 #      DESTRUCTION optional initial GAME destruction setting (0 or 1), before world loading
 #      BUOYANCY     optional initial GAME buoyancy setting (0 or 1), before world loading
 #      CLOTH        optional initial GAME cloth setting (0 or 1), before world loading
+#      ITEM_WAKE    optional initial GAME item_wake setting (0 or 1), before world loading
+#      PLACED_ITEMS optional initial GAME placed_items setting (0 or 1), before world loading
+#      STATIC_COLLISION_SPLIT optional initial GAME static_collision_split setting (0 or 1), before world loading
 #      CHARACTER_VIRTUAL optional initial GAME character_virtual setting (0 or 1), before world loading
 #      NPC_CHARACTER_VIRTUAL optional initial GAME npc_character_virtual setting (0 or 1)
 #      MONSTER_CHARACTER_VIRTUAL optional initial GAME monster_character_virtual setting (0 or 1)
+#      MELEE_PHYSICS_HITS optional initial GAME melee_physics_hits setting (0 or 1)
+#      MELEE_POSTURE optional initial GAME melee_posture setting (0 or 1)
+#      MELEE_DOWN_TACTICS optional initial GAME melee_down_tactics setting (0 or 1)
+#      MELEE_HITSTOP optional initial GAME melee_hitstop setting (0 or 1)
+#      MELEE_STAMINA optional initial GAME melee_stamina setting (0 or 1)
+#      MELEE_PARRY optional initial GAME melee_parry setting (0 or 1)
+#      MELEE_REACTIONS optional initial GAME melee_reactions setting (0 or 1)
+#      MELEE_BLADE_SHADOW optional initial GAME melee_blade_shadow setting (0 or 1)
 #      OPENGOTHIC_TEXTURES  sharper textures (default: those of scripts/hd-textures.sh, when made; empty: none)
 #      OPENGOTHIC_CENSUS  session resource JSON (use an absolute path inside out dir for Ryzen)
 #      OPENGOTHIC_FRACTURE  pre-cut meshes (default: ~/.local/share/gothic-ai/fracture, when made; empty: none)
+#      OPENGOTHIC_CONVEX_PARTS furniture collision cache (default: ~/.local/share/gothic-ai/convex-parts; empty: none)
 #      OPENGOTHIC_CONTENT  material/mesh overrides (Ryzen: sync this directory; empty: none; unset: engine default)
+#      OPENGOTHIC_BASE_CACHE, OPENGOTHIC_BASE_STORE  base cache/store on the selected host
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEFAULT_GOTHIC_DIR="/Volumes/DevSSD/Dev/games/Gothic II"
@@ -40,6 +55,7 @@ BIN="$ROOT/OpenGothic/build/opengothic/Gothic2Notr"
 GAME_BIN="${GAME_BIN:-$BIN}"
 HD_TEXTURES="$HOME/.local/share/gothic-ai/hd-textures/textures"
 FRACTURE_CACHE="$HOME/.local/share/gothic-ai/fracture"
+CONVEX_PARTS_CACHE="$HOME/.local/share/gothic-ai/convex-parts"
 BENCH_HOST="${BENCH_HOST:-auto}"
 case "$BENCH_HOST" in
   auto|ryzen|local) ;;
@@ -51,6 +67,16 @@ SCEN="${1:?usage: scripts/bench.sh <scenario> [out dir]}"
 [[ -f "$SCEN" ]] || { echo "no scenario: $1" >&2; exit 2; }
 SCEN="$(cd "$(dirname "$SCEN")" && pwd)/$(basename "$SCEN")"
 NAME="$(basename "$SCEN" .bench)"
+if [[ "$NAME" == routine-return ]]; then
+  export WORLD="${WORLD:-NEWWORLD.ZEN}"
+  export TIMEOUT="${TIMEOUT:-3600}"
+  export RYZEN_MAX="${RYZEN_MAX:-75m}"
+  [[ "$WORLD" == NEWWORLD.ZEN ]] || { echo "bench: routine-return requires WORLD=NEWWORLD.ZEN" >&2; exit 2; }
+fi
+if [[ "$NAME" == streaming-flythrough || "$NAME" == streaming-shots || "$NAME" == furniture-parts ]]; then
+  export WORLD="${WORLD:-NEWWORLD.ZEN}"
+  export RYZEN_BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"
+fi
 NEEDS_CADENCE=0
 if awk '$1 == "cadence" { found=1 } END { exit !found }' "$SCEN"; then NEEDS_CADENCE=1; fi
 OUT="${2:-$ROOT/.bench/$NAME-$(date +%Y%m%d-%H%M%S)}"
@@ -77,7 +103,8 @@ out, textures = map(path, sys.argv[1:])
 for name, value in sorted(os.environ.items()):
     if not name.startswith(("OPENGOTHIC_", "GOTHIC_", "TEMPEST_")):
         continue
-    if name in ("GOTHIC_DIR", "GOTHIC_AI_URL", "OPENGOTHIC_FRACTURE", "OPENGOTHIC_CONTENT"):
+    if name in ("GOTHIC_DIR", "GOTHIC_AI_URL", "OPENGOTHIC_FRACTURE", "OPENGOTHIC_CONVEX_PARTS", "OPENGOTHIC_CONTENT", "OPENGOTHIC_BASE",
+                "OPENGOTHIC_BASE_CACHE", "OPENGOTHIC_BASE_STORE"):
         continue
     if not value.startswith(("/", "~/")):
         continue
@@ -137,7 +164,7 @@ fi
 
 # These fixtures use a prepared world and clock; skip the new-game chapter video
 # before their first command on NEWWORLD.
-if [[ "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census ]]; then
+if [[ "$NAME" == placed-items* || "$NAME" == item-wake || "$NAME" == routine-return || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough || "$NAME" == streaming-shots || "$NAME" == furniture-parts || "$NAME" == loadprobe-idle || "$NAME" == loadprobe-chain ]]; then
   START_ARGS+=(-nointro)
 fi
 
@@ -166,6 +193,25 @@ if [[ "${RYZEN_BENCH:-}" != 1 && "$NEEDS_CADENCE" == 1 ]]; then
   fi
 fi
 
+# Chunk publication measurements need frame profiling as well as normal cadence.
+if [[ "${RYZEN_BENCH:-}" != 1 && "$NAME" == streaming-flythrough ]]; then
+  PROFILE_BUILD="$(dirname "$GAME_BIN")"
+  PROFILE_SUPPORTED=0
+  for ((i = 0; i < 4; i++)); do
+    if [[ -f "$PROFILE_BUILD/CMakeCache.txt" ]]; then
+      if grep -qx 'OPENGOTHIC_ENABLE_FRAME_PROFILE:BOOL=ON' "$PROFILE_BUILD/CMakeCache.txt"; then
+        PROFILE_SUPPORTED=1
+      fi
+      break
+    fi
+    PROFILE_BUILD="$(dirname "$PROFILE_BUILD")"
+  done
+  if [[ "$PROFILE_SUPPORTED" != 1 ]]; then
+    echo 'bench: streaming-flythrough requires -DOPENGOTHIC_ENABLE_FRAME_PROFILE=ON; use BENCH_HOST=ryzen to wait for Ryzen' >&2
+    exit 2
+  fi
+fi
+
 # the game reads Gothic.ini and saves from its working directory
 RUN="$OUT/run"
 mkdir -p "$RUN"
@@ -182,11 +228,19 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
     printf 'movable_vobs=%s\n' "$MOVABLE_VOBS" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${ITEM_HULLS:-}" ]]; then
+    [[ "$ITEM_HULLS" == 0 || "$ITEM_HULLS" == 1 ]] || { echo "ITEM_HULLS must be 0 or 1" >&2; exit 2; }
+    printf 'item_hulls=%s\n' "$ITEM_HULLS" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${FURNITURE_PARTS:-}" ]]; then
+    [[ "$FURNITURE_PARTS" == 0 || "$FURNITURE_PARTS" == 1 ]] || { echo "FURNITURE_PARTS must be 0 or 1" >&2; exit 2; }
+    printf 'furniture_parts=%s\n' "$FURNITURE_PARTS" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${ARROW_STICKING:-}" ]]; then
     [[ "$ARROW_STICKING" == 0 || "$ARROW_STICKING" == 1 ]] || { echo "ARROW_STICKING must be 0 or 1" >&2; exit 2; }
@@ -204,6 +258,38 @@ if [[ -n "${MOVABLE_VOBS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}
     [[ "$MONSTER_CHARACTER_VIRTUAL" == 0 || "$MONSTER_CHARACTER_VIRTUAL" == 1 ]] || { echo "MONSTER_CHARACTER_VIRTUAL must be 0 or 1" >&2; exit 2; }
     printf 'monster_character_virtual=%s\n' "$MONSTER_CHARACTER_VIRTUAL" >>"$RUN/Gothic.ini"
   fi
+  if [[ -n "${MELEE_PHYSICS_HITS:-}" ]]; then
+    [[ "$MELEE_PHYSICS_HITS" == 0 || "$MELEE_PHYSICS_HITS" == 1 ]] || { echo "MELEE_PHYSICS_HITS must be 0 or 1" >&2; exit 2; }
+    printf 'melee_physics_hits=%s\n' "$MELEE_PHYSICS_HITS" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_POSTURE:-}${MELEE_REACTIONS:-}" ]]; then
+    [[ "$MELEE_POSTURE" == 0 || "$MELEE_POSTURE" == 1 ]] || { echo "MELEE_POSTURE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_posture=%s\n' "$MELEE_POSTURE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_DOWN_TACTICS:-}" ]]; then
+    [[ "$MELEE_DOWN_TACTICS" == 0 || "$MELEE_DOWN_TACTICS" == 1 ]] || { echo "MELEE_DOWN_TACTICS must be 0 or 1" >&2; exit 2; }
+    printf 'melee_down_tactics=%s\n' "$MELEE_DOWN_TACTICS" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_HITSTOP:-}" ]]; then
+    [[ "$MELEE_HITSTOP" == 0 || "$MELEE_HITSTOP" == 1 ]] || { echo "MELEE_HITSTOP must be 0 or 1" >&2; exit 2; }
+    printf 'melee_hitstop=%s\n' "$MELEE_HITSTOP" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_STAMINA:-}" ]]; then
+    [[ "$MELEE_STAMINA" == 0 || "$MELEE_STAMINA" == 1 ]] || { echo "MELEE_STAMINA must be 0 or 1" >&2; exit 2; }
+    printf 'melee_stamina=%s\n' "$MELEE_STAMINA" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_PARRY:-}" ]]; then
+    [[ "$MELEE_PARRY" == 0 || "$MELEE_PARRY" == 1 ]] || { echo "MELEE_PARRY must be 0 or 1" >&2; exit 2; }
+    printf 'melee_parry=%s\n' "$MELEE_PARRY" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_REACTIONS:-}" ]]; then
+    [[ "$MELEE_REACTIONS" == 0 || "$MELEE_REACTIONS" == 1 ]] || { echo "MELEE_REACTIONS must be 0 or 1" >&2; exit 2; }
+    printf 'melee_reactions=%s\n' "$MELEE_REACTIONS" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_BLADE_SHADOW:-}" ]]; then
+    [[ "$MELEE_BLADE_SHADOW" == 0 || "$MELEE_BLADE_SHADOW" == 1 ]] || { echo "MELEE_BLADE_SHADOW must be 0 or 1" >&2; exit 2; }
+    printf 'melee_blade_shadow=%s\n' "$MELEE_BLADE_SHADOW" >>"$RUN/Gothic.ini"
+  fi
   if [[ -n "${PHYSICS_NOISE:-}" ]]; then
     [[ "$PHYSICS_NOISE" == 0 || "$PHYSICS_NOISE" == 1 ]] || { echo "PHYSICS_NOISE must be 0 or 1" >&2; exit 2; }
     printf 'physics_noise=%s\n' "$PHYSICS_NOISE" >>"$RUN/Gothic.ini"
@@ -220,6 +306,18 @@ if [[ -n "${MOVABLE_VOBS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}
     [[ "$CLOTH" == 0 || "$CLOTH" == 1 ]] || { echo "CLOTH must be 0 or 1" >&2; exit 2; }
     printf 'cloth=%s\n' "$CLOTH" >>"$RUN/Gothic.ini"
   fi
+  if [[ -n "${ITEM_WAKE:-}" ]]; then
+    [[ "$ITEM_WAKE" == 0 || "$ITEM_WAKE" == 1 ]] || { echo "ITEM_WAKE must be 0 or 1" >&2; exit 2; }
+    printf 'item_wake=%s\n' "$ITEM_WAKE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${PLACED_ITEMS:-}" ]]; then
+    [[ "$PLACED_ITEMS" == 0 || "$PLACED_ITEMS" == 1 ]] || { echo "PLACED_ITEMS must be 0 or 1" >&2; exit 2; }
+    printf 'placed_items=%s\n' "$PLACED_ITEMS" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${STATIC_COLLISION_SPLIT:-}" ]]; then
+    [[ "$STATIC_COLLISION_SPLIT" == 0 || "$STATIC_COLLISION_SPLIT" == 1 ]] || { echo "STATIC_COLLISION_SPLIT must be 0 or 1" >&2; exit 2; }
+    printf 'static_collision_split=%s\n' "$STATIC_COLLISION_SPLIT" >>"$RUN/Gothic.ini"
+  fi
 fi
 
 # the sharper textures the launcher gives the game too (scripts/hd-textures.sh)
@@ -229,9 +327,19 @@ fi
 if [[ -z "${OPENGOTHIC_FRACTURE+set}" && -d "$FRACTURE_CACHE" ]]; then
   export OPENGOTHIC_FRACTURE="$FRACTURE_CACHE"
 fi
+if [[ -z "${OPENGOTHIC_CONVEX_PARTS+set}" && -d "$CONVEX_PARTS_CACHE" ]]; then
+  export OPENGOTHIC_CONVEX_PARTS="$CONVEX_PARTS_CACHE"
+fi
 
+GAME_BIN="$GAME_BIN" bash "$ROOT/scripts/base-ensure.sh" "$GOTHIC_DIR"
+
+BACKGROUND=1
+if [[ "$NAME" == streaming-flythrough ]]; then
+  export OPENGOTHIC_FRAME_PROFILE="$OUT/frameprofile.csv" OPENGOTHIC_BENCH_VISIBLE=1 OPENGOTHIC_LOADPROBE=1
+  BACKGROUND=0
+fi
 START=$(date +%s)
-(cd "$RUN" && exec env TEMPEST_BACKGROUND=1 TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}" \
+(cd "$RUN" && exec env TEMPEST_BACKGROUND="$BACKGROUND" TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}" \
   OPENGOTHIC_BENCH="$SCEN" OPENGOTHIC_BENCH_OUT="$OUT" ${KEEP:+OPENGOTHIC_BENCH_KEEP=1} \
   "$GAME_BIN" -g "$GOTHIC_DIR" -window -devmode "${START_ARGS[@]}") >"$OUT/game.log" 2>&1 &
 PID=$!
@@ -260,6 +368,8 @@ from pathlib import Path
 path = Path(sys.argv[1])
 failures = []
 observed = Counter()
+routine_results = {}
+routine_summaries = []
 if path.exists():
     with path.open() as events:
         for line_number, line in enumerate(events, 1):
@@ -275,6 +385,13 @@ if path.exists():
                 observed[('checkpoint', event.get('label'))] += 1
             elif kind == 'cloth_session_initial' and event.get('rest'):
                 observed[('initial', event.get('label'))] += 1
+            elif kind == 'routine_return_result':
+                key = (event.get('case'), event.get('attempt'))
+                if key in routine_results:
+                    failures.append(f'duplicate routine return result: {key}')
+                routine_results[key] = event
+            elif kind == 'routine_return_summary':
+                routine_summaries.append(event)
             if kind == 'error' or kind.endswith('_error') or event.get('pass') is False:
                 failures.append(f"{kind}: {event.get('reason', event.get('check', 'check failed'))}")
 scenario = Path(sys.argv[2])
@@ -286,6 +403,32 @@ if scenario.name.startswith('cloth'):
             expected[(command[1], command[2])] += 1
     for (command, label), count in (expected - observed).items():
         failures.append(f'missing cloth {command} {label}: {count} result(s)')
+if scenario.name == 'routine-return.bench':
+    commands = [line.split() for line in scenario.read_text().splitlines()]
+    labels = [command[2] for command in commands
+              if len(command) == 8 and command[:2] == ['routine-return', 'case']]
+    if not 10 <= len(labels) <= 12 or len(set(labels)) != len(labels):
+        failures.append('routine return needs 10-12 unique case labels')
+    if commands.count(['routine-return', 'retry-failures']) != 1:
+        failures.append('routine return needs one retry-failures command')
+    initial = {(label, 1) for label in labels}
+    failed = {label for label in labels if (label, 1) in routine_results
+              and routine_results[(label, 1)].get('pass') is not True}
+    expected = initial | {(label, 2) for label in failed}
+    if set(routine_results) != expected:
+        failures.append(f'routine return result mismatch: missing {sorted(expected - set(routine_results))}, '
+                        f'unexpected {sorted(set(routine_results) - expected)}')
+    if any(result.get('preparation_valid') is not True for result in routine_results.values()):
+        failures.append('routine return has invalid or missing preparation proof')
+    if any(result.get('pass') is not True for result in routine_results.values()):
+        failures.append('routine return has failed or incomplete cases')
+    if len(routine_summaries) != 1:
+        failures.append(f'routine return needs one summary, got {len(routine_summaries)}')
+    else:
+        summary = routine_summaries[0]
+        if (summary.get('complete') is not True or summary.get('cases') != len(labels)
+                or summary.get('failed') != len(failed) or summary.get('repeated') != len(failed)):
+            failures.append('routine return summary is incomplete or inconsistent')
 if failures:
     for failure in failures[:10]:
         print(f'bench: failed: {failure}', file=sys.stderr)
@@ -305,6 +448,9 @@ except (OSError, ValueError, KeyError):
 if not valid:
     raise SystemExit('bench: normal-clock timing did not complete; no valid cadence measurement')
 PY
+fi
+if [[ "$NAME" == streaming-flythrough ]]; then
+  python3 "$ROOT/scripts/perf_report.py" run "$OUT" || REPORT_RC=1
 fi
 echo "bench: ran on $HOST"
 echo "$OUT"

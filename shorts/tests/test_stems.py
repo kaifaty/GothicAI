@@ -1,5 +1,6 @@
 import math
 import shutil
+import subprocess
 import sys
 import wave
 from array import array
@@ -104,3 +105,34 @@ def test_speakers_share_loudness_but_retain_dynamics_across_their_utterances(tmp
     assert hero_level == pytest.approx(levels.BASE_LUFS, abs=0.3)
     assert npc_level == pytest.approx(hero_level, abs=0.3)
     assert loudness([(2.4, 3.4)]) - loudness([(1, 2)]) == pytest.approx(20 * math.log10(3), abs=0.3)
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is required")
+def test_stereo_speakers_are_folded_before_gain_and_rendered_as_dual_mono(tmp_path):
+    source = tone(tmp_path / "source.wav", 1.5, 0.05)
+    clips = []
+    for index, (speaker, right) in enumerate([("left", "0*c0"), ("center", "c0")]):
+        path = tmp_path / f"{speaker}.wav"
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(source),
+             "-af", f"pan=stereo|c0=c0|c1={right}", str(path)],
+            check=True, capture_output=True,
+        )
+        clips.append(stems.Clip(speaker, path, index * 2, index * 2 + 1.5))
+
+    gains = stems.speaker_gains(clips)
+    # Folding halves the left-only signal's amplitude in both output channels.
+    assert gains["left"] - gains["center"] == pytest.approx(20 * math.log10(2), abs=0.1)
+    out = stems.render(clips, Timeline(4), tmp_path / "voice.wav")
+    for start, end in [(0.1, 1.4), (2.1, 3.4)]:
+        assert levels.measure(["-i", str(out)], "[0:a]anull[v]", "v", [(start, end)]) == pytest.approx(
+            levels.BASE_LUFS, abs=0.3,
+        )
+    decoded = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-i", str(out), "-f", "f32le", "-"],
+        check=True, capture_output=True,
+    ).stdout
+    samples = array("f", decoded)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    assert samples[::2] == samples[1::2]

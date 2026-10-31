@@ -75,19 +75,25 @@ bool uniqueKeys(const Json& value) {
   return true;
   }
 
-size_t parseVectorInputSize(const Json& preprocessing, uint32_t& demoVersion) {
+size_t parseVectorInputSize(const Json& preprocessing, uint32_t& demoVersion, uint32_t weightVersion) {
   const auto& order = field(preprocessing,"vector_order");
   if(!order.IsArray() || (order.Size()!=3 && order.Size()!=4))
     fail("unsupported preprocessing vector_order");
   if(preprocessing.HasMember("navdemo_version")) {
     const auto& version = preprocessing["navdemo_version"];
-    if(!version.IsUint() || (version.GetUint()!=1 && version.GetUint()!=2))
+    if(!version.IsUint() || (version.GetUint()!=1 && version.GetUint()!=2 &&
+                           !(weightVersion==4 && version.GetUint()==3)))
       fail("unsupported NAVDEMO input version");
     demoVersion = version.GetUint();
     }
-  if(demoVersion==2) {
+  if(weightVersion==4 && demoVersion!=3)
+    fail("unsupported NAVDEMO input version");
+  if(demoVersion>=2) {
     expectStrings(order,{"eye","roads","body"});
-    expectStrings(field(preprocessing,"input_fields"),{"body","roads","eye","memory_near","memory_far"});
+    if(weightVersion>=3)
+      expectStrings(field(preprocessing,"input_fields"),{"body","roads","eye","memory_near","memory_far","feet_height_cm"});
+    else
+      expectStrings(field(preprocessing,"input_fields"),{"body","roads","eye","memory_near","memory_far"});
     expectString(field(preprocessing,"roads_schema"),"carrot_v2");
     expectStrings(field(preprocessing,"roads_fields"),{"carrot_direction","carrot_distance_cm",
       "goal_direction","goal_distance_cm","remaining_known_cm","beyond_known"});
@@ -103,12 +109,39 @@ size_t parseVectorInputSize(const Json& preprocessing, uint32_t& demoVersion) {
   return NavPolicy::legacyVectorSize;
   }
 
-void validateArchitecture(const Json& architecture, size_t& hidden, size_t vectorSize) {
+void validateHdPreprocessing(const Json& preprocessing, uint32_t demoVersion, uint32_t weightVersion) {
+  if(weightVersion==3 && demoVersion!=2)
+    fail("HD weights require NAVDEMO v2 inputs");
+  expectString(field(preprocessing,"input_variant"),weightVersion==4 ? "hd-familiar" : "hd");
+  if(weightVersion==4)
+    expectStrings(field(preprocessing,"map_order"),{"confidence","free","wall","ledge","drop","water","movable",
+      "relative_ground_height_max","relative_ground_height_min","height_valid_fraction","familiar"});
+  else
+    expectStrings(field(preprocessing,"map_order"),{"confidence","free","wall","ledge","drop","water","movable",
+      "relative_ground_height_max","relative_ground_height_min","height_valid_fraction"});
+  expectString(field(preprocessing,"memory"),
+    "7 probability channels unpooled; near 64x64 at 25cm; far forward rows[50:100] and all 100 columns at 200cm; one recorded height per cell");
+  expectString(field(preprocessing,"height"),
+    "known ground max and min minus physical feet height, /200cm, clip [-10,10]; unknown=0; unpooled recorded max=min");
+  expectString(field(preprocessing,"height_reference"),
+    "own physical feet height only; no absolute world position, x/z, yaw or teacher_hint access");
+  expectString(field(preprocessing,"cache_quantization"),
+    "vector/height extrema float16, map probabilities/validity round(255*x) uint8, labels uint8");
+  }
+
+void validateArchitecture(const Json& architecture, size_t& hidden, size_t vectorSize, uint32_t version) {
   expectString(field(architecture,"name"),"map-cnn-vector-gru");
   expectInt(field(architecture,"version"),1);
   const auto& inputs = field(architecture,"inputs");
-  expectShape(field(inputs,"near"),{9,32,32});
-  expectShape(field(inputs,"far"),{9,25,25});
+  const size_t channels = version==4 ? 11 : version==3 ? 10 : 9;
+  if(version>=3) {
+    expectShape(field(inputs,"near"),{channels,64,64});
+    expectShape(field(inputs,"far"),{channels,50,100});
+    }
+  else {
+    expectShape(field(inputs,"near"),{9,32,32});
+    expectShape(field(inputs,"far"),{9,25,25});
+    }
   expectShape(field(inputs,"vector"),{vectorSize});
   expectString(field(inputs,"dtype"),"float32");
   expectString(field(inputs,"map_layout"),"CHW");
@@ -121,7 +154,7 @@ void validateArchitecture(const Json& architecture, size_t& hidden, size_t vecto
   for(unsigned i=0; i<2; ++i) {
     const auto& conv = layers[i];
     expectString(field(conv,"type"),"conv2d");
-    expectInt(field(conv,"in_channels"),i==0 ? 9 : 8);
+    expectInt(field(conv,"in_channels"),i==0 ? channels : 8);
     expectInt(field(conv,"out_channels"),i==0 ? 8 : 16);
     expectInt(field(conv,"kernel"),3);
     expectInt(field(conv,"stride"),2);
@@ -153,13 +186,15 @@ void validateArchitecture(const Json& architecture, size_t& hidden, size_t vecto
     fail("unsupported GRU hidden size");
   hidden = hiddenSize.GetUint();
   const auto& heads = field(architecture,"heads");
-  if(!heads.IsObject() || heads.MemberCount()!=NavPolicy::headCount)
+  const size_t headCount = version>=2 ? NavPolicy::bc3HeadNames.size() : NavPolicy::headNames.size();
+  if(!heads.IsObject() || heads.MemberCount()!=headCount)
     fail("incorrect policy heads");
-  for(size_t i=0; i<NavPolicy::headCount; ++i) {
-    const auto& head = field(heads,NavPolicy::headNames[i]);
-    expectInt(field(head,"classes"),i<3 ? 3 : 2);
+  for(size_t i=0; i<headCount; ++i) {
+    const auto& head = field(heads,version>=2 ? NavPolicy::bc3HeadNames[i] : NavPolicy::headNames[i]);
+    const size_t classes = i<3 || (version>=2 && i==4) ? 3 : 2;
+    expectInt(field(head,"classes"),classes);
     const auto& values = field(head,"values");
-    if(!values.IsArray() || values.Size()!=(i<3 ? 3u : 2u))
+    if(!values.IsArray() || values.Size()!=classes)
       fail("incorrect head values");
     for(rapidjson::SizeType j=0; j<values.Size(); ++j)
       if(!values[j].IsInt() || values[j].GetInt()!=int(j)-(i<3 ? 1 : 0))
@@ -250,6 +285,38 @@ void poolMemory(const NavigationMemory::Layer& layer, size_t factor, float refer
       }
     }
   }
+
+void nativeMemory(const NavigationMemory::Layer& layer, size_t firstRow, size_t rows,
+                  float reference, bool familiar, float* output) {
+  const size_t columns = layer.size, area = rows*columns;
+  for(size_t z=0; z<rows; ++z) {
+    for(size_t x=0; x<columns; ++x) {
+      const auto& cell = layer.cells[(firstRow+z)*columns+x];
+      const size_t index = z*columns+x;
+      const float channels[] = {cell.confidence,cell.free,cell.wall,cell.ledge,
+                                cell.drop,cell.water,cell.movable};
+      for(size_t c=0; c<7; ++c) {
+        if(!std::isfinite(channels[c]) || channels[c]<0 || channels[c]>1)
+          fail("memory channel outside [0,1]");
+        output[c*area+index] = float(std::lround(channels[c]*255.f))/255.f;
+        }
+      if(!std::isnan(cell.groundHeightCm) && !std::isfinite(cell.groundHeightCm))
+        fail("infinite memory ground height");
+      const bool valid = std::isfinite(cell.groundHeightCm);
+      // Native cells contain one height sample. Max and min coincide until
+      // an upstream memory representation supplies more than one sample.
+      const float relative = valid ? std::clamp((cell.groundHeightCm-reference)/200.f,-10.f,10.f) : 0.f;
+      output[7*area+index] = relative;
+      output[8*area+index] = relative;
+      output[9*area+index] = valid ? 1.f : 0.f;
+      if(familiar) {
+        if(!std::isfinite(cell.familiar) || cell.familiar<0 || cell.familiar>1)
+          fail("memory familiar channel outside [0,1]");
+        output[10*area+index] = float(std::lround(cell.familiar*255.f))/255.f;
+        }
+      }
+    }
+  }
 }
 
 NavPolicy::NavPolicy(const std::string& path) {
@@ -272,11 +339,36 @@ NavPolicy::NavPolicy(const std::string& path) {
   if(header.HasParseError() || !header.IsObject() || !uniqueKeys(header))
     fail("invalid or duplicate-key weight JSON header");
   expectString(field(header,"format"),"gothic-nav-bc");
-  expectInt(field(header,"version"),1);
+  const auto& version = field(header,"version");
+  if(!version.IsUint() || (version.GetUint()!=1 && version.GetUint()!=2 && version.GetUint()!=3 && version.GetUint()!=4))
+    fail("unsupported navigation weight version");
+  formatVersion = version.GetUint();
   expectString(field(header,"byte_order"),"little");
   expectString(field(header,"offset_origin"),"first byte after JSON header newline");
-  const size_t vectorInputs = parseVectorInputSize(field(header,"preprocessing"),demoVersion);
-  validateArchitecture(field(header,"architecture"),hidden,vectorInputs);
+  const auto& preprocessing = field(header,"preprocessing");
+  const size_t vectorInputs = parseVectorInputSize(preprocessing,demoVersion,formatVersion);
+  if(formatVersion>=3)
+    validateHdPreprocessing(preprocessing,demoVersion,formatVersion);
+  if(preprocessing.HasMember("navigation_memory_version")) {
+    const auto& memory = preprocessing["navigation_memory_version"];
+    if(!memory.IsUint() || (memory.GetUint()!=3 && memory.GetUint()!=4))
+      fail("unsupported navigation memory version");
+    memoryVersion = memory.GetUint();
+    }
+  if(formatVersion==4 && memoryVersion!=4)
+    fail("BC4 weights require navigation memory version 4");
+  validateArchitecture(field(header,"architecture"),hidden,vectorInputs,formatVersion);
+  if(header.HasMember("temperatures")) {
+    const auto& values = header["temperatures"];
+    if(!values.IsObject() || values.MemberCount()!=actionHeadCount())
+      fail("incorrect policy temperatures");
+    for(size_t i=0; i<actionHeadCount(); ++i) {
+      const auto& value = field(values,headName(i));
+      if(!value.IsNumber() || !std::isfinite(value.GetDouble()) || value.GetDouble()<=0)
+        fail("policy temperatures must be finite and positive");
+      temperatures[i] = value.GetDouble();
+      }
+    }
   const auto& length = field(header,"data_nbytes");
   if(!length.IsUint64() || length.GetUint64()>64*1024*1024)
     fail("invalid weight payload size");
@@ -292,7 +384,7 @@ NavPolicy::NavPolicy(const std::string& path) {
   std::unordered_map<std::string,Tensor> tensors;
   std::vector<std::pair<size_t,size_t>> ranges;
   const auto& entries = field(header,"tensors");
-  if(!entries.IsArray() || entries.Size()!=28)
+  if(!entries.IsArray() || entries.Size()!=16+2*actionHeadCount())
     fail("incorrect number of policy tensors");
   for(const auto& entry:entries.GetArray()) {
     const auto& nameValue = field(entry,"name");
@@ -355,9 +447,10 @@ NavPolicy::NavPolicy(const std::string& path) {
     layer.bias = take(name+".bias",{out});
     };
   const auto loadMap = [&](MapEncoder& encoder, const char* prefix) {
-    encoder.first.inputs = 9*3*3;
+    const size_t channels = formatVersion==4 ? 11 : formatVersion==3 ? 10 : 9;
+    encoder.first.inputs = channels*3*3;
     encoder.first.outputs = 8;
-    encoder.first.weight = take(std::string(prefix)+".0.weight",{8,9,3,3});
+    encoder.first.weight = take(std::string(prefix)+".0.weight",{8,channels,3,3});
     encoder.first.bias = take(std::string(prefix)+".0.bias",{8});
     encoder.second.inputs = 8*3*3;
     encoder.second.outputs = 16;
@@ -376,10 +469,24 @@ NavPolicy::NavPolicy(const std::string& path) {
   gruHidden.outputs = hidden*3;
   gruHidden.weight = take("gru.weight_hh_l0",{hidden*3,hidden});
   gruHidden.bias = take("gru.bias_hh_l0",{hidden*3});
-  for(size_t i=0; i<headCount; ++i)
-    loadLinear(heads[i],std::string("head_")+headNames[i],hidden,i<3 ? 3 : 2);
+  for(size_t i=0; i<actionHeadCount(); ++i)
+    loadLinear(heads[i],std::string("head_")+headName(i),hidden,headSize(i));
   if(!tensors.empty())
     fail("unknown weight tensors");
+  }
+
+void NavPolicy::configureMemory(NavigationMemory& memory, const char* journeyOverride) const {
+  bool journey = memoryVersion==4;
+  if(journeyOverride) {
+    const std::string_view value(journeyOverride);
+    if(value!="0" && value!="1")
+      fail("OPENGOTHIC_NAV_JOURNEY_MEMORY must be 0 or 1");
+    journey = value=="1";
+    }
+  memory.setJourneyMemory(journey);
+  // Each episode starts without inherited familiarity. The stand may attach
+  // the resident's map only after this selects v4 memory.
+  memory.setFamiliarMap(nullptr,{});
   }
 
 NavPolicy::Features NavPolicy::encode(const NavDemoWriter::Snapshot& observation) const {
@@ -389,14 +496,24 @@ NavPolicy::Features NavPolicy::encode(const NavDemoWriter::Snapshot& observation
   const auto& far = observation.memory->far;
   validateLayer(near,NavDemoWriter::nearSize,NavigationMemory::Constants::nearCellCm);
   validateLayer(far,NavDemoWriter::farSize,NavigationMemory::Constants::farCellCm);
-  float nearReference = 0, farReference = 0;
-  const bool nearKnown = nearestHeight(near,nearReference);
-  nearestHeight(far,farReference);
-  const float reference = nearKnown ? nearReference : farReference;
   Features features;
   features.vector.resize(vectorInputSize());
-  poolMemory(near,2,reference,features.near.data());
-  poolMemory(far,4,reference,features.far.data());
+  if(formatVersion>=3) {
+    if(!std::isfinite(observation.position[1]))
+      fail("non-finite feet height");
+    features.near.resize(nearInputSize());
+    features.far.resize(farInputSize());
+    nativeMemory(near,0,64,observation.position[1],formatVersion==4,features.near.data());
+    nativeMemory(far,50,50,observation.position[1],formatVersion==4,features.far.data());
+    }
+  else {
+    float nearReference = 0, farReference = 0;
+    const bool nearKnown = nearestHeight(near,nearReference);
+    nearestHeight(far,farReference);
+    const float reference = nearKnown ? nearReference : farReference;
+    poolMemory(near,2,reference,features.near.data());
+    poolMemory(far,4,reference,features.far.data());
+    }
   size_t cursor = 0;
   auto& vector = features.vector;
   for(const auto& ray:*observation.eye) {
@@ -410,14 +527,14 @@ NavPolicy::Features NavPolicy::encode(const NavDemoWriter::Snapshot& observation
     vector[cursor++] = ray.hit ? 1.f : 0.f;
     }
   const auto distance = [](float value) { return std::clamp(value/1000.f,0.f,50.f); };
-  for(float value:demoVersion==2 ? observation.roads.carrotDirection : observation.roads.nextDirection)
+  for(float value:demoVersion>=2 ? observation.roads.carrotDirection : observation.roads.nextDirection)
     vector[cursor++] = value;
-  vector[cursor++] = distance(demoVersion==2 ? observation.roads.carrotDistanceCm : observation.roads.nextDistanceCm);
+  vector[cursor++] = distance(demoVersion>=2 ? observation.roads.carrotDistanceCm : observation.roads.nextDistanceCm);
   for(float value:observation.roads.goalDirection)
     vector[cursor++] = value;
   vector[cursor++] = distance(observation.roads.goalDistanceCm);
-  vector[cursor++] = distance(demoVersion==2 ? observation.roads.remainingKnownCm : observation.roads.remainingVisualCm);
-  vector[cursor++] = (demoVersion==2 ? observation.roads.beyondKnown : observation.roads.goalInKnown) ? 1.f : 0.f;
+  vector[cursor++] = distance(demoVersion>=2 ? observation.roads.remainingKnownCm : observation.roads.remainingVisualCm);
+  vector[cursor++] = (demoVersion>=2 ? observation.roads.beyondKnown : observation.roads.goalInKnown) ? 1.f : 0.f;
   for(float value:observation.body.velocityCmS)
     vector[cursor++] = std::clamp(value/500.f,-4.f,4.f);
   for(uint8_t flag:observation.body.flags) {
@@ -457,47 +574,48 @@ std::vector<float> NavPolicy::linear(const float* input, const Linear& layer, bo
   return result;
   }
 
-std::array<float,64> NavPolicy::map(const float* input, size_t size, const MapEncoder& encoder) {
-  const auto convolution = [](const float* data, size_t side, size_t channels, const Linear& layer) {
-    const size_t outputSize = (side+1)/2, area = outputSize*outputSize;
+std::array<float,64> NavPolicy::map(const float* input, size_t rows, size_t columns, const MapEncoder& encoder) {
+  const auto convolution = [](const float* data, size_t height, size_t width, const Linear& layer) {
+    const size_t outputHeight = (height+1)/2, outputWidth = (width+1)/2;
+    const size_t area = outputHeight*outputWidth, channels = layer.inputs/9;
     std::vector<float> result(layer.outputs*area);
     // A zero-padded window is shared by every output channel. OIHW tap order
     // agrees with the reference's im2col cross-correlation (no kernel flip).
-    std::array<float,9*3*3> window;
-    for(size_t z=0; z<outputSize; ++z) {
-      for(size_t x=0; x<outputSize; ++x) {
+    std::array<float,11*3*3> window;
+    for(size_t z=0; z<outputHeight; ++z) {
+      for(size_t x=0; x<outputWidth; ++x) {
         size_t tap = 0;
         for(size_t channel=0; channel<channels; ++channel) {
           for(int dz=-1; dz<=1; ++dz) {
             const int sourceZ = int(2*z)+dz;
             for(int dx=-1; dx<=1; ++dx) {
               const int sourceX = int(2*x)+dx;
-              window[tap++] = sourceZ>=0 && sourceX>=0 && sourceZ<int(side) && sourceX<int(side) ?
-                              data[(channel*side+size_t(sourceZ))*side+size_t(sourceX)] : 0.f;
+              window[tap++] = sourceZ>=0 && sourceX>=0 && sourceZ<int(height) && sourceX<int(width) ?
+                              data[(channel*height+size_t(sourceZ))*width+size_t(sourceX)] : 0.f;
               }
             }
           }
         for(size_t out=0; out<layer.outputs; ++out)
-          result[out*area+z*outputSize+x] = std::max(0.f,dot(window.data(),layer.weight.data()+out*layer.inputs,
+          result[out*area+z*outputWidth+x] = std::max(0.f,dot(window.data(),layer.weight.data()+out*layer.inputs,
                                                           layer.inputs)+layer.bias[out]);
         }
       }
     return result;
     };
-  auto first = convolution(input,size,9,encoder.first);
-  size = (size+1)/2;
-  auto second = convolution(first.data(),size,8,encoder.second);
-  size = (size+1)/2;
+  auto first = convolution(input,rows,columns,encoder.first);
+  rows = (rows+1)/2;columns = (columns+1)/2;
+  auto second = convolution(first.data(),rows,columns,encoder.second);
+  rows = (rows+1)/2;columns = (columns+1)/2;
   std::array<float,64> result;
   for(size_t channel=0; channel<16; ++channel) {
     for(size_t z=0; z<2; ++z) {
-      const size_t startZ = z*size/2, endZ = ((z+1)*size+1)/2;
+      const size_t startZ = z*rows/2, endZ = ((z+1)*rows+1)/2;
       for(size_t x=0; x<2; ++x) {
-        const size_t startX = x*size/2, endX = ((x+1)*size+1)/2;
+        const size_t startX = x*columns/2, endX = ((x+1)*columns+1)/2;
         float sum = 0;
         for(size_t sourceZ=startZ; sourceZ<endZ; ++sourceZ)
           for(size_t sourceX=startX; sourceX<endX; ++sourceX)
-            sum += second[(channel*size+sourceZ)*size+sourceX];
+            sum += second[(channel*rows+sourceZ)*columns+sourceX];
         result[channel*4+z*2+x] = sum/float((endZ-startZ)*(endX-startX));
         }
       }
@@ -506,8 +624,9 @@ std::array<float,64> NavPolicy::map(const float* input, size_t size, const MapEn
   }
 
 NavPolicy::Result NavPolicy::step(const Features& features, State& state) const {
-  if(features.vector.size()!=vectorInputSize())
-    fail("incorrect vector feature size");
+  if(features.near.size()!=nearInputSize() || features.far.size()!=farInputSize() ||
+     features.vector.size()!=vectorInputSize())
+    fail("incorrect learner feature size");
   for(float value:features.near)
     if(!std::isfinite(value)) fail("non-finite near map feature");
   for(float value:features.far)
@@ -520,8 +639,8 @@ NavPolicy::Result NavPolicy::step(const Features& features, State& state) const 
     fail("incorrect GRU state size");
   for(float value:state.hidden)
     if(!std::isfinite(value)) fail("non-finite GRU state");
-  const auto near = map(features.near.data(),32,nearEncoder);
-  const auto far = map(features.far.data(),25,farEncoder);
+  const auto near = map(features.near.data(),formatVersion>=3 ? 64 : 32,formatVersion>=3 ? 64 : 32,nearEncoder);
+  const auto far = map(features.far.data(),formatVersion>=3 ? 50 : 25,formatVersion>=3 ? 100 : 25,farEncoder);
   const auto vector = linear(features.vector.data(),vectorEncoder,true);
   std::array<float,256> joined;
   std::copy(near.begin(),near.end(),joined.begin());
@@ -537,8 +656,8 @@ NavPolicy::Result NavPolicy::step(const Features& features, State& state) const 
     state.hidden[i] = (1.f-update)*next+update*state.hidden[i];
     }
   Result result;
-  std::array<size_t,headCount> action;
-  for(size_t i=0; i<headCount; ++i) {
+  std::array<size_t,headCount> action = {};
+  for(size_t i=0; i<actionHeadCount(); ++i) {
     result.logits[i] = linear(state.hidden.data(),heads[i]);
     action[i] = size_t(std::max_element(result.logits[i].begin(),result.logits[i].end())-result.logits[i].begin());
     }
@@ -546,8 +665,8 @@ NavPolicy::Result NavPolicy::step(const Features& features, State& state) const 
   result.keys.strafe = float(int(action[1])-1);
   result.keys.turn = float(int(action[2])-1);
   result.keys.walk = action[3]!=0;
-  result.keys.jump = action[4]!=0;
-  result.keys.climb = action[5]!=0;
+  result.keys.jump = formatVersion>=2 ? action[4]==1 : action[4]!=0;
+  result.keys.climb = formatVersion>=2 ? action[4]==2 : action[5]!=0;
   // Head yaw and pitch stay at the KeyState default: straight ahead.
   return result;
   }

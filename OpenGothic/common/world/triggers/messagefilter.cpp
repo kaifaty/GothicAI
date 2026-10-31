@@ -2,7 +2,7 @@
 
 #include "world/world.h"
 
-MessageFilter::MessageFilter(Vob* parent, World &world, const zenkit::VMessageFilter& filt, Flags flags)
+MessageFilter::MessageFilter(Vob* parent, World &world, const asset::VMessageFilter& filt, Flags flags)
   :AbstractTrigger(parent,world,filt,flags) {
   target = filt.target;
   onUntriggerA = filt.on_untrigger;
@@ -17,31 +17,31 @@ void MessageFilter::onUntrigger(const TriggerEvent&) {
   exec(onUntriggerA);
   }
 
-void MessageFilter::exec(zenkit::MessageFilterAction eval) {
+void MessageFilter::exec(asset::MessageFilterAction eval) {
   switch(eval) {
-    case zenkit::MessageFilterAction::NONE:
+    case asset::MessageFilterAction::NONE:
       break;
-    case zenkit::MessageFilterAction::TRIGGER: {
+    case asset::MessageFilterAction::TRIGGER: {
       TriggerEvent e(target,vobName,TriggerEvent::T_Trigger);
       world.execTriggerEvent(e);
       break;
       }
-    case zenkit::MessageFilterAction::UNTRIGGER: {
+    case asset::MessageFilterAction::UNTRIGGER: {
       TriggerEvent e(target,vobName,TriggerEvent::T_Untrigger);
       world.execTriggerEvent(e);
       break;
       }
-    case zenkit::MessageFilterAction::ENABLE: {
+    case asset::MessageFilterAction::ENABLE: {
       TriggerEvent e(target,vobName,TriggerEvent::T_Enable);
       world.execTriggerEvent(e);
       break;
       }
-    case zenkit::MessageFilterAction::DISABLE:{
+    case asset::MessageFilterAction::DISABLE:{
       TriggerEvent e(target,vobName,TriggerEvent::T_Disable);
       world.execTriggerEvent(e);
       break;
       }
-    case zenkit::MessageFilterAction::TOGGLE:{
+    case asset::MessageFilterAction::TOGGLE:{
       TriggerEvent e(target,vobName,TriggerEvent::T_ToggleEnable);
       world.execTriggerEvent(e);
       break;

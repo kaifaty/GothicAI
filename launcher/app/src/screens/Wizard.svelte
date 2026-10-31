@@ -140,6 +140,9 @@
       <Setting key="voice.enabled" kind="toggle" title="Голосовой ввод" description="Выключено: только текстовый чат" />
       {#if s.settings.voice.enabled}
         <Setting key="voice.provider" kind="choice" options={ASR} />
+        {#if s.settings.voice.provider === "inworld" || s.settings.voice.fallback === "inworld"}
+          <Setting key="secrets.inworld_api_key" kind="secret" />
+        {/if}
         {#if s.settings.voice.provider === "voxtral" || s.settings.voice.fallback === "voxtral"}
           <Setting key="voice.voxtral_url" placeholder="http://gpu-server:47830" mono />
         {/if}

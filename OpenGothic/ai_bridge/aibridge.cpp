@@ -4,9 +4,6 @@
 #include <Tempest/Log>
 #include <Tempest/Timer>
 
-#include <ixwebsocket/IXNetSystem.h>
-#include <ixwebsocket/IXWebSocket.h>
-
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -26,6 +23,7 @@
 #include "game/gamescript.h"
 #include "game/bodyobservations.h"
 #include "game/bodycontroller.h"
+#include "game/bodyenginepolicy.h"
 #include "game/inventory.h"
 #include "game/herodeed.h"
 #include "game/serialize.h"
@@ -40,6 +38,7 @@
 #include "world/worldsound.h"
 #include "npcchests.h"
 #include "gothic.h"
+#include "frameprofile.h"
 
 #include "beasts.h"
 #include "chatoverlay.h"
@@ -62,11 +61,23 @@
 #include "voicebuffer.h"
 #include "testbench.h"
 
+// last: on Windows these pull in <windows.h>, whose macros (ERROR, VOID, CONST, near, far)
+// would rewrite the ZenKit and game declarations above and the names below
+#include <ixwebsocket/IXNetSystem.h>
+#include <ixwebsocket/IXWebSocket.h>
+#ifdef _WIN32
+#undef ERROR
+#undef VOID
+#undef CONST
+#undef near
+#undef far
+#endif
+
 using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 49;
+constexpr int         ProtocolVersion = 54;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
 constexpr float       IntroCm         = 3000;  // -nointro: those this near the hero at the start
@@ -223,6 +234,8 @@ struct AiBridge::Impl final {
   void onObservedPerception(Npc& self, Npc& other, Npc* victim, PercType perc);
   void onPhysicsNoiseHeard(Npc& self, const PhysicsNoise& noise);
   void onHeroDeed(const HeroDeed& deed);
+  void onCombatHit(Npc& npc, Npc& by, int32_t damage, std::string_view kind);
+  bool onSvmLine(Npc& npc, std::string_view svm, std::string_view line, Npc* target, bool overlay);
   // who drives the npc instead of its scripts: "attached" or nobody
   std::string_view npcOwner(std::string_view symbol) const;
   bool onConsoleCommand(std::string_view cmd, std::string& reply);
@@ -288,6 +301,8 @@ struct AiBridge::Impl final {
   std::vector<Inbound> inbound;
 
   bool                 connected = false;
+  bool                 replaceSvm = false;
+  uint64_t             svmLines = 0;
   uint64_t             bodyGeneration = 0;
   bool                 bodyResetPending = false;
   std::string          lastError;
@@ -364,6 +379,7 @@ AiBridge::Impl::Impl() {
   gothic.onExternalPerception.bind(this,&Impl::onPerception);
   gothic.onObservedPerception.bind(this,&Impl::onObservedPerception);
   gothic.onPhysicsNoiseHeard .bind(this,&Impl::onPhysicsNoiseHeard);
+  gothic.onCombatHit         .bind(this,&Impl::onCombatHit);
   gothic.onHeroDeed          .bind(this,&Impl::onHeroDeed);
   gothic.interceptPerception = [this](Npc& self, Npc& other, Npc* victim, PercType perc, const HeroDeed* deed) {
     World* world = Gothic::inst().world();
@@ -372,6 +388,9 @@ AiBridge::Impl::Impl() {
            (beasts.intercept(*world,self,other,victim,perc) ||
             (connected && observer.intercept(*world,self,other,victim,perc,deed,
                                             deed!=nullptr ? session.branch+"/deed-"+std::to_string(deed->id) : "")));
+    };
+  gothic.interceptSvm = [this](Npc& npc, std::string_view svm, std::string_view line, Npc* target, bool overlay) {
+    return onSvmLine(npc,svm,line,target,overlay);
     };
   gothic.consoleCommandFn = [this](std::string_view cmd, std::string& reply) {
     return onConsoleCommand(cmd,reply);
@@ -414,7 +433,8 @@ AiBridge::Impl::Impl() {
         if(v.drainedAt==0)
           return true;
       // still thinking of the answer: the "Хм..." said at once was not it
-      if(auto w = Gothic::inst().world(); w!=nullptr && !thinker.empty() && w->tickCount()<thinkUntil)
+      if(auto w = Gothic::inst().world(); w!=nullptr && !thinker.empty() &&
+         w->tickCount()<thinkUntil && thinkUntil<=w->tickCount()+ThinkMax)
         return true;
       return lines.pending();
       };
@@ -473,8 +493,10 @@ AiBridge::Impl::~Impl() {
   gothic.onExternalPerception.ubind(this,&Impl::onPerception);
   gothic.onObservedPerception.ubind(this,&Impl::onObservedPerception);
   gothic.onPhysicsNoiseHeard .ubind(this,&Impl::onPhysicsNoiseHeard);
+  gothic.onCombatHit         .ubind(this,&Impl::onCombatHit);
   gothic.onHeroDeed          .ubind(this,&Impl::onHeroDeed);
   gothic.interceptPerception = nullptr;
+  gothic.interceptSvm       = nullptr;
   gothic.consoleCommandFn  = nullptr;
   gothic.externalMessageFn = nullptr;
   gothic.externalSoundFn   = nullptr;
@@ -494,14 +516,17 @@ void AiBridge::Impl::onTick(uint64_t /*dt*/) {
   BodyController::pumpWatchdogs();
   finishBodyReset(Gothic::inst().world());
   std::vector<Inbound> queue;
+  World* world = nullptr;
   {
-    std::lock_guard<std::mutex> guard(sync);
-    queue.swap(inbound);
-  }
-
-  World* world = Gothic::inst().world();
-  for(auto& in:queue)
-    processInbound(world,in);
+    FrameProfile::Scope timing(FrameProfile::Zone::AiBridge);
+    {
+      std::lock_guard<std::mutex> guard(sync);
+      queue.swap(inbound);
+      }
+    world = Gothic::inst().world();
+    for(auto& in:queue)
+      processInbound(world,in);
+    }
 
   if(world!=nullptr) {
     ctrl.tick(*world);
@@ -527,6 +552,8 @@ void AiBridge::Impl::onTick(uint64_t /*dt*/) {
         envelope.Parse(events.c_str(),events.size());
         if(envelope.HasMember("events") && !envelope["events"].Empty())
           send(std::move(events));
+        for(auto& report:BodyController::drainPolicyJson())
+          send(std::move(report));
         }
       }
     tickVoices(*world);
@@ -542,6 +569,7 @@ void AiBridge::Impl::onTick(uint64_t /*dt*/) {
 void AiBridge::Impl::processInbound(World* world, Inbound& in) {
   switch(in.kind) {
     case Inbound::Open:
+      replaceSvm = false;
       // Reconnection invalidates old requests immediately, while an old owner's current locked
       // animation reaches its safe boundary before observation IDs are reset.
       BodyController::disconnect("");
@@ -555,6 +583,7 @@ void AiBridge::Impl::processInbound(World* world, Inbound& in) {
              .integer("protocol",ProtocolVersion)
              .str("client","opengothic-ai-bridge")
              .str("codepage","cp1251")
+             .raw("body_net",BodyEnginePolicy::netStatusJson())
              .finish());
       session.reason = "connect";
       sendSession();
@@ -563,12 +592,15 @@ void AiBridge::Impl::processInbound(World* world, Inbound& in) {
       break;
     case Inbound::Close:
     case Inbound::Error:
+      replaceSvm = false;
       BodyController::disconnect("");
       if(connected) {
         Log::i("[ai] disconnected: ",in.text);
         Gothic::inst().onPrint(TextCodec::fromUtf8("Связь с ИИ-сервером потеряна"));
         // nobody drives the npc's anymore: hand them back to their routines, threats to their scripts
         if(world!=nullptr) {
+          if(auto* pl = world->player())
+            pl->setPlayerPose(false);
           ctrl.detachAll(*world,"server_disconnected");
           observer.releaseAll(*world);
           beasts.releaseAll(*world);
@@ -614,9 +646,14 @@ void AiBridge::Impl::onStartLoading() {
   originalLines.clear();
   originalTo.clear();
   lines.clear();
+  listener.clear();
+  thinker.clear();
+  pttHeld = false;
+  listenUntil = thinkUntil = 0;
   if(auto world = Gothic::inst().world())
     observer.cancelDeeds(*world);
   observer.clear();
+  view.clear();
   Log::i("[story] ",graph.status(),"; ",triggers.status());
   // the server sends the patches of the new branch
   graph.clear();
@@ -790,6 +827,48 @@ void AiBridge::Impl::onPhysicsNoiseHeard(Npc& self, const PhysicsNoise& noise) {
     observer.physicsNoise(*world,self,noise);
   }
 
+void AiBridge::Impl::onCombatHit(Npc& npc, Npc& by, int32_t damage, std::string_view kind) {
+  auto& gothic = Gothic::inst();
+  auto* world = gothic.world();
+  auto* hero = world!=nullptr ? world->player() : nullptr;
+  if(!connected || hero==nullptr || gothic.isInDialog() || damage<=0)
+    return;
+  const auto nearbyHuman = [&](const Npc& who) {
+    return !who.isPlayer() && who.guild()<GIL_SEPERATOR_HUM && who.qDistTo(*hero)<=3000.f*3000.f;
+    };
+  if(!nearbyHuman(npc) && !nearbyHuman(by))
+    return;
+  send(JsonWriter("combat_hit")
+         .str("npc",npc.isPlayer() ? "PLAYER" : npcSymbol(*world,npc))
+         .str("by",by.isPlayer() ? "PLAYER" : npcSymbol(*world,by))
+         .integer("damage",damage).integer("hp",npc.attribute(ATR_HITPOINTS))
+         .integer("hp_max",npc.attribute(ATR_HITPOINTSMAX))
+         .boolean("down",npc.isDown()).boolean("dead",npc.isDead()).str("kind",kind).finish());
+  }
+
+bool AiBridge::Impl::onSvmLine(Npc& npc, std::string_view svm, std::string_view line, Npc* target, bool overlay) {
+  auto* world = Gothic::inst().world();
+  if(world==nullptr || npc.isPlayer() || npc.guild()>=GIL_SEPERATOR_HUM)
+    return false;
+  const auto symbol = npcSymbol(*world,npc);
+  const auto duration = world->script().messageTime(line);
+  if(!connected || !replaceSvm) {
+    Log::i("[ai] native svm ",symbol," ",svm," line=",line," game_ms=",world->tickCount(),
+           " duration_ms=",duration);
+    return false;
+    }
+  send(JsonWriter("svm_line")
+         .str("id","svm-"+std::to_string(++svmLines))
+         .str("npc",symbol)
+         .str("svm",svm)
+         .str("text",TextCodec::toUtf8(world->script().messageByName(line)))
+         .str("target",target!=nullptr ? npcSymbol(*world,*target) : "")
+         .boolean("overlay",overlay)
+         .finish());
+  Log::i("[ai] svm_line ",symbol," ",svm," game_ms=",world->tickCount()," duration_ms=",duration);
+  return true;
+  }
+
 std::string_view AiBridge::Impl::npcOwner(std::string_view symbol) const {
   if(ctrl.isAttached(symbol))
     return "attached";
@@ -813,6 +892,18 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
 
   if(type=="ping") {
     send(JsonWriter("pong").str("req",req).finish());
+    return;
+    }
+  if(type=="player_pose") {
+    auto* pl = world!=nullptr ? world->player() : nullptr;
+    const auto pose = JsonRead::str(doc,"pose");
+    const bool valid = pose=="kneel" || pose=="none";
+    const bool ok = pl!=nullptr && valid && pl->setPlayerPose(pose=="kneel");
+    sendResult(req,ok,"player_pose requires an available hero and pose kneel or none");
+    return;
+    }
+  if(type=="svm_mode") {
+    replaceSvm = JsonRead::boolean(doc,"replace",false);
     return;
     }
   if(type=="memory") {
@@ -988,6 +1079,13 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
     }
   else if(type=="chat_status") {
     onChatStatus(*world,doc);
+    }
+  else if(type=="feat_toast") {
+    // a feat of the hero (v53): a quiet toast, nothing answers it
+    ensureChat();
+    chat->showFeat(TextCodec::fromUtf8(JsonRead::str(doc,"title")),
+                   TextCodec::fromUtf8(JsonRead::str(doc,"text")),
+                   std::string(JsonRead::str(doc,"icon")));
     }
   else if(type=="transcript") {
     onTranscript(doc);
@@ -2094,8 +2192,20 @@ bool AiBridge::Impl::onConsoleCommand(std::string_view cmd, std::string& reply) 
       reply += " " + id;
     return true;
     }
+  if(sub=="skip" && args.size()>2) {
+    // its important dialogs count as told, as `debug skip_important` does: a shot's npc does not stop the hero
+    Npc* npc = npcBySymbol(*world,upperSymbol(args[2]));
+    Npc* pl  = world->player();
+    if(npc==nullptr || pl==nullptr || npc==pl) {
+      reply = "no npc " + args[2];
+      return true;
+      }
+    world->script().skipImportantInfos(*npc,*pl);
+    reply = "skipped " + args[2];
+    return true;
+    }
 
-  reply = "usage: ai status | ai attach <npc> | ai detach [npc] | ai dialogs <npc> | ai ptt start [<wav>]|stop|cancel";
+  reply = "usage: ai status | ai attach <npc> | ai detach [npc] | ai dialogs <npc> | ai skip <npc> | ai ptt start [<wav>]|stop|cancel";
   return true;
   }
 
@@ -2511,6 +2621,7 @@ void AiBridge::Impl::submitChat(const std::string& text) {
   World* world = Gothic::inst().world();
   if(world==nullptr || world->player()==nullptr || text.empty())
     return;
+  world->player()->setPlayerPose(false);
   // shown once the server has decided whom it is said to (transcript)
   JsonWriter j("player_text");
   j.str("text",TextCodec::toUtf8(text));
@@ -2553,7 +2664,7 @@ void AiBridge::Impl::tickListener(World& world) {
   Npc*           pl  = world.player();
   if(!listener.empty()) {
     Npc* npc = npcBySymbol(world,listener);
-    if(npc!=nullptr && pl!=nullptr && (pttHeld || now<listenUntil)) {
+    if(npc!=nullptr && pl!=nullptr && (pttHeld || (now<listenUntil && listenUntil<=now+ListenAfter))) {
       npc->listenTo(500);
       // the two look at each other while he speaks
       npc->setTalkPartner(pl,1000);
@@ -2566,7 +2677,7 @@ void AiBridge::Impl::tickListener(World& world) {
     }
   if(!thinker.empty()) {
     Npc* npc = npcBySymbol(world,thinker);
-    if(npc!=nullptr && pl!=nullptr && now<thinkUntil) {
+    if(npc!=nullptr && pl!=nullptr && now<thinkUntil && thinkUntil<=now+ThinkMax) {
       npc->thinkOfAnswer(500);
       npc->setTalkPartner(pl,1000);  // the eyes go aside from him, he stays the one it talks to
       } else {
@@ -2590,6 +2701,8 @@ void AiBridge::Impl::sendPtt(std::string_view type, std::string_view audio) {
   if(world==nullptr)
     return;
   if(type=="ptt_start") {
+    if(auto* pl = world->player())
+      pl->setPlayerPose(false);
     pttHeld = true;
     Npc* npc = pickListener(*world);
     if(npc!=nullptr && npcSymbol(*world,*npc)!=listener) {

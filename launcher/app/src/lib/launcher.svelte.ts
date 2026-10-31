@@ -17,6 +17,7 @@ export type Tone = "plain" | "you" | "npc" | "warn" | "bad";
 export type Line = { t: number; tone: Tone; text: string; meta?: string };
 
 export const SERVICE_NAMES: Record<string, string> = {
+  prepare: "Подготовка базы игры",
   asr: "Голос игрока",
   tts: "Озвучка NPC",
   server: "ИИ-сервер",
@@ -80,6 +81,7 @@ export function serviceLine(e: ServiceEvent, t = Date.now() / 1000): Line | null
     case "waiting":
       return { t, tone: "plain", text: e.detail };
     case "starting":
+      if (e.proc === "prepare") return { t, tone: "plain", text: name };
       return e.proc === "game" ? { t, tone: "plain", text: "Запускаю игру" } : null;
     case "ready":
       if (e.detail === "after restart") return { t, tone: "plain", text: `${name}: снова работает` };
@@ -92,6 +94,7 @@ export function serviceLine(e: ServiceEvent, t = Date.now() / 1000): Line | null
     case "failed":
       return { t, tone: "bad", text: `${name}: не запустился`, meta: firstLine(e.detail) };
     case "status": {
+      if (e.proc === "prepare") return { t, tone: "plain", text: e.detail };
       if (e.proc === "microphone") return { t, tone: "warn", text: e.detail };
       const h = e.data;
       if (!h?.ok) return { t, tone: "warn", text: `${name}: не отвечает` };

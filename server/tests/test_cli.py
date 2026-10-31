@@ -10,6 +10,16 @@ import pytest
 from gothic_ai import cli
 
 
+def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, monkeypatch, caplog):
+    game = tmp_path / "game"
+    game.mkdir()
+    monkeypatch.delenv("OPENGOTHIC_BASE", raising=False)
+    monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(tmp_path / "cache"))
+    assert cli._story_graph(SimpleNamespace(story_graph=None), game) is None
+    assert f"no ready base for {game}" in caplog.text
+    assert "run the game once with the installation or set OPENGOTHIC_BASE" in caplog.text
+
+
 @pytest.mark.parametrize("scenario", [None, "m0"])
 def test_scenario_start_marker_waits_for_world_and_precedes_scenario(monkeypatch, caplog, tmp_path, scenario):
     real_serve = cli.serve
@@ -147,10 +157,50 @@ def test_showrunner_opt_in_flag_is_removed(monkeypatch, capsys):
     assert "unrecognized arguments: --showrunner" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("flags", [[], ["--no-feat-challenges"], ["--no-feats"]])
+def test_feat_challenge_flags(monkeypatch, flags):
+    async def serve(args):
+        assert args.no_feat_challenges == ("--no-feat-challenges" in flags)
+        assert args.no_feats == ("--no-feats" in flags)
+        return 0
+
+    monkeypatch.setattr(cli, "serve", serve)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", *flags])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+
+
 @pytest.mark.parametrize("flags", [[], ["--scenario", "questlog"], ["--no-questlog"]])
 def test_questlog_is_enabled_by_default_including_scenarios(monkeypatch, flags):
     async def serve(args):
         assert args.no_questlog == ("--no-questlog" in flags)
+        return 0
+
+    monkeypatch.setattr(cli, "serve", serve)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", *flags])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+
+
+@pytest.mark.parametrize("flags", [[], ["--no-combat-barks"]])
+def test_combat_barks_are_enabled_by_default(monkeypatch, flags):
+    async def serve(args):
+        assert args.no_combat_barks == ("--no-combat-barks" in flags)
+        return 0
+
+    monkeypatch.setattr(cli, "serve", serve)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", *flags])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+
+
+@pytest.mark.parametrize("flags", [[], ["--no-svm-lines"]])
+def test_svm_lines_are_enabled_by_default(monkeypatch, flags):
+    async def serve(args):
+        assert args.no_svm_lines == ("--no-svm-lines" in flags)
         return 0
 
     monkeypatch.setattr(cli, "serve", serve)
@@ -261,30 +311,40 @@ async def test_encounter_worker_starts_without_a_behavioral_planner(monkeypatch)
 
 
 @pytest.mark.parametrize(
-    ("scenario", "control", "enabled", "url", "llm", "valid"),
+    ("scenario", "control", "enabled", "url", "llm", "valid", "policy"),
     [
-        ("neural-soak", "1", False, None, "fake", True),
-        ("neural-soak", "1", False, "tcp://policy:47835", "fake", True),
-        ("neural-soak", "1", True, "tcp://policy:47835", "fake", False),
-        ("neural-soak", "0", False, None, "fake", False),
-        ("neural-soak", "0", True, None, "fake", False),
-        ("neural-soak", "0", True, "tcp://policy:47835", "fake", True),
-        ("neural-soak", "1", False, None, "chatgpt", False),
-        ("neural-load", "1", False, None, "fake", False),
-        (None, "1", False, None, "fake", False),
+        ("neural-soak", "1", False, None, "fake", True, "service"),
+        ("neural-soak", "1", False, "tcp://policy:47835", "fake", True, "service"),
+        ("neural-soak", "1", True, "tcp://policy:47835", "fake", False, "service"),
+        ("neural-soak", "0", False, None, "fake", False, "service"),
+        ("neural-soak", "0", True, None, "fake", True, "engine"),
+        ("neural-soak", "0", True, None, "fake", False, "service"),
+        ("neural-soak", "0", True, "tcp://policy:47835", "fake", True, "service"),
+        ("neural-soak", "0", True, "tcp://policy:47835", "fake", True, "engine"),
+        ("neural-soak", "1", False, None, "chatgpt", False, "service"),
+        ("neural-load", "1", False, None, "fake", False, "service"),
+        (None, "1", False, None, "fake", False, "service"),
+        ("neural", "0", True, None, "fake", True, "engine"),
+        ("neural", "0", True, None, "fake", False, "service"),
+        ("feats", "0", True, None, "fake", True, "engine"),
+        ("feats", "0", True, None, "chatgpt", True, "engine"),
+        ("feats", "0", True, None, "local", False, "engine"),
     ],
 )
-async def test_soak_control_requires_explicit_pilot_disable_and_only_skips_body_url(
-    monkeypatch, scenario, control, enabled, url, llm, valid
+async def test_serve_validates_scenario_backend_and_soak_control(
+    monkeypatch, scenario, control, enabled, url, llm, valid, policy
 ):
     monkeypatch.setenv("GOTHIC_SOAK_CONTROL", control)
-    args = SimpleNamespace(scenario=scenario, neural_body=enabled, body_url=url, llm=llm)
+    args = SimpleNamespace(
+        scenario=scenario, neural_body=enabled, body_url=url, llm=llm, body_policy=policy,
+    )
     backend = Mock(side_effect=RuntimeError("passed launch validation"))
     monkeypatch.setattr(cli, "_backend", backend)
     if valid:
         with pytest.raises(RuntimeError, match="passed launch validation"):
             await cli.serve(args)
         backend.assert_called_once_with(args)
+        assert args.body_policy == policy
     else:
         assert await cli.serve(args) == 2
         backend.assert_not_called()
@@ -293,17 +353,20 @@ async def test_soak_control_requires_explicit_pilot_disable_and_only_skips_body_
 @pytest.mark.parametrize(
     ("flags", "env_url", "enabled", "expected_url", "created"),
     [
-        ([], None, True, None, False),
+        ([], None, True, None, True),
         ([], "tcp://policy:47835", True, "tcp://policy:47835", True),
         (["--no-neural-body"], "tcp://policy:47835", False, "tcp://policy:47835", False),
         (["--neural-body", "--body-url", "tcp://explicit:47835"], None, True, "tcp://explicit:47835", True),
         (["--body-url", "tcp://explicit:47835"], "tcp://policy:47835", True, "tcp://explicit:47835", True),
-        (["--body-url", ""], "tcp://policy:47835", True, "", False),
+        (["--body-url", ""], "tcp://policy:47835", True, "", True),
+        (["--body-policy", "service"], None, True, None, False),
+        (["--body-policy", "service"], "tcp://policy:47835", True, "tcp://policy:47835", True),
     ],
 )
-def test_serve_arguments_create_bodypilot_only_with_flag_and_url(
+def test_serve_arguments_create_engine_pilot_without_url_and_service_with_url(
     monkeypatch, flags, env_url, enabled, expected_url, created
 ):
+    monkeypatch.delenv("GOTHIC_BODY_POLICY", raising=False)
     if env_url is None:
         monkeypatch.delenv("GOTHIC_BODY_URL", raising=False)
     else:
@@ -320,6 +383,7 @@ def test_serve_arguments_create_bodypilot_only_with_flag_and_url(
         if created:
             assert pilot is factory.return_value
             assert factory.call_args.args == (link, expected_url)
+            assert factory.call_args.kwargs["body_policy"] == args.body_policy
             assert factory.call_args.kwargs["companion"] is talk.orders.companion
         else:
             assert pilot is None
@@ -356,6 +420,21 @@ def test_bodypilot_distinguishes_conversation_partner_from_attached_npcs(monkeyp
     talk.attached.clear()
     assert not unavailable("NPC")
     assert not talking("NPC")
+
+
+@pytest.mark.parametrize("policy", ["engine", "service"])
+def test_body_policy_environment_selects_default(monkeypatch, policy):
+    monkeypatch.setenv("GOTHIC_BODY_POLICY", policy)
+
+    async def serve(args):
+        assert args.body_policy == policy
+        return 0
+
+    monkeypatch.setattr(cli, "serve", serve)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve"])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
 
 
 @pytest.mark.parametrize("maximum", [1, 4])

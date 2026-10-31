@@ -15,6 +15,8 @@ class Marvin {
     bool autoComplete(std::string& v);
     bool exec(std::string_view v);
 
+    static bool chunksVisible() { return showChunks; }
+
   private:
     enum CmdType {
       C_None,
@@ -28,8 +30,10 @@ class Marvin {
 
       // rendering
       C_ToggleFrame,
+      C_ToggleChunks,
       C_ToggleShowRay,
       C_ToggleVobBox,
+      C_ToggleMeleeBladeDraw,
 
       // game
       C_ToggleDesktop,
@@ -64,6 +68,7 @@ class Marvin {
 
       // opengothic specific
       C_Census,
+      C_PlayVideo,
       C_ToggleGI,
       C_ToggleVsm,
       C_ToggleRtsm,
@@ -86,13 +91,25 @@ class Marvin {
       C_ToggleArrowSticking,
       C_ToggleSpellPhysics,
       C_ToggleMovableVobs,
+      C_ToggleItemHulls,
+      C_ToggleFurnitureParts,
       C_TogglePhysicsNoise,
       C_ToggleDestruction,
       C_ToggleBuoyancy,
       C_ToggleCloth,
+      C_ToggleItemWake,
+      C_TogglePlacedItems,
       C_ToggleCharacterVirtual,
       C_ToggleNpcCharacterVirtual,
       C_ToggleMonsterCharacterVirtual,
+      C_ToggleMeleeBladeShadow,
+      C_ToggleMeleePhysicsHits,
+      C_ToggleMeleeReactions,
+      C_ToggleMeleePosture,
+      C_ToggleMeleeDownTactics,
+      C_ToggleMeleeHitStop,
+      C_ToggleMeleeStamina,
+      C_ToggleMeleeParry,
       };
 
     struct Cmd {
@@ -122,6 +139,7 @@ class Marvin {
     bool   setTime                 (World& world, std::string_view hh, std::string_view mm);
     bool   goToVob                 (World& world, Npc& player, Camera& c, std::string_view name, size_t n);
 
+    static bool showChunks;
     std::vector<Cmd> cmd;
   };
 

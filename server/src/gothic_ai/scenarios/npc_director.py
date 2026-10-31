@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 import re
 from collections.abc import AsyncIterator
 from dataclasses import replace
@@ -311,21 +312,29 @@ async def npc_director(
             return _logged(results)
 
         if live:
+            # GOTHIC_DIRECTOR_ASKS=N asks the same brief N times to see how often a hidden challenge is laid
+            asks = max(1, int(os.environ.get("GOTHIC_DIRECTOR_ASKS", "1")))
             brief = await director.brief(occasion)
-            raw = await director.model.propose(brief)
-            try:
-                proposal = Proposal.of(raw or {})
-                errors = director.canon(proposal, brief)
-                if not errors:
-                    errors = await director._requirements(proposal)
-            except ValidationError as error:
-                return _logged({**results, "live_decision": f"failed ({error})"})
-            outcome = {"fact": "line_none" if proposal.kind == "none" else "line",
-                       "proposal": raw, "canon": errors}
-            log.info("npc_director live outcome: %s", json.dumps(outcome, ensure_ascii=False))
-            check("live_decision", bool(proposal.reason.strip()) if proposal.kind == "none"
-                  else bool(proposal.premise.strip()), outcome)
-            check("live_canon", not errors, errors)
+            challenges: list[str] = []
+            for ask in range(asks):
+                suffix = f"_{ask + 1}" if asks > 1 else ""
+                raw = await director.model.propose(brief)
+                try:
+                    proposal = Proposal.of(raw or {})
+                    errors = director.canon(proposal, brief)
+                    if not errors:
+                        errors = await director._requirements(proposal)
+                except ValidationError as error:
+                    return _logged({**results, f"live_decision{suffix}": f"failed ({error})"})
+                outcome = {"fact": "line_none" if proposal.kind == "none" else "line",
+                           "proposal": raw, "canon": errors}
+                log.info("npc_director live outcome: %s", json.dumps(outcome, ensure_ascii=False))
+                check(f"live_decision{suffix}", bool(proposal.reason.strip()) if proposal.kind == "none"
+                      else bool(proposal.premise.strip()), outcome)
+                check(f"live_canon{suffix}", not errors, errors)
+                if proposal.kind != "none":
+                    challenges.append((proposal.challenge or {}).get("kind", "") or "none")
+            check("live_challenges", True, ", ".join(challenges) or "no lines")
             return _logged(results)
 
         director.model.llm = FakeBackend("", tool_calls=[ToolCall("propose_line", {

@@ -19,7 +19,9 @@ class Snapshot final {
     explicit Snapshot(zenkit::DaedalusVm& vm) {
       for(uint32_t i=0; i<vm.symbols().size(); ++i) {
         auto* s = vm.find_symbol_by_index(i);
-        if(s==nullptr || s->is_const() || s->is_member() || s->is_external())
+        // the VM's own scratch for pushed strings is not a script variable, and it grows during a call:
+        // restored by the count taken before, it would read past the values taken
+        if(s==nullptr || s->is_const() || s->is_member() || s->is_external() || s->name()=="$PHOENIX_FAKE_STRINGS")
           continue;
         auto t = s->type();
         if(t==DaedalusDataType::INT || t==DaedalusDataType::FLOAT || t==DaedalusDataType::STRING ||
@@ -55,8 +57,7 @@ class Snapshot final {
             }
       }
 
-    // the first variable whose value differs from `o`'s ("MIS_X: 1, 2"), empty if none; both taken over one VM.
-    // The VM's own scratch for pushed strings is not a script variable.
+    // the first variable whose value differs from `o`'s ("MIS_X: 1, 2"), empty if none; both taken over one VM
     std::string differs(const Snapshot& o) const {
       size_t ni = 0, nf = 0, ns = 0, nn = 0;
       for(auto* s : syms)
@@ -74,7 +75,7 @@ class Snapshot final {
               nf++;
               break;
             case DaedalusDataType::STRING:
-              if(strs[ns]!=o.strs[ns] && s->name()!="$PHOENIX_FAKE_STRINGS")
+              if(strs[ns]!=o.strs[ns])
                 return name() + ": \"" + strs[ns] + "\", \"" + o.strs[ns] + "\"";
               ns++;
               break;

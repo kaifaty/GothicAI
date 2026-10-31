@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 49
+PROTOCOL_VERSION = 54
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -39,11 +39,68 @@ class _GameMessage(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
 
+class BodyNet(_GameMessage):
+    loaded: bool
+    checkpoint_sha256: str | None = None
+    error: str | None = None
+
+
 class Hello(_GameMessage):
     type: Literal["hello"]
     protocol: int
     client: str
     codepage: str
+    body_net: BodyNet | None = None
+
+
+class BodyPolicy(_GameMessage):
+    """Interval counters for an engine-owned combat policy (v54)."""
+
+    type: Literal["body_policy"]
+    session_epoch: int
+    world_epoch: int
+    entity_id: int
+    control_generation: int
+    goal_version: int
+    target_entity_id: int
+    t_game_ms: int
+    t_wall_ms: int
+    decisions: int
+    fallbacks: dict[str, int]
+    steps: int
+    p50_us: float
+    p99_us: float
+    final: bool
+    reason: str
+    selected_actions: dict[str, int] = Field(default_factory=dict)
+    accepted_actions: dict[str, int] = Field(default_factory=dict)
+    hidden_reset: int = 0
+
+
+class SvmLine(_GameMessage):
+    """A suppressed human SVM line, offered to the server without a required reply."""
+
+    type: Literal["svm_line"]
+    id: str
+    npc: str
+    svm: str
+    text: str
+    target: str | None = None
+    overlay: bool
+
+
+class CombatHit(_GameMessage):
+    """Actual health lost in a nearby fight (v51), after damage and knockdown/death."""
+
+    type: Literal["combat_hit"]
+    npc: str
+    by: str
+    damage: int = Field(gt=0)
+    hp: int
+    hp_max: int
+    down: bool
+    dead: bool
+    kind: Literal["melee", "ranged", "spell"]
 
 
 class WorldLoaded(_GameMessage):
@@ -138,6 +195,7 @@ class NpcState(_GameMessage):
     hp: int
     hp_max: int
     busy: bool
+    animations: str = ""  # v52: native animation names, including transitions
     action: str | None = None
     following: bool = False
     gaze: str | None = None  # v27: whom its eyes are on (an npc id, PLAYER), none: nobody
@@ -148,6 +206,8 @@ class NpcState(_GameMessage):
 
 class PlayerState(_GameMessage):
     name: str
+    animations: str = ""
+    kneeling: bool = False
     pos: tuple[float, float, float]
     # v32: where he faces on the ground (x, z), ahead of him and to his right as the screen shows it
     ahead: tuple[float, float] | None = None
@@ -573,6 +633,7 @@ class NpcView(_GameMessage):
     indoors: bool = False
     room_guild: int | None = None  # whose room it is in (the scripts' guilds), indoors only
     state: str = ""
+    senses_range: float = 0  # v52: native perception radius, cm
     theft_ready: bool | None = None  # v44: initialized native ASSESSTHEFT callback, for scene setup
     theft_range: float | None = None  # v48: native ASSESSTHEFT range, cm; also available outside AiNormal
     others_damage_ready: bool | None = None  # v47: initialized native ASSESSOTHERSDAMAGE callback
@@ -1163,6 +1224,8 @@ class BodyControlEvents(_BodyModel):
 
 GameMessage = Annotated[
     Hello
+    | SvmLine
+    | CombatHit
     | WorldLoaded
     | Loading
     | Session
@@ -1200,6 +1263,7 @@ GameMessage = Annotated[
     | BeastEvent
     | NpcViews
     | BodyObservations
+    | BodyPolicy
     | BodyControlEvents,
     Field(discriminator="type"),
 ]
@@ -1242,6 +1306,11 @@ class _Command(BaseModel):
 
     def to_json(self) -> str:
         return self.model_dump_json(exclude_none=True)
+
+
+class SvmModeCmd(_Command):
+    type: Literal["svm_mode"] = "svm_mode"
+    replace: bool
 
 
 class AttachCmd(_Command):
@@ -1293,6 +1362,7 @@ class BodyAcquireCmd(_BodyCommand):
     target_entity_id: BodyPositive | None = None
     await_boundary_ms: Annotated[int, Field(strict=True, ge=0, le=2000)] = 0
     acquire_request_id: BodyUInt = 0
+    policy: Literal["engine"] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -1450,6 +1520,14 @@ class NpcActCmd(_Command):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
+class PlayerPoseCmd(_Command):
+    """v52: native hero kneeling until movement, attack or dialogue; result acknowledges the request."""
+
+    type: Literal["player_pose"] = "player_pose"
+    req: str
+    pose: Literal["kneel", "none"]
+
+
 class SnapshotCmd(_Command):
     type: Literal["snapshot"] = "snapshot"
     npc: str
@@ -1563,6 +1641,16 @@ class MemoryCmd(_Command):
     type: Literal["memory"] = "memory"
     branch: str
     seq: int
+
+
+class FeatToastCmd(_Command):
+    """A quiet toast for a deed recorded by the chronicler (v53)."""
+
+    type: Literal["feat_toast"] = "feat_toast"
+    feat: str
+    title: str
+    text: str
+    icon: str = ""
 
 
 DebugCommand = Literal[

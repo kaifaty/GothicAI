@@ -57,7 +57,10 @@ DEAL_MAX = 6  # a quest with more people in it makes no acquaintances
 OUTLAWS = frozenset({9, 10, 11})  # bandits, convicts, seekers: they have no dealings with the rest
 # retellings away from the one lied to: a lie seen through on the spot is talked about nearby, one he took
 # a reward for goes further
-HOPS = {"caught": 2, "found_out": 3, "broken": 2, "theft": 2, "attack": 3, "murder": 4, "sheep": 2}
+HOPS = {
+    "caught": 2, "found_out": 3, "broken": 2, "theft": 2, "attack": 3, "murder": 4, "sheep": 2,
+    "fame": 3,
+}
 HOPS.update({s.kind: s.hops for root in SOURCES.values() for s in (root, *root.alternatives)})
 CRIME_KINDS = frozenset({"theft", "attack", "murder", "sheep"})
 TELLS_PER_DAY = 3  # one tells a rumor to this many a day at most: it goes round in chains, not in a flood
@@ -274,6 +277,7 @@ class Rumor:
     crime: str = ""  # the deed's Chronicle id, also for a lie about that deed
     subject: str = PLAYER
     subject_name: str = "герой"
+    text: str = ""  # the feat's account, when kind is fame
 
     def __post_init__(self) -> None:
         self.subject = (self.subject or PLAYER).upper()
@@ -308,6 +312,8 @@ class Rumor:
 
     def description(self) -> str:
         """The same subject-aware content for memories, news and a live retelling."""
+        if self.kind == "fame":
+            return f"о герое говорят: «{self.title}» — {self.text}"
         subject = "герой" if self.is_player else self.subject_name or self.subject
         if (source := source_kind(self.kind)) is not None:
             return source.text.format(subject_name=subject, about_name=self.about_name, title=self.title)
@@ -377,14 +383,19 @@ class Rumors:
             except (GameError, TimeoutError) as err:
                 log.info("rumors: %s", err or type(err).__name__)
 
-    async def tick(self) -> None:
-        """Who met whom since the last tick, and what they told each other."""
+    async def prepare_social(self) -> Social:
+        """The current world's acquaintances, loaded before a caller chooses among them."""
         if self.social is None:
             people = await self.link.story_people()
             self.social = Social(people, self.graph, self.bonds())
             if self.crimes is not None:
                 self.crimes.people = {p["npc"]: p for p in people}
             log.info("rumors: %d people, %d ties", len(self.social.names), _count(self.social))
+        return self.social
+
+    async def tick(self) -> None:
+        """Who met whom since the last tick, and what they told each other."""
+        await self.prepare_social()
         if self.crimes is not None:
             try:
                 await self.crimes.sides.prepare()
@@ -578,6 +589,7 @@ class Rumors:
             "hops": r.known[listener],
             "how": how,
             "day": at // DAY,
+            **({"feat": r.quest, "text": r.text} if r.kind == "fame" else {}),
             **({"said": True} if r.said else {}),
             **({"crime": r.crime, "at": at} if r.crime else {}),
             **excuse,
@@ -618,6 +630,12 @@ class Rumors:
                 r.since[event.source] = event.day
             return
         match f.get("fact"):
+            case "feat_fame":
+                r = Rumor(f["feat"], "fame", PLAYER, "герой", f["title"], text=f["text"])
+                r = self.rumors.setdefault(r.key, r)
+                for npc in f["witnesses"]:
+                    r.known[npc] = 0
+                    r.since.setdefault(npc, int(f["day"]))
             case "found_out" | "caught":
                 r = Rumor(
                     f.get("quest", ""),

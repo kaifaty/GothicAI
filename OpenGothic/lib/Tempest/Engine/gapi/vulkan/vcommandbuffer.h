@@ -23,6 +23,19 @@ class VCompPipeline;
 class VBuffer;
 class VTexture;
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+struct VFrameProfileQueries {
+  static constexpr uint32_t MaxQueries=256;
+  VkDevice device=VK_NULL_HANDLE;
+  VkQueryPool pool=VK_NULL_HANDLE;
+  uint32_t count=0;
+  bool active=false, valid=true;
+  void* record=nullptr;
+  ~VFrameProfileQueries();
+  void complete(bool success);
+  };
+#endif
+
 class VCommandBuffer:public AbstractGraphicsApi::CommandBuffer {
   public:
     enum RpState : uint8_t {
@@ -99,6 +112,9 @@ class VCommandBuffer:public AbstractGraphicsApi::CommandBuffer {
       };
     Detail::SmallList<Chunk,32>    chunks;
     std::vector<VSwapchain::Sync*> swapchainSync;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    std::shared_ptr<VFrameProfileQueries> profileQueries;
+#endif
 
   protected:
     void addDependency(VSwapchain& s, size_t imgId);
@@ -114,6 +130,9 @@ class VCommandBuffer:public AbstractGraphicsApi::CommandBuffer {
 
     void pushChunk();
     void newChunk();
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    void profileDraw();
+#endif
 
     void bindVbo(const VBuffer& vbo, size_t stride);
     void implSetUniforms(const PipelineStage st);

@@ -10,6 +10,11 @@
 #include <Tempest/Application>
 #include <Tempest/Log>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+
 #include "ui/crosshair.h"
 #include "ui/dialogmenu.h"
 #include "ui/menuroot.h"
@@ -30,11 +35,15 @@
 #include "gothic.h"
 #include "testbench.h"
 #include "frameprofile.h"
+#include "marvin.h"
+#include "world/chunkresidency.h"
 
 using namespace Tempest;
 
 MainWindow::MainWindow(Device& device)
-  : Window(TestBench::isActive() ? Minimized : Maximized),device(device),swapchain(device,hwnd()),
+  : Window(TestBench::isActive() ?
+      (std::getenv("OPENGOTHIC_BENCH_VISIBLE")!=nullptr && std::strcmp(std::getenv("OPENGOTHIC_BENCH_VISIBLE"),"1")==0 ? Normal : Minimized) : Maximized),
+    device(device),swapchain(device,hwnd()),
     atlas(device),rootMenu(keycodec),inventory(keycodec),
     dialogs(inventory),document(keycodec),
     console(*this),
@@ -76,6 +85,10 @@ MainWindow::MainWindow(Device& device)
 
   Gothic::inst().onVideo       .bind(this,&MainWindow::onVideo);
 
+  if(CommandLine::inst().doIntro() && !Gothic::inst().isBenchmarkMode() &&
+     Gothic::settingsGetI("GAME","scaleVideos")>=0)
+    Resources::startVideoBase();
+
   Gothic::inst().onBenchmarkFinished.bind(this,&MainWindow::onBenchmarkFinished);
 
   if(!Gothic::inst().defaultSave().empty()){
@@ -88,6 +101,7 @@ MainWindow::MainWindow(Device& device)
     }
   else {
     rootMenu.processMusicTheme();
+    Log::i("Main menu ready: ",Gothic::inst().menuMain());
     }
 
   funcKey[2] = Shortcut(*this,Event::M_NoModifier,Event::K_F2);
@@ -238,6 +252,7 @@ void MainWindow::paintEvent(PaintEvent& event) {
 
           if(showHealthBar)
             drawBar(p,barHp, 10, h()-10, hp, AlignLeft | AlignBottom);
+          drawStamina(p,*pl,showHealthBar);
           if(showManaBar)
             drawBar(p,barMana, w()-10, h()-10, mp, AlignRight | AlignBottom);
           if(showSwimBar) {
@@ -261,6 +276,8 @@ void MainWindow::paintEvent(PaintEvent& event) {
       world->marchInteractives(dbg);
       world->view()->dbgLights(dbg);
       world->marchCsCameras(dbg);
+      if(Marvin::chunksVisible())
+        drawChunks(p,*world,*c);
       }
     }
 
@@ -294,6 +311,11 @@ void MainWindow::paintEvent(PaintEvent& event) {
       DbgPainter dbg(p,c->viewProj(),w(),h());
       player.drawVobRay(dbg);
       }
+
+    if(Gothic::inst().doMeleeBladeDraw() && c!=nullptr) {
+      DbgPainter dbg(p,c->viewProj(),w(),h());
+      world->drawMeleeShadow(dbg);
+      }
     }
 
   if(auto wx = Gothic::inst().worldView()) {
@@ -301,10 +323,101 @@ void MainWindow::paintEvent(PaintEvent& event) {
     }
   }
 
+void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera) {
+  auto& fnt = Resources::font(Gothic::interfaceScale(this));
+  const int x = 10, y = 60, line = fnt.pixelSize()+3;
+  const auto textures = Resources::textureStats();
+  auto drawTextures = [&](int top) {
+    char text[192];
+    std::snprintf(text,sizeof(text),"Textures %llu: %.2f MiB live  %.2f retired  %.2f peak",
+                  static_cast<unsigned long long>(textures.count),double(textures.liveBytes)/1048576.0,
+                  double(textures.retiredBytes)/1048576.0,double(textures.peakBytes)/1048576.0);
+    fnt.drawText(p,x,top,text);
+    std::snprintf(text,sizeof(text),"Landscape %.2f MiB/%llu  Static %.2f MiB/%llu",
+                  double(textures.categoryBytes[0])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[0]),
+                  double(textures.categoryBytes[1])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[1]));
+    fnt.drawText(p,x,top+line,text);
+    std::snprintf(text,sizeof(text),"NPC/items %.2f MiB/%llu  Other %.2f MiB/%llu",
+                  double(textures.categoryBytes[2])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[2]),
+                  double(textures.categoryBytes[3])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[3]));
+    fnt.drawText(p,x,top+2*line,text);
+    std::snprintf(text,sizeof(text),"Texture session: evicted %llu  reloaded %llu",
+                  static_cast<unsigned long long>(textures.evicted),static_cast<unsigned long long>(textures.reloaded));
+    fnt.drawText(p,x,top+3*line,text);
+    };
+  const auto chunks = world.chunkResidency();
+  if(chunks==nullptr) {
+    fnt.drawText(p,x,y,"Chunks: streaming manager disabled");
+    drawTextures(y+line);
+    return;
+    }
+  auto hero = world.player();
+  if(hero==nullptr)
+    return;
+
+  const auto center = ChunkId::fromPosition(hero->position().x,hero->position().z);
+  const auto cam = camera.originLwc();
+  const auto cameraId = ChunkId::fromPosition(cam.x,cam.z);
+  const int64_t radius = std::max<int64_t>({8,std::abs(int64_t(cameraId.x)-center.x)+1,
+                                            std::abs(int64_t(cameraId.z)-center.z)+1});
+  const int mapSize = std::min(240,std::min(w(),h())/2);
+  const int mapY = y+8*line;
+  const float cell = float(mapSize)/float(radius*2+1);
+  p.setBrush(Color(0.f,0.f,0.f,0.8f));
+  p.drawRect(x-5,y-5,std::max(580,mapSize+10),mapSize+10*line+10);
+
+  const auto& stats = chunks->stats();
+  char text[160];
+  std::snprintf(text,sizeof(text),"Chunks 64 m: Near %zu  Far %zu  Outside %zu",stats.near,stats.far,stats.outside);
+  fnt.drawText(p,x,y,text);
+  std::snprintf(text,sizeof(text),"Transitions/s %zu  update %.3f ms  work %.3f ms",
+                stats.transitionsLastSecond,stats.updateMs,stats.workMs);
+  fnt.drawText(p,x,y+line,text);
+  std::snprintf(text,sizeof(text),"Landscape: pending %zu  published %llu  released %llu",stats.pending,
+                static_cast<unsigned long long>(stats.published),static_cast<unsigned long long>(stats.released));
+  fnt.drawText(p,x,y+2*line,text);
+  std::snprintf(text,sizeof(text),"Pages %zu: %.2f MiB used  %.2f free  %.2f retired",stats.landscapePageCount,
+                double(stats.landscapePageUsedBytes)/1048576.0,double(stats.landscapePageFreeBytes)/1048576.0,
+                double(stats.landscapePageRetiredBytes)/1048576.0);
+  fnt.drawText(p,x,y+3*line,text);
+  drawTextures(y+4*line);
+
+  const auto& entries = chunks->table().entries;
+  for(size_t i=0;i<entries.size();++i) {
+    const auto id = entries[i].id;
+    const int64_t dx = int64_t(id.x)-center.x, dz = int64_t(id.z)-center.z;
+    if(std::abs(dx)>radius || std::abs(dz)>radius)
+      continue;
+    switch(chunks->desired(i)) {
+      case ChunkResidency::State::Near:    p.setBrush(Color(0.2f,0.8f,0.3f)); break;
+      case ChunkResidency::State::Far:     p.setBrush(Color(0.2f,0.45f,0.9f)); break;
+      case ChunkResidency::State::Outside: p.setBrush(Color(0.3f,0.3f,0.3f)); break;
+      }
+    const int px = x+int(float(dx+radius)*cell);
+    const int py = mapY+int(float(radius-dz)*cell);
+    p.drawRect(px,py,std::max(1,int(cell)-1),std::max(1,int(cell)-1));
+    }
+
+  auto marker = [&](const Vec3& position,const Color& color,std::string_view label) {
+    const float dx = position.x/float(ChunkId::Size)-float(center.x);
+    const float dz = position.z/float(ChunkId::Size)-float(center.z);
+    const int px = x+int((dx+float(radius))*cell);
+    const int py = mapY+int((float(radius)+1.f-dz)*cell);
+    p.setBrush(color);
+    p.drawRect(px-3,py-3,7,7);
+    fnt.drawText(p,px+4,py-4,label);
+    };
+  marker(cam,Color(1.f,0.8f,0.1f),"C");
+  marker(hero->position(),Color(1.f),"H");
+  fnt.drawText(p,x,mapY+mapSize+line,"Green Near  Blue Far  Gray Outside  H hero  C camera");
+  }
+
 void MainWindow::resizeEvent(SizeEvent&) {
   for(auto& i:fence)
     i.wait();
   swapchain.reset();
+  if(TestBench::isActive())
+    Log::i("[bench] drawable ",swapchain.w(),"x",swapchain.h());
   if(auto camera = Gothic::inst().camera())
     camera->setViewport(swapchain.w(),swapchain.h());
 
@@ -723,13 +836,41 @@ void MainWindow::paintFocus(Painter& p, Rect rect) {
   p.drawRect(rect.x+rect.w-w,rect.y+rect.h-h,w,h, w,h, w2,h2);
   }
 
-void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y, float v, AlignFlag flg) {
+int MainWindow::barHeight() const {
+  if(barBack==nullptr)
+    return 0;
+  const float scale = Gothic::interfaceScale(this);
+  const float destW = 200.f*scale*float(std::min(w(),800))/800.f;
+  return int(float(barBack->h())*destW/float(std::max(barBack->w(),1)));
+  }
+
+void MainWindow::drawStamina(Painter& p, const Npc& pl, bool aboveHealth) {
+  // The hidden meter of melee shows only in a fight: a weapon of melee drawn, or still filling up after it.
+  // Thin gold under the frame of the health bar, as the game's own bars; spent to nothing it dims and
+  // marks the quarter it must come back to before a blow or a jump back.
+  if(!pl.hasStamina())
+    return;
+  const auto ws    = pl.weaponState();
+  const bool melee = ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H;
+  const float v    = pl.staminaFraction();
+  if(!melee && v>=1.f)
+    return;
+  constexpr float height = .6f;
+  const int   gap  = std::max(1,int(2.f*Gothic::interfaceScale(this)));
+  const int   y    = h()-10-(aboveHealth ? barHeight()+gap : 0);
+  if(pl.isStaminaExhausted())
+    drawBar(p,barMisc,10,y,v,AlignLeft|AlignBottom,height,Color(.55f,.42f,.32f,1.f),.25f); else
+    drawBar(p,barMisc,10,y,v,AlignLeft|AlignBottom,height);
+  }
+
+void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y, float v, AlignFlag flg,
+                         float height, const Tempest::Color& tint, float mark) {
   if(barBack==nullptr || bar==nullptr)
     return;
   const float scale   = Gothic::interfaceScale(this);
   const float destW   = 200.f*scale*float(std::min(w(),800))/800.f;
   const float k       = float(destW)/float(std::max(barBack->w(),1));
-  const float destH   = float(barBack->h())*k;
+  const float destH   = float(barBack->h())*k*height;
   const float destHin = float(destH)*24.f/32.f;
   //const float destHin = 20;//float(destH)*24.f/32.f;
 
@@ -746,9 +887,14 @@ void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y
 
   int   dy = int(0.5f*(destH-destHin));
   float pd = 9.f*k;
-  p.setBrush(*bar);
+  p.setBrush(Brush(*bar,tint,Painter::Alpha));
   p.drawRect(x+int(pd),y+dy,int(float(destW-pd*2)*v),int(destHin),
              0,0,bar->w(),bar->h());
+  if(mark>0.f && mark<1.f) {
+    const int mx = x+int(pd)+int(float(destW-pd*2)*mark);
+    p.setBrush(Brush(Color(.9f,.8f,.55f,.9f),Painter::Alpha));
+    p.drawRect(mx,y+dy,std::max(1,int(scale)),int(destHin));
+    }
   }
 
 void MainWindow::drawMsg(Tempest::Painter& p) {
@@ -1024,7 +1170,7 @@ void MainWindow::tickCamera(uint64_t dt) {
       }
     else if(pl!=nullptr && !camera.isFree()) {
       auto spin = camera.spin();
-      if(pl->interactive()==nullptr && !pl->isDown())
+      if(pl->interactive()==nullptr && !pl->isDown() && !pl->isMeleeKnockedDown())
         spin.y = pl->rotation();
       if(pl->isDive() && !camera.isMarvin())
         spin.x = -pl->rotationY();
@@ -1063,6 +1209,8 @@ Camera::Mode MainWindow::solveCameraMode() const {
   if(auto pl = Gothic::inst().player()) {
     if(pl->isDead())
       return Camera::Death;
+    if(pl->isMeleeKnockedDown())
+      return Camera::Normal;
     if(pl->isDive())
       return Camera::Dive;
     if(pl->isSwim())
@@ -1191,9 +1339,10 @@ void MainWindow::saveGame(std::string_view slot, std::string_view name) {
   update();
   }
 
-void MainWindow::onVideo(std::string_view fname) {
+void MainWindow::onVideo(std::string_view fname, bool explicitRequest) {
   // -nointro (autotests): no videos, Xardas's first dialog plays the addon's intro for over a minute
-  if(Gothic::inst().isBenchmarkMode() || !CommandLine::inst().doIntro())
+  if(!explicitRequest && (Gothic::inst().isBenchmarkMode() || !CommandLine::inst().doIntro() ||
+                         Gothic::settingsGetI("GAME","scaleVideos")<0))
     return;
   video.pushVideo(fname);
   }
@@ -1206,6 +1355,11 @@ void MainWindow::onStartLoading() {
 
 void MainWindow::onWorldLoaded() {
   dMouse = Point();
+  if(TestBench::isActive())
+    Log::i("[bench] drawable ",swapchain.w(),"x",swapchain.h());
+  if(TestBench::isActive())
+    if(auto* world = Gothic::inst().world())
+      Log::i("[bench] world ready: ",world->name());
 
   if(Gothic::inst().isBenchmarkMode()) {
     if(auto world = Gothic::inst().world()) {
@@ -1314,6 +1468,10 @@ void MainWindow::render(){
         }
       }
 
+    // Reuse only this frame slot; do not advance the simulation while its GPU work is pending.
+    auto& sync = fence[cmdId];
+    { FrameProfile::Scope timing(FrameProfile::Zone::FencePoll); sync.wait(); }
+
     /*
       Note: game update goes first
       once player position is updated, animation bones(cameraBone in particular) can be updated
@@ -1325,6 +1483,20 @@ void MainWindow::render(){
       FrameProfile::Scope timing(FrameProfile::Zone::FinishStep);
       return SimulationStep::finishStep(dt,player,[&] { FrameProfile::Scope cameraTiming(FrameProfile::Zone::Camera); tickCamera(dt); });
       }();
+    if(auto world = Gothic::inst().world()) {
+      auto hero = Gothic::inst().player();
+      auto camera = Gothic::inst().camera();
+      if(hero!=nullptr && camera!=nullptr) {
+        world->updateLandscape(*camera);
+        TestBench::sampleStreaming(*world);
+        }
+      else if(Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
+        Resources::updateTextures(nullptr);
+        }
+      }
+    else if(Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
+      Resources::updateTextures(nullptr);
+      }
     if(capture) {
       profile.flag(FrameProfile::Flag::CaptureRequested);
       auto   tex = TestBench::withUi() ? screenshotWithUi() : renderer.screenshoot(cmdId);
@@ -1343,15 +1515,6 @@ void MainWindow::render(){
         }
       }
 
-    auto& sync = fence[cmdId];
-    const bool ready=[&] { FrameProfile::Scope timing(FrameProfile::Zone::FencePoll); return sync.wait(0); }();
-    if(!ready) {
-      // GPU rendering is not done, pass to next frame
-      std::this_thread::yield();
-      profile.flag(FrameProfile::Flag::FenceBusy);
-      profile.outcome(FrameProfile::Outcome::FenceBusy);
-      return;
-      }
     { FrameProfile::Scope timing(FrameProfile::Zone::Recycle); Resources::resetRecycled(cmdId); }
 
     {

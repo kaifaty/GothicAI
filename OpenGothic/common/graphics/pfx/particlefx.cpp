@@ -7,7 +7,7 @@
 
 using namespace Tempest;
 
-ParticleFx::ParticleFx(const Material& mat, const zenkit::VirtualObject& vob) {
+ParticleFx::ParticleFx(const Material& mat, const asset::VirtualObject& vob) {
   dbgName          = vob.visual->name;
 
   ppsValue         = -1;
@@ -15,7 +15,7 @@ ParticleFx::ParticleFx(const Material& mat, const zenkit::VirtualObject& vob) {
   dirMode          = ParticleFx::Dir::Dir;
   visTexColorStart = Vec3(255,255,255);
   visTexColorEnd   = Vec3(255,255,255);
-  if(auto decal = dynamic_cast<const zenkit::VisualDecal*>(vob.visual.get())) {
+  if(auto decal = dynamic_cast<const asset::VisualDecal*>(vob.visual.get())) {
     visSizeStart     = Vec2(2.f*decal->dimension.x,
                             2.f*decal->dimension.y);
     }
@@ -30,13 +30,13 @@ ParticleFx::ParticleFx(const Material& mat, const zenkit::VirtualObject& vob) {
   visSizeEndScale  = 1;
   visAlphaStart    = 1;
   visAlphaEnd      = 1;
-  visYawAlign      = vob.sprite_camera_facing_mode==zenkit::SpriteAlignment::YAW;
+  visYawAlign      = vob.sprite_camera_facing_mode==asset::SpriteAlignment::YAW;
   visZBias         = vob.bias!=0;
 
   useEmittersFOR   = true;
   }
 
-ParticleFx::ParticleFx(const zenkit::IParticleEffect& src, std::string_view name)
+ParticleFx::ParticleFx(const Def::ParticleEffect& src, std::string_view name)
   :dbgName(name) {
   ppsValue            = std::max(0.f,src.pps_value);
   ppsScaleKeys        = loadArr(src.pps_scale_keys_s);
@@ -209,7 +209,7 @@ uint64_t ParticleFx::calcPrefferedTimeSingle(const KeyList& k, float fps) {
   }
 
 const Tempest::Texture2d* ParticleFx::loadTexture(std::string_view src) {
-  auto view = Resources::loadTexture(src);
+  auto view = Resources::loadTexture(src,false,false);
   if(view==nullptr)
     view = &Resources::fallbackBlack();
   return view;

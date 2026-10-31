@@ -10,6 +10,10 @@
 #include <Tempest/Log>
 #include <unordered_map>
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "gapi/metalapi.h"
+#endif
+
 using namespace Tempest::Detail;
 
 void MtBlasBuildCtx::pushGeometry(MtDevice& dx,
@@ -82,6 +86,9 @@ MtAccelerationStructure::MtAccelerationStructure(MtDevice& dx, const Tempest::Ab
   auto enc = cmd->accelerationStructureCommandEncoder();
   enc->buildAccelerationStructure(impl.get(), ctx.desc.get(), scratch.get(), 0);
   enc->endEncoding();
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileGpu(cmd);
+#endif
   cmd->commit();
   // TODO: implement proper upload engine
   cmd->waitUntilCompleted();
@@ -161,6 +168,9 @@ MtTopAccelerationStructure::MtTopAccelerationStructure(MtDevice& dx, const RtIns
   auto enc = cmd->accelerationStructureCommandEncoder();
   enc->buildAccelerationStructure(impl.get(), desc.get(), scratch.get(), 0);
   enc->endEncoding();
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileGpu(cmd);
+#endif
   cmd->commit();
   // TODO: implement proper upload engine
   cmd->waitUntilCompleted();

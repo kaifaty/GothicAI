@@ -51,6 +51,7 @@ from .journal import Journal
 from .llm import Tool, ToolCall
 from .places import PlaceBook
 from .protocol import DialogChosen, GameMessage, Loading, Session, Snapshot, TriggerFired
+from .quest_tools import AMEND_TOOL, DROP_TOOL
 from .story import QUEST, StoryPatches
 from .turn import ToolOutcome
 from .validator import (
@@ -714,6 +715,8 @@ class QuestBook:
         self.quests: dict[str, Quest] = {}  # by id, in the order they were made
         self._version = -1
         self._generation = 0
+        self._completed_goals: set[str] = set()
+        self.dropping: set[str] = set()
         self._blame_tasks: set[asyncio.Task[Any]] = set()
         self._blame_lock = asyncio.Lock()
         chronicle.on_fact.append(self._on_fact)
@@ -1034,6 +1037,8 @@ class QuestBook:
         match msg:
             case Loading() | Session():
                 self._generation += 1
+                self._completed_goals.clear()
+                self.dropping.clear()
                 for task in tuple(self._blame_tasks):
                     task.cancel()
                 self._version = -1
@@ -1105,6 +1110,7 @@ class QuestBook:
             self._fact(q, "story_quest_given")
         elif node == done_node(q) and self.progress(q.id).state == "given":
             self._fact(q, "story_quest_done")
+            self._outcome(q, npc, "amended" if self._terms(q) else "done", "full")
         if talk is not None and talk.remember and self.dialogue is not None:
             self.dialogue.remember(npc.upper(), q.name(npc.upper()), talk.remember)
 
@@ -1132,12 +1138,18 @@ class QuestBook:
         if not mine:
             return
         await self._settle_blame(mine)
-        names = [v for q in mine for v in (q.id, stage_var(q))]
+        names = [v for q in mine for v in (q.id, stage_var(q), *self._goals(q))]
+        generation = self._generation
         try:
             vars = (await self.link.story_state(vars=names)).get("vars") or {}
         except (GameError, TimeoutError) as err:
             log.warning("questbook: the quests' state: %s", err)
             return
+        if generation != self._generation:
+            return
+        self._completed_goals.update(
+            gid for q in mine for gid in self._goals(q) if vars.get(gid, 0) >= 1
+        )
         for q in mine:
             p, status, stage = self.progress(q.id), vars.get(q.id), vars.get(stage_var(q))
             if status in (LOG_RUNNING, LOG_SUCCESS, LOG_FAILED, LOG_OBSOLETE) and p.state == "open":
@@ -1155,6 +1167,76 @@ class QuestBook:
 
     async def prepare(self, npc: str) -> None:
         await self.settle(npc)
+
+    def _terms(self, q: Quest) -> list[Fact]:
+        return [f for f in self.chronicle.facts("quest_terms") if f.get("quest") == q.id]
+
+    def _goals(self, q: Quest) -> dict[str, Goal]:
+        return {
+            goal_id(q, k, j): goal
+            for k, stage in enumerate(q.stages, 1)
+            for j, goal in enumerate(stage.goals, 1)
+        }
+
+    def _done_goals(self, q: Quest) -> set[str]:
+        done = self._completed_goals | {
+            f["id"] for f in self.chronicle.facts("triggered") if f.get("count", 0) >= 1
+        }
+        done.update(f["goal"] for f in self.chronicle.facts("story_quest_goal") if f.get("id") == q.id)
+        told = Patches.of(self.patches.ops()).told
+        done.update(gid for gid in self._goals(q) if goal_node(gid) in told)
+        return done
+
+    def _removable(self, q: Quest) -> dict[str, Goal]:
+        dropped = {id for f in self._terms(q) for id in f["drop"]}
+        done = self._done_goals(q)
+        return {
+            goal_id(q, k, j): goal
+            for k, stage in enumerate(q.stages, 1)
+            for j, goal in enumerate(stage.goals, 1)
+            if k >= self.progress(q.id).stage
+            and goal.kind != VANILLA
+            and goal is not q.turn_in()
+            and goal_id(q, k, j) not in dropped
+            and goal_id(q, k, j) not in done
+        }
+
+    def _goal_name(self, q: Quest, goal: Goal) -> str:
+        item = q.name(goal.item)
+        if goal.count > 1:
+            item += f" ×{goal.count}"
+        match goal.kind:
+            case "reach":
+                place = self.places.of(goal.point) if self.places and goal.point else None
+                return f"дойти до {place.ru if place else goal.point or q.name(goal.npc)}"
+            case "bring":
+                return f"принести {item} ({q.name(goal.npc)})"
+            case "have":
+                return f"добыть {item}"
+            case "talk":
+                return f"поговорить с {q.name(goal.npc)}: {goal.talk.description if goal.talk else ''}"
+            case "kill":
+                return f"убить: {', '.join(q.name(npc) for npc in goal.npcs)}"
+            case "wait":
+                return f"подождать {goal.days} дн."
+            case "blame":
+                return f"назвать виновного в деле {goal.crime}"
+            case _:
+                raise ValueError(f"Goal cannot be amended: {goal.kind}")
+
+    def _outcome(self, q: Quest, npc: str, how: str, pay: str, why: str | None = None) -> None:
+        terms = self._terms(q)
+        self.chronicle.record(
+            {
+                "fact": "quest_outcome",
+                "quest": q.id,
+                "npc": npc,
+                "how": how,
+                "drop": list(dict.fromkeys(id for f in terms for id in f["drop"])),
+                "why": [f["why"] for f in terms] + ([why] if why is not None else []),
+                "pay": pay,
+            }
+        )
 
     def situation(self, npc: str) -> str | None:
         npc = npc.upper()
@@ -1174,16 +1256,26 @@ class QuestBook:
                         if g.talk is not None and any(r["goal"] == goal_id(q, k, j) for r in inherited)
                     ]
                     line = (
-                        f"Ты принял поручение умершего ({dead}) «{q.title}»: "
+                        f"Ты принял поручение умершего ({dead}) «{q.title}» (id {q.id}): "
                         f"{q.asked or q.stages[0].journal} Ждёшь героя: {'; '.join(pending)}."
                     )
                 else:
-                    line = f"Ты дал герою поручение «{q.title}»: {q.asked or q.stages[0].journal}"
+                    line = f"Ты дал герою поручение «{q.title}» (id {q.id}): {q.asked or q.stages[0].journal}"
                 if q.turn_in() is not None and q.turn_in().npc == npc:
                     line += f" Сделает — заплатишь: {q.reward()}."
                 if q.days:
                     line += f" Срок — {q.days} дн."
                 out.append(line)
+                goals = self._goals(q)
+                for term in self._terms(q):
+                    names = ", ".join(self._goal_name(q, goals[id]) for id in term["drop"])
+                    out.append(f"Снято тобой: {names} — «{term['why']}»")
+                removable = self._removable(q)
+                if removable:
+                    out.append(
+                        "Можешь снять цели (amend_quest): "
+                        + "; ".join(f"{id} — {self._goal_name(q, goal)}" for id, goal in removable.items())
+                    )
             elif p.state == "done":
                 line = f"Поручение «{q.title}» герой выполнил"
                 if q.turn_in() is not None and q.turn_in().npc == npc:
@@ -1196,12 +1288,83 @@ class QuestBook:
                 out.append(f"Поручение «{q.title}» потеряло смысл и закрыто.")
         return "\n".join(out) or None
 
-    all_tools: tuple[Tool, ...] = ()
+    all_tools: tuple[Tool, ...] = (AMEND_TOOL, DROP_TOOL)
 
     def tools(self, npc: str) -> list[Tool]:
-        return []
+        npc = npc.upper()
+        quests = [
+            q for q in self.all().values()
+            if self.progress(q.id).state == "given"
+            and q.id not in self.dropping
+            and (q.giver == npc or any(r["npc"] == npc for r in q.repairs))
+        ]
+        tools = [AMEND_TOOL] if any(self._removable(q) for q in quests) else []
+        if quests:
+            tools.append(DROP_TOOL)
+        return tools
 
     async def handle(
         self, dialogue: DialogueManager, conv: Conversation, call: ToolCall, snap: Snapshot | None
     ) -> ToolOutcome | None:
-        return None
+        if call.name not in (AMEND_TOOL.name, DROP_TOOL.name):
+            return None
+        q = self.all().get(str(call.arguments.get("quest", "")).upper())
+        if q is None or (q.giver != conv.npc and not any(r["npc"] == conv.npc for r in q.repairs)):
+            return ToolOutcome("Отклонено: такого дела ты от героя не ждёшь.", "rejected")
+        if self.progress(q.id).state != "given":
+            return ToolOutcome("Отклонено: ты не давал герою этого поручения.", "rejected")
+        if q.id in self.dropping:
+            return ToolOutcome("Отклонено: поручение уже отменяется.", "rejected")
+        why = str(call.arguments.get("why", ""))
+        if call.name == AMEND_TOOL.name:
+            return await self._amend(q, conv, call.arguments.get("drop", []), why)
+
+        async def drop() -> tuple[str, bool]:
+            return await self._drop(q, conv, why)
+
+        self.dropping.add(q.id)
+        dialogue.after_speech(conv, drop)
+        return ToolOutcome("Принято: поручение закроется без награды после реплики.", "accepted")
+
+    async def _amend(self, q: Quest, conv: Conversation, drop: Any, why: str) -> ToolOutcome:
+        if not isinstance(drop, list) or not drop or not all(isinstance(d, str) for d in drop):
+            return ToolOutcome("Отклонено: укажи id снимаемых пунктов из обстановки.", "rejected")
+        ids = list(dict.fromkeys(d.upper() for d in drop))
+        goals, removable = self._goals(q), self._removable(q)
+        done = self._done_goals(q)
+        for id in ids:
+            if id not in removable:
+                why_not = "этот пункт не снимается" if id in goals else "такого пункта нет в уговоре"
+                if id in goals and id in done:
+                    why_not = "эта цель уже выполнена"
+                return ToolOutcome(f"Отклонено: {id} — {why_not}.", "rejected")
+        try:
+            await self.link.story_effect(conv.npc, [{"do": "set", "var": id, "value": 1} for id in ids])
+        except (GameError, TimeoutError) as err:
+            return ToolOutcome(f"Отклонено: игра не приняла правку: {err}", "rejected")
+        fact = {
+            "fact": "quest_terms", "quest": q.id, "npc": conv.npc,
+            "name": conv.persona.name, "drop": ids, "why": why,
+        }
+        self.chronicle.record(fact)
+        self.journal.add("quest_amended", **{k: v for k, v in fact.items() if k != "fact"})
+        return ToolOutcome(
+            "Принято: ты снял пункты: " + ", ".join(self._goal_name(q, goals[id]) for id in ids) + ".",
+            "accepted",
+        )
+
+    async def _drop(self, q: Quest, conv: Conversation, why: str) -> tuple[str, bool]:
+        effects = [
+            {"do": "set", "var": q.id, "value": LOG_OBSOLETE},
+            {"do": "journal", "topic": q.title, "text": "", "status": "LOG_OBSOLETE"},
+        ]
+        try:
+            await self.link.story_effect(conv.npc, effects)
+        except (GameError, TimeoutError) as err:
+            self.dropping.discard(q.id)
+            return f"Ты не смог отменить поручение «{q.title}»: {err}", False
+        self._outcome(q, conv.npc, "dropped", "none", why)
+        self.journal.add(
+            "quest_dropped", npc=conv.npc, name=conv.persona.name, quest=q.id, title=q.title, why=why
+        )
+        return f"Ты отменил поручение «{q.title}»: оно закрыто без награды.", True

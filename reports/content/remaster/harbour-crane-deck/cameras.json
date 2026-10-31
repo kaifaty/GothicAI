@@ -1,0 +1,60 @@
+{
+ "cameras": [
+  {
+   "name": "crane-far",
+   "eye": [
+    300,
+    230,
+    -1700
+   ],
+   "target": [
+    -750,
+    60,
+    -3000
+   ],
+   "note": "crane C on the quay from 17 m, eye 2.3 m above the quay"
+  },
+  {
+   "name": "deck-mid",
+   "eye": [
+    -200,
+    230,
+    -3650
+   ],
+   "target": [
+    -750,
+    40,
+    -3050
+   ],
+   "note": "crane C's deck from 8 m: the straps and the planks' edge"
+  },
+  {
+   "name": "deck-close",
+   "eye": [
+    -230,
+    150,
+    -3380
+   ],
+   "target": [
+    -430,
+    40,
+    -3120
+   ],
+   "note": "the deck's cut corner from 3.5 m: plank ends and the strap bent over the edge"
+  },
+  {
+   "name": "crane-a",
+   "eye": [
+    -7417.1,
+    6.0,
+    -12325.9
+   ],
+   "target": [
+    -8291,
+    -20,
+    -12541
+   ],
+   "note": "crane A by the paladins' ship from 9 m on the quay path (towards NW_CITY_WAY_TO_SHIP_19)"
+  }
+ ]
+}

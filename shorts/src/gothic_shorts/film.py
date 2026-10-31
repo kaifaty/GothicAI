@@ -95,6 +95,9 @@ def film(
 
     ports = Ports.free()
     procs = services(config, layout, ports, cwd=logs)
+    for proc in procs:
+        if proc.name == "tts" and "--no-original-voices" not in proc.argv:
+            proc.argv.append("--no-original-voices")
     procs[-1] = _server(procs[-1], take, decider_url, shot.server_args)
     game = Proc(
         "game",

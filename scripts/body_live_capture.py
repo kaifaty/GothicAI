@@ -166,6 +166,8 @@ async def capture(args) -> int:
     shutil.copy(args.save, run / "save_slot_1.sav")
     (run / "Gothic.ini").write_text("[INTERNAL]\nvidResIndex=0\n[GAME]\nUSEGOTHIC1CONTROLS=0\n[SOUND]\n"
                                    "soundVolume=1\nmusicVolume=0\nmusicEnabled=0\nworldSounds=0\n")
+    subprocess.run(["bash", str(Path(__file__).with_name("base-ensure.sh")), str(args.assets)],
+                   env=dict(os.environ, GAME_BIN=str(args.game.resolve())), check=True)
     session_done = asyncio.Event()
     errors: list[Exception] = []
 

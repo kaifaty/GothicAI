@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Tempest/Matrix4x4>
-#include <zenkit/vobs/MovableObject.hh>
+#include "asset/worldtypes.h"
 
 #include "graphics/mesh/animationsolver.h"
 #include "graphics/objvisual.h"
@@ -26,7 +26,7 @@ class Interactive : public Vob {
       FromStand = 11,
       };
 
-    Interactive(Vob* parent, World& world, const zenkit::VMovableObject& vob, Flags flags);
+    Interactive(Vob* parent, World& world, const asset::VMovableObject& vob, Flags flags);
 
     void                load(Serialize& fin) override;
     void                save(Serialize& fout) const override;
@@ -128,7 +128,7 @@ class Interactive : public Vob {
     virtual void        onStateChanged(){}
 
   private:
-    void                setVisual(const zenkit::VirtualObject& vob);
+    void                setVisual(const asset::VirtualObject& vob);
     void                invokeStateFunc(Npc &npc);
     void                implTick(Pos &p);
     void                implQuitInteract(Pos &p);

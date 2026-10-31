@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-#include <zenkit/ModelMesh.hh>
+#include "asset/staticmesh.h"
 
 #include <Tempest/Point>
 
@@ -12,7 +12,7 @@ class Pose;
 class PfxEmitterMesh {
   public:
     PfxEmitterMesh(const PackedMesh& src);
-    PfxEmitterMesh(const zenkit::ModelMesh& src);
+    PfxEmitterMesh(const asset::ModelMesh& src);
 
     Tempest::Vec3 randCoord(float rnd, const Pose* pose) const;
 

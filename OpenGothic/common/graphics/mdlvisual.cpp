@@ -539,31 +539,31 @@ void MdlVisual::clearSlotItem(std::string_view bone) {
     }
   }
 
-bool MdlVisual::setFightMode(zenkit::MdsFightMode mode) {
+bool MdlVisual::setFightMode(asset::MdsFightMode mode) {
   WeaponState f = WeaponState::NoWeapon;
 
   switch(mode) {
-    case zenkit::MdsFightMode::INVALID:
+    case asset::MdsFightMode::INVALID:
       return false;
-    case zenkit::MdsFightMode::NONE:
+    case asset::MdsFightMode::NONE:
       f=WeaponState::NoWeapon;
       break;
-    case zenkit::MdsFightMode::FIST:
+    case asset::MdsFightMode::FIST:
       f=WeaponState::Fist;
       break;
-    case zenkit::MdsFightMode::SINGLE_HANDED:
+    case asset::MdsFightMode::SINGLE_HANDED:
       f=WeaponState::W1H;
       break;
-    case zenkit::MdsFightMode::DUAL_HANDED:
+    case asset::MdsFightMode::DUAL_HANDED:
       f=WeaponState::W2H;
       break;
-    case zenkit::MdsFightMode::BOW:
+    case asset::MdsFightMode::BOW:
       f=WeaponState::Bow;
       break;
-    case zenkit::MdsFightMode::CROSSBOW:
+    case asset::MdsFightMode::CROSSBOW:
       f=WeaponState::CBow;
       break;
-    case zenkit::MdsFightMode::MAGIC:
+    case asset::MdsFightMode::MAGIC:
       f=WeaponState::Mage;
       break;
     }
@@ -1204,6 +1204,14 @@ Vec3 MdlVisual::mapWeaponBone() const {
   return {pos.at(3,0), pos.at(3,1), pos.at(3,2)};
   }
 
+void MdlVisual::setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now) {
+  skInst->setLayerSpeed(seq,k,now);
+  }
+
+void MdlVisual::hitStop(uint64_t until, float k) {
+  skInst->hitStop(until,k);
+  }
+
 void MdlVisual::setAnimSpeed(std::string_view name, float k) {
   skInst->setAnimSpeed(name,k);
   }
@@ -1271,6 +1279,32 @@ float MdlVisual::animTime(std::string_view name) const {
   return sq!=nullptr ? sq->totalTime() : 0.f;
   }
 
+// the bones of the model at a frame of the animation (f past its end: the bind pose), in the model's frame
+static void modelFrame(const Skeleton& skeleton, const Animation::AnimData& d, uint32_t f,
+                       std::vector<Tempest::Matrix4x4>& world) {
+  auto& nodes = skeleton.nodes;
+  std::vector<Tempest::Matrix4x4> local(nodes.size());
+  world.resize(nodes.size());
+  for(size_t i=0; i<nodes.size(); ++i)
+    local[i] = nodes[i].tr;
+  for(size_t i=0; i<d.nodeIndex.size() && f<d.numFrames; ++i)
+    if(d.nodeIndex[i]<nodes.size())
+      local[d.nodeIndex[i]] = mkMatrix(d.samples[size_t(f)*d.nodeIndex.size()+i]);
+  std::vector<bool> done(nodes.size(),false);
+  for(size_t i=0; i<nodes.size(); ++i) {
+    size_t chain[Resources::MAX_NUM_SKELETAL_NODES];
+    size_t n = 0;
+    for(size_t b=i; b<nodes.size() && !done[b] && n<nodes.size(); b=nodes[b].parent)
+      chain[n++] = b;
+    while(n>0) {
+      const size_t b = chain[--n];
+      const size_t p = nodes[b].parent;
+      world[b] = p<nodes.size() ? world[p]*local[b] : local[b];
+      done[b]  = true;
+      }
+    }
+  }
+
 std::string MdlVisual::animInfo(std::string_view name) const {
   const Animation::Sequence* sq = solver.solveFrm(name);
   if(sq==nullptr || sq->data==nullptr)
@@ -1283,6 +1317,13 @@ std::string MdlVisual::animInfo(std::string_view name) const {
                 double(d.fpsRate),double(ms),d.nodeIndex.size(),int(d.hasMoveTr),double(d.moveTr.x),double(d.moveTr.y),
                 double(d.moveTr.z),ms>0.f ? double(d.moveTr.length()/ms*1000.f) : 0.0,sq->next.c_str());
   std::string out = buf;
+  // the blow's frames (the attack windows)
+  for(const auto& e:d.events)
+    if(e.type==asset::MdsEventType::OPTIMAL_FRAME) {
+      out += "; optimal";
+      for(auto f:e.frames)
+        out += " " + std::to_string(f);
+      }
   if(skeleton==nullptr || d.nodeIndex.empty() || d.numFrames==0)
     return out;
   // the nodes it moves (not all: an upper body only animation)
@@ -1299,33 +1340,13 @@ std::string MdlVisual::animInfo(std::string_view name) const {
   const size_t rt = skeleton->findNode("BIP01 R THIGH");
   if(lt>=nodes.size() || rt>=nodes.size())
     return out;
-  std::vector<Tempest::Matrix4x4> local(nodes.size()), world(nodes.size());
+  std::vector<Tempest::Matrix4x4> world;
   auto yaw = [&](const Tempest::Matrix4x4* m) {
     const float dx = m[lt].at(3,0)-m[rt].at(3,0);
     const float dz = m[lt].at(3,2)-m[rt].at(3,2);
     return std::atan2(dz,dx)*180.f/float(M_PI);
     };
-  // f: a frame, else the bind pose
-  auto pose = [&](uint32_t f) {
-    for(size_t i=0; i<nodes.size(); ++i)
-      local[i] = nodes[i].tr;
-    for(size_t i=0; i<d.nodeIndex.size() && f<d.numFrames; ++i)
-      if(d.nodeIndex[i]<nodes.size())
-        local[d.nodeIndex[i]] = mkMatrix(d.samples[size_t(f)*d.nodeIndex.size()+i]);
-    std::vector<bool> done(nodes.size(),false);
-    for(size_t i=0; i<nodes.size(); ++i) {
-      size_t chain[Resources::MAX_NUM_SKELETAL_NODES];
-      size_t n = 0;
-      for(size_t b=i; b<nodes.size() && !done[b] && n<nodes.size(); b=nodes[b].parent)
-        chain[n++] = b;
-      while(n>0) {
-        const size_t b = chain[--n];
-        const size_t p = nodes[b].parent;
-        world[b] = p<nodes.size() ? world[p]*local[b] : local[b];
-        done[b]  = true;
-        }
-      }
-    };
+  auto pose = [&](uint32_t f) { modelFrame(*skeleton,d,f,world); };
   pose(uint32_t(-1));
   std::snprintf(buf,sizeof(buf),"; hips bind %.0f, at frames",double(yaw(world.data())));
   out += buf;
@@ -1333,6 +1354,49 @@ std::string MdlVisual::animInfo(std::string_view name) const {
     const uint32_t f = std::min(d.numFrames-1,d.numFrames*q/4);
     pose(f);
     std::snprintf(buf,sizeof(buf)," %u:%.0f/%.0f",unsigned(f),double(yaw(world.data())),double(world[0].at(3,1)));
+    out += buf;
+    }
+  return out;
+  }
+
+std::string MdlVisual::bladePath(std::string_view name, float length) const {
+  // the blade's tip (-length along the hand's x, as the weapon meshes lie) at each frame, in the model's
+  // frame, and how fast it goes; the root bone, whose x and z the game keeps at the actor's position (the
+  // actor goes the root's way instead); the frames of the fight tags as the MDS gives them
+  const Animation::Sequence* sq = solver.solveFrm(name);
+  if(sq==nullptr || sq->data==nullptr || skeleton==nullptr)
+    return std::string(name) + ": none";
+  const auto& d = *sq->data;
+  const size_t hand = skeleton->findNode("ZS_RIGHTHAND");
+  const size_t root = skeleton->findRootNode();
+  if(hand>=skeleton->nodes.size() || root>=skeleton->nodes.size() || d.numFrames==0)
+    return std::string(name) + ": no hand";
+  char buf[256];
+  std::snprintf(buf,sizeof(buf),"%s: frames %u..%u (%u) fps %.1f reverse %d",sq->name.c_str(),unsigned(d.firstFrame),
+                unsigned(d.lastFrame),unsigned(d.numFrames),double(d.fpsRate),int(sq->reverse));
+  std::string out = buf;
+  for(const auto& e:d.events) {
+    const char* tag = e.type==asset::MdsEventType::OPTIMAL_FRAME ? "optimal" :
+                      e.type==asset::MdsEventType::HIT_END       ? "hit_end" :
+                      e.type==asset::MdsEventType::COMBO_WINDOW  ? "window"  : nullptr;
+    if(tag==nullptr)
+      continue;
+    out += std::string("; ") + tag;
+    for(auto f:e.frames)
+      out += " " + std::to_string(f);
+    }
+  std::vector<Tempest::Matrix4x4> world;
+  Tempest::Vec3 previous;
+  for(uint32_t f=0; f<d.numFrames; ++f) {
+    modelFrame(*skeleton,d,f,world);
+    Tempest::Vec3 tip(-length,0,0), grip;
+    world[hand].project(tip);
+    world[hand].project(grip);
+    const float speed = f>0 ? (tip-previous).length()*d.fpsRate : 0.f;
+    previous = tip;
+    std::snprintf(buf,sizeof(buf),"; %u: tip %.0f %.0f %.0f grip %.0f %.0f %.0f root %.0f %.0f %.0f %.0f cm/s",
+                  unsigned(f),double(tip.x),double(tip.y),double(tip.z),double(grip.x),double(grip.y),double(grip.z),
+                  double(world[root].at(3,0)),double(world[root].at(3,1)),double(world[root].at(3,2)),double(speed));
     out += buf;
     }
   return out;

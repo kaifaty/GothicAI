@@ -2,6 +2,11 @@
 
 #include <Tempest/AbstractGraphicsApi>
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+namespace MTL { class CommandBuffer; }
+namespace Tempest::Detail { void profileGpu(MTL::CommandBuffer* cmd); }
+#endif
+
 namespace Tempest {
 
 class MetalApi : public AbstractGraphicsApi {

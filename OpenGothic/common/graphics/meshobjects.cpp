@@ -75,7 +75,7 @@ void MeshObjects::Mesh::setFatness(float f) {
     sub[i].setFatness(f);
   }
 
-void MeshObjects::Mesh::setWind(zenkit::AnimationType m, float intensity) {
+void MeshObjects::Mesh::setWind(asset::AnimationType m, float intensity) {
   for(size_t i=0;i<subCount;++i)
     sub[i].setWind(m,intensity);
   }
@@ -281,6 +281,16 @@ void MeshObjects::Mesh::setObjMatrix(const Tempest::Matrix4x4 &mt) {
   implSetObjMatrix(mt,skeleton==nullptr ? nullptr : skeleton->tr.data());
   }
 
+void MeshObjects::Mesh::setTextureCategory(Resources::TextureCategory category) {
+  for(size_t i=0;i<subCount;++i)
+    sub[i].setTextureCategory(category);
+  }
+
+void MeshObjects::Mesh::setTexturePosition(const Tempest::Vec3& position) {
+  for(size_t i=0;i<subCount;++i)
+    sub[i].setTexturePosition(position);
+  }
+
 void MeshObjects::Mesh::implSetObjMatrix(const Tempest::Matrix4x4& mt, const Tempest::Matrix4x4* tr) {
   const size_t binds = (binder==nullptr ? 0 : binder->bind.size());
   if(cpuOnly) {
@@ -290,12 +300,14 @@ void MeshObjects::Mesh::implSetObjMatrix(const Tempest::Matrix4x4& mt, const Tem
       }
     return;
     }
+  // Static attachments belong to the vob's cell, including animated nodes.
+  const Tempest::Vec3 texturePosition(mt[3][0],mt[3][1],mt[3][2]);
   for(size_t i=0; i<binds; ++i) {
     auto id = binder->bind[i];
-    sub[i].setObjMatrix(tr[id]);
+    sub[i].setObjMatrix(tr[id],texturePosition);
     }
   for(size_t i=binds; i<subCount; ++i)
-    sub[i].setObjMatrix(mt);
+    sub[i].setObjMatrix(mt,texturePosition);
   }
 
 const Bounds& MeshObjects::Node::bounds() const {

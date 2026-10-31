@@ -314,6 +314,39 @@ async def test_every_vanilla_quest_change_is_an_occasion_with_the_heros_current_
         assert chronicle.facts("occasion") == changes
 
 
+async def test_vanilla_occasion_carries_latest_outcome_and_names_without_changing_event(places):
+    async with world(places) as (fake, clock, chronicle, occasions):
+        await settle(fake, clock, occasions, "ROAD")
+        event = vanilla_quest(**{"from": "running", "to": "success"})
+        started = {**event, "from": "open", "to": "running"}
+        chronicle.record(started)
+        chronicle.record(event)
+        outcome = {
+            "fact": "quest_outcome", "quest": event["quest"], "npc": LOBART,
+            "how": "amended", "drop": [HILDA, "ITPL_BEET"],
+            "why": ["Я снял эти пункты."], "pay": "none",
+        }
+        fake.item_names["ITPL_BEET"] = "Репа"
+        chronicle.record({**outcome, "how": "done", "drop": [], "pay": "full"})
+        chronicle.record(outcome)
+        chronicle.record({**outcome, "quest": "MIS_OTHER", "how": "dropped"})
+        await occasions.poll()
+        result = await occasions.next()
+        assert result["kind"] == "vanilla"
+        assert [result["vanilla"], *(m["vanilla"] for m in result["also"])] == [
+            started,
+            {
+                **event,
+                "outcome": {
+                    "how": "amended", "drop": ["Хильда", "Репа"],
+                    "why": outcome["why"], "pay": "none",
+                },
+            },
+        ]
+        assert chronicle.facts("vanilla_quest") == [started, event]
+        assert "outcome" not in started and "outcome" not in event
+
+
 async def test_only_a_person_killed_by_the_hero_is_a_deed(places):
     async with world(places) as (fake, clock, chronicle, occasions):
         await occasions.poll()

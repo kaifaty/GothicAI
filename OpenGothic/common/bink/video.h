@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "frame.h"
@@ -49,13 +51,14 @@ class Video final {
       bool     isMono     = false;
       };
 
-    explicit Video(Input* file);
+    explicit Video(Input* file, std::string_view filename = {});
     Video(const Video&) = delete;
     ~Video();
 
     const Frame& nextFrame();
     size_t       frameCount() const;
     size_t       currentFrame() const { return frameCounter; }
+    size_t       recoveryCount() const { return recoveryCounter; }
 
     const FrameRate& fps() const { return fRate; }
 
@@ -224,6 +227,8 @@ class Video final {
 
     FrameRate               fRate;
     Frame                   frames[2] = {};
+    std::string             sourceName;
+    size_t                  recoveryCounter = 0;
 
     std::vector<uint8_t>    packet;
     uint32_t                frameCounter = 0;

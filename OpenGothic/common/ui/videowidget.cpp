@@ -9,33 +9,12 @@
 
 #include <cstddef>
 
-#include "bink/video.h"
+#include "videodata.h"
 #include "graphics/shaders.h"
 #include "gamemusic.h"
 #include "gothic.h"
 
 using namespace Tempest;
-
-struct VideoWidget::Input : Bink::Video::Input {
-  Input(zenkit::Read& fin):fin(fin) {}
-
-  void read(void *dest, size_t count) override {
-    if(fin.read(dest,count)!=count)
-      throw std::runtime_error("i/o error");
-    at += count;
-    }
-  void skip(size_t count) override {
-    fin.seek(ptrdiff_t(count), zenkit::Whence::CUR);
-    at += count;
-    }
-  void seek(size_t pos) override {
-    fin.seek(ptrdiff_t(pos), zenkit::Whence::BEG);
-    at = pos;
-    }
-
-  zenkit::Read&   fin;
-  size_t          at = 0;
-  };
 
 struct VideoWidget::Sound : Tempest::SoundProducer {
   Sound(SoundContext& c, uint16_t sampleRate, bool isMono)
@@ -62,11 +41,11 @@ struct VideoWidget::SoundContext {
     }
 
   uint64_t tickCount() const {
-    auto smp = processedSamples;
+    auto smp = processedSamples.load();
     return uint64_t(smp*1000)/uint64_t(std::max(sampleRate * numChannels, 1));
     }
 
-  void pushSamples(const std::vector<float>& s) {
+  void pushSamples(const std::vector<int16_t>& s) {
     std::lock_guard<std::mutex> guard(syncSamples);
     size_t sz = samples.size();
     samples.resize(sz+s.size());
@@ -76,9 +55,9 @@ struct VideoWidget::SoundContext {
   Context&             ctx;
   Tempest::SoundEffect snd;
   std::mutex           syncSamples;
-  std::vector<float>   samples;
+  std::vector<int16_t> samples;
 
-  uint64_t             processedSamples = 0;
+  std::atomic<uint64_t> processedSamples{0};
   uint16_t             sampleRate = 0;
   uint16_t             numChannels = 0;
   };
@@ -90,46 +69,73 @@ void VideoWidget::Sound::renderSound(int16_t *out, size_t n) {
   auto& s = ctx.samples;
   if(s.size()<n)
     return;
-  for(size_t i=0; i<n; ++i) {
-    float v = s[i];
-    out[i] = (v < -1.00004566f ? int16_t(-32768) : (v > 1.00001514f ? int16_t(32767) : int16_t(v * 32767.5f)));
-    }
+  std::memcpy(out, s.data(), n*sizeof(s[0]));
   ctx.samples.erase(ctx.samples.begin(),ctx.samples.begin()+int(n));
   ctx.processedSamples += n;
   }
 
 struct VideoWidget::Context {
-  Context(std::unique_ptr<zenkit::Read>&& f) : fin(std::move(f)), input(*fin), vid(&input) {
-    sndCtx.resize(vid.audioCount());
+  struct Frame {
+    struct Plane {
+      const uint8_t* pixels = nullptr;
+      uint32_t strd = 0;
+      uint32_t stride() const { return strd; }
+      const uint8_t* data() const { return pixels; }
+      uint8_t at(uint32_t x, uint32_t y) const { return pixels[x+y*strd]; }
+      };
+    Frame(const VideoData::Info& info, VideoData::Frame&& frame) : info(info), data(std::move(frame)) {
+      for(size_t i=0; i<planes.size(); ++i)
+        planes[i]={data.planes[i].data(),info.planes[i].stride};
+      }
+    const VideoData::Info& info;
+    VideoData::Frame data;
+    std::array<Plane,4> planes;
+    uint32_t width() const { return info.width; }
+    uint32_t height() const { return info.height; }
+    const Plane& plane(size_t i) const { return planes[i]; }
+    };
+
+  Context(std::unique_ptr<VideoData::Reader>&& f, std::string_view filename) : vid(std::move(f)), filename(filename) {
+    sndCtx.resize(vid->info().tracks.size());
     for(size_t i=0; i<sndCtx.size(); ++i) {
-      auto& aud = vid.audio(uint8_t(i));
-      sndCtx[i].reset(new SoundContext(*this,sndDev,aud.sampleRate,aud.isMono));
+      const auto& aud = vid->info().tracks[i];
+      sndCtx[i].reset(new SoundContext(*this,sndDev,uint16_t(aud.sampleRate),aud.channels==1));
       }
 
     const float volume = Gothic::settingsSoundVolume();
     sndDev.setGlobalVolume(volume);
-    for(size_t i=0; i<vid.audioCount(); ++i)
-      sndCtx[i]->play();
+    for(auto& sound:sndCtx)
+      sound->play();
 
     for(size_t i=0; i<Resources::MaxFramesInFlight; ++i) {
       cmd[i] = Resources::device().commandBuffer();
       }
 
     frameTime = Application::tickCount();
+    Log::i("video start: ",filename,", frames=",vid->info().frames);
     }
 
   ~Context() {
     for(auto& i:sync)
       i.wait();
+    uint64_t samples=0;
+    for(auto& sound:sndCtx) {
+      sound->snd = SoundEffect();
+      samples+=sound->processedSamples.load();
+      }
+    Log::i("video stop: ",filename,", completed=",isEof(),", frames=",currentFrame,
+           ", last_frame=",currentFrame==0 ? -1 : int64_t(currentFrame-1),", samples=",samples);
     }
 
   void advance(Tempest::Device& device, uint8_t fId) {
-    auto& f = vid.nextFrame();
+    Frame f{vid->info(),vid->nextFrame()};
+    ++currentFrame;
+    Resources::videoFrameRead(filename);
     yuvToRgba(f, device, fId);
-    for(size_t i=0; i<vid.audioCount(); ++i)
-      sndCtx[i]->pushSamples(f.audio(uint8_t(i)).samples);
+    for(size_t i=0; i<sndCtx.size(); ++i)
+      sndCtx[i]->pushSamples(f.data.audio[i]);
 
-    const uint64_t destTick = (1000*vid.fps().den*vid.currentFrame())/vid.fps().num;
+    const uint64_t destTick = (uint64_t(1000)*vid->info().fpsDen*currentFrame)/vid->info().fpsNum;
     const uint64_t tickVis  = Application::tickCount() - frameTime;
     const uint64_t tickSnd  = tickSound();
     const uint64_t tick     = std::min(tickVis, tickSnd);
@@ -144,12 +150,12 @@ struct VideoWidget::Context {
     uint64_t tickSnd = uint64_t(-1);
     // return tickSnd;
 
-    for(size_t i=0; i<vid.audioCount(); ++i)
+    for(size_t i=0; i<sndCtx.size(); ++i)
       tickSnd = std::min(tickSnd, sndCtx[i]->tickCount());
     return tickSnd;
     }
 
-  void yuvToRgba(const Bink::Frame& f, Tempest::Device& device, uint8_t fId) {
+  void yuvToRgba(const Frame& f, Tempest::Device& device, uint8_t fId) {
     if(uint32_t(frameImg.w())!=f.width() || uint32_t(frameImg.h())!=f.height()) {
       Resources::recycle(std::move(frameImg));
       frameImg = device.attachment(Tempest::RGBA8, f.width(), f.height());
@@ -199,7 +205,7 @@ struct VideoWidget::Context {
     }
 
   [[deprecated]]
-  void yuvToRgba(const Bink::Frame& f, Pixmap& pm) {
+  void yuvToRgba(const Frame& f, Pixmap& pm) {
     if(pm.w()!=f.width() || pm.h()!=f.height())
       pm = Pixmap(f.width(),f.height(),TextureFormat::RGBA8);
     auto& planeY = f.plane(0);
@@ -231,12 +237,12 @@ struct VideoWidget::Context {
     }
 
   bool isEof() const {
-    return vid.currentFrame()>=vid.frameCount();
+    return currentFrame>=vid->info().frames;
     }
 
-  std::unique_ptr<zenkit::Read> fin;
-  Input                         input;
-  Bink::Video                   vid;
+  std::unique_ptr<VideoData::Reader> vid;
+  std::string                   filename;
+  uint32_t                      currentFrame = 0;
   uint64_t                      frameTime = 0;
 
   Tempest::Attachment           frameImg;
@@ -256,9 +262,7 @@ VideoWidget::~VideoWidget() {
   }
 
 void VideoWidget::pushVideo(std::string_view filename) {
-  const int scaleVideos = Gothic::settingsGetI("GAME", "scaleVideos");
-  if(scaleVideos<0)
-    return;
+  Resources::startVideoBase();
   std::lock_guard<std::mutex> guard(syncVideo);
   pendingVideo.emplace(filename);
   hasPendingVideo.store(true);
@@ -290,30 +294,22 @@ void VideoWidget::tick() {
     hasPendingVideo.store(false);
   }
 
-  std::unique_ptr<zenkit::Read> read;
-  if(auto* entry = Resources::vdfsIndex().find(filename)) {
-    read = entry->open_read();
-    }
-  else if(auto* entry = Resources::vdfsIndex().find(filename+".bik")) {
-    // some api-calls are missing extension
-    read = entry->open_read();
-    }
-  else {
-    Log::e("unable to locate video file: \"",filename,"\"");
-    stopVideo();
-    return;
-    }
-
   try {
-    ctx.reset(new Context(std::move(read)));
+    auto read=Resources::loadVideo(filename);
+    if(!read || Gothic::settingsGetI("GAME", "scaleVideos")<0) {
+      stopVideo();
+      return;
+      }
+    frame = nullptr;
+    ctx.reset(new Context(std::move(read),filename));
     if(!active) {
       active       = true;
       restoreMusic = GameMusic::inst().isEnabled();
       GameMusic::inst().setEnabled(false);
       }
     }
-  catch(...){
-    Log::e("unable to play video: \"",filename,"\"");
+  catch(const std::exception& error) {
+    Log::e("unable to play video: \"",filename,"\", ",error.what());
     stopVideo();
     }
   }
@@ -339,9 +335,12 @@ void VideoWidget::mouseDownEvent(Tempest::MouseEvent& event) {
 
 void VideoWidget::stopVideo() {
   ctx.reset();
+  frame = nullptr;
   if(!hasPendingVideo) {
     if(restoreMusic && !GameMusic::inst().isEnabled())
       GameMusic::inst().setEnabled(true);
+    if(active)
+      Log::i("video return: music_enabled=",GameMusic::inst().isEnabled());
     active = false;
     }
   update();
@@ -355,12 +354,9 @@ void VideoWidget::paint(Tempest::Device& device, uint8_t fId) {
     frame = &textureCast<Texture2d&>(ctx->frameImg);
     update();
     }
-  catch(const Bink::VideoDecodingException& e) { // video exception is recoverable
-    Log::e("video decoding error. frame: ",ctx->vid.currentFrame(),", what: \"", e.what(), "\"");
-    }
-  catch(...) {
-    Log::e("video decoding error. frame: ",ctx->vid.currentFrame());
-    ctx.reset();
+  catch(const std::exception& e) {
+    Log::e("video decoding error. frame: ",ctx->currentFrame,", what: \"", e.what(), "\"");
+    stopVideo();
     }
   }
 

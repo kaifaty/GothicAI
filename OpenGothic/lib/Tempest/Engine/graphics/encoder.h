@@ -118,6 +118,8 @@ class Encoder<Tempest::CommandBuffer> {
     void copy(const Texture2d&  src, uint32_t mip, StorageBuffer& dest, size_t offset);
 
     void generateMipmaps(Attachment& tex);
+    // Spatial upscale of a tonemapped image into dst; requires Device::properties().spatialUpscale.
+    void upscale(const Attachment& src, StorageImage& dst);
 
   private:
     explicit Encoder(CommandBuffer* ow);

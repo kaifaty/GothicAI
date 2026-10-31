@@ -18,6 +18,7 @@ from ..game import GameError, GameLink
 from ..incidents import IncidentDesk
 from ..llm import ToolCall
 from ..llm.fake import FakeBackend, FakeStep
+from ..parley import Parley
 from ..perception import BEASTS, PerceptionDesk
 from ..persona import PersonaProvider
 from ..protocol import (
@@ -34,18 +35,22 @@ from ..protocol import (
     PerceptionHeld,
     RoutineEntry,
     SayCmd,
+    Session,
     ThreatControlCmd,
 )
 from ..talk import TalkDesk
 from .common import (
     FixedDecider,
     _ByNpc,
+    _clear_beasts,
     _logged,
     _m5b_player_weapon,
     _OnWords,
+    _save,
     _until,
     _until_async,
     attach_when_free,
+    wait_message,
 )
 
 log = logging.getLogger("gothic_ai.scenarios")
@@ -83,7 +88,7 @@ async def neural_talk_scenario(
     from .neural_load import _policy_resets
 
     if pilot is None:
-        raise GameError("scenario neural-talk requires GOTHIC_BODY_URL and --neural-body")
+        raise GameError("scenario neural-talk requires --neural-body and an available body policy")
     if dialogue.llm.name != "fake":
         raise GameError("scenario neural-talk requires LLM=fake")
     stalls: list[HeroFightWait] = []
@@ -210,7 +215,9 @@ async def neural_talk_scenario(
                 s.npc == npc and s.lease is None and id(s) not in previous for s in pilot.summaries
             )
             if not check("talk_to_attack", bool(ready and len(lines) > mark and first_lease
-                                                and first_lease.npc == npc and resets.get(first_client)),
+                                                and first_lease.npc == npc and (
+                                                    pilot.policy == "engine" or resets.get(first_client)
+                                                )),
                          f"lines={len(lines) - mark}, symbol={symbol}, "
                          f"lease={first_lease.control_generation if first_lease else 0}, "
                          f"decisions={first._decisions if first else 0}, "
@@ -277,7 +284,9 @@ async def neural_talk_scenario(
             second_client = second.client if second else None
             if not check("return_to_second_fight", bool(
                 ready and second_lease and second_lease != first_lease
-                and second_client is not first_client and resets.get(second_client)
+                and (pilot.policy == "engine" or (
+                    second_client is not first_client and resets.get(second_client)
+                ))
                 and second._fallbacks == 0
             ), f"branch={branch}, lease={second_lease.control_generation if second_lease else 0}, "
                f"previous_lease={first_lease.control_generation if first_lease else 0}, "
@@ -333,7 +342,7 @@ async def neural_talk_scenario(
 async def neural_group_scenario(link: GameLink, pilot: BodyPilot | None) -> dict[str, str]:
     """Three independent P30 leases in a native melee against the hero and his companion."""
     if pilot is None:
-        raise GameError("scenario neural-group requires GOTHIC_BODY_URL and --neural-body")
+        raise GameError("scenario neural-group requires --neural-body and an available body policy")
     await link.wait_world()
     if link.hello is None or link.hello.protocol < 45 or pilot.max_fights < 3:
         raise GameError("scenario neural-group requires protocol >=45 and --neural-body-max >=3")
@@ -546,7 +555,7 @@ async def neural_group_scenario(link: GameLink, pilot: BodyPilot | None) -> dict
         decisions = sum(summary.decisions for summary in npc_summaries)
         fallbacks = sum(summary.fallbacks for summary in npc_summaries)
         # A bandit may finish with the companion and then attack the hero. Check
-        # every lease and service episode, with a separate end/release clock.
+        # every lease and policy episode, with a separate end/release clock.
         for episode, summary in enumerate(npc_summaries or [None], 1):
             prefix = f"neural_group_{index}"
             if len(npc_summaries) > 1:
@@ -574,8 +583,14 @@ async def neural_group_scenario(link: GameLink, pilot: BodyPilot | None) -> dict
             check(f"{prefix}_release", bool(
                 summary and summary.release_confirmed and released_in is not None and released_in <= 2
             ), f"confirmed={summary.release_confirmed if summary else False}, after_down_s={released_in}")
-            p95 = summary.service_p95_ms if summary else None
-            check(f"{prefix}_service_p95", p95 is not None and p95 <= 20, f"p95_ms={p95}, maximum_ms=20")
+            if summary is not None and summary.policy == "engine":
+                p99 = summary.engine_p99_us if summary else None
+                check(f"{prefix}_engine_p99", p99 is not None and p99 <= 2000,
+                      f"p99_us={p99}, maximum_us=2000")
+            else:
+                p95 = summary.service_p95_ms if summary else None
+                check(f"{prefix}_service_p95", p95 is not None and p95 <= 20,
+                      f"p95_ms={p95}, maximum_ms=20")
             check(f"{prefix}_summary", summary is not None,
                   f"npc={npc}, decisions={summary.decisions}, fallback={summary.fallbacks}, "
                   f"acquire_refusals={dict(summary.acquire_refusals)}, "
@@ -599,7 +614,7 @@ async def _neural_fight_scenario(
 ) -> dict[str, str]:
     scenario = "neural-companion" if companion else "neural"
     if pilot is None:
-        raise GameError(f"scenario {scenario} requires GOTHIC_BODY_URL and --neural-body")
+        raise GameError(f"scenario {scenario} requires --neural-body and an available body policy")
     await link.wait_world()
     npc = "DIR_NPC_NEURAL_BANDIT"
     target = "DIR_NPC_NEURAL_COMPANION" if companion else "PLAYER"
@@ -736,6 +751,7 @@ async def _neural_fight_scenario(
     link.raw_body_listeners.append(observe)
     started = time.monotonic()
     try:
+        log.info("neural arena before combat: beasts_cleared=%d", await _clear_beasts(link, npc))
         if companion:
             await link.debug("npc_goto", npc=npc, waypoint=arena, face="PC_HERO")
             await link.debug("npc_goto", npc=target, to=npc, distance=250, face=npc)
@@ -799,7 +815,7 @@ async def _neural_fight_scenario(
               bool(summary and summary.target_kind == "companion" and summary.target_name == target_name),
               f"kind={summary.target_kind if summary else None}, "
               f"name={summary.target_name if summary else None}, expected={target_name}")
-    minimum = 6 if companion else 10
+    minimum = 6 if companion and summary is not None and summary.policy == "service" else 10
     check("neural_decisions", summary is not None and summary.decisions >= minimum,
           f"decisions={summary.decisions if summary else None}, minimum={minimum}")
     check("neural_fallback", summary is not None and summary.fallbacks == 0,
@@ -819,8 +835,12 @@ async def _neural_fight_scenario(
         bool(summary and summary.release_confirmed and released_in is not None and released_in <= 2),
         f"confirmed={summary.release_confirmed if summary else False}, after_down_s={released_in}",
     )
-    p95 = summary.service_p95_ms if summary else None
-    check("neural_service_p95", p95 is not None and p95 <= 20, f"p95_ms={p95}, maximum_ms=20")
+    if summary is not None and summary.policy == "engine":
+        p99 = summary.engine_p99_us if summary else None
+        check("neural_engine_p99", p99 is not None and p99 <= 2000, f"p99_us={p99}, maximum_us=2000")
+    else:
+        p95 = summary.service_p95_ms if summary else None
+        check("neural_service_p95", p95 is not None and p95 <= 20, f"p95_ms={p95}, maximum_ms=20")
     await asyncio.sleep(0.3)
     check(
         "neural_idle",
@@ -1230,7 +1250,9 @@ async def orders_scenario(
     if not ok or stood < 7.5:
         await diagnose("halt_failed")
 
-    ok, took = await order("За мной!", "follow")
+    ok, took = await order(
+        "Ну, ты, если что, не туда идешь, ты в стену куда-то идешь. Иди за мной.", "follow"
+    )
     closer = await _until(lambda: 0 <= dist() <= stood - 2, 15)
     results["follow"] = f"{'done' if ok and closer else 'failed'} (in {took}; {stood:.1f} -> {dist():.1f} m)"
     if not ok or not closer:
@@ -1789,10 +1811,151 @@ async def wolf_scenario(link: GameLink, talk: TalkDesk, beasts: BeastDesk) -> di
     return results
 
 
+async def wolf_load_scenario(link: GameLink, talk: TalkDesk, beasts: BeastDesk) -> dict[str, str]:
+    """Rewind a peaceful save, then hear young wolves and each other wolf kind after loading it."""
+    await link.wait_world()
+    results: dict[str, str] = {}
+    rng, rolls = beasts.rng, _Rolls()
+    beasts.rng = rolls  # type: ignore[assignment]
+
+    def check(name: str, ok: bool, detail: str) -> bool:
+        results[name] = f"{'done' if ok else 'failed'} ({detail})"
+        log.info("%-12s %s", name, results[name])
+        return ok
+
+    def state(wolf: str | None) -> str:
+        entry = beasts.wolves.get(wolf or "")
+        return entry.state if entry is not None else "gone"
+
+    def distance(wolf: str | None) -> float:
+        entry = beasts.wolves.get(wolf or "")
+        return entry.distance / 100 if entry is not None else -1.0
+
+    async def kill(wolf: str | None) -> None:
+        if wolf in beasts.wolves:
+            await link.debug("kill", instance=wolf.split("#", 1)[0], by="PLAYER")
+            await _until(lambda: wolf not in beasts.wolves, 5)
+
+    async def ticks() -> int:
+        # A fresh snapshot carries world.tickCount() even when there are no wolves to report.
+        return (await link.snapshot("NONE_100_XARDAS", fresh=True)).t
+
+    points = {point["name"]: point for point in await link.waypoints()}
+    hero = points[WOLF_HERO]
+    ground = [point for point in points.values() if abs(point["y"] - hero["y"]) < 250 and not point["fp"]]
+    at = min(ground, key=lambda point: abs(math.hypot(point["x"] - hero["x"], point["z"] - hero["z"]) - 1000))
+
+    async def spawn(symbol: str, number: int) -> tuple[str | None, int, float]:
+        before = set(beasts.wolves)
+        started = time.monotonic()
+        count = await link.story_spawn(symbol, tag=f"beast_load_{number}", waypoint=at["name"])
+
+        def listed() -> str | None:
+            return next((wolf for wolf in beasts.wolves if wolf not in before and symbol in wolf), None)
+
+        await _until(listed, max(0, started + 8 - time.monotonic()))
+        return listed(), count, time.monotonic() - started
+
+    async def soothe(wolf: str | None, symbol: str, *, biting: bool = False) -> tuple[bool, str]:
+        ready = await _until(
+            lambda: state(wolf) == "attack" and 0 <= distance(wolf) < 3 if biting
+            else state(wolf) in ({"threaten"} if symbol == "YWOLF" else {"threaten", "attack"}),
+            20 if biting else 15,
+        )
+        before, metres = state(wolf), distance(wolf)
+        if not ready:
+            return False, f"ready=0, state={before}, distance_m={metres:.1f}, calm=0"
+        rolls.queue = [0.0]
+        beasts.verdicts = []
+        text = "Стой, стой! Песик, тихо, остановись." if biting else "Тише, тише, хороший мальчик."
+        talk.hear(text, symbol, {"via": "scenario"})
+        to = talk.last[0] if talk.last else None
+        routed = to is not None and to.why == "beast" and to.id == wolf
+        calm = await _until(lambda: state(wolf) == "calm" and bool(beasts.verdicts), 5)
+        verdict = next((item for item in beasts.verdicts if item.wolf == wolf), None)
+        outcome = verdict.outcome if verdict else "missing"
+        roll = verdict.roll if verdict else -1.0
+        tone = beasts.last_tone
+        return (
+            calm and routed and verdict is not None and roll == 0.0 and outcome == "calm",
+            f"ready={int(ready)}, state={before}, distance_m={metres:.1f}, routed={int(routed)}, "
+            f"roll={roll:.2f}, outcome={outcome}, calm={int(calm)}, tone={tone[1] if tone else 'missing'}",
+        )
+
+    try:
+        await link.debug("player_hp", hp=5000)
+        await link.debug("player_goto", waypoint=WOLF_HERO)
+        await asyncio.sleep(2)
+        killed = 0
+        for _ in range(8):
+            if not beasts.wolves:
+                break
+            await kill(min(beasts.wolves.values(), key=lambda wolf: wolf.distance).id)
+            killed += 1
+        if beasts.wolves:
+            raise GameError(f"wolf_load preparation: {len(beasts.wolves)} road wolves remain")
+
+        slot = 7
+        saved = await _save(link, slot)
+        if saved is None:
+            check("rewound", False, f"saved=0, slot={slot}, killed={killed}")
+            return results
+        saved_t = await ticks()
+        advanced = await _until_async(ticks, lambda now: now - saved_t >= 30_000, 90)
+        before_t = await ticks()
+        loading = asyncio.create_task(wait_message(
+            link, Session, lambda message: message.reason == "load", 60,
+        ))
+        await asyncio.sleep(0)
+        await link.debug("load", slot)
+        await loading
+        await link.wait_world()
+        after_t = await ticks()
+        if not check(
+            "rewound", advanced and before_t - after_t >= 20_000,
+            f"saved_t={saved_t}, before_t={before_t}, after_t={after_t}, "
+            f"elapsed_ms={before_t - saved_t}, rewind_ms={before_t - after_t}, killed={killed}",
+        ):
+            return results
+
+        wolf, count, seconds = await spawn("YWOLF", 1)
+        if not check(
+            "listed", count == 1 and wolf is not None and seconds <= 8,
+            f"spawned={count}, listed={int(wolf is not None)}, seconds={seconds:.2f}, id={wolf}",
+        ):
+            return results
+        calm, detail = await soothe(wolf, "YWOLF")
+        check("young_calm", calm, detail)
+        await kill(wolf)
+
+        await link.debug("player_goto", waypoint=WOLF_HERO)
+        wolf, count, seconds = await spawn("YWOLF", 2)
+        calm, detail = await soothe(wolf, "YWOLF", biting=True)
+        check("young_bite", count == 1 and wolf is not None and calm,
+              f"spawned={count}, listed={int(wolf is not None)}, seconds={seconds:.2f}, {detail}")
+        await kill(wolf)
+
+        kinds: list[str] = []
+        passed = 0
+        for number, symbol in enumerate(("WARG", "ICEWOLF", "BLACKWOLF"), 3):
+            await link.debug("player_goto", waypoint=WOLF_HERO)
+            wolf, count, seconds = await spawn(symbol, number)
+            calm, detail = await soothe(wolf, symbol)
+            passed += int(count == 1 and wolf is not None and calm)
+            kinds.append(f"{symbol}: spawned={count}, listed={int(wolf is not None)}, "
+                         f"seconds={seconds:.2f}, id={wolf}, {detail}")
+            await kill(wolf)
+        check("kinds", passed == 3, f"calm={passed}/3; {'; '.join(kinds)}")
+        return results
+    finally:
+        beasts.rng = rng
+
+
 async def companion_scenario(
     link: GameLink,
     dialogue: DialogueManager,
     talk: TalkDesk,
+    parley: Parley,
     npc: str = "BAU_4300_ADDON_CAVALORN",
     bandit: str = "BDT_1013_BANDIT_L",
     cave: tuple[str, ...] = ("BDT_1014_BANDIT_L", "BDT_1015_BANDIT_L"),
@@ -1805,7 +1968,8 @@ async def companion_scenario(
     - freed: the bandit at the steps does not start his scripted "Where are you going?" (story.FREED);
     - go_to: told to go into the cave first, it walks into the bandits' cave and waits there; the freed
       bandits in it do not fall on it;
-    - attack: the bandit's own model decides to attack the hero (scripted): the scripts' attack;
+    - attack: the bandit's model sets a 30-second ultimatum, then attacks through the scripts after
+      the hero's personal reply; the scenario waits for the active ultimatum before replying;
     - defend: the companion, told «Погоди.» 20 m off (an order now: 2026-10-14 the model took it for «I
       no longer need you», and Cavalorn stood by while the bandits beat the hero 20 m from him), fights
       him at once, with no order, and follows the hero again after;
@@ -1823,14 +1987,17 @@ async def companion_scenario(
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
-    calls: list[tuple[float, str, str, dict[str, Any]]] = []  # (sent, action, status, args)
+    sent: list[tuple[float, str]] = []
+    calls: list[tuple[float, str, str, dict[str, Any], float]] = []  # (sent, action, status, args, completed)
     act = link.act
 
     async def recorded(who: str, action: Any, /, **kw: Any) -> Any:
         t = time.monotonic()
+        if who.upper() == npc:
+            sent.append((t, action))
         res = await act(who, action, **kw)
         if who.upper() == npc:
-            calls.append((t, action, res.status, kw))
+            calls.append((t, action, res.status, kw, time.monotonic()))
         return res
 
     link.act = recorded  # type: ignore[method-assign]
@@ -1856,8 +2023,16 @@ async def companion_scenario(
                 ],
                 FakeStep("Держись, я с тобой!"),
             ),
-            "Бандит": FakeBackend(
-                script=[FakeStep("Ну всё, сам напросился!", [ToolCall("set_intent", fight)])], delay=0
+            "Бандит": _OnWords(
+                [
+                    ("отойди с дороги", FakeStep("Это ты мне? Сто золотых за проход — или проваливай.", [
+                        ToolCall("ultimatum", {
+                            "demand": "Заплати сто золотых за проход или уходи", "seconds": 30,
+                        }),
+                    ])),
+                    ("Сам проваливай.", FakeStep("Ну всё, сам напросился!", [ToolCall("set_intent", fight)])),
+                ],
+                FakeStep("Хм."),
             ),
         },
         FakeBackend("Хм.", delay=0),
@@ -1866,7 +2041,7 @@ async def companion_scenario(
     def dist(who: str = npc) -> float:
         return talk.people[who].distance / 100 if who in talk.people else -1.0
 
-    def since(t0: float, action: str) -> list[tuple[float, str, str, dict[str, Any]]]:
+    def since(t0: float, action: str) -> list[tuple[float, str, str, dict[str, Any], float]]:
         return [c for c in calls if c[0] >= t0 and c[1] == action]
 
     try:
@@ -1909,15 +2084,19 @@ async def companion_scenario(
     await _until(lambda: 0 <= dist() <= 6, 30)  # it has caught up from its fire: it hears its name
     t0 = time.monotonic()
     talk.hear("Кавалорн, иди в пещеру первым.", None, {"via": "scenario"})
-    walked = await _until(lambda: since(t0, "go_to_waypoint"), 20)
+    walked = await _until(lambda: any(t >= t0 and action == "go_to_waypoint" for t, action in sent), 20)
     arrived = await _until(lambda: any(c[2] == "done" for c in since(t0, "go_to_waypoint")), 100)
     walk = since(t0, "go_to_waypoint")
+    first_done = next((c for c in walk if c[2] == "done"), None)
+    done_detail = f"first done after {first_done[4] - t0:.1f} s" if first_done else "no done"
     snap = await link.snapshot(npc, fresh=True)
     standing = talk.orders.standing.get(npc) if talk.orders else None
     check(
         "go_to",
         walked and arrived and standing is not None and standing.kind == "go",
-        f"{walk[-1][2] if walk else 'not sent'}, at {snap.npc.waypoint or snap.npc.nearest_waypoint}",
+        f"{walk[-1][2] if walk else 'not sent'}, {done_detail}, "
+        f"standing {standing.kind if standing is not None else 'none'}, "
+        f"at {snap.npc.waypoint or snap.npc.nearest_waypoint}",
     )
     # it looks around in there before it says what it found
     told = await _until(
@@ -1985,8 +2164,16 @@ async def companion_scenario(
     await _until(lambda: 0 <= dist(bandit) <= 5 and dist() >= 12, 15)
     far = dist()
     exp = await link.evaluate(["field", hero, "EXP"])
-    t0 = time.monotonic()
     talk.hear("Эй, ты! А ну отойди с дороги.", bandit, {"via": "scenario"})
+    required = await _until(lambda: bool(
+        (ultimatum := parley.ultimatum(bandit)) and ultimatum.get("status") == "active"
+    ), 20)
+    if not required:
+        check("attack", False, "no active ultimatum")
+        link.act = act  # type: ignore[method-assign]
+        return _logged(results)
+    t0 = time.monotonic()
+    talk.hear("Сам проваливай.", bandit, {"via": "scenario"})
     attacked = await _until(lambda: any(e["kind"] == "attack" for e in entries), 20)
     check("attack", attacked, "the scripts' attack" if attacked else "no attack")
     defended = await _until(
@@ -2015,12 +2202,14 @@ async def calm_scenario(
     link: GameLink,
     dialogue: DialogueManager,
     talk: TalkDesk,
+    parley: Parley,
     bandit: str = "BDT_1013_BANDIT_L",
     gang: tuple[str, ...] = ("BDT_1014_BANDIT_L", "BDT_1015_BANDIT_L"),
 ) -> dict[str, str]:
     """Talking an attacker down (the user, 2026-10-14: attacked by a bandit, he spoke to him and was told
-    nobody heard; he wants to calm one with words). The bandit at the steps decides to attack the hero (its
-    model scripted); the hero, looking at no one, says «Воу, воу, ты чего? Спокуха!». Checks:
+    nobody heard; he wants to calm one with words). The bandit at the steps sets a 30-second ultimatum
+    (its model scripted); after the scenario confirms it is active, the hero replies to him personally
+    and the bandit attacks. The hero, looking at no one, says «Воу, воу, ты чего? Спокуха!». Checks:
     - attack: the scripts' attack, the bandit in ZS_ATTACK;
     - addressed: the words go to whoever is at the hero, though not in his focus;
     - calm: its model calls the fight off (scripted) and the effect `calm` goes to the game;
@@ -2049,7 +2238,12 @@ async def calm_scenario(
         {
             "Бандит": _OnWords(
                 [
-                    ("отойди", FakeStep("Ну всё, сам напросился!", [ToolCall("set_intent", fight)])),
+                    ("отойди с дороги", FakeStep("Это ты мне? Сто золотых за проход — или проваливай.", [
+                        ToolCall("ultimatum", {
+                            "demand": "Заплати сто золотых за проход или уходи", "seconds": 30,
+                        }),
+                    ])),
+                    ("Сам проваливай.", FakeStep("Ну всё, сам напросился!", [ToolCall("set_intent", fight)])),
                     ("спокуха", FakeStep("Ладно, ладно. Живи пока.", [ToolCall("set_intent", calm)])),
                 ],
                 FakeStep("Хм."),
@@ -2080,6 +2274,13 @@ async def calm_scenario(
         return _logged({"near": f"failed ({bandit} is not near the hero)"})
 
     talk.hear("Эй, ты! А ну отойди с дороги.", bandit, {"via": "scenario"})
+    required = await _until(lambda: bool(
+        (ultimatum := parley.ultimatum(bandit)) and ultimatum.get("status") == "active"
+    ), 20)
+    if not required:
+        check("attack", False, "no active ultimatum")
+        return _logged(results)
+    talk.hear("Сам проваливай.", bandit, {"via": "scenario"})
     attacked = await _until(
         lambda: any(e["kind"] == "attack" for e in entries) and state() == "ZS_ATTACK", 20
     )

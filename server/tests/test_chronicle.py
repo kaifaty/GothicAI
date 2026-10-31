@@ -4,7 +4,7 @@ from typing import Any
 
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.memory import MemoryStore
-from gothic_ai.protocol import Session
+from gothic_ai.protocol import HeroKill, NpcDied, Session
 
 LOBART = "BAU_950_LOBART"
 
@@ -65,9 +65,15 @@ async def test_a_fact_written_straight_into_the_store_is_seen():
 async def test_kind_filters():
     store = MemoryStore(":memory:")
     chronicle, _ = _chronicle(store)
-    for fact in (died(LOBART), {"fact": "quest", "id": "Q"}, died("HILDA"), {"note": "no kind"}):
-        chronicle.record(fact)
-    assert [f["npc"] for f in chronicle.facts("died")] == [LOBART, "HILDA"]
+    chronicle._on_message(HeroKill(type="hero_kill", npc=LOBART, guild=12, monster=False))
+    chronicle._on_message(NpcDied(type="npc_died", npc=LOBART, killer="PLAYER"))
+    chronicle.record({"fact": "quest", "id": "Q"})
+    chronicle._on_message(NpcDied(type="npc_died", npc="HILDA", killer="OTHER"))
+    chronicle.record({"note": "no kind"})
+    deaths = chronicle.facts("died")
+    assert [f["npc"] for f in deaths] == [LOBART, "HILDA"]
+    assert deaths[0]["guild"] == 12 and deaths[0]["monster"] is False
+    assert "guild" not in deaths[1] and "monster" not in deaths[1]
     assert [f["id"] for f in chronicle.facts("quest")] == ["Q"]
     assert chronicle.facts("rumor") == []
     assert len(chronicle.facts()) == 4

@@ -1,10 +1,10 @@
 #include "triggerworldstart.h"
 
-#include <zenkit/vobs/Trigger.hh>
+#include "asset/worldtypes.h"
 
 #include "world/world.h"
 
-TriggerWorldStart::TriggerWorldStart(Vob* parent, World &world, const zenkit::VTriggerWorldStart& trg, Flags flags)
+TriggerWorldStart::TriggerWorldStart(Vob* parent, World &world, const asset::VTriggerWorldStart& trg, Flags flags)
   :AbstractTrigger(parent,world,trg,flags){
   fireOnlyFirstTime = trg.fire_once;
   target = trg.target;

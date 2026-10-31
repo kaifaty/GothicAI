@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from .loudness import Leveler, Line
 from .providers import TtsError, TtsProvider, Voice
+from .providers.inworld import InworldTTS, _UnknownVoice
 
 log = logging.getLogger(__name__)
 
@@ -76,7 +77,14 @@ class Synthesizer:
                 log.warning("%s warmup failed: %s", p.name, err)
                 self._mark_down(p)
 
-    async def speak(self, text: str, voice: Voice, on_chunk: SpeechCallback) -> Speech:
+    async def speak(
+        self,
+        text: str,
+        voice: Voice,
+        on_chunk: SpeechCallback,
+        *,
+        original_voice: Voice | None = None,
+    ) -> Speech:
         """Raises TtsError when every provider failed or is out (or one failed after it started speaking)."""
         started = time.monotonic()
         providers = self.available()
@@ -85,8 +93,9 @@ class Synthesizer:
         errors: list[str] = []
         leveler = self.leveler
         for p in providers:
+            selected = original_voice if original_voice is not None and p.supports_cloning else voice
             first: float | None = None
-            line = leveler.start(p.name, voice.id, p.rate) if leveler is not None else None
+            line = leveler.start(p.name, selected.id, p.rate) if leveler is not None else None
 
             async def chunk(pcm: bytes, p: TtsProvider = p, line: Line | None = line) -> None:
                 nonlocal first
@@ -98,8 +107,14 @@ class Synthesizer:
                     await on_chunk(pcm, p)
 
             try:
-                audio_s = await p.synthesize(text, voice, chunk)
+                audio_s = await p.synthesize(text, selected, chunk)
             except TtsError as err:
+                if (
+                    selected is original_voice and first is None
+                    and isinstance(p, InworldTTS) and isinstance(err, _UnknownVoice)
+                ):
+                    p._forget(selected.id)
+                    raise  # only this clone is gone; the service retries with the designed voice
                 log.warning("%s failed: %s", p.name, err)
                 self._mark_down(p)
                 if first is not None:
@@ -111,11 +126,11 @@ class Synthesizer:
             if leveler is not None and line is not None:
                 if tail := line.flush():
                     await on_chunk(tail, p)
-                if not voice.style:
-                    leveler.learn(p.name, voice.id, line)
+                if not selected.style:
+                    leveler.learn(p.name, selected.id, line)
                 gain = f", {line.gain_db:+.1f} dB"
-            if voice.style:
-                gain += f", {voice.style}"
+            if selected.style:
+                gain += f", {selected.style}"
             took = time.monotonic() - started
             log.info(
                 "%s: %.2fs of audio in %.2fs (first chunk %.2fs) [%s%s]: %s",
@@ -123,7 +138,7 @@ class Synthesizer:
                 audio_s,
                 took,
                 first or 0.0,
-                voice.id,
+                selected.id,
                 gain,
                 text[:60],
             )

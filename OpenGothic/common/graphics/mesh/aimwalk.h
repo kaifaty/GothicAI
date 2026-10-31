@@ -3,7 +3,7 @@
 #include <Tempest/Matrix4x4>
 #include <Tempest/Vec>
 
-#include <zenkit/ModelAnimation.hh>
+#include "asset/modeltypes.h"
 
 #include <algorithm>
 #include <array>
@@ -63,7 +63,7 @@ class AimWalk final {
     Tempest::Vec3  move(uint64_t dt) const;
     // after the animation's skeleton: m is the model's matrix the root hangs from, base the samples it was
     // built of
-    void           apply(Tempest::Matrix4x4* tr, size_t numBones, const zenkit::AnimationSample* base,
+    void           apply(Tempest::Matrix4x4* tr, size_t numBones, const asset::AnimationSample* base,
                          const Tempest::Matrix4x4& m);
     void           probe(Probe& p) const;
     // Final contacts, after FootIk. Rebuilds within one update share the same previous frame.
@@ -77,7 +77,7 @@ class AimWalk final {
   private:
     float          cycle() const;                 // ms
     float          rate() const;                  // the cycle's time per real time
-    bool           sample(float at, size_t node, zenkit::AnimationSample& out) const;
+    bool           sample(float at, size_t node, asset::AnimationSample& out) const;
     float          hipsYaw(const Tempest::Matrix4x4* tr) const;
     float          chestYaw(const Tempest::Matrix4x4* tr) const;
 

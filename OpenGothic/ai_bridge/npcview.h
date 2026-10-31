@@ -24,6 +24,7 @@ class NpcView final {
 
     explicit NpcView(Emit emit);
 
+    void clear();
     void tick(World& world);
     // a JSON array of the views of the npc's named in `npcs` (script symbols); unknown ones are left out
     std::string views(World& world, const rapidjson::Value& npcs);

@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.llm import ToolCall
@@ -7,6 +9,7 @@ from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.quests import QuestBoard
+from gothic_ai.trust import WORD_BROKEN
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
 
@@ -74,14 +77,15 @@ async def test_a_lie_is_paid_found_out_and_spread():
         await link_cm.__aexit__(None, None, None)
 
 
-async def test_the_truth_is_no_lie_and_quests_follow_the_save():
+@pytest.mark.parametrize("killer", ["PLAYER", "NONE_100_XARDAS"])
+async def test_the_truth_is_no_lie_and_quests_follow_the_save(killer):
     fake = FakeGame(branch="A")
     store = MemoryStore(":memory:")
     llm = FakeBackend(script=[PAY, FakeStep("Ну?")], delay=0)
     link_cm, dialogue, chronicle, board = await _setup(fake, llm, store)
     try:
         q = await board.give(XARDAS, "Ксардас", "перебей волков", "WOLF", 1, "ITPO_HEALTH_01", "Эликсир", 1)
-        await fake.send(type="npc_died", npc="WOLF", tag=q.tag, killer="PLAYER")
+        await fake.send(type="npc_died", npc="WOLF", tag=q.tag, killer=killer)
         await _until(lambda: board.done(q))
         dialogue.open(XARDAS, "Ксардас")
         await dialogue.say_as_player(XARDAS, "Волк мёртв.")
@@ -94,5 +98,36 @@ async def test_the_truth_is_no_lie_and_quests_follow_the_save():
         await _until(lambda: board.quests == {})
         await fake.send(type="session", branch="C", parent="A", parent_seq=head, reason="load")
         await _until(lambda: "Q1" in board.quests and board.quests["Q1"].paid)
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("lied", [False, True])
+async def test_pay_reward_names_the_actual_trust_reason(lied):
+    fake = FakeGame(branch="A")
+    store = MemoryStore(":memory:")
+    llm = FakeBackend(delay=0)
+    link_cm, dialogue, chronicle, board = await _setup(fake, llm, store)
+    try:
+        q = await board.give(XARDAS, "Ксардас", "перебей волков", "WOLF", 1, "ITPO_HEALTH_01", "Эликсир", 1)
+        chronicle.record({"fact": "gate_vouch_broken", "npc": XARDAS, "crime_kind": "theft"})
+        if lied:
+            chronicle.record({"fact": "caught", "npc": XARDAS, "quest": "OLD_QUEST"})
+        record = board.trust.of(XARDAS)
+        assert record.crimes and not record.broke
+        assert bool(record.lied) is lied
+        conv = dialogue.open(XARDAS, "Ксардас")
+        result = await board.handle(dialogue, conv, ToolCall("pay_reward", {"quest": q.id}, "c1"), None)
+        assert result is not None and result.status == "rejected"
+        reason = (
+            "его дела подорвали твоё доверие "
+            "(ты поручился за него, а он совершил преступление: «theft»)"
+        )
+        if lied:
+            reason = f"он уже лгал тебе; {reason}"
+        else:
+            assert "лгал" not in result.output
+        assert result.output == f"Отклонено: {reason}. {WORD_BROKEN}"
+        assert not q.paid and chronicle.facts("paid") == []
     finally:
         await link_cm.__aexit__(None, None, None)

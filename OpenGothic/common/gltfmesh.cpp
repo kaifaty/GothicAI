@@ -90,9 +90,9 @@ std::string decodedString(std::string value) {
   return value;
   }
 
-zenkit::MaterialGroup materialGroup(const cgltf_material& material) {
+asset::MaterialGroup materialGroup(const cgltf_material& material) {
   if(material.extras.data==nullptr)
-    return zenkit::MaterialGroup::UNDEFINED;
+    return asset::MaterialGroup::UNDEFINED;
 
   // cgltf already vendors this JSON tokenizer. Reuse it for the one extras
   // field instead of adding a JSON dependency to the standalone converter.
@@ -102,7 +102,7 @@ zenkit::MaterialGroup materialGroup(const cgltf_material& material) {
   jsmn_init(&parser);
   const int count = jsmn_parse(&parser,json.data(),json.size(),tokens.data(),tokens.size());
   if(count<=0 || tokens[0].type!=JSMN_OBJECT)
-    return zenkit::MaterialGroup::UNDEFINED;
+    return asset::MaterialGroup::UNDEFINED;
   for(size_t i=1; i<size_t(count); ) {
     const auto& key = tokens[i++];
     if(i>=size_t(count))
@@ -113,30 +113,30 @@ zenkit::MaterialGroup materialGroup(const cgltf_material& material) {
       if(value.type!=JSMN_STRING)
         reject("material extras.group must be a string");
       const auto group = decodedString(std::string(json.substr(size_t(value.start),size_t(value.end-value.start))));
-      if(group=="UNDEF") return zenkit::MaterialGroup::UNDEFINED;
-      if(group=="METAL") return zenkit::MaterialGroup::METAL;
-      if(group=="STONE") return zenkit::MaterialGroup::STONE;
-      if(group=="WOOD")  return zenkit::MaterialGroup::WOOD;
-      if(group=="EARTH") return zenkit::MaterialGroup::EARTH;
+      if(group=="UNDEF") return asset::MaterialGroup::UNDEFINED;
+      if(group=="METAL") return asset::MaterialGroup::METAL;
+      if(group=="STONE") return asset::MaterialGroup::STONE;
+      if(group=="WOOD")  return asset::MaterialGroup::WOOD;
+      if(group=="EARTH") return asset::MaterialGroup::EARTH;
       if(group=="WATER")
         reject("material extras.group WATER is unsupported for static visuals: water belongs to world mesh surfaces and overrides OPAQUE/MASK");
-      if(group=="SNOW")  return zenkit::MaterialGroup::SNOW;
+      if(group=="SNOW")  return asset::MaterialGroup::SNOW;
       reject("unknown material extras.group: " + group);
       }
     const auto end = value.end;
     do { ++i; } while(i<size_t(count) && tokens[i].start<end);
     }
-  return zenkit::MaterialGroup::UNDEFINED;
+  return asset::MaterialGroup::UNDEFINED;
   }
 
-zenkit::Material convertMaterial(const cgltf_material* source) {
+asset::Material convertMaterial(const cgltf_material* source) {
   if(source==nullptr || source->name==nullptr || source->name[0]=='\0')
     reject("each primitive needs a named material");
   if(source->alpha_mode==cgltf_alpha_mode_blend)
     reject("BLEND materials are not supported");
   if(source->alpha_mode!=cgltf_alpha_mode_opaque && source->alpha_mode!=cgltf_alpha_mode_mask)
     reject("unsupported material alphaMode");
-  zenkit::Material material;
+  asset::Material material;
   material.name = decodedString(source->name);
   if(material.name.empty())
     reject("each primitive needs a named material");
@@ -146,7 +146,7 @@ zenkit::Material convertMaterial(const cgltf_material* source) {
   material.group = materialGroup(*source);
   material.color = {255,255,255,255};
   material.alpha_func = source->alpha_mode==cgltf_alpha_mode_mask ?
-                       zenkit::AlphaFunction::DEFAULT : zenkit::AlphaFunction::NONE;
+                       asset::AlphaFunction::DEFAULT : asset::AlphaFunction::NONE;
   return material;
   }
 
@@ -307,7 +307,7 @@ struct MaterialState {
 
 class Converter {
   public:
-    zenkit::MultiResolutionMesh mesh;
+    asset::StaticMesh mesh;
 
     Converter() { mesh.alpha_test = false; }
 
@@ -420,7 +420,7 @@ class Converter {
         state.streams.push_back({&node,position,normal,uv,wedgeBase});
         }
       for(size_t i=0; i<count; i+=3) {
-        zenkit::MeshTriangle triangle;
+        asset::MeshTriangle triangle;
         for(unsigned corner=0; corner<3; ++corner) {
           const size_t index = primitive.indices==nullptr ? i+corner : cgltf_accessor_read_index(primitive.indices,i+corner);
           if(index>=position->count)
@@ -484,7 +484,7 @@ std::vector<GltfMeshNode> loadScene(const std::filesystem::path& path, std::vect
 
 }
 
-zenkit::MultiResolutionMesh loadGltfMesh(const std::filesystem::path& path, std::vector<uint8_t>* source) {
+asset::StaticMesh loadGltfMesh(const std::filesystem::path& path, std::vector<uint8_t>* source) {
   auto meshes = loadScene(path,source,false);
   return std::move(meshes.front().mesh);
   }

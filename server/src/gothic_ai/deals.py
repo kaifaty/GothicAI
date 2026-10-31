@@ -82,6 +82,7 @@ from .protocol import (
     Session,
     Snapshot,
 )
+from .purse import Purse, meeting_words
 from .turn import ToolOutcome
 
 if TYPE_CHECKING:
@@ -668,6 +669,7 @@ class Deals:
         self.chronicle.npc_cheat_enabled = cheat
         self.roster: Callable[[], Mapping[str, RosterEntry]] = dict
         self.stash = Stash(chronicle)
+        self.purse = Purse(chronicle)
         # what the npc knows it keeps in its chests (chests.py): a thing it offers may be there
         self.in_chests: Callable[[str], dict[str, tuple[int, str]]] = lambda npc: {}
         # the tasks of the deals and their rewards: a TurnExtension of its own (cli.py)
@@ -818,7 +820,9 @@ class Deals:
         self, dialogue: DialogueManager, conv: Conversation, call: ToolCall, snap: Snapshot | None
     ) -> ToolOutcome | None:
         if call.name == PROPOSE_DEAL:
-            return await self.propose(conv.npc, conv.persona.name, call.arguments, snap)
+            return await self.propose(
+                conv.npc, conv.persona.name, call.arguments, snap, hero_words=meeting_words(conv)
+            )
         if call.name == WITHDRAW_DEAL:
             deal = self.open.get(conv.npc)
             if deal is None:
@@ -831,7 +835,15 @@ class Deals:
             return ToolOutcome("Предложение снято.", "accepted")
         return None
 
-    async def propose(self, npc: str, name: str, args: dict[str, Any], snap: Snapshot | None) -> ToolOutcome:
+    async def propose(
+        self,
+        npc: str,
+        name: str,
+        args: dict[str, Any],
+        snap: Snapshot | None,
+        *,
+        hero_words: Collection[str] = (),
+    ) -> ToolOutcome:
         npc = npc.upper()
         current = self.open.get(npc)
         if current is not None and current.state in ("accepting", "unknown"):
@@ -996,6 +1008,8 @@ class Deals:
             let_pass=let_pass,
             secret=secret,
         )
+        if why := self.purse.error(deal, self.debts.values(), hero_words):
+            return ToolOutcome(why, "rejected")
         if current is not None and current.same(deal):
             return ToolOutcome(f"Эти условия герой уже видит: {current.terms()}.", "accepted")
         try:

@@ -292,7 +292,7 @@ namespace zenkit {
 					    ZKLOGW("ModelScript", "Unexpected type for modelTag: \"%s\"", event_type.c_str());
 				    }
 
-				    tag.bone = c->read_line(true);
+				    tag.bone = c->read_line_then_ignore("\r\n");
 				    script.model_tags.push_back(std::move(tag));
 				    break;
 			    }

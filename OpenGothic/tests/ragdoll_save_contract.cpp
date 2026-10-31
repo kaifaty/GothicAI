@@ -1,9 +1,11 @@
 #include "game/ragdollsave.h"
 #include "game/serialize.h"
 #include "resources.h"
+#include "asset/modeltypes.h"
 
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>
+#include <zenkit/ModelAnimation.hh>
 
 #include <bit>
 #include <cmath>
@@ -162,6 +164,39 @@ namespace {
       write(output);
     }
     return bytes;
+    }
+
+  void testAnimationSampleCompatibility() {
+    const zenkit::AnimationSample source{{-0.f,12.25f,-34.5f},{.8f,-0.f,.6f,0.f}};
+    const asset::AnimationSample own{source.position,source.rotation};
+    static_assert(sizeof(own)==sizeof(source));
+    const auto bytes=archive([&](Serialize& output) {
+      output.setEntry("animation/owned");
+      output.write(own);
+      output.setEntry("animation/original");
+      output.writeBytes(&source,sizeof(source));
+      output.setEntry("animation/v39");
+      output.write(source.position.x,source.position.y,source.position.z,
+                   source.rotation.x,source.rotation.y,source.rotation.z,source.rotation.w);
+      });
+    Tempest::MemReader reader(bytes);
+    Serialize input(reader);
+    require(input.setEntry("animation/owned"),"owned sample entry must exist");
+    zenkit::AnimationSample original;
+    input.readBytes(&original,sizeof(original));
+    require(std::memcmp(&source,&original,sizeof(source))==0,
+            "owned sample writes must match original save bytes and retain quaternion WXYZ layout");
+    require(input.setEntry("animation/original"),"original sample entry must exist");
+    input.setVersion(40);
+    asset::AnimationSample restored;
+    input.read(restored);
+    require(std::memcmp(&source,&restored,sizeof(source))==0,
+            "owned samples must read original raw saves without losing signed zero");
+    require(input.setEntry("animation/v39"),"legacy sample entry must exist");
+    input.setVersion(39);
+    input.read(restored);
+    require(std::memcmp(&source,&restored,sizeof(source))==0,
+            "owned samples must retain legacy XYZW component reads before save version 40");
     }
 
   template<class T>
@@ -711,6 +746,7 @@ namespace {
   }
 
 int main() {
+  testAnimationSampleCompatibility();
   testQuestReturn();
   testRoundTrip();
   testInactiveAndOldSave();

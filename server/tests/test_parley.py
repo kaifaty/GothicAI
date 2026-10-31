@@ -7,11 +7,12 @@ from types import SimpleNamespace
 import pytest
 
 from gothic_ai.chronicle import Chronicle
-from gothic_ai.dialogue import DialogueManager
+from gothic_ai.dialogue import REACT_HINT, DialogueManager
 from gothic_ai.executor import Intent
 from gothic_ai.gamedata.storygraph import Node, StoryGraph, load
-from gothic_ai.llm import FakeBackend, FakeStep, ToolCall, ToolResult
+from gothic_ai.llm import FakeBackend, FakeStep, Message, ToolCall, ToolResult
 from gothic_ai.memory import MemoryStore
+from gothic_ai.orders import Orders
 from gothic_ai.parley import AGREEMENT, EXPIRY_CUE, HAIL_CUE, LEASE_MS, NO_REASON, Parley
 from gothic_ai.perception import PerceptionDesk
 from gothic_ai.persona import PersonaProvider
@@ -30,6 +31,7 @@ from gothic_ai.protocol import (
     WorldLoaded,
 )
 from gothic_ai.story import StoryPatches, freed
+from gothic_ai.talk import TalkDesk
 from tests.fake_game import FakeGame, connected
 
 BRAGO, MATE, OTHER = "BDT_1014_BANDIT_L", "BDT_1015_BANDIT_L", "VLK_414_RUPERT"
@@ -1093,6 +1095,40 @@ async def test_answered_ultimatum_keeps_silence_without_a_talk_partner_until_exp
             assert any(op.get("do") == "attack" for msg in fake.story for op in msg.get("effects", []))
 
 
+async def test_companion_model_waits_for_negotiations_but_a_hero_order_does_not(monkeypatch):
+    async with world() as (fake, link, dialogue, _, parley):
+        fake.nearby = [{"id": BRAGO, "name": "Браго", "distance": 100, "guild": 9}]
+        await link.attach(COMPANION)
+        snap = await link.snapshot(COMPANION, fresh=True)
+        talk = TalkDesk(link, dialogue)
+        orders = Orders(link, talk, dialogue)
+        orders.parley_quiet = parley.quiet
+        assert dialogue.fight_reason == parley.fight_reason
+        conv = dialogue.open(COMPANION, "Диего", warm=False)
+        conv.intent = Intent("follow_hero", "PLAYER", "friendly")
+        starts = []
+        monkeypatch.setattr(orders, "_start", lambda npc, target, standing: starts.append((npc, target)))
+        monkeypatch.setattr(dialogue, "event_turn", lambda *a, **kw: None)
+        attack = ToolCall("set_intent", {"goal": "fight", "target": BRAGO, "attitude": "friendly"})
+
+        await demand(dialogue, parley)
+        parley.hero_said(BRAGO)
+        assert parley.fight_reason(BRAGO) is None and parley.quiet(BRAGO)
+        result = dialogue._set_intent(conv, attack, snap)
+        assert result.status == "rejected" and "Нужен приказ героя" in result.output
+        assert conv.intent.goal == "follow_hero" and not starts
+        assert orders.fight_intent(COMPANION, BRAGO)
+        assert starts == [(COMPANION, BRAGO)]
+
+        # A new, unanswered demand expires: the model follows the usual fight rules again.
+        await demand(dialogue, parley)
+        parley._ticks = parley.ultimatum(BRAGO)["deadline"]
+        parley.tick()
+        assert not parley.ultimatum(BRAGO).get("answered") and not parley.quiet(BRAGO)
+        assert dialogue._set_intent(conv, attack, snap).status == "accepted"
+        assert starts == [(COMPANION, BRAGO), (COMPANION, BRAGO)]
+
+
 async def test_expired_ultimatum_attacks_even_with_a_lingering_talk_partner(monkeypatch):
     async with world() as (fake, link, dialogue, _, parley):
         parley.talk = SimpleNamespace(partner=SimpleNamespace(npc=BRAGO))
@@ -1104,3 +1140,40 @@ async def test_expired_ultimatum_attacks_even_with_a_lingering_talk_partner(monk
         assert parley.ultimatum(BRAGO)["status"] == "expired"
         assert sent[-1].to == "scripts"
         assert any(op.get("do") == "attack" for msg in fake.story for op in msg.get("effects", []))
+
+
+async def test_quick_summaries_include_the_same_balance_without_waiting_for_extensions(monkeypatch):
+    async with world() as (_, link, dialogue, _, parley):
+        conv = dialogue.conversations[BRAGO]
+        conv.intent = Intent(attitude="wary")
+        quick = FakeBackend("Твоё невежество граничит с безумием.", delay=0)
+        dialogue.quick = quick
+
+        async def no_preparation(npc):
+            raise AssertionError("the quick summary must not prepare extensions")
+
+        parley.prepare = no_preparation
+        brief, _, _ = await dialogue._situation(conv, None, brief=True)
+        balance = parley.balance(BRAGO)
+        assert balance and balance in brief and balance in parley.situation(BRAGO)
+        assert conv.intent.describe() in brief
+        assert balance in dialogue._brief(conv)
+        request = [
+            *conv.history, Message("developer", brief + "\n" + REACT_HINT), Message("user", "Я убью вас!")
+        ]
+        await dialogue._first_reaction(conv, "Я убью вас!", request)
+        assert balance in quick.calls[0][1][-2].content
+        assert quick.temperatures == [0.6]
+        assert parley.balance(OTHER) is None
+
+        dialogue.guild_of = lambda npc: None
+        parley._guilds.clear()
+
+        def no_facts(*args):
+            raise AssertionError("the quick summary must not read the database")
+
+        monkeypatch.setattr(parley.chronicle, "facts", no_facts)
+        assert parley.balance(BRAGO) == balance
+        assert parley.balance(OTHER) is None
+        parley._on_message(Session(type="session", branch="another"))
+        assert parley.balance(BRAGO) is None

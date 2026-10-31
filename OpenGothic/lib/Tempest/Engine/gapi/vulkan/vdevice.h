@@ -436,6 +436,9 @@ class VDevice : public AbstractGraphicsApi::Device {
     VSamplerCache           samplers;
 
     VkProps                 props = {};
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    bool                    profilePipelineStatistics=false;
+#endif
 
     PFN_vkGetBufferMemoryRequirements2KHR vkGetBufferMemoryRequirements2 = nullptr;
     PFN_vkGetImageMemoryRequirements2KHR  vkGetImageMemoryRequirements2  = nullptr;

@@ -288,6 +288,7 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
   const bool dive  = (state==Dive);
   const bool grav  = (state==InAir || state==Falling || state==JumpUp);
   const auto pos0  = npc.position();
+  const auto assist = virtualWalking ? npc.meleeStep(dt) : Tempest::Vec3{};
   auto       dp    = (!grav && state!=Slide) ? npcMoveSpeed(dt,moveFlg) : npcFallSpeed(dt);
   const bool walk  = bool(npc.wlkMode & WalkBit::WM_Walk) && (state==Run);
 
@@ -314,7 +315,11 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
     const bool attackRoot = !npc.isPlayer() && !npc.isHuman() && bs==BS_HIT;
     if(state!=Slide && !attackRoot)
       dp.y = 0.f; // walking root bob cannot detach the controller from its support
+    const auto root = dp;
+    dp += assist;
+    const auto assistOrigin = npc.position();
     const bool moved = tickCharacterVirtual(dt,dp);
+    npc.noteMeleeStep(root,assist,npc.position()-assistOrigin,dt);
     if(impulseGeneration!=movementImpulseGeneration)
       return moved;
     guardEdgeMove();
@@ -698,7 +703,7 @@ bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displaceme
   auto& world = npc.world();
   std::vector<Item*> nearbyItems;
   world.detectItem(origin,DynamicWorld::characterItemRange,[&](Item& item) {
-    if(!item.isDynamic())
+    if(!item.isDynamic() && !(Gothic::physicsFlags().placedItems && item.isPlacedItem()))
       nearbyItems.push_back(&item);
     });
   // Creating a native body invalidates the item query index. Finish detection first,
@@ -1604,10 +1609,10 @@ Tempest::Vec3 MoveAlgo::normalRay(const Tempest::Vec3& pos) const {
   return cache.n;
   }
 
-zenkit::MaterialGroup MoveAlgo::groundMaterial() const {
+asset::MaterialGroup MoveAlgo::groundMaterial() const {
   const float stp = stepHeight();
   if(cacheW.wdepth+stp>cache.v.y)
-    return zenkit::MaterialGroup::WATER;
+    return asset::MaterialGroup::WATER;
   return cache.mat;
   }
 

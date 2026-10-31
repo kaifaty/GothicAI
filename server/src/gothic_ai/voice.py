@@ -146,11 +146,15 @@ class AsrClient:
         self._lock = asyncio.Lock()  # one utterance at a time
 
     async def open(
-        self, rate: int, lang: str = "ru", on_partial: PartialCallback | None = None
+        self,
+        rate: int,
+        lang: str = "ru",
+        on_partial: PartialCallback | None = None,
+        hints: list[str] | None = None,
     ) -> AsrSession:
         """Start an utterance: feed audio as it is recorded, then `finish` or `cancel` it."""
         await self._lock.acquire()
-        session = AsrSession(self, rate, lang, on_partial)
+        session = AsrSession(self, rate, lang, on_partial, hints)
         await session.begin()
         return session
 
@@ -177,11 +181,19 @@ class AsrSession:
     """One utterance. The audio is also kept here: when the connection drops, `finish` sends the
     whole recording again over a fresh one."""
 
-    def __init__(self, client: AsrClient, rate: int, lang: str, on_partial: PartialCallback | None) -> None:
+    def __init__(
+        self,
+        client: AsrClient,
+        rate: int,
+        lang: str,
+        on_partial: PartialCallback | None,
+        hints: list[str] | None = None,
+    ) -> None:
         self.client = client
         self.rate = rate
         self.lang = lang
         self.on_partial = on_partial
+        self.hints = list(hints) if hints else []
         self._pcm: list[bytes] = []
         self._ws: ClientConnection | None = None
         self._reader: asyncio.Task[None] | None = None
@@ -199,9 +211,10 @@ class AsrSession:
 
     async def _start(self) -> None:
         self._ws = await self.client._connection()
-        await self._ws.send(
-            json.dumps({"type": "start", "lang": self.lang, "sample_rate": self.rate, "format": "pcm16"})
-        )
+        start = {"type": "start", "lang": self.lang, "sample_rate": self.rate, "format": "pcm16"}
+        if self.hints:
+            start["hints"] = self.hints
+        await self._ws.send(json.dumps(start))
         self._reader = asyncio.create_task(self._read(self._ws))
 
     async def _read(self, ws: ClientConnection) -> None:
@@ -307,6 +320,7 @@ def _fail(fut: asyncio.Future[Recognized], err: Exception) -> None:
 class _Utterance:
     focus: str | None  # the npc the hero looked at when he spoke
     source: AudioSource
+    hints: list[str] | None = None
     queue: asyncio.Queue[bytes | None] = field(default_factory=asyncio.Queue)
     recognize: bool = False
     finished: bool = False  # the final transcript was sent: drop late partials
@@ -320,6 +334,7 @@ Heard = Callable[[str, str | None, dict[str, Any]], None]
 class VoiceInput:
     """Turns push-to-talk key events from the game into the hero's phrases (`heard`).
 
+    `hints`: ASR vocabulary for the hero's focus, snapshotted once when the key is pressed.
     `files`: a `ptt_start` may name a recording (`audio`) the hero says instead of the microphone; the test
     bench speaks for the hero this way (scripts/shorts/). Off by default: the game is not to make the server
     read files."""
@@ -334,6 +349,7 @@ class VoiceInput:
         lang: str = "ru",
         journal: Journal | None = None,
         files: bool = False,
+        hints: Callable[[str | None], list[str]] | None = None,
     ) -> None:
         self.link = link
         self.heard = heard
@@ -342,6 +358,7 @@ class VoiceInput:
         self.asr = asr
         self.lang = lang
         self.files = files
+        self.hints = hints
         self.active: _Utterance | None = None  # while the key is held
         self._watchdog: asyncio.TimerHandle | None = None
         self._tasks: set[asyncio.Task[None]] = set()
@@ -364,6 +381,8 @@ class VoiceInput:
         try:
             source = self._source(audio)
             utt = _Utterance(focus.upper() if focus else None, source)
+            if self.hints is not None:
+                utt.hints = list(self.hints(utt.focus))
             source.start(lambda data: loop.call_soon_threadsafe(utt.queue.put_nowait, data))
         except VoiceError as err:
             log.error("voice: %s", err)
@@ -408,7 +427,7 @@ class VoiceInput:
             if text and not utt.finished:
                 self._spawn(self._partial(utt, text))
 
-        session = await self.asr.open(rate, self.lang, partial)
+        session = await self.asr.open(rate, self.lang, partial, hints=utt.hints)
         size, heard = 0, False
         while (chunk := await utt.queue.get()) is not None:
             size += len(chunk)

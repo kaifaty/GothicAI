@@ -177,6 +177,7 @@ class Orders:
         self._monster_gaps: dict[str, dict[str, float]] = {}  # viewer -> visible monster's distance to hero
         self.fights: dict[str, Fight] = {}  # companion -> its fight now
         self.on_fight: Callable[[str, str], None] | None = None
+        self.parley_quiet: Callable[[str], bool] = lambda npc: False
         # those marked the scripts' party members here (`party`), with the mark's number (GameLink.party):
         # only these are unmarked here, and only if nobody marked them since
         self.party: dict[str, int] = {}
@@ -664,9 +665,11 @@ class Orders:
         """A companion's model may not start a fight with a gang still willing to bargain."""
         if not self.companion(npc) or target is None or self.foe(target):
             return None
-        if self.dialogue.fight_reason is not None and self.dialogue.fight_reason(
-            target.upper(), self.link.snapshots.get(target.upper())
-        ) is not None:
+        if self.parley_quiet(target) or (
+            self.dialogue.fight_reason is not None and self.dialogue.fight_reason(
+                target.upper(), self.link.snapshots.get(target.upper())
+            ) is not None
+        ):
             return "У шайки нет повода для драки: идут переговоры или действует уговор. Нужен приказ героя."
         return None
 

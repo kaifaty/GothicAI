@@ -31,6 +31,7 @@ from .commands import Order, words
 from .game import GameError, GameLink
 from .journal import Journal
 from .llm import LLMBackend, LLMError, Message, TextDelta, with_deadlines
+from .llm.base import QUICK_SLOT
 from .protocol import (
     BeastDo,
     BeastEntry,
@@ -313,10 +314,14 @@ class BeastDesk:
     async def _quick_tone(self, text: str) -> str:
         assert self.quick is not None
         said = ""
-        events = self.quick.stream(instructions=TONE_INSTRUCTIONS, messages=[Message("user", text)])
-        async for event in with_deadlines(events, first_s=TONE_S, idle_s=TONE_S, name=self.quick.name):
-            if isinstance(event, TextDelta):
-                said += event.text
+        token = QUICK_SLOT.set(None)  # tone has no NPC persona or pinned slot
+        try:
+            events = self.quick.stream(instructions=TONE_INSTRUCTIONS, messages=[Message("user", text)])
+            async for event in with_deadlines(events, first_s=TONE_S, idle_s=TONE_S, name=self.quick.name):
+                if isinstance(event, TextDelta):
+                    said += event.text
+        finally:
+            QUICK_SLOT.reset(token)
         found = words(said)
         return next((w for w in found if w in TONES), said.strip()[:40])
 

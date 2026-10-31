@@ -1,7 +1,7 @@
 """WebSocket API of the service. It knows nothing about the game or microphones: audio in, text out.
 
     service -> client  {"type":"hello","service":"gothic-asr","providers":[...],"streaming":true}
-    client  -> service {"type":"start","lang":"ru","sample_rate":16000,"format":"pcm16"}
+    client  -> service {"type":"start","lang":"ru","sample_rate":16000,"format":"pcm16","hints":["Кавалорн"]}
     client  -> service binary frames: 16-bit little-endian mono PCM, sent while the player speaks
     service -> client  {"type":"partial","text":"..."}     (streaming providers: text so far)
     client  -> service {"type":"end"}            (or {"type":"cancel"} to drop the utterance)
@@ -9,6 +9,8 @@
     service -> client  {"type":"error","detail":"..."}
 
 `latency_s` counts from `end`. Utterances on one connection are handled one after another.
+`start.hints` is an optional list of names or phrases to help streaming providers recognize them.
+Providers without hint support ignore it; clients can omit it.
 
 `GET /health` on the same port answers {"ok":true,"service":"gothic-asr","providers":[{"name":"..."}]}:
 the launcher waits for it before starting the game.
@@ -92,10 +94,18 @@ class AsrService:
                         outbox.put_nowait({"type": "error", "detail": "only pcm16 is supported"})
                         utt = None
                         continue
+                    hints = msg.get("hints")
+                    if "hints" in msg and (
+                        not isinstance(hints, list) or any(not isinstance(h, str) for h in hints)
+                    ):
+                        outbox.put_nowait({"type": "error", "detail": "hints must be a list of strings"})
+                        utt = None
+                        continue
                     rate, size = int(msg.get("sample_rate", RATE)), 0
                     utt = self.recognizer.utterance(
                         str(msg.get("lang", "ru")),
                         lambda text: outbox.put_nowait({"type": "partial", "text": text}),
+                        hints=hints,
                     )
                     await utt.begin()
                 elif kind == "cancel":

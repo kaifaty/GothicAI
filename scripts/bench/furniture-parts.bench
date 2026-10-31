@@ -1,0 +1,34 @@
+# Numeric native furniture checks on a fresh NEWWORLD, FURNITURE_PARTS=1 and =0.
+# No capture commands: events.jsonl and furniture-parts-physics.csv are evidence.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+movable on
+destruction off
+character on
+furniture-parts setup
+furniture-parts table-items
+wait 6000
+furniture-parts items-report
+furniture-parts clear-items
+furniture-parts ragdoll
+wait 5000
+furniture-parts ragdoll-report
+furniture-parts npc-walk
+wait 6000
+furniture-parts walk-report
+furniture-parts walk
+hold forward 6000
+wait 6000
+release all
+furniture-parts walk-report
+furniture-parts shelf-item
+wait 6000
+furniture-parts items-report
+furniture-parts clear-items
+slowmo 2
+furniture-parts performance
+wait 12000
+furniture-parts performance-report
+slowmo 1

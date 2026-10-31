@@ -24,7 +24,7 @@ float CsCamera::KeyFrame::arcLength() const {
   }
 
 
-CsCamera::KbSpline::KbSpline(const std::vector<std::shared_ptr<zenkit::VCameraTrajectoryFrame>>& frames, const float duration, std::string_view vobName) {
+CsCamera::KbSpline::KbSpline(const std::vector<std::shared_ptr<asset::VCameraTrajectoryFrame>>& frames, const float duration, std::string_view vobName) {
   keyframe.reserve(frames.size());
   for(auto& f : frames) {
     KeyFrame kF;
@@ -86,11 +86,11 @@ Vec3 CsCamera::KbSpline::position(const uint64_t time) const {
   float u   = (t - kF0.time) / (kF1.time - kF0.time);
 
   const float k = 1.005f;
-  if(kF0.motionType==zenkit::CameraMotion::SLOW && kF1.motionType!=zenkit::CameraMotion::SLOW) {
+  if(kF0.motionType==asset::CameraMotion::SLOW && kF1.motionType!=asset::CameraMotion::SLOW) {
     // slow -> non-slow = accelerate
     u = std::pow(u, k);
     }
-  else if(kF0.motionType!=zenkit::CameraMotion::SLOW && kF1.motionType==zenkit::CameraMotion::SLOW) {
+  else if(kF0.motionType!=asset::CameraMotion::SLOW && kF1.motionType==asset::CameraMotion::SLOW) {
     // non-slow -> slow = deccelerate
     u = std::pow(u, 1.f/k);
     }
@@ -100,12 +100,12 @@ Vec3 CsCamera::KbSpline::position(const uint64_t time) const {
   }
 
 
-CsCamera::CsCamera(Vob* parent, World& world, const zenkit::VCutsceneCamera& cam, Flags flags)
+CsCamera::CsCamera(Vob* parent, World& world, const asset::VCutsceneCamera& cam, Flags flags)
   :AbstractTrigger(parent,world,cam,flags) {
   if(cam.position_count<1 || cam.total_duration<=0)
     return;
 
-  if(cam.trajectory_for==zenkit::CameraCoordinateReference::OBJECT || cam.target_trajectory_for==zenkit::CameraCoordinateReference::OBJECT) {
+  if(cam.trajectory_for==asset::CameraCoordinateReference::OBJECT || cam.target_trajectory_for==asset::CameraCoordinateReference::OBJECT) {
     Log::d("Object camera not implemented, \"", name() , "\"");
     return;
     }

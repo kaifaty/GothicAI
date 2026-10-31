@@ -7,7 +7,7 @@ import pytest
 
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.director import Director, Pacing, _rest
-from gothic_ai.gamedata.storygraph import StoryGraph, load
+from gothic_ai.gamedata.storygraph import StoryGraph, load, walk
 from gothic_ai.llm import ToolCall
 from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.memory import MemoryStore
@@ -347,6 +347,7 @@ async def test_the_director_repairs_after_a_rejected_proposal(graph):
         cheaper = "E3: вариант ответа «Лучше продай одежду дешевле!», в ответ: «Хорошо! Я отдам тебе ее на 10"
         assert cheaper in brief and "дешевле.» — сам ничего не даёт" in brief
         assert "E4: забрать у героя ITPL_BEET ×20" in brief
+        assert "Умерший сам снял пункты уговора" not in brief
         assert f"{HILDA} — Хильда: этот квест есть в диалогах" in brief
         assert f"{VINO} — Вино: был рядом (12 м)" in brief
 
@@ -395,6 +396,136 @@ async def test_the_director_repairs_after_a_rejected_proposal(graph):
         assert [op["op"] for op in director.patches.ops()] == ["add_node"]
         # repaired: the next look finds nothing to do
         assert await director.look() == [] and len(llm.calls) == 2
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("transfer", [None, "give", "remove_items"])
+async def test_repair_keeps_the_dead_givers_item_terms(graph, transfer):
+    if transfer is not None:
+        graph.nodes["DIA_LOBART_RUEBENRUNNING"].effects.append(
+            {
+                "do": transfer,
+                "from": ["inst", "OTHER"],
+                "to": ["inst", "SELF"],
+                "npc": ["inst", "OTHER"],
+                "item": ["sym", "ITPL_BEET"],
+                "amount": ["int", 20],
+            }
+        )
+    fake = FakeGame(branch="A")
+    fake.item_names["ITPL_BEET"] = "Репа"
+    llm = FakeBackend(script=[FakeStep("", [_proposal(HILDA, effects=["E1", "E2"])])], delay=0)
+    link_cm, director, chronicle = await _director(fake, llm, graph, MemoryStore(":memory:"))
+    try:
+        chronicle.record(
+            {
+                "fact": "quest_terms",
+                "quest": QUEST,
+                "npc": LOBART,
+                "name": "Лобарт",
+                "drop": ["ITPL_BEET"],
+                "why": "Оставь репу себе",
+            }
+        )
+        assert await director.look([LOBART]) == [QUEST]
+        assert len(director.repairs) == 1
+        brief = llm.calls[0][1][0].content
+        assert (
+            "Умерший сам снял пункты уговора: Репа — «Оставь репу себе». Преемник держит этот уговор"
+            in brief
+        )
+        assert "забрать у героя ITPL_BEET" not in brief
+        node = director.repairs[0].ops[0]["node"]
+        assert not any(e.get("to") == "self" for e in node["effects"])
+        assert not any(e[:2] == ["call", "NPC_HASITEMS"] for e in walk(node["condition"]))
+        assert node["effects"][0] == {"do": "xp", "amount": 50}
+        # The gold choice must keep the waived item out of its guard as well.
+        assert node["program"][0]["do"] == "choice"
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("waived", [False, True])
+async def test_repair_keeps_cavalorns_spared_bandit_out_of_the_helper(graph, waived):
+    cavalorn = "BAU_4300_ADDON_CAVALORN"
+    bandits = ["BDT_1013_BANDIT_L", "BDT_1014_BRAGO", "BDT_1015_BANDIT_L"]
+    helper = ["fn", "C_BRAGOBANDITSDEAD"]
+    deaths = [["call", "NPC_ISDEAD", ["inst", f"AMBUSHER_{i}"]] for i in (1013, 1014, 1015)]
+    graph.instances.update({f"AMBUSHER_{i}": b for i, b in zip((1013, 1014, 1015), bandits, strict=True)})
+    graph.functions[helper[1]] = {"params": 0, "body": ["&&", *deaths], "lifted": True}
+    node = graph.nodes["DIA_LOBART_RUEBENRUNNING"]
+    node.npc = cavalorn
+    node.condition = ["&&", RUNNING, helper]
+    node.effects = [{"do": "set", "var": QUEST, "value": ["int", 2, "LOG_SUCCESS"]}]
+    fake = FakeGame(branch="A")
+    link_cm, director, chronicle = await _director(fake, FakeBackend(delay=0), graph, MemoryStore(":memory:"))
+    fake.npc_states[cavalorn] = {"state": "dead", "name": "Кавалорн"}
+    fake.npc_states[bandits[0]] = {"state": "alive", "name": "Бандит у дороги"}
+    try:
+        if waived:
+            chronicle.record(
+                {
+                    "fact": "quest_terms",
+                    "quest": QUEST,
+                    "npc": cavalorn,
+                    "name": "Кавалорн",
+                    "drop": [bandits[0]],
+                    "why": "Он просил пощады",
+                }
+            )
+        brief = await director.brief(QUEST, await director.story())
+        assert brief is not None
+        ending = brief.endings[0]
+        if waived:
+            assert [e for e in walk(ending.condition) if e[:2] == ["call", "NPC_ISDEAD"]] == deaths[1:]
+            assert helper not in list(walk(ending.condition))
+            assert (
+                "Умерший сам снял пункты уговора: Бандит у дороги — «Он просил пощады». "
+                "Преемник держит этот уговор" in brief.text()
+            )
+        else:
+            assert ending.condition == ["&&", RUNNING, helper]
+            assert "Умерший сам снял пункты уговора" not in brief.text()
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+async def test_repair_accumulates_only_the_dead_givers_terms_for_this_quest(graph):
+    dialog = "DIA_LOBART_WORKNOW"
+    knows = ["call", "NPC_KNOWSINFO", ["inst", "OTHER"], ["sym", dialog]]
+    node = graph.nodes["DIA_LOBART_RUEBENRUNNING"]
+    node.condition = ["&&", node.condition, knows]
+    fake = FakeGame(branch="A")
+    link_cm, director, chronicle = await _director(fake, FakeBackend(delay=0), graph, MemoryStore(":memory:"))
+    try:
+        for quest, npc, dropped, why in [
+            (QUEST, LOBART, ["ITPL_BEET"], "Репа не нужна"),
+            (QUEST, LOBART, [dialog], "Мы уже договорились"),
+            (QUEST, HILDA, ["KAPITEL"], "Чужой уговор"),
+            ("MIS_OTHER", LOBART, ["KAPITEL"], "Другое дело"),
+        ]:
+            chronicle.record(
+                {
+                    "fact": "quest_terms",
+                    "quest": quest,
+                    "npc": npc,
+                    "name": NAMES[npc],
+                    "drop": dropped,
+                    "why": why,
+                }
+            )
+        brief = await director.brief(QUEST, await director.story())
+        assert brief is not None
+        condition = brief.endings[0].condition
+        assert not any(
+            e[:2] in (["call", "NPC_HASITEMS"], ["call", "NPC_KNOWSINFO"]) for e in walk(condition)
+        )
+        assert KAPITEL_LT_3 in list(walk(condition))
+        text = brief.text()
+        assert text.count("Умерший сам снял пункты уговора") == 2
+        assert "Репа не нужна" in text and "DIA_LOBART_WORKNOW — «Мы уже договорились»" in text
+        assert "Чужой уговор" not in text and "Другое дело" not in text
     finally:
         await link_cm.__aexit__(None, None, None)
 

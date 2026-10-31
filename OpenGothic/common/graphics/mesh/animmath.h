@@ -3,8 +3,8 @@
 #include <Tempest/Matrix4x4>
 #include <Tempest/Point>
 
-#include <zenkit/ModelAnimation.hh>
+#include "asset/modeltypes.h"
 
-zenkit::AnimationSample mix(const zenkit::AnimationSample& x, const zenkit::AnimationSample& y, float a);
+asset::AnimationSample mix(const asset::AnimationSample& x, const asset::AnimationSample& y, float a);
 zenkit::Quat            slerp(const zenkit::Quat& x, const zenkit::Quat& y, float a);
-Tempest::Matrix4x4      mkMatrix(const zenkit::AnimationSample& s);
+Tempest::Matrix4x4      mkMatrix(const asset::AnimationSample& s);

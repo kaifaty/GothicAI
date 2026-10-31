@@ -15,6 +15,7 @@ export const EFFORT: Option[] = [
 ];
 
 export const ASR: Option[] = [
+  { value: "inworld", label: "Inworld" },
   { value: "voxtral", label: "Voxtral на своём сервере" },
   { value: "chatgpt", label: "Подписка ChatGPT" },
   { value: "openai", label: "Ключ OpenAI" },

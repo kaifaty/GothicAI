@@ -137,14 +137,7 @@ async def group_scenario(
         npc: FakeBackend("Спокойно, он со мной.", delay=0.02, first=0.5),
         steps: FakeBackend("А я его знаю!", delay=0.02, first=0.5),
     }
-    # whose instructions: «Ты — <the card's first words>» (the two bandits share a name)
-    keys = {
-        brago: "Браго",
-        bandit: "Бандит, который встречает",
-        npc: "Кавалорн",
-        steps: "Бандит, пронырливый",
-    }
-    dialogue.llm = _ByNpc({keys[n]: m for n, m in models.items()}, FakeBackend("Хм.", delay=0))
+    dialogue.llm = _ByNpc(models, FakeBackend("Хм.", delay=0))
     started: list[tuple[float, str, str]] = []  # (when, npc, line)
     link.listeners.append(
         lambda m: (
@@ -204,7 +197,7 @@ async def group_scenario(
         ],
     )
     brago_says = FakeBackend("Кавалорн, ты бы язык прикусил, пока цел.", delay=0.02, first=0.5)
-    dialogue.llm = _ByNpc({keys[npc]: cavalorn, keys[brago]: brago_says}, FakeBackend("Хм.", delay=0))
+    dialogue.llm = _ByNpc({npc: cavalorn, brago: brago_says}, FakeBackend("Хм.", delay=0))
     sent: list[SayCmd] = []
     send = link.send
 

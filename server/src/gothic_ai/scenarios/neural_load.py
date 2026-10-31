@@ -47,7 +47,7 @@ def _policy_resets() -> Iterator[dict[PolicyClient, list[dict[str, Any]]]]:
 async def neural_load_scenario(link: GameLink, pilot: BodyPilot | None) -> dict[str, str]:
     """Load a peaceful save during three real P30 fights, then acquire a fresh fight."""
     if pilot is None:
-        raise GameError("scenario neural-load requires GOTHIC_BODY_URL and --neural-body")
+        raise GameError("scenario neural-load requires --neural-body and an available body policy")
     await link.wait_world()
     if link.hello is None or link.hello.protocol < 45 or pilot.max_fights < 3:
         raise GameError("scenario neural-load requires protocol >=45 and --neural-body-max >=3")
@@ -207,7 +207,7 @@ async def neural_load_scenario(link: GameLink, pilot: BodyPilot | None) -> dict[
                     pilot.handles(npc) and pilot.fights[npc].lease == old_leases[npc]
                     and link.body_leases.get(old_leases[npc].entity_id) == old_leases[npc]
                     and identity(old_leases[npc]) in observed_swords
-                    and resets.get(old_clients.get(npc), [])
+                    and (pilot.policy == "engine" or resets.get(old_clients.get(npc), []))
                     for npc in npcs
                 )
 
@@ -284,8 +284,9 @@ async def neural_load_scenario(link: GameLink, pilot: BodyPilot | None) -> dict[
                 fight = pilot.fights.get(npc)
                 return bool(
                     fight and fight.lease and link.body_leases.get(fight.lease.entity_id) == fight.lease
-                    and fight.lease != old_leases.get(npc) and fight.client is not old_clients.get(npc)
-                    and resets.get(fight.client, []) and fight._decisions >= 5
+                    and fight.lease != old_leases.get(npc) and (pilot.policy == "engine" or (
+                        fight.client is not old_clients.get(npc) and resets.get(fight.client, [])
+                    )) and fight._decisions >= 5
                     and identity(fight.lease) in observed_swords
                 )
 
@@ -300,8 +301,10 @@ async def neural_load_scenario(link: GameLink, pilot: BodyPilot | None) -> dict[
                 and (lease.session_epoch, lease.world_epoch) != (
                     old_leases[npc].session_epoch, old_leases[npc].world_epoch,
                 )
-                and reset_calls[0]["session_epoch"] == lease.session_epoch
-                and reset_calls[0]["world_epoch"] == lease.world_epoch
+                and (pilot.policy == "engine" or (
+                    reset_calls[0]["session_epoch"] == lease.session_epoch
+                    and reset_calls[0]["world_epoch"] == lease.world_epoch
+                ))
             ), f"decisions={fight._decisions if fight else 0}, "
                f"fallback={fight._fallbacks if fight else None}, resets={len(reset_calls)}, "
                f"new_client={bool(fight and fight.client is not old_clients.get(npc))}, "

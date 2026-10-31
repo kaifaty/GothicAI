@@ -4,17 +4,20 @@ A quest of the scripts (Lobart's turnips) ends in a dialog whose effects are lif
 against the VM (`storygraph --effects`). In a conversation the npc that ends it sees what it expects from the
 hero (what it asked for, the reward) and may take his word that it is done (`accept_quest`). The code plays
 the ending as the scripts would in a world where his claim is true — he has the turnips: the quest variable,
-the experience, the reward (the first choice that pays), the journal. Items he really has are taken; items he
-does not have are not, and that is a lie, written down with the truth.
+the experience, the reward (the first choice that pays), the journal. The giver may waive items, deaths or
+conversations (`amend_quest`, saved as `quest_terms`), withhold its payment (`pay: none`), or cancel its own
+non-plot quest (`drop_quest`). Experience and continuation still play on completion. Only items the hero
+really has are taken. Waived or witnessed terms are never his lie; the actual truth is still recorded.
 
 Whether the npc believes him is up to its model, in character, but on what the code shows it, so the player
 can read and play it:
 - what it sees for itself: the items he has on him (he hands them over, the rest is his word), the people
-  that must be dead — before its eyes (the engine's own sight: not behind a wall), a short walk away (60 m),
-  or too far to check;
+  that must be dead — before its eyes (the engine's own sight: not behind a wall), remembered from their
+  death or body (`seen_dead` in the save branch), a short walk away (60 m), or too far to check;
 - what it knows of his word (trust.py): lies of his it knows of, rumors, claims of his that were true.
 What it sees it does not take on his word: with someone alive before its eyes, or once he lied to it and
-it does not see the claim true, `accept_quest` is refused. It may go and see for itself (`check_claim`):
+it has not seen the claim true, `accept_quest` is refused. Its own mistaken sight is no lie of the hero's.
+It may go and see for itself (`check_claim`):
 it walks there, and what it sees decides — he lied (caught) or it pays. It may call him a liar to his face
 when it sees the claim false (`expose_lie`). A lie seen through before it pays costs him its trust and a
 rumor (quests.caught); a lie believed is found out later by a rule:
@@ -32,7 +35,7 @@ import json
 import logging
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -42,11 +45,14 @@ from .director import topic_titles
 from .game import GameError, GameLink
 from .gamedata.storygraph import Expr, Node, StoryGraph, walk
 from .journal import Journal
+from .knowledge import Partial, StoryState
 from .llm import Tool, ToolCall
 from .protocol import GameMessage, Loading, Session, Snapshot
+from .quest_tools import _QUEST_ARG, AMEND, AMEND_TOOL, DROP, DROP_TOOL
 from .quests import SEE_CM, Lie, caught, unmask
 from .trust import WORD_BROKEN, Trust
 from .turn import ToolOutcome
+from .validator import Rules
 
 if TYPE_CHECKING:
     from .dialogue import Conversation, DialogueManager
@@ -54,13 +60,17 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 ACCEPT = "accept_quest"
+ACCEPT_NOW = (
+    f"Засчитать можно сейчас: отдаёшь награду — вызови {ACCEPT}, без него она не перейдёт."
+)
 CHECK = "check_claim"
 EXPOSE = "expose_lie"
 GIVE = "give_quest"
 CHECK_CM = 6000  # how far an npc goes to see for itself
 LOOK_CM = 1800  # how close it comes to what it goes to see
+WALK_TIMEOUT_MS = 120_000
 BACK_CM = 300  # how close it comes back to the hero to tell him
-LOG_RUNNING, LOG_SUCCESS = 1, 2
+LOG_RUNNING, LOG_SUCCESS, LOG_OBSOLETE = 1, 2, 4
 QUEST_REWARDS: dict[str, dict[str, int]] = json.loads(
     (Path(__file__).parent / "gamedata" / "quest_rewards.json").read_text(encoding="utf-8")
 )
@@ -74,20 +84,24 @@ COSMETIC_CALLS = ("AI_", "PRINT", "SND_", "WLD_PLAYEFFECT", "MDL_", "B_SAY", "B_
 PARTY = ["int", 15, "AIV_PARTYMEMBER"]
 MAX_SAID = 600  # characters of the scripts' lines of a dialog shown to the npc's model
 
-_QUEST_ARG = {
-    "type": "object",
-    "properties": {
-        "quest": {"type": "string", "description": "id из обстановки, например MIS_LOBART_RUEBEN"}
-    },
-    "required": ["quest"],
-    "additionalProperties": False,
-}
 ACCEPT_TOOL = Tool(
     ACCEPT,
-    "Засчитать герою дело, которого ты от него ждёшь (список — в обстановке), и отдать обещанную награду. "
+    "Засчитать герою дело, которого ты от него ждёшь (список — в обстановке), и выбрать плату. "
     "Вызывай, только если веришь, что он его сделал. Что из принесённого у него с собой, перейдёт к тебе; "
     "если он говорит, что остальное оставил где-то ещё, решай, веришь ли. Тело всё сделает после реплики.",
-    _QUEST_ARG,
+    {
+        **_QUEST_ARG,
+        "properties": {
+            **_QUEST_ARG["properties"],
+            "pay": {
+                "type": ["string", "null"],
+                "enum": ["full", "none", None],
+                "description": "full — отдаёшь обещанное; none — своего ничего не даёшь (например, дело "
+                "сделал не он). Опыт за решённое дело герой получит в любом случае. null — как full.",
+            },
+        },
+        "required": ["quest", "pay"],
+    },
 )
 CHECK_TOOL = Tool(
     CHECK,
@@ -127,6 +141,18 @@ class Claim:
     )  # helper predicates of the scripts that hold (C_BragoBanditsDead)
 
     @property
+    def removable(self) -> list[str]:
+        return list(dict.fromkeys([*self.dead, *self.items, *self.knows]))
+
+    def select(self, ids: set[str]) -> Claim:
+        """Only the removable terms with these ids, without script state or helper assumptions."""
+        return Claim(
+            items={i: n for i, n in self.items.items() if i in ids},
+            dead=[d for d in self.dead if d in ids],
+            knows=[k for k in self.knows if k in ids],
+        )
+
+    @property
     def kind(self) -> str:
         return "fetch" if self.items else "kill" if self.dead else "talk" if self.knows else "other"
 
@@ -148,8 +174,17 @@ class Claim:
                 return ["int", 1]
             if e[1] == "NPC_GETDISTTOWP" and e[2] == ["inst", "SELF"]:
                 return ["int", 0]  # where the npc stands is the place of its dialog: it talks with him there
-        if e[0] == "fn" and len(e) == 2 and e[1] in self.fns:
-            return ["int", 1]
+        if e[0] == "fn" and len(e) == 2:
+            if e[1] in self.fns:
+                return ["int", 1]
+            helper = graph.functions.get(e[1])
+            if (
+                (self.dead or self.items or self.knows)
+                and helper
+                and helper.get("lifted")
+                and not helper.get("params")
+            ):
+                return self.assume(helper["body"], graph)
         if e[0] == "var" and len(e) == 2 and e[1] in self.vars:
             return ["int", self.vars[e[1]]]
         if e[0] in ("int", "str", "var", "inst", "sym", "param", "unknown"):
@@ -170,17 +205,40 @@ class Target:
     alive: bool
     distance: float | None  # cm from the npc; None: not in this world
     visible: bool | None = None  # the npc sees it now (the engine's sight); None: unknown, by distance
+    remembered: str | None = None  # how the npc saw it dead on this save branch
 
     @property
     def seen(self) -> bool:
-        if self.distance is None:
-            return False
-        return self.visible if self.visible is not None else self.distance <= SEE_CM
+        if self.visible is not None:
+            return self.visible
+        return self.distance is not None and self.distance <= SEE_CM
+
+    @property
+    def seen_dead(self) -> bool:
+        """Its remembered sight, unless it sees this person alive now."""
+        return not self.alive if self.seen else self.remembered is not None
 
     @property
     def walk(self) -> bool:
         """Not seen from here, but a short walk away."""
-        return not self.seen and self.distance is not None and self.distance <= CHECK_CM
+        return (
+            not self.seen and not self.seen_dead and self.distance is not None and self.distance <= CHECK_CM
+        )
+
+    @property
+    def state(self) -> str:
+        if self.seen:
+            return f"{'жив' if self.alive else 'мёртв'}, у тебя на глазах"
+        if self.remembered:
+            how = {
+                "killed": "ты убил его сам",
+                "saw_die": "ты видел, как он умер",
+                "saw_body": "ты видел тело",
+            }[self.remembered]
+            return f"мёртв: {how}"
+        if self.walk:
+            return f"в {_m(self.distance or 0)} м, отсюда не видно"
+        return "ты его не видел"
 
 
 @dataclass
@@ -202,6 +260,19 @@ class Offer:
     targets: list[Target] = field(default_factory=list)  # kill: where they are
     said: str = ""  # what the npc says in the ending in the scripts
     asked: bool = True  # the quest is in progress: the npc asked him; else he did it unasked
+    original: Claim = field(default_factory=Claim)
+    terms: list[Fact] = field(default_factory=list)
+    dropped: list[str] = field(default_factory=list)
+    term_names: dict[str, str] = field(default_factory=dict)
+    unseen_helpers: bool = False
+
+    @property
+    def waived(self) -> Claim:
+        return self.original.select(set(self.dropped))
+
+    @property
+    def all_removed(self) -> bool:
+        return bool(self.dropped) and not (self.claim.removable or self.claim.vars or self.unseen_helpers)
 
     def items(self, counts: dict[str, int] | None = None) -> str:
         """The items of the claim in the game's words (with other counts: what is missing...)."""
@@ -230,10 +301,15 @@ class Offer:
         return None
 
     def seen_true(self) -> bool:
-        """The npc sees for itself all the claim says: the items on him, the dead before its eyes."""
-        visible = bool(self.claim.items or self.claim.dead)
+        """The npc has seen all the claim says: the items on him, the people dead."""
+        visible = bool(self.claim.items or self.claim.dead) or self.all_removed
         return (
-            visible and not any(self.missing().values()) and all(not t.alive and t.seen for t in self.targets)
+            visible
+            and not self.claim.knows
+            and not self.claim.vars
+            and not self.unseen_helpers
+            and not any(self.missing().values())
+            and all(t.seen_dead for t in self.targets)
         )
 
     def reachable(self) -> Target | None:
@@ -267,6 +343,9 @@ class Offer:
                 if group
             )
             parts.append(f"у тебя на глазах: {what}")
+        for t in self.targets:
+            if t.remembered and t.seen_dead and not t.seen:
+                parts.append(f"{t.name} — {t.state}")
         near = [t for t in self.targets if t.walk]
         if near:
             ds = sorted(_m(t.distance or 0) for t in near)
@@ -274,7 +353,7 @@ class Offer:
             parts.append(
                 f"{_names(near)} — в {span} м, отсюда не видно: можешь сходить и посмотреть сам ({CHECK})"
             )
-        far = [t for t in self.targets if not t.seen and not t.walk]
+        far = [t for t in self.targets if not t.seen and not t.walk and not t.seen_dead]
         if far:
             parts.append(f"{_names(far)} — далеко, проверить сам не можешь")
         return "; ".join(parts) or None
@@ -335,11 +414,15 @@ class VanillaQuests:
         self.hero_distance = hero_distance or (lambda _npc: None)
         self.journal = journal or dialogue.journal
         self.trust = trust or Trust(chronicle)
+        self.plot_vars = Rules.of(graph).plot_vars
         self.titles = topic_titles(graph)
         self._topic_uses = Counter(t for q in graph.quests.values() for t in q.topics)
         self.offers: dict[str, dict[str, Offer]] = {}  # npc -> quest -> offer, as of its last turn
-        self.checking: set[str] = set()  # npc's gone to see for themselves
+        self.checking: dict[str, Offer] = {}  # npc -> the quest it has gone to check
         self.told: dict[str, Told] = {}
+        self.seen_dead: dict[tuple[str, str], str] = {}  # (giver, target) -> how it saw the target dead
+        self.terms: dict[tuple[str, str], list[Fact]] = {}  # (giver, quest) -> amendments in this branch
+        self.unpaid: set[str] = set()  # no bonus, including a later native success notification
         self._endings: dict[str, list[Node]] = {}  # npc -> dialogs of its that end a quest with success
         self._starts: dict[str, list[tuple[str, Node]]] = {}  # npc -> the quests its dialogs give, and those
         for q in graph.quests.values():
@@ -348,7 +431,8 @@ class VanillaQuests:
                 self._endings.setdefault(node.npc, []).append(node)
             for id in sorted(q.running):
                 node = graph.nodes[id]
-                self._starts.setdefault(node.npc, []).append((q.var, node))
+                if not _ends(node):
+                    self._starts.setdefault(node.npc, []).append((q.var, node))
         self.starts: dict[str, dict[str, Start]] = {}  # npc -> quest -> start, as of its last turn
         self._background: set[asyncio.Task[Any]] = set()
         self._reward_lock = asyncio.Lock()
@@ -381,9 +465,11 @@ class VanillaQuests:
                 # бандитами покончено» wants it not begun (the hero killed them without being asked)
                 running = state.get("vars", {}).get(quest) == LOG_RUNNING
                 if (
-                    not (running or _reads(self._condition(node), quest))
+                    state.get("vars", {}).get(quest) in (2, 3, 4)
+                    or not (running or _reads(self._condition(node), quest))
                     or quest in offers
                     or quest in self.told
+                    or (npc in self.checking and self.checking[npc].quest == quest)
                 ):
                     continue
                 if any(o.ending == node.id for o in offers.values()):
@@ -407,7 +493,7 @@ class VanillaQuests:
         """What of each claim the npc can see for itself: the items the hero has on him, where the people
         that must be dead are."""
         items = sorted({i for o in offers for i in o.claim.items})
-        dead = sorted({d for o in offers for d in o.claim.dead})
+        dead = sorted({d for o in offers for d in o.original.dead})
         have = (
             await self.link.story_eval(
                 npc, [["call", "NPC_HASITEMS", ["inst", "OTHER"], ["sym", i]] for i in items]
@@ -418,16 +504,59 @@ class VanillaQuests:
         counts = {i: int(v or 0) for i, v in zip(items, have, strict=False)}
         people = (await self.link.story_state(npcs=dead, near=npc)).get("npcs", {}) if dead else {}
         for o in offers:
+            o.term_names = {
+                **{i: o.names.get(i, i) for i in o.original.items},
+                **{d: (people.get(d) or {}).get("name") or d for d in o.original.dead},
+                **{
+                    k: self.graph.nodes[k].description if k in self.graph.nodes else k
+                    for k in o.original.knows
+                },
+            }
             o.have = {i: counts.get(i, 0) for i in o.claim.items}
             o.targets = [_target(d, people.get(d) or {}) for d in o.claim.dead]
-            if o.targets:
-                o.needs = f"будут мертвы: {_names(o.targets)}"
+            for target in o.targets:
+                if target.seen and not target.alive:
+                    self._remember_dead(npc, target.npc, "saw_body")
+                target.remembered = self.seen_dead.get((npc, target.npc))
+            self._needs(o)
+
+    def _needs(self, offer: Offer) -> None:
+        offer.needs = (
+            f"ты снял все условия: можешь засчитать ({ACCEPT})"
+            if offer.all_removed
+            else _needs(
+                offer.claim, offer.names | offer.term_names, self.graph, self.graph.nodes[offer.ending]
+            )
+        )
+
+    def _apply_terms(self, offer: Offer) -> None:
+        offer.terms = list(self.terms.get((offer.npc, offer.quest), []))
+        offer.dropped = list(dict.fromkeys(d for f in offer.terms for d in f["drop"]))
+        remaining = offer.original.select(set(offer.original.removable) - set(offer.dropped))
+        offer.claim = replace(
+            offer.original, items=remaining.items, dead=remaining.dead, knows=remaining.knows
+        )
+        offer.targets = [t for t in offer.targets if t.npc in offer.claim.dead]
+        offer.have = {i: n for i, n in offer.have.items() if i in offer.claim.items}
+        self._needs(offer)
 
     def situation(self, npc: str) -> str | None:
         npc = npc.upper()
         lines = []
         for o in self.offers.get(npc, {}).values():
             seen = o.evidence()
+            if seen and npc in self.checking:
+                seen = seen.replace(f": можешь сходить и посмотреть сам ({CHECK})", "")
+            refusal = self._refusal(npc, o)
+            targets = {t.npc: t for t in o.targets}
+            terms = []
+            for i in o.claim.removable:
+                term = f"{i} — {o.term_names.get(i, i)}"
+                if i in targets:
+                    term += f" ({targets[i].state})"
+                elif i in o.claim.items:
+                    term += f" (у героя с собой ×{o.have.get(i, 0)} из {o.claim.items[i]})"
+                terms.append(term)
             lines.append(
                 (
                     f"Ты ждёшь от героя: «{o.title}» (id {o.quest}). "
@@ -435,11 +564,27 @@ class VanillaQuests:
                     else f"Герой может сказать, что сам сделал «{o.title}» (id {o.quest}), "
                     "без твоей просьбы. "
                 )
-                + f"Засчитать можно, когда {o.needs}. "
-                f"Награда, как обещано: {o.reward}. "
+                + (
+                    f"Ты снял все условия: можешь засчитать ({ACCEPT}). "
+                    if o.all_removed
+                    else f"Засчитать можно, когда {o.needs}. "
+                )
+                + f"Награда, как обещано (pay: full): {o.reward}. "
+                "При pay: none своего ничего не даёшь; опыт герой получит в любом случае. "
+                + "".join(
+                    f"Снято тобой: {', '.join(o.term_names.get(d, d) for d in f['drop'])} — «{f['why']}». "
+                    for f in o.terms
+                )
+                + (
+                    f"Можешь снять пункты ({AMEND}): "
+                    + "; ".join(terms)
+                    + ". "
+                    if o.asked and o.quest not in self.plot_vars and o.claim.removable
+                    else ""
+                )
                 + (
                     f"Засчитывая, в игре ты говоришь (скажи это по смыслу, своими словами): {o.said} "
-                    if o.said
+                    if o.said and refusal is None
                     else ""
                 )
                 + (
@@ -447,6 +592,29 @@ class VanillaQuests:
                     if seen
                     else "Сделал ли он это — своими глазами ты не видел."
                 )
+            )
+            if refusal is not None:
+                t = o.alive_in_view()
+                reason = (
+                    f"{t.name} жив — у тебя на глазах, в {_m(t.distance or 0)} м"
+                    if t is not None
+                    else "на слово ты ему не веришь, а своими глазами видел не всё"
+                )
+                hint = (
+                    f" Можешь сходить и посмотреть сам ({CHECK})."
+                    if npc not in self.checking and o.reachable()
+                    else f" Можешь уличить его во лжи ({EXPOSE})." if o.seen_false() else ""
+                )
+                lines.append(
+                    f"Засчитать сейчас нельзя: {reason}. Не говори, что отдаёшь награду или "
+                    f"рассчитываешься, пока дело не засчитано.{hint}"
+                )
+            elif o.seen_true():
+                lines.append(ACCEPT_NOW)
+        if checking := self.checking.get(npc):
+            lines.append(
+                f"Ты пошёл сам посмотреть, сделал ли герой «{checking.title}»: что увидишь, то и решит. "
+                "Пока не вернёшься, не засчитывай дело и не говори, что отдаёшь награду."
             )
         for st in self.starts.get(npc, {}).values():
             lines.append(
@@ -460,27 +628,40 @@ class VanillaQuests:
                 continue
             if t.found_out:
                 lines.append(f"Ты знаешь, что герой солгал тебе о деле «{t.title}» и забрал награду.")
+            elif t.quest in self.unpaid:
+                lines.append(f"Ты засчитал герою дело «{t.title}» без своей платы; {t.reward}.")
             else:
                 lines.append(f"Ты засчитал герою дело «{t.title}» и отдал награду: {t.reward}.")
         return "\n".join(lines) or None
 
-    all_tools: tuple[Tool, ...] = (ACCEPT_TOOL, CHECK_TOOL, EXPOSE_TOOL, GIVE_TOOL)
+    all_tools: tuple[Tool, ...] = (ACCEPT_TOOL, CHECK_TOOL, EXPOSE_TOOL, GIVE_TOOL, AMEND_TOOL, DROP_TOOL)
 
     def tools(self, npc: str) -> list[Tool]:
-        offers = list(self.offers.get(npc.upper(), {}).values())
-        tools = [ACCEPT_TOOL] if offers else []
-        if any(o.reachable() for o in offers):
+        npc = npc.upper()
+        offers = list(self.offers.get(npc, {}).values())
+        tools = [ACCEPT_TOOL] if any(self._refusal(npc, o) is None for o in offers) else []
+        if npc not in self.checking and any(o.reachable() for o in offers):
             tools.append(CHECK_TOOL)
         if any(o.seen_false() for o in offers):
             tools.append(EXPOSE_TOOL)
-        if self.starts.get(npc.upper()):
+        if self.starts.get(npc):
             tools.append(GIVE_TOOL)
+        checking = [self.checking[npc]] if npc in self.checking else []
+        mutable = [
+            o for o in [*offers, *checking]
+            if o.asked and o.quest not in self.plot_vars
+            and not any(f.get("quest") == o.quest for f in self.chronicle.facts("quest_outcome"))
+        ]
+        if any(o.claim.removable for o in mutable):
+            tools.append(AMEND_TOOL)
+        if mutable:
+            tools.append(DROP_TOOL)
         return tools
 
     async def handle(
         self, dialogue: DialogueManager, conv: Conversation, call: ToolCall, snap: Snapshot | None
     ) -> ToolOutcome | None:
-        if call.name not in (ACCEPT, CHECK, EXPOSE, GIVE):
+        if call.name not in (ACCEPT, CHECK, EXPOSE, GIVE, AMEND, DROP):
             return None
         quest = str(call.arguments.get("quest", "")).upper()
         if call.name == GIVE:
@@ -493,33 +674,143 @@ class VanillaQuests:
 
             dialogue.after_speech(conv, give)
             return ToolOutcome("Принято: поручение будет у него после реплики.", "accepted")
+        if quest not in self.graph.quests:
+            return None
+        checking = self.checking.get(conv.npc)
+        if checking is not None and call.name == ACCEPT and checking.quest == quest:
+            return ToolOutcome(
+                "Отклонено: ты уже идёшь посмотреть сам; что увидишь, то и решит.", "rejected"
+            )
         offers = self.offers.get(conv.npc, {})
-        offer = offers.get(quest)
+        offer = checking if call.name == CHECK and checking is not None else offers.get(quest)
+        if offer is None and call.name in (AMEND, DROP) and checking is not None:
+            if checking.quest == quest and not any(
+                f.get("quest") == quest for f in self.chronicle.facts("quest_outcome")
+            ):
+                offer = checking
         if offer is None:
             return ToolOutcome("Отклонено: такого дела ты от героя не ждёшь.", "rejected")
+        if call.name in (AMEND, DROP):
+            if not offer.asked:
+                return ToolOutcome("Отклонено: ты не давал герою этого поручения.", "rejected")
+            if quest in self.plot_vars:
+                return ToolOutcome("Отклонено: квест главного сюжета нельзя менять или отменять.", "rejected")
+            why = str(call.arguments.get("why", ""))
+            if call.name == AMEND:
+                return self._amend(offer, conv, call.arguments.get("drop", []), why)
+            offers.pop(quest, None)
+
+            async def drop() -> tuple[str, bool]:
+                return await self._drop(offer, conv, why)
+
+            dialogue.after_speech(conv, drop)
+            return ToolOutcome("Принято: поручение закроется без награды после реплики.", "accepted")
         if call.name == CHECK:
             return self._go_check(conv, offer)
         if call.name == EXPOSE:
             return self._expose(conv, offer)
-        # what it sees for itself, it does not take on his word
-        if (t := offer.alive_in_view()) is not None:
-            return ToolOutcome(
-                f"Отклонено: {t.name} жив — у тебя на глазах, в {_m(t.distance or 0)} м. Своим глазам ты "
-                "веришь больше, чем его словам.",
-                "rejected",
-            )
-        if self.trust.broken(conv.npc) and not offer.seen_true():
-            hint = f" Можешь сходить и посмотреть сам ({CHECK})." if offer.reachable() else ""
-            return ToolOutcome(f"Отклонено: он уже лгал тебе. {WORD_BROKEN}{hint}", "rejected")
+        pay = call.arguments.get("pay", "full")
+        if pay is None:
+            pay = "full"
+        if pay not in ("full", "none"):
+            return ToolOutcome("Отклонено: pay должен быть full или none.", "rejected")
+        if refusal := self._refusal(conv.npc, offer):
+            return ToolOutcome(refusal, "rejected")
         offers.pop(quest)
 
         async def job() -> tuple[str, bool]:
-            return await self._accept(offer, conv)
+            return await self._accept(offer, conv, pay=pay)
 
         dialogue.after_speech(conv, job)
-        return ToolOutcome("Принято: засчитаешь и отдашь награду после реплики.", "accepted")
+        payment = "отдашь обещанное" if pay == "full" else "своего ничего не дашь"
+        return ToolOutcome(
+            f"Принято: засчитаешь после реплики, {payment}. Опыт герой получит в любом случае.", "accepted"
+        )
+
+    def _refusal(self, npc: str, offer: Offer) -> str | None:
+        """What it sees for itself, it does not take on the hero's word."""
+        if (t := offer.alive_in_view()) is not None:
+            return (
+                f"Отклонено: {t.name} жив — у тебя на глазах, в {_m(t.distance or 0)} м. Своим глазам ты "
+                "веришь больше, чем его словам."
+            )
+        if self.trust.broken(npc) and not offer.seen_true():
+            hint = f" Можешь сходить и посмотреть сам ({CHECK})." if offer.reachable() else ""
+            return f"Отклонено: {self.trust.of(npc).broken_reason()}. {WORD_BROKEN}{hint}"
+        return None
+
+    def _amend(self, offer: Offer, conv: Conversation, drop: Any, why: str) -> ToolOutcome:
+        if not isinstance(drop, list) or not drop or not all(isinstance(d, str) for d in drop):
+            return ToolOutcome("Отклонено: укажи id снимаемых пунктов из обстановки.", "rejected")
+        ids = list(dict.fromkeys(d.upper() for d in drop))
+        for id in ids:
+            if id not in offer.claim.removable:
+                script = id in offer.claim.vars or id in offer.claim.fns or _reads(offer.truth, id)
+                why_not = "этот пункт не снимается" if script else "такого пункта нет в уговоре"
+                return ToolOutcome(f"Отклонено: {id} — {why_not}.", "rejected")
+        fact = {
+            "fact": "quest_terms",
+            "quest": offer.quest,
+            "npc": offer.npc,
+            "name": conv.persona.name,
+            "drop": ids,
+            "why": why,
+        }
+        self.chronicle.record(fact)
+        self.journal.add("quest_amended", **{k: v for k, v in fact.items() if k != "fact"})
+        self._apply_terms(offer)
+        next_step = (
+            "Ты уже идёшь посмотреть сам; что увидишь, то и решит"
+            if offer.all_removed and self.checking.get(conv.npc) is offer
+            else offer.needs if not offer.all_removed else "Можешь засчитать (accept_quest)"
+        )
+        return ToolOutcome(
+            "Принято: ты снял пункты: "
+            + ", ".join(offer.term_names.get(d, d) for d in ids)
+            + f". {next_step}.",
+            "accepted",
+        )
+
+    def _outcome(self, offer: Offer, how: str, pay: str, why: str | None = None) -> None:
+        self.chronicle.record(
+            {
+                "fact": "quest_outcome",
+                "quest": offer.quest,
+                "npc": offer.npc,
+                "how": how,
+                "drop": offer.dropped,
+                "why": [f["why"] for f in offer.terms] + ([why] if why is not None else []),
+                "pay": pay,
+            }
+        )
+
+    async def _drop(self, offer: Offer, conv: Conversation, why: str) -> tuple[str, bool]:
+        effects = [{"do": "set", "var": offer.quest, "value": LOG_OBSOLETE}]
+        effects += [
+            {"do": "journal", "topic": title, "text": "", "status": "LOG_OBSOLETE"}
+            for topic, title in self.graph.quests[offer.quest].topics.items()
+            if title and self._topic_uses.get(topic, 0) == 1  # a shared topic (the militia's) stays open
+        ]
+        try:
+            await self.link.story_effect(offer.npc, effects)
+        except (GameError, TimeoutError) as err:
+            return f"Ты не смог отменить поручение «{offer.title}»: {err}", False
+        self._outcome(offer, "dropped", "none", why)
+        self.journal.add(
+            "quest_dropped",
+            npc=offer.npc,
+            name=conv.persona.name,
+            quest=offer.quest,
+            title=offer.title,
+            why=why,
+        )
+        return f"Ты отменил поручение «{offer.title}»: оно закрыто без награды.", True
 
     def _go_check(self, conv: Conversation, offer: Offer) -> ToolOutcome:
+        if conv.npc in self.checking:
+            return ToolOutcome(
+                "Отклонено: ты уже идёшь посмотреть сам; что увидишь, то и решит.", "rejected"
+            )
         target = offer.reachable()
         if target is None:
             why = (
@@ -527,6 +818,7 @@ class VanillaQuests:
             )
             return ToolOutcome(f"Отклонено: {why}.", "rejected")
         self.offers[conv.npc].pop(offer.quest)
+        self.checking[conv.npc] = offer
 
         async def job() -> tuple[str, bool]:
             return await self._check(offer, target, conv)
@@ -626,7 +918,7 @@ class VanillaQuests:
         if not node.is_choice:
             played.append({"do": "knows", "info": node.id})  # the dialog counts as played: as heard
         reward = _reward(played + self._bonus(quest), names)
-        return Offer(
+        offer = Offer(
             quest,
             self._title(quest, node.id),
             npc,
@@ -640,7 +932,19 @@ class VanillaQuests:
             names,
             said=_said(effects, fired),
             asked=running,
+            original=claim,
+            # A satisfied branch does not require the script state of its other alternatives.
+            unseen_helpers=any(
+                Partial(self.graph, StoryState()).truth(
+                    claim.select(set(claim.removable)).assume(
+                        self.graph.functions[fn]["body"], self.graph
+                    )
+                ) is not True
+                for fn in claim.fns
+            ),
         )
+        self._apply_terms(offer)
+        return offer
 
     async def _start(self, node: Node, quest: str, npc: str, names: dict[str, str]) -> Start | None:
         """The quest as the npc's dialog would give it now; None if it would not, or can't be played so.
@@ -731,29 +1035,46 @@ class VanillaQuests:
             out.append(made)
         return True
 
-    async def _accept(self, offer: Offer, conv: Conversation, checked: bool = False) -> tuple[str, bool]:
-        """The npc accepts: the ending plays; what the hero has of the items is taken, what he does not have
-        is not, and that is a lie."""
+    async def _accept(
+        self, offer: Offer, conv: Conversation, checked: bool = False, *, pay: str = "full"
+    ) -> tuple[str, bool]:
+        """Play the ending, keep the actual truth, and count only the hero's unsupported claims as lies."""
         try:
-            truth = (await self.link.story_eval(offer.npc, [offer.truth]))[0]
+            witnessed = replace(
+                offer.waived,
+                dead=[*offer.waived.dead, *(t.npc for t in offer.targets if t.seen_dead)],
+                items=offer.waived.items
+                | {i: n for i, n in offer.claim.items.items() if offer.have.get(i, 0) >= n},
+            )
+            truth, believed_truth = await self.link.story_eval(
+                offer.npc, [offer.truth, witnessed.assume(offer.truth, self.graph)]
+            )
             have = await self.link.story_eval(
                 offer.npc,
-                [["call", "NPC_HASITEMS", ["inst", "OTHER"], ["sym", i]] for i in offer.claim.items],
+                [["call", "NPC_HASITEMS", ["inst", "OTHER"], ["sym", i]] for i in offer.original.items],
             )
-            counts = {i: int(v or 0) for i, v in zip(offer.claim.items, have, strict=False)}
+            counts = {i: int(v or 0) for i, v in zip(offer.original.items, have, strict=False)}
             state = await self.link.story_state()
-            await self.link.story_effect(offer.npc, _takes(offer.effects, counts, bool(truth)))
+            effects = [
+                e for e in offer.effects if pay == "full" or e["do"] != "give" or e.get("to") == "self"
+            ]
+            if pay == "none":
+                self.unpaid.add(offer.quest)
+            await self.link.story_effect(offer.npc, _takes(effects, counts, bool(truth)))
         except (GameError, TimeoutError) as err:
+            if pay == "none":
+                self.unpaid.discard(offer.quest)
             log.warning("vanilla: %s not accepted: %s", offer.quest, err)
             return f"Ты не смог засчитать «{offer.title}»: {err}", False
         name = conv.persona.name
-        lie = not truth
+        reward = offer.reward if pay == "full" else _reward(effects, offer.names)
+        lie = not believed_truth
         told = Told(
             offer.quest,
             offer.npc,
             name,
             offer.title,
-            offer.reward,
+            reward,
             lie,
             offer.claim.kind,
             int(state.get("day", 0)),
@@ -764,7 +1085,7 @@ class VanillaQuests:
             "npc": offer.npc,
             "name": name,
             "title": offer.title,
-            "reward": offer.reward,
+            "reward": reward,
         }
         self.chronicle.record({**claim, "believed": True, "truth": bool(truth), "checked": checked})
         self.chronicle.record(
@@ -780,16 +1101,14 @@ class VanillaQuests:
         if lie:
             offer.have = counts
             told.items = offer.items(offer.missing())
-            told.targets = list(offer.claim.dead)
+            told.targets = [t.npc for t in offer.targets if not t.seen_dead]
             told.tag = f"{offer.quest}_ALIVE" if told.targets else ""
             told.follow = sorted(
                 q.var
                 for q in self.graph.quests.values()
                 if offer.ending in q.running and q.var != offer.quest
             )
-            had = ", ".join(
-                f"{i} {v or 0} of {n}" for (i, n), v in zip(offer.claim.items.items(), have, strict=False)
-            )
+            had = ", ".join(f"{i} {counts.get(i, 0)} of {n}" for i, n in offer.claim.items.items())
             truth_text = had or (
                 "alive: " + ", ".join(told.targets) if told.targets else "the claim is false"
             )
@@ -800,7 +1119,7 @@ class VanillaQuests:
                     "npc": offer.npc,
                     "name": name,
                     "title": offer.title,
-                    "reward": offer.reward,
+                    "reward": reward,
                     "kind": told.kind,
                     "truth": truth_text,
                     "day": told.day,
@@ -812,9 +1131,12 @@ class VanillaQuests:
             )
             self.journal.add("lie", npc=offer.npc, name=name, quest=offer.quest, truth=truth_text)
         self.told[offer.quest] = told
-        await self._pay_bonus(offer.quest, offer.npc)
+        self._outcome(offer, "amended" if offer.terms else "done", pay)
+        if pay == "full":
+            await self._pay_bonus(offer.quest, offer.npc)
         await self._watch()
-        return f"Ты засчитал герою «{offer.title}» и отдал награду: {offer.reward}", True
+        payment = f"отдал награду: {reward}" if pay == "full" else f"своего ничего не дал; {reward}"
+        return f"Ты засчитал герою «{offer.title}» и {payment}. Опыт герой получает в любом случае.", True
 
     @staticmethod
     def _bonus(quest: str) -> list[dict[str, Any]]:
@@ -833,6 +1155,7 @@ class VanillaQuests:
             if (
                 branch is None
                 or branch != self.chronicle.branch
+                or quest in self.unpaid
                 or any(f.get("quest") == quest for f in self.chronicle.facts("vanilla_reward"))
             ):
                 return
@@ -849,39 +1172,93 @@ class VanillaQuests:
                 self.chronicle.record({"fact": "vanilla_reward", "quest": quest, "npc": npc})
 
     def _on_fact(self, fact: Fact) -> None:
-        if fact.get("fact") != "vanilla_quest" or fact.get("to") != "success":
+        if fact.get("fact") == "quest_outcome":
+            if fact["pay"] == "none":
+                self.unpaid.add(fact["quest"])
             return
-        quest = fact["quest"]
-        if quest not in QUEST_REWARDS or quest not in self.graph.quests:
+        if fact.get("fact") == "quest_terms":
+            self.terms.setdefault((fact["npc"], fact["quest"]), []).append(fact)
             return
-        givers = {self.graph.nodes[n].npc for n in self.graph.quests[quest].running}
-        if len(givers) != 1:
-            raise ValueError(f"extra reward of {quest} needs exactly one giver, got {givers}")
-        task = asyncio.create_task(self._pay_bonus(quest, givers.pop(), branch=self.chronicle.branch))
+        if fact.get("fact") == "seen_dead":
+            self.seen_dead.setdefault((fact["npc"], fact["dead"]), fact["how"])
+            return
+        if fact.get("fact") == "died":
+            task = asyncio.create_task(self._see_death(fact, self.chronicle.branch))
+        elif fact.get("fact") == "vanilla_quest" and fact.get("to") == "success":
+            quest = fact["quest"]
+            if quest not in QUEST_REWARDS or quest not in self.graph.quests:
+                return
+            givers = {self.graph.nodes[n].npc for n in self.graph.quests[quest].running}
+            if len(givers) != 1:
+                raise ValueError(f"extra reward of {quest} needs exactly one giver, got {givers}")
+            task = asyncio.create_task(self._pay_bonus(quest, givers.pop(), branch=self.chronicle.branch))
+        else:
+            return
         self._background.add(task)
 
         def finished(task: asyncio.Task[Any]) -> None:
             self._background.discard(task)
             if not task.cancelled() and (err := task.exception()) is not None:
-                log.warning("vanilla: extra reward of %s: %s", quest, err, exc_info=err)
+                log.warning("vanilla: fact %s: %s", fact, err, exc_info=err)
 
         task.add_done_callback(finished)
+
+    def _remember_dead(self, npc: str, dead: str, how: str) -> None:
+        """One observation of this pair, kept in the save branch."""
+        if (npc, dead) not in self.seen_dead:
+            self.chronicle.record({"fact": "seen_dead", "npc": npc, "dead": dead, "how": how})
+
+    async def _see_death(self, fact: Fact, branch: str | None) -> None:
+        """The giver's own kills and deaths before its eyes, even before its first conversation turn."""
+        dead = fact["npc"]
+        for npc, endings in self._endings.items():
+            if (npc, dead) in self.seen_dead:
+                continue
+            quests = {
+                quest
+                for node in endings
+                for quest in _ends(node)
+                if dead in _claim(
+                    next((e.get("when") for e in node.effects if _ends_effect(e, quest)), None),
+                    self._condition(node), self.graph, npc,
+                ).dead
+            }
+            if not quests:
+                continue
+            killed = fact.get("killer") == npc
+            try:
+                state = await self.link.story_state(
+                    vars=sorted(quests), npcs=[] if killed else [dead], near=npc,
+                )
+            except (GameError, TimeoutError):
+                continue
+            if branch is None or branch != self.chronicle.branch:
+                return
+            if not any(state.get("vars", {}).get(q, 0) not in (2, 3, 4) for q in quests):
+                continue
+            if killed or _target(dead, state.get("npcs", {}).get(dead) or {}).seen:
+                self._remember_dead(npc, dead, "killed" if killed else "saw_die")
 
     async def _check(self, offer: Offer, target: Target, conv: Conversation) -> tuple[str, bool]:
         """The npc goes to see for itself, then comes back to the hero to say what it saw: he lied to it, or
         it pays."""
-        self.checking.add(conv.npc)
+        self.checking[conv.npc] = offer
         held = await self.dialogue.borrow_body(conv, "check")
         try:
             walked = await self._go(conv, target.npc, LOOK_CM) if held else "ты был занят"
+            if walked == "cancelled":
+                return "Ты не дошёл проверить: герой позвал тебя назад.", False
             if held and not walked:
                 await self._face(conv, target.npc)  # to see it, it looks that way
+            if any(f.get("quest") == offer.quest for f in self.chronicle.facts("quest_outcome")):
+                return f"Поручение «{offer.title}» уже закрыто.", True
+            self._apply_terms(offer)  # the giver may have changed the agreement while walking
             try:
-                people = (await self.link.story_state(npcs=offer.claim.dead, near=offer.npc)).get("npcs", {})
+                await self._evidence(offer.npc, [offer])
             except (GameError, TimeoutError) as err:
                 return f"Ты не смог проверить: {err}", False
-            seen = [t for t in (_target(d, people.get(d) or {}) for d in offer.claim.dead) if t.seen]
-            alive = sorted((t for t in seen if t.alive), key=lambda t: t.distance or 0)
+            seen = [t for t in offer.targets if t.seen_dead]
+            alive = sorted((t for t in offer.targets if t.seen and t.alive), key=lambda t: t.distance or 0)
             if alive:
                 t = alive[0]
                 how = f"сходил проверить и увидел: {t.name} жив, в {_m(t.distance or 0)} м от тебя"
@@ -889,29 +1266,64 @@ class VanillaQuests:
                 await caught(self.link, self.dialogue, self.chronicle, self.journal, lie, how)
                 note, ok = f"Ты {how}", True
                 cue = f"Ты сходил проверить слова героя о деле «{offer.title}»: {t.name} жив. Он тебе солгал"
-            elif not seen:
+            elif not seen and not offer.all_removed:
                 return f"Ты не дошёл, чтобы посмотреть самому{f' ({walked})' if walked else ''}", False
             else:
                 paid, ok = await self._accept(offer, conv, checked=True)
-                dead = f"{_names(seen)} — {'мёртв' if len(seen) == 1 else 'мертвы'}"
+                dead = (
+                    f"{_names(seen)} — {'мёртв' if len(seen) == 1 else 'мертвы'}"
+                    if seen
+                    else "ты снял все условия"
+                )
                 note = f"Ты сходил проверить: {dead}. {paid}"
                 cue = f"Ты сходил проверить слова героя о деле «{offer.title}»: {dead}, он сказал правду"
                 cue += f". {paid}"
+                if ok and offer.said:
+                    cue += (
+                        " В игре при этом ты говоришь (скажи это по смыслу, своими словами): "
+                        f"{offer.said}"
+                    )
             if held:
                 await self._go(conv, "PLAYER", BACK_CM)  # to say it to his face
         finally:
             if held:
                 self.dialogue.return_body(conv, "check")
-            self.checking.discard(conv.npc)
+            self.checking.pop(conv.npc, None)
         self._react(conv, cue)
         return note, ok
 
     async def _go(self, conv: Conversation, npc: str, radius: int) -> str:
         """The npc's body walks until it is `radius` cm from someone; what went wrong, or ''."""
+        log.info("vanilla: %s go_to_npc start target=%s radius=%s", conv.npc, npc, radius)
         try:
-            res = await self.link.act(conv.npc, "go_to_npc", npc=npc, radius=radius)
+            res = await self.link.act(
+                conv.npc,
+                "go_to_npc",
+                npc=npc,
+                radius=radius,
+                timeout_ms=WALK_TIMEOUT_MS,
+                timeout=WALK_TIMEOUT_MS / 1000 + 10,
+            )
+            log.info(
+                "vanilla: %s go_to_npc end target=%s radius=%s status=%s detail=%s distance=%s",
+                conv.npc,
+                npc,
+                radius,
+                res.status,
+                res.detail,
+                res.distance,
+            )
+            if res.status == "cancelled":
+                return res.status
             return "" if res.status == "done" else res.detail or res.status
         except (GameError, TimeoutError) as err:
+            log.info(
+                "vanilla: %s go_to_npc end target=%s radius=%s status=error detail=%s distance=None",
+                conv.npc,
+                npc,
+                radius,
+                err,
+            )
             return str(err) or type(err).__name__
 
     async def _face(self, conv: Conversation, npc: str) -> None:
@@ -987,18 +1399,30 @@ class VanillaQuests:
         """The claims of the branch, from its facts (after a load: as they were at that save)."""
         self.told.clear()
         self.offers.clear()
+        self.checking.clear()
+        self.seen_dead.clear()
+        self.terms.clear()
+        self.unpaid.clear()
         for f in self.chronicle.facts():
+            if f.get("fact") == "seen_dead":
+                self.seen_dead.setdefault((f["npc"], f["dead"]), f["how"])
+                continue
             quest = f.get("quest", "")
             if quest not in self.graph.quests:
                 continue
             match f.get("fact"):
+                case "quest_terms":
+                    self.terms.setdefault((f["npc"], quest), []).append(f)
+                case "quest_outcome" if f["pay"] == "none":
+                    self.unpaid.add(quest)
                 case "claim":
                     name, reward = f.get("name", f["npc"]), f.get("reward", "")
                     self.told[quest] = Told(
-                        quest, f["npc"], name, self._title(quest), reward, lie=not f.get("truth")
+                        quest, f["npc"], name, self._title(quest), reward, lie=False
                     )
                 case "lie" if quest in self.told:
                     t = self.told[quest]
+                    t.lie = True
                     t.npc_name, t.title, t.reward = (
                         f.get("name", t.npc),
                         f.get("title", t.title),
@@ -1247,14 +1671,17 @@ def _reward(effects: list[dict[str, Any]], names: dict[str, str]) -> str:
 
 
 def _needs(claim: Claim, names: dict[str, str], graph: StoryGraph, node: Node) -> str:
+    parts = []
     if claim.items:
-        return "герой принесёт тебе " + ", ".join(f"{names.get(i, i)} ×{n}" for i, n in claim.items.items())
+        parts.append(
+            "герой принесёт тебе " + ", ".join(f"{names.get(i, i)} ×{n}" for i, n in claim.items.items())
+        )
     if claim.dead:
-        return "будут мертвы: " + ", ".join(claim.dead)
+        parts.append("будут мертвы: " + _names([Target(d, names.get(d, d), False, None) for d in claim.dead]))
     if claim.knows:
         said = [graph.nodes[k].description for k in claim.knows if k in graph.nodes]
-        return "герой поговорит об этом: " + "; ".join(f"«{s}»" for s in said if s)
-    return f"герой скажет «{node.description}»"
+        parts.append("герой поговорит об этом: " + "; ".join(f"«{s}»" for s in said if s))
+    return "; ".join(parts) or f"герой скажет «{node.description}»"
 
 
 def _said(effects: list[dict[str, Any]], fired: set[int]) -> str:

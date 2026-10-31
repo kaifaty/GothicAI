@@ -20,7 +20,7 @@ class ObjVisual {
     void load(Serialize& fin,  Interactive &mob);
 
     void setVisual(const zenkit::IItem& visual, World& world, bool staticDraw);
-    void setVisual(const zenkit::VirtualObject& visual, World& world, bool staticDraw, bool enablePhysics = true);
+    void setVisual(const asset::VirtualObject& visual, World& world, bool staticDraw, bool enablePhysics = true);
     void setObjMatrix(const Tempest::Matrix4x4& obj);
     // Preload the cached cut surfaces and their draw instances before impacts.
     void setupFracture(World& world, DynamicWorld::Item& body);

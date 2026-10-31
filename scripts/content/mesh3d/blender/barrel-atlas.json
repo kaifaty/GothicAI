@@ -54,5 +54,19 @@
     "OWN_PROP_WOOD_STAVE": 1.6,
     "OWN_PROP_WOOD_HEAD": 1.6,
     "OWN_PROP_IRON_BAND": 1.3
-  }
+  },
+  "crevice": {
+    "distance": 0.02,
+    "dirt": 0.7,
+    "colour": [0.008, 0.009, 0.005]
+  },
+  "streaks": {
+    "length": 0.25,
+    "rust": 0.6,
+    "dirt": 0.35,
+    "rust_colour": [0.045, 0.022, 0.01],
+    "column": 0.012
+  },
+  "wet_roughness": 0.6,
+  "metal_scale": 0.0
 }

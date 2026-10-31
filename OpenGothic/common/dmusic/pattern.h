@@ -8,9 +8,11 @@ namespace Dx8 {
 
 class Pattern final {
   public:
+    Pattern()=default;
     Pattern(Riff &riff);
 
     struct PartRef final {
+      PartRef()=default;
       PartRef(Riff &input);
       DMUS_IO_PARTREF io;
       Unfo            unfo;
