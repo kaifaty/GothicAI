@@ -3028,6 +3028,11 @@ void CollisionWorld::tick(uint64_t dt) {
     // Headless worlds may have only static geometry and posed HitZones. Query
     // their animation frame without adding a native simulation update.
     if(impl->hasShadowBlades.load(std::memory_order_acquire)) stepShadowBlades(1.f);
+    // A bodyless world still receives projectile and blade queries each frame.
+    // Keep sub-step frames with native bodies on their existing shared budget.
+    if(rigid.empty() && ragdolls.empty() && impl->meleeSubsteps==0) {
+      itemWakeQueries=0;itemWakeCreated=0;
+      }
     }
   if(cloth!=nullptr) cloth->finishFrame();
 

@@ -4077,6 +4077,27 @@ namespace {
       world.tick(17);
       require(created==8,"projectile and active-body wakes must share eight new native bodies per step");
       }
+    {
+      CollisionWorld world;
+      size_t queries=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t) {++queries;return size_t(0);});
+      for(size_t i=0;i<33;++i)
+        world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(queries==32,"an empty world must retain the shared limit before its tick");
+      world.tick(17);
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(queries==33,"a bodyless world must renew projectile wake queries after its tick");
+      size_t created=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t budget) {
+        created+=budget;return budget;
+        });
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(created==8,"an empty world must retain the shared creation limit before its tick");
+      world.tick(17);
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(created==16,"a bodyless world must renew the shared creation budget after its tick");
+      }
     }
 
   void testItemWake() {
