@@ -352,7 +352,7 @@ void WorldView::finishLandscapeUpdate() {
   }
 
 bool WorldView::landscapeReady() const {
-  return !streaming || streaming->ready();
+  return (!streaming || streaming->ready()) && Resources::texturesReady();
   }
 
 const LightSource& WorldView::mainLight() const {
@@ -516,8 +516,11 @@ MeshObjects::Mesh WorldView::addView(const ProtoMesh* mesh) {
   }
 
 MeshObjects::Mesh WorldView::addItmView(std::string_view visual, int32_t material) {
-  if(auto mesh=Resources::loadMesh(visual))
-    return MeshObjects::Mesh(objGroup,*mesh,material,0,0,true);
+  if(auto mesh=Resources::loadMesh(visual)) {
+    auto view=MeshObjects::Mesh(objGroup,*mesh,material,0,0,true);
+    view.setTextureCategory(Resources::TextureCategory::Dynamic);
+    return view;
+    }
   return MeshObjects::Mesh();
   }
 
@@ -586,9 +589,9 @@ bool WorldView::updateLights(const gtime gameTime) {
 bool WorldView::updateRtScene() {
   if(!Shaders::options().doRtScene)
     return false;
-  if(!visuals.updateRtScene(sGlobal.rtScene))
-    return false;
-  return true;
+  if(visuals.updateRtScene(sGlobal.rtScene))
+    return true;
+  return sGlobal.rtScene.refreshTextures();
   }
 
 void WorldView::postFrameupdate() {

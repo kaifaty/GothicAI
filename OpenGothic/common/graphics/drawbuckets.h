@@ -59,7 +59,7 @@ class DrawBuckets {
     bool commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
   private:
-    void updateBindlessArrays();
+    void updateBindlessArrays(bool updateBuffers);
 
     enum BucketFlg : uint32_t {
       BK_SOLID = 0x1,
@@ -102,4 +102,5 @@ class DrawBuckets {
     std::vector<Bucket>      bucketsCpu;
     Tempest::StorageBuffer   bucketsGpu;
     bool                     bucketsDurtyBit = false;
+    uint64_t                 textureGeneration = 0;
   };

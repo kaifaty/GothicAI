@@ -22,6 +22,9 @@ enum class Zone : size_t {
   // Main-thread buoyancy preparation/finish plus the synchronous Jolt step
   // listener (possibly a worker): elapsed sum, overlapping Physics wall time.
   Water, Destruction, AiBridge, Sound,
+  TextureUpdate,
+  // Demand elapsed sums include animation workers and can overlap.
+  TextureDemand,
   EncodeShadows, EncodeMain, EncodeWater, EncodePost, EncodeUi, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
