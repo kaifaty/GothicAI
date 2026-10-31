@@ -93,7 +93,9 @@ def create_settings(path, source, repo, home):
 def build_command(source):
     return [str(Path.home() / "gothic-ai/bin/gq"), "run", "--class", "quick",
             "--threads", "12", "--mem", "12G", "--max", "30m",
-            "--name", "Gothic AI install/update", "--", sys.executable, "-c", source, "__prepare"]
+            "--name", "Gothic AI install/update", "--", "bash", "-euc",
+            'source scripts/ryzen-build.sh; exec "$@"', "ryzen-play",
+            sys.executable, "-c", source, "__prepare"]
 
 
 def sync_content():
