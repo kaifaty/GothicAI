@@ -34,6 +34,9 @@ if(MSVC)
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
   add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
   add_definitions(-D_ITERATOR_DEBUG_LEVEL=0)
+  # std::stable_sort of Jolt's 16-byte aligned contacts (physics/collisionworld.cpp) needs the conforming
+  # aligned_storage; without this MSVC stops with C2338 instead of choosing a layout silently
+  add_definitions(-D_ENABLE_EXTENDED_ALIGNED_STORAGE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4800")
 endif()
 
