@@ -4,6 +4,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -687,10 +688,13 @@ async def test_only_one_epilogue_per_feat_even_for_another_lie():
         assert epilogue["trigger"] == trigger
 
 
-async def test_revelation_before_feat_is_recovered_when_the_feat_is_written():
-    distances = {"LOTAR": ATTACK_CM - 1}
-    async with world(history=[lie()], hero_distance=distances.get) as (_, chronicle, _, _, _):
+@pytest.mark.parametrize("learning", ["near", "talk"])
+async def test_revelation_before_feat_is_recovered_when_the_feat_is_written(learning):
+    distances = {"LOTAR": ATTACK_CM - 1 if learning == "near" else ATTACK_CM + 1}
+    async with world(history=[lie()], hero_distance=distances.get) as (_, chronicle, chronicler, _, _):
         chronicle.record(revelation())
+        if learning == "talk":
+            chronicler.hero_talk("LOTAR")
         distances["LOTAR"] = ATTACK_CM + 1
         chronicle.record(feat(evidence=[1], category="deceit"))
         await _until(lambda: bool(chronicle.facts("feat_epilogue")))
@@ -797,12 +801,35 @@ async def test_epilogue_retry_yields_to_an_ordinary_feat(monkeypatch):
         ]
 
 
+@pytest.mark.parametrize("already_shown", [False, True])
+async def test_roster_does_not_read_long_history_without_pending_epilogues(already_shown):
+    history = [
+        lie(), feat(evidence=[1], category="deceit"), revelation(),
+        {"fact": "feat_epilogue", "feat": "old", "text": "Позже Лотар узнал правду.",
+         "trigger": 3, "npc": "LOTAR", "name": "Лотар", "quest": "WOLVES", "day": 10},
+        {"fact": "feat_epilogue_shown", "feat": "old"},
+    ] if already_shown else []
+    history += [revelation(quest="OTHER", npc="STRANGER", name="Чужой")]
+    history += [{"fact": "npc_intent", "npc": "STRANGER", "plan": str(i)} for i in range(5000)]
+    async with world(history=history) as (_, chronicle, chronicler, _, _):
+        with (
+            patch.object(chronicle, "entries", wraps=chronicle.entries) as entries,
+            patch.object(chronicle, "facts", wraps=chronicle.facts) as facts,
+            patch.object(chronicler, "_near", wraps=chronicler._near) as near,
+        ):
+            for tick in range(2):
+                chronicle.link._dispatch(NpcRoster(type="npc_roster", t=tick, npcs=[]))
+            assert entries.call_count == facts.call_count == near.call_count == 0
+
+
 @pytest.mark.parametrize(("near_at_reveal", "with_picture"), [(True, False), (False, True)])
 async def test_epilogue_toast_when_near_at_disclosure_or_on_later_approach(
     tmp_path, monkeypatch, near_at_reveal, with_picture,
 ):
     distances = {"LOTAR": ATTACK_CM - 1 if near_at_reveal else ATTACK_CM + 1}
     history = [lie(), feat(evidence=[1], category="deceit")]
+    if not near_at_reveal:
+        history += [{"fact": "npc_intent", "plan": str(i)} for i in range(5000)]
     monkeypatch.setattr(feats_module, "DEFAULT_ROOT", tmp_path)
     icon = feats_module.CATEGORY_ICONS / "deceit/icon.png"
     if with_picture:
@@ -817,8 +844,18 @@ async def test_epilogue_toast_when_near_at_disclosure_or_on_later_approach(
         await _until(lambda: bool(chronicle.facts("feat_epilogue")))
         if not near_at_reveal:
             assert not chronicle.facts("feat_epilogue_shown")
+            chronicle.record(revelation(quest="OTHER", npc="STRANGER", name="Чужой"))
             distances["LOTAR"] = ATTACK_CM - 1
-            chronicle.link._dispatch(NpcRoster(type="npc_roster", t=1, npcs=[]))
+            with (
+                patch.object(chronicle, "entries", wraps=chronicle.entries) as entries,
+                patch.object(chronicle, "facts", wraps=chronicle.facts) as facts,
+                patch.object(chronicler, "_near", wraps=chronicler._near) as near,
+            ):
+                chronicle.link._dispatch(NpcRoster(type="npc_roster", t=1, npcs=[]))
+                kinds = [call.args[0] if call.args else call.kwargs.get("kind")
+                         for call in [*entries.call_args_list, *facts.call_args_list]]
+                assert None not in kinds and "rumor" not in kinds
+                assert [call.args for call in near.call_args_list] == [("LOTAR",)]
         await _until(lambda: bool(chronicle.facts("feat_epilogue_shown")))
         await _until(lambda: any(msg["type"] == "feat_toast" for msg in fake.received))
         [toast] = [msg for msg in fake.received if msg["type"] == "feat_toast"]

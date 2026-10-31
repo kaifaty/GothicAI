@@ -417,6 +417,9 @@ class Feats:
         self._epilogue_work: asyncio.Task[None] | None = None
         self._known_disclosures: set[int] = set()
         self._epilogue_showing: set[tuple[int, str]] = set()
+        self._epilogue_possible = False
+        self._epilogue_revealed: list[tuple[Fact, int, Fact]] = []
+        self._epilogue_waiting: list[tuple[Fact, Fact]] = []
         self._drawings: set[asyncio.Task[Picture | None]] = set()
         self._toasts: set[asyncio.Task[None]] = set()
         self._pending: _Occasion | None = None
@@ -425,6 +428,7 @@ class Feats:
         self._loading = False
         chronicle.on_entry.append(self._on_entry)
         link.listeners.append(self._on_message)
+        self._refresh_epilogues()
         self._reconcile_epilogues()
 
     @property
@@ -434,9 +438,13 @@ class Feats:
     def _on_entry(self, seq: int, fact: Fact) -> None:
         if self._loading:
             return
-        if fact["fact"] in {"found_out", "caught", "feat", "feat_epilogue"}:
+        if fact["fact"] in {"found_out", "caught"} and fact.get("quest") and self._near(fact["npc"]):
+            # Remember proximity at the revelation even if its feat has not been written yet.
+            self._known_disclosures.add(seq)
+        if fact["fact"] in {"found_out", "caught", "feat", "feat_epilogue", "feat_epilogue_shown"}:
+            self._refresh_epilogues()
             self._reconcile_epilogues()
-        if not notable(seq, fact, self.chronicle.entries()):
+        if fact["fact"] not in TRIGGERS or not notable(seq, fact, self.chronicle.entries()):
             log.debug("feats: unremarkable occasion #%s %s", seq, fact.get("fact"))
             return
         occasion = _Occasion(seq, fact, asyncio.get_running_loop().time() + self.gather_s)
@@ -460,24 +468,47 @@ class Feats:
                 self._epilogue_work.cancel()
                 self._epilogue_work = None
             self._known_disclosures.clear()
+            self._refresh_epilogues()
             if isinstance(message, Session):
                 self._reconcile_epilogues()
         elif isinstance(message, NpcRoster) and not self._loading:
             self._reconcile_epilogues()
 
-    def _revealed_feats(self) -> list[tuple[Fact, int, Fact]]:
-        entries = self.chronicle.entries()
-        disclosures = [(seq, f) for seq, f in entries if f["fact"] in {"found_out", "caught"}]
-        revealed = []
-        for feat in self.feats:
-            quests = {
-                f["quest"] for seq, f in entries if seq in feat["evidence"]
-                and f["fact"] in {"lie", "claim"} and f.get("quest")
-            }
+    def _refresh_epilogues(self) -> None:
+        """Rebuild branch-derived work only when its facts or save branch change."""
+        self._epilogue_possible = False
+        self._epilogue_revealed = []
+        self._epilogue_waiting = []
+        if self._loading:
+            return
+        feats = self.feats
+        if not feats:
+            return
+        epilogues = {f["feat"]: f for f in self.chronicle.facts("feat_epilogue")}
+        shown = {f["feat"] for f in self.chronicle.facts("feat_epilogue_shown")}
+        self._epilogue_waiting = [
+            (feat, epilogues[feat["id"]]) for feat in feats
+            if feat["id"] in epilogues and feat["id"] not in shown
+        ]
+        unwritten = [feat for feat in feats if feat["id"] not in epilogues]
+        if not unwritten:
+            return
+        lies = {
+            seq: f for kind in ("lie", "claim") for seq, f in self.chronicle.entries(kind)
+            if f.get("quest")
+        }
+        disclosures = sorted(
+            self.chronicle.entries("found_out") + self.chronicle.entries("caught"),
+            key=lambda entry: entry[0],
+        )
+        for feat in unwritten:
+            quests = {lies[seq]["quest"] for seq in feat["evidence"] if seq in lies}
+            if not quests:
+                continue
+            self._epilogue_possible = True
             first = next(((seq, f) for seq, f in disclosures if f.get("quest") in quests), None)
             if first is not None:
-                revealed.append((feat, *first))
-        return revealed
+                self._epilogue_revealed.append((feat, *first))
 
     def _near(self, npc: str) -> bool:
         distance = self.hero_distance(npc)
@@ -486,29 +517,35 @@ class Feats:
     def hero_talk(self, npc: str) -> None:
         """The hero addresses someone who knows the disclosure, including a rumor recipient."""
         if not self._loading:
+            if not self._epilogue_possible and not self._epilogue_waiting:
+                # The hero may learn the truth before the chronicler writes the related feat.
+                quests = {
+                    r.get("quest") for r in self.chronicle.facts("rumor")
+                    if r.get("to") == npc.upper() and r.get("kind") in {"found_out", "caught"}
+                }
+                for kind in ("found_out", "caught"):
+                    for seq, disclosure in self.chronicle.entries(kind):
+                        if disclosure.get("npc") == npc.upper() or disclosure.get("quest") in quests:
+                            self._known_disclosures.add(seq)
             self._reconcile_epilogues(npc.upper())
 
     def _reconcile_epilogues(self, talking: str | None = None) -> None:
-        revealed = self._revealed_feats()
-        epilogues = {f["feat"]: f for f in self.chronicle.facts("feat_epilogue")}
+        if not self._epilogue_possible and not self._epilogue_waiting:
+            return
         rumors = self.chronicle.facts("rumor") if talking else []
-        for seq, disclosure in self.chronicle.entries():
-            if disclosure["fact"] not in {"found_out", "caught"} or not disclosure.get("quest"):
-                continue
+        disclosures = {f["trigger"]: f for _, f in self._epilogue_waiting}
+        disclosures.update((seq, f) for _, seq, f in self._epilogue_revealed)
+        for seq, disclosure in disclosures.items():
             knows = talking == disclosure["npc"] or any(
                 r.get("quest") == disclosure["quest"] and r.get("to") == talking
                 and r.get("kind") in {"found_out", "caught"} for r in rumors
             )
             if knows or self._near(disclosure["npc"]):
                 self._known_disclosures.add(seq)
-        if any(feat["id"] not in epilogues for feat, _, _ in revealed):
+        if self._epilogue_revealed:
             if self._epilogue_work is None or self._epilogue_work.done():
                 self._epilogue_work = asyncio.create_task(self._write_epilogues(self._generation))
-        shown = {f["feat"] for f in self.chronicle.facts("feat_epilogue_shown")}
-        for feat in self.feats:
-            epilogue = epilogues.get(feat["id"])
-            if epilogue is None or feat["id"] in shown:
-                continue
+        for feat, epilogue in self._epilogue_waiting:
             key = (self._generation, feat["id"])
             if key in self._epilogue_showing:
                 continue
@@ -521,13 +558,9 @@ class Feats:
     async def _write_epilogues(self, generation: int) -> None:
         try:
             while generation == self._generation:
-                written = {f["feat"] for f in self.chronicle.facts("feat_epilogue")}
-                pending = next(
-                    (entry for entry in self._revealed_feats() if entry[0]["id"] not in written), None,
-                )
-                if pending is None:
+                if not self._epilogue_revealed:
                     return
-                feat, seq, disclosure = pending
+                feat, seq, disclosure = self._epilogue_revealed[0]
                 entries = self.chronicle.entries()
                 evidence = [(n, f) for n, f in entries if n in feat["evidence"] or n == seq]
                 brief = "\n".join([
