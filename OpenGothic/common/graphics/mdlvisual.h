@@ -36,6 +36,7 @@ class MdlVisual final {
     void                           setVisual(const Skeleton *visual);
 
     void                           setObjMatrix(const Tempest::Matrix4x4 &m, bool syncAttach = false);
+    void                           setTextureOwner(const Tempest::Vec3& position, bool spatial);
     bool                           minSkinnedVertex(float fatness, Tempest::Vec3& point) const;
 
     void                           setHeadRotation(float dx, float dz);
@@ -261,6 +262,8 @@ class MdlVisual final {
     void setupGestures();
 
     Tempest::Matrix4x4             pos;
+    Tempest::Vec3                 textureOwnerPosition;
+    bool                          textureOwnerKnown = false, textureOwnerSpatial = false;
     MeshObjects::Mesh              view;
 
     MeshAttach                     head, sword, bow, shield;

@@ -36,6 +36,9 @@ def test_session_and_world_change_csv(tmp_path):
                     f"malloc_in_use_mb={footprint - 30.123} malloc_allocated_mb={footprint + 10.234}\n")
             log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} tex_live_bytes={elapsed + 1000} "
                     f"tex_retired_bytes=32 tex_peak_bytes=32000 tex_live_n=4 tex_evicted=3 tex_reloaded=1\n")
+            log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} tex_full_bytes=1000 tex_tail_bytes={elapsed} "
+                    "tex_promoted=5 tex_demoted=2 tex_promotion_queue=1 tex_near_tail_n=2 tex_near_tail_seconds=0.125 "
+                    "tex_full_ring2_bytes=700 tex_source_hd_bytes=800 tex_source_hd_full_bytes=600\n")
             log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} "
                     f"tex_landscape_bytes={elapsed + 400} tex_landscape_n=1 tex_static_bytes=300 tex_static_n=1\n")
             log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} "
@@ -44,7 +47,7 @@ def test_session_and_world_change_csv(tmp_path):
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
     reader = csv.DictReader(io.StringIO(output))
     rows = list(reader)
-    assert len(reader.fieldnames) == 91
+    assert len(reader.fieldnames) == 139
     assert len(rows) == 2
     assert [(row["seg"], row["world"], row["total_s"]) for row in rows] == [
         ("0", "NEWWORLD", "5.0"), ("1", "OLDWORLD", "2.0")]
@@ -66,6 +69,11 @@ def test_session_and_world_change_csv(tmp_path):
     assert [rows[0][key] for key in malloc_fields] == ["179.877", "220.234", "204.877", "245.234", "199.877", "240.234"]
     assert all(rows[1][key] == "" for key in malloc_fields)
     assert [rows[0][f"tex_live_bytes_{stage}"] for stage in ("end", "warm", "warm_5s")] == ["6100", "6500", "11500"]
+    assert [rows[0][f"tex_{field}_warm_5s"] for field in (
+        "full_bytes", "tail_bytes", "promoted", "demoted", "promotion_queue", "near_tail_n", "near_tail_seconds")] == [
+        "1000", "10500", "5", "2", "1", "2", "0.125"]
+    assert [rows[0][f"tex_{field}_warm_5s"] for field in (
+        "full_ring2_bytes", "source_hd_bytes", "source_hd_full_bytes")] == ["700", "800", "600"]
     assert [rows[0][f"tex_{field}_warm_5s"] for field in (
         "retired_bytes", "peak_bytes", "live_n", "evicted", "reloaded", "landscape_bytes", "landscape_n",
         "static_bytes", "static_n", "dynamic_bytes", "dynamic_n", "other_bytes", "other_n")] == [
