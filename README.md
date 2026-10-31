@@ -4,6 +4,10 @@
 
 Движок: [OpenGothic](https://github.com/Try/OpenGothic) с нашими изменениями, лежит в `OpenGothic/` этого репозитория. ИИ работает в отдельных сервисах, а в игре остаётся только тонкий мост.
 
+## Windows
+
+Готовый архив для Windows 10/11 x64 собирает GitHub Actions ([`windows-release.yml`](.github/workflows/windows-release.yml), запуск вручную): движок этого форка с ИИ-мостом и граф сюжета компилируются MSVC, тесты ядра и входа ChatGPT идут на Windows, архив с `SHA256SUMS` и манифестом сборки после проверки выходит в Releases как предварительный выпуск. Игроку компилятор не нужен; инструкция — [`START_HERE.ru.md`](START_HERE.ru.md). Сборка из исходников — `scripts/build-engine.ps1` (Visual Studio 2022 C++, Vulkan SDK, Git), затем `Setup-GothicAI.cmd`. Игра, графика и микрофон на настоящем ПК ещё не проверены.
+
 ## Структура
 
 | Путь | Что |

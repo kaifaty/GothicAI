@@ -184,6 +184,13 @@ add_definitions(-DMINIZ_NO_STDIO)
 add_library(miniz STATIC EXCLUDE_FROM_ALL "lib/miniz/miniz.h" "lib/miniz/miniz.c")
 target_link_libraries(${PROJECT_NAME} miniz)
 include(cmake/BaseImport.cmake)
+if(MSVC)
+  # musicnative.c (runtime) and basemusic.c/musicnativeimport.c (import) read dmusic's private structs
+  # with C11 _Atomic counters; dmusic opts its own sources in the same way. Set here, not in
+  # BaseImport.cmake: that file is a base format input, and a flag must not change the base fingerprint.
+  target_compile_options(gothic-base-runtime PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+  target_compile_options(gothic-base-import PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+endif()
 include(cmake/VideoImport.cmake)
 target_link_libraries(${PROJECT_NAME} gothic-base-runtime gothic-video-runtime)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/convert/CMakeLists.txt")

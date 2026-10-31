@@ -94,7 +94,13 @@ std::shared_ptr<const FractureMesh> FractureMesh::load(std::string_view visual) 
       if(dir[0]=='\0') return {};
       root=dir;
       }
+#ifdef _WIN32
+    // the launcher's Path.home(); HOME is usually unset on Windows, the wide variable keeps a Cyrillic name
+    else if(const auto* home=_wgetenv(L"USERPROFILE"); home && *home)
+      root=std::filesystem::path(home)/".local/share/gothic-ai/fracture";
+#else
     else if(const auto* home=std::getenv("HOME")) root=std::filesystem::path(home)/".local/share/gothic-ai/fracture";
+#endif
     else return {};
     path=root/(basename(visual)+".fracture");
     }

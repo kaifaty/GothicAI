@@ -1,0 +1,204 @@
+# The prebuilt Windows x64 archive for players: this fork's game with its AI bridge, the base and video
+# converter and the story graph converter, compiled with MSVC, the AI services' sources and locks, the
+# pinned uv and the entry points. Run by hand only. One job on a standard GitHub-hosted runner, no caches
+# and no workflow artifacts. By default the run only validates: build, tests, converter and launcher checks
+# and the package checks, and the archive stays on the runner. With draft_release the archive leaves it as
+# an asset of a new DRAFT prerelease, made as the very last step, after everything else passed. The
+# maintainer checks the assets (ZIP CRC, x64, checksums, imports, file list) and then publishes the draft
+# as a prerelease.
+name: Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft_release:
+        description: Also make a draft prerelease with the archive (off validates only)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
+env:
+  BUILD_TYPE: Release
+  VULKAN_SDK_VERSION: 1.4.357.0  # the version upstream OpenGothic's CI builds with
+  UV_VERSION: 0.10.4  # matches the projects' uv_build>=0.10.4,<0.11 backend
+  UV_PYTHON: "3.12"  # what players get: the services pin 3.12
+  PYTHONUTF8: "1"
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 180
+    permissions:
+      contents: write  # only the draft prerelease of the last step
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: PowerShell scripts parse in Windows PowerShell 5.1 and stay ASCII
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem scripts -Recurse -Filter *.ps1 | ForEach-Object {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            foreach ($e in $errors) { Write-Host "$($_.FullName):$($e.Extent.StartLineNumber): $($e.Message)"; $failed = $true }
+            if ([System.IO.File]::ReadAllBytes($_.FullName) | Where-Object { $_ -gt 127 } | Select-Object -First 1) {
+              Write-Host "$($_.FullName): not ASCII (5.1 reads a .ps1 without BOM in the ANSI code page)"; $failed = $true
+            }
+          }
+          Get-Content -Raw -Encoding UTF8 scripts/windows/messages.ru.json | ConvertFrom-Json | Out-Null
+          if ($failed) { exit 1 }
+
+      - name: uv, the pinned official release (also packed for players)
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'uv'
+          New-Item -ItemType Directory -Force -Path "$dir/bin", "$dir/licenses" | Out-Null
+          $base = "https://github.com/astral-sh/uv/releases/download/$env:UV_VERSION"
+          $zip = Join-Path $dir 'uv-x86_64-pc-windows-msvc.zip'
+          Invoke-WebRequest "$base/uv-x86_64-pc-windows-msvc.zip" -OutFile $zip
+          Invoke-WebRequest "$base/uv-x86_64-pc-windows-msvc.zip.sha256" -OutFile "$zip.sha256"
+          $expected = ((Get-Content -Raw "$zip.sha256").Trim() -split '\s+')[0]
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash
+          if ($actual -ne $expected) { throw "uv archive checksum: $actual, published $expected" }
+          Expand-Archive $zip -DestinationPath "$dir/bin" -Force
+          foreach ($name in 'LICENSE-MIT', 'LICENSE-APACHE') {
+            Invoke-WebRequest "https://raw.githubusercontent.com/astral-sh/uv/$env:UV_VERSION/$name" -OutFile "$dir/licenses/$name"
+          }
+          $uv = Get-ChildItem "$dir/bin" -Recurse -Filter uv.exe | Select-Object -First 1
+          Add-Content $env:GITHUB_PATH $uv.DirectoryName
+          Add-Content $env:GITHUB_ENV "UV_ZIP=$zip"
+          Add-Content $env:GITHUB_ENV "UV_LICENSES=$dir/licenses"
+
+      # Each suite from its own project folder: `uv run --project` keeps the working directory, and pytest
+      # would collect from the repository root. Includes the real job object and lock tests.
+      - name: Launcher core tests on Windows (no keys, no network models)
+        working-directory: launcher/core
+        run: |
+          uv run --locked pytest -q -rs tests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: ChatGPT auth tests on Windows (no keys, no network models)
+        working-directory: libs/chatgpt-auth
+        run: |
+          uv run --locked pytest -q -rs tests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Base-game profile tests on Windows (synthetic archives, no game files)
+        run: |
+          uv run --locked --project launcher/core pytest -q -rs scripts/tests/test_windows_game_profile.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: The services and the chosen providers import on Windows
+        run: |
+          $checks = @(
+            @('server', 'import gothic_ai.cli, gothic_ai.gamedata.ou, gothic_ai.llm.siwc, gothic_ai.llm.openai_responses, gothic_ai.voice, gothic_ai.gates, gothic_ai.dialogue'),
+            @('asr-service', 'import gothic_asr.cli, gothic_asr.providers.chatgpt'),
+            @('tts-service', 'import gothic_tts.cli, gothic_tts.providers.inworld, gothic_tts.originals')
+          )
+          foreach ($check in $checks) {
+            uv run --locked --project $check[0] python -c $check[1]
+            if ($LASTEXITCODE) { throw "$($check[0]): imports failed" }
+          }
+          foreach ($tool in @(@('server', 'gothic-ai'), @('asr-service', 'gothic-asr'), @('tts-service', 'gothic-tts'))) {
+            uv run --locked --project $tool[0] $tool[1] --help | Out-Null
+            if ($LASTEXITCODE) { throw "$($tool[1]) --help failed" }
+          }
+
+      - name: Vulkan SDK (headers, loader library and glslangValidator for the build only)
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "VulkanSDK/$env:VULKAN_SDK_VERSION"
+          $installer = Join-Path $env:RUNNER_TEMP 'vulkansdk.exe'
+          $url = "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_SDK_VERSION.exe"
+          Invoke-WebRequest $url -OutFile $installer
+          Write-Host "Vulkan SDK installer SHA-256: $((Get-FileHash $installer -Algorithm SHA256).Hash)"
+          & $installer --accept-licenses --default-answer --confirm-command install --root $root | Out-Null
+          if (-not (Test-Path (Join-Path $root 'Bin/glslangValidator.exe'))) { throw "no Vulkan SDK in $root" }
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=$root"
+
+      - name: Build this fork's game (AI bridge), content-convert and storygraph with MSVC
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-engine.ps1 -BuildType $env:BUILD_TYPE
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: The converter passes its self-test and refuses a folder without Gothic II
+        env:
+          OPENGOTHIC_BASE_CACHE: ${{ runner.temp }}\base-cache  # a throwaway cache, nothing in AppData
+        run: |
+          $convert = Join-Path $env:GITHUB_WORKSPACE 'OpenGothic\build\opengothic\content-convert.exe'
+          & $convert --self-test
+          if ($LASTEXITCODE) { throw "content-convert --self-test failed with exit code $LASTEXITCODE" }
+          $empty = Join-Path $env:RUNNER_TEMP 'no-game'
+          New-Item -ItemType Directory -Force -Path $empty | Out-Null
+          $out = & $convert resolve $empty 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -eq 0) { throw 'content-convert resolve accepted a folder without Gothic II' }
+          if ($out -notmatch 'no ready base for') { throw "content-convert resolve: unexpected failure (exit code $code)" }
+          # the expected failure passed: the runner would otherwise end the step with it
+          exit 0
+
+      - name: The launcher finds the built game and converters
+        env:
+          USERPROFILE: ${{ runner.temp }}\profile  # a throwaway profile: no settings, keys or sign-in
+        run: |
+          [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+          New-Item -ItemType Directory -Force -Path $env:USERPROFILE | Out-Null
+          uv run --locked --project launcher/core gothic-launcher --help | Out-Null
+          if ($LASTEXITCODE) { throw 'gothic-launcher --help failed' }
+          $out = uv run --locked --project launcher/core gothic-launcher setup --check 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 2) { throw "setup --check: expected 2 (no game folder or sign-in here), got $code" }
+          if ($out -match 'не собран|не найден uv') { throw 'the launcher does not see the built game, content-convert or storygraph' }
+          $empty = Join-Path $env:RUNNER_TEMP 'no-game'
+          New-Item -ItemType Directory -Force -Path $empty | Out-Null
+          $json = uv run --locked --project launcher/core gothic-launcher check $empty
+          $code = $LASTEXITCODE
+          Write-Host $json
+          if ($code -ne 1) { throw "check: expected 1 for a folder without Gothic II, got $code" }
+          $items = @($json | ConvertFrom-Json)
+          if ($items.Count -ne 1 -or $items[0].id -ne 'folder' -or $items[0].ok) { throw 'check: unexpected answer' }
+          # the expected codes passed: the runner would otherwise end the step with them
+          exit 0
+
+      - name: Package
+        run: |
+          $name = "GothicAI-windows-x64-r${{ github.run_number }}-$('${{ github.sha }}'.Substring(0, 7))"
+          $dist = Join-Path $env:RUNNER_TEMP 'dist'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/windows/package.ps1 `
+            -UvZip $env:UV_ZIP -UvLicenses $env:UV_LICENSES -OutDir $dist -Name $name `
+            -Repository '${{ github.server_url }}/${{ github.repository }}' -Commit '${{ github.sha }}' -RunUrl '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}' `
+            -VulkanSdkVersion $env:VULKAN_SDK_VERSION -UvVersion $env:UV_VERSION
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Add-Content $env:GITHUB_ENV "PACKAGE_NAME=$name"
+          Add-Content $env:GITHUB_ENV "PACKAGE_DIR=$dist"
+
+      - name: Draft prerelease with the archive, its manifest and SHA256SUMS
+        if: ${{ inputs.draft_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "windows-r${{ github.run_number }}.${{ github.run_attempt }}-$('${{ github.sha }}'.Substring(0, 7))"
+          $notes = Join-Path $env:RUNNER_TEMP 'notes.md'
+          @(
+            "Prebuilt Windows x64 archive of ${{ github.sha }}, built by ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}.",
+            '',
+            'Preliminary build: compiled with MSVC on windows-2022 and unit-tested there. Gameplay, graphics and the microphone have not been tested on a real PC yet.',
+            'Check the archive against SHA256SUMS before use; the manifest lists every binary, its SHA-256 and the DLLs it imports.'
+          ) | Set-Content -Encoding utf8 $notes
+          gh release create $tag --repo '${{ github.repository }}' --draft --prerelease --target '${{ github.sha }}' `
+            --title "Gothic AI for Windows x64, preliminary r${{ github.run_number }}" --notes-file $notes `
+            (Join-Path $env:PACKAGE_DIR "$env:PACKAGE_NAME.zip") `
+            (Join-Path $env:PACKAGE_DIR "$env:PACKAGE_NAME.manifest.json") `
+            (Join-Path $env:PACKAGE_DIR 'SHA256SUMS')
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }

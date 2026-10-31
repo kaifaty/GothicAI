@@ -24,8 +24,14 @@ struct Network final {
       std::string path;
       if(const char* configured=std::getenv("OPENGOTHIC_BODY_NET")) path=configured;
       else {
+#ifdef _WIN32
+        // the home of the launcher's and the services' Path.home(); HOME is usually unset on Windows
+        const char* home=std::getenv("USERPROFILE");
+        if(!home || !*home) throw std::runtime_error("USERPROFILE is unavailable for the default body network path");
+#else
         const char* home=std::getenv("HOME");
         if(!home || !*home) throw std::runtime_error("HOME is unavailable for the default body network path");
+#endif
         path=std::string(home)+"/.local/share/gothic-ai/body/nets/p30.bodynet";
         }
       net=std::make_unique<BodyNet>(path);

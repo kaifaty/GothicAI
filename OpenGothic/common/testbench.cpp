@@ -34,6 +34,11 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#ifdef _WIN32
+// The MSVC runtime names the POSIX pipe functions with an underscore (bench video capture only).
+#define popen _popen
+#define pclose _pclose
+#endif
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/resource.h>
 #endif
@@ -12461,6 +12466,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     NavDemos::command(a,w,pl,outDir);
     return;
   }
+  // MSVC allows at most 128 nested blocks, including else-if clauses (C1061).
+  // Split the ladder into runs while preserving the first matching command.
+  bool dispatched=true;
   if(c=="navmesh") {
     bench.navigationOnly = true;
     if(a.size()!=2 || a[1]!="wait") NavBench::command(a,w,pl,outDir);
@@ -13188,7 +13196,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       ",\"waypoint\":"+jsonStr(waypoint)+",\"minimum_debris_distance_cm\":"+ragdollNumber(minimum)+
       ",\"distance_cm\":"+ragdollNumber((destination-origin).length()));
     }
-  else if(c=="water-film" && a.size()==3 && a[1]=="setup")waterFilmSetup(w,pl,a[2]);
+  else dispatched=false;
+  if(dispatched) return;
+  dispatched=true;
+  if(c=="water-film" && a.size()==3 && a[1]=="setup")waterFilmSetup(w,pl,a[2]);
   else if(c=="water-film" && a.size()==2 && a[1]=="begin")waterFilmBegin(w,pl);
   else if(c=="water-film" && a.size()==2 && a[1]=="checkpoint")waterFilmCheckpoint(w);
   else if(c=="cloth" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
@@ -13635,7 +13646,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="movable" && a.size()==2 && a[1]=="push-pinned") pushMovablePinnedTable(w);
   else if(c=="movable" && a.size()==3 && a[1]=="begin") movableBegin(w,a[2]);
   else if(c=="movable" && a.size()==2 && a[1]=="checkpoint") movableCheckpoint(w);
-  else if(c=="movable" && a.size()==2 && a[1]=="walk") {
+  else dispatched=false;
+  if(dispatched) return;
+  dispatched=true;
+  if(c=="movable" && a.size()==2 && a[1]=="walk") {
     if(!bench.movableReady) {arenaAbort("movable walking test needs the tavern fixture");return;}
     auto* npc=w.addNpc(w.script().findSymbolIndex("BAU_904_BAUER"),bench.movableWalkStart);
     if(!npc) {arenaAbort("movable walker insertion failed");return;}
@@ -14809,7 +14823,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("push "+symName(w,npc)+" impulse="+ragdollVector(impulse));
     event("ragdoll_push","\"actor\":"+jsonStr(TestBench::who(npc))+",\"impulse_ns\":"+ragdollVector(impulse));
     }
-  else if(c=="world") {
+  else dispatched=false;
+  if(dispatched) return;
+  dispatched=true;
+  if(c=="world") {
     if(a.size()<2 || a.size()>3 || !Resources::hasWorld(a[1])) {
       arenaAbort("world expects an indexed ZEN and an optional waypoint");
       return;
@@ -16321,7 +16338,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     say("fight " + std::to_string(sent) + " at " + symName(w,tg));
     }
-  else if(c=="waitdown") {
+  else dispatched=false;
+  if(dispatched) return;
+  dispatched=true;
+  if(c=="waitdown") {
     // waitdown <npc|player> [ms]: the scenario waits till it is down (dead, unconscious): `fight over`
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "player");
     if(n==nullptr) {
