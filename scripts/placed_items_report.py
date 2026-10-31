@@ -5,10 +5,11 @@ import argparse
 import collections
 import json
 import math
+import re
 from pathlib import Path
 
 
-REASONS = ("quest", "hangs", "static", "furniture", "neighbour", "ok")
+REASONS = ("quest", "hangs", "static", "furniture", "neighbour", "rooted", "slope", "on_excluded", "ok")
 IDENTITY = ("instance", "visual", "zen_id", "placed", "owner", "owner_guild", "flags", "count")
 
 
@@ -56,9 +57,29 @@ def verify_saves(runs):
     return {"save_cycles": cycles, "pass": all(row["moved_linked"] > 0 for row in cycles)}
 
 
-def summarize(runs):
+def slope_distribution(rows):
+    bins = {f"{low}–{low + 5}": 0 for low in range(0, 90, 5)}
+    missing = non_static = 0
+    for row in rows:
+        angle = row.get("support_slope_deg")
+        if angle is None or not math.isfinite(angle):
+            missing += 1
+            non_static += row["support_category"] not in (2, 4)
+        else:
+            low = min(85, int(max(0, angle) // 5) * 5)
+            bins[f"{low}–{low + 5}"] += 1
+    return {"bins_deg": bins, "missing": missing, "non_static_support": non_static,
+            "static_ray_miss": missing - non_static}
+
+
+def summarize(runs, previous_runs=()):
     worlds = []
     outliers = []
+    previous_outliers = {}
+    for run in previous_runs:
+        for row in read_rows(run / "placed-items-probe.jsonl"):
+            if row["max_shift_cm"] > 10:
+                previous_outliers[(row["world"], row["zen_id"])] = row
     total = under_five = recovered = 0
     maximum = 0.0
     for run in runs:
@@ -93,7 +114,16 @@ def summarize(runs):
                                  "npc_contact": probe["npc_contact"],
                                  "support_item_zen_id": census[support_index]["zen_id"]
                                  if isinstance(support_index, int) and 0 <= support_index < len(census) else None})
-        log_recovered = (run / "game.log").read_text().count("item recovered")
+        recovery_lines = [line for line in (run / "game.log").read_text().splitlines()
+                          if "item recovered" in line]
+        recovery_records = []
+        for line in recovery_lines:
+            identity = re.search(r"zen_id=(\d+)", line)
+            zen_id = int(identity[1]) if identity else None
+            source = next((row for row in census if row["zen_id"] == zen_id), {})
+            recovery_records.append({"zen_id": zen_id, "visual": source.get("visual"),
+                                     "origin_cm": source.get("origin_cm"), "message": line})
+        log_recovered = len(recovery_lines)
         recovered += log_recovered
         within = sum(shift < 5 for shift in shifts)
         high = max(shifts, default=0)
@@ -104,6 +134,12 @@ def summarize(runs):
                        "eligible": len(admitted), "classification_ms": summary["classification_ms"],
                        "gaps_cm": [summary["gaps_0_1"], summary["gaps_1_2"], summary["gaps_2_4"]],
                        "under_5cm": within, "max_shift_cm": high, "recovered": log_recovered,
+                       "recoveries": recovery_records,
+                       "admitted_slopes": slope_distribution(admitted.values()),
+                       "previous_outlier_slopes": slope_distribution(
+                           row for row in census if (world, row["zen_id"]) in previous_outliers),
+                       "previous_outlier_reasons": dict(collections.Counter(
+                           row["disposition"] for row in census if (world, row["zen_id"]) in previous_outliers)),
                        "densest_center_cm": summary["densest_center_cm"],
                        "densest_eligible_within_20m": summary["densest_eligible_within_20m"]})
     if len({row["world"] for row in worlds}) != len(worlds):
@@ -119,8 +155,10 @@ def main():
     parser.add_argument("runs", nargs="+", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--save-chain", action="store_true", help="verify two successive cold reloads")
+    parser.add_argument("--previous-runs", nargs="*", type=Path, default=[],
+                        help="previous probe runs; report new facet slopes of their >10 cm outliers")
     args = parser.parse_args()
-    result = verify_saves(args.runs) if args.save_chain else summarize(args.runs)
+    result = verify_saves(args.runs) if args.save_chain else summarize(args.runs, args.previous_runs)
     text = json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     if args.output:
         args.output.write_text(text)

@@ -836,19 +836,31 @@ python3 scripts/placed_items_report.py .bench/placed-items-{NEWWORLD,OLDWORLD,AD
 exclusive exclusion reason, support gap and penetration depths. The census event
 adds classification time, admitted gap buckets (0–1, 1–2, 2–4 cm) and the densest
 20 m neighbourhood among all source Items (ties prefer more admitted Items).
+After the original geometric reasons, `rooted` excludes `ItPl_*` on landscape or
+`C_Object`; `slope` excludes static supports steeper than 15°. Its normal comes
+from a downward ray at the collision shape's lowest point, rather than the
+nearest overlap contact. `on_excluded` propagates rejected Item supports through
+whole stacks. Plants on furniture or admitted Items use the ordinary rules.
 `placed-items-probe.jsonl` records maximum and final travel
 for every admitted Item. The reader requires at least 95% of the combined sample
 to move less than 5 cm, maximum travel at most 100 cm, and zero `item recovered`
 messages. Every displacement over 10 cm remains in the output with its original
 contact measurements. These limits are fixed; a failed 95% gate requires a decision.
+Pass the previous four run directories with `--previous-runs` to include the
+new facet-slope distributions of their >10 cm outliers, alongside admitted Items,
+in 5° bins. A missing facet normal is counted separately. Recovery messages name
+the ZEN-ID whenever the recovered Item has an authored link.
 
 `PLACED_ITEMS=0` selects the existing body-creation paths. `[GAME] placed_items`
 defaults to 1; Marvin `toggle placed_items` changes it during play. The census is
 computed even when the feature starts disabled, so enabling it later uses the
 same original geometry. Dropped Items retain their existing physics path.
+In OFF, the existing CharacterVirtual path creates bodies within its nearby Item
+radius and can push them; the walk check records this observed behavior.
 
 `placed-items` runs the native hero passage, arrow, tavern-table and owned pickup
-checks in NEWWORLD with `PLACED_ITEMS=1` and `=0`. Its save precedes pickup:
+checks in NEWWORLD with `PLACED_ITEMS=1` and `=0`. It snapshots ownership before
+the checks and saves after pickup (including removal/reordering of world Items):
 `session-placed-items.sav` and `placed-items-saved.jsonl` describe the same Items.
 Start `placed-items-reload` in two successive new processes, using the preceding
 process's archive as `SAVE` each time (leave `WORLD` unset). Its first command
@@ -869,12 +881,16 @@ have no body. Also load an actual main save with no `placed-items` entry through
 the census, measures entry frames and ten steady seconds after two seconds of
 warmup. Run three fresh processes per mode on the M1 Pro with `BENCH_HOST=local`,
 `WORLD=NEWWORLD.ZEN`, `RYZEN_CLEAN_IDLE_HOURS=0` and `PLACED_ITEMS=0`/`1`.
-Before each local game, check `pgrep -fl '[G]othic2Notr' || echo absent` and wait
-for any existing game. `placed-items-performance.csv` contains native physics
+Before each pair, record `uptime` and `pgrep -fl '[G]othic2Notr' || echo absent`.
+Wait up to 30 minutes for load average to fall to 12 or below, and always wait
+for any existing game. If load remains higher, measure the three pairs plus the
+same scene on a clean `origin/main` in the same window; ON–OFF is then the main
+comparison. `placed-items-performance.csv` contains native physics
 time, frame time, total/placed body counts and `proximity_created`. The latter
 counts only the new proximity budget; the existing `item_wake` budget is separate.
 Acceptance is physics p95 ≤2 ms and ON–OFF ≤0.2 ms. The report also records the
 worst entry frame, body counts and complete world loading time including census.
+Compare complete NEWWORLD loading time using the median of three runs per mode.
 
 [Recorded results](../../reports/physics/2026-10-31-placed-items/README.md): the
 first four-world probe reached 88.81% below 5 cm; validation stopped for a decision.

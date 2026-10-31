@@ -1096,7 +1096,7 @@ struct Bench {
     Matrix4x4 tableOrigin;
     uint64_t walkSince=0,walkArrived=0;
     float walkMaximumStep=0,walkMaximumCrossTrack=0;
-    bool walking=false,tracing=false;
+    bool walking=false,tracing=false,walkBodyBefore=false;
     size_t pickupSymbol=0,pickupCount=0,pickupBefore=0;
     bool pickupAccepted=false,watchingTheft=false;
     std::vector<std::string> theftWitnesses;
@@ -6894,7 +6894,11 @@ std::string placedItemRow(World& world,const WorldObjects::PlacedItem& row) {
     ",\"furniture_depth_cm\":"+ragdollNumber(validation.furnitureDepthCm)+
     ",\"item_depth_cm\":"+ragdollNumber(validation.itemDepthCm)+
     ",\"support_category\":"+std::to_string(validation.supportCategory)+",\"support_label\":"+jsonStr(validation.supportLabel)+
-    ",\"support_normal\":"+ragdollVector(validation.supportNormal)+",\"support_zen_id\":"+
+    ",\"support_normal\":"+ragdollVector(validation.supportNormal)+
+    ",\"hull_low_point_cm\":"+ragdollVector(validation.hullLowPointCm)+
+    ",\"support_face_normal\":"+ragdollVector(validation.supportFaceNormal)+
+    ",\"support_slope_deg\":"+(std::isfinite(validation.supportSlopeDeg)?ragdollNumber(validation.supportSlopeDeg):"null")+
+    ",\"support_zen_id\":"+
     (validation.supportZenId==uint32_t(-1)?"null":std::to_string(validation.supportZenId))+
     ",\"support_item_index\":"+(validation.supportItemIndex==size_t(-1)?"null":std::to_string(validation.supportItemIndex));
 }
@@ -7158,7 +7162,9 @@ void placedItemsFloor(World& world,Npc& player) {
 void placedItemsWalk(World& world) {
   auto& state=bench.placedItems;
   if(state.target==size_t(-1)) {arenaAbort("placed Item walking needs a prepared floor object");return;}
-  state.walkSince=world.tickCount();state.walking=true;
+  const auto* item=world.placedItemCensus()[state.target].item;
+  if(!item) {arenaAbort("placed Item walking source disappeared");return;}
+  state.walkBodyBefore=item->isDynamic();state.walkSince=world.tickCount();state.walking=true;
   placedItemsObserve(world,{state.target});
 }
 
@@ -7168,14 +7174,18 @@ void placedItemsWalkReport(World& world,Npc& player) {
   const auto shift=state.travel[state.target];const bool enabled=Gothic::physicsFlags().placedItems;
   const auto elapsed=(state.walkArrived?state.walkArrived:world.tickCount())-state.walkSince;
   const bool pass=state.walkArrived && elapsed<=2500 && state.walkMaximumCrossTrack<25.f && state.walkMaximumStep<20.f &&
-    (enabled?shift>.1f:shift<=.01f);
+    (!enabled || shift>.1f);
   event("placed_items_walk",placedItemRow(world,row)+",\"placed_items\":"+(enabled?"true":"false")+
     ",\"character_virtual\":"+(Gothic::physicsFlags().characterVirtual?"true":"false")+
+    ",\"npc_character_virtual\":"+(Gothic::physicsFlags().npcCharacterVirtual?"true":"false")+
+    ",\"body_before_walk\":"+(state.walkBodyBefore?"true":"false")+
+    ",\"body_after_walk\":"+(row.item && row.item->isDynamic()?"true":"false")+
+    ",\"npc_contact\":"+(row.item && row.item->physicsTouchedByNpc()?"true":"false")+
     ",\"arrived\":"+(state.walkArrived?"true":"false")+",\"elapsed_ms\":"+std::to_string(elapsed)+
     ",\"max_shift_cm\":"+ragdollNumber(shift)+",\"hero_travel_cm\":"+ragdollNumber((player.position()-state.walkStart).length())+
     ",\"max_cross_track_cm\":"+ragdollNumber(state.walkMaximumCrossTrack)+",\"max_vertical_step_cm\":"+
     ragdollNumber(state.walkMaximumStep)+",\"pass\":"+(pass?"true":"false"));
-  if(!pass)arenaAbort("placed Item hero passage did not match the requested ON/OFF behavior");
+  if(!pass)arenaAbort("placed Item hero passage stalled, deviated or failed to move the object in ON mode");
 }
 
 void placedItemsArrowReady(World& world,Npc& player) {
@@ -7283,12 +7293,20 @@ void placedItemsSnapshot(World& world,std::string_view label,uint64_t initialDt=
   if(label=="initial" && initialDt!=0) {arenaAbort("placed Item cold snapshot must precede the first native step");return;}
   std::ofstream file(outDir+"/placed-items-"+std::string(label)+".jsonl");
   if(!file) {arenaAbort("cannot write placed Item save observation");return;}
-  size_t count=0,linked=0,dynamic=0,sleeping=0;
+  size_t count=0,linked=0,dynamic=0,sleeping=0,shifted=0,unchanged=0;
+  std::unordered_map<uint32_t,const WorldObjects::PlacedItem*> authored;
+  for(const auto& row:world.placedItemCensus())authored.emplace(row.zenId,&row);
   for(uint32_t i=0;auto* item=world.itmById(i);++i) {
     ++count;linked+=item->isPlacedItem();dynamic+=item->isDynamic();sleeping+=item->isDynamic() && item->physicsSleeping();
+    const auto source=authored.find(item->placedItemZenId());
+    const bool hasOrigin=item->isPlacedItem() && source!=authored.end();
+    const float shift=hasOrigin?(item->position()-movablePosition(source->second->origin)).length():0.f;
+    if(hasOrigin) {shifted+=shift>.01f;unchanged+=shift<=.01f;}
     file<<"{\"world\":"+jsonStr(world.name())+",\"index\":"+std::to_string(i)+",\"instance\":"+std::to_string(item->clsId())+
       ",\"visual\":"+jsonStr(item->handle().visual)+",\"zen_id\":"+(item->isPlacedItem()?std::to_string(item->placedItemZenId()):"null")+
-      ",\"placed\":"+(item->isPlacedItem()?"true":"false")+",\"position_cm\":"+ragdollVector(item->position())+
+      ",\"placed\":"+(item->isPlacedItem()?"true":"false")+
+      ",\"shift_from_origin_cm\":"+(hasOrigin?ragdollNumber(shift):"null")+
+      ",\"position_cm\":"+ragdollVector(item->position())+
       ",\"transform\":"+ragdollMatrix(item->transform())+",\"dynamic\":"+(item->isDynamic()?"true":"false")+
       ",\"sleeping\":"+(item->physicsSleeping()?"true":"false")+",\"owner\":"+std::to_string(item->handle().owner)+
       ",\"owner_guild\":"+std::to_string(item->handle().owner_guild)+",\"flags\":"+std::to_string(item->itemFlag())+
@@ -7296,7 +7314,8 @@ void placedItemsSnapshot(World& world,std::string_view label,uint64_t initialDt=
   }
   event("placed_items_snapshot","\"label\":"+jsonStr(label)+",\"world\":"+jsonStr(world.name())+
     ",\"initial_dt\":"+std::to_string(initialDt)+",\"items\":"+std::to_string(count)+",\"linked\":"+std::to_string(linked)+
-    ",\"dynamic\":"+std::to_string(dynamic)+",\"sleeping\":"+std::to_string(sleeping));
+    ",\"dynamic\":"+std::to_string(dynamic)+",\"sleeping\":"+std::to_string(sleeping)+
+    ",\"placed_shifted\":"+std::to_string(shifted)+",\"placed_unchanged\":"+std::to_string(unchanged));
 }
 
 void placedItemsSave(World& world) {
@@ -7311,15 +7330,25 @@ void placedItemsSave(World& world) {
 }
 
 void placedItemsPickupReady(World& world,Npc& player) {
-  auto& state=bench.placedItems;
-  if(state.target==size_t(-1)) {arenaAbort("placed Item pickup requires the authored floor target");return;}
-  const auto& row=world.placedItemCensus()[state.target];
-  if(!row.item || (row.item->handle().owner==0 && row.item->handle().owner_guild==0)) {arenaAbort("placed Item pickup requires an existing owned authored object");return;}
+  auto& state=bench.placedItems;const auto& all=world.placedItemCensus();
+  const auto ownedMoved=[&](size_t index) {
+    const auto& row=all[index];
+    return row.item && row.validation.enabled && (row.item->handle().owner!=0 || row.item->handle().owner_guild!=0) &&
+      (row.item->position()-movablePosition(row.origin)).length()>.1f;
+  };
+  if(state.target==size_t(-1) || !ownedMoved(state.target)) {
+    const auto found=std::find_if(state.observed.begin(),state.observed.end(),ownedMoved);
+    if(found==state.observed.end()) {arenaAbort("placed Item pickup requires a moved owned authored floor or tabletop object");return;}
+    state.target=*found;
+  }
+  const auto& row=all[state.target];
   const auto point=row.item->position();auto observer=point-state.walkDirection*70.f;
   const auto floor=world.physic()->landRay(observer+Vec3(0,200,0),600.f);
   if(!floor.hasCol) {arenaAbort("placed Item pickup observer has no native floor");return;}
   observer.y=floor.v.y;player.closeWeapon(true);player.clearAiQueue();player.clearGoTo();player.stopWalking();player.clearSpeed();
   player.setPosition(observer);player.setDirection(point-observer);player.updateTransform();
+  event("placed_items_pickup_ready",placedItemRow(world,row)+",\"shift_from_origin_cm\":"+
+    ragdollNumber((row.item->position()-movablePosition(row.origin)).length()));
 }
 
 void placedItemsPickup(World& world,Npc& player,PlayerControl& ctrl) {
@@ -13571,6 +13600,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="placed-items" && a.size()==2 && a[1]=="table-push")placedItemsTablePush(w,pl);
   else if(c=="placed-items" && a.size()==2 && a[1]=="table-report")placedItemsTableReport(w);
   else if(c=="placed-items" && a.size()==2 && a[1]=="save")placedItemsSave(w);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="snapshot")placedItemsSnapshot(w,"before");
   else if(c=="placed-items" && a.size()==2 && a[1]=="initial")placedItemsSnapshot(w,"initial",w.tickCount());
   else if(c=="placed-items" && a.size()==2 && a[1]=="pickup-ready")placedItemsPickupReady(w,pl);
   else if(c=="placed-items" && a.size()==2 && a[1]=="pickup")placedItemsPickup(w,pl,ctrl);

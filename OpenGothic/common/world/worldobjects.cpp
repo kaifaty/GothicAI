@@ -256,7 +256,7 @@ void WorldObjects::finalizePlacedItems() {
   // selects item_hulls and applies scale for both the census and live bodies.
   for(auto& source:placedItems) {
     source.item->setPhysicsEnable(owner);
-    candidates.push_back({&source.item->physic,source.item->isMission()});
+    candidates.push_back({&source.item->physic,source.item->isMission(),source.visual});
     }
   const auto verdicts=owner.physic()->placedItemCensus(candidates);
   size_t allowed=0;

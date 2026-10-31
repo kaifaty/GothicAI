@@ -1579,6 +1579,41 @@ void CollisionWorld::CollisionBody::getAabb(JPH::Vec3& min, JPH::Vec3& max) cons
   max = box.mMax;
   }
 
+Tempest::Vec3 CollisionWorld::CollisionBody::lowestPoint() const {
+  JPH::BodyLockRead lock(owner->impl->system.GetBodyLockInterface(),id);
+  if(!lock.Succeeded())
+    throw std::runtime_error("Item lowest point requires a native body");
+  auto leaf=lock.GetBody().GetTransformedShape();
+  JPH::SubShapeID remainder;
+  while(leaf.mShape->GetType()==JPH::EShapeType::Decorated)
+    leaf=leaf.GetSubShapeTransformedShape(JPH::SubShapeID(),remainder);
+  if(leaf.mShape->GetType()!=JPH::EShapeType::Convex)
+    throw std::runtime_error("Item lowest point requires a convex shape");
+  const auto& shape=static_cast<const JPH::ConvexShape&>(*leaf.mShape);
+  const auto direction=leaf.mShapeRotation.Conjugated()*-JPH::Vec3::sAxisY();
+  JPH::ConvexShape::SupportBuffer buffer;
+  const auto* support=shape.GetSupportFunction(JPH::ConvexShape::ESupportMode::Default,buffer,leaf.GetShapeScale());
+  auto point=leaf.mShapeRotation*support->GetSupport(direction)-JPH::Vec3::sAxisY()*support->GetConvexRadius();
+  JPH::Shape::SupportingFace face;
+  shape.GetSupportingFace(JPH::SubShapeID(),-direction,leaf.GetShapeScale(),
+                          JPH::Mat44::sRotation(leaf.mShapeRotation),face);
+  JPH::Vec3 sum=JPH::Vec3::sZero();
+  size_t count=0;
+  for(const auto& vertex:face)
+    if(std::abs(vertex.GetY()-point.GetY())<=1.e-6f) {
+      sum+=vertex;
+      ++count;
+      }
+  // A flat support face (or edge) has no distinguished vertex. Its centroid
+  // gives a deterministic point on the actual envelope, including rotation.
+  if(count>1) {
+    const auto center=sum/float(count);
+    point.SetX(center.GetX());
+    point.SetZ(center.GetZ());
+    }
+  return toCentimeters(leaf.mShapePositionCOM+point);
+  }
+
 float CollisionWorld::CollisionBody::mass() const {
   if(owner==nullptr || id.IsInvalid()) return 0.f;
   JPH::BodyLockRead lock(owner->impl->system.GetBodyLockInterface(),id);
@@ -2898,9 +2933,11 @@ void CollisionWorld::recoverItem(CollisionBody& body, const Tempest::Vec3& faile
   body.inWater=false;
   body.waterRestTime=0;
   body.itemRecovered=true;
+  const auto* item=body.ptrType()==DynamicWorld::P_Item ? static_cast<const Item*>(body.payload()) : nullptr;
+  const auto identity=item!=nullptr && item->isPlacedItem() ? " zen_id="+std::to_string(item->placedItemZenId()) : std::string();
   Tempest::Log::i("[physics] item recovered: body=",body.nativeId()," from=",failedPosition.x,",",
                  failedPosition.y,",",failedPosition.z," rest=",body.itemRestTransform.at(3,0),",",
-                 body.itemRestTransform.at(3,1),",",body.itemRestTransform.at(3,2));
+                 body.itemRestTransform.at(3,1),",",body.itemRestTransform.at(3,2),identity);
   }
 
 void CollisionWorld::tick(uint64_t dt) {

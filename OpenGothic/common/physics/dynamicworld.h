@@ -420,6 +420,7 @@ class DynamicWorld final {
     struct PlacedItemCandidate {
       const Item* body = nullptr;
       bool mission = false;
+      std::string_view visual = {};
       };
     struct PlacedItemCensusEntry {
       std::string disposition;
@@ -428,6 +429,8 @@ class DynamicWorld final {
       int supportCategory = 0;
       std::string supportLabel;
       Tempest::Vec3 supportNormal = {};
+      Tempest::Vec3 hullLowPointCm = {}, supportFaceNormal = {};
+      float supportSlopeDeg = std::numeric_limits<float>::quiet_NaN();
       uint32_t supportZenId = uint32_t(-1);
       size_t supportItemIndex = size_t(-1);
       bool enabled = false;

@@ -1336,13 +1336,47 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
         neighbour.itemDepthCm = std::max(neighbour.itemDepthCm,hit.depth);
         }
       }
+    entry.hullLowPointCm = body.lowestPoint();
+    if(entry.supportCategory==C_Landscape || entry.supportCategory==C_Object) {
+      const auto from = entry.hullLowPointCm+Tempest::Vec3(0,limitCm,0);
+      const auto to = entry.hullLowPointCm-Tempest::Vec3(0,limitCm,0);
+      const auto face = world->rayCast(from,to,(1u<<C_Landscape)|(1u<<C_Object));
+      if(face.hasHit) {
+        entry.supportFaceNormal = face.normal;
+        entry.supportSlopeDeg = std::acos(std::clamp(face.normal.y,-1.f,1.f))*180.f/float(M_PI);
+        }
+      }
     }
   for(size_t i=0;i<candidates.size();++i) {
     auto& entry = result[i];
     entry.disposition = candidates[i].mission ? "quest" : entry.supportGapCm>limitCm ? "hangs" :
                         entry.staticDepthCm>limitCm ? "static" : entry.furnitureDepthCm>limitCm ? "furniture" :
                         entry.itemDepthCm>limitCm ? "neighbour" : "ok";
+    if(entry.disposition=="ok" && (entry.supportCategory==C_Landscape || entry.supportCategory==C_Object)) {
+      constexpr std::string_view rootedPrefix = "ITPL_";
+      const auto visual = candidates[i].visual;
+      const bool rooted = visual.size()>=rootedPrefix.size() &&
+          std::equal(rootedPrefix.begin(),rootedPrefix.end(),visual.begin(),[](char upper,char value) {
+            return upper==char(std::toupper(static_cast<unsigned char>(value)));
+            });
+      if(rooted)
+        entry.disposition = "rooted";
+      else if(entry.supportSlopeDeg>15.f)
+        entry.disposition = "slope";
+      }
     entry.enabled = entry.disposition=="ok";
+    }
+  // A rejected supporting Item has no collision body after the census. Follow
+  // that dependency through whole stacks, independent of their array order.
+  bool changed = true;
+  while(changed) {
+    changed = false;
+    for(auto& entry:result)
+      if(entry.enabled && entry.supportItemIndex!=size_t(-1) && !result[entry.supportItemIndex].enabled) {
+        entry.disposition = "on_excluded";
+        entry.enabled = false;
+        changed = true;
+        }
     }
   return result;
   }
