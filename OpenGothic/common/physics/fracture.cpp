@@ -1,6 +1,7 @@
 #include "fracture.h"
 #include "fracturedata.h"
 #include "resources.h"
+#include "utils/userhome.h"
 
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Tempest/Log>
@@ -94,7 +95,7 @@ std::shared_ptr<const FractureMesh> FractureMesh::load(std::string_view visual) 
       if(dir[0]=='\0') return {};
       root=dir;
       }
-    else if(const auto* home=std::getenv("HOME")) root=std::filesystem::path(home)/".local/share/gothic-ai/fracture";
+    else if(const auto home=userHome(); !home.empty()) root=home/".local/share/gothic-ai/fracture";
     else return {};
     path=root/(basename(visual)+".fracture");
     }

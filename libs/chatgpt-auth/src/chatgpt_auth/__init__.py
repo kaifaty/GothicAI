@@ -5,19 +5,22 @@ via `client_id=dynamic_agent_client`, scope `chatgpt.tokens.use.direct`, resourc
 Access tokens live ~1 h; refresh tokens rotate, so refreshes are serialized and persisted immediately.
 Several processes may share one token store (the AI server and the ASR service): a refresh happens under
 an exclusive file lock and re-reads the store first, so a rotated refresh token is never used twice.
-Tokens are stored in a 0600 file and never logged.
+The lock is flock on Unix and a byte-range lock (msvcrt.locking) on Windows; both belong to the open file
+and go away with it or with the process. Tokens are stored in a 0600 file (on Windows in the user profile,
+whose permissions keep it private) and never logged.
 """
 
 from __future__ import annotations
 
 import asyncio
 import base64
-import fcntl
+import errno
 import hashlib
 import json
 import logging
 import os
 import secrets
+import sys
 import time
 import webbrowser
 from collections.abc import Callable
@@ -38,6 +41,10 @@ DEFAULT_PORT = 47818
 DEFAULT_STORE = Path.home() / ".config" / "gothic-ai" / "chatgpt.json"
 REFRESH_MARGIN_S = 120
 LOGIN_HINT = "run `gothic-ai login chatgpt`"
+LOCK_POLL_S = 0.05  # Windows has no blocking lock without a 10 s limit: poll, as flock waits
+REPLACE_TRIES = 50  # Windows: up to ~1 s for a reader to close the store before it can be replaced
+# what msvcrt.locking raises while another handle holds the bytes
+_LOCKED = {errno.EACCES, getattr(errno, "EDEADLOCK", errno.EDEADLK)}
 
 
 class AuthError(RuntimeError):
@@ -72,7 +79,7 @@ class TokenStore:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump(asdict(creds), f)
-        os.replace(tmp, self.path)
+        _replace(tmp, self.path)
 
     def delete(self) -> None:
         self.path.unlink(missing_ok=True)
@@ -82,23 +89,69 @@ class TokenStore:
         return _FileLock(self.path.with_suffix(".lock"))
 
 
+def _replace(tmp: Path, path: Path) -> None:
+    """Windows refuses to replace a file that another process has open (a reader of the store, for a
+    moment): wait for it rather than lose a rotated refresh token. Elsewhere a refusal is final."""
+    for attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if sys.platform != "win32" or attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(0.02)
+
+
 class _FileLock:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._fd: int | None = None
 
     def acquire(self) -> None:
-        """Blocking: call it from a worker thread."""
+        """Blocking until the holder releases it or exits: call it from a worker thread."""
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            if sys.platform == "win32":
+                _lock_windows(fd)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX)
+        except BaseException:
+            os.close(fd)
+            raise
         self._fd = fd
 
     def release(self) -> None:
         if self._fd is not None:
-            fcntl.flock(self._fd, fcntl.LOCK_UN)
+            if sys.platform == "win32":
+                import msvcrt
+
+                os.lseek(self._fd, 0, os.SEEK_SET)
+                msvcrt.locking(self._fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
             os.close(self._fd)
             self._fd = None
+
+
+def _lock_windows(fd: int) -> None:
+    """The first byte of the lock file, exclusively. LK_LOCK gives up after 10 s, so this polls the
+    non-blocking form instead: it waits as long as flock would, and other errors still raise."""
+    import msvcrt
+
+    while True:
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return
+        except OSError as err:
+            if err.errno not in _LOCKED:
+                raise
+        time.sleep(LOCK_POLL_S)
 
 
 async def _discovery(http: httpx.AsyncClient) -> dict[str, str]:

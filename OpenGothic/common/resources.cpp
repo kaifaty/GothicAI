@@ -55,6 +55,7 @@
 #include "dmusic/directmusic.h"
 #include "utils/fileext.h"
 #include "utils/gthfont.h"
+#include "utils/userhome.h"
 
 #include "gothic.h"
 #include "contentcensus.h"
@@ -932,8 +933,8 @@ std::filesystem::path Resources::worldOverrideDir(std::string_view world) {
       return {};
     return worldContentDir(dir,world);
     }
-  if(const char* home = std::getenv("HOME"))
-    return worldContentDir(std::filesystem::path(home)/".local/share/gothic-ai/content",world);
+  if(const auto home=userHome(); !home.empty())
+    return worldContentDir(home/".local/share/gothic-ai/content",world);
   return {};
   }
 
@@ -1004,8 +1005,8 @@ void Resources::indexMeshOverrides() {
     if(dir[0]=='\0')
       return;
     root = dir;
-    } else if(const char* home = std::getenv("HOME")) {
-    root = std::filesystem::path(home)/".local/share/gothic-ai/content";
+    } else if(const auto home=userHome(); !home.empty()) {
+    root = home/".local/share/gothic-ai/content";
     } else {
     return;
     }
@@ -1126,8 +1127,8 @@ void Resources::indexMaterialMaps() {
     if(dir[0]=='\0')
       return;
     root = dir;
-    } else if(const char* home = std::getenv("HOME")) {
-    root = std::filesystem::path(home)/".local/share/gothic-ai/content";
+    } else if(const auto home=userHome(); !home.empty()) {
+    root = home/".local/share/gothic-ai/content";
     } else {
     return;
     }
