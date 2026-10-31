@@ -10,12 +10,10 @@ import math
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
-from unittest.mock import patch
 
 from ..game import GameLink
 from ..llm import Done, Item, LLMEvent, Message, Tool, ToolCall, ToolChoice
 from ..llm.fake import FakeBackend
-from ..people_knowledge import PeopleKnowledge
 from ..protocol import Session
 from ..showrunner import MIN_REAL_SECONDS, OUTCOMES, occasion_members
 from .common import _logged, _save_or_fail, _until, wait_message
@@ -285,8 +283,6 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
     real_clock = director.clock
     wall = [real_clock()]
     director.clock = lambda: wall[0]
-    hint_chance = patch("gothic_ai.challenges._chance", return_value=0.0)
-    hint_chance.start()
     try:
         before_rejected = len(director.chronicle.facts("line_rejected"))
         line = await director.decide(occasion)
@@ -304,46 +300,20 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         )
         quests = line.get("quests", [])
         line_seq = next(seq for seq, fact in director.chronicle.entries("line") if fact == line)
-        challenge = next(
-            (
-                (seq, fact)
-                for seq, fact in director.chronicle.entries("challenge")
-                if fact.get("line") == line_seq
-            ),
-            None,
-        )
+        dropped = [
+            fact for fact in director.chronicle.facts("challenge_dropped")
+            if fact.get("line") == line_seq
+        ]
         check(
             "challenge",
-            challenge is not None
-            and challenge[1].get("kind") == "no_blood"
-            and challenge[1].get("quests") == quests
-            and giver in challenge[1].get("people", []),
-            challenge,
-        )
-
-        def challenge_hint() -> dict[str, Any] | None:
-            return next((
-                fact for fact in director.chronicle.facts("challenge_hint")
-                if challenge is not None and fact.get("challenge") == challenge[0]
-            ), None)
-
-        await _until(challenge_hint, 5)
-        hint = challenge_hint()
-        sources = hint.get("witnesses", []) if hint is not None else []
-        check(
-            "challenge_hint",
-            hint is not None and hint.get("kind") == "no_blood" and hint.get("npc") == giver
-            and sources == [builder.neighbor],
-            hint,
-        )
-        knowledge = PeopleKnowledge(director.chronicle)
-        check(
-            "challenge_hint_known",
-            hint is not None and len(sources) == 1 and any(
-                entry.key == f"challenge_hint:{hint['id']}" and entry.subject == giver
-                and entry.direct for entry in knowledge.of(sources[0])
+            dropped == [{
+                "fact": "challenge_dropped", "kind": "no_blood", "line": line_seq,
+                "why": "no_fight", "people": sorted([giver, builder.neighbor]),
+            }]
+            and not any(
+                fact.get("line") == line_seq for fact in director.chronicle.facts("challenge")
             ),
-            sources,
+            dropped,
         )
         made = [director.book.all()[q] for q in quests if q in director.book.all()]
         check(
@@ -488,35 +458,13 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         await director.book.settle(giver)
         check("completed", bool(made) and all(director.book.progress(q.id).state == "done" for q in made))
 
-        def challenge_met() -> dict[str, Any] | None:
-            return next(
-                (
-                    fact
-                    for fact in director.chronicle.facts("challenge_met")
-                    if challenge is not None and fact.get("challenge") == challenge[0]
-                ),
-                None,
-            )
-
-        await _until(challenge_met, 5)
-        met = challenge_met()
-        evidence = met.get("evidence", []) if met is not None else []
-        facts = dict(director.chronicle.entries())
         check(
-            "challenge_met",
-            met is not None
-            and met.get("kind") == "no_blood"
-            and met.get("line") == line_seq
-            and bool(evidence)
-            and all(seq in facts for seq in evidence)
-            and any(
-                facts[seq].get("fact") == "quest_outcome" and facts[seq].get("quest") in quests
-                for seq in evidence if seq in facts
+            "challenge_unearned",
+            not any(
+                fact.get("line") == line_seq for fact in director.chronicle.facts("challenge_met")
             ),
-            met,
         )
     finally:
-        hint_chance.stop()
         director.clock = real_clock
     return _logged(results)
 

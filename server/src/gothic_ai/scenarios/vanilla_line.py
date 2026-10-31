@@ -410,30 +410,38 @@ async def vanilla_line_live(
                 continue
             lines += 1
             challenge = None
+            dropped = False
             if force_challenge:
                 line_seq = next(seq for seq, entry in director.chronicle.entries("line") if entry == fact)
-                challenges = [
-                    (seq, entry) for seq, entry in director.chronicle.entries("challenge")
-                    if entry.get("line") == line_seq
-                ]
-                challenge = challenges[0] if len(challenges) == 1 else None
-                check(
-                    f"challenge_{lines}",
-                    challenge is not None and challenge[1].get("kind") in KINDS,
-                    challenges,
+                dropped = any(
+                    entry.get("line") == line_seq
+                    for entry in director.chronicle.facts("challenge_dropped")
                 )
+                if dropped:
+                    check(f"challenge_{lines}", True, "dropped: no_fight")
+                else:
+                    challenges = [
+                        (seq, entry) for seq, entry in director.chronicle.entries("challenge")
+                        if entry.get("line") == line_seq
+                    ]
+                    challenge = challenges[0] if len(challenges) == 1 else None
+                    check(
+                        f"challenge_{lines}",
+                        challenge is not None and challenge[1].get("kind") in KINDS,
+                        challenges,
+                    )
 
-                def hint(
-                    seq: int | None = challenge[0] if challenge is not None else None,
-                ) -> dict[str, Any] | None:
-                    return next((
-                        entry for entry in director.chronicle.facts("challenge_hint")
-                        if seq is not None and entry.get("challenge") == seq
-                    ), None)
+                    def hint(
+                        seq: int | None = challenge[0] if challenge is not None else None,
+                    ) -> dict[str, Any] | None:
+                        return next((
+                            entry for entry in director.chronicle.facts("challenge_hint")
+                            if seq is not None and entry.get("challenge") == seq
+                        ), None)
 
-                if challenge is not None:
-                    await _until(hint, 30)
-                check(f"challenge_hint_{lines}", hint() is not None, hint())
+                    if challenge is not None:
+                        await _until(hint, 30)
+                    check(f"challenge_hint_{lines}", hint() is not None, hint())
             safe = await _giver_ok(link, director, fact)
             check(f"{state}_giver", safe, {"giver": fact.get("giver"), "follows": fact.get("follows")})
             if not safe:
@@ -458,7 +466,7 @@ async def vanilla_line_live(
             )
             log.info("vanilla line live %s passage: %s", state, json.dumps(played, ensure_ascii=False))
             check(f"{state}_completed", passed)
-            if force_challenge:
+            if force_challenge and not dropped:
                 def challenge_outcomes(
                     challenge_seq: int | None = challenge[0] if challenge is not None else None,
                 ) -> list[tuple[int, dict[str, Any]]]:
