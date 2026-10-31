@@ -563,8 +563,8 @@ struct WorldDataContract {
         }
       if(phase==3) setenv("OPENGOTHIC_CONTENT","",1);
       Resources resources;
-      if(phase==0) particleDefinitions(fixture,Resources::baseDir());
       Gothic gothic;
+      if(phase==0) particleDefinitions(fixture,Resources::baseDir());
       gothic.isNpcInDialogFn=[](const Npc*) { return false; };
       gothic.setupGlobalScripts();
       if(phase==0) runtimeParticles(gothic,fixture,Resources::baseDir());
