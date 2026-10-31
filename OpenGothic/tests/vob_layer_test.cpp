@@ -416,14 +416,14 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     }
   }
 
-void runtimeParticles(Gothic& gothic, const Fixture& f) {
+void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot) {
   const auto* original=gothic.loadParticleFx("FIRE_SMOKE");
   const auto* copy=gothic.loadParticleFx("own_test_copy.pfx");
   const auto* custom=gothic.loadParticleFx("own_test_smoke.PfX");
   require(original && copy && custom,"Gothic resolves base and custom names case-insensitively with suffix");
   require(custom==gothic.loadParticleFx("OWN_TEST_SMOKE"),"custom aliases reuse one cached ParticleFx");
   particleSettings(*copy,*original);
-  auto vm=ParticleContent::openProgram(Resources::baseDir());
+  auto vm=ParticleContent::openProgram(baseRoot);
   const auto definitions=ParticleContent::load(*vm,f.content);
   ParticleFx expected(*definitions.effects.at("OWN_TEST_SMOKE"),"expected");
   particleSettings(*custom,expected);
@@ -567,7 +567,7 @@ struct WorldDataContract {
       Gothic gothic;
       gothic.isNpcInDialogFn=[](const Npc*) { return false; };
       gothic.setupGlobalScripts();
-      if(phase==0) runtimeParticles(gothic,fixture);
+      if(phase==0) runtimeParticles(gothic,fixture,Resources::baseDir());
       if(phase==2)
         require(gothic.loadParticleFx("OWN_TEST_SMOKE")!=nullptr,"disabling vob layers retains custom particle definitions");
       if(phase==3)
