@@ -762,6 +762,7 @@ struct Bench {
     uint64_t loadWarmUntil=0,loadEnd=0,loadLastNative=0,loadZeroFrames=0;
     size_t loadMinimumActive=10,loadDecomposed=0;
     bool loadRunning=false;
+    bool traceApple=false;
     } furnitureParts;
   uint32_t ownMeshZen=uint32_t(-1);
   Vec3 ownMeshAxis,ownMeshApproach,ownMeshHeroStart,ownMeshBodyStart;
@@ -4063,11 +4064,86 @@ bool furnitureDrop(World& world,Npc& player,std::string role,const char* instanc
   if(speed.quadLength()>0 && !drop.item->addSpellImpulse(speed*(.01f*drop.item->physicsMass()),&player)) {
     arenaAbort("furniture preparation: native Item throw refused");return false;
     }
+  if(drop.role=="under_apple" && bench.furnitureParts.traceApple && !world.physic()->startItemTrace(*drop.item)) {
+    arenaAbort("furniture diagnosis: cannot trace the native apple");return false;
+    }
   event("furniture_parts_drop","\"role\":"+jsonStr(drop.role)+",\"symbol\":"+jsonStr(instance)+
     ",\"bottom_cm\":"+ragdollVector(bottom)+",\"velocity_cm_s\":"+ragdollVector(speed)+
     ",\"support_y_cm\":"+ragdollNumber(supportY)+",\"item_hulls\":"+(Gothic::physicsFlags().itemHulls?"true":"false")+
     ",\"extra_padding_cm\":"+ragdollNumber(hull.extraPaddingCm));
   bench.furnitureParts.drops.push_back(std::move(drop));return true;
+  }
+
+void furnitureTraceBegin(World& world) {
+  bench.furnitureParts.traceApple=true;
+  const auto geometry=world.physic()->navigationGeometry();
+  const auto center=bench.furnitureParts.tableCenter;
+  auto* file=std::fopen((outDir+"/furniture-parts-floor.csv").c_str(),"w");
+  if(!file) {arenaAbort("furniture diagnosis: cannot write native floor geometry");return;}
+  std::fprintf(file,"triangle,ax_cm,ay_cm,az_cm,bx_cm,by_cm,bz_cm,cx_cm,cy_cm,cz_cm,max_edge_cm\n");
+  size_t count=0;
+  for(size_t i=0;i<geometry.triangles.size();i+=3) {
+    Vec3 points[3];
+    for(size_t j=0;j<3;++j) {
+      const auto at=size_t(geometry.triangles[i+j])*3;
+      points[j]=Vec3(geometry.vertices[at],geometry.vertices[at+1],geometry.vertices[at+2])*100.f;
+      }
+    Vec3 low=points[0],high=points[0];
+    for(const auto& p:points) {
+      low=Vec3(std::min(low.x,p.x),std::min(low.y,p.y),std::min(low.z,p.z));
+      high=Vec3(std::max(high.x,p.x),std::max(high.y,p.y),std::max(high.z,p.z));
+      }
+    if(low.x>center.x+500.f || high.x<center.x-500.f || low.z>center.z+500.f || high.z<center.z-500.f ||
+       low.y>center.y+200.f || high.y<center.y-300.f)continue;
+    const float edge=std::max({(points[0]-points[1]).length(),(points[1]-points[2]).length(),(points[2]-points[0]).length()});
+    std::fprintf(file,"%zu,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g\n",i/3,
+      double(points[0].x),double(points[0].y),double(points[0].z),double(points[1].x),double(points[1].y),double(points[1].z),
+      double(points[2].x),double(points[2].y),double(points[2].z),double(edge));
+    ++count;
+    }
+  std::fclose(file);
+  event("furniture_parts_trace_begin","\"native_floor_triangles\":"+std::to_string(count));
+  }
+
+void furnitureTraceReport(World& world) {
+  world.physic()->stopItemTrace();
+  const auto samples=world.physic()->takeItemTrace();
+  auto* file=std::fopen((outDir+"/furniture-parts-apple-trace.jsonl").c_str(),"w");
+  if(!file) {arenaAbort("furniture diagnosis: cannot write native apple trace");return;}
+  uint64_t previous=0,maximumGap=0;
+  for(const auto& sample:samples) {
+    if(previous!=0)maximumGap=std::max(maximumGap,sample.nativeStep-previous);
+    previous=sample.nativeStep;
+    std::string contacts="[";
+    for(const auto& contact:sample.contacts) {
+      if(contacts.size()>1)contacts+=',';
+      contacts+="{\"body_id\":"+std::to_string(contact.bodyId)+",\"zen_id\":"+std::to_string(contact.zenId)+
+        ",\"category\":"+std::to_string(contact.category)+",\"visual\":"+jsonStr(contact.visual)+
+        ",\"depth_cm\":"+ragdollNumber(contact.depth)+",\"normal\":"+ragdollVector(contact.normal)+
+        ",\"point_cm\":"+ragdollVector(contact.point)+",\"other_point_cm\":"+ragdollVector(contact.otherPoint)+"}";
+      }
+    const auto row="{\"step\":"+std::to_string(sample.nativeStep)+",\"index\":"+std::to_string(sample.index)+
+      ",\"native_steps\":"+std::to_string(sample.nativeSteps)+",\"before_step\":"+(sample.beforeStep?"true":"false")+
+      ",\"seconds\":"+ragdollNumber(sample.seconds)+",\"step_seconds\":"+ragdollNumber(sample.stepSeconds)+
+      ",\"position_cm\":"+ragdollVector(sample.position)+",\"com_cm\":"+ragdollVector(sample.centerOfMass)+
+      ",\"velocity_cm_s\":"+ragdollVector(sample.velocity)+",\"bounds_min_cm\":"+ragdollVector(sample.bounds[0])+
+      ",\"bounds_max_cm\":"+ragdollVector(sample.bounds[1])+",\"active\":"+(sample.active?"true":"false")+
+      ",\"sleeping\":"+(sample.sleeping?"true":"false")+",\"contacts\":"+contacts+"]}\n";
+    std::fputs(row.c_str(),file);
+    }
+  std::fclose(file);
+  bench.furnitureParts.traceApple=false;
+  event("furniture_parts_trace_report","\"samples\":"+std::to_string(samples.size())+
+    ",\"maximum_native_step_gap\":"+std::to_string(maximumGap)+",\"pass\":"+(!samples.empty() && maximumGap<=1?"true":"false"));
+  }
+
+void furnitureRemoveTable(World& world) {
+  auto matrix=bench.furnitureParts.tableOrigin;
+  matrix.translate(0,-100000.f,0);
+  const bool moved=world.physic()->setMovableVobTransform(bench.furnitureParts.table,matrix);
+  event("furniture_parts_table_removed","\"zen_id\":"+std::to_string(bench.furnitureParts.table)+
+    ",\"transform\":"+ragdollMatrix(matrix)+",\"pass\":"+(moved?"true":"false"));
+  if(!moved)arenaAbort("furniture diagnosis: cannot remove table collision from the throw");
   }
 
 void furnitureSetup(World& world,Npc& player) {
@@ -12761,6 +12837,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="own-mesh" && a.size()==2 && a[1]=="walk")ownMeshWalk(w,pl);
   else if(c=="own-mesh" && a.size()==2 && a[1]=="checkpoint")ownMeshCheckpoint(w,pl);
   else if(c=="furniture-parts" && a.size()==2 && a[1]=="setup") furnitureSetup(w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="trace") furnitureTraceBegin(w);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="trace-report") furnitureTraceReport(w);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="remove-table") furnitureRemoveTable(w);
   else if(c=="furniture-parts" && a.size()==2 && a[1]=="table-items") furnitureTableItems(w,pl);
   else if(c=="furniture-parts" && a.size()==2 && a[1]=="shelf-item") furnitureCupboardItem(w,pl);
   else if(c=="furniture-parts" && a.size()==2 && a[1]=="items-report") furnitureItemReport(w);

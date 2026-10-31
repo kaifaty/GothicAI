@@ -199,6 +199,56 @@ struct DynamicWorld::BodyData {
   std::function<void(bool,const std::vector<Tempest::Matrix4x4>&)> fractureCallback;
   };
 
+struct DynamicWorld::ItemTrace {
+  const ::Item* item = nullptr;
+  bool enabled = true;
+  uint64_t firstStep = 0, lastStep = 0, index = 0;
+  std::vector<ItemTraceSample> samples;
+
+  bool sample(CollisionWorld& world, bool beforeStep) {
+    const auto step=world.simulationStep();
+    for(const auto& native:world.waterBodySnapshot()) {
+      if(native.body==nullptr || native.body->ptrType()!=P_Item || native.body->payload()!=item)
+        continue;
+      ItemTraceSample result;
+      result.nativeStep=step;
+      result.nativeSteps=step-lastStep;
+      result.index=index++;
+      result.seconds=float(step-firstStep)/60.f;
+      result.stepSeconds=float(result.nativeSteps)/60.f;
+      result.beforeStep=beforeStep;
+      result.position=native.body->position();
+      result.centerOfMass=native.body->centerOfMass();
+      result.velocity=native.velocity;
+      result.active=!native.sleeping;
+      result.sleeping=native.sleeping;
+      result.bounds[0]=native.collisionBounds[0];
+      result.bounds[1]=native.collisionBounds[1];
+      constexpr uint32_t mask=(1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_Item)|(1u<<C_Ragdoll)|
+                              (1u<<C_LivingBody)|(1u<<C_ActiveBody)|(1u<<C_MovableVob)|(1u<<C_Fragment);
+      for(const auto& contact:world.overlaps(*native.body,2.f,mask)) {
+        ItemTraceContact entry;
+        entry.category=contact.category;
+        entry.depth=contact.depth;
+        entry.normal=-contact.axis;
+        entry.point=contact.point1;
+        entry.otherPoint=contact.point2;
+        if(contact.body!=nullptr) {
+          entry.bodyId=contact.body->nativeId();
+          entry.visual=contact.body->label();
+          if(contact.body->ptrType()==P_MovableVob && contact.body->payload()!=nullptr)
+            entry.zenId=static_cast<const BodyData*>(contact.body->payload())->pose->zenId;
+          }
+        result.contacts.push_back(std::move(entry));
+        }
+      samples.push_back(std::move(result));
+      lastStep=step;
+      return true;
+      }
+    return false;
+    }
+  };
+
 struct DynamicWorld::WorldBodies {
   std::vector<JPH::Vec3>                        vertices;
   std::vector<JPH::Vec3>                        clothVertices;
@@ -2523,7 +2573,9 @@ void DynamicWorld::tick(uint64_t dt) {
     }
   npcList   ->tickAabbs();
   bulletList->tick(dt);
+  if(itemTrace && itemTrace->enabled) itemTrace->sample(*world,true);
   world     ->tick(dt);
+  if(itemTrace && itemTrace->enabled) itemTrace->sample(*world,false);
   {
     FrameProfile::Scope timing(FrameProfile::Zone::Destruction);
     for(auto* obj:movableVobs->bodies)
@@ -2565,6 +2617,27 @@ DynamicWorld::PhysicsStats DynamicWorld::physicsStats() const {
   }
 
 uint64_t DynamicWorld::simulationStep() const { return world->simulationStep(); }
+
+bool DynamicWorld::startItemTrace(const ::Item& item) {
+  auto trace=std::make_unique<ItemTrace>();
+  trace->item=&item;
+  trace->firstStep=trace->lastStep=world->simulationStep();
+  if(!trace->sample(*world,false))return false;
+  itemTrace=std::move(trace);
+  return true;
+  }
+
+std::vector<DynamicWorld::ItemTraceSample> DynamicWorld::takeItemTrace() {
+  std::vector<ItemTraceSample> result;
+  if(itemTrace)result.swap(itemTrace->samples);
+  if(itemTrace && !itemTrace->enabled)itemTrace.reset();
+  return result;
+  }
+
+void DynamicWorld::stopItemTrace() {
+  if(itemTrace)itemTrace->enabled=false;
+  }
+
 void DynamicWorld::configureMeleeBench(int substeps) { world->configureMeleeBench(substeps); }
 void DynamicWorld::updateMeleeBlade(const Npc* owner,const Tempest::Matrix4x4& hand,float lengthCm) { world->updateMeleeBlade(owner,hand,lengthCm); }
 void DynamicWorld::removeMeleeBlade(const Npc* owner) { world->removeMeleeBlade(owner); }
