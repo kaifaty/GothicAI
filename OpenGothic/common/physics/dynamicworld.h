@@ -1,6 +1,7 @@
 #pragma once
 
 #include "asset/worldmesh.h"
+#include "game/meleeimpact.h"
 #include "physics/physicsnoise.h"
 #include "physics/charactervirtualdiagnostics.h"
 #include "physics/navmesh.h"
@@ -531,7 +532,7 @@ class DynamicWorld final {
     void updateShadowBlade(const Npc* owner, uint64_t swingId,
                            const std::vector<MeleeBladeSegment>& segments, uint64_t timeMs,
                            double activeBeginMs, double activeEndMs, float walkableCos = .7f,
-                           Tempest::Vec3 forward = {});
+                           Tempest::Vec3 forward = {}, MeleeImpact::Weapon weapon = MeleeImpact::Weapon::OneHand);
     std::vector<MeleeBladeContact> takeShadowBladeContacts(const Npc* owner);
     void removeShadowBlade(const Npc* owner);
     void flushShadowBlades();
@@ -611,6 +612,10 @@ class DynamicWorld final {
       uint64_t rays = 0;
       };
     PhysicsStats physicsStats() const;
+    struct StaticCollisionStats {
+      size_t shapeBytes = 0, triangles = 0;
+      };
+    StaticCollisionStats staticCollisionStats() const;
     uint64_t simulationStep() const;
 
     // Called explicitly by the runner; ordinary worlds never build a navmesh.
@@ -652,6 +657,7 @@ class DynamicWorld final {
     std::unique_ptr<ItemTrace>         itemTrace;
     std::unique_ptr<Cloth>             clothWorld;
     World*                            ownerWorld = nullptr;
+    bool                              splitStaticTriangles = true;
 
     std::vector<std::string>           sectors;
 

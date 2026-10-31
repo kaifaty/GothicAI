@@ -12,6 +12,8 @@ df -h "$HOME"
 python3 -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home()).free >= 20*1024**3, "Less than 20 GiB free"'
 mkdir -p "$TASK/source" "$TASK/input"
 PREPARE
+ssh ryzen "mkdir -p '$task/source/scripts'"
+rsync -rt --no-links "$ROOT/scripts/nav_job.py" "ryzen:$task/source/scripts/"
 if [[ "$stage" != cleanup ]]; then
   rsync -a --exclude=build --exclude='build-*' --exclude=__pycache__ \
     "$ROOT/OpenGothic" "$ROOT/scripts" "$ROOT/AGENTS.md" "ryzen:$task/source/"
@@ -66,13 +68,13 @@ elif [[ "$stage" == measure-mode ]]; then
     "$task/bake-npcs/memory-cost.json"
   mode="${1:?memory comparison mode}"
   shift
-  timeout 110m "$task/.venv/bin/python" -I scripts/nav_memory_v4.py evaluate \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_memory_v4.py evaluate \
     --task "$task" --budget-seconds 6500 --mode "$mode" "$@"
-  timeout 8m "$task/.venv/bin/python" -I scripts/nav_memory_v4.py safety \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_memory_v4.py safety \
     --task "$task" --budget-seconds 420 --mode "$mode" "$@"
 else
   test -x "$task/build/opengothic/gothic-body-runner"
-  timeout 110m "$task/.venv/bin/python" -I scripts/nav_memory_v4.py "$stage" --task "$task" --budget-seconds 6500 "$@"
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_memory_v4.py "$stage" --task "$task" --budget-seconds 6500 "$@"
 fi
 PHASE
 if [[ "$stage" == measure ]]; then
@@ -82,10 +84,10 @@ if [[ "$stage" == measure ]]; then
     phase_args=(measure-mode "$mode")
     [[ "$mode" != bake ]] || phase_args=(bake)
     identifier=$("$ROOT/scripts/gq" submit --class batch --threads 16 --mem 8G --max 2h --cpu-quota 1200% \
-      --name "nav memory v4 $mode" -- bash "$task/phase.sh" "${phase_args[@]}" "${@:2}")
+      --name "nav memory v4 $mode" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- bash "$task/phase.sh" "${phase_args[@]}" "${@:2}")
     printf '%s %s\n' "$mode" "$identifier"
   done
   exit 0
 fi
 "$ROOT/scripts/gq" submit --class batch --threads 12 --mem 8G --max 2h --cpu-quota 1200% \
-  --name "nav memory v4 $stage" -- bash "$task/phase.sh" "$stage" "${@:2}"
+  --name "nav memory v4 $stage" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- bash "$task/phase.sh" "$stage" "${@:2}"

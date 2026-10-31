@@ -64,7 +64,8 @@ for ((first = 0; first < ${#indices[@]}; first += batch_size)); do
     df -h "$HOME"
     gq_job --class batch --threads 2 --mem 3G --max "${max_seconds}s" \
       --name "nav $drive_kind beta=$teacher_beta indices=$joined" -- \
-      python3 -I "$ROOT/scripts/nav_drive.py" collect "${collector_args[@]}" --indices "$joined"
+      python3 -I "$ROOT/scripts/nav_job.py" --max-seconds "$max_seconds" -- \
+      python3 -X faulthandler -I "$ROOT/scripts/nav_drive.py" collect "${collector_args[@]}" --indices "$joined"
   else
     (
       exec 9>"$HOME/gothic-ai/body-simulation.lock"

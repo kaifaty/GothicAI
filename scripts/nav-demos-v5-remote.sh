@@ -81,8 +81,8 @@ else
   test -x "$task/build/opengothic/gothic-body-runner"
   next_stage=record
 fi
-exec "$task/.venv/bin/python" -I scripts/nav_demos_v5_chain.py \
+exec "$task/.venv/bin/python" -X faulthandler -I scripts/nav_demos_v5_chain.py \
   --task "$task" --archive-root "$archive" --stage "$next_stage" --submit
 PHASE
 "$ROOT/scripts/gq" submit --class batch --threads 12 --cpu-quota 1200% --mem 8G --max 2h \
-  --name "nav demos v5 $stage" -- env "${game_env[@]}" bash "$task/phase.sh" "$stage"
+  --name "nav demos v5 $stage" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$stage"
