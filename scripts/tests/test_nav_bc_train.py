@@ -24,6 +24,7 @@ def test_parallel_loader_preserves_packed_bytes_batch_order_and_training_rng(tmp
         directory.mkdir()
         (directory / "episode.json").write_text(json.dumps({"eye_layout": layout.tolist()}))
         records = np.zeros(steps, dtype=demos.RECORD_DTYPES[version])
+        records["time_ms"] = np.arange(steps) * demos.PERIOD_MS
         records["eye"]["distance_cm"] = 1000
         records["roads"]["carrot_direction"][:, 2] = 1
         records["keys"]["forward"] = number - 1
