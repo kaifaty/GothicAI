@@ -37,7 +37,7 @@ MtBuffer::MtBuffer(MtDevice& dev, const void* data, size_t size, MTL::ResourceOp
   if(impl==nullptr)
     throw std::system_error(GraphicsErrc::OutOfVideoMemory);
   if(impl->storageMode()==MTL::StorageModePrivate)
-    upload(data,0,size,true); else
+    dev.uploadBuffer(*impl,data,0,size,dev.syncBufferUploads); else
     implUpdate(data,0,size);
   }
 
@@ -58,7 +58,7 @@ void MtBuffer::update(const void *data, size_t off, size_t size) {
     implUpdate(data,off,size);
     return;
     }
-  upload(data,off,size,true);
+  dev->uploadBuffer(*impl,data,off,size,true);
   }
 
 void MtBuffer::updateAsync(const void* data, size_t off, size_t size) {
@@ -66,13 +66,20 @@ void MtBuffer::updateAsync(const void* data, size_t off, size_t size) {
     implUpdate(data,off,size);
     return;
     }
-  upload(data,off,size,false);
+  dev->uploadBuffer(*impl,data,off,size,false);
   }
 
-void MtBuffer::upload(const void* data, size_t off, size_t size, bool wait) {
+void MtDevice::uploadBuffer(MTL::Buffer& target, const void* data, size_t off, size_t size, bool wait) {
   auto pool = NsPtr<NS::AutoreleasePool>::init();
+  constexpr size_t maxStagingBytes = 128u*1024u*1024u;
+  std::unique_lock<std::mutex> guard(bufferUploadSync);
+  // Retire the oldest copies before allocating more staging. A single buffer
+  // larger than the budget is allowed only when all previous copies finished.
+  bufferUploadCv.wait(guard,[&] {
+    return bufferUploads.empty() || size<=maxStagingBytes-std::min(bufferUploadBytes,maxStagingBytes);
+    });
   MTL::ResourceOptions opt   = MTL::ResourceStorageModeShared | MTL::ResourceCPUCacheModeWriteCombined;
-  auto                 stage = NsPtr<MTL::Buffer>(dev->impl->newBuffer(size,opt));
+  auto                 stage = NsPtr<MTL::Buffer>(impl->newBuffer(size,opt));
   if(stage==nullptr)
     throw std::system_error(GraphicsErrc::OutOfVideoMemory);
   probeMetalUploadBuffer(stage.get());
@@ -80,19 +87,32 @@ void MtBuffer::upload(const void* data, size_t off, size_t size, bool wait) {
 
   // Retained references keep both buffers alive after the staging owner exits.
   // Consuming draws commit later on this same queue and see the completed copy.
-  auto cmd = dev->queue->commandBuffer();
+  auto cmd = queue->commandBuffer();
   auto enc = cmd->blitCommandEncoder();
-  enc->copyFromBuffer(stage.get(),0, impl.get(),off, size);
+  enc->copyFromBuffer(stage.get(),0, &target,off, size);
   enc->endEncoding();
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   profileGpu(cmd);
 #endif
-  if(!wait) {
-    auto* device = dev;
-    device->onSubmit();
-    cmd->addCompletedHandler(^(MTL::CommandBuffer*) { device->onFinish(); });
+  cmd->retain();
+  bufferUploads.push_back({NsPtr<MTL::CommandBuffer>(cmd),stage->allocatedSize()});
+  bufferUploadBytes += stage->allocatedSize();
+  onSubmit();
+  auto* device = this;
+  cmd->addCompletedHandler(^(MTL::CommandBuffer*) {
+    {
+    std::lock_guard<std::mutex> guard(device->bufferUploadSync);
+    while(!device->bufferUploads.empty() &&
+          device->bufferUploads.front().command->status()>=MTL::CommandBufferStatusCompleted) {
+      device->bufferUploadBytes -= device->bufferUploads.front().bytes;
+      device->bufferUploads.pop_front();
+      }
+    device->bufferUploadCv.notify_all();
     }
+    device->onFinish();
+    });
   cmd->commit();
+  guard.unlock();
   if(wait)
     cmd->waitUntilCompleted();
   }
