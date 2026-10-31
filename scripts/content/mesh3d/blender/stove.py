@@ -77,13 +77,39 @@ for i in range(n):
         q = [rings[a][i], rings[a][j], rings[c][j], rings[c][i]]
         P.poly(q, CAST, [(v.co.x, v.co.y) for v in q])
 # embers under the grate and the bars over them
-dome(P, rng, b(gx, y1 - 0.06, gz), gr - 0.01, 0.04, EMBER, sides=16, rings=2)
-turned(P, b(gx, top, gz), [(0.0, gr + 0.01), (0.03, gr + 0.012), (0.035, gr - 0.012)], [(0.035, gr - 0.02), (0.0, gr - 0.02)],
-       24, RIVET)
+dome(P, rng, b(gx, y1 + 0.002, gz), gr - 0.01, 0.018, EMBER, sides=16, rings=2)  # on the box top, under the grate
+grate_ring = [b(gx + gr * math.cos(2 * math.pi * k / 24), top + 0.015, gz + gr * math.sin(2 * math.pi * k / 24)) for k in range(25)]
+for p0, p1 in zip(grate_ring, grate_ring[1:]):  # an open cast ring round the grate, no floor over the embers
+    bar(P, p0, p1, 0.03, 0.03, RIVET)
 for k in range(nbars):
     zz = gz - gr * 0.85 + (2 * gr * 0.85) * k / (nbars - 1)
     w = math.sqrt(max(gr * gr - (zz - gz) ** 2, 0)) * 2
     P.board(b(gx, top + 0.02, zz), X, Z, Y, w, 0.016, 0.02, RIVET)
+# forged scrolls in the four corners of the front and both side faces: a curl of short bars
+def scroll(corner, ax, ay, normal, size):
+    """A C-scroll from the corner along ax, curling in toward ay; ax, ay unit vectors in the face."""
+    pts = []
+    for k in range(9):
+        t = k / 8
+        ang = math.pi * 1.6 * t
+        r = size * (1 - 0.6 * t)
+        pts.append(corner + ax * (size * 0.3 + r * (1 - math.cos(ang)) * 0.5 + t * size * 0.6) + ay * (size * 0.25 + r * math.sin(ang) * 0.5))
+    for p0, p1 in zip(pts, pts[1:]):
+        bar(P, p0 + normal * 0.006, p1 + normal * 0.006, 0.014, 0.01, RIVET)
+
+
+sc = cfg.get("scroll", 0.12)
+faces = [(Vector((0, 1, 0)), lambda u, v: b(u, v, -hz - 0.002), (1, 0)),  # front (glTF -z)
+         (Vector((1, 0, 0)), lambda u, v: b(hx + 0.002, v, u), (0, 1)),
+         (Vector((-1, 0, 0)), lambda u, v: b(-hx - 0.002, v, u), (0, 1))]
+for normal, at, _ in faces:
+    for su in (-1, 1):
+        for sv in (-1, 1):
+            u0, v0 = su * (hx - ew - 0.01), (y0 + ew + 0.01) if sv < 0 else (y1 - ew - 0.01)
+            corner = at(u0, v0)
+            ax = (at(u0 - su * 0.1, v0) - corner).normalized()
+            ay = (at(u0, v0 - sv * 0.1) - corner).normalized()
+            scroll(corner, ax, ay, normal, sc)
 # the fire door on the front face (glTF -z) with vent holes and a ring handle
 dy, dr, dt, holes = cfg["door"]
 front = -hz
@@ -101,6 +127,9 @@ for i in range(24):
     P.poly([cf, fr[i], fr[j]], CAST, [(0, 0), (disc[i][0], disc[i][1]), (disc[j][0], disc[j][1])])
     P.poly([cb, bk[j], bk[i]], CAST, [(0, 0), (disc[j][0], disc[j][1]), (disc[i][0], disc[i][1])])
     P.poly([fr[i], bk[i], bk[j], fr[j]], CAST, [(0, 0), (0, dt), (0.02, dt), (0.02, 0)])
+ring_pts = [b(dr * 1.08 * math.cos(2 * math.pi * k / 20), dy + dr * 1.08 * math.sin(2 * math.pi * k / 20), front - 0.006) for k in range(21)]
+for p0, p1 in zip(ring_pts, ring_pts[1:]):  # a raised cast ring round the door
+    bar(P, p0, p1, 0.022, 0.014, RIVET)
 for k in range(holes):  # glowing vent holes in a ring on the door
     t = 2 * math.pi * k / holes
     c = b(dr * 0.6 * math.cos(t), dy + dr * 0.6 * math.sin(t), front - dt - 0.002)
