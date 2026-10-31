@@ -619,7 +619,8 @@ class Witnesses:
             return  # its own turn: event_turn would leave the cue to its next one
         if self.budget is not None and not self.budget.allow(t.witness):
             return
-        saw = "; ".join(self.sightings.words(s, t.minute) for s in t.told)
+        # no «без доспеха» here: the witness would say it aloud, and a bare hero is nothing to tell
+        saw = "; ".join(self.sightings.words(s, t.minute, bare=False) for s in t.told)
         if self.crimes is not None or t.about != HERO:
             deeds = "; ".join(self._describe(t, f) for f in self._deeds(t))
             saw = "; ".join(part for part in (saw, deeds) if part)

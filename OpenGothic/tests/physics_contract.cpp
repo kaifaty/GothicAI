@@ -2354,6 +2354,46 @@ namespace {
             "NPC contact eligibility must preserve the bounded query's previous simplex");
     }
 
+  void testNpcFrozenBodyReplacement() {
+    zenkit::ModelHierarchy hierarchy{};
+    hierarchy.collision_bbox={{-25,0,-25},{25,180,25}};
+    Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"FROZEN_NPC_REPLACEMENT_CONTRACT");
+    DynamicWorld world(nullptr,movableFloor());
+    auto first=world.addGhostObj(&shape);
+    auto middle=world.addGhostObj(&shape);
+    auto last=world.addGhostObj(&shape);
+    first.setPosition({0,0,0});
+    middle.setPosition({200,0,0});
+    last.setPosition({400,0,0});
+    int identity=0;
+    auto* npc=reinterpret_cast<Npc*>(&identity);
+    last.setUserPointer(npc);
+    world.tick(0);
+    world.tick(0); // freeze all three bodies before replacing the first
+
+    // Npc::setVisual, including MdlVisual::load, replaces its existing ghost
+    // this way. Later NPC movement must use the shifted frozen-list index.
+    first=world.addGhostObj(&shape);
+    first.setPosition({-600,0,0});
+    last.setPosition({1000,0,0});
+    last.moveVirtual({},0,50.f,float(M_PI_4),80.f);
+    int hits=0;
+    world.rayArrow({900,90,0},{1100,90,0},[&](Npc& hit,const Tempest::Vec3&,const Tempest::Vec3&,float&) {
+      if(&hit==npc)
+        ++hits;
+      return false;
+      });
+    std::printf("Frozen NPC replacement: moved body records %d (expected 1)\n",hits);
+    require(hits==1,"replacing a frozen NPC body must not duplicate another moving NPC record");
+
+    // A duplicate would survive this deletion and become a dangling rider in
+    // DynamicWorld::tick when that body had a CharacterVirtual controller.
+    last=DynamicWorld::NpcItem();
+    const auto cleared=world.rayNpc({900,90,0},{1100,90,0},nullptr);
+    require(cleared.npcHit==nullptr,"removing a moved NPC must remove its only broad-phase record");
+    world.tick(0);
+    }
+
   void testNpcScalarWitness() {
     CollisionWorld world;
     // This source face stopped the player one frame early in ik-sweep. The
@@ -4652,6 +4692,7 @@ int main() {
     testSphereQueryPrecision();
     testShallowOverlapProjection();
     testNpcContactDistance();
+    testNpcFrozenBodyReplacement();
     testNpcScalarWitness();
     testNpcSeparatedContactResponse();
     testFixedStepCarry();

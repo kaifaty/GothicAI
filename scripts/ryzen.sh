@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the current worktree on Ryzen. No system packages or training files are changed.
-# Usage: scripts/ryzen.sh setup|e2e|pytest [pytest args...]|bench <scenario> <out>|clean|clean-cache
+# Usage: scripts/ryzen.sh setup|e2e|pytest [pytest args...]|bench <scenario> <out>|clean|clean-cache|du
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -62,109 +62,20 @@ PY
 }
 
 auto_clean() {
-  python3 - "$WORKTREE_LOCK" "${CLEAN_IDLE_HOURS:-48}" <<'PY'
+  # Cleanup belongs to the janitor; this controller only marks its own session.
+  python3 - "$WORKTREE_LOCK" <<'PY_MARKER'
 import os
 from pathlib import Path
-import shutil
-import stat
-import subprocess
 import sys
-import time
 
 root = Path.home() / 'gothic-ai/e2e'
 own = root / Path(sys.argv[1]).name.removesuffix('.lock')
-idle_hours = int(sys.argv[2])
-now = time.time()
-cutoff = now - idle_hours * 3600
-gib = 1024 ** 3
-
-def available():
-    return shutil.disk_usage(root).free
-
-def lock_file(path):
-    # A lock symlink must never redirect creation/truncation outside e2e.
-    return os.fdopen(os.open(path, os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600), 'w')
-
-def try_lock(stream):
-    return subprocess.run(['flock', '-n', str(stream.fileno())],
-                          pass_fds=(stream.fileno(),), check=False).returncode == 0
-
-def activity(directory):
-    marker = directory / '.last-used'
-    if marker.exists():
-        return marker.lstat().st_mtime
-    # Legacy worktrees have no marker. Inspect at most two levels, without
-    # following links into game data, shared caches or other task directories.
-    latest = directory.stat().st_mtime
-    for entry in directory.iterdir():
-        metadata = entry.lstat()
-        latest = max(latest, metadata.st_mtime)
-        if stat.S_ISDIR(metadata.st_mode):
-            for child in entry.iterdir():
-                latest = max(latest, child.lstat().st_mtime)
-    return latest
-
 if root.is_symlink() or own.is_symlink():
     raise SystemExit('Ryzen: refusing a symlink for the e2e/worktree directory')
 own.mkdir(parents=True, exist_ok=True)
-with lock_file(own / '.last-used') as marker:
+with os.fdopen(os.open(own / '.last-used', os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600), 'w') as marker:
     os.utime(marker.fileno(), None)
-
-before = available()
-removed, errors = [], []
-if idle_hours:
-    for directory in sorted(root.iterdir()):
-        if (directory == own or directory.name.startswith('.')
-                or directory.is_symlink() or not directory.is_dir()):
-            continue
-        try:
-            if activity(directory) >= cutoff:
-                continue
-            path = root / (directory.name + '.lock')
-            with lock_file(path) as lock:
-                if not try_lock(lock):
-                    continue
-                # Skip a lock path replaced between open and flock.
-                if path.stat().st_ino != os.fstat(lock.fileno()).st_ino:
-                    continue
-                if directory.is_symlink() or activity(directory) >= cutoff:
-                    continue
-                shutil.rmtree(directory)
-                # Legacy wrappers may already have this inode open, but not
-                # locked yet. Keep the named lock so they cannot later acquire
-                # a detached inode alongside a new invocation of this worktree.
-                removed.append(directory.name)
-        except FileNotFoundError:
-            continue  # A concurrent cleaner already removed this entry.
-        except OSError as error:
-            errors.append(f'{directory.name}: {error.strerror}')
-freed = max(0, available() - before)
-summary = ', '.join(removed) if removed else 'none'
-suffix = f"; errors: {'; '.join(errors)}" if errors else ''
-print(f'Ryzen: auto-clean removed {summary}; freed {freed / gib:.2f} GiB'
-      + (' (disabled)' if not idle_hours else '') + suffix, flush=True)
-
-if available() < 60 * gib:
-    # Serialize the cooldown check across different worktree controllers. uv
-    # itself owns the cache lock; we never remove cache files ourselves.
-    with lock_file(root / '.uv-prune.lock') as lock:
-        if try_lock(lock):
-            marker = root / '.uv-prune'
-            if not marker.exists() or now - marker.lstat().st_mtime >= 12 * 3600:
-                before = available()
-                # Stamp attempts too: a broken uv must not be retried by every
-                # concurrent invocation while the disk is under pressure.
-                with lock_file(marker) as stamp:
-                    os.utime(stamp.fileno(), None)
-                try:
-                    result = subprocess.run([str(Path.home() / '.local/bin/uv'), 'cache', 'prune'],
-                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                    suffix = '' if result.returncode == 0 else f'; failed (exit {result.returncode})'
-                except OSError as error:
-                    suffix = f'; failed ({error.strerror})'
-                freed = max(0, available() - before)
-                print(f'Ryzen: uv cache prune freed {freed / gib:.2f} GiB{suffix}', flush=True)
-PY
+PY_MARKER
 }
 
 disk_usage() {
@@ -660,9 +571,7 @@ if [[ "${1:-}" == __remote ]]; then
 fi
 
 ACTION="${1:-}"
-case "$ACTION" in setup|e2e|pytest|bench|clean|clean-cache) shift ;; *) echo 'Usage: scripts/ryzen.sh setup|e2e|pytest [args...]|bench <scenario> <out>|clean|clean-cache' >&2; exit 2 ;; esac
-CLEAN_IDLE_HOURS="${RYZEN_CLEAN_IDLE_HOURS:-48}"
-[[ "$CLEAN_IDLE_HOURS" =~ ^[0-9]+$ ]] || { echo 'RYZEN_CLEAN_IDLE_HOURS must be nonnegative hours' >&2; exit 2; }
+case "$ACTION" in setup|e2e|pytest|bench|clean|clean-cache|du) shift ;; *) echo 'Usage: scripts/ryzen.sh setup|e2e|pytest [args...]|bench <scenario> <out>|clean|clean-cache|du' >&2; exit 2 ;; esac
 if [[ "$ACTION" == bench ]]; then
   BENCH_CLASS="${RYZEN_BENCH_CLASS:-quick}"
   case "$BENCH_CLASS" in
@@ -689,6 +598,10 @@ remote() {
   for arg in "$@"; do printf -v command '%s %q' "$command" "$arg"; done
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$RYZEN_HOST" "$command"
 }
+
+if [[ "$ACTION" == du ]]; then
+  RYZEN_HOST="$RYZEN_HOST" exec "$ROOT/scripts/ryzen-janitor.sh" du
+fi
 
 if [[ "$ACTION" == clean-cache ]]; then
   { declare -f cache_artifact; echo 'set -euo pipefail; cache_artifact clean engine unused'; } | remote bash -s
@@ -1043,7 +956,7 @@ set -euo pipefail
 LOCK_WAIT=$LOCK_WAIT
 $(printf 'WORKTREE_LOCK=%q' "$STATE.lock")
 take_lock
-$(if [[ "$ACTION" != clean ]]; then printf 'CLEAN_IDLE_HOURS=%q\nauto_clean\n' "$CLEAN_IDLE_HOURS"; fi)
+$(if [[ "$ACTION" != clean ]]; then echo auto_clean; fi)
 disk_usage
 $(if [[ -n "${GQ_HOME+set}" ]]; then printf 'export GQ_HOME=%q\n' "$GQ_HOME"; fi)
 $(printf 'exec python3 -u -c %q %q %q' "$(cat "$ROOT/scripts/ryzen-lock.py")" "$STATE" "$REMOTE_HOME/gothic-ai/bin/gq")"
