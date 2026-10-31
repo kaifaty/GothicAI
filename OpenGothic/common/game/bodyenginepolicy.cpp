@@ -1,4 +1,5 @@
 #include "bodyenginepolicy.h"
+#include "utils/userhome.h"
 
 #include <Tempest/Log>
 #include <rapidjson/stringbuffer.h>
@@ -21,18 +22,23 @@ struct Network final {
   std::string error;
   Network() {
     try {
-      std::string path;
-      if(const char* configured=std::getenv("OPENGOTHIC_BODY_NET")) path=configured;
-      else {
+      std::filesystem::path path;
 #ifdef _WIN32
-        // the home of the launcher's and the services' Path.home(); HOME is usually unset on Windows
-        const char* home=std::getenv("USERPROFILE");
-        if(!home || !*home) throw std::runtime_error("USERPROFILE is unavailable for the default body network path");
+      const auto* configured=_wgetenv(L"OPENGOTHIC_BODY_NET");
 #else
-        const char* home=std::getenv("HOME");
-        if(!home || !*home) throw std::runtime_error("HOME is unavailable for the default body network path");
+      const auto* configured=std::getenv("OPENGOTHIC_BODY_NET");
 #endif
-        path=std::string(home)+"/.local/share/gothic-ai/body/nets/p30.bodynet";
+      if(configured) path=configured;
+      else {
+        const auto home=userHome();
+        if(home.empty()) {
+#ifdef _WIN32
+          throw std::runtime_error("USERPROFILE is unavailable for the default body network path");
+#else
+          throw std::runtime_error("HOME is unavailable for the default body network path");
+#endif
+          }
+        path=home/".local/share/gothic-ai/body/nets/p30.bodynet";
         }
       net=std::make_unique<BodyNet>(path);
       } catch(const std::exception& e) {

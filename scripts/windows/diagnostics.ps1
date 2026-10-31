@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Writes what Codex needs to judge this PC and this install into one text file (Diagnostics-GothicAI.cmd).
+Writes information about this PC and this install into one text file for a bug report (Diagnostics-GothicAI.cmd).
 
 .DESCRIPTION
 Windows, CPU, memory, graphics adapters and drivers, Vulkan and DirectX, microphones and the microphone

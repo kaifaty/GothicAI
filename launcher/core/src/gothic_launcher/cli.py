@@ -222,9 +222,8 @@ def login(args: argparse.Namespace) -> int:
     return subprocess.call(argv)
 
 
-# What the author plays with: every model remote, nothing on one's own servers, no local models. The brain
-# and speech recognition on the ChatGPT plan, NPC voices on Inworld TTS-2 with the original voices cloned,
-# no fallbacks and no quick model.
+# First-setup profile for a player without their own servers: the brain uses the ChatGPT plan,
+# speech recognition keeps its defaults, and Inworld TTS uses the original NPC voices.
 REMOTE_PROFILE: dict[str, Any] = {
     "llm.backend": "chatgpt",
     "llm.quick": False,
@@ -232,8 +231,6 @@ REMOTE_PROFILE: dict[str, Any] = {
     "llm.quick_url": None,
     "llm.body_url": None,
     "voice.enabled": True,
-    "voice.provider": "chatgpt",
-    "voice.fallback": "none",
     "tts.enabled": True,
     "tts.provider": "inworld",
     "tts.fallback": "none",
@@ -244,18 +241,22 @@ NO_GAME_FOLDER = 3  # the Windows setup then shows a folder picker
 
 def setup(args: argparse.Namespace) -> int:
     """First run, for a player: the game folder, the remote-only profile, the Inworld key (hidden input)
-    and the ChatGPT sign-in. A value of one's own that the profile replaces is printed; other settings and
-    a key already set stay. `--check` only says what is still missing before `up`."""
+    and the ChatGPT sign-in. Later runs preserve the player's settings and a key already set.
+    `--check` only says what is still missing before `up`."""
+    first_setup = not Config.load().settings_path.exists()
     config = _config()
     if args.check:
         return _preflight(config)
+    replaced = _apply(REMOTE_PROFILE, config) if first_setup else []
+    if first_setup:
+        config.save()
+        print("Мозг NPC: подписка ChatGPT. Распознавание речи и голоса NPC: Inworld, оригинальные голоса.")
     folder = _choose_game(config, args.game_dir)
     if folder is None:
         return NO_GAME_FOLDER
-    replaced = _apply({"game.dir": str(folder), **REMOTE_PROFILE}, config)
+    replaced.extend(_apply({"game.dir": str(folder)}, config))
     config.save()
     print(f"Папка игры: {folder}")
-    print("Мозг NPC и распознавание речи: подписка ChatGPT. Голоса NPC: Inworld, оригинальные голоса.")
     if replaced:
         print("Заменены ваши прежние значения:")
         for title, old in replaced:

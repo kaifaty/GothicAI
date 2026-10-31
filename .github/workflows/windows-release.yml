@@ -1,7 +1,7 @@
 # The prebuilt Windows x64 archive for players: this fork's game with its AI bridge, the base and video
 # converter and the story graph converter, compiled with MSVC, the AI services' sources and locks, the
-# pinned uv and the entry points. Run by hand only. One job on a standard GitHub-hosted runner, no caches
-# and no workflow artifacts. By default the run only validates: build, tests, converter and launcher checks
+# pinned uv and the entry points. Pull requests validate; releases run by hand. One job on a standard
+# GitHub-hosted runner, no caches and no workflow artifacts. By default the run only validates: build, tests, converter and launcher checks
 # and the package checks, and the archive stays on the runner. With draft_release the archive leaves it as
 # an asset of a new DRAFT prerelease, made as the very last step, after everything else passed. The
 # maintainer checks the assets (ZIP CRC, x64, checksums, imports, file list) and then publishes the draft
@@ -9,6 +9,19 @@
 name: Windows release
 
 on:
+  pull_request:
+    paths:
+      - 'OpenGothic/**'
+      - 'scripts/convert/**'
+      - 'scripts/build-engine.ps1'
+      - 'scripts/windows/**'
+      - 'scripts/tests/test_windows_game_profile.py'
+      - 'launcher/core/**'
+      - 'libs/chatgpt-auth/**'
+      - 'server/src/gothic_ai/gamedata/base.py'
+      - 'tts-service/src/gothic_tts/base.py'
+      - '*.cmd'
+      - '.github/workflows/windows-release.yml'
   workflow_dispatch:
     inputs:
       draft_release:
@@ -20,8 +33,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-release
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'pull_request' && format('windows-release-pr-{0}', github.event.pull_request.number) || 'windows-release' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   BUILD_TYPE: Release
@@ -184,7 +197,7 @@ jobs:
           Add-Content $env:GITHUB_ENV "PACKAGE_DIR=$dist"
 
       - name: Draft prerelease with the archive, its manifest and SHA256SUMS
-        if: ${{ inputs.draft_release }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.draft_release }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

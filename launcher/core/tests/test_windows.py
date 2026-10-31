@@ -24,7 +24,7 @@ import pytest
 from gothic_launcher import base, checks, cli, commands, state, winproc
 from gothic_launcher import supervisor as sv
 from gothic_launcher.commands import LaunchError, Layout, Ports, Proc, child_env, game, services
-from gothic_launcher.settings import Config
+from gothic_launcher.settings import Config, VoiceSettings
 from gothic_launcher.state import AlreadyRunning, SessionFile
 from gothic_launcher.supervisor import Event, Supervisor
 from tests.test_checks import _ready_base
@@ -448,6 +448,8 @@ def gothic(folder: Path) -> Path:
 @pytest.fixture
 def setup_env(tmp_path, monkeypatch):
     config = Config.load(tmp_path / "config")
+    load = Config.load
+    monkeypatch.setattr(Config, "load", lambda config_dir=config.dir: load(config_dir))
     repo = tmp_path / "repo"  # unbuilt, whatever the workspace holds (CI tests after its build)
     (repo / "server").mkdir(parents=True)
     (repo / "server" / "pyproject.toml").write_text("")
@@ -472,7 +474,6 @@ def setup_args(**kwargs):
 
 def test_setup_sets_the_remote_profile_and_takes_the_key_hidden(setup_env, tmp_path, monkeypatch, capsys):
     config = setup_env
-    config.set("voice.provider", "voxtral")  # one's own value: replaced, and said so
     config.set("llm.body_url", "tcp://gpu:47835")
     asked: list[str] = []
     monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: asked.append(prompt) or "iw-test-key")
@@ -481,23 +482,38 @@ def test_setup_sets_the_remote_profile_and_takes_the_key_hidden(setup_env, tmp_p
     code = cli.setup(setup_args(game_dir=str(folder)))
 
     s = config.settings
-    assert (s.llm.backend, s.voice.provider, s.voice.fallback) == ("chatgpt", "chatgpt", "none")
+    voice = VoiceSettings()
+    assert s.llm.backend == "chatgpt"
+    assert (s.voice.provider, s.voice.fallback) == (voice.provider, voice.fallback)
     assert (s.tts.provider, s.tts.fallback, s.tts.original_voices) == ("inworld", "none", True)
     assert s.llm.quick is False and s.llm.decider_url is None and s.llm.body_url is None
     assert s.game.dir == folder and config.secrets.inworld_api_key == "iw-test-key" and len(asked) == 1
     out = capsys.readouterr().out
     assert "iw-test-key" not in out
-    assert "Распознавание: было voxtral" in out and "Адрес запасного сервиса боя: было tcp://gpu:47835" in out
+    profile = "Мозг NPC: подписка ChatGPT. Распознавание речи и голоса NPC: Inworld, оригинальные голоса."
+    assert profile in out and "Адрес запасного сервиса боя: было tcp://gpu:47835" in out
     assert code == 2 and "Нет входа в ChatGPT" in out and "Игра ещё не собрана" in out
 
     again = Config.load(tmp_path / "config")
-    assert again.secrets.inworld_api_key == "iw-test-key" and again.settings.voice.provider == "chatgpt"
+    assert again.secrets.inworld_api_key == "iw-test-key"
+    assert (again.settings.voice.provider, again.settings.voice.fallback) == (voice.provider, voice.fallback)
+    config.set("tts.provider", "voxcpm")
+    config.save()
     monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: pytest.fail("the key is set already"))
     cli.setup(setup_args(game_dir=str(folder)))
+    assert config.settings.tts.provider == "voxcpm" and profile not in capsys.readouterr().out
+
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt: "iw-new-key")
+    cli.setup(setup_args(change_key=True))
+    again = Config.load(tmp_path / "config")
+    assert again.secrets.inworld_api_key == "iw-new-key" and again.settings.tts.provider == "voxcpm"
+    assert profile not in capsys.readouterr().out
 
 
 def test_setup_without_a_game_folder_asks_for_one(setup_env, tmp_path, capsys):
+    setup_env.set("tts.provider", "voxcpm")
     assert cli.setup(setup_args()) == cli.NO_GAME_FOLDER
+    assert Config.load(setup_env.dir).settings.tts.provider == "inworld"
     assert "не найдена" in capsys.readouterr().out
     english = tmp_path / "Gothic II EN"
     (english / "Data").mkdir(parents=True)
