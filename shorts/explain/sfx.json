@@ -1,0 +1,88 @@
+{
+  "about": "The explainer's sound effects: a 'scriptorium' palette (paper, books, wood) under the channel's wax-seal letter. Only CC0 sources; their files stay outside the repository in ~/.local/share/gothic-ai/sfx (packs/: the unpacked downloads, lib/: what scripts/sfx_lib.py makes of them). Each kind is a set of variants; `lead` is where a variant's peak sits after processing, so the composition starts it that much before the frame it belongs to (src/parts/sfxMap.ts KINDS keeps the same numbers).",
+  "sources": {
+    "kenney_rpg-audio": {"title": "Kenney, RPG Audio", "url": "https://kenney.nl/assets/rpg-audio", "license": "CC0 1.0"},
+    "kenney_impact-sounds": {"title": "Kenney, Impact Sounds", "url": "https://kenney.nl/assets/impact-sounds", "license": "CC0 1.0"},
+    "book_flips_-_starninjas": {"title": "starninjas, 10 Book Page Flips", "url": "https://opengameart.org/content/10-book-page-flips", "license": "CC0 1.0"}
+  },
+  "kinds": {
+    "page": {
+      "what": "a page turned: a card coming in",
+      "lead": 0.25,
+      "lowpass": 9000,
+      "files": [
+        "book_flips_-_starninjas/book_flip.1.ogg",
+        "book_flips_-_starninjas/book_flip.4.ogg",
+        "book_flips_-_starninjas/book_flip.5.ogg",
+        "book_flips_-_starninjas/book_flip.6.ogg",
+        "book_flips_-_starninjas/book_flip.8.ogg"
+      ]
+    },
+    "swish": {
+      "what": "cloth: a frame sliding in, a label flying across",
+      "lead": 0.12,
+      "lowpass": 9000,
+      "files": [
+        "kenney_rpg-audio/Audio/cloth1.ogg",
+        "kenney_rpg-audio/Audio/cloth2.ogg",
+        "kenney_rpg-audio/Audio/cloth3.ogg"
+      ]
+    },
+    "place": {
+      "what": "a book set on the table: a key number or a verdict landing",
+      "lead": 0.01,
+      "files": [
+        "kenney_rpg-audio/Audio/bookPlace1.ogg",
+        "kenney_rpg-audio/Audio/bookPlace2.ogg",
+        "kenney_rpg-audio/Audio/bookPlace3.ogg"
+      ]
+    },
+    "tap": {
+      "what": "a light knock on wood: a term or a row of a card",
+      "lead": 0.005,
+      "files": [
+        "kenney_impact-sounds/Audio/impactPlank_medium_000.ogg",
+        "kenney_impact-sounds/Audio/impactPlank_medium_002.ogg",
+        "kenney_impact-sounds/Audio/impactPlank_medium_004.ogg"
+      ]
+    },
+    "tick": {
+      "what": "a die on wood: a counter running",
+      "lead": 0.002,
+      "lowpass": 5000,
+      "files": [
+        "kenney_impact-sounds/Audio/impactWood_light_000.ogg",
+        "kenney_impact-sounds/Audio/impactWood_light_001.ogg",
+        "kenney_impact-sounds/Audio/impactWood_light_002.ogg",
+        "kenney_impact-sounds/Audio/impactWood_light_003.ogg",
+        "kenney_impact-sounds/Audio/impactWood_light_004.ogg"
+      ]
+    },
+    "settle": {
+      "what": "a heavier knock: a counter stopping on its number",
+      "lead": 0.003,
+      "lowpass": 5000,
+      "files": [
+        "kenney_impact-sounds/Audio/impactWood_medium_000.ogg",
+        "kenney_impact-sounds/Audio/impactWood_medium_002.ogg",
+        "kenney_impact-sounds/Audio/impactWood_medium_004.ogg"
+      ]
+    },
+    "thud": {
+      "what": "a dull drop: a value falling (the dice chart's step)",
+      "lead": 0.006,
+      "files": [
+        "kenney_impact-sounds/Audio/impactSoft_medium_000.ogg",
+        "kenney_impact-sounds/Audio/impactSoft_medium_002.ogg"
+      ]
+    },
+    "punch": {
+      "what": "a low thump: a punch-in zoom",
+      "lead": 0.007,
+      "files": [
+        "kenney_impact-sounds/Audio/impactSoft_heavy_000.ogg",
+        "kenney_impact-sounds/Audio/impactSoft_heavy_002.ogg"
+      ]
+    }
+  }
+}
