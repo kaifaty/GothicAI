@@ -2362,6 +2362,10 @@ namespace {
         for(const float tilt:{0.f,17.f}) {
           const Tempest::Vec3 from(float(x)-tilt,100,float(z)+tilt),to(float(x)+tilt,-100,float(z)-tilt);
           const auto a=whole.rayCast(from,to,landscapeMask),b=chunked.rayCast(from,to,landscapeMask);
+          if(a.hasHit!=b.hasHit || (a.hasHit && (a.material!=b.material || std::string(a.sector)!=std::string(b.sector))))
+            std::fprintf(stderr,"Chunk ray at (%d,%d), tilt %.9g: hit %d/%d material %u/%u sector '%s'/'%s'\n",
+                         x,z,double(tilt),int(a.hasHit),int(b.hasHit),unsigned(a.material),unsigned(b.material),
+                         a.sector==nullptr ? "" : a.sector,b.sector==nullptr ? "" : b.sector);
           require(a.hasHit && b.hasHit && a.material==b.material && std::string(a.sector)==std::string(b.sector),
                   "chunked rays must retain the whole body's material and sector at edges and corners");
           require((a.point-b.point).length()<=.1f && (a.normal-b.normal).length()<=.000001f,

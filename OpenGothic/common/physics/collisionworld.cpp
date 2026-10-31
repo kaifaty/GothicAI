@@ -2111,14 +2111,15 @@ CollisionWorld::QueryResult CollisionWorld::rayCast(const Tempest::Vec3& from, c
       result = convert(collector.mHit,true);
       if(edge.mesh!=nullptr) {
         // Compressed mesh vertices can reverse the closest face at a shared edge.
-        // Requery after releasing its body lock and compare only adjacent
-        // native hits across every body sharing this mesh and placement against the original mesh planes. All-hit queries
-        // retain their native fraction ordering.
+        // Requery after releasing its body lock and compare adjacent native
+        // hits across bodies sharing this mesh and placement against source
+        // planes. All-hit queries retain their native fraction ordering.
         JPH::AllHitCollisionCollector<JPH::CastRayCollector> candidates;
         impl->system.GetNarrowPhaseQuery().CastRay(ray,settings,candidates,broadFilter,filter,bodyFilter);
         auto closest = collector.mHit;
         auto triangle = edge.triangle;
         float fraction = edge.mesh->rayTriangleFraction(triangle,edge.from,edge.to,backfaces);
+        const auto sourcePoint=edge.from*(1.f-fraction)+edge.to*fraction;
         for(const auto& hit:candidates.mHits) {
           JPH::BodyLockRead candidateLock(impl->system.GetBodyLockInterface(),hit.mBodyID);
           if(!candidateLock.Succeeded())
@@ -2133,10 +2134,17 @@ CollisionWorld::QueryResult CollisionWorld::rayCast(const Tempest::Vec3& from, c
           if(!edge.mesh->triangleVertices(candidate,vertices))
             continue;
           unsigned shared = 0;
+          auto sharedVertex=JPH::Vec3::sZero();
           for(const auto& vertex:edge.vertices)
-            if(vertex==vertices[0] || vertex==vertices[1] || vertex==vertices[2])
+            if(vertex==vertices[0] || vertex==vertices[1] || vertex==vertices[2]) {
               ++shared;
-          if(shared<2)
+              sharedVertex=vertex;
+              }
+          // Opposite chunks at a four-way corner share only one vertex.
+          // Include it only at that original vertex (within 0.1 mm), retaining
+          // the existing two-vertex rule inside a monolithic body.
+          if(shared<2 && (shared!=1 || hit.mBodyID==collector.mHit.mBodyID ||
+                          (sharedVertex-sourcePoint).LengthSq()>0.0001f*0.0001f))
             continue;
           const float candidateFraction = edge.mesh->rayTriangleFraction(candidate,edge.from,edge.to,backfaces);
           if(candidateFraction>=1.f || candidateFraction>fraction ||
