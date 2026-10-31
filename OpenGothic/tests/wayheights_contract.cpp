@@ -107,9 +107,11 @@ void collisionFiles(const fs::path& root) {
   changed.content=Resources::wayHeightInputs("SMALL.ZEN").contentFingerprint;
   require(changed.content!=key.content,"world content edit must change the collision input fingerprint");
   rebuild(changed,"content file edit must force collision rebuild");
+  write(cache.path(),saved);
   changed=key;
   changed.collisionFlags^=1;
   rebuild(changed,"collision flags must force rebuild");
+  write(cache.path(),saved);
   changed=key;
   ++changed.version;
   rebuild(changed,"collision bake version must force rebuild");
