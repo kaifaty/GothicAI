@@ -113,6 +113,9 @@ async def settled(chronicler):
     {"fact": "died", "killer": "OTHER", "name": "SECRET"},
     {"fact": "surrender", "status": "offered"},
     {"fact": "feat", "title": "SECRET"},
+    {"fact": "challenge", "kind": "no_blood", "people": ["SECRET"]},
+    {"fact": "challenge_hint", "kind": "no_blood", "npc": "SECRET", "witnesses": ["SECRET"]},
+    {"fact": "challenge_failed", "kind": "no_blood", "why": "SECRET"},
 ])
 def test_hidden_facts_have_no_hero_view(fact):
     assert hero_view(1, fact) is None
@@ -163,6 +166,12 @@ def test_notable_first_repeated_and_unusual_outcomes():
     assert not notable(3, crime(id="C3", kind="murder", victim="HILDA"), [
         (1, bandit), (2, farmer), (3, crime(id="C3", kind="murder", victim="HILDA")),
     ])
+    met = {
+        "fact": "challenge_met", "kind": "no_blood", "line": 1,
+        "challenge": 2, "people": ["LOBART"], "evidence": [3],
+    }
+    assert hero_view(4, met) == {key: value for key, value in met.items() if key != "challenge"}
+    assert notable(5, met, [(4, met), (5, met)])
 
 
 def test_turns_require_the_related_earlier_deed():
@@ -251,6 +260,13 @@ def test_canon_accepts_names_from_evidence_and_unchanged_proposal(name, text):
 ])
 def test_canon_accepts_ordinary_words_and_symbols(changes):
     assert canon(Proposal.of(proposal(**changes)), 1, [(1, crime())], []) == []
+
+
+def test_challenge_canon_accepts_its_supporting_evidence():
+    met = {"fact": "challenge_met", "kind": "mercy", "evidence": [1]}
+    p = Proposal.of(proposal(evidence=[1, 50]))
+    assert canon(p, 50, [(50, met)], [feat(trigger=1)]) == []
+    assert canon(p, 50, [(50, {**met, "evidence": [2]})], [])
 
 
 async def test_complete_path_retries_records_toast_and_journal_then_rolls_back():
@@ -443,17 +459,40 @@ async def test_hidden_truth_never_reaches_the_chronicler():
         assert not chronicle.facts("feat")
 
 
-@pytest.mark.parametrize("history", [
-    [feat(id=str(i), day=i) for i in range(1, 4)],
-    [feat(day=10, hour=7, minute=59)],
-    [feat(evidence=[2])],
+@pytest.mark.parametrize(("history", "occasion"), [
+    ([feat(id=str(i), day=i) for i in range(1, 4)], crime()),
+    ([feat(day=10, hour=7, minute=59)], crime()),
+    ([feat(evidence=[2])], crime()),
+    ([feat(id=str(i), day=i) for i in range(1, 4)],
+     {"fact": "challenge_met", "kind": "no_blood", "evidence": [1]}),
 ])
-async def test_budget_discards_without_a_model_call(history):
+async def test_budget_discards_without_a_model_call(history, occasion):
     async with world(proposal(), history=history) as (_, chronicle, chronicler, llm, _):
-        chronicle.record(crime())
+        chronicle.record(occasion)
         await settled(chronicler)
         assert llm.calls == []
         assert len(chronicle.facts("feat")) == len(history)
+
+
+async def test_challenge_bypasses_daily_budget_and_shows_old_evidence():
+    history = [
+        feat(day=10, hour=7, minute=59, trigger=2),
+        {"fact": "quest_outcome", "quest": "Q", "how": "done", "pay": "full"},
+        *[{"fact": "visited", "waypoint": "TOWER"} for _ in range(41)],
+    ]
+    trigger = len(history) + 1
+    async with world(proposal(evidence=[2, trigger]), history=history) as (
+        _, chronicle, chronicler, llm, _,
+    ):
+        seq = chronicle.record({
+            "fact": "challenge_met", "challenge": 1, "kind": "no_blood",
+            "line": 1, "people": ["LOBART"], "evidence": [2],
+        })
+        await settled(chronicler)
+        assert seq == trigger and len(llm.calls) == 1
+        assert len(chronicle.facts("feat")) == 2
+        assert "#2 quest_outcome " in llm.calls[0][1][0].content
+        assert chronicle.facts("feat")[-1]["evidence"] == [2, trigger]
 
 
 @pytest.mark.parametrize("answer", [proposal(title="Кошель!"), proposal(verdict="none")])
@@ -482,7 +521,10 @@ async def test_model_error_loses_the_occasion(caplog):
         assert "test unavailable" in caplog.text
 
 
-async def test_loading_cancels_the_wait_and_an_inflight_model():
+@pytest.mark.parametrize("message", [
+    Loading(type="loading"), Session(type="session", branch="B", reason="load"),
+])
+async def test_loading_cancels_the_wait_and_an_inflight_model(message):
     for gather_s, model_delay in [(60, 0), (0, 60)]:
         backend = FakeBackend(
             script=[FakeStep(tool_calls=[ToolCall("write_feat", proposal())])],
@@ -492,9 +534,11 @@ async def test_loading_cancels_the_wait_and_an_inflight_model():
             chronicle.record(crime())
             if model_delay:
                 await _until(lambda: bool(llm.calls))
-            chronicle.link._dispatch(Loading(type="loading"))
-            chronicle.link._dispatch(Session(type="session", branch="B", reason="load"))
+            chronicle.record({"fact": "challenge_met", "kind": "no_blood", "evidence": [1]})
+            assert len(chronicler._pending_challenges) == 1
+            chronicle.link._dispatch(message)
             await settled(chronicler)
+            assert not chronicler._pending_challenges
             assert chronicle.facts("feat") == []
             assert len(llm.calls) == (1 if model_delay else 0)
 
@@ -515,6 +559,42 @@ async def test_while_busy_only_the_latest_occasion_waits():
         text = llm.calls[1][1][0].content
         assert f"#{latest}" in text and "truce" in text
         assert not chronicle.facts("feat")
+
+
+async def test_pending_challenges_survive_newer_ordinary_occasions(monkeypatch):
+    backend = FakeBackend(
+        script=[FakeStep(tool_calls=[ToolCall("write_feat", proposal(verdict="none"))])], delay=0,
+    )
+    started, release = asyncio.Event(), asyncio.Event()
+    stream = backend.stream
+
+    async def wait_first(**kwargs):
+        if not started.is_set():
+            started.set()
+            await release.wait()
+        async for event in stream(**kwargs):
+            yield event
+
+    monkeypatch.setattr(backend, "stream", wait_first)
+    async with world(backend=backend) as (_, chronicle, chronicler, llm, _):
+        chronicle.record(crime())
+        await _until(started.is_set)
+        first = chronicle.record({"fact": "challenge_met", "kind": "no_blood", "evidence": [1]})
+        chronicle.record({"fact": "hero_yield", "npc": "N"})
+        second = chronicle.record({"fact": "challenge_met", "kind": "mercy", "evidence": [1]})
+        chronicle.record({"fact": "truce", "npc": "N"})
+        for seq, title in [(first, "Тихий путь"), (second, "Мягкая рука")]:
+            backend.script.append(FakeStep(tool_calls=[ToolCall(
+                "write_feat", proposal(title=title, text="Завершил дело.", evidence=[seq]),
+            )]))
+        release.set()
+        await settled(chronicler)
+        assert [fact["trigger"] for fact in chronicle.facts("feat")] == [first, second]
+        assert len(llm.calls) == 3
+        for call, seq in zip(llm.calls[1:], [first, second], strict=True):
+            assert call[1][0].content.startswith(f"Повод: #{seq} challenge_met ")
+        assert not chronicler._pending_challenges
+        assert chronicler._pending is None
 
 
 async def test_story_state_timeout_drops_only_the_active_occasion(monkeypatch, caplog):

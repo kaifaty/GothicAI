@@ -18,6 +18,7 @@ from gothic_ai.game import GameError
 from gothic_ai.gamedata.storygraph import StoryGraph, load
 from gothic_ai.llm.fake import FakeBackend
 from gothic_ai.memory import MemoryStore
+from gothic_ai.people_knowledge import PeopleKnowledge
 from gothic_ai.perception import PerceptionDesk
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import Look
@@ -153,6 +154,32 @@ def test_a_rumor_goes_round_the_meetings_in_order(graph, monkeypatch):
     assert second["about_name"] == "Лобарт" and second["day"] == 1
     # the city has no meeting with the farm
     assert VATRAS not in rumor.known and ANDRE not in rumor.known
+
+
+@pytest.mark.parametrize("kind", ["no_blood", "no_reward", "secret_kept", "mercy"])
+def test_challenge_hint_source_knows_and_passes_news_to_an_acquaintance(graph, monkeypatch, kind):
+    monkeypatch.setattr(social, "P_MEET", 1.0)
+    monkeypatch.setattr(social, "P_DEAL", 0.0)
+    r, _, facts = _rumors(Social(PEOPLE, graph))
+    r.rumors.clear()
+    fact = {
+        "fact": "challenge_hint", "id": "CH1", "challenge": 12, "kind": kind,
+        "npc": ANDRE, "name": "Андре", "witnesses": [LOBART],
+        "witness_names": {LOBART: "Лобарт"}, "day": 1,
+    }
+    facts.append(fact)
+    r._on_fact(fact)
+    [rumor] = r.rumors.values()
+    assert rumor.known == {LOBART: 0} and not rumor.is_player
+    desk = PeopleKnowledge(r.chronicle)
+    [direct] = desk.of(LOBART)
+    assert direct.direct and direct.subject == ANDRE
+    assert r.spread(DAY + _h(9), DAY + _h(10)) == 1
+    assert rumor.known == {LOBART: 0, HILDA: 1}
+    [heard] = desk.of(HILDA)
+    assert not heard.direct and heard.source == LOBART and heard.subject == ANDRE
+    assert heard.description() == direct.description() == rumor.description()
+    assert facts[-1]["subject"] == ANDRE and facts[-1]["to"] == HILDA
 
 
 def test_dealings_bring_it_to_the_city_once_a_day(graph, monkeypatch):

@@ -20,6 +20,8 @@ from .attitudes import non_hostile
 from .authoring import Author
 from .casting import Casting
 from .chains import ChainAuthor
+from .challenges import KINDS as CHALLENGE_KINDS
+from .challenges import line_people
 from .chronicle import Fact
 from .crime_law import CrimeLaw
 from .crimes import Crimes
@@ -88,6 +90,12 @@ INSTRUCTIONS = """\
 Людей и места выбирай только из сводки. При нехватке бюджета на людей выбери quest или chain без новых
 людей или none. Отказ кода исправь, не повторяй его."""
 
+CHALLENGE_INSTRUCTIONS = """\
+Поле challenge — null или одно скрытое условие {kind}: no_blood — не убивать людей линии;
+no_reward — исполнить поручение без платы; secret_kept — соврать в линии и сохранить тайну;
+mercy — пощадить человека линии. Не больше одного условия, только если оно естественно для людей
+и сюжета линии; чаще оставляй null. Герою условие не сообщается."""
+
 
 class Proposal(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -101,6 +109,7 @@ class Proposal(BaseModel):
     follows: str = ""
     crime: str = ""
     requires: list[dict[str, Any]] = Field(default_factory=list)
+    challenge: dict[str, str] | None = None
 
     @classmethod
     def of(cls, raw: dict[str, Any]) -> Proposal:
@@ -124,6 +133,17 @@ PROPOSE_TOOL = Tool(
             "reason": {"type": "string"},
             "follows": {"type": "string"},
             "crime": {"type": "string"},
+            "challenge": {
+                "anyOf": [
+                    {"type": "null"},
+                    {
+                        "type": "object",
+                        "properties": {"kind": {"type": "string", "enum": sorted(CHALLENGE_KINDS)}},
+                        "required": ["kind"],
+                        "additionalProperties": False,
+                    },
+                ],
+            },
             "requires": {
                 "type": "array",
                 "items": {
@@ -161,7 +181,8 @@ PROPOSE_TOOL = Tool(
             },
         },
         "required": [
-            "kind", "giver", "place", "new_people", "premise", "reason", "follows", "crime", "requires"
+            "kind", "giver", "place", "new_people", "premise", "reason", "follows", "crime",
+            "requires", "challenge",
         ],
         "additionalProperties": False,
     },
@@ -285,8 +306,25 @@ class _Build:
 
 
 class ShowrunnerModel:
-    def __init__(self, llm: LLMBackend) -> None:
+    def __init__(self, llm: LLMBackend, *, feat_challenges: bool = True) -> None:
         self.llm = llm
+        self.instructions = INSTRUCTIONS
+        self.tool = PROPOSE_TOOL
+        if feat_challenges:
+            self.instructions += "\n" + CHALLENGE_INSTRUCTIONS
+        else:
+            self.tool = Tool(
+                PROPOSE_TOOL.name,
+                PROPOSE_TOOL.description,
+                {
+                    **PROPOSE_TOOL.parameters,
+                    "properties": {
+                        k: v for k, v in PROPOSE_TOOL.parameters["properties"].items()
+                        if k != "challenge"
+                    },
+                    "required": [k for k in PROPOSE_TOOL.parameters["required"] if k != "challenge"],
+                },
+            )
 
     async def propose(
         self, brief: Brief, previous: dict[str, Any] | None = None, errors: list[str] | None = None
@@ -306,7 +344,7 @@ class ShowrunnerModel:
         calls = []
         try:
             async for ev in self.llm.stream(
-                instructions=INSTRUCTIONS, messages=messages, tools=[PROPOSE_TOOL], cache_key=CACHE_KEY
+                instructions=self.instructions, messages=messages, tools=[self.tool], cache_key=CACHE_KEY
             ):
                 if isinstance(ev, ToolCall) and ev.name == PROPOSE:
                     calls.append(ev)
@@ -328,11 +366,13 @@ class Showrunner:
         clock: Callable[[], float] = time.time,
         crimes: Crimes | None = None,
         law: CrimeLaw | None = None,
+        feat_challenges: bool = True,
     ) -> None:
         self.occasions, self.author, self.chains, self.casting = occasions, author, chains, casting
         self.link, self.chronicle, self.places = occasions.link, occasions.chronicle, occasions.places
         self.book, self.rules = author.book, author.rules
-        self.model, self.clock = ShowrunnerModel(llm), clock
+        self.model = ShowrunnerModel(llm, feat_challenges=feat_challenges)
+        self.clock, self.feat_challenges = clock, feat_challenges
         self.crimes, self.law = crimes, law
         self._lock = asyncio.Lock()
         self._generation = 0
@@ -826,6 +866,11 @@ class Showrunner:
 
     def canon(self, p: Proposal, brief: Brief) -> list[str]:
         errors = []
+        if p.challenge is not None:
+            if not self.feat_challenges:
+                errors.append("hidden challenges are disabled")
+            elif set(p.challenge) != {"kind"} or p.challenge.get("kind") not in CHALLENGE_KINDS:
+                errors.append(f"unknown challenge: {p.challenge!r}")
         if p.kind not in {"quest", "chain", "stranger", "none"}:
             errors.append(f"неизвестный вид линии {p.kind!r}")
         if p.kind in {"quest", "chain"}:
@@ -1096,9 +1141,9 @@ class Showrunner:
             quests = [q for q in self.book.all() if q not in build.before_quests]
         # A stranger may have been recorded just before Loading interrupted character()'s return.
         giver = build.giver or (characters[0] if p.kind == "stranger" and len(characters) == 1 else "")
-        build.outcome = self._record(
-            "line_failed" if errors else "line",
-            brief.occasion,
+        build.outcome = dict(
+            fact="line_failed" if errors else "line",
+            occasion=brief.occasion,
             kind=p.kind,
             giver=giver,
             premise=p.premise,
@@ -1113,4 +1158,12 @@ class Showrunner:
             wall_time=self.clock(),
             **({"why": errors} if errors else {}),
         )
+        seq = self.chronicle.record(build.outcome)
+        if not errors and self.feat_challenges and p.challenge is not None and seq is not None:
+            self.chronicle.record({
+                "fact": "challenge", "kind": p.challenge["kind"], "line": seq,
+                "quests": quests, "people": line_people(self.book, quests, giver, characters),
+                "chapter": brief.chapter,
+                **{k: build.outcome[k] for k in ("day", "hour", "minute")},
+            })
         return build.outcome
