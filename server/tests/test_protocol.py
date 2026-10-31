@@ -1,4 +1,7 @@
 import json
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -57,6 +60,24 @@ from gothic_ai.protocol import (
     parse_game_message,
 )
 from tests.fake_game import FakeGame
+
+
+def test_native_chronicle_parser_contract(tmp_path):
+    compiler = shutil.which("c++")
+    if compiler is None:
+        pytest.skip("needs a C++ compiler for the native chronicle parser")
+    engine = Path(__file__).resolve().parents[2] / "OpenGothic"
+    bridge = engine / "ai_bridge"
+    executable = tmp_path / "chronicle-contract"
+    subprocess.run(
+        [compiler, "-std=c++20", "-Wall", "-Wconversion", "-Werror", "-I", str(bridge),
+         "-isystem", str(engine / "lib" / "rapidjson" / "include"),
+         str(bridge / "tests" / "chronicle_contract.cpp"), str(bridge / "chronicledata.cpp"),
+         str(bridge / "textcodec.cpp"), "-o", str(executable)],
+        check=True, capture_output=True, text=True, timeout=60,
+    )
+    checked = subprocess.run([str(executable)], check=True, capture_output=True, text=True, timeout=10)
+    assert checked.stdout == "Chronicle contract: 15 checks passed\n"
 
 
 @pytest.mark.parametrize("counters", [{}, {
