@@ -106,8 +106,11 @@ def create_settings(path, source, repo, home):
 def build_command(source):
     return [str(Path.home() / "gothic-ai/bin/gq"), "run", "--class", "quick",
             "--threads", "12", "--mem", "12G", "--max", "30m",
-            "--name", "Gothic AI install/update", "--", "bash", "-euc",
-            'source scripts/ryzen-build.sh; exec "$@"', "ryzen-play",
+            "--name", "Gothic AI install/update", "--", *prepare_command(source)]
+
+
+def prepare_command(source):
+    return ["bash", "-euc", 'source scripts/ryzen-build.sh; exec "$@"', "ryzen-play",
             sys.executable, "-c", source, "__prepare"]
 
 
@@ -212,7 +215,7 @@ def atomic_write(path, text):
             temporary.unlink(missing_ok=True)
 
 
-def auto_update(expected_origin):
+def auto_update(expected_origin, *, admitted=False):
     home = Path.home()
     repo = home / "gothic-ai/play"
     state_path = repo.parent / "play-update.json"
@@ -231,10 +234,26 @@ def auto_update(expected_origin):
     try:
         if state_path.exists():
             state["failed_commit"] = json.loads(state_path.read_text())["failed_commit"]
-        run(["git", "-C", repo, "fetch", "origin"])
+        if not admitted:
+            run(["git", "-C", repo, "fetch", "origin"])
         state.update(old_commit=commit("HEAD"), new_commit=commit("origin/main"))
-        if state["old_commit"] == state["new_commit"]:
-            return finish("up_to_date")
+        if not admitted:
+            if state["old_commit"] == state["new_commit"]:
+                return finish("up_to_date")
+            if state["failed_commit"] == state["new_commit"]:
+                return finish("build_failed_rolled_back", detail="Skipping previously failed origin/main")
+            previous = state_path.read_text() if state_path.exists() else None
+            os.chdir(repo)
+            os.environ["GQ_OWNER"] = "ryzen-play-autoupdate"
+            command = build_command("")
+            command = command[:command.index("--") + 1] + [
+                sys.executable, str(repo / "scripts/ryzen-play.sh"), "__auto_build", expected_origin]
+            # Wait without locking or changing the checkout. systemd serializes runs.
+            result = owned_process(command, keep_stdin=True)
+            current = state_path.read_text() if state_path.exists() else None
+            if current == previous:
+                return finish("error", result or 2, error=f"gq exited {result} without an update result")
+            return result
         with (repo.parent / "play.install.lock").open("a") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -242,7 +261,7 @@ def auto_update(expected_origin):
                 return finish("busy")
             check_tools(home)
             check_checkout(repo, expected_origin)
-            # A manual update may have finished between fetch and locking.
+            # A manual update may have finished while this job was queued.
             state.update(old_commit=commit("HEAD"), new_commit=commit("origin/main"))
             if state["old_commit"] == state["new_commit"]:
                 return finish("up_to_date")
@@ -251,10 +270,8 @@ def auto_update(expected_origin):
             run(["git", "-C", repo, "pull", "--ff-only"])
             state["new_commit"] = commit("HEAD")
             os.chdir(repo)
-            os.environ["GQ_OWNER"] = "ryzen-play-autoupdate"
             script = repo / "scripts/ryzen-play.sh"
-            # A systemd oneshot inherits /dev/null; gq needs a live input pipe.
-            result = owned_process(build_command(script.read_text()), keep_stdin=True)
+            result = subprocess.run(prepare_command(script.read_text()), check=False).returncode
             if result in (0, 3):
                 write_desktop_entry(repo, result)
                 state["failed_commit"] = ""
@@ -262,7 +279,7 @@ def auto_update(expected_origin):
             state["failed_commit"] = state["new_commit"]
             state["build_exit"] = result
             run(["git", "-C", repo, "reset", "--hard", state["old_commit"]])
-            rollback = owned_process(build_command(script.read_text()), keep_stdin=True)
+            rollback = subprocess.run(prepare_command(script.read_text()), check=False).returncode
             state["rollback_exit"] = rollback
             if rollback not in (0, 3):
                 raise ValueError(f"Rollback build failed with exit {rollback}")
@@ -359,6 +376,8 @@ def main(argv=None):
             return prepare()
         if argv[:1] == ["__auto"]:
             return auto_update(argv[1])
+        if argv[:1] == ["__auto_build"]:
+            return auto_update(argv[1], admitted=True)
         if argv[:1] == ["__autoupdate"]:
             payload = json.loads(sys.stdin.readline())
             return manage_autoupdate(argv[1], payload.get("origin"))

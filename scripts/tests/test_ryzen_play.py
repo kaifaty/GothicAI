@@ -383,14 +383,23 @@ class RyzenPlayTests(unittest.TestCase):
             old = play_git(repo, "rev-parse", "HEAD")
             state_path = home / "gothic-ai/play-update.json"
             with patch.object(install.Path, "home", return_value=home), \
-                    patch.object(install, "owned_process") as build, \
+                    patch.object(install.os, "chdir"), patch.dict(install.os.environ), \
+                    patch.object(install, "owned_process") as queued, \
                     patch.object(install, "run", wraps=install.run) as run:
                 self.assertEqual(install.auto_update(str(upstream)), 0)
+                queued.assert_not_called()
                 state = json.loads(state_path.read_text())
                 self.assertEqual(state["result"], "up_to_date")
                 self.assertEqual((state["old_commit"], state["new_commit"]), (old, old))
                 self.assertTrue(state["time"])
                 target = advance_play(upstream, "new installer\n")
+
+                def admitted(command, *, keep_stdin=False):
+                    self.assertTrue(keep_stdin)
+                    self.assertEqual(play_git(repo, "rev-parse", "HEAD"), old)
+                    return install.main(command[-2:])
+
+                queued.side_effect = admitted
                 with (home / "gothic-ai/play.install.lock").open("a") as lock:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     self.assertEqual(install.auto_update(str(upstream)), 0)
@@ -398,7 +407,7 @@ class RyzenPlayTests(unittest.TestCase):
                 self.assertEqual(state["result"], "busy")
                 self.assertEqual((state["old_commit"], state["new_commit"]), (old, target))
                 self.assertFalse(any("pull" in call.args[0] for call in run.call_args_list))
-                build.assert_not_called()
+                queued.assert_called_once()
             self.assertEqual(play_git(repo, "rev-parse", "HEAD"), old)
         probe = "import select, sys; sys.exit(bool(select.select([sys.stdin], [], [], 0)[0]))"
         self.assertEqual(install.owned_process([install.sys.executable, "-c", probe], keep_stdin=True), 0)
@@ -422,26 +431,61 @@ class RyzenPlayTests(unittest.TestCase):
             before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in protected}
             state_path = home / "gothic-ai/play-update.json"
             builds = []
+            in_job = False
+            lock_busy = False
+            real_run = subprocess.run
+            installer_run = install.run
 
-            def build(command, *, keep_stdin=False):
+            def admitted(command, *, keep_stdin=False):
+                nonlocal in_job
                 self.assertTrue(keep_stdin)
+                separator = command.index("--")
+                expected = install.build_command("")
+                self.assertEqual(command[:separator], expected[:expected.index("--")])
+                self.assertEqual(command[separator + 1:], [
+                    install.sys.executable, str(repo / "scripts/ryzen-play.sh"), "__auto_build", str(upstream),
+                ])
+                self.assertEqual(play_git(repo, "rev-parse", "HEAD"), old)
+                self.assertEqual((repo / "scripts/ryzen-play.sh").read_text(), "old installer\n")
+                with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                    if lock_busy:
+                        with self.assertRaises(BlockingIOError):
+                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    else:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                in_job = True
+                try:
+                    return install.main(command[-2:])
+                finally:
+                    in_job = False
+
+            def build(command, *args, **kwargs):
+                if command[0] != "bash" or command[-1] != "__prepare":
+                    return real_run(command, *args, **kwargs)
+                self.assertTrue(in_job)
                 with (home / "gothic-ai/play.install.lock").open("a") as lock:
                     with self.assertRaises(BlockingIOError):
                         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 builds.append((play_git(repo, "rev-parse", "HEAD"), command))
-                return 1 if len(builds) == 1 else 3
+                return subprocess.CompletedProcess(command, 1 if len(builds) == 1 else 3)
+
+            def run_inside_queue(command, **kwargs):
+                if command[0] == "git" and "pull" in command:
+                    self.assertTrue(in_job)
+                return installer_run(command, **kwargs)
 
             with patch.object(install.Path, "home", return_value=home), \
                     patch.object(install.os, "chdir"), patch.dict(install.os.environ), \
-                    patch.object(install, "owned_process", side_effect=build) as queued, \
-                    patch.object(install, "run", wraps=install.run) as run, \
+                    patch.object(install, "owned_process", side_effect=admitted) as queued, \
+                    patch.object(install.subprocess, "run", side_effect=build), \
+                    patch.object(install, "run", side_effect=run_inside_queue) as run, \
                     patch.object(install.sys, "stdout", new_callable=io.StringIO) as journal:
                 self.assertNotEqual(install.auto_update(str(upstream)), 0)
+                queued.assert_called_once()
                 self.assertEqual([commit for commit, _ in builds], [target, old])
                 self.assertEqual([command[-2] for _, command in builds],
                                  ["failed installer\n", "old installer\n"])
-                self.assertTrue(all(command[command.index("--class") + 1] == "quick"
-                                    for _, command in builds))
+                self.assertTrue(all(command[0] == "bash" and "gq" not in command for _, command in builds))
                 self.assertEqual(play_git(repo, "rev-parse", "HEAD"), old)
                 self.assertEqual(play_git(repo, "branch", "--show-current"), "main")
                 state = json.loads(state_path.read_text())
@@ -456,12 +500,21 @@ class RyzenPlayTests(unittest.TestCase):
                 with (home / "gothic-ai/play.install.lock").open("a") as lock:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     self.assertEqual(install.auto_update(str(upstream)), 0)
-                self.assertEqual(json.loads(state_path.read_text())["result"], "busy")
+                self.assertEqual(json.loads(state_path.read_text())["result"], "build_failed_rolled_back")
                 self.assertEqual(install.auto_update(str(upstream)), 0)
-                self.assertEqual(queued.call_count, 2)
+                self.assertEqual(queued.call_count, 1)
                 self.assertFalse(any("pull" in call.args[0] for call in run.call_args_list))
                 self.assertEqual(json.loads(state_path.read_text())["failed_commit"], target)
                 latest = advance_play(upstream, "fixed installer\n")
+                lock_busy = True
+                with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self.assertEqual(install.auto_update(str(upstream)), 0)
+                self.assertEqual(json.loads(state_path.read_text())["result"], "busy")
+                self.assertEqual(json.loads(state_path.read_text())["failed_commit"], target)
+                self.assertEqual(queued.call_count, 2)
+                self.assertEqual(len(builds), 2)
+                lock_busy = False
                 self.assertEqual(install.auto_update(str(upstream)), 0)
                 self.assertEqual(queued.call_count, 3)
                 self.assertEqual(play_git(repo, "rev-parse", "HEAD"), latest)
