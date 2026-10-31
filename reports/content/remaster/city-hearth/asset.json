@@ -1,0 +1,25 @@
+{
+  "asset": "city-hearth",
+  "title": "Кухня и очаг: котёл, сковорода, кострища, плита, камины, уличный светильник",
+  "kind": "props",
+  "created": "2026-10-31",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "city-hearth"
+  ],
+  "sources": [],
+  "selected": {},
+  "reviews": [],
+  "gates": [
+    {
+      "gate": "preserve",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-31",
+      "quote": "Принимаю",
+      "note": null
+    }
+  ],
+  "build": null,
+  "backup": null
+}
