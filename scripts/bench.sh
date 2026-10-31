@@ -294,16 +294,6 @@ fi
 
 GAME_BIN="$GAME_BIN" bash "$ROOT/scripts/base-ensure.sh" "$GOTHIC_DIR"
 
-# Base preparation can outlast the caller's game check. Check again immediately
-# before launching on the shared Mac, rather than opening a second game.
-if [[ "$(uname -s)" == Darwin ]]; then
-  if LC_ALL=C pgrep -x Gothic2Notr >/dev/null; then
-    echo 'bench: waiting for the other local game to exit' >&2
-    while LC_ALL=C pgrep -x Gothic2Notr >/dev/null; do sleep 1; done
-  fi
-  LC_ALL=C pgrep -fl '[G]othic2Notr' || echo absent
-fi
-
 BACKGROUND=1
 if [[ "$NAME" == streaming-flythrough ]]; then
   export OPENGOTHIC_FRAME_PROFILE="$OUT/frameprofile.csv" OPENGOTHIC_BENCH_VISIBLE=1
