@@ -1,6 +1,7 @@
 """Launcher settings: what to run and how (`settings.toml`) and API keys (`secrets.toml`, mode 600).
 
-Both files live in ~/.config/gothic-ai/ next to the ChatGPT tokens. The services do not read them: the
+Both files live in ~/.config/gothic-ai/ next to the ChatGPT tokens (on Windows in the user profile, whose
+permissions keep them private: there are no file modes). The services do not read them: the
 launcher hands the values over as flags and environment variables the services already understand (see
 commands.py). Titles and descriptions are for the launcher window, which builds its form from the JSON
 Schema of these models.
@@ -9,6 +10,7 @@ Schema of these models.
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -246,7 +248,7 @@ class Config:
 def read_env_file(path: Path) -> dict[str, str]:
     """`KEY=value` lines as the services read them (cli.load_env_file)."""
     out: dict[str, str] = {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         key, sep, value = line.strip().removeprefix("export ").partition("=")
         if sep and key and not key.startswith("#"):
             out[key.strip()] = value.strip().strip("'\"")
@@ -257,7 +259,7 @@ def _load[M: BaseModel](model: type[M], path: Path) -> M:
     if not path.is_file():
         return model()
     try:
-        return model.model_validate(tomllib.loads(path.read_text()))
+        return model.model_validate(tomllib.loads(path.read_text(encoding="utf-8")))  # TOML is UTF-8
     except tomllib.TOMLDecodeError as err:
         raise SettingsError(f"{path}: {err}") from None
     except ValidationError as err:
@@ -272,9 +274,10 @@ def _plain(model: BaseModel) -> dict[str, Any]:
 def _write(path: Path, text: str, mode: int) -> None:
     """Atomic, and the file never exists with looser permissions than `mode`."""
     tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), mode)
     try:
-        os.fchmod(fd, mode)
+        if sys.platform != "win32":  # Windows has no modes: the user profile's permissions apply
+            os.fchmod(fd, mode)
         os.write(fd, text.encode())
     finally:
         os.close(fd)

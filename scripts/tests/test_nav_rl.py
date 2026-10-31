@@ -1646,6 +1646,8 @@ def test_eval_screen_reuses_only_matching_finished_runner(tmp_path, monkeypatch)
     (source / "scripts").mkdir()
     launcher = source / "scripts/nav-eval-screen-remote.sh"
     launcher.write_text("fixed build command")
+    flags = source / "scripts/ryzen-build.sh"
+    flags.write_text("fixed flags")
     previous, output = runs / "first", runs / "next"
     previous.mkdir(parents=True)
     output.mkdir()
@@ -1669,4 +1671,7 @@ def test_eval_screen_reuses_only_matching_finished_runner(tmp_path, monkeypatch)
     assert screen.reuse_runner(source, runs, output) != source_sha and not copied.exists()
     native.write_text("native source")
     launcher.write_text("changed build command")
+    assert screen.reuse_runner(source, runs, output) != source_sha and not copied.exists()
+    launcher.write_text("fixed build command")
+    flags.write_text("changed flags")
     assert screen.reuse_runner(source, runs, output) != source_sha and not copied.exists()

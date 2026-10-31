@@ -47,6 +47,9 @@ class World final {
     void                 postInit();
     std::string_view     name() const { return wname; }
     double               loadMilliseconds() const { return worldLoadMs; }
+    const std::vector<WorldObjects::PlacedItem>& placedItemCensus() const { return wobj.placedItemCensus(); }
+    double               placedItemValidationMilliseconds() const { return wobj.placedItemValidationMilliseconds(); }
+    size_t               placedItemsCreatedThisFrame() const { return wobj.placedItemsCreatedThisFrame(); }
     const ChunkTable&    chunkTable() const { return chunks; }
     ChunkResidency*      chunkResidency() const { return residency.get(); }
     void                 updateLandscape(const Camera& camera);

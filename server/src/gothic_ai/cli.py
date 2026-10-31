@@ -2168,6 +2168,12 @@ async def serve(args: argparse.Namespace) -> int:
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario feats: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
+            elif args.scenario == "feat_fame":
+                assert state.dialogue is not None and state.talk is not None and state.rumors is not None
+                results = await scenarios.feat_fame(link, state.dialogue, state.talk, state.rumors)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario feat_fame: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
             elif args.scenario == "repair":
                 assert state.director is not None and state.story is not None
                 results = await scenarios.repair_after_death(link, state.director, state.story)
@@ -3176,6 +3182,7 @@ def main() -> None:
             "repair",
             "death_load",
             "feats",
+            "feat_fame",
             "authored",
             "occasions",
             "questlog",

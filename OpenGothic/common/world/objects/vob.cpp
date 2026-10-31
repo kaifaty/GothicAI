@@ -246,8 +246,9 @@ std::unique_ptr<Vob> Vob::load(Vob* parent, World& world, const asset::VirtualOb
       return std::unique_ptr<Vob>(new Vob(parent,world,vob,flags));
       }
     case asset::VirtualObjectType::oCItem: {
-      if(flags)
-        world.addItem(reinterpret_cast<const asset::VItem&>(vob));
+      // Rebuild the complete authored catalogue before loading saved items.
+      // Trigger parents clear Static, including on their Item descendants.
+      world.addItem(reinterpret_cast<const asset::VItem&>(vob));
       // FIXME
       return std::unique_ptr<Vob>(new Vob(parent,world,vob,flags));
       }

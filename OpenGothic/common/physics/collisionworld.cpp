@@ -4,6 +4,7 @@
 #include "ragdoll.h"
 #include "cloth.h"
 #include "frameprofile.h"
+#include "gothic.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
@@ -81,6 +82,30 @@ namespace {
       bounds.mMax.SetComponent(axis,float(max[axis])+radius);
       }
     return bounds;
+    }
+
+  CollisionWorld::NativeTriangle traceTriangle(const JPH::Body& body, JPH::SubShapeID subShape,
+                                                JPH::Vec3Arg normal) {
+    CollisionWorld::NativeTriangle result;
+    JPH::SubShapeID remainder;
+    const auto* leaf=body.GetShape()->GetLeafShape(subShape,remainder);
+    if(leaf==nullptr || (leaf->GetSubType()!=JPH::EShapeSubType::Mesh && leaf->GetSubType()!=JPH::EShapeSubType::Triangle))
+      return result;
+    const auto base=body.GetCenterOfMassPosition();
+    JPH::Shape::SupportingFace face;
+    body.GetTransformedShape().GetSupportingFace(subShape,normal,base,face);
+    if(face.size()!=3)
+      return result;
+    result.valid=true;
+    result.nativeSubShapeId=subShape.GetValue();
+    if(leaf->GetSubType()==JPH::EShapeSubType::Mesh)
+      result.sourceTriangle=Physics::triangleData(*body.GetShape(),subShape);
+    result.normal={normal.GetX(),normal.GetY(),normal.GetZ()};
+    for(JPH::uint i=0;i<3;++i) {
+      result.vertices[i]=CollisionWorld::toCentimeters(base+face[i]);
+      result.edgesCm[i]=(face[(i+1)%3]-face[i]).Length()*100.f;
+      }
+    return result;
     }
 
   void submergedVolume(const JPH::Body& body, const JPH::Shape& shape, float waterY,
@@ -390,7 +415,42 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     }
 
   void onContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
-                 const JPH::ContactSettings& settings) {
+                 const JPH::ContactSettings& settings, bool persisted) {
+    if(const auto* target=solverTraceTarget.load(std::memory_order_relaxed)) {
+      const auto traced=[&](const JPH::Body& body) {
+        if(body.GetObjectLayer()!=DynamicWorld::C_Item)return false;
+        const auto* wrapper=reinterpret_cast<const CollisionBody*>(body.GetUserData());
+        return wrapper!=nullptr && wrapper->ptrType()==DynamicWorld::P_Item && wrapper->payload()==target;
+      };
+      const bool first=traced(a),second=traced(b);
+      if(first || second) {
+        const auto& item=first?a:b;
+        const auto& other=first?b:a;
+        const auto subshape=first?manifold.mSubShapeID2:manifold.mSubShapeID1;
+        for(uint i=0;i<manifold.mRelativeContactPointsOn1.size();++i) {
+          ItemSolverContact entry;
+          entry.nativeStep=simulationStep;
+          entry.itemBodyId=item.GetID().GetIndexAndSequenceNumber();
+          entry.bodyId=other.GetID().GetIndexAndSequenceNumber();
+          entry.persisted=persisted;
+          auto& contact=entry.contact;
+          const auto layer=other.GetObjectLayer();
+          if(layer!=DynamicWorld::C_Ragdoll && layer!=DynamicWorld::C_ActiveBody && layer!=DynamicWorld::C_LivingBody)
+            contact.body=reinterpret_cast<CollisionBody*>(other.GetUserData());
+          contact.category=int(layer);
+          contact.depth=manifold.mPenetrationDepth*100.f;
+          const auto outward=first?manifold.mWorldSpaceNormal:-manifold.mWorldSpaceNormal;
+          contact.axis={outward.GetX(),outward.GetY(),outward.GetZ()};
+          const auto point=first?manifold.GetWorldSpaceContactPointOn1(i):manifold.GetWorldSpaceContactPointOn2(i);
+          const auto otherPoint=first?manifold.GetWorldSpaceContactPointOn2(i):manifold.GetWorldSpaceContactPointOn1(i);
+          contact.point1=toCentimeters(point);
+          contact.point2=toCentimeters(otherPoint);
+          contact.triangle=traceTriangle(other,subshape,other.GetWorldSpaceSurfaceNormal(subshape,otherPoint));
+          std::lock_guard<std::mutex> guard(impactMutex);
+          solverContacts.push_back(std::move(entry));
+        }
+      }
+    }
     auto markNpcContact = [](const JPH::Body& movable, const JPH::Body& other) {
       if(movable.GetObjectLayer()!=DynamicWorld::C_MovableVob ||
          (other.GetObjectLayer()!=DynamicWorld::C_LivingBody && other.GetObjectLayer()!=DynamicWorld::C_ActiveBody))
@@ -512,11 +572,11 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
 
   void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
                       JPH::ContactSettings& settings) override {
-    onContact(a,b,manifold,settings);
+    onContact(a,b,manifold,settings,false);
     }
   void OnContactPersisted(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
                           JPH::ContactSettings& settings) override {
-    onContact(a,b,manifold,settings);
+    onContact(a,b,manifold,settings,true);
     }
 
   LayerInterface layers;
@@ -526,6 +586,8 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
   JPH::TempAllocatorImpl allocator;
   JPH::JobSystemThreadPool jobs;
   std::mutex impactMutex;
+  std::atomic<const Item*> solverTraceTarget {nullptr};
+  std::vector<ItemSolverContact> solverContacts;
   std::vector<Impact> impacts;
   std::vector<NoiseImpact> noises;
   uint64_t simulationStep = 0;
@@ -1578,6 +1640,41 @@ void CollisionWorld::CollisionBody::getAabb(JPH::Vec3& min, JPH::Vec3& max) cons
   max = box.mMax;
   }
 
+Tempest::Vec3 CollisionWorld::CollisionBody::lowestPoint() const {
+  JPH::BodyLockRead lock(owner->impl->system.GetBodyLockInterface(),id);
+  if(!lock.Succeeded())
+    throw std::runtime_error("Item lowest point requires a native body");
+  auto leaf=lock.GetBody().GetTransformedShape();
+  JPH::SubShapeID remainder;
+  while(leaf.mShape->GetType()==JPH::EShapeType::Decorated)
+    leaf=leaf.GetSubShapeTransformedShape(JPH::SubShapeID(),remainder);
+  if(leaf.mShape->GetType()!=JPH::EShapeType::Convex)
+    throw std::runtime_error("Item lowest point requires a convex shape");
+  const auto& shape=static_cast<const JPH::ConvexShape&>(*leaf.mShape);
+  const auto direction=leaf.mShapeRotation.Conjugated()*-JPH::Vec3::sAxisY();
+  JPH::ConvexShape::SupportBuffer buffer;
+  const auto* support=shape.GetSupportFunction(JPH::ConvexShape::ESupportMode::Default,buffer,leaf.GetShapeScale());
+  auto point=leaf.mShapeRotation*support->GetSupport(direction)-JPH::Vec3::sAxisY()*support->GetConvexRadius();
+  JPH::Shape::SupportingFace face;
+  shape.GetSupportingFace(JPH::SubShapeID(),-direction,leaf.GetShapeScale(),
+                          JPH::Mat44::sRotation(leaf.mShapeRotation),face);
+  JPH::Vec3 sum=JPH::Vec3::sZero();
+  size_t count=0;
+  for(const auto& vertex:face)
+    if(std::abs(vertex.GetY()-point.GetY())<=1.e-6f) {
+      sum+=vertex;
+      ++count;
+      }
+  // A flat support face (or edge) has no distinguished vertex. Its centroid
+  // gives a deterministic point on the actual envelope, including rotation.
+  if(count>1) {
+    const auto center=sum/float(count);
+    point.SetX(center.GetX());
+    point.SetZ(center.GetZ());
+    }
+  return toCentimeters(leaf.mShapePositionCOM+point);
+  }
+
 float CollisionWorld::CollisionBody::mass() const {
   if(owner==nullptr || id.IsInvalid()) return 0.f;
   JPH::BodyLockRead lock(owner->impl->system.GetBodyLockInterface(),id);
@@ -2016,7 +2113,8 @@ CollisionWorld::QueryResult CollisionWorld::raySweep(const Tempest::Vec3& from, 
   return result;
   }
 
-std::vector<CollisionWorld::Overlap> CollisionWorld::overlaps(const CollisionBody& body, float marginCm, uint32_t mask) const {
+std::vector<CollisionWorld::Overlap> CollisionWorld::overlaps(const CollisionBody& body, float marginCm, uint32_t mask,
+                                                            bool triangles) const {
   std::vector<Overlap> ret;
   JPH::RMat44 com;
   JPH::ShapeRefC shape;
@@ -2050,6 +2148,10 @@ std::vector<CollisionWorld::Overlap> CollisionWorld::overlaps(const CollisionBod
     o.axis     = toCentimeters(hit.mPenetrationAxis.NormalizedOr(JPH::Vec3::sZero())*0.01f);
     o.point1   = toCentimeters(base+hit.mContactPointOn1);
     o.point2   = toCentimeters(base+hit.mContactPointOn2);
+    if(triangles) {
+      const auto normal=native.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2,base+hit.mContactPointOn2);
+      o.triangle=traceTriangle(native,hit.mSubShapeID2,normal);
+      }
     if(o.body!=nullptr && o.body->mesh!=nullptr) {
       QueryResult info;
       info.body = o.body;
@@ -2784,19 +2886,39 @@ void CollisionWorld::wakeItems() {
 
 void CollisionWorld::prepareItemSweeps() {
   itemSweeps.clear();
-  if(!itemWake)
+  itemSweepTraceBody=nullptr;
+  itemSweepTraceIndex=size_t(-1);
+  if(!itemWake && itemTraceTarget==nullptr)
     return;
   // A contact or blade can activate a sleeper during this same step.
   for(auto* body:rigid) {
     if(body->category()!=DynamicWorld::C_Item)
       continue;
+    const bool traced=itemTraceTarget!=nullptr && body->ptrType()==DynamicWorld::P_Item && body->payload()==itemTraceTarget;
+    if(!itemWake && !traced)
+      continue;
     JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),body->id);
-    if(lock.Succeeded() && lock.GetBody().IsDynamic())
-      itemSweeps.emplace_back(body,toCentimeters(lock.GetBody().GetCenterOfMassPosition()));
+    if(lock.Succeeded() && lock.GetBody().IsDynamic()) {
+      const auto from=toCentimeters(lock.GetBody().GetCenterOfMassPosition());
+      if(itemWake)
+        itemSweeps.emplace_back(body,from);
+      if(traced) {
+        itemSweepTraceBody=body;
+        itemSweepTraceIndex=itemSweepTrace.size();
+        ItemSweepTrace trace;
+        trace.nativeStep=impl->simulationStep;
+        trace.itemBodyId=body->nativeId();
+        trace.from=trace.to=from;
+        trace.status=itemWake ? "budget" : "item_wake_off";
+        itemSweepTrace.push_back(std::move(trace));
+        }
+      }
     }
   }
 
 void CollisionWorld::recoverTunneledItems() {
+  if(itemSweepTraceBody!=nullptr)
+    itemSweepTrace[itemSweepTraceIndex].to=itemSweepTraceBody->centerOfMass();
   if(itemSweeps.empty())return;
   constexpr uint32_t mask=(1u<<DynamicWorld::C_Landscape)|(1u<<DynamicWorld::C_Object);
   struct StaticBodies final : JPH::BodyFilter {
@@ -2811,27 +2933,49 @@ void CollisionWorld::recoverTunneledItems() {
     const auto [body,from]=itemSweeps[itemSweepCursor];
     itemSweepCursor=(itemSweepCursor+1)%itemSweeps.size();
     const auto to=body->centerOfMass();
+    auto* trace=itemSweepTraceBody==body ? &itemSweepTrace[itemSweepTraceIndex] : nullptr;
     if(!std::isfinite(to.x) || !std::isfinite(to.y) || !std::isfinite(to.z)) {
+      if(trace!=nullptr) {trace->status="nonfinite";trace->triggered=true;}
       Tempest::Log::i("[physics] item recovery trigger: body=",body->nativeId()," path=nonfinite");
       recoverItem(*body,body->position());
       continue;
       }
     const auto origin=toMeters(from),end=toMeters(to);
-    if((end-origin).IsNearZero())continue;
+    if((end-origin).IsNearZero()) {
+      if(trace!=nullptr)trace->status="zero_motion";
+      continue;
+      }
     const JPH::RRayCast ray(origin,end-origin);
     JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> hits;
     ++rays;
     impl->rayCount.fetch_add(1,std::memory_order_relaxed);
     impl->system.GetNarrowPhaseQuery().CastRay(ray,settings,hits,QueryBroadPhaseFilter(mask),QueryLayerFilter(mask),staticBodies);
+    if(trace!=nullptr) {trace->tested=true;trace->hit=hits.HadHit();trace->status=trace->hit ? "ray" : "nohit";}
     if(!hits.HadHit())continue;
     JPH::Vec3 point,normal;
     {
       JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),hits.mHit.mBodyID);
-      if(!lock.Succeeded())continue;
+      if(!lock.Succeeded()) {
+        if(trace!=nullptr)trace->status="body_removed";
+        continue;
+        }
       point=ray.GetPointOnRay(hits.mHit.mFraction);
       normal=lock.GetBody().GetWorldSpaceSurfaceNormal(hits.mHit.mSubShapeID2,point);
+      if(trace!=nullptr) {
+        trace->bodyId=hits.mHit.mBodyID.GetIndexAndSequenceNumber();
+        trace->category=int(lock.GetBody().GetObjectLayer());
+        trace->point=toCentimeters(point);
+        trace->normal={normal.GetX(),normal.GetY(),normal.GetZ()};
+        trace->fraction=hits.mHit.mFraction;
+        trace->triangle=traceTriangle(lock.GetBody(),hits.mHit.mSubShapeID2,normal);
+        }
       }
     const float before=(origin-point).Dot(normal),after=(end-point).Dot(normal);
+    if(trace!=nullptr) {
+      trace->beforeCm=before*100.f;
+      trace->afterCm=after*100.f;
+      trace->triggered=before>0.f && after<0.f;
+      }
     if(before>0.f && after<0.f) {
       const auto face=toCentimeters(point);
       Tempest::Log::i("[physics] item recovery crossing: body=",body->nativeId(),
@@ -2844,6 +2988,33 @@ void CollisionWorld::recoverTunneledItems() {
       recoverItem(*body,body->position());
       }
     }
+  }
+
+void CollisionWorld::setItemTraceTarget(const Item* item) {
+  impl->solverTraceTarget.store(item,std::memory_order_relaxed);
+  {
+    std::lock_guard<std::mutex> guard(impl->impactMutex);
+    impl->solverContacts.clear();
+  }
+  itemTraceTarget=item;
+  itemSweepTraceBody=nullptr;
+  itemSweepTraceIndex=size_t(-1);
+  itemSweepTrace.clear();
+  }
+
+std::vector<CollisionWorld::ItemSweepTrace> CollisionWorld::takeItemSweepTrace() {
+  std::vector<ItemSweepTrace> result;
+  result.swap(itemSweepTrace);
+  itemSweepTraceBody=nullptr;
+  itemSweepTraceIndex=size_t(-1);
+  return result;
+  }
+
+std::vector<CollisionWorld::ItemSolverContact> CollisionWorld::takeItemSolverContacts() {
+  std::vector<ItemSolverContact> result;
+  std::lock_guard<std::mutex> guard(impl->impactMutex);
+  result.swap(impl->solverContacts);
+  return result;
   }
 
 void CollisionWorld::recoverItems() {
@@ -2897,9 +3068,11 @@ void CollisionWorld::recoverItem(CollisionBody& body, const Tempest::Vec3& faile
   body.inWater=false;
   body.waterRestTime=0;
   body.itemRecovered=true;
+  const auto* item=body.ptrType()==DynamicWorld::P_Item ? static_cast<const Item*>(body.payload()) : nullptr;
+  const auto identity=item!=nullptr && item->isPlacedItem() ? " zen_id="+std::to_string(item->placedItemZenId()) : std::string();
   Tempest::Log::i("[physics] item recovered: body=",body.nativeId()," from=",failedPosition.x,",",
                  failedPosition.y,",",failedPosition.z," rest=",body.itemRestTransform.at(3,0),",",
-                 body.itemRestTransform.at(3,1),",",body.itemRestTransform.at(3,2));
+                 body.itemRestTransform.at(3,1),",",body.itemRestTransform.at(3,2),identity);
   }
 
 void CollisionWorld::tick(uint64_t dt) {
@@ -3226,7 +3399,8 @@ void CollisionWorld::tick(uint64_t dt) {
       // that sleeping body to remain queryable so a native contact can wake it.
       // A sleeping water item also retains its native body, independently of
       // characters, so save/load, pickup and a buoyancy toggle remain physical.
-      disable = !native.IsActive() && !body->keepSleepingItem(toCentimeters(native.GetPosition()));
+      disable = !native.IsActive() && !body->keepSleepingItem(toCentimeters(native.GetPosition())) &&
+                !(Gothic::physicsFlags().placedItems && item->isPlacedItem());
       }
     item->setPhysicsMatrix(matrix);
     if(disable)

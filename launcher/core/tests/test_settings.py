@@ -1,5 +1,7 @@
 import stat
+import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +18,7 @@ def test_missing_files_mean_defaults(tmp_path):
     assert config.secrets.inworld_api_key is None
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="file modes and a POSIX path; Windows: test_windows.py")
 def test_saved_settings_load_back_and_keys_stay_in_their_own_file(tmp_path):
     config = Config.load(tmp_path)
     config.set("game.dir", "/games/Gothic II")
@@ -81,7 +84,7 @@ def test_import_from_env(tmp_path):
     assert skipped == ["GOTHIC_GPU_SSH"]
     assert config.settings.voice.voxtral_url == "http://gpu:47830"
     assert config.settings.llm.body_policy == "service"
-    assert str(config.settings.llm.body_net) == "/nets/p30.bodynet"
+    assert config.settings.llm.body_net == Path("/nets/p30.bodynet")
     assert config.settings.tts.provider == "voxcpm" and config.secrets.inworld_api_key == "iw"
     assert config.secrets.openai_api_key is None  # empty values are not settings
 
