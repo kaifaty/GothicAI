@@ -562,7 +562,8 @@ fi
 
 case "$SCENARIO" in
   # These fixtures own hold verdicts or measure native reactions before contact.
-  bandit_hold|fight_reactions_bandits|fight_reactions_flee) FEAT_ARGS+=(--no-parley) ;;
+  # crime_ally supplies Brago's attack on Cavalorn without a parley cause to test crimes.
+  bandit_hold|fight_reactions_bandits|fight_reactions_flee|crime_ally) FEAT_ARGS+=(--no-parley) ;;
 esac
 
 (cd "$ROOT/server" && exec uv run gothic-ai serve --port "$PORT" --scenario "$SCENARIO" --llm "$LLM" --exit-after --no-console \

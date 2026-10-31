@@ -193,6 +193,14 @@ class Parley:
         if not self.negotiable(npc):
             await self.link.send(HoldVerdictCmd(hold=message.hold, to="scripts"))
             return
+        conv = self.dialogue.conversations.get(npc)
+        if (
+            message.kind == "bandit_enemy" and message.other != "PLAYER"
+            and conv is not None and (conv.intent.goal, conv.intent.target) == ("fight", message.other)
+            and self.fight_reason(npc) is None
+        ):
+            await self.link.send(HoldVerdictCmd(hold=message.hold, to="scripts"))
+            return  # The accepted intent already chose this party member; keep its target.
         truce = self.truce(npc)
         quiet = self.quiet(npc)
         if message.kind == "party_enemy":
@@ -447,8 +455,15 @@ class Parley:
                     out.append(f)
         return out
 
-    def fight_reason(self, npc: str, snap: Snapshot | None = None) -> str | None:
+    def fight_reason(
+        self, npc: str, snap: Snapshot | None = None, target: str | None = "PLAYER",
+    ) -> str | None:
         npc = npc.upper()
+        target = target.upper() if target else None
+        if target != "PLAYER" and (
+            target is None or not (self.companion(target) or self.link.party.get(target, (0, 0))[1])
+        ):
+            return None
         if not self.negotiable(npc):
             return None
         self.tick()

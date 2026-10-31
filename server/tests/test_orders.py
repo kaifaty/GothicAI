@@ -450,7 +450,7 @@ async def test_companion_model_cannot_attack_a_gang_without_a_cause(reason, dire
     cm, dialogue, talk = await _desk(fake, FakeBackend("-", delay=0))
     try:
         await _follows(fake, dialogue, person(BANDIT, "Бандит", 6))
-        dialogue.fight_reason = lambda npc, snap: reason if npc == BANDIT else None
+        dialogue.fight_reason = lambda npc, snap, target: reason if npc == BANDIT else None
         conv = dialogue.conversations[GORN]
         result = dialogue._set_intent(conv, ToolCall("set_intent", {
             "goal": "fight", "target": BANDIT, "attitude": "friendly", "agenda": None,
@@ -474,7 +474,7 @@ async def test_companion_can_defend_against_an_attacker_during_parley(struck):
     cm, dialogue, talk = await _desk(fake, FakeBackend("-", delay=0))
     try:
         await _follows(fake, dialogue, person(BANDIT, "Бандит", 6))
-        dialogue.fight_reason = lambda npc, snap: "У вас уговор." if npc == BANDIT else None
+        dialogue.fight_reason = lambda npc, snap, target: "У вас уговор." if npc == BANDIT else None
         if struck:
             await fake.perception(GORN, "ASSESSOTHERSDAMAGE", BANDIT, victim="PLAYER")
         else:

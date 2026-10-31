@@ -667,7 +667,7 @@ class Orders:
             return None
         if self.parley_quiet(target) or (
             self.dialogue.fight_reason is not None and self.dialogue.fight_reason(
-                target.upper(), self.link.snapshots.get(target.upper())
+                target.upper(), self.link.snapshots.get(target.upper()), "PLAYER"
             ) is not None
         ):
             return "У шайки нет повода для драки: идут переговоры или действует уговор. Нужен приказ героя."

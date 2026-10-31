@@ -758,6 +758,47 @@ async def test_cause_attacks_player_immediately_for_overridden_and_native_bandit
         assert not dialogue.llm.calls
 
 
+@pytest.mark.parametrize(("membership", "cause"), [
+    ("orders", "weapon"), ("orders", "attack"), ("party", "weapon"),
+])
+async def test_bandit_needs_a_cause_to_fight_a_companion_and_keeps_the_chosen_target(
+    monkeypatch, membership, cause,
+):
+    async with world() as (fake, link, dialogue, _, parley):
+        fake.nearby.append({"id": COMPANION, "name": "Диего", "distance": 200, "guild": 3})
+        snap = await link.snapshot(BRAGO, fresh=True)
+        orders = Orders(link, TalkDesk(link, dialogue), dialogue)
+        companion = dialogue.open(COMPANION, "Диего", warm=False)
+        companion.intent = Intent("follow_hero", "PLAYER", "friendly")
+        parley.companion = orders.companion if membership == "orders" else lambda npc: False
+        if membership == "party":
+            link.party[COMPANION] = (1, 1)
+        conv = dialogue.conversations[BRAGO]
+        attack = ToolCall("set_intent", {"goal": "fight", "target": COMPANION.lower(), "attitude": "hostile"})
+        result = dialogue._set_intent(conv, attack, snap)
+        assert result.status == "rejected" and NO_REASON in result.output
+        assert conv.intent.goal != "fight"
+        citizen = dialogue.open(OTHER, "Горожанин", warm=False)
+        assert dialogue._set_intent(citizen, attack, snap).status == "accepted"
+
+        sent = verdicts(monkeypatch, link)
+        await parley._held(held(other=COMPANION), parley._generation)
+        await finish_hails(parley)
+        assert [(s.to, s.ms) for s in sent] == [("parley", LEASE_MS)]
+        if cause == "weapon":
+            armed(parley, "melee")
+        else:
+            parley._on_message(Perception(
+                type="perception", npc=BRAGO, perc="ASSESSDAMAGE", other=COMPANION, distance=100,
+            ))
+        assert dialogue._set_intent(conv, attack, snap).status == "accepted"
+        intent = conv.intent
+        await parley._held(held(other=COMPANION, key="chosen-target"), parley._generation)
+        assert sent[-1].to == "scripts" and sent[-1].ms is None
+        assert conv.intent is intent and intent.target == COMPANION
+        assert not any(op.get("do") == "attack" for msg in fake.story for op in msg.get("effects", []))
+
+
 async def test_no_cause_leases_before_a_slow_approach_and_hails_the_leader_once(monkeypatch):
     async with world() as (_, link, dialogue, chronicle, parley):
         approaches, turns = hail_body(monkeypatch, dialogue, parley)
