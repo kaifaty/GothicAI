@@ -397,6 +397,7 @@ class Npc final {
     void        fitHitZones() { visual.fitHitZones(); }
     std::string bowDump() const { return visual.bowDump(); }
     std::string animInfo(std::string_view name) const { return visual.animInfo(name); }
+    std::string bladePath(std::string_view name, float length) const { return visual.bladePath(name,length); }
     // ms the animation of that name takes as this one plays it (its overlays: the trained archers' reload)
     float       animTime(std::string_view name) const { return visual.animTime(name); }
     // the test bench: hit, it neither stumbles nor flinches (a target that keeps its pose)

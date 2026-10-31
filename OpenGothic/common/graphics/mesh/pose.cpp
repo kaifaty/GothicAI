@@ -306,6 +306,7 @@ void Pose::setSkeleton(const Skeleton* sk) {
   for(auto& i:hasSamples)
     i = S_None;
   blend.reset(numBones);
+  blend.setWeaponBody(skeleton!=nullptr && skeleton->findNode("ZS_RIGHTHAND")<skeleton->nodes.size());
   ik.setSkeleton(skeleton);
   gaze.setSkeleton(skeleton);
   lean.setSkeleton(skeleton);
