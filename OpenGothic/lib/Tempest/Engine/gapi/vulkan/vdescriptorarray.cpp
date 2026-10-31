@@ -213,6 +213,8 @@ void VDescriptorHeapArray::setTexture(size_t index, AbstractGraphicsApi::Texture
     throw std::system_error(GraphicsErrc::UnsupportedExtension,"texture update of a buffer descriptor array");
   if(index>=cnt)
     throw std::out_of_range("descriptor array index");
+  if(texture==nullptr)
+    throw std::system_error(GraphicsErrc::UnsupportedExtension,"null texture update of a descriptor heap array");
   dev.descAlloc.set(dPtrR+uint32_t(index),texture,mipLevel);
   }
 
