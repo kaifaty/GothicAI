@@ -524,6 +524,49 @@ JPH::ShapeRefC PhysicVbo::shape(bool splitLargeTriangles) const {
   return cached;
   }
 
+void PhysicVbo::overlapChunkSeams(std::vector<std::vector<uint32_t>>& chunks) const {
+  if(chunks.size()<2)
+    return;
+  std::vector<size_t> firstOwner(vert.size(),size_t(-1));
+  std::unordered_map<uint32_t,std::vector<size_t>> shared;
+  // Packing retains global source vertex indices, including across GLBs.
+  // Only vertices with multiple original owners need an adjacency list.
+  for(size_t chunk=0;chunk<chunks.size();++chunk)
+    for(const auto triangle:chunks[chunk]) {
+      if(size_t(triangle)>=triangleCount())
+        throw std::out_of_range("Physics chunk triangle is outside the source mesh");
+      for(size_t v=0;v<3;++v) {
+        const auto vertex=id[3*size_t(triangle)+v];
+        auto& first=firstOwner[vertex];
+        if(first==size_t(-1)) {
+          first=chunk;
+          } else if(first!=chunk) {
+          auto& owners=shared[vertex];
+          if(owners.empty())owners.push_back(first);
+          if(owners.back()!=chunk)owners.push_back(chunk);
+          }
+        }
+      }
+
+  std::vector<std::vector<uint32_t>> additions(chunks.size());
+  for(size_t chunk=0;chunk<chunks.size();++chunk)
+    for(const auto triangle:chunks[chunk])
+      for(size_t v=0;v<3;++v) {
+        const auto found=shared.find(id[3*size_t(triangle)+v]);
+        if(found==shared.end())continue;
+        for(const auto neighbor:found->second)
+          if(neighbor!=chunk)additions[neighbor].push_back(triangle);
+        }
+  // Merge only after adjacency and additions were computed from canonical
+  // ownership; iterating an expanded list would recursively copy the island.
+  for(size_t chunk=0;chunk<chunks.size();++chunk) {
+    auto& triangles=chunks[chunk];
+    triangles.insert(triangles.end(),additions[chunk].begin(),additions[chunk].end());
+    std::sort(triangles.begin(),triangles.end());
+    triangles.erase(std::unique(triangles.begin(),triangles.end()),triangles.end());
+    }
+  }
+
 JPH::ShapeRefC PhysicVbo::chunkShape(std::span<const uint32_t> source, bool splitLargeTriangles) const {
   if(source.empty())
     return nullptr;

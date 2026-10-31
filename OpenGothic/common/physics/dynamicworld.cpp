@@ -822,6 +822,13 @@ struct DynamicWorld::LandscapeChunks {
     }
 
   void prepare() {
+    std::vector<std::vector<uint32_t>> triangles;
+    triangles.reserve(entries.size());
+    for(auto& entry:entries)
+      triangles.push_back(std::move(entry->triangles));
+    owner.landMesh->overlapChunkSeams(triangles);
+    for(size_t i=0;i<entries.size();++i)
+      entries[i]->triangles=std::move(triangles[i]);
     for(auto& ptr:entries) {
       auto& entry=*ptr;
       const float inf=std::numeric_limits<float>::infinity();
@@ -1130,8 +1137,10 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
   const bool useChunks=residency!=nullptr && !residency->table().entries.empty() &&
       !(chunkFlag!=nullptr && std::strcmp(chunkFlag,"0")==0) &&
       !(streamingFlag!=nullptr && std::strcmp(streamingFlag,"0")==0);
-  if(useChunks)
+  if(useChunks) {
+    world->setLandscapeChunksEnabled(true);
     landscapeChunks=std::make_unique<LandscapeChunks>(*this,*residency);
+    }
 
   landMesh .reset(new PhysicVbo(&bodies->vertices));
   waterMesh.reset(new PhysicVbo(&bodies->vertices));

@@ -55,6 +55,33 @@
 #endif
 
 namespace {
+  // Chunk seam copies represent one source face to gameplay queries. Preserve
+  // native subdivision contacts within the first body that exposes the face.
+  struct LandscapeQueryFaces {
+    struct Hit {
+      const PhysicVbo* mesh;
+      uint32_t triangle;
+      JPH::BodyID body;
+      JPH::RVec3 position;
+      JPH::Quat rotation;
+      JPH::Vec3 scale;
+      };
+
+    bool keep(const JPH::Body& body, const PhysicVbo& mesh, JPH::Vec3Arg scale, JPH::SubShapeID subShape) {
+      const auto triangle=Physics::triangleData(*body.GetShape(),subShape);
+      const auto found=std::find_if(hits.begin(),hits.end(),[&](const auto& previous) {
+        return previous.mesh==&mesh && previous.triangle==triangle && previous.scale==scale &&
+               previous.position==body.GetPosition() && previous.rotation==body.GetRotation();
+        });
+      if(found!=hits.end())
+        return found->body==body.GetID();
+      hits.push_back({&mesh,triangle,body.GetID(),body.GetPosition(),body.GetRotation(),scale});
+      return true;
+      }
+
+    std::vector<Hit> hits;
+    };
+
   bool waterThing(int category) {
     return category==DynamicWorld::C_Item || category==DynamicWorld::C_MovableVob || category==DynamicWorld::C_Fragment;
     }
@@ -1697,6 +1724,7 @@ void CollisionWorld::addBody(CollisionBody& body, const Tempest::Matrix4x4& matr
     settings.mMassPropertiesOverride.mInertia = JPH::Mat44::sIdentity();
     }
   if(type==JPH::EMotionType::Dynamic) {
+    settings.mEnhancedInternalEdgeRemoval = landscapeChunks;
     settings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
     settings.mMassPropertiesOverride.mMass = mass;
     settings.mMotionQuality = JPH::EMotionQuality::LinearCast;
@@ -2096,7 +2124,18 @@ CollisionWorld::QueryResult CollisionWorld::rayCast(const Tempest::Vec3& from, c
     JPH::AllHitCollisionCollector<JPH::CastRayCollector> collector;
     impl->system.GetNarrowPhaseQuery().CastRay(ray,settings,collector,broadFilter,filter,bodyFilter);
     collector.Sort();
+    LandscapeQueryFaces landscapeFaces;
     for(const auto& hit:collector.mHits) {
+      if(landscapeChunks) {
+        JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),hit.mBodyID);
+        if(lock.Succeeded()) {
+          const auto& native=lock.GetBody();
+          const auto* body=reinterpret_cast<const CollisionBody*>(native.GetUserData());
+          if(body!=nullptr && body->categoryId==DynamicWorld::C_Landscape && body->mesh!=nullptr &&
+             !landscapeFaces.keep(native,*body->mesh,body->scale,hit.mSubShapeID2))
+            continue;
+          }
+        }
       auto value = convert(hit);
       if(value.hasHit)
         all->push_back(value);
@@ -2250,11 +2289,16 @@ std::vector<CollisionWorld::Overlap> CollisionWorld::overlaps(const CollisionBod
   const auto base = com.GetTranslation();
   impl->system.GetNarrowPhaseQuery().CollideShape(shape,JPH::Vec3::sOne(),com,settings,base,collector,
                                                broadFilter,filter,self);
+  LandscapeQueryFaces landscapeFaces;
   for(const auto& hit:collector.mHits) {
     JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),hit.mBodyID2);
     if(!lock.Succeeded())
       continue;
     const auto& native = lock.GetBody();
+    const auto* body=reinterpret_cast<const CollisionBody*>(native.GetUserData());
+    if(landscapeChunks && body!=nullptr && body->categoryId==DynamicWorld::C_Landscape && body->mesh!=nullptr &&
+       !landscapeFaces.keep(native,*body->mesh,body->scale,hit.mSubShapeID2))
+      continue;
     Overlap o;
     o.body     = reinterpret_cast<CollisionBody*>(native.GetUserData());
     o.category = int(native.GetObjectLayer());
@@ -2379,6 +2423,7 @@ bool CollisionWorld::hasCollision(const JPH::Shape* shape, const Tempest::Vec3& 
   bool hasSourceWitnessNormal = false;
   size_t count = 0;
   Interactive* hitVob = nullptr;
+  LandscapeQueryFaces landscapeFaces;
   for(const auto& hit:collector.mHits) {
     JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),hit.mBodyID2);
     if(!lock.Succeeded())
@@ -2420,6 +2465,9 @@ bool CollisionWorld::hasCollision(const JPH::Shape* shape, const Tempest::Vec3& 
           }
         }
       }
+    if(landscapeChunks && body!=nullptr && body->categoryId==DynamicWorld::C_Landscape && body->mesh!=nullptr &&
+       !landscapeFaces.keep(native,*body->mesh,body->scale,hit.mSubShapeID2))
+      continue;
     sum += contactNormal;
     ++count;
     if(body!=nullptr && body->categoryId==DynamicWorld::C_Object)

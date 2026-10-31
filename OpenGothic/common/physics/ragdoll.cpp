@@ -704,15 +704,19 @@ struct Ragdoll::Impl final {
     return frame.GetRotation().Transposed3x3()*basis;
     }
 
-  static JPH::Ref<JPH::RagdollSettings> massSettings(JPH::Ref<JPH::RagdollSettings> source, float volumeScale) {
-    if(volumeScale==1.f) return source;
-    // Cached geometry/anatomy is shared. Mass belongs to the instance's object
-    // scale, including nonuniform scale, and must also reach the motor source.
+  static JPH::Ref<JPH::RagdollSettings> massSettings(JPH::Ref<JPH::RagdollSettings> source, float volumeScale,
+                                                   bool enhancedEdges) {
+    if(volumeScale==1.f && !enhancedEdges) return source;
+    // Cached geometry/anatomy is shared. Object mass and collision edge
+    // handling belong to this instance and must also reach its motor source.
     JPH::Ref<JPH::RagdollSettings> result=new JPH::RagdollSettings();
     result->mSkeleton=source->mSkeleton;
     result->mParts=source->mParts;
     result->mAdditionalConstraints=source->mAdditionalConstraints;
-    for(auto& part:result->mParts) part.mMassPropertiesOverride.mMass*=volumeScale;
+    for(auto& part:result->mParts) {
+      part.mMassPropertiesOverride.mMass*=volumeScale;
+      part.mEnhancedInternalEdgeRemoval=enhancedEdges;
+      }
     // CalculateInertia uses this mass with the already scaled capsule shape.
     result->CalculateBodyIndexToConstraintIndex();
     result->CalculateConstraintIndexToBodyIdxPair();
@@ -1127,7 +1131,7 @@ Ragdoll::Ragdoll(CollisionWorld& world, const Skeleton& skeleton, const HitZones
     settings=impl->object.uniform ? Impl::settings(*impl->rig,impl->object.scale.GetX()) :
                                    Impl::bakedSettings(*impl->rig,impl->object,impl->references,pose);
     }
-  settings=Impl::massSettings(std::move(settings),impl->object.volumeScale);
+  settings=Impl::massSettings(std::move(settings),impl->object.volumeScale,world.landscapeChunksEnabled());
   impl->actualMass=impl->rig->totalMass*impl->object.volumeScale;
   impl->kinematic=kinematic;
   impl->hits.reserve(4);
@@ -1744,7 +1748,7 @@ bool Ragdoll::restore(const State& state) {
       settings=object.uniform ? Impl::settings(*impl->rig,object.scale.GetX()) :
                                 Impl::bakedSettings(*impl->rig,object,references,referenceFrames);
       }
-    settings=Impl::massSettings(std::move(settings),object.volumeScale);
+    settings=Impl::massSettings(std::move(settings),object.volumeScale,impl->world->landscapeChunksEnabled());
     replacement=settings->CreateRagdoll(impl->group,0,&impl->world->physicsSystem());
     if(replacement==nullptr) return false;
     replacement->SetPose(JPH::RVec3::sZero(),pose.data());

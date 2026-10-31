@@ -276,6 +276,9 @@ class CollisionWorld final {
                                                const Tempest::Matrix4x4& objectMatrix);
     // Publication changes the broad phase while retaining each native BodyID.
     void setLandscapeBodiesPublished(std::span<CollisionBody* const> bodies, bool published);
+    // Configure before creating native bodies; the mode survives publication.
+    void setLandscapeChunksEnabled(bool enabled) { landscapeChunks=enabled; }
+    bool landscapeChunksEnabled() const { return landscapeChunks; }
     void optimizeBroadPhase();
     void setLandscapeQueryCallback(std::function<void(const Tempest::Vec3&,const Tempest::Vec3&)> callback);
     void setLandscapeReadyCallback(std::function<bool(const Tempest::Vec3&)> callback);
@@ -344,6 +347,7 @@ class CollisionWorld final {
     std::vector<DynamicBody*> rigid;
     std::vector<Ragdoll*> ragdolls;
     uint32_t nextRagdollGroup = 1;
+    bool landscapeChunks = false;
     std::function<void(const Tempest::Vec3&,const Tempest::Vec3&)> landscapeQuery;
     std::function<bool(const Tempest::Vec3&)> landscapeReady;
     std::function<void(const StaticTriangleOutput&)> landscapeTriangles;

@@ -2302,30 +2302,51 @@ namespace {
             "interior mesh rays must retain their closest native face");
     }
 
-  void testChunkedLandscape() {
+  bool testChunkedLandscape() {
     // Four independently published bodies meet at the grid origin. All of
     // them resolve user data through the same original physics triangle IDs.
+    // Four-metre source cells keep the overlap to a local seam ring rather
+    // than making each of the four bodies contain every triangle in the test.
+    constexpr uint32_t cells=16, side=2*cells+1;
     std::vector<JPH::Vec3> vertices;
-    for(int x=-1;x<=1;++x)
-      for(int z=-1;z<=1;++z)
+    for(int x=-int(cells);x<=int(cells);++x)
+      for(int z=-int(cells);z<=int(cells);++z)
         vertices.emplace_back(float(x)*4.f,0,float(z)*4.f);
     PhysicVbo mesh(&vertices);
+    std::vector<std::vector<uint32_t>> ownership(4);
     const char* sectors[]={"south-west","north-west","south-east","north-east"};
     for(uint32_t x=0;x<2;++x)
       for(uint32_t z=0;z<2;++z) {
-        const uint32_t a=x*3+z,b=a+1,c=a+4,d=a+3;
+        std::vector<uint32_t> indices;
+        for(uint32_t localX=0;localX<cells;++localX)
+          for(uint32_t localZ=0;localZ<cells;++localZ) {
+            const uint32_t a=(x*cells+localX)*side+z*cells+localZ,b=a+1,c=a+side+1,d=a+side;
+            indices.insert(indices.end(),{a,c,b,a,d,c});
+            }
+        const auto first=uint32_t(mesh.triangleCount());
         const auto material=(x+z)%2==0 ? asset::MaterialGroup::STONE : asset::MaterialGroup::WOOD;
-        mesh.addIndex({a,c,b,a,d,c},0,6,material,sectors[x*2+z]);
+        mesh.addIndex(indices,0,indices.size(),material,sectors[x*2+z]);
+        for(uint32_t triangle=0;triangle<uint32_t(indices.size()/3);++triangle)
+          ownership[x*2+z].push_back(first+triangle);
         }
+    mesh.overlapChunkSeams(ownership);
+    size_t overlapTriangles=0;
+    for(const auto& triangles:ownership) {
+      require(triangles.size()>2*cells*cells && triangles.size()<mesh.triangleCount(),
+              "seam overlap must add a local source ring without duplicating the whole landscape");
+      overlapTriangles+=triangles.size();
+      }
+    std::printf("Seam overlap: %zu source triangles, %zu triangle instances across four 64 m chunks\n",
+                mesh.triangleCount(),overlapTriangles);
     mesh.prepareTriangleData();
     CollisionWorld whole,chunked;
+    chunked.setLandscapeChunksEnabled(true);
     auto wholeBody=whole.addCollisionBody(mesh.shape(true),at(0,0,0),0,DynamicWorld::C_Landscape,false,false,&mesh);
     std::array<std::unique_ptr<CollisionWorld::CollisionBody>,4> chunks;
     std::array<CollisionWorld::CollisionBody*,4> batch;
     std::array<bool,4> published{};
     for(size_t i=0;i<chunks.size();++i) {
-      const std::array<uint32_t,2> triangles={uint32_t(i*2),uint32_t(i*2+1)};
-      chunks[i]=chunked.addCollisionBody(mesh.chunkShape(triangles,true),at(0,0,0),0,
+      chunks[i]=chunked.addCollisionBody(mesh.chunkShape(ownership[i],true),at(0,0,0),0,
                                          DynamicWorld::C_Landscape,false,false,&mesh,false);
       batch[i]=chunks[i].get();
       }
@@ -2342,19 +2363,41 @@ namespace {
         ++synchronous;
         }
       });
-    const auto first=chunked.rayCast({-100,100,-100},{-100,-100,-100},landscapeMask);
+    const auto first=chunked.rayCast({-1000,100,-1000},{-1000,-100,-1000},landscapeMask);
     require(first.hasHit && synchronous==1,"a ray must publish only its missing support before querying Jolt");
-    const auto swept=chunked.raySweep({100,100,-100},{100,-100,-100},10,landscapeMask);
+    const auto swept=chunked.raySweep({1000,100,-1000},{1000,-100,-1000},10,landscapeMask);
     require(swept.hasHit && synchronous==2,"a sweep must publish its missing support before querying Jolt");
     JPH::CapsuleShape capsule(.1f,.1f);
     Tempest::Vec3 normal;
     Interactive* interactive=nullptr;
-    require(chunked.hasCollision(&capsule,{-100,5,100},normal,interactive) && synchronous==3,
+    require(chunked.hasCollision(&capsule,{-1000,5,1000},normal,interactive) && synchronous==3,
             "an overlap must publish its missing support before querying Jolt");
-    auto walker=chunked.createVirtualCharacter(25,180,{100,0,100});
+    auto walker=chunked.createVirtualCharacter(25,180,{1000,0,1000});
     walker->move({},17,50,.785398163f,80,nullptr);
     require(synchronous==4,"CharacterVirtual must publish its missing support before querying Jolt");
     chunked.setLandscapeQueryCallback({});
+
+    // Sound occlusion pairs every hit, so seam copies must count only once.
+    std::vector<CollisionWorld::QueryResult> wholeHits,chunkHits;
+    whole.rayCast({53,100,-151},{53,-100,-151},landscapeMask,false,&wholeHits);
+    chunked.rayCast({53,100,-151},{53,-100,-151},landscapeMask,false,&chunkHits);
+    require(wholeHits.size()==1 && chunkHits.size()==wholeHits.size(),
+            "all-hit rays must count a copied seam triangle once, as in the whole body");
+    for(size_t i=0;i<wholeHits.size();++i)
+      require(wholeHits[i].fraction==chunkHits[i].fraction && wholeHits[i].material==chunkHits[i].material &&
+              std::string(wholeHits[i].sector)==std::string(chunkHits[i].sector),
+              "all-hit seam copies must retain whole-body hit order, material and sector");
+    Tempest::Vec3 wholeNormal,chunkNormal;
+    require(whole.hasCollision(&capsule,{53,5,-151},wholeNormal,interactive) &&
+            chunked.hasCollision(&capsule,{53,5,-151},chunkNormal,interactive) && (wholeNormal-chunkNormal).length()<=.000001f,
+            "legacy seam overlaps must retain the whole-body collision and normal");
+    {
+      auto wholeProbe=whole.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(53,5,-151),0,1);
+      auto chunkProbe=chunked.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(53,5,-151),0,1);
+      const auto expected=whole.overlaps(*wholeProbe,0,landscapeMask),actual=chunked.overlaps(*chunkProbe,0,landscapeMask);
+      require(expected.size()==1 && actual.size()==expected.size() && actual[0].material==expected[0].material,
+              "overlap queries must count a copied seam triangle once with its original material");
+      }
 
     size_t rays=0;
     for(int x=-160;x<=160;x+=4)
@@ -2373,28 +2416,83 @@ namespace {
           ++rays;
           }
 
-    // Walk and slide over an edge, then the intersection of all four bodies.
-    for(const bool corner:{false,true}) {
-      auto cv=chunked.createVirtualCharacter(25,180,{-120,0,corner ? -120.f : -80.f});
-      auto reference=whole.createVirtualCharacter(25,180,{-120,0,corner ? -120.f : -80.f});
-      CollisionWorld::CharacterMoveResult state,expected;
-      for(int frame=0;frame<90;++frame) {
-        state=cv->move({3,0,corner ? 3.f : 0.f},17,50,.785398163f,80,nullptr);
-        expected=reference->move({3,0,corner ? 3.f : 0.f},17,50,.785398163f,80,nullptr);
-        requireNear(state.position.y,expected.position.y,.1f,"a CV must retain whole-body support across chunk seams");
-        }
-      require(state.position.x>140,"CVs must cross chunk edges and four-body corners without sticking");
-      cv.reset();reference.reset();
-      auto box=chunked.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(-120,10,corner ? -120.f : -80.f),0,1);
-      auto control=whole.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(-120,10,corner ? -120.f : -80.f),0,1);
-      box->setVelocity({100,0,corner ? 100.f : 0.f},{});
-      control->setVelocity({100,0,corner ? 100.f : 0.f},{});
-      for(int frame=0;frame<90;++frame) {
-        chunked.tick(17);whole.tick(17);
-        requireNear(box->position().y,control->position().y,.1f,"a dynamic body must retain whole-body support across chunk seams");
-        }
-      require(box->position().x>0,"dynamic bodies must cross chunk edges and four-body corners without sticking");
-      }
+    // Speeds are representative walking/running inputs, not animation metadata.
+    // Every route passes through its edge/corner; shallow approaches have enough
+    // travel to clear the capsule on both sides without reaching an outer edge.
+    constexpr uint64_t seamDt=17;
+    constexpr float seamSeconds=float(seamDt)*.001f, halfRoute=600.f;
+    bool seamsPassed=true;
+    std::puts("Seam matrix: kind speed_cm_s angle_deg height_mm vertical_m_s airborne stairs_attempted stairs_succeeded speed_loss_pct box_bounce_mm cv_travel_cm box_travel_cm result");
+    for(const bool corner:{false,true})
+      for(const float speed:{180.f,400.f})
+        for(const float angle:{90.f,45.f,10.f}) {
+          const float radians=angle*.01745329252f;
+          const Tempest::Vec3 direction=angle==90.f ? Tempest::Vec3(1,0,0) :
+                                                   Tempest::Vec3(std::sin(radians),0,std::cos(radians));
+          const auto center=Tempest::Vec3(0,0,corner ? 0.f : -1600.f);
+          const auto initial=center-direction*halfRoute;
+          const auto displacement=direction*(speed*seamSeconds);
+          const int frames=int(std::ceil(2.f*halfRoute/(speed*seamSeconds)));
+          auto cv=chunked.createVirtualCharacter(25,180,initial);
+          auto reference=whole.createVirtualCharacter(25,180,initial);
+          cv->setDiagnosticsEnabled(true);
+          CollisionWorld::CharacterMoveResult state,expected;
+          for(int frame=0;frame<30;++frame) {
+            state=cv->move({},seamDt,50,.785398163f,80,nullptr);
+            expected=reference->move({},seamDt,50,.785398163f,80,nullptr);
+            }
+          require(state.grounded && expected.grounded,"seam fixtures must settle on their flat support before measuring");
+          const auto settled=state.position;
+          float height=0,verticalSpeed=0,speedLoss=0;
+          size_t airborne=0,stairsAttempted=0,stairsSucceeded=0;
+          for(int frame=0;frame<frames;++frame) {
+            const auto previous=state.position,previousExpected=expected.position;
+            state=cv->move(displacement,seamDt,50,.785398163f,80,nullptr);
+            expected=reference->move(displacement,seamDt,50,.785398163f,80,nullptr);
+            CharacterVirtualDiagnostics diagnostic;
+            require(cv->diagnostics(diagnostic),"seam measurements must retain native ground and stair diagnostics");
+            height=std::max(height,std::abs(state.position.y-expected.position.y));
+            // Include penetration recovery/stair snaps as actual vertical motion,
+            // as well as the controller's solved velocity.
+            verticalSpeed=std::max({verticalSpeed,std::abs(state.position.y-previous.y)/seamSeconds,
+                                   std::abs(state.velocity.y)});
+            const auto actualDelta=state.position-previous,expectedDelta=expected.position-previousExpected;
+            const float actualAdvance=actualDelta.x*direction.x+actualDelta.z*direction.z;
+            const float expectedAdvance=expectedDelta.x*direction.x+expectedDelta.z*direction.z;
+            require(expected.grounded && expectedAdvance>0,"whole-body seam control must stay grounded and advance each frame");
+            speedLoss=std::max(speedLoss,std::max(0.f,1.f-actualAdvance/expectedAdvance));
+            airborne+=!state.grounded || diagnostic.afterStairs.groundState!=0 ? 1 : 0;
+            stairsAttempted+=diagnostic.stairAttempted ? 1 : 0;
+            stairsSucceeded+=diagnostic.stairSucceeded ? 1 : 0;
+            }
+          const auto cvDelta=state.position-settled;
+          const float cvTravel=cvDelta.x*direction.x+cvDelta.z*direction.z;
+          cv.reset();reference.reset();
+
+          auto box=chunked.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(initial.x,10,initial.z),0,1);
+          auto control=whole.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(initial.x,10,initial.z),0,1);
+          for(int frame=0;frame<120;++frame) {
+            chunked.tick(seamDt);whole.tick(seamDt);
+            }
+          const auto boxStart=box->position();
+          box->setVelocity(direction*speed,{});
+          control->setVelocity(direction*speed,{});
+          float boxBounce=0;
+          for(int frame=0;frame<frames;++frame) {
+            chunked.tick(seamDt);whole.tick(seamDt);
+            boxBounce=std::max({boxBounce,box->position().y-boxStart.y,
+                               std::abs(box->position().y-control->position().y)});
+            }
+          const auto boxDelta=box->position()-boxStart;
+          const float boxTravel=boxDelta.x*direction.x+boxDelta.z*direction.z;
+          const bool passed=height<=.5f && verticalSpeed<=10.f && airborne==0 && stairsSucceeded==0 &&
+                            speedLoss<=.05f && cvTravel>halfRoute+25.f && boxBounce<=.5f && boxTravel>halfRoute+10.f;
+          seamsPassed=seamsPassed && passed;
+          std::printf("Seam %s %.0f %.0f %.6f %.6f %zu %zu %zu %.6f %.6f %.6f %.6f %s\n",
+                      corner ? "corner" : "edge",double(speed),double(angle),double(height*10.f),double(verticalSpeed*.01f),
+                      airborne,stairsAttempted,stairsSucceeded,double(speedLoss*100.f),double(boxBounce*10.f),
+                      double(cvTravel),double(boxTravel),passed ? "PASS" : "FAIL");
+          }
 
     bool ready=false;
     chunked.setLandscapeReadyCallback([&](const Tempest::Vec3&) { return ready; });
@@ -2411,39 +2509,48 @@ namespace {
     require(held->position().y<95 && held->position().y>9,"publishing support must resume ordinary gravity and floor contact");
     held.reset();
     chunked.setLandscapeReadyCallback({});
-    const auto identity=chunked.rayCast({-100,100,-100},{-100,-100,-100},landscapeMask).nativeBodyId;
+    const auto identity=chunked.rayCast({-1000,100,-1000},{-1000,-100,-1000},landscapeMask).nativeBodyId;
     for(int cycle=0;cycle<3;++cycle) {
       chunked.setLandscapeBodiesPublished(batch,false);
-      require(!chunked.rayCast({-100,100,-100},{-100,-100,-100},landscapeMask).hasHit,
+      require(!chunked.rayCast({-1000,100,-1000},{-1000,-100,-1000},landscapeMask).hasHit,
               "RemoveBodies must remove every landscape chunk from queries");
       chunked.setLandscapeBodiesPublished(batch,true);
-      const auto restored=chunked.rayCast({-100,100,-100},{-100,-100,-100},landscapeMask);
+      const auto restored=chunked.rayCast({-1000,100,-1000},{-1000,-100,-1000},landscapeMask);
       require(restored.hasHit && restored.nativeBodyId==identity,"AddBodies must restore the same valid chunk BodyID");
       }
     chunks[0].reset();
     require(chunked.navigationBodyCategory(identity)==0,"destroyed chunk BodyIDs must never resolve through stale sequence numbers");
-    std::printf("Chunk collision: %zu rays, %zu synchronous publications, edge/corner CV and dynamics, support hold, 3 Remove/Add cycles passed\n",
+    std::printf("Chunk collision: %zu rays, %zu synchronous publications, edge/corner matrix complete; support hold and 3 Remove/Add cycles passed\n",
                 rays,synchronous);
+    return seamsPassed;
     }
 
   void testPhysicsResidency() {
     asset::WorldMesh mesh;
-    mesh.bbox={{-400,0,-400},{400,0,400}};
-    for(int x=-1;x<=1;++x)
-      for(int z=-1;z<=1;++z)
+    // Occupants stay more than one overlap ring away from the empty cells.
+    constexpr uint32_t cells=16,side=2*cells+1;
+    mesh.bbox={{-6400,0,-6400},{6400,0,6400}};
+    for(int x=-int(cells);x<=int(cells);++x)
+      for(int z=-int(cells);z<=int(cells);++z)
         mesh.vertices.push_back({float(x)*400,0,float(z)*400});
     mesh.materials.resize(1);
     mesh.materials[0].group=asset::MaterialGroup::STONE;
     ChunkTable table;
     for(uint32_t x=0;x<2;++x)
       for(uint32_t z=0;z<2;++z) {
-        const uint32_t a=x*3+z,b=a+1,c=a+4,d=a+3,index=uint32_t(table.entries.size());
-        mesh.polygons.vertex_indices.insert(mesh.polygons.vertex_indices.end(),{a,c,b,a,d,c});
-        mesh.polygons.material_indices.insert(mesh.polygons.material_indices.end(),{0,0});
-        table.triangleChunks.insert(table.triangleChunks.end(),{index,index});
+        const auto index=uint32_t(table.entries.size());
+        for(uint32_t localX=0;localX<cells;++localX)
+          for(uint32_t localZ=0;localZ<cells;++localZ) {
+            const uint32_t a=(x*cells+localX)*side+z*cells+localZ,b=a+1,c=a+side+1,d=a+side;
+            mesh.polygons.vertex_indices.insert(mesh.polygons.vertex_indices.end(),{a,c,b,a,d,c});
+            mesh.polygons.material_indices.insert(mesh.polygons.material_indices.end(),{0,0});
+            table.triangleChunks.insert(table.triangleChunks.end(),{index,index});
+            }
         ChunkTable::Entry entry;
         entry.id={int32_t(x)-1,int32_t(z)-1};
-        entry.min=mesh.vertices[a];entry.max=mesh.vertices[c];entry.triangleCount=2;
+        entry.min=mesh.vertices[x*cells*side+z*cells];
+        entry.max=mesh.vertices[(x+1)*cells*side+(z+1)*cells];
+        entry.triangleCount=2*cells*cells;
         table.entries.push_back(entry);
         }
     const char* names[]={"OPENGOTHIC_PHYSICS_CHUNKS","OPENGOTHIC_STREAMING","OPENGOTHIC_PHYSICS_UNLOAD"};
@@ -2464,25 +2571,25 @@ namespace {
       setenv(names[2],unload ? "1" : "0",1);
       ChunkResidency residency(table);
       DynamicWorld world(nullptr,mesh,nullptr,&residency);
-      require(!world.landscapeReady({100,100,-100}),"a deferred physics chunk must report missing support");
-      auto pending=world.addDynamicObj(at(100,100,-100),bounds,asset::MaterialGroup::STONE);
+      require(!world.landscapeReady({1000,100,-1000}),"a deferred physics chunk must report missing support");
+      auto pending=world.addDynamicObj(at(1000,100,-1000),bounds,asset::MaterialGroup::STONE);
       require(pending.isEmpty(),"an item must not create native physics before publishing its support");
       world.startPhysicsStreaming({0,0,0},{0,0,0});
       residency.update({0,0,0},{0,0,0},1);
-      require(world.landscapeReady({100,100,-100}),"initial Near physics chunks must publish synchronously");
-      auto item=world.addDynamicObj(at(100,100,-100),bounds,asset::MaterialGroup::STONE);
+      require(world.landscapeReady({1000,100,-1000}),"initial Near physics chunks must publish synchronously");
+      auto item=world.addDynamicObj(at(1000,100,-1000),bounds,asset::MaterialGroup::STONE);
       require(!item.isEmpty(),"an item must resume native physics after its support publishes");
       for(int frame=0;frame<30;++frame)world.tick(17);
       require(item.position().y<95 && item.position().y>9,"an item must fall onto its published chunk support");
       auto npc=world.addGhostObj(&skeleton);
-      npc.setPosition({-100,0,-100});
+      npc.setPosition({-1000,0,-1000});
       residency.update({1000000,0,1000000},{1000000,0,1000000},1);
-      require(world.landscapeReady({-100,0,-100}) && world.landscapeReady(item.position()),
+      require(world.landscapeReady({-1000,0,-1000}) && world.landscapeReady(item.position()),
               "Outside physics must retain NPC and item supports");
-      require(world.landscapeReady({100,100,100})!=unload,
+      require(world.landscapeReady({1000,100,1000})!=unload,
               "Outside physics removal must be enabled only by OPENGOTHIC_PHYSICS_UNLOAD=1");
-      const auto hit=world.landRay({100,100,100},200);
-      require(hit.hasCol && world.landscapeReady({100,100,100}),
+      const auto hit=world.landRay({1000,100,1000},200);
+      require(hit.hasCol && world.landscapeReady({1000,100,1000}),
               "a query must synchronously Add an unloaded Outside support before accessing Jolt");
       requireNear(hit.v.y,0,.001f,"Remove/Add must retain the original landscape plane");
       }
@@ -2536,7 +2643,24 @@ namespace {
             expected.waterVertices==actual.waterVertices && expected.waterTriangles==actual.waterTriangles &&
             expectedKey==actualKey,"chunk residency must preserve the full native navigation geometry and cache key");
 
-    const float top=mesh.bbox.max.y+1000,bottom=mesh.bbox.min.y-1000;
+    // The stitched chunk reader does not populate WorldMesh::bbox. Use the
+    // cloth-filtered table bounds so rays start above and end below the island.
+    const float infinity=std::numeric_limits<float>::infinity();
+    Tempest::Vec3 minimum(infinity),maximum(-infinity);
+    for(const auto& entry:table.entries)
+      if(entry.triangleCount!=0) {
+        minimum.x=std::min(minimum.x,entry.min.x);maximum.x=std::max(maximum.x,entry.max.x);
+        minimum.y=std::min(minimum.y,entry.min.y);maximum.y=std::max(maximum.y,entry.max.y);
+        minimum.z=std::min(minimum.z,entry.min.z);maximum.z=std::max(maximum.z,entry.max.z);
+        }
+    require(std::isfinite(minimum.x) && std::isfinite(minimum.y) && std::isfinite(minimum.z) &&
+            std::isfinite(maximum.x) && std::isfinite(maximum.y) && std::isfinite(maximum.z) &&
+            maximum.x>minimum.x && maximum.y>minimum.y && maximum.z>minimum.z,
+            "NEWWORLD ray coverage must use finite nonempty chunk-table bounds");
+    const float top=maximum.y+1000,bottom=minimum.y-1000;
+    std::printf("NEWWORLD ray bounds cm: min (%.9g,%.9g,%.9g), max (%.9g,%.9g,%.9g), top %.9g, bottom %.9g\n",
+                double(minimum.x),double(minimum.y),double(minimum.z),double(maximum.x),double(maximum.y),double(maximum.z),
+                double(top),double(bottom));
     size_t rays=0,hits=0;
     float maxPointError=0,maxNormalError=0;
     const auto compare=[&](float x,float z,float tilt) {
@@ -2557,9 +2681,12 @@ namespace {
       maxPointError=std::max(maxPointError,pointError);
       maxNormalError=std::max(maxNormalError,normalError);
       };
-    for(float x=mesh.bbox.min.x;x<=mesh.bbox.max.x;x+=1600)
-      for(float z=mesh.bbox.min.z;z<=mesh.bbox.max.z;z+=1600)
+    for(float x=minimum.x;x<=maximum.x;x+=1600)
+      for(float z=minimum.z;z<=maximum.z;z+=1600)
         for(const float tilt:{0.f,3200.f})compare(x,z,tilt);
+    const auto gridRays=rays;
+    require(gridRays>2,"NEWWORLD regular ray grid must cover the island rather than one zero-bounds point");
+    std::printf("NEWWORLD regular 16 m grid: %zu rays\n",gridRays);
     for(const auto& chunk:table.entries) {
       if(chunk.triangleCount==0)continue;
       const float x=float(chunk.id.x)*ChunkId::Size,z=float(chunk.id.z)*ChunkId::Size;
@@ -2570,8 +2697,8 @@ namespace {
             compare(x+float(along),z+offset,tilt);
             }
       }
-    std::printf("NEWWORLD chunk rays: %zu rays, %zu hits, max point error %.9g cm, max normal error %.9g; 16 m grid, 1 m seam samples at -1/0/+1 mm\n",
-                rays,hits,double(maxPointError),double(maxNormalError));
+    std::printf("NEWWORLD chunk rays: %zu rays (%zu regular grid, %zu seam), %zu hits, max point error %.9g cm, max normal error %.9g; 16 m grid, 1 m seam samples at -1/0/+1 mm\n",
+                rays,gridRays,rays-gridRays,hits,double(maxPointError),double(maxNormalError));
     if(oldChunks==nullptr)unsetenv("OPENGOTHIC_PHYSICS_CHUNKS");
     else setenv("OPENGOTHIC_PHYSICS_CHUNKS",savedChunks.c_str(),1);
     if(oldStreaming==nullptr)unsetenv("OPENGOTHIC_STREAMING");
@@ -5242,7 +5369,7 @@ int main() {
     testMeshRayEdges();
     testCoincidentMaterials();
     testSharedRayEdge();
-    testChunkedLandscape();
+    const bool seamsPassed=testChunkedLandscape();
     testPhysicsResidency();
     testOriginalFloorProjection();
     testSourceTerrainNormals();
@@ -5280,6 +5407,7 @@ int main() {
     testRagdollNoise();
     testOffCenterImpulse();
     testNewWorldChunkCollision();
+    require(seamsPassed,"chunk seam matrix must satisfy height, velocity, continuous ground, stairs and horizontal-speed limits");
     std::puts("Physics contracts passed");
     return EXIT_SUCCESS;
     }

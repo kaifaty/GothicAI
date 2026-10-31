@@ -40,6 +40,9 @@ class PhysicVbo final {
     // Independent construction on immutable source geometry; native triangle
     // user data still addresses this full mesh's material and sector tables.
     JPH::ShapeRefC          chunkShape(std::span<const uint32_t> triangles, bool splitLargeTriangles = false) const;
+    // Share the original one-ring triangles at owner boundaries. Global
+    // triangle IDs remain unchanged; added faces do not grow another ring.
+    void                    overlapChunkSeams(std::vector<std::vector<uint32_t>>& triangles) const;
     // Finish query metadata before immutable geometry is shared with workers.
     void                    prepareTriangleData() const;
     // Exact source geometry, before Jolt's triangle BVH quantization.
