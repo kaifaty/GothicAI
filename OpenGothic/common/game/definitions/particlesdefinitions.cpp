@@ -3,13 +3,15 @@
 #include <Tempest/Log>
 
 #include "graphics/pfx/particlefx.h"
-#include "utils/fileext.h"
 #include "gothic.h"
+#include "resources.h"
 
 using namespace Tempest;
 
 ParticlesDefinitions::ParticlesDefinitions() {
   vm = Gothic::inst().createPhoenixVm("ParticleFx.dat");
+  content=ParticleContent::load(*vm,Resources::contentDir());
+  for(const auto& error:content.errors) Log::e("particles: skipped ",error);
   }
 
 ParticlesDefinitions::~ParticlesDefinitions() {
@@ -19,11 +21,10 @@ const ParticleFx* ParticlesDefinitions::get(std::string_view name, bool relaxed)
   if(name.empty())
     return nullptr;
 
-  while(FileExt::hasExt(name,"PFX"))
-    name = name.substr(0,name.size()-4);
+  const auto cname=ParticleContent::canonicalName(name);
 
   std::lock_guard<std::recursive_mutex> guard(sync);
-  return implGet(name,relaxed);
+  return implGet(cname,relaxed);
   }
 
 const ParticleFx* ParticlesDefinitions::get(const ParticleFx* base, const VisualFx::Key* key) {
@@ -62,19 +63,19 @@ std::shared_ptr<Def::ParticleEffect> ParticlesDefinitions::implGetDirect(std::st
   if(!vm || name.empty())
     return nullptr;
 
+  if(const auto effect=content.effects.find(std::string(name)); effect!=content.effects.end())
+    return effect->second;
+
   if(name=="PFX_GAI_PEE")
     return peeStream();
 
-  auto id = vm->find_symbol_by_name(name);
-  if(id==nullptr) {
+  auto ret=ParticleContent::base(*vm,name);
+  if(ret==nullptr) {
     if(!relaxed)
       Log::e("invalid particle system: \"",name,"\"");
     return nullptr;
     }
 
-  auto ret = std::make_shared<Def::ParticleEffect>();
-  ret->vis_tex_is_quadpoly = 1; // seem to be default
-  vm->init_instance(ret, id);
   return ret;
   }
 
