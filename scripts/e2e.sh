@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end check: starts the AI server with a scenario, then a new game in OpenGothic.
+# LLM=off forbids model calls except explicit scenario givens (given/silent); the default remains fake.
 #   check_walk: new game, no SAVE, LLM=fake; Cavalorn walks from Xardas's stairs to Brago's
 #       unseen body in the bandit cave using the native waynet, sees it and returns to the hero
 #   follow_back: new game, no SAVE, LLM=fake; repeated set_intent follow_hero recalls Cavalorn

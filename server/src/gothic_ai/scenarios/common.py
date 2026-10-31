@@ -18,12 +18,19 @@ from ..game import GameError, GameLink
 from ..gossip import Scene
 from ..llm import Item, LLMBackend, LLMEvent, Message, Tool, ToolCall, ToolChoice, ToolResult
 from ..llm.fake import FakeBackend, FakeStep
+from ..llm.off import OffBackend
 from ..perception import BEASTS, trace_name
 from ..protocol import ActionResult, GameMessage, NpcActResult, NpcIdle, PerceptionHeld, Saved
 from ..sightings import Sighting
 from ..talk import TalkDesk
 
 log = logging.getLogger("gothic_ai.scenarios")
+
+
+def model_off(dialogue: DialogueManager) -> OffBackend:
+    if not isinstance(dialogue.llm, OffBackend):
+        raise RuntimeError("scenario needs LLM=off")
+    return dialogue.llm
 
 
 @dataclass(frozen=True)
