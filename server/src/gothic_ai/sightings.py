@@ -460,8 +460,9 @@ class Sightings:
         """The hero's latest sightings, the latest first."""
         return [s for s in reversed(self.mind(npc).sightings) if s.who == HERO]
 
-    def words(self, s: Sighting, now: int | None = None) -> str:
-        """A sighting in words: «сегодня 08:10–08:14, около часа назад — на пастбище у…; без доспеха»."""
+    def words(self, s: Sighting, now: int | None = None, bare: bool = True) -> str:
+        """A sighting in words: «сегодня 08:10–08:14, около часа назад — на пастбище у…; без доспеха».
+        `bare=False` leaves out «без доспеха» when he wore nothing all along (a witness's answer)."""
         now = max(self.now if now is None else now, s.end)
         parts = [", потом ".join(s.places) or "где-то"]
         if s.trace_kind:
@@ -472,7 +473,7 @@ class Sightings:
                 )
             return f"{_observed_when(s.start, now)} — {trace_name(s.trace_kind, s.name)}; {parts[0]}{age}"
         if s.who == HERO:
-            parts.append(_wore(s))
+            parts.append(_wore(s) if bare or any(s.armor) else "")
         parts += [NOTABLE[n] for n in s.notable if n in NOTABLE]
         return f"{when(s.start, s.end, now)} — " + "; ".join(p for p in parts if p)
 

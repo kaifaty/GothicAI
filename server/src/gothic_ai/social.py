@@ -377,14 +377,19 @@ class Rumors:
             except (GameError, TimeoutError) as err:
                 log.info("rumors: %s", err or type(err).__name__)
 
-    async def tick(self) -> None:
-        """Who met whom since the last tick, and what they told each other."""
+    async def prepare_social(self) -> Social:
+        """The current world's acquaintances, loaded before a caller chooses among them."""
         if self.social is None:
             people = await self.link.story_people()
             self.social = Social(people, self.graph, self.bonds())
             if self.crimes is not None:
                 self.crimes.people = {p["npc"]: p for p in people}
             log.info("rumors: %d people, %d ties", len(self.social.names), _count(self.social))
+        return self.social
+
+    async def tick(self) -> None:
+        """Who met whom since the last tick, and what they told each other."""
+        await self.prepare_social()
         if self.crimes is not None:
             try:
                 await self.crimes.sides.prepare()

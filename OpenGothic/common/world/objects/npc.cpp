@@ -2067,8 +2067,10 @@ void Npc::updateMeleeShadow() {
   if(shadow.stopped)
     return;
   const float walkableCos = std::cos(float(owner.script().guildVal().slide_angle[guild()])*float(M_PI)/180.f);
+  const auto weapon=weaponState()==WeaponState::Fist ? MeleeImpact::Weapon::Fist :
+                    weaponState()==WeaponState::W2H ? MeleeImpact::Weapon::TwoHand : MeleeImpact::Weapon::OneHand;
   owner.physic()->updateShadowBlade(this,shadow.id,blade,owner.tickCount(),activeBegin,activeEnd,walkableCos,
-                                    Vec3(std::cos(rotationRad()),0,std::sin(rotationRad())));
+                                    Vec3(std::cos(rotationRad()),0,std::sin(rotationRad())),weapon);
   if(Gothic::inst().doMeleeBladeDraw()) {
     const double now = double(owner.tickCount());
     meleeShadowDrawPose   = blade;

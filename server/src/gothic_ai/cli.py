@@ -41,6 +41,7 @@ from .budget import Budget
 from .cast import Cast
 from .casting import Casting
 from .chains import ChainAuthor
+from .challenges import Challenges
 from .characters import Cards, Traits
 from .chests import ChestDesk
 from .chronicle import Chronicle
@@ -259,6 +260,7 @@ class ServerState:
         self.questlog: QuestLog | None = None
         self.showrunner: Showrunner | None = None
         self.feats: Feats | None = None
+        self.feat_challenges: Challenges | None = None
         self.vanilla: VanillaQuests | None = None
         self.gates: Gates | None = None
         self.trust: Trust | None = None
@@ -825,8 +827,11 @@ async def serve(args: argparse.Namespace) -> int:
         log.error("scenario %s requires --neural-body and, for service policy, GOTHIC_BODY_URL "
                   "(or --body-url)", args.scenario)
         return 2
-    if args.scenario in {"neural-soak", "feats"} and args.llm != "fake":
+    if args.scenario == "neural-soak" and args.llm != "fake":
         log.error("scenario %s requires --llm fake", args.scenario)
+        return 2
+    if args.scenario == "feats" and args.llm not in {"fake", "chatgpt"}:
+        log.error("scenario feats requires --llm fake or chatgpt")
         return 2
     done = asyncio.Event()
     exit_code = 0
@@ -984,13 +989,17 @@ async def serve(args: argparse.Namespace) -> int:
             if not args.no_feat_images:
                 if args.scenario == "feats":
                     feat_image_root = TemporaryDirectory(prefix="feat-images-")
-                    artist = ScenarioArtist(Path(feat_image_root.name), codex="scenario")
+                    artist = (
+                        ScenarioArtist(Path(feat_image_root.name), codex="scenario")
+                        if args.llm == "fake" else Artist(Path(feat_image_root.name))
+                    )
                 else:
                     artist = Artist()
             state.feats = Feats(
-                link, state.chronicle, llm, journal=journal,
-                gather_s=1 if args.scenario == "feats" else 20,
-                artist=artist, image_wait_s=30 if args.scenario == "feats" else 150,
+                link, state.chronicle, llm, journal=journal, places=place_book,
+                gather_s=1 if args.scenario == "feats" and args.llm == "fake" else 20,
+                artist=artist,
+                image_wait_s=30 if args.scenario == "feats" and args.llm == "fake" else 150,
             )
         if not args.no_crimes:
             state.crimes = Crimes(
@@ -1311,6 +1320,7 @@ async def serve(args: argparse.Namespace) -> int:
                         llm,
                         crimes=state.crimes,
                         law=state.crime_law.law if state.crime_law is not None else None,
+                        feat_challenges=not args.no_feats and not args.no_feat_challenges,
                     )
                     if (task := _start_showrunner(args, state.showrunner)) is not None:
                         directing.append(task)
@@ -1346,6 +1356,11 @@ async def serve(args: argparse.Namespace) -> int:
             bonds=state.cast.bonds if state.cast else dict,
             crimes=state.crimes,
         )
+        if state.book is not None and not args.no_feats and not args.no_feat_challenges:
+            state.feat_challenges = Challenges(
+                state.chronicle, state.book,
+                social=state.rumors.prepare_social if state.rumors is not None else None,
+            )
         if state.cast is not None:
             state.cast.on_change.append(state.rumors.people_changed)
         directing.append(asyncio.create_task(state.rumors.run()))
@@ -1487,6 +1502,8 @@ async def serve(args: argparse.Namespace) -> int:
                 task.cancel()
             if state.feats is not None:
                 await state.feats.close()
+            if state.feat_challenges is not None:
+                state.feat_challenges.close()
             if feat_image_root is not None:
                 feat_image_root.cleanup()
             if state.questlog is not None:
@@ -3290,6 +3307,11 @@ def main() -> None:
         "--no-feats",
         action="store_true",
         help="disable the chronicler's feats (enabled by default outside scenarios and in feats)",
+    )
+    p.add_argument(
+        "--no-feat-challenges",
+        action="store_true",
+        help="disable the director's hidden line challenges (enabled by default)",
     )
     p.add_argument(
         "--no-feat-images",

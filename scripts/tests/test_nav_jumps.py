@@ -146,6 +146,9 @@ remote_env = {key: value for key, value in os.environ.items()
 raise SystemExit(subprocess.run(["bash", "-c", command], env=remote_env).returncode)
 """)
     ssh.chmod(0o755)
+    rsync = tools / "rsync"
+    rsync.write_text("#!/bin/sh\nexit 0\n")
+    rsync.chmod(0o755)
     home = tmp_path / "home"
     home.mkdir()
     for key in tuple(os.environ):
@@ -178,6 +181,8 @@ raise SystemExit(subprocess.run(["bash", "-c", command], env=remote_env).returnc
     result = subprocess.run(["bash", str(script), "recheck"], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     payload = shlex.split(queue.read_text())
+    assert str(home / "gothic-ai/nav-jumps/source/scripts/nav_job.py") in payload
+    assert payload[payload.index("--max-seconds") + 1] == "7200"
     assert "/Volumes/x" not in queue.read_text()
     assert not any(value.startswith("GOTHIC_DIR=") for value in payload)
     assert f"OPENGOTHIC_BASE_FINGERPRINT={fingerprints['base']}" in payload

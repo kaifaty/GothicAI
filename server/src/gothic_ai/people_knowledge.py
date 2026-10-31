@@ -50,6 +50,51 @@ class Source:
 
 
 SOURCES = {
+    "challenge_hint": Source(
+        kind="challenge_hint_no_blood", subject="npc", observer="witnesses", key="id", context="",
+        subject_name="name", observer_name="witness_names",
+        text="{subject_name} не терпит, когда при нём льётся кровь",
+        warning_direct="{subject_name} не терпит, когда при нём льётся кровь",
+        warning_heard=(
+            "ты слышал, что {subject_name} не терпит, когда при нём льётся кровь; со слов: {source_name}"
+        ),
+        requires=(("kind", "no_blood"),), direct_context="ты слышал это сам",
+        alternatives=(
+            Source(
+                kind="challenge_hint_no_reward", subject="npc", observer="witnesses", key="id", context="",
+                subject_name="name", observer_name="witness_names",
+                text="{subject_name} больше ценит тех, кто помогает не ради платы",
+                warning_direct="{subject_name} больше ценит тех, кто помогает не ради платы",
+                warning_heard=(
+                    "ты слышал, что {subject_name} больше ценит тех, кто помогает не ради платы; "
+                    "со слов: {source_name}"
+                ),
+                requires=(("kind", "no_reward"),), direct_context="ты слышал это сам",
+            ),
+            Source(
+                kind="challenge_hint_secret_kept", subject="npc", observer="witnesses", key="id", context="",
+                subject_name="name", observer_name="witness_names",
+                text="{subject_name} ценит тех, кто умеет держать язык за зубами",
+                warning_direct="{subject_name} ценит тех, кто умеет держать язык за зубами",
+                warning_heard=(
+                    "ты слышал, что {subject_name} ценит тех, кто умеет держать язык за зубами; "
+                    "со слов: {source_name}"
+                ),
+                requires=(("kind", "secret_kept"),), direct_context="ты слышал это сам",
+            ),
+            Source(
+                kind="challenge_hint_mercy", subject="npc", observer="witnesses", key="id", context="",
+                subject_name="name", observer_name="witness_names",
+                text="{subject_name} говорит, что пощадить труднее, чем убить",
+                warning_direct="{subject_name} говорит, что пощадить труднее, чем убить",
+                warning_heard=(
+                    "ты слышал, что {subject_name} говорит, что пощадить труднее, чем убить; "
+                    "со слов: {source_name}"
+                ),
+                requires=(("kind", "mercy"),), direct_context="ты слышал это сам",
+            ),
+        ),
+    ),
     "gate_vouch_broken": Source(
         kind="gate_vouch_broken", subject="npc", observer="witnesses", key="id", context="",
         subject_name="name", observer_name="witness_names",

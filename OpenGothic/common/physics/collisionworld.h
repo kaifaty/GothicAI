@@ -3,12 +3,14 @@
 #include <Tempest/Matrix4x4>
 #include <Tempest/Vec>
 #include "asset/material.h"
+#include "game/meleeimpact.h"
 
 #include <functional>
 #include <atomic>
 #include <memory>
 #include <vector>
 #include <string_view>
+#include <utility>
 
 #include "physics/physics.h"
 #include "physics/physicsnoise.h"
@@ -187,7 +189,7 @@ class CollisionWorld final {
     void updateShadowBlade(const Npc* owner, uint64_t swingId,
                            const std::vector<MeleeBladeSegment>& segments, uint64_t timeMs,
                            double activeBeginMs, double activeEndMs, float walkableCos = .7f,
-                           Tempest::Vec3 forward = {});
+                           Tempest::Vec3 forward = {}, MeleeImpact::Weapon weapon = MeleeImpact::Weapon::OneHand);
     std::vector<MeleeBladeContact> takeShadowBladeContacts(const Npc* owner);
     void removeShadowBlade(const Npc* owner);
     void flushShadowBlades();
@@ -199,7 +201,9 @@ class CollisionWorld final {
     void setBuoyancyEnabled(bool enabled);
     bool buoyancyEnabled() const;
     void setItemWakeEnabled(bool enabled);
+    bool itemWakeEnabled() const { return itemWake; }
     void setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback);
+    void wakeItemsInBounds(const Tempest::Vec3& min, const Tempest::Vec3& max);
     struct WaterBodySnapshot {
       const CollisionBody* body = nullptr;
       const Ragdoll* ragdoll = nullptr;
@@ -268,6 +272,7 @@ class CollisionWorld final {
                                                const Tempest::Matrix4x4* worldPose, size_t numBones,
                                                const Tempest::Matrix4x4& objectMatrix);
     size_t bodyCount() const;
+    JPH::Shape::Stats staticCollisionStats() const;
     float stepMilliseconds() const;
     uint64_t rayCount() const;
     uint64_t simulationStep() const;
@@ -305,7 +310,10 @@ class CollisionWorld final {
     void stepShadowBlades(float fraction, bool bodiesLocked = false);
     void sampleMeleeBench();
     void wakeItems();
+    void wakeShadowItems();
     void recoverItems();
+    void prepareItemSweeps();
+    void recoverTunneledItems();
     void recoverItem(CollisionBody& body, const Tempest::Vec3& failedPosition);
     void fillMaterial(QueryResult& result, const JPH::Shape& shape, JPH::SubShapeID subShape) const;
     void fillRagdoll(QueryResult& result, JPH::BodyID body) const;
@@ -327,6 +335,9 @@ class CollisionWorld final {
     bool itemWake = true;
     std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> itemWakeCallback;
     size_t itemWakeCursor = 0;
+    size_t itemSweepCursor = 0;
+    std::vector<std::pair<CollisionBody*,Tempest::Vec3>> itemSweeps;
+    size_t itemWakeQueries = 0, itemWakeCreated = 0, itemShadowWakeCursor = 0;
     JPH::Vec3 bboxMin = JPH::Vec3::sZero();
     float accumulatedTime = 0;
     friend class Ragdoll;

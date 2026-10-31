@@ -333,6 +333,7 @@ async def test_a_witness_called_over_tells_what_it_saw_and_the_lie_is_caught_by_
     cue = str(hilda[1][-1].content)
     assert "Лобарт спрашивает тебя о герое: тот говорит «всё утро был в городе»" in cue
     assert "Что ты видел сам: сегодня 08:10–08:30" in cue and hilda[2] == []
+    assert "доспех" not in cue  # he wore none: nothing for her to tell
     assert "Видела его утром на пастбище." in fake.said
 
     # Lobart's reaction: the answer is С1, catch_lie is offered for it
