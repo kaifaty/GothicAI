@@ -98,7 +98,38 @@ class RyzenPlayTests(unittest.TestCase):
         options = command[:separator]
         self.assertEqual(options[options.index("--class") + 1], "quick")
         self.assertNotIn("--display-exclusive", options)
-        self.assertEqual(command[separator + 1:], [install.sys.executable, "-c", "prepare-source", "__prepare"])
+        self.assertEqual(command[separator + 1:], [
+            "bash", "-euc", 'source scripts/ryzen-build.sh; exec "$@"', "ryzen-play",
+            install.sys.executable, "-c", "prepare-source", "__prepare",
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "home"
+            task_repo = home / "gothic-ai/play"
+            (task_repo / "scripts").mkdir(parents=True)
+            helper = Path(__file__).resolve().parents[1] / "ryzen-build.sh"
+            shutil.copyfile(helper, task_repo / "scripts/ryzen-build.sh")
+            binaries = Path(directory) / "bin"
+            binaries.mkdir()
+            for tool in ("bash", "mkdir"):
+                (binaries / tool).symlink_to(shutil.which(tool))
+            ccache = binaries / "ccache"
+            ccache.write_text("#!/bin/sh\nexit 0\n")
+            ccache.chmod(0o755)
+            probe = ('import json, os; print(json.dumps({key: value '
+                     'for key, value in os.environ.items() if key.startswith("CCACHE_")}))')
+            queued = install.build_command(probe)
+            result = subprocess.run(
+                queued[queued.index("--") + 1:], cwd=task_repo,
+                env={"HOME": str(home), "PATH": str(binaries)},
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {
+                "CCACHE_DIR": str(home / ".cache/gothic-ai/ccache"),
+                "CCACHE_MAXSIZE": "20G",
+                "CCACHE_BASEDIR": str(home / "gothic-ai"),
+                "CCACHE_NOHASHDIR": "true",
+            })
         with patch.dict(install.os.environ), \
                 patch.object(install.Path, "cwd", return_value=repo), \
                 patch.object(install.shutil, "which", return_value="/tool"), \
