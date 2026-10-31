@@ -110,8 +110,8 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
         check("save_before_deed", True, f"slot={slot}, branch={saved.branch}, seq={saved.seq}")
 
         if not live:
-            # The debug kill places its victim beside the hero; keep this deed unwitnessed.
-            await link.debug("player_goto", waypoint="NW_XARDAS_TOWER_VALLEY_01")
+            # Keep the debug kill in the tower, away from wildlife, with Xardas outside.
+            await link.debug("npc_goto", npc="NONE_100_XARDAS", waypoint="NW_XARDAS_TOWER_VALLEY_01")
             nearby = await link.story_nearby("PC_HERO", 3500)
             if not check("unwitnessed_setup", not nearby, [person["npc"] for person in nearby]):
                 return _logged(results)
