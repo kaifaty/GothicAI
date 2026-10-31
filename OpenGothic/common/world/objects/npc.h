@@ -325,6 +325,8 @@ class Npc final {
     float     staminaMax() const;
     float     staminaFraction() const;
     bool      isStaminaExhausted() const;
+    bool      isMeleeStunned() const;
+    void      startMeleeStun(Npc& by, std::string_view reason);
     auto      beginCastSpell() -> BeginCastResult;
     void      endCastSpell(bool playerCtrl = false);
     void      setActiveSpellInfo(int32_t info);
@@ -976,6 +978,15 @@ class Npc final {
     bool                          allowStaminaAction(std::string_view action, float cost, bool fullCost = false);
     void                          spendStamina(std::string_view action, float cost);
     void                          waitForMeleeStamina(uint64_t dt);
+    bool                          allowMeleeStunAction(std::string_view action);
+    void                          endMeleeStun(std::string_view reason);
+    void                          tickMeleeParry();
+    void                          applyMeleeParry(Npc& attacker, const MeleeBladeContact* contact);
+    float                         meleePostureSkillScale(const Npc& attacker) const;
+    uint64_t                      meleeStunUntil = 0;
+    std::optional<uint64_t>        meleeParadeOrigin;
+    uint64_t                      meleeParadeEnd = 0;
+    bool                          meleeParadeContact = false;
     bool                          meleeKnockdown = false;
     bool                          meleeDownStrike = false; // the chop from above at one lying is playing
     bool                          meleeGetupForced = false;

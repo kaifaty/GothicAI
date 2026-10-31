@@ -37,6 +37,7 @@
 #      MELEE_DOWN_TACTICS optional initial GAME melee_down_tactics setting (0 or 1)
 #      MELEE_HITSTOP optional initial GAME melee_hitstop setting (0 or 1)
 #      MELEE_STAMINA optional initial GAME melee_stamina setting (0 or 1)
+#      MELEE_PARRY optional initial GAME melee_parry setting (0 or 1)
 #      MELEE_REACTIONS optional initial GAME melee_reactions setting (0 or 1)
 #      MELEE_BLADE_SHADOW optional initial GAME melee_blade_shadow setting (0 or 1)
 #      OPENGOTHIC_TEXTURES  sharper textures (default: those of scripts/hd-textures.sh, when made; empty: none)
@@ -226,7 +227,7 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
@@ -275,6 +276,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-
   if [[ -n "${MELEE_STAMINA:-}" ]]; then
     [[ "$MELEE_STAMINA" == 0 || "$MELEE_STAMINA" == 1 ]] || { echo "MELEE_STAMINA must be 0 or 1" >&2; exit 2; }
     printf 'melee_stamina=%s\n' "$MELEE_STAMINA" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_PARRY:-}" ]]; then
+    [[ "$MELEE_PARRY" == 0 || "$MELEE_PARRY" == 1 ]] || { echo "MELEE_PARRY must be 0 or 1" >&2; exit 2; }
+    printf 'melee_parry=%s\n' "$MELEE_PARRY" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${MELEE_REACTIONS:-}" ]]; then
     [[ "$MELEE_REACTIONS" == 0 || "$MELEE_REACTIONS" == 1 ]] || { echo "MELEE_REACTIONS must be 0 or 1" >&2; exit 2; }

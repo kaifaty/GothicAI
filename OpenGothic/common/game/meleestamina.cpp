@@ -38,15 +38,19 @@ bool MeleeStamina::canAfford(const State& state, float cost, bool enabled) {
   return !enabled || (canAct(state,true) && state.current>=cost);
   }
 
-bool MeleeStamina::spend(State& state, float cost, uint64_t now, bool enabled) {
-  if(!canAct(state,enabled))
-    return false;
-  if(!enabled)
-    return true;
+void MeleeStamina::drain(State& state, float cost, uint64_t now) {
   state.current = std::max(0.f,state.current-cost);
   state.lastSpend = now;
   state.lastUpdate = now;
   if(state.current==0.f)
     state.exhausted = true;
+  }
+
+bool MeleeStamina::spend(State& state, float cost, uint64_t now, bool enabled) {
+  if(!canAct(state,enabled))
+    return false;
+  if(!enabled)
+    return true;
+  drain(state,cost,now);
   return true;
   }
