@@ -201,24 +201,82 @@ def test_external_script_selects_referencing_tests(repository):
     }
 
 
-def test_external_file_matches_full_path(repository):
+@pytest.mark.parametrize("parts", [
+    ("tools", "run-special"),
+    ("lib", "src", "libpkg", "unimported.py"),
+    ("docs", "style.md"),
+])
+def test_external_file_matches_full_path(repository, parts):
     root, _ = repository
+    changed = "/".join(parts)
     path = root / "app/tests/test_resource.py"
-    path.write_text('SCRIPT = "tools/run-special"\n')
-    assert selected_files(selection(repository, "tools/run-special")) == {
-        "app/tests/test_resource.py"
-    }
+    path.write_text(f"RESOURCE = {changed!r}\n")
+    (root / "lib/tests/test_unused.py").write_text(f"RESOURCE = {parts[-1]!r}\n")
+    expected = {"app/tests/test_resource.py"}
+    if parts[0] == "tools":
+        expected.add("lib/tests/test_unused.py")
+    assert selected_files(selection(repository, changed)) == expected
 
 
 def test_docs_and_images_select_nothing(repository):
     root, _ = repository
     (root / "app/tests/test_resource.py").write_text(
-        'REFERENCES = "docs/x.md README.md docs/sample.py app/README.md '
-        'image.png image.jpg icon.svg reports/frame.npz"\n'
+        'REFERENCES = "x.md sample.py notes.md image.png image.jpg icon.svg frame.npz"\n'
     )
-    assert selection(repository, "docs/x.md", "README.md", "docs/sample.py",
-                     "app/README.md", "image.png", "image.jpg", "icon.svg",
+    assert selection(repository, "/".join(("docs", "x.md")), "README.md", "docs/sample.py",
+                     "app/notes.md", "images/image.png", "images/image.jpg", "images/icon.svg",
                      "reports/frame.npz") == []
+
+
+def test_scripts_partition_follows_transitive_imports_and_keeps_selections(repository):
+    root, original_groups = repository
+    files = {
+        "scripts/backend.py": "import torch\nfrom libpkg.other import READY\n",
+        "scripts/tests/test_backend.py": 'import backend\nRESOURCE = "config.json"\n',
+        "scripts/tests/test_optional.py": 'import pytest\npytest.importorskip("torch")\n',
+        "scripts/tests/test_body.py": "import gothic_body.schema\n",
+        "scripts/tests/test_light.py": 'import json\nRESOURCE = "config.json"\n',
+        "scripts/tests/conftest.py": "FLAG = True\n",
+    }
+    for name, text in files.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    command = ("uv", "run", "--no-project", *check.PYTEST)
+    groups = (*original_groups,
+              check.Group("scripts", "scripts", command, dependencies=("lib",)),
+              check.Group("scripts-torch", "scripts", command, dependencies=("scripts",)))
+    repository = root, groups
+    tests = check.discover_tests(root, groups)
+    light = {"scripts/tests/test_light.py"}
+    heavy = {
+        "scripts/tests/test_backend.py", "scripts/tests/test_optional.py", "scripts/tests/test_body.py"
+    }
+    assert set(tests["scripts"]) == light
+    assert set(tests["scripts-torch"]) == heavy
+    assert selected_files(selection(repository, "scripts/backend.py")) == {
+        "scripts/tests/test_backend.py"
+    }
+    assert selected_files(selection(repository, "lib/src/libpkg/other.py")) == {
+        "lib/tests/test_other.py", "scripts/tests/test_backend.py"
+    }
+    assert selected_files(selection(repository, "scripts/config.json")) == {
+        "scripts/tests/test_light.py", "scripts/tests/test_backend.py"
+    }
+    matrix = selection(repository, "scripts/tests/conftest.py")
+    assert selected_files(matrix) == light | heavy
+    assert all(group["whole_group"] for group in matrix)
+    for group in matrix:
+        members = light if group["name"] == "scripts" else heavy
+        assert group["command"].split()[-len(members):] == sorted(
+            str(Path(path).relative_to("scripts")) for path in members
+        )
+        assert not any(str(Path(path).relative_to("scripts")) in group["command"]
+                       for path in (light | heavy) - members)
+    assert selected_files(selection(repository, "scripts/tests/test_light.py")) == light
+    assert selected_files(selection(repository, "scripts/tests/test_optional.py")) == {
+        "scripts/tests/test_optional.py"
+    }
 
 
 @pytest.mark.parametrize("path", ["scripts/check.py", ".github/workflows/tests.yml"])
@@ -269,13 +327,32 @@ def test_local_changes_include_commits_index_worktree_and_untracked(repository):
 
 
 def test_real_docs_select_nothing():
-    assert check.select_groups(ROOT, ["docs/x.md", "README.md"]) == []
+    assert check.select_groups(ROOT, ["/".join(("docs", "x.md"))]) == []
+
+
+@pytest.mark.parametrize("parts, expected", [
+    (("server", "src", "gothic_ai", "gamedata", "base.py"), {
+        "launcher/core/tests/test_checks.py"
+    }),
+    (("scripts", "ryzen_game.py"), {
+        "launcher/core/tests/test_commands.py"
+    }),
+    (("docs", "content-style.md"), {
+        "scripts/content/test_city_set.py", "scripts/content/test_generate.py",
+        "scripts/content/test_generate_run.py", "scripts/content/test_import_imagegen.py",
+    }),
+])
+def test_real_full_path_references_cross_group_boundaries(parts, expected):
+    files = selected_files(check.select_groups(ROOT, ["/".join(parts)]))
+    assert expected <= files
+    if parts[0] == "docs":
+        assert files == expected
 
 
 def test_real_game_change_selects_server_importers():
-    matrix = check.select_groups(ROOT, ["server/src/gothic_ai/game.py"])
+    matrix = check.select_groups(ROOT, ["/".join(("server", "src", "gothic_ai", "game.py"))])
     files = selected_files(matrix)
-    assert {group["name"] for group in matrix} == {"server", "scripts"}
+    assert {group["name"] for group in matrix} == {"server", "scripts-torch"}
     assert "scripts/tests/test_body_live_capture.py" in files
     assert "server/tests/test_memprobe.py" in files
     assert "server/tests/test_neural_transitions.py" in files
@@ -309,7 +386,11 @@ def test_real_selector_change_selects_every_group():
     assert all("--timeout=120 --timeout-method=signal" in group["command"] for group in matrix)
     assert all("faulthandler_timeout" not in group["command"] for group in matrix)
     assert "--editable ." in next(group["command"] for group in matrix if group["name"] == "body-service")
-    assert "--editable ../body-service" in next(group["command"] for group in matrix if group["name"] == "scripts")
+    light = next(group["command"] for group in matrix if group["name"] == "scripts")
+    heavy = next(group["command"] for group in matrix if group["name"] == "scripts-torch")
+    assert "--torch-backend" not in light and "--with torch" not in light and "../body-service" not in light
+    assert "--torch-backend cpu" in heavy and "--editable ../body-service" in heavy
+    assert not any(group["name"].startswith("npc-body-") for group in matrix)
 
 
 def test_every_tracked_test_is_grouped_once_or_explicitly_excluded():

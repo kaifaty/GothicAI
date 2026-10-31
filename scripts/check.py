@@ -8,7 +8,6 @@ import ast
 from collections import defaultdict, deque
 from dataclasses import dataclass
 import json
-import os
 from pathlib import Path, PurePosixPath
 import shlex
 import subprocess
@@ -44,7 +43,13 @@ GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout",
         'exec uv run --no-project --python .venv/bin/python --with pytest-timeout '
         'pytest -q -rs --timeout=120 --timeout-method=signal "$@"', "pytest",
     )),
+    # Shared sources belong to the first group; test membership is split by the import graph.
     Group("scripts", "scripts", (
+        "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest",
+        "--with", "numpy", "--with", "pillow", "--with", "matplotlib", "--with", "websockets",
+        "--with", "../launcher/core", *PYTEST,
+    ), dependencies=("launcher/core", "server", "body-service")),
+    Group("scripts-torch", "scripts", (
         "bash", "-c", 'uv venv --allow-existing .venv && '
         'uv pip install --python .venv/bin/python --torch-backend cpu '
         '--default-index https://pypi.org/simple "torch>=2.5,<3" pytest numpy pillow '
@@ -52,7 +57,7 @@ GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout",
         'exec uv run --no-project --python .venv/bin/python --with pytest-timeout '
         'pytest -q -rs --timeout=120 --timeout-method=signal '
         '--ignore=content --ignore=meshes --ignore=fracture "$@"', "pytest",
-    ), dependencies=("launcher/core", "server", "body-service")),
+    ), dependencies=("scripts",)),
     Group("content", "scripts/content", (
         "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest", "--with", "numpy",
         "--with", "pillow", "--with", "scipy", "--with", "shapely",
@@ -65,18 +70,23 @@ GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout",
         "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest",
         "--with", "numpy", "--with", "scipy", *PYTEST,
     )),
-    *(Group(name, directory, ("env", "PYTHONPATH=" + os.path.relpath("scripts", directory),
-                             "uv", "run", "--no-project", "--with", "pytest-timeout",
-                             "--with", "pytest", *PYTEST),
-            dependencies=("scripts",))
-      for name, directory in (
-          ("npc-body-guard", "reports/npc-body/2026-10-14-combat/guard-reader-v1/code"),
-          ("npc-body-separation", "reports/npc-body/2026-10-14-combat/service-separation/validation/code"),
-      )),
 )
 
 # Exact repository paths only: exclusions must not silently hide future tests.
-EXCLUSIONS: dict[str, str] = {}
+EXCLUSIONS: dict[str, str] = {
+    "reports/npc-body/2026-10-14-combat/guard-reader-v1/code/scripts/tests/test_body_combat_report.py":
+        "Archived experiment snapshot: code and configurations as of the report date.",
+    "reports/npc-body/2026-10-14-combat/guard-reader-v1/code/scripts/tests/test_body_final_evaluation.py":
+        "Archived experiment snapshot: code and configurations as of the report date.",
+    "reports/npc-body/2026-10-14-combat/guard-reader-v1/code/scripts/tests/test_body_stage8_final_report.py":
+        "Archived experiment snapshot: code and configurations as of the report date.",
+    "reports/npc-body/2026-10-14-combat/service-separation/validation/code/scripts/tests/test_body_combat_report.py":
+        "Archived experiment snapshot: code and configurations as of the report date.",
+    "reports/npc-body/2026-10-14-combat/service-separation/validation/code/scripts/tests/test_body_final_evaluation.py":
+        "Archived experiment snapshot: code and configurations as of the report date.",
+    "reports/npc-body/2026-10-14-combat/service-separation/validation/code/scripts/tests/test_body_stage8_final_report.py":
+        "Archived experiment snapshot: code and configurations as of the report date.",
+}
 
 
 def git_files(root: Path, *, untracked: bool = False) -> list[str]:
@@ -93,7 +103,8 @@ def owner(path: str, groups: tuple[Group, ...]) -> Group | None:
     return max(matches, key=lambda item: item[0])[1] if matches else None
 
 
-def discover_tests(root: Path, groups: tuple[Group, ...] | None = None) -> dict[str, list[str]]:
+def discover_tests(root: Path, groups: tuple[Group, ...] | None = None, *,
+                   graph: dict[str, set[str]] | None = None) -> dict[str, list[str]]:
     groups = GROUPS if groups is None else groups
     tests: dict[str, list[str]] = {g.name: [] for g in groups}
     for path in git_files(root, untracked=True):
@@ -103,12 +114,20 @@ def discover_tests(root: Path, groups: tuple[Group, ...] | None = None) -> dict[
             group = owner(path, groups)
             if group:
                 tests[group.name].append(path)
+    if "scripts-torch" in tests:
+        if graph is None:
+            graph = import_graph(root, groups, git_files(root, untracked=True), dependencies(root, groups))
+        torch_paths = import_dependents(graph, ("torch", "gothic_body"))
+        tests["scripts-torch"] = [p for p in tests["scripts"] if p in torch_paths]
+        tests["scripts"] = [p for p in tests["scripts"] if p not in torch_paths]
     return tests
 
 
 def dependencies(root: Path, groups: tuple[Group, ...]) -> dict[str, set[str]]:
     """Project edges come from uv path sources, including transitive dependencies."""
-    by_directory = {(root / g.directory).resolve(): g.name for g in groups}
+    by_directory: dict[Path, str] = {}
+    for group in groups:
+        by_directory.setdefault((root / group.directory).resolve(), group.name)
     result = {g.name: set(g.dependencies) for g in groups}
     for group in groups:
         manifest = root / group.directory / "pyproject.toml"
@@ -132,7 +151,7 @@ def dependencies(root: Path, groups: tuple[Group, ...]) -> dict[str, set[str]]:
 
 
 def import_graph(root: Path, groups: tuple[Group, ...], files: list[str], deps: dict[str, set[str]]) -> dict[str, set[str]]:
-    """Reverse file edges, resolved in each project's own package namespace."""
+    """Reverse file edges and Torch package roots in each project's own package namespace."""
     modules: dict[str, dict[str, set[str]]] = {g.name: defaultdict(set) for g in groups}
     names: dict[str, str] = {}
     owners: dict[str, Group] = {}
@@ -190,7 +209,7 @@ def import_graph(root: Path, groups: tuple[Group, ...], files: list[str], deps: 
                                 for alias in node.names if alias.name != "*")
             elif isinstance(node, ast.Call):
                 function = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-                if function in {"import_module", "__import__"} and node.args:
+                if function in {"import_module", "__import__", "importorskip"} and node.args:
                     argument = node.args[0]
                     if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
                         name = argument.value
@@ -216,6 +235,8 @@ def import_graph(root: Path, groups: tuple[Group, ...], files: list[str], deps: 
                     reverse[target].add(path)
         for name in imported:
             parts = name.split(".")
+            if parts[0] in {"torch", "gothic_body"}:
+                reverse[parts[0]].add(path)
             for length in range(1, len(parts) + 1):
                 prefix = ".".join(parts[:length])
                 for project in visible:
@@ -225,6 +246,17 @@ def import_graph(root: Path, groups: tuple[Group, ...], files: list[str], deps: 
                             reverse[target].add(path)
                         break
     return reverse
+
+
+def import_dependents(graph: dict[str, set[str]], paths: Iterable[str]) -> set[str]:
+    visited = set(paths)
+    pending = deque(visited)
+    while pending:
+        for importer in graph.get(pending.popleft(), ()):
+            if importer not in visited:
+                visited.add(importer)
+                pending.append(importer)
+    return visited
 
 
 def documentation(root: Path, path: str) -> bool:
@@ -249,8 +281,12 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
                   groups: tuple[Group, ...] | None = None) -> list[dict]:
     """Return runnable Python selections. Future E2E selection stays outside this function."""
     groups = GROUPS if groups is None else groups
-    tests = discover_tests(root, groups)
     changed = sorted(set(changed_files))
+    files = git_files(root, untracked=True)
+    deps = dependencies(root, groups)
+    reverse = (import_graph(root, groups, sorted(set(files) | set(changed)), deps)
+               if any(g.name == "scripts-torch" for g in groups) or any(p.endswith(".py") for p in changed) else {})
+    tests = discover_tests(root, groups, graph=reverse)
     reasons: dict[str, set[str]] = defaultdict(set)
     whole_groups: dict[str, set[str]] = defaultdict(set)
 
@@ -267,11 +303,10 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
     else:
         if event != "pull_request":
             raise ValueError(f"Unsupported event: {event}")
-        files = git_files(root, untracked=True)
-        deps = dependencies(root, groups)
-        reverse = import_graph(root, groups, sorted(set(files) | set(changed)), deps) if any(p.endswith(".py") for p in changed) else {}
         texts = {p: (root / p).read_text() for p in all_tests if (root / p).is_file()}
         for path in changed:
+            references = [p for p, text in texts.items() if path in text]
+            select(references, path + ": full path reference")
             if documentation(root, path):
                 continue
             group = owner(path, groups)
@@ -286,21 +321,14 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
                     whole_groups[name].add(full_reason)
             elif group and PurePosixPath(path).name == "conftest.py":
                 parent = str(PurePosixPath(path).parent) + "/"
-                select((p for p in tests[group.name] if p.startswith(parent)), reason + ": fixture scope (rule 3)")
+                select((p for p in all_tests if p.startswith(parent)), reason + ": fixture scope (rule 3)")
             elif group and path.endswith(".py"):
-                pending = deque([path])
-                visited = {path}
-                while pending:
-                    for importer in reverse.get(pending.popleft(), ()):
-                        if importer not in visited:
-                            visited.add(importer)
-                            pending.append(importer)
-                select(all_tests & visited, reason + ": import dependency (rules 2/3/5)")
-            else:
-                candidates = tests[group.name] if group else all_tests
-                matches = [p for p in candidates if path in texts.get(p, "") or PurePosixPath(path).name in texts.get(p, "")]
+                select(all_tests & import_dependents(reverse, [path]), reason + ": import dependency (rules 2/3/5)")
+            elif not path.endswith(".py"):
+                candidates = [p for p in all_tests if owner(p, groups) == group] if group else all_tests
+                matches = [p for p in candidates if PurePosixPath(path).name in texts.get(p, "")]
                 select(matches, reason + ": file reference (rules 6/7)")
-                if not matches:
+                if not matches and not references:
                     print(f"No tests reference {path}; no tests selected for this file.", file=sys.stderr)
 
     result = []
@@ -316,7 +344,10 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
         whole_group = "; ".join(sorted(whole_groups[group.name])) or None
         directory = root / group.directory
         # Commands use the group's working directory; paths in the plan remain repository-relative.
-        arguments = [] if whole_group else [str((root / p).relative_to(directory)) for p in selected]
+        # The two scripts groups share a directory, so even a whole group needs its own file list.
+        shared_directory = sum(g.directory == group.directory for g in groups) > 1
+        arguments = ([] if whole_group and not shared_directory else
+                     [str((root / p).relative_to(directory)) for p in selected])
         result.append({"name": group.name, "dir": group.directory,
                        "command": shlex.join([*group.command, *arguments]), "timeout": group.timeout,
                        "platform": group.platform,
