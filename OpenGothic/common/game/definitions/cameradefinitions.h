@@ -1,32 +1,32 @@
 #pragma once
 
-#include <zenkit/addon/daedalus.hh>
+#include "game/definitions/definitiontypes.h"
 
 class CameraDefinitions final {
   public:
     CameraDefinitions();
 
-    const zenkit::ICamera& dialogCam()    const { return camModDialog;    }
-    const zenkit::ICamera& inventoryCam() const { return camModInventory; }
-    const zenkit::ICamera& stdCam()       const { return camModNormal; }
-    const zenkit::ICamera& fpCam()        const { return camModFp;     }
-    const zenkit::ICamera& backCam()      const { return camModBack;   }
-    const zenkit::ICamera& meleeCam()     const { return camModMelee;  }
-    const zenkit::ICamera& rangeCam()     const { return camModRange;  }
-    const zenkit::ICamera& mageCam()      const { return camModMage;   }
-    const zenkit::ICamera& deathCam()     const { return camModDeath;  }
-    const zenkit::ICamera& swimCam()      const { return camModSwim;   }
-    const zenkit::ICamera& diveCam()      const { return camModDive;   }
-    const zenkit::ICamera& fallCam()      const { return camModFall;   }
-    const zenkit::ICamera& mobsiCam(std::string_view tag, std::string_view pos) const;
+    const Def::Camera& dialogCam()    const { return camModDialog;    }
+    const Def::Camera& inventoryCam() const { return camModInventory; }
+    const Def::Camera& stdCam()       const { return camModNormal; }
+    const Def::Camera& fpCam()        const { return camModFp;     }
+    const Def::Camera& backCam()      const { return camModBack;   }
+    const Def::Camera& meleeCam()     const { return camModMelee;  }
+    const Def::Camera& rangeCam()     const { return camModRange;  }
+    const Def::Camera& mageCam()      const { return camModMage;   }
+    const Def::Camera& deathCam()     const { return camModDeath;  }
+    const Def::Camera& swimCam()      const { return camModSwim;   }
+    const Def::Camera& diveCam()      const { return camModDive;   }
+    const Def::Camera& fallCam()      const { return camModFall;   }
+    const Def::Camera& mobsiCam(std::string_view tag, std::string_view pos) const;
 
   private:
-    zenkit::ICamera getCam(std::string_view name);
+    Def::Camera getCam(std::string_view name);
 
-    std::vector<std::pair<std::string, zenkit::ICamera>> cameras;
-    const zenkit::ICamera* find(std::string_view name) const;
+    std::vector<std::pair<std::string, Def::Camera>> cameras;
+    const Def::Camera* find(std::string_view name) const;
 
-    zenkit::ICamera camModNormal, camModFp, camModBack;
-    zenkit::ICamera camModDialog, camModInventory, camModDeath, camModSwim, camModDive, camModFall;
-    zenkit::ICamera camModMelee, camModRange, camModMage;
+    Def::Camera camModNormal, camModFp, camModBack;
+    Def::Camera camModDialog, camModInventory, camModDeath, camModSwim, camModDive, camModFall;
+    Def::Camera camModMelee, camModRange, camModMage;
   };

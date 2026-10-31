@@ -62,6 +62,7 @@ from .trace import TraceWriter
 
 if TYPE_CHECKING:
     from .beasts import BeastDesk
+    from .crime_meet import Encounter
     from .orders import Orders
 
 log = logging.getLogger(__name__)
@@ -187,6 +188,40 @@ _ADDRESS = frozenset(
     "мастер господин госпожа брат сестра сэр лорд друг дружище приятель старик старина парень командир "
     "капитан генерал отец сынок учитель хозяин торговец кузнец страж стражник маг".split()
 )
+
+_WORLD_HINTS = (
+    "Иннос", "Инноса", "Инносу", "Аданос", "Аданоса", "Аданосу", "Белиар", "Белиара", "Белиару",
+    "Хоринис", "Хориниса", "Хоринисе", "Долина Рудников", "Долине Рудников", "Долину Рудников",
+    "Яркендар", "Яркендаре",
+)
+
+
+def _asr_name_hints(name: str) -> list[str]:
+    """The complete name, its words and their simple Russian case forms, preserving spelling."""
+    hints = [name]
+    for word in re.findall(r"[^\W\d_]+", name):
+        if len(word) < 3 or word.lower().replace("ё", "е") in _ADDRESS:
+            continue
+        hints.append(word)
+        last = word[-1].lower()
+        if last in "бвгджзклмнпрстфхцчшщ":
+            stem, endings = word, ("а", "у", "ом", "е")
+        elif last == "й":
+            stem, endings = word[:-1], ("я", "ю", "ем", "е")
+        elif last == "а":
+            stem = word[:-1]
+            before = word[-2].lower()
+            endings = ("и" if before in "гкхжшщч" else "ы", "е", "у",
+                       "ей" if before in "жшщчц" else "ой")
+        elif last == "я":
+            stem, endings = word[:-1], ("и", "и" if word.lower().endswith("ия") else "е", "ю", "ей")
+        else:
+            continue
+        hints.extend(stem + (ending.upper() if word.isupper() else ending) for ending in endings)
+    return list(dict.fromkeys(
+        hint for hint in hints
+        if hint and all(c.isalpha() or c.isdigit() or c in " .,'():!?;-" for c in hint)
+    ))
 
 
 # a phrase to several of those around («Пацаны, здорово», «Всем привет», «Эй, вы двое»): to the conversation.
@@ -348,6 +383,8 @@ class TalkDesk:
         self.planner = planner
         # what an npc perceives now, for the behavioral model (perception.py)
         self.view_of: Callable[[str], tuple[str, ...]] = lambda npc: ()
+        self.refuses: Callable[[str], bool] = lambda npc: False
+        self.refusal: Callable[[str], Encounter | None] = lambda npc: None
         self.end_silence_s = end_silence_s
         self.people: dict[str, RosterEntry] = {}  # the roster: people around the hero
         self.game_time: tuple[int, int] | None = None
@@ -376,6 +413,35 @@ class TalkDesk:
         dialogue.take_body = self.hold
         dialogue.free_body = self.free
         dialogue.on_end = self.on_npc_end
+
+    def asr_hints(self, focus: str | None) -> list[str]:
+        """Priority names and world words, then nearby names in a stable alphabetical order."""
+        names: list[str] = []
+        if focus and (entry := self.people.get(focus.upper())) is not None and entry.activity != "down":
+            names.append(entry.name)
+        if self.partner is not None:
+            entry = self.people.get(self.partner.npc)
+            if entry is None or entry.activity != "down":
+                names.append(self.partner.name)
+        hints = [hint for name in names for hint in _asr_name_hints(name)]
+        hints.extend(_WORLD_HINTS)
+        hints = list(dict.fromkeys(hints))[:100]
+        selected = set(hints)
+        others: list[tuple[str, list[str]]] = []
+        for entry in sorted(self.people.values(), key=lambda entry: entry.earshot):
+            if len(selected) == 100:
+                break
+            if entry.activity == "down":
+                continue
+            forms = _asr_name_hints(entry.name)
+            others.append((entry.name, forms))
+            for hint in forms:
+                if len(selected) == 100:
+                    break
+                selected.add(hint)
+        for _, forms in sorted(others, key=lambda item: (item[0].casefold(), item[0])):
+            hints.extend(hint for hint in forms if hint in selected)
+        return list(dict.fromkeys(hints))
 
     # --- events ---------------------------------------------------------------------------
 
@@ -498,6 +564,8 @@ class TalkDesk:
         if to is None:
             self._spawn(self.link.send(ChatStatusCmd(status="notice", detail="Рядом некому ответить")))
             return
+        if self._refused(to.id):
+            return
         talk = self.partner
         if talk is None or talk.npc != to.id:
             if talk is not None:
@@ -531,6 +599,8 @@ class TalkDesk:
         """The npc opens the conversation itself (it came up to the hero): it is his partner now, and his next
         words go to it. Not while he talks to another; True if it is the partner already."""
         npc = npc.upper()
+        if self.refuses(npc):
+            return False
         if self.partner is not None:
             return self.partner.npc == npc
         self._open(npc, name, self.clock()).posture = posture
@@ -568,6 +638,8 @@ class TalkDesk:
 
     async def _answer(self, talk: Talk, text: str) -> None:
         npc = talk.npc
+        if self._refused(npc):
+            return
         snap = asyncio.create_task(self._snapshot(npc)) if npc not in self.attached else None
         if npc in self.held:  # it listens, walks along or follows already
             if "scene" in self.held[npc]:  # it stood talking to another (gossip.py): now it listens to him
@@ -583,6 +655,8 @@ class TalkDesk:
             await snap
         if self.partner is not talk:
             return  # the hero turned to someone else meanwhile
+        if self._refused(npc):
+            return
         body = POSTURE_OPTIONS[choice].ru if choice else None
         self.dialogue.say_as_player(npc, text, overlay=choice not in (None, "listen"), body=body)
 
@@ -645,9 +719,40 @@ class TalkDesk:
     async def listen(self, npc: str) -> bool:
         """The npc stops and turns to the hero, held while it listens; False if its body cannot be held."""
         npc = npc.upper()
+        if self.refuses(npc):
+            return False
         if not await self.hold(npc, "listen"):
             return False
         self._spawn(self._act(npc, "turn_to", npc="PLAYER"))
+        return True
+
+    def _refused(self, npc: str) -> bool:
+        """A rule's current refusal applies to voice and typed speech as well as native dialogs."""
+        reason = self.refusal(npc)
+        if reason is None and not self.refuses(npc):
+            return False
+        if self.partner is not None and self.partner.npc == npc:
+            self._end("refused")
+
+        def name(who: str) -> str:
+            entry = self.people.get(who.upper())
+            card = self.dialogue.personas.cards.get(who.upper())
+            return (entry.name if entry is not None else "") or (card.name if card else "") or who
+
+        npc_name = name(npc)
+        detail = f"{npc_name} не хочет говорить"
+        if reason is not None:
+            crime = reason.crime
+            victim = str(crime.get("victim") or crime.get("owner") or "неизвестно")
+            log.info(
+                "talk refused npc=%s (%s) crime=%s kind=%s victim=%s role=%s reaction=%s",
+                npc, npc_name, crime["id"], crime.get("kind"), victim, reason.role, reason.reaction,
+            )
+            detail += f": знает об убийстве. Жертва: {name(victim)}"
+        else:
+            log.info("talk refused npc=%s (%s)", npc, npc_name)
+        self._spawn(self.link.send(ChatStatusCmd(npc=npc, status="notice", detail=detail)))
+        self._spawn(self._soft(npc, "say_svm", svm="NOTNOW", overlay=True))
         return True
 
     async def _act(self, npc: str, action: str, /, **args: Any) -> None:

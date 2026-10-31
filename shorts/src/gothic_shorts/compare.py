@@ -49,6 +49,31 @@ WHITE, ACCENT = (255, 255, 255, 255), (255, 214, 120, 255)  # a caption's words,
 PAGE_WORDS = 3  # a caption page: at most this many words, a new one after a comma or a full stop
 
 
+def is_compare_plan(plan: dict) -> bool:
+    """Comparison beats name recorded segments; explainer beats do not."""
+    beats = plan.get("beats") if isinstance(plan, dict) else None
+    return isinstance(beats, list) and any(isinstance(beat, dict) and "segment" in beat for beat in beats)
+
+
+def placed_lines(plan: dict) -> list[dict]:
+    """Voiced lines and words on the cut's timeline, in words.<lang>.json form."""
+    lines, offset = [], 0.0
+    for beat in plan["beats"]:
+        for line in beat.get("lines", []):
+            at = offset + line["at"] - beat["start"]
+            lines.append({
+                "n": len(lines) + 1,
+                "file": line["file"],
+                "start": round(at, 3),
+                "words": [
+                    {"text": word, "start": round(at + start, 3), "end": round(at + end, 3)}
+                    for word, start, end in line["words"]
+                ],
+            })
+        offset += beat["end"] - beat["start"]
+    return lines
+
+
 def font(spec: tuple[str, int], size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(spec[0], size, index=spec[1])
 
@@ -152,7 +177,8 @@ def master(inputs: list[str], mix: str, out: Path, length: float, *, voiced: boo
         levels._master_voiced(audio, report, out, length, inputs=inputs, run=run, detect=clicks.detect)
         return
     loud = "loudnorm=I=-14:TP=-1.5:LRA=11"
-    pre = f"{mix},alimiter=limit=0.75:level=false"
+    pre = (f"{mix},aformat=sample_rates=48000:channel_layouts=stereo,{levels.DUAL_MONO},"
+           "alimiter=limit=0.75:level=false")
     probe = subprocess.run(["ffmpeg", "-hide_banner", *inputs, "-filter_complex", f"{pre},{loud}:print_format=json",
                             "-f", "null", "-"], check=True, capture_output=True, text=True).stderr
     key = probe.rindex('"input_i"')  # the json loudnorm prints, among ffmpeg's other lines
@@ -162,7 +188,14 @@ def master(inputs: list[str], mix: str, out: Path, length: float, *, voiced: boo
     fade = f"afade=t=out:st={length - 0.08:.3f}:d=0.08"
     run(["ffmpeg", "-y", *inputs, "-filter_complex", f"{pre},{loud},{fade}[a]", "-map", "0:v", "-map", "[a]",
          "-c:v", "copy",
-         "-c:a", "aac", "-b:a", "192k", "-ar", "48000", str(out)])
+         *levels.aac_encoder(), "-ar", "48000", str(out)])
+    difference_db = levels.dual_mono_peak(out)
+    if difference_db > levels.DUAL_MONO_MAX_DIFF_DB:
+        out.unlink(missing_ok=True)
+        raise levels.LevelsError(
+            f"Mastering gate dual_mono failed: L - R {difference_db:g} dBFS "
+            f"> {levels.DUAL_MONO_MAX_DIFF_DB:g} dBFS"
+        )
 
 
 @dataclass(frozen=True)
@@ -179,7 +212,9 @@ def build_ending(tmp: Path) -> tuple[Path, float]:
     """Encode the ending like a beat and report its exact container duration."""
     sting = tmp / "sting.mp4"
     run(["ffmpeg", "-y", "-i", str(BRAND / "sting.mp4"), "-r", str(FPS), "-c:v", "libx264", "-preset", "slow",
-         "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2", str(sting)])
+         "-crf", "18", "-pix_fmt", "yuv420p",
+         "-af", f"aformat=sample_rates=48000:channel_layouts=stereo,{levels.DUAL_MONO}",
+         *levels.aac_encoder(), "-ar", "48000", "-ac", "2", str(sting)])
     duration = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of",
                                     "csv=p=0", str(sting)], check=True, capture_output=True, text=True).stdout)
     return sting, duration
@@ -238,12 +273,13 @@ def build(plan: dict, takes: Path, lang: str, tmp: Path) -> Built:
         ])
         fade = 0.06
         dur = end - start
-        audio = (f"[{len(inputs) // 2}]atrim={start}:{end},asetpts=PTS-STARTPTS,"
+        audio = (f"[{len(inputs) // 2}]aformat=sample_rates=48000:channel_layouts=stereo,{levels.DUAL_MONO},"
+                 f"atrim={start}:{end},asetpts=PTS-STARTPTS,"
                  f"afade=t=in:d={fade},afade=t=out:st={dur - fade}:d={fade}[aud]")
         inputs += ["-i", str(takes / "on" / f"{seg}.wav")]
         part = tmp / f"p{i}.mp4"
         run(["ffmpeg", "-y", *inputs, "-filter_complex", graph + ";" + audio, "-map", "[v]", "-map", "[aud]",
-             "-r", str(FPS), "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-c:a", "aac", "-b:a", "192k",
+             "-r", str(FPS), "-c:v", "libx264", "-preset", "slow", "-crf", "18", *levels.aac_encoder(),
              "-ar", "48000", "-ac", "2", str(part)])
         parts.append(part)
     length = offset
@@ -285,7 +321,10 @@ def main() -> None:
                 music_volume=music["volume"] if music else 1.0,
             )
             levels.print_balance(report)
-            master(audio.inputs, audio.mix(), out, built.length, voiced=False)
+            try:
+                master(audio.inputs, audio.mix(), out, built.length, voiced=False)
+            except levels.LevelsError as error:
+                raise SystemExit(str(error)) from error
     render_cover(plan, takes, lang, out)
     # frames over the whole short, for a look
     run(["ffmpeg", "-y", "-i", str(out), "-vf", "fps=1,scale=270:-2,tile=6x3", "-frames:v", "1",

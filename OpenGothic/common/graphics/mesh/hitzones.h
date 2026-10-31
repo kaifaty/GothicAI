@@ -52,9 +52,13 @@ class HitZones final {
       Tempest::Vec3 a, b;
       float         r    = 0;
       Zone          zone = None;
+      size_t        bone = size_t(-1);
       };
     // the capsules as posed (the test bench draws them)
     void             posed(const Tempest::Matrix4x4* tr, size_t numBones, float scale, std::vector<Posed>& out) const;
+    // Signed XZ clearance between torso capsules; offset translates the first body.
+    static float     horizontalBodyGap(const std::vector<Posed>& a, const std::vector<Posed>& b,
+                                      const Tempest::Vec3& offset = {});
 
     static std::string_view name(Zone z);
     // the capsules as posed, for debugging: (a, b, radius, zone)

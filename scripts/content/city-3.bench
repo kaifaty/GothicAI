@@ -1,0 +1,184 @@
+# City set 3: city sites, market-house views, module-rich sites and alpha silhouettes.
+# The original city camera and its 6 s settle + 20 s FPS window remain unchanged.
+# Daylight comparison at every site; market and facade_close also at 23:00.
+# Capture preparation appends a census-only visit to each packed material's inspection camera.
+cheat god
+set time 12 0
+overlay off
+goto NW_CITY_MERCHANT_SHOP01_FRONT_03
+face 0
+cam game
+wait 6000
+shot city_a
+wait 20000
+shot city
+wait 300
+rec city_cap
+wait 3000
+stop
+set time 23 0
+wait 3000
+shot city_night
+wait 100
+
+set time 12 0
+goto MARKT
+face wp NW_CITY_MERCHANT_PATH_28_D
+cam game
+wait 6000
+shot market
+wait 300
+set time 23 0
+wait 3000
+shot market_night
+wait 300
+
+set time 12 0
+goto NW_CITY_HABOUR_06_B
+face wp NW_CITY_HABOUR_05
+cam game
+wait 6000
+shot harbour
+wait 300
+
+goto NW_CITY_UPTOWN_PATH_13
+face wp NW_CITY_UPTOWN_PATH_15
+cam game
+wait 6000
+shot upper
+wait 300
+
+goto NW_CITY_MERCHANT_HUT_02_IN_02
+face wp NW_CITY_BED_ZURIS
+cam game
+wait 6000
+shot house
+wait 300
+
+# Front detail: original comparison camera; hold before the airborne hero falls.
+view hide animated morph pfx
+cam lift off
+cam look -2000
+goto pos 9137 2725 3745
+cam world 800.000 -1900.000 24.500
+wait 34
+cam hold
+wait 6000
+shot facade_close
+wait 300
+set time 23 0
+wait 3000
+shot facade_close_night
+wait 300
+
+# Corner and plinth: same opposite corner as city-2, avoiding market awnings.
+set time 12 0
+cam look -2000
+goto pos 9162 2350 3207
+cam world 500.331 -2000.000 -12.352
+wait 34
+cam hold
+wait 6000
+shot facade_corner
+wait 300
+
+# Whole facade, including upper plaster panels and the stone plinth.
+cam look -2000
+goto pos 9137 2725 3745
+cam world 1700.000 -1900.000 24.500
+wait 34
+cam hold
+wait 6000
+shot facade_full
+wait 300
+
+# Upper-quarter framing and neighbouring panels: inspection camera widened 1.8 times.
+# The unchanged target has a clear central ray through the offline city geometry.
+cam look 45
+goto pos 14116 1555 -2995
+cam world 713.396 130.617 61.979
+wait 34
+cam hold
+wait 6000
+shot upper_modules
+wait 300
+
+# Harbour wall, shutter and adjoining surfaces: 1.8 times the inspection radius.
+# Raise the eye above the opposite low obstruction; the target and azimuth stay fixed.
+cam look 45
+goto pos 2335 -104 1154
+cam world 844.513 450.000 0.264
+wait 34
+cam hold
+wait 6000
+shot harbour_modules
+wait 300
+
+# Upper-quarter interior: 1.8 times the inspection radius exposes neighbouring wall bays.
+cam look 45
+goto pos 15238 988 -3648
+cam world 1221.708 192.358 -118.015
+wait 34
+cam hold
+wait 6000
+shot interior_modules
+wait 300
+
+# Alpha silhouettes: the original inspection cameras and a 2.5-times wider view.
+# Each pair keeps the same target and sightline; all six central rays are clear.
+set time 12 0
+view hide animated morph pfx
+cam lift off
+cam look 45
+goto pos 8734 2233 -6389
+cam world 313.492 82.721 73.931
+wait 34
+cam hold
+wait 6000
+shot alpha_flag_close
+wait 300
+
+cam look 45
+goto pos 8734 2233 -6389
+cam world 783.731 139.302 73.931
+wait 34
+cam hold
+wait 6000
+shot alpha_flag_far
+wait 300
+
+cam look 45
+goto pos 14068 1039 2942
+cam world 541.580 169.827 -123.461
+wait 34
+cam hold
+wait 6000
+shot alpha_ivy_border_close
+wait 300
+
+cam look 45
+goto pos 14068 1039 2942
+cam world 1353.950 357.067 -123.461
+wait 34
+cam hold
+wait 6000
+shot alpha_ivy_border_far
+wait 300
+
+cam look 45
+goto pos 9776 1257 -4055
+cam world 298.516 81.236 -26.508
+wait 34
+cam hold
+wait 6000
+shot alpha_ivy_full_close
+wait 300
+
+cam look 45
+goto pos 9776 1257 -4055
+cam world 746.289 135.590 -26.508
+wait 34
+cam hold
+wait 6000
+shot alpha_ivy_full_far
+wait 500

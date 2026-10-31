@@ -1,0 +1,25 @@
+# Fresh NEWWORLD.ZEN. Run with test content and again with OPENGOTHIC_CONTENT=.
+# Uses the existing destruction-step2 native one-handed animation fixture.
+seed 73013
+cheat god
+set time 12 0
+movable on
+living on
+noise on
+destruction on
+overlay off
+ui off
+view full
+destruction2 setup barrel 1h
+wait 600
+shot own-mesh-fracture-before
+wait 100
+rec own-mesh-fracture
+destruction2 attack
+wait 1200
+destruction2 checkpoint
+shot own-mesh-fracture-after
+wait 100
+stop
+census
+wait 100

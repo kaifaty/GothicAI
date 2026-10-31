@@ -7,6 +7,9 @@
 
 #include "graphics/mesh/submesh/animmesh.h"
 #include "gothic.h"
+#include "frameprofile.h"
+#include "physics/worldwind.h"
+#include "world/chunkresidency.h"
 
 using namespace Tempest;
 
@@ -32,8 +35,8 @@ struct VisualObjects::InstanceDesc {
   float    pos[4][3] = {};
   float    fatness   = 0;
   uint32_t animPtr   = 0;
-  uint32_t padd0     = {};
-  uint32_t padd1     = {};
+  uint32_t deformPtr = 0;
+  uint32_t deformCount = 0;
   };
 
 struct VisualObjects::MorphDesc final {
@@ -50,13 +53,53 @@ struct VisualObjects::MorphData {
 
 
 void VisualObjects::Item::setObjMatrix(const Tempest::Matrix4x4& pos) {
+  setObjMatrix(pos,Vec3(pos[3][0],pos[3][1],pos[3][2]));
+  }
+
+void VisualObjects::Item::setObjMatrix(const Tempest::Matrix4x4& pos, const Vec3& texturePosition) {
   if(owner!=nullptr) {
     auto& obj = owner->objects[id];
     if(obj.pos!=pos)
       owner->updateRtAs(id);
     obj.pos = pos;
+    setTexturePosition(texturePosition);
     owner->updateInstance(id);
     }
+  }
+
+void VisualObjects::Item::setTexturePosition(const Vec3& position) {
+  if(owner==nullptr)
+    return;
+  auto& obj=owner->objects[id];
+  // Each animation worker owns its items; chunk callbacks only change demand
+  // after the workers join. Unchanged transforms need no shared registration.
+  if(obj.textureCategory!=Resources::TextureCategory::Static || obj.texturePosition==position)
+    return;
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+  std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
+  obj.texturePosition=position;
+  owner->updateTextureDemand(id);
+  }
+
+void VisualObjects::Item::setTextureCategory(Resources::TextureCategory category) {
+  if(owner==nullptr)
+    return;
+  auto& obj=owner->objects[id];
+  if(obj.textureCategory==category)
+    return;
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+  std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
+  owner->setTextureDemand(obj,false);
+  if(obj.textureChunkRegistered) {
+    if(auto found=owner->textureChunks.find(obj.textureChunk);found!=owner->textureChunks.end()) {
+      found->second.erase(id);
+      if(found->second.empty())
+        owner->textureChunks.erase(found);
+      }
+    obj.textureChunkRegistered=false;
+    }
+  obj.textureCategory=category;
+  owner->updateTextureDemand(id);
   }
 
 void VisualObjects::Item::setAsGhost(bool g) {
@@ -74,15 +117,15 @@ void VisualObjects::Item::setFatness(float f) {
     }
   }
 
-void VisualObjects::Item::setWind(zenkit::AnimationType m, float intensity) {
+void VisualObjects::Item::setWind(asset::AnimationType m, float intensity) {
   if(owner==nullptr)
     return;
 
-  if(intensity!=0 && m==zenkit::AnimationType::NONE)
-    m = zenkit::AnimationType::WIND_ALT;
+  if(intensity!=0 && m==asset::AnimationType::NONE)
+    m = asset::AnimationType::WIND_ALT;
 
   if(intensity==0)
-    m = zenkit::AnimationType::NONE;
+    m = asset::AnimationType::NONE;
 
   auto& obj = owner->objects[id];
 
@@ -93,15 +136,70 @@ void VisualObjects::Item::setWind(zenkit::AnimationType m, float intensity) {
   if(prev==m)
     return;
 
-  if(prev!=zenkit::AnimationType::NONE)
+  if(prev!=asset::AnimationType::NONE)
     owner->objectsWind.erase(id);
-  if(m!=zenkit::AnimationType::NONE)
+  if(m!=asset::AnimationType::NONE)
     owner->objectsWind.insert(id);
+  }
+
+void VisualObjects::Item::setVisible(bool visible) {
+  if(owner==nullptr)
+    return;
+  auto& obj = owner->objects[id];
+  if(obj.visible==visible || obj.isEmpty())
+    return;
+  obj.visible = visible;
+  const auto meshlets = obj.iboLen/PackedMesh::MaxInd;
+  const auto count = obj.type==DrawCommands::Landscape ? meshlets : 1u;
+  for(uint32_t i=0;i<count;++i)
+    owner->clustersMem[obj.clusterId+i].meshletCount = visible ? (obj.type==DrawCommands::Landscape ? 1u : meshlets) : 0u;
+  owner->clustersMem.markClusters(obj.clusterId,count);
+  owner->updateRtAs(id);
   }
 
 void VisualObjects::Item::startMMAnim(std::string_view anim, float intensity, uint64_t timeUntil, bool freeOnly) {
   if(owner!=nullptr)
     owner->startMMAnim(id, anim, intensity, timeUntil, freeOnly);
+  }
+
+void VisualObjects::Item::setDeformation(const std::vector<Tempest::Vec4>& vertices) {
+  if(owner==nullptr)
+    return;
+  auto& obj = owner->objects[id];
+  const auto count = uint32_t(vertices.size()/2);
+  if(count==0) {
+    if(obj.deformCount==0)
+      return;
+    obj.objDeform = InstanceStorage::Id();
+    obj.deformCount = 0;
+    if(auto mesh=obj.bucketId->staticMesh) {
+      owner->clustersMem[obj.clusterId].r = mesh->bbox.rConservative+obj.bucketId->mat.waveMaxAmplitude;
+      owner->clustersMem.markClusters(obj.clusterId);
+      }
+    owner->updateInstance(id);
+    return;
+    }
+  const auto size = vertices.size()*sizeof(Tempest::Vec4);
+  const bool changed = owner->instanceMem.realloc(obj.objDeform,size);
+  obj.objDeform.set(vertices.data(),0,size);
+  // The authored bounds are shared by every instance. Grow this instance's
+  // sphere to retain cloth that folds beyond the original flat mesh bounds.
+  float radius = 0;
+  for(size_t i=0;i<vertices.size();i+=2) {
+    const auto& p = vertices[i];
+    Vec3 point(p.x,p.y,p.z);
+    float zero = 0;
+    obj.pos.project(point.x,point.y,point.z,zero);
+    radius = std::max(radius,point.length());
+    }
+  if(owner->clustersMem[obj.clusterId].r<radius) {
+    owner->clustersMem[obj.clusterId].r = radius;
+    owner->clustersMem.markClusters(obj.clusterId);
+    }
+  if(changed || obj.deformCount!=count) {
+    obj.deformCount = count;
+    owner->updateInstance(id);
+    }
   }
 
 void VisualObjects::Item::setMMShape(std::string_view anim, uint32_t frame0, uint32_t frame1, float alpha, float intensity) {
@@ -111,6 +209,38 @@ void VisualObjects::Item::setMMShape(std::string_view anim, uint32_t frame0, uin
 
 float VisualObjects::Item::morphWeight(std::string_view anim) {
   return owner!=nullptr ? owner->morphWeight(id, anim) : 0.f;
+  }
+
+VisualObjects::MorphSample VisualObjects::Item::morphSample(std::string_view name, uint64_t tick) const {
+  if(owner==nullptr)
+    return {};
+  auto& obj = owner->objects[id];
+  const auto* mesh = obj.bucketId->staticMesh;
+  if(mesh==nullptr || mesh->morph.anim==nullptr)
+    return {};
+  for(const auto& ani:obj.morphAnim) {
+    if(ani.id>=mesh->morph.anim->size() || ani.timeUntil<tick)
+      continue;
+    const auto& anim = (*mesh->morph.anim)[ani.id];
+    if(anim.name!=name || anim.numFrames==0 || ani.intensity<=0.f)
+      continue;
+    const auto time = tick-ani.timeStart;
+    float weight = 1.f;
+    if(!ani.manual) {
+      if(anim.blendIn>0.f)
+        weight = std::min(weight,float(time)*anim.blendIn);
+      if(anim.blendOut>0.f && ani.timeUntil!=uint64_t(-1))
+        weight = std::min(weight,float(ani.timeUntil-tick)*anim.blendOut);
+      }
+    const auto quantize = [](float x) { return float(uint16_t(std::clamp(x,0.f,1.f)*uint16_t(-1)))/float(uint16_t(-1)); };
+    MorphSample sample;
+    sample.frame0 = ani.manual ? ani.frame0 : uint32_t((time/anim.tickPerFrame+0)%anim.numFrames);
+    sample.frame1 = ani.manual ? ani.frame1 : uint32_t((time/anim.tickPerFrame+1)%anim.numFrames);
+    sample.alpha = quantize(ani.manual ? ani.alpha : float(time%anim.tickPerFrame)/float(anim.tickPerFrame));
+    sample.intensity = quantize(ani.intensity*std::clamp(weight,0.f,1.f));
+    return sample;
+    }
+  return {};
   }
 
 const Material& VisualObjects::Item::material() const {
@@ -161,6 +291,91 @@ VisualObjects::VisualObjects(const SceneGlobals& scene, const std::pair<Vec3, Ve
   }
 
 VisualObjects::~VisualObjects() {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  if(textureResidency)
+    textureResidency->unsubscribe(textureSubscription);
+  for(auto& object:objects)
+    if(!object.isEmpty())
+      setTextureDemand(object,false);
+  }
+
+void VisualObjects::setTextureResidency(ChunkResidency* residency) {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  if(textureResidency)
+    textureResidency->unsubscribe(textureSubscription);
+  textureResidency=residency;
+  if(textureResidency) {
+    textureSubscription=textureResidency->subscribe([this](ChunkId chunk, ChunkResidency::State, ChunkResidency::State next) {
+      FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+      std::lock_guard<std::recursive_mutex> guard(textureSync);
+      const auto found=textureChunks.find({chunk.x,chunk.z});
+      if(found==textureChunks.end())
+        return;
+      for(auto id:found->second)
+        setTextureDemand(objects[id],next!=ChunkResidency::State::Outside);
+      });
+    }
+  for(size_t id=0;id<objects.size();++id)
+    if(!objects[id].isEmpty())
+      updateTextureDemand(id);
+  }
+
+bool VisualObjects::textureChunkActive(const Vec3& position) const {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  if(!textureResidency)
+    return true;
+  const auto chunk=ChunkId::fromPosition(position.x,position.z);
+  const auto index=textureResidency->indexOf(chunk);
+  if(index!=size_t(-1))
+    return textureResidency->desired(index)!=ChunkResidency::State::Outside;
+  // Some visuals occupy cells without landscape triangles.
+  return true;
+  }
+
+ChunkResidency* VisualObjects::textureResidencyManager() const {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  return textureResidency;
+  }
+
+void VisualObjects::setTextureDemand(Object& object, bool active) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  if(object.textureDemand==active)
+    return;
+  Resources::textureDemand(object.bucketId->mat,object.textureCategory,active);
+  object.textureDemand=active;
+  }
+
+void VisualObjects::updateTextureDemand(size_t id) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  auto& object=objects[id];
+  if(object.isEmpty())
+    return;
+  if(object.textureCategory!=Resources::TextureCategory::Static) {
+    setTextureDemand(object,true);
+    return;
+    }
+  const auto chunk=ChunkId::fromPosition(object.texturePosition.x,object.texturePosition.z);
+  const std::pair key{chunk.x,chunk.z};
+  if(!object.textureChunkRegistered || key!=object.textureChunk) {
+    if(object.textureChunkRegistered)
+      if(auto found=textureChunks.find(object.textureChunk);found!=textureChunks.end()) {
+        found->second.erase(id);
+        if(found->second.empty())
+          textureChunks.erase(found);
+        }
+    object.textureChunk=key;
+    textureChunks[key].insert(id);
+    object.textureChunkRegistered=true;
+    }
+  setTextureDemand(object,textureChunkActive(object.texturePosition));
+  }
+
+void VisualObjects::invalidate(const StaticMesh& mesh) {
+  assert(std::none_of(objects.begin(),objects.end(),[&](const auto& object) {
+    return !object.isEmpty() && object.bucketId->staticMesh==&mesh;
+    }));
+  bucketsMem.invalidate(mesh);
   }
 
 void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
@@ -172,6 +387,8 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   d.setPosition(pos==nullptr ? obj.pos : *pos);
   d.animPtr = obj.animPtr;
   d.fatness = obj.fatness*0.5f;
+  d.deformPtr = obj.objDeform.offsetId<uint32_t>();
+  d.deformCount = obj.deformCount;
   obj.objInstance.set(&d, 0, sizeof(d));
 
   auto cId  = obj.clusterId;
@@ -205,6 +422,7 @@ void VisualObjects::updateRtAs(size_t id) {
 VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen,
                                        bool staticDraw) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets
   assert(iboOff%PackedMesh::MaxInd==0);
@@ -235,6 +453,8 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   if(obj.isEmpty())
     return Item(); // null command
 
+  obj.textureCategory=staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic;
+  { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
   obj.objInstance = instanceMem.alloc(sizeof(InstanceDesc));
   clustersMem[obj.clusterId].instanceId = obj.objInstance.offsetId<InstanceDesc>();
 
@@ -253,6 +473,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
 VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen,
                                        const InstanceStorage::Id& anim) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets
   assert(iboOff%PackedMesh::MaxInd==0);
@@ -278,6 +499,7 @@ VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat
 
   if(obj.isEmpty())
     return Item(); // null command
+  { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
   obj.animPtr     = anim.offsetId<Matrix4x4>();
   obj.objInstance = instanceMem.alloc(sizeof(InstanceDesc));
   clustersMem[obj.clusterId].instanceId = obj.objInstance.offsetId<InstanceDesc>();
@@ -290,6 +512,7 @@ VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat
 VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster,
                                        DrawCommands::Type type) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets
   assert(iboOff%PackedMesh::MaxInd==0);
@@ -304,12 +527,14 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   obj.iboLen    = uint32_t(iboLen);
   obj.bucketId  = bucketsMem.alloc(mat, mesh);
   obj.cmdId     = drawCmd.commandId(mat, type, obj.bucketId.toInt());
-  obj.clusterId = clusterId(cluster, iboOff/PackedMesh::MaxInd, iboLen/PackedMesh::MaxInd, obj.bucketId.toInt(), obj.cmdId);
+  obj.clusterId = clusterId(cluster, mesh.firstMeshlet()+iboOff/PackedMesh::MaxInd, iboLen/PackedMesh::MaxInd, obj.bucketId.toInt(), obj.cmdId);
   obj.alpha     = mat.alpha;
   obj.timeShift = -scene.tickCount;
 
   if(obj.isEmpty())
     return Item(); // null command
+  obj.textureCategory=Resources::TextureCategory::Landscape;
+  { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
   updateRtAs(id);
   return Item(*this, id);
   }
@@ -326,7 +551,18 @@ size_t VisualObjects::implAlloc() {
   }
 
 void VisualObjects::free(size_t id) {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   Object& obj = objects[id];
+  setTextureDemand(obj,false);
+  if(obj.textureChunkRegistered) {
+    if(auto found=textureChunks.find(obj.textureChunk);found!=textureChunks.end()) {
+      found->second.erase(id);
+      if(found->second.empty())
+        textureChunks.erase(found);
+      }
+    }
+  timing.finish();
 
   const uint32_t meshletCount = (obj.iboLen/PackedMesh::MaxInd);
   const uint32_t numCluster = (obj.type==DrawCommands::Landscape ? meshletCount : 1);
@@ -335,7 +571,7 @@ void VisualObjects::free(size_t id) {
   clustersMem.free(obj.clusterId, numCluster);
   updateRtAs(id);
 
-  if(obj.wind==zenkit::AnimationType::NONE)
+  if(obj.wind!=asset::AnimationType::NONE)
     objectsWind.erase(id);
   if(obj.type==DrawCommands::Morph)
     objectsMorph.erase(id);
@@ -586,45 +822,12 @@ void VisualObjects::preFrameUpdate() {
   }
 
 void VisualObjects::preFrameUpdateWind() {
-  if(!scene.zWindEnabled)
-    return;
-
-  const uint64_t period = scene.windPeriod;
-  float ax = float(scene.tickCount%period)/float(period);
-  ax = ax*2.f-1.f;
-
   for(auto id:objectsWind) {
-    auto& i = objects[id];
-    float m = 0;
-
-    switch(i.wind) {
-      case zenkit::AnimationType::WIND:
-        // tree. note: mods tent to bump Intensity to insane values
-        if(i.windIntensity>0.f)
-          m = 0.03f; else
-          m = 0;
-        break;
-      case zenkit::AnimationType::WIND_ALT:
-        // grass
-        if(i.windIntensity>0.f && i.windIntensity<=1.0)
-          m = i.windIntensity * 0.1f; else
-          m = 0;
-        break;
-      case zenkit::AnimationType::NONE:
-      default:
-        // error
-        m = 0.f;
-        break;
-      }
-
-    auto  pos   = i.pos;
-    float shift = i.pos[3][0]*scene.windDir.x + i.pos[3][2]*scene.windDir.y;
-    const float a = m * std::cos(float(ax*M_PI) + shift*0.0001f);
-
-    pos[1][0] += scene.windDir.x*a;
-    pos[1][2] += scene.windDir.y*a;
-
-    updateInstance(id, &pos);
+    auto& object = objects[id];
+    auto position = WorldWind::shaderMatrix(object.pos, scene.tickCount, scene.windPeriod,
+                                            scene.zWindEnabled, object.wind, object.windIntensity,
+                                            scene.windScale, scene.legacyWind);
+    updateInstance(id, &position);
     }
   }
 
@@ -731,7 +934,7 @@ bool VisualObjects::updateRtScene(RtScene& out) {
   if(!out.isUpdateRequired())
     return false;
   for(auto& obj:objects) {
-    if(obj.isEmpty())
+    if(obj.isEmpty() || !obj.visible)
       continue;
     auto& bucket = *obj.bucketId;
     auto* mesh   = bucket.staticMesh;

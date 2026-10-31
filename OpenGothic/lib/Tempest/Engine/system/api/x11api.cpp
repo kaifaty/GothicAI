@@ -15,6 +15,7 @@
 
 #include <X11/X.h>
 #include <X11/Xlib.h>
+#include <X11/XKBlib.h>
 #include <X11/Xcursor/Xcursor.h>
 #include <X11/Xatom.h>
 #include <X11/Xos.h>
@@ -136,14 +137,19 @@ struct WPayload {
   Tempest::Window* owner = nullptr;
   XIC              xic   = nullptr;
   bool             fullscreen = false;
+  bool             positionPending = false;
+  int              initialX = 0, initialY = 0;
   };
 
 struct X11Api::Private {
   std::unordered_map<SystemApi::Window*,WPayload> windows;
 
-  void onCreateWindow(SystemApi::Window* w, Tempest::Window *owner) {
+  void onCreateWindow(SystemApi::Window* w, Tempest::Window *owner, bool positioned, int x, int y) {
     WPayload p;
     p.owner = owner;
+    p.positionPending = positioned;
+    p.initialX = x;
+    p.initialY = y;
     windows[w] = p;
     }
 
@@ -233,8 +239,15 @@ X11Api::X11Api() {
   XrmInitialize();
   dpy = XOpenDisplay(nullptr);
 
-  if(dpy != nullptr)
+  if(dpy != nullptr) {
     root = DefaultRootWindow(dpy);
+    // A held key repeats as KeyPress alone, without a synthetic KeyRelease before each repeat:
+    // the dispatcher then reports KeyRepeat, as on macOS, and a held key (push-to-talk) stays held.
+    Bool detectable = False;
+    XkbSetDetectableAutoRepeat(dpy, True, &detectable);
+    if(!detectable)
+      Log::i("X11: no detectable key autorepeat, dropping paired releases instead");
+    }
 
   // X input method setup, only strictly necessary for intl key text
   // loads the XMODIFIERS environment variable to see what IME to use
@@ -291,7 +304,16 @@ SystemApi::Window *X11Api::implCreateWindow(Tempest::Window *owner, uint32_t w, 
                    FocusChangeMask | StructureNotifyMask |
                    PropertyChangeMask;
 
-  HWND win = XCreateWindow( dpy, root, 0, 0, w, h,
+  int windowX = 0, windowY = 0;
+  bool positioned = false;
+  if(const char* pos = std::getenv("TEMPEST_WINDOW_POS")) {
+    char tail = 0;
+    positioned = std::sscanf(pos,"%d,%d%c",&windowX,&windowY,&tail)==2;
+    if(!positioned)
+      windowX = windowY = 0;
+    }
+
+  HWND win = XCreateWindow( dpy, root, windowX, windowY, w, h,
                             0, vi->depth, InputOutput, vi->visual,
                             CWColormap | CWEventMask, &swa );
   if(win==0)
@@ -302,12 +324,19 @@ SystemApi::Window *X11Api::implCreateWindow(Tempest::Window *owner, uint32_t w, 
 
   XStoreName(dpy, win, "");
 
-  if(fixedSize) {
-    // Automated captures need the requested client size, even with a tiling WM.
+  if(fixedSize || positioned) {
     XSizeHints hints = {};
-    hints.flags = PMinSize | PMaxSize;
-    hints.min_width  = hints.max_width  = int(w);
-    hints.min_height = hints.max_height = int(h);
+    if(fixedSize) {
+      // Automated captures need the requested client size, even with a tiling WM.
+      hints.flags |= PMinSize | PMaxSize;
+      hints.min_width  = hints.max_width  = int(w);
+      hints.min_height = hints.max_height = int(h);
+      }
+    if(positioned) {
+      hints.flags |= USPosition;
+      hints.x = windowX;
+      hints.y = windowY;
+      }
     XSetWMNormalHints(dpy,win,&hints);
     }
 
@@ -315,9 +344,12 @@ SystemApi::Window *X11Api::implCreateWindow(Tempest::Window *owner, uint32_t w, 
   XFree(vi);
 
   auto ret = reinterpret_cast<SystemApi::Window*>(win.ptr());
-  impl->onCreateWindow(ret, owner);
+  impl->onCreateWindow(ret, owner, positioned, windowX, windowY);
   XMapWindow(dpy, win);
   XSync(dpy,False);
+  if(positioned) {
+    Log::i("[window] requested client size=",w,"x",h," position=",windowX,",",windowY);
+    }
 
   // X input context, you can have multiple for text boxes etc, but having a
   // single one is the easiest.
@@ -371,8 +403,9 @@ SystemApi::Window *X11Api::implCreateWindow(Tempest::Window *owner, SystemApi::S
       break;
     case Maximized:
       // TODO
-      hwnd = implCreateWindow(owner,width, height);
-      if(hwnd!=nullptr)
+      hwnd = fixedSize ? implCreateWindow(owner,windowWidth,windowHeight,true)
+                       : implCreateWindow(owner,width,height);
+      if(hwnd!=nullptr && !fixedSize)
         maximizeWindow(hwnd);
       break;
     case FullScreen:
@@ -569,6 +602,17 @@ void X11Api::implProcessEvents(SystemApi::AppCallBack &cb) {
       return;
     Tempest::Window& cb = *it->owner;
     switch( xev.type ) {
+      case MapNotify: {
+        if(it->positionPending) {
+          // Move only after the window manager has mapped/reparented the client.
+          // XSync after XMapWindow alone does not wait for the window manager.
+          XMoveWindow(dpy,hWnd,it->initialX,it->initialY);
+          XFlush(dpy);
+          it->positionPending = false;
+          Log::i("[window] applied position after MapNotify=",it->initialX,",",it->initialY);
+          }
+        break;
+        }
       case ClientMessage: {
         if(xev.xclient.data.l[0] == long(WM_DELETE_WINDOW())){
           SystemApi::exit();
@@ -664,6 +708,13 @@ void X11Api::implProcessEvents(SystemApi::AppCallBack &cb) {
         }
       case KeyPress:
       case KeyRelease: {
+        if(xev.type==KeyRelease && XEventsQueued(dpy, QueuedAfterReading)>0) {
+          // Without detectable autorepeat a repeat is KeyRelease + KeyPress with the same time.
+          XEvent next = {};
+          XPeekEvent(dpy, &next);
+          if(next.type==KeyPress && next.xkey.keycode==xev.xkey.keycode && next.xkey.time==xev.xkey.time)
+            break;
+          }
         KeySym ksym = XLookupKeysym(&xev.xkey,0);
         XIC    xic  = impl->xicOf(hWnd.ptr());
 

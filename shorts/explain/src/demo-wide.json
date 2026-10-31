@@ -1,0 +1,938 @@
+{
+  "format": "wide",
+  "brand": false,
+  "lang": "ru",
+  "hook": {"text": "Механика в широком кадре", "until": 1.8},
+  "beats": [
+    {
+      "id": "dice", "kind": "card", "dur": 6,
+      "texts": [{"text": "16:9 · те же формулы и цвета", "at": 0.2, "until": 1.7, "size": 44}],
+      "chart": {
+        "type": "dice", "talent": 40, "axisX": "метры", "axisY": "шанс, %",
+        "source": "Демо: формулы Gothic2.exe и OpenGothic, навык 40%",
+        "curves": [
+          {"curve": "exe", "name": "Gothic2.exe", "draw": [[2, 0], [3.2, 15], [3.5, 15], [4.2, 45]]},
+          {"curve": "opengothic", "name": "OpenGothic", "draw": [[2.2, 0], [4.2, 45]]}
+        ],
+        "talentMark": {"at": 2, "text": "навык 40%"},
+        "stepMark": {"at": 2.5, "text": "−⅓"},
+        "markers": [{"d": 30, "curve": "exe", "at": 4.3, "text": "30 м: {v}%"}]
+      }
+    },
+    {
+      "id": "formula", "kind": "card", "dur": 6,
+      "chart": {
+        "type": "formula", "title": "УРОН =",
+        "terms": [
+          {"text": "(лук + ловкость)", "at": 0.2, "color": "#8BE08B"},
+          {"text": "× натяжение", "at": 0.6},
+          {"text": "− защита", "at": 1},
+          {"text": "× зона попадания", "at": 1.4, "color": "#FFD678"}
+        ],
+        "legend": {"text": "Округление на каждом шаге; минимум 5", "at": 1.8},
+        "example": {"at": 2, "bow": 50, "dex": 40, "draw": 0.8, "prot": 20,
+          "zones": [{"name": "голова", "k": 2, "at": 2.4}, {"name": "тело", "k": 1, "at": 2.8}, {"name": "рука", "k": 0.5, "at": 3.2}]},
+        "source": "Демо: расчёт из входов по damagecalculator.cpp"
+      }
+    },
+    {
+      "id": "bars", "kind": "card", "dur": 6,
+      "chart": {
+        "type": "bars", "title": "Сравнение трёх групп",
+        "series": [{"name": "Было", "color": "#D8D8D8"}, {"name": "Стало", "color": "#FFD678"}],
+        "groups": [{"label": "10 м", "values": [1, 1.4], "at": 0.3}, {"label": "20 м", "values": [0.8, 1.8], "at": 1}, {"label": "30 м", "values": [0.5, 2.2], "at": 1.7}],
+        "max": 2.5, "source": "Демо: условные значения для проверки композиции"
+      }
+    },
+    {
+      "id": "dots", "kind": "card", "dur": 6,
+      "chart": {
+        "type": "dots", "title": "Попадания из тридцати выстрелов",
+        "total": 30, "hits": 17, "at": 0.5, "dur": 3, "caption": "{n} из 30",
+        "source": "Демо: условный счётчик для проверки композиции"
+      }
+    },
+    {
+      "id": "stats", "kind": "card", "dur": 6,
+      "chart": {
+        "type": "stats",
+        "rows": [{"name": "Сила", "value": "60", "color": "#FF7A66"}, {"name": "Ловкость", "value": "40", "color": "#8BE08B"}, {"name": "Навык", "value": "40%", "color": "#7EC8FF"}, {"name": "Защита", "value": "20"}],
+        "fadeAt": 3, "question": {"text": "Что определяет результат?", "at": 3.3}
+      }
+    },
+    {
+      "id": "ppo-pool",
+      "kind": "card",
+      "dur": 8,
+      "chart": {
+        "type": "line",
+        "title": "PPO: победы над пулом своих версий",
+        "axisX": {
+          "min": 0,
+          "max": 40,
+          "ticks": [
+            0,
+            5,
+            10,
+            15,
+            20,
+            25,
+            30,
+            35,
+            40
+          ],
+          "label": "итерация"
+        },
+        "axisY": {
+          "min": 0,
+          "max": 100,
+          "ticks": [
+            0,
+            25,
+            50,
+            75,
+            100
+          ],
+          "label": "победы, %"
+        },
+        "series": [
+          {
+            "name": "train_pool · T = 1",
+            "color": "#FFD678",
+            "points": [
+              [1, 50.89108910891089],
+              [2, 56.33802816901409],
+              [3, 54.69061876247505],
+              [4, 60.03898635477583],
+              [5, 57.001972386587774],
+              [6, 58.11623246492986],
+              [7, 59.84555984555985],
+              [8, 62.124248496993985],
+              [9, 65.79476861167002],
+              [10, 68.36935166994107],
+              [11, 67.65327695560254],
+              [12, 69.8989898989899],
+              [13, 69.8292220113852],
+              [14, 67.14876033057851],
+              [15, 74.05189620758483],
+              [16, 72.85714285714286],
+              [17, 76.23762376237623],
+              [18, 79.296875],
+              [19, 81.53241650294696],
+              [20, 85.95505617977528],
+              [21, 82.13592233009709],
+              [22, 86.58536585365853],
+              [23, 86.88845401174169],
+              [24, 85.42056074766356],
+              [25, 85.77154308617234],
+              [26, 83.86491557223265],
+              [27, 83.68121442125238],
+              [28, 85.94059405940594],
+              [29, 86.73076923076923],
+              [30, 86.79611650485437],
+              [31, 83.96946564885496],
+              [32, 88.77952755905511],
+              [33, 88.23529411764706],
+              [34, 85.65737051792829],
+              [35, 92.39766081871345],
+              [36, 87.37864077669903],
+              [37, 86.67953667953668],
+              [38, 88.95238095238095],
+              [39, 90.7514450867052],
+              [40, 90.42145593869732]
+            ],
+            "draw": [0.5, 4]
+          }
+        ],
+        "marks": [
+          {
+            "x": 30,
+            "text": "P30 · итерация 30",
+            "at": 4.8
+          }
+        ],
+        "labels": [
+          {
+            "x": 1,
+            "y": 50.89108910891089,
+            "text": "50,9%",
+            "at": 0.7
+          },
+          {
+            "x": 40,
+            "y": 90.42145593869732,
+            "text": "90,4%",
+            "at": 4.6
+          }
+        ],
+        "source": "reports/npc-body/2026-10-16-ppo/iterations.json · train_pool, 40 итераций"
+      }
+    },
+    {
+      "id": "ppo-wall",
+      "kind": "card",
+      "dur": 8,
+      "chart": {
+        "type": "line",
+        "title": "После итерации 30 игра у стены ухудшается",
+        "axisX": {
+          "min": 0,
+          "max": 40,
+          "ticks": [
+            0,
+            5,
+            10,
+            15,
+            20,
+            25,
+            30,
+            35,
+            40
+          ],
+          "label": "итерация (0 — R3m)"
+        },
+        "axisY": {
+          "min": 250,
+          "max": 300,
+          "ticks": [
+            250,
+            260,
+            270,
+            280,
+            290,
+            300
+          ],
+          "label": "HP у стены, из 300"
+        },
+        "series": [
+          {
+            "name": "Отборочная оценка · 256 дуэлей",
+            "color": "#7EC8FF",
+            "points": [
+              [0, 271.0],
+              [5, 275.484375],
+              [10, 278.015625],
+              [15, 280.734375],
+              [20, 280.828125],
+              [25, 284.6875],
+              [30, 283.546875],
+              [35, 264.515625],
+              [40, 268.75]
+            ],
+            "draw": [0.5, 4]
+          }
+        ],
+        "marks": [
+          {
+            "x": 30,
+            "text": "Выбрана P30",
+            "at": 4.8
+          }
+        ],
+        "labels": [
+          {
+            "x": 0,
+            "y": 271,
+            "text": "R3m · 271,0",
+            "at": 0.7
+          },
+          {
+            "x": 35,
+            "y": 264.515625,
+            "text": "264,5 HP",
+            "at": 4.6
+          }
+        ],
+        "source": "reports/npc-body/2026-10-16-ppo/iterations.json · eval_wall_hp; README.md · старт R3m"
+      }
+    },
+    {
+      "id": "throughput",
+      "kind": "card",
+      "dur": 8,
+      "chart": {
+        "type": "bars",
+        "title": "Скорость сбора: от 2,5 до 786 решений в секунду",
+        "log": true,
+        "series": [
+          {
+            "name": "Решений в секунду",
+            "color": "#FFD678"
+          }
+        ],
+        "groups": [
+          {
+            "label": "Один\nrunner",
+            "values": [2.5],
+            "at": 0.3
+          },
+          {
+            "label": "16\nrunner",
+            "values": [90],
+            "at": 0.9,
+            "note": "без модели"
+          },
+          {
+            "label": "Fork\nreset",
+            "values": [150],
+            "at": 1.5,
+            "note": "без модели"
+          },
+          {
+            "label": "Шаг до\nрешения",
+            "values": [116],
+            "at": 2.1
+          },
+          {
+            "label": "Заморозка\nмира",
+            "values": [309],
+            "at": 2.7
+          },
+          {
+            "label": "Лёгкий\nPython",
+            "values": [420],
+            "at": 3.3
+          },
+          {
+            "label": "Fork\nprefix",
+            "values": [786],
+            "at": 3.9
+          }
+        ],
+        "max": 1000,
+        "format": "{v}",
+        "source": "docs/npc-body-control-plan.md §9.1; reports/npc-body/2026-10-13-arena · 2,471 ≈ 2,5/с"
+      }
+    },
+    {
+      "id": "defeats",
+      "kind": "card",
+      "dur": 6,
+      "chart": {
+        "type": "bars",
+        "title": "Поражения на открытой арене · из 2048 дуэлей",
+        "series": [
+          {
+            "name": "Поражения",
+            "color": "#D8D8D8"
+          }
+        ],
+        "groups": [
+          {
+            "label": "BC",
+            "values": [40],
+            "at": 0.3,
+            "color": "#D8D8D8"
+          },
+          {
+            "label": "R2u",
+            "values": [11],
+            "at": 1,
+            "color": "#7EC8FF"
+          },
+          {
+            "label": "R3u",
+            "values": [3],
+            "at": 1.7,
+            "color": "#FF7A66"
+          },
+          {
+            "label": "P30",
+            "values": [0],
+            "at": 2.4,
+            "color": "#FFD678"
+          }
+        ],
+        "max": 45,
+        "format": "{v}",
+        "source": "reports/npc-body/2026-10-16-ppo/README.md · итог P30; 2026-10-15-round3-film · R2u"
+      }
+    },
+    {
+      "id": "network",
+      "kind": "card",
+      "dur": 6,
+      "chart": {
+        "type": "big",
+        "title": "Маленькая сеть управляет бойцом",
+        "items": [
+          {
+            "value": 476556,
+            "label": "чисел в сети",
+            "at": 0.3,
+            "color": "#FFD678",
+            "count": {
+              "from": 0,
+              "to": 476556,
+              "dur": 2.5,
+              "format": "{v}"
+            }
+          },
+          {
+            "value": "≈1 мс",
+            "label": "на решение",
+            "at": 3,
+            "color": "#7EC8FF"
+          }
+        ],
+        "source": "body-service/src/gothic_body/models.py · GRU-256; reports/npc-body/2026-10-16-gate-r3m-p30 · p95"
+      }
+    },
+    {
+      "id": "results",
+      "kind": "card",
+      "dur": 6,
+      "chart": {
+        "type": "table",
+        "title": "Открытая арена: от подражания к P30",
+        "columns": [
+          "Метрика",
+          "BC",
+          "P30"
+        ],
+        "highlight": 2,
+        "rows": [
+          {
+            "cells": [
+              "HP из 300",
+              "218,2",
+              "294,5"
+            ],
+            "at": 0.5
+          },
+          {
+            "cells": [
+              "Без урона, из 2048",
+              78,
+              1814
+            ],
+            "at": 1.6
+          },
+          {
+            "cells": [
+              "Средняя победа, с",
+              "15,3",
+              "9,7"
+            ],
+            "at": 2.7
+          }
+        ],
+        "source": "reports/npc-body/2026-10-16-ppo/README.md · «Итоговая оценка P30»"
+      }
+    },
+    {
+      "id": "gate-attempts",
+      "kind": "card",
+      "dur": 8,
+      "chart": {
+        "type": "cells",
+        "title": "Экзамен: одиннадцать провалов до следующего дня",
+        "cells": [
+          {
+            "label": "v1",
+            "state": "fail",
+            "at": 0.3
+          },
+          {
+            "label": "v2",
+            "state": "fail",
+            "at": 0.52
+          },
+          {
+            "label": "v3",
+            "state": "fail",
+            "at": 0.74
+          },
+          {
+            "label": "v4",
+            "state": "fail",
+            "at": 0.96
+          },
+          {
+            "label": "v5",
+            "state": "fail",
+            "at": 1.18
+          },
+          {
+            "label": "v6",
+            "state": "fail",
+            "at": 1.4
+          },
+          {
+            "label": "v7",
+            "state": "fail",
+            "at": 1.62
+          },
+          {
+            "label": "v8",
+            "state": "fail",
+            "at": 1.84
+          },
+          {
+            "label": "v9",
+            "state": "fail",
+            "at": 2.06
+          },
+          {
+            "label": "v10",
+            "state": "fail",
+            "at": 2.28
+          },
+          {
+            "label": "v11",
+            "state": "fail",
+            "at": 2.5
+          },
+          {
+            "label": "v12",
+            "state": "fail",
+            "at": 3.2
+          },
+          {
+            "label": "v14",
+            "state": "fail",
+            "at": 3.8
+          },
+          {
+            "label": "v16",
+            "state": "pass",
+            "at": 4.4
+          }
+        ],
+        "spans": [
+          {
+            "from": 0,
+            "to": 10,
+            "text": "14.10"
+          },
+          {
+            "from": 11,
+            "to": 13,
+            "text": "15.10"
+          }
+        ],
+        "notes": [
+          {
+            "text": "Веса одни и те же · пороги не ослабляли",
+            "at": 2.8
+          },
+          {
+            "text": "v12, v14 — общий сервер",
+            "at": 4,
+            "color": "#D8D8D8"
+          },
+          {
+            "text": "v16 — Ryzen, боевой gate пройден",
+            "at": 4.8,
+            "color": "#8BE08B"
+          }
+        ],
+        "source": "docs/npc-body-control-plan.md · этап 8; reports/npc-body/2026-10-15-gate-v16"
+      }
+    },
+    {
+      "id": "observation-rays",
+      "kind": "card",
+      "dur": 8,
+      "chart": {
+        "type": "rays",
+        "title": "184 числа · демо",
+        "maxCm": 600,
+        "rays": [
+          {
+            "cm": 600,
+            "hit": false
+          },
+          {
+            "cm": 600,
+            "hit": false
+          },
+          {
+            "cm": 340,
+            "hit": true
+          },
+          {
+            "cm": 280,
+            "hit": true
+          },
+          {
+            "cm": 250,
+            "hit": true
+          },
+          {
+            "cm": 315,
+            "hit": true
+          },
+          {
+            "cm": 600,
+            "hit": false
+          },
+          {
+            "cm": 600,
+            "hit": false
+          },
+          {
+            "cm": 440,
+            "hit": true
+          },
+          {
+            "cm": 600,
+            "hit": false
+          },
+          {
+            "cm": 600,
+            "hit": false
+          },
+          {
+            "cm": 390,
+            "hit": true
+          },
+          {
+            "cm": 325,
+            "hit": true
+          },
+          {
+            "cm": 370,
+            "hit": true
+          },
+          {
+            "cm": 600,
+            "hit": false
+          },
+          {
+            "cm": 600,
+            "hit": false
+          }
+        ],
+        "target": {
+          "x": 150,
+          "y": 230,
+          "label": "противник",
+          "at": 0.8
+        },
+        "hideAt": 5.8,
+        "panels": [
+          {
+            "title": "я",
+            "lines": [
+              "HP · оружие · поза",
+              "движение · доступные действия"
+            ],
+            "color": "#FFD678",
+            "at": 0.4
+          },
+          {
+            "title": "противник",
+            "lines": [
+              "дальность · направление",
+              "движение · видимая поза"
+            ],
+            "color": "#7EC8FF",
+            "at": 0.8
+          }
+        ],
+        "raysAt": [
+          1.3,
+          1.6
+        ],
+        "source": "демо лучей; реальные данные: observations.jsonl дуэли · scripts/body_trajectory_dataset.py; скрытая цель: docs/npc-body-observations.md:31–32"
+      }
+    },
+    {
+      "id": "vision-cone",
+      "kind": "card",
+      "dur": 7,
+      "chart": {
+        "type": "cone",
+        "title": "Конус зрения и доворот",
+        "halfDeg": 35,
+        "rangeCm": 420,
+        "path": [
+          {
+            "t": 0.4,
+            "x": 0,
+            "y": 270
+          },
+          {
+            "t": 1.6,
+            "x": 70,
+            "y": 270
+          },
+          {
+            "t": 3,
+            "x": 240,
+            "y": 220
+          },
+          {
+            "t": 6.5,
+            "x": 240,
+            "y": 220
+          }
+        ],
+        "turn": {
+          "at": 4.2,
+          "dur": 0.4,
+          "deg": 48,
+          "label": "≤ 400 мс"
+        },
+        "texts": [
+          {
+            "text": "Противник выходит из конуса",
+            "at": 3,
+            "color": "#7EC8FF"
+          },
+          {
+            "text": "BC: 0 из 6 дуэлей",
+            "at": 3.2,
+            "color": "#FF5A5A"
+          },
+          {
+            "text": "Доворот возвращает цель",
+            "at": 4.6,
+            "color": "#FFD678"
+          }
+        ],
+        "source": "reports/npc-body/2026-10-14-bc/validation-notes.md:60–67; docs/npc-body-combat-gate.md:109–120; reports/npc-body/2026-10-15-stage8-resume"
+      }
+    },
+    {
+      "id": "decision-ticks",
+      "kind": "card",
+      "dur": 6,
+      "chart": {
+        "type": "ticks",
+        "title": "20 раз в секунду",
+        "rows": [
+          {
+            "label": "сеть",
+            "cells": "DBBBBDBBBBDBBBBDBBBB",
+            "offset": 0,
+            "at": 0.5
+          }
+        ],
+        "dur": 3,
+        "legend": {
+          "D": "решение",
+          "B": "тело занято"
+        },
+        "source": "журнал повтора: 300 строк → 60 решений · docs/npc-body-control-plan.md:654"
+      }
+    },
+    {
+      "id": "action-grid",
+      "kind": "card",
+      "dur": 7,
+      "chart": {
+        "type": "grid",
+        "title": "12 действий",
+        "columns": 4,
+        "tiles": [
+          {
+            "label": "подойти",
+            "at": 0.3
+          },
+          {
+            "label": "повернуться",
+            "at": 0.7
+          },
+          {
+            "label": "шаг влево",
+            "at": 1.1
+          },
+          {
+            "label": "шаг вправо",
+            "at": 1.5
+          },
+          {
+            "label": "отскок",
+            "at": 1.9
+          },
+          {
+            "label": "удар прямо",
+            "at": 2.3
+          },
+          {
+            "label": "удар слева",
+            "at": 2.7
+          },
+          {
+            "label": "удар справа",
+            "at": 3.1
+          },
+          {
+            "label": "блок",
+            "at": 3.5
+          },
+          {
+            "label": "пауза 200",
+            "at": 3.9
+          },
+          {
+            "label": "пауза 300",
+            "at": 4.3
+          },
+          {
+            "label": "продолжать",
+            "at": 4.7
+          }
+        ],
+        "source": "docs/npc-body-api.md:93–102 · примитивы боевого тела"
+      }
+    },
+    {
+      "id": "self-imitation-flow",
+      "kind": "card",
+      "dur": 7,
+      "chart": {
+        "type": "flow",
+        "title": "Самоимитация",
+        "nodes": [
+          {
+            "id": "play",
+            "label": "Играть\n2016 дуэлей",
+            "x": 0.2,
+            "y": 0.56,
+            "w": 0.22,
+            "color": "#FFD678",
+            "at": 0.4
+          },
+          {
+            "id": "select",
+            "label": "Отобрать\n25% лучших",
+            "x": 0.5,
+            "y": 0.56,
+            "w": 0.22,
+            "color": "#FFD678",
+            "at": 1.4
+          },
+          {
+            "id": "train",
+            "label": "Доучить",
+            "x": 0.8,
+            "y": 0.56,
+            "w": 0.22,
+            "color": "#FFD678",
+            "at": 2.4
+          }
+        ],
+        "edges": [
+          {
+            "from": "play",
+            "to": "select",
+            "at": 1.4
+          },
+          {
+            "from": "select",
+            "to": "train",
+            "at": 2.4
+          },
+          {
+            "from": "train",
+            "to": "play",
+            "label": "снова",
+            "at": 3.4,
+            "curve": 0.23,
+            "packets": {
+              "every": 0.9,
+              "dur": 1.5
+            }
+          }
+        ],
+        "source": "reports/npc-body/2026-10-15-self-imitation · 2016 дуэлей → 25% лучших → доучивание"
+      }
+    },
+    {
+      "id": "one-tick",
+      "kind": "card",
+      "dur": 7,
+      "chart": {
+        "type": "ticks",
+        "title": "Один тик",
+        "rows": [
+          {
+            "label": "игра",
+            "cells": "DBBBBDBBBBDBBBBDBBBB",
+            "offset": 0,
+            "at": 0.5
+          },
+          {
+            "label": "стенд",
+            "cells": "DBBBBDBBBBDBBBBDBBBB",
+            "offset": 1,
+            "at": 0.9
+          }
+        ],
+        "dur": 2.4,
+        "legend": {
+          "D": "решение",
+          "B": "тело занято"
+        },
+        "align": {
+          "at": 4.2,
+          "dur": 0.8
+        },
+        "source": "reports/npc-body/2026-10-15-schedule-equivalence · выравнивание на один тик → 64/64"
+      }
+    },
+    {
+      "id": "service-flow",
+      "kind": "card",
+      "dur": 7,
+      "chart": {
+        "type": "flow",
+        "title": "Mac (игра + сервер) ⇄ Ryzen (сеть)",
+        "nodes": [
+          {
+            "id": "mac",
+            "label": "Mac\nигра + сервер",
+            "x": 0.25,
+            "y": 0.52,
+            "w": 0.28,
+            "color": "#D8D8D8",
+            "at": 0.4
+          },
+          {
+            "id": "ryzen",
+            "label": "Ryzen\nсеть P30",
+            "x": 0.75,
+            "y": 0.52,
+            "w": 0.28,
+            "color": "#FFD678",
+            "at": 1
+          }
+        ],
+        "edges": [
+          {
+            "from": "mac",
+            "to": "ryzen",
+            "label": "наблюдение",
+            "at": 1.4,
+            "curve": 0.13,
+            "packets": {
+              "every": 0.55,
+              "dur": 1.4
+            }
+          },
+          {
+            "from": "ryzen",
+            "to": "mac",
+            "label": "действие",
+            "at": 2.2,
+            "curve": 0.13,
+            "packets": {
+              "every": 0.55,
+              "dur": 1.4
+            }
+          }
+        ],
+        "source": "docs/npc-body-control-plan.md:549–554; reports/npc-body/2026-10-18-p30-service-load · p99 17,3 мс"
+      }
+    }
+  ],
+  "lines": [[
+    {"text": "Демонстрационные", "start": 2.2, "end": 3},
+    {"text": "горизонтальные", "start": 3, "end": 3.8},
+    {"text": "субтитры", "start": 3.8, "end": 4.6},
+    {"text": "синхронизированы", "start": 4.6, "end": 5.4}
+  ]]
+}

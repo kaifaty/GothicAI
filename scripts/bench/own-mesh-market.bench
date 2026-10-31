@@ -1,0 +1,280 @@
+# Market set (NW_CITY_MERCHANT) before/after, stage 2: one frame per visual, census, FPS over the market.
+# Run with OPENGOTHIC_CONTENT= (originals) and with the set root; OPENGOTHIC_CENSUS=<absolute out>/census.json.
+# Positions are copies of each visual in the district (scripts/content-meshes.sh areas); the hero is parked below the world.
+# A shot is written at the end of its frame: wait after it before the camera moves on.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view nopfx
+cam lift off
+# NW_CITY_WEAPON_BARREL_01
+goto pos 10301 -1686 6596
+clear 3000
+cam look 2029
+cam cut
+cam world 266 2135 180
+wait 34
+cam hold
+wait 4000
+shot nw_city_weapon_barrel_01
+wait 300
+# NW_MISC_SIGN_01
+goto pos 6409 -1607 3598
+clear 3000
+cam look 2000
+cam cut
+cam world 285 2200 285
+wait 34
+cam hold
+wait 800
+shot nw_misc_sign_01
+wait 300
+# NW_CITY_OILLAMP_01
+goto pos 8590 -1678 1091
+clear 3000
+cam look 1999
+cam cut
+cam world 148 2058 58
+wait 34
+cam hold
+wait 800
+shot nw_city_oillamp_01
+wait 300
+# NW_HARBOUR_BARRELGROUP_01
+goto pos 9511 -1624 7037
+clear 3000
+cam look 2000
+cam cut
+cam world 518 2233 266
+wait 34
+cam hold
+wait 800
+shot nw_harbour_barrelgroup_01
+wait 300
+# NW_HARBOUR_ROPE_01
+goto pos 6137 -1707 -5953
+clear 3000
+cam look 2000
+cam cut
+cam world 401 2180 25
+wait 34
+cam hold
+wait 800
+shot nw_harbour_rope_01
+wait 300
+# NW_CITY_CANDLE_01
+goto pos 8162 -1286 3147
+clear 3000
+cam look 2000
+cam cut
+cam world 148 2059 90
+wait 34
+cam hold
+wait 800
+shot nw_city_candle_01
+wait 300
+# NW_CITY_WEAPON_BAG_01
+goto pos 5514 -1706 -3319
+clear 3000
+cam look 2000
+cam cut
+cam world 167 2042 211
+wait 34
+cam hold
+wait 800
+shot nw_city_weapon_bag_01
+wait 300
+# NW_HARBOUR_CRATEPILE_01
+goto pos 10529 -1618 -1654
+clear 3000
+cam look 2000
+cam cut
+cam world 417 2188 125
+wait 34
+cam hold
+wait 800
+shot nw_harbour_cratepile_01
+wait 300
+# NW_CITY_DECO_SHIELD_01
+goto pos 10333 -1473 6617
+clear 3000
+cam look 2000
+cam cut
+cam world 237 2095 211
+wait 34
+cam hold
+wait 800
+shot nw_city_deco_shield_01
+wait 300
+# NW_CITY_WINDOW_WOOD_IN_01
+goto pos 8102 -1572 2753
+clear 3000
+cam look 1997
+cam cut
+cam world 352 2138 24
+wait 34
+cam hold
+wait 800
+shot nw_city_window_wood_in_01
+wait 300
+# NW_CITY_WINDOW_WOOD_OUT_01
+goto pos 8289 -1556 -3634
+clear 3000
+cam look 2000
+cam cut
+cam world 306 2122 301
+wait 34
+cam hold
+wait 800
+shot nw_city_window_wood_out_01
+wait 300
+# NW_CITY_CUPBOARD_POOR_02
+goto pos 8200 -1303 3094
+clear 3000
+cam look 1939
+cam cut
+cam world 306 2061 115
+wait 34
+cam hold
+wait 800
+shot nw_city_cupboard_poor_02
+wait 300
+# NW_CITY_DECO_WOLFHEAD_01
+goto pos 7943 -1359 -3784
+clear 3000
+cam look 2000
+cam cut
+cam world 193 2087 72
+wait 34
+cam hold
+wait 800
+shot nw_city_deco_wolfhead_01
+wait 300
+# NW_CITY_MARKETSTALL_ROOF_01
+goto pos 10409 -1609 4708
+clear 3000
+cam look 2034
+cam cut
+cam world 658 2330 166
+wait 34
+cam hold
+wait 800
+shot nw_city_marketstall_roof_01
+wait 300
+# OC_FIREWOOD_V3
+goto pos 6603 -1740 -2265
+clear 3000
+cam look 2084
+cam cut
+cam world 452 2288 223
+wait 34
+cam hold
+wait 800
+shot oc_firewood_v3
+wait 300
+# OC_SAECKE_01
+goto pos 9322 -1682 6314
+clear 3000
+cam look 1999
+cam cut
+cam world 236 2058 225
+wait 34
+cam hold
+wait 800
+shot oc_saecke_01
+wait 300
+# NW_CITY_CARPET_03
+goto pos 6986 -1719 2957
+clear 3000
+cam look 2000
+cam cut
+cam world 464 2209 81
+wait 34
+cam hold
+wait 800
+shot nw_city_carpet_03
+wait 300
+# NW_CITY_CART_01
+goto pos 8545 -1673 5521
+clear 3000
+cam look 2024
+cam cut
+cam world 409 2208 100
+wait 34
+cam hold
+wait 800
+shot nw_city_cart_01
+wait 300
+# NW_CITY_COUNTER_01
+goto pos 8034 -1678 -3412
+clear 3000
+cam look 2000
+cam cut
+cam world 557 2139 30
+wait 34
+cam hold
+wait 800
+shot nw_city_counter_01
+wait 300
+# NW_HARBOUR_BARREL_01
+goto pos 9906 -1677 6583
+clear 3000
+cam look 2000
+cam cut
+cam world 201 2090 145
+wait 34
+cam hold
+wait 800
+shot nw_harbour_barrel_01
+wait 300
+# NW_HARBOUR_BARREL_01
+goto pos 7645 -1677 -911
+clear 3000
+cam look 2000
+cam cut
+cam world 201 2090 325
+wait 34
+cam hold
+wait 800
+shot nw_harbour_barrel_01_2
+wait 300
+# NW_HARBOUR_CRATE_01
+goto pos 10029 -1682 6627
+clear 3000
+cam look 2000
+cam cut
+cam world 212 2095 162
+wait 34
+cam hold
+wait 800
+shot nw_harbour_crate_01
+wait 300
+# NW_HARBOUR_CRATE_01
+goto pos 5249 -1696 -5985
+clear 3000
+cam look 2000
+cam cut
+cam world 212 2095 349
+wait 34
+cam hold
+wait 800
+shot nw_harbour_crate_01_2
+wait 300
+census
+# FPS: completed application frames over the market from above, normal game clock.
+goto pos 7721 -1674 -662
+cam cut
+cam look 2000
+cam world 2600 3600 210
+wait 34
+cam hold
+wait 2000
+shot market-overview
+wait 300
+cadence normal
+wait 34
+character measure off
+cadence wait
+character report

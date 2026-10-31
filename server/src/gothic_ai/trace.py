@@ -85,7 +85,10 @@ class StepTrace:
     tool_choice: str | None = None
     first_token_s: float | None = None
     total_s: float = 0.0
+    started_s: float = 0.0  # from the turn's trigger, including work before the model call
+    ended_s: float = 0.0
     usage: dict[str, int] | None = None
+    timing: dict[str, Any] | None = None
     llm: str | None = None  # another model than the turn's (the quick model of a fight, dialogue.py)
     silent: bool = False  # its text was not said: the quick model spoke, this step only acts
 
@@ -131,6 +134,7 @@ class TurnTrace:
         self, added: Sequence[Item], tool_choice: str | None, *, llm: str | None = None, silent: bool = False
     ) -> StepTrace:
         st = StepTrace([item_json(i) for i in added], tool_choice=tool_choice, llm=llm, silent=silent)
+        st.started_s = round(time.time() - self.started, 3)
         self.steps.append(st)
         return st
 
@@ -138,9 +142,11 @@ class TurnTrace:
     def finish_step(st: StepTrace, done: Done | None, first_token_s: float | None, total_s: float) -> None:
         st.first_token_s = None if first_token_s is None else round(first_token_s, 3)
         st.total_s = round(total_s, 3)
+        st.ended_s = round(st.started_s + total_s, 3)
         if done is not None:
             st.text = done.text
             st.usage = asdict(done.usage) if done.usage else None
+            st.timing = done.timing
 
     def event(self, kind: str, **data: Any) -> None:
         """Something else that belongs to the turn (a reflex, an action outcome...)."""

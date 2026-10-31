@@ -5,6 +5,8 @@ is told apart by code from the transcript in no time (orders.py carries it out a
 requests may include a destination or a question ("Пошли к пещере", "Ну ты идёшь, нет?"): an existing
 companion obeys, while anyone else decides in conversation. Other orders stay short fixed phrases;
 "Не стой столбом" and "Он сказал: стой" go to the conversational model as before.
+If the whole phrase is not a follow request, its last sentence is checked by the same rules.
+Reported speech anywhere in the phrase or quotation marks rule out a follow request.
 
 A phrase is an order when, without words of address ("эй", "ребята", the npc's name) and of hurry
 ("быстро", "живо"), what is left is one of the forms of the order, said once or repeated ("Стой, стой!",
@@ -169,10 +171,46 @@ def match(rest: str) -> str | None:
 def follow_request(text: str, is_name: Callable[[str], bool] = lambda w: False) -> bool:
     """A direct invitation to go with the speaker, including its destination or a reminder question.
 
-    Only the opening may be words of address: finding "пойдём" inside a story, a conditional or a
-    question about somebody's route must not move a companion (or repair an unmade commitment).
+    Only the opening may be words of address; if the whole phrase is not a request, its last sentence
+    is checked by the same rules. Reported speech anywhere or quotation marks reject the whole phrase.
     """
     rest = words(text)
+    if any(mark in text for mark in ('"', "«", "»")) or any(
+        w in (
+            "сказал",
+            "сказала",
+            "сказали",
+            "говорит",
+            "говорят",
+            "говорил",
+            "говорила",
+            "крикнул",
+            "крикнула",
+            "кричит",
+            "велел",
+            "велела",
+            "спросил",
+            "спросила",
+            "ответил",
+        )
+        and not (
+            w in {"сказал", "сказала"}
+            and (
+                rest[i - 1 : i] == ["я"]
+                or rest[i - 2 : i] == ["я", "же"]
+                or rest[i + 1 : i + 2] == ["же"]
+            )
+        )
+        for i, w in enumerate(rest)
+    ):
+        return False
+    if _follow_words(rest, is_name):
+        return True
+    sentences = re.split(r"(?<=[.!?…])\s+", text.strip())
+    return len(sentences) > 1 and _follow_words(words(sentences[-1]), is_name)
+
+
+def _follow_words(rest: list[str], is_name: Callable[[str], bool]) -> bool:
     while rest and (rest[0] in EXTRA or is_name(rest[0])):
         rest.pop(0)
     if not rest or any(
@@ -190,8 +228,6 @@ def follow_request(text: str, is_name: Callable[[str], bool] = lambda w: False) 
             "ли",
         )
     ):
-        return False
-    if any(mark in text for mark in ('"', "«", "»")):
         return False
     if rest[:2] in (["пошли", "слухи"], ["пошли", "разговоры"]):
         return False

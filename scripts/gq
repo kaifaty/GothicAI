@@ -73,20 +73,26 @@ def install(host):
         raise ValueError(f"unknown GQ_PROFILE {profile!r}; "
                          "use GQ_PROFILE=ryzen when installing through an SSH alias")
     # Upload into the destination filesystem and rename only after a full copy.
-    command = "gq_profile=" + shlex.quote(profile) + "\n" + """set -eu
+    archive_source = Path(__file__).with_name("nas_archive.py").read_text()
+    command = ("gq_profile=" + shlex.quote(profile) + "\n"
+               + "gq_archive_source=" + shlex.quote(archive_source) + "\n" + """set -eu
 umask 022
-mkdir -p "$HOME/gothic-ai/bin"
+mkdir -p "$HOME/gothic-ai/bin" "$HOME/gothic-ai/lib"
 gq_upload=$(mktemp "$HOME/gothic-ai/bin/.gq.XXXXXX")
 gq_profile_upload=''
-trap 'rm -f -- "$gq_upload" "$gq_profile_upload"' EXIT HUP INT TERM
+gq_archive_upload=''
+trap 'rm -f -- "$gq_upload" "$gq_profile_upload" "$gq_archive_upload"' EXIT HUP INT TERM
 gq_profile_upload=$(mktemp "$HOME/gothic-ai/bin/.gq-profile.XXXXXX")
+gq_archive_upload=$(mktemp "$HOME/gothic-ai/lib/.nas-archive.XXXXXX")
 cat > "$gq_upload"
 printf '%s\\n' "$gq_profile" > "$gq_profile_upload"
+printf '%s' "$gq_archive_source" > "$gq_archive_upload"
 chmod 755 "$gq_upload"
-chmod 644 "$gq_profile_upload"
+chmod 644 "$gq_profile_upload" "$gq_archive_upload"
+mv -f -- "$gq_archive_upload" "$HOME/gothic-ai/lib/nas_archive.py"
 mv -f -- "$gq_upload" "$HOME/gothic-ai/bin/gq"
 mv -f -- "$gq_profile_upload" "$HOME/gothic-ai/bin/gq.profile"
-"""
+""")
     with Path(__file__).with_name("gq.py").open("rb") as source:
         return subprocess.call(ssh_command(host, command), stdin=source)
 

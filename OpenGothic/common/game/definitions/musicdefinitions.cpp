@@ -10,14 +10,14 @@ MusicDefinitions::MusicDefinitions() {
   vm = Gothic::inst().createPhoenixVm("Music.dat");
 
   vm->enumerate_instances_by_class_name("C_MusicTheme", [this](zenkit::DaedalusSymbol& s) {
-    themes.push_back(vm->init_instance<zenkit::IMusicTheme>(&s));
+    themes.push_back(vm->init_instance<Def::MusicTheme>(&s));
     });
   }
 
 MusicDefinitions::~MusicDefinitions() {
   }
 
-const zenkit::IMusicTheme* MusicDefinitions::operator [](std::string_view name) const {
+const Def::MusicTheme* MusicDefinitions::operator [](std::string_view name) const {
   if(!vm)
     return nullptr;
 

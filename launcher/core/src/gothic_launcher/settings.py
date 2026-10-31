@@ -1,6 +1,7 @@
 """Launcher settings: what to run and how (`settings.toml`) and API keys (`secrets.toml`, mode 600).
 
-Both files live in ~/.config/gothic-ai/ next to the ChatGPT tokens. The services do not read them: the
+Both files live in ~/.config/gothic-ai/ next to the ChatGPT tokens (on Windows in the user profile, whose
+permissions keep them private: there are no file modes). The services do not read them: the
 launcher hands the values over as flags and environment variables the services already understand (see
 commands.py). Titles and descriptions are for the launcher window, which builds its form from the JSON
 Schema of these models.
@@ -9,6 +10,7 @@ Schema of these models.
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +31,8 @@ ENV_KEYS = {
     "GOTHIC_DECIDER_URL": "llm.decider_url",
     "GOTHIC_QUICK_LLM_URL": "llm.quick_url",
     "GOTHIC_BODY_URL": "llm.body_url",
+    "GOTHIC_BODY_POLICY": "llm.body_policy",
+    "OPENGOTHIC_BODY_NET": "llm.body_net",
     "GOTHIC_ASR_PROVIDER": "voice.provider",
     "GOTHIC_ASR_FALLBACK": "voice.fallback",
     "GOTHIC_VOXTRAL_URL": "voice.voxtral_url",
@@ -50,7 +54,8 @@ class _Section(BaseModel):
 
 class GameSettings(_Section):
     dir: Path | None = Field(
-        None, title="Папка игры", description="Gothic II с аддоном «Ночь Ворона» и русской локализацией"
+        None, title="Папка игры",
+        description="Каталог настроек с готовой базой; для первого импорта — установленная Gothic II",
     )
     dev_mode: bool = Field(
         False, title="Режим разработчика", description="Консоль Marvin (F2) и отладочные команды ИИ"
@@ -82,16 +87,31 @@ class LlmSettings(_Section):
         title="Адрес модели реплик в бою",
         description="Gemma на llama.cpp (http://…/v1). Пусто: сервер decider, порт 47834",
     )
+    body_policy: Literal["engine", "service"] = Field(
+        "engine",
+        title="Политика боя",
+        description="engine: сеть P30 в движке; service: внешний TCP-сервис",
+    )
+    body_net: Path | None = Field(
+        None,
+        title="Файл сети боя",
+        description="Файл .bodynet. Пусто: ~/.local/share/gothic-ai/body/nets/p30.bodynet",
+    )
     body_url: str | None = Field(
         None,
-        title="Адрес сети боя",
-        description="Сеть тела P30 (tcp://…:47835) ведёт бой NPC с одноручным мечом против героя. Пусто: бой ведут скрипты",
+        title="Адрес запасного сервиса боя",
+        description=(
+            "Сеть тела P30 (tcp://…:47835): для service или когда сеть движка не загружена. "
+            "Пусто: доступна только сеть в движке"
+        ),
     )
 
 
 class VoiceSettings(_Section):
     enabled: bool = Field(True, title="Голосовой ввод", description="Удерживайте T, чтобы сказать реплику")
-    provider: str = Field("voxtral", title="Распознавание", description="voxtral, chatgpt или openai:…")
+    provider: str = Field(
+        "inworld", title="Распознавание", description="inworld, voxtral, chatgpt или openai:…"
+    )
     fallback: str = Field("chatgpt", title="Запасное распознавание", description="none: без запасного")
     voxtral_url: str | None = Field(None, title="Адрес Voxtral")
     mic_device: str | None = Field(None, title="Микрофон", description="Имя или номер; пусто: системный")
@@ -99,8 +119,11 @@ class VoiceSettings(_Section):
 
 class TtsSettings(_Section):
     enabled: bool = Field(True, title="Озвучка NPC", description="Выключено: только субтитры")
+    original_voices: bool = Field(
+        True, title="Оригинальные голоса", description="Клоны оригинальных голосов сюжетных NPC в Inworld"
+    )
     provider: str = Field("inworld", title="Голоса", description="inworld, voxcpm или openai:…")
-    fallback: str = Field("voxcpm", title="Запасные голоса", description="none: без запасного")
+    fallback: str = Field("none", title="Запасные голоса", description="none: без запасного")
     voxcpm_url: str | None = Field(None, title="Адрес VoxCPM2")
     loudness: float | Literal["none"] | None = Field(
         None,
@@ -225,7 +248,7 @@ class Config:
 def read_env_file(path: Path) -> dict[str, str]:
     """`KEY=value` lines as the services read them (cli.load_env_file)."""
     out: dict[str, str] = {}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         key, sep, value = line.strip().removeprefix("export ").partition("=")
         if sep and key and not key.startswith("#"):
             out[key.strip()] = value.strip().strip("'\"")
@@ -236,7 +259,7 @@ def _load[M: BaseModel](model: type[M], path: Path) -> M:
     if not path.is_file():
         return model()
     try:
-        return model.model_validate(tomllib.loads(path.read_text()))
+        return model.model_validate(tomllib.loads(path.read_text(encoding="utf-8")))  # TOML is UTF-8
     except tomllib.TOMLDecodeError as err:
         raise SettingsError(f"{path}: {err}") from None
     except ValidationError as err:
@@ -251,9 +274,10 @@ def _plain(model: BaseModel) -> dict[str, Any]:
 def _write(path: Path, text: str, mode: int) -> None:
     """Atomic, and the file never exists with looser permissions than `mode`."""
     tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), mode)
     try:
-        os.fchmod(fd, mode)
+        if sys.platform != "win32":  # Windows has no modes: the user profile's permissions apply
+            os.fchmod(fd, mode)
         os.write(fd, text.encode())
     finally:
         os.close(fd)

@@ -1,0 +1,923 @@
+{
+  "asset": "harbour-hut",
+  "title": "Хижина бедного квартала порта",
+  "kind": "building",
+  "created": "2026-10-21",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "harbour-hut",
+    "harbour-hut-concept"
+  ],
+  "sources": [
+    {
+      "file": "harbour-hut-concept/harbour-hut-elevations-attempt-1.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 1,
+      "sha256": "de753d8dc316f092270c369dd07b0943831250b2437c76969fdc80f13fe7b043",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T07:15:55Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut-concept/harbour-hut-elevations-attempt-2.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 2,
+      "sha256": "d1a9b6ea208242e70bd06ae4f623b77616e31750980db2a40cd8291778f2b2d5",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T07:24:46Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-1.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_GIEBEL_01.TGA",
+      "attempt": 1,
+      "sha256": "89db0aae9607f9486dee2f9f4b4e9ed6a851f233f2386e531974985339ace782",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T07:41:02Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-2.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_GIEBEL_01.TGA",
+      "attempt": 2,
+      "sha256": "e3366ea4b0c11bbfca07cb9c47e05630ff1ead89c4ef7c6f7853619e092af5a5",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T07:43:03Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-1.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_01.TGA",
+      "attempt": 1,
+      "sha256": "de105d454ea7968ec93cab30e52acec48cc0eed5c694ab0bcb760441e1fb74ee",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T07:34:06Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-2.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_01.TGA",
+      "attempt": 2,
+      "sha256": "435273d45367b2cf57f29a0b0d87e203f111d0730bbeee253f7da8dfd02b6db5",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T07:35:39Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-3.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_01.TGA",
+      "attempt": 3,
+      "sha256": "4c3e230595e7f56733e9829883e6ffa6c4e0de6e93cf15a5293a02afa34b9bff",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T07:56:04Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-1.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 1,
+      "sha256": "1ee611221a5c37ffef83f9a1cd053deca090b2456f7d7700c7d459a85ea12c1b",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T07:37:19Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-2.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 2,
+      "sha256": "6e428678810f2afc365c3418bbe769284bbe65cae4f52f69aa9dc56e128a55bc",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T07:39:13Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-3.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 3,
+      "sha256": "8558c7103261316916b71245a297397798e21deae4c438aab95917a53e83ecac",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T08:06:23Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-4.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 4,
+      "sha256": "886d8c6cfaca7ef5971c1fdbb9555f929d491101bb302a531f7bcdbefab4f987",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T08:39:11Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-5.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 5,
+      "sha256": "89f3ea2ec250d96f91a36de65bb9857afaf68b7f61c35b0db0b223a1a4ef96c7",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T08:43:53Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_WOODBEAM_01-attempt-1.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOODBEAM_01.TGA",
+      "attempt": 1,
+      "sha256": "924a7feed74e6035d1445d2934ce8224d3a4457657067883c787ea3d1209bd2a",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T07:44:36Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_WOODBEAM_01-attempt-2.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOODBEAM_01.TGA",
+      "attempt": 2,
+      "sha256": "b8a3b62c6a27b6383b1a5e709ac0500855cc2dff0f6ac2a0b47bf78f5ea5fd4e",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T07:46:09Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": null
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-6.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 6,
+      "sha256": "dad2ea69ea4cd8251aedd9082bbf5e558881a1cdc250bf9c26deb5c63e1fdc39",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T11:19:51Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-4.png"
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-3.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_GIEBEL_01.TGA",
+      "attempt": 3,
+      "sha256": "f0dcf16a76bea851dd9a36b26e1619d568a08ac77fc90e30b254d14bdae3ee98",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T11:25:17Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-1.png"
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-7.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 7,
+      "sha256": "106ad6669ccf1c5ba6e5e59a729df32cc8148cec7fe8459a9b527a5d2f00365a",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T11:44:25Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-3.png"
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-4.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_GIEBEL_01.TGA",
+      "attempt": 4,
+      "sha256": "459c0576717a8bdf582d3b0d2ebf1d15bc11ee80a79ad2ceb1fc8e8a1bc604e6",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T11:49:15Z",
+      "thread": "01a15d50-51ed-7270-beab-ca7655b0a6ce",
+      "parent": "harbour-hut-concept/harbour-hut-elevations-attempt-2.png"
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-4.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_01.TGA",
+      "attempt": 4,
+      "sha256": "d38ffd49e8e6878e297b26fe8a8672c830fa071d4380fc227d3d09e9ce794f37",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T12:01:08Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-4.normal.png",
+          "sha256": "6140720e8485aa66b007403097f98bab0cc13ba30edbd846efbdc07dab0462fa"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-4.roughness.png",
+          "sha256": "9dea0e2ccaf528baee9ee1b427323ec55ef0e26a5b50342a1f697bf65c4f8290"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-8.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 8,
+      "sha256": "2eda7d1edd4d77f3c12d49bcb1a078194d03a5d0798b9e5d5527a4cbd0e67628",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T12:01:08Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-8.normal.png",
+          "sha256": "0515afe372d360b642701af3bc74147ced8d5c6d776fc3a49a773f1d57f9617a"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-8.roughness.png",
+          "sha256": "034b98ba849b77246de9463e4ebcd9c6080c30e6b7c4dd6cb94cea231c52fd4a"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-5.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_GIEBEL_01.TGA",
+      "attempt": 5,
+      "sha256": "6dceaf54e108ac86fca53fb41873d047c48a98f37a11dd53ac1e40a3ad87ed6b",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T12:01:08Z",
+      "thread": "blender",
+      "parent": "city-timber-oak/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-5.normal.png",
+          "sha256": "66c6a1ee7d046fcf9a5d46b8a4a26489862dee5fbc9519a834ef313884847287"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-5.roughness.png",
+          "sha256": "21272eb1de1a2fad0e0c4ff801a7aa6c04ef3b5d31ffa09d9561507c2f47b80a"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_WOODBEAM_01-attempt-3.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOODBEAM_01.TGA",
+      "attempt": 3,
+      "sha256": "27191cd77e4ac02165dc406ee86ed87670b7a3abd16345e63031bd8591bc6f7e",
+      "c2pa": null,
+      "model": "derived: scripts/content/timber_bake.py",
+      "utc": "2026-10-22T12:01:08Z",
+      "thread": "blender",
+      "parent": "city-timber-oak/reference-attempt-1.png",
+      "tool": "scripts/content/timber_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_WOODBEAM_01-attempt-3.normal.png",
+          "sha256": "07e6745449c6782711e9f37139ed294ad0c8a4de6ba064e2f121d1c3b58c69cf"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_WOODBEAM_01-attempt-3.roughness.png",
+          "sha256": "1b0987b9c80b5768e262bec69b72e6745edb25a71775faeea95987f46499c44a"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-6.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_GIEBEL_01.TGA",
+      "attempt": 6,
+      "sha256": "a34381e17791bad6994467d3da6171999d4a433681214e68a191f09eb919bf6b",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T12:05:36Z",
+      "thread": "blender",
+      "parent": "city-timber-oak/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-6.normal.png",
+          "sha256": "89ac2bb88527a602048a540885213ec999a1770246834304b42097b0dac08ccc"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-6.roughness.png",
+          "sha256": "e1d7188e6a3f81e6b571df9a824646a830bc6fa893075d76591489e04af2dc6e"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-5.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_01.TGA",
+      "attempt": 5,
+      "sha256": "30db9371216f1c71cc6ac5e5c6a022b5531300429939be067aa2c58daf9bb11c",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T12:08:36Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-5.normal.png",
+          "sha256": "6140720e8485aa66b007403097f98bab0cc13ba30edbd846efbdc07dab0462fa"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-5.roughness.png",
+          "sha256": "41629fd6c69f2b9b04a399d19028c5d5ffc7634da73073b1ecb170cbdf485c13"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-9.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 9,
+      "sha256": "2908dfa8f7118e23372ec060596279ed8fcb90ddc0cad6f8031adf7e7611a859",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T12:08:36Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-9.normal.png",
+          "sha256": "0515afe372d360b642701af3bc74147ced8d5c6d776fc3a49a773f1d57f9617a"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-9.roughness.png",
+          "sha256": "6e2b0bb0c2e3d326d56542fde2e99837238f723a0408a146884c0c75bada30f0"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-7.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_GIEBEL_01.TGA",
+      "attempt": 7,
+      "sha256": "b88f543b30c652428ce5da6999869df390435ebbb0ac8a02c3e86ab2b393feed",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T12:08:36Z",
+      "thread": "blender",
+      "parent": "city-timber-oak/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-7.normal.png",
+          "sha256": "89ac2bb88527a602048a540885213ec999a1770246834304b42097b0dac08ccc"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-7.roughness.png",
+          "sha256": "33d4ab6f958c5eae45448f4164dd220ac256a8559dc787ebed88d16dd7484719"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-10.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 10,
+      "sha256": "755d298ef3f94d1cb51a89d761b9e18f9fa49a581755e9c437f6166b6c20bccb",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T12:09:16Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-10.normal.png",
+          "sha256": "0515afe372d360b642701af3bc74147ced8d5c6d776fc3a49a773f1d57f9617a"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-10.roughness.png",
+          "sha256": "6e2b0bb0c2e3d326d56542fde2e99837238f723a0408a146884c0c75bada30f0"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-6.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_01.TGA",
+      "attempt": 6,
+      "sha256": "0e5174b74bb548eabbc0c7185e46bef017d4770ac9fa6be74daeb0d6d3ca0b77",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T12:22:24Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-6.normal.png",
+          "sha256": "b9b7dc16a99bb5f1a01a91d2fff672b7d7ecedf516ecc105a1c03344c6e4667d"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-6.roughness.png",
+          "sha256": "71b007ebd0306577310d34e9a8df5ffef6cffba025092a55bc938081ca69af1f"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-11.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 11,
+      "sha256": "be3c226a70c8cf78afdb95ebfe6dcbc6c80f626700fe6512127c4871026c627e",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T12:22:24Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-11.normal.png",
+          "sha256": "83b15da1c55aa697481044dfc6c490508ff4620b6491fea5d5c2fe53c25fcff8"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-11.roughness.png",
+          "sha256": "c6b3c3918bbdc1dd422cc5db5df59d59ee7b7fa11cc94ed0580f95e1f4c9906f"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-8.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_GIEBEL_01.TGA",
+      "attempt": 8,
+      "sha256": "5e6baa17e95349b99a2cacab3cf8d2ed874a488b9490b9339b9ca658f3378fe4",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T12:22:24Z",
+      "thread": "blender",
+      "parent": "city-timber-oak/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-8.normal.png",
+          "sha256": "1b2de6b792f25c8310606f33fbb36aa9356fbf8386d83dd97f3a55dacbf3b4e2"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-8.roughness.png",
+          "sha256": "617f948ae796b8d3a8dace4bf22fa08fe8744a183f06fbf7d77abe3d4ebb89e7"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-7.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_01.TGA",
+      "attempt": 7,
+      "sha256": "ee526ddbd8af1e4747873e3515e7017c0714b2de658be415c1e3bcbf49c82238",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T14:48:53Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-7.normal.png",
+          "sha256": "14c1211023d5dfe19ef5aeeffb30d3d8b8f12adfc2dbf80ee2e5eeb843b55cb6"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-7.roughness.png",
+          "sha256": "700f5fe047c4d2461609ac0607bad12058fffc5210e9fcfce70cc2bf8a4ce2c2"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-12.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 12,
+      "sha256": "af6ccd8267118a707c56dbe4c303e7e64e91184591b46d96219c7355361e27d8",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T14:48:53Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-12.normal.png",
+          "sha256": "7392210ae382e76a4fd715b138d74c518c1b866df8a56399bcef1e21a9ffc9b4"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-12.roughness.png",
+          "sha256": "8e23cc4a66fe89629f42d3df7934ad75917b2b7b2726c3ee506c8601241bff1f"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-9.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_GIEBEL_01.TGA",
+      "attempt": 9,
+      "sha256": "46432282a987f2a554fbaa5dc1116996c028a7b36fa1a81a16e468c3890da979",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T14:48:53Z",
+      "thread": "blender",
+      "parent": "city-timber-oak/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-9.normal.png",
+          "sha256": "a8d44e4f4a85809c3ff525890a3e72cc68c30661a9a07b3336b360ae929f3c6f"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-9.roughness.png",
+          "sha256": "639d0209d00c2b1aeb61fc57611164e4062415434058ed2aa2c0300a1af8a820"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-8.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_01.TGA",
+      "attempt": 8,
+      "sha256": "1beae7ab69a53bc78ade3176eccaa170fa46fc7935c94f959052cd5b6d75c05f",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T17:36:45Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-8.normal.png",
+          "sha256": "14c1211023d5dfe19ef5aeeffb30d3d8b8f12adfc2dbf80ee2e5eeb843b55cb6"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-8.roughness.png",
+          "sha256": "700f5fe047c4d2461609ac0607bad12058fffc5210e9fcfce70cc2bf8a4ce2c2"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-13.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "attempt": 13,
+      "sha256": "79feb93a187b09d31c39b856310a19261f0282d652b1d109923181ed0e1ba732",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T17:36:45Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-13.normal.png",
+          "sha256": "7392210ae382e76a4fd715b138d74c518c1b866df8a56399bcef1e21a9ffc9b4"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-13.roughness.png",
+          "sha256": "8e23cc4a66fe89629f42d3df7934ad75917b2b7b2726c3ee506c8601241bff1f"
+        }
+      }
+    },
+    {
+      "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-10.png",
+      "role": "texture",
+      "texture": "NW_CITY_HAFEN_GIEBEL_01.TGA",
+      "attempt": 10,
+      "sha256": "5baced011c854fd8a961f223b7965f08166f80165a1328989479c1514783a158",
+      "c2pa": null,
+      "model": "derived: scripts/content/hut_bake.py",
+      "utc": "2026-10-22T17:36:45Z",
+      "thread": "blender",
+      "parent": "city-timber-oak/reference-attempt-1.png",
+      "tool": "scripts/content/hut_bake.py",
+      "maps": {
+        "normal": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-10.normal.png",
+          "sha256": "a8d44e4f4a85809c3ff525890a3e72cc68c30661a9a07b3336b360ae929f3c6f"
+        },
+        "roughness": {
+          "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-10.roughness.png",
+          "sha256": "639d0209d00c2b1aeb61fc57611164e4062415434058ed2aa2c0300a1af8a820"
+        }
+      }
+    }
+  ],
+  "selected": {
+    "concept": {
+      "file": "harbour-hut-concept/harbour-hut-elevations-attempt-2.png",
+      "reason": "attempt 2: crooked hut, larger windows, accepted by the user with a note on moss",
+      "date": "2026-10-21"
+    },
+    "NW_CITY_HAFEN_HOLZWAND_01.TGA": {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_01-attempt-8.png",
+      "reason": "hut-10: relief, olive shade",
+      "date": "2026-10-22"
+    },
+    "NW_CITY_HAFEN_HOLZWAND_02.TGA": {
+      "file": "harbour-hut/NW_CITY_HAFEN_HOLZWAND_02-attempt-13.png",
+      "reason": "hut-10: relief, olive shade",
+      "date": "2026-10-22"
+    },
+    "NW_CITY_HAFEN_GIEBEL_01.TGA": {
+      "file": "harbour-hut/NW_CITY_HAFEN_GIEBEL_01-attempt-10.png",
+      "reason": "hut-10: relief, even rows, olive shade",
+      "date": "2026-10-22"
+    },
+    "NW_CITY_WOODBEAM_01.TGA": {
+      "file": "harbour-hut/NW_CITY_WOODBEAM_01-attempt-3.png",
+      "reason": "hut-4: model-built truss beam",
+      "date": "2026-10-22"
+    }
+  },
+  "reviews": [
+    {
+      "id": "cal-hut-concept-a1",
+      "stage": "calibration",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/cal-hut-concept-a1/merged.json"
+    },
+    {
+      "id": "cal-hut-concept-a2",
+      "stage": "calibration",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/cal-hut-concept-a2/merged.json"
+    },
+    {
+      "id": "cal2-hut-concept-a1",
+      "stage": "calibration",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/cal2-hut-concept-a1/merged.json"
+    },
+    {
+      "id": "cal2-hut-concept-a2",
+      "stage": "calibration",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/cal2-hut-concept-a2/merged.json"
+    },
+    {
+      "id": "r3-hut2-front",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/r3-hut2-front/merged.json"
+    },
+    {
+      "id": "r3-hut2-gable",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/r3-hut2-gable/merged.json"
+    },
+    {
+      "id": "r3-hut2-planks",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/r3-hut2-planks/merged.json"
+    },
+    {
+      "id": "r3-h7-front",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-22",
+      "path": "reviews/r3-h7-front/merged.json"
+    },
+    {
+      "id": "r3-h7-gable-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-22",
+      "path": "reviews/r3-h7-gable-close/merged.json"
+    },
+    {
+      "id": "r3-h7-planks",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-22",
+      "path": "reviews/r3-h7-planks/merged.json"
+    },
+    {
+      "id": "r3-h8-front",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "PASS",
+      "date": "2026-10-22",
+      "path": "reviews/r3-h8-front/merged.json"
+    },
+    {
+      "id": "r3-h8-gable-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-22",
+      "path": "reviews/r3-h8-gable-close/merged.json"
+    },
+    {
+      "id": "r3-h8-planks",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-22",
+      "path": "reviews/r3-h8-planks/merged.json"
+    }
+  ],
+  "gates": [
+    {
+      "gate": "concept",
+      "verdict": "changes",
+      "by": "user",
+      "date": "2026-10-21",
+      "quote": "В концепте окна меньше, чем в оригинальном дизайне, и оно самостроение немножечко более ровное. В оригинале там немножко крыша покосилась, есть легкая асимметрия. Я боюсь, что если мы много таких домов ровненьких поставим, то пропадет ощущение бедного квартала.",
+      "note": "Попытка 1."
+    },
+    {
+      "gate": "concept",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-21",
+      "quote": "Да, хорошо. И в оригинале там еще больше мха было, которым порос дом. Из-за этого он имел такой зеленоватый немножко оттенок.",
+      "note": "Попытка 2. Затем правило квартала: «концепция портового квартала в том, что там постоянная сырость, влага, и это должно сказываться на всех строениях, которые там находятся»."
+    },
+    {
+      "gate": "textures",
+      "verdict": "changes",
+      "by": "user",
+      "date": "2026-10-21",
+      "quote": "Посмотри еще на окно оригинала. Оно здесь больше, оно занимает большую часть стены и выглядит интереснее, красивее при всем при этом.",
+      "note": "Окно HOLZWAND_02 попытки 3 (маленький проём со ставнями) отклонено; сделана попытка 4 по замыслу оригинала."
+    },
+    {
+      "gate": "textures",
+      "verdict": "changes",
+      "by": "user",
+      "date": "2026-10-21",
+      "quote": "да, все что мы ранее сделали, нужно переделать по новому пайплайну",
+      "note": "Ответ на вопрос об общих ROOF_01 и WOODBEAM_02: делать их по оригиналу как общие текстуры города, отдельными ассетами, хотя это меняет и принятый house-2."
+    },
+    {
+      "gate": "ingame",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-22",
+      "quote": "Да все понравилось, все хорошо, классно получилось.",
+      "note": "Набор hut-8 (стены, окно и фронтон моделью, балка ферм) вместе с roofs-8 и timber-7. Рецензент Р3: длинная сторона PASS, фронтон и стена с окном спорные."
+    },
+    {
+      "gate": "enable",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-22",
+      "quote": "Да все понравилось, все хорошо, классно получилось.",
+      "note": "Ответ на «Если нравится — включу хижину вместе с кровлями и деревом». working-3 = roofs-8 + timber-7 + barrel-wear-metal0 + hut-8.",
+      "set": "hut-8"
+    },
+    {
+      "gate": "ingame",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-22",
+      "quote": "да, давай",
+      "note": "Набор hut-10: рельеф досок в модели, ровные ряды фронтона, оливковые тени. Ответ на «Если hut-10 нравится, заменю им hut-8 в рабочем контенте»."
+    },
+    {
+      "gate": "enable",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-22",
+      "quote": "да, давай",
+      "note": "working-4 = roofs-8 + timber-7 + barrel-wear-metal0 + hut-10.",
+      "set": "hut-10"
+    }
+  ],
+  "build": {
+    "set": "hut-10",
+    "base": "original",
+    "date": "2026-10-22",
+    "albedo_sha256": {
+      "NW_CITY_HAFEN_HOLZWAND_01.TGA": "7aa2f7a92467483a6abdbb449fde4e35dd3a65a7e8144d28b8679bab955ddc1a",
+      "NW_CITY_HAFEN_HOLZWAND_02.TGA": "cabfeb8a188596c311c8486f04c2340adbe324a1581f191c0294fe604374d474",
+      "NW_CITY_HAFEN_GIEBEL_01.TGA": "c9ea546843744df89edeed095b61b9bc0648331ee90e391f40a4b1775c14a590",
+      "NW_CITY_WOODBEAM_01.TGA": "0a5085ee0bdeed11496710e16ecae14aa510b4bb68209eb1add414bc4a984b98"
+    },
+    "entries": 4,
+    "replaced": [
+      "NW_CITY_HAFEN_GIEBEL_01.TGA",
+      "NW_CITY_HAFEN_HOLZWAND_01.TGA",
+      "NW_CITY_HAFEN_HOLZWAND_02.TGA",
+      "NW_CITY_WOODBEAM_01.TGA"
+    ],
+    "unchanged_entries": 0
+  },
+  "backup": {
+    "date": "2026-10-22",
+    "host": "dev-ubuntu",
+    "matched": 108,
+    "mismatched": []
+  }
+}

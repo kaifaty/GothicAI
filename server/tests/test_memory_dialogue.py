@@ -48,10 +48,10 @@ async def test_a_new_conversation_is_noted_as_a_new_meeting():
         await fake.send(type="player_text", text="Привет", focus=XARDAS)
         await _until(lambda: fake.statuses[-2:] == ["thinking", "idle"])
         await fake.roster({**xardas, "distance": 2000.0})  # the hero walks off mid-line: it is over
-        await _until(lambda: talk.partner is None)
+        await _until(lambda: talk.partner is None and XARDAS not in talk.attached)
         await fake.roster(xardas)
         await fake.send(type="player_text", text="Это снова я", focus=XARDAS)
-        await _until(lambda: len(llm.calls) == 2 and fake.statuses[-1] == "idle")
+        await _until(lambda: len(llm.calls) == 2 and fake.statuses.count("idle") == 2)
 
     contents = [m.content for m in dialogue.conversations[XARDAS].history]
     assert contents[:2] == ["Привет", "Опять ты."]

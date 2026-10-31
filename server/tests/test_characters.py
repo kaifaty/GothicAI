@@ -6,7 +6,7 @@ import pytest
 
 from gothic_ai import characters
 from gothic_ai.characters import Card
-from gothic_ai.gamedata.storygraph import StoryGraph, load
+from gothic_ai.gamedata.storygraph import Node, StoryGraph, load
 from gothic_ai.llm import ToolCall
 from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.persona import PersonaProvider, render_instructions
@@ -69,6 +69,134 @@ def test_what_the_model_is_told_of_an_npc(graph):
     text = s.text()
     assert text.startswith(f"## {TRADER} — Маттео, горожанин Хориниса") and "Для героя: торгует." in text
     assert characters.subjects(graph, PEOPLE, only={LOBART}) == []
+
+
+@pytest.mark.parametrize(
+    ("npc", "ambush"),
+    [
+        ("BDT_1014_BANDIT_L", "DIA_BDT_1014_BANDIT_KILLER"),
+        ("SLD_840_ALVARES", "DIA_ALVARES_ATTACK"),
+        ("SLD_841_ENGARDO", "DIA_ENGARDO_HALLO"),
+    ],
+)
+def test_samples_exclude_freed_dialogs_and_their_choices(graph, npc, ambush):
+    choice = ambush + "_ATTACK"
+    nested = choice + "_AGAIN"
+    graph.nodes[ambush] = Node(
+        ambush,
+        "dialog",
+        npc,
+        "",
+        [_line("Это он, точно! Держи его!"), {"do": "choice", "node": choice}],
+        set(),
+    )
+    graph.nodes[choice] = Node(
+        choice,
+        "choice",
+        npc,
+        "",
+        [_line("Хватайте его!"), {"do": "choice", "node": nested}],
+        set(),
+        parents=[ambush],
+    )
+    graph.nodes[nested] = Node(
+        nested, "choice", npc, "", [_line("Он не уйдёт!"), {"do": "set_guild"}], set(), parents=[choice]
+    )
+    people = [*PEOPLE, {"npc": npc, "name": "Bandit"}]
+    (trader,) = characters.subjects(graph, people)
+    assert trader.npc == TRADER
+    assert "Смотри, но руками не трогай." in trader.lines
+
+
+def test_law_conditions_do_not_disable_card_samples(graph):
+    andre = "MIL_311_ANDRE"
+    node = "DIA_ANDRE_PETZMASTER"
+    graph.nodes[node] = Node(
+        node,
+        "dialog",
+        andre,
+        "",
+        [_line("Тебе придётся заплатить штраф.")],
+        set(),
+        condition=["fn", "B_GETGREATESTPETZCRIME"],
+    )
+    (subject,) = characters.subjects(graph, [{"npc": andre, "name": "Андре"}])
+    assert subject.lines == ["Тебе придётся заплатить штраф."]
+
+
+@pytest.mark.parametrize(
+    "expected",
+    [
+        Card(
+            npc="BDT_1014_BANDIT_L",
+            name="Браго",
+            ru=(
+                "Ты — Браго, главарь маленькой шайки. Говоришь коротко и властно, "
+                "привык, что тебя слушаются. Ты жаден и расчётлив: сначала прикидываешь, "
+                "чего стоит чужак и сколько с него можно содрать, "
+                "а дерёшься, когда это выгодно или когда тебе перечат после твоего последнего слова. "
+                "Слабых давишь, сильных проверяешь на испуг, лжецов не прощаешь. "
+                "О своих делах и о тех, кто тебе платит, держишь язык за зубами. "
+                "Побеждённых ты любишь унижать: сдавшегося можешь и обобрать, "
+                "и обмочить у всех на виду — чтобы помнил, кто тут главный."
+            ),
+            en=(
+                "Curt, commanding gang leader; greedy and calculating — sizes a stranger up and squeezes "
+                "him before fighting; fights when it pays or when defied after his last word; bullies the "
+                "weak, tests the strong, never forgives a liar; keeps his paymasters secret. "
+                "Likes to humiliate the beaten: robs a man who gives up and may piss on him "
+                "in front of everyone, so he remembers who is boss."
+            ),
+            greed=4,
+            honesty=2,
+            courage=4,
+            talk=2,
+            pushy=4,
+            strangers=1,
+        ),
+        Card(
+            npc="BDT_1015_BANDIT_L",
+            name="Бандит",
+            ru=(
+                "Ты — бандит из шайки Браго, подозрительный и грубый. Разглядываешь каждую незнакомую рожу "
+                "и спрашиваешь без церемоний. Решать оставляешь Браго и поддакиваешь ему, но своя шкура тебе "
+                "дороже чужой награды: когда запахнет жареным, торгуешься или отходишь."
+            ),
+            en=(
+                "Brago's henchman; suspicious and blunt, scrutinizes strangers, defers to Brago, values "
+                "his own skin over a bounty — haggles or backs off when it gets dangerous."
+            ),
+            greed=3,
+            honesty=3,
+            courage=2,
+            talk=3,
+            pushy=2,
+            strangers=2,
+        ),
+    ],
+)
+def test_bandit_cards(expected):
+    assert characters.load()[expected.npc] == expected
+
+
+@pytest.mark.parametrize(
+    ("leader", "gang"),
+    [
+        (
+            "BDT_10301_ADDON_RANGERBANDIT_M",
+            [f"BDT_1030{i}_ADDON_RANGERBANDIT_{'M' if i == 4 else 'L'}" for i in (0, 2, 3, 4, 5)],
+        ),
+        ("BDT_1001_BANDIT_L", ["BDT_1000_BANDIT_L", "BDT_1002_BANDIT_L"]),
+        ("BDT_1000_BANDIT_L", ["BDT_1002_BANDIT_L"]),  # the woods by the town have no 1001
+        ("BDT_1011_BANDIT_M", ["BDT_1009_BANDIT_L", "BDT_1010_BANDIT_L"]),
+        ("BDT_1021_LEUCHTTURMBANDIT", ["BDT_1022_LEUCHTTURMBANDIT", "BDT_1023_LEUCHTTURMBANDIT"]),
+        ("SLD_840_ALVARES", ["SLD_841_ENGARDO"]),
+    ],
+)
+def test_road_gangs_have_one_leader(leader, gang):
+    """The leader hails the hero first and answers for the gang (talk.lead): its card leads."""
+    cards = characters.load()
+    assert all(cards[leader].lead > cards[member].lead for member in gang)
 
 
 async def test_cards_from_the_models_answer(graph):

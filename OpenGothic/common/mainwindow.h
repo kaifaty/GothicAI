@@ -69,8 +69,12 @@ class MainWindow : public Tempest::Window {
     void paintFocus     (Tempest::Painter& p, Tempest::Rect rect);
     void paintCrosshair (Tempest::Painter& p, const Tempest::Matrix4x4& vp);
 
-    void drawBar(Tempest::Painter& p, const Tempest::Texture2d *bar, int x, int y, float v, Tempest::AlignFlag flg);
+    void drawBar(Tempest::Painter& p, const Tempest::Texture2d *bar, int x, int y, float v, Tempest::AlignFlag flg,
+                 float height = 1.f, const Tempest::Color& tint = Tempest::Color(1,1,1,1), float mark = -1.f);
+    int  barHeight() const;
+    void drawStamina(Tempest::Painter& p, const Npc& pl, bool aboveHealth);
     void drawMsg(Tempest::Painter& p);
+    void drawChunks(Tempest::Painter& p, const World& world, const Camera& camera);
     void drawProgress(Tempest::Painter& p, int x, int y, int w, int h, float v);
     void drawLoading (Tempest::Painter& p,int x,int y,int w,int h);
     void drawSaving  (Tempest::Painter& p);
@@ -80,7 +84,7 @@ class MainWindow : public Tempest::Window {
     void loadGame (std::string_view slot);
     void saveGame (std::string_view slot, std::string_view name);
 
-    void onVideo(std::string_view fname);
+    void onVideo(std::string_view fname, bool explicitRequest);
     void onStartLoading();
     void onWorldLoaded();
     void onSessionExit();

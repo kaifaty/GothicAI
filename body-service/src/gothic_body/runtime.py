@@ -131,7 +131,8 @@ class PolicyRuntime:
     def __init__(self, checkpoint: Path | str | None = None, *, device: str = "cpu", backend=None,
                  checkpoint_sha256: str | None = None, normalizer: dict[str, Any] | None = None,
                  feature_packer: Callable | None = None, max_actors: int = 16, max_age_game_ms: int = 100,
-                 max_dt_game_ms: int = 100, inference_cpu_threads: int = 2, lean: bool = False):
+                 max_dt_game_ms: int = 100, inference_cpu_threads: int = 2, lean: bool = False,
+                 allow_stale_memory_only: bool = False):
         if type(max_actors) is not int or not 1 <= max_actors <= 256:
             raise ValueError("invalid actor bound")
         if type(inference_cpu_threads) is not int or inference_cpu_threads not in (1, 2):
@@ -158,6 +159,9 @@ class PolicyRuntime:
         self.counters: Counter = Counter()
         self.lock = threading.RLock()
         self.lean = lean
+        # The live network pilot can replay a frame's backlog through memory.
+        # Other callers retain the existing age gate unless explicitly opted in.
+        self.allow_stale_memory_only = allow_stale_memory_only
         # Features of the last row the backend consumed (a collector stores them as training input).
         self.last_features: list[float] | None = None
 
@@ -283,9 +287,13 @@ class PolicyRuntime:
         base["sequence_dt_game_ms"] = dt
         gap = sequence != state.sequence+1
         bucket_gap = previous_game is not None and game_ms//50 > previous_game//50+1
+        memory_only = request.get("memory_only") is True
+        valid_memory_only = memory_only and (row.get("can_decide") is False or
+                                             request.get("command_enabled") is False)
+        check_age = not (self.allow_stale_memory_only and valid_memory_only)
         reason = ("unexpected_gap" if gap or request.get("gap") is True else
                   "unexpected_periodic_gap" if bucket_gap else
-                  "observation_too_old" if now_game_ms-game_ms > self.max_age_game_ms else
+                  "observation_too_old" if check_age and now_game_ms-game_ms > self.max_age_game_ms else
                   "unexpected_time_gap" if previous_game is not None and dt > self.max_dt_game_ms else None)
         if reason:
             state.sequence, state.game_ms, state.fingerprint = sequence, game_ms, fingerprint
@@ -295,7 +303,6 @@ class PolicyRuntime:
         mask = row.get("action_mask", row.get("availability_mask"))
         if not isinstance(mask, list) or len(mask) != 12 or any(type(value) is not bool for value in mask):
             return fallback("invalid_action_mask", True)
-        memory_only = request.get("memory_only") is True
         if memory_only and row.get("can_decide") is not False and request.get("command_enabled") is not False:
             return fallback("invalid_memory_only_context", True)
         if not any(mask) and not memory_only:

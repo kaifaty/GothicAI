@@ -91,8 +91,8 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     cmd.setBinding(L_Vbo, buckets.vbo());
     }
   else if(bx.staticMesh!=nullptr) {
-    cmd.setBinding(L_Ibo, bx.staticMesh->ibo8);
-    cmd.setBinding(L_Vbo, bx.staticMesh->vbo);
+    cmd.setBinding(L_Ibo, bx.staticMesh->ibo8Buffer());
+    cmd.setBinding(L_Vbo, bx.staticMesh->vboBuffer());
     }
   else {
     cmd.setBinding(L_Ibo, bx.animMesh->ibo8);
@@ -114,6 +114,17 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
       }
     auto smp = SceneGlobals::isShadowView(v) ? Sampler::trillinear() : Sampler::anisotrophy();
     cmd.setBinding(L_Sampler, smp);
+    }
+
+  if(Shaders::options().doMaterialMaps && v==SceneGlobals::V_Main &&
+     (cx.alpha==Material::Solid || cx.alpha==Material::AlphaTest)) {
+    if(cx.isBindless()) {
+      cmd.setBinding(L_Normal, buckets.normals());
+      cmd.setBinding(L_Orm, buckets.orm());
+      } else {
+      cmd.setBinding(L_Normal, bx.mat.normal!=nullptr ? *bx.mat.normal : Resources::fallbackTexture());
+      cmd.setBinding(L_Orm, bx.mat.orm!=nullptr ? *bx.mat.orm : Resources::fallbackTexture());
+      }
     }
 
   if(v==SceneGlobals::V_Main && cx.isShadowmapRequired()) {
@@ -144,7 +155,7 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
 
 uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId) {
   const bool bindlessSys = Shaders::options().doBindless;
-  const bool bindless    = bindlessSys && !m.hasFrameAnimation();
+  const bool bindless    = bindlessSys && (!m.hasFrameAnimation() || type==Landscape);
 
   auto pMain    = Shaders::inst().materialPipeline(m, type, Shaders::T_Main,   bindless);
   auto pShadow  = Shaders::inst().materialPipeline(m, type, Shaders::T_Shadow, bindless);
@@ -235,7 +246,8 @@ void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
       continue;
     if(v.indirectCmd.byteSize() != sizeof(IndirectCmd)*cmd.size()) {
       Resources::recycle(std::move(v.indirectCmd));
-      v.indirectCmd = device.ssbo(cx.data(), sizeof(IndirectCmd)*cx.size());
+      v.indirectCmd = device.ssbo(Uninitialized,sizeof(IndirectCmd)*cx.size());
+      v.indirectCmd.updateAsync(cx.data(),0,sizeof(IndirectCmd)*cx.size());
       }
     else if(layChg) {
       auto staging = device.ssbo(BufferHeap::Upload, cx.data(), sizeof(IndirectCmd)*cx.size());
@@ -365,6 +377,8 @@ void DrawCommands::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
 
   for(size_t i=0; i<ord.size(); ++i) {
     auto& cx = *ord[i];
+    if(cx.maxPayload==0)
+      continue;
     if(cx.alpha!=Material::Solid && cx.alpha!=Material::AlphaTest)
       continue;
     if(cx.pVsm==nullptr)
@@ -414,6 +428,8 @@ void DrawCommands::drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
 
   for(size_t i=0; i<ord.size(); ++i) {
     auto& cx = *ord[i];
+    if(cx.maxPayload==0)
+      continue;
     if(cx.alpha!=Material::Solid && cx.alpha!=Material::AlphaTest)
       continue;
     if(cx.type!=Landscape && cx.type!=Static)

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 
 #include "game/gamescript.h"
 #include "game/inventory.h"
@@ -13,6 +14,7 @@
 #include "world/objects/item.h"
 #include "physics/dynamicworld.h"
 #include "world/objects/npc.h"
+#include "world/waypath.h"
 #include "world/waypoint.h"
 #include "world/world.h"
 #include "commandline.h"
@@ -40,7 +42,10 @@ constexpr float    FollowCatchUp    = 800;   // farther than this it runs, whate
 constexpr float    FollowLost       = 6000;  // give up
 constexpr uint64_t FollowStepMs     = 500;
 constexpr uint64_t FollowStuckMs    = 2000;  // walking, but it has not moved FollowMovedCm in this long: stuck
+constexpr uint64_t WalkStartMs      = 3000;  // arm stuck detection even if it cannot take its first step
 constexpr float    FollowMovedCm    = 75;
+constexpr float    WalkSameSpotCm   = 100;   // a replanned waynet route got stuck here again
+constexpr uint64_t WalkProgressMs   = 5000;
 constexpr float    TakeRange        = 2000;  // cm: take_item picks up the nearest such thing within this
 constexpr float    ChestNear        = 300;   // cm: use_chest walks to the chest's waypoint from farther
 constexpr uint64_t StateStartMs     = 3000;  // fight/flee: the script state must begin within this
@@ -241,6 +246,7 @@ void NpcController::detachAll(World& world, std::string_view reason) {
     auto symbol = npcs.back().symbol;
     detach(world,symbol,reason,err);
     }
+  percThrottle.clear();
   }
 
 void NpcController::dropAll(std::string_view reason) {
@@ -401,9 +407,11 @@ bool NpcController::startAction(World& world, Controlled& c, Action& a, const ra
     a.toPlayer = target->isPlayer();
     a.target   = target->instanceSymbol();
     if(a.type=="go_to_npc") {
-      a.radius   = float(integer(args,"radius",400));
-      a.deadline = 60000;
-      npc.aiPush(AiQueue::aiGoToNpc(target));
+      a.radius    = float(integer(args,"radius",400));
+      a.closeApproach = JsonRead::boolean(args,"close",false);
+      a.deadline  = 60000;
+      a.updatedAt = a.start;
+      planNpcWalk(world,c,a,*target,!npc.canSeeNpc(*target,true));
       } else {
       a.deadline = 5000;
       npc.aiPush(AiQueue::aiTurnToNpc(target));
@@ -417,7 +425,14 @@ bool NpcController::startAction(World& world, Controlled& c, Action& a, const ra
       err = "unknown animation: " + name;
       return false;
       }
-    a.deadline = 15000;
+    const auto hold = integer(args,"hold_ms",0);
+    if(hold<0 || hold>60000) {
+      err = "play_ani hold_ms must be in [0, 60000]";
+      return false;
+      }
+    a.animation = name;
+    a.holdMs = uint64_t(hold);
+    a.deadline = 15000+a.holdMs;
     npc.aiPush(AiQueue::aiPlayAnim(name));
     return true;
     }
@@ -668,9 +683,51 @@ void NpcController::regainControl(Controlled& c) {
     npc.aiPush(AiQueue::aiRemoveWeapon());
   }
 
+void NpcController::planNpcWalk(World& world, Controlled& c, Action& a, Npc& target, bool byWay) {
+  const WayPoint* wp = nullptr;
+  if(byWay) {
+    wp = world.findWayPoint(target.position(),[&](const WayPoint& w) {
+      return target.canRayHitPoint(w.position(),true);
+      });
+    if(wp==nullptr)
+      wp = world.findWayPoint(target.position());
+    }
+  Npc& npc = *c.npc;
+  a.byWay     = wp!=nullptr;
+  a.movedFrom = npc.position();
+  a.plannedFrom = a.movedFrom;
+  a.movedAt   = world.tickCount();
+  a.distance  = std::sqrt(double(npc.qDistTo(target)));
+  if(a.replans>0)
+    Tempest::Log::i("[ai] ",c.symbol," go_to_npc ",a.id," replan ",a.replans," at [",
+                    a.movedFrom.x,",",a.movedFrom.y,",",a.movedFrom.z,"], ",a.distance/100.," m to ",npcId(world,target));
+  const auto seen = npc.canSeeNpc(target,true) ? "visible" : "not visible";
+  const auto step = a.replans==0 ? " start to " : " route to ";
+  if(wp!=nullptr) {
+    auto path = world.wayTo(npc,*wp);
+    auto from = npc.position();
+    double length = 0;
+    size_t count  = 0;
+    while(const auto p = path.pop()) {
+      length += double((p->position()-from).length());
+      from = p->position();
+      ++count;
+      }
+    Tempest::Log::i("[ai] ",c.symbol," go_to_npc ",a.id,step,npcId(world,target),": waynet to ",wp->name,
+                    ": ",count," points, ",length/100.," m path; direct ",a.distance/100.," m, ",seen);
+    npc.aiPush(AiQueue::aiGoToPoint(*wp));
+    } else {
+    Tempest::Log::i("[ai] ",c.symbol," go_to_npc ",a.id,step,npcId(world,target),": direct, ",a.distance/100.," m, ",seen);
+    }
+  if(a.closeApproach)
+    npc.aiPush(AiQueue::aiGoToNpc(&target,int(a.radius))); else
+    npc.aiPush(AiQueue::aiGoToNpc(&target));
+  }
+
 void NpcController::updateAction(World& world, Controlled& c, uint64_t now) {
   auto& a = *c.act;
-  if(now<a.start+GraceMs)
+  a.updatedAt = now;
+  if(a.holdMs==0 && now<a.start+GraceMs)
     return;
   if(a.state.isValid()) {
     updateStateAction(world,c,now);
@@ -679,14 +736,68 @@ void NpcController::updateAction(World& world, Controlled& c, uint64_t now) {
 
   if(c.npc->haveOutput())
     a.deadline = now + a.timeout; // queued speech goes first, the clock starts after it
+  if(a.holdMs>0) {
+    if(c.npc->animProgress(a.animation)>=0.f) {
+      if(a.heldAt==0)
+        a.heldAt = now;
+      if(now>=a.heldAt+a.holdMs) {
+        c.npc->clearAiQueue();
+        finishAction(c,"done","");
+        }
+      }
+    else if(a.heldAt!=0) {
+      finishAction(c,"failed","held animation was interrupted");
+      }
+    else if(now>=a.deadline) {
+      c.npc->clearAiQueue();
+      finishAction(c,"timeout","animation did not start");
+      }
+    return;
+    }
   if(a.pace=="hero")
     keepHeroPace(world,*c.npc);
-  if(a.type=="go_to_npc" && c.npc->isAiBusy() && !c.npc->haveOutput()) {
-    // it stops within the radius: to see someone, it need not walk right up to them
+  if(a.type=="go_to_npc") {
     Npc* target = a.toPlayer ? world.player() : world.findNpcByInstance(a.target);
-    if(target!=nullptr && c.npc->qDistTo(*target)<=a.radius*a.radius) {
-      c.npc->clearAiQueue();
-      c.npc->clearGoTo();
+    if(target!=nullptr) {
+      a.distance = std::sqrt(double(c.npc->qDistTo(*target)));
+      const auto pos = c.npc->position();
+      const bool seen = c.npc->canSeeNpc(*target,true);
+      if(now>=a.nextProgress) {
+        const auto wp = c.npc->currentGoToPoint();
+        char progress[128];
+        std::snprintf(progress,sizeof(progress)," progress t=%.1fs pos=[%.0f,%.0f,%.0f] d=%.1fm moved=%.0fcm idle=%.1fs",
+                      double(now-a.start)/1000.,double(pos.x),double(pos.y),double(pos.z),a.distance/100.,
+                      double((pos-a.movedFrom).length()),double(now-a.movedAt)/1000.);
+        Tempest::Log::i("[ai] ",c.symbol," go_to_npc ",a.id,progress," point=",wp!=nullptr ? wp->name : "-",
+                        " walk=",uint32_t(c.npc->walkMode())," body=",uint32_t(c.npc->bodyStateMasked()),
+                        " busy=",int(c.npc->isAiBusy())," queue=",c.npc->aiQueueSize(),
+                        " los=",int(seen));
+        a.nextProgress = now + WalkProgressMs;
+        }
+      // Allow initial item animations and turning a short grace; ignore vertical settling too.
+      const auto moved = pos-a.movedFrom;
+      const bool startClock = !a.walkStarted &&
+                              (moved.x*moved.x+moved.z*moved.z>1.f || now>=a.start+WalkStartMs);
+      if(startClock)
+        a.walkStarted = true;
+      if(c.npc->haveOutput() || startClock || a.movedAt==0 || moved.quadLength()>=FollowMovedCm*FollowMovedCm) {
+        a.movedFrom = pos;
+        a.movedAt   = now;
+        }
+      if(c.npc->isAiBusy() && !c.npc->haveOutput()) {
+        // Stop close enough to see the target, never on the other side of a wall.
+        if(a.distance<=a.radius && seen) {
+          c.npc->clearAiQueue();
+          c.npc->clearGoTo();
+          } else if(a.walkStarted && now>=a.movedAt+FollowStuckMs) {
+          const bool repeated = a.byWay && a.replans>0 &&
+                                (pos-a.plannedFrom).quadLength()<=WalkSameSpotCm*WalkSameSpotCm;
+          c.npc->clearAiQueue();
+          c.npc->clearGoTo();
+          ++a.replans;
+          planNpcWalk(world,c,a,*target,!seen && !repeated);
+          }
+        }
       }
     }
   if(c.npc->isAiBusy()) {
@@ -732,7 +843,7 @@ void NpcController::updateAction(World& world, Controlled& c, uint64_t now) {
       return;
       }
     const double d = std::sqrt(double(c.npc->qDistTo(*target)));
-    if(d<=a.radius)
+    if(d<=a.radius && (!a.closeApproach || c.npc->canSeeNpc(*target,true)))
       finishAction(c,"done","",d); else
       finishAction(c,"failed","stopped away from target",d);
     return;
@@ -810,7 +921,7 @@ void NpcController::updateFollow(World& world, Controlled& c, uint64_t now) {
       }
     f.byWay = false;  // stuck on the waynet too: straight again
     }
-  if(d<=FollowNear || now<f.nextStep || c.npc->isAiBusy())
+  if(d<=FollowNear || (now<f.nextStep && f.nextStep<=now+FollowStepMs) || c.npc->isAiBusy())
     return;
   f.nextStep = now + FollowStepMs;
   f.byWay    = false;
@@ -870,6 +981,12 @@ void NpcController::useChest(World& world, Controlled& c, Action& a) {
 void NpcController::finishAction(Controlled& c, std::string_view status, std::string_view detail, double distance) {
   if(!c.act)
     return;
+  if(c.act->type=="go_to_npc") {
+    const auto& a = *c.act;
+    const double d = distance>=0 ? distance : a.distance;
+    Tempest::Log::i("[ai] ",c.symbol," go_to_npc ",a.id," finish status=",status," detail=",detail,
+                    " distance=",d/100.," m elapsed=",double(a.updatedAt-a.start)/1000.," s replans=",a.replans);
+    }
   if(c.act->type=="use_chest" && c.act->chest!=nullptr) {
     if(c.npc!=nullptr && c.npc->interactive()==c.act->chest && status!="done")
       c.npc->setInteraction(nullptr,true);  // cut off at the open chest: it lets go of it
@@ -920,7 +1037,7 @@ void NpcController::tick(World& world) {
       updateAction(world,c,now);
     else if(c.follow)
       updateFollow(world,c,now);
-    if(now>=c.nextSnapshot) {
+    if(now>=c.nextSnapshot || c.nextSnapshot>now+SnapshotPeriodMs) {
       emitSnapshot(world,c);
       c.nextSnapshot = now + SnapshotPeriodMs;
       }
@@ -938,7 +1055,7 @@ void NpcController::perception(World& world, Npc& self, Npc& other, Npc* victim,
   const uint64_t now = world.tickCount();
   const uint64_t key = (uint64_t(it->instance)<<40) ^ (uint64_t(other.instanceSymbol())<<8) ^ uint64_t(perc);
   auto& last = percThrottle[key];
-  if(last!=0 && now<last+PercThrottleMs)
+  if(last!=0 && last<=now && now<last+PercThrottleMs)
     return;
   last = now;
 
@@ -1014,7 +1131,8 @@ void NpcController::emitSnapshot(World& world, Npc& npc, std::string_view symbol
   j.num("rot",double(npc.rotation()))
    .integer("hp",npc.attribute(ATR_HITPOINTS))
    .integer("hp_max",npc.attribute(ATR_HITPOINTSMAX))
-   .boolean("busy",npc.isAiBusy());
+   .boolean("busy",npc.isAiBusy())
+   .str("animations",npc.animNames());
   if(!action.empty())
     j.str("action",action); else
     j.null("action");
@@ -1057,7 +1175,9 @@ void NpcController::emitSnapshot(World& world, Npc& npc, std::string_view symbol
         j.null(key);
       };
     j.object("player")
-       .str("name",TextCodec::toUtf8(pl->displayName()));
+       .str("name",TextCodec::toUtf8(pl->displayName()))
+       .str("animations",pl->animNames())
+       .boolean("kneeling",pl->isPlayerKneeling());
     writePos(j,"pos",pl->position());
     // v32: where he faces, for where places are from him (places.py)
     const auto ax = heroAxes(*pl);

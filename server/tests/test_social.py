@@ -10,11 +10,15 @@ import pytest
 
 from gothic_ai import social
 from gothic_ai.chronicle import Chronicle
+from gothic_ai.crime_react import CrimeReact
+from gothic_ai.crimes import Crimes
 from gothic_ai.deals import Deals
 from gothic_ai.dialogue import DialogueManager
+from gothic_ai.game import GameError
 from gothic_ai.gamedata.storygraph import StoryGraph, load
 from gothic_ai.llm.fake import FakeBackend
 from gothic_ai.memory import MemoryStore
+from gothic_ai.people_knowledge import PeopleKnowledge
 from gothic_ai.perception import PerceptionDesk
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import Look
@@ -125,7 +129,10 @@ def _rumors(s: Social) -> tuple[Rumors, Rumor, list[dict]]:
     r = Rumors.__new__(Rumors)
     facts: list[dict] = []
     r.social, r.dead, r.rumors, r.tells = s, set(), {}, defaultdict(int)
-    r.chronicle = type("C", (), {"record": lambda self, f: facts.append(f)})()
+    r.chronicle = SimpleNamespace(
+        record=facts.append,
+        facts=lambda kind=None: [f for f in facts if kind is None or f.get("fact") == kind],
+    )
     r.dialogue = type("D", (), {"remember": lambda self, *a: None})()
     rumor = Rumor(QUEST, "caught", LOBART, "Лобарт", "Убрать поле репы")
     rumor.known[LOBART] = 0
@@ -147,6 +154,59 @@ def test_a_rumor_goes_round_the_meetings_in_order(graph, monkeypatch):
     assert second["about_name"] == "Лобарт" and second["day"] == 1
     # the city has no meeting with the farm
     assert VATRAS not in rumor.known and ANDRE not in rumor.known
+
+
+@pytest.mark.parametrize("kind", ["no_blood", "no_reward", "secret_kept", "mercy"])
+def test_challenge_hint_source_knows_and_passes_news_to_an_acquaintance(graph, monkeypatch, kind):
+    monkeypatch.setattr(social, "P_MEET", 1.0)
+    monkeypatch.setattr(social, "P_DEAL", 0.0)
+    r, _, facts = _rumors(Social(PEOPLE, graph))
+    r.rumors.clear()
+    fact = {
+        "fact": "challenge_hint", "id": "CH1", "challenge": 12, "kind": kind,
+        "npc": ANDRE, "name": "Андре", "witnesses": [LOBART],
+        "witness_names": {LOBART: "Лобарт"}, "day": 1,
+    }
+    facts.append(fact)
+    r._on_fact(fact)
+    [rumor] = r.rumors.values()
+    assert rumor.known == {LOBART: 0} and not rumor.is_player
+    desk = PeopleKnowledge(r.chronicle)
+    [direct] = desk.of(LOBART)
+    assert direct.direct and direct.subject == ANDRE
+    assert r.spread(DAY + _h(9), DAY + _h(10)) == 1
+    assert rumor.known == {LOBART: 0, HILDA: 1}
+    [heard] = desk.of(HILDA)
+    assert not heard.direct and heard.source == LOBART and heard.subject == ANDRE
+    assert heard.description() == direct.description() == rumor.description()
+    assert facts[-1]["subject"] == ANDRE and facts[-1]["to"] == HILDA
+
+
+def test_feat_fame_starts_with_witnesses_spreads_and_rewinds(graph, monkeypatch):
+    monkeypatch.setattr(social, "P_MEET", 1.0)
+    monkeypatch.setattr(social, "P_DEAL", 0.0)
+    r, _, facts = _rumors(Social(PEOPLE, graph))
+    r.rumors.clear()
+    fame = {
+        "fact": "feat_fame", "feat": "F1", "title": "Вернул чужое",
+        "text": "Вернул кошель без награды.", "witnesses": [LOBART], "day": 1,
+    }
+    facts.extend([fame, fame.copy()])
+    r._load()
+    [rumor] = r.rumors.values()
+    assert rumor.is_player and rumor.known == {LOBART: 0} and rumor.hops == 3
+    assert rumor.description() == "о герое говорят: «Вернул чужое» — Вернул кошель без награды."
+    assert r.spread(DAY + _h(9), DAY + _h(23)) == 2
+    assert rumor.known == {LOBART: 0, HILDA: 1, VINO: 2}
+    first, second = [f for f in facts if f["fact"] == "rumor"]
+    assert (first["to"], second["to"], second["from_name"]) == (HILDA, VINO, "Хильда")
+    assert all(f["kind"] == "fame" and f["feat"] == "F1" and f["text"] == fame["text"]
+               and f["title"] == fame["title"] and f["subject"] == "PLAYER" for f in [first, second])
+    r._load()
+    assert len(r.rumors) == 1 and next(iter(r.rumors.values())).known == rumor.known
+    facts.clear()
+    r._load()
+    assert r.rumors == {}
 
 
 def test_dealings_bring_it_to_the_city_once_a_day(graph, monkeypatch):
@@ -285,6 +345,51 @@ def test_one_who_promised_silence_tells_no_one(graph, monkeypatch):
     assert VINO in rumor.known and all(f["from"] != LOBART for f in facts)
 
 
+@pytest.mark.parametrize("promise", ["lie", "crime", "cover"])
+@pytest.mark.parametrize("keeps", [False, True])
+def test_npc_intent_controls_silence_and_first_real_retelling_records_betrayal(graph, promise, keeps):
+    if promise == "lie":
+        r, rumor, facts = _rumors(Social(PEOPLE, graph))
+        teller, listeners = LOBART, [HILDA, VINO]
+        terms = {"silence": [rumor.key]}
+    else:
+        r, rumor, facts = _crime_rumors(Social(PEOPLE, graph))
+        teller, listeners = HILDA, [LOBART, VINO]
+        terms = {"cover": {"crime": "c1"}} if promise == "cover" else {"silence": ["crime:c1"]}
+    how = "cover" if promise == "cover" else "silence"
+    facts.append({"fact": "npc_intent", "npc": teller, "deal": "D1", "keeps": keeps, "how": [how]})
+    deal = {"fact": "deal", "npc": teller, "deal": "D1", **terms}
+    facts.append(deal)
+    r._on_fact(deal)
+    r.clock = DAY + _h(9)
+
+    assert (teller in rumor.silent) is keeps
+    assert r.tell(rumor, teller, listeners[0]) == ("no" if keeps else "told")
+    assert r.tell(rumor, teller, listeners[1]) == ("no" if keeps else "told")
+    betrayals = [f for f in facts if f.get("fact") == "betrayed"]
+    assert betrayals == ([] if keeps else [{
+        "fact": "betrayed", "npc": teller, "deal": "D1", "how": "told", "to": listeners[0],
+    }])
+
+
+@pytest.mark.parametrize("promise", ["silence", "cover"])
+def test_disabling_cheating_restores_raw_crime_promises_on_load(graph, promise):
+    r, _, facts = _crime_rumors(Social(PEOPLE, graph))
+    facts.extend([
+        {"fact": "npc_intent", "npc": HILDA, "deal": "D1", "keeps": False, "how": [promise]},
+        {"fact": "deal", "npc": HILDA, "deal": "D1", **(
+            {"cover": {"crime": "c1"}} if promise == "cover" else {"silence": ["crime:c1"]}
+        )},
+    ])
+    r.chronicle.npc_cheat_enabled = False
+    r._load()
+    [rumor] = r.rumors.values()
+    r.clock = DAY + _h(9)
+    assert HILDA in rumor.silent
+    assert r.tell(rumor, HILDA, LOBART) == "no"
+    assert not any(f.get("fact") == "betrayed" for f in facts)
+
+
 def test_a_debt_not_paid_back_goes_round(graph, monkeypatch):
     monkeypatch.setattr(social, "P_MEET", 1.0)
     monkeypatch.setattr(social, "P_DEAL", 0.0)
@@ -317,11 +422,46 @@ def _crime_rumors(s: Social, kind: str = "theft", witness: str = HILDA) -> tuple
     r.chronicle.facts = lambda kind=None: [f for f in facts if kind is None or f.get("fact") == kind]
     r.crimes = SimpleNamespace(
         facts=lambda: r.chronicle.facts("crime"),
+        crime=lambda crime_id: next((f for f in r.chronicle.facts("crime") if f["id"] == crime_id), None),
         describe=lambda f: f"герой совершил {f['kind']} (день {f['day']})",
+        learn_side=lambda npc, crime: None,
+        excuse=lambda npc, crime: {},
+        react=None,
+        cover=True,
+        testimony_crimes=lambda f: f.get("crime_told", []),
     )
     for f in list(facts):
         r._on_fact(f)
     return r, next(iter(r.rumors.values())), facts
+
+
+@pytest.mark.parametrize("cover", [True, False])
+def test_cover_silence_respects_switch_when_loading_rumors(graph, cover):
+    r, rumor, facts = _crime_rumors(Social(PEOPLE, graph))
+    r.crimes.cover = cover
+    silence = {"fact": "silenced", "npc": HILDA, "crime": "c1", "cover": "D1"}
+    facts.append(silence)
+    r._on_fact(silence)
+    assert (HILDA in rumor.silent) is cover
+    r._load()
+    [rumor] = r.rumors.values()
+    assert (HILDA in rumor.silent) is cover
+    facts.append({"fact": "silenced", "npc": HILDA, "crime": "c1"})
+    r._load()
+    assert HILDA in next(iter(r.rumors.values())).silent
+
+
+@pytest.mark.parametrize("cover", ["D1", ""])
+def test_no_crimes_ignores_cover_silence_for_old_caught_rumors(graph, cover):
+    r, _, facts = _crime_rumors(Social(PEOPLE, graph))
+    r.crimes = None
+    facts[:] = [
+        {"fact": "caught", "quest": "old-lie", "npc": HILDA, "title": "не брал", "crime": "c1"},
+        {"fact": "silenced", "npc": HILDA, "crime": "c1", **({"cover": cover} if cover else {})},
+    ]
+    r._load()
+    [rumor] = r.rumors.values()
+    assert (HILDA in rumor.silent) is (not cover)
 
 
 def test_crime_witnesses_share_one_rumor_and_keep_the_speaker(graph, monkeypatch):
@@ -342,6 +482,74 @@ def test_crime_witnesses_share_one_rumor_and_keep_the_speaker(graph, monkeypatch
         1,
     )
     assert rumor.told("Хильда") == "Слух (со слов: Хильда): герой совершил theft (день 1)"
+
+
+def test_justified_murder_upgrades_known_news_and_keeps_its_source_on_reload(graph):
+    r, rumor, facts = _crime_rumors(Social(PEOPLE, graph), "murder")
+    facts[0]["victim"] = BANDIT
+    facts.extend([
+        {"fact": "crime_seen", "npc": VINO, "crime": "c1"},
+        {"fact": "crime_side", "npc": HILDA, "crime": "c1", "why": "fought"},
+    ])
+    r.chronicle.on_fact = []
+    r.crimes = Crimes(SimpleNamespace(listeners=[]), r.chronicle)
+    r.crimes.people = {p["npc"]: {"guild": p["guild"], "npctype": 0} for p in PEOPLE}
+    CrimeReact(r.crimes.link, r.crimes)
+    r._load()
+    [rumor] = r.rumors.values()
+    notes = []
+    r.dialogue = SimpleNamespace(remember=lambda *args: notes.append(args[-1]))
+    r.clock = DAY + _h(10)
+    assert r.tell(rumor, VINO, VATRAS) == "told"
+    assert r.tell(rumor, VATRAS, LOBART) == "told"
+    assert not [f for f in facts if f.get("fact") == "rumor"][-1].get("excuse")
+    assert rumor.known[LOBART] == 2
+    r.gate = lambda *args: True
+    assert r.offer_status(rumor, HILDA, LOBART) == "told"
+    upgraded = [f for f in facts if f.get("fact") == "rumor"][-1]
+    assert (upgraded["excuse"], upgraded["excuse_by"], upgraded["excuse_by_name"]) == (
+        "fought", HILDA, "Хильда",
+    )
+    assert "Хильда говорит:" in notes[-1] and "дрался с ним" in notes[-1]
+    assert rumor.known[LOBART] == 1
+    assert r.tell(rumor, HILDA, LOBART) == "no"
+    assert r.tell(rumor, LOBART, ANDRE) == "told"
+    retold = [f for f in facts if f.get("fact") == "rumor"][-1]
+    assert (retold["excuse"], retold["excuse_by"], retold["hops"]) == ("fought", HILDA, 2)
+    tells, known = dict(r.tells), dict(rumor.known)
+    r._load()
+    [restored] = r.rumors.values()
+    assert restored.known == known and dict(r.tells) == tells
+    assert r.crimes.excuse(ANDRE, "c1")["excuse_by"] == HILDA
+
+
+@pytest.mark.parametrize("error", [None, GameError("guilds unavailable"), TimeoutError("guilds timeout")])
+async def test_rumor_tick_prepares_guilds_and_still_spreads_on_read_failure(
+    graph, monkeypatch, caplog, error,
+):
+    monkeypatch.setattr(social, "P_MEET", 1.0)
+    monkeypatch.setattr(social, "P_DEAL", 0.0)
+    r, rumor, facts = _crime_rumors(Social(PEOPLE, graph), "murder")
+    calls = []
+
+    async def prepare():
+        calls.append("prepare")
+        if error is not None:
+            raise error
+
+    async def state():
+        calls.append("state")
+        return {"day": 1, "hour": 10, "minute": 0}
+
+    r.crimes.sides = SimpleNamespace(prepare=prepare)
+    r.link = SimpleNamespace(story_state=state)
+    r.clock = DAY + _h(9)
+    with caplog.at_level("INFO", logger="gothic_ai.social"):
+        await r.tick()
+    assert calls == ["prepare", "state"]
+    assert LOBART in rumor.known and len([f for f in facts if f.get("fact") == "rumor"]) == 1
+    if error is not None:
+        assert str(error) in caplog.text
 
 
 @pytest.mark.parametrize("kind,hops", [("theft", 2), ("sheep", 2), ("attack", 3), ("murder", 4)])

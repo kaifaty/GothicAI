@@ -5,14 +5,6 @@ import type {DiceChart as Spec} from '../schema';
 import {COLOR, FONT, OUTLINE} from '../theme';
 import {keyframes, shown} from './anim';
 
-// the plot inside the 1080x1920 card: above the captions, clear of the Shorts interface
-const X0 = 190;
-const X1 = 900;
-const Y0 = 1040; // 0 %
-const Y1 = 470; // 100 %
-const x = (d: number) => X0 + ((X1 - X0) * d) / MAX_DIST;
-const y = (c: number) => Y0 + ((Y1 - Y0) * c) / 100;
-
 const STYLE: Record<Curve, {color: string; width: number}> = {
   exe: {color: COLOR.now, width: 9},
   opengothic: {color: COLOR.before, width: 6},
@@ -20,7 +12,7 @@ const STYLE: Record<Curve, {color: string; width: number}> = {
 
 // the line's corners up to `upTo` metres (both rules are straight pieces); the exe's step at 15 m drops as `drop`
 // goes 0 -> 1. Drawn without the game's rounding to whole percent; the markers show the game's numbers.
-const points = (curve: Curve, talent: number, upTo: number, drop: number) => {
+const points = (curve: Curve, talent: number, upTo: number, drop: number, x: (d: number) => number, y: (c: number) => number) => {
   const raw = (d: number) =>
     curve === 'exe' && d > MIN_DIST ? talent - (talent * d) / MAX_DIST : chance(curve, talent, d);
   const pts: [number, number][] = [[x(0), y(raw(0))]];
@@ -48,7 +40,16 @@ const label = (size: number, color: string): React.CSSProperties => ({
 });
 
 export const DiceChart: React.FC<{spec: Spec}> = ({spec}) => {
-  const t = useCurrentFrame() / useVideoConfig().fps;
+  const {width, height, fps} = useVideoConfig();
+  const t = useCurrentFrame() / fps;
+  const wide = width > height;
+  // Portrait coordinates stay fixed; the landscape plot uses the available width above the captions.
+  const X0 = wide ? 230 : 190;
+  const X1 = wide ? 1740 : 900;
+  const Y0 = wide ? 740 : 1040;
+  const Y1 = wide ? 260 : 470;
+  const x = (d: number) => X0 + ((X1 - X0) * d) / MAX_DIST;
+  const y = (c: number) => Y0 + ((Y1 - Y0) * c) / 100;
   const axes = shown(t, 0, undefined, 0.3);
   const H = spec.talent;
   const drop = spec.stepMark
@@ -60,7 +61,7 @@ export const DiceChart: React.FC<{spec: Spec}> = ({spec}) => {
 
   return (
     <AbsoluteFill style={{background: COLOR.card}}>
-      <svg width={1080} height={1920} style={{position: 'absolute', opacity: axes}}>
+      <svg width={width} height={height} style={{position: 'absolute', opacity: axes}}>
         {[0, 25, 50, 75, 100].map((c) => (
           <line key={c} x1={X0} x2={X1} y1={y(c)} y2={y(c)} stroke={COLOR.grid} strokeWidth={2} />
         ))}
@@ -81,7 +82,7 @@ export const DiceChart: React.FC<{spec: Spec}> = ({spec}) => {
         )}
         {spec.curves.map((c) => {
           const upTo = keyframes(t, c.draw);
-          const pts = points(c.curve, H, upTo, drop);
+          const pts = points(c.curve, H, upTo, drop, x, y);
           if (pts.length < 2) {
             return null;
           }
@@ -112,7 +113,7 @@ export const DiceChart: React.FC<{spec: Spec}> = ({spec}) => {
       {[0, 50, 100].map((c) => (
         <div
           key={c}
-          style={{position: 'absolute', right: 1080 - X0 + 18, top: y(c) - 24, opacity: axes, ...label(36, COLOR.before)}}
+          style={{position: 'absolute', right: width - X0 + 18, top: y(c) - 24, opacity: axes, ...label(36, COLOR.before)}}
         >
           {c}
         </div>
@@ -157,9 +158,9 @@ export const DiceChart: React.FC<{spec: Spec}> = ({spec}) => {
           style={{
             position: 'absolute',
             left: x(MIN_DIST) + 30,
-            top: y(H) - 112,
+            top: y(H) - (wide ? 94 : 112),
             opacity: shown(t, spec.stepMark.at + 0.2),
-            ...label(88, COLOR.text),
+            ...label(wide ? 72 : 88, COLOR.text),
           }}
         >
           {spec.stepMark.text}
@@ -177,11 +178,12 @@ export const DiceChart: React.FC<{spec: Spec}> = ({spec}) => {
             key={i}
             style={{
               position: 'absolute',
-              left: exe ? x(m.d) - 30 : x(m.d) + 26,
+              left: wide ? Math.max(120, Math.min(1510, x(m.d) + (exe ? -240 : 26))) : exe ? x(m.d) - 30 : x(m.d) + 26,
               top: y(exact) + (exe ? 26 : -84),
-              transform: exe ? 'translateX(-100%)' : undefined,
+              transform: !wide && exe ? 'translateX(-100%)' : undefined,
               opacity: o,
               ...label(48, STYLE[m.curve].color),
+              ...(wide ? {width: 310, whiteSpace: 'normal', lineHeight: 1.15} : {}),
             }}
           >
             {m.text.replace('{v}', String(Math.round(exact)))}
@@ -208,7 +210,7 @@ export const DiceChart: React.FC<{spec: Spec}> = ({spec}) => {
         </div>
       ))}
 
-      <div style={{position: 'absolute', left: X0 - 20, top: 1440, opacity: axes, ...label(28, COLOR.before), fontWeight: 600}}>
+      <div style={{position: 'absolute', left: wide ? 96 : X0 - 20, top: wide ? 850 : 1440, opacity: axes, ...label(28, COLOR.before), fontWeight: 600, ...(wide ? {width: 1728, whiteSpace: 'normal'} : {})}}>
         {spec.source}
       </div>
     </AbsoluteFill>

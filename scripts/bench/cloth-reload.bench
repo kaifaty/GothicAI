@@ -1,0 +1,13 @@
+# SAVE=<cloth functional output>/session-cloth-moving.sav; do not set WORLD.
+# Observe the untouched world before its first native physics step.
+cloth initial cold-load
+cheat god
+set time 12 0
+overlay off
+view full
+cloth setup 6367 oldcamp-cold-load
+cloth on
+wait 1000
+cloth verify anchors
+cloth checkpoint after-cold-load
+shot cloth-after-cold-load

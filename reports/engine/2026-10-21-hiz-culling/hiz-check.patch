@@ -1,0 +1,53 @@
+--- a/OpenGothic/common/graphics/renderer.cpp	2026-10-21 01:16:59
++++ b/OpenGothic/common/graphics/renderer.cpp	2026-10-21 01:16:59
+@@ -613,7 +613,50 @@
+     }
+   }
+ 
++// DIAG(hiz): every N frames compare each HiZ mip with the max of its 2x2 sources in the mip below
++static void checkHiZ(const Tempest::StorageImage& hiZ) {
++  static const int every = [](){ const char* e = std::getenv("OPENGOTHIC_HIZ_CHECK"); return e!=nullptr ? std::atoi(e) : 0; }();
++  static uint64_t frame = 0;
++  if(every<=0 || hiZ.isEmpty() || (++frame % uint64_t(every))!=0)
++    return;
++  auto& device = Resources::device();
++  device.waitIdle();
++  std::vector<Pixmap> mips;
++  for(uint32_t i=0; i<hiZ.mipCount(); ++i)
++    mips.push_back(device.readPixels(hiZ, i));
++  std::string out = "hiz check frame=" + std::to_string(frame);
++  for(size_t m=1; m<mips.size(); ++m) {
++    const auto& s  = mips[m-1];
++    const auto& d  = mips[m];
++    auto*       sp = reinterpret_cast<const uint16_t*>(s.data());
++    auto*       dp = reinterpret_cast<const uint16_t*>(d.data());
++    const int   sw = int(s.w()), sh = int(s.h());
++    int nearer = 0, farther = 0, worst = 0;
++    for(int y=0; y<int(d.h()); ++y)
++      for(int x=0; x<int(d.w()); ++x) {
++        const int x0 = std::min(2*x, sw-1), x1 = std::min(2*x+1, sw-1);
++        const int y0 = std::min(2*y, sh-1), y1 = std::min(2*y+1, sh-1);
++        const int want = std::max(std::max(sp[y0*sw+x0], sp[y0*sw+x1]), std::max(sp[y1*sw+x0], sp[y1*sw+x1]));
++        const int got  = dp[y*int(d.w())+x];
++        if(got<want) nearer++;
++        if(got>want) farther++;
++        worst = std::max(worst, std::abs(got-want));
++        }
++    out += " mip" + std::to_string(m) + "=" + std::to_string(nearer) + "/" + std::to_string(farther) +
++           "/" + std::to_string(d.w()*d.h()) + (worst>0 ? ":" + std::to_string(worst) : "");
++    if(worst>0 && d.w()*d.h()<=16) {
++      out += " [src";
++      for(size_t i=0; i<s.w()*s.h(); ++i) out += " " + std::to_string(sp[i]);
++      out += " dst";
++      for(size_t i=0; i<d.w()*d.h(); ++i) out += " " + std::to_string(dp[i]);
++      out += "]";
++      }
++    }
++  Log::i(out);
++  }
++
+ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& wview, const Camera& camera) {
++  checkHiZ(hiz.hiZ);
+   //FIXME: those also needed to be refactor away
+   const auto world     = Gothic::inst().world();
+   const auto gameTime  = world!=nullptr ? world->time() : gtime(8,0);

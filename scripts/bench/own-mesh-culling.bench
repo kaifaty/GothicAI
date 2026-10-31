@@ -1,0 +1,79 @@
+# Occlusion culling after a teleport: four spots of own-mesh-relief where props went missing from frames on the Mac
+# (Hi-Z mips 5-6 built from stale texels, fixed 2026-10-21). Three shots per hold, 1 s, 2.5 s and 4 s after the cut:
+# all twelve are the same in every run, the bookshelf, the bench, the lamp post and rope coils, the cupboard in them.
+# Run it twice and compare the PNGs; see reports/engine/2026-10-21-hiz-culling.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view nopfx
+cam lift off
+# table
+goto pos 3924 -2073 -6663
+clear 3000
+cam look 2000
+cam cut
+cam world 400 2190 270
+wait 34
+cam hold
+wait 1000
+shot table_1000
+wait 300
+wait 1200
+shot table_2500
+wait 300
+wait 1200
+shot table_4000
+wait 300
+# bench
+goto pos 2982 -2121 -5631
+clear 3000
+cam look 2030
+cam cut
+cam world 330 2180 145
+wait 34
+cam hold
+wait 1000
+shot bench_1000
+wait 300
+wait 1200
+shot bench_2500
+wait 300
+wait 1200
+shot bench_4000
+wait 300
+# cart
+goto pos 8545 -1673 5521
+clear 3000
+cam look 2030
+cam cut
+cam world 230 2130 100
+wait 34
+cam hold
+wait 1000
+shot cart_1000
+wait 300
+wait 1200
+shot cart_2500
+wait 300
+wait 1200
+shot cart_4000
+wait 300
+# cupboard
+goto pos 8502 -1606 -3156
+clear 3000
+cam look 1938
+cam cut
+cam world 260 1980 210
+wait 34
+cam hold
+wait 1000
+shot cupboard_1000
+wait 300
+wait 1200
+shot cupboard_2500
+wait 300
+wait 1200
+shot cupboard_4000
+wait 300

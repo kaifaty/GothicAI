@@ -1,0 +1,158 @@
+[
+ {
+  "label": "default",
+  "flags": "-rt 1",
+  "exit": "0",
+  "gpu": "NVIDIA GeForce RTX 3080",
+  "done": true,
+  "errors": [],
+  "n_errors": 0,
+  "shots": [
+   "city.png",
+   "city_a.png",
+   "city_night.png",
+   "farm.png",
+   "farm_a.png",
+   "farm_night.png"
+  ],
+  "attempts": 2175,
+  "overflow": 0,
+  "n_shots": 6,
+  "n_recs": 2,
+  "idle_util": null,
+  "spots": {
+   "city": {
+    "wall_ms": 4250.809642,
+    "frames": 599,
+    "fence_busy": 0,
+    "ticks": 599,
+    "fps": 140.91433172673698,
+    "iv_med": 6.9732065,
+    "iv_p95": 7.8536596,
+    "iv_p99": 9.203656229999995,
+    "encode_med": 1.55698,
+    "present_med": 0.116108,
+    "sim_med": 5.196849,
+    "gpu": {
+     "util_gpu": 38.0,
+     "clock_gr": 1072.142857142857,
+     "power_w": 83.49142857142857,
+     "mem_used_mib": 1610.0,
+     "n": 42
+    },
+    "gpu_ms_est": 2.696673896427379,
+    "gpu_ms_maxclk": 1.376771264808672,
+    "cap_n": 85,
+    "cap_med": 129.93567,
+    "cap_p95": 135.2713088,
+    "cap_render_med": 121.74183200000002,
+    "cap_render_p95": 127.0160984
+   },
+   "farm": {
+    "wall_ms": 4115.244759,
+    "frames": 599,
+    "fence_busy": 0,
+    "ticks": 599,
+    "fps": 145.5563484261763,
+    "iv_med": 6.7532185,
+    "iv_p95": 7.6024205,
+    "iv_p99": 8.579933259999999,
+    "encode_med": 1.552992,
+    "present_med": 0.117291,
+    "sim_med": 4.977607,
+    "gpu": {
+     "util_gpu": 38.926829268292686,
+     "clock_gr": 1107.0731707317073,
+     "power_w": 77.20146341463415,
+     "mem_used_mib": 1738.0,
+     "n": 41
+    },
+    "gpu_ms_est": 2.6743477484278677,
+    "gpu_ms_maxclk": 1.4098564959482103,
+    "cap_n": 85,
+    "cap_med": 116.890793,
+    "cap_p95": 120.32581839999999,
+    "cap_render_med": 109.375902,
+    "cap_render_p95": 112.5465874
+   }
+  }
+ },
+ {
+  "label": "pathtrace",
+  "flags": "-rt 1",
+  "exit": "0",
+  "gpu": "NVIDIA GeForce RTX 3080",
+  "done": true,
+  "errors": [],
+  "n_errors": 0,
+  "shots": [
+   "city.png",
+   "city_a.png",
+   "city_night.png",
+   "farm.png",
+   "farm_a.png",
+   "farm_night.png"
+  ],
+  "attempts": 2174,
+  "overflow": 0,
+  "n_shots": 6,
+  "n_recs": 2,
+  "idle_util": null,
+  "spots": {
+   "city": {
+    "wall_ms": 4573.066107,
+    "frames": 599,
+    "fence_busy": 0,
+    "ticks": 599,
+    "fps": 130.98432998445173,
+    "iv_med": 7.27471,
+    "iv_p95": 10.377117649999999,
+    "iv_p99": 14.07263358,
+    "encode_med": 1.481688,
+    "present_med": 0.127059,
+    "sim_med": 5.244239,
+    "gpu": {
+     "util_gpu": 84.86666666666666,
+     "clock_gr": 1857.3333333333333,
+     "power_w": 281.5488888888889,
+     "mem_used_mib": 1639.0,
+     "n": 45
+    },
+    "gpu_ms_est": 6.479146526667778,
+    "gpu_ms_maxclk": 5.730445150252835,
+    "cap_n": 85,
+    "cap_med": 119.459837,
+    "cap_p95": 124.2997006,
+    "cap_render_med": 111.71330999999999,
+    "cap_render_p95": 115.8983486
+   },
+   "farm": {
+    "wall_ms": 4090.158782,
+    "frames": 599,
+    "fence_busy": 0,
+    "ticks": 599,
+    "fps": 146.449082279173,
+    "iv_med": 6.70091,
+    "iv_p95": 7.7724134,
+    "iv_p99": 8.89118482,
+    "encode_med": 1.499061,
+    "present_med": 0.117511,
+    "sim_med": 4.974421,
+    "gpu": {
+     "util_gpu": 68.525,
+     "clock_gr": 1905.375,
+     "power_w": 272.085,
+     "mem_used_mib": 1767.0,
+     "n": 40
+    },
+    "gpu_ms_est": 4.679100676737062,
+    "gpu_ms_maxclk": 4.2454483104466085,
+    "cap_n": 85,
+    "cap_med": 117.865196,
+    "cap_p95": 124.0067806,
+    "cap_render_med": 109.521535,
+    "cap_render_p95": 116.0116928
+   }
+  }
+ }
+]

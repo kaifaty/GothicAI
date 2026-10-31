@@ -1,13 +1,16 @@
 #include "projectmgr.h"
 
 #include "projectitem.h"
-#include "resources.h"
+#include "baseimport.h"
+#include "commandline.h"
 
 static ProjectMgr* instance = nullptr;
 
 ProjectMgr::ProjectMgr() {
   instance = this;
-  rootItem = mkIndex(Resources::vdfsIndex().root(), size_t(-1), "");
+  std::filesystem::path work;
+  BaseImport::mountRuntime(sources, std::filesystem::path(CommandLine::inst().rootPath()), work);
+  rootItem = mkIndex(sources.root(), size_t(-1), "");
   }
 
 ProjectMgr::~ProjectMgr() {

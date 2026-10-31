@@ -4,6 +4,7 @@ import math
 import struct
 from contextlib import asynccontextmanager
 
+import pytest
 from websockets.asyncio.server import serve
 
 from gothic_ai.dialogue import DialogueManager
@@ -164,3 +165,104 @@ async def test_the_bench_says_a_recording_for_the_hero_only_when_files_are_allow
         await fake.send(type="ptt_start", audio=str(rec))
         await _until(lambda: fake.statuses[-1:] == ["error"])
         assert voice.active is None and "--voice-files" in fake.received[-1]["detail"]
+
+
+@asynccontextmanager
+async def capturing_asr(*, drop_first: bool = False):
+    starts: list[dict] = []
+    recordings: list[bytes] = []
+
+    async def handler(ws):
+        pcm = b""
+        async for raw in ws:
+            if isinstance(raw, bytes):
+                pcm += raw
+                continue
+            msg = json.loads(raw)
+            if msg["type"] == "start":
+                starts.append(msg)
+                pcm = b""
+            elif msg["type"] == "end":
+                recordings.append(pcm)
+                if drop_first and len(starts) == 1:
+                    await ws.close()
+                    return
+                await ws.send(json.dumps({"type": "final", "text": "Привет", "provider": "fake"}))
+
+    async with serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        yield f"ws://127.0.0.1:{port}", starts, recordings
+
+
+@pytest.mark.parametrize("hints", [None, [], ["Ватрас", "Лотара", "Хориниса"]])
+async def test_asr_start_includes_only_nonempty_hints(hints):
+    async with capturing_asr() as (url, starts, _):
+        asr = AsrClient(url)
+        session = await asr.open(24000, hints=hints)
+        await session.finish()
+        expected = {"type": "start", "lang": "ru", "sample_rate": 24000, "format": "pcm16"}
+        if hints:
+            expected["hints"] = hints
+        assert starts == [expected]
+        await asr.aclose()
+
+
+async def test_asr_restarts_with_the_same_hints_and_recording():
+    async with capturing_asr(drop_first=True) as (url, starts, recordings):
+        asr = AsrClient(url)
+        hints = ["Ксардас", "Ксардаса"]
+        session = await asr.open(16000, hints=hints)
+        hints.append("Декстер")
+        pcm = speech()
+        await session.feed(pcm)
+        assert (await session.finish()).text == "Привет"
+        assert len(starts) == 2
+        assert starts[0] == starts[1]
+        assert starts[0]["hints"] == ["Ксардас", "Ксардаса"]
+        assert recordings == [pcm, pcm]
+        await asr.aclose()
+
+
+async def test_voice_without_a_hint_source_omits_hints():
+    fake = FakeGame()
+    heard = []
+    async with capturing_asr() as (url, starts, _), connected(fake) as link:
+        asr = AsrClient(url)
+        voice = VoiceInput(link, lambda *args: heard.append(args), FakeSource(speech()), asr)
+        await fake.send(type="ptt_start", focus=XARDAS)
+        await _until(lambda: voice.active is not None)
+        await fake.send(type="ptt_stop")
+        await _until(lambda: len(heard) == 1)
+        assert len(starts) == 1 and "hints" not in starts[0]
+        await asr.aclose()
+
+
+async def test_voice_snapshots_hints_once_per_start_with_the_heros_focus():
+    fake = FakeGame()
+    heard, focuses = [], []
+    names = ["Ксардас", "Ксардаса"]
+
+    def hints(focus):
+        focuses.append(focus)
+        return names
+
+    async with capturing_asr() as (url, starts, _), connected(fake) as link:
+        asr = AsrClient(url)
+        voice = VoiceInput(
+            link, lambda *args: heard.append(args), FakeSource(speech()), asr, hints=hints
+        )
+        voice.start(XARDAS.lower())
+        assert focuses == [XARDAS]
+        names[:] = ["Ватрас"]  # the roster may change before the streaming task starts
+        voice.stop(recognize=True, focus="MIL_LOTHAR")
+        await _until(lambda: len(heard) == 1)
+        assert starts[0]["hints"] == ["Ксардас", "Ксардаса"]
+        assert heard[0][1] == "MIL_LOTHAR"
+        assert focuses == [XARDAS]
+
+        voice.start()
+        voice.stop(recognize=True)
+        await _until(lambda: len(heard) == 2)
+        assert focuses == [XARDAS, None]
+        assert starts[1]["hints"] == ["Ватрас"]
+        await asr.aclose()

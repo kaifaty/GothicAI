@@ -8,6 +8,10 @@
 
 #include "mtdevice.h"
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "gapi/metalapi.h"
+#endif
+
 using namespace Tempest;
 using namespace Tempest::Detail;
 
@@ -65,6 +69,9 @@ MtTexture::MtTexture(MtDevice& dev, const Pixmap& pm, uint32_t mipCnt, TextureFo
       enc->generateMipmaps(impl.get());
     }
   enc->endEncoding();
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileGpu(cmd);
+#endif
   cmd->commit();
   // TODO: implement proper upload engine
   cmd->waitUntilCompleted();
@@ -164,6 +171,9 @@ void MtTexture::readPixels(Pixmap& out, TextureFormat frm, const uint32_t w, con
   if(opt==MTL::StorageModeManaged)
     enc->synchronizeResource(stage.get());
   enc->endEncoding();
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileGpu(cmd);
+#endif
   cmd->commit();
   cmd->waitUntilCompleted();
 

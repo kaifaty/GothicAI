@@ -93,6 +93,8 @@ class DrawCommands {
       L_SceneClr   = 12,
       L_GDepth     = 13,
       L_CmdOffsets = 14,
+      L_Normal     = 15,
+      L_Orm        = 16,
       L_VsmPages   = L_Shadow0,
       L_Lights     = L_Shadow1,
       };

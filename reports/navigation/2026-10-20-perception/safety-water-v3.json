@@ -1,0 +1,933 @@
+{
+  "episodes": [
+    {
+      "label": "water-bigfarm-lake-1",
+      "kind": "water",
+      "link_id": 0,
+      "safe": true,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": false,
+      "max_unsupported_descent_cm": 0.0,
+      "fall_intervals": [],
+      "damage_events": [],
+      "unattributed_damage": 0,
+      "inconclusive": false,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 280,
+      "hitpoints_max": 280,
+      "swimming_frames": 0,
+      "entered_water_frames": 0,
+      "deep_water_frames": 0,
+      "max_water_depth_cm": 7.64257812,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 901,
+      "cv_frames": 900,
+      "supported_cv_frames": 900,
+      "closest_hazard_cm": 499.6289180539219,
+      "max_displacement_cm": 746.9646918838043,
+      "initial_hazard_distance_cm": 499.999573,
+      "goal_success": false,
+      "elapsed_ms": 30000,
+      "failure": "path_timeout",
+      "teacher": "memory",
+      "teacher_version": 3,
+      "fixture_cohort": "original"
+    },
+    {
+      "label": "water-bigfarm-lake-2",
+      "kind": "water",
+      "link_id": 0,
+      "safe": true,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": false,
+      "max_unsupported_descent_cm": 0.0,
+      "fall_intervals": [],
+      "damage_events": [],
+      "unattributed_damage": 0,
+      "inconclusive": false,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 280,
+      "hitpoints_max": 280,
+      "swimming_frames": 0,
+      "entered_water_frames": 0,
+      "deep_water_frames": 0,
+      "max_water_depth_cm": 2.05456543,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 901,
+      "cv_frames": 900,
+      "supported_cv_frames": 900,
+      "closest_hazard_cm": 499.0471325735482,
+      "max_displacement_cm": 1660.18510535157,
+      "initial_hazard_distance_cm": 499.999146,
+      "goal_success": false,
+      "elapsed_ms": 30000,
+      "failure": "path_timeout",
+      "teacher": "memory",
+      "teacher_version": 3,
+      "fixture_cohort": "original"
+    },
+    {
+      "label": "water-lake-2",
+      "kind": "water",
+      "link_id": 0,
+      "safe": false,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": false,
+      "max_unsupported_descent_cm": 19.343629999999848,
+      "fall_intervals": [
+        {
+          "start_ms": 14433,
+          "end_ms": 17267,
+          "peak_cm": 1259.46814,
+          "descent_cm": 19.343629999999848
+        }
+      ],
+      "damage_events": [
+        {
+          "elapsed_ms": 9867,
+          "hitpoints_lost": 45,
+          "associated_with_fall": false,
+          "descent_cm": 0.0
+        },
+        {
+          "elapsed_ms": 11867,
+          "hitpoints_lost": 45,
+          "associated_with_fall": false,
+          "descent_cm": 0.0
+        },
+        {
+          "elapsed_ms": 13067,
+          "hitpoints_lost": 45,
+          "associated_with_fall": false,
+          "descent_cm": 0.0
+        },
+        {
+          "elapsed_ms": 14300,
+          "hitpoints_lost": 45,
+          "associated_with_fall": false,
+          "descent_cm": 0.0
+        },
+        {
+          "elapsed_ms": 15533,
+          "hitpoints_lost": 45,
+          "associated_with_fall": false,
+          "descent_cm": 0.0
+        },
+        {
+          "elapsed_ms": 16400,
+          "hitpoints_lost": 45,
+          "associated_with_fall": false,
+          "descent_cm": 0.0
+        },
+        {
+          "elapsed_ms": 17267,
+          "hitpoints_lost": 10,
+          "associated_with_fall": false,
+          "descent_cm": 0.0
+        }
+      ],
+      "unattributed_damage": 280,
+      "inconclusive": true,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 0,
+      "hitpoints_max": 280,
+      "swimming_frames": 84,
+      "entered_water_frames": 509,
+      "deep_water_frames": 85,
+      "max_water_depth_cm": 156.480225,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 519,
+      "cv_frames": 434,
+      "supported_cv_frames": 433,
+      "closest_hazard_cm": 282.5129671020197,
+      "max_displacement_cm": 218.84173866241036,
+      "initial_hazard_distance_cm": 500,
+      "goal_success": false,
+      "elapsed_ms": 17267,
+      "failure": "actor_down",
+      "teacher": "memory",
+      "teacher_version": 3,
+      "fixture_cohort": "original"
+    },
+    {
+      "label": "water-new-port-1",
+      "kind": "water",
+      "link_id": 0,
+      "safe": true,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": false,
+      "max_unsupported_descent_cm": 0.0,
+      "fall_intervals": [],
+      "damage_events": [],
+      "unattributed_damage": 0,
+      "inconclusive": false,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 280,
+      "hitpoints_max": 280,
+      "swimming_frames": 0,
+      "entered_water_frames": 0,
+      "deep_water_frames": 0,
+      "max_water_depth_cm": 5.98968506,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 901,
+      "cv_frames": 900,
+      "supported_cv_frames": 900,
+      "closest_hazard_cm": 380.0363627801792,
+      "max_displacement_cm": 46.53841201922427,
+      "initial_hazard_distance_cm": 399.999969,
+      "goal_success": false,
+      "elapsed_ms": 30000,
+      "failure": "path_timeout",
+      "teacher": "memory",
+      "teacher_version": 3,
+      "fixture_cohort": "new"
+    },
+    {
+      "label": "water-new-port-2",
+      "kind": "water",
+      "link_id": 0,
+      "safe": true,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": false,
+      "max_unsupported_descent_cm": 0.0,
+      "fall_intervals": [],
+      "damage_events": [],
+      "unattributed_damage": 0,
+      "inconclusive": false,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 280,
+      "hitpoints_max": 280,
+      "swimming_frames": 0,
+      "entered_water_frames": 861,
+      "deep_water_frames": 0,
+      "max_water_depth_cm": 28.1195679,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 901,
+      "cv_frames": 900,
+      "supported_cv_frames": 900,
+      "closest_hazard_cm": 150.21844996482275,
+      "max_displacement_cm": 63.4028092051884,
+      "initial_hazard_distance_cm": 200.000061,
+      "goal_success": false,
+      "elapsed_ms": 30000,
+      "failure": "path_timeout",
+      "teacher": "memory",
+      "teacher_version": 3,
+      "fixture_cohort": "new"
+    },
+    {
+      "label": "water-new-port-3",
+      "kind": "water",
+      "link_id": 0,
+      "safe": true,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": true,
+      "max_unsupported_descent_cm": 116.53497299999992,
+      "fall_intervals": [
+        {
+          "start_ms": 12500,
+          "end_ms": 13033,
+          "peak_cm": -488.181366,
+          "descent_cm": 5.383912000000009
+        },
+        {
+          "start_ms": 16033,
+          "end_ms": 16167,
+          "peak_cm": -483.197174,
+          "descent_cm": 2.4088439999999878
+        },
+        {
+          "start_ms": 17533,
+          "end_ms": 17667,
+          "peak_cm": -532.662842,
+          "descent_cm": 36.0362550000001
+        },
+        {
+          "start_ms": 17700,
+          "end_ms": 18933,
+          "peak_cm": -567.977783,
+          "descent_cm": 116.53497299999992,
+          "descent_witnessed_ms": 18367
+        }
+      ],
+      "damage_events": [],
+      "unattributed_damage": 0,
+      "inconclusive": false,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 280,
+      "hitpoints_max": 280,
+      "swimming_frames": 0,
+      "entered_water_frames": 0,
+      "deep_water_frames": 0,
+      "max_water_depth_cm": 0,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 901,
+      "cv_frames": 873,
+      "supported_cv_frames": 842,
+      "closest_hazard_cm": 11.348565131950174,
+      "max_displacement_cm": 333.14904492719165,
+      "initial_hazard_distance_cm": 200.000061,
+      "goal_success": false,
+      "elapsed_ms": 30000,
+      "failure": "path_timeout",
+      "teacher": "memory",
+      "teacher_version": 3,
+      "fixture_cohort": "new"
+    },
+    {
+      "label": "water-bigfarm-lake-1",
+      "kind": "water",
+      "link_id": 0,
+      "safe": true,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": false,
+      "max_unsupported_descent_cm": 0.0,
+      "fall_intervals": [],
+      "damage_events": [],
+      "unattributed_damage": 0,
+      "inconclusive": false,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 280,
+      "hitpoints_max": 280,
+      "swimming_frames": 0,
+      "entered_water_frames": 0,
+      "deep_water_frames": 0,
+      "max_water_depth_cm": 3.45617676,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 901,
+      "cv_frames": 900,
+      "supported_cv_frames": 900,
+      "closest_hazard_cm": 499.6289180539219,
+      "max_displacement_cm": 0.371202281243546,
+      "initial_hazard_distance_cm": 499.999573,
+      "goal_success": false,
+      "elapsed_ms": 30000,
+      "failure": "no_path:end_off_mesh",
+      "teacher": "v2",
+      "teacher_version": 2,
+      "fixture_cohort": "original"
+    },
+    {
+      "label": "water-bigfarm-lake-2",
+      "kind": "water",
+      "link_id": 0,
+      "safe": true,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": false,
+      "max_unsupported_descent_cm": 0.0,
+      "fall_intervals": [],
+      "damage_events": [],
+      "unattributed_damage": 0,
+      "inconclusive": false,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 280,
+      "hitpoints_max": 280,
+      "swimming_frames": 0,
+      "entered_water_frames": 0,
+      "deep_water_frames": 0,
+      "max_water_depth_cm": 2.05456543,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 901,
+      "cv_frames": 900,
+      "supported_cv_frames": 900,
+      "closest_hazard_cm": 499.5333900121851,
+      "max_displacement_cm": 0.5373141312134566,
+      "initial_hazard_distance_cm": 499.999146,
+      "goal_success": false,
+      "elapsed_ms": 30000,
+      "failure": "no_path:end_off_mesh",
+      "teacher": "v2",
+      "teacher_version": 2,
+      "fixture_cohort": "original"
+    },
+    {
+      "label": "water-lake-2",
+      "kind": "water",
+      "link_id": 0,
+      "safe": true,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": false,
+      "max_unsupported_descent_cm": 0.0,
+      "fall_intervals": [],
+      "damage_events": [],
+      "unattributed_damage": 0,
+      "inconclusive": false,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 280,
+      "hitpoints_max": 280,
+      "swimming_frames": 0,
+      "entered_water_frames": 0,
+      "deep_water_frames": 0,
+      "max_water_depth_cm": 0.228027344,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 901,
+      "cv_frames": 900,
+      "supported_cv_frames": 900,
+      "closest_hazard_cm": 499.13409379670105,
+      "max_displacement_cm": 1.026445446236669,
+      "initial_hazard_distance_cm": 500,
+      "goal_success": false,
+      "elapsed_ms": 30000,
+      "failure": "no_path:end_off_mesh",
+      "teacher": "v2",
+      "teacher_version": 2,
+      "fixture_cohort": "original"
+    },
+    {
+      "label": "water-new-port-1",
+      "kind": "water",
+      "link_id": 0,
+      "safe": true,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": false,
+      "max_unsupported_descent_cm": 0.0,
+      "fall_intervals": [],
+      "damage_events": [],
+      "unattributed_damage": 0,
+      "inconclusive": false,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 280,
+      "hitpoints_max": 280,
+      "swimming_frames": 0,
+      "entered_water_frames": 0,
+      "deep_water_frames": 0,
+      "max_water_depth_cm": 0,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 901,
+      "cv_frames": 900,
+      "supported_cv_frames": 900,
+      "closest_hazard_cm": 399.99996559095905,
+      "max_displacement_cm": 0.9409781012648365,
+      "initial_hazard_distance_cm": 399.999969,
+      "goal_success": false,
+      "elapsed_ms": 30000,
+      "failure": "no_path:end_off_mesh",
+      "teacher": "v2",
+      "teacher_version": 2,
+      "fixture_cohort": "new"
+    },
+    {
+      "label": "water-new-port-2",
+      "kind": "water",
+      "link_id": 0,
+      "safe": true,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": false,
+      "max_unsupported_descent_cm": 0.0,
+      "fall_intervals": [],
+      "damage_events": [],
+      "unattributed_damage": 0,
+      "inconclusive": false,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 280,
+      "hitpoints_max": 280,
+      "swimming_frames": 0,
+      "entered_water_frames": 0,
+      "deep_water_frames": 0,
+      "max_water_depth_cm": 2.46081543,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 901,
+      "cv_frames": 900,
+      "supported_cv_frames": 900,
+      "closest_hazard_cm": 199.05956773818735,
+      "max_displacement_cm": 0.9408561208416135,
+      "initial_hazard_distance_cm": 200.000061,
+      "goal_success": false,
+      "elapsed_ms": 30000,
+      "failure": "no_path:end_off_mesh",
+      "teacher": "v2",
+      "teacher_version": 2,
+      "fixture_cohort": "new"
+    },
+    {
+      "label": "water-new-port-3",
+      "kind": "water",
+      "link_id": 0,
+      "safe": true,
+      "harmful_fall": false,
+      "unsafe_descent": false,
+      "harmless_descent_over_step": false,
+      "max_unsupported_descent_cm": 0.0,
+      "fall_intervals": [],
+      "damage_events": [],
+      "unattributed_damage": 0,
+      "inconclusive": false,
+      "initial_hitpoints": 280,
+      "final_hitpoints": 280,
+      "hitpoints_max": 280,
+      "swimming_frames": 0,
+      "entered_water_frames": 0,
+      "deep_water_frames": 0,
+      "max_water_depth_cm": 0,
+      "deep_water_threshold_cm": 140,
+      "physical_frames": 901,
+      "cv_frames": 900,
+      "supported_cv_frames": 900,
+      "closest_hazard_cm": 200.0000610000001,
+      "max_displacement_cm": 1.3974546601249112,
+      "initial_hazard_distance_cm": 200.000061,
+      "goal_success": false,
+      "elapsed_ms": 30000,
+      "failure": "no_path:disconnected",
+      "teacher": "v2",
+      "teacher_version": 2,
+      "fixture_cohort": "new"
+    }
+  ],
+  "by_kind": {
+    "water": {
+      "memory": {
+        "attempts": 6,
+        "safe": 5,
+        "inconclusive": 1,
+        "swimming_episodes": 1,
+        "entered_water_episodes": 2,
+        "deep_water_episodes": 1,
+        "harmful_fall_episodes": 0,
+        "harmless_descent_episodes": 1
+      },
+      "v2": {
+        "attempts": 6,
+        "safe": 6,
+        "inconclusive": 0,
+        "swimming_episodes": 0,
+        "entered_water_episodes": 0,
+        "deep_water_episodes": 0,
+        "harmful_fall_episodes": 0,
+        "harmless_descent_episodes": 0
+      }
+    }
+  },
+  "identity": {
+    "input_sha256": {
+      "runner": "ea2277f9ff79533a4d5e9a80ad45a1ad7b275cb198b8b9e3fa1b8c161f86fdf9",
+      "routes": "65fbf0bd94c83d1c336251f22a71a7cb06077b6e5903024849a71cb3741f0b8e",
+      "links": "4db7d3aea029cd3699059bbbcdf7d96f4080603f40de92b2f4e09b692883e851",
+      "save": "c2852f4c009f23225e1c9c70f564ca36b4c12e8220736d1c72a1dbfce8d3372f",
+      "roads": "5c5d7fb8115be1720c234ef9e170aaeffd91ec5ab8ebe783f3fa75d65b39ebbd"
+    },
+    "historical_records_sha256": {},
+    "assets": "/home/kaifaty/gothic-ai/game",
+    "records": "/home/kaifaty/gothic-ai/nav-demos-jumps/final",
+    "npc": "BAU_954_MALETH",
+    "physics": "cv",
+    "seed": 19102026,
+    "mode": "gaze",
+    "limit_ms": 30000,
+    "per_kind": 3,
+    "teachers": [
+      "memory",
+      "v2"
+    ],
+    "navigation_memory_version": 3,
+    "safety_script_sha256": "bc8ddeca5782dfa4c148305af12f8b7dc183c490e568d9870bf72d4a8e1d6b26",
+    "criteria_version": 2,
+    "criteria": {
+      "harmful_fall": "HP loss during witnessed >60cm unsupported descent or within 500ms of landing",
+      "deep_water": "swimming or feet water depth +1cm >= actual guild water_depth_chest",
+      "visible_water_followup": "no entry deeper than 10cm on the six water fixtures",
+      "unrelated_damage": "inconclusive; cannot count as a clean safety pass",
+      "harmless_descent": "diagnostic only",
+      "landing_damage_window_ms": 500
+    },
+    "height_candidates_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
+    "shore_seeds_sha256": "381d334857e60dc9201d5bba29d12a92ba0632d007ae91c7a4465024ac81e703",
+    "kinds": [
+      "water"
+    ],
+    "water_baseline_sha256": "79c6d1c6ab1f499812e0098d0fdf18949906c1dda8a2647ffc7e24af32e81d9e",
+    "water_baseline_source": "/home/kaifaty/gothic-ai/nav-perception/safety-check-1/fixtures.json",
+    "new_shores": 3,
+    "new_shore_min_separation_cm": 500,
+    "recordings_created": false,
+    "player_godmode": "runner cheat god affects HERO only; controlled actor is Maleth"
+  },
+  "fixtures": [
+    {
+      "label": "water-bigfarm-lake-1",
+      "kind": "water",
+      "link_id": 0,
+      "qualified": true,
+      "reason": "ok",
+      "start_cm": [
+        49930.6562,
+        1393.14844,
+        -7795.8335
+      ],
+      "projected_start_cm": [
+        49930.6562,
+        1393.14856,
+        -7795.83447
+      ],
+      "source_hazard_cm": [
+        49680.6562,
+        1232.1936,
+        -8228.84668
+      ],
+      "source_goal_cm": [
+        49530.6562,
+        1232.1936,
+        -8488.6543
+      ],
+      "goal_cm": [
+        49530.6562,
+        1232.1936,
+        -8488.6543
+      ],
+      "hazard_cm": [
+        49680.6562,
+        1232.1936,
+        -8228.84668
+      ],
+      "hazard_ground_cm": [
+        49680.6562,
+        1232.1936,
+        -8228.84668
+      ],
+      "goal_ground_cm": [
+        49530.6562,
+        1118.22046,
+        -8488.6543
+      ],
+      "drop_cm": 160.954956,
+      "max_local_drop_cm": 9.49816895,
+      "missing_ground_on_approach": false,
+      "start_water_depth_cm": 3.45617676,
+      "hazard_water_depth_cm": 164.411133,
+      "start_to_hazard_cm": 499.999573,
+      "hazard_lateral_cm": 9.76563024e-05
+    },
+    {
+      "label": "water-bigfarm-lake-2",
+      "kind": "water",
+      "link_id": 0,
+      "qualified": true,
+      "reason": "ok",
+      "start_cm": [
+        50683.4414,
+        1394.55029,
+        -8172.25879
+      ],
+      "projected_start_cm": [
+        50683.4414,
+        1394.55017,
+        -8172.25879
+      ],
+      "source_hazard_cm": [
+        50250.4297,
+        1236.46484,
+        -8422.25879
+      ],
+      "source_goal_cm": [
+        49990.6211,
+        1236.46484,
+        -8572.25879
+      ],
+      "goal_cm": [
+        49990.6211,
+        1236.46484,
+        -8572.25879
+      ],
+      "hazard_cm": [
+        50250.4297,
+        1236.46484,
+        -8422.25879
+      ],
+      "hazard_ground_cm": [
+        50250.4258,
+        1236.46448,
+        -8422.25781
+      ],
+      "goal_ground_cm": [
+        49990.6172,
+        1144.24438,
+        -8572.25781
+      ],
+      "drop_cm": 158.085693,
+      "max_local_drop_cm": 9.71228027,
+      "missing_ground_on_approach": false,
+      "start_water_depth_cm": 2.05456543,
+      "hazard_water_depth_cm": 160.140259,
+      "start_to_hazard_cm": 499.999146,
+      "hazard_lateral_cm": 0.00048828125
+    },
+    {
+      "label": "water-lake-2",
+      "kind": "water",
+      "link_id": 0,
+      "qualified": true,
+      "reason": "ok",
+      "start_cm": [
+        48136.2305,
+        1396.37793,
+        -9499.03516
+      ],
+      "projected_start_cm": [
+        48136.2305,
+        1396.37671,
+        -9499.03516
+      ],
+      "source_hazard_cm": [
+        48136.2305,
+        1129.70386,
+        -8999.03516
+      ],
+      "source_goal_cm": [
+        48136.2305,
+        1129.70386,
+        -8699.03516
+      ],
+      "goal_cm": [
+        48136.2305,
+        1129.70386,
+        -8699.03516
+      ],
+      "hazard_cm": [
+        48136.2305,
+        1129.70386,
+        -8999.03516
+      ],
+      "hazard_ground_cm": [
+        48136.2305,
+        1129.70374,
+        -8999.03516
+      ],
+      "goal_ground_cm": [
+        48136.2305,
+        1094.1355,
+        -8699.03516
+      ],
+      "drop_cm": 266.672974,
+      "max_local_drop_cm": 16.6500244,
+      "missing_ground_on_approach": false,
+      "start_water_depth_cm": 0.228027344,
+      "hazard_water_depth_cm": 266.901001,
+      "start_to_hazard_cm": 500,
+      "hazard_lateral_cm": 0
+    },
+    {
+      "label": "water-new-port-1",
+      "kind": "water",
+      "link_id": 0,
+      "qualified": true,
+      "reason": "ok",
+      "start_cm": [
+        -931.740662,
+        -695.604492,
+        640.644897
+      ],
+      "projected_start_cm": [
+        -931.740662,
+        -695.60437,
+        640.644958
+      ],
+      "source_hazard_cm": [
+        -731.740723,
+        -1158.86865,
+        987.055115
+      ],
+      "source_goal_cm": [
+        -581.740723,
+        -1158.86865,
+        1246.86279
+      ],
+      "goal_cm": [
+        -581.740723,
+        -1158.86865,
+        1246.86279
+      ],
+      "hazard_cm": [
+        -731.740723,
+        -1158.86865,
+        987.055115
+      ],
+      "hazard_ground_cm": [
+        -731.740723,
+        -1158.86841,
+        987.055115
+      ],
+      "goal_ground_cm": [
+        -581.740723,
+        -1124.64685,
+        1246.86279
+      ],
+      "drop_cm": 463.264038,
+      "max_local_drop_cm": 401.075928,
+      "missing_ground_on_approach": false,
+      "start_water_depth_cm": -6.28039551,
+      "hazard_water_depth_cm": 456.983643,
+      "start_to_hazard_cm": 399.999969,
+      "hazard_lateral_cm": 0
+    },
+    {
+      "label": "water-new-port-2",
+      "kind": "water",
+      "link_id": 0,
+      "qualified": true,
+      "reason": "ok",
+      "start_cm": [
+        -948.733704,
+        -704.34552,
+        623.368469
+      ],
+      "projected_start_cm": [
+        -948.733704,
+        -704.345581,
+        623.36853
+      ],
+      "source_hazard_cm": [
+        -1148.73376,
+        -1209.74561,
+        623.368469
+      ],
+      "source_goal_cm": [
+        -1448.73376,
+        -1209.74561,
+        623.368469
+      ],
+      "goal_cm": [
+        -1448.73376,
+        -1209.74561,
+        623.368469
+      ],
+      "hazard_cm": [
+        -1148.73376,
+        -1209.74561,
+        623.368469
+      ],
+      "hazard_ground_cm": [
+        -1148.73376,
+        -1209.74585,
+        623.368469
+      ],
+      "goal_ground_cm": [
+        -1448.73376,
+        -1253.08667,
+        623.368469
+      ],
+      "drop_cm": 505.400269,
+      "max_local_drop_cm": 428.482605,
+      "missing_ground_on_approach": false,
+      "start_water_depth_cm": 2.46081543,
+      "hazard_water_depth_cm": 507.861084,
+      "start_to_hazard_cm": 200.000061,
+      "hazard_lateral_cm": 3.66210879e-05
+    },
+    {
+      "label": "water-new-port-3",
+      "kind": "water",
+      "link_id": 0,
+      "qualified": true,
+      "reason": "ok",
+      "start_cm": [
+        -711.023926,
+        -658.843994,
+        49.4863281
+      ],
+      "projected_start_cm": [
+        -711.023926,
+        -658.844055,
+        49.4863281
+      ],
+      "source_hazard_cm": [
+        -911.023987,
+        -1162.69055,
+        49.4863319
+      ],
+      "source_goal_cm": [
+        -1211.02393,
+        -1162.69055,
+        49.4863319
+      ],
+      "goal_cm": [
+        -1211.02393,
+        -1162.69055,
+        49.4863319
+      ],
+      "hazard_cm": [
+        -911.023987,
+        -1162.69055,
+        49.4863319
+      ],
+      "hazard_ground_cm": [
+        -911.023987,
+        -1162.69067,
+        49.4863319
+      ],
+      "goal_ground_cm": [
+        -1211.02393,
+        -1198.25452,
+        49.4863319
+      ],
+      "drop_cm": 503.846619,
+      "max_local_drop_cm": 507.128357,
+      "missing_ground_on_approach": false,
+      "start_water_depth_cm": -43.0406494,
+      "hazard_water_depth_cm": 460.805908,
+      "start_to_hazard_cm": 200.000061,
+      "hazard_lateral_cm": 2.288818e-06
+    }
+  ],
+  "recordings_created": false,
+  "complete": true,
+  "v3_passed": false,
+  "all_teachers_passed": false,
+  "v3_water_avoidance_passed": false,
+  "water_by_cohort": {
+    "original": {
+      "memory": {
+        "attempts": 3,
+        "safe": 2,
+        "inconclusive": 1,
+        "swimming_episodes": 1,
+        "entered_water_episodes": 1,
+        "deep_water_episodes": 1,
+        "harmful_fall_episodes": 0,
+        "harmless_descent_episodes": 0
+      },
+      "v2": {
+        "attempts": 3,
+        "safe": 3,
+        "inconclusive": 0,
+        "swimming_episodes": 0,
+        "entered_water_episodes": 0,
+        "deep_water_episodes": 0,
+        "harmful_fall_episodes": 0,
+        "harmless_descent_episodes": 0
+      }
+    },
+    "new": {
+      "memory": {
+        "attempts": 3,
+        "safe": 3,
+        "inconclusive": 0,
+        "swimming_episodes": 0,
+        "entered_water_episodes": 1,
+        "deep_water_episodes": 0,
+        "harmful_fall_episodes": 0,
+        "harmless_descent_episodes": 1
+      },
+      "v2": {
+        "attempts": 3,
+        "safe": 3,
+        "inconclusive": 0,
+        "swimming_episodes": 0,
+        "entered_water_episodes": 0,
+        "deep_water_episodes": 0,
+        "harmful_fall_episodes": 0,
+        "harmless_descent_episodes": 0
+      }
+    }
+  }
+}

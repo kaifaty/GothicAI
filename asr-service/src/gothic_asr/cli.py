@@ -17,8 +17,8 @@ from .service import AsrService
 
 log = logging.getLogger("gothic_asr")
 
-# self-hosted Voxtral Realtime (streams, ~0.15 s after speech), ChatGPT plan when it is unreachable
-DEFAULT_PROVIDER = "voxtral"
+# Inworld STT (streams, ~0.2 s after speech), ChatGPT plan when it is unreachable
+DEFAULT_PROVIDER = "inworld"
 DEFAULT_FALLBACK = "chatgpt"
 CHUNK_S = 0.1
 
@@ -72,7 +72,7 @@ async def transcribe(args: argparse.Namespace) -> int:
             for _ in range(args.repeat):
                 if args.realtime:
                     # as if spoken: 100 ms chunks at real-time pace; latency counts from the end of speech
-                    utt = recognizer.utterance(args.lang)
+                    utt = recognizer.utterance(args.lang, hints=args.hints)
                     await utt.begin()
                     step = int(CHUNK_S * RATE)
                     for i in range(0, len(audio), step):
@@ -129,6 +129,12 @@ def main() -> None:
     p.add_argument("files", nargs="+")
     p.add_argument("--lang", default="ru")
     p.add_argument("--repeat", type=int, default=1, help="runs per file (latency statistics)")
+    p.add_argument(
+        "--hints",
+        type=lambda value: [hint.strip() for hint in value.split(",") if hint.strip()],
+        default=None,
+        help="comma-separated names or phrases for streaming providers",
+    )
     p.add_argument(
         "--realtime", action="store_true", help="feed audio at speaking pace (streaming providers)"
     )

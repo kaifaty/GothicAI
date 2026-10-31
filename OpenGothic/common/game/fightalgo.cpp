@@ -19,6 +19,16 @@
 FightAlgo::FightAlgo() {
   }
 
+FightAlgo::Action FightAlgo::resolveDownTactics(bool enabled, bool knockdown, bool rising, bool inRange, bool focus) {
+  if(!enabled || !knockdown)
+    return MV_NULL;
+  if(!inRange)
+    return MV_MOVE;
+  if(!focus)
+    return MV_TURN2HIT;
+  return rising ? MV_WAIT : MV_ATTACK;
+  }
+
 void FightAlgo::load(Serialize &fin) {
   fin.read(reinterpret_cast<int32_t&>(queueId));
   for(int i=0;i<MV_MAX;++i)
@@ -92,60 +102,60 @@ void FightAlgo::fillQueue(Npc &npc, Npc &tg, GameScript& owner) {
   fillQueue(npc,owner,ai.my_w_nofocus);
   }
 
-bool FightAlgo::fillQueue(const Npc& npc, GameScript& owner, const zenkit::IFightAi& src) {
+bool FightAlgo::fillQueue(const Npc& npc, GameScript& owner, const Def::FightAi& src) {
   uint32_t sz=0;
-  for(size_t i=0; i<zenkit::IFightAi::move_count; ++i){
-    if(src.move[i]==zenkit::FightAiMove::NOP)
+  for(size_t i=0; i<Def::FightAi::move_count; ++i){
+    if(src.move[i]==Def::FightMove::NOP)
       break;
     sz++;
     }
   if(sz==0)
     return false;
-  queueId = zenkit::FightAiMove(src.move[owner.rand(sz,&npc)]);
-  return queueId!=zenkit::FightAiMove::NOP;
+  queueId = Def::FightMove(src.move[owner.rand(sz,&npc)]);
+  return queueId!=Def::FightMove::NOP;
   }
 
 FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner) {
-  using zenkit::FightAiMove;
+  using Def::FightMove;
 
   if(tr[0]==MV_NULL) {
     const auto selected = queueId;
     switch(queueId) {
-      case FightAiMove::TURN:
+      case FightMove::TURN:
         tr[0] = MV_TURN;
         break;
-      case FightAiMove::RUN:{
+      case FightMove::RUN:{
         tr[0] = MV_MOVE;
         break;
         }
-      case FightAiMove::RUN_BACK:{
+      case FightMove::RUN_BACK:{
         tr[0] = MV_NULL; //TODO
         break;
         }
-      case FightAiMove::JUMP_BACK:{
+      case FightMove::JUMP_BACK:{
         tr[0] = MV_JUMPBACK;
         break;
         }
-      case FightAiMove::STRAFE:{
+      case FightMove::STRAFE:{
         tr[0] = owner.rand(2,&npc) ? MV_STRAFEL : MV_STRAFER;
         tr[1] = FightAlgo::MV_STRAFE_E;
         break;
         }
-      case FightAiMove::ATTACK:{
+      case FightMove::ATTACK:{
         tr[0] = MV_ATTACK;
         break;
         }
-      case FightAiMove::ATTACK_SIDE:{
+      case FightMove::ATTACK_SIDE:{
         tr[0] = MV_ATTACKL;
         tr[1] = MV_ATTACKR;
         break;
         }
-      case FightAiMove::ATTACK_FRONT:{
+      case FightMove::ATTACK_FRONT:{
         tr[0] = owner.rand(2,&npc) ? MV_ATTACKL : MV_ATTACKR;
         tr[1] = MV_ATTACK;
         break;
         }
-      case FightAiMove::ATTACK_TRIPLE:{
+      case FightMove::ATTACK_TRIPLE:{
         if(owner.rand(2,&npc)){
           tr[0] = MV_ATTACK;
           tr[1] = MV_ATTACKR;
@@ -157,14 +167,14 @@ FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner)
           }
         break;
         }
-      case FightAiMove::ATTACK_WHIRL:{
+      case FightMove::ATTACK_WHIRL:{
         tr[0] = MV_ATTACKL;
         tr[1] = MV_ATTACKR;
         tr[2] = MV_ATTACKL;
         tr[3] = MV_ATTACKR;
         break;
         }
-      case FightAiMove::ATTACK_MASTER:{
+      case FightMove::ATTACK_MASTER:{
         tr[0] = MV_ATTACKL;
         tr[1] = MV_ATTACKR;
         tr[2] = MV_ATTACK;
@@ -173,28 +183,28 @@ FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner)
         tr[5] = MV_ATTACK;
         break;
         }
-      case FightAiMove::TURN_TO_HIT:{
+      case FightMove::TURN_TO_HIT:{
         tr[0] = MV_TURN2HIT;
         break;
         }
-      case FightAiMove::PARRY:{
+      case FightMove::PARRY:{
         tr[0] = MV_BLOCK;
         break;
         }
-      case FightAiMove::STAND_UP:{
+      case FightMove::STAND_UP:{
         break;
         }
-      case FightAiMove::WAIT:
-      case FightAiMove::WAIT_EXT:{
+      case FightMove::WAIT:
+      case FightMove::WAIT_EXT:{
         tr[0] = MV_WAIT;
         break;
         }
-      case FightAiMove::WAIT_LONGER:{
+      case FightMove::WAIT_LONGER:{
         tr[0] = MV_WAITLONG;
         break;
         }
       default: {
-        static std::set<FightAiMove> inst;
+        static std::set<FightMove> inst;
         if(inst.find(queueId)==inst.end()) {
           Tempest::Log::d("unrecognized FAI instruction: ", int(queueId));
           inst.insert(queueId);
@@ -202,7 +212,7 @@ FightAlgo::Action FightAlgo::nextFromQueue(Npc& npc, Npc& tg, GameScript& owner)
         }
       }
     traceInstruction=int(selected); ++traceEntry;
-    queueId = FightAiMove::NOP;
+    queueId = FightMove::NOP;
     if(TestBench::bodyTracing()) {
       std::string moves = "[";
       for(size_t i=0; i<MV_MAX; ++i) {
@@ -226,7 +236,7 @@ bool FightAlgo::hasInstructions() const {
 
 bool FightAlgo::fetchInstructions(Npc &npc, Npc &tg, GameScript& owner) {
   fillQueue(npc,tg,owner);
-  if(queueId==zenkit::FightAiMove::NOP)
+  if(queueId==Def::FightMove::NOP)
     return false;
   nextFromQueue(npc,tg,owner);
   return true;
@@ -241,15 +251,21 @@ void FightAlgo::consumeAction() {
 
 void FightAlgo::onClearTarget() {
   ++traceEntry;
-  queueId = zenkit::FightAiMove::NOP;
+  queueId = Def::FightMove::NOP;
   tr[0]   = MV_NULL;
+  }
+
+void FightAlgo::onTargetKnockdown() {
+  onClearTarget();
+  for(auto& action:tr)
+    action = MV_NULL;
   }
 
 void FightAlgo::onTakeHit() {
   hitFlg = true;
   for(auto& i:tr)
     i = MV_NULL;
-  queueId = zenkit::FightAiMove::NOP;
+  queueId = Def::FightMove::NOP;
   }
 
 float FightAlgo::qDistTo(const Npc& npc, const Npc& tg) const {

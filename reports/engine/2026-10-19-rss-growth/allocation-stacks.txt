@@ -1,0 +1,100 @@
+jemalloc 5.3.0, prof_accum:true, lg_prof_sample:19
+jeprof --collapsed --alloc_space --show_bytes --base=cycle-2.heap <mapped executable> cycle-8.heap
+Largest allocation stacks, cycles 3-8. Thread/future and allocator wrapper frames omitted.
+Values are sampled allocation estimates, not retained bytes. See allocator-stats.csv for exact live bytes.
+
+377487360 bytes (360.000000 MiB) allocated
+  World::World(GameSession&, std::basic_string_view<char, std::char_traits<char> >, bool, std::function<void (int)>)::{lambda()#2}::operator()() const
+  PackedMesh::PackedMesh(zenkit::Mesh const&, PackedMesh::PkgType)
+  PackedMesh::packMeshletsLnd(zenkit::Mesh const&)
+  PackedMesh::Meshlet::flush(std::vector<Resources::Vertex, std::allocator<Resources::Vertex> >&, std::vector<unsigned int, std::allocator<unsigned int> >&, std::vector<unsigned char, std::allocator<unsigned char> >&, std::vector<PackedMesh::Cluster, std::allocator<PackedMesh::Cluster> >&, zenkit::Mesh const&)
+  PackedMesh::Meshlet::flush(std::vector<Resources::Vertex, std::allocator<Resources::Vertex> >&, std::vector<unsigned int, std::allocator<unsigned int> >&, std::vector<unsigned char, std::allocator<unsigned char> >&, std::vector<PackedMesh::Cluster, std::allocator<PackedMesh::Cluster> >&, zenkit::Mesh const&)[inline]
+  std::vector<Resources::Vertex, std::allocator<Resources::Vertex> >::resize(unsigned long)
+  std::vector<Resources::Vertex, std::allocator<Resources::Vertex> >::_M_default_append(unsigned long)[inline]
+
+265432032 bytes (253.135712 MiB) allocated
+  MainWindow::render()
+  Renderer::draw(Tempest::Attachment&, Tempest::Encoder<Tempest::CommandBuffer>&, unsigned char, Tempest::VectorImage::Mesh&, Tempest::VectorImage::Mesh&, InventoryMenu&, VideoWidget&)
+  Renderer::draw(Tempest::Attachment&, Tempest::Encoder<Tempest::CommandBuffer>&, unsigned char, WorldView&, Camera const&)
+  WorldView::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>&, unsigned char)
+  LightGroup::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>&, unsigned char)
+  std::vector<LightGroup::LightSsbo, std::allocator<LightGroup::LightSsbo> >::push_back(LightGroup::LightSsbo const&)[inline]
+
+251993509 bytes (240.319737 MiB) allocated
+  MainWindow::loadGame(std::basic_string_view<char, std::char_traits<char> >)::{lambda(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&)#1}::operator()(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&) const
+  GameSession::GameSession(Serialize&)
+  World::World(GameSession&, std::basic_string_view<char, std::char_traits<char> >, bool, std::function<void (int)>)
+  WorldObjects::addRoot(std::shared_ptr<zenkit::VirtualObject> const&, bool)
+  Vob::load(Vob*, World&, zenkit::VirtualObject const&, Vob::Flags)
+  Vob::Vob(Vob*, World&, zenkit::VirtualObject const&, Vob::Flags)
+  Vob::load(Vob*, World&, zenkit::VirtualObject const&, Vob::Flags)
+
+201326592 bytes (192.000000 MiB) allocated
+  DynamicWorld::DynamicWorld(World*, zenkit::Mesh const&, zenkit::Mesh const*)
+  CollisionWorld::CollisionWorld()
+  CollisionWorld::Impl::Impl()
+  JPH::TempAllocatorImpl::TempAllocatorImpl(unsigned long)[inline]
+
+176160768 bytes (168.000000 MiB) allocated
+  MainWindow::loadGame(std::basic_string_view<char, std::char_traits<char> >)::{lambda(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&)#1}::operator()(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&) const
+  GameSession::GameSession(Serialize&)
+  World::load(Serialize&)
+  WorldObjects::load(Serialize&)
+  Item::Item(World&, Serialize&, Item::Type)
+  World::addView(zenkit::IItem const&)
+  WorldView::addView(std::basic_string_view<char, std::char_traits<char> >, int, int, int)
+  MeshObjects::Mesh::Mesh(MeshObjects&, ProtoMesh const&, int, int, int, bool)
+  MeshObjects::implGet(StaticMesh const&, StaticMesh::SubMesh const&, int, int, int, bool)
+  VisualObjects::get(StaticMesh const&, Material const&, unsigned long, unsigned long, bool)
+  VisualObjects::implAlloc()
+  std::vector<VisualObjects::Object, std::allocator<VisualObjects::Object> >::resize(unsigned long)[inline]
+  std::vector<VisualObjects::Object, std::allocator<VisualObjects::Object> >::_M_default_append(unsigned long)
+
+161404607 bytes (153.927428 MiB) allocated
+  MainWindow::loadGame(std::basic_string_view<char, std::char_traits<char> >)::{lambda(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&)#1}::operator()(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&) const
+  GameSession::GameSession(Serialize&)
+  World::World(GameSession&, std::basic_string_view<char, std::char_traits<char> >, bool, std::function<void (int)>)
+  PortalRooms::Volumes::reset(zenkit::Mesh const&, zenkit::BspTree const&)
+  std::vector<PortalRooms::Volumes::Triangle, std::allocator<PortalRooms::Volumes::Triangle> >::push_back(PortalRooms::Volumes::Triangle const&)[inline]
+
+159847928 bytes (152.442863 MiB) allocated
+  MainWindow::loadGame(std::basic_string_view<char, std::char_traits<char> >)::{lambda(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&)#1}::operator()(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&) const
+  GameSession::GameSession(Serialize&)
+  World::World(GameSession&, std::basic_string_view<char, std::char_traits<char> >, bool, std::function<void (int)>)
+  WorldObjects::addRoot(std::shared_ptr<zenkit::VirtualObject> const&, bool)
+  Vob::load(Vob*, World&, zenkit::VirtualObject const&, Vob::Flags)
+  Vob::Vob(Vob*, World&, zenkit::VirtualObject const&, Vob::Flags)
+  Vob::load(Vob*, World&, zenkit::VirtualObject const&, Vob::Flags)
+  WorldObjects::addItem(zenkit::VItem const&)
+  WorldObjects::addItem(unsigned long, std::basic_string_view<char, std::char_traits<char> >)
+  WorldObjects::addItem(unsigned long, Tempest::BasicPoint<float, 3ul> const&, Tempest::BasicPoint<float, 3ul> const&)
+  SpaceIndex<Item>::add(Item*)[inline]
+  BaseSpaceIndex::add(Vob*)
+  std::vector<Vob*, std::allocator<Vob*> >::reserve(unsigned long)[inline]
+
+151012425 bytes (144.016671 MiB) allocated
+  MainWindow::loadGame(std::basic_string_view<char, std::char_traits<char> >)::{lambda(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&)#1}::operator()(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&) const
+  GameSession::GameSession(Serialize&)
+  World::load(Serialize&)
+  WorldObjects::load(Serialize&)
+  Npc::load(Serialize&, unsigned long, std::basic_string_view<char, std::char_traits<char> >)
+  Npc::setVisualBody(int, int, int, int, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)
+  MdlVisual::setVisualBody(Npc&, MeshObjects::Mesh&&, MeshObjects::Mesh&&, int)
+  MdlVisual::fitHitZones()
+  HitZones::fit(std::vector<HitZones::Shape, std::allocator<HitZones::Shape> > const&)
+  std::vector<HitZones::Point, std::allocator<HitZones::Point> >::push_back(HitZones::Point&&)[inline]
+  HitZones::Point& std::vector<HitZones::Point, std::allocator<HitZones::Point> >::emplace_back<HitZones::Point>(HitZones::Point&&)[inline]
+
+150994944 bytes (144.000000 MiB) allocated
+  MainWindow::loadGame(std::basic_string_view<char, std::char_traits<char> >)::{lambda(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&)#1}::operator()(std::unique_ptr<GameSession, std::default_delete<GameSession> >&&) const
+  GameSession::GameSession(Serialize&)
+  World::World(GameSession&, std::basic_string_view<char, std::char_traits<char> >, bool, std::function<void (int)>)
+  std::vector<zenkit::Polygon, std::allocator<zenkit::Polygon> >::resize(unsigned long)[inline]
+  std::vector<zenkit::Polygon, std::allocator<zenkit::Polygon> >::_M_default_append(unsigned long)
+
+150994944 bytes (144.000000 MiB) allocated
+  World::World(GameSession&, std::basic_string_view<char, std::char_traits<char> >, bool, std::function<void (int)>)::{lambda()#2}::operator()() const
+  PackedMesh::PackedMesh(zenkit::Mesh const&, PackedMesh::PkgType)
+  PackedMesh::packMeshletsLnd(zenkit::Mesh const&)
+  PackedMesh::PrimitiveHeap::reserve(unsigned long)[inline]
+  std::vector<std::pair<unsigned long, unsigned int>, std::allocator<std::pair<unsigned long, unsigned int> > >::reserve(unsigned long)[inline]

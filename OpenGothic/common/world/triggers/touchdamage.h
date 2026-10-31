@@ -6,7 +6,7 @@ class World;
 
 class TouchDamage : public AbstractTrigger {
   public:
-    TouchDamage(Vob* parent, World &world, const zenkit::VTouchDamage& data, Flags flags);
+    TouchDamage(Vob* parent, World &world, const asset::VTouchDamage& data, Flags flags);
 
   private:
     void onTrigger(const TriggerEvent &evt) override;

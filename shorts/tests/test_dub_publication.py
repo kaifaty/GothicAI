@@ -1,6 +1,7 @@
 """Publication ownership, interruption and source replacement use synthetic media only."""
 
 import json
+import re
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -8,7 +9,14 @@ from threading import Event
 from types import SimpleNamespace
 
 import pytest
-from test_dub import CONFIG, _assert_unchanged, _packet_hashes, _stale_outputs
+from test_dub import (
+    CONFIG,
+    _assert_publication,
+    _assert_unchanged,
+    _packet_hashes,
+    _stale_outputs,
+    _tts_sound,
+)
 from test_explain import _plan
 from test_explain import synthetic_stems as synthetic_stems
 
@@ -77,6 +85,50 @@ def explainer_publication(tmp_path, monkeypatch, synthetic_stems, russian_versio
 
 def _outputs(directory):
     return [directory / f"dub.en.{suffix}" for suffix in ("mp4", "wav", "levels.json")]
+
+
+def _assert_dual_mono(path):
+    measured = subprocess.run(
+        ["ffmpeg", "-nostdin", "-hide_banner", "-i", str(path), "-map", "0:a:0",
+         "-af", "pan=mono|c0=c0-c1,volumedetect", "-f", "null", "-"],
+        check=True, capture_output=True, text=True,
+    ).stderr
+    difference = float(re.search(r"max_volume: ([\d.+-]+) dB", measured)[1])
+    assert difference <= -90, f"{path.name}: max L-R = {difference} dB"
+
+
+def test_explainer_english_aac_and_wav_are_dual_mono(
+    tmp_path, monkeypatch, synthetic_stems, russian_versions,
+):
+    ws = tmp_path / "explainer"
+    directory = ws / "render"
+    directory.mkdir(parents=True)
+    plan = _plan(lang="ru")
+    (ws / "plan.json").write_text(json.dumps(plan))
+    (ws / "words.ru.json").write_text(json.dumps({"lines": [{"words": plan["lines"][0]}]}))
+    (ws / "script.en.txt").write_text("First and last\n")
+    russian = directory / "short-ru.mp4"
+    shutil.copyfile(russian_versions[0], russian)
+    russian.with_suffix(".levels.json").write_text(json.dumps({
+        "ok": True, "rows": [{"id": "voice_mastered", "measured_lufs": -14}],
+    }))
+
+    def render(workspace, rendered_plan, target, *, stems):
+        assert workspace == ws and rendered_plan == plan
+        assert stems == ("game", "music")
+        for stem in stems:
+            shutil.copyfile(synthetic_stems / f"{stem}.wav", target / f"{stem}.wav")
+
+    monkeypatch.setattr(explain, "render", render)
+    monkeypatch.setattr(dub, "clone", lambda *args: [
+        _tts_sound(ws / "voice/en/raw/01.wav", seconds=2),
+    ])
+    done = dub.dub_explainer(CONFIG, ws)
+
+    report = _assert_publication(done, russian)
+    assert next(row for row in report["rows"] if row["id"] == "dual_mono")["ok"] is True
+    _assert_dual_mono(done.preview)
+    _assert_dual_mono(done.wav)
 
 
 @pytest.mark.parametrize("invalid", [

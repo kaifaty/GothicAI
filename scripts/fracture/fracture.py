@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """Fixed-seed Voronoi fracture of source shells, in Gothic centimetres.
 
-The source meshes and generated pieces contain game assets and belong in the
-local cache, never in git. Requires numpy and scipy (installed by fracture.sh).
+Stock meshes and pieces contain game assets and belong in the local cache,
+never in git. Content mode reads only our indexed GLBs, without game archives,
+and writes adjacent version 2 sidecars. Requires numpy and scipy (fracture.sh).
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import fnmatch
 import hashlib
 import io
+import json
 from pathlib import Path
+import subprocess
+import tempfile
 import time
+import zlib
 
 import numpy as np
 from scipy.spatial import ConvexHull, HalfspaceIntersection, cKDTree
@@ -196,10 +202,24 @@ def fracture_boards(source, textures, seed, count):
     return data, sum(volumes), 1.0
 
 
-def validate(data):
+def bind_source(data, glb):
+    """Version 2 binds the pieces to the exact GLB bytes that were converted."""
+    header, body = data.split(b"\n", 1)
+    if header != b"GOTHIC_FRACTURE 1":
+        raise ValueError("expected version 1 fracture")
+    return (f"GOTHIC_FRACTURE 2\nsource {len(glb)} {zlib.crc32(glb):08x}\n".encode("ascii") + body)
+
+
+def validate(data, glb=None):
     """Check the actual serialized geometry consumed by the game."""
     lines = iter(data.decode("ascii").splitlines())
-    if next(lines) != "GOTHIC_FRACTURE 1":
+    header = next(lines)
+    if header == "GOTHIC_FRACTURE 2":
+        source = next(lines).split()
+        if (len(source) != 3 or source[0] != "source" or glb is None or
+                int(source[1]) != len(glb) or int(source[2], 16) != zlib.crc32(glb)):
+            raise ValueError("fracture source does not match GLB size and CRC32")
+    elif header != "GOTHIC_FRACTURE 1" or glb is not None:
         raise ValueError("invalid header")
     count = int(next(lines).split()[1])
     if not 8 <= count <= 20:
@@ -247,13 +267,90 @@ def validate(data):
     return count, volume_sum
 
 
+def content_meshes(root):
+    """Select indexed destructibles without consulting game archives or MRM."""
+    table = json.loads((root / "meshes/meshes.json").read_text())
+    if not isinstance(table, dict):
+        raise ValueError("meshes.json must contain an object")
+    rules = []
+    listing = Path(__file__).resolve().parents[2] / "OpenGothic/data/destructible-vobs.csv"
+    with listing.open() as stream:
+        for row in csv.reader(line for line in stream if not line.startswith("#")):
+            if row and row[1] in ("crate", "barrel", "pot", "fence"):
+                rules.append((row[0].upper(), row[1]))
+    selected = {}
+    for visual, entry in table.items():
+        if not visual or "\0" in visual or "/" in visual or "\\" in visual or Path(visual).suffix:
+            raise ValueError(f"invalid indexed visual: {visual!r}")
+        visual = visual.upper()
+        cls = next((cls for pattern, cls in rules if fnmatch.fnmatchcase(visual, pattern)), None)
+        if cls is None:
+            continue
+        value = entry.get("glb") if isinstance(entry, dict) else None
+        if not isinstance(value, str) or not value or "\0" in value:
+            raise ValueError(f"{visual}: missing GLB path")
+        relative = Path(value)
+        if relative.is_absolute() or ".." in relative.parts or relative.suffix.lower() != ".glb":
+            raise ValueError(f"{visual}: invalid relative GLB path")
+        selected[visual] = (root / "meshes" / relative, cls)
+    return sorted(selected.items())
+
+
+def cut_content(args):
+    rows = []
+    for visual, (glb_path, cls) in content_meshes(args.cache):
+        glb = glb_path.read_bytes()
+        target = glb_path.with_suffix(".fracture")
+        if args.verify:
+            # Reject a stale sidecar before recutting or invoking the converter.
+            validate(target.read_bytes(), glb)
+        started = time.monotonic()
+        with tempfile.TemporaryDirectory(prefix="gothic-fracture-") as directory:
+            source_path = Path(directory) / "source.mesh"
+            snapshot = Path(directory) / "source.glb"
+            # The converter reads exactly the bytes identified by the source row.
+            snapshot.write_bytes(glb)
+            subprocess.run([str(args.extractor), str(snapshot), str(source_path)], check=True)
+            source, textures = read_source(source_path)
+        cutter = fracture_boards if cls == "fence" else fracture
+        data, shell_volume, _ = cutter(source, textures, args.seed, args.pieces)
+        data = bind_source(data, glb)
+        count, actual_volume = validate(data, glb)
+        ratio = actual_volume / shell_volume
+        if not 0.9 <= ratio <= 1.1:
+            raise ValueError(f"{visual}: serialized volume ratio {ratio}")
+        if args.verify:
+            if target.read_bytes() != data:
+                raise ValueError(f"{target}: repeated fracture differs byte-for-byte")
+        else:
+            with tempfile.TemporaryDirectory(dir=target.parent, prefix=f".{target.name}.") as directory:
+                temporary = Path(directory) / target.name
+                temporary.write_bytes(data)
+                temporary.replace(target)
+        rows.append((visual, count))
+        print(f"{visual}: {count} pieces, {time.monotonic() - started:.3f} s, "
+              f"shell {shell_volume:.6f} cm3, pieces {actual_volume:.6f} cm3, "
+              f"volume {ratio:.9f}, closed + convex" +
+              (", identical bytes" if args.verify else ""), flush=True)
+    if not rows:
+        raise ValueError("no indexed destructible GLB meshes")
+    print(f"Validated {len(rows)} visuals, {sum(row[1] for row in rows)} convex closed pieces.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("cache", type=Path)
     parser.add_argument("--seed", type=int, default=601)
     parser.add_argument("--pieces", type=int, default=12, choices=range(8, 21))
     parser.add_argument("--verify", action="store_true", help="re-cut and compare bytes without overwriting")
+    parser.add_argument("--content", action="store_true", help="cut indexed GLB files into adjacent version 2 sidecars")
+    parser.add_argument("--extractor", type=Path, help="CPU GLB-to-source converter for --content")
     args = parser.parse_args()
+    if args.content:
+        if args.extractor is None:
+            parser.error("--content requires --extractor")
+        cut_content(args)
+        return
     source_dir = args.cache / "source"
     classes = {}
     listing = source_dir / "visuals.csv"

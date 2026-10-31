@@ -2,6 +2,8 @@
 
 #include <Tempest/Matrix4x4>
 
+#include "asset/modeltypes.h"
+
 #include "graphics/mesh/animationsolver.h"
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/flinch.h"
@@ -64,7 +66,7 @@ class MdlVisual final {
     void                           setSlotItem   (MeshObjects::Mesh&& itm,  std::string_view bone);
     void                           setStateItem  (MeshObjects::Mesh&& itm,  std::string_view bone);
     void                           clearSlotItem (std::string_view bone);
-    bool                           setFightMode  (zenkit::MdsFightMode mode);
+    bool                           setFightMode  (asset::MdsFightMode mode);
     void                           dropWeapon    (Npc& owner);
     void                           dropShield    (Npc& owner);
 
@@ -74,6 +76,9 @@ class MdlVisual final {
     void                           startEffect (World& owner, Effect&& pfx, int32_t slot, bool noSlot);
     void                           stopEffect  (const VisualFx& vfx);
     void                           stopEffect  (int32_t slot);
+    // an effect of the animations' events that does not start (the native PEE while an aimed one plays)
+    void                           setMutedPfx(std::string_view name) { muted = name; }
+    std::string_view               mutedPfx() const { return muted; }
     void                           setNpcEffect(World& owner, Npc& npc, std::string_view s, zenkit::NpcFlag flags);
     void                           setFatness  (float f);
     void                           emitBlockEffect(Npc& dst, Npc& src);
@@ -106,6 +111,8 @@ class MdlVisual final {
     const HitZones&                hitZoneShape() const { return hitZones; }
     // the animation of that name plays k times as fast from its next start (1: as it is)
     void                           setAnimSpeed(std::string_view name, float k);
+    void                           setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now);
+    void                           hitStop(uint64_t until, float k);
     bool                           updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint64_t dt, bool force,
                                                     bool pausePose=false);
     bool                           updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedToGround);
@@ -137,6 +144,8 @@ class MdlVisual final {
     // an animation of the model (the test bench): its frames, the nodes it moves, how far it goes, which
     // way the hips face (the thighs) at a few points of it
     std::string                    animInfo(std::string_view name) const;
+    // the blade's tip at each frame of the animation (the test bench)
+    std::string                    bladePath(std::string_view name, float length) const;
     // ms the animation of that name takes (the overlays chosen), 0: none
     float                          animTime(std::string_view name) const;
     // cm the bow's string goes from rest to drawn as held in the aim (its morph), 0: not known
@@ -267,6 +276,7 @@ class MdlVisual final {
     std::vector<ArrowPin>          stuckArrows;
 
     std::vector<PfxSlot>           effects;
+    std::string_view               muted;
     PfxSlot                        pfx;
 
     TorchSlot                      torch;

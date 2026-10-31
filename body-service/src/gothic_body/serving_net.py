@@ -25,6 +25,8 @@ def configure_serve_net_parser(subparsers) -> None:
     parser.add_argument("--max-actors", type=int, default=16)
     parser.add_argument("--max-age-game-ms", type=int, default=100)
     parser.add_argument("--max-dt-game-ms", type=int, default=100)
+    parser.add_argument("--allow-stale-memory-only", action=argparse.BooleanOptionalAction, default=True,
+                        help="update memory for old rows when commands are disabled (default: enabled)")
 
 
 def invalid_request(error: Exception, request_id=None) -> dict:
@@ -55,6 +57,8 @@ class PolicySession:
                                            initial_game_ms=request["initial_game_ms"])
                 self.stream.clear()
                 response = {"reason": "episode_reset", "hidden_reset": True}
+                if request.get("include_capabilities") is True:
+                    response["memory_only_step"] = True
             elif command == "step":
                 response = self.step(request)
             elif command == "status":
@@ -89,7 +93,8 @@ class PolicySession:
             raise ValueError("actor stream capacity exceeded")
         previous = self.stream.get(entity)
         sequence = previous[1] + 1 if previous is not None and previous[0] == identity else 1
-        eligible = row.get("can_decide") is True and row.get("action_mask_valid") is True
+        eligible = (row.get("can_decide") is True and row.get("action_mask_valid") is True and
+                    request.get("memory_only") is not True)
         processed = self.runtime.process({"stream_seq": sequence, "observation": row,
             "source": "periodic_observer", "now_game_ms": now,
             "checkpoint_sha256": self.runtime.checkpoint_sha256,
@@ -185,7 +190,8 @@ def serve_net_main(args: argparse.Namespace) -> int:
         return PolicyRuntime(backend=backend, checkpoint_sha256=checkpoint_sha256,
                              max_actors=args.max_actors, max_age_game_ms=args.max_age_game_ms,
                              max_dt_game_ms=args.max_dt_game_ms,
-                             inference_cpu_threads=args.inference_cpu_threads)
+                             inference_cpu_threads=args.inference_cpu_threads,
+                             allow_stale_memory_only=args.allow_stale_memory_only)
 
     with PolicyTCPServer((args.host, args.port), runtime_factory) as server:
         print(f"gothic-body listening on {args.host}:{server.server_address[1]}", file=sys.stderr, flush=True)

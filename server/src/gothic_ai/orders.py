@@ -26,8 +26,10 @@ someone who just struck the hero is words to him, not an order.
 
 **A companion fights without an order**, as the original party members do: whoever strikes the hero, it
 or another companion (a blow seen within 10 m, heard within 30 m), one that turns on the hero by its own
-model's decision (before its first blow, within DEFEND_CM), and a monster that comes close (the game's own
-combat), then it goes on with the hero. It does not wait for the conversational model, which only finds
+model's decision (before its first blow, within DEFEND_CM), and a monster hunting the hero within 25 m
+(already fighting him, or hostile and coming at him), before its first blow. Hostile monsters in direct
+sight are visible to a companion up to 40 m away. A monster that comes close (the game's own combat)
+is fought too, then it goes on with the hero. It does not wait for the conversational model, which only finds
 out (incidents.py words it). A companion told to wait stands up for the hero only near it; after
 "Отступай!" it fights no one for a while, unless struck itself.
 
@@ -63,7 +65,7 @@ from .game import GameError, GameLink
 from .journal import Journal
 from .llm import Tool, ToolCall
 from .places import Place, PlaceBook
-from .protocol import GameMessage, Loading, NpcRoster, NpcView, Perception, Snapshot
+from .protocol import GameMessage, Loading, NpcRoster, NpcView, NpcViews, Perception, Snapshot
 from .talk import calls, named, words
 from .turn import ToolOutcome
 
@@ -82,6 +84,7 @@ WAIT_S = 600.0  # "Жди здесь!" at most this long
 FIGHT_S = 70.0  # a fight is given up after this (the game's own deadline is 60 s)
 FOE_S = 30.0  # whoever struck the hero or a companion is a foe this long
 ENEMY_CM = 1000.0  # a monster this close to a companion is fought without an order
+HUNT_CM = 2500.0  # a visible monster hunting the hero: intercept before its first blow
 GUARD_CM = 1500.0  # a companion told to wait stands up for the hero this near it
 DEFEND_CM = 3000.0  # one who turns on the hero this near a companion is fought: the game's fight sound reach
 MEET_CM = 500.0  # sent ahead, a companion goes on with the hero once he comes this close
@@ -171,7 +174,9 @@ class Orders:
         self.clock = clock
         self.standing: dict[str, Standing] = {}
         self.foes: dict[str, float] = {}  # who struck the hero or a companion, and when
+        self._monster_gaps: dict[str, dict[str, float]] = {}  # viewer -> visible monster's distance to hero
         self.fights: dict[str, Fight] = {}  # companion -> its fight now
+        self.on_fight: Callable[[str, str], None] | None = None
         # those marked the scripts' party members here (`party`), with the mark's number (GameLink.party):
         # only these are unmarked here, and only if nobody marked them since
         self.party: dict[str, int] = {}
@@ -318,6 +323,8 @@ class Orders:
         if not squad or (order.kind == "attack" and target is None):
             return []
         for npc, name in squad:
+            if order.kind == "attack" and target is not None and self.on_fight is not None:
+                self.on_fight(npc, target)
             before = self.standing.get(npc)
             if order.kind in WEAPONS:
                 standing = before  # the weapon changes no standing order: it waits, follows... as before
@@ -411,6 +418,8 @@ class Orders:
         return err
 
     def _start(self, npc: str, target: str, standing: Standing | None, *, seek: bool = True) -> None:
+        if self.on_fight is not None:
+            self.on_fight(npc, target)
         fight = self.fights[npc] = Fight(target, seek)  # at once: the next perception finds it fighting
         self._spawn(self._fight(npc, fight, standing))
 
@@ -519,9 +528,13 @@ class Orders:
                 self._perceived(msg)
             case NpcRoster():
                 self._party()
+            case NpcViews():
+                for view in msg.views:
+                    self._hunting(view)
             case Loading():
                 self.foes.clear()
                 self.party.clear()
+                self._monster_gaps.clear()
 
     # --- the scripts' party ----------------------------------------------------------------------
 
@@ -559,6 +572,36 @@ class Orders:
         else:
             self.party.pop(npc, None)
         log.info("%s %s the hero's party", npc, "joins" if on else "leaves")
+
+    def _hunting(self, view: NpcView) -> None:
+        """A visible monster already fighting the hero, or hostile and closing on him: do not wait for
+        damage perceptions. Native combat targets disambiguate a hunt from merely passing nearby."""
+        npc = view.npc.upper()
+        before = self._monster_gaps.get(npc, {})
+        self._monster_gaps[npc] = {
+            o.id.upper(): o.hero_cm for o in view.sees if o.kind == "monster" and o.hero_cm is not None
+        }
+        if npc not in self.talk.attached or not self.companion(npc):
+            return
+        for other in view.sees:
+            if other.kind != "monster" or other.distance > HUNT_CM or other.body in ("down", "dead"):
+                continue
+            target = (other.combat_target or "").upper()
+            if target != "PLAYER":
+                continue
+            closing = (
+                other.moving
+                and other.att_hero == "hostile"
+                and other.hero_cm is not None
+                and other.hero_cm < before.get(other.id.upper(), 0) - 10
+                and other.state not in {"ZS_FLEE", "ZS_MM_FLEE"}
+            )
+            if not other.fighting and not closing:
+                continue
+            if self.talk.beasts is not None and self.talk.beasts.spares(other.id):
+                continue
+            self._stand_up(npc, other.id.upper(), "охотится на героя", struck=False)
+            break
 
     def _perceived(self, p: Perception) -> None:
         npc, other = p.npc.upper(), p.other.upper()
@@ -829,6 +872,8 @@ class Orders:
 
     async def _act(self, npc: str, action: str, /, *, timeout: float = 10, **args: Any) -> str:
         """ "done", "cancelled" (a later order took over) or what went wrong."""
+        if action == "fight" and self.on_fight is not None:
+            self.on_fight(npc, args["npc"])
         try:
             res = await self.link.act(npc, action, timeout=timeout, **args)  # type: ignore[arg-type]
         except (GameError, TimeoutError) as err:

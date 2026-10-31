@@ -1,0 +1,2 @@
+#pragma once
+static constexpr const char* ClothWorldData = R"clothcsv(@CLOTH_WORLD_DATA@)clothcsv";

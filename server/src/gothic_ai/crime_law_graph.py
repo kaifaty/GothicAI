@@ -1,9 +1,9 @@
 """The community law's locks and projections around otherwise native dialog programs.
 
-The bridge's existing graph operations are enough: an additive condition leaves the script's own
-condition intact; a few stores before its original program prevent fresh vanilla perceptions from
-polluting the counters while a report is still travelling. None of these ops belongs in the branch
-patch log: the crime service supplies them as static patches, and --no-crimes supplies none.
+The bridge's existing graph operations are enough: law-only dialogs keep an additive condition;
+mixed gate dialogs project our law before their original programs and guard native admission.
+Fresh vanilla perceptions cannot pollute these reads while a report is still travelling. These ops
+stay outside the branch patch log: the crime service supplies static patches, --no-crimes supplies none.
 """
 
 from __future__ import annotations
@@ -24,6 +24,12 @@ CRIME_LEVELS = {"sheep": 1, "attack": 2, "theft": 3, "murder": 4}
 LOCATIONS = {1: "oldcamp", 2: "city", 3: "monastery", 4: "farm"}
 AMBIENT = "DIA_AMBIENT_NEWS"
 NEWS_CRIME = "DIR_NEWS_CRIME"
+CITY_GATE_NPCS = {"MIL_310_STADTWACHE", "MIL_333_STADTWACHE"}
+UPPER_GATE_NPCS = {"MIL_305_TORWACHE", "PAL_205_TORWACHE"}
+CITY_ENTRY_SUFFIXES = {
+    "FIRSTWARN", "BRIBE", "PASSIERSCHEIN", "ZUMSCHMIED", "CONSTANTINO", "PERM",
+    "PASSASCITIZEN", "PASSASMIL", "PASSASMAGE", "PASSASSLD",
+}
 
 
 def law_var(community: str) -> str:
@@ -66,6 +72,27 @@ def gate_nodes(graph: StoryGraph) -> dict[str, str]:
     return result
 
 
+def city_entry_nodes(graph: StoryGraph) -> set[str]:
+    """The city gates' mixed greeting and every native way to grant passage."""
+    return {
+        node.id for node in graph.nodes.values()
+        if node.npc in CITY_GATE_NPCS | UPPER_GATE_NPCS
+        and node.id.rsplit("_", 1)[-1] in CITY_ENTRY_SUFFIXES
+    }
+
+
+def city_entry_blocked() -> list[Any]:
+    # Sheep alone has never barred passage. These derived counters are cleared immediately at
+    # the native GrantAbsolution call, so payment removes this block before the next server poll.
+    return [
+        "&&", ["var", law_var("city")],
+        ["||", *(
+            [">", ["var", projection_var(f"PETZCOUNTER_CITY_{kind}")], ["int", 0]]
+            for kind in ("ATTACK", "THEFT", "MURDER")
+        )],
+    ]
+
+
 def init_ops(graph: StoryGraph) -> list[dict[str, Any]]:
     variables = {law_var(community): 0 for community in LAWFUL}
     variables[NEWS_CRIME] = 0
@@ -76,6 +103,7 @@ def init_ops(graph: StoryGraph) -> list[dict[str, Any]]:
         *(
             {"op": "condition", "node": node, "expr": ["var", law_var(community)]}
             for node, community in gate_nodes(graph).items()
+            if node not in city_entry_nodes(graph)
         ),
     ]
 
@@ -97,6 +125,40 @@ def project_program(community: str, own: list[Step]) -> list[Step]:
         },
         *copy.deepcopy(own),
     ]
+
+
+def city_entry_program(node: str, part: str, own: list[Step]) -> list[Step]:
+    """Keep native entry voices and effects, using only our known, unpaid city cases.
+
+    FIRSTWARN mixes crime refusal with ordinary admission, so a law-presence condition cannot
+    gate the whole dialog. It must also revoke an old native bribe's PASSGATE exception. Other
+    admitting dialogs are closed before both their condition and their information: no bribe or
+    quest alternative can reopen passage while the law still has the crime.
+    """
+    projected = project_program("city", own)
+    prefix = projected[0]["then"]  # gates must also project zeros while the law is closed
+    if node.endswith("_FIRSTWARN"):
+        if part == "condition" and any(f"_{number}_" in node for number in ("310", "333")):
+            number = "310" if "_310_" in node else "333"
+            prefix.append({
+                "do": "if", "cond": city_entry_blocked(),
+                "then": [
+                    {
+                        "do": "set", "target": ["field", ["inst", "SELF"], "AIVAR", 14],
+                        "value": ["int", 0],
+                    },
+                    {
+                        "do": "set", "target": ["var", f"MIL_{number}_PERSONAL_ABSOLUTIONLEVEL"],
+                        "value": ["fn", "B_GETCURRENTABSOLUTIONLEVEL", ["inst", "SELF"]],
+                    },
+                ],
+            })
+    else:
+        prefix.append({
+            "do": "if", "cond": city_entry_blocked(),
+            "then": [{"do": "return", **({"value": ["int", 0]} if part == "condition" else {})}],
+        })
+    return [*prefix, *projected[1:]]
 
 
 def absolution_program(own: list[Step]) -> list[Step]:
@@ -191,6 +253,7 @@ def validate_ops(ops: list[dict[str, Any]], story: Story) -> list[str]:
     nodes = gate_nodes(story.graph)
     allowed_programs = {
         *(str(node) for node in nodes),
+        *city_entry_nodes(story.graph),
         *(str(node) + "_PAYNOW" for node in nodes if node.endswith("_PETZMASTER")),
         "DIA_PARLAN_WELCOME",
         AMBIENT,
@@ -202,7 +265,8 @@ def validate_ops(ops: list[dict[str, Any]], story: Story) -> list[str]:
                 return ["unexpected community law variables"]
         elif op.get("op") == "condition":
             node = op.get("node")
-            if node not in nodes or op.get("expr") != ["var", law_var(nodes[node])]:
+            if (node not in nodes or node in city_entry_nodes(story.graph)
+                    or op.get("expr") != ["var", law_var(nodes[node])]):
                 return [f"unexpected community law condition: {node}"]
         elif op.get("op") == "program":
             if op.get("node") not in allowed_programs:

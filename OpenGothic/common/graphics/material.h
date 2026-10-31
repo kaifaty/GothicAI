@@ -2,17 +2,18 @@
 
 #include <Tempest/Texture2d>
 
-#include <zenkit/Material.hh>
-#include <zenkit/world/VobTree.hh>
+#include "asset/material.h"
+#include "asset/worldtypes.h"
 #include <zenkit/DaedalusScript.hh>
 #include <zenkit/addon/daedalus.hh>
+#include "game/definitions/definitiontypes.h"
 
 class Material final {
   public:
     Material()=default;
-    Material(const zenkit::Material& m, bool enableAlphaTest);
-    Material(const zenkit::VisualDecal& decal);
-    Material(const zenkit::IParticleEffect &src);
+    Material(const asset::Material& m, bool enableAlphaTest, bool requireAlphaTest = false);
+    Material(const asset::VisualDecal& decal);
+    Material(const Def::ParticleEffect &src);
 
     enum AlphaFunc:uint8_t {
       Solid,
@@ -25,7 +26,19 @@ class Material final {
       AdditiveLight,
       };
 
+    enum class Antitile : uint8_t {
+      Off,
+      Offset,
+      Rotate,
+      };
+
     const Tempest::Texture2d* tex=nullptr;
+    const Tempest::Texture2d* normal=nullptr;
+    const Tempest::Texture2d* orm=nullptr;
+    float                     uvScale          = 1.f;
+    float                     antitileCell     = 1.f;
+    Antitile                  antitile         = Antitile::Off;
+    bool                      materialMaps     = false;
     std::vector<const Tempest::Texture2d*> frames;
     AlphaFunc                 alpha            = AlphaTest;
     float                     alphaWeight      = 1;
@@ -38,7 +51,9 @@ class Material final {
     bool operator == (const Material& other) const;
 
     bool isSolid() const;
+    void setAlbedo(const Tempest::Texture2d* texture);
 
+    bool hasMaterialMaps()       const { return materialMaps; }
     bool hasFrameAnimation()     const { return !frames.empty() && texAniFPSInv!=0;    }
     bool hasUvAnimation()        const { return texAniMapDirPeriod!=Tempest::Point(0); }
     bool isTesselated()          const { return isTesselated(alpha);                   }
@@ -54,9 +69,21 @@ class Material final {
     static bool isTextureInShadowPass(AlphaFunc alpha);
 
   private:
-    static AlphaFunc loadAlphaFunc(zenkit::AlphaFunction zenAlpha, zenkit::MaterialGroup matGroup,
-                                   uint8_t alpha, const Tempest::Texture2d* tex, bool enableAlphaTest);
-    void             loadFrames(const zenkit::Material& m);
+    friend struct AssetDigest;
+    bool             alphaTestEnabled = false;
+    // An explicit GLB MASK must survive DXT1's one-bit transparency and later
+    // albedo changes; native materials retain their format-based heuristics.
+    bool             alphaTestRequired = false;
+    asset::AlphaFunction sourceAlphaFunc = asset::AlphaFunction::NONE;
+    asset::MaterialGroup sourceMaterialGroup = asset::MaterialGroup::UNDEFINED;
+    uint8_t          sourceColorAlpha = 255;
+    // Keep explicit alpha overrides separate from texture-derived classification.
+    AlphaFunc        classifiedAlpha = AlphaTest;
+
+    static AlphaFunc loadAlphaFunc(asset::AlphaFunction zenAlpha, asset::MaterialGroup matGroup,
+                                   uint8_t alpha, const Tempest::Texture2d* tex, bool enableAlphaTest,
+                                   bool requireAlphaTest = false);
+    void             loadFrames(const asset::Material& m);
     void             loadFrames(const std::string_view fr, float fps);
   };
 

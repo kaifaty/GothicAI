@@ -18,10 +18,12 @@ from .common import (
     LOBART,
     ClaimScript,
     FixedDecider,
+    WitnessReaction,
     _logged,
     _save,
     _until,
     _until_async,
+    prepare_theft_witness,
     wait_message,
 )
 from .crimes import HOUSE
@@ -56,9 +58,8 @@ async def crime_talk(
 ) -> dict[str, str]:
     """Three independent scenes from save 1. With a live model only the first scene runs.
 
-    Every theft uses real native ownership and real witnesses. After the witnessed theft Hilda is
-    returned to a standing activity: vanilla has already handled ASSESSTHEFT and may have attacked,
-    but that fight must not prevent testing speech. No perception is intercepted or disabled. A
+    Every theft uses real native ownership and real witnesses. Hilda's rule and native SVM finish
+    before she is moved to the field for speech. No perception is disabled. A
     rumor gate chooses the Hilda--Lobart meeting and removes its random lot; it never bypasses the
     knowledge, hop, freshness or silence checks. Reloading resets the scripts between scenes.
     """
@@ -108,7 +109,7 @@ async def crime_talk(
         return check(f"{label}_branch", not facts("crime"), f"{len(facts('crime'))} crimes")
 
     async def theft(label: str) -> dict[str, Any] | None:
-        await link.debug("player_goto", waypoint=HOUSE)
+        await link.debug("player_goto", waypoint="NW_FARM1_INHOUSE_01")
         for npc in farm:
             await stand(npc, parked)
         await stand(LOBART, HOUSE)
@@ -117,14 +118,19 @@ async def crime_talk(
             return None
         await asyncio.sleep(1)
         await stand(LOBART, parked)
-        await stand(HILDA, "NW_FARM1_INHOUSE_02", face="PLAYER")
-        await asyncio.sleep(1)
+        prepared, preparation = await prepare_theft_witness(link, HILDA)
+        if not check(f"{label}_witness_ready", prepared, preparation):
+            return None
         before = {f["id"] for f in facts("crime")}
-        await link.debug("player_take", item="ITMI_SILVERCUP", distance=800)
-        await _until(lambda: any(f["id"] not in before for f in facts("crime")), 10)
-        crime = next((f for f in facts("crime") if f["id"] not in before), None)
-        # A routine replacement after recording the actual native witness ends vanilla combat.
-        # Holding Hilda before the theft would hide the witness and invalidate this scene.
+        with WitnessReaction(link, service.chronicle, HILDA) as reaction:
+            await link.debug("player_take", item="ITMI_SILVERCUP", distance=1200)
+            await _until(lambda: any(f["id"] not in before for f in facts("crime")), 10)
+            crime = next((f for f in facts("crime") if f["id"] not in before), None)
+            if crime is not None and not check(
+                f"{label}_reaction", await reaction.wait(str(crime["id"])), reaction.detail
+            ):
+                return None
+        # Replacing the activity earlier can interrupt the held rule or its native voice.
         await stand(HILDA, field)
         if not check(
             f"{label}_theft",

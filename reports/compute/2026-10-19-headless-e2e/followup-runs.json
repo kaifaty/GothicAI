@@ -1,0 +1,47 @@
+[
+  {
+    "label": "stages-normal-1",
+    "scenario": "stages",
+    "cap_fps": null,
+    "run": "20261019T061801Z-11553",
+    "code": 0,
+    "checks": [
+      7,
+      0
+    ],
+    "fps_ini_created": false,
+    "ini_before": null,
+    "ini_after": "[INTERNAL]\n\nvidResIndex=0\n\n\n",
+    "save_sha256": "c2852f4c009f23225e1c9c70f564ca36b4c12e8220736d1c72a1dbfce8d3372f"
+  },
+  {
+    "label": "stages-normal-2",
+    "scenario": "stages",
+    "cap_fps": null,
+    "run": "20261019T062329Z-19152",
+    "code": 0,
+    "checks": [
+      7,
+      0
+    ],
+    "fps_ini_created": false,
+    "ini_before": null,
+    "ini_after": "[INTERNAL]\n\nvidResIndex=0\n\n\n",
+    "save_sha256": "c2852f4c009f23225e1c9c70f564ca36b4c12e8220736d1c72a1dbfce8d3372f"
+  },
+  {
+    "label": "stages-cap30-1",
+    "scenario": "stages",
+    "cap_fps": 30,
+    "run": "20261019T062621Z-24198",
+    "code": 0,
+    "checks": [
+      7,
+      0
+    ],
+    "fps_ini_created": true,
+    "ini_before": "[ENGINE]\nzMaxFps=30\n\n",
+    "ini_after": "[ENGINE]\n\nzMaxFps=30\n\n\n[INTERNAL]\n\nvidResIndex=0\n\n\n",
+    "save_sha256": "c2852f4c009f23225e1c9c70f564ca36b4c12e8220736d1c72a1dbfce8d3372f"
+  }
+]

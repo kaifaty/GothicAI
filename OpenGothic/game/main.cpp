@@ -24,6 +24,7 @@
 #include "gothic.h"
 #include "build.h"
 #include "commandline.h"
+#include "resources.h"
 #include "aibridge.h"
 
 #include <dmusic.h>
@@ -96,24 +97,7 @@ int main(int argc,const char** argv) {
     }
   CrashLog::setup();
 
-  zenkit::Logger::set(zenkit::LogLevel::INFO, [] (zenkit::LogLevel lvl, const char* cat, const char* message) {
-    (void)cat;
-    switch (lvl) {
-      case zenkit::LogLevel::ERROR:
-        Tempest::Log::e("[zenkit] ", message);
-        break;
-      case zenkit::LogLevel::WARNING:
-        Tempest::Log::e("[zenkit] ", message);
-        break;
-      case zenkit::LogLevel::INFO:
-        Tempest::Log::i("[zenkit] ", message);
-        break;
-      case zenkit::LogLevel::DEBUG:
-      case zenkit::LogLevel::TRACE:
-        Tempest::Log::d("[zenkit] ", message); // unused
-        break;
-      }
-    });
+  zenkit::Logger::set(zenkit::LogLevel::INFO, Resources::zenkitLog);
   Dm_setLogger(DmLogLevel_INFO, [](void* ctx, DmLogLevel lvl, char const* msg) {
     switch (lvl) {
       case DmLogLevel_FATAL:
@@ -142,6 +126,9 @@ int main(int argc,const char** argv) {
   Tempest::Device      device{*api,gpuName};
   CrashLog::setGpu(device.properties().name);
 
+  Tempest::Application app;
+  const auto startup=Tempest::Application::tickCount();
+  try {
   Resources            resources{device};
   Gothic               gothic;
   GameMusic            music;
@@ -149,6 +136,11 @@ int main(int argc,const char** argv) {
   AiBridge             aiBridge;
 
   MainWindow           wx(device);
-  Tempest::Application app;
+  Tempest::Log::i("base: game window ready (",Tempest::Application::tickCount()-startup," ms since base preparation)");
   return app.exec();
+  }
+  catch(const BaseStore::Error& error) {
+    Tempest::Log::e(error.what());
+    return EXIT_FAILURE;
+    }
   }

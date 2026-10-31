@@ -1,0 +1,80 @@
+{
+  "glb": "market-set/build/wolf-head/model.glb",
+  "maps_dir": "market-set/tiles",
+  "scales": {
+    "OWN_PROP_WOOD_PLANK": 2.6315789,
+    "OWN_PROP_FUR": 1.0,
+    "OWN_PROP_BONE": 1.0,
+    "OWN_PROP_EYE": 1.0,
+    "OWN_PROP_NOSE": 1.0
+  },
+  "targets": {
+    "OWN_PROP_WOOD_PLANK": [
+      0.0355,
+      0.0256,
+      0.0146
+    ],
+    "OWN_PROP_FUR": [
+      0.115,
+      0.1,
+      0.085
+    ],
+    "OWN_PROP_BONE": [
+      0.45,
+      0.4,
+      0.3
+    ],
+    "OWN_PROP_EYE": [
+      0.45,
+      0.24,
+      0.04
+    ],
+    "OWN_PROP_NOSE": [
+      0.012,
+      0.011,
+      0.01
+    ]
+  },
+  "slots": {
+    "OWN_PROP_WOOD_PLANK": [
+      "OWN_WOLFHEAD_MARKET_WOOD",
+      "WOOD"
+    ],
+    "OWN_PROP_FUR": [
+      "OWN_WOLFHEAD_MARKET_FUR",
+      "UNDEF"
+    ],
+    "OWN_PROP_BONE": [
+      "OWN_WOLFHEAD_MARKET_FUR",
+      "UNDEF"
+    ],
+    "OWN_PROP_EYE": [
+      "OWN_WOLFHEAD_MARKET_FUR",
+      "UNDEF"
+    ],
+    "OWN_PROP_NOSE": [
+      "OWN_WOLFHEAD_MARKET_FUR",
+      "UNDEF"
+    ]
+  },
+  "metal": [],
+  "size": 1024,
+  "seed": 1,
+  "angle_limit": 66,
+  "margin": 0.004,
+  "tone_spread": 0.05,
+  "wet_height": 0.0,
+  "algae": 0.0,
+  "bleach": 0.0,
+  "edge_radius": 0.004,
+  "planks_per_tile": {
+    "OWN_PROP_WOOD_PLANK": 4
+  },
+  "contrast": {
+    "OWN_PROP_WOOD_PLANK": 1.3,
+    "OWN_PROP_FUR": 1.2,
+    "OWN_PROP_BONE": 1.0,
+    "OWN_PROP_EYE": 1.0,
+    "OWN_PROP_NOSE": 1.0
+  }
+}

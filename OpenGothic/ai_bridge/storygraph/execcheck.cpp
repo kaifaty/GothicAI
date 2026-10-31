@@ -8,6 +8,7 @@
 #include <zenkit/DaedalusVm.hh>
 #include <zenkit/addon/daedalus.hh>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 

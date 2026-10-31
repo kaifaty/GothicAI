@@ -1,0 +1,38 @@
+# The humiliation after a surrender (docs/npc-agent.md, mercy), staged without the AI server to judge how it
+# looks: the hero kneels (heropose, as player_pose), Lobart stands PEE_DISTANCE_CM in front of him facing him
+# and plays the native T_STAND_2_PEE -> S_PEE. Stills from the side, three-quarter front and behind the npc.
+cheat god
+set time 12 0
+goto NW_FARM1_OUT_01
+freeze BAU_950_LOBART
+overlay off
+wait 3000
+heropose kneel
+wait 2500
+put BAU_950_LOBART 100 0
+wait 800
+ani BAU_950_LOBART T_STAND_2_PEE
+wait 5000
+watch BAU_950_LOBART
+anims
+watch player
+cam follow 230 95 90
+rec stream
+wait 2000
+stop
+cam follow 150 95 75
+wait 500
+shot stream-close
+cam follow 300 90 90
+wait 500
+shot side-100
+cam follow 260 110 50
+wait 500
+shot q-100
+cam follow 260 120 160
+wait 500
+shot back-100
+cam follow 170 80 80
+wait 500
+shot close-100
+wait 600

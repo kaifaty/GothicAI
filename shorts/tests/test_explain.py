@@ -5,10 +5,12 @@ import json
 import shutil
 import subprocess
 import sys
+import wave
+from array import array
 
 import pytest
 
-from gothic_shorts import cli, explain, levels, studio
+from gothic_shorts import cli, clicks, explain, levels, studio
 
 
 def _rows(report):
@@ -51,6 +53,73 @@ def test_speech_windows_match_remotion_rounding_and_optional_sting(brand, ending
     assert windows == []
     assert total == pytest.approx(5 / 30)
     assert length == pytest.approx(total + ending)
+
+
+def test_sound_spans_follow_remotion_frames_and_stop_at_freeze():
+    spans = explain.sound_spans({"beats": [
+        {"kind": "card", "dur": 1},
+        {"kind": "footage", "dur": 2, "freeze": 1},       # silent from its 30th frame
+        {"kind": "footage", "dur": 0.075},                # Math.round(92.25): frames 90..92
+        {"kind": "footage", "dur": 1, "freeze": 0.1},     # 3/30 >= 0.1 although ceil(0.1 * 30) is 4
+        {"kind": "footage", "dur": 1, "freeze": 5},       # past its end: the whole beat
+        {"kind": "footage", "dur": 1, "freeze": 0},       # frozen from the first frame: no sound
+    ]})
+
+    expected = [(0, 1), (1, 2), (90 / 30, 92 / 30), (92 / 30, 95 / 30), (122 / 30, 152 / 30)]
+    assert len(spans) == len(expected)
+    for actual, span in zip(spans, expected, strict=True):
+        assert actual == pytest.approx(span)
+
+
+def _wav(path, signal, *, rate=48_000, sample_format="s16"):
+    subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i",
+         f"aevalsrc='{signal}':s={rate}:d=3:c=stereo", "-c:a", f"pcm_{sample_format}le", str(path)],
+        check=True, capture_output=True,
+    )
+
+
+def _samples(path):
+    with wave.open(str(path), "rb") as source:
+        return array("h", source.readframes(source.getnframes()))
+
+
+def test_fade_edges_removes_hard_cuts_and_keeps_samples_outside_spans(tmp_path):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is required for the synthetic stem")
+    path = tmp_path / "game.wav"
+    # A silent card, then footage starting mid-wave at 1 s and cut mid-wave to other footage at 1.5 s,
+    # which stops at 2.5 s; the sting fades in on its own after the last span.
+    _wav(path, "if(lt(t,1),0,if(lt(t,1.5),0.5*sin(2*PI*440*t+1),if(lt(t,2.5),0.5*sin(2*PI*660*t+2),"
+               "0.3*min(1,(t-2.5)/0.05)*sin(2*PI*220*(t-2.5)))))")
+    assert [round(hit, 2) for hit in clicks.detect(path)] == [1, 1.5, 2.5]
+    before = _samples(path)
+
+    explain.fade_edges(path, [(0, 1), (1, 1.5), (1.5, 2.5)])
+
+    assert clicks.detect(path) == []
+    after = _samples(path)
+    assert len(after) == len(before)
+    rate, ramp = 48_000, round(explain.EDGE_FADE * 48_000)
+    for start in (1, 1.5):
+        first = 2 * round(start * rate)
+        assert after[first] == after[first + 1] == 0  # each span starts silent
+    for end in (1.5, 2.5):
+        assert abs(after[2 * round(end * rate) - 1]) <= 16384 / ramp + 1  # and ends one step from it
+    middle = slice(2 * (rate + ramp), 2 * (round(1.5 * rate) - ramp))
+    assert after[middle] == before[middle]
+    sting = slice(2 * round(2.5 * rate), None)
+    assert after[sting] == before[sting]
+
+
+def test_fade_edges_rejects_non_16_bit_stems(tmp_path):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg is required for the synthetic stem")
+    path = tmp_path / "game.wav"
+    _wav(path, "0.5*sin(2*PI*440*t)", sample_format="s32")
+
+    with pytest.raises(explain.ExplainError, match="expected 16-bit PCM"):
+        explain.fade_edges(path, [(0, 1)])
 
 
 @pytest.fixture(scope="module")
@@ -120,13 +189,54 @@ def _run_cli(monkeypatch, *arguments):
     return exit_info.value.code
 
 
-@pytest.mark.parametrize("music", [True, False], ids=["music-defaults", "no-music-custom-paths"])
+@pytest.mark.parametrize("format,width,height", [
+    (None, 1080, 1920), ("tall", 1080, 1920), ("wide", 1920, 1080),
+], ids=["default-tall", "tall", "wide"])
+def test_render_passes_plan_dimensions_and_preserves_stems(tmp_path, monkeypatch, format, width, height):
+    plan = _plan()
+    if format is not None:
+        plan["format"] = format
+    original = copy.deepcopy(plan)
+    commands = []
+    monkeypatch.setattr(explain, "_run", lambda command, **kwargs: commands.append((command, kwargs)))
+    faded = []
+    monkeypatch.setattr(explain, "fade_edges", lambda path, spans: faded.append((path, spans)))
+
+    explain.render(tmp_path, plan, tmp_path)
+
+    assert faded == [(tmp_path / "game.wav", [(0, 12)])]
+    assert len(commands) == 4
+    for (command, kwargs), stem in zip(commands, (None, "voice", "game", "music"), strict=True):
+        assert command[:4] == ["npx", "remotion", "render", "Explainer"]
+        assert command[command.index("--width") + 1] == str(width)
+        assert command[command.index("--height") + 1] == str(height)
+        assert kwargs == {"cwd": explain.PROJECT}
+        props = json.loads((tmp_path / f"{stem or 'picture'}.json").read_text())
+        expected = {**plan, "stem": stem} if stem else plan
+        assert props == expected
+    assert plan == original
+
+
+def test_render_rejects_unknown_format_before_starting_remotion(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(explain, "_run", lambda *args, **kwargs: commands.append(args))
+
+    with pytest.raises(explain.ExplainError, match="format must be tall or wide"):
+        explain.render(tmp_path, {**_plan(), "format": "square"}, tmp_path)
+
+    assert commands == []
+
+
+@pytest.mark.parametrize("music,format", [(True, None), (False, None), (True, "wide")],
+                         ids=["music-defaults", "no-music-custom-paths", "wide-shared-levels"])
 def test_cli_publishes_synthetic_stems_with_shared_levels(
-    tmp_path, synthetic_stems, monkeypatch, capsys, music,
+    tmp_path, synthetic_stems, monkeypatch, capsys, music, format,
 ):
     ws = tmp_path / "explainers" / "synthetic"
     ws.mkdir(parents=True)
     plan = _plan(music=music)
+    if format is not None:
+        plan["format"] = format
     plan_file = "plan.json" if music else "plan.other.json"
     (ws / plan_file).write_text(json.dumps(plan))
     calls = _prepared_render(monkeypatch, synthetic_stems)

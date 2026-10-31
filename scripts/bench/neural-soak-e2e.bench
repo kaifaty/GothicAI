@@ -1,0 +1,9 @@
+# Keep the ordinary app clock throughout the soak. The scenario only signals
+# when the first wave begins; this fixture never moves or changes the actors.
+cadence normal
+waitai broken soak_wave 300000
+cam game
+ui on
+rec soak-wave
+wait 25000
+stop

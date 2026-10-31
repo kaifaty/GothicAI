@@ -9,6 +9,7 @@
 #include "gothic.h"
 #include "gamemusic.h"
 #include "resources.h"
+#include "basestore.h"
 #include "game/playercontrol.h"
 #include "game/serialize.h"
 #include "game/simulationstep.h"
@@ -159,6 +160,7 @@ public:
         return uint64_t(arena[key].GetUint());
       };
       arenaConfig->scenario=textField("scenario","native_duel");
+      arenaConfig->weapon=textField("weapon","1h");
       arenaConfig->seed=uint32_t(unsignedField("seed",seed>=0 ? uint64_t(seed) : 17));
       arenaConfig->side=unsigned(unsignedField("side",0));
       arenaConfig->timeoutMs=unsignedField("timeout_ms",60000);
@@ -202,7 +204,9 @@ public:
         arenaConfig->centerOffsetCm={offset[0].GetFloat(),offset[1].GetFloat()};
       }
       seed=arenaConfig->seed;
-      if(arenaConfig->side>1 || !std::isfinite(arenaConfig->distanceCm) || arenaConfig->distanceCm<80 ||
+      if((arenaConfig->weapon!="1h" && arenaConfig->weapon!="2h") ||
+         (arenaConfig->weapon=="2h" && arenaConfig->scenario!="native_duel") ||
+         arenaConfig->side>1 || !std::isfinite(arenaConfig->distanceCm) || arenaConfig->distanceCm<80 ||
          arenaConfig->distanceCm>2000 || arenaConfig->timeoutMs<33 || arenaConfig->timeoutMs>60000 ||
          !std::isfinite(arenaConfig->yawOffsetDeg) || std::abs(arenaConfig->yawOffsetDeg)>45 ||
          !std::isfinite(arenaConfig->opponentYawOffsetDeg) || std::abs(arenaConfig->opponentYawOffsetDeg)>45 ||
@@ -301,11 +305,22 @@ public:
   }
   // A fork ending its episode: flush its own journals without tearing down the shared world.
   void flushForExit() {
+    finishMeleeShadowSwings();
     saveSummary();
     observationFile.close(); timingFile.close(); controlFile.close(); arenaFile.close();
   }
 
 private:
+  void finishMeleeShadowSwings() {
+    if(auto* world=gothic.world()) {
+      // finishStep publishes animation after World::tick has run physics. Query
+      // that final pose interval before any NPC drains/removes its shadow blade.
+      world->physic()->flushShadowBlades();
+      for(uint32_t i=0;i<world->npcCount();++i)
+        world->npcById(i)->finishMeleeShadowSwing();
+      }
+  }
+
   void teardown() {
     BodyArena::interrupt("reset_requested");
     BodyArena::disable();
@@ -935,6 +950,7 @@ public:
   }
 
   void close() {
+    finishMeleeShadowSwings();
     saveSummary();
     BodyArena::interrupt("close_requested"); BodyArena::disable();
     BodyTrajectory::reset("close");
@@ -1401,17 +1417,18 @@ int main(int argc, const char** argv) {
     // Jolt steps on this thread unless asked otherwise: one schedule for lockstep and realtime runs,
     // and a single-threaded template for --fork-reset.
     setenv("OPENGOTHIC_PHYSICS_THREADS","0",0);
+    // No background copy of the base to the store: --fork-reset needs a single thread, and the
+    // copy would serialize every parallel runner on the store's lock.
+    BaseStore::setPublication(false);
     std::filesystem::create_directories(opts.output);
     CommandLine commandLine(argc,argv);
+    zenkit::Logger::set(zenkit::LogLevel::WARNING,Resources::zenkitLog);
     Resources resources;
     Gothic gothic;
     auto stuckLogger = StuckLogger::fromEnvironment();
     gothic.isNpcInDialogFn = [](const Npc*) { return false; };
     gothic.setupGlobalScripts();
     GameMusic music;
-    zenkit::Logger::set(zenkit::LogLevel::WARNING,[](zenkit::LogLevel,const char*,const char* message) {
-      Tempest::Log::e("[zenkit] ",message);
-    });
     Runner runner(gothic,opts);
     if(!opts.stdio) {
       Json reset(rapidjson::kObjectType);
@@ -1579,10 +1596,14 @@ int main(int argc, const char** argv) {
         auto response = runner.status();
         echoId(response,request);
         runner.compactReply(response,cmd);
+        // The caller may terminate the template as soon as it receives this
+        // acknowledgement. All episode journals must be complete first.
+        if(cmd=="close") {
+          if(forkPipe>=0) runner.flushForExit(); else runner.close();
+        }
         send(protocol,response);
         if(cmd=="close") {
-          if(forkPipe>=0) { runner.flushForExit(); _exit(0); }
-          runner.close();
+          if(forkPipe>=0) _exit(0);
           return 0;
         }
       } catch(const std::exception& e) {

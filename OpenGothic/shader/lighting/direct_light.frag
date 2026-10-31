@@ -10,6 +10,9 @@
 #include "lighting/purkinje_shift.glsl"
 #include "scene.glsl"
 #include "common.glsl"
+#if defined(MATERIAL_MAPS)
+#include "lighting/material_brdf.glsl"
+#endif
 
 layout(location = 0) out vec4 outColor;
 
@@ -24,6 +27,9 @@ layout(binding = 0, std140) uniform UboScene {
 layout(binding = 1) uniform sampler2D  gbufDiffuse;
 layout(binding = 2) uniform usampler2D gbufNormal;
 layout(binding = 3) uniform sampler2D  depth;
+#if defined(MATERIAL_MAPS)
+layout(binding = 12) uniform sampler2D gbufOrm;
+#endif
 
 #if defined(SHADOW_MAP)
 layout(binding = 4) uniform sampler2D textureSm0;
@@ -150,7 +156,15 @@ void main(void) {
   const vec3 linear      = textureAlbedo(diff.rgb);
 
   const vec3 illuminance = scene.sunColor * light;
-  const vec3 luminance   = linear * illuminance * Fd_Lambert;
+  vec3 luminance = linear * illuminance * Fd_Lambert;
+#if defined(MATERIAL_MAPS)
+  const vec4 orm = texelFetch(gbufOrm, fragCoord, 0);
+  if(orm.a>0.5 && light>0.0) {
+    const vec4 pos = worldPos(d);
+    const vec3 view = normalize(scene.camPos - pos.xyz/pos.w);
+    luminance = materialBrdf(linear, normal, view, scene.sunDir, orm.rgb) * illuminance;
+    }
+#endif
 
   outColor = vec4(luminance * scene.exposure, 0.0);
 

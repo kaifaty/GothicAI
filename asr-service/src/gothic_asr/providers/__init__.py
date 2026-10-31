@@ -1,5 +1,5 @@
 """Provider registry. A provider is chosen by a spec string: `name` or `name:key=value,key=value`,
-e.g. `voxtral` (self-hosted Voxtral Realtime), `chatgpt` (ChatGPT plan) or
+e.g. `inworld` (Inworld STT), `voxtral` (self-hosted Voxtral Realtime), `chatgpt` (ChatGPT plan) or
 `openai:base_url=https://api.groq.com/openai/v1,model=whisper-large-v3-turbo,api_key_env=GROQ_API_KEY`.
 Models are never run on this machine: self-hosted ones live on a GPU server.
 """
@@ -25,6 +25,12 @@ def _voxtral(**opts: str) -> AsrProvider:
     return VoxtralRealtime(**opts)
 
 
+def _inworld(**opts: str) -> AsrProvider:
+    from .inworld import InworldRealtime
+
+    return InworldRealtime(**opts)
+
+
 def _openai(**opts: str) -> AsrProvider:
     from .remote import OpenAICompatible
 
@@ -39,6 +45,7 @@ def _fake(**opts: str) -> AsrProvider:
 
 
 PROVIDERS: dict[str, Callable[..., AsrProvider]] = {
+    "inworld": _inworld,
     "voxtral": _voxtral,
     "chatgpt": _chatgpt,
     "openai": _openai,

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/addon/daedalus.hh>
+#include "game/definitions/definitiontypes.h"
 
 #include <Tempest/SoundDevice>
 #include <Tempest/SoundEffect>
@@ -32,7 +32,7 @@ class GameMusic final {
     void      setEnabled(bool e);
     bool      isEnabled() const;
     void      setMusic(Music m);
-    void      setMusic(const zenkit::IMusicTheme &theme, Tags t);
+    void      setMusic(const Def::MusicTheme &theme, Tags t);
     void      stopMusic();
 
   private:
@@ -45,7 +45,7 @@ class GameMusic final {
     static GameMusic* instance;
 
     struct {
-      zenkit::IMusicTheme theme = {};
+      Def::MusicTheme theme = {};
       Tags                tags  = Tags::Std;
       } currentMusic;
 

@@ -13,13 +13,16 @@ from typing import Any, Literal
 
 from .chronicle import Fact
 from .crimes import COMMUNITIES, Crimes
+from .npc_cheat import betrayed
+from .people_knowledge import rumor_subject
+from .promise_breach import broken_promises, silence_facts
 
 DAY_MINUTES = 24 * 60
 REPORT_DELAYS = {"theft": DAY_MINUTES, "sheep": DAY_MINUTES, "attack": DAY_MINUTES // 2, "murder": 120}
 LAW_COMMUNITIES = tuple(key for key, value in COMMUNITIES.items() if value.lawkeepers)
 COUNTER_KINDS = {"theft": "THEFT", "attack": "ATTACK", "murder": "MURDER", "sheep": "SHEEPKILLER"}
 _GUARD_GUILDS = {"city": {1, 2}, "oldcamp": {1, 2}, "farm": {7}, "monastery": {4}}
-_TIMED_FACTS = {"died", "forgiven", "silenced", "rumor", "testimony"}
+_TIMED_FACTS = {"died", "forgiven", "silenced", "deal", "rumor", "testimony"}
 
 
 def game_minutes(fact: Mapping[str, Any]) -> int | None:
@@ -101,7 +104,70 @@ class CrimeLaw:
         total = sum(counters.values())
         if total and total == counters["SHEEPKILLER"]:
             return 100  # PETZMASTER's CRIME_SHEEPKILLER branch replaces the computed total
-        return min(1000, 50 * total + (500 if counters["MURDER"] else 0))
+        surrendered = sum(bool(f.get("surrendered")) for f in self.unpaid(community))
+        return min(1000, 50 * total + (500 if counters["MURDER"] else 0) + 250 * surrendered)
+
+    def inform(self, crime: str, *, via: str, how: str, at: int) -> Fact | None:
+        """The common arrival path: delayed reports and an on-scene call teach law once."""
+        deed = self.crimes.crime(crime)
+        if deed is None or (community := deed.get("community")) not in LAW_COMMUNITIES:
+            return None
+        if self.crimes.side(via, crime) is not None:
+            return None
+        if any(f.get("id") == crime for f in self.known(community)):
+            return None
+        fact: Fact = {
+            "fact": "crime_known", "community": community, "crime": crime,
+            "how": how, "via": via.upper(), "at": at,
+        }
+        self.chronicle.record(fact)
+        for promise in broken_promises(
+            self.chronicle, via, crime=crime, cover=self.crimes.cover, at=at,
+        ):
+            betrayed(self.chronicle, via, str(promise.get("deal", "")), "reported", community)
+        return fact
+
+    def called(
+        self, crime: str, via: str, guards: Iterable[str], *, at: int | None = None
+    ) -> list[Fact]:
+        """Teach guards who heard the witness and deliver that call to their community law."""
+        deed = self.crimes.crime(crime)
+        if deed is None or deed.get("community") not in LAW_COMMUNITIES:
+            return []
+        if self.crimes.side(via, crime) is not None:
+            return []
+        when = at if at is not None else self.now
+        if when is None:
+            when = game_minutes(deed)
+        if when is None:
+            return []
+        via = via.upper()
+        listeners = sorted({
+            npc.upper() for npc in guards if self.crimes.side(npc, crime) is None
+        })
+        source = next(
+            (f["npc"] for f in self.chronicle.facts("crime_seen")
+             if f.get("crime") == crime and f.get("npc")),
+            via,
+        )
+        out = []
+        for npc in listeners:
+            if not self.is_guard(npc, deed["community"]):
+                continue
+            if not any(k.crime["id"] == crime and k.degree != "suspects" for k in self.crimes.known(npc)):
+                fact: Fact = {
+                    "fact": "rumor", "crime": crime, "from": via, "to": npc,
+                    "hops": 1, "at": when, "how": "called",
+                    "quest": f"crime:{crime}", "kind": deed["kind"], "about": source,
+                    "about_name": self.crimes.names(source), "title": self.crimes.describe(deed),
+                    "day": when // DAY_MINUTES,
+                }
+                self.chronicle.record(fact)
+                out.append(fact)
+        if any(self.is_guard(npc, deed["community"]) for npc in listeners):
+            if arrival := self.inform(crime, via=via, how="called", at=when):
+                out.append(arrival)
+        return out
 
     def _times(self, facts: list[Fact]) -> dict[int, int]:
         stamps = {
@@ -125,6 +191,8 @@ class CrimeLaw:
         facts = self.chronicle.facts()
         times = self._times(facts)
         for index, fact in enumerate(facts):
+            if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+                continue
             if fact.get("fact") in _TIMED_FACTS and index not in times:
                 self.chronicle.record({"fact": "crime_law_time", "event": index, "at": now})
         out = []
@@ -134,17 +202,11 @@ class CrimeLaw:
             key = (report.community, report.crime["id"])
             if report.status != "pending" or report.due > now or key in known:
                 continue
-            fact = {
-                "fact": "crime_known",
-                "community": report.community,
-                "crime": report.crime["id"],
-                "how": report.how,
-                "via": report.via,
-                "at": report.due,
-            }
-            self.chronicle.record(fact)
-            known.add(key)
-            out.append(fact)
+            if fact := self.inform(
+                report.crime["id"], via=report.via, how=report.how, at=report.due
+            ):
+                known.add(key)
+                out.append(fact)
         return out
 
     def deliveries(self) -> list[LawDelivery]:
@@ -156,6 +218,8 @@ class CrimeLaw:
         reports: list[LawDelivery] = []
         routes: set[tuple[str, str, str, int]] = set()
         for index, fact in enumerate(facts):
+            if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+                continue
             entries: list[tuple[str, str]] = []
             kind = fact.get("fact")
             if kind == "crime_seen":
@@ -163,12 +227,14 @@ class CrimeLaw:
             elif kind == "rumor" and fact.get("crime"):
                 entries.append((fact["crime"], fact.get("to", "")))
             elif kind == "testimony":
-                entries += [(crime, fact.get("npc", "")) for crime in fact.get("crime_told", [])]
+                entries += [(crime, fact.get("npc", "")) for crime in self.crimes.testimony_crimes(fact)]
             for crime_id, npc in entries:
                 crime = crimes.get(crime_id)
                 if crime is None or (community := crime.get("community")) not in LAW_COMMUNITIES:
                     continue
                 npc = npc.upper()
+                if self.crimes.side(npc, crime_id) is not None:
+                    continue
                 guard = self.is_guard(npc, community, fact)
                 if kind == "crime_seen":
                     if not guard and self.community_of(npc, fact) != community:
@@ -197,8 +263,7 @@ class CrimeLaw:
                 reports.append(LawDelivery(community, crime, npc, due, how, status, reason))
         return reports
 
-    @staticmethod
-    def _blocker(crime: Fact, via: str, due: int, facts: list[Fact], times: dict[int, int]) -> str:
+    def _blocker(self, crime: Fact, via: str, due: int, facts: list[Fact], times: dict[int, int]) -> str:
         candidates = []
         victim = crime.get("victim") or crime.get("owner")
         for index, fact in enumerate(facts):
@@ -208,11 +273,13 @@ class CrimeLaw:
             kind, npc = fact.get("fact"), fact.get("npc", "").upper()
             if kind == "died" and npc == via:
                 candidates.append((at, index, "died"))
-            elif fact.get("crime") == crime["id"]:
-                if kind == "silenced" and npc == via:
-                    candidates.append((at, index, "silenced"))
-                elif kind == "forgiven" and npc == victim:
-                    candidates.append((at, index, "repaid" if fact.get("paid") else "forgiven"))
+            elif npc == via and any(
+                promise.get("crime") == crime["id"]
+                for promise in silence_facts(self.chronicle, fact, cover=self.crimes.cover)
+            ):
+                candidates.append((at, index, "silenced"))
+            elif fact.get("crime") == crime["id"] and kind == "forgiven" and npc == victim:
+                candidates.append((at, index, "repaid" if fact.get("paid") else "forgiven"))
         return min(candidates)[2] if candidates else ""
 
     def absolve(

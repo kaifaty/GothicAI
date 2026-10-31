@@ -91,6 +91,72 @@ async def crimes(link: GameLink, service: Crimes, slot: int = 7) -> dict[str, st
         }
         return seen == set(fact.get("witnesses", ()))
 
+    async def house_witnesses() -> bool:
+        # Separate standing places keep Hilda clear of the owner's collision capsule.
+        # The house's walk points have a clear ray; BED_02 is among furniture. As in crime_react,
+        # move the hero in front of Hilda and prove real sight before the single native take.
+        places = {HILDA: "NW_FARM1_INHOUSE_02", LOBART: "NW_FARM1_INHOUSE_01"}
+        last: dict[str, Any] = {}
+
+        async def ready() -> bool:
+            views = await link.npc_view([HILDA, LOBART])
+            last["views"] = [view.model_dump() for view in views]
+            hilda = next((view for view in views if view.npc == HILDA), None)
+            return (
+                hilda is not None
+                and hilda.theft_ready is True
+                and hilda.state == "ZS_STAND_WP"
+                and hilda.body == "stand"
+                and hilda.weapon == "none"
+                and hilda.nearest_waypoint == places[HILDA]
+                and hilda.hero is not None
+                and hilda.hero.seen
+                and hilda.hero.distance <= 1500
+            )
+
+        for distance in (180, 300, 120):
+            views = {v.npc: v for v in await link.npc_view([HILDA, LOBART])}
+            for npc, point in places.items():
+                view = views.get(npc)
+                await link.debug("npc_goto", npc=npc, waypoint=point)
+                if (
+                    view is None
+                    or view.state != "ZS_STAND_WP"
+                    or view.body != "stand"
+                    or view.waypoint != point
+                ):
+                    await link.npc_act(
+                        npc,
+                        "start_activity",
+                        state="ZS_STAND_WP",
+                        waypoint=point,
+                        minutes=120,
+                        place=False,
+                    )
+
+            # Wait for Hilda's actual callback after any native quiet-sound/state transition.
+            async def initialized() -> bool:
+                current = await link.npc_view([HILDA, LOBART])
+                last["views"] = [view.model_dump() for view in current]
+                hilda = next((view for view in current if view.npc == HILDA), None)
+                return (
+                    hilda is not None
+                    and hilda.theft_ready is True
+                    and hilda.state == "ZS_STAND_WP"
+                    and hilda.body == "stand"
+                    and hilda.nearest_waypoint == places[HILDA]
+                )
+
+            if not await _until_async(initialized, bool, 5):
+                continue
+            await link.debug("teleport", near=HILDA, distance=distance)
+            for npc, point in places.items():
+                await link.debug("npc_goto", npc=npc, waypoint=point, face="PLAYER")
+            last["hero_in_front_cm"] = distance
+            if await _until_async(ready, bool, 2):
+                return check("house_witnesses_ready", True, last)
+        return check("house_witnesses_ready", False, last)
+
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
@@ -105,7 +171,13 @@ async def crimes(link: GameLink, service: Crimes, slot: int = 7) -> dict[str, st
             await link.debug("skip_important", near=npc)
         await link.story_effect(LOBART, [{"do": "end"}])
         points = {p["name"]: p for p in await link.waypoints() if not p.get("fp")}
-        if not check("farm", HOUSE in points and HILDA in humans and LOBART in humans, HOUSE):
+        if not check(
+            "farm",
+            {HOUSE, "NW_FARM1_INHOUSE_01", "NW_FARM1_INHOUSE_02"} <= points.keys()
+            and HILDA in humans
+            and LOBART in humans,
+            HOUSE,
+        ):
             return _logged(results)
         house = points[HOUSE]
         house_pos = (house["x"], house["y"], house["z"])
@@ -132,9 +204,9 @@ async def crimes(link: GameLink, service: Crimes, slot: int = 7) -> dict[str, st
         # Lobart and Hilda are OUT in this save: the household theft has no vanilla community or
         # lawkeeper. Hilda stays free and receives ASSESSTHEFT normally. The native drop owns the cup;
         # the room's ownership is reported as it is, without assigning it a farmer guild.
-        await link.debug("player_goto", waypoint=HOUSE)
+        await link.debug("player_goto", waypoint="NW_FARM1_INHOUSE_01")
+        await link.debug("npc_goto", npc=HILDA, waypoint=parked)
         await stand(LOBART, HOUSE)
-        await stand(HILDA, "NW_FARM1_INHOUSE_02", face="PLAYER")
         await asyncio.sleep(1)
         views = await link.npc_view([LOBART])
         room_detail = f"indoors={views[0].indoors}, room_guild={views[0].room_guild}" if views else "no view"
@@ -144,8 +216,9 @@ async def crimes(link: GameLink, service: Crimes, slot: int = 7) -> dict[str, st
             f"native Lobart drop; {room_detail}",
         ):
             return _logged(results)
-        await asyncio.sleep(1)
-        await link.debug("player_take", item="ITMI_SILVERCUP", distance=800)
+        if not await house_witnesses():
+            return _logged(results)
+        await link.debug("player_take", item="ITMI_SILVERCUP", distance=1200)
         deed = await received("take_item")
         fact = await crime_of(deed)
         if not check(

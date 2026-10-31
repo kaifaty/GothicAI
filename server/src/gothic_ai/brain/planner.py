@@ -72,6 +72,7 @@ NO_ACTION = {"continue", KEEP}
 # not react too
 TAKES_BODY = {"fight", "flee", "call_help"}
 BODY_MAX_S = 60.0  # a body taken over without word of it being done is given back after this
+INTENT_THREAT_WAIT_S = 10.0  # an NPC can choose to run just before the first threat perception arrives
 OVERHEAR_CM = 1000  # npc's this close hear what the player says to someone else
 TRACE_PER_MIN = 12  # decision rows per npc a minute: a NEAR npc with an agenda is asked every 6-10 s
 # a quiet npc whose routine is being asked is looked at again this soon (no request, no token spent)
@@ -225,6 +226,7 @@ class NpcRecord:
     flight: Flight | None = None
     holds: list[tuple[str, float]] = field(default_factory=list)  # threats held from the scripts, (id, when)
     body: tuple[str, float] | None = None  # the body took a threat over: (choice, since); until npc_idle
+    waiting_body: tuple[str, float] | None = None  # conversational choice waiting for its threat's source
     missed_urgent: bool = False  # something urgent happened while it was fighting
     last_plan: float = 0.0  # when it last thought of its day (or appeared): the next plan is a period later
     talking: bool = False  # in a conversation with the hero (talk.py has its body): threats only
@@ -292,6 +294,7 @@ class NpcPlanner:
         # takes a chosen trip over (chat, pray, tavern): walks the npc there; without it a trip is not done
         self.on_plan: Callable[[Decision, NpcRecord, DayOption], None] | None = None
         self.applier = applier
+        self.crime_rooms = False  # CrimeMeet handles hero room entry; keep it only as model context.
         self.builder = builder or SituationBuilder()
         self.cfg = config or PlannerConfig()
         self.clock = clock
@@ -373,6 +376,7 @@ class NpcPlanner:
             if rec.activity not in ("dialog", "attached") or e.activity != "routine":
                 rec.activity = e.activity
             if rec.activity != "routine":
+                rec.waiting_body = None
                 self._finish_investigation(rec, now, resume=False)
         if full:
             for npc in [n for n in self.npcs if n not in seen]:
@@ -397,6 +401,7 @@ class NpcPlanner:
         place: str | None = None,
         loudness: float | None = None,
         source: str | None = None,
+        context_only: bool = False,
     ) -> None:
         rec = self.npcs.get(npc.upper())
         if rec is None or (rec.tier is Tier.OFF and rec.activity != "fight"):
@@ -429,9 +434,16 @@ class NpcPlanner:
         rec.stimuli = merge(rec.stimuli, stim, now)
         if other == "PLAYER":
             rec.last_interaction = now
-        if p.scripted:  # the game's scripts react; it stays as context for later decisions
+        if p.scripted or context_only or (
+            self.crime_rooms and kind == "enter_room" and other.upper() in {"PLAYER", "HERO", "PC_HERO"}
+        ):  # scripts or crime rules react; retain context for later decisions
             self.stats.scripted_events += 1
             return
+        if p.threat and rec.waiting_body is not None:
+            choice, since = rec.waiting_body
+            rec.waiting_body = None
+            if now - since <= INTENT_THREAT_WAIT_S and self.take_body(rec.id, choice) is not None:
+                return  # its own words already chose to fight/run; do not overwrite them on the first hit
         if rec.tier is Tier.OFF:
             # fighting (its weapon is out): decided upon once the fight is over, at once if it was urgent,
             # e.g. the hero killed the wolf the npc was fighting
@@ -449,7 +461,26 @@ class NpcPlanner:
 
     def on_held(self, msg: PerceptionHeld, now: float) -> None:
         """A threat the game holds from the npc's scripts until the model decides (or 0.6 s pass)."""
+        if msg.kind in {"bandit_enemy", "party_enemy"}:
+            return  # Parley owns these sightings, including late holds for an unknown or owned npc.
+        if msg.deed is not None or msg.other.upper() in {"PLAYER", "HERO", "PC_HERO"}:
+            # CrimeReact/CrimeMeet settle hero deeds and room entry. Keep their context,
+            # including when a malformed hold has no deed id and must fall back to scripts.
+            self.on_event(
+                msg.npc,
+                msg.kind,
+                now,
+                other=msg.other,
+                distance_cm=msg.distance,
+                detail=msg.detail,
+                other_name=msg.other_name,
+                context_only=True,
+            )
+            return
         rec = self.npcs.get(msg.npc.upper())
+        if rec is not None and rec.activity == "body":
+            self.applier.verdict(msg.hold, "server", npc=rec.id)
+            return  # a late held perception must not hand an owned body back to native scripts
         if rec is None or rec.tier is Tier.OFF:
             self.applier.verdict(msg.hold, "scripts")
             return
@@ -469,7 +500,9 @@ class NpcPlanner:
     def _settle_holds(self, rec: NpcRecord, upto: float, decision: Decision | None) -> None:
         """Held threats up to `upto`: kept from the scripts only if the body took them over, by this
         decision or before (an unsure answer while running for help: it goes on running)."""
-        if decision is not None:
+        if rec.activity == "body":
+            taken = True
+        elif decision is not None:
             taken = decision.choice in TAKES_BODY
         else:
             taken = rec.body is not None and self.clock() - rec.body[1] < BODY_MAX_S
@@ -477,7 +510,7 @@ class NpcPlanner:
         keep = []
         for hold, at in rec.holds:
             if at <= upto:
-                self.applier.verdict(hold, to)
+                self.applier.verdict(hold, to, npc=rec.id)
             else:
                 keep.append((hold, at))
         rec.holds = keep
@@ -578,31 +611,41 @@ class NpcPlanner:
             s.alive(now) and (s.policy.urgent or s.policy.threat) for s in rec.stimuli
         )
 
-    def take_body(self, npc: str, choice: str) -> Decision | None:
+    def take_body(self, npc: str, choice: str, *, target: str | None = None) -> Decision | None:
         """The conversational model's intent for a free npc moves its body, like the behavioral model's own
         choice: `flee` or `fight` against the newest threat, while there is one (an intent that comes after
         the danger is moot). In-flight answers about the moment are outdated by it; the threats held now stay
         from the scripts."""
         rec = self.npcs.get(npc.upper())
         if rec is None or rec.activity in ("dialog", "attached", "body"):
+            if rec is not None:
+                rec.waiting_body = None
             log.info("%s: no body to take (%s)", npc, rec.activity if rec else "not around")
             return None
         now = self.clock()
-        target = self._threat(rec, now)
+        target = target or self._threat(rec, now)
         if target is None:
+            rec.waiting_body = (choice, now)
             log.info("%s: nothing to %s (%s)", npc, choice, ",".join(s.kind for s in rec.stimuli) or "calm")
             return None
+        rec.waiting_body = None
         self._finish_investigation(rec, now, resume=False)
         rec.version += 1
+        rec.pending = None
         rec.last_applied[applied_key(choice, target)] = now
         rec.body = (choice, now)
-        self._settle_holds(rec, now, None)
         decision = Decision(
             rec.id, "react", choice, 1.0, {}, tuple(s.kind for s in rec.stimuli), target=target
         )
         self.stats.applied += 1
         self.applier.apply(decision)
+        self._settle_holds(rec, now, decision)
         return decision
+
+    def clear_body_intent(self, npc: str) -> None:
+        rec = self.npcs.get(npc.upper())
+        if rec is not None:
+            rec.waiting_body = None
 
     def set_agenda(self, npc: str, agenda: str | None) -> None:
         """What the npc wants from the player (from memory or the big model's plan); None clears it."""
@@ -738,6 +781,7 @@ class NpcPlanner:
         if rec is not None and rec.activity != activity:
             rec.activity = activity
             if activity != "routine":
+                rec.waiting_body = None
                 self._finish_investigation(rec, self.clock(), resume=False)
             self._retier(self.clock())
 
@@ -950,6 +994,8 @@ class NpcPlanner:
         if rec.tier is Tier.OFF or rec.version != flight.version or rec.investigation is not None:
             self.stats.discarded += 1  # something happened meanwhile: a new pending request covers it
             self._settled(npc, flight, answer, False, "outdated")
+            if rec.activity == "body":
+                self._settle_holds(rec, flight.sent, None)
             self._shadow(npc, flight, outcome)
             if rec.pending is None:
                 self._schedule(rec, now)

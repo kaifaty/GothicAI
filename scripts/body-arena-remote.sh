@@ -42,7 +42,7 @@ set -euo pipefail
 task_root="$HOME/$1"
 mkdir -p "$task_root/source/scripts/bench" "$task_root/source/evals/npc-body" "$task_root/provenance" "$task_root/runs"
 REMOTE_SCRIPT
-  rsync -a "$ROOT/scripts/body-arena-remote.sh" "$ROOT/scripts/body_arena_env.py" \
+  rsync -a "$ROOT/scripts/body-arena-remote.sh" "$ROOT/scripts/body_arena_env.py" "$ROOT/scripts/base-ensure.sh" \
     "$ROOT/scripts/body_arena_suite.py" "$ROOT/scripts/body_arena_report.py" \
     "$ROOT/scripts/body_api_suite.py" "$ROOT/scripts/body_api_report.py" \
     "$ROOT/scripts/body_observe_suite.py" "$ROOT/scripts/body_headless_suite.py" \

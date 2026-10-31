@@ -292,9 +292,14 @@ async def deal_debt(
         return int(await link.evaluate(["call", "NPC_HASITEMS", hero, ["sym", item]]) or 0)
 
     async def come() -> str | None:
-        await link.debug("player_goto", to=lender, distance=250)
+        await link.debug("teleport", near=lender, distance=250)
         talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
-        return talk.people[lender].name if await _until(lambda: lender in talk.people, 20) else None
+        ready = await _until(
+            lambda: (entry := talk.people.get(lender)) is not None
+            and entry.distance <= 600 and entry.earshot <= 600 and entry.activity != "down",
+            20,
+        )
+        return talk.people[lender].name if ready else None
 
     await link.debug("skip_important", near=lender)  # his important dialog would start as the hero comes
     await link.attach(lender)  # gold to lend
@@ -378,6 +383,168 @@ async def deal_debt(
     after = await has(GOLD)
     check("repaid", ok and after == before - 25, f"{before} -> {after} gold")
     check("word_stays", Trust(deals.chronicle).broken(lender))
+    return _logged(results)
+
+
+async def xardas_money(
+    link: GameLink,
+    dialogue: DialogueManager,
+    talk: TalkDesk,
+    deals: Deals,
+    npc: str = "NONE_100_XARDAS",
+) -> dict[str, str]:
+    """Xardas's money on a new game: gifts and loans when asked, within his purse limits.
+
+    Fake mode gives 30, lends 150 for three days and refuses another gift of 100. Live mode first
+    checks that he offers no money unasked, then asks for 200 and accepts the terms he chooses.
+    """
+    results: dict[str, str] = {}
+
+    def check(name: str, ok: bool, detail: object = "") -> None:
+        results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
+
+    await link.wait_world()
+    if link.session is None:
+        await wait_message(link, Session, timeout=10)
+    await asyncio.sleep(1)
+    hero = ["inst", "HERO"]
+
+    async def gold() -> int:
+        return int(await link.evaluate(["call", "NPC_HASITEMS", hero, ["sym", GOLD]]) or 0)
+
+    def cash_offer() -> bool:
+        deal = deals.open.get(npc)
+        return deal is not None and (
+            any(g.item == GOLD for g in deal.npc_gives)
+            or bool(deal.npc_later and any(g.item == GOLD for g in deal.npc_later.gives))
+        )
+
+    def said() -> str:
+        conv = dialogue.conversations.get(npc)
+        return " | ".join(e.content for e in conv.memory.entries if e.role == "assistant") if conv else ""
+
+    await link.debug("skip_important", near=npc)
+    await link.debug("player_goto", to=npc, distance=250)
+    talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
+    if not await _until(lambda: npc in talk.people and talk.people[npc].distance <= 600, 20):
+        check("near", False, npc)
+        return _logged(results)
+    name = talk.people[npc].name
+
+    if isinstance(dialogue.llm, FakeBackend):
+
+        def offer(amount: int, loan: int = 0) -> ToolCall:
+            return ToolCall(
+                "propose_deal",
+                {
+                    "npc_gives": [{"item": GOLD, "count": amount}],
+                    "hero_gives": [],
+                    "hero_later": [{"item": GOLD, "count": loan, "days": 3}] if loan else [],
+                },
+                f"money{amount}_{loan}",
+            )
+
+        script = dialogue.llm = ClaimScript(
+            said=[
+                ("немного золота", FakeStep("Возьми тридцать золотых.", [offer(30)])),
+                ("одолжи", FakeStep("Сто пятьдесят. Вернёшь через три дня.", [offer(150, 150)])),
+                ("сто золотых даром", FakeStep("Дам ещё сто даром.", [offer(100)])),
+            ],
+            told=[],
+            default="Хорошо.",
+            only=name,
+        )
+        for key, line, amount, loan in (
+            ("gift", f"{name}, дай немного золота.", 30, 0),
+            ("loan", f"{name}, одолжи сто пятьдесят золотых на три дня.", 150, 150),
+        ):
+            before = await gold()
+            day = int((await link.story_state()).get("day", 0))
+            await link.debug("type", text=line)
+            if not await _until(lambda: npc in deals.open, 30):
+                check(key, False, f"no offer; {script.outputs}")
+                return _logged(results)
+            deal = deals.open[npc]
+            offered = sum(g.count for g in deal.npc_gives if g.item == GOLD)
+            later = sum(x.give.count for x in deal.later if x.give.item == GOLD)
+            due = all(x.due == day + 3 for x in deal.later)
+            await asyncio.sleep(1.2)
+            pressed = await link.press_deal()
+            accepted = await _until(lambda deal=deal: deal.state == "done", 20)
+            after = await gold()
+            debt = [d for d in deals.debts.values() if d.npc == npc and not d.paid]
+            owed = sum(d.give.count for d in debt if d.give.item == GOLD)
+            ok = (
+                offered == amount and later == loan and due and pressed == "sent" and accepted
+                and after == before + amount and owed == loan
+            )
+            check(key, ok, f"gold {before} -> {after}, debt {owed}; {deal.terms()}")
+            if not ok:
+                return _logged(results)
+            await asyncio.sleep(2)
+
+        before, facts = await gold(), len(deals.chronicle.facts("deal"))
+        outputs = len(script.outputs)
+        await link.debug("type", text=f"{name}, дай ещё сто золотых даром.")
+        expected = (
+            "Отклонено: даром ты даёшь герою не больше 50 золотых за всё время, осталось 20. "
+            "Больше — только в долг: что он вернёт, впиши в hero_later."
+        )
+        rejected = await _until(lambda: any(
+            result.startswith(expected) for result in script.outputs[outputs:]
+        ), 30)
+        window = await link.deal_window()
+        check(
+            "over",
+            rejected and npc not in deals.open and window is None and await gold() == before
+            and len(deals.chronicle.facts("deal")) == facts,
+            script.outputs[outputs:],
+        )
+        return _logged(results)
+
+    await link.debug("type", text=f"{name}, что мне теперь делать?")
+    unasked = not await _until(cash_offer, 20)
+    check("unasked", unasked, f"20 s; {said()}")
+    if not unasked:
+        return _logged(results)
+
+    for line in (
+        f"{name}, мне нужно двести золотых: сто стражникам у ворот и сто на первое время. "
+        "Дашь или одолжишь?",
+        f"{name}, согласен на твои условия, давай по рукам.",
+        f"{name}, хорошо, я согласен. Оформим сделку.",
+    ):
+        await link.debug("type", text=line)
+        if await _until(cash_offer, 45):
+            break
+    conv = dialogue.conversations.get(npc)
+    reply = conv.reply if conv else None
+    settled = reply is None or await _until(reply.done, 45)
+    deal = deals.open.get(npc)
+    offered = cash_offer() and settled
+    check("offered", offered, f"{said()}; {deal.terms() if deal else 'no offer'}")
+    if not offered or deal is None:
+        return _logged(results)
+    before = await gold()
+    loan = sum(x.give.count for x in deal.later if x.give.item == GOLD)
+    given = sum(g.count for g in deal.npc_gives if g.item == GOLD)
+    paid = sum(g.count for g in deal.hero_gives if g.item == GOLD)
+    paid += sum(d.give.count for d in deal.repay if d.give.item == GOLD)
+    debt_ids = set(deals.debts)
+    await asyncio.sleep(1.2)
+    pressed = await link.press_deal()
+    accepted = await _until(lambda: deal.state == "done", 20)
+    after = await gold()
+    owed = sum(
+        d.give.count for key, d in deals.debts.items()
+        if key not in debt_ids and d.npc == npc and d.give.item == GOLD and not d.paid
+    )
+    check(
+        "accepted",
+        pressed == "sent" and accepted and given > paid
+        and after == before + given - paid and owed == loan,
+        f"gold {before} -> {after}, debt {owed}; {said()}; {deal.terms()}",
+    )
     return _logged(results)
 
 

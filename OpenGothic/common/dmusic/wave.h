@@ -13,6 +13,7 @@ namespace Dx8 {
 
 class Wave final {
   public:
+    Wave()=default;
     Wave(Riff &input);
     Wave(const char* dbg);
     Wave(const int16_t* pcm,size_t count);

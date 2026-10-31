@@ -28,12 +28,14 @@ from typing import TYPE_CHECKING, Any
 
 from .gamedata.storygraph import QUEST_STATES, Expr, Node, Quest, StoryGraph, walk
 from .npc_tools import guild_name
+from .validator import Patches
 
 if TYPE_CHECKING:
     from .dialogue import Conversation, DialogueManager
     from .game import GameLink
     from .llm import Tool, ToolCall
     from .protocol import Snapshot
+    from .story import StoryPatches
     from .turn import ToolOutcome
 
 log = logging.getLogger(__name__)
@@ -105,6 +107,11 @@ class Partial:
         flow: Callable[[str], int | None] | None = None,
     ) -> None:
         self.graph, self.state, self.own, self.flow = graph, state, set(own), flow
+        # a lifted function's value by its arguments: a guard's dialogs call B_GETGREATESTPETZCRIME and its
+        # C_NPCBELONGSTO* again and again, 1.4 s a turn (2026-10-28); not kept if it asked `flow`, whose
+        # answers change while Knowledge.view walks the dialogs
+        self._fns: dict[tuple[str, tuple[Value, ...], int], Value] = {}
+        self._flow_asked = 0
 
     def truth(self, e: Expr | None) -> bool | None:
         """False only when the story rules it out; no condition is true."""
@@ -138,7 +145,14 @@ class Partial:
                 body = self.graph.functions.get(fn, {})
                 if depth >= FN_DEPTH or not body.get("lifted") or "body" not in body:
                     return None
-                return self.value(body["body"], tuple(self.value(a, params, depth) for a in args), depth + 1)
+                key = (fn, tuple(self.value(a, params, depth) for a in args), depth)
+                if key in self._fns:
+                    return self._fns[key]
+                asked = self._flow_asked
+                v = self.value(body["body"], key[1], depth + 1)
+                if self._flow_asked == asked:
+                    self._fns[key] = v
+                return v
             case ["cases", *pairs]:
                 for i in range(0, len(pairs) - 1, 2):
                     g = self.value(pairs[i], params, depth)
@@ -171,6 +185,7 @@ class Partial:
         match fn, args:
             case "NPC_KNOWSINFO", [who, info] if who in HERO and isinstance(info, str):
                 if info in self.own:
+                    self._flow_asked += 1
                     return self.flow(info) if self.flow is not None else None
                 return int(self.state.knows[info]) if info in self.state.knows else None
             case "NPC_ISDEAD", [npc] if isinstance(npc, str):
@@ -272,9 +287,10 @@ class View:
 class Knowledge:
     """The npc's knowledge for the conversational model: a TurnExtension with situation lines and recall."""
 
-    def __init__(self, link: GameLink, graph: StoryGraph) -> None:
+    def __init__(self, link: GameLink, graph: StoryGraph, patches: StoryPatches | None = None) -> None:
         self.link = link
         self.graph = graph
+        self.patches = patches
         self.views: dict[str, View] = {}
         self._topic_uses = Counter(t for q in graph.quests.values() for t in q.topics)
         self._ambient: dict[str, list[Node]] = {}  # "VLK_6" -> its ambient dialogs
@@ -299,10 +315,11 @@ class Knowledge:
         pool = self.ambient(guild, voice, named=bool(own))
         quests = self.quests(npc)
         atoms = Atoms(vars={"KAPITEL"}, knows={n.id for n in own})
+        seen: set[str] = set()  # each function's body once: the atoms are a union
         for node in [*own, *pool, *(c for n in own for c in self._choices(n))]:
-            atoms.add(self.graph, node.condition)
+            atoms.add(self.graph, node.condition, seen)
             for e in node.effects:
-                atoms.add(self.graph, e.get("when"))
+                atoms.add(self.graph, e.get("when"), seen)
         atoms.vars |= {q.var for q in quests}
         raw = await self.link.story_state(
             vars=sorted(atoms.vars), knows=sorted(atoms.knows), npcs=sorted(atoms.npcs)
@@ -349,8 +366,14 @@ class Knowledge:
     # --- the index ----------------------------------------------------------------------------
 
     def dialogs(self, npc: str) -> list[Node]:
-        """The npc's dialogs that say something: no exits, pickpocketing or trade menus."""
-        return [n for n in self.graph.dialogs_of(npc) if not _menu_only(n)]
+        """The npc's enabled dialogs that say something: no exits, pickpocketing or trade menus."""
+        disabled = self._disabled()
+        return [n for n in self.graph.dialogs_of(npc) if n.id not in disabled and not _menu_only(n)]
+
+    def _disabled(self) -> set[str]:
+        if self.patches is None:
+            return set()
+        return Patches.of([*self.patches.static, *self.patches.ops()]).disabled
 
     def ambient(self, guild: int | None, voice: int | None, *, named: bool) -> list[Node]:
         """The ambient dialogs of the npc's kind: its own voice for a nameless one, its whole guild's for a
@@ -381,6 +404,9 @@ class Knowledge:
         pool: list[Node],
         quests: list[Quest],
     ) -> View:
+        disabled = self._disabled()
+        own = [n for n in own if n.id not in disabled]
+        pool = [n for n in pool if n.id not in disabled]
         gates: dict[str, bool | None] = {}
 
         def gate(id: str) -> bool | None:
@@ -398,7 +424,7 @@ class Knowledge:
         partial = Partial(self.graph, state, {n.id for n in own}, flow)
 
         def topic(n: Node, told: bool, sure: bool) -> Topic:
-            choices = [(c, _lines(c, partial)) for c in self._choices(n)]
+            choices = [(c, _lines(c, partial)) for c in self._choices(n, disabled)]
             return Topic(n, told, sure, _lines(n, partial), choices)
 
         told: list[Topic] = []
@@ -447,13 +473,13 @@ class Knowledge:
                         return True
         return False
 
-    def _choices(self, node: Node) -> list[Node]:
+    def _choices(self, node: Node, disabled: Collection[str] = ()) -> list[Node]:
         """The answers the dialog offers the hero, and theirs, in order."""
         out: list[Node] = []
         todo = list(node.choices())
         while todo:
             id = todo.pop(0)
-            if id in self.graph.nodes and all(c.id != id for c in out):
+            if id not in disabled and id in self.graph.nodes and all(c.id != id for c in out):
                 choice = self.graph.nodes[id]
                 out.append(choice)
                 todo += choice.choices()

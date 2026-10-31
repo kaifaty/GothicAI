@@ -1,0 +1,57 @@
+{
+  "asset": "harbour-crane-deck",
+  "title": "Настил портовых кранов",
+  "kind": "building",
+  "created": "2026-10-30",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "harbour-crane-deck"
+  ],
+  "sources": [],
+  "selected": {},
+  "reviews": [
+    {
+      "id": "r3l-crane-far",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "PASS",
+      "date": "2026-10-30",
+      "path": "reviews/r3l-crane-far/merged.json"
+    },
+    {
+      "id": "r3l-deck-mid",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-30",
+      "path": "reviews/r3l-deck-mid/merged.json"
+    },
+    {
+      "id": "r3l-deck-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-30",
+      "path": "reviews/r3l-deck-close/merged.json"
+    },
+    {
+      "id": "r4-deck-mid",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-30",
+      "path": "reviews/r4-deck-mid/merged.json"
+    },
+    {
+      "id": "r4-deck-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-30",
+      "path": "reviews/r4-deck-close/merged.json"
+    }
+  ],
+  "gates": [],
+  "build": null,
+  "backup": null
+}

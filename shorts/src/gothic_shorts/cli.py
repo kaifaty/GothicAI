@@ -11,7 +11,7 @@ from pathlib import Path
 from gothic_launcher.commands import LaunchError, find_layout, load_config, tools
 from gothic_launcher.settings import Config, SettingsError
 
-from . import cover, srt, youtube
+from . import compare, cover, srt, youtube
 from . import cut as cutting
 from .align import AlignError, align
 from .dub import DubError, dub_compare, dub_explainer, dub_take
@@ -104,7 +104,7 @@ def cmd_subs(args: argparse.Namespace) -> int:
 
 
 def cmd_srt(args: argparse.Namespace) -> int:
-    """A shot's take, or an explainer's workspace: its Russian voice timed, the translated script"""
+    """A shot's take, or an explainer/comparison workspace: timed Russian voice and translated script."""
     try:
         shot = _shot(args.short)
     except ShotError:
@@ -113,12 +113,24 @@ def cmd_srt(args: argparse.Namespace) -> int:
         print(cutting.subtitles(shot, _take(_config(), shot, args.take), args.lang))
         return 0
     ws = workspace(args.short)
-    words, script = ws / "words.ru.json", ws / f"script.{args.lang}.txt"
-    for f in (words, script):
-        if not f.is_file():
-            raise StudioError(f"{args.short} is no shot, and its workspace has no {f.name}")
+    script = ws / f"script.{args.lang}.txt"
+    if not script.is_file():
+        raise StudioError(f"{args.short} is no shot, and its workspace has no {script.name}")
     try:
-        cues = srt.explainer(json.loads(words.read_text()), script.read_text().strip().splitlines())
+        plan = json.loads((ws / args.plan).read_text())
+    except (OSError, ValueError):
+        plan = {}
+    try:
+        if compare.is_compare_plan(plan):
+            timed = {"lines": compare.placed_lines(plan)}
+            if not timed["lines"]:
+                raise StudioError(f"В плане сравнения {ws / args.plan} нет озвученных строк")
+        else:
+            words = ws / "words.ru.json"
+            if not words.is_file():
+                raise StudioError(f"{args.short} is no shot, and its workspace has no {words.name}")
+            timed = json.loads(words.read_text())
+        cues = srt.explainer(timed, script.read_text().strip().splitlines())
     except ValueError as err:
         raise StudioError(f"{script}: {err}") from err
     out = ws / f"subs.{args.lang}.srt"
@@ -142,7 +154,7 @@ def cmd_dub(args: argparse.Namespace) -> int:
             plan = json.loads((ws / args.plan).read_text())
         except (OSError, ValueError):
             plan = {}  # Let the publisher validate its inputs under the publication lock.
-        if any("segment" in beat for beat in plan.get("beats", [])):
+        if compare.is_compare_plan(plan):
             done = dub_compare(_config(), ws, args.lang, args.plan, args.tts, args.reclone, args.takes)
         else:
             done = dub_explainer(_config(), ws, args.lang, args.plan, args.tts, args.reclone)
@@ -401,10 +413,11 @@ def main() -> None:
     s.set_defaults(fn=cmd_subs)
 
     s = sub.add_parser("srt", help="the short's texts in another language as a caption track (SubRip): "
-                                   "<take>/subs.<lang>.srt, or subs.<lang>.srt in an explainer's workspace")
-    s.add_argument("short", help="a shot (its take's subs.<lang>.json), or an explainer (script.<lang>.txt)")
+                                   "<take>/subs.<lang>.srt, or subs.<lang>.srt in a workspace")
+    s.add_argument("short", help="a shot (its take's subs.<lang>.json), or a workspace (script.<lang>.txt)")
     s.add_argument("take", nargs="?", help="a shot's take folder or number (default: the newest)")
     s.add_argument("--lang", default="en")
+    s.add_argument("--plan", default="plan.json", help="the workspace's comparison plan (default: plan.json)")
     s.set_defaults(fn=cmd_srt)
 
     s = sub.add_parser("dub", help="the English sound track of a shot, explainer or comparison")

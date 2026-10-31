@@ -37,7 +37,7 @@
     const s = launcher.state;
     if (launcher.coreDown) return "core";
     if (!s) return loadError ? "core" : "loading";
-    if (s.session?.state === "running") return "running";
+    if (s.session?.state === "running" || s.session?.state === "waiting") return "running";
     if (s.session?.failed && s.session.code !== 0 && dismissed !== s.session.started) return "failed";
     if (view === "wizard" || !s.configured) return "wizard";
     return view;
@@ -49,7 +49,7 @@
 {:else if screen === "core"}
   <div class="center" data-tauri-drag-region>
     <h1 class="display">Ядро лаунчера остановилось</h1>
-    <p class="muted selectable">{loadError ?? "Подробности в ~/Library/Logs/GothicAI/launcher.log"}</p>
+    <p class="muted selectable">{loadError ?? (navigator.platform.startsWith("Mac") ? "Подробности в ~/Library/Logs/GothicAI/launcher.log" : "Подробности в ~/.local/state/gothic-ai/logs/launcher.log")}</p>
   </div>
 {:else if screen === "running"}
   <Running />

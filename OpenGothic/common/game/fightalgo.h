@@ -2,7 +2,7 @@
 
 #include <cstdint>
 #include <array>
-#include <zenkit/addon/daedalus.hh>
+#include "game/definitions/definitiontypes.h"
 #include <Tempest/Vec>
 
 class Npc;
@@ -57,11 +57,13 @@ class FightAlgo final {
     static Resolution resolve(PolicyAction action, const ResolverState& state);
     // Native normalization is diagnostic only; the executor retains native consume/skip semantics.
     static Action resolveNative(Action action, const ResolverState& state);
+    static Action resolveDownTactics(bool enabled, bool knockdown, bool rising, bool inRange, bool focus);
     static std::array<bool,12> actionMask(const ResolverState& state);
 
     Action nextFromQueue(Npc &npc, Npc &tg, GameScript& owner);
     void   consumeAction();
     void   onClearTarget();
+    void   onTargetKnockdown();
     void   onTakeHit();
 
     bool   hasInstructions() const;
@@ -89,12 +91,12 @@ class FightAlgo final {
 
   private:
     void   fillQueue(Npc &npc, Npc &tg, GameScript& owner);
-    bool   fillQueue(const Npc& npc, GameScript& owner, const zenkit::IFightAi& src);
+    bool   fillQueue(const Npc& npc, GameScript& owner, const Def::FightAi& src);
 
     static bool   angleTest(const Npc& npc, const Npc& tg, float cosMax);
     static float  weaponRange(GameScript &owner,const Npc &npc);
 
-    zenkit::FightAiMove queueId = zenkit::FightAiMove::NOP;
+    Def::FightMove queueId = Def::FightMove::NOP;
     Action              tr   [MV_MAX]={};
     bool                hitFlg=false;
     uint64_t            traceChoice=0; // bench telemetry only, never serialized or used for decisions

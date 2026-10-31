@@ -1,0 +1,15 @@
+{"svm":"$ENEMYKILLED","text":"Ты заслужил это, подонок!","target":"BDT_1014_BANDIT_L"}
+{"svm":"$MONSTERKILLED","text":"Еще одним монстром стало меньше!","target":"YWOLF"}
+{"svm":"$HELP","text":"Помогите!","target":""}
+{"svm":"$DIRTYTHIEF","text":"Грязный вор! Ну, подожди!","target":"PLAYER"}
+{"svm":"$ALARM","text":"ТРЕВОГА!","target":""}
+{"svm":"$GETOUTOFHERE","text":"Убирайся отсюда!","target":"PLAYER"}
+{"svm":"$WEAPONDOWN","text":"Убери оружие!","target":"PLAYER"}
+{"svm":"$ISAIDWEAPONDOWN","text":"Ты уберешь это чертово оружие?!","target":"PLAYER"}
+{"svm":"$WISEMOVE","text":"Умный мальчик!","target":"PLAYER"}
+{"svm":"$GOODVICTORY","text":"(дьявольский смех) Ты показал ему, кто здесь главный!","target":"BAU_4300_ADDON_CAVALORN"}
+{"svm":"$NOTBAD","text":"(одобрительно) Неплохо...","target":"PLAYER"}
+{"svm":"$OHMYGODITSAFIGHT","text":"(потрясенно) Ох, бог мой, драка!","target":""}
+{"svm":"$RUNAWAY","text":"Ох, черт!!!","target":"BDT_1013_BANDIT_L"}
+{"svm":"$AWAKE","text":"(зевает)","target":""}
+{"svm":"$GETOUTOFMYBED","text":"Убирайся с моей кровати!","target":"PLAYER"}

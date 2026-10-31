@@ -1,9 +1,10 @@
 #include "cameradefinitions.h"
 
 #include <Tempest/Log>
-#include <zenkit/vobs/Camera.hh>
+#include "asset/worldtypes.h"
 
 #include "gothic.h"
+#include "worlddata.h"
 #include "utils/string_frm.h"
 
 using namespace Tempest;
@@ -13,11 +14,11 @@ CameraDefinitions::CameraDefinitions() {
 
   vm->enumerate_instances_by_class_name("CCAMSYS", [this, &vm](zenkit::DaedalusSymbol& s) {
     try {
-      auto cam = vm->init_instance<zenkit::ICamera>(&s);
+      auto cam = vm->init_instance<Def::Camera>(&s);
       cameras.emplace_back(s.name(), *cam);
       }
     catch(const zenkit::DaedalusScriptError&) {
-      // There was an error initializing the ICamera. Ignore it.
+      // There was an error initializing the Def::Camera. Ignore it.
       }
     });
 
@@ -35,29 +36,22 @@ CameraDefinitions::CameraDefinitions() {
   camModFall      = getCam("CAMMODFALL");
 
   // dialog presets: unused yet
-  std::vector<zenkit::VCutsceneCamera> cameras;
+  std::vector<asset::VCutsceneCamera> cameras;
   try {
-    std::unique_ptr<zenkit::Read> read;
-    auto zen = Resources::openReader("DialogCams.ZEN", read);
-
-    while(!read->eof()) {
-      zenkit::ArchiveObject   obj {};
-      zenkit::VCutsceneCamera preset {};
-      zen->read_object_begin(obj);
-      preset.load(*zen, Gothic::inst().version().game == 1 ? zenkit::GameVersion::GOTHIC_1
-                                                           : zenkit::GameVersion::GOTHIC_2);
-      cameras.emplace_back(std::move(preset));
-      if(!zen->read_object_end()) {
-        zen->skip_object(true);
-        }
+    WorldData::ZenFile base;
+    if(Resources::loadBaseZen("DialogCams.ZEN","cameras",base)) {
+      for(const auto& camera:base.vobs)
+        cameras.push_back(*std::dynamic_pointer_cast<asset::VCutsceneCamera>(camera));
+      return;
       }
+    Log::e("unable to load base dialog cameras");
     }
   catch(...) {
     Log::e("unable to load Zen-file: \"DialogCams.ZEN\"");
     }
   }
 
-const zenkit::ICamera& CameraDefinitions::mobsiCam(std::string_view tag, std::string_view pos) const {
+const Def::Camera& CameraDefinitions::mobsiCam(std::string_view tag, std::string_view pos) const {
   if(!pos.empty()) {
     string_frm name("CAMMODMOB",tag,'_',pos);
     if(auto* c = find(name))
@@ -72,7 +66,7 @@ const zenkit::ICamera& CameraDefinitions::mobsiCam(std::string_view tag, std::st
   return camModNormal;
   }
 
-zenkit::ICamera CameraDefinitions::getCam(std::string_view name) {
+Def::Camera CameraDefinitions::getCam(std::string_view name) {
   for(auto& i:cameras)
     if(i.first==name)
       return i.second;
@@ -80,7 +74,7 @@ zenkit::ICamera CameraDefinitions::getCam(std::string_view name) {
   return {};
   }
 
-const zenkit::ICamera* CameraDefinitions::find(std::string_view name) const {
+const Def::Camera* CameraDefinitions::find(std::string_view name) const {
   for(auto& i:cameras)
     if(i.first==name)
       return &i.second;

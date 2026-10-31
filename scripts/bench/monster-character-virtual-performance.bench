@@ -1,0 +1,18 @@
+# Mac target machine, native normal clock, no video capture.
+seed 73024
+cheat god
+set time 12 0
+movable on
+off: monstercharacter off
+on: monstercharacter on
+view full
+overlay off
+monstercharacter crowd
+wait 1500
+monstercharacter camera
+cadence normal
+wait 34
+off: monstercharacter measure off
+on: monstercharacter measure on
+cadence wait
+monstercharacter report

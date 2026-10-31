@@ -7,8 +7,16 @@
 #include <cctype>
 #include <cassert>
 
+#if defined(__GLIBC__)
+#include <chrono>
+#include <cstdlib>
+#include <malloc.h>
+#endif
+
 #include <zenkit/addon/daedalus.hh>
 
+#include "game/definitions/definitiontypes.h"
+#include "game/bodyenginepolicy.h"
 #include "game/definitions/visualfxdefinitions.h"
 #include "game/definitions/sounddefinitions.h"
 #include "game/definitions/cameradefinitions.h"
@@ -31,6 +39,7 @@ Gothic* Gothic::instance = nullptr;
 
 Gothic::Gothic() {
   instance = this;
+  BodyEnginePolicy::initialize();
   if(!Resources::isHeadless())
     sndDev = std::make_unique<Tempest::SoundDevice>();
 
@@ -68,8 +77,13 @@ Gothic::Gothic() {
 #endif
   setBenchmarkMode(CommandLine::inst().isBenchmarkMode());
 
-  if(Resources::hasGraphicsDevice() && Resources::device().properties().raytracing.rayQuery)
+  if(Resources::hasGraphicsDevice() && Resources::device().properties().raytracing.rayQuery) {
     opts.doGi = CommandLine::inst().isRtGi();
+    // GI probes by default on a discrete GPU: ≈0.7 ms on an RTX 3080, an M1 is at 99 % with them
+    // (reports/render-features/2026-10-18); the renderer drops them without -rt
+    if(!CommandLine::inst().hasRtGiArg() && Resources::device().properties().type==Tempest::DeviceType::Discrete)
+      opts.doGi = GiMethod::Probes;
+    }
 
   opts.aaPreset = CommandLine::inst().aaPreset();
 
@@ -77,8 +91,10 @@ Gothic::Gothic() {
 
   baseIniFile.reset(new IniFile(nestedPath({u"system",u"Gothic.ini"},Dir::FT_File)));
   iniFile    .reset(new IniFile(u"Gothic.ini"));
+  // 75 % where MetalFX upscales it (as sharp as full resolution, +15-20 FPS on an M1 Pro), full resolution elsewhere
+  const int vidResDefault = (Resources::hasGraphicsDevice() && Resources::device().properties().spatialUpscale) ? 1 : 0;
   if(!iniFile->has("INTERNAL", "vidResIndex")) {
-    iniFile->set("INTERNAL", "vidResIndex", 0); // full-res
+    iniFile->set("INTERNAL", "vidResIndex", vidResDefault);
     }
   {
   defaults.reset(new IniFile());
@@ -99,11 +115,26 @@ Gothic::Gothic() {
   defaults->set("GAME", "arrow_sticking",      1);
   defaults->set("GAME", "spell_physics",       1);
   defaults->set("GAME", "movable_vobs",        1);
+  defaults->set("GAME", "item_hulls",          1);
+  defaults->set("GAME", "furniture_parts",     1);
   defaults->set("GAME", "physics_noise",       1);
   defaults->set("GAME", "destruction",         1);
   defaults->set("GAME", "buoyancy",            1);
+  defaults->set("GAME", "cloth",               1);
+  defaults->set("GAME", "item_wake",           1);
+  defaults->set("GAME", "placed_items",        1);
+  defaults->set("GAME", "static_collision_split",1);
   defaults->set("GAME", "character_virtual",   1);
   defaults->set("GAME", "npc_character_virtual",1);
+  defaults->set("GAME", "monster_character_virtual",1);
+  defaults->set("GAME", "melee_blade_shadow",    1);
+  defaults->set("GAME", "melee_physics_hits",    1);
+  defaults->set("GAME", "melee_reactions",       1);
+  defaults->set("GAME", "melee_posture",         1);
+  defaults->set("GAME", "melee_down_tactics",    1);
+  defaults->set("GAME", "melee_hitstop",         1);
+  defaults->set("GAME", "melee_stamina",         1);
+  defaults->set("GAME", "melee_parry",           1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -125,7 +156,9 @@ Gothic::Gothic() {
   defaults->set("ENGINE",       "zEnvMappingEnabled", 1); // reflections
   defaults->set("ENGINE",       "zCloudShadowScale", Resources::hasGraphicsDevice() &&
                 Resources::device().properties().type==Tempest::DeviceType::Discrete); // ssao
-  defaults->set("INTERNAL",     "vidResIndex", 0); // full-res
+  defaults->set("INTERNAL",     "vidResIndex", vidResDefault);
+  defaults->set("INTERNAL",     "halfResAoFog", 1); // SSAO and fog shadows at half resolution
+  defaults->set("INTERNAL",     "spatialUpscale", 1); // MetalFX for reduced resolution, where supported
 
   defaults->set("VIDEO", "zVidBrightness", 0.5f);
   defaults->set("VIDEO", "zVidContrast",   0.5f);
@@ -170,6 +203,7 @@ Gothic::Gothic() {
   defaults->set("KEYS", "keyShowMap",     "3200");
   }
 
+  Resources::loadBase();
   detectGothicVersion();
 
   std::u16string_view mod = CommandLine::inst().modPath();
@@ -177,8 +211,6 @@ Gothic::Gothic() {
     modFile.reset(new IniFile(mod));
     }
 
-  std::vector<std::u16string> modvdfs;
-  bool                        modFilter = true;
   if(modFile!=nullptr) {
     wrldDef = modFile->getS("SETTINGS","WORLD");
     size_t split = wrldDef.rfind('\\');
@@ -187,23 +219,7 @@ Gothic::Gothic() {
     plDef      = modFile->getS("SETTINGS","PLAYER");
     gameDatDef = modFile->getS("FILES","GAME");
     ouDef      = modFile->getS("FILES","OUTPUTUNITS");
-
-    std::u16string vdf = TextCodec::toUtf16(modFile->getS("FILES","VDF"));
-    modFilter = modFile->has("FILES","VDF");
-    for(size_t start = 0, split = 0; split != std::string::npos; start = split+1) {
-      split = vdf.find(' ', start);
-      std::u16string mod = vdf.substr(start, split-start);
-      if(!mod.empty())
-        modvdfs.emplace_back(std::move(mod));
-      }
     }
-  /*
-   '/work' seem to have lowest priority
-   load it last with zenkit::VfsOverwriteBehavior::NONE
-   any other order will interact with time-stamp based override, resulting in inconsistent behaviour
-  */
-  Resources::loadVdfs(modvdfs, modFilter);
-  Resources::mountWork(Gothic::nestedPath({u"_work"}, Dir::FT_Dir));
 
   if(wrldDef.empty()) {
     if(version().game==2)
@@ -508,11 +524,24 @@ bool Gothic::finishLoading() {
     return false;
   if(loadingFlag.compare_exchange_strong(state,LoadState::Idle)){
     loaderTh.join();
+    if(baseLoadError) std::rethrow_exception(std::exchange(baseLoadError,{}));
+#if defined(__GLIBC__)
+    const bool loadedWorld = state==LoadState::Finalize && loadingWorld && pendingGame!=nullptr;
+#endif
     if(pendingGame!=nullptr)
       game = std::move(pendingGame);
     saveTex = Texture2d();
     loadTex = Texture2d();
     onWorldLoaded();
+#if defined(__GLIBC__)
+    const char* trim = std::getenv("OPENGOTHIC_MALLOC_TRIM");
+    if(loadedWorld && (trim==nullptr || std::strcmp(trim,"0")!=0)) {
+      const auto started = std::chrono::steady_clock::now();
+      malloc_trim(0);
+      const auto elapsed = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
+      Log::i("malloc_trim after world load: ",elapsed," ms");
+      }
+#endif
     return true;
     }
   return false;
@@ -540,6 +569,9 @@ void Gothic::implStartLoadSave(std::string_view banner,
   if(!loadingFlag.compare_exchange_strong(zero,one)){
     return; // loading already
     }
+#if defined(__GLIBC__)
+  loadingWorld = load;
+#endif
 
   onStartLoading();
   auto g = clearGame().release();
@@ -554,6 +586,11 @@ void Gothic::implStartLoadSave(std::string_view banner,
         next        = f(std::move(game));
         pendingGame = std::move(next);
         loadingFlag.compare_exchange_strong(curState,LoadState::Finalize);
+        }
+      catch(const BaseStore::Error& e) {
+        Tempest::Log::e(e.what());
+        baseLoadError=std::current_exception();
+        loadingFlag.compare_exchange_strong(curState,err);
         }
       catch(std::bad_alloc&){
         Tempest::Log::e("loading error: out of memory");
@@ -593,6 +630,10 @@ void Gothic::cancelLoading() {
   if(loadingFlag.load()!=LoadState::Idle){
     loaderTh.join();
     loadingFlag.store(LoadState::Idle);
+    // the loader may have finished a session: hand it over, so the caller unloads it
+    // while Gothic::inst() is valid, not ~Gothic after the instance is gone
+    if(pendingGame!=nullptr)
+      game = std::move(pendingGame);
     }
   }
 
@@ -722,44 +763,7 @@ std::unique_ptr<zenkit::DaedalusVm> Gothic::createPhoenixVm(std::string_view dat
   }
 
 zenkit::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {
-  if(Resources::hasFile(datFile)) {
-    auto buf = Resources::getFileBuffer(datFile);
-    zenkit::DaedalusScript script;
-    script.load(buf.get());
-    return script;
-    }
-
-  const size_t segment = datFile.find_last_of("\\/");
-  if(segment!=std::string::npos && Resources::hasFile(datFile.substr(segment+1))) {
-    auto buf = Resources::getFileBuffer(datFile.substr(segment+1));
-    zenkit::DaedalusScript script;
-    script.load(buf.get());
-    return script;
-    }
-
-  char16_t str16[256] = {};
-  for(size_t i=0; i<datFile.size() && i<255; ++i)
-    str16[i] = char16_t(datFile[i]);
-
-  auto gscript = CommandLine::inst().scriptPath();
-  auto path    = caseInsensitiveSegment(gscript,str16,Dir::FT_File);
-  if(!FileUtil::exists(path) && int(lang)>=0) {
-    gscript = CommandLine::inst().scriptPath(lang);
-    path    = caseInsensitiveSegment(gscript,str16,Dir::FT_File);
-    }
-  if(!FileUtil::exists(path) && int(lang)>=0) {
-    datFile = datFile.substr(segment+1);
-    for(size_t i=0; i<datFile.size() && i<255; ++i)
-      str16[i] = char16_t(datFile[i]);
-    str16[datFile.size()] = u'\0';
-    gscript = CommandLine::inst().scriptPath(lang);
-    path    = caseInsensitiveSegment(gscript,str16,Dir::FT_File);
-    }
-
-  auto buf = zenkit::Read::from(path);
-  zenkit::DaedalusScript script;
-  script.load(buf.get());
-  return script;
+  return Resources::loadBaseProgram(datFile,int(lang));
   }
 
 void Gothic::setupCommonScriptClasses(zenkit::DaedalusScript& sc) {
@@ -787,15 +791,15 @@ void Gothic::setupCommonScriptClasses(zenkit::DaedalusScript& sc) {
   registerOpaque  ("C_SVM"); // structure is very customizable, so better to use type-less mapping
   registerIfExists("C_MENU",         zenkit::IMenu::register_);
   registerIfExists("C_MENU_ITEM",    zenkit::IMenuItem::register_);
-  registerIfExists("CCAMSYS",        zenkit::ICamera::register_);
+  registerIfExists("CCAMSYS",        Def::Camera::register_);
   registerIfExists("C_MUSICSYS_CFG", zenkit::IMusicSystem::register_);
-  registerIfExists("C_MUSICTHEME",   zenkit::IMusicTheme::register_);
+  registerIfExists("C_MUSICTHEME",   Def::MusicTheme::register_);
   registerIfExists("C_MUSICJINGLE",  zenkit::IMusicJingle::register_);
-  registerIfExists("C_PARTICLEFX",   zenkit::IParticleEffect::register_);
-  registerIfExists("CFX_BASE",       zenkit::IEffectBase::register_);
-  registerIfExists("C_PARTICLEFXEMITKEY", zenkit::IParticleEffectEmitKey::register_);
+  registerIfExists("C_PARTICLEFX",   Def::ParticleEffect::register_);
+  registerIfExists("CFX_BASE",       Def::EffectBase::register_);
+  registerIfExists("C_PARTICLEFXEMITKEY", Def::ParticleEffectEmitKey::register_);
   registerOpaque  ("C_FIGHTAI"); // many mods get it wrong/corrupted. Opaque binding is one is a way to get around it
-  registerIfExists("C_SFX",          zenkit::ISoundEffect::register_);
+  registerIfExists("C_SFX",          Def::SoundEffect::register_);
   registerIfExists("C_SNDSYS_CFG",   zenkit::ISoundSystem::register_);
   }
 
@@ -811,6 +815,8 @@ bool Gothic::settingsHasSection(std::string_view sec) {
 int Gothic::settingsGetI(std::string_view sec, std::string_view name) {
   if(name.empty())
     return 0;
+  if(sec=="GAME" && name=="language")
+    return Resources::baseLanguage();
   if(instance->iniFile->has(sec,name))
     return instance->iniFile->getI(sec,name);
   if(instance->baseIniFile->has(sec,name))
@@ -871,42 +877,9 @@ void Gothic::flushSettings() {
   }
 
 void Gothic::detectGothicVersion() {
-  int score[3]={};
-
-  auto gpath = CommandLine::inst().rootPath();
-  if(gpath.find(u"Gothic/")!=std::string::npos || gpath.find(u"gothic/")!=std::string::npos)
-    score[1]++;
-  if(FileUtil::exists(nestedPath({u"_work",u"Data",u"Scripts",u"content",u"CUTSCENE",u"OU.BIN"},Dir::FT_File)))
-    score[1]++;
-
-  if(FileUtil::exists(nestedPath({u"_work",u"Data",u"Scripts",u"content",u"CUTSCENE",u"OU.DAT"},Dir::FT_File)))
-    score[2]++;
-  if(baseIniFile->has("KEYSDEFAULT1"))
-    score[2]++;
-  if(baseIniFile->has("GAME","PATCHVERSION"))
-    score[2]++;
-  if(baseIniFile->has("GAME","useGothic1Controls"))
-    score[2]++;
-
-  if(score[1]>score[2])
-    vinfo.game = 1; else
-    vinfo.game = 2;
-
-  if(vinfo.game==2) {
-    vinfo.patch = baseIniFile->getI("GAME","PATCHVERSION");
-    }
-
-  if(CommandLine::inst().doForceG1()) {
-    vinfo.game = 1;
-    }
-  else if(CommandLine::inst().doForceG2()) {
-    vinfo.game  = 2;
-    vinfo.patch = 0;
-    }
-  else if(CommandLine::inst().doForceG2NR()) {
-    vinfo.game  = 2;
-    vinfo.patch = 5;
-    }
+  // The selected base supports Gothic II: Night of the Raven only.
+  vinfo.game  = 2;
+  vinfo.patch = 5;
   }
 
 void Gothic::refreshPhysicsFlags() {
@@ -921,22 +894,41 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","physics_noise")!=0,
     settingsGetI("GAME","destruction")!=0,
     settingsGetI("GAME","buoyancy")!=0,
+    settingsGetI("GAME","cloth")!=0,
+    settingsGetI("GAME","item_wake")!=0,
     settingsGetI("GAME","character_virtual")!=0,
-    settingsGetI("GAME","npc_character_virtual")!=0
+    settingsGetI("GAME","npc_character_virtual")!=0,
+    settingsGetI("GAME","monster_character_virtual")!=0,
+    settingsGetI("GAME","melee_blade_shadow")!=0,
+    settingsGetI("GAME","melee_physics_hits")!=0,
+    settingsGetI("GAME","melee_reactions")!=0,
+    settingsGetI("GAME","melee_posture")!=0,
+    settingsGetI("GAME","melee_down_tactics")!=0,
+    settingsGetI("GAME","item_hulls")!=0,
+    settingsGetI("GAME","melee_hitstop")!=0,
+    settingsGetI("GAME","melee_stamina")!=0,
+    settingsGetI("GAME","melee_parry")!=0,
+    settingsGetI("GAME","furniture_parts")!=0,
+    settingsGetI("GAME","placed_items")!=0
     };
   }
 
 void Gothic::setupSettings() {
+  Resources::configureTextures(settingsGetS("GAME","texture_budget_mb"));
+  Resources::censusProfile(gameDatDef,ouDef,settingsGetI("GAME","language"));
   // settingsSetI/S/F emit onSettingsChanged synchronously. Publish before any
   // same-dispatch actor creation, prepare or input query can consume the change.
   refreshPhysicsFlags();
   if(game!=nullptr)
     game->setupSettings();
   if(auto* activeWorld = world()) {
+    activeWorld->physic()->setFurniturePartsEnabled(physicsFlagsCache.furnitureParts);
     activeWorld->physic()->setMovableVobsEnabled(physicsFlagsCache.movableVobs);
     activeWorld->physic()->setPhysicsNoiseEnabled(physicsFlagsCache.physicsNoise);
     activeWorld->physic()->setDestructionEnabled(physicsFlagsCache.destruction);
     activeWorld->physic()->setBuoyancyEnabled(physicsFlagsCache.buoyancy);
+    activeWorld->physic()->setClothEnabled(physicsFlagsCache.cloth);
+    activeWorld->physic()->setItemWakeEnabled(physicsFlagsCache.itemWake);
     }
 
   const float soundVolume = settingsSoundVolume();
@@ -1081,12 +1073,12 @@ void Gothic::introducechapter(std::string_view title, std::string_view subtitle,
   }
 
 bool Gothic::playvideo(std::string_view name) {
-  onVideo(name);
+  onVideo(name,false);
   return true;
   }
 
 bool Gothic::playvideoex(std::string_view name, bool, bool) {
-  onVideo(name);
+  onVideo(name,false);
   return true;
   }
 

@@ -1,0 +1,140 @@
+# city-roofs-evening: the city-roofs cameras at 18:30, low sun; NPC and effects hidden.
+# Derived from city-roofs.bench with every "set time 12 0" as "set time 18 30"; world cm.
+cheat god
+clear 1000000
+set time 18 30
+overlay off
+view hide animated morph pfx
+cam lift off
+
+# harbour-overhead: ROOF_01 на постройках порта сверху; камера обзора квартала khorinis-survey
+cam look -2301.000
+goto pos 2400.000 2401.000 -2000.000
+cam world 5161.395 -500.000 -144.462322
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot harbour-overhead
+wait 300
+
+# harbour-huts: ROOF_01 на хижинах бедного квартала с улицы; три четверти хижины B037
+cam look -500.000
+goto pos 3632.800 650.000 -3446.400
+cam world 1299.985 -668.200 -149.499595
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot harbour-huts
+wait 300
+
+# roof-01-close: ROOF_01 вблизи сверху, B035; камера разбора задумки
+cam look -971.000
+goto pos 1366.000 1322.000 1706.000
+cam world 708.102 -500.000 90.971022
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot roof-01-close
+wait 300
+
+# merchant-overhead: ROOF_01 и ROOF_04 нижнего города сверху
+cam look -2470.000
+goto pos 7900.000 2970.000 1000.000
+cam world 4313.931 -500.000 44.060809
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot merchant-overhead
+wait 300
+
+# market-house: ROOF_01 дома у рынка B052 с земли; камера front из market-house.bench
+cam look -500.000
+goto pos 9137.000 1260.000 3745.000
+cam world 1649.576 -820.000 24.470688
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot market-house
+wait 300
+
+# uptown-overhead: ROOF_04 верхнего квартала сверху
+cam look -2600.000
+goto pos 13500.000 3600.000 -1000.000
+cam world 4763.402 -500.000 -140.964487
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot uptown-overhead
+wait 300
+
+# uptown-street: ROOF_04 с улицы верхнего квартала
+cam look -500.000
+goto pos 11280.000 1796.000 1716.000
+cam world 1025.324 -742.000 -49.271422
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot uptown-street
+wait 300
+
+# roof-04-close: ROOF_04 вблизи, казармы; камера разбора задумки
+cam look -1035.000
+goto pos 3118.000 2377.000 8483.000
+cam world 659.564 -500.000 160.054002
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot roof-04-close
+wait 300
+
+# kasern-overhead: ROOF_04 казарм сверху
+cam look -2183.000
+goto pos 4800.000 3133.000 6800.000
+cam world 4036.087 -500.000 41.987212
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot kasern-overhead
+wait 300
+
+# small-roof-uptown: малая постройка ROOF_04 + WOOD_ORNAMENT_02, блок B054
+cam look -510.000
+goto pos 8778.000 2200.000 -6375.000
+cam world 989.949 -500.000 45.000000
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot small-roof-uptown
+wait 300
+
+# small-roof-harbour: малая постройка ROOF_04 + WOOD_ORNAMENT_02, блок B042
+cam look -699.000
+goto pos 4998.000 2000.000 -6793.000
+cam world 1000.000 -500.000 36.869898
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot small-roof-harbour
+wait 300
+
+# roof-inside: ROOF_INSIDE_01 изнутри; камера разбора задумки
+cam look -500.000
+goto pos 1636.000 1034.000 -699.000
+cam world 592.818 -1109.000 -36.425304
+wait 34
+cam hold
+wait 6000
+set time 18 30
+shot roof-inside
+wait 300

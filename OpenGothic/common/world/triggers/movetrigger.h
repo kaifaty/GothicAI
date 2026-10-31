@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/vobs/Trigger.hh>
+#include "asset/worldtypes.h"
 
 #include "graphics/meshobjects.h"
 #include "physics/physicmesh.h"
@@ -8,7 +8,7 @@
 
 class MoveTrigger : public AbstractTrigger {
   public:
-    MoveTrigger(Vob* parent, World &world, const zenkit::VMover& data, Flags flags);
+    MoveTrigger(Vob* parent, World &world, const asset::VMover& data, Flags flags);
 
     void save(Serialize& fout) const override;
     void load(Serialize &fin) override;
@@ -60,10 +60,10 @@ class MoveTrigger : public AbstractTrigger {
     MeshObjects::Mesh                    view;
     PhysicMesh                           physic;
     std::vector<KeyLen>                  keyframes;
-    std::vector<zenkit::AnimationSample> moverKeyFrames;
-    zenkit::MoverBehavior                behavior;
-    zenkit::MoverSpeedType               speedType;
-    zenkit::MoverLerpType                lerpType;
+    std::vector<asset::MoverKeyframe> moverKeyFrames;
+    asset::MoverBehavior                behavior;
+    asset::MoverSpeedType               speedType;
+    asset::MoverLerpType                lerpType;
     bool                                 autoRotate;
     std::string                          sfxOpenStart;
     std::string                          sfxOpenEnd;

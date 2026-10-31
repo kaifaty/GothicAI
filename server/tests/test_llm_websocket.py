@@ -3,6 +3,7 @@
 import asyncio
 import json
 import socket
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -98,8 +99,13 @@ async def test_an_npcs_requests_share_its_connection_and_a_step_sends_only_what_
         done = out[-1]
         assert [type(e) for e in out] == [TextDelta, Done] and done.text == "Ответ 1."
         assert done.usage is not None and done.usage.cached_tokens == 64
+        assert done.timing["transport"] == "websocket" and done.timing["connection"] == "new"
+        assert done.timing["connection_open_s"] >= 0
+        assert 0 <= done.timing["connection_wait_s"] <= done.timing["first_event_s"]
         # the next step of the turn: the response and what was added go on from it
-        await _ask(backend, [*first, *done.items, Message("user", "Ещё")])
+        again = (await _ask(backend, [*first, *done.items, Message("user", "Ещё")]))[-1]
+        assert again.timing["connection"] == "open"
+        assert again.timing["connection_opened_at"] == done.timing["connection_opened_at"]
         # a new turn: another request, sent whole
         await _ask(backend, [Message("user", "Другое")])
     finally:
@@ -250,6 +256,7 @@ async def test_no_websocket_the_request_goes_over_http():
     finally:
         await backend.aclose()
     assert out[-1].text == "По HTTP." and sent["prompt_cache_key"] == "NONE_100_XARDAS"
+    assert out[-1].timing["transport"] == "http" and out[-1].timing["first_event_s"] >= 0
     assert not backend._ws_on()  # HTTP for a while, not a failed connect each time
 
 
@@ -302,13 +309,30 @@ async def test_a_kept_key_stays_open_while_unused():
 
 
 async def test_a_connection_is_opened_ahead_of_the_turn():
-    server = Server()
+    server = Server(
+        answer=lambda request, n: [
+            {"type": "response.created", "response": {"id": f"resp_{n}", "status": "in_progress"}},
+            0.05,
+            *_reply(f"resp_{n}", "Да."),
+        ]
+    )
     ws, backend = await _start(server)
     try:
         backend.open_ahead("K")
         backend.open_ahead("K")  # once
-        await _until(lambda: bool(server.headers))
-        await _ask(backend, [Message("user", "1")], key="K")
+        await _until(lambda: any(not s.busy for s in backend._sockets.get("K", [])))
+        started = time.monotonic()
+        text_at = None
+        out = []
+        async for event in backend.stream(instructions="i", messages=[Message("user", "1")], cache_key="K"):
+            out.append(event)
+            if isinstance(event, TextDelta):
+                text_at = time.monotonic() - started
+        timing = out[-1].timing
+        assert timing["connection"] == "open" and timing["connection_opened_at"] <= time.time()
+        assert timing["connection_wait_s"] <= timing["request_sent_s"] <= timing["first_event_s"]
+        # The first raw event precedes text: response.created is not exposed as an LLMEvent.
+        assert text_at is not None and text_at - timing["first_event_s"] >= 0.04
     finally:
         await backend.aclose()
         backend.open_ahead("L")  # closed: nothing opens

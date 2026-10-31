@@ -1,7 +1,8 @@
 import React from 'react';
+import {fitTextOnNLines} from '@remotion/layout-utils';
 import {AbsoluteFill, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {Word} from '../schema';
-import {COLOR, FONT, SAFE, W} from '../theme';
+import {COLOR, FONT, SAFE, WIDE_SAFE} from '../theme';
 
 const MAX_WORDS = 4;
 // a page does not end on these: they belong to the word after them
@@ -47,7 +48,10 @@ export const pages = (lines: Word[][]) => {
 
 // the voice's words at the lower middle, the word being said in the accent colour
 export const Captions: React.FC<{lines: Word[][]; brand: boolean}> = ({lines, brand}) => {
-  const t = useCurrentFrame() / useVideoConfig().fps;
+  const {fps, width, height} = useVideoConfig();
+  const wide = width > height;
+  const safe = wide ? WIDE_SAFE : SAFE;
+  const t = useCurrentFrame() / fps;
   const all = pages(lines);
   const i = all.findIndex((p, k) => {
     const next = all[k + 1];
@@ -57,21 +61,30 @@ export const Captions: React.FC<{lines: Word[][]; brand: boolean}> = ({lines, br
   if (i < 0) {
     return null;
   }
+  const fontFamily = brand ? FONT.title : FONT.body;
+  const fontWeight = brand ? 700 : 900;
+  // Metadata waits for the bundled fonts before measuring. Fit whole pages into at most two lines.
+  const fontSize = wide ? fitTextOnNLines({
+    text: all[i].map((w) => w.text).join(' '), maxLines: 2,
+    maxBoxWidth: width - safe.left - safe.right - 16,
+    fontFamily, fontWeight, fontVariantNumeric: 'tabular-nums', textTransform: 'uppercase',
+    maxFontSize: 56,
+  }).fontSize : 76;
   return (
     <AbsoluteFill>
       <div
         style={{
           position: 'absolute',
-          top: 1170,
-          left: SAFE.left,
-          width: W - SAFE.left - SAFE.right,
+          ...(wide ? {bottom: safe.bottom} : {top: 1170}),
+          left: safe.left,
+          width: width - safe.left - safe.right,
           textAlign: 'center',
-          fontFamily: brand ? FONT.title : FONT.body,
-          fontWeight: brand ? 700 : 900,
-          fontSize: 76,
+          fontFamily,
+          fontWeight,
+          fontSize,
           lineHeight: 1.12,
           textTransform: 'uppercase',
-          WebkitTextStroke: '14px #000',
+          WebkitTextStroke: wide ? '10px #000' : '14px #000',
           paintOrder: 'stroke fill',
           fontVariantNumeric: 'tabular-nums',
         }}

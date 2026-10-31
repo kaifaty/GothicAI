@@ -108,10 +108,37 @@ vec3 processVertexCommon(out Varyings shOut, in Vertex v, uint bucketId, uint in
   Instance obj = pullInstance(instanceId);
 #endif
 
+#if (MESH_TYPE==T_MORPH)
+  vec3 morphRestPosition = v.pos;
+#endif
+
   // Position offsets
 #if (MESH_TYPE==T_MORPH)
   for(int i=0; i<MAX_MORPH_LAYERS; ++i)
     v.pos += morphOffset(bucketId, obj.animPtr+i, vboOffset);
+#endif
+
+#if (MESH_TYPE==T_OBJ || MESH_TYPE==T_MORPH) && defined(LVL_OBJECT)
+  // Cloth shares the normal object pipeline in every render pass, including
+  // Metal/MoltenVK. UVs and colour stay in the immutable packed mesh.
+  if(vboOffset<obj.deformCount) {
+    uint at = obj.deformPtr + vboOffset*8;
+#if (MESH_TYPE==T_MORPH)
+    vec3 morphDelta = v.pos-morphRestPosition;
+    float simulationWeight = uintBitsToFloat(instanceMem[at+3]);
+#endif
+    v.pos = vec3(uintBitsToFloat(instanceMem[at+0]),
+                 uintBitsToFloat(instanceMem[at+1]),
+                 uintBitsToFloat(instanceMem[at+2]));
+#if (MESH_TYPE==T_MORPH)
+    // Keep the original morph phase in the distance blend. It continues to
+    // play while Jolt owns the nearby cloth, so entering/leaving never resets it.
+    v.pos += morphDelta*(1.0-simulationWeight);
+#endif
+    v.normal = vec3(uintBitsToFloat(instanceMem[at+4]),
+                    uintBitsToFloat(instanceMem[at+5]),
+                    uintBitsToFloat(instanceMem[at+6]));
+    }
 #endif
 
   // Normals

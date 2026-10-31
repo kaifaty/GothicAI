@@ -1,0 +1,95 @@
+scenario,menu,audio,video,camera,input,group,source,lines,note
+m0,—,—,—,—,—,B,server/src/gothic_ai/scenarios/basics.py,"69,91",
+m1,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/basics.py,"106,118",
+m2,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/basics.py,"324,357",
+m3,—,N,—,—,WAV,B,server/src/gothic_ai/scenarios/basics.py,"421,483",WAV на сервере
+m4,—,N,—,CPU,—,B,server/src/gothic_ai/scenarios/basics.py,"499,513",
+m5,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/basics.py,"566,632,667",
+m5b,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/basics.py,"700,823,871",
+m5c,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/basics.py,"911,971",
+m5e,—,N,—,CPU focus,PTT/debug,B,server/src/gothic_ai/scenarios/basics.py,"1048,1063,1089",
+m6,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/basics.py,"1190,1195",heard_in_menu проверяется direct choose
+tts,—,real,opt,—,inject,A,server/src/gothic_ai/scenarios/basics.py,"398,405,412",По смыслу проверяет настоящее проигрывание
+websocket,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/basics.py,"153,157,210",
+orders,—,N,—,CPU focus,inject,B,server/src/gothic_ai/scenarios/companions.py,"1191,1202,1298",
+companion,—,N,—,CPU focus,inject,B,server/src/gothic_ai/scenarios/companions.py,"1833,1909,1917",
+calm,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/companions.py,"1960,2028,2035",
+wolf,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/companions.py,"1621,1638",beasts.listen
+rescue,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/companions.py,"828,887,934,980",
+rescue_self,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/companions.py,"828,934","cli.py:1387, killer=npc"
+neural,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/companions.py,"54,591,637",
+neural-companion,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/companions.py,"59,591,734",
+neural-group,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/companions.py,"327,430,524",
+neural-talk,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/companions.py,"198,257",neural_knockout.py:289
+neural-load,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/neural_load.py,"47,231,313",
+see,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/perception.py,"544,651,668",
+seen,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/perception.py,"702,824,859",
+hearing,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/perception.py,"335,385","talk.hear, без микрофона"
+cave,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/perception.py,"139,201,243",
+ground,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/perception.py,"46,108,113,121",
+places,—,—,—,—,—,B,server/src/gothic_ai/cli.py,1704,"places.py:89, JSON waypoints/people"
+knows,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/perception.py,"271,320",
+remembers,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/perception.py,"417,491,506",
+trace,—,N,—,CPU aim,bench,B,server/src/gothic_ai/scenarios/perception.py,907,"trace-e2e.bench:27,29,34,37 — CPU camera ray"
+broken,—,N,+,CPU,bench,V,server/src/gothic_ai/scenarios/broken.py,69,"broken-e2e.bench:17,29 — два rec"
+day,—,PCM,—,CPU,inject,Z,server/src/gothic_ai/scenarios/npc_life.py,"1225,1488,1498",
+noise,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/npc_life.py,"1006,1153,1173","Физический noise, не аудиоустройство"
+initiative,—,N,—,CPU,inject/deal,B,server/src/gothic_ai/scenarios/npc_life.py,"664,665,745,772",Проверяет guard важного диалога и помечает told
+lead,—,N,—,CPU,inject/deal,B,server/src/gothic_ai/scenarios/npc_life.py,"137,145,180",
+meet,—,N,—,—,inject/deal,B,server/src/gothic_ai/scenarios/npc_life.py,"281,304,353",
+meet_missed,—,N,—,—,inject/deal,B,server/src/gothic_ai/scenarios/npc_life.py,"217,330","cli.py:1576,1585"
+errand,—,PCM,—,CPU,inject,Z,server/src/gothic_ai/scenarios/npc_life.py,"1632,1674,1689,1716",
+errand_fork,—,PCM,—,CPU,inject,Z,server/src/gothic_ai/scenarios/npc_life.py,1754,cli.py:1590
+errand_far,—,PCM,—,CPU,inject,Z,server/src/gothic_ai/scenarios/npc_life.py,1718,Ранние реплики voiced
+errand_give,—,PCM,—,CPU,inject,Z,server/src/gothic_ai/scenarios/npc_life.py,"1779,1823,1843",TTS включён e2e.sh:350
+chests,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/npc_life.py,"371,442,455,484",
+chests_lobart,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/npc_life.py,"371,442","cli.py:1547,1551"
+group,—,PCM,—,CPU,inject,Z,server/src/gothic_ai/scenarios/conversation.py,"161,177,188,262",
+interject,—,PCM,—,CPU,inject,Z,server/src/gothic_ai/scenarios/conversation.py,"279,334,341,360",
+gossip,—,PCM,—,CPU,PTT/debug,Z,server/src/gothic_ai/scenarios/conversation.py,"593,595,639,810",Ждёт voice starts/played
+gossip_demo,—,N,opt,CPU,inject,B,server/src/gothic_ai/scenarios/conversation.py,"896,904,951",Внешний gossip.bench требует рендера
+cards,—,—,—,—,—,B,server/src/gothic_ai/scenarios/conversation.py,"848,862",
+deal,—,N,—,—,debug deal,B,server/src/gothic_ai/scenarios/deals.py,"89,97,102,122",Нужна модель состояния ChatOverlay/deal
+deal_demo,—,N,opt,CPU,debug deal,B,server/src/gothic_ai/scenarios/deals.py,"475,486,516",Внешний deal.bench требует рендера; модель deal
+debt,—,N,—,—,debug deal,B,server/src/gothic_ai/scenarios/deals.py,"327,334,372,376",Модель deal
+contract,—,N,—,—,debug deal,B,server/src/gothic_ai/scenarios/deals.py,"216,223,242",Модель deal
+haggle,—,N,—,—,debug deal,B,server/src/gothic_ai/scenarios/deals.py,"438,463",Модель deal
+lie,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/lies.py,"98,105,130",
+vlie,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/lies.py,"281,336,337,369,379",Direct choose
+vgive,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/lies.py,"462,482,489",Scripted effects ending
+vcheck,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/lies.py,"529,586,599,608",
+rumor,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/lies.py,"672,680,715",
+witness,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/lies.py,"1047,1051,1108",
+amends,?,N,—,—,inject,D?,server/src/gothic_ai/scenarios/lies.py,"861,864,867","Не уверен: auto important TALK, fallback choose"
+amends_deal,?,N,—,—,debug deal,D?,server/src/gothic_ai/scenarios/lies.py,"861,892,898","Не уверен: auto important TALK, fallback choose"
+crimes,+,N,—,CPU,debug menu,D,server/src/gothic_ai/scenarios/crimes.py,"427,431,437",Настоящий выбор карманной кражи
+crime_react,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/crime_react.py,"441,453",Native SVM queued/done
+crime_meet,+,N,—,CPU,inject,D,server/src/gothic_ai/scenarios/crime_meet.py,"578,598,621",Обязательный automatic TALK
+crime_talk,—,N,—,CPU,debug deal,B,server/src/gothic_ai/scenarios/crime_talk.py,"261,324,329",Модель deal
+crime_law,+,N,—,—,debug menu/deal,D,server/src/gothic_ai/scenarios/crime_law.py,"222,224,233",
+crime_director,?,N,—,CPU,inject/deal,D?,server/src/gothic_ai/scenarios/crime_director.py,"626,648,650","Не уверен: auto important Amends, fallback choose"
+wrath,—,N,—,CPU,inject,B,server/src/gothic_ai/scenarios/lies.py,"174,178,180,213","Закрывает возможный intro, проверяет spells/raised"
+trace_crime,—,N,—,CPU,bench/debug,B,server/src/gothic_ai/scenarios/trace_crime.py,"104,381","trace_crime-e2e.bench:12,16 — без rec"
+graph,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/story.py,"131,139,142",Choose и original SayCmd
+programs,+,PCM,—,—,debug menu,D,server/src/gothic_ai/scenarios/story.py,"238,247,344,350,360",Также нужен тихий PCM
+repair,—?,N,—,—,inject,B?,server/src/gothic_ai/scenarios/story.py,"545,547,550,554,558",Не уверен: необязательный native greeting
+authored,—?,N,—,—,inject,B?,server/src/gothic_ai/scenarios/story.py,"935,937,956,988",Не уверен: необязательный native greeting
+own,—,—,—,—,inject,B,server/src/gothic_ai/scenarios/story.py,"2134,2165,2216",
+own_repair,—?,N,—,—,inject,B?,server/src/gothic_ai/scenarios/story.py,"1056,1102,1200,1306",Не уверен: необязательный native greeting
+trigger,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/story.py,"2254,2423,2438,2463",
+stages,—?,N,—,—,inject,B?,server/src/gothic_ai/scenarios/story.py,"1102,1184,1200,1306",Не уверен: native greeting; свои choose не требуют меню
+requires,—?,N,—,—,inject,B?,server/src/gothic_ai/scenarios/story.py,"1355,1357,1483,1525,1536",Не уверен: необязательный native greeting
+chain,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/story.py,"1688,1709,1749",
+cast,—,—,—,—,inject,B,server/src/gothic_ai/scenarios/story.py,"1896,1948,1984,1993",
+person,—?,N,—,—,inject,B?,server/src/gothic_ai/scenarios/story.py,"2081,2105,2109,2119",Не уверен: необязательный native greeting
+character,—?,N,—,—,inject,B?,server/src/gothic_ai/scenarios/story.py,"854,901",Не уверен: вызывает authored_quest
+occasions,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/occasions.py,"20,84,148,171",
+questlog,+,N,—,—,debug menu,D,server/src/gothic_ai/scenarios/questlog.py,"72,79,86,91",
+showrunner,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/showrunner.py,429,Вызывает story.py:1749
+showrunner_live,—,N,—,—,inject,B,server/src/gothic_ai/scenarios/showrunner.py,621,Вызывает story.py:1749
+vanilla_line,+,N,—,—,debug menu,D,server/src/gothic_ai/scenarios/vanilla_line.py,"138,142,146,150,217",
+vanilla_line_live,+,N,—,—,debug menu,D,server/src/gothic_ai/scenarios/vanilla_line.py,"138,150,282,295",
+fight_reactions_wolf,—,PCM,—,CPU,inject,Z,server/src/gothic_ai/scenario_fight_reactions.py,"196,399,674,705",TTS включён e2e.sh:350
+fight_reactions_sight,—,PCM,—,CPU,inject,Z,server/src/gothic_ai/scenario_fight_reactions.py,"498,515,569","Native sight rays, без render visibility"
+fight_reactions_bandits,—,PCM+N,—,CPU,inject,Z,server/src/gothic_ai/scenario_fight_reactions.py,"188,865,879","Native duration, общий TTS setup"
+fight_reactions_flee,—,PCM+N,—,CPU,inject,Z,server/src/gothic_ai/scenario_fight_reactions.py,"1049,1059,1062,1071",Voiced и native shout

@@ -1,3 +1,4 @@
+import asyncio
 import copy
 
 import pytest
@@ -137,6 +138,31 @@ async def test_what_was_taken_unseen_is_missing_when_it_looks(tmp_path):
         "кто-то в нём рылся.]"
     ) in notes(dialogue)
     assert GOLD not in chests.known(BRAGO)[CAVE].items  # it knows now
+
+
+async def test_npc_suspicion_runs_only_after_owner_opens_and_notices_missing(tmp_path):
+    fake = FakeGame()
+    fake.chests[BRAGO] = [chest([i for i in START if i["item"] != GOLD])]
+    observed = []
+    store = MemoryStore(tmp_path / "m.sqlite3")
+    async with connected(fake) as link:
+        desk = ChestDesk(link, store)
+
+        def suspect(npc, chest_id, missing, **kwargs):
+            observed.append((npc, chest_id, missing))
+            return [{"suspect": "VINO"}]
+
+        desk.npc_suspect = suspect
+        await desk.prepare(BRAGO)
+        assert observed == []  # cached world truth does not reveal the loss to its owner
+        note = await desk.looked(BRAGO, CAVE, "")
+        assert observed == [(BRAGO, CAVE, {GOLD: 29})]
+        assert "подозрение, не доказательство" in note
+        await desk.looked(BRAGO, CAVE, "")
+        assert len(observed) == 1
+        if desk._tasks:
+            await asyncio.gather(*desk._tasks)
+    store.close()
 
 
 async def test_what_is_not_in_its_chest_it_cannot_take_out(tmp_path):

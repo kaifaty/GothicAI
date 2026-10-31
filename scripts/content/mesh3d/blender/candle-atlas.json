@@ -1,0 +1,18 @@
+{
+  "glb": "market-set/build/candle/model.glb",
+  "maps_dir": "market-set/tiles",
+  "scales": {"OWN_PROP_IRON_BAND": 1.0, "OWN_PROP_WAX": 1.0},
+  "targets": {"OWN_PROP_IRON_BAND": [0.0306, 0.0275, 0.0136], "OWN_PROP_WAX": [0.2558, 0.2153, 0.1414]},
+  "slots": {"OWN_PROP_IRON_BAND": ["OWN_CANDLE_MARKET_IRON", "METAL"], "OWN_PROP_WAX": ["OWN_CANDLE_MARKET_WAX", "UNDEF"]},
+  "metal": ["OWN_PROP_IRON_BAND"],
+  "size": 1024,
+  "seed": 1,
+  "angle_limit": 60,
+  "margin": 0.004,
+  "tone_spread": 0.05,
+  "wet_height": 0.0,
+  "algae": 0.0,
+  "bleach": 0.05,
+  "edge_radius": 0.003,
+  "contrast": {"OWN_PROP_IRON_BAND": 1.2, "OWN_PROP_WAX": 1.0}
+}

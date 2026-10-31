@@ -1,5 +1,6 @@
 import json
 import stat
+import sys
 import time
 from urllib.parse import parse_qs, urlsplit
 
@@ -72,7 +73,8 @@ async def test_login_completes_pkce_flow_via_loopback(tmp_path):
     assert exchange["grant_type"] == "authorization_code"
     assert exchange["client_id"] == "app_123" and exchange["code"] == "c0de" and exchange["code_verifier"]
     assert creds.client_id == "app_123" and creds.access_token == "access-1"
-    assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
+    if sys.platform != "win32":  # Windows has no modes: the user profile's permissions apply
+        assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
 
 
 async def test_valid_token_is_returned_without_network(tmp_path):

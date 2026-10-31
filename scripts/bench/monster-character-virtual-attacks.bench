@@ -1,0 +1,19 @@
+# Attack range check at the same seed and time as the films; no capture.
+seed 73024
+cheat god
+set time 12 0
+movable on
+off: monstercharacter off
+on: monstercharacter on
+view full
+overlay off
+monstercharacter attack wolf
+wait 600
+monstercharacter attack-start
+wait 3000
+monstercharacter end
+monstercharacter attack fieldraider
+wait 600
+monstercharacter attack-start
+wait 3000
+monstercharacter end

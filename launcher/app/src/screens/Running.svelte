@@ -37,7 +37,7 @@
 </script>
 
 <div class="screen">
-  <Header subtitle="идёт игра">
+  <Header subtitle={session.state === "waiting" ? "ожидание окна" : "идёт игра"}>
     <span class="mono elapsed">{elapsed}</span>
     <button class="btn btn-stop" onclick={stop} disabled={stopping}>
       <Icon name="stop" size={16} />{stopping ? "Останавливаю…" : "Остановить игру и сервисы"}
@@ -46,9 +46,13 @@
   <main>
     <section class="now panel" aria-labelledby="now-title">
       <h2 id="now-title" class="display">Сейчас</h2>
-      {#each rows as row (row.key)}
-        <StatusRow icon={row.icon} title={row.title} detail={row.detail} chip={row.chip} tone={row.tone} />
-      {/each}
+      {#if session.state === "waiting"}
+        <StatusRow icon="shield" title="Очередь игр" detail={session.services.queue?.detail ?? "Ожидаем допуска gq"} chip="ожидание" tone="idle" />
+      {:else}
+        {#each rows as row (row.key)}
+          <StatusRow icon={row.icon} title={row.title} detail={row.detail} chip={row.chip} tone={row.tone} />
+        {/each}
+      {/if}
     </section>
     <section class="log" aria-labelledby="log-title">
       <h2 id="log-title" class="display">Журнал</h2>

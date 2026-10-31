@@ -1,12 +1,14 @@
 import asyncio
 import json
 import os
+from unittest.mock import AsyncMock
 
 import httpx
 import numpy as np
 import pytest
 from websockets.asyncio.client import connect
 
+from gothic_asr import cli
 from gothic_asr.audio import RATE, float_to_pcm16, resample
 from gothic_asr.providers import AsrError, make_provider, parse_spec
 from gothic_asr.providers.fake import FakeProvider
@@ -135,12 +137,17 @@ async def test_openai_compatible() -> None:
         await nokey.transcribe(tone(1), "ru")
 
 
-async def _roundtrip(port: int, pcm: bytes, chunk: int = 3200) -> list[dict]:
+async def _roundtrip(
+    port: int, pcm: bytes, chunk: int = 3200, *, hints: list[str] | None = None
+) -> list[dict]:
     """One utterance sent in chunks; every event up to the final (or error)."""
     events = []
     async with connect(f"ws://127.0.0.1:{port}") as ws:
         events.append(json.loads(await ws.recv()))
-        await ws.send(json.dumps({"type": "start", "lang": "ru", "sample_rate": RATE}))
+        start = {"type": "start", "lang": "ru", "sample_rate": RATE}
+        if hints is not None:
+            start["hints"] = hints
+        await ws.send(json.dumps(start))
         for i in range(0, len(pcm), chunk):
             await ws.send(pcm[i : i + chunk])
         await asyncio.sleep(0.05)  # partials of the last chunks
@@ -172,6 +179,64 @@ async def test_streaming_partials_then_final(streaming_service) -> None:
     assert partials[:2] == ["Стой", "Стой здесь"] and partials[-1] == "Стой здесь и никуда не уходи."
     assert events[-1]["type"] == "final" and events[-1]["provider"] == "fake"
     assert primary.streams[0].samples == RATE and not fallback.calls
+
+
+@pytest.mark.parametrize("streaming_service", [{}], indirect=True)
+async def test_start_hints_reach_streaming_provider(streaming_service, monkeypatch) -> None:
+    svc, primary, _ = streaming_service
+    open_stream = AsyncMock(wraps=primary.open_stream)
+    monkeypatch.setattr(primary, "open_stream", open_stream)
+    hints = ["Кавалорн", "Лотара", "Долина Рудников"]
+    events = await _roundtrip(svc.port, float_to_pcm16(tone(0.5)), hints=hints)
+    assert events[-1]["type"] == "final"
+    assert open_stream.await_args.kwargs == {"hints": hints}
+
+
+@pytest.mark.parametrize("hints", [None, "Кавалорн", {"name": "Кавалорн"}, [1], ["Лотар", None]])
+@pytest.mark.parametrize("streaming_service", [{}], indirect=True)
+async def test_malformed_hints_are_rejected_without_closing_client(streaming_service, hints) -> None:
+    svc, primary, _ = streaming_service
+    async with connect(f"ws://127.0.0.1:{svc.port}") as ws:
+        await ws.recv()
+        await ws.send(json.dumps({"type": "start", "hints": hints}))
+        assert json.loads(await ws.recv()) == {
+            "type": "error",
+            "detail": "hints must be a list of strings",
+        }
+        assert not primary.streams
+        await ws.send(json.dumps({"type": "start", "hints": []}))
+        await ws.send(float_to_pcm16(tone(0.5)))
+        await ws.send(json.dumps({"type": "end"}))
+        while (event := json.loads(await ws.recv()))["type"] == "partial":
+            pass
+        assert event["type"] == "final"
+        assert len(primary.streams) == 1
+
+
+def test_realtime_cli_hints_and_provider_defaults(monkeypatch, tmp_path) -> None:
+    primary = FakeProvider(text="Кавалорн", stream=True)
+    open_stream = AsyncMock(wraps=primary.open_stream)
+    monkeypatch.setattr(primary, "open_stream", open_stream)
+    parsed = []
+
+    def recognizer(args):
+        parsed.append(args)
+        return Recognizer(primary)
+
+    monkeypatch.setattr(cli, "_recognizer", recognizer)
+    monkeypatch.setattr(cli, "load_env_file", lambda: None)
+    monkeypatch.setattr(cli, "read_wav", lambda _: (tone(0.4), RATE))
+    monkeypatch.delenv("GOTHIC_ASR_PROVIDER", raising=False)
+    monkeypatch.delenv("GOTHIC_ASR_FALLBACK", raising=False)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["gothic-asr", "transcribe", "--realtime", "--hints", "Кавалорн, Ватрас", str(tmp_path / "a.wav")],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 0
+    assert parsed[0].provider == "inworld" and parsed[0].fallback == "chatgpt"
+    open_stream.assert_awaited_once_with("ru", None, hints=["Кавалорн", "Ватрас"])
 
 
 @pytest.mark.parametrize("streaming_service", [{"stream_fail": True}], indirect=True)

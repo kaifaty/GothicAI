@@ -1,0 +1,64 @@
+# Market house at a raking sun (8:00): the same views as market-house.bench, for the relief of the normal maps.
+# Frame from market-house-measurement.json (cm): origin [9137,950,3745],
+# outward [0.909959643,0,0.414696814], tangent [-0.414696814,0,0.909959643].
+cheat god
+set time 8 0
+overlay off
+view hide animated morph pfx
+cam lift off
+
+# Whole front from ground level: eye outward 1650 cm, Y=440; target Y=760.
+# Anchor above the roof avoids teleport collision; hold before it can fall.
+cam look -1240
+goto pos 9137 2000 3745
+cam world 1650 -1560 24.462
+wait 34
+cam hold
+wait 6000
+shot front
+wait 300
+
+# Side with stone basement: target local outward=-545, tangent=494, Y=730.
+# Eye is 1500 cm farther along +tangent, at Y=440 (ground + 170 cm).
+cam look -1270
+goto pos 8436.212 2000 3968.510
+cam world 1500 -1560 114.462
+wait 34
+cam hold
+wait 6000
+shot side
+wait 300
+
+# Existing facade camera from quality-pilot.bench, unchanged.
+cam look 45
+goto pos 9137 905 3745
+cam world 479.218 102.698 24.462
+wait 34
+cam hold
+wait 6000
+shot facade
+wait 500
+
+# Basement close views (2026-10-22): world cm from market-house-measurement.json, as remaster.py bench writes them.
+# basement-window: 4 m from the basement window, eye ground + 170 cm
+cam look -540.000
+goto pos 8970.000 940.000 4008.000
+cam world 397.271 -500.000 25.016893
+wait 34
+cam hold
+wait 6000
+set time 8 0
+shot basement-window
+wait 300
+
+# basement-chain: 2.5 m from the chain wall, inside the arcade, eye ground + 170 cm
+cam look -540.000
+goto pos 8680.000 940.000 4120.000
+cam world 250.599 -500.000 118.610460
+wait 34
+cam hold
+wait 6000
+set time 8 0
+shot basement-chain
+wait 300
+

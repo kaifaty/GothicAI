@@ -14,8 +14,8 @@ const state: State = {
   settings: {
     game: { dir: scenario === "fresh" ? null : "/Games/Gothic II", dev_mode: false, chat_scale: null },
     llm: { backend: "chatgpt", model: null, base_url: null, reasoning_effort: "low" },
-    voice: { enabled: true, provider: "voxtral", fallback: "chatgpt", voxtral_url: "http://gpu-server:47830", mic_device: null },
-    tts: { enabled: true, provider: "inworld", fallback: "voxcpm", voxcpm_url: "ws://gpu-server:47831", loudness: null },
+    voice: { enabled: true, provider: "inworld", fallback: "chatgpt", voxtral_url: "http://gpu-server:47830", mic_device: null },
+    tts: { enabled: true, provider: "inworld", fallback: "none", voxcpm_url: "ws://gpu-server:47831", loudness: null },
     paths: { repo: null, uv: null, game_bin: null, game_home: null },
   },
   secrets: { openai_api_key: false, inworld_api_key: true },
@@ -38,7 +38,7 @@ if (scenario === "failed") {
     failed: {
       proc: "asr",
       detail:
-        "exited with code 2 before it was ready\n    --- 2026-10-11 18:21:04 uv run --project asr-service gothic-asr serve --provider voxtrall\n    error: unknown provider 'voxtrall', known: voxtral, chatgpt, openai, fake",
+        "exited with code 2 before it was ready\n    --- 2026-10-11 18:21:04 uv run --project asr-service gothic-asr serve --provider voxtrall\n    error: unknown provider 'voxtrall', known: inworld, voxtral, chatgpt, openai, fake",
     },
     code: 1,
   };
@@ -49,7 +49,7 @@ const providers = {
   voice: {
     enabled: true,
     providers: [
-      { id: "voxtral", ok: true, title: "Voxtral на своём сервере", detail: "Доступен" },
+      { id: "inworld", ok: true, title: "Inworld", detail: "Доступен" },
       { id: "chatgpt", ok: true, title: "Подписка ChatGPT", detail: "Вход выполнен" },
     ],
   },
@@ -70,14 +70,14 @@ async function play(session: Session) {
   await emit("core", { event: "session", data: session });
   for (const proc of ["asr", "tts", "server"]) await service({ proc, kind: "starting", detail: "", data: null });
   await sleep(700);
-  await service({ proc: "asr", kind: "ready", detail: "in 1.8s", data: { ok: true, providers: [{ name: "voxtral" }, { name: "chatgpt" }] } });
+  await service({ proc: "asr", kind: "ready", detail: "in 1.8s", data: { ok: true, providers: [{ name: "inworld" }, { name: "chatgpt" }] } });
   await service({ proc: "tts", kind: "ready", detail: "in 1.2s", data: { ok: true, providers: [{ name: "inworld", ok: true }, { name: "voxcpm", ok: true }] } });
   await service({ proc: "server", kind: "ready", detail: "in 1.1s", data: { ok: true, game: false } });
   await service({ proc: "game", kind: "starting", detail: "", data: null });
   await sleep(1500);
   await service({ proc: "server", kind: "status", detail: "", data: { ok: true, game: true } });
   await sleep(1200);
-  await journal({ kind: "player", npc: "NONE_100_XARDAS", name: "Ксардас", text: "Привет, Ксардас.", via: "voice", asr: "voxtral", latency_s: 0.49 });
+  await journal({ kind: "player", npc: "NONE_100_XARDAS", name: "Ксардас", text: "Привет, Ксардас.", via: "voice", asr: "inworld", latency_s: 0.49 });
   await sleep(900);
   await journal({ kind: "npc", npc: "NONE_100_XARDAS", name: "Ксардас", text: "Придержи язык.", llm: "chatgpt", first_token_s: 3.13, total_s: 5.06 });
   await sleep(900);
@@ -134,7 +134,7 @@ export function installMock(): void {
             if (i === 15) await emit("core", { event: "voice_test", data: { partial: "Привет" } });
             await sleep(100);
           }
-          return { text: "Привет, Ксардас.", provider: "voxtral", audio_s: 4, latency_s: 0.49 };
+          return { text: "Привет, Ксардас.", provider: "inworld", audio_s: 4, latency_s: 0.49 };
         case "test.speech":
           await sleep(1800);
           return { text: "Я ждал тебя. Нам нужно поговорить.", provider: "inworld", first_chunk_s: 0.26, audio_s: 2.4, latency_s: 0.9 };

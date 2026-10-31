@@ -8,6 +8,7 @@
 #include "Stream.hh"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -88,9 +89,17 @@ namespace zenkit {
 		ZKAPI explicit VfsNode(std::string_view name, VfsFileDescriptor dev, std::time_t ts);
 
 	private:
+		friend class Vfs;
+
+		struct OpenObserver {
+			std::function<void(std::string_view, std::string_view)> callback;
+			std::string source;
+		};
+
 		std::string _m_name;
 		std::time_t _m_time;
 		std::variant<ChildContainer, VfsFileDescriptor> _m_data;
+		std::shared_ptr<OpenObserver const> _m_open_observer;
 	};
 
 	enum class VfsOverwriteBehavior {
@@ -105,6 +114,12 @@ namespace zenkit {
 	class Vfs {
 	public:
 		ZKAPI Vfs();
+
+		/// \brief Observe successful file opens for subsequent mounts.
+		/// \param observer Receives the file name and archive filename or host path.
+		/// Set before mounting files. An empty observer disables tracking for subsequent mounts.
+		/// Observer exceptions are ignored so observation cannot interrupt resource loading.
+		ZKAPI void set_open_observer(std::function<void(std::string_view, std::string_view)> observer);
 
 		/// \brief Get the root node of the file system structure.
 		/// \return The root node of the file system structure.
@@ -207,11 +222,15 @@ namespace zenkit {
 #endif
 
 	private:
-		ZKINT void mount_disk(std::byte const* buf, std::size_t size, VfsOverwriteBehavior overwrite);
+		ZKINT void mount_disk(std::byte const* buf,
+		                     std::size_t size,
+		                     VfsOverwriteBehavior overwrite,
+		                     std::string_view source = {});
 		ZKINT void save_internal(Write* w, GameVersion version, time_t unix_t, bool compressed) const;
 
 		VfsNode _m_root;
 		std::vector<std::unique_ptr<std::byte[]>> _m_data;
+		std::function<void(std::string_view, std::string_view)> _m_open_observer;
 
 #ifdef _ZK_WITH_MMAP
 		std::vector<Mmap> _m_data_mapped;

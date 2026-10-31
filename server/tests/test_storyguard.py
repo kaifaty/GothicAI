@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -99,3 +100,16 @@ def test_asleep():
         assert asleep(s), s
     for s in ("", "ZS_STAND_GUARDING", "ZS_SIT_BENCH", "ZS_PRAY_SLEEPER"):
         assert not asleep(s), s
+
+
+def test_harm_protects_exact_story_holder_and_mission_item(graph):
+    first = next(iter(graph.nodes.values()))
+    graph.nodes["DIA_LOBART_ITEM"] = replace(
+        first, id="DIA_LOBART_ITEM", npc=LOBART,
+        condition=["call", "NPC_HASITEMS", SELF, ["sym", "ITMI_QUEST_OBJECT"]],
+    )
+    guard = StoryGuard(graph)
+    assert "сюжетного владельца" in guard.harm(VINO, target=LOBART, item="ITMI_QUEST_OBJECT")
+    assert guard.harm(VINO, target="BAU_OTHER", item="ITMI_QUEST_OBJECT") is None
+    assert guard.harm(VINO, target=LOBART, item="ITFO_BREAD") is None
+    assert "вещь для задания" in guard.harm(VINO, target=LOBART, item="ITFO_BREAD", mission=True)

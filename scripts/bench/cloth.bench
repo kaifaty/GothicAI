@@ -1,0 +1,101 @@
+# Old Camp banner acceptance: OFF/ON, calm/gust, native projectiles and 40 m transitions.
+# WORLD=OLDWORLD.ZEN; OC_LOB_FLAG_SMALL authored zen id 6367.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+view full
+cloth checkpoint world-load
+cloth setup 6367 oldcamp-flags
+cloth off
+cloth wind calm
+wait 12000
+rec cloth-oldcamp-off
+shot cloth-oldcamp-off-calm
+wait 3000
+cloth wind gust
+wait 10000
+shot cloth-oldcamp-off-gust
+wait 34
+cloth checkpoint off-gust
+stop
+
+cloth wind calm
+cloth on
+wait 2000
+cloth reset-stats
+wait 10000
+cloth checkpoint calm-10s
+cloth verify anchors
+rec cloth-oldcamp-on
+shot cloth-oldcamp-on-calm
+wait 3000
+cloth wind gust
+wait 10000
+shot cloth-oldcamp-on-gust
+wait 34
+cloth checkpoint gust
+cloth shoot fireball
+wait 2000
+cloth verify fireball
+cloth checkpoint after-fireball
+shot cloth-oldcamp-after-fireball
+wait 34
+cloth wind calm
+wait 5000
+cloth shoot arrow
+wait 1500
+cloth verify arrow
+cloth verify anchors
+cloth checkpoint after-arrow
+shot cloth-oldcamp-after-arrow
+wait 34
+stop
+
+# Keep the camera on the actual flag while the physical hero crosses the radius.
+cloth wind natural
+cloth distance 3450
+wait 2000
+rec cloth-oldcamp-radius
+shot cloth-radius-inside
+wait 34
+cloth checkpoint radius-inside
+cloth distance 3750
+wait 250
+cloth distance 3850
+wait 250
+cloth distance 3950
+wait 250
+cloth distance 3990
+wait 1000
+shot cloth-radius-before-exit
+wait 34
+cloth checkpoint radius-before-exit
+cloth distance 4010
+wait 34
+shot cloth-radius-after-exit
+wait 34
+cloth checkpoint radius-after-exit
+wait 1000
+cloth distance 4500
+wait 1000
+cloth distance 4010
+wait 1000
+shot cloth-radius-before-entry
+wait 34
+cloth checkpoint radius-before-entry
+cloth distance 3990
+wait 34
+shot cloth-radius-after-entry
+wait 34
+cloth checkpoint radius-after-entry
+wait 1000
+cloth distance 3450
+wait 3000
+cloth verify anchors
+cloth checkpoint final
+cloth wind gust
+wait 3000
+cloth save moving
+stop
+physics stats

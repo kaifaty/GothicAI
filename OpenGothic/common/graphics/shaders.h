@@ -31,6 +31,7 @@ class Shaders {
       bool     doMeshShading     = false;
       bool     doVirtualShadow   = false;
       bool     doSoftwareShadow  = false;
+      bool     doMaterialMaps    = false;
 
       bool     doSoftwareRT      = false;
       uint32_t swRenderingPreset = 0;

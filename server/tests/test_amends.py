@@ -1,3 +1,4 @@
+import asyncio
 import copy
 import json
 from pathlib import Path
@@ -243,7 +244,8 @@ async def test_one_confession_settles_both_who_asked_for_it(graph):
         await _until(lambda: first.stage == "told" and second.stage == "told")
         # he confesses to Lobart once: both are settled, the other confession is gone from Lobart's menu
         await fake.send(type="dialog_chosen", npc=LOBART, node=first.pay, made=True)
-        await _until(lambda: second.stage == "done")
+        await _until(lambda: len(chronicle.facts("amends")) == 2)
+        assert second.stage == "done"
         assert {"op": "remove_node", "node": second.pay} in _ops(fake)
         assert len(chronicle.facts("amends")) == 2
     finally:
@@ -345,6 +347,24 @@ async def test_victim_gets_amends_only_after_learning_of_the_hero(graph, kind, h
         assert await amends.consider(s.lie, LOBART, "снова слышал") is None
         assert await amends.consider(s.lie, HILDA, "видела сама") is None
         assert len(llm.calls) == 1
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("cover", [True, False])
+async def test_old_covered_testimony_opens_amends_only_with_cover_disabled(graph, cover):
+    fake = FakeGame(branch="A")
+    link_cm, amends, chronicle = await _amends(
+        fake, FakeBackend("…", delay=0), graph, MemoryStore(":memory:"), crimes=True
+    )
+    amends.crimes.cover = cover
+    try:
+        _crime(chronicle)
+        chronicle.record({
+            "fact": "testimony", "npc": LOBART, "witness": HILDA, "cover": "D1",
+            "crime_saw": [CRIME], "crime_told": [],
+        })
+        assert (f"crime:{CRIME}" in amends.lies) is not cover
     finally:
         await link_cm.__aexit__(None, None, None)
 
@@ -468,4 +488,192 @@ async def test_saved_crime_amends_can_be_paid_with_crimes_disabled(graph):
         _crime_proof(chronicle, "seen")
         assert amends._queue.empty() and len(llm.calls) == 1
     finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+async def test_meeting_demand_reuses_existing_amends_and_its_payment(graph):
+    fake = FakeGame(branch="A")
+    llm = FakeBackend(script=[FakeStep("", [_crime_proposal()])], delay=0)
+    link_cm, amends, chronicle = await _amends(fake, llm, graph, MemoryStore(":memory:"), crimes=True)
+    try:
+        _crime(chronicle)
+        _crime_proof(chronicle, "seen")
+        storylet = await amends.demand(LOBART, CRIME)
+        assert storylet is not None
+        assert await amends.demand(LOBART, CRIME) is storylet
+        await fake.send(type="dialog_chosen", npc=LOBART, node=storylet.talk, made=True)
+        await _until(lambda: storylet.stage == "told")
+        assert await amends.demand(LOBART, CRIME) is storylet
+        await fake.send(type="dialog_chosen", npc=LOBART, node=storylet.pay, made=True)
+        await _until(lambda: bool(chronicle.facts("forgiven")))
+        assert not amends.active_crime(LOBART, CRIME)
+        assert await amends.demand(LOBART, CRIME) is None
+        assert len(llm.calls) == 1 and chronicle.facts("forgiven")[0]["paid"]
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("proposal", ["none", "invalid"])
+async def test_meeting_rule_requires_validated_amends_even_if_model_declines(graph, proposal):
+    fake = FakeGame(branch="A")
+    args = {"kind": "none"} if proposal == "none" else {"gold": 5000}
+    llm = FakeBackend(script=[FakeStep("", [_crime_proposal(**args)])], delay=0)
+    link_cm, amends, chronicle = await _amends(fake, llm, graph, MemoryStore(":memory:"), crimes=True)
+    try:
+        _crime(chronicle)
+        _crime_proof(chronicle, "seen")
+        storylet = await amends.demand(LOBART, CRIME)
+        assert storylet is not None and 1 <= storylet.gold <= 50
+        assert len(llm.calls) == 2 and not chronicle.facts("amends_none")
+        assert "Правило встречи уже решило" in llm.calls[0][1][0].content
+        talk = next(op["node"] for op in _ops(fake) if op.get("node", {}).get("id") == storylet.talk)
+        assert talk["important"] and len(talk["lines"]) >= 2
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("resolution", ["silenced", "died"])
+async def test_silence_and_death_withdraw_native_amends_and_survive_reload(graph, resolution):
+    fake = FakeGame(branch="A")
+    llm = FakeBackend(script=[FakeStep("", [_crime_proposal()])], delay=0)
+    link_cm, amends, chronicle = await _amends(fake, llm, graph, MemoryStore(":memory:"), crimes=True)
+    try:
+        _crime(chronicle)
+        _crime_proof(chronicle, "seen")
+        storylet = await amends.demand(LOBART, CRIME)
+        assert storylet is not None
+        chronicle.record({"fact": resolution, "npc": LOBART, "crime": CRIME})
+        await _until(lambda: bool(chronicle.facts("amends_withdrawn")))
+        assert {"op": "remove_node", "node": storylet.talk} in _ops(fake)
+        assert not amends.active_crime(LOBART, CRIME)
+        assert await amends.demand(LOBART, CRIME) is None
+        amends._load()
+        assert amends.storylets[storylet.id].stage == "done"
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("change", ["silenced", "forgiven", "died", "branch"])
+async def test_inflight_meeting_demand_does_not_create_dialog_after_knowledge_or_load_changes(graph, change):
+    fake = FakeGame(branch="A")
+    llm = FakeBackend(script=[FakeStep("", [_crime_proposal()])], delay=0, first=0.1)
+    link_cm, amends, chronicle = await _amends(fake, llm, graph, MemoryStore(":memory:"), crimes=True)
+    try:
+        _crime(chronicle)
+        _crime_proof(chronicle, "seen")
+        demand = asyncio.create_task(amends.demand(LOBART, CRIME))
+        await _until(lambda: bool(llm.calls))
+        if change == "branch":
+            await fake.send(type="loading")
+            await fake.send(type="session", branch="B", parent=None, parent_seq=0, reason="load")
+            await _until(lambda: chronicle.branch == "B")
+        else:
+            chronicle.record({"fact": change, "npc": LOBART, "crime": CRIME})
+        assert await demand is None
+        assert not chronicle.facts("amends_open")
+        assert not any(op.get("op") == "add_node" for op in _ops(fake))
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+async def test_meeting_demand_accepts_known_owner_when_victim_field_is_empty(graph):
+    fake = FakeGame(branch="A")
+    llm = FakeBackend(script=[FakeStep("", [_crime_proposal()])], delay=0)
+    link_cm, amends, chronicle = await _amends(fake, llm, graph, MemoryStore(":memory:"), crimes=True)
+    try:
+        _crime(chronicle)
+        case = {**chronicle.facts("crime")[0], "id": "OWN", "victim": ""}
+        chronicle.record(case)
+        chronicle.record({"fact": "crime_seen", "crime": "OWN", "npc": LOBART})
+        storylet = await amends.demand(LOBART, "OWN")
+        assert storylet is not None and storylet.to == LOBART
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+async def test_cancelled_demand_removes_talk_already_sent_without_storylet(graph):
+    fake = FakeGame(branch="A")
+    llm = FakeBackend(script=[FakeStep("", [_crime_proposal()])], delay=0)
+    link_cm, amends, chronicle = await _amends(fake, llm, graph, MemoryStore(":memory:"), crimes=True)
+    original_apply = amends.patches.apply
+    sent = asyncio.Event()
+
+    async def waiting_for_ack(op: dict[str, Any]) -> None:
+        if op.get("op") == "add_node":
+            # The engine has applied TALK, while StoryPatches.apply still awaits its result.
+            await amends.link.patch_graph([op])
+            sent.set()
+            await asyncio.Event().wait()
+        else:
+            await original_apply(op)
+
+    amends.patches.apply = waiting_for_ack
+    try:
+        _crime(chronicle)
+        _crime_proof(chronicle, "seen")
+        demand = asyncio.create_task(amends.demand(LOBART, CRIME))
+        await sent.wait()
+        demand.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await demand
+        talk = next(op["node"]["id"] for op in _ops(fake) if op.get("op") == "add_node")
+        assert {"op": "remove_node", "node": talk} in _ops(fake)
+        assert not amends.storylets and not chronicle.facts("amends_open")
+    finally:
+        amends.patches.apply = original_apply
+        await link_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("callback", ["talk", "paid", "forgiven"])
+@pytest.mark.parametrize("loading", [False, True])
+async def test_dialog_callback_does_not_write_loaded_branch_during_pending_patch_ack(
+    graph, callback, loading
+):
+    fake = FakeGame(branch="A")
+    llm = FakeBackend(script=[FakeStep("", [_crime_proposal()])], delay=0)
+    link_cm, amends, chronicle = await _amends(fake, llm, graph, MemoryStore(":memory:"), crimes=True)
+    original_patch = amends.link.patch_graph
+    sent, acknowledge = asyncio.Event(), asyncio.Event()
+
+    async def waiting_for_ack(ops, *, replace=False):
+        await original_patch(ops, replace=replace)
+        if not replace and not sent.is_set():
+            # The native operation already ran; its delayed acknowledgement must not
+            # let StoryPatches or the callback record that old operation in branch B.
+            sent.set()
+            await acknowledge.wait()
+
+    try:
+        _crime(chronicle)
+        _crime_proof(chronicle, "seen")
+        storylet = await amends.demand(LOBART, CRIME)
+        assert storylet is not None
+        # Restored Amends can also reopen native dialogs. Two entries prove that
+        # loading during the first await cannot send the next mutation to the new world.
+        storylet.close = [JOIN, MISSION]
+        amends.link.patch_graph = waiting_for_ack
+        if callback == "forgiven":
+            chronicle.record({"fact": "forgiven", "npc": LOBART, "crime": CRIME})
+        else:
+            await fake.send(
+                type="dialog_chosen", npc=LOBART,
+                node=storylet.talk if callback == "talk" else storylet.pay, made=True,
+            )
+        await asyncio.wait_for(sent.wait(), 1)
+        pending = tuple(amends._background)
+        old_ops = len(_ops(fake))
+        if loading:
+            await fake.send(type="loading")
+            await _until(lambda: amends._loading)
+        await fake.send(type="session", branch="B", parent=None, parent_seq=0, reason="load")
+        await _until(lambda: chronicle.branch == "B")
+        acknowledge.set()
+        await asyncio.gather(*pending, return_exceptions=True)
+        assert not amends.storylets
+        assert amends.patches.ops() == []
+        assert chronicle.facts() == []
+        assert _ops(fake)[old_ops:] == []
+    finally:
+        acknowledge.set()
+        amends.link.patch_graph = original_patch
         await link_cm.__aexit__(None, None, None)

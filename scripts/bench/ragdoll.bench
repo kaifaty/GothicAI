@@ -36,7 +36,8 @@ stop
 waitragdoll watched sleep 30000
 release all
 place 100 0
-wait 100
+# The hero may be put on the rocks by the corpse: let him land before he loots.
+wait 1500
 ragdoll loot watched
 
 # Ordinary animation transitions on the identical human skeleton provide an independent

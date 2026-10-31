@@ -1,0 +1,30 @@
+# Fresh NEWWORLD.ZEN, noon. OPENGOTHIC_CENSUS=<absolute output>/census.json.
+# Authored harbour cargo barrel NW_HARBOUR_BARREL_01, ZEN id 19986:
+# origin (5391.2266, 319.8680, -5821.8828) cm. Its neighbour is id 19987.
+# The camera is held independently of the hero; no fixture prop is inserted.
+# Run the same scene with OPENGOTHIC_CONTENT= for original-mesh screenshots/FPS.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view nopfx
+cam lift off
+# Park the hero below the world so he neither enters the frame nor touches the
+# authored props. Marvin's goto pos takes integer centimetres.
+goto pos 5391 -1680 -5822
+clear 5000
+cam look 2000
+cam world 280 2120 0
+wait 34
+cam hold
+wait 5000
+shot own-mesh-barrel
+census
+# Completed application frames, normal game clock, no video capture.
+# character measure only arms the shared cadence window; no character fixture.
+cadence normal
+wait 34
+character measure off
+cadence wait
+character report

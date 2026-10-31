@@ -167,6 +167,7 @@ class Ending:
     condition: Expr | None  # when it is offered, with what the ending needs (`guard`)
     lines: list[str]
     offers: list[Offer]
+    terms: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -203,6 +204,9 @@ class Brief:
                 f"{i}. {e.node} — диалог «{e.description}», ставит квесту {ENDINGS.get(e.value, 'running')}. "
                 f"Когда: {render(e.condition)}."
             )
+            out += [
+                f"   Умерший сам снял пункты уговора: {t}. Преемник держит этот уговор" for t in e.terms
+            ]
             if e.lines:
                 out.append("   Как это звучало: " + " ".join(f"«{t}»" for t in e.lines))
             out.append(
@@ -489,6 +493,16 @@ class Director:
         q = self.graph.quests.get(quest)
         if q is None:
             return None
+        dropped = {
+            d
+            for f in self.chronicle.facts("quest_terms")
+            if f.get("quest") == quest and story.state.dead(f["npc"])
+            for d in f["drop"]
+        }
+        if dropped:
+            names = await self.link.story_state(npcs=sorted(dropped), items=sorted(dropped))
+            story.state.names.update(WorldState.from_game(names).names)
+            story.state.names.update(names.get("items", {}))
         endings = []
         n = 1
         for id in story.endings(quest):
@@ -642,8 +656,27 @@ class Director:
             )
         running = ["==", ["var", quest], ["int", LOG_RUNNING, "LOG_RUNNING"]]
         condition = _all(running, condition, guard)
+        terms = [
+            f
+            for f in self.chronicle.facts("quest_terms")
+            if f.get("quest") == quest and f.get("npc") == node.npc
+        ]
+        claim = None
+        dropped: list[str] = []
+        if terms:
+            from .vanilla import Claim
+
+            dropped = list(dict.fromkeys(d for f in terms for d in f["drop"]))
+            items = _hero_items(condition)
+            claim = Claim(items={d: items.get(d, 1) for d in dropped}, dead=dropped, knows=dropped)
+            needs = {i: n for i, n in needs.items() if i not in dropped}
+
+        def assume(e: Any) -> Any:
+            return claim.assume(e, self.graph) if claim is not None else e
+
+        condition = assume(condition)
         offers: list[Offer] = []
-        self._offers(node, quest, story, needs, offers, first, label="")
+        self._offers(node, quest, story, needs, offers, first, label="", assume=assume, dropped=dropped)
         for item, count in needs.items():
             offers.append(
                 Offer(
@@ -657,9 +690,16 @@ class Director:
             for e in node.effects
             if e["do"] == "line"
             and e.get("speaker") == ["inst", "SELF"]
-            and story.possible(e.get("when"), self_npc=node.npc, hero_items=needs)
+            and story.possible(assume(e.get("when")), self_npc=node.npc, hero_items=needs)
         ][:4]
-        return Ending(node.id, node.npc, node.description, value, condition, lines, offers)
+        said = []
+        for f in terms:
+            names = ", ".join(
+                self.graph.nodes[d].description if d in self.graph.nodes else story.state.name(d)
+                for d in f["drop"]
+            )
+            said.append(f"{names} — «{f['why']}»")
+        return Ending(node.id, node.npc, node.description, value, condition, lines, offers, said)
 
     def _offers(
         self,
@@ -670,32 +710,37 @@ class Director:
         out: list[Offer],
         first: int,
         label: str,
+        assume: Callable[[Any], Any],
+        dropped: list[str],
         depth: int = 0,
     ) -> None:
         for e in node.effects:
-            if not story.possible(e.get("when"), self_npc=node.npc, hero_items=needs):
+            when = assume(e.get("when"))
+            if not story.possible(when, self_npc=node.npc, hero_items=needs):
                 continue
             made = _effect(e, quest, self.titles)
             if made is not None:
                 effect, text = made
+                if effect.get("to") == "self" and effect.get("item") in dropped:
+                    continue
                 out.append(Offer(f"E{first + len(out)}", effect, text + label))
             elif e["do"] == "choice" and depth == 0 and e.get("node") in self.graph.nodes:
                 # the hero's choice in the menu, as the scripts offer it: kept whole, its program played
                 choice = self.graph.nodes[e["node"]]
                 inside: list[Offer] = []
-                self._offers(choice, quest, story, needs, inside, 0, "", 1)
+                self._offers(choice, quest, story, needs, inside, 0, "", assume, dropped, 1)
                 gives = ", ".join(o.text for o in inside) or "сам ничего не даёт"
                 said = " ".join(
                     f"«{x.get('text', '')}»"
                     for x in choice.effects
                     if x["do"] == "line"
                     and x.get("speaker") == ["inst", "SELF"]
-                    and story.possible(x.get("when"), self_npc=node.npc, hero_items=needs)
+                    and story.possible(assume(x.get("when")), self_npc=node.npc, hero_items=needs)
                 )
                 text = f"вариант ответа «{choice.description}»" + (f", в ответ: {said}" if said else "")
                 text += f" — {gives}"
                 effects = [o.effect for o in inside]
-                out.append(Offer(f"E{first + len(out)}", {}, text, choice.id, effects, e.get("when")))
+                out.append(Offer(f"E{first + len(out)}", {}, text, choice.id, effects, when))
 
     def _told(self, quest: str) -> list[str]:
         q = self.graph.quests[quest]

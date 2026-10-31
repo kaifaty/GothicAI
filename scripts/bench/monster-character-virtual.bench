@@ -1,0 +1,93 @@
+# First numerical OFF/ON comparison; no video capture. The hero/human flags are independent.
+# Run fresh processes with OPENGOTHIC_BENCH_TAKE=off|on and MONSTER_CHARACTER_VIRTUAL=0|1.
+seed 73024
+cheat god
+set time 12 0
+movable on
+off: monstercharacter off
+on: monstercharacter on
+view full
+overlay off
+
+monstercharacter route wolf_stairs
+wait 600
+monstercharacter begin
+wait 10000
+monstercharacter end
+
+monstercharacter route wolf_slope
+wait 600
+monstercharacter begin
+wait 10000
+monstercharacter end
+
+monstercharacter route troll_barrel
+wait 1800
+monstercharacter begin
+wait 18000
+monstercharacter end
+
+monstercharacter route wolf_water
+wait 600
+monstercharacter begin
+wait 10000
+monstercharacter end
+monstercharacter reverse
+monstercharacter begin
+wait 10000
+monstercharacter end
+
+monstercharacter attack wolf
+wait 600
+monstercharacter attack-start
+wait 3000
+monstercharacter end
+monstercharacter attack fieldraider
+wait 600
+monstercharacter attack-start
+wait 3000
+monstercharacter end
+
+# Eligibility and live toggles are checked separately after the OFF/ON route windows.
+monstercharacter on
+monstercharacter route wolf_stairs
+wait 600
+monstercharacter distance 1950
+wait 100
+monstercharacter expect enter_19_5m 1
+monstercharacter distance 2100
+wait 100
+monstercharacter expect retain_21m 1
+monstercharacter distance 2250
+wait 100
+monstercharacter expect leave_22_5m 0
+monstercharacter distance 2100
+wait 100
+monstercharacter expect outside_reenter_21m 0
+monstercharacter distance 1950
+wait 100
+monstercharacter expect reenter_19_5m 1
+toggle monster_character_virtual
+wait 100
+monstercharacter expect marvin_off 0
+toggle monster_character_virtual
+wait 100
+monstercharacter expect marvin_on 1
+monstercharacter distance 400
+wait 600
+monstercharacter save
+wait 100
+monstercharacter snapshot restored
+
+monstercharacter flying Bloodfly
+wait 300
+monstercharacter expect bloodfly_excluded 0
+monstercharacter flying Harpie
+wait 300
+monstercharacter expect harpy_excluded 0
+monstercharacter flying Demon
+wait 300
+monstercharacter expect demon_excluded 0
+monstercharacter flying Wisp
+wait 300
+monstercharacter expect wisp_excluded 0

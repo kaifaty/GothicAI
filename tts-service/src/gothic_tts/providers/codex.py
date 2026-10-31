@@ -52,6 +52,7 @@ PROMPT = (
 class CodexRealtime:
     name = "codex"
     rate = 24000
+    supports_cloning = False
 
     def __init__(
         self,

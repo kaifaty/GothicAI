@@ -110,10 +110,12 @@ class Goal:
     arrive: int = 0  # away (far from the hero): the game minute it would be there
     retry: int = 0  # a walk cut off: not again before this game minute
     tries: int = 0
+    subject: str = "PLAYER"  # tell: omitted in old goal facts about the hero
 
     def what(self) -> str:
         if self.do == "tell":
-            return f"рассказать о герое ({self.title}) — кому: {self.to_name}"
+            news = "о герое" if self.subject == "PLAYER" else "новость"
+            return f"рассказать {news} ({self.title}) — кому: {self.to_name}"
         return f"отнести {self.item_name}, {self.count} шт. — кому: {self.to_name}"
 
     def when(self, now: int | None) -> str:
@@ -125,7 +127,7 @@ class Goal:
         return {"fact": "goal", "id": self.id, "npc": self.npc, "name": self.name, "do": self.do,
                 "to": self.to, "to_name": self.to_name, "start": self.start, "rumor": self.rumor,
                 "title": self.title, "item": self.item, "item_name": self.item_name,
-                "count": self.count}  # fmt: skip
+                "count": self.count, "subject": self.subject}  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -184,6 +186,8 @@ class Errands:
         self.chronicle = chronicle
         self.bodies = bodies
         self.rumors = rumors
+        self.gate_news: Callable[[str, str], tuple[str, str] | None] | None = None
+        self.gate_told: Callable[[str, str, str], Coroutine[Any, Any, None]] | None = None
         self.checked = checked_items(graph)
         self.journal = journal or dialogue.journal
         self.goals: dict[str, Goal] = {}
@@ -231,7 +235,7 @@ class Errands:
                         str(f["id"]), str(f["npc"]), str(f.get("name", "")), f.get("do", "tell"),
                         str(f["to"]), str(f.get("to_name", "")), int(f["start"]), str(f.get("rumor", "")),
                         str(f.get("title", "")), str(f.get("item", "")), str(f.get("item_name", "")),
-                        int(f.get("count", 0)),
+                        int(f.get("count", 0)), subject=str(f.get("subject") or "PLAYER").upper(),
                     )  # fmt: skip
                     self.goals[g.id] = g
                 case "goal_done" if (g := self.goals.get(f.get("goal", ""))) is not None:
@@ -320,10 +324,15 @@ class Errands:
             start,  # type: ignore[arg-type]
         )
         if do == "tell":
-            rumor = self._rumor(npc, to)
-            if rumor is None:
-                return None, f"{goal.to_name} уже знает всё, что ты знаешь о герое"
-            goal.rumor, goal.title = rumor.key, rumor.title
+            news = self.gate_news(npc, to) if self.gate_news is not None else None
+            if news is not None:
+                goal.rumor, goal.title = news
+            else:
+                rumor = self._rumor(npc, to)
+                if rumor is None:
+                    return None, f"{goal.to_name} уже знает все новости, которые ты можешь рассказать"
+                goal.rumor, goal.subject = rumor.key, rumor.subject
+                goal.title = rumor.title if rumor.is_player else rumor.description()
         else:
             why = self._thing(goal, str(raw.get("item") or ""), raw.get("count"), snap)
             if why:
@@ -362,12 +371,13 @@ class Errands:
         return who, ""
 
     def _rumor(self, npc: str, to: str) -> Rumor | None:
-        """What it knows of the hero and the other does not: its own first, then the freshest."""
+        """News it can pass to the other: its own discovery first, then the freshest."""
         rumors = self.rumors()
         if rumors is None:
             return None
         known = [
-            r for r in rumors.rumors.values() if npc in r.known and to not in r.known and npc not in r.silent
+            r for r in rumors.rumors.values()
+            if npc in r.known and to not in r.known and npc not in r.silent and r.subject != npc
         ]
         known.sort(key=lambda r: (r.about != npc, -r.since.get(npc, 0)))
         return known[0] if known else None
@@ -526,7 +536,10 @@ class Errands:
                 people = []
             if any(p.get("npc") == g.to for p in people):
                 return await self._near(g, g.to)
-            if g.do == "tell" and social is not None and (guild := social.guilds.get(g.to)):
+            if (
+                g.do == "tell" and not g.rumor.startswith("gate:")
+                and social is not None and (guild := social.guilds.get(g.to))
+            ):
                 rumor = self._of(g)
                 others = sorted(
                     (p for p in people if p.get("guild") == guild and p.get("npc") not in (g.npc, g.to)
@@ -554,6 +567,8 @@ class Errands:
             seen = await self._seen_by(g.npc, to)
             self._gave(g, to, seen)
             return self._done(g, to, "near")
+        if g.rumor.startswith("gate:"):
+            return await self._tell_gate(g, to, "near", self._world)
         rumors, rumor = self.rumors(), self._of(g)
         if rumors is None or rumor is None:
             return self._fail(g, "забыл, о чём хотел рассказать")
@@ -576,6 +591,12 @@ class Errands:
                 return self._fail(g, f"не застал на месте: {g.to_name}")
             self._spawn(self._give_far(g, self._world))
             return
+        if g.rumor.startswith("gate:"):
+            if not there:
+                return self._fail(g, f"не застал на месте: {g.to_name}")
+            g.state = "there"
+            self._spawn(self._tell_gate(g, g.to, "far", self._world))
+            return
         rumor = self._of(g)
         if rumors is None or rumor is None:
             return self._fail(g, "забыл, о чём хотел рассказать")
@@ -584,6 +605,19 @@ class Errands:
             return self._fail(g, f"не застал на месте: {g.to_name}")
         status = rumors.tell(rumor, g.npc, to)
         self._done(g, to, "far" if status == "told" else "knew")
+
+    async def _tell_gate(self, g: Goal, to: str, how: str, world: int) -> None:
+        """Gate news is addressed to this person: another guard cannot receive it in its place."""
+        if to != g.to or self.gate_told is None:
+            return self._fail(g, f"не передал новость адресату: {g.to_name}")
+        try:
+            await self.gate_told(g.rumor, g.npc, to)
+        except (GameError, TimeoutError) as err:
+            if world == self._world:
+                self._fail(g, f"не передал новость: {str(err) or type(err).__name__}")
+            return
+        if world == self._world:
+            self._done(g, to, how)
 
     def _stand_in(self, g: Goal, rumor: Rumor) -> str | None:
         """Another of the other's guild by its spot at that minute, by its routine, awake (the far fork)."""
@@ -653,9 +687,11 @@ class Errands:
         if g.do == "give":
             note = f"Ты отнёс {g.item_name}, {g.count} шт. — кому: {to_name}"
         elif how == "knew":
-            note = f"Ты пришёл рассказать о герое, а он уже знал — кому: {to_name}"
+            news = "о герое" if g.subject == "PLAYER" else f"новость ({g.title})"
+            note = f"Ты пришёл рассказать {news}, а он уже знал — кому: {to_name}"
         else:
-            note = f"Ты рассказал о герое ({g.title}) — кому: {to_name}"
+            news = "о герое" if g.subject == "PLAYER" else "новость"
+            note = f"Ты рассказал {news} ({g.title}) — кому: {to_name}"
             if to != g.to:
                 note += f"; не застал: {g.to_name}"
         self.dialogue.remember(g.npc, g.name, note)

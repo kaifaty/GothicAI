@@ -1,0 +1,17 @@
+# Densest actual cloth cluster in the requested WORLD (compare OLDWORLD and NEWWORLD).
+# Normal game clock: no recording and no per-frame mesh snapshot events in the timing window.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+view full
+cloth setup densest cloth-density
+cloth on
+cloth wind gust
+wait 15000
+cloth checkpoint density-on
+cadence normal
+wait 34
+cloth measure on
+cadence wait
+cloth report

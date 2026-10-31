@@ -1,0 +1,1255 @@
+{
+  "date": "2026-10-20",
+  "source": "Saved Ryzen outputs only; no new rollouts",
+  "evaluation": {
+    "scenarios": 96,
+    "episodes": 288,
+    "complete": true,
+    "by_kind": {
+      "point": {
+        "v2": {
+          "episodes": 30,
+          "successes": 30,
+          "decisions": 16860,
+          "mean_elapsed_ms": 56156.63333333333,
+          "mean_travelled_cm": 4633.125316354683,
+          "mean_length_over_detour": 1.4344106308957567,
+          "blocked_spans": 31,
+          "backward": 0,
+          "strafe": 0,
+          "backward_fraction": 0,
+          "strafe_fraction": 0,
+          "follow_fraction": null,
+          "follow_first_contacts": 0,
+          "approach_success_fraction": null,
+          "jump": 0,
+          "climb": 0
+        },
+        "memory": {
+          "episodes": 30,
+          "successes": 10,
+          "decisions": 50184,
+          "mean_elapsed_ms": 167268.86666666667,
+          "mean_travelled_cm": 11448.153051381898,
+          "mean_length_over_detour": 3.9935226890348923,
+          "blocked_spans": 409,
+          "backward": 4869,
+          "strafe": 12673,
+          "backward_fraction": 0.09702295552367288,
+          "strafe_fraction": 0.2525306870715766,
+          "follow_fraction": null,
+          "follow_first_contacts": 0,
+          "approach_success_fraction": null,
+          "jump": 0,
+          "climb": 0
+        },
+        "oracle": {
+          "episodes": 30,
+          "successes": 22,
+          "decisions": 27388,
+          "mean_elapsed_ms": 91266.63333333333,
+          "mean_travelled_cm": 4044.780403458385,
+          "mean_length_over_detour": 1.3764977470682738,
+          "blocked_spans": 24,
+          "backward": 1389,
+          "strafe": 4118,
+          "backward_fraction": 0.05071564188695779,
+          "strafe_fraction": 0.1503578209434789,
+          "follow_fraction": null,
+          "follow_first_contacts": 0,
+          "approach_success_fraction": null,
+          "jump": 0,
+          "climb": 0
+        }
+      },
+      "object": {
+        "v2": {
+          "episodes": 30,
+          "successes": 30,
+          "decisions": 13681,
+          "mean_elapsed_ms": 45571.13333333333,
+          "mean_travelled_cm": 3680.284597087618,
+          "mean_length_over_detour": 0.9898124894272906,
+          "blocked_spans": 2,
+          "backward": 0,
+          "strafe": 0,
+          "backward_fraction": 0,
+          "strafe_fraction": 0,
+          "follow_fraction": null,
+          "follow_first_contacts": 0,
+          "approach_success_fraction": null,
+          "jump": 0,
+          "climb": 1
+        },
+        "memory": {
+          "episodes": 30,
+          "successes": 10,
+          "decisions": 49961,
+          "mean_elapsed_ms": 166523.3,
+          "mean_travelled_cm": 10769.661604882835,
+          "mean_length_over_detour": 3.7392345238465086,
+          "blocked_spans": 363,
+          "backward": 1050,
+          "strafe": 10211,
+          "backward_fraction": 0.02101639278637337,
+          "strafe_fraction": 0.20437941594443665,
+          "follow_fraction": null,
+          "follow_first_contacts": 0,
+          "approach_success_fraction": null,
+          "jump": 0,
+          "climb": 0
+        },
+        "oracle": {
+          "episodes": 30,
+          "successes": 26,
+          "decisions": 20765,
+          "mean_elapsed_ms": 69191.13333333333,
+          "mean_travelled_cm": 3966.2395182516448,
+          "mean_length_over_detour": 1.0242163964335473,
+          "blocked_spans": 26,
+          "backward": 97,
+          "strafe": 199,
+          "backward_fraction": 0.004671321935949916,
+          "strafe_fraction": 0.009583433662412714,
+          "follow_fraction": null,
+          "follow_first_contacts": 0,
+          "approach_success_fraction": null,
+          "jump": 0,
+          "climb": 0
+        }
+      },
+      "follow": {
+        "v2": {
+          "episodes": 18,
+          "successes": 0,
+          "decisions": 42103,
+          "mean_elapsed_ms": 233905.55555555556,
+          "mean_travelled_cm": 14934.713372667296,
+          "mean_length_over_detour": 4.2279329626786035,
+          "blocked_spans": 40,
+          "backward": 0,
+          "strafe": 0,
+          "backward_fraction": 0,
+          "strafe_fraction": 0,
+          "follow_fraction": 0.14824985007732855,
+          "follow_first_contacts": 16,
+          "approach_success_fraction": null,
+          "jump": 0,
+          "climb": 0
+        },
+        "memory": {
+          "episodes": 18,
+          "successes": 0,
+          "decisions": 41540,
+          "mean_elapsed_ms": 230775.94444444444,
+          "mean_travelled_cm": 22108.683563849685,
+          "mean_length_over_detour": 6.9625243697901045,
+          "blocked_spans": 182,
+          "backward": 3914,
+          "strafe": 8822,
+          "backward_fraction": 0.09422243620606645,
+          "strafe_fraction": 0.2123736157920077,
+          "follow_fraction": 0.28039947322212466,
+          "follow_first_contacts": 14,
+          "approach_success_fraction": null,
+          "jump": 0,
+          "climb": 0
+        },
+        "oracle": {
+          "episodes": 18,
+          "successes": 6,
+          "decisions": 42103,
+          "mean_elapsed_ms": 233905.55555555556,
+          "mean_travelled_cm": 23054.175174522483,
+          "mean_length_over_detour": 7.15714780099885,
+          "blocked_spans": 131,
+          "backward": 1075,
+          "strafe": 1318,
+          "backward_fraction": 0.025532622378452843,
+          "strafe_fraction": 0.03130418259981474,
+          "follow_fraction": 0.6460135764674564,
+          "follow_first_contacts": 14,
+          "approach_success_fraction": null,
+          "jump": 0,
+          "climb": 0
+        }
+      },
+      "approach": {
+        "v2": {
+          "episodes": 18,
+          "successes": 9,
+          "decisions": 7980,
+          "mean_elapsed_ms": 44296.38888888889,
+          "mean_travelled_cm": 2388.951386983828,
+          "mean_length_over_detour": 0.3986562582242202,
+          "blocked_spans": 29,
+          "backward": 0,
+          "strafe": 0,
+          "backward_fraction": 0,
+          "strafe_fraction": 0,
+          "follow_fraction": 1,
+          "follow_first_contacts": 9,
+          "approach_success_fraction": 0.5,
+          "jump": 0,
+          "climb": 0
+        },
+        "memory": {
+          "episodes": 18,
+          "successes": 6,
+          "decisions": 11502,
+          "mean_elapsed_ms": 63872.27777777778,
+          "mean_travelled_cm": 6129.3021751207925,
+          "mean_length_over_detour": 0.8069921394255533,
+          "blocked_spans": 139,
+          "backward": 621,
+          "strafe": 2410,
+          "backward_fraction": 0.0539906103286385,
+          "strafe_fraction": 0.20952877760389496,
+          "follow_fraction": 0.08161993769470405,
+          "follow_first_contacts": 8,
+          "approach_success_fraction": 0.3333333333333333,
+          "jump": 0,
+          "climb": 0
+        },
+        "oracle": {
+          "episodes": 18,
+          "successes": 7,
+          "decisions": 8012,
+          "mean_elapsed_ms": 44479.666666666664,
+          "mean_travelled_cm": 3819.0407900433597,
+          "mean_length_over_detour": 0.6636989249495859,
+          "blocked_spans": 34,
+          "backward": 148,
+          "strafe": 2449,
+          "backward_fraction": 0.018472291562656017,
+          "strafe_fraction": 0.30566650024962555,
+          "follow_fraction": 1,
+          "follow_first_contacts": 7,
+          "approach_success_fraction": 0.3888888888888889,
+          "jump": 0,
+          "climb": 0
+        }
+      }
+    },
+    "settings": {
+      "selection_sha256": "0af332388ac6d588d525cd975cae69801a82d07d65cf3ab80f0462c2146991d0",
+      "runner_sha256": "f92553e067535afc65e08e42c98f1f781a1615dc8812a498e7bf2a0c3af08e03",
+      "limit_ms": 240000,
+      "modes": [
+        "v2",
+        "memory",
+        "oracle"
+      ],
+      "expected_by_kind": {
+        "point": 30,
+        "object": 30,
+        "follow": 18,
+        "approach": 18
+      }
+    },
+    "storage_bytes": 4332227125
+  },
+  "coverage": {
+    "all": {
+      "scenarios": 96,
+      "status": {
+        "sampled_frames": 15413,
+        "path_complete_frames": 15231,
+        "path_unavailable_frames": 182,
+        "path_not_beyond5m_frames": 1200,
+        "corridor_available_frames": 13662,
+        "corridor_unavailable_frames": 1751,
+        "corridor_ok_frames": 13662,
+        "raster_support_invalid_frames": 128,
+        "raster_not_evaluated_frames": 1623,
+        "offmesh_transition_frames": 241,
+        "corridor_empty_frames": 0,
+        "corridor_short_path_frames": 1200,
+        "corridor_unsupported_pose_frames": 128,
+        "corridor_incomplete_path_frames": 182,
+        "corridor_offmesh_transition_frames": 241
+      },
+      "counts": {
+        "cells": 710330,
+        "area_cm2": 2344390625,
+        "unknown": 279937,
+        "unknown_area_cm2": 583240000,
+        "confidence_quantized_sum": 68764470,
+        "free_quantized_sum": 68542879,
+        "unknown_exposure_quantized_sum": 112591271,
+        "truth_passable": 627800,
+        "truth_passable_unknown": 243491,
+        "truth_unpassable": 82530,
+        "truth_height_boundary": 25863,
+        "false_danger": 58776,
+        "false_danger_area_cm2": 535065000,
+        "unknown_zero_confidence": 279887,
+        "unknown_positive_confidence_zero_free": 50,
+        "danger_wall": 30653,
+        "danger_ledge": 16698,
+        "danger_drop": 33971,
+        "danger_water": 899,
+        "danger_movable": 2492,
+        "height_comparable": 115961,
+        "height_mismatch_gt100": 6253,
+        "false_danger_height_mismatch_gt100": 378,
+        "free": 350507,
+        "free_area_cm2": 928407500,
+        "truth_passable_free": 325533,
+        "danger": 79886,
+        "danger_area_cm2": 832743125,
+        "truth_passable_danger": 58776
+      },
+      "truth_passable_fractions": {
+        "free": 0.5185297865562281,
+        "unknown": 0.3878480407773176,
+        "danger": 0.09362217266645428
+      },
+      "false_danger_fraction_memory_danger": 0.7357484415291791,
+      "false_danger_fraction_truth_passable": 0.09362217266645428,
+      "layers": {
+        "near": {
+          "counts": {
+            "cells": 662065,
+            "area_cm2": 413790625,
+            "unknown": 269568,
+            "unknown_area_cm2": 168480000,
+            "confidence_quantized_sum": 61736253,
+            "free_quantized_sum": 61595661,
+            "unknown_exposure_quantized_sum": 107230914,
+            "truth_passable": 592779,
+            "truth_passable_unknown": 235933,
+            "truth_unpassable": 69286,
+            "truth_height_boundary": 16901,
+            "false_danger": 46120,
+            "false_danger_area_cm2": 28825000,
+            "unknown_zero_confidence": 269518,
+            "unknown_positive_confidence_zero_free": 50,
+            "danger_wall": 18769,
+            "danger_ledge": 10152,
+            "danger_drop": 30456,
+            "danger_water": 723,
+            "danger_movable": 984,
+            "height_comparable": 89047,
+            "height_mismatch_gt100": 4053,
+            "false_danger_height_mismatch_gt100": 97,
+            "free": 332492,
+            "free_area_cm2": 207807500,
+            "truth_passable_free": 310726,
+            "danger": 60005,
+            "danger_area_cm2": 37503125,
+            "truth_passable_danger": 46120
+          },
+          "truth_passable_fractions": {
+            "free": 0.5241852359817065,
+            "unknown": 0.39801173793268657,
+            "danger": 0.07780302608560695
+          },
+          "false_danger_fraction_memory_danger": 0.7686026164486293
+        },
+        "far": {
+          "counts": {
+            "cells": 48265,
+            "area_cm2": 1930600000,
+            "danger": 19881,
+            "danger_area_cm2": 795240000,
+            "confidence_quantized_sum": 7028217,
+            "free_quantized_sum": 6947218,
+            "unknown_exposure_quantized_sum": 5360357,
+            "truth_passable": 35021,
+            "truth_passable_danger": 12656,
+            "truth_unpassable": 13244,
+            "truth_height_boundary": 8962,
+            "false_danger": 12656,
+            "false_danger_area_cm2": 506240000,
+            "unknown_zero_confidence": 10369,
+            "unknown_positive_confidence_zero_free": 0,
+            "danger_wall": 11884,
+            "danger_ledge": 6546,
+            "danger_drop": 3515,
+            "danger_water": 176,
+            "danger_movable": 1508,
+            "height_comparable": 26914,
+            "height_mismatch_gt100": 2200,
+            "false_danger_height_mismatch_gt100": 281,
+            "free": 18015,
+            "free_area_cm2": 720600000,
+            "truth_passable_free": 14807,
+            "unknown": 10369,
+            "unknown_area_cm2": 414760000,
+            "truth_passable_unknown": 7558
+          },
+          "truth_passable_fractions": {
+            "free": 0.42280346078067443,
+            "unknown": 0.21581336912138432,
+            "danger": 0.36138317009794124
+          },
+          "false_danger_fraction_memory_danger": 0.6365876967959359
+        }
+      }
+    },
+    "by_goal_kind": {
+      "point": {
+        "scenarios": 30,
+        "status": {
+          "sampled_frames": 5049,
+          "path_complete_frames": 5049,
+          "path_unavailable_frames": 0,
+          "path_not_beyond5m_frames": 64,
+          "corridor_available_frames": 4984,
+          "corridor_unavailable_frames": 65,
+          "corridor_ok_frames": 4984,
+          "raster_support_invalid_frames": 1,
+          "raster_not_evaluated_frames": 64,
+          "offmesh_transition_frames": 0,
+          "corridor_empty_frames": 0,
+          "corridor_short_path_frames": 64,
+          "corridor_unsupported_pose_frames": 1
+        },
+        "truth_passable_fractions": {
+          "free": 0.45196101229303054,
+          "unknown": 0.48086283752625913,
+          "danger": 0.06717615018071031
+        },
+        "false_danger_fraction_memory_danger": 0.734718510216398,
+        "layers": {
+          "near": {
+            "truth_passable_fractions": {
+              "free": 0.45459886631635565,
+              "unknown": 0.4891927675948529,
+              "danger": 0.05620836608879143
+            },
+            "false_danger_fraction_memory_danger": 0.7865786578657866,
+            "counts": {
+              "cells": 268059,
+              "area_cm2": 167536875,
+              "unknown": 131533,
+              "unknown_area_cm2": 82208125,
+              "confidence_quantized_sum": 22880493,
+              "free_quantized_sum": 22806825,
+              "unknown_exposure_quantized_sum": 45548220,
+              "truth_passable": 241690,
+              "truth_passable_unknown": 118233,
+              "truth_unpassable": 26369,
+              "truth_height_boundary": 1421,
+              "false_danger": 13585,
+              "false_danger_area_cm2": 8490625,
+              "unknown_zero_confidence": 131512,
+              "unknown_positive_confidence_zero_free": 21,
+              "danger_wall": 10548,
+              "danger_ledge": 2888,
+              "danger_drop": 3973,
+              "danger_water": 0,
+              "danger_movable": 495,
+              "height_comparable": 32168,
+              "height_mismatch_gt100": 1872,
+              "false_danger_height_mismatch_gt100": 6,
+              "free": 119255,
+              "free_area_cm2": 74534375,
+              "truth_passable_free": 109872,
+              "danger": 17271,
+              "danger_area_cm2": 10794375,
+              "truth_passable_danger": 13585
+            }
+          },
+          "far": {
+            "truth_passable_fractions": {
+              "free": 0.39896932923281525,
+              "unknown": 0.3135233978887873,
+              "danger": 0.28750727287839745
+            },
+            "false_danger_fraction_memory_danger": 0.5836004724143748,
+            "counts": {
+              "cells": 18171,
+              "area_cm2": 726840000,
+              "danger": 5927,
+              "danger_area_cm2": 237080000,
+              "confidence_quantized_sum": 2129788,
+              "free_quantized_sum": 2115234,
+              "unknown_exposure_quantized_sum": 2518371,
+              "truth_passable": 12031,
+              "truth_passable_danger": 3459,
+              "truth_unpassable": 6140,
+              "truth_height_boundary": 4154,
+              "false_danger": 3459,
+              "false_danger_area_cm2": 138360000,
+              "unknown_zero_confidence": 5641,
+              "unknown_positive_confidence_zero_free": 0,
+              "danger_wall": 3711,
+              "danger_ledge": 1447,
+              "danger_drop": 1251,
+              "danger_water": 0,
+              "danger_movable": 622,
+              "height_comparable": 8580,
+              "height_mismatch_gt100": 661,
+              "false_danger_height_mismatch_gt100": 36,
+              "free": 6603,
+              "free_area_cm2": 264120000,
+              "truth_passable_free": 4800,
+              "unknown": 5641,
+              "unknown_area_cm2": 225640000,
+              "truth_passable_unknown": 3772
+            }
+          }
+        }
+      },
+      "object": {
+        "scenarios": 30,
+        "status": {
+          "sampled_frames": 5026,
+          "path_complete_frames": 4844,
+          "path_unavailable_frames": 182,
+          "path_not_beyond5m_frames": 330,
+          "corridor_available_frames": 4273,
+          "corridor_unavailable_frames": 753,
+          "corridor_ok_frames": 4273,
+          "raster_support_invalid_frames": 0,
+          "raster_not_evaluated_frames": 753,
+          "offmesh_transition_frames": 241,
+          "corridor_empty_frames": 0,
+          "corridor_short_path_frames": 330,
+          "corridor_incomplete_path_frames": 182,
+          "corridor_offmesh_transition_frames": 241
+        },
+        "truth_passable_fractions": {
+          "free": 0.5926873652677846,
+          "unknown": 0.26912847504129456,
+          "danger": 0.1381841596909208
+        },
+        "false_danger_fraction_memory_danger": 0.8634757356285644,
+        "layers": {
+          "near": {
+            "truth_passable_fractions": {
+              "free": 0.6036487701477252,
+              "unknown": 0.2795941576806969,
+              "danger": 0.11675707217157794
+            },
+            "false_danger_fraction_memory_danger": 0.9142577396493845,
+            "counts": {
+              "cells": 180558,
+              "area_cm2": 112848750,
+              "free": 107995,
+              "free_area_cm2": 67496875,
+              "confidence_quantized_sum": 20344920,
+              "free_quantized_sum": 20323169,
+              "unknown_exposure_quantized_sum": 25719121,
+              "truth_passable": 167947,
+              "truth_passable_free": 101381,
+              "truth_unpassable": 12611,
+              "truth_height_boundary": 3326,
+              "false_danger": 19609,
+              "false_danger_area_cm2": 12255625,
+              "unknown_zero_confidence": 51104,
+              "unknown_positive_confidence_zero_free": 11,
+              "danger_wall": 3331,
+              "danger_ledge": 5363,
+              "danger_drop": 11977,
+              "danger_water": 723,
+              "danger_movable": 137,
+              "height_comparable": 23148,
+              "height_mismatch_gt100": 541,
+              "false_danger_height_mismatch_gt100": 3,
+              "unknown": 51115,
+              "unknown_area_cm2": 31946875,
+              "truth_passable_unknown": 46957,
+              "danger": 21448,
+              "danger_area_cm2": 13405000,
+              "truth_passable_danger": 19609
+            }
+          },
+          "far": {
+            "truth_passable_fractions": {
+              "free": 0.4197971450037566,
+              "unknown": 0.10405709992486852,
+              "danger": 0.4761457550713749
+            },
+            "false_danger_fraction_memory_danger": 0.7107808776111033,
+            "counts": {
+              "cells": 13802,
+              "area_cm2": 552080000,
+              "free": 5359,
+              "free_area_cm2": 214360000,
+              "confidence_quantized_sum": 2706101,
+              "free_quantized_sum": 2703988,
+              "unknown_exposure_quantized_sum": 815522,
+              "truth_passable": 10648,
+              "truth_passable_free": 4470,
+              "truth_unpassable": 3154,
+              "truth_height_boundary": 2172,
+              "false_danger": 5070,
+              "false_danger_area_cm2": 202800000,
+              "unknown_zero_confidence": 1310,
+              "unknown_positive_confidence_zero_free": 0,
+              "danger_wall": 3321,
+              "danger_ledge": 3572,
+              "danger_drop": 1058,
+              "danger_water": 176,
+              "danger_movable": 437,
+              "height_comparable": 8458,
+              "height_mismatch_gt100": 672,
+              "false_danger_height_mismatch_gt100": 183,
+              "danger": 7133,
+              "danger_area_cm2": 285320000,
+              "truth_passable_danger": 5070,
+              "unknown": 1310,
+              "unknown_area_cm2": 52400000,
+              "truth_passable_unknown": 1108
+            }
+          }
+        }
+      },
+      "follow": {
+        "scenarios": 18,
+        "status": {
+          "sampled_frames": 4170,
+          "path_complete_frames": 4170,
+          "path_unavailable_frames": 0,
+          "path_not_beyond5m_frames": 775,
+          "corridor_available_frames": 3269,
+          "corridor_unavailable_frames": 901,
+          "corridor_ok_frames": 3269,
+          "raster_support_invalid_frames": 126,
+          "raster_not_evaluated_frames": 775,
+          "offmesh_transition_frames": 0,
+          "corridor_empty_frames": 0,
+          "corridor_short_path_frames": 775,
+          "corridor_unsupported_pose_frames": 126
+        },
+        "truth_passable_fractions": {
+          "free": 0.5465846533694115,
+          "unknown": 0.3536356915744974,
+          "danger": 0.09977965505609107
+        },
+        "false_danger_fraction_memory_danger": 0.5951708194194708,
+        "layers": {
+          "near": {
+            "truth_passable_fractions": {
+              "free": 0.5548763609522052,
+              "unknown": 0.3619979085932214,
+              "danger": 0.08312573045457342
+            },
+            "false_danger_fraction_memory_danger": 0.597292817679558,
+            "counts": {
+              "cells": 152161,
+              "area_cm2": 95100625,
+              "free": 76200,
+              "free_area_cm2": 47625000,
+              "confidence_quantized_sum": 13809729,
+              "free_quantized_sum": 13777793,
+              "unknown_exposure_quantized_sum": 25023262,
+              "truth_passable": 130056,
+              "truth_passable_free": 72165,
+              "truth_unpassable": 22105,
+              "truth_height_boundary": 10851,
+              "false_danger": 10811,
+              "false_danger_area_cm2": 6756875,
+              "unknown_zero_confidence": 57844,
+              "unknown_positive_confidence_zero_free": 17,
+              "danger_wall": 3017,
+              "danger_ledge": 1391,
+              "danger_drop": 13718,
+              "danger_water": 0,
+              "danger_movable": 293,
+              "height_comparable": 23539,
+              "height_mismatch_gt100": 1258,
+              "false_danger_height_mismatch_gt100": 74,
+              "danger": 18100,
+              "danger_area_cm2": 11312500,
+              "truth_passable_danger": 10811,
+              "unknown": 57861,
+              "unknown_area_cm2": 36163125,
+              "truth_passable_unknown": 47080
+            }
+          },
+          "far": {
+            "truth_passable_fractions": {
+              "free": 0.43026642217668,
+              "unknown": 0.23632833567036998,
+              "danger": 0.33340524215295003
+            },
+            "false_danger_fraction_memory_danger": 0.5878661087866108,
+            "counts": {
+              "cells": 12307,
+              "area_cm2": 492280000,
+              "danger": 5258,
+              "danger_area_cm2": 210320000,
+              "confidence_quantized_sum": 1641535,
+              "free_quantized_sum": 1620099,
+              "unknown_exposure_quantized_sum": 1518186,
+              "truth_passable": 9271,
+              "truth_passable_danger": 3091,
+              "truth_unpassable": 3036,
+              "truth_height_boundary": 2036,
+              "false_danger": 3091,
+              "false_danger_area_cm2": 123640000,
+              "unknown_zero_confidence": 2709,
+              "unknown_positive_confidence_zero_free": 0,
+              "danger_wall": 3746,
+              "danger_ledge": 1013,
+              "danger_drop": 1037,
+              "danger_water": 0,
+              "danger_movable": 311,
+              "height_comparable": 7405,
+              "height_mismatch_gt100": 777,
+              "false_danger_height_mismatch_gt100": 52,
+              "free": 4340,
+              "free_area_cm2": 173600000,
+              "truth_passable_free": 3989,
+              "unknown": 2709,
+              "unknown_area_cm2": 108360000,
+              "truth_passable_unknown": 2191
+            }
+          }
+        }
+      },
+      "approach": {
+        "scenarios": 18,
+        "status": {
+          "sampled_frames": 1168,
+          "path_complete_frames": 1168,
+          "path_unavailable_frames": 0,
+          "path_not_beyond5m_frames": 31,
+          "corridor_available_frames": 1136,
+          "corridor_unavailable_frames": 32,
+          "corridor_ok_frames": 1136,
+          "raster_support_invalid_frames": 1,
+          "raster_not_evaluated_frames": 31,
+          "offmesh_transition_frames": 0,
+          "corridor_empty_frames": 0,
+          "corridor_unsupported_pose_frames": 1,
+          "corridor_short_path_frames": 31
+        },
+        "truth_passable_fractions": {
+          "free": 0.5138451128087327,
+          "unknown": 0.430044339975426,
+          "danger": 0.0561105472158413
+        },
+        "false_danger_fraction_memory_danger": 0.6635081069698884,
+        "layers": {
+          "near": {
+            "truth_passable_fractions": {
+              "free": 0.5144105790603926,
+              "unknown": 0.445748408243228,
+              "danger": 0.03984101269637946
+            },
+            "false_danger_fraction_memory_danger": 0.6638418079096046,
+            "counts": {
+              "cells": 61287,
+              "area_cm2": 38304375,
+              "free": 29042,
+              "free_area_cm2": 18151250,
+              "confidence_quantized_sum": 4701111,
+              "free_quantized_sum": 4687874,
+              "unknown_exposure_quantized_sum": 10940311,
+              "truth_passable": 53086,
+              "truth_passable_free": 27308,
+              "truth_unpassable": 8201,
+              "truth_height_boundary": 1303,
+              "false_danger": 2115,
+              "false_danger_area_cm2": 1321875,
+              "unknown_zero_confidence": 29058,
+              "unknown_positive_confidence_zero_free": 1,
+              "danger_wall": 1873,
+              "danger_ledge": 510,
+              "danger_drop": 788,
+              "danger_water": 0,
+              "danger_movable": 59,
+              "height_comparable": 10192,
+              "height_mismatch_gt100": 382,
+              "false_danger_height_mismatch_gt100": 14,
+              "danger": 3186,
+              "danger_area_cm2": 1991250,
+              "truth_passable_danger": 2115,
+              "unknown": 29059,
+              "unknown_area_cm2": 18161875,
+              "truth_passable_unknown": 23663
+            }
+          },
+          "far": {
+            "truth_passable_fractions": {
+              "free": 0.5040703353956366,
+              "unknown": 0.15858026701400196,
+              "danger": 0.3373493975903614
+            },
+            "false_danger_fraction_memory_danger": 0.6628278950735764,
+            "counts": {
+              "cells": 3985,
+              "area_cm2": 159400000,
+              "free": 1713,
+              "free_area_cm2": 68520000,
+              "confidence_quantized_sum": 550793,
+              "free_quantized_sum": 507897,
+              "unknown_exposure_quantized_sum": 508278,
+              "truth_passable": 3071,
+              "truth_passable_free": 1548,
+              "truth_unpassable": 914,
+              "truth_height_boundary": 600,
+              "false_danger": 1036,
+              "false_danger_area_cm2": 41440000,
+              "unknown_zero_confidence": 709,
+              "unknown_positive_confidence_zero_free": 0,
+              "danger_wall": 1106,
+              "danger_ledge": 514,
+              "danger_drop": 169,
+              "danger_water": 0,
+              "danger_movable": 138,
+              "height_comparable": 2471,
+              "height_mismatch_gt100": 90,
+              "false_danger_height_mismatch_gt100": 10,
+              "danger": 1563,
+              "danger_area_cm2": 62520000,
+              "truth_passable_danger": 1036,
+              "unknown": 709,
+              "unknown_area_cm2": 28360000,
+              "truth_passable_unknown": 487
+            }
+          }
+        }
+      }
+    },
+    "by_outcome": {
+      "success": {
+        "scenarios": 26,
+        "status": {
+          "sampled_frames": 1147,
+          "path_complete_frames": 1147,
+          "path_unavailable_frames": 0,
+          "path_not_beyond5m_frames": 154,
+          "corridor_available_frames": 992,
+          "corridor_unavailable_frames": 155,
+          "corridor_ok_frames": 992,
+          "raster_support_invalid_frames": 1,
+          "raster_not_evaluated_frames": 154,
+          "offmesh_transition_frames": 0,
+          "corridor_empty_frames": 0,
+          "corridor_short_path_frames": 154,
+          "corridor_unsupported_pose_frames": 1
+        },
+        "counts": {
+          "cells": 48381,
+          "area_cm2": 173405625,
+          "unknown": 19018,
+          "unknown_area_cm2": 29053750,
+          "confidence_quantized_sum": 6590526,
+          "free_quantized_sum": 6545810,
+          "unknown_exposure_quantized_sum": 5791345,
+          "truth_passable": 41805,
+          "truth_passable_unknown": 14600,
+          "truth_unpassable": 6576,
+          "truth_height_boundary": 730,
+          "false_danger": 3808,
+          "false_danger_area_cm2": 50102500,
+          "unknown_zero_confidence": 19015,
+          "unknown_positive_confidence_zero_free": 3,
+          "danger_wall": 1657,
+          "danger_ledge": 1203,
+          "danger_drop": 2184,
+          "danger_water": 0,
+          "danger_movable": 355,
+          "height_comparable": 5397,
+          "height_mismatch_gt100": 125,
+          "false_danger_height_mismatch_gt100": 23,
+          "free": 24466,
+          "free_area_cm2": 76086250,
+          "truth_passable_free": 23397,
+          "danger": 4897,
+          "danger_area_cm2": 68265625,
+          "truth_passable_danger": 3808
+        },
+        "truth_passable_fractions": {
+          "free": 0.559669895945461,
+          "unknown": 0.34924052146872386,
+          "danger": 0.0910895825858151
+        },
+        "false_danger_fraction_memory_danger": 0.7776189503777823,
+        "false_danger_fraction_truth_passable": 0.0910895825858151,
+        "layers": {
+          "near": {
+            "counts": {
+              "cells": 44745,
+              "area_cm2": 27965625,
+              "unknown": 18582,
+              "unknown_area_cm2": 11613750,
+              "confidence_quantized_sum": 5859417,
+              "free_quantized_sum": 5817287,
+              "unknown_exposure_quantized_sum": 5592688,
+              "truth_passable": 38869,
+              "truth_passable_unknown": 14264,
+              "truth_unpassable": 5876,
+              "truth_height_boundary": 288,
+              "false_danger": 2596,
+              "false_danger_area_cm2": 1622500,
+              "unknown_zero_confidence": 18579,
+              "unknown_positive_confidence_zero_free": 3,
+              "danger_wall": 951,
+              "danger_ledge": 524,
+              "danger_drop": 1624,
+              "danger_water": 0,
+              "danger_movable": 170,
+              "height_comparable": 3826,
+              "height_mismatch_gt100": 69,
+              "false_danger_height_mismatch_gt100": 0,
+              "free": 22922,
+              "free_area_cm2": 14326250,
+              "truth_passable_free": 22009,
+              "danger": 3241,
+              "danger_area_cm2": 2025625,
+              "truth_passable_danger": 2596
+            },
+            "truth_passable_fractions": {
+              "free": 0.5662353031979213,
+              "unknown": 0.3669762535696828,
+              "danger": 0.066788443232396
+            },
+            "false_danger_fraction_memory_danger": 0.8009873495834618
+          },
+          "far": {
+            "counts": {
+              "cells": 3636,
+              "area_cm2": 145440000,
+              "danger": 1656,
+              "danger_area_cm2": 66240000,
+              "confidence_quantized_sum": 731109,
+              "free_quantized_sum": 728523,
+              "unknown_exposure_quantized_sum": 198657,
+              "truth_passable": 2936,
+              "truth_passable_danger": 1212,
+              "truth_unpassable": 700,
+              "truth_height_boundary": 442,
+              "false_danger": 1212,
+              "false_danger_area_cm2": 48480000,
+              "unknown_zero_confidence": 436,
+              "unknown_positive_confidence_zero_free": 0,
+              "danger_wall": 706,
+              "danger_ledge": 679,
+              "danger_drop": 560,
+              "danger_water": 0,
+              "danger_movable": 185,
+              "height_comparable": 1571,
+              "height_mismatch_gt100": 56,
+              "false_danger_height_mismatch_gt100": 23,
+              "free": 1544,
+              "free_area_cm2": 61760000,
+              "truth_passable_free": 1388,
+              "unknown": 436,
+              "unknown_area_cm2": 17440000,
+              "truth_passable_unknown": 336
+            },
+            "truth_passable_fractions": {
+              "free": 0.47275204359673023,
+              "unknown": 0.11444141689373297,
+              "danger": 0.4128065395095368
+            },
+            "false_danger_fraction_memory_danger": 0.7318840579710145
+          }
+        }
+      },
+      "failure": {
+        "scenarios": 70,
+        "status": {
+          "sampled_frames": 14266,
+          "path_complete_frames": 14084,
+          "path_unavailable_frames": 182,
+          "path_not_beyond5m_frames": 1046,
+          "corridor_available_frames": 12670,
+          "corridor_unavailable_frames": 1596,
+          "corridor_ok_frames": 12670,
+          "raster_support_invalid_frames": 127,
+          "raster_not_evaluated_frames": 1469,
+          "offmesh_transition_frames": 241,
+          "corridor_empty_frames": 0,
+          "corridor_unsupported_pose_frames": 127,
+          "corridor_short_path_frames": 1046,
+          "corridor_incomplete_path_frames": 182,
+          "corridor_offmesh_transition_frames": 241
+        },
+        "counts": {
+          "cells": 661949,
+          "area_cm2": 2170985000,
+          "free": 326041,
+          "free_area_cm2": 852321250,
+          "confidence_quantized_sum": 62173944,
+          "free_quantized_sum": 61997069,
+          "unknown_exposure_quantized_sum": 106799926,
+          "truth_passable": 585995,
+          "truth_passable_free": 302136,
+          "truth_unpassable": 75954,
+          "truth_height_boundary": 25133,
+          "false_danger": 54968,
+          "false_danger_area_cm2": 484962500,
+          "unknown_zero_confidence": 260872,
+          "unknown_positive_confidence_zero_free": 47,
+          "danger_wall": 28996,
+          "danger_ledge": 15495,
+          "danger_drop": 31787,
+          "danger_water": 899,
+          "danger_movable": 2137,
+          "height_comparable": 110564,
+          "height_mismatch_gt100": 6128,
+          "false_danger_height_mismatch_gt100": 355,
+          "danger": 74989,
+          "danger_area_cm2": 764477500,
+          "truth_passable_danger": 54968,
+          "unknown": 260919,
+          "unknown_area_cm2": 554186250,
+          "truth_passable_unknown": 228891
+        },
+        "truth_passable_fractions": {
+          "free": 0.5155948429594109,
+          "unknown": 0.39060230889342057,
+          "danger": 0.0938028481471685
+        },
+        "false_danger_fraction_memory_danger": 0.7330141754123938,
+        "false_danger_fraction_truth_passable": 0.0938028481471685,
+        "layers": {
+          "near": {
+            "counts": {
+              "cells": 617320,
+              "area_cm2": 385825000,
+              "free": 309570,
+              "free_area_cm2": 193481250,
+              "confidence_quantized_sum": 55876836,
+              "free_quantized_sum": 55778374,
+              "unknown_exposure_quantized_sum": 101638226,
+              "truth_passable": 553910,
+              "truth_passable_free": 288717,
+              "truth_unpassable": 63410,
+              "truth_height_boundary": 16613,
+              "false_danger": 43524,
+              "false_danger_area_cm2": 27202500,
+              "unknown_zero_confidence": 250939,
+              "unknown_positive_confidence_zero_free": 47,
+              "danger_wall": 17818,
+              "danger_ledge": 9628,
+              "danger_drop": 28832,
+              "danger_water": 723,
+              "danger_movable": 814,
+              "height_comparable": 85221,
+              "height_mismatch_gt100": 3984,
+              "false_danger_height_mismatch_gt100": 97,
+              "danger": 56764,
+              "danger_area_cm2": 35477500,
+              "truth_passable_danger": 43524,
+              "unknown": 250986,
+              "unknown_area_cm2": 156866250,
+              "truth_passable_unknown": 221669
+            },
+            "truth_passable_fractions": {
+              "free": 0.5212344965788666,
+              "unknown": 0.400189561481107,
+              "danger": 0.07857594194002636
+            },
+            "false_danger_fraction_memory_danger": 0.7667535762102741
+          },
+          "far": {
+            "counts": {
+              "cells": 44629,
+              "area_cm2": 1785160000,
+              "free": 16471,
+              "free_area_cm2": 658840000,
+              "confidence_quantized_sum": 6297108,
+              "free_quantized_sum": 6218695,
+              "unknown_exposure_quantized_sum": 5161700,
+              "truth_passable": 32085,
+              "truth_passable_free": 13419,
+              "truth_unpassable": 12544,
+              "truth_height_boundary": 8520,
+              "false_danger": 11444,
+              "false_danger_area_cm2": 457760000,
+              "unknown_zero_confidence": 9933,
+              "unknown_positive_confidence_zero_free": 0,
+              "danger_wall": 11178,
+              "danger_ledge": 5867,
+              "danger_drop": 2955,
+              "danger_water": 176,
+              "danger_movable": 1323,
+              "height_comparable": 25343,
+              "height_mismatch_gt100": 2144,
+              "false_danger_height_mismatch_gt100": 258,
+              "unknown": 9933,
+              "unknown_area_cm2": 397320000,
+              "truth_passable_unknown": 7222,
+              "danger": 18225,
+              "danger_area_cm2": 729000000,
+              "truth_passable_danger": 11444
+            },
+            "truth_passable_fractions": {
+              "free": 0.4182328190743338,
+              "unknown": 0.22508960573476702,
+              "danger": 0.35667757519089915
+            },
+            "false_danger_fraction_memory_danger": 0.6279286694101509
+          }
+        }
+      }
+    },
+    "by_goal_kind_outcome": {
+      "point": {
+        "success": {
+          "scenarios": 10,
+          "truth_passable_fractions": {
+            "free": 0.42154033958495174,
+            "unknown": 0.5234713128398624,
+            "danger": 0.054988347575185885
+          },
+          "false_danger_fraction_memory_danger": 0.6422553467271549
+        },
+        "failure": {
+          "scenarios": 20,
+          "truth_passable_fractions": {
+            "free": 0.4542870355835197,
+            "unknown": 0.47760491134879657,
+            "danger": 0.06810805306768378
+          },
+          "false_danger_fraction_memory_danger": 0.7413068575386746
+        }
+      },
+      "object": {
+        "success": {
+          "scenarios": 10,
+          "truth_passable_fractions": {
+            "free": 0.7074333153970328,
+            "unknown": 0.20900914751326005,
+            "danger": 0.08355753708970713
+          },
+          "false_danger_fraction_memory_danger": 0.8459143968871595
+        },
+        "failure": {
+          "scenarios": 20,
+          "truth_passable_fractions": {
+            "free": 0.58367253270204,
+            "unknown": 0.2738516541253488,
+            "danger": 0.1424758131726112
+          },
+          "false_danger_fraction_memory_danger": 0.8643024618991794
+        }
+      },
+      "follow": {
+        "success": {
+          "scenarios": 0,
+          "truth_passable_fractions": {
+            "free": null,
+            "unknown": null,
+            "danger": null
+          },
+          "false_danger_fraction_memory_danger": null
+        },
+        "failure": {
+          "scenarios": 18,
+          "truth_passable_fractions": {
+            "free": 0.5465846533694115,
+            "unknown": 0.3536356915744974,
+            "danger": 0.09977965505609107
+          },
+          "false_danger_fraction_memory_danger": 0.5951708194194708
+        }
+      },
+      "approach": {
+        "success": {
+          "scenarios": 6,
+          "truth_passable_fractions": {
+            "free": 0.6123074067198812,
+            "unknown": 0.22712084648227213,
+            "danger": 0.16057174679784667
+          },
+          "false_danger_fraction_memory_danger": 0.8361527307878202
+        },
+        "failure": {
+          "scenarios": 12,
+          "truth_passable_fractions": {
+            "free": 0.49046999977965317,
+            "unknown": 0.4782187162593923,
+            "danger": 0.03131128396095454
+          },
+          "false_danger_fraction_memory_danger": 0.530223880597015
+        }
+      }
+    }
+  },
+  "contracts": {
+    "point": {
+      "episodes": 30,
+      "records": 50184,
+      "mismatches": 0,
+      "previous_mismatches": 0
+    },
+    "object": {
+      "episodes": 30,
+      "records": 49961,
+      "mismatches": 0,
+      "previous_mismatches": 0
+    },
+    "follow": {
+      "episodes": 18,
+      "records": 41540,
+      "mismatches": 0,
+      "previous_mismatches": 0
+    },
+    "approach": {
+      "episodes": 18,
+      "records": 11502,
+      "mismatches": 0,
+      "previous_mismatches": 0
+    }
+  },
+  "recorded_examples": {
+    "point": {
+      "episodes": 10,
+      "decisions": 4217,
+      "backward": 153,
+      "strafe": 785
+    },
+    "visible": {
+      "episodes": 66,
+      "decisions": 103003,
+      "backward": 5585,
+      "strafe": 21443
+    },
+    "format_version": 2,
+    "validated": true,
+    "record_bytes": 173838
+  },
+  "notes": {
+    "false_danger_channels": "Existing danger_* counts include both real and false hazards; channels overlap. They are not per-channel false-positive counts.",
+    "follow_outcome": "success requires >=80% post-contact time in2–5m; saved native success is kept separately.",
+    "approach_shared_target_down": 9,
+    "evaluation_storage_bytes_precedes_coverage": true
+  },
+  "verification": {
+    "ryzen": {
+      "build_type": "RelWithDebInfo",
+      "targets": [
+        "Gothic2Notr",
+        "gothic-body-runner"
+      ],
+      "native_v3_self_tests": 22,
+      "native_oracle_tests": 12,
+      "python_tests_first_oracle_job": 80,
+      "python_tests_final_job": 70
+    },
+    "mac": {
+      "build_type": "RelWithDebInfo",
+      "compiler": "AppleClang 21",
+      "architecture": "arm64",
+      "targets": [
+        "Gothic2Notr",
+        "gothic-body-runner"
+      ],
+      "exit_code": 0,
+      "source_head": "3f9e8fdc7ab7ba2e7a2ee505e6341f2ecc53d104",
+      "opengothic_tree": "5229c50366ded3b1e021e7cb7365dbc21146022c",
+      "executed_binaries": false
+    },
+    "new_rollouts_in_final_turn": 0,
+    "own_builds_removed": [
+      "Ryzen ~/gothic-ai/nav-teacher-v3/build",
+      "Mac worktree OpenGothic/build"
+    ],
+    "final_storage_bytes": {
+      "nav_demos_v3": 4093893764,
+      "oracle_experiment_including_coverage": 447430996,
+      "v2_attempts": 52261128,
+      "total": 4593585888
+    }
+  }
+}

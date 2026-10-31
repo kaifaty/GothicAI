@@ -1,0 +1,42 @@
+# Fresh NEWWORLD.ZEN. Authored NW_HARBOUR_BARREL_01, ZEN id 24244:
+# origin (10248.6309, 326.437866, 2359.78076) cm. No prop is inserted or moved.
+# Census: only landscape support, depth -0.443108 cm. With radius x1.5 the
+# wall gap is 51.081 cm and the barrel remains movable. Approach/arrow come
+# from +X, pushing toward -X and away from the wall; clearance checks each
+# actual 200 cm line with native Jolt/visual rays. Camera faces the free side.
+# Run originals (no meshes index), radius-scale 1, and radius-scale 1.5, each
+# with MOVABLE_VOBS=0 and =1. Pass absolute replacement-content/output paths.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view nopfx
+cam lift off
+destruction off
+sticking feature on
+walkmode walk
+own-mesh setup 24244 1 0
+clear 1800
+wait 500
+own-mesh clearance
+shot own-mesh-physics
+wait 34
+# A real native projectile is aimed at the authored half-height, with gravity.
+own-mesh arrow
+wait 700
+# Return only the hero to the same straight approach. The body stays authored;
+# its push reference is sampled after the shot and its initial settling.
+# Forward steering holds this line against tangential facet sliding; the
+# native character controller alone supplies positions and velocities.
+own-mesh walk
+wait 500
+press forward
+wait 2500
+# Check while forward is still held: the last 500 ms distinguish stop/motion.
+own-mesh checkpoint
+release forward
+wait 34
+shot own-mesh-physics-contact
+wait 34
+census

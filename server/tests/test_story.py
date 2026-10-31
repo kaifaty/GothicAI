@@ -84,7 +84,9 @@ async def test_the_freed_npcs_dialogs_are_off_on_every_branch_and_never_recorded
     store = MemoryStore(":memory:")
     fake = FakeGame(branch="A")
     static = freed(lambda node: node != "DIA_ADDON_CAVALORN_LETSKILLBANDITS")  # a game without it
-    assert [op["node"] for op in static] == list(FREED[:-1])
+    assert [op["node"] for op in static] == [
+        node for node in FREED if node != "DIA_ADDON_CAVALORN_LETSKILLBANDITS"
+    ]
     async with connected(fake) as link:
         story = StoryPatches(link, store, static=static)
         await _until(lambda: len(fake.graph) == 1)

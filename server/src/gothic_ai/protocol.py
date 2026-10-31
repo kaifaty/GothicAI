@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 42
+PROTOCOL_VERSION = 54
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -26,6 +26,11 @@ ERRAND_PROTOCOL = 39  # inventory items' `mission`; story_effect give to another
 BROKEN_TRACE_PROTOCOL = 40  # visible debris, with the time of breakage kept in the engine and save
 BODY_CONTROL_PROTOCOL = 41  # shared body authority and combat API (body_acquire, body_action, ...)
 CRIME_PROTOCOL = 42  # raw hero deeds, ownership, engine perception recipients and pickpocket evidence
+FIGHT_REACTION_PROTOCOL = 43  # Look.combat_target/fighting, npc_threat, immediate fight/flee with own SVM
+CRIME_REACT_PROTOCOL = 44  # independently held hero deeds, their ids, and vanilla fight reasons
+CRIME_MEET_PROTOCOL = 46  # deeds switch also holds room entry; rule verdicts need no body action
+NPC_CRIME_PROTOCOL = 47  # marked NPC theft/attack and separate npc_deed snapshots
+NPC_FAR_PROTOCOL = 48  # story_effect chest_take: a checked chest-to-self transfer without a body action
 
 # --- game -> server -----------------------------------------------------------
 
@@ -34,11 +39,68 @@ class _GameMessage(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
 
+class BodyNet(_GameMessage):
+    loaded: bool
+    checkpoint_sha256: str | None = None
+    error: str | None = None
+
+
 class Hello(_GameMessage):
     type: Literal["hello"]
     protocol: int
     client: str
     codepage: str
+    body_net: BodyNet | None = None
+
+
+class BodyPolicy(_GameMessage):
+    """Interval counters for an engine-owned combat policy (v54)."""
+
+    type: Literal["body_policy"]
+    session_epoch: int
+    world_epoch: int
+    entity_id: int
+    control_generation: int
+    goal_version: int
+    target_entity_id: int
+    t_game_ms: int
+    t_wall_ms: int
+    decisions: int
+    fallbacks: dict[str, int]
+    steps: int
+    p50_us: float
+    p99_us: float
+    final: bool
+    reason: str
+    selected_actions: dict[str, int] = Field(default_factory=dict)
+    accepted_actions: dict[str, int] = Field(default_factory=dict)
+    hidden_reset: int = 0
+
+
+class SvmLine(_GameMessage):
+    """A suppressed human SVM line, offered to the server without a required reply."""
+
+    type: Literal["svm_line"]
+    id: str
+    npc: str
+    svm: str
+    text: str
+    target: str | None = None
+    overlay: bool
+
+
+class CombatHit(_GameMessage):
+    """Actual health lost in a nearby fight (v51), after damage and knockdown/death."""
+
+    type: Literal["combat_hit"]
+    npc: str
+    by: str
+    damage: int = Field(gt=0)
+    hp: int
+    hp_max: int
+    down: bool
+    dead: bool
+    kind: Literal["melee", "ranged", "spell"]
 
 
 class WorldLoaded(_GameMessage):
@@ -133,6 +195,7 @@ class NpcState(_GameMessage):
     hp: int
     hp_max: int
     busy: bool
+    animations: str = ""  # v52: native animation names, including transitions
     action: str | None = None
     following: bool = False
     gaze: str | None = None  # v27: whom its eyes are on (an npc id, PLAYER), none: nobody
@@ -143,6 +206,8 @@ class NpcState(_GameMessage):
 
 class PlayerState(_GameMessage):
     name: str
+    animations: str = ""
+    kneeling: bool = False
     pos: tuple[float, float, float]
     # v32: where he faces on the ground (x, z), ahead of him and to his right as the screen shows it
     ahead: tuple[float, float] | None = None
@@ -316,14 +381,13 @@ class DeedWitness(_GameMessage):
     npctype: int = 0
 
 
-class HeroDeed(_GameMessage):
+class DeedSnapshot(_GameMessage):
     """Raw action, rather than a crime verdict (v42). Witnesses passed the engine's perception gates.
 
     Empty owner ids and guild -1 mean unknown; guild 15 is the scripts' public ownership. Inventory and
     pocket flags bracket the original pickpocket function; the server decides whether it succeeded.
     """
 
-    type: Literal["hero_deed"]
     id: str
     kind: Literal["take_item", "use_mob", "attack", "murder", "pickpocket"]
     item: str = ""
@@ -365,6 +429,20 @@ class HeroDeed(_GameMessage):
     picked_pocket_before: int = 0
     picked_pocket_after: int = 0
     caught: bool = False
+
+
+class HeroDeed(DeedSnapshot):
+    type: Literal["hero_deed"]
+
+
+class NpcDeed(DeedSnapshot):
+    """A physical deed explicitly started by the server (v47); never a vanilla NPC fight."""
+
+    type: Literal["npc_deed"]
+    culprit: str
+    culprit_guild: int = -1
+    culprit_npctype: int = 0
+    kind: Literal["take_item", "attack"]
 
 
 class TagNear(_GameMessage):
@@ -510,6 +588,8 @@ class Look(_GameMessage):
     from_hero: Side | None = None
     hero_cm: float | None = None
     noticed: bool = False  # v18: close by, out of the viewer's field of view: it notices it all the same
+    combat_target: str | None = None  # v43: native combat target, distinct from the hero's focus
+    fighting: bool = False  # v43: native attack state, including approach before the first blow
 
 
 class HeroLook(Look):
@@ -553,6 +633,11 @@ class NpcView(_GameMessage):
     indoors: bool = False
     room_guild: int | None = None  # whose room it is in (the scripts' guilds), indoors only
     state: str = ""
+    senses_range: float = 0  # v52: native perception radius, cm
+    theft_ready: bool | None = None  # v44: initialized native ASSESSTHEFT callback, for scene setup
+    theft_range: float | None = None  # v48: native ASSESSTHEFT range, cm; also available outside AiNormal
+    others_damage_ready: bool | None = None  # v47: initialized native ASSESSOTHERSDAMAGE callback
+    others_damage_range: float | None = None  # v47: native range of that perception, cm
     body: str = "stand"
     mob: str | None = None  # what it uses: a bench, an anvil
     weapon: str = "none"
@@ -582,6 +667,8 @@ class NpcEvent(_GameMessage):
     Threats from others (`other` is their script symbol, `other_name` the shown name): a monster it
     senses (`monster_near`), a monster attacking it or someone near (`monster_attack`, `detail`: "you"
     or the victim), an npc attacking it (`npc_attack`), someone attacking the hero (`hero_attacked`).
+    v43: `npc_threat` — a hostile armed npc approaching it before contact, including a listening npc
+    whose body the server must release before reacting; `other` identifies that attacker.
     The end of it: a monster killed (`monster_killed`; `other` is the killer, the npc itself too, `victim`
     the monster's symbol, `detail` its name).
     Noise (v36): `at` is the impact point in cm, `place` its nearest waypoint (named by the server's
@@ -637,9 +724,16 @@ class NpcActResult(_GameMessage):
 
 
 class PerceptionHeld(_GameMessage):
-    """A threat to a free npc the game holds back from its scripts for the behavioral model (v6, after
-    `threat_control{hold:true}`): a monster near or attacking, an npc attacking. Fields as in `npc_event`.
-    The server answers `hold_verdict`; without one the scripts get it after 0.6 s."""
+    """A held threat (v6), hero deed (v44), hero room entry (v46) or bandit sighting (v49).
+
+    `deed` links deed rules to the subsequent HeroDeed; room entry has no deed id.
+    `bandit_enemy`: a hostile human bandit sees the hero or a party member; `party_enemy`: an
+    unowned party member sees a hostile human bandit. These kinds have no deed id.
+
+    The server answers `hold_verdict`; without one the scripts get it after 0.6 s.
+    A `parley` verdict swallows this sighting and repeats of the same npc/other pair for `ms`;
+    after the lease expires, the next sighting creates a new hold.
+    """
 
     type: Literal["perception_held"]
     hold: str
@@ -649,6 +743,7 @@ class PerceptionHeld(_GameMessage):
     other_name: str | None = None
     distance: float | None = None
     detail: str | None = None
+    deed: str | None = None
 
 
 class RoutineEntry(_GameMessage):
@@ -1129,6 +1224,8 @@ class BodyControlEvents(_BodyModel):
 
 GameMessage = Annotated[
     Hello
+    | SvmLine
+    | CombatHit
     | WorldLoaded
     | Loading
     | Session
@@ -1158,6 +1255,7 @@ GameMessage = Annotated[
     | NpcDied
     | HeroKill
     | HeroDeed
+    | NpcDeed
     | StoryWorld
     | DealAccept
     | DealDecline
@@ -1165,6 +1263,7 @@ GameMessage = Annotated[
     | BeastEvent
     | NpcViews
     | BodyObservations
+    | BodyPolicy
     | BodyControlEvents,
     Field(discriminator="type"),
 ]
@@ -1207,6 +1306,11 @@ class _Command(BaseModel):
 
     def to_json(self) -> str:
         return self.model_dump_json(exclude_none=True)
+
+
+class SvmModeCmd(_Command):
+    type: Literal["svm_mode"] = "svm_mode"
+    replace: bool
 
 
 class AttachCmd(_Command):
@@ -1258,6 +1362,7 @@ class BodyAcquireCmd(_BodyCommand):
     target_entity_id: BodyPositive | None = None
     await_boundary_ms: Annotated[int, Field(strict=True, ge=0, le=2000)] = 0
     acquire_request_id: BodyUInt = 0
+    policy: Literal["engine"] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -1340,6 +1445,7 @@ NpcActType = Literal[
     "go_to_npc",
     "turn_away",
     "fight",  # v6: ZS_ATTACK against args.npc; npc_idle when the npc leaves that state
+    "steal",  # v47: chest|item, what, count, deed=true; native walk/open/take, then npc_deed
     "flee",  # v6: ZS_FLEE from args.npc
     "draw_weapon",  # v6
     "remove_weapon",  # v6
@@ -1354,19 +1460,27 @@ NpcActType = Literal[
 
 
 class ThreatControlCmd(_Command):
-    """Whether threats to free npc's are held from their scripts for the behavioral model (v6)."""
+    """Independent switches for model-owned threats (v6), deeds/rooms (v44/46) and bandits (v49)."""
 
     type: Literal["threat_control"] = "threat_control"
-    hold: bool
+    hold: bool | None = None
+    deeds: bool | None = None
+    bandits: bool | None = None
 
 
 class HoldVerdictCmd(_Command):
-    """What becomes of a held threat (v6): `server` — the behavioral model took the body over (fight,
-    flee), repeats of it are kept from the scripts for a while; `scripts` — they get it now."""
+    """`server`: a threat's body action, or deed/room rules; `scripts`: release; `parley`: lease (v49)."""
 
     type: Literal["hold_verdict"] = "hold_verdict"
     hold: str
-    to: Literal["server", "scripts"]
+    to: Literal["server", "scripts", "parley"]
+    ms: Annotated[int, Field(strict=True, ge=1000, le=15000)] | None = None
+
+    @model_validator(mode="after")
+    def parley_duration(self) -> HoldVerdictCmd:
+        if self.to == "parley" and self.ms is None:
+            raise ValueError("parley verdict requires ms")
+        return self
 
 
 BeastDo = Literal["listen", "calm", "flee", "attack", "resume"]
@@ -1404,6 +1518,14 @@ class NpcActCmd(_Command):
     npc: str
     action: NpcActType
     args: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlayerPoseCmd(_Command):
+    """v52: native hero kneeling until movement, attack or dialogue; result acknowledges the request."""
+
+    type: Literal["player_pose"] = "player_pose"
+    req: str
+    pose: Literal["kneel", "none"]
 
 
 class SnapshotCmd(_Command):
@@ -1521,6 +1643,16 @@ class MemoryCmd(_Command):
     seq: int
 
 
+class FeatToastCmd(_Command):
+    """A quiet toast for a deed recorded by the chronicler (v53)."""
+
+    type: Literal["feat_toast"] = "feat_toast"
+    feat: str
+    title: str
+    text: str
+    icon: str = ""
+
+
 DebugCommand = Literal[
     "save",
     "load",
@@ -1547,12 +1679,14 @@ DebugCommand = Literal[
     "player_equip",
     "waypoints",
     "npc_goto",
+    "npc_los",
     "player_hp",
     "player_drop",
     "chest_take",
     "player_take",
     "npc_drop",  # v42: an npc drops its own item, retaining the native owner
     "player_hit",  # v42: the hero damages an npc through the native damage path
+    "npc_hit",  # v43: confirmed npc melee contact, with native damage and attacker perceptions
     "spawn_item",  # v42: an unowned world item, without going through an npc inventory
     "own_npc",
     "triggers",
@@ -1589,7 +1723,11 @@ class DebugCmd(_Command):
     director's (`own_npc`, v33): a script symbol of ours `npc` (DIR_...) made like the script's npc `like`,
     put at a `waypoint` or `distance` cm (default 300) in front of the player; the save keeps both (`value`:
     {npc, index: its symbol, name}). v42: `npc_drop` (`npc`, `item`, `count`) uses the npc's native drop
-    path, retaining ownership; `player_hit` (`npc`) uses the hero's native damage path.
+    path, retaining ownership; `player_hit` (`npc`) uses the hero's native damage path. v43: `npc_hit`
+    (`npc`, `by`) confirms one melee contact between distinct living npcs within 500 cm, bypassing only
+    parry/backstep. It requires a drawn melee weapon and a mortal victim vulnerable to its damage;
+    armour, damage calculation and perceptions stay native. `value` contains `attacker`, `victim`,
+    `game_ms`, `hp_before`, `hp_after`; no HP loss is a failed command.
 
     The story graph (v8): `dialogs` — the dialogs `npc` offers the player now (`value`: their ids, as the
     menu would list them); `choose` — plays dialog `node` of `npc` as if the player chose it in the menu;
@@ -1737,7 +1875,12 @@ class StoryEffectCmd(_Command):
     (`error`: what is missing, "missing: hero ITMI_GOLD 30 (has 12)").
 
     v39: `give` with `to: "npc"` and `npc` (an instance symbol): the npc gives it to that other npc (an
-    errand far from the hero, errands.py); a mission item never (`error`: "a mission item: …")."""
+    errand far from the hero, errands.py); a mission item never (`error`: "a mission item: …").
+
+    v48: `chest_take` with `chest`, `item`, `count`: the self npc takes the exact count into its own
+    inventory, without walking, animation or script perceptions. Every source chest is checked before
+    any effect runs, even without `check`; missing quantities and mission items reject the whole batch.
+    The server's StoryGuard protects plot items before sending this effect."""
 
     type: Literal["story_effect"] = "story_effect"
     req: str
@@ -1802,7 +1945,8 @@ class DealHideCmd(_Command):
 
 class StoryStateCmd(_Command):
     """What the director's rules read (v8, stage 5). `result.value`: {"vars": {name: int}, "npcs": {symbol:
-    {"state": "alive" | "dead" | "absent", "name", "distance": cm from `near`, alive or dead, and "seen":
+    {"state": "alive" | "dead" | "absent", "name", "pos": live world coordinates [x,y,z] (v48, if
+    present in the world, including far NPCs), "distance": cm from `near`, alive or dead, and "seen":
     `near` sees it now (v12), if given}}, "knows": {dialog: bool} (the hero has heard it), "symbols": {name:
     "npc" | "item" | "info" | "var" | "const" | "func" | "other"} (unknown names are left out), "items":
     {instance: name in the game}, "dialog": bool, "cutscene": bool, "day", "hour", "minute": the game
@@ -1816,6 +1960,7 @@ class StoryStateCmd(_Command):
     knows: list[str] = []
     symbols: list[str] = []
     items: list[str] = []
+    deed_target: dict[str, Any] | None = None  # v47: live steal target, ownership and mission protection
 
 
 class StoryPeopleCmd(_Command):

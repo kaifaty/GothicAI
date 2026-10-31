@@ -1,0 +1,761 @@
+{
+  "asset": "city-timber",
+  "title": "Дерево города: балки и доски",
+  "kind": "material",
+  "created": "2026-10-21",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "city-timber",
+    "city-timber-concept",
+    "city-timber-oak"
+  ],
+  "sources": [
+    {
+      "file": "city-timber-concept/concept-attempt-1.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 1,
+      "sha256": "0170444c293c507cb2e2e53372e326371242b4930bd34566b10c0e3ab099b798",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T15:51:52Z",
+      "thread": "01a15f28-cea7-7902-b1d4-9d8ba074c50e",
+      "parent": null
+    },
+    {
+      "file": "city-timber-concept/concept-attempt-2.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 2,
+      "sha256": "72a6c0acbf40bcb88ec865c5b5642cc69d550ee8e8864f0f435f6ef6657b9cca",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T15:53:32Z",
+      "thread": "01a15f28-cea7-7902-b1d4-9d8ba074c50e",
+      "parent": null
+    },
+    {
+      "file": "city-timber-concept/concept-attempt-3.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 3,
+      "sha256": "dcfc2ea8c8af4284f6da2565bc368293ce92250df38495693cb2137832828b85",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T15:54:18Z",
+      "thread": "01a15f28-cea7-7902-b1d4-9d8ba074c50e",
+      "parent": null
+    },
+    {
+      "file": "city-timber-concept/concept-attempt-4.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 4,
+      "sha256": "bd6355419057825cd23fac4a7a633505c14c8d6f71e3af22a985c615794c7559",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:04:21Z",
+      "thread": "01a15f34-ba5c-73d0-bced-24a2abf2db2d",
+      "parent": null
+    },
+    {
+      "file": "city-timber-concept/concept-attempt-5.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 5,
+      "sha256": "11aaa86e752fb0040ab19c57cb8d9619e3f3b0456577305666e1d97c4ffd870a",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:05:36Z",
+      "thread": "01a15f34-ba5c-73d0-bced-24a2abf2db2d",
+      "parent": null
+    },
+    {
+      "file": "city-timber-concept/concept-attempt-6.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 6,
+      "sha256": "b47616a306fa6f236a50bd0c856841aef4e701536097d6aaead1440c53895197",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:06:19Z",
+      "thread": "01a15f34-ba5c-73d0-bced-24a2abf2db2d",
+      "parent": null
+    },
+    {
+      "file": "city-timber-concept/concept-attempt-7.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 7,
+      "sha256": "e13a4a82d55bc0e0b315b1d63ba576e3007b2727c0eac15b7f2f8c42d76dd829",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:16:22Z",
+      "thread": "01a15f34-ba5c-73d0-bced-24a2abf2db2d",
+      "parent": "city-timber-concept/concept-attempt-4.png"
+    },
+    {
+      "file": "city-timber-concept/concept-attempt-8.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 8,
+      "sha256": "7b5f2d6bc7e46a5690eb02efbf43446d98f5cd16c497b93b9a8a4f3d732a5d8f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:17:36Z",
+      "thread": "01a15f34-ba5c-73d0-bced-24a2abf2db2d",
+      "parent": "city-timber-concept/concept-attempt-4.png"
+    },
+    {
+      "file": "city-timber-concept/concept-attempt-9.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 9,
+      "sha256": "f1c0def0bba5c56d3f8cf236fd439a67b76cf39b42c556be3338c170344e8170",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:22:05Z",
+      "thread": "01a15f34-ba5c-73d0-bced-24a2abf2db2d",
+      "parent": "city-timber-concept/concept-attempt-7.png"
+    },
+    {
+      "file": "city-timber-concept/concept-attempt-10.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 10,
+      "sha256": "f724e58c3c810501fa6d67756504164573250d2745d35732601d8bd6608b1cd7",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:23:20Z",
+      "thread": "01a15f34-ba5c-73d0-bced-24a2abf2db2d",
+      "parent": "city-timber-concept/concept-attempt-7.png"
+    },
+    {
+      "file": "city-timber-concept/concept-NW_CITY_WOODBEAM_02-attempt-1.png",
+      "role": "concept",
+      "texture": "NW_CITY_WOODBEAM_02.TGA",
+      "attempt": 1,
+      "sha256": "aac272da5c1dbae3033de8f77a15d5652d88f23b10d682b7e315bd06c1cb4a04",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:30:37Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": null
+    },
+    {
+      "file": "city-timber-concept/concept-NW_CITY_WOODBEAM_03-attempt-1.png",
+      "role": "concept",
+      "texture": "NW_CITY_WOODBEAM_03.TGA",
+      "attempt": 1,
+      "sha256": "9ef90c463be3d9adcbdb6d0a9c4e21053a794d26d543d3d3c0eb1e12b15b3fe6",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:31:29Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": null
+    },
+    {
+      "file": "city-timber-concept/concept-NW_CITY_WOOD_ORNAMENT_02-attempt-1.png",
+      "role": "concept",
+      "texture": "NW_CITY_WOOD_ORNAMENT_02.TGA",
+      "attempt": 1,
+      "sha256": "fbda6c8d14550c2f9bcdbf76d25a92592d987909dabedd3d3b49ca82c095c5df",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:32:08Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": null
+    },
+    {
+      "file": "city-timber-concept/concept-NW_CITY_WOOD_ORNAMENT_01-attempt-1.png",
+      "role": "concept",
+      "texture": "NW_CITY_WOOD_ORNAMENT_01.TGA",
+      "attempt": 1,
+      "sha256": "180c0fcc990e41ae24290aee488b857df2ee0475252376375d0ff204b3392b92",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:32:54Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": null
+    },
+    {
+      "file": "city-timber-concept/concept-NW_CITY_WOOD_01-attempt-1.png",
+      "role": "concept",
+      "texture": "NW_CITY_WOOD_01.TGA",
+      "attempt": 1,
+      "sha256": "560be37ff7578abbb35b7c4d32cf8bc357472f8a58f3238c56bc082e8c0a8b25",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:33:42Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": null
+    },
+    {
+      "file": "city-timber-concept/concept-NW_CITY_WOODBEAM_02-attempt-2.png",
+      "role": "concept",
+      "texture": "NW_CITY_WOODBEAM_02.TGA",
+      "attempt": 2,
+      "sha256": "31ff52480d9e1512520ab21e898275b6bd3e780f72eb47eddf260b9ef205b481",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:40:53Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": "city-timber-concept/concept-NW_CITY_WOODBEAM_02-attempt-1.png"
+    },
+    {
+      "file": "city-timber-concept/concept-NW_CITY_WOOD_ORNAMENT_01-attempt-2.png",
+      "role": "concept",
+      "texture": "NW_CITY_WOOD_ORNAMENT_01.TGA",
+      "attempt": 2,
+      "sha256": "8f59d5d859f92084535e3b15760ad7de162ddda3db3d894e866b1d19e792e87e",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:42:02Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": "city-timber-concept/concept-NW_CITY_WOOD_ORNAMENT_01-attempt-1.png"
+    },
+    {
+      "file": "city-timber-concept/concept-NW_CITY_WOOD_01-attempt-2.png",
+      "role": "concept",
+      "texture": "NW_CITY_WOOD_01.TGA",
+      "attempt": 2,
+      "sha256": "316e2765040fbd94d89f0eb551258aaf098e1c40b8aab8b4b0794b831456484f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T16:42:59Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": "city-timber-concept/concept-NW_CITY_WOOD_01-attempt-1.png"
+    },
+    {
+      "file": "city-timber-concept/concept-NW_CITY_WOODBEAM_02-attempt-3.png",
+      "role": "concept",
+      "texture": "NW_CITY_WOODBEAM_02.TGA",
+      "attempt": 3,
+      "sha256": "0e09fb86db07e57ffdb99fc6734501b2592a52711bda24fc24d2c4e07506771c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T17:02:49Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": "city-timber-concept/concept-NW_CITY_WOODBEAM_02-attempt-1.png"
+    },
+    {
+      "file": "city-timber-concept/concept-NW_CITY_WOOD_ORNAMENT_01-attempt-3.png",
+      "role": "concept",
+      "texture": "NW_CITY_WOOD_ORNAMENT_01.TGA",
+      "attempt": 3,
+      "sha256": "97bce67b77055343ad20a01ebdcdce4d4c13cddc7e7887119ed5f9c3e4682ea1",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T17:05:44Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": "city-timber-concept/concept-NW_CITY_WOOD_ORNAMENT_01-attempt-1.png"
+    },
+    {
+      "file": "city-timber/NW_CITY_WOODBEAM_02-attempt-1.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOODBEAM_02.TGA",
+      "attempt": 1,
+      "sha256": "ba6f9ad0c2850127130ffd665ab71e5f8002b02bb4a3207a034490ccc2943562",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T18:00:55Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": "city-timber-concept/concept-NW_CITY_WOODBEAM_02-attempt-3.png"
+    },
+    {
+      "file": "city-timber/NW_CITY_WOOD_ORNAMENT_01-attempt-1.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOOD_ORNAMENT_01.TGA",
+      "attempt": 1,
+      "sha256": "96633c06979521769d061d17da4ee929cd768791e31d9cd26e939cdca654b4ba",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-21T18:07:29Z",
+      "thread": "01a15f4c-09fd-7072-934c-9b2a8f7b008f",
+      "parent": "city-timber-concept/concept-NW_CITY_WOOD_ORNAMENT_01-attempt-3.png"
+    },
+    {
+      "file": "city-timber-oak/reference-attempt-1.png",
+      "role": "reference",
+      "texture": null,
+      "attempt": 1,
+      "sha256": "618437fd72c4f5d59df4598ef5db8f42c33a58b7d514a8e8049deafed41a386b",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-22T05:09:49Z",
+      "thread": "01a16204-04d4-75b3-ba4a-48a2e41936e4",
+      "parent": null
+    },
+    {
+      "file": "city-timber-oak/reference-attempt-2.png",
+      "role": "reference",
+      "texture": null,
+      "attempt": 2,
+      "sha256": "5035603c5548f6e9de581ec1dd77792373b3f54da78e7d0eba8e6362a04c645f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-22T05:09:49Z",
+      "thread": "01a16204-04d4-75b3-ba4a-48a2e41936e4",
+      "parent": null
+    },
+    {
+      "file": "city-timber/NW_CITY_WOODBEAM_02-attempt-2.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOODBEAM_02.TGA",
+      "attempt": 2,
+      "sha256": "b975380500b638e6c0c17034da82cb0671a630f436354340081bc4fca6d03fab",
+      "c2pa": null,
+      "model": "derived: scripts/content/timber_bake.py",
+      "utc": "2026-10-22T05:30:00Z",
+      "thread": "blender",
+      "parent": "city-timber-oak/reference-attempt-1.png",
+      "tool": "scripts/content/timber_bake.py",
+      "maps": {
+        "normal": {
+          "file": "city-timber/NW_CITY_WOODBEAM_02-attempt-2.normal.png",
+          "sha256": "0579459da735a8e4c35f3ebe91b54acf42b912f8120275494b84eb618fe7b02f"
+        },
+        "roughness": {
+          "file": "city-timber/NW_CITY_WOODBEAM_02-attempt-2.roughness.png",
+          "sha256": "5f1ed417097f220e5d9080fef5fdd4a511237d755a990d92f624f5c75ccedb76"
+        }
+      }
+    },
+    {
+      "file": "city-timber/NW_CITY_WOODBEAM_02-attempt-3.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOODBEAM_02.TGA",
+      "attempt": 3,
+      "sha256": "6749c0d3ba164ee665978c6aab66bdf443ed381687888383243bb8d0eb7d688d",
+      "c2pa": null,
+      "model": "derived: scripts/content/timber_bake.py",
+      "utc": "2026-10-22T05:33:08Z",
+      "thread": "blender",
+      "parent": "city-timber-oak/reference-attempt-1.png",
+      "tool": "scripts/content/timber_bake.py",
+      "maps": {
+        "normal": {
+          "file": "city-timber/NW_CITY_WOODBEAM_02-attempt-3.normal.png",
+          "sha256": "0579459da735a8e4c35f3ebe91b54acf42b912f8120275494b84eb618fe7b02f"
+        },
+        "roughness": {
+          "file": "city-timber/NW_CITY_WOODBEAM_02-attempt-3.roughness.png",
+          "sha256": "5f1ed417097f220e5d9080fef5fdd4a511237d755a990d92f624f5c75ccedb76"
+        }
+      }
+    },
+    {
+      "file": "city-timber/NW_CITY_WOODBEAM_02-attempt-4.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOODBEAM_02.TGA",
+      "attempt": 4,
+      "sha256": "6749c0d3ba164ee665978c6aab66bdf443ed381687888383243bb8d0eb7d688d",
+      "c2pa": null,
+      "model": "derived: scripts/content/timber_bake.py",
+      "utc": "2026-10-22T05:34:56Z",
+      "thread": "blender",
+      "parent": "city-timber-oak/reference-attempt-1.png",
+      "tool": "scripts/content/timber_bake.py",
+      "maps": {
+        "normal": {
+          "file": "city-timber/NW_CITY_WOODBEAM_02-attempt-4.normal.png",
+          "sha256": "0579459da735a8e4c35f3ebe91b54acf42b912f8120275494b84eb618fe7b02f"
+        },
+        "roughness": {
+          "file": "city-timber/NW_CITY_WOODBEAM_02-attempt-4.roughness.png",
+          "sha256": "41a60a9861772a0a6fe352486cd9ecf7653d6f9ca00872faee47433e2d618c97"
+        }
+      }
+    },
+    {
+      "file": "city-timber/NW_CITY_WOODBEAM_03-attempt-1.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOODBEAM_03.TGA",
+      "attempt": 1,
+      "sha256": "aab5b8bc9726a80f043c462aec6d2a495d54c8f53df4e73a822e7b508da09f5d",
+      "c2pa": null,
+      "model": "derived: scripts/content/timber_bake.py",
+      "utc": "2026-10-22T05:53:36Z",
+      "thread": "blender",
+      "parent": "city-timber-oak/reference-attempt-2.png",
+      "tool": "scripts/content/timber_bake.py",
+      "maps": {
+        "normal": {
+          "file": "city-timber/NW_CITY_WOODBEAM_03-attempt-1.normal.png",
+          "sha256": "049073d2b6e483c92a3736342dce31206ffc46420f41505c4287e8c385e16d7d"
+        },
+        "roughness": {
+          "file": "city-timber/NW_CITY_WOODBEAM_03-attempt-1.roughness.png",
+          "sha256": "89fd4498d8512ca3fea7090c04067f9d9c758550d1e738f501edb32e28d2106c"
+        }
+      }
+    },
+    {
+      "file": "city-timber/NW_CITY_WOOD_ORNAMENT_02-attempt-1.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOOD_ORNAMENT_02.TGA",
+      "attempt": 1,
+      "sha256": "414b912bd084a7ad5c524c20275ceaa9d5cf88813771f8e521de998d198ef9bc",
+      "c2pa": null,
+      "model": "derived: scripts/content/timber_bake.py",
+      "utc": "2026-10-22T05:53:38Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/timber_bake.py",
+      "maps": {
+        "normal": {
+          "file": "city-timber/NW_CITY_WOOD_ORNAMENT_02-attempt-1.normal.png",
+          "sha256": "b889ea203c8ba48323a50808daca44f99a9136fcaa3fa76d2d7742c463f48d9e"
+        },
+        "roughness": {
+          "file": "city-timber/NW_CITY_WOOD_ORNAMENT_02-attempt-1.roughness.png",
+          "sha256": "0edb72f79320910f286bccd805d0c2337c7a9297605838d173a46123619d4379"
+        }
+      }
+    },
+    {
+      "file": "city-timber/NW_CITY_WOOD_ORNAMENT_01-attempt-2.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOOD_ORNAMENT_01.TGA",
+      "attempt": 2,
+      "sha256": "c18d90a6f562479a6aa5b14a609bad188413e2165cbc0e88deb7a42b82f6abe4",
+      "c2pa": null,
+      "model": "derived: scripts/content/timber_bake.py",
+      "utc": "2026-10-22T05:52:19Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-1.png",
+      "tool": "scripts/content/timber_bake.py",
+      "maps": {
+        "normal": {
+          "file": "city-timber/NW_CITY_WOOD_ORNAMENT_01-attempt-2.normal.png",
+          "sha256": "0614c8adea27aee0fb477a5eb65a4e85805f1538ac658cc44fbc692f7de0816f"
+        },
+        "roughness": {
+          "file": "city-timber/NW_CITY_WOOD_ORNAMENT_01-attempt-2.roughness.png",
+          "sha256": "1dfe77fb5a26e3596b717b3287a6146081c228156be2fce92630840a22aae206"
+        }
+      }
+    },
+    {
+      "file": "city-timber/NW_CITY_WOOD_01-attempt-1.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOOD_01.TGA",
+      "attempt": 1,
+      "sha256": "7805b7c7c484a29e675eb1f10307ea906146b4f43ad19353856fd8ce0831b62c",
+      "c2pa": null,
+      "model": "derived: scripts/content/timber_bake.py",
+      "utc": "2026-10-22T05:53:33Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-2.png",
+      "tool": "scripts/content/timber_bake.py",
+      "maps": {
+        "normal": {
+          "file": "city-timber/NW_CITY_WOOD_01-attempt-1.normal.png",
+          "sha256": "d39a83cf3a596751919426be2c40caf41558b0eabb612637d17cbe32870fd507"
+        },
+        "roughness": {
+          "file": "city-timber/NW_CITY_WOOD_01-attempt-1.roughness.png",
+          "sha256": "ba98cffd20746c1ca38c287801cb75632648a38127f863d80fedf20ac4f8189c"
+        }
+      }
+    },
+    {
+      "file": "city-timber/NW_CITY_WOOD_01-attempt-2.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOOD_01.TGA",
+      "attempt": 2,
+      "sha256": "f849532f08f0c7ecfbd4f677e7cb26d86ae56dc643f1dac3310823fdd9f31184",
+      "c2pa": null,
+      "model": "derived: scripts/content/timber_bake.py",
+      "utc": "2026-10-22T05:56:40Z",
+      "thread": "blender",
+      "parent": "city-roofs-shingle/reference-attempt-2.png",
+      "tool": "scripts/content/timber_bake.py",
+      "maps": {
+        "normal": {
+          "file": "city-timber/NW_CITY_WOOD_01-attempt-2.normal.png",
+          "sha256": "d39a83cf3a596751919426be2c40caf41558b0eabb612637d17cbe32870fd507"
+        },
+        "roughness": {
+          "file": "city-timber/NW_CITY_WOOD_01-attempt-2.roughness.png",
+          "sha256": "c0ebdd500d537c30b87b38efc79bdb80abda308b800a90806ea0d5f13a21240b"
+        }
+      }
+    },
+    {
+      "file": "city-timber/NW_CITY_WOOD_ORNAMENT_01-attempt-3.png",
+      "role": "texture",
+      "texture": "NW_CITY_WOOD_ORNAMENT_01.TGA",
+      "attempt": 3,
+      "sha256": "60ed1c54543fdcead12956d2cf19427d91ca241a31cb13bd05569c40c95ee5f3",
+      "c2pa": null,
+      "model": "derived: scripts/content/timber_bake.py",
+      "utc": "2026-10-22T08:06:39Z",
+      "thread": "blender",
+      "parent": "city-timber/NW_CITY_WOOD_ORNAMENT_01-attempt-2.png",
+      "tool": "scripts/content/timber_bake.py",
+      "maps": {
+        "normal": {
+          "file": "city-timber/NW_CITY_WOOD_ORNAMENT_01-attempt-3.normal.png",
+          "sha256": "aef3a55d8f4a9723ed8475591e1240b0a1ce8853d8d0dd1763dd8df172e6e77f"
+        },
+        "roughness": {
+          "file": "city-timber/NW_CITY_WOOD_ORNAMENT_01-attempt-3.roughness.png",
+          "sha256": "d1e45dcdb25466fa8a0c5fb6ab56fb163848b19a0ec04d4dcfd7dbf0fee1fde6"
+        }
+      }
+    }
+  ],
+  "selected": {
+    "concept:NW_CITY_WOODBEAM_02.TGA": {
+      "file": "city-timber-concept/concept-NW_CITY_WOODBEAM_02-attempt-3.png",
+      "reason": "попытка 3: цельный брус, неровные пятна сырости; трещины вдоль волокна — на этапе текстур",
+      "date": "2026-10-21"
+    },
+    "concept:NW_CITY_WOODBEAM_03.TGA": {
+      "file": "city-timber-concept/concept-NW_CITY_WOODBEAM_03-attempt-1.png",
+      "reason": "попытка 1: приглушённый красно-бурый, тонкая полоса на двух гвоздях",
+      "date": "2026-10-21"
+    },
+    "concept:NW_CITY_WOOD_ORNAMENT_02.TGA": {
+      "file": "city-timber-concept/concept-NW_CITY_WOOD_ORNAMENT_02-attempt-1.png",
+      "reason": "попытка 1: простая серо-бурая доска",
+      "date": "2026-10-21"
+    },
+    "concept:NW_CITY_WOOD_ORNAMENT_01.TGA": {
+      "file": "city-timber-concept/concept-NW_CITY_WOOD_ORNAMENT_01-attempt-3.png",
+      "reason": "попытка 3: тёмные углубления, узор читается; кольца сделать неровными на этапе текстур",
+      "date": "2026-10-21"
+    },
+    "concept:NW_CITY_WOOD_01.TGA": {
+      "file": "city-timber-concept/concept-NW_CITY_WOOD_01-attempt-2.png",
+      "reason": "попытка 2: оливковые доски, плоская сырость",
+      "date": "2026-10-21"
+    },
+    "NW_CITY_WOODBEAM_02.TGA": {
+      "file": "city-timber/NW_CITY_WOODBEAM_02-attempt-4.png",
+      "reason": "model-built beam; damp wood without a sky sheen",
+      "date": "2026-10-22"
+    },
+    "NW_CITY_WOODBEAM_03.TGA": {
+      "file": "city-timber/NW_CITY_WOODBEAM_03-attempt-1.png",
+      "reason": "model-built on timber_bake.py; tone and spread measured against the original's preview",
+      "date": "2026-10-22"
+    },
+    "NW_CITY_WOOD_ORNAMENT_02.TGA": {
+      "file": "city-timber/NW_CITY_WOOD_ORNAMENT_02-attempt-1.png",
+      "reason": "model-built on timber_bake.py; tone and spread measured against the original's preview",
+      "date": "2026-10-22"
+    },
+    "NW_CITY_WOOD_ORNAMENT_01.TGA": {
+      "file": "city-timber/NW_CITY_WOOD_ORNAMENT_01-attempt-3.png",
+      "reason": "model-built carved board with the original's figure-eights: one band crossing itself at the waist, crescent chips, the square in a frame, lilies of a lens, a bud and two leaves",
+      "date": "2026-10-22"
+    },
+    "NW_CITY_WOOD_01.TGA": {
+      "file": "city-timber/NW_CITY_WOOD_01-attempt-2.png",
+      "reason": "model-built boards, moss share as the original",
+      "date": "2026-10-22"
+    }
+  },
+  "reviews": [
+    {
+      "id": "r1-concept-2",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/r1-concept-2/merged.json"
+    },
+    {
+      "id": "r1-concept-4",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/r1-concept-4/merged.json"
+    },
+    {
+      "id": "r1-concept-9",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/r1-concept-9/merged.json"
+    },
+    {
+      "id": "r1-concept-r3",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/r1-concept-r3/merged.json"
+    },
+    {
+      "id": "r1-concept-r3e",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/r1-concept-r3e/merged.json"
+    },
+    {
+      "id": "r1-concept-r4",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/r1-concept-r4/merged.json"
+    },
+    {
+      "id": "r2-textures-1",
+      "stage": "textures",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-21",
+      "path": "reviews/r2-textures-1/merged.json"
+    }
+  ],
+  "gates": [
+    {
+      "gate": "preserve",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-21",
+      "quote": "Да, оба списка подтверждаю, делай концепты",
+      "note": "Список сохранения дерева, пункты 1–7."
+    },
+    {
+      "gate": "concept",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-21",
+      "quote": "можно",
+      "note": "Принят с правками на этапе текстур: на брусе каркаса три длинные трещины вдоль волокна; кольца резьбы неровные, вырезанные от руки; доска резьбы темнее. Каждая текстура делается отдельно."
+    },
+    {
+      "gate": "ingame",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-22",
+      "quote": "Да, круто. Спасибо большое. Давай все вливаем. Есть, конечно, небольшой огрех в дизайне орнамента на дереве. Там восьмерки в стиле знака бесконечности, а ты как два круга сделал. Ну, это, в принципе, мелочи.",
+      "note": "Набор timber-6. Огрех резной доски WOOD_ORNAMENT_01 — строка 5c списка отклонённых дефолтов; переделка — отдельной задачей. Рецензент Р3 на пары из игры не запускался."
+    },
+    {
+      "gate": "enable",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-22",
+      "quote": "да, давай",
+      "note": "В ответ на «Если «всё вливаем» значило и это, скажи — включу кровли, дерево и бочку». Набор working-1 (roofs-8 + timber-6 + бочка barrel-wear-metal0) в рабочем контенте Mac; рецензенты Р1–Р3 не пройдены."
+    },
+    {
+      "gate": "enable",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-22",
+      "quote": "Да, давай включать.",
+      "note": "Набор timber-7 (резьба восьмёрками) в рабочем контенте: working-2 = roofs-8 + timber-7 + barrel-wear-metal0.",
+      "set": "timber-7"
+    }
+  ],
+  "build": {
+    "set": "timber-7",
+    "base": "original",
+    "date": "2026-10-22",
+    "albedo_sha256": {
+      "NW_CITY_WOODBEAM_02.TGA": "99f08690d1d04d3d69f7edfdc00c6bded705373fbc62c7380fa2f113d844acb7",
+      "NW_CITY_WOODBEAM_03.TGA": "b020ef0232b65287e43b67d97db51b2439bfd8f193d862bc93bd4873bd37ab11",
+      "NW_CITY_WOOD_ORNAMENT_02.TGA": "a60ce99745ec81c74aa28f98226856f5b8c4dce3c6a59c14c4180261b8a0aea4",
+      "NW_CITY_WOOD_ORNAMENT_01.TGA": "b6fe5a9e2a875d15919a96de37f9659cd3556f5e5634a3c943b8cfbf05020afc",
+      "NW_CITY_WOOD_01.TGA": "a7d672d2e04be0d72b162a90b402545d66ad31cf212aa72bb19544478ff61e1b"
+    },
+    "entries": 5,
+    "replaced": [
+      "NW_CITY_WOODBEAM_02.TGA",
+      "NW_CITY_WOODBEAM_03.TGA",
+      "NW_CITY_WOOD_01.TGA",
+      "NW_CITY_WOOD_ORNAMENT_01.TGA",
+      "NW_CITY_WOOD_ORNAMENT_02.TGA"
+    ],
+    "unchanged_entries": 0
+  },
+  "backup": {
+    "date": "2026-10-22",
+    "host": "dev-ubuntu",
+    "matched": 80,
+    "mismatched": []
+  }
+}

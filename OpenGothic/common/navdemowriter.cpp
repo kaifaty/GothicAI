@@ -58,7 +58,7 @@ uint32_t age(uint64_t now, uint64_t sampled) {
   }
 
 void layer(std::vector<uint8_t>& out, const NavigationMemory::Layer& value,
-           uint32_t expected, float cellCm) {
+           uint32_t expected, float cellCm, uint32_t formatVersion) {
   if(value.size!=expected || value.cells.size()!=size_t(expected)*expected || value.cellCm!=cellCm)
     throw std::runtime_error("nav demo: incorrect memory shape or resolution");
   for(const auto& cell:value.cells) {
@@ -69,6 +69,12 @@ void layer(std::vector<uint8_t>& out, const NavigationMemory::Layer& value,
         throw std::runtime_error("nav demo: memory channel outside [0,1]");
       byte(out,uint8_t(std::lround(c*255.f)));
       }
+    if(!std::isfinite(cell.familiar) || cell.familiar<0 || cell.familiar>1)
+      throw std::runtime_error("nav demo: familiar channel outside [0,1]");
+    if(formatVersion==3)
+      byte(out,uint8_t(std::lround(cell.familiar*255.f)));
+    else if(cell.familiar!=0)
+      throw std::runtime_error("nav demo: familiar memory requires format version 3");
     const bool known = std::isfinite(cell.groundHeightCm);
     if(!known && !std::isnan(cell.groundHeightCm))
       throw std::runtime_error("nav demo: infinite memory ground height");
@@ -79,9 +85,9 @@ void layer(std::vector<uint8_t>& out, const NavigationMemory::Layer& value,
 }
 
 NavDemoWriter::NavDemoWriter(const std::string& path, uint32_t formatVersion):fileVersion(formatVersion) {
-  if(fileVersion!=1 && fileVersion!=2)
+  if(fileVersion!=1 && fileVersion!=2 && fileVersion!=3)
     throw std::invalid_argument("nav demo: unsupported format version");
-  buffer.reserve(recordBytes);
+  buffer.reserve(recordBytesForVersion(fileVersion));
   stream = gzopen(path.c_str(),"wb1");
   if(stream==nullptr)
     throw std::runtime_error("nav demo: cannot create "+path);
@@ -94,7 +100,7 @@ NavDemoWriter::NavDemoWriter(const std::string& path, uint32_t formatVersion):fi
   const char magic[] = "NAVDEMO";
   buffer.insert(buffer.end(),magic,magic+8);
   u32(buffer,fileVersion);
-  u32(buffer,recordBytes);
+  u32(buffer,recordBytesForVersion(fileVersion));
   u32(buffer,rayCount);
   u32(buffer,nearSize);
   u32(buffer,farSize);
@@ -147,12 +153,12 @@ double NavDemoWriter::append(const Snapshot& sample) {
   f32(buffer,sample.body.groundSlopeDeg);
   f32(buffer,sample.body.headYawDeg);
   f32(buffer,sample.body.headPitchDeg);
-  vec(buffer,fileVersion==2 ? sample.roads.carrotDirection : sample.roads.nextDirection);
-  f32(buffer,fileVersion==2 ? sample.roads.carrotDistanceCm : sample.roads.nextDistanceCm);
+  vec(buffer,fileVersion>=2 ? sample.roads.carrotDirection : sample.roads.nextDirection);
+  f32(buffer,fileVersion>=2 ? sample.roads.carrotDistanceCm : sample.roads.nextDistanceCm);
   vec(buffer,sample.roads.goalDirection);
   f32(buffer,sample.roads.goalDistanceCm);
-  f32(buffer,fileVersion==2 ? sample.roads.remainingKnownCm : sample.roads.remainingVisualCm);
-  byte(buffer,fileVersion==2 ? sample.roads.beyondKnown : sample.roads.goalInKnown);
+  f32(buffer,fileVersion>=2 ? sample.roads.remainingKnownCm : sample.roads.remainingVisualCm);
+  byte(buffer,fileVersion>=2 ? sample.roads.beyondKnown : sample.roads.goalInKnown);
   keys(buffer,sample.previous);
   keys(buffer,sample.keys);
   for(const auto& ray:*sample.eye) {
@@ -166,11 +172,11 @@ double NavDemoWriter::append(const Snapshot& sample) {
     byte(buffer,ray.complete);
     byte(buffer,ray.hit);
     }
-  layer(buffer,sample.memory->near,nearSize,NavigationMemory::Constants::nearCellCm);
-  layer(buffer,sample.memory->far,farSize,NavigationMemory::Constants::farCellCm);
+  layer(buffer,sample.memory->near,nearSize,NavigationMemory::Constants::nearCellCm,fileVersion);
+  layer(buffer,sample.memory->far,farSize,NavigationMemory::Constants::farCellCm,fileVersion);
   vec(buffer,sample.teacherCorner);
   f32(buffer,sample.teacherPathCm);
-  if(buffer.size()!=recordBytes)
+  if(buffer.size()!=recordBytesForVersion(fileVersion))
     throw std::runtime_error("nav demo: internal record layout mismatch");
   write(buffer);
   ++count;

@@ -1,0 +1,24 @@
+Generate concept images with the built-in image_gen tool. This is not a coding task: do not read, open, list or view any files or images on disk, and do not search the web. Use only the text below and the images you generate yourself in this thread. The only shell command you may run is `date -u +%Y-%m-%dT%H:%M:%SZ`, right before and right after each image_gen call.
+
+Use a {canvas} canvas. Make {variants} image_gen calls with the prompt text exactly as given between the lines (copy it verbatim each time). Do not judge or compare the results and do not retry.
+
+Reply with only, for every call in order: attempt number; absolute path of the PNG; UTC start and end; the exact full prompt text of that call.
+
+----- prompt start -----
+[RESULT] {result}
+
+[PLACE] {place}
+
+[FORM — keep exactly] {form}
+Do not straighten, tidy, simplify, shrink, enlarge or add anything to the items in this block.
+
+[MATERIALS] {materials}
+
+[AGEING] {ageing}
+
+[STYLE] {style_block}
+
+[AVOID — rejected before] {defaults}
+
+[CONSTRAINTS] No people, text, logos, heraldry or props unless listed. No cast shadows baked into colour. Plain light grey background.
+----- prompt end -----

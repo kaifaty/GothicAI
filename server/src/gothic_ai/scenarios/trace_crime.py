@@ -22,12 +22,14 @@ from .common import (
     LOBART,
     ClaimScript,
     FixedDecider,
+    WitnessReaction,
     _logged,
     _save,
     _trace_evidence_line,
     _until,
     _until_async,
     attach_when_free,
+    prepare_theft_witness,
     wait_message,
 )
 
@@ -202,13 +204,19 @@ async def trace_crime(
             return _logged(results)
         await asyncio.sleep(1)
         await stand(LOBART, parked)
-        await stand(HILDA, "NW_FARM1_INHOUSE_02", face="PLAYER")
-        await asyncio.sleep(1)
+        prepared, preparation = await prepare_theft_witness(link, HILDA)
+        if not check("native_witness_ready", prepared, preparation):
+            return _logged(results)
         before = {f["id"] for f in facts("crime")}
-        await link.debug("player_take", item="ITMI_SILVERCUP", distance=800)
-        await _until(lambda: any(f["id"] not in before for f in facts("crime")), 10)
-        crime = next((f for f in facts("crime") if f["id"] not in before), None)
-        # Reset vanilla combat only AFTER the native witness has been recorded, as in crime_talk.
+        with WitnessReaction(link, service.chronicle, HILDA) as reaction:
+            await link.debug("player_take", item="ITMI_SILVERCUP", distance=1200)
+            await _until(lambda: any(f["id"] not in before for f in facts("crime")), 10)
+            crime = next((f for f in facts("crime") if f["id"] not in before), None)
+            if crime is not None and not check(
+                "native_reaction", await reaction.wait(str(crime["id"])), reaction.detail
+            ):
+                return _logged(results)
+        # Keep the witness in place until the held rule and its native voice have finished.
         await stand(HILDA, field)
         if not check(
             "native_theft",

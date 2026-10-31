@@ -8,6 +8,9 @@
 #include <zenkit/DaedalusVm.hh>
 
 #include "game/gamescript.h"
+#include "game/herodeed.h"
+#include "game/inventory.h"
+#include "world/objects/interactive.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "gothic.h"
@@ -15,6 +18,7 @@
 
 #include "eval.h"
 #include "jsonread.h"
+#include "npcchests.h"
 #include "textcodec.h"
 
 using namespace Tempest;
@@ -70,6 +74,7 @@ int32_t intConst(zenkit::DaedalusVm& vm, std::string_view name) {
 std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm, StoryEffect& e) {
   e.kind   = std::string(JsonRead::str(x,"do"));
   e.item   = upper(JsonRead::str(x,"item"));
+  e.chest  = upper(JsonRead::str(x,"chest"));
   e.teach  = std::string(JsonRead::str(x,"teach"));
   e.arg    = upper(JsonRead::str(x,"arg"));
   e.var    = upper(JsonRead::str(x,"var"));
@@ -83,15 +88,18 @@ std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm,
   e.routine = upper(JsonRead::str(x,"routine"));
   e.count  = int32_t(JsonRead::integer(x,"count",JsonRead::integer(x,"amount",
                      JsonRead::integer(x,"value",JsonRead::integer(x,"seconds",1)))));
+  e.day    = int32_t(JsonRead::integer(x,"day",0));
   e.toNpc  = JsonRead::str(x,"to")=="npc";
   e.toHero = JsonRead::str(x,"to")!="self" && !e.toNpc;
   auto* item = vm ? vm->find_symbol_by_name(e.item) : nullptr;
   auto* var  = vm ? vm->find_symbol_by_name(e.var) : nullptr;
-  if(e.kind=="give" || e.kind=="create") {
+  if(e.kind=="give" || e.kind=="create" || e.kind=="chest_take") {
     if(vm && (item==nullptr || item->type()!=DaedalusDataType::INSTANCE))
       return e.kind + ": no item " + e.item;
     if(e.count<=0)
       return e.kind + ": count must be positive";
+    if(e.kind=="chest_take" && e.chest.empty())
+      return "chest_take: needs a chest";
     if(e.kind=="give" && e.toNpc) {
       auto* t = vm && !e.target.empty() ? vm->find_symbol_by_name(e.target) : nullptr;
       if(e.target.empty() || (vm && (t==nullptr || t->type()!=DaedalusDataType::INSTANCE)))
@@ -117,6 +125,21 @@ std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm,
   if(e.kind=="set") {
     if(vm && (var==nullptr || var->type()!=DaedalusDataType::INT || var->is_const() || var->is_member()))
       return "set: no variable " + e.var;
+    return {};
+    }
+  if(e.kind=="crime_memory") {
+    if(e.count<0 || e.count>4 || e.day<0)
+      return "crime_memory: value must be 0..4 and day nonnegative";
+    if(vm) {
+      for(auto name:{"AIV_NPCSAWPLAYERCOMMIT","AIV_NPCSAWPLAYERCOMMITDAY","AIV_CRIMEABSOLUTIONLEVEL"}) {
+        auto* s = vm->find_symbol_by_name(name);
+        if(s==nullptr || !s->is_const() || s->type()!=DaedalusDataType::INT ||
+           s->get_int(0)<0 || uint32_t(s->get_int(0))>=zenkit::INpc::aivar_count)
+          return std::string("crime_memory: no AIV constant ")+name;
+        }
+      if(vm->find_symbol_by_name("B_GETCURRENTABSOLUTIONLEVEL")==nullptr)
+        return "crime_memory: no B_GetCurrentAbsolutionLevel";
+      }
     return {};
     }
   if(e.kind=="journal") {
@@ -188,7 +211,17 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
   self->set_instance(npc.handlePtr());
   other->set_instance(player.handlePtr());
 
-  if(kind=="give" && toNpc) {
+  if(kind=="chest_take") {
+    // v48: an outcome far from the hero. Direct transfer sends neither perceptions nor npc_deed;
+    // Npc::addItem(chest) is deliberately avoided because it also captures a marked physical deed.
+    auto& world = npc.world();
+    auto* source = NpcChests::find(world,chest);
+    const auto id = world.script().findSymbolIndex(item);
+    if(source!=nullptr && id!=size_t(-1))
+      Inventory::transfer(const_cast<Inventory&>(npc.inventory()),source->inventory(),nullptr,
+                          id,size_t(count),world);
+    }
+  else if(kind=="give" && toNpc) {
     // to another npc (v39): an errand far from the hero, the walk taken as done (errands.py)
     auto* s = vm.find_symbol_by_name(item);
     auto* t = vm.find_symbol_by_name(target);
@@ -235,6 +268,17 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
     if(auto* s = vm.find_symbol_by_name(var))
       s->set_int(count);
     }
+  else if(kind=="crime_memory") {
+    // B_MemorizePlayerCrime also writes PETZ counters. Project only its NPC-local fields, with
+    // the current native absolution stamp so a new deed after payment remains readable.
+    auto level = call("B_GETCURRENTABSOLUTIONLEVEL",{Value::instance(npc.handlePtr())});
+    if(level) {
+      auto& aiv = npc.handlePtr()->aivar;
+      aiv[size_t(intConst(vm,"AIV_NPCSAWPLAYERCOMMIT"))] = count;
+      aiv[size_t(intConst(vm,"AIV_NPCSAWPLAYERCOMMITDAY"))] = day;
+      aiv[size_t(intConst(vm,"AIV_CRIMEABSOLUTIONLEVEL"))] = level->i;
+      }
+    }
   else if(kind=="journal") {
     call("LOG_CREATETOPIC",{Value::str(topic),Value::integer(constant("LOG_MISSION",0))});
     call("LOG_SETTOPICSTATUS",{Value::str(topic),Value::integer(constant(status,1))});
@@ -254,12 +298,13 @@ void StoryEffect::run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string
     // its attitude to him as the scripts set it (B_SetAttitude), so their B_AssessEnemy sees no enemy in
     // him any more; and a fight with him ends now, the npc back to its routine
     call("B_SETATTITUDE",{Value::instance(npc.handlePtr()),Value::integer(constant(attitude,2))});
-    if(npc.target()==&player && !npc.isDown()) {
+    auto* target = npc.target();
+    if(target!=nullptr && (target==&player || HeroDeed::aivar(*target,"AIV_PARTYMEMBER")!=0) && !npc.isDown()) {
       npc.clearAiQueue();
       npc.clearState(true);
       npc.setTarget(nullptr);
-      npc.aiPush(AiQueue::aiRemoveWeapon());
       npc.resumeAiRoutine();
+      npc.aiPush(AiQueue::aiRemoveWeapon());
       }
     }
   else if(kind=="knows") {

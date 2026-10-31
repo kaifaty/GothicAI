@@ -1,0 +1,14 @@
+# The feat toast (protocol v53) from a stand-in server that sends one every 9 s after the world loads
+cheat god
+set time 12 0
+overlay off
+ui on
+wait 13000
+shot fade
+wait 1200
+shot full_a
+wait 9000
+shot full_b
+wait 9000
+shot full_c
+wait 1000

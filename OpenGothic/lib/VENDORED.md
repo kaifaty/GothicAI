@@ -14,6 +14,7 @@ automatically; to update one, copy the needed parts of a newer upstream version 
 | `JoltPhysics/` | https://github.com/jrouwe/JoltPhysics | e77f175595e64cb44218cc9d9d56fc365ad0e36a (v5.6.0) | MIT | everything but `Jolt/`, `Build/CMakeLists.txt` and `LICENSE` (examples, test framework, unit/performance tests, viewer, documentation, assets and build helper scripts omitted) |
 | `dmusic/` | https://github.com/GothicKit/dmusic | b73b270b94714b8ec8d9d0b2a9f3a5c445da52d1 | MIT | `docs/`, `examples/` |
 | `rapidjson/` | https://github.com/Tencent/rapidjson | f54b0e47a08782a6131cc3d60f94d038fa6e0a51 (v1.1.0) | MIT | everything but `include/` (header-only) |
+| `cgltf/` | https://github.com/jkuhlmann/cgltf | 360db1a95480fe102ae9c69b27c5d101167ff5ba (v1.15) | MIT | everything but `cgltf.h` and `LICENSE` (single-header GLB parser) |
 | `TinySoundFont/` | https://github.com/schellingb/TinySoundFont | 92a8f0e9fe3c98358be7d8564db21fc4b1142d04 | MIT | `examples/`, `sfotool/` |
 | `edd-dbg/`, `miniz/` | as in upstream OpenGothic | — | see the directories | — |
 
@@ -33,6 +34,17 @@ retained in `BulletCompat.LICENSE`; the Jolt library and its existing code retai
 
 Keep these when updating a library from upstream.
 
+- `Tempest/Engine/graphics/device.cpp`, `gapi/metal/mtdevice.mm` and
+  `gapi/vulkan/vallocator.cpp`: `tempestProbeGpuBytes()` reports Metal
+  `currentAllocatedSize` and live Vulkan allocations (including cached allocator pages).
+  `tempestLoadProbeEnabled()` caches the exact `OPENGOTHIC_LOADPROBE=1` switch once for the
+  engine and counters; ordinary runs skip GPU sampling and allocation bookkeeping.
+- `cgltf/` `cgltf.h`: removed a tab from an otherwise empty line to pass the repository's
+  diff whitespace check; parser code is unchanged.
+- `ZenKit/` `Vfs::set_open_observer` (`Vfs.hh`, `Vfs.cc`): optional successful-open callback
+  with the winning archive filename or host file path, set before mounting. File nodes keep
+  provenance through overrides; `find` and `resolve` do not count as opens. Used only by
+  `OPENGOTHIC_CENSUS`; without an observer no provenance metadata is allocated.
 - `JoltPhysics/Jolt/Physics/Character/CharacterVirtual.{h,cpp}`: optional transient
   `WalkStairsDiagnostics` records the rejection stage and sweep results. The stair support test
   tests the full lookahead endpoint first, then at most four intermediate positions, checking the
@@ -53,6 +65,10 @@ Keep these when updating a library from upstream.
   (the test bench records the game's sound in step with the frames).
 - `Tempest/Engine/sound/sound.{h,cpp}`: `Sound::samples16` gives the decoded samples of a sound (lip sync
   measures the loudness of a voice line, `common/graphics/mesh/lipsync.cpp`).
+- `Tempest/Engine/gapi/metal/mtshader.cpp`: shader compile errors (SPIRV-Cross and MSL) go to `Log::e` in
+  every build, not only without `NDEBUG`; the MSL source is still dumped only in debug builds. The
+  unconditional `Log::d(msl)` of every mesh shader is removed (with `-ms 1` it put about 24 000 lines
+  into `game.log`).
 - `rapidjson/include/rapidjson/document.h`: `GenericStringRef::operator=` deleted (GCC 15 diagnoses the
   old one), and `memcpy` into `GenericValue`/`Member` storage goes through `void*`, as upstream does now
   (clang's `-Wnontrivial-memcall`; the engine builds with `-Werror`).
@@ -99,3 +115,8 @@ Keep these when updating a library from upstream.
   in the same order before a save's world loads, so the npc's of the save find their symbols by index. The
   code names its own instance (`self` in an instance's body), so `GameScript::initializeInstanceNpc` binds
   that instance to the new npc while the code runs.
+- `ZenKit/` archive writers (`ArchiveAscii.cc`, `ArchiveBinary.cc`, `ArchiveBinsafe.cc`): on `_WIN32` the
+  header date is written with `%#d.%#m` instead of glibc's `%-d.%-m`. The Microsoft CRT has no `-` flag, and
+  its `strftime` sends an invalid format to the invalid-parameter handler, which by default ends the process
+  when an archive is written. The written date is the same; other platforms keep the upstream format. ZenKit sources are base
+  format inputs (`cmake/BaseImport.cmake`), so this patch changes `BaseFormatSha256` on every platform.

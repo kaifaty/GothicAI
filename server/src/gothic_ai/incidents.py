@@ -2,8 +2,9 @@
 
 Something happens to the npc → an incident (brain/incident.py). At once, without waiting:
 - the **behavioral model** picks the body's reaction (brain/reflex.py) — in ~0.1 s;
-- the code's **safety rule** hands a beaten npc back to the game's scripts (they fight back or flee):
-  a second hit from the same attacker within `SECOND_HIT_S`, or health below half.
+- with the planner, a listening npc threatened by another npc is freed before the first reaction, so its
+  native fight or flight has its body; without it, the **safety rule** hands a beaten npc back to the
+  game's scripts: a second hit from the same attacker within `SECOND_HIT_S`, or health below half.
 The hero's companions are the exception: in a fight orders.py has their bodies (they stand up for him),
 so neither the behavioral model nor the safety rule moves them; only their words come from here.
 
@@ -38,6 +39,7 @@ from .protocol import (
     FollowEnded,
     GameMessage,
     Loading,
+    NpcEvent,
     Perception,
     Session,
 )
@@ -65,6 +67,7 @@ INTENT_BODY = {"flee": "flee", "fight": "fight", "seek_help": "flee"}
 EVENTS_RU = {
     "monster_near": "{other} идёт на тебя",
     "npc_attack": "{other} напал на тебя",
+    "npc_threat": "{other} враждебен и бежит на тебя с обнажённым оружием",
     "fight_nearby": "рядом драка: {detail}",
     "cry_for_help": "{other} зовёт на помощь",
     "player_near": "герой подошёл к тебе",
@@ -185,6 +188,7 @@ class IncidentDesk:
         # free npc -> when its words were last asked for, and what about
         self._spoke: dict[str, tuple[float, frozenset[tuple[str, str]]]] = {}
         self._calming: set[str] = set()  # free npc's waiting for their moment to pass
+        self._releasing: set[str] = set()  # a threat is freeing its listening body before a reaction
         self.calm_poll_s = 1.0
         if planner is not None:
             self.follow(planner)
@@ -207,6 +211,12 @@ class IncidentDesk:
                     event = classify(msg, self._names(npc), self.clock())
                     if event is not None:
                         self._event(npc, event)
+            case NpcEvent(kind="npc_threat"):
+                npc = msg.npc.upper()
+                if npc in self.attached and not self.companion(npc):
+                    self._spawn(
+                        self._release_for_threat(npc, msg.kind, msg.other, msg.other_name, msg.distance)
+                    )
             case FollowEnded():
                 npc = msg.npc.upper()
                 if msg.reason in FOLLOW_REASONS and npc in self.dialogue.conversations:
@@ -254,6 +264,9 @@ class IncidentDesk:
             return
         if event.spec.urgent and self.companion(npc):
             self._spawn(self._escalate_later(npc, inc.id))  # its body fights already (orders.py)
+            return
+        if event.kind == "attacked" and event.other and event.other != "PLAYER" and self.planner is not None:
+            self._spawn(self._release_for_threat(npc, "npc_attack", event.other, event.other_name))
             return
         if event.kind == "attacked" and self._beaten(npc, inc, event):
             self._spawn(self._release(npc, event))
@@ -330,6 +343,43 @@ class IncidentDesk:
             await self.link.act(npc, "return_to_routine", timeout=10)
         except (GameError, TimeoutError) as err:
             log.info("%s: release failed: %s", npc, err)
+
+    async def _release_for_threat(
+        self,
+        npc: str,
+        kind: str,
+        other: str,
+        other_name: str | None,
+        distance_cm: float | None = None,
+    ) -> None:
+        """Listening never owns a threatened NPC's body. Detach first so npc_act can start native combat
+        against its actual attacker; Detached also clears talk.py's listening hold through its listener."""
+        if self.planner is None or npc in self._releasing:
+            return
+        self._releasing.add(npc)
+        try:
+            if npc in self.attached:
+                await self.link.detach(npc)
+            self.planner.on_event(
+                npc, kind, self.clock(), other=other, other_name=other_name, distance_cm=distance_cm
+            )
+            conv = self.dialogue.conversations.get(npc)
+            if conv is not None and conv.calm is not None:
+                intent = conv.intent
+                choice = INTENT_BODY.get(intent.goal)
+                same_threat = intent.target is not None and intent.target.upper() == other.upper()
+                if choice and (
+                    same_threat
+                    or intent.goal == "seek_help"
+                    or (intent.goal == "flee" and intent.target is None)
+                ):
+                    # An attached listener may have already chosen to run in its own words. Preserve
+                    # that live choice after releasing its body, against this actual threat.
+                    self.planner.take_body(npc, choice, target=other)
+        except (GameError, TimeoutError) as err:
+            log.info("%s: could not free its listening body for %s: %s", npc, kind, err)
+        finally:
+            self._releasing.discard(npc)
 
     async def _watch(self, npc: str, incident_id: int) -> None:
         """When the incident is over, so are the goals that only held during it."""
@@ -450,9 +500,14 @@ class IncidentDesk:
         """A free npc's goal of the moment (flee, fight, seek help) is carried out by its body, through the
         planner, so that its words and deeds agree; the npc's routine is the planner's business otherwise."""
         choice = INTENT_BODY.get(new.goal)
-        if self.planner is None or choice is None or (new.goal, new.target) == (old.goal, old.target):
+        if self.planner is None:
             return
-        decision = self.planner.take_body(npc, choice)
+        if choice is None:
+            self.planner.clear_body_intent(npc)
+            return
+        if (new.goal, new.target) == (old.goal, old.target):
+            return
+        decision = self.planner.take_body(npc, choice, target=new.target if new.goal != "seek_help" else None)
         log.info(
             "%s: intent %s moves the body: %s",
             npc,

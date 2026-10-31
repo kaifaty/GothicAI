@@ -156,6 +156,17 @@ add_geom_shader(main_mph_d_at  "-DMESH_TYPE=3" -DDEPTH_ONLY -DATEST)
 add_geom_shader(main_mph_v     "-DMESH_TYPE=3" -DDEPTH_ONLY -DVIRTUAL_SHADOW)
 add_geom_shader(main_mph_v_at  "-DMESH_TYPE=3" -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 
+# The legacy variants remain in use when there is no material table. Position
+# varyings for the cotangent frame are needed only on the material-map path.
+add_geom_shader(main_lnd_orm      "-DMESH_TYPE=0" -DFLAT_NORMAL -DMATERIAL_MAPS)
+add_geom_shader(main_obj_orm      "-DMESH_TYPE=1" -DMATERIAL_MAPS)
+add_geom_shader(main_ani_orm      "-DMESH_TYPE=2" -DMATERIAL_MAPS)
+add_geom_shader(main_mph_orm      "-DMESH_TYPE=3" -DMATERIAL_MAPS)
+add_geom_shader(main_lnd_d_at_orm "-DMESH_TYPE=0" -DFLAT_NORMAL -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
+add_geom_shader(main_obj_d_at_orm "-DMESH_TYPE=1" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
+add_geom_shader(main_ani_d_at_orm "-DMESH_TYPE=2" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
+add_geom_shader(main_mph_d_at_orm "-DMESH_TYPE=3" -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
+
 # tesselation
 add_shader(main_lnd_f_slot.tesc      materials/main.tesc  "-DMESH_TYPE=0" -DWATER)
 add_shader(main_lnd_f_slot.tese      materials/main.tese  "-DMESH_TYPE=0" -DWATER)
@@ -188,6 +199,14 @@ add_frag_shader(main_obj_d_at  -DDEPTH_ONLY -DATEST)
 add_frag_shader(main_obj_v     -DDEPTH_ONLY -DVIRTUAL_SHADOW)
 add_frag_shader(main_obj_v_at  -DDEPTH_ONLY -DVIRTUAL_SHADOW -DATEST)
 
+add_frag_shader(main_lnd_g_s_orm  -DFLAT_NORMAL -DGBUFFER -DSIMPLE_MAT -DMATERIAL_MAPS)
+add_frag_shader(main_lnd_g_orm    -DFLAT_NORMAL -DGBUFFER -DMATERIAL_MAPS)
+add_frag_shader(main_lnd_g_at_orm -DFLAT_NORMAL -DGBUFFER -DATEST -DMATERIAL_MAPS)
+add_frag_shader(main_obj_g_orm    -DGBUFFER -DMATERIAL_MAPS)
+add_frag_shader(main_obj_g_at_orm -DGBUFFER -DATEST -DMATERIAL_MAPS)
+add_frag_shader(main_lnd_d_at_orm -DFLAT_NORMAL -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
+add_frag_shader(main_obj_d_at_orm -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
+
 # pfx geometry
 add_shader(main_pfx.vert       materials/pfx.vert   "-DMESH_TYPE=4" -DVT_COLOR)
 add_shader(main_pfx_f.vert     materials/pfx.vert   "-DMESH_TYPE=4" -DFORWARD    -DVT_COLOR)
@@ -208,6 +227,12 @@ add_shader(main_pfx_d.frag     materials/main.frag  "-DMESH_TYPE=4" -DDEPTH_ONLY
 add_shader(main_pfx_d_at.frag  materials/main.frag  "-DMESH_TYPE=4" -DDEPTH_ONLY -DVT_COLOR -DATEST)
 add_shader(main_pfx_v.frag     materials/main.frag  "-DMESH_TYPE=4" -DDEPTH_ONLY -DVIRTUAL_SHADOW -DVT_COLOR)
 add_shader(main_pfx_v_at.frag  materials/main.frag  "-DMESH_TYPE=4" -DDEPTH_ONLY -DVIRTUAL_SHADOW -DVT_COLOR -DATEST)
+
+add_shader(main_pfx_orm.vert       materials/pfx.vert  "-DMESH_TYPE=4" -DVT_COLOR -DMATERIAL_MAPS)
+add_shader(main_pfx_d_at_orm.vert  materials/pfx.vert  "-DMESH_TYPE=4" -DVT_COLOR -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
+add_shader(main_pfx_g_orm.frag     materials/main.frag "-DMESH_TYPE=4" -DVT_COLOR -DGBUFFER -DMATERIAL_MAPS)
+add_shader(main_pfx_g_at_orm.frag  materials/main.frag "-DMESH_TYPE=4" -DVT_COLOR -DGBUFFER -DATEST -DMATERIAL_MAPS)
+add_shader(main_pfx_d_at_orm.frag  materials/main.frag "-DMESH_TYPE=4" -DVT_COLOR -DDEPTH_ONLY -DATEST -DMATERIAL_MAPS)
 
 
 add_shader(item.vert                 inventory/item.vert)
@@ -231,6 +256,17 @@ add_shader(light.frag                lighting/light.frag)
 add_shader(light_rq.frag             lighting/light.frag -DRAY_QUERY)
 add_shader(light_rq_at.frag          lighting/light.frag -DRAY_QUERY -DRAY_QUERY_AT)
 add_shader(light_vsm.frag            lighting/light.frag -DVIRTUAL_SHADOW)
+
+add_shader(direct_light_orm.frag       lighting/direct_light.frag -DMATERIAL_MAPS)
+add_shader(direct_light_sh_orm.frag    lighting/direct_light.frag -DSHADOW_MAP -DMATERIAL_MAPS)
+add_shader(direct_light_rq_orm.frag    lighting/direct_light.frag -DSHADOW_MAP -DRAY_QUERY -DRAY_QUERY_AT -DMATERIAL_MAPS)
+add_shader(ambient_light_orm.frag      lighting/ambient_light.frag -DMATERIAL_MAPS)
+add_shader(ambient_light_ssao_orm.frag lighting/ambient_light.frag -DSSAO -DMATERIAL_MAPS)
+add_shader(ambient_light_surf_orm.frag lighting/ambient_light.frag -DSSAO -DSURFEL_GI -DMATERIAL_MAPS)
+add_shader(light_orm.frag              lighting/light.frag -DMATERIAL_MAPS)
+add_shader(light_rq_orm.frag           lighting/light.frag -DRAY_QUERY -DMATERIAL_MAPS)
+add_shader(light_rq_at_orm.frag        lighting/light.frag -DRAY_QUERY -DRAY_QUERY_AT -DMATERIAL_MAPS)
+add_shader(light_vsm_orm.frag          lighting/light.frag -DVIRTUAL_SHADOW -DMATERIAL_MAPS)
 
 add_shader(irradiance.comp           lighting/irradiance.comp)
 add_shader(sky_exposure.comp         lighting/sky_exposure.comp)
@@ -311,9 +347,11 @@ add_shader(probe_vote.comp           lighting/rt/probe_allocation.comp -DVOTE)
 add_shader(probe_allocation.comp     lighting/rt/probe_allocation.comp -DALLOC)
 add_shader(probe_trace.comp          lighting/rt/probe_trace.comp      -DRAY_QUERY -DRAY_QUERY_AT)
 add_shader(probe_lighting.comp       lighting/rt/probe_lighting.comp)
+add_shader(probe_lighting_orm.comp   lighting/rt/probe_lighting.comp -DMATERIAL_MAPS)
 
 add_shader(probe_ambient.vert        triangle.vert)
 add_shader(probe_ambient.frag        lighting/rt/probe_ambient.frag)
+add_shader(probe_ambient_orm.frag     lighting/rt/probe_ambient.frag -DMATERIAL_MAPS)
 
 # Surfels
 add_shader(surf_dbg.vert             lighting/surfels/surf_dbg.vert)

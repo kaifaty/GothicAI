@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from collections.abc import AsyncIterator, Callable, Collection, Sequence
@@ -12,14 +13,23 @@ from typing import Any, Literal
 
 from ..brain import Outcome
 from ..brain.reflex import Reflexes
-from ..chronicle import Fact
+from ..chronicle import Chronicle, Fact
 from ..dialogue import DialogueManager, SceneLine
 from ..game import GameError, GameLink
 from ..gossip import Scene
 from ..llm import Item, LLMBackend, LLMEvent, Message, Tool, ToolCall, ToolChoice, ToolResult
 from ..llm.fake import FakeBackend, FakeStep
-from ..perception import trace_name
-from ..protocol import ActionResult, GameMessage, Saved
+from ..perception import BEASTS, trace_name
+from ..protocol import (
+    ActionResult,
+    GameMessage,
+    NpcActResult,
+    NpcIdle,
+    NpcRoster,
+    PerceptionHeld,
+    RosterEntry,
+    Saved,
+)
 from ..sightings import Sighting
 from ..talk import TalkDesk
 
@@ -30,6 +40,322 @@ log = logging.getLogger("gothic_ai.scenarios")
 class Step:
     name: str
     result: ActionResult
+
+
+class WitnessReaction:
+    """Watch one native deed until its rule and recorded SVM finish, before moving its witness."""
+
+    def __init__(self, link: GameLink, chronicle: Chronicle, npc: str) -> None:
+        self.link, self.chronicle, self.npc = link, chronicle, npc
+        self.events: list[tuple[float, NpcActResult | NpcIdle | PerceptionHeld]] = []
+        self.rows: list[Fact] = []
+        self.started = time.monotonic()
+
+    def __enter__(self) -> WitnessReaction:
+        self.link.listeners.append(self._record)
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.link.listeners.remove(self._record)
+
+    def _record(self, message: GameMessage) -> None:
+        if isinstance(message, NpcActResult | NpcIdle | PerceptionHeld) and message.npc == self.npc:
+            self.events.append((time.monotonic(), message))
+
+    @property
+    def detail(self) -> dict[str, Any]:
+        return {
+            "reactions": self.rows,
+            "events": [
+                {"ms": round((at - self.started) * 1000), **event.model_dump()} for at, event in self.events
+            ],
+        }
+
+    async def wait(self, crime: str, *, reaction: str = "shout", svm: str = "DIRTYTHIEF") -> bool:
+        def decided() -> bool:
+            self.rows = [
+                fact
+                for fact in self.chronicle.facts("crime_reaction")
+                if fact.get("crime") == crime and fact.get("npc") == self.npc
+            ]
+            return bool(self.rows)
+
+        if not await _until(decided, 5):
+            return False
+        if len(self.rows) != 1 or any(
+            self.rows[0].get(key) != value
+            for key, value in {"verdict": "server", "reaction": reaction, "svm": svm}.items()
+        ):
+            return False
+
+        def voiced() -> bool:
+            queued = {
+                event.id
+                for _, event in self.events
+                if isinstance(event, NpcActResult) and event.action == "say_svm" and event.status == "queued"
+            }
+            return any(
+                isinstance(event, NpcIdle) and event.act in queued and event.reason == "done"
+                for _, event in self.events
+            )
+
+        return await _until(voiced, 20)
+
+
+async def prepare_theft_witness(link: GameLink, npc: str) -> tuple[bool, dict[str, Any]]:
+    """Stage the household's free witness and prove native sight immediately before a single take."""
+    point, hero_point = "NW_FARM1_INHOUSE_02", "NW_FARM1_INHOUSE_01"
+    detail: dict[str, Any] = {"npc": npc, "point": point, "attempts": []}
+
+    async def initialized() -> bool:
+        views = await link.npc_view([npc])
+        if not views:
+            return False
+        view = views[0]
+        detail["view"] = view.model_dump()
+        return (
+            view.theft_ready is True
+            and view.state == "ZS_STAND_WP"
+            and view.body == "stand"
+            and view.weapon == "none"
+        )
+
+    async def visible() -> bool:
+        if not await initialized():
+            return False
+        hero = detail["view"].get("hero")
+        return bool(hero and hero["seen"] and hero["distance"] <= 1500)
+
+    await link.debug("skip_important", near=npc)
+    await link.debug("player_goto", waypoint=hero_point)
+    for attempt, distance in enumerate((None, 180, 300)):
+        if attempt == 0 or not await initialized():
+            await link.debug("npc_goto", npc=npc, waypoint=point)
+            await link.npc_act(
+                npc,
+                "start_activity",
+                state="ZS_STAND_WP",
+                waypoint=point,
+                minutes=120,
+                place=False,
+            )
+            if not await _until_async(initialized, bool, 5):
+                detail["attempts"].append({"distance": distance, "view": detail.get("view")})
+                continue
+        # Beds and the stove can occlude the hero. Only test placement changes here; native
+        # perceptions stay enabled. No second npc_act replaces the initialized standing activity.
+        if distance is None:
+            await link.debug("player_goto", waypoint=hero_point)
+        else:
+            await link.debug("teleport", near=npc, distance=distance)
+        await link.debug("npc_goto", npc=npc, waypoint=point, face="PLAYER")
+        if await _until_async(visible, bool, 2):
+            detail["hero_in_front_cm"] = distance
+            return True, detail
+        detail["attempts"].append({"distance": distance, "view": detail.get("view")})
+    return False, detail
+
+
+async def prepare_npc_pose(
+    link: GameLink,
+    npc: str,
+    waypoint: str,
+    *,
+    face: str | None = None,
+    to: str | None = None,
+    distance: int = 300,
+    require_perception_ready: bool = True,
+    perception: Literal["theft", "others_damage"] = "theft",
+    timeout: float = 15,
+) -> tuple[bool, dict[str, Any]]:
+    """Place a free, standing actor and wait for its native state, perception and pose.
+
+    A relative placement happens only after ZS_STAND_WP initializes. It clears the old walk while
+    keeping that activity; issuing turn_to as a second soft action would replace it. Use one road
+    waypoint for both actors when the later AI_GotoNpc must stay on a connected stretch.
+    Distant parking may skip perception initialization until the actor returns near the hero.
+    """
+    detail: dict[str, Any] = {"npc": npc, "waypoint": waypoint}
+    receipts: list[NpcActResult | NpcIdle] = []
+
+    def record(message: GameMessage) -> None:
+        if isinstance(message, NpcActResult | NpcIdle) and message.npc == npc:
+            receipts.append(message)
+
+    async def ready(*, unarmed: bool = True) -> bool:
+        views = await link.npc_view([npc])
+        view = views[0] if views else None
+        detail["view"] = view.model_dump() if view is not None else None
+        return (
+            view is not None
+            and view.state == "ZS_STAND_WP"
+            and (not require_perception_ready or getattr(view, f"{perception}_ready") is True)
+            and view.body == "stand"
+            and (not unarmed or view.weapon == "none")
+            and view.hp > 0
+        )
+
+    link.listeners.append(record)
+    try:
+        await link.debug("skip_important", near=npc)
+        await link.debug("npc_goto", npc=npc, waypoint=waypoint)
+        action = await link.npc_act(
+            npc, "start_activity", state="ZS_STAND_WP", waypoint=waypoint, minutes=120, place=False
+        )
+        detail["action"] = action
+        await _until(lambda: any(isinstance(r, NpcActResult) and r.id == action for r in receipts), 5)
+        detail["receipts"] = [r.model_dump() for r in receipts]
+        if not any(isinstance(r, NpcActResult) and r.id == action and r.status == "queued" for r in receipts):
+            return False, detail
+        if not await _until_async(lambda: ready(unarmed=False), bool, timeout):
+            return False, detail
+        if detail["view"]["weapon"] != "none":
+            sheathe = await link.npc_act(npc, "remove_weapon")
+            if not await _until(
+                lambda: any(
+                    isinstance(r, NpcIdle) and r.act == sheathe and r.reason == "done" for r in receipts
+                ), timeout,
+            ):
+                detail["receipts"] = [r.model_dump() for r in receipts]
+                return False, detail
+        placement: dict[str, Any] = {"npc": npc}
+        if to is None:
+            placement["waypoint"] = waypoint
+        else:
+            placement.update(to=to, distance=distance)
+        if face is not None:
+            placement["face"] = face
+        await link.debug("npc_goto", **placement)
+        detail["placement"] = placement
+        return await _until_async(ready, bool, timeout), detail
+    finally:
+        link.listeners.remove(record)
+
+
+async def wait_npc_visibility(
+    link: GameLink,
+    witness: str,
+    target: str,
+    *,
+    distance: float = 1500,
+    perception: Literal["theft", "others_damage"] = "theft",
+    state: str = "ZS_STAND_WP",
+    bodies: Collection[str] = ("stand",),
+    range_target: str | None = None,
+    timeout: float = 5,
+) -> tuple[bool, dict[str, Any]]:
+    """Prove native sight, state and the deed's actual perception anchor without changing a callback."""
+    anchor = range_target or target
+    detail: dict[str, Any] = {
+        "witness": witness, "target": target, "perception": perception,
+        "expected_state": state, "range_target": anchor,
+    }
+
+    async def ready() -> bool:
+        seen, actual, senses_range, anchor_distance = await link.story_eval(witness, [
+            ["call", "NPC_CANSEENPC", ["inst", "SELF"], ["inst", target]],
+            ["call", "NPC_GETDISTTONPC", ["inst", "SELF"], ["inst", target]],
+            ["field", ["inst", "SELF"], "SENSES_RANGE"],
+            ["call", "NPC_GETDISTTONPC", ["inst", "SELF"], ["inst", anchor]],
+        ])
+        views = await link.npc_view([witness])
+        view = views[0] if views else None
+        native_range = (
+            view.others_damage_range if view is not None and perception == "others_damage" else senses_range
+        )
+        detail.update(
+            seen=seen, distance=actual, senses_range=senses_range, perception_range=native_range,
+            anchor_distance=anchor_distance,
+            view=view.model_dump() if view is not None else None,
+        )
+        return (
+            bool(seen)
+            and actual <= min(distance, senses_range)
+            and native_range is not None and anchor_distance <= native_range
+            and view is not None
+            and view.state == state
+            and getattr(view, f"{perception}_ready") is True
+            and view.body in bodies
+            and view.weapon == "none"
+        )
+
+    return await _until_async(ready, bool, timeout), detail
+
+
+async def prepare_npc_parking(
+    link: GameLink, npc: str, waypoint: str, position: tuple[float, float, float],
+) -> tuple[bool, dict[str, Any]]:
+    """Keep a distant extra outside the scene, without requiring an initialized still pose."""
+    receipts: dict[str, NpcActResult] = {}
+
+    def record(message: GameMessage) -> None:
+        if isinstance(message, NpcActResult) and message.npc == npc:
+            receipts[message.id] = message
+
+    link.listeners.append(record)
+    try:
+        # Crowded parking points can keep distant extras stepping around one another.
+        await link.debug("skip_important", near=npc)
+        await link.debug("npc_goto", npc=npc, waypoint=waypoint)
+        action = await link.npc_act(
+            npc, "start_activity", state="ZS_STAND_WP", waypoint=waypoint, minutes=120, place=False,
+        )
+        await _until(lambda: action in receipts, 5)
+        receipt = receipts.get(action)
+        snapshot = await link.snapshot(npc, fresh=True)
+        horizontal = math.hypot(snapshot.npc.pos[0] - position[0], snapshot.npc.pos[2] - position[2])
+        distance = snapshot.player.distance if snapshot.player is not None else 0
+        ready = receipt is not None and receipt.status == "queued" and horizontal <= 600 and distance >= 8000
+        return ready, {
+            "npc": npc, "point": waypoint, "receipt": receipt.model_dump() if receipt else None,
+            "pos": snapshot.npc.pos, "horizontal": horizontal, "hero_distance": distance,
+        }
+    finally:
+        link.listeners.remove(record)
+
+
+async def prepare_street_theft_witness(
+    link: GameLink, npc: str, waypoint: str, item: str,
+) -> tuple[bool, dict[str, Any]]:
+    """Prove the initialized street witness sees both the hero and the native dropped item."""
+    roster_serial = 0
+    people: dict[str, RosterEntry] = {}
+
+    def record(message: GameMessage) -> None:
+        nonlocal roster_serial, people
+        if isinstance(message, NpcRoster):
+            roster_serial += 1
+            entries = {entry.id.upper(): entry for entry in message.npcs}
+            people = entries if message.full else {**people, **entries}
+
+    link.listeners.append(record)
+    try:
+        await link.debug("teleport", near=npc, distance=450)
+        # Keep the initialized activity while the native drop animation finishes.
+        await link.debug("npc_goto", npc=npc, waypoint=waypoint, face="PC_HERO")
+        after = roster_serial
+        visible, detail = await wait_npc_visibility(link, npc, "HERO", timeout=5)
+        free = await _until(
+            lambda: roster_serial > after
+            and npc in people and people[npc].activity == "routine"
+            and people[npc].state == "ZS_STAND_WP"
+            and not link.body_owned(npc),
+            5,
+        )
+        entry = people.get(npc)
+        cup = next((
+            ground for ground in detail.get("view", {}).get("items", []) if ground.get("item") == item
+        ), None)
+        detail.update(
+            fresh_roster=free, roster=entry.model_dump() if entry is not None else None, cup=cup,
+        )
+        return (
+            visible and free and 250 <= detail.get("distance", 0) <= 700
+            and cup is not None and cup.get("hero_cm") is not None and cup["hero_cm"] <= 800,
+            detail,
+        )
+    finally:
+        link.listeners.remove(record)
 
 
 async def wait_message[M: GameMessage](
@@ -123,6 +449,21 @@ async def _m5b_player_weapon(link: GameLink, state: Literal["none", "melee"], *,
         await link.body_watch([], timeout=1)
 
 
+async def _clear_beasts(link: GameLink, npc: str) -> int:
+    """Remove nearby beasts without crediting an NPC as their killer."""
+    cleared = 0
+    for other in (await link.snapshot(npc, fresh=True)).nearby_npcs:
+        if not other.dead and other.guild >= BEASTS:
+            await link.debug("kill", instance=other.id, near=npc)
+            cleared += 1
+    for view in await link.npc_view([npc]):
+        for seen in view.sees:
+            if seen.guild >= BEASTS and seen.body != "dead":
+                await link.debug("kill", instance=seen.id, near=npc)
+                cleared += 1
+    return cleared
+
+
 async def _until(check: Callable[[], object], timeout: float) -> bool:
     """Poll `check` until it is true or `timeout` seconds pass."""
     deadline = time.monotonic() + timeout
@@ -188,7 +529,7 @@ class _Recorded:
 
 
 class _ByNpc:
-    """A scripted model for each npc: the one whose «Ты — {name}» its instructions have; `default` else."""
+    """A scripted model selected by its npc cache key, then its persona prefix; `default` else."""
 
     name = "fake"
 
@@ -208,7 +549,9 @@ class _ByNpc:
         allowed: Collection[str] | None = None,
         cache_key: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
-        llm = next((b for name, b in self.by.items() if f"Ты — {name}" in instructions), self.default)
+        llm = self.by.get(cache_key) if cache_key is not None else None
+        if llm is None:
+            llm = next((b for name, b in self.by.items() if f"Ты — {name}" in instructions), self.default)
         return llm.stream(
             instructions=instructions,
             messages=messages,
@@ -329,6 +672,8 @@ def _trace_evidence_line(prompt: str, observation: Sighting) -> tuple[str, str]:
         ):
             return match[1], line
     return "", ""
+
+
 VINO = "BAU_952_VINO"
 # the scene as the scripted model writes it: (0 the teller, 1 the listener), text, mood
 GOSSIP_LINES = (
@@ -433,6 +778,14 @@ async def _save(link: GameLink, slot: int, attempts: int = 15) -> Saved | None:
         except TimeoutError:
             return None
     return None
+
+
+async def _save_or_fail(link: GameLink, slot: int) -> Saved:
+    """Save with retries, failing the scenario if the game never saves."""
+    saved = await _save(link, slot)
+    if saved is None:
+        raise RuntimeError(f"Game did not save to slot {slot}")
+    return saved
 
 
 def _passes_text(facts: list[Fact]) -> str:

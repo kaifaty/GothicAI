@@ -17,6 +17,8 @@
     border-radius: 8px; padding: 6px 12px; cursor: pointer; }
   button:hover { border-color: var(--dim); }
   button.on { border-color: var(--gold); color: var(--gold); }
+  button.armed { border-color: var(--red); color: var(--red); background: #3a1b17;
+    box-shadow: 0 0 0 1px var(--red); }
   kbd { font: 12px ui-monospace, monospace; border: 1px solid var(--faint); border-radius: 4px; padding: 0 5px;
     color: var(--dim); }
 
@@ -117,7 +119,8 @@
     <span><kbd>Enter</kbd> прослушать с картинкой</span>
     <span><kbd>↑</kbd> <kbd>↓</kbd> фраза</span>
     <span><kbd>1</kbd>–<kbd>9</kbd> выбрать дубль</span>
-    <span><kbd>⌫</kbd> дубль в корзину</span>
+    <span><kbd>⌫</kbd> дважды за 3 с — в корзину</span>
+    <span><kbd>Z</kbd> вернуть дубль</span>
   </div>
 </footer>
 <script src="/app/app.js"></script>

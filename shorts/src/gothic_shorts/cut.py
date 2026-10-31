@@ -191,6 +191,7 @@ def _effects_filters(tl: Timeline, duration: float, audio_input: str,
     keep = tl.keep()
     filters = [
         f"[{audio_input}]aformat=sample_rates=48000:channel_layouts=stereo,"
+        f"{levels.DUAL_MONO},"
         f"apad=whole_dur={tl.duration:.9f},atrim=duration={tl.duration:.9f},"
         f"asplit={len(keep)}" + "".join(f"[as{i}]" for i in range(len(keep))),
     ]
@@ -209,6 +210,7 @@ def _effects_filters(tl: Timeline, duration: float, audio_input: str,
     if sting_input is not None:
         ending.append(
             f"[{sting_input}]aformat=sample_rates=48000:channel_layouts=stereo,"
+            f"{levels.DUAL_MONO},"
             f"apad,atrim=duration={sting_duration:.9f},asetpts=PTS-STARTPTS,"
             "afade=t=in:d=0.02,"
             f"afade=t=out:st={max(0, sting_duration - 0.02):.9f}:d=0.02[stinga]"

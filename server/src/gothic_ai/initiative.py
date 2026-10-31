@@ -23,6 +23,7 @@ import asyncio
 import hashlib
 import logging
 from collections.abc import Callable, Coroutine
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -35,7 +36,7 @@ from .concerns import Concerns
 from .game import GameError, GameLink
 from .incidents import hears
 from .journal import Journal
-from .protocol import GameMessage, Loading, NpcViews, Session
+from .protocol import GameMessage, Loading, NpcActResult, NpcViews, Session
 from .storyguard import StoryGuard, asleep
 
 if TYPE_CHECKING:
@@ -53,6 +54,8 @@ FLOOR_WAIT_S = 45.0  # come up while two talk next to the hero: it waits this lo
 # the conversation's tools, at most six (docs/npc-tools.md, principle 8)
 TOOLS = ("set_intent", "give_item", "recall", "end_conversation", "propose_deal", "withdraw_deal")
 CHECKINFO = ["call", "NPC_CHECKINFO", ["inst", "SELF"], ["int", 1]]
+IMPORTANT_WAIT_S = 12.0  # native perception gets its next polls after the soft approach
+IMPORTANT_TALK_S = 60.0  # a started native conversation may still be playing its lines
 
 
 @dataclass(frozen=True)
@@ -60,6 +63,159 @@ class Occasion:
     key: str
     ru: str  # what it comes up about, for the conversational model
     agenda: str | None
+
+
+class ImportantApproach:
+    """A rule sends a free NPC to its existing important dialog; native perceptions start the talk.
+
+    This path needs neither a behavioral model nor a conversational turn. It never captures the NPC:
+    its native routine and perceptions keep running during the soft walk.
+    """
+
+    def __init__(
+        self, link: GameLink, bodies: Bodies, talk: TalkDesk, guard: StoryGuard, chronicle: Chronicle
+    ) -> None:
+        self.link, self.bodies, self.talk = link, bodies, talk
+        self.guard, self.chronicle = guard, chronicle
+        self.active: str | None = None
+        self._world = 0
+        self.link.listeners.append(self._on_message)
+
+    def _on_message(self, message: GameMessage) -> None:
+        if isinstance(message, (Loading, Session)):
+            self._world += 1
+
+    async def close(self) -> None:
+        self._world += 1
+        if self._on_message in self.link.listeners:
+            self.link.listeners.remove(self._on_message)
+
+    def _free(self, npc: str) -> bool:
+        entry = self.talk.people.get(npc)
+        partner = self.talk.partner
+        return (
+            entry is not None and entry.activity == "routine" and not asleep(entry.state)
+            and not self.link.body_owned(npc)
+            and (partner is None or partner.npc == npc)
+        )
+
+    async def approach(
+        self, npc: str, key: str, *, valid: Callable[[], bool], told: Callable[[], bool],
+        release: Callable[[], AbstractAsyncContextManager[None]] | None = None,
+    ) -> bool:
+        npc = npc.upper()
+        world = self._world
+        if self.active is not None or not valid() or not self._free(npc) or self.bodies.busy(npc):
+            return False
+        entry = self.talk.people[npc]
+        stay = self.guard.body(npc, entry.state) is not None
+        if not hears(entry.distance, entry.in_view) or (stay and entry.distance > STAY_CM):
+            return False
+        self.active = npc
+        walk: asyncio.Task[Any] | None = None
+        queued: asyncio.Future[NpcActResult] = asyncio.get_running_loop().create_future()
+        action = "turn_to" if stay else "go_to_npc"
+        act: str | None = None
+        replaced = False
+
+        def receipt(message: GameMessage) -> None:
+            nonlocal act, replaced
+            if not isinstance(message, NpcActResult) or message.npc.upper() != npc:
+                return
+            if act is not None and message.status == "queued" and message.id != act:
+                replaced = True
+            if not queued.done() and message.action in {None, action}:
+                if message.status == "queued":
+                    act = message.id
+                queued.set_result(message)
+
+        try:
+            state = await self.link.story_state(npcs=[npc])
+            if world != self._world or not valid() or not self._free(npc):
+                return False
+            if state.get("dialog") or state.get("cutscene"):
+                return False
+            dialog_distance = 0
+            if release is not None:
+                values = await self.link.story_eval(npc, [["var", "PERC_DIST_DIALOG"]])
+                if len(values) == 1 and type(values[0]) is int and values[0] > 0:
+                    dialog_distance = values[0]
+                if world != self._world or not valid() or not self._free(npc):
+                    return False
+            self.link.listeners.append(receipt)
+            walk = asyncio.create_task(self.bodies.act(npc, action))
+            while not queued.done() and not walk.done() and world == self._world and valid():
+                await asyncio.wait((queued, walk), timeout=WATCH_S, return_when=asyncio.FIRST_COMPLETED)
+            if world != self._world or not valid() or not queued.done() or queued.result().status != "queued":
+                return False
+            act = queued.result().id
+            while not walk.done() and world == self._world and valid():
+                current = self.talk.people.get(npc)
+                if replaced:
+                    return False
+                if current is not None and current.distance <= dialog_distance:
+                    break
+                await asyncio.wait((walk,), timeout=WATCH_S)
+            if world != self._world or not valid() or replaced:
+                return False
+            if walk.done() and walk.result().status != "done":
+                if walk.result().status == "gone" and told():
+                    self._record_important(npc, entry.name, key, state)
+                    return True  # native TALK took over an approach already under way
+                return False
+            # AI_GotoNpc aims for melee range and can stop against terrain before that distance.
+            # Native important TALK is already possible within PERC_DIST_DIALOG, including before
+            # the first step when the hero approaches. Its crime gate must not wait for melee range.
+            async with release() if release is not None else nullcontext():
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + IMPORTANT_WAIT_S
+                talk_deadline: float | None = None
+                while world == self._world and valid() and not replaced:
+                    if told():
+                        self._record_important(npc, entry.name, key, state)
+                        return True
+                    current = self.talk.people.get(npc)
+                    talking = current is not None and current.activity == "dialog"
+                    if talking and talk_deadline is None:
+                        talk_deadline = loop.time() + IMPORTANT_TALK_S
+                    if talk_deadline is not None and not talking:
+                        return False  # a cancelled native TALK no longer needs the crime gate open
+                    if walk.done():
+                        if walk.result().status not in {"done", "gone"} and not talking:
+                            return False
+                    if loop.time() >= (talk_deadline if talk_deadline is not None else deadline):
+                        return False
+                    await asyncio.sleep(WATCH_S)
+            return False
+        finally:
+            if walk is not None:
+                if not queued.done() and not walk.done() and world == self._world:
+                    # Cancellation can arrive after the command was sent and before its receipt.
+                    # Keep that receipt listener until we know whether there is a walk to cancel.
+                    await asyncio.wait((queued, walk), timeout=2, return_when=asyncio.FIRST_COMPLETED)
+                # Cancelling the coroutine alone leaves AI_GotoNPC queued in the native body.
+                # Only clear our own unfinished soft walk, never a dialog, fight or a new owner.
+                owned = act is not None or (queued.done() and queued.result().status == "queued")
+                if (owned and not replaced and not walk.done() and world == self._world
+                    and not told() and self._free(npc)):
+                    try:
+                        await self.link.story_eval(npc, [["call", "NPC_CLEARAIQUEUE", ["inst", "SELF"]]])
+                    except (GameError, TimeoutError):
+                        pass
+                if not walk.done():
+                    walk.cancel()
+                await asyncio.gather(walk, return_exceptions=True)
+            if receipt in self.link.listeners:
+                self.link.listeners.remove(receipt)
+            if self.active == npc:
+                self.active = None
+
+    def _record_important(self, npc: str, name: str, key: str, state: dict[str, Any]) -> None:
+        self.chronicle.record({
+            "fact": "initiative", "npc": npc, "name": name, "occasion": key,
+            "why": "требует возместить ущерб", "seen_by": ["PLAYER"],
+            **{k: state[k] for k in ("day", "hour", "minute") if k in state},
+        })
 
 
 class InitiativeDesk:

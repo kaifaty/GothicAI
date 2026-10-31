@@ -1,0 +1,132 @@
+# Human corpse anatomy: the same deaths before and after a joint change.
+# Run with OPENGOTHIC_RAGDOLL_TRACE=1, then scripts/ragdoll_joints.py <output> reads the angles.
+seed 73013
+cheat god
+set time 12 0
+ragdoll on
+overlay off
+view nopfx
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02   # Onar's field: open and level
+turn 210
+wait 500
+clear 3000
+
+# Plain collapse where it stands.
+insert BDT_1013_BANDIT_L
+freeze BDT_1013_BANDIT_L
+put BDT_1013_BANDIT_L 300 0
+watch BDT_1013_BANDIT_L
+cam world 260 140 30
+cam look 30
+wait 600
+rec drop
+down watched dead
+wait 8000
+stop
+ragdoll remove watched
+
+# Struck dead: a blow-sized impulse on the fresh corpse, from four sides.
+insert BDT_1013_BANDIT_L
+freeze BDT_1013_BANDIT_L
+put BDT_1013_BANDIT_L 300 60
+watch BDT_1013_BANDIT_L
+cam world 260 140 30
+cam look 30
+wait 600
+rec blow_x
+down watched dead
+wait 50
+push watched 1 .3 0 140
+wait 8000
+stop
+ragdoll remove watched
+insert BDT_1013_BANDIT_L
+freeze BDT_1013_BANDIT_L
+put BDT_1013_BANDIT_L 300 -60
+watch BDT_1013_BANDIT_L
+cam world 260 140 30
+cam look 30
+wait 600
+rec blow_mx
+down watched dead
+wait 50
+push watched -1 .3 0 140
+wait 8000
+stop
+ragdoll remove watched
+insert BDT_1013_BANDIT_L
+freeze BDT_1013_BANDIT_L
+put BDT_1013_BANDIT_L 420 20
+watch BDT_1013_BANDIT_L
+cam world 260 140 30
+cam look 30
+wait 600
+rec blow_z
+down watched dead
+wait 50
+push watched 0 .3 1 140
+wait 8000
+stop
+ragdoll remove watched
+insert BDT_1013_BANDIT_L
+freeze BDT_1013_BANDIT_L
+put BDT_1013_BANDIT_L 420 -20
+watch BDT_1013_BANDIT_L
+cam world 260 140 30
+cam look 30
+wait 600
+rec blow_mz
+down watched dead
+wait 50
+push watched 0 .3 -1 140
+wait 8000
+stop
+ragdoll remove watched
+
+foreach slope 25 40 1
+  face downhill
+  insert BDT_1013_BANDIT_L
+  freeze BDT_1013_BANDIT_L
+  put BDT_1013_BANDIT_L 120 90
+  watch BDT_1013_BANDIT_L
+  cam world 260 140 30
+  cam look 30
+  wait 600
+  rec slope$I
+  down watched dead
+  wait 12000
+  stop
+  ragdoll remove watched
+end
+
+foreach stairs 1
+  face downhill
+  insert BDT_1013_BANDIT_L
+  freeze BDT_1013_BANDIT_L
+  put BDT_1013_BANDIT_L 120 0
+  watch BDT_1013_BANDIT_L
+  cam world 260 140 30
+  cam look 30
+  wait 600
+  rec stairs
+  down watched dead
+  wait 12000
+  stop
+  ragdoll remove watched
+end
+
+goto NW_XARDAS_TOWER_VALLEY_02
+face 135
+insert BDT_1013_BANDIT_L
+freeze BDT_1013_BANDIT_L
+pin BDT_1013_BANDIT_L 1400 0 0
+watch BDT_1013_BANDIT_L
+cam world 260 140 30
+cam look 30
+wait 600
+pin off
+rec cliff
+down watched dead
+wait 10000
+stop
+ragdoll remove watched

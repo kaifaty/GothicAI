@@ -20,6 +20,11 @@ FRAME_COLUMNS = {'phase', 'frame', 't_game_ms', 'dt_ms', 'npc_id', 'x_cm', 'y_cm
                  'z_cm', 'visual_x_cm', 'visual_y_cm', 'visual_z_cm', 'step_ms',
                  'wall_ms', 'nearby_humans', 'nearby_cv'} | BOOLEAN_COLUMNS
 OPTIONAL_FRAME_COLUMNS = {'moving_humans', 'moving_cv'}
+SLIDING_BOOLEAN_COLUMNS = {'diagnostics_valid', 'steep_contact', 'move_blocked'}
+SLIDING_FRAME_COLUMNS = {'move_sequence', 'move_dt_ms', 'requested_x_cm', 'requested_y_cm',
+                         'requested_z_cm', 'accepted_dx_cm', 'accepted_dy_cm', 'accepted_dz_cm',
+                         'advancement_ratio', 'steep_normal_x', 'steep_normal_y', 'steep_normal_z'} | SLIDING_BOOLEAN_COLUMNS
+OPTIONAL_FRAME_COLUMNS |= SLIDING_FRAME_COLUMNS
 
 
 def require(condition, message):
@@ -93,7 +98,7 @@ def load_run(directory, enabled, require_frames=True):
                 require(FRAME_COLUMNS <= set(reader.fieldnames or []),
                         f'{frame_path}: missing columns {sorted(FRAME_COLUMNS - set(reader.fieldnames or []))}')
                 for index, raw in enumerate(reader, 2):
-                    row = {key: (value if key == 'phase' else flag(value) if key in BOOLEAN_COLUMNS
+                    row = {key: (value if key == 'phase' else flag(value) if key in BOOLEAN_COLUMNS | SLIDING_BOOLEAN_COLUMNS
                                  else number(value)) for key, value in raw.items()
                            if key in FRAME_COLUMNS | OPTIONAL_FRAME_COLUMNS}
                     require(row['phase'] and row['dt_ms'] > 0 and row['step_ms'] >= 0 and row['wall_ms'] >= 0,
@@ -122,6 +127,83 @@ def load_run(directory, enabled, require_frames=True):
 
 def select(run, kind):
     return [row for row in run['events'] if row['kind'] == kind]
+
+
+def steep_sliding(run, threshold=.60, required_routes=ROUTES):
+    """Measure native human CV contacts; repeated idle diagnostics add no time.
+
+    steep_contact is the production static/kinematic, unwalkable, opposing
+    contact after the stair recipe. A sliding sample also needs a grounded
+    moving actor and at least 0.1 cm accepted horizontal travel. Completely
+    blocked samples are reported separately, rather than called sliding.
+    """
+    require(0 < threshold < 1, 'advancement threshold must be between zero and one')
+    routes = []
+    for name in required_routes:
+        frames = [row for row in run['frames'] if row['phase'] == name]
+        result = {'route': name, 'frames': len(frames), 'cv_frames': sum(row['cv_active'] for row in frames),
+                  'cv_move_frames': 0, 'steep_below_threshold_frames': 0, 'sliding_frames': 0,
+                  'sliding_episodes': 0, 'sliding_ms': 0, 'longest_episode_ms': 0,
+                  'missing_diagnostic_frames': 0, 'episodes': [], 'pass': None}
+        active, prior_sequence = {}, {}
+        for row in frames:
+            actor = row['npc_id']
+            eligible = row['cv_active'] and row['moving'] and not row['in_air'] and not row['interactive']
+            if not SLIDING_FRAME_COLUMNS <= row.keys():
+                if eligible:
+                    result['missing_diagnostic_frames'] += 1
+                active.pop(actor, None)
+                continue
+            valid = row['diagnostics_valid'] and row['move_sequence'] > 0 and row['move_dt_ms'] > 0
+            if not valid:
+                if eligible:
+                    result['missing_diagnostic_frames'] += 1
+                active.pop(actor, None)
+                continue
+            sequence = row['move_sequence']
+            previous = prior_sequence.get(actor)
+            prior_sequence[actor] = sequence
+            if not eligible:
+                active.pop(actor, None)
+                continue
+            # A diagnostic persists when the actor does not run its movement
+            # again. It is one move, however many bench frames observe it.
+            if sequence == previous:
+                continue
+            requested = math.hypot(row['requested_x_cm'], row['requested_z_cm'])
+            accepted = math.hypot(row['accepted_dx_cm'], row['accepted_dz_cm'])
+            if requested <= .1:
+                active.pop(actor, None)
+                continue
+            result['cv_move_frames'] += 1
+            steep = row['steep_contact'] and row['advancement_ratio'] < threshold
+            result['steep_below_threshold_frames'] += steep
+            if not steep or accepted <= .1:
+                active.pop(actor, None)
+                continue
+            require(math.hypot(row['steep_normal_x'], row['steep_normal_z']) > .01,
+                    f'{name}: steep contact has no horizontal normal')
+            result['sliding_frames'] += 1
+            duration = row['move_dt_ms']
+            result['sliding_ms'] += duration
+            episode = active.get(actor)
+            if episode is None:
+                episode = {'npc_id': actor, 'start_game_ms': row['t_game_ms'] - duration,
+                           'end_game_ms': row['t_game_ms'], 'frames': 0, 'duration_ms': 0}
+                result['episodes'].append(episode)
+                active[actor] = episode
+            episode['end_game_ms'] = row['t_game_ms']
+            episode['frames'] += 1
+            episode['duration_ms'] += duration
+        result['sliding_episodes'] = len(result['episodes'])
+        result['longest_episode_ms'] = max((row['duration_ms'] for row in result['episodes']), default=0)
+        result['pass'] = combined([run['pass'], True if frames and result['cv_frames'] else None,
+                                   None if result['missing_diagnostic_frames'] else True])
+        routes.append(result)
+    return {'pass': combined([row['pass'] for row in routes]), 'advancement_threshold': threshold,
+            'routes': routes, 'run': run_status(run),
+            'duration_clock': 'Sum of unique native move_dt_ms samples, not repeated idle diagnostics.',
+            'definition': 'Grounded moving noninteractive human CV; static/kinematic unwalkable opposing contact after stairs; advancement below threshold and horizontal accepted travel >0.1 cm.'}
 
 
 def unique_event(run, kind, key=None, value=None):
@@ -494,9 +576,24 @@ def main():
     parser.add_argument('--window-mode', choices=('off', 'on'))
     parser.add_argument('--require-runner-summary', action='store_true', help='Require completed CPU-runner metadata for every selected window')
     parser.add_argument('--required-route', action='append', default=[], help='Repeat to require a fixture even when no route end was recorded')
+    parser.add_argument('--steep-sliding', action='store_true',
+                        help='Emit human steep-contact sliding JSON for one ON route run (directory or --routes-on)')
+    parser.add_argument('--advancement-threshold', type=float, default=.60,
+                        help='Advancement ratio below which a steep contact is counted (default 0.60)')
     parser.add_argument('--min-nearby-humans', type=int, default=18)
     parser.add_argument('--output', type=Path, help='Markdown output and JSON beside it; .json selects the JSON destination')
     args = parser.parse_args()
+    if args.steep_sliding:
+        try:
+            run = load_run(args.routes_on or args.directory, True)
+            result = steep_sliding(run, args.advancement_threshold, args.required_route or ROUTES)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            result = {'pass': False, 'error': str(error)}
+        print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+        return 0 if result['pass'] is True else 1 if result['pass'] is False else 2
     if args.check_window is not None:
         if args.window_label is None or args.window_mode is None:
             parser.error('--check-window requires --window-label and --window-mode')

@@ -85,6 +85,10 @@ void AbstractGraphicsApi::CommandBuffer::setDebugMarker(std::string_view tag) {
   (void)tag;
   }
 
+void AbstractGraphicsApi::CommandBuffer::upscale(Texture& /*src*/, Texture& /*dst*/) {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
 void AbstractGraphicsApi::CommandBuffer::dispatchMesh(size_t x, size_t y, size_t z) {
   throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
   }

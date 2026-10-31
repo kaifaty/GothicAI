@@ -6,10 +6,15 @@ HOST="${GOTHIC_BODY_SSH:-dev-ubuntu}"
 RUN="${1:-bullet-front-snapshot-v1}"
 [[ "$RUN" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || exit 2
 printf -v quoted_run '%q' "$RUN"
+ssh -o BatchMode=yes "$HOST" 'mkdir -p "$HOME/gothic-ai/physics-stage1/e2e/source/scripts"'
+rsync -a "$ROOT/scripts/base-ensure.sh" "$HOST:gothic-ai/physics-stage1/e2e/source/scripts/"
 ssh -o BatchMode=yes "$HOST" "bash -s -- $quoted_run" <<'REMOTE'
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 root="$HOME/gothic-ai/physics-stage1/e2e"
+binary="$HOME/gothic-ai/physics-stage1/bullet/reference/opengothic/Gothic2Notr"
+converter="$(dirname "$binary")/content-convert"
+[[ -x "$converter" ]] || { echo "Missing converter: $converter. Rebuild the engine before running physics e2e." >&2; exit 1; }
 out="$root/diagnostics/$1"
 base="$root/fixtures/eef46cfc3b5d3ca24c75033d3aefed80387407212cfbabb9047bba0b0dc290ff/source"
 [[ -d "$base" ]] || base="$root/source"
@@ -20,6 +25,7 @@ rsync -a --exclude=__pycache__/ "$base/server/src" "$out/source/server/"
 cp "$base/libs/chatgpt-auth/pyproject.toml" "$out/source/libs/chatgpt-auth/"
 rsync -a --exclude=__pycache__/ "$base/libs/chatgpt-auth/src" "$out/source/libs/chatgpt-auth/"
 cp "$base/scripts/e2e.sh" "$out/source/scripts/"
+cp "$root/source/scripts/base-ensure.sh" "$out/base-ensure.sh"
 python3 - "$out/source" "$out" <<'PY'
 import hashlib, json, sys
 from pathlib import Path
@@ -73,13 +79,16 @@ import socket
 with socket.socket() as probe:
     probe.bind(("0.0.0.0", 47927))
 PY
+cp "$binary" "$out/reference/Gothic2Notr"
+cp "$converter" "$out/"
 binary="$out/reference/Gothic2Notr"
-cp "$HOME/gothic-ai/physics-stage1/bullet/reference/opengothic/Gothic2Notr" "$binary"
 sha256sum "$binary" > "$out/binary.sha256"
 sha256sum "$HOME/gothic-ai/body-baseline/reference/save_slot_1.sav" > "$out/save.sha256"
 sha256sum "$out/source/server/uv.lock" > "$out/server-lock.sha256"
 cat > "$out/game-wrapper.sh" <<'WRAPPER'
 #!/usr/bin/env bash
+set -euo pipefail
+GAME_BIN="$0" bash "$(dirname "$0")/base-ensure.sh" "$GOTHIC_DIR"
 exec "$PHYSICS_E2E_BINARY" "$@" -g2 -window -aa 0 -gi 0 -rt 0
 WRAPPER
 chmod +x "$out/game-wrapper.sh"

@@ -171,7 +171,7 @@
       "type": "string"
      },
      "fallback": {
-      "default": "voxcpm",
+      "default": "none",
       "description": "none: без запасного",
       "title": "Запасные голоса",
       "type": "string"
@@ -219,8 +219,8 @@
       "type": "boolean"
      },
      "provider": {
-      "default": "voxtral",
-      "description": "voxtral, chatgpt или openai:…",
+      "default": "inworld",
+      "description": "inworld, voxtral, chatgpt или openai:…",
       "title": "Распознавание",
       "type": "string"
      },

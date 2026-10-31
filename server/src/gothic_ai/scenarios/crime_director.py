@@ -26,10 +26,12 @@ from .common import (
     LOBART,
     ClaimScript,
     FixedDecider,
+    WitnessReaction,
     _logged,
     _save,
     _until,
     _until_async,
+    prepare_theft_witness,
     wait_message,
 )
 from .crimes import HOUSE
@@ -52,10 +54,10 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 GOLD = "ITMI_GOLD"
 PREMISE = "Лобарт заметил пропажу из сундука и просит найти и принести вещь; кто вор, он не знает."
-# The gossip scenario's open farm path: 10.6 m between two actual waypoints. An arbitrary heading
-# from FIELD_01 can put the hero past field obstacles, outside the soft walk's reachable endpoint.
+# AI_GotoNpc walks straight to the hero. Use one connected road segment; the old shortcut
+# from PATH_01 to ENTRANCE_03 skips OUT_01 and can leave the native walk stuck 7 m away.
 WITNESS_SPOT = "NW_FARM1_PATH_01"
-WITNESS_HERO = "NW_FARM1_ENTRANCE_03"
+WITNESS_HERO = "NW_FARM1_PATH_02"
 
 
 class CrimeAmendsScript(FakeBackend):
@@ -218,7 +220,7 @@ async def crime_director(
         return check(f"{label}_branch", not facts("crime"), f"{len(facts('crime'))} crimes")
 
     async def witnessed(label: str) -> dict[str, Any] | None:
-        await link.debug("player_goto", waypoint=HOUSE)
+        await link.debug("player_goto", waypoint="NW_FARM1_INHOUSE_01")
         for npc in farm:
             await stand(npc, parked)
         await stand(LOBART, HOUSE)
@@ -236,13 +238,19 @@ async def crime_director(
             return None
         await asyncio.sleep(1)
         await stand(LOBART, parked)
-        await stand(HILDA, "NW_FARM1_INHOUSE_02", face="PLAYER")
-        await asyncio.sleep(1)
+        prepared, preparation = await prepare_theft_witness(link, HILDA)
+        if not check(f"{label}_witness_ready", prepared, preparation):
+            return None
         before = {f["id"] for f in facts("crime")}
-        await link.debug("player_take", item="ITMI_SILVERCUP", distance=800)
-        await _until(lambda: any(f["id"] not in before for f in facts("crime")), 10)
-        crime = next((f for f in facts("crime") if f["id"] not in before), None)
-        # End vanilla combat only after its real witness has been recorded, as in crime_talk.
+        with WitnessReaction(link, service.chronicle, HILDA) as reaction:
+            await link.debug("player_take", item="ITMI_SILVERCUP", distance=1200)
+            await _until(lambda: any(f["id"] not in before for f in facts("crime")), 10)
+            crime = next((f for f in facts("crime") if f["id"] not in before), None)
+            if crime is not None and not check(
+                f"{label}_reaction", await reaction.wait(str(crime["id"])), reaction.detail
+            ):
+                return None
+        # Preserve the held rule and native SVM before staging the director's later scene.
         await stand(HILDA, field)
         if not check(
             f"{label}_theft",
@@ -337,21 +345,44 @@ async def crime_director(
         concerns.on_change.append(agenda)
         agenda(HILDA)
         try:
-            await stand(HILDA, WITNESS_SPOT)
             await link.debug("player_goto", waypoint=WITNESS_HERO)
-            await link.npc_act(HILDA, "turn_to", npc="PLAYER")
-            positioned = await _until(
-                lambda: HILDA in talk.people and 500 <= talk.people[HILDA].distance <= 1500, 10
+            await link.debug("skip_important", near=HILDA)
+            settled = await bodies.act(
+                HILDA,
+                "start_activity",
+                state="ZS_STAND_WP",
+                waypoint=WITNESS_SPOT,
+                minutes=120,
+                place=True,
+                arrive=True,
+                radius=150,
+                timeout=20,
             )
+            turned = await bodies.act(HILDA, "turn_to", npc="PLAYER", timeout=20)
             snap = await link.snapshot(HILDA, fresh=True)
-            level = snap.player is not None and abs(snap.player.pos[1] - snap.npc.pos[1]) <= 200
+            views = await link.npc_view([HILDA])
+            ready = bool(views and views[0].state == "ZS_STAND_WP" and views[0].body == "stand")
+            connected = WITNESS_HERO in points[WITNESS_SPOT].get("conn", [])
+            positioned = (
+                settled.status == "arrived"
+                and turned.status == "done"
+                and ready
+                and connected
+                and snap.player is not None
+                and 500 <= snap.player.distance <= 1500
+                and abs(snap.player.pos[1] - snap.npc.pos[1]) <= 200
+            )
             if not check(
                 "witness_position",
-                positioned and level,
+                positioned,
                 {
+                    "settled": settled.status,
+                    "turned": turned.status,
+                    "ready": ready,
+                    "connected": connected,
                     "npc": snap.npc.pos,
                     "hero": snap.player.pos if snap.player is not None else None,
-                    "distance": talk.people[HILDA].distance if HILDA in talk.people else None,
+                    "distance": snap.player.distance if snap.player is not None else None,
                 },
             ):
                 return False

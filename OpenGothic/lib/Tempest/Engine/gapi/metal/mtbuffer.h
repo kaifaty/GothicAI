@@ -18,6 +18,7 @@ class MtBuffer : public Tempest::AbstractGraphicsApi::Buffer {
     MtBuffer& operator = (MtBuffer&& other);
 
     void  update  (const void* data, size_t off, size_t size) override;
+    void  updateAsync(const void* data, size_t off, size_t size) override;
     void  read    (      void* data, size_t off, size_t size) override;
 
     MtDevice*          dev  = nullptr;
@@ -26,6 +27,7 @@ class MtBuffer : public Tempest::AbstractGraphicsApi::Buffer {
 
   private:
     void implUpdate(const void *data, size_t off, size_t size);
+    void upload(const void* data, size_t off, size_t size, bool wait);
   };
 
 }

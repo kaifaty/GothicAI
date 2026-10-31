@@ -311,6 +311,12 @@ async def meet_scenario(
     check("agreed", pressed == "sent" and agreed, f"Y: {pressed}, {m.term.text() if m else 'no meeting'}")
     if m is None:
         return _logged(results)
+    await _until(lambda: not dialogue.speaking(npc), 20)
+    talk.end("gone")
+    released = await _until(lambda: npc not in talk.attached, 20)
+    check("released", released, "the agreement conversation ended before the clock leap")
+    if not released:
+        return _logged(results)
 
     # the clock past when it sets off, near enough the hour for him to come (it is put there), or a little
     # before it sets off (it walks there by the hour)
@@ -327,7 +333,20 @@ async def meet_scenario(
 
     if not missed:
         t0 = len(entries)
-        await link.debug("teleport", near=npc, distance=600)
+        await link.debug("skip_important", near=npc)
+        await link.debug("teleport", near=npc, distance=300)
+        ready = await _until(
+            lambda: (entry := talk.people.get(npc)) is not None
+            and entry.distance <= 700 and entry.earshot <= 700 and entry.activity != "down",
+            20,
+        )
+        entry = talk.people.get(npc)
+        check(
+            "arrival_ready", ready,
+            f"distance/hearing: {entry.distance}/{entry.earshot}" if entry else "no roster",
+        )
+        if not ready:
+            return _logged(results)
         kept = await _until(lambda: m.state == "kept", 30)
         facts = [f for f in meetings.chronicle.facts("meet_kept") if f.get("meet") == m.id]
         check("kept", kept and bool(facts), m.state)

@@ -1,0 +1,12 @@
+# Enter the real lunge while the multi-riser presentation correction is pending.
+seed 73024
+cheat god
+set time 12 0
+monstercharacter on
+monstercharacter route wolf_stairs
+wait 600
+monstercharacter begin
+wait 1000
+monstercharacter stair-attack
+wait 3000
+monstercharacter end

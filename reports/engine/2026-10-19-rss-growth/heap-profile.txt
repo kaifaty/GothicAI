@@ -1,0 +1,59 @@
+jeprof-inuse-diff.txt (first rows)
+Total: 14474287 B
+10295907  71.1%  71.1% 10295907  71.1% operator delete[] ??:?
+ 3170368  21.9%  93.0%  3170368  21.9% al::allocator::allocate (inline) OpenGothic/lib/Tempest/Engine/thirdparty/openal-soft/common/almalloc.h:78
+ 1336369   9.2% 102.3%  1336369   9.2% JPH::BodyID::operator new[] (inline) OpenGothic/lib/JoltPhysics/Build/../Jolt/Physics/Body/BodyID.h:15
+  824006   5.7% 108.0%   824006   5.7% JPH::IslandBuilder::BodyLink::operator new[] (inline) OpenGothic/lib/JoltPhysics/Build/../Jolt/Physics/IslandBuilder.h:94
+  524448   3.6% 111.6%   524448   3.6% JPH::BodyWithMotionProperties::operator new (inline) OpenGothic/lib/JoltPhysics/Jolt/Physics/Body/BodyManager.cpp:55
+  454809   3.1% 114.7%   454809   3.1% JPH::AlignedAllocateImpl OpenGothic/lib/JoltPhysics/Jolt/Core/Memory.cpp:51
+       0   0.0% 114.7%   524304   3.6% ::Reader::read OpenGothic/ai_bridge/storygraph/exprjson.cpp:107
+       0   0.0% 114.7%  -524368  -3.6% ::Reader::read OpenGothic/ai_bridge/storygraph/exprjson.cpp:124 (discriminator 7)
+       0   0.0% 114.7%  -524368  -3.6% ::Reader::read OpenGothic/ai_bridge/storygraph/exprjson.cpp:137
+       0   0.0% 114.7%  -524368  -3.6% ::Reader::read OpenGothic/ai_bridge/storygraph/exprjson.cpp:140 (discriminator 8)
+       0   0.0% 114.7%  -524368  -3.6% ::Reader::read OpenGothic/ai_bridge/storygraph/exprjson.cpp:155
+       0   0.0% 114.7%  -524368  -3.6% ::Reader::read OpenGothic/ai_bridge/storygraph/exprjson.cpp:169
+       0   0.0% 114.7%  -524368  -3.6% ::Reader::read::{lambda#1}::operator OpenGothic/ai_bridge/storygraph/exprjson.cpp:80 (discriminator 2)
+       0   0.0% 114.7%  -524368  -3.6% ::StepReader::steps OpenGothic/ai_bridge/storygraph/exprjson.cpp:225
+       0   0.0% 114.7%  -524368  -3.6% ::StepReader::steps OpenGothic/ai_bridge/storygraph/exprjson.cpp:240
+
+jeprof-alloc-diff.txt (first rows)
+Total: 9478479196 B
+6299835431  66.5%  66.5% 6299835431  66.5% operator delete[] ??:?
+1103827637  11.6%  78.1% 1103827637  11.6% JPH::STLAllocator::reallocate (inline) OpenGothic/lib/JoltPhysics/Build/../Jolt/Core/STLAllocator.h:66
+530945815   5.6%  83.7% 533043063   5.6% _nv019glcore ??:?
+318286932   3.4%  87.1% 318286932   3.4% JPH::MeshShape::sFindActiveEdges (inline) OpenGothic/lib/JoltPhysics/Build/../Jolt/Core/HashTable.h:159
+201326592   2.1%  89.2% 201326592   2.1% JPH::TempAllocatorImpl::TempAllocatorImpl (inline) OpenGothic/lib/JoltPhysics/Jolt/Core/TempAllocator.h:45
+143661362   1.5%  90.7% 143661362   1.5% JPH::STLAllocator::allocate (inline) OpenGothic/lib/JoltPhysics/Jolt/Core/STLAllocator.h:55
+132897838   1.4%  92.1% 132897838   1.4% JPH::QuadTree::NodeID::operator new[] (inline) OpenGothic/lib/JoltPhysics/Build/../Jolt/Physics/Collision/BroadPhase/QuadTree.h:33
+106981995   1.1%  93.2% 106981995   1.1% JPH::Vec3::operator new[] (inline) OpenGothic/lib/JoltPhysics/Build/../Jolt/Math/Vec3.h:19
+105584451   1.1%  94.4% 105584451   1.1% JPH::STLAllocator::reallocate (inline) OpenGothic/lib/JoltPhysics/Jolt/Core/STLAllocator.h:66
+100663309   1.1%  95.4% 100663309   1.1% JPH::LFHMAllocator::Init (inline) OpenGothic/lib/JoltPhysics/Build/../Jolt/Core/LockFreeHashMap.inl:30
+82255533   0.9%  96.3% 82255533   0.9% rtcGetVersion ??:?
+80913382   0.9%  97.1% 80913382   0.9% JPH::HashTable::AllocateTable (inline) OpenGothic/lib/JoltPhysics/Build/../Jolt/Core/HashTable.h:159
+71300118   0.8%  97.9% 71300118   0.8% JPH::STLAllocator::allocate (inline) OpenGothic/lib/JoltPhysics/Build/../Jolt/Core/STLAllocator.h:55
+46805092   0.5%  98.4% 46805092   0.5% JPH::AlignedAllocateImpl OpenGothic/lib/JoltPhysics/Jolt/Core/Memory.cpp:51
+27904090   0.3%  98.7% 27904090   0.3% mz_zip_reader_extract_to_mem_no_alloc OpenGothic/lib/miniz/miniz.c:4476
+26326516   0.3%  99.0% 26326516   0.3% rapidjson::CrtAllocator::Realloc (inline) OpenGothic/lib/rapidjson/include/rapidjson/allocators.h:77
+17005481   0.2%  99.1% 17005481   0.2% mz_zip_array_ensure_capacity (inline) OpenGothic/lib/miniz/miniz.c:3273
+15862961   0.2%  99.3% 15862961   0.2% rapidjson::CrtAllocator::Malloc (inline) OpenGothic/lib/rapidjson/include/rapidjson/allocators.h:67
+12060832   0.1%  99.4% 12060832   0.1% JPH::BroadPhaseQuadTree::LayerState::operator new[] (inline) OpenGothic/lib/JoltPhysics/Build/../Jolt/Physics/Collision/BroadPhase/BroadPhaseQuadTree.h:53
+ 9511105   0.1%  99.5%  9511105   0.1% al::allocator::allocate (inline) OpenGothic/lib/Tempest/Engine/thirdparty/openal-soft/common/almalloc.h:78
+ 5345478   0.1%  99.6%  5345478   0.1% JPH::BodyID::operator new[] (inline) OpenGothic/lib/JoltPhysics/Build/../Jolt/Physics/Body/BodyID.h:15
+
+jeprof-alloc-cumulative.txt (selected engine frames)
+Total: 9478479196 B
+       0   0.0%  66.5% 4698333289  49.6% operator OpenGothic/common/gothic.cpp:561
+       0   0.0%  66.5% 4672895389  49.3% MainWindow::loadGame::{lambda#1}::operator OpenGothic/common/mainwindow.cpp:1118 (discriminator 2)
+       0   0.0%  66.5% 3253737966  34.3% GameSession::GameSession OpenGothic/common/game/gamesession.cpp:160 (discriminator 3)
+       0   0.0%  66.5% 1263189534  13.3% PhysicVbo::shape OpenGothic/common/physics/physicvbo.cpp:450 (discriminator 1)
+       0   0.0%  78.1% 1097030614  11.6% World::World OpenGothic/common/world/world.cpp:129 (discriminator 3)
+       0   0.0%  83.7% 378625771   4.0% PackedMesh::Meshlet::flush@6382a0 (inline) OpenGothic/common/graphics/mesh/submesh/packedmesh.cpp:117
+201326592   2.1%  89.2% 201326592   2.1% JPH::TempAllocatorImpl::TempAllocatorImpl (inline) OpenGothic/lib/JoltPhysics/Jolt/Core/TempAllocator.h:45
+
+Commands:
+jeprof --text --show_bytes --lines --base=cycle-2.heap <mapped-executable> cycle-8.heap
+jeprof --text --show_bytes --lines --alloc_space --base=cycle-2.heap <mapped-executable> cycle-8.heap
+jeprof --text --show_bytes --lines --cum --alloc_space --base=cycle-2.heap <mapped-executable> cycle-8.heap
+
+The executable path must match MAPPED_LIBRARIES for PIE/ASLR relocation.
+All values above are sampled estimates; exact allocated bytes are in allocator-stats.csv.

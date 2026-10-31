@@ -1,0 +1,25 @@
+{
+  "glb": "market-set/build/firewood/model.glb",
+  "maps_dir": "market-set/tiles",
+  "scales": {"OWN_PROP_BARK": 1.0, "OWN_PROP_WOOD_END": 1.0, "OWN_PROP_WOOD_SPLIT": 1.0},
+  "targets": {
+    "OWN_PROP_BARK": [0.0689, 0.0508, 0.0266],
+    "OWN_PROP_WOOD_END": [0.1072, 0.0672, 0.0382],
+    "OWN_PROP_WOOD_SPLIT": [0.09, 0.06, 0.034]
+  },
+  "slots": {
+    "OWN_PROP_BARK": ["OWN_FIREWOOD_MARKET_WOOD", "WOOD"],
+    "OWN_PROP_WOOD_END": ["OWN_FIREWOOD_MARKET_WOOD", "WOOD"],
+    "OWN_PROP_WOOD_SPLIT": ["OWN_FIREWOOD_MARKET_WOOD", "WOOD"]
+  },
+  "metal": [],
+  "size": 2048,
+  "seed": 1,
+  "angle_limit": 60,
+  "margin": 0.003,
+  "tone_spread": 0.25,
+  "wet_height": 0.12,
+  "algae": 0.2,
+  "bleach": 0.2,
+  "contrast": {"OWN_PROP_BARK": 1.2, "OWN_PROP_WOOD_END": 1.2, "OWN_PROP_WOOD_SPLIT": 1.2}
+}

@@ -51,6 +51,30 @@ class StoryGuard:
             return "сюжетный: только слова"
         return self.on_duty(npc, state)
 
+    def harm(
+        self, npc: str, *, target: str = "", state: str = "", target_state: str = "",
+        item: str = "", mission: bool = False,
+    ) -> str | None:
+        """Why a marked physical deed must not start; both bodies and the real item are protected."""
+        for who, current in ((npc, state), (target, target_state)):
+            if not who:
+                continue
+            if who.upper() in {"PLAYER", "HERO", "PC_HERO"}:
+                return "дела NPC против героя не поддерживаются"
+            if reason := self.body(who, current):
+                return f"{who.upper()}: {reason}"
+        if mission:
+            return f"{item.upper()}: вещь для задания"
+        if item and self.graph is not None:
+            # Same exact holder checks as errands, rather than treating ordinary bread or money as
+            # plot property merely because some quest mentions them.
+            from .errands import checked_items
+
+            holders = checked_items(self.graph).get(item.upper(), set())
+            if any(who.upper() in holders for who in (npc, target) if who):
+                return f"{item.upper()}: вещь должна остаться у своего сюжетного владельца"
+        return None
+
     def on_duty(self, npc: str, state: str = "") -> str | None:
         """Why the npc's body is the scripts' right now (Russian): at its post, or leading or following the
         hero; else None. Such a body is never held, while a plot npc that is not on duty may be."""

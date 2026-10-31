@@ -1,0 +1,46 @@
+{
+ "set": "hut-10",
+ "base": "original",
+ "registry": "data/content/remaster/harbour-hut.jsonl",
+ "textures": {
+  "NW_CITY_HAFEN_HOLZWAND_01.TGA": {
+   "axes": "",
+   "colour": {
+    "mode": "target"
+   },
+   "maps": "source",
+   "size": 1024
+  },
+  "NW_CITY_HAFEN_HOLZWAND_02.TGA": {
+   "axes": "",
+   "colour": {
+    "mode": "target"
+   },
+   "maps": "source",
+   "size": 1024
+  },
+  "NW_CITY_HAFEN_GIEBEL_01.TGA": {
+   "axes": "",
+   "colour": {
+    "mode": "target"
+   },
+   "maps": "source",
+   "size": 1024
+  },
+  "NW_CITY_WOODBEAM_01.TGA": {
+   "axes": "",
+   "colour": {
+    "mode": "target"
+   },
+   "maps": "source",
+   "size": 1024
+  }
+ },
+ "guard": {
+  "luminance_ratio": [
+   0.75,
+   1.25
+  ],
+  "clipped_max": 0.01
+ }
+}

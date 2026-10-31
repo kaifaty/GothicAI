@@ -24,8 +24,8 @@ float along(const Point& p, const Point& a, const Point& b) {
 Point lerp(const Point& a, const Point& b, float t) {
   return {a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t};
   }
-bool close(const Point& p, const Point& q, float radius=.22f) {
-  return horizontal(p,q)<=radius && std::abs(p[1]-q[1])<=1.f;
+bool close(const Point& p, const Point& q, float radius=.22f, float height=1.f) {
+  return horizontal(p,q)<=radius && std::abs(p[1]-q[1])<=height;
   }
 float remaining(const Point& p,const NavMesh::Path& path,size_t corner) {
   float result=distance(p,path.corners[corner]);
@@ -109,7 +109,7 @@ NavKeyTeacher::Decision NavKeyTeacher::decide(const State& body,const NavMesh::P
   for(const auto& link:path.transitions) {
     const float t=along(body.position,link.start,link.end);
     const bool landed=!airborne && body.supported &&
-                      (close(body.position,link.end,.6f) ||
+                      ((t>=.5f && close(body.position,link.end,.6f,.3f)) ||
                        (t>=1.f && std::abs(body.position[1]-link.end[1])<=.6f));
     if(landed)
       continue;
@@ -143,9 +143,17 @@ NavKeyTeacher::Decision NavKeyTeacher::decide(const State& body,const NavMesh::P
     out.hint.transitionId=active->id;
     out.hint.transitionType=active->type;
     const float t=along(body.position,active->start,active->end);
-    const bool takeoff=close(body.position,active->start,.25f);
-    const bool traversing=airborne || (t>0.f && t<1.f &&
-                                     horizontal(body.position,lerp(active->start,active->end,t))<.6f);
+    // A nearby point in the link's corridor is not its native takeoff. In
+    // particular, running past a wall .35 m to one side never triggers a climb.
+    // Walk back to the actual start until the narrow physical window is reached.
+    const bool takeoff=close(body.position,active->start,.10f,.3f);
+    const float alongVelocity=body.velocity[0]*(active->end[0]-active->start[0])+
+                              body.velocity[2]*(active->end[2]-active->start[2]);
+    // A moving drop reconstructs its departure from pose and velocity. It may
+    // still be inside the takeoff window while the standing flag has closed.
+    const bool advancingDrop=active->type==NavMesh::LinkType::Drop && t>0.f && alongVelocity>0.f &&
+                             horizontal(body.position,lerp(active->start,active->end,t))<=.10f;
+    const bool traversing=airborne || advancingDrop;
     if(takeoff || traversing) {
       out.hint.onTransition=true;
       out.hint.cornerIndex=active->cornerIndex+1;
@@ -153,23 +161,22 @@ NavKeyTeacher::Decision NavKeyTeacher::decide(const State& body,const NavMesh::P
       out.hint.remainingLength=remaining(body.position,path,active->cornerIndex+1);
       out.keys.walk=false;
       steer(out.keys,body,active->end,18.f);
-      const bool aligned=std::abs(angle(body,active->end))<=std::max(5.f,body.turnSpeedDegrees*.05f);
-      // Turning while running can carry the body beyond a narrow takeoff before jump is
-      // permitted. Finish that turn on the takeoff, then press forward and jump together.
-      if(takeoff && !airborne && !aligned && active->type!=NavMesh::LinkType::Drop)
+      const bool aligned=std::abs(angle(body,active->end))<=std::max(1.f,body.turnSpeedDegrees*.05f);
+      // Native probing acts from rest at the takeoff. Run-mode idle stops the
+      // preceding walk promptly; walk-mode idle can keep its root motion alive.
+      // Once a drop is moving out along the link, do not stop it for standing.
+      if(!airborne && !advancingDrop) {
         out.keys.forward=0;
+      }
       // NpcKeys advances an airborne body before consulting jump; avoid retriggering jump
       // on landing by emitting it only at the takeoff while the body is supported.
-      if(takeoff && body.supported && !airborne && !body.sliding && !body.swimming &&
-         aligned) {
+      if(takeoff && body.supported && body.standing && !airborne && !body.sliding && !body.swimming &&
+         aligned && !advancingDrop) {
+        out.keys.walk=false;out.keys.forward=1;
         if(active->type==NavMesh::LinkType::Jump)
           out.keys.jump=true;
-        else if(active->type==NavMesh::LinkType::Climb) {
-          if(body.standing)
-            out.keys.climb=true;
-          else
-            out.keys.forward=0;
-          }
+        else if(active->type==NavMesh::LinkType::Climb)
+          out.keys.climb=true;
         }
       return out;
       }

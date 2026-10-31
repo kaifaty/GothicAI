@@ -15,9 +15,16 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tauri::image::Image;
-use tauri::menu::{Menu, MenuBuilder, MenuEvent, MenuItemBuilder, SubmenuBuilder};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{ActivationPolicy, AppHandle, Emitter, Manager, RunEvent, State, WindowEvent, Wry};
+#[cfg(target_os = "macos")]
+use tauri::menu::{Menu, SubmenuBuilder};
+use tauri::menu::{MenuBuilder, MenuEvent, MenuItemBuilder};
+use tauri::tray::TrayIconBuilder;
+#[cfg(target_os = "macos")]
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
+#[cfg(target_os = "macos")]
+use tauri::{ActivationPolicy, Wry};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WindowEvent};
+#[cfg(target_os = "macos")]
 use tauri_plugin_positioner::{Position, WindowExt};
 
 use bridge::Core;
@@ -45,6 +52,7 @@ fn to_menu_bar(app: AppHandle) {
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.hide();
     }
+    #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(ActivationPolicy::Accessory);
 }
 
@@ -63,18 +71,35 @@ fn quit_app(app: AppHandle) {
 /// Shows a file or folder in Finder.
 #[tauri::command]
 fn reveal(path: String) -> Result<(), String> {
-    Command::new("/usr/bin/open")
-        .arg("-R")
-        .arg(&path)
-        .status()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("/usr/bin/open")
+            .arg("-R")
+            .arg(&path)
+            .status()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let path = std::path::Path::new(&path);
+        let folder = if path.is_dir() {
+            path
+        } else {
+            path.parent().unwrap_or(path)
+        };
+        open_folder(folder.to_string_lossy().into_owned())
+    }
 }
 
 /// Opens a folder in Finder.
 #[tauri::command]
 fn open_folder(path: String) -> Result<(), String> {
-    Command::new("/usr/bin/open")
+    #[cfg(target_os = "macos")]
+    let opener = "/usr/bin/open";
+    #[cfg(target_os = "linux")]
+    let opener = "xdg-open";
+    Command::new(opener)
         .arg(&path)
         .status()
         .map(|_| ())
@@ -82,6 +107,7 @@ fn open_folder(path: String) -> Result<(), String> {
 }
 
 fn show_main(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(ActivationPolicy::Regular);
     if let Some(tray) = app.get_webview_window("tray") {
         let _ = tray.hide();
@@ -107,6 +133,7 @@ fn request_quit(app: &AppHandle) {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn toggle_panel(app: &AppHandle) {
     let Some(panel) = app.get_webview_window("tray") else {
         return;
@@ -121,6 +148,7 @@ fn toggle_panel(app: &AppHandle) {
 }
 
 /// The app menu with our own Quit (it asks while the game runs) and the Edit commands text fields need.
+#[cfg(target_os = "macos")]
 fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let quit = MenuItemBuilder::with_id("quit", "Выйти из Gothic AI")
         .accelerator("CmdOrCtrl+Q")
@@ -161,14 +189,17 @@ fn on_menu(app: &AppHandle, event: MenuEvent) {
 }
 
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main(app)
         }))
         .plugin(tauri_plugin_dialog::init())
+        .manage(QuitAllowed::default());
+    #[cfg(target_os = "macos")]
+    let builder = builder
         .plugin(tauri_plugin_positioner::init())
-        .manage(QuitAllowed::default())
-        .menu(app_menu)
+        .menu(app_menu);
+    let app = builder
         .on_menu_event(on_menu) // the app menu and the tray menu alike
         .setup(|app| {
             let core = Core::spawn(app.handle().clone())?;
@@ -180,11 +211,13 @@ pub fn run() {
                 .separator()
                 .item(&quit)
                 .build()?;
-            TrayIconBuilder::with_id("gothic")
+            let tray = TrayIconBuilder::with_id("gothic")
+                .tooltip("Gothic AI")
+                .menu(&tray_menu);
+            #[cfg(target_os = "macos")]
+            let tray = tray
                 .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
                 .icon_as_template(true)
-                .tooltip("Gothic AI")
-                .menu(&tray_menu)
                 .show_menu_on_left_click(false) // a left click opens the panel, a right click the menu
                 .on_tray_icon_event(|tray, event| {
                     tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
@@ -196,8 +229,13 @@ pub fn run() {
                     {
                         toggle_panel(tray.app_handle());
                     }
-                })
-                .build(app)?;
+                });
+            // AppIndicator delivers its menu on Linux; tray click events are macOS-only.
+            #[cfg(target_os = "linux")]
+            let tray = tray
+                .icon(Image::from_bytes(include_bytes!("../icons/128x128.png"))?)
+                .show_menu_on_left_click(true);
+            tray.build(app)?;
             Ok(())
         })
         .on_window_event(|window, event| match (window.label(), event) {
@@ -206,9 +244,17 @@ pub fn run() {
             }
             ("main", WindowEvent::CloseRequested { api, .. }) => {
                 let app = window.app_handle();
+                #[cfg(target_os = "macos")]
                 if game_runs(app) {
                     api.prevent_close(); // the game runs: keep going from the menu bar
                     to_menu_bar(app.clone());
+                } else {
+                    app.exit(0);
+                }
+                #[cfg(target_os = "linux")]
+                if game_runs(app) {
+                    api.prevent_close();
+                    request_quit(app);
                 } else {
                     app.exit(0);
                 }
@@ -227,6 +273,7 @@ pub fn run() {
         .expect("error while building the launcher");
 
     app.run(|app, event| match event {
+        #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => show_main(app), // a click on the Dock icon
         // Quit from the Dock or the system (logout asks the same way); app.exit() passes a code
         RunEvent::ExitRequested {

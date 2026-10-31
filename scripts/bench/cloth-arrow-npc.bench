@@ -1,0 +1,20 @@
+# WORLD=NEWWORLD.ZEN; each check invokes one native moveBullet segment.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+view full
+cloth setup densest arrow-npc-harbour-wind
+cloth on
+cloth wind gust
+wait 1000
+cloth verify harbour-wind
+cloth setup NW_CITY_FLAG_01:1 arrow-npc-ordering
+cloth on
+cloth wind calm
+wait 2000
+cloth arrow-npc behind
+cloth arrow-npc ahead
+cloth verify anchors
+cloth checkpoint arrow-npc-complete
+physics stats

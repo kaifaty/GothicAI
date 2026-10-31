@@ -1,0 +1,232 @@
+[
+  {
+    "id": "barrel",
+    "visual": "NW_HARBOUR_BARREL_01.MRM",
+    "kind": "static_mrm",
+    "budget_tris": 1500,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_STAVE",
+        "group": "WOOD",
+        "role": "curved vertical staves"
+      },
+      {
+        "key": "OWN_PROP_WOOD_HEAD",
+        "group": "WOOD",
+        "role": "inset plank ends"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged retaining hoops and rivets"
+      }
+    ],
+    "resolved_visual": "NW_HARBOUR_BARREL_01.MRM",
+    "bbox_min": [
+      -0.398562736511,
+      -0.55889465332,
+      -0.400130805969
+    ],
+    "bbox_max": [
+      0.399873046875,
+      0.548935012817,
+      0.398304977417
+    ],
+    "origin_in_bbox": [
+      0.499179451628,
+      0.504495113648,
+      0.501143378459
+    ],
+    "source_tris": 60,
+    "source_pose": "static",
+    "newworld_instances": 150
+  },
+  {
+    "id": "crate",
+    "visual": "NW_HARBOUR_CRATE_01.MRM",
+    "kind": "static_mrm",
+    "budget_tris": 1500,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_PLANK",
+        "group": "WOOD",
+        "role": "box plank faces"
+      },
+      {
+        "key": "OWN_PROP_WOOD_BRACE",
+        "group": "WOOD",
+        "role": "corner and face reinforcing rails"
+      },
+      {
+        "key": "OWN_PROP_IRON_NAIL",
+        "group": "METAL",
+        "role": "small forged nail heads"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "forged straps; unused by the 2026-10-21 crate"
+      },
+      {
+        "key": "OWN_PROP_ROPE",
+        "group": "WOOD",
+        "role": "rope handles on the ends; small, so they sound and collide as wood"
+      },
+      {
+        "key": "OWN_PROP_WOOD_INNER",
+        "group": "WOOD",
+        "role": "dark core box seen through the plank gaps"
+      }
+    ],
+    "resolved_visual": "NW_HARBOUR_CRATE_01.MRM",
+    "bbox_min": [
+      -0.600009994507,
+      -0.499990005493,
+      -0.499990005493
+    ],
+    "bbox_max": [
+      0.599990005493,
+      0.500009994507,
+      0.500009994507
+    ],
+    "origin_in_bbox": [
+      0.500008328756,
+      0.499990005493,
+      0.499990005493
+    ],
+    "source_tris": 12,
+    "source_pose": "static",
+    "newworld_instances": 105
+  },
+  {
+    "id": "table",
+    "visual": "NW_CITY_TABLE_PEASANT_01.MRM",
+    "kind": "static_mrm",
+    "budget_tris": 3000,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_TOP",
+        "group": "WOOD",
+        "role": "thick plank tabletop"
+      },
+      {
+        "key": "OWN_PROP_WOOD_FRAME",
+        "group": "WOOD",
+        "role": "legs, aprons and lower stretchers"
+      },
+      {
+        "key": "OWN_PROP_IRON_BRACKET",
+        "group": "METAL",
+        "role": "small forged joint brackets and nails"
+      }
+    ],
+    "resolved_visual": "NW_CITY_TABLE_PEASANT_01.MRM",
+    "bbox_min": [
+      -1.00000999451,
+      -0.449990005493,
+      -0.599990081787
+    ],
+    "bbox_max": [
+      0.999990005493,
+      0.450009994507,
+      0.600009994507
+    ],
+    "origin_in_bbox": [
+      0.500004997254,
+      0.499988894992,
+      0.499991703034
+    ],
+    "source_tris": 44,
+    "source_pose": "static",
+    "newworld_instances": 52
+  },
+  {
+    "id": "chest",
+    "visual": "CHESTBIG_NW_NORMAL_LOCKED.MDS",
+    "kind": "mob_model",
+    "budget_tris": 3000,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_BODY",
+        "group": "WOOD",
+        "role": "closed box body planks"
+      },
+      {
+        "key": "OWN_PROP_WOOD_LID",
+        "group": "WOOD",
+        "role": "arched lid planks"
+      },
+      {
+        "key": "OWN_PROP_IRON_BAND",
+        "group": "METAL",
+        "role": "reinforcing straps and hinges"
+      },
+      {
+        "key": "OWN_PROP_IRON_LOCK",
+        "group": "METAL",
+        "role": "front hasp and lock plate"
+      }
+    ],
+    "resolved_visual": "CHESTBIG_NW_NORMAL_LOCKED.MDL",
+    "bbox_min": [
+      -0.418042882638,
+      4.819763e-06,
+      -0.297960953465
+    ],
+    "bbox_max": [
+      0.424074026473,
+      0.77468069315,
+      0.350717232967
+    ],
+    "origin_in_bbox": [
+      0.496419057871,
+      -6.221651e-06,
+      0.459335552971
+    ],
+    "source_tris": 66,
+    "source_pose": "S_S0_frame_0_closed",
+    "newworld_instances": 43
+  },
+  {
+    "id": "bench",
+    "visual": "BENCH_NW_CITY_01.ASC",
+    "kind": "mob_model",
+    "budget_tris": 3000,
+    "zones": [
+      {
+        "key": "OWN_PROP_WOOD_SEAT",
+        "group": "WOOD",
+        "role": "long plank seat"
+      },
+      {
+        "key": "OWN_PROP_WOOD_FRAME",
+        "group": "WOOD",
+        "role": "supports and lower stretcher"
+      },
+      {
+        "key": "OWN_PROP_IRON_BRACKET",
+        "group": "METAL",
+        "role": "small forged joint straps and nails"
+      }
+    ],
+    "resolved_visual": "BENCH_NW_CITY_01.MDL",
+    "bbox_min": [
+      -1.0,
+      -5.386e-05,
+      -0.378126335144
+    ],
+    "bbox_max": [
+      1.0,
+      0.500154762268,
+      0.378333358765
+    ],
+    "origin_in_bbox": [
+      0.5,
+      0.000107675074,
+      0.499863162821
+    ],
+    "source_tris": 64,
+    "source_pose": "bind",
+    "newworld_instances": 43
+  }
+]

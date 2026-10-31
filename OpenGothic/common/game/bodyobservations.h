@@ -25,11 +25,14 @@ class BodyObservations final {
     static void reset(uint64_t generation);
     static void configure(const Config& config);
     static void watch(const std::vector<Npc*>& actors);
+    // Same-period subscription edit: retain identity, history and rows of remaining actors.
+    static void updateWatch(const std::vector<Npc*>& actors);
     static void disable();
     static bool enabled();
     static size_t watchedCount();
     static size_t queuedCount();
     static size_t queueCapacity();
+    static uint64_t samplePeriodMs();
     static void setSink(std::function<void(std::string_view)> sink);
     static uint64_t lastStepCostUs();
     static size_t lastStepActorCount();
@@ -45,6 +48,10 @@ class BodyObservations final {
     static uint64_t latestGameMs(const Npc& actor);
     static bool latestPeriodic(const Npc& actor);
     static uint64_t latestWallMs(const Npc& actor);
+    struct SentObservation final {
+      uint64_t sequence = 0, gameMs = 0, wallMs = 0;
+      };
+    static SentObservation latestSent(const Npc& actor);
     static void forget(const Npc* actor);
     // Explicit teleport/fixture relocation; ordinary MoveAlgo correction is not a discontinuity.
     static void discontinuity(const Npc& actor);
@@ -62,12 +69,16 @@ class BodyObservations final {
     // The packet is valid JSON even when empty. Rows share one generation-wide sequence;
     // dropped counters account for bounded-queue losses. Draining never advances game time.
     static std::string drainJson();
+    // Ordinary bridge only: acknowledge the last drained packet after transport accepts it.
+    static void markDrainedSent();
     static std::string statsJson();
 
     // Decision-relevant fields of one queued row, kept beside the serialized queue. The runner's
     // arena_advance stops on them exactly where a per-tick client would make its next decision.
     struct QueuedRow final {
       uint64_t entityId = 0, sessionEpoch = 0, worldEpoch = 0, controlGeneration = 0;
+      uint64_t enqueueIndex = 0; // queue cursor, including rows removed by subscription edits
+      SentObservation observation;
       bool periodic = false, canDecide = false, actionMaskValid = false;
       std::array<bool,12> actionMask = {};
       };

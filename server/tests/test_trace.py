@@ -38,6 +38,7 @@ async def test_every_turn_is_traced_with_its_instructions_once(tmp_path):
     (step,) = turn["steps"]
     assert step["added"][-1] == {"role": "user", "content": "Пойдём со мной"}  # the whole request
     assert step["text"] == "Держи, это поможет."
+    assert 0 <= step["started_s"] <= step["ended_s"] <= turn["total_s"] + 0.001
     assert [(c["name"], c["outcome"]) for c in step["calls"]] == [("give_item", "accepted")]
 
 

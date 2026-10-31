@@ -22,6 +22,10 @@ struct CharacterVirtualDiagnostics {
     // are displacement vectors. Neighbour pointers have the same lifetime
     // restriction as Body::payload and must be resolved when sampling.
     Tempest::Vec3 initial = {}, requested = {}, clippedRequest = {}, nativePosition = {}, accepted = {};
+    Tempest::Vec3 steepContactNormal = {};
+    uint64_t sequence = 0, dt = 0;
+    float advancementRatio = 1.f;
+    bool steepContact = false;
     bool requestClipped = false, resolvedClipped = false, blocked = false;
     NpcCollision requestCollision, resolvedCollision;
     };
@@ -68,6 +72,9 @@ struct CharacterVirtualDiagnostics {
     };
 
   uint64_t dt = 0;
+  // Cumulative invalid/near-zero native normal reads for this controller;
+  // includes ordinary airborne zero sentinels and diagnostic reads.
+  uint64_t groundNormalFallbacks = 0;
   Tempest::Vec3 requested = {};
   Tempest::Vec3 requestedVelocity = {}, stairDesiredVelocity = {};
   float maxSlopeRadians = 0.f, stairHeight = 0.f;

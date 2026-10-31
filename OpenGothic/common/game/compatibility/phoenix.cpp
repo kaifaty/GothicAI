@@ -2,7 +2,7 @@
 
 #include <limits>
 
-zenkit::AxisAlignedBoundingBox phoenix_compat::get_total_aabb(const zenkit::SoftSkinMesh& msh) {
+zenkit::AxisAlignedBoundingBox phoenix_compat::get_total_aabb(const asset::SoftSkinMesh& msh) {
   zenkit::AxisAlignedBoundingBox bbox = {{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()},
                                          {std::numeric_limits<float>::min(), std::numeric_limits<float>::min(), std::numeric_limits<float>::min()}};
 
@@ -33,7 +33,7 @@ zenkit::AxisAlignedBoundingBox phoenix_compat::get_total_aabb(const zenkit::Soft
   return bbox;
 }
 
-phoenix_compat::PackedSkeletalMesh phoenix_compat::pack_softskin_mesh(const zenkit::SoftSkinMesh& self) {
+phoenix_compat::PackedSkeletalMesh phoenix_compat::pack_softskin_mesh(const asset::SoftSkinMesh& self) {
   phoenix_compat::PackedSkeletalMesh mesh {};
   std::vector<phoenix_compat::SkeletalVertex> vertices(self.mesh.positions.size());
 

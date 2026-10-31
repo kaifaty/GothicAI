@@ -23,8 +23,10 @@ from dataclasses import dataclass
 
 from .chronicle import Chronicle, Fact
 from .crime_law import CrimeLaw
+from .crimes import Crimes
 from .deals import GOLD, Deals, Debt
 from .game import GameLink
+from .people_knowledge import rumor_subject
 from .protocol import GameMessage, Loading, Session
 
 RANK = {"debt_broken": 0, "lied": 1, "witness": 1, "crime_witness": 1, "debt_due": 2, "errand": 2}
@@ -44,6 +46,7 @@ FACTS = frozenset(
         "meet_raised",
         "crime_suspected",
         "crime_seen",
+        "crime_side",
         "rumor",
         "forgiven",
         "silenced",
@@ -148,10 +151,11 @@ class Concerns:
                 or knowledge.suspect != "PLAYER"
                 or knowledge.silenced
                 or knowledge.forgiven
+                or crimes.side(npc, crime["id"]) is not None
                 or victim == npc
                 or law.is_guard(npc, community, metadata)
                 or crime["id"] in delivered
-                or any(_delivers_crime(f, crime["id"], victim) for f in facts)
+                or any(_delivers_crime(f, crime["id"], victim, crimes) for f in facts)
             ):
                 continue
             ru = (
@@ -165,12 +169,14 @@ class Concerns:
         return out
 
     def _on_fact(self, f: Fact) -> None:
+        if f.get("fact") == "rumor" and rumor_subject(f) != "PLAYER":
+            return
         if f.get("fact") not in FACTS:
             return
         affected = [f.get("npc"), f.get("to")]
         # Reports are about a case, not the witness. Its cached agenda must end at delivery too.
         if self.deals.crimes is not None and f.get("fact") in {"crime_known", "rumor", "testimony"}:
-            ids = set(f.get("crime_told", []))
+            ids = set(self.deals.crimes.testimony_crimes(f)) if f.get("fact") == "testimony" else set()
             if f.get("crime"):
                 ids.add(f["crime"])
             for crime_id in ids:
@@ -178,7 +184,7 @@ class Concerns:
                 if crime is None:
                     continue
                 victim = crime.get("victim") or crime.get("owner")
-                if f.get("fact") == "crime_known" or _delivers_crime(f, crime_id, victim):
+                if f.get("fact") == "crime_known" or _delivers_crime(f, crime_id, victim, self.deals.crimes):
                     affected += [
                         seen.get("npc")
                         for seen in self.chronicle.facts("crime_seen")
@@ -223,9 +229,10 @@ def _debt_en(d: Debt) -> str:
     return f"remind the hero to pay back {owed} by tonight"
 
 
-def _delivers_crime(f: Fact, crime: str, victim: str | None) -> bool:
+def _delivers_crime(f: Fact, crime: str, victim: str | None, crimes: Crimes) -> bool:
     """Personal delivery to the victim also ends the witness's chance to keep this secret."""
     return bool(victim) and (
-        (f.get("fact") == "rumor" and f.get("crime") == crime and f.get("to") == victim)
-        or (f.get("fact") == "testimony" and f.get("npc") == victim and crime in f.get("crime_told", []))
+        (f.get("fact") == "rumor" and rumor_subject(f) == "PLAYER"
+         and f.get("crime") == crime and f.get("to") == victim)
+        or (f.get("fact") == "testimony" and f.get("npc") == victim and crime in crimes.testimony_crimes(f))
     )

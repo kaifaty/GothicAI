@@ -112,6 +112,12 @@ class Pose final {
     bool               animRelative(std::string_view name, float at, size_t from, size_t to, Tempest::Matrix4x4& out) const;
     // The animation of that name plays k times as fast, from its next start on (1: as it is)
     void               setAnimSpeed(std::string_view name, float k);
+    // the playing layer of seq goes on k times as fast from now, without a jump
+    void               setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now);
+    // hit stop: the layers playing now go on k times as fast from the last shown frame until `until`;
+    // their events, windows and root motion hold with them. Then the rest of a one-off animation
+    // plays a little faster and ends when it would have without the hold
+    void               hitStop(uint64_t until, float k);
     BowDraw&           bowDrawIk() { return bowDraw; }
     AimWalk&           aimWalk() { return walk; }
     bool               updateAimWalk(const AimWalk::Input& in);
@@ -128,7 +134,7 @@ class Pose final {
     bool               isRagdollBlending() const { return physicalReturning; }
     void               saveRagdollRecovery(Serialize& fout) const;
     void               loadRagdollRecovery(Serialize& fin);
-    void               setAnimRotate(const AnimationSolver &solver, Npc &npc, WeaponState fightMode, AnimationSolver::TurnType turn, int dir);
+    void               setAnimRotate(const AnimationSolver &solver, const Npc &npc, WeaponState fightMode, AnimationSolver::TurnType turn, int dir);
     auto               setAnimItem(const AnimationSolver &solver, Npc &npc, std::string_view scheme, int state) -> const Animation::Sequence*;
     bool               stopItemStateAnim(const AnimationSolver &solver, uint64_t tickCount);
 
@@ -154,6 +160,7 @@ class Pose final {
     struct CombatLayer final {
       const Animation::Sequence* sequence = nullptr;
       uint64_t start = 0;
+      uint64_t origin = 0; // the start as the animation began: a hit stop moves `start`, not this
       uint64_t time = 0;
       float speed = 1;
       uint8_t combination = 0;
@@ -178,13 +185,20 @@ class Pose final {
     struct Layer final {
       const Animation::Sequence* seq      = nullptr;
       uint64_t                   sAnim    = 0;
+      uint64_t                   sOrigin  = 0;  // sAnim as it began; a speed change moves sAnim only
       float                      speed    = 1;  // plays that many times as fast, from its start (setAnimSpeed)
+      float                      stopFrom = 0;  // its speed before a hit stop; 0: not held
+      float                      catchFrom = 0; // its own speed while it makes up a hit stop; 0: on time
+      uint64_t                   dueStart = 0;  // the start it keeps to at its own speed, without the hold
       uint8_t                    comb     = 0;
       BodyState                  bs       = BS_NONE;
       };
 
     // the layer's own clock at the time t: its animation plays `speed` times as fast from its start
     static uint64_t layerTime(const Layer& l, uint64_t t);
+    // from `at` on the layer plays k times as fast, without a jump: the time it has played stays
+    static bool     rebaseLayer(Layer& l, float k, uint64_t at);
+    void            endHitStop();
     float           speedOf(const Animation::Sequence* seq) const;
 
     struct ComboState {
@@ -204,7 +218,8 @@ class Pose final {
     void applyRagdollPose(size_t bone, const Tempest::Matrix4x4* animated, bool* done);
     void applyRagdollReturn();
 
-    bool updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTime, uint64_t now);
+    // sOrigin names the play for AnimBlend: a speed change moves sTime, it is no switch
+    bool updateFrame(const Animation::Sequence &s, BodyState bs, uint64_t sTime, uint64_t sOrigin, uint64_t now);
 
     const Animation::Sequence* solveNext(const AnimationSolver& solver, const Layer& lay);
 
@@ -225,6 +240,7 @@ class Pose final {
     float                           trY=0;
     Flags                           flag=NoFlags;
     uint64_t                        lastUpdate=0;
+    uint64_t                        stopUntil=0; // hitStop
     ComboState                      combo;
     bool                            needToUpdate = true;
     uint8_t                         hasEvents = 0;
@@ -246,9 +262,9 @@ class Pose final {
     std::vector<uint8_t>            physicalMask;
     float                          physicalWeight = 1.f;
     AnimBlend                      physicalBlend;
-    std::vector<zenkit::AnimationSample> physicalRaw;
-    std::vector<zenkit::AnimationSample> physicalShown;
-    std::vector<zenkit::AnimationSample> physicalTargetNext;
+    std::vector<asset::AnimationSample> physicalRaw;
+    std::vector<asset::AnimationSample> physicalShown;
+    std::vector<asset::AnimationSample> physicalTargetNext;
     std::vector<Tempest::Matrix4x4> physicalStretchFrom;
     std::vector<Tempest::Matrix4x4> physicalStretchTarget;
     bool                           physicalReturning = false;
@@ -259,8 +275,8 @@ class Pose final {
 
     size_t                          numBones = 0;
     SampleStatus                    hasSamples[Resources::MAX_NUM_SKELETAL_NODES] = {};
-    zenkit::AnimationSample         base      [Resources::MAX_NUM_SKELETAL_NODES] = {};  // shown: raw blended by AnimBlend
-    zenkit::AnimationSample         raw       [Resources::MAX_NUM_SKELETAL_NODES] = {};  // what the animations give
+    asset::AnimationSample         base      [Resources::MAX_NUM_SKELETAL_NODES] = {};  // shown: raw blended by AnimBlend
+    asset::AnimationSample         raw       [Resources::MAX_NUM_SKELETAL_NODES] = {};  // what the animations give
     Tempest::Matrix4x4              tr        [Resources::MAX_NUM_SKELETAL_NODES] = {};
     Tempest::Matrix4x4              pos;
   };

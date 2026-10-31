@@ -3,6 +3,7 @@
 #include <string>
 #include <memory>
 #include <thread>
+#include <exception>
 
 #include <Tempest/Signal>
 #include <Tempest/Dir>
@@ -55,8 +56,26 @@ class Gothic final {
       bool physicsNoise  = false;
       bool destruction   = false;
       bool buoyancy      = true;
+      bool cloth         = true;
+      bool itemWake      = true;
       bool characterVirtual = false;
       bool npcCharacterVirtual = false;
+      bool monsterCharacterVirtual = false;
+      bool meleeBladeShadow = true;
+      bool meleePhysicsHits = true;
+      bool meleeReactions = true;
+      bool meleePosture = true;
+      bool meleeDownTactics = true;
+      bool itemHulls = true;
+      bool meleeHitStop = true;
+      bool meleeStamina = true;
+      bool meleeParry = true;
+      bool furnitureParts = true;
+      bool placedItems = true;
+
+      bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
+        return monsterCharacterVirtual && !down && !flying;
+        }
       };
 
     struct Options {
@@ -155,6 +174,9 @@ class Gothic final {
     bool         doVobRays() const { return vobRays; }
     void         setVobRays(bool v) { vobRays = v; }
 
+    bool         doMeleeBladeDraw() const { return meleeBladeDraw; }
+    void         setMeleeBladeDraw(bool v) { meleeBladeDraw = v; }
+
     bool         isBenchmarkMode() const;
     bool         isBenchmarkModeCi() const;
     void         setBenchmarkMode(Benchmark b);
@@ -194,7 +216,7 @@ class Gothic final {
 
     Tempest::Signal<void(std::string_view,int,int,int,const GthFont&)>  onPrintScreen;
     Tempest::Signal<void(std::string_view)>                             onPrint;
-    Tempest::Signal<void(std::string_view)>                             onVideo;
+    Tempest::Signal<void(std::string_view, bool)>                       onVideo;
 
     Tempest::Signal<void(const ChapterScreen::Show&)>                   onIntroChapter;
     Tempest::Signal<void(const DocumentMenu::Show&)>                    onShowDocument;
@@ -211,13 +233,16 @@ class Gothic final {
     Tempest::Signal<void(Npc&,Npc&,Npc*,PercType)>                      onExternalPerception;
     // perceptions of npc's that follow their scripts (seen, not consumed): ai_bridge watches them
     Tempest::Signal<void(Npc&,Npc&,Npc*,PercType)>                      onObservedPerception;
+    Tempest::Signal<void(Npc&,Npc&,int32_t,std::string_view)>           onCombatHit;
     // A completed hero action and the actual recipients of its passive perception.
     Tempest::Signal<void(const HeroDeed&)>                              onHeroDeed;
     // A physical impact actually heard, before the listener turns towards it.
     Tempest::Signal<void(Npc&,const PhysicsNoise&)>                     onPhysicsNoiseHeard;
     // a perception the scripts would handle may be taken over (true: the scripts do not get it now);
     // the taker decides and hands it back with Npc::passPerception if it does not act on it
-    std::function<bool(Npc&,Npc&,Npc*,PercType)>                         interceptPerception;
+    std::function<bool(Npc&,Npc&,Npc*,PercType,const HeroDeed*)>         interceptPerception;
+    // A native SVM line is ready to start: true replaces its sound and subtitle, retaining its wait.
+    std::function<bool(Npc&,std::string_view,std::string_view,Npc*,bool)> interceptSvm;
     std::function<bool(std::string_view,std::string&)>                  consoleCommandFn;
     // runtime dialog lines: id -> subtitle text and duration (ms); false if the id is not external
     std::function<bool(std::string_view,std::string_view&,uint32_t&)>   externalMessageFn;
@@ -287,6 +312,7 @@ class Gothic final {
     bool                                    showTime       = false;
     bool                                    vobBox         = false;
     bool                                    vobRays        = false;
+    bool                                    meleeBladeDraw = false;
     Benchmark                               isBenchmark    = Benchmark::None;
 
     std::string                             wrldDef, plDef, gameDatDef, ouDef;
@@ -301,7 +327,11 @@ class Gothic final {
     Tempest::Texture2d                      saveTex;
     std::atomic_int                         loadProgress{0};
     std::thread                             loaderTh;
+    std::exception_ptr                      baseLoadError;
     std::atomic<LoadState>                  loadingFlag{LoadState::Idle};
+#if defined(__GLIBC__)
+    bool                                    loadingWorld = false;
+#endif
 
     std::unique_ptr<GameSession>            game, pendingGame;
     std::unique_ptr<FightAi>                fight;

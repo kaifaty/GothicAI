@@ -5,6 +5,7 @@
 
 #include <Tempest/Log>
 #include <Foundation/NSProcessInfo.h>
+#include <objc/runtime.h>
 // #include <Metal/MTLPixelFormat.h>
 
 using namespace Tempest;
@@ -36,6 +37,57 @@ static MTL::LanguageVersion languageVersion() {
   return std::min<MTL::LanguageVersion>(MTL::LanguageVersion3_1, opt->languageVersion());
   }
 
+static std::mutex probeDeviceSync;
+static MTL::Device* probeDevice = nullptr;
+
+bool tempestLoadProbeEnabled();
+
+static std::atomic_size_t probeStagingCount = 0;
+static std::atomic_size_t probeStagingBytes = 0;
+static char probeUploadKey;
+
+// Attach to the Metal object itself: completion of its copy alone does not
+// prove that all command-buffer and autorelease owners have released it.
+@interface TempestUploadProbe : NSObject {
+  size_t bytes;
+  }
+- (instancetype)initWithBytes:(size_t)bufferBytes;
+@end
+
+@implementation TempestUploadProbe
+- (instancetype)initWithBytes:(size_t)bufferBytes {
+  if((self=[super init])) {
+    bytes=bufferBytes;
+    ++probeStagingCount;
+    probeStagingBytes+=bytes;
+    }
+  return self;
+  }
+- (void)dealloc {
+  --probeStagingCount;
+  probeStagingBytes-=bytes;
+  [super dealloc];
+  }
+@end
+
+void Tempest::Detail::probeMetalUploadBuffer(MTL::Buffer* buffer) {
+  if(!tempestLoadProbeEnabled() || buffer==nullptr)
+    return;
+  auto* tracker=[[TempestUploadProbe alloc] initWithBytes:buffer->allocatedSize()];
+  objc_setAssociatedObject(reinterpret_cast<id>(buffer),&probeUploadKey,tracker,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  [tracker release];
+  }
+
+void tempestProbeMetalUploadBuffers(size_t& stagingCount, size_t& stagingBytes) {
+  stagingCount=probeStagingCount.load();
+  stagingBytes=probeStagingBytes.load();
+  }
+
+size_t tempestProbeMetalGpuBytes() {
+  std::lock_guard<std::mutex> guard(probeDeviceSync);
+  return probeDevice ? probeDevice->currentAllocatedSize() : 0;
+  }
+
 MtDevice::MtDevice(std::string_view name, bool validation)
   : impl(mkDevice(name)), samplers(*impl), validation(validation) {
   if(impl.get()==nullptr)
@@ -62,9 +114,19 @@ MtDevice::MtDevice(std::string_view name, bool validation)
     prop.transposedRtMatrix = true;
     }
   deductProps(prop,*impl);
+  if(tempestLoadProbeEnabled()) {
+    std::lock_guard<std::mutex> guard(probeDeviceSync);
+    probeDevice = impl.get();
+    }
   }
 
 MtDevice::~MtDevice() {
+  waitIdle();
+  if(!tempestLoadProbeEnabled())
+    return;
+  std::lock_guard<std::mutex> guard(probeDeviceSync);
+  if(probeDevice==impl.get())
+    probeDevice = nullptr;
   }
 
 void MtDevice::onSubmit() {
@@ -202,6 +264,41 @@ void MtDevice::handleError(NS::Error *err) {
   Log::d("NSError: \"",e,"\"");
 #endif
   throw DeviceLostException();
+  }
+
+MTLFX::SpatialScaler& MtDevice::spatialScaler(MTL::Texture& src, MTL::Texture& dst) {
+  std::lock_guard<std::mutex> guard(scalerSync);
+  for(auto& s:scalers) {
+    if(s->inputWidth()==src.width() && s->inputHeight()==src.height() &&
+       s->outputWidth()==dst.width() && s->outputHeight()==dst.height() &&
+       s->colorTextureFormat()==src.pixelFormat() && s->outputTextureFormat()==dst.pixelFormat())
+      return *s;
+    }
+
+  auto pool = NsPtr<NS::AutoreleasePool>::init();
+  auto desc = NsPtr<MTLFX::SpatialScalerDescriptor>::init();
+  desc->setInputWidth (src.width());
+  desc->setInputHeight(src.height());
+  desc->setOutputWidth (dst.width());
+  desc->setOutputHeight(dst.height());
+  desc->setColorTextureFormat (src.pixelFormat());
+  desc->setOutputTextureFormat(dst.pixelFormat());
+  // input is tonemapped, display-referred color
+  desc->setColorProcessingMode(MTLFX::SpatialScalerColorProcessingModePerceptual);
+
+  auto scaler = NsPtr<MTLFX::SpatialScaler>(desc->newSpatialScaler(impl.get()));
+  if(scaler==nullptr)
+    throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  if((src.usage() & scaler->colorTextureUsage())!=scaler->colorTextureUsage() ||
+     (dst.usage() & scaler->outputTextureUsage())!=scaler->outputTextureUsage())
+    throw std::system_error(Tempest::GraphicsErrc::InvalidTexture);
+
+  // Command buffers do not retain references: keep recent scalers alive while frames may still use them.
+  // A resolution change waits for the device to go idle, so dropping the oldest is safe.
+  if(scalers.size()>=4)
+    scalers.erase(scalers.begin());
+  scalers.emplace_back(std::move(scaler));
+  return *scalers.back();
   }
 
 void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
@@ -368,6 +465,8 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
 
   prop.anisotropy    = true;
   prop.maxAnisotropy = 16;
+
+  prop.spatialUpscale = MTLFX::SpatialScalerDescriptor::supportsDevice(&dev);
 
 #ifdef __IOS__
   if(dev.supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily3_v2))

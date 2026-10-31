@@ -576,6 +576,19 @@ async def test_crime_brief_separates_the_directors_truth_from_peoples_knowledge(
         assert chains.crimes.known(HILDA) == []
 
 
+@pytest.mark.parametrize("cover", [True, False])
+async def test_old_cover_testimony_enters_chain_context_when_cover_is_disabled(graph, cover):  # noqa: F811
+    async with _setup(graph, with_crimes=True) as (_, chains, _, _):
+        deed = _record_crime(chains)
+        chains.crimes.cover = cover
+        chains.chronicle.record({
+            "fact": "testimony", "npc": "REMOTE_KNOWER", "witness": LOBART, "cover": "D1",
+            "crime_saw": [deed["id"]], "crime_told": [],
+        })
+        text = chains._crime_context(deed, {})
+        assert ("- REMOTE_KNOWER" in text) is not cover
+
+
 async def test_the_hero_can_return_his_own_loot_without_spawning_it_or_being_forgiven(graph):  # noqa: F811
     async with _setup(graph, [_return_loot()], with_crimes=True) as (fake, chains, casting, _):
         deed = _record_crime(chains, witnesses=[])
@@ -890,3 +903,74 @@ async def test_asked_for_someone_new_a_chain_of_the_people_around_is_refused(gra
         assert "cast пуст" in llm.calls[1][1][-1].content
         [rejected] = chains.chronicle.facts("chain_rejected")
         assert any("cast пуст" in why for why in rejected["why"])
+
+
+def _find_npc_thief(crime: str) -> dict[str, Any]:
+    raw = _single_proposal()
+    raw["quests"][0]["stages"] = [
+        {"journal": "Нужно убедить Хильду, кто вор.", "goals": [{"kind": "blame", "crime": crime}]},
+        {"journal": "Хильда поверила обвинению.",
+         "goals": [{"kind": "talk", "npc": "giver", "talk": _talk("Теперь ты знаешь, кто вор.")}]},
+    ]
+    return raw
+
+
+async def test_npc_crime_builder_knows_only_the_linked_deed_and_can_ask_to_convince_giver(graph):  # noqa: F811
+    crime = "npc-stolen-bread"
+    async with _setup(graph, [_find_npc_thief(crime)], with_crimes=True) as (_, chains, casting, llm):
+        deed = _record_crime(chains, fact="npc_crime", id=crime, culprit="BAU_952_MALAK")
+        chains.chronicle.record({"fact": "npc_crime_seen", "npc": LOBART, "crime": crime})
+        chains.chronicle.record({"fact": "blamed", "id": "BLAME_1", "npc": HILDA, "crime": crime,
+                                 "culprit": LOBART, "truth": False, "because": "hero_words"})
+        made = await chains.chain(HILDA, crime=crime, quest_count=1, max_people=0)
+        assert made is not None and len(made) == 1 and not casting.calls
+        goal = made[0].stages[0].goals[0]
+        assert (goal.kind, goal.crime, goal.npc) == ("blame", deed["id"], "")
+        context = llm.calls[0][1][0].content
+        assert "убедить заказчика, кто вор" in context
+        assert "даже если герой подставил невиновного" in context
+        assert f"{LOBART} — Лобарт; видел" in context
+        assert f"{HILDA} — Хильда; винит: {LOBART}; со слов/основание: герой" in context
+        assert "truth" not in context and "False" not in context
+
+
+async def test_npc_crime_actual_item_can_be_returned_without_creating_another_copy(graph):  # noqa: F811
+    async with _setup(graph, [_return_loot()], with_crimes=True) as (fake, chains, casting, _):
+        deed = _record_crime(chains, fact="npc_crime", id="npc-loot", culprit="BAU_952_MALAK")
+        fake.symbols.update({STOLEN: "item", "PC_HERO": "npc"})
+        fake.hero_items[STOLEN] = 1
+        made = await chains.chain(HILDA, crime=deed["id"], quest_count=1, max_people=0)
+        assert made is not None and not casting.calls
+        assert made[0].stages[-1].goals[0].item == STOLEN
+        assert "WLD_INSERTITEM" not in str(fake.graph[-1])
+
+
+@pytest.mark.parametrize("linked", ["hero", "other_npc", "disabled_npc"])
+async def test_blame_goal_cannot_target_an_unlinked_or_disabled_npc_deed(graph, linked):  # noqa: F811
+    async with _setup(graph, with_crimes=True) as (_, chains, casting, _):
+        deed = _record_crime(chains)
+        _record_crime(chains, fact="npc_crime", id="npc-other", culprit="BAU_952_MALAK")
+        if linked != "hero":
+            deed = _record_crime(chains, fact="npc_crime", id="npc-linked", culprit="BAU_952_MALAK")
+        if linked == "disabled_npc":
+            chains.npc_crimes = False
+            assert await chains.brief(HILDA, crime=deed["id"]) is None
+            return
+        brief = await chains.brief(HILDA, crime=deed["id"])
+        assert brief is not None
+        brief.quest_count = 1
+        made, errors = await chains._try(_find_npc_thief("npc-other"), brief)
+        assert made is None and "blame: нужен id связанного дела NPC" in errors
+        assert not casting.calls and not chains.book.all()
+
+
+async def test_refuting_the_latest_accusation_does_not_restore_an_older_builder_belief(graph):  # noqa: F811
+    async with _setup(graph, with_crimes=True) as (_, chains, _, _):
+        deed = _record_crime(chains, fact="npc_crime", id="npc-loot", culprit="BAU_952_MALAK")
+        for number, culprit in enumerate([LOBART, "BAU_961_VINO"], 1):
+            chains.chronicle.record({"fact": "blamed", "id": f"BLAME_{number}", "npc": HILDA,
+                                     "crime": deed["id"], "culprit": culprit, "truth": False})
+        chains.chronicle.record({"fact": "blame_refuted", "blamed": "BLAME_2", "how": "no_goods"})
+        text = chains._crime_context(deed, {})
+        assert "винит:" not in text
+        assert "пострадавший; может заметить пропажу" in text

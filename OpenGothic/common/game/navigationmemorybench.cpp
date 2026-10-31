@@ -107,6 +107,11 @@ NavigationMemory::Pose pose(const Npc& npc,uint64_t now) {
   result.position=npc.position();
   result.forward=Vec3(std::cos(npc.rotationRad()),0,std::sin(npc.rotationRad()));
   result.gameMs=now;
+  const auto& guild=npc.world().script().guildVal();
+  const float step=float(guild.step_height[npc.guild()]);
+  result.stepHeightCm=step>0.f?step:50.f;
+  constexpr float Pi=3.14159265358979323846f;
+  result.maxSlopeDegrees=std::acos(std::clamp(std::cos(float(guild.slide_angle[npc.guild()])*Pi/180.f),0.f,1.f))*180.f/Pi;
   return result;
 }
 Actor& tracked(World& world,const std::string& selector,bool create) {
@@ -314,7 +319,7 @@ void NavigationMemoryBench::tick(World& world) {
     actor->nextDecision=now+DecisionPeriodMs;
     actor->eye.update(*actor->npc,now);
     const auto begin=Clock::now();
-    actor->memory.update(actor->eye.samples(),body);
+    actor->memory.update(actor->eye.memorySamples(),body);
     const auto sampled=Clock::now();
     actor->memory.view(actor->view);
     const auto viewed=Clock::now();

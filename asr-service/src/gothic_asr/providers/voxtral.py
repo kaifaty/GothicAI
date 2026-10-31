@@ -75,7 +75,13 @@ class VoxtralRealtime:
             raise AsrError(f"voxtral {self.url}: health {status} {body[:200]!r}")
         log.info("voxtral server ready (%s)", self.url)
 
-    async def open_stream(self, lang: str, on_partial: PartialCallback | None = None) -> _Stream:
+    async def open_stream(
+        self,
+        lang: str,
+        on_partial: PartialCallback | None = None,
+        *,
+        hints: list[str] | None = None,
+    ) -> _Stream:
         await self._lock.acquire()
         try:
             reader, writer = await self._connect()

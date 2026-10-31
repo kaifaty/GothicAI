@@ -7,12 +7,16 @@
 #include <vector>
 
 class Npc;
+class DynamicWorld;
 
 // Opt-in navigation sensor. It neither drives NPCs nor publishes bridge observations.
 // Coordinates and ranges are centimetres; yaw/pitch are degrees relative to the posed head.
 class NavigationEye final {
   public:
     enum class HitKind : uint8_t { None, World, StaticVob, MovableVob, Npc, Water };
+    // WalkingGazeDown rotates the sensor's effective head frame, without changing
+    // animation or locomotion. At 1.8 m eye height its gaze meets floor at 3.5 m.
+    enum class FloorSampling : uint8_t { Baseline, WalkingGazeDown, ForwardRows };
 
     struct Config final {
       size_t   layout = 500; // 250 / 500 / 1000 select 238 / 500 / 1036 rays
@@ -22,6 +26,14 @@ class NavigationEye final {
       float    nearRangeCm = 1000.f;
       uint64_t nearPeriodMs = 100;
       uint64_t farPeriodMs = 500;
+      FloorSampling floorSampling = FloorSampling::WalkingGazeDown;
+      };
+
+    // The applied head frame plus the actor's own feet position. This overload
+    // also lets offline sensor measurements replay the same observed poses.
+    struct Pose final {
+      Tempest::Vec3 origin = {}, forward = {1,0,0}, right = {0,0,1}, up = {0,1,0};
+      Tempest::Vec3 position = {};
       };
 
     struct Ray final {
@@ -31,8 +43,7 @@ class NavigationEye final {
       Tempest::Vec3 origin = {}, direction = {}, point = {};
       uint64_t sampledAtMs = 0, nearSampledAtMs = 0;
       bool hit = false;
-      // False until the unobstructed far segment has been observed at least once.
-      // A cached far observation retains its own original head pose and timestamp.
+      // A fresh near miss is incomplete until its own far segment is cast.
       bool complete = false;
       };
 
@@ -45,10 +56,16 @@ class NavigationEye final {
     NavigationEye();
     explicit NavigationEye(const Config& config);
     Update update(const Npc& npc, uint64_t gameMs);
+    Update update(const Pose& pose, const DynamicWorld& physics, const Npc* except, uint64_t gameMs);
     void reset();
     const Config& config() const { return cfg; }
     const std::vector<Ray>& samples() const { return rays; }
+    // Stable 2*N slots: current observations followed by cached far rays. Cached
+    // rays keep their original origin, direction and timestamp. Invalid cached
+    // slots have distance zero. Physical casts are counted by rayCount().
+    const std::vector<Ray>& memorySamples() const { return memoryRays; }
     size_t rayCount() const { return rays.size(); }
+    float gazePitchDeg() const { return gazePitch; }
     static const char* hitKindName(HitKind kind);
 
   private:
@@ -58,9 +75,11 @@ class NavigationEye final {
       };
 
     Config cfg;
-    std::vector<Ray> rays;
+    std::vector<Ray> rays, memoryRays;
     std::vector<Tempest::Vec3> localDirections;
     std::vector<CachedFar> far;
     uint64_t lastNear = 0, lastFar = 0;
+    Tempest::Vec3 previousPosition = {};
+    float gazePitch = 0;
     bool sampled = false;
   };

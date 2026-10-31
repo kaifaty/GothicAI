@@ -1,10 +1,13 @@
 import json
+import sys
+from types import SimpleNamespace
 
 import pytest
 from test_timeline import EVENTS
 
-from gothic_shorts import cut, srt
+from gothic_shorts import cli, compare, cut, srt
 from gothic_shorts.shot import Shot
+from gothic_shorts.studio import StudioError
 
 
 def test_timestamps():
@@ -29,6 +32,114 @@ def test_explainer_lines_over_their_russian_voice():
     assert (cues[2].start, cues[2].end) == (5.0, 6.0)
     with pytest.raises(ValueError):
         srt.explainer(words, ["one line"])
+
+
+@pytest.fixture
+def compare_plan():
+    return {"beats": [
+        {"segment": "first", "start": 1.2, "end": 5.7, "lines": [
+            {"at": 1.2, "file": "voice/01.wav", "words": [["Вода", 0.15, 1.2]]},
+        ]},
+        {"segment": "second", "start": 0.1, "end": 5.3, "lines": [
+            {"at": 0.2, "file": "voice/02.wav", "words": [["Ящик", 0.72, 1.2]]},
+        ]},
+    ]}  # fmt: skip
+
+
+def _studio_words():
+    return {"lines": [
+        {"n": 1, "file": "voice/01.wav", "start": 0,
+         "words": [{"text": "Вода", "start": 0.15, "end": 1.2}]},
+        {"n": 2, "file": "voice/02.wav", "start": 1.55,
+         "words": [{"text": "Ящик", "start": 2.27, "end": 2.75}]},
+    ]}  # fmt: skip
+
+
+@pytest.mark.parametrize("plan_name", ["plan.json", "comparison.json"])
+@pytest.mark.parametrize("words_source", ["studio", "missing", "invalid"])
+def test_comparison_workspace_subtitles_follow_the_cut(
+    tmp_path, monkeypatch, compare_plan, plan_name, words_source,
+):
+    (tmp_path / plan_name).write_text(json.dumps(compare_plan))
+    (tmp_path / "script.en.txt").write_text("Water\nCrate\n")
+    if words_source == "studio":
+        (tmp_path / "words.ru.json").write_text(json.dumps(_studio_words()))
+    elif words_source == "invalid":
+        (tmp_path / "words.ru.json").write_text("not JSON: comparison subtitles must not read this")
+    argv = ["gothic-shorts", "srt", str(tmp_path)]
+    if plan_name != "plan.json":
+        argv += ["--plan", plan_name]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as done:
+        cli.main()
+
+    assert done.value.code == 0
+    assert (tmp_path / "subs.en.srt").read_text() == (
+        "1\n00:00:00,150 --> 00:00:01,200\nWater\n\n"
+        "2\n00:00:05,320 --> 00:00:05,800\nCrate\n"
+    )
+
+
+@pytest.mark.parametrize("plan_text", [None, '{"scenes": []}', "not JSON"])
+def test_explainer_workspace_subtitles_keep_the_studio_timeline(tmp_path, monkeypatch, plan_text):
+    if plan_text is not None:
+        (tmp_path / "plan.json").write_text(plan_text)
+    (tmp_path / "words.ru.json").write_text(json.dumps(_studio_words()))
+    (tmp_path / "script.en.txt").write_text("Water\nCrate\n")
+    monkeypatch.setattr(sys, "argv", ["gothic-shorts", "srt", str(tmp_path)])
+
+    with pytest.raises(SystemExit) as done:
+        cli.main()
+
+    assert done.value.code == 0
+    assert (tmp_path / "subs.en.srt").read_text() == (
+        "1\n00:00:00,150 --> 00:00:01,200\nWater\n\n"
+        "2\n00:00:02,270 --> 00:00:02,750\nCrate\n"
+    )
+
+
+def test_placed_lines_include_unvoiced_beats_in_the_offset(compare_plan):
+    compare_plan["beats"].insert(1, {"segment": "silent", "start": 10.2, "end": 11.43456})
+    original = json.dumps(compare_plan)
+
+    assert compare.placed_lines(compare_plan) == [
+        {"n": 1, "file": "voice/01.wav", "start": 0,
+         "words": [{"text": "Вода", "start": 0.15, "end": 1.2}]},
+        {"n": 2, "file": "voice/02.wav", "start": 5.835,
+         "words": [{"text": "Ящик", "start": 6.555, "end": 7.035}]},
+    ]
+    assert json.dumps(compare_plan) == original
+
+
+@pytest.mark.parametrize("translated", ["", "Water\n", "Water\nCrate\nAnother\n"])
+def test_comparison_subtitles_reject_a_different_number_of_translated_lines(
+    tmp_path, compare_plan, translated,
+):
+    (tmp_path / "plan.json").write_text(json.dumps(compare_plan))
+    (tmp_path / "script.en.txt").write_text(translated)
+    args = SimpleNamespace(short=str(tmp_path), take=None, lang="en", plan="plan.json")
+
+    with pytest.raises(StudioError) as error:
+        cli.cmd_srt(args)
+
+    assert "script.en.txt" in str(error.value)
+    assert "2" in str(error.value)
+    assert not (tmp_path / "subs.en.srt").exists()
+
+
+def test_comparison_subtitles_reject_a_plan_without_voice(tmp_path, compare_plan):
+    for beat in compare_plan["beats"]:
+        beat.pop("lines")
+    (tmp_path / "plan.json").write_text(json.dumps(compare_plan))
+    (tmp_path / "script.en.txt").write_text("Water\nCrate\n")
+    args = SimpleNamespace(short=str(tmp_path), take=None, lang="en", plan="plan.json")
+
+    with pytest.raises(StudioError) as error:
+        cli.cmd_srt(args)
+
+    assert "words.ru.json" not in str(error.value)
+    assert not (tmp_path / "subs.en.srt").exists()
 
 
 def test_a_take_as_english_captions_on_the_cut(tmp_path):

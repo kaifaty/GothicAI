@@ -1,0 +1,21 @@
+{
+  "id": "window-out",
+  "target": "data/content/mesh3d-market.json",
+  "seed": 1,
+  "lintel": [0.2, 0.09],
+  "sill": [0.16, 0.1125],
+  "post": [0.15, 0.06],
+  "mullion": [0.07, 0.04],
+  "leaf": [0.05, 0.04, -0.035],
+  "leaf_gap": 0.006,
+  "glass": [0.012, -0.024],
+  "diamonds": [6, 9],
+  "hinge": [0.09, 0.026, 0.004],
+  "lintel_nails": 4,
+  "nail": 0.008,
+  "nail_radius": 0.018,
+  "tiles": "market-set/tiles",
+  "glass_tile": {"size": 1024, "per_tile": 4, "came": 0.045, "seed": 2},
+  "stave_tile": 0.38,
+  "planks_per_tile": 4
+}

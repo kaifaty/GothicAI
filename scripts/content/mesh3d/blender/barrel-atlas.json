@@ -1,0 +1,72 @@
+{
+  "glb": "mesh3d-barrel-concept/meshes/mesh3d-barrel-concept/barrel.glb",
+  "maps_dir": "mesh3d-barrel-concept/tiles",
+  "scales": {
+    "OWN_PROP_WOOD_STAVE": 2.6315789,
+    "OWN_PROP_WOOD_HEAD": 2.6315789,
+    "OWN_PROP_IRON_BAND": 5.0
+  },
+  "targets": {
+    "OWN_PROP_WOOD_STAVE": [
+      0.0266,
+      0.0204,
+      0.0131
+    ],
+    "OWN_PROP_WOOD_HEAD": [
+      0.0171,
+      0.0126,
+      0.0078
+    ],
+    "OWN_PROP_IRON_BAND": [
+      0.0282,
+      0.0269,
+      0.0168
+    ]
+  },
+  "slots": {
+    "OWN_PROP_WOOD_STAVE": [
+      "OWN_BARREL_HARBOUR_WOOD",
+      "WOOD"
+    ],
+    "OWN_PROP_WOOD_HEAD": [
+      "OWN_BARREL_HARBOUR_WOOD",
+      "WOOD"
+    ],
+    "OWN_PROP_IRON_BAND": [
+      "OWN_BARREL_HARBOUR_IRON",
+      "METAL"
+    ]
+  },
+  "metal": [
+    "OWN_PROP_IRON_BAND"
+  ],
+  "size": 1024,
+  "seed": 1,
+  "light_part": [
+    6,
+    1.35
+  ],
+  "planks_per_tile": {
+    "OWN_PROP_WOOD_STAVE": 4,
+    "OWN_PROP_WOOD_HEAD": 4
+  },
+  "contrast": {
+    "OWN_PROP_WOOD_STAVE": 1.6,
+    "OWN_PROP_WOOD_HEAD": 1.6,
+    "OWN_PROP_IRON_BAND": 1.3
+  },
+  "crevice": {
+    "distance": 0.02,
+    "dirt": 0.7,
+    "colour": [0.008, 0.009, 0.005]
+  },
+  "streaks": {
+    "length": 0.25,
+    "rust": 0.6,
+    "dirt": 0.35,
+    "rust_colour": [0.045, 0.022, 0.01],
+    "column": 0.012
+  },
+  "wet_roughness": 0.6,
+  "metal_scale": 0.0
+}

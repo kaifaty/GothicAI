@@ -128,6 +128,50 @@ def test_locked_periodic_rows_update_memory_with_continue_only_mask():
     assert policy.backend.calls[-1][0] == [50.0] and policy.backend.calls[-1][2] == 1
 
 
+def test_stale_memory_only_rows_update_hidden_without_actions_when_enabled():
+    policy = runtime(allow_stale_memory_only=True)
+    policy.process(request())
+    old = request(2)
+    old.update(memory_only=True, command_enabled=False, now_game_ms=450)
+    response = policy.process(old)
+    assert response["status"] == "processed" and response["model_processed"]
+    assert response["memory_only"] and response["action_id"] is None and not response["new_decision"]
+    assert not response["hidden_reset"] and policy.backend.calls[-1][2] == 1
+    assert policy.arbitrate(old["observation"], stream_seq=2)["reason"] == "memory_only"
+    assert policy.process(request(3))["model_processed"]
+    assert policy.backend.calls[-1][2] == 2
+
+
+def test_stale_actionable_rows_still_fall_back_when_memory_age_bypass_enabled():
+    policy = runtime(allow_stale_memory_only=True)
+    policy.process(request())
+    old = request(2)
+    old.update(now_game_ms=301, command_enabled=True)
+    response = policy.process(old)
+    assert response["reason"] == "observation_too_old" and response["hidden_reset"]
+    assert response["action_id"] is None and not response["model_processed"]
+    assert len(policy.backend.calls) == 1
+
+
+@pytest.mark.parametrize("options", ({}, {"allow_stale_memory_only": False}))
+def test_memory_only_age_gate_preserves_previous_default(options):
+    policy = runtime(**options)
+    old = request()
+    old.update(memory_only=True, command_enabled=False, now_game_ms=300)
+    response = policy.process(old)
+    assert response["reason"] == "observation_too_old" and response["hidden_reset"]
+    assert not response["model_processed"] and not policy.backend.calls
+
+
+def test_stale_memory_only_cannot_bypass_context_validation():
+    policy = runtime(allow_stale_memory_only=True)
+    old = request()
+    old.update(memory_only=True, command_enabled=True, now_game_ms=300)
+    response = policy.process(old)
+    assert response["reason"] == "observation_too_old" and not response["model_processed"]
+    assert not policy.backend.calls
+
+
 def test_actor_limit_bounds_memory():
     policy = runtime(max_actors=1)
     policy.process(request(entity=1))

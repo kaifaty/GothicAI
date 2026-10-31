@@ -15,6 +15,49 @@ from body_headless_suite import service_snapshot, write_json
 from body_observe_suite import provenance
 
 
+def weapon_contract(runner, args):
+    """Check reset profiles on the real runner without advancing a duel."""
+    profiles = {}
+    fields = ("symbol", "physical_side", "hp", "hp_max", "str", "dex", "onehand", "onehand_talent",
+              "edge_protection", "blunt_protection", "weapon_symbol", "weapon", "armor_symbol", "armor",
+              "weapon_damage", "weapon_length", "weapon_state", "immortal", "pose")
+    legacy = {"hp": 300, "hp_max": 300, "str": 60, "dex": 60, "onehand": 60, "onehand_talent": 2,
+              "edge_protection": 30, "blunt_protection": 30, "weapon": "ItMw_1h_Common_01",
+              "armor": "ItAr_Leather_L", "weapon_state": 2, "immortal": False}
+    for name, extra in (("default", {}), ("1h", {"weapon": "1h"}), ("2h", {"weapon": "2h"}),
+                        ("unknown", {"weapon": "unknown"})):
+        directory = args.output / ("weapon-" + name)
+        directory.mkdir()
+        response = runner.request({"cmd": "reset", "scenario": str(args.scenario), "output_dir": str(directory),
+                                   "mode": "lockstep", "arena": {"scenario": "native_duel", "seed": 100000,
+                                   "side": 0, "distance_cm": 400, "timeout_ms": 1000, **extra}}, allow_error=True)
+        if name == "unknown":
+            if response.get("ok") is not False:
+                raise RuntimeError("Unknown arena weapon unexpectedly reset successfully")
+            profiles[name] = {"rejected": True, "error": response.get("error")}
+            continue
+        if response.get("ok") is False or not response["arena"]["ready"] or response["arena"]["started"]:
+            raise RuntimeError("Weapon reset did not yield an unstarted ready arena: " + name)
+        actors = response["arena"]["actors"]
+        if len(actors) != 2:
+            raise RuntimeError("Weapon reset did not create two duel actors")
+        for actor in actors:
+            expected = legacy if name != "2h" else {
+                key: value for key, value in legacy.items() if key not in ("weapon", "weapon_state", "onehand", "onehand_talent")}
+            if any(actor[key] != value for key, value in expected.items()):
+                raise RuntimeError("Weapon reset changed the canonical arena profile: " + name)
+            if name == "2h" and (actor["weapon"].upper() != "ITMW_2H_BAU_AXE" or actor["weapon_state"] != 3 or
+                                 actor.get("twohand") != 60 or actor.get("twohand_talent") != 2):
+                raise RuntimeError("Two-handed reset did not equip the master axe profile")
+        profiles[name] = [{key: actor[key] for key in fields} for actor in actors]
+        if name == "2h":
+            for profile, actor in zip(profiles[name], actors):
+                profile.update(twohand=actor["twohand"], twohand_talent=actor["twohand_talent"])
+    if profiles["default"] != profiles["1h"]:
+        raise RuntimeError("Explicit one-handed reset differs from the legacy default profile")
+    return profiles
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial-workers",dest="native_serial_workers",action="store_true")
@@ -32,6 +75,7 @@ def main():
     runner = ArenaRunner(args)
     result = {"kind": "body_stage7_setup_probe", "status": "infrastructure_failure", "cases": []}
     try:
+        result["weapon_contract"] = weapon_contract(runner, args)
         for name, extra, distance in (("yaw", {"yaw_offset_deg": 35, "center_offset_cm": [120, -120],
                                      "separation_yaw_deg": 25}, 650),
                                      ("wall-150", {"geometry": "near_wall"}, 150),

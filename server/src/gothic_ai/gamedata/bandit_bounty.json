@@ -1,0 +1,16 @@
+{
+  "client": {"npc": "BDT_1060_DEXTER", "name": "Декстер", "place": "CASTLEMINE_HUT", "place_text": "дом Декстера: логово на крутой скале у большой фермы, рядом со сторожевой башней и шахтами"},
+  "reward": {"alive": 300, "dead": 150},
+  "public": "Героя ищут: за его голову платят, по рукам ходят листовки с его лицом. Об этом можешь говорить свободно и угрожать ему этим.",
+  "default": {"secrets": [], "minimum_gold": 0},
+  "npcs": {
+    "BDT_1013_BANDIT_L": {"secrets": ["client_name", "client_place"], "minimum_gold": 10, "seen_client": false},
+    "BDT_1014_BANDIT_L": {"secrets": ["client_name", "client_place"], "minimum_gold": 150, "seen_client": true},
+    "BDT_1015_BANDIT_L": {"secrets": [], "minimum_gold": 0}
+  },
+  "journal": {
+    "topic": "Объявления о розыске и бандиты",
+    "text": "Главаря бандитов зовут Декстер. Он скрывается в шахте около поместья лендлорда.",
+    "status": "LOG_RUNNING"
+  }
+}

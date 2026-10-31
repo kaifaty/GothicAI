@@ -16,6 +16,7 @@ Entries (`t` is the unix time, `npc` the npc's symbol, `name` its display name):
     {"kind": "tts_off", "npc", "name", "seconds", "detail"}   lines go out silent for a while
     {"kind": "llm_error", "npc", "name", "detail"}
     {"kind": "voice_error", "npc", "detail"}
+    {"kind": "feat", "id", "title", "text", "category"}   a deed recorded by the chronicler
 """
 
 from __future__ import annotations

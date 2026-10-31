@@ -66,6 +66,7 @@ void Shaders::setupOptions() {
   opts.doSoftwareShadow = Shaders::isRtsmSupported() && CommandLine::inst().isSoftwareShadow();
   opts.doVirtualShadow  = Shaders::isVsmSupported()  && CommandLine::inst().isVirtualShadow();
   opts.doSoftwareRT     = false;
+  opts.doMaterialMaps   = Resources::materialMapsEnabled();
   }
 
 void Shaders::compileKeyShaders() {
@@ -75,6 +76,7 @@ void Shaders::compileKeyShaders() {
 
 void Shaders::compileShaders() noexcept {
   auto& device = Resources::device();
+  const char* materialMaps = opts.doMaterialMaps ? "_orm" : "";
 
   copyBuf   = computeShader("copy.comp.sprv");
   copyImg   = computeShader("copy_img.comp.sprv");
@@ -93,14 +95,14 @@ void Shaders::compileShaders() noexcept {
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
 
-  directLight      = postEffect("direct_light",    RenderState::ZTestMode::NoEqual);
-  directLightSh    = postEffect("direct_light_sh", RenderState::ZTestMode::NoEqual);
+  directLight      = postEffect(string_frm("direct_light", materialMaps),    RenderState::ZTestMode::NoEqual);
+  directLightSh    = postEffect(string_frm("direct_light_sh", materialMaps), RenderState::ZTestMode::NoEqual);
   if(opts.doRayQuery && device.properties().descriptors.nonUniformIndexing)
-    directLightRq  = postEffect("direct_light_rq", RenderState::ZTestMode::NoEqual);
+    directLightRq  = postEffect(string_frm("direct_light_rq", materialMaps), RenderState::ZTestMode::NoEqual);
 
-  ambientLight       = ambientLightShader("ambient_light");
-  ambientLightSsao   = ambientLightShader("ambient_light_ssao");
-  ambientLightSurf   = ambientLightShader("ambient_light_surf");
+  ambientLight       = ambientLightShader(string_frm("ambient_light", materialMaps));
+  ambientLightSsao   = ambientLightShader(string_frm("ambient_light_ssao", materialMaps));
+  ambientLightSurf   = ambientLightShader(string_frm("ambient_light_surf", materialMaps));
 
   irradiance         = computeShader("irradiance.comp.sprv");
   cloudsLut          = computeShader("clouds_lut.comp.sprv");
@@ -165,21 +167,21 @@ void Shaders::compileShaders() noexcept {
 
   auto sh      = GothicShader::get("light.vert.sprv");
   auto vsLight = device.shader(sh.data,sh.len);
-  sh           = GothicShader::get("light.frag.sprv");
+  sh           = GothicShader::get(string_frm("light", materialMaps, ".frag.sprv"));
   auto fsLight = device.shader(sh.data,sh.len);
   lights       = device.pipeline(Triangles, state, vsLight, fsLight);
   if(opts.doRtScene) {
     if(opts.doRayQuery) {
-      sh      = GothicShader::get("light_rq_at.frag.sprv");
+      sh      = GothicShader::get(string_frm("light_rq_at", materialMaps, ".frag.sprv"));
       fsLight = device.shader(sh.data,sh.len);
       } else {
-      sh      = GothicShader::get("light_rq.frag.sprv");
+      sh      = GothicShader::get(string_frm("light_rq", materialMaps, ".frag.sprv"));
       fsLight = device.shader(sh.data,sh.len);
       }
     lightsRq = device.pipeline(Triangles, state, vsLight, fsLight);
     }
   if(Shaders::isVsmSupported()) {
-    sh      = GothicShader::get("light_vsm.frag.sprv");
+    sh      = GothicShader::get(string_frm("light_vsm", materialMaps, ".frag.sprv"));
     fsLight = device.shader(sh.data,sh.len);
     lightsVsm = device.pipeline(Triangles, state, vsLight, fsLight);
     }
@@ -272,7 +274,7 @@ void Shaders::compileShaders() noexcept {
     probePrune     = computeShader("probe_prune.comp.sprv");
     probeAlocation = computeShader("probe_allocation.comp.sprv");
     probeTrace     = computeShader("probe_trace.comp.sprv");
-    probeLighting  = computeShader("probe_lighting.comp.sprv");
+    probeLighting  = computeShader(string_frm("probe_lighting", materialMaps, ".comp.sprv"));
 
     state.setBlendSource  (RenderState::BlendMode::One);
     state.setBlendDest    (RenderState::BlendMode::SrcAlpha);  // for debugging
@@ -280,7 +282,7 @@ void Shaders::compileShaders() noexcept {
     state.setZWriteEnabled(false);
     sh = GothicShader::get("probe_ambient.vert.sprv");
     vs = device.shader(sh.data,sh.len);
-    sh = GothicShader::get("probe_ambient.frag.sprv");
+    sh = GothicShader::get(string_frm("probe_ambient", materialMaps, ".frag.sprv"));
     fs = device.shader(sh.data,sh.len);
     probeAmbient = device.pipeline(Triangles,state,vs,fs);
     }
@@ -639,6 +641,9 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     return nullptr;
 
   const char* bindless = bl ? "_bindless" : "_slot";
+  const bool mapsMain = pt==T_Main && (alpha==Material::Solid || alpha==Material::AlphaTest);
+  const bool mapsDepth = (pt==T_Depth || pt==T_Shadow) && alpha==Material::AlphaTest;
+  const char* materialMaps = opts.doMaterialMaps && (mapsMain || mapsDepth) ? "_orm" : "";
 
   materials.emplace_front();
   auto& b = materials.front();
@@ -662,24 +667,24 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     b.pipeline = device.pipeline(Triangles, state, vs, tc, te, fs);
     }
   else if(options().doMeshShading && t!=DrawCommands::Pfx) {
-    auto shMs = GothicShader::get(string_frm("main_", vsTok, typeVs, bindless, ".mesh.sprv"));
-    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, bindless, ".frag.sprv"));
+    auto shMs = GothicShader::get(string_frm("main_", vsTok, typeVs, materialMaps, bindless, ".mesh.sprv"));
+    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, materialMaps, bindless, ".frag.sprv"));
 
     auto ms = device.shader(shMs.data,shMs.len);
     auto fs = device.shader(shFs.data,shFs.len);
     b.pipeline = device.pipeline(state, Shader(), ms, fs);
     }
   else if(t!=DrawCommands::Pfx) {
-    auto shVs = GothicShader::get(string_frm("main_", vsTok, typeVs, bindless, ".vert.sprv"));
-    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, bindless, ".frag.sprv"));
+    auto shVs = GothicShader::get(string_frm("main_", vsTok, typeVs, materialMaps, bindless, ".vert.sprv"));
+    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, materialMaps, bindless, ".frag.sprv"));
 
     auto vs = device.shader(shVs.data,shVs.len);
     auto fs = device.shader(shFs.data,shFs.len);
     b.pipeline = device.pipeline(Triangles, state, vs, fs);
     }
   else {
-    auto shVs = GothicShader::get(string_frm("main_", vsTok, typeVs, ".vert.sprv"));
-    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, ".frag.sprv"));
+    auto shVs = GothicShader::get(string_frm("main_", vsTok, typeVs, materialMaps, ".vert.sprv"));
+    auto shFs = GothicShader::get(string_frm("main_", fsTok, typeFs, materialMaps, ".frag.sprv"));
 
     auto vs = device.shader(shVs.data,shVs.len);
     auto fs = device.shader(shFs.data,shFs.len);

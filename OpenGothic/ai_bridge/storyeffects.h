@@ -16,8 +16,9 @@ namespace zenkit {
 // in a dialog of its own, or as the consequence of a lie found out.
 struct StoryEffect final {
   std::string kind;     // give, xp, set, journal, end, attack, refuse_talk, routine, create, teach, calm, party,
-                        // knows
-  std::string item;     // give, create: item instance
+                        // knows, crime_memory, chest_take
+  std::string item;     // give, create, chest_take: item instance
+  std::string chest;    // chest_take (v48): source chest's NpcChests id
   std::string teach;    // teach: attribute, fight, circle, rune, thief, alchemy, smith, trophy (v17)
   std::string arg;      // teach: the scripts' constant (ATR_STRENGTH, NPC_TALENT_1H, SPL_*, POTION_*...)
   std::string var;      // set: global int variable
@@ -30,8 +31,9 @@ struct StoryEffect final {
   std::string reason;   // attack: AR_* constant (default AR_NONE: until the hero is down, not to death)
   std::string attitude; // calm: ATT_* constant, how it treats the hero from now on (default ATT_NEUTRAL; v20)
   std::string info;     // knows: a dialog (C_INFO) the hero has heard from now on, as when it is played (v31)
-  int32_t     count  = 1;  // give, create: count; xp: amount; set: value; refuse_talk: seconds;
+  int32_t     count  = 1;  // give, create, chest_take: count; xp: amount; set: value; refuse_talk: seconds;
                            // teach: points (attribute), percent (fight), circle (circle); party: 1 on, 0 off
+  int32_t     day    = 0;  // crime_memory: the remembered deed's day
   bool        toHero = true;  // give: the npc gives to the hero, else the hero to the npc
   bool        toNpc  = false; // give (v39): the npc gives to another npc (`target`), far from the hero
 

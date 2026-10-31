@@ -1,0 +1,17 @@
+{
+  "glb": "market-set/build/rope/model.glb",
+  "maps_dir": "market-set/tiles",
+  "scales": {"OWN_PROP_ROPE": 1.0},
+  "targets": {"OWN_PROP_ROPE": [0.16, 0.09, 0.026]},
+  "slots": {"OWN_PROP_ROPE": ["OWN_ROPE_HARBOUR_HEMP", "UNDEF"]},
+  "metal": [],
+  "size": 2048,
+  "seed": 1,
+  "angle_limit": 70,
+  "margin": 0.003,
+  "tone_spread": 0.12,
+  "wet_height": 0.06,
+  "algae": 0.3,
+  "bleach": 0.15,
+  "contrast": {"OWN_PROP_ROPE": 1.2}
+}

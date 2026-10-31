@@ -244,3 +244,27 @@ async def test_a_bandit_group_returns_already_introduced_characters_on_refusal(m
         rest, errors = await casting.bandits("FARM1_FIELD", 1, occupied_points=[group[0].at])
         assert errors == [] and len(rest) == 1 and rest[0].at != group[0].at
         assert len(cast.characters()) == 2
+
+
+async def test_a_director_card_applies_to_delayed_deceit_and_greedy_deeds():
+    from gothic_ai.npc_cheat import decide
+    from gothic_ai.npc_will import MOTIVES
+
+    fake = FakeGame(branch="A")
+    _bandit_world(fake)
+    llm = FakeBackend(script=[FakeStep("", [_character(honesty=1, greed=5)])], delay=0)
+    store = MemoryStore(":memory:")
+    async with connected(fake) as link:
+        patches = StoryPatches(link, store)
+        chronicle = Chronicle(link, store)
+        cast = Cast(link, patches, chronicle)
+        casting = Casting(link, cast, llm, PlaceBook(BOOK), chronicle)
+        await _until(lambda: patches.branch is not None and chronicle.branch is not None)
+        spec = await casting.character("FARM1_ENTRANCE")
+        assert spec is not None
+        cards = Cards({}, cast.cards)
+        card = cards[spec.npc]
+        assert (card.honesty, card.greed) == (1, 5)
+        intent = decide(chronicle, spec.npc, "DIRECTOR_DEAL", ["npc_later"], cards=cards)
+        assert intent is not None and intent["keeps"] is False and intent["why"] == "dishonesty"
+        assert MOTIVES["greed"].action(card) == "steal"

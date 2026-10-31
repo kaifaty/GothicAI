@@ -9,8 +9,11 @@ import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 
 import pytest
@@ -73,7 +76,14 @@ state = json.loads(path.read_text()) if path.exists() else {
     "ActiveState": "inactive", "SubState": "dead", "Result": "success",
     "ExecMainCode": "1", "ExecMainStatus": "0", "LoadState": "not-found"}
 command = next((value for value in args if value in
-                ("show", "stop", "is-active", "reset-failed", "status")), "show")
+                ("show", "stop", "is-active", "reset-failed", "status", "set-property")), "show")
+if command == "set-property":
+    if os.environ.get("FAKE_SYSTEMD_SET_PROPERTY_FAIL"):
+        print("fake property update failed", file=sys.stderr)
+        sys.exit(1)
+    state.update(dict(value.split("=", 1) for value in args if "=" in value))
+    path.write_text(json.dumps(state))
+    sys.exit(0)
 if command in ("stop", "reset-failed"):
     state.update(ActiveState="inactive", SubState="dead")
     path.write_text(json.dumps(state))
@@ -116,6 +126,7 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setenv("GQ_PROFILE", "ryzen")
     monkeypatch.setenv("GQ_LEGACY_LOCK", str(legacy))
     monkeypatch.setenv("GQ_OWNER", "test-worktree")
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(tmp_path))
     return {"home": home, "legacy": legacy, "locks": locks,
             "systemd": tmp_path / "systemd", "env": dict(os.environ)}
 
@@ -125,6 +136,7 @@ def queue(gq, host, monkeypatch):
     q = gq.Queue(home=host["home"], legacy_lock=host["legacy"], proc_locks=host["locks"])
     monkeypatch.setattr(q, "now", lambda: 1000.0)
     monkeypatch.setattr(q, "disk_free", lambda: 100 * GIB)
+    monkeypatch.setattr(q, "disk_space", lambda: {q.local_root: 100 * GIB, Path("/"): 100 * GIB})
     # The scheduler is exercised independently from the systemd lifecycle.
     monkeypatch.setattr(q, "reconcile", lambda: None)
     monkeypatch.setattr(q, "launch", lambda job: q.started(job["id"]))
@@ -132,9 +144,13 @@ def queue(gq, host, monkeypatch):
 
 
 def spec(kind="quick", *, owner="session-a", threads=4, mem=GIB,
-         gpu_mem=0, display=False, maximum=60, name="test", command=None):
+         gpu_mem=0, display=False, display_shared=False, display_exclusive=False,
+         interactive=False, maximum=60, name="test", command=None):
     return {"class": kind, "threads": threads, "mem": mem,
-            "gpu_mem": gpu_mem, "display": display, "max": maximum,
+            "gpu_mem": gpu_mem, "display": display, "display_shared": display_shared,
+            "display_exclusive": display_exclusive,
+            "interactive": interactive,
+            "max": maximum,
             "name": name, "command": command or ["true"], "owner": owner}
 
 
@@ -155,11 +171,66 @@ def test_quick_runs_with_batch_even_when_all_batch_threads_are_claimed(queue):
     assert queue.get(batch)["status"] == queue.get(quick)["status"] == "running"
 
 
-@pytest.mark.parametrize("resource", ["mem", "gpu_mem", "display"])
+def test_interactive_does_not_wait_for_background_memory_or_gpu(queue):
+    batch = start(queue, "batch", threads=28, mem=20 * GIB, gpu_mem=10 * GIB)
+    player = start(queue, threads=8, mem=8 * GIB, gpu_mem=3 * GIB,
+                   display_exclusive=True, interactive=True, maximum=6 * 3600)
+    assert queue.get(batch)["status"] == queue.get(player)["status"] == "running"
+    ordinary = enqueue(queue)
+    queue.tick()
+    assert queue.get(ordinary)["status"] == "queued"
+
+
+@pytest.mark.parametrize("quiet_active", [False, True])
+def test_interactive_bypasses_quiet_and_legacy_without_admitting_other_games(
+        queue, monkeypatch, quiet_active):
+    quiet = start(queue, "quiet") if quiet_active else enqueue(queue, "quiet")
+    earlier_game = enqueue(queue, display_shared=True, display=True)
+    player = enqueue(queue, display_exclusive=True, interactive=True)
+
+    @contextmanager
+    def unavailable_legacy(*_args):
+        yield False
+
+    monkeypatch.setattr(queue, "legacy_probe", unavailable_legacy)
+    monkeypatch.setattr(queue, "legacy_waiting", lambda: True)
+    queue.tick()
+    assert queue.get(player)["status"] == "running"
+    assert queue.get(earlier_game)["status"] == "queued"
+    assert queue.get(quiet)["status"] == ("running" if quiet_active else "queued")
+
+
+def test_interactive_waits_for_active_games_and_blocks_all_new_windows(queue):
+    active = start(queue, display_shared=True, display=True)
+    earlier_game = enqueue(queue, "quiet", display_shared=True, display=True)
+    player = enqueue(queue, display_exclusive=True, interactive=True)
+    later_game = enqueue(queue, display_shared=True, display=True)
+    queue.tick()
+    assert all(queue.get(ident)["status"] == "queued"
+               for ident in (earlier_game, player, later_game))
+    queue.finish(active, "success")
+    queue.tick()
+    assert queue.get(player)["status"] == "running"
+    assert all(queue.get(ident)["status"] == "queued" for ident in (earlier_game, later_game))
+    queue.finish(player, "success")
+    queue.tick()
+    assert queue.get(earlier_game)["status"] == "running"
+
+
+@pytest.mark.parametrize("overrides", [
+    {"display_exclusive": False}, {"kind": "batch"}, {"kind": "quiet"},
+    {"maximum": 6 * 3600 + 1},
+])
+def test_interactive_rejects_other_classes_shared_windows_and_long_runtime(queue, gq, overrides):
+    request = {"display_exclusive": True, "interactive": True, **overrides}
+    with pytest.raises(gq.QueueError, match="interactive"):
+        queue.submit(spec(**request))
+
+
+@pytest.mark.parametrize("resource", ["mem", "gpu_mem"])
 def test_quick_waits_for_its_memory_gpu_or_window(queue, resource):
     first = {"mem": 12 * GIB, "gpu_mem": 6 * GIB, "display": True}
-    waiting = {"mem": 9 * GIB} if resource == "mem" else (
-        {"gpu_mem": 5 * GIB} if resource == "gpu_mem" else {"display": True})
+    waiting = {"mem": 9 * GIB} if resource == "mem" else {"gpu_mem": 5 * GIB}
     running = start(queue, **first)
     ident = enqueue(queue, **waiting)
     queue.tick()
@@ -167,6 +238,184 @@ def test_quick_waits_for_its_memory_gpu_or_window(queue, resource):
     queue.finish(running, "success")
     queue.tick()
     assert queue.get(ident)["status"] == "running"
+
+
+def test_three_displays_run_with_distinct_slots_and_fourth_waits(queue):
+    running = [enqueue(queue, display=True, display_shared=True) for _ in range(3)]
+    waiting = enqueue(queue, display=True, display_shared=True)
+    queue.tick()
+    assert all(queue.get(ident)["status"] == "running" for ident in running)
+    assert {queue.get(ident)["display_slot"] for ident in running} == {0, 1, 2}
+    assert queue.get(waiting)["status"] == "queued"
+    assert "display_slot" not in queue.get(waiting)
+    queue.finish(running[1], "success")
+    queue.tick()
+    assert queue.get(waiting)["status"] == "running"
+    assert queue.get(waiting)["display_slot"] == 1
+
+
+def test_display_slots_remain_reserved_until_cancelled_unit_stops(queue):
+    running = [start(queue, display=True, display_shared=True) for _ in range(3)]
+    waiting = enqueue(queue, display=True, display_shared=True)
+    queue.cancel(running[0], "session-a")
+    queue.tick()
+    assert queue.get(waiting)["status"] == "queued"
+    queue.finish(running[0], "success")
+    queue.tick()
+    assert queue.get(running[0])["status"] == "cancelled"
+    assert queue.get(waiting)["status"] == "running"
+    assert queue.get(waiting)["display_slot"] == 0
+
+
+def test_cancelled_queued_game_never_reserves_a_slot(queue):
+    cancelled = enqueue(queue, display=True, display_shared=True)
+    queue.cancel(cancelled, "session-a")
+    assert "display_slot" not in queue.get(cancelled)
+    assert {queue.get(start(queue, display=True, display_shared=True))["display_slot"] for _ in range(3)} == {0, 1, 2}
+
+
+def test_display_capacity_is_taken_from_profile(queue):
+    queue.profile = {**queue.profile, "display": 1}
+    first = start(queue, display=True, display_shared=True)
+    second = enqueue(queue, display=True, display_shared=True)
+    queue.tick()
+    assert queue.get(second)["status"] == "queued"
+    queue.finish(first, "success")
+    queue.tick()
+    assert queue.get(second)["display_slot"] == 0
+
+
+@pytest.mark.parametrize("has_slot", [False, True])
+def test_persisted_legacy_display_reserves_all_slots(queue, has_slot):
+    first = start(queue, display=True)
+    with queue.transaction() as state:
+        legacy = next(job for job in state["jobs"] if job["id"] == first)
+        legacy.pop("display_shared")
+        legacy.pop("display_exclusive")
+        if not has_slot:
+            legacy.pop("display_slot")
+    waiting = enqueue(queue, display=True, display_shared=True)
+    queue.tick()
+    assert queue.get(waiting)["status"] == "queued"
+    queue.finish(first, "success")
+    queue.tick()
+    assert queue.get(waiting)["status"] == "running"
+    assert queue.get(waiting)["display_slot"] == 0
+
+
+@pytest.mark.parametrize("exclusive_request", [
+    {"display_exclusive": True},
+    {"display": True},
+    {"display": True, "display_shared": True, "display_exclusive": True},
+])
+@pytest.mark.parametrize("persisted", [False, True])
+def test_display_exclusive_drains_all_slots_and_blocks_new_games(queue, exclusive_request, persisted):
+    running = [start(queue, display=True, display_shared=True) for _ in range(3)]
+    exclusive = enqueue(queue, **exclusive_request)
+    if persisted:
+        with queue.transaction() as state:
+            legacy = next(job for job in state["jobs"] if job["id"] == exclusive)
+            # Old queued requests have neither field; explicit exclusivity does
+            # not depend on whether an old client persisted display_shared.
+            if not exclusive_request.get("display_shared"):
+                legacy.pop("display_shared")
+            if not exclusive_request.get("display_exclusive"):
+                legacy.pop("display_exclusive")
+    later = enqueue(queue, display=True, display_shared=True)
+    cpu_only = enqueue(queue)
+    queue.tick()
+    assert queue.get(cpu_only)["status"] == "running"
+    assert queue.get(exclusive)["status"] == queue.get(later)["status"] == "queued"
+    for ident in running[:-1]:
+        queue.finish(ident, "success")
+        queue.tick()
+        assert queue.get(exclusive)["status"] == queue.get(later)["status"] == "queued"
+    queue.finish(running[-1], "success")
+    queue.tick()
+    assert queue.get(exclusive)["status"] == "running"
+    assert queue.get(exclusive)["display"] and queue.get(exclusive)["display_slot"] == 0
+    assert queue.get(later)["status"] == "queued"
+    queue.finish(exclusive, "success")
+    queue.tick()
+    assert queue.get(later)["status"] == "running"
+
+
+def test_waiting_exclusive_cannot_be_starved_by_a_stream_of_new_games(queue):
+    running = start(queue, display=True, display_shared=True)
+    exclusive = enqueue(queue, display_exclusive=True)
+    for _ in range(5):
+        later = enqueue(queue, display=True, display_shared=True)
+        queue.tick()
+        assert queue.get(later)["status"] == "queued"
+    queue.finish(running, "success")
+    queue.tick()
+    assert queue.get(exclusive)["status"] == "running"
+    assert all(job["status"] == "queued" for job in queue.jobs()
+               if job["id"] not in {running, exclusive})
+
+
+def test_display_exclusives_are_fifo_and_cancellation_reopens_admission(queue):
+    running = start(queue, display=True, display_shared=True)
+    first = enqueue(queue, display_exclusive=True)
+    second = enqueue(queue, display_exclusive=True)
+    later = enqueue(queue, display=True, display_shared=True)
+    queue.finish(running, "success")
+    queue.tick()
+    assert queue.get(first)["status"] == "running"
+    assert queue.get(second)["status"] == queue.get(later)["status"] == "queued"
+    queue.cancel(second, "session-a")
+    queue.finish(first, "success")
+    queue.tick()
+    assert queue.get(later)["status"] == "running"
+
+
+def test_display_exclusive_preserves_fifo_of_earlier_batches(queue):
+    earlier = enqueue(queue, "batch", display=True, display_shared=True)
+    exclusive = enqueue(queue, "batch", display_exclusive=True)
+    later = enqueue(queue, "batch", display=True, display_shared=True)
+    queue.tick()
+    assert queue.get(earlier)["status"] == "running"
+    assert queue.get(exclusive)["status"] == queue.get(later)["status"] == "queued"
+    queue.finish(earlier, "success")
+    queue.tick()
+    assert queue.get(exclusive)["status"] == "running"
+    assert queue.get(later)["status"] == "queued"
+
+
+@pytest.mark.parametrize("exclusive_kind", ["quick", "batch"])
+@pytest.mark.parametrize("quiet_first", [True, False])
+def test_display_exclusive_keeps_quiet_class_priority_without_deadlock(
+        queue, exclusive_kind, quiet_first):
+    if quiet_first:
+        quiet = enqueue(queue, "quiet", display=True, display_shared=True)
+    exclusive = enqueue(queue, exclusive_kind, display_exclusive=True)
+    if not quiet_first:
+        quiet = enqueue(queue, "quiet", display=True, display_shared=True)
+    later = enqueue(queue, display=True, display_shared=True)
+    queue.tick()
+    assert queue.get(quiet)["status"] == "running"
+    assert queue.get(exclusive)["status"] == queue.get(later)["status"] == "queued"
+    queue.finish(quiet, "success")
+    queue.tick()
+    assert queue.get(exclusive)["status"] == "running"
+    assert queue.get(later)["status"] == "queued"
+
+
+def test_games_already_ahead_of_exclusive_drain_but_later_games_wait(queue):
+    running = start(queue, display=True, display_shared=True)
+    earlier = enqueue(queue, display=True, display_shared=True)
+    exclusive = enqueue(queue, display_exclusive=True)
+    later = enqueue(queue, display=True, display_shared=True)
+    queue.tick()
+    assert queue.get(earlier)["status"] == "running"
+    assert queue.get(exclusive)["status"] == queue.get(later)["status"] == "queued"
+    queue.finish(running, "success")
+    queue.tick()
+    assert queue.get(exclusive)["status"] == queue.get(later)["status"] == "queued"
+    queue.finish(earlier, "success")
+    queue.tick()
+    assert queue.get(exclusive)["status"] == "running"
+    assert queue.get(later)["status"] == "queued"
 
 
 def test_batch_thread_budget_includes_all_running_batches(queue):
@@ -279,14 +528,32 @@ def test_quiet_jobs_are_exclusive_and_ordered(queue):
 
 
 @pytest.mark.parametrize("kind", ["quick", "batch", "quiet"])
-def test_disk_floor_blocks_new_jobs_and_allows_exact_threshold(queue, monkeypatch, kind):
-    monkeypatch.setattr(queue, "disk_free", lambda: 20 * GIB - 1)
+@pytest.mark.parametrize("low_disk", ["local", "root"])
+def test_disk_floor_blocks_new_jobs_and_allows_exact_threshold(queue, gq, monkeypatch, kind, low_disk):
+    disks = {queue.local_root: 100 * GIB, Path("/"): 100 * GIB}
+    path = queue.local_root if low_disk == "local" else Path("/")
+    disks[path] = 20 * GIB - 1
+    monkeypatch.setattr(queue, "disk_space", lambda: disks)
+    monkeypatch.setattr(queue, "disk_free", gq.Queue.disk_free.__get__(queue))
     ident = enqueue(queue, kind)
     queue.tick()
     assert queue.get(ident)["status"] == "queued"
-    monkeypatch.setattr(queue, "disk_free", lambda: 20 * GIB)
+    disks[path] = 20 * GIB
     queue.tick()
     assert queue.get(ident)["status"] == "running"
+
+
+def test_disk_space_follows_local_root_symlink(gq, host, monkeypatch, tmp_path):
+    data = tmp_path / "data" / "gothic-ai"
+    data.mkdir(parents=True)
+    root = tmp_path / "gothic-ai"
+    root.symlink_to(data, target_is_directory=True)
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    queue = gq.Queue(home=host["home"], legacy_lock=host["legacy"], proc_locks=host["locks"])
+    free = {data: 45 * GIB, Path("/"): 80 * GIB}
+    monkeypatch.setattr(gq.shutil, "disk_usage", lambda path: type("Usage", (), {"free": free[path]})())
+    assert queue.disk_space() == free
+    assert queue.disk_free() == 45 * GIB
 
 
 def test_batch_maximum_is_two_hours(queue, gq):
@@ -594,6 +861,185 @@ def test_systemd_launch_sets_affinity_limits_runtime_and_stop_callback(gq, host,
     assert "_finish" in properties["ExecStopPost"] and ident in properties["ExecStopPost"]
     assert properties["StandardOutput"] == f"append:{q.home}/logs/{ident}.log"
     assert "_execute" in arguments and arguments[-1] == ident
+
+
+def test_cli_interactive_uses_live_cpu_weight_and_exact_six_hour_limit(gq, host, monkeypatch):
+    q = make_queue(gq, host, monkeypatch)
+    monkeypatch.setattr(gq, "Queue", lambda: q)
+    monkeypatch.setattr(gq, "wait_job", lambda *_args, **_kwargs: 0)
+    assert gq.main(["run", "--class", "quick", "--threads", "8", "--mem", "8G",
+                    "--gpu-mem", "3G", "--display-exclusive", "--interactive", "--max", "6h",
+                    "--name", "Gothic AI", "--", "true"]) == 0
+    q.tick()
+    player, = q.jobs()
+    assert player["interactive"] and player["display"] and player["display_exclusive"]
+    properties = dict(value.removeprefix("--property=").split("=", 1)
+                      for value in calls(host, "systemd-run")[0] if value.startswith("--property="))
+    assert properties["CPUWeight"] == "1000"
+    assert properties["CPUAffinity"] == "2-15 18-31"
+    assert properties["MemoryMax"] == str(8 * GIB)
+    assert properties["RuntimeMaxSec"] == "21600s"
+
+
+def test_interactive_execute_starts_with_background_exclusive_legacy_lock(gq, host, monkeypatch):
+    q = make_queue(gq, host, monkeypatch)
+    marker = host["home"].parent / "interactive-started"
+    ident = q.submit(spec(display_exclusive=True, interactive=True, command=[
+        sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).touch()", str(marker)]))
+    with host["legacy"].open("a+") as background:
+        fcntl.flock(background, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        q.tick()
+        assert q.get(ident)["status"] == "starting"
+        systemd_state(host, ident, CPUWeight="100", RuntimeMaxUSec="27000000000")
+        assert gq.execute(q, ident) == 0
+        assert marker.exists()
+        properties = json.loads((host["systemd"] / f"gq-{ident}.json").read_text())
+        assert properties["CPUWeight"] == "1000"
+        assert ["--user", "set-property", "--runtime", f"gq-{ident}.service", "CPUWeight=1000"] in calls(host, "systemctl")
+
+
+def test_interactive_property_failure_prevents_command_start(gq, host, monkeypatch, capsys):
+    q = make_queue(gq, host, monkeypatch)
+    marker = host["home"].parent / "must-not-start"
+    ident = q.submit(spec(display_exclusive=True, interactive=True, command=[
+        sys.executable, "-c", "from pathlib import Path; import sys; Path(sys.argv[1]).touch()", str(marker)]))
+    q.tick()
+    monkeypatch.setenv("FAKE_SYSTEMD_SET_PROPERTY_FAIL", "1")
+    monkeypatch.setattr(gq, "Queue", lambda: q)
+    assert gq.main(["_execute", ident]) == 2
+    assert q.get(ident)["status"] == "starting"
+    assert not marker.exists()
+    report = capsys.readouterr().err
+    assert "приоритет игры" in report and "fake property update failed" in report
+    assert "Traceback" not in report
+
+
+@pytest.mark.parametrize("phase", ["command", "orphan"])
+def test_interactive_helper_timeout_stops_children_without_systemd_timer(gq, host, monkeypatch, phase):
+    q = make_queue(gq, host, monkeypatch)
+    marker = host["home"].parent / "started"
+    source = ("from pathlib import Path; import sys,time; Path(sys.argv[1]).touch(); time.sleep(5)"
+              if phase == "command" else
+              "from pathlib import Path; import subprocess,sys; "
+              "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(5)']); "
+              "Path(sys.argv[1]).write_text(str(child.pid))")
+    ident = q.submit(spec(display_exclusive=True, interactive=True, maximum=1,
+                         command=[sys.executable, "-c", source, str(marker)]))
+    q.tick()
+    systemd_state(host, ident, RuntimeMaxUSec="infinity")
+    command = None
+    stopped = False
+    checking_orphans = False
+    original_popen, original_systemctl = gq.subprocess.Popen, gq.systemctl
+
+    def spawn(argv, *args, **kwargs):
+        nonlocal command
+        process = original_popen(argv, *args, **kwargs)
+        if "_command" in argv:
+            command = process
+        return process
+
+    def stop_unit(*args):
+        nonlocal stopped
+        result = original_systemctl(*args)
+        if args[0] == "stop":
+            stopped = True
+            os.kill(command.pid if phase == "command" else int(marker.read_text()), signal.SIGTERM)
+        return result
+
+    def has_orphans(_job_id):
+        nonlocal checking_orphans
+        checking_orphans = True
+        return phase == "orphan" and not stopped
+
+    monkeypatch.setattr(gq.subprocess, "Popen", spawn)
+    monkeypatch.setattr(gq, "systemctl", stop_unit)
+    monkeypatch.setattr(gq, "unit_has_children", has_orphans)
+    monkeypatch.setattr(gq.time, "monotonic", lambda: (
+        1002 if (marker.exists() if phase == "command" else checking_orphans) else 1000))
+    try:
+        gq.execute(q, ident)
+        assert marker.exists() and stopped
+        assert q.get(ident)["cancel_reason"] == "timeout"
+        q.finish(ident, "success")
+        assert q.get(ident)["status"] == "timeout" and q.get(ident)["code"] == 124
+    finally:
+        if command is not None and command.poll() is None:
+            command.terminate()
+            command.wait()
+        if phase == "orphan" and marker.exists() and not stopped:
+            try:
+                os.kill(int(marker.read_text()), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+
+def test_interactive_wait_reports_current_window_owners(queue, gq, monkeypatch, capsys):
+    game = start(queue, name="e2e stage", owner="other-session", display=True)
+    start(queue, "batch", name="background-training")
+    player = enqueue(queue, interactive=True, display_exclusive=True)
+    monkeypatch.setattr(gq.time, "sleep", lambda _seconds: queue.cancel(player, "session-a"))
+    assert gq.wait_job(queue, player) == 143
+    report = capsys.readouterr().err
+    assert "ждём игры" in report
+    assert game in report and "other-session" in report and "e2e stage" in report
+    assert "background-training" not in report
+
+
+def test_starting_units_reserve_slots_and_receive_their_slot_environment(gq, host, monkeypatch):
+    q = make_queue(gq, host, monkeypatch)
+    monkeypatch.setenv("GQ_DISPLAY_SLOT", "99")
+    running = [q.submit(spec(display=True, display_shared=True)) for _ in range(3)]
+    waiting = q.submit(spec(display=True, display_shared=True))
+    q.tick()
+    assert all(q.get(ident)["status"] == "starting" for ident in running)
+    assert q.get(waiting)["status"] == "queued"
+    arguments = calls(host, "systemd-run")
+    assert len(arguments) == 3
+    for slot, args in enumerate(arguments):
+        assert f"--setenv=GQ_DISPLAY_SLOT={slot}" in args
+        assert "--setenv=GQ_DISPLAY_SLOT=99" not in args
+
+
+@pytest.mark.parametrize("action", ["run", "submit"])
+def test_cli_display_shared_allows_two_games_together(gq, host, monkeypatch, action):
+    q = make_queue(gq, host, monkeypatch)
+    monkeypatch.setattr(gq, "Queue", lambda: q)
+    monkeypatch.setattr(gq, "spawn_pump", lambda *_: None)
+    monkeypatch.setattr(gq, "wait_job", lambda *_args, **_kwargs: 0)
+    for _ in range(2):
+        assert gq.main([action, "--class", "quick", "--threads", "4", "--mem", "5G",
+                        "--display", "--display-shared", "--max", "1m", "--name", "shared",
+                        "--", "true"]) == 0
+    q.tick()
+    assert all(job["status"] == "starting" and job["display_shared"] for job in q.jobs())
+    assert {job["display_slot"] for job in q.jobs()} == {0, 1}
+
+
+@pytest.mark.parametrize("action", ["run", "submit"])
+def test_cli_display_exclusive_claims_the_display_without_requiring_display_flag(
+        gq, host, monkeypatch, action):
+    q = make_queue(gq, host, monkeypatch)
+    monkeypatch.setattr(gq, "Queue", lambda: q)
+    monkeypatch.setattr(gq, "spawn_pump", lambda *_: None)
+    monkeypatch.setattr(gq, "wait_job", lambda *_args, **_kwargs: 0)
+    assert gq.main([action, "--class", "quick", "--threads", "4", "--mem", "5G",
+                    "--display-exclusive", "--max", "1m", "--name", "exclusive",
+                    "--", "true"]) == 0
+    job = q.jobs()[0]
+    assert job["display"] and job["display_exclusive"]
+    q.tick()
+    assert job["id"] == q.jobs()[0]["id"] and q.jobs()[0]["display_slot"] == 0
+    assert "--setenv=GQ_DISPLAY_SLOT=0" in calls(host, "systemd-run")[0]
+
+
+def test_non_display_units_do_not_inherit_an_outer_display_slot(gq, host, monkeypatch):
+    monkeypatch.setenv("GQ_DISPLAY_SLOT", "2")
+    q = make_queue(gq, host, monkeypatch)
+    q.submit(spec())
+    q.tick()
+    assert not any(arg.startswith("--setenv=GQ_DISPLAY_SLOT=")
+                   for arg in calls(host, "systemd-run")[0])
 
 
 @pytest.mark.parametrize("action", ["run", "submit"])
@@ -1079,9 +1525,160 @@ def test_execute_keeps_the_user_commands_nonzero_exit_code(gq, host, monkeypatch
     previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
         assert gq.execute(q, ident) == 7
+        assert not any("set-property" in args for args in calls(host, "systemctl"))
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
+
+
+@pytest.mark.parametrize("action", ["run", "submit"])
+def test_archive_options_require_absolute_paths_below_local_root(gq, queue, monkeypatch, tmp_path, action):
+    root = tmp_path / "local"
+    root.mkdir()
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    arguments = [action, "--class", "quick", "--threads", "1", "--mem", "1G",
+                 "--max", "1m", "--name", "archive"]
+    args = gq.parser().parse_args(arguments + ["--archive", str(root / "one"),
+                                             "--archive", str(root / "two"), "--", "true"])
+    ident = queue.submit(dict(spec(), archive=args.archive))
+    assert queue.get(ident)["archive"] == [str(root / "one"), str(root / "two")]
+    for invalid in (root, tmp_path / "outside", Path("relative")):
+        with pytest.raises(gq.QueueError, match="absolute|local root"):
+            queue.submit(dict(spec(), archive=[str(invalid)]))
+    assert len(queue.jobs()) == 1
+
+
+@pytest.mark.parametrize("code,first_missing", [(0, False), (7, False), (17, True)])
+def test_archive_after_command_preserves_exit_code_and_logs_each_result(
+        gq, host, monkeypatch, tmp_path, code, first_missing, capsys):
+    root, nas = tmp_path / "local", tmp_path / "nas"
+    root.mkdir()
+    nas.mkdir()
+    mounts = tmp_path / "mounts"
+    mounts.write_text(f"//server/share {nas} cifs rw 0 0\n")
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    monkeypatch.setenv("GOTHIC_NAS_ROOT", str(nas))
+    monkeypatch.setenv("GOTHIC_NAS_MOUNTS", str(mounts))
+    archiver = gq.archive_module()
+    monkeypatch.setattr(archiver.shutil, "disk_usage", lambda _path: type("Usage", (), {"free": 10**9})())
+    first, second = root / "first", root / "second"
+    if not first_missing:
+        first.mkdir()
+        (first / "data").write_bytes(b"first")
+    second.mkdir()
+    q = make_queue(gq, host, monkeypatch)
+    command = [sys.executable, "-c", "from pathlib import Path; "
+               f"Path({str(second / 'data')!r}).write_bytes(b'second'); raise SystemExit({code})"]
+    ident = q.submit(dict(spec(command=command), archive=[str(first), str(second)]))
+    q.tick()
+    assert second.exists() and not (nas / "second").exists()
+    assert gq.execute(q, ident) == code
+    assert second.exists(), "transfer must start after the command completes"
+    monkeypatch.setattr(gq, "unit_cgroup", lambda job_id: f"/gq-{job_id}.service")
+    q.finish(ident, "success" if code == 0 else "exit-code", "exited", str(code))
+    assert q.get(ident)["code"] == code
+    assert not second.exists() and (nas / "second" / "data").read_bytes() == b"second"
+    outcomes = [record for record in records(q) if record["event"] == "archive"]
+    assert [(record["outcome"], record["bytes"]) for record in outcomes] == [
+        ("error", 0) if first_missing else ("moved", 5), ("moved", 6)]
+    properties = dict(value.removeprefix("--property=").split("=", 1)
+                      for value in calls(host, "systemd-run")[0] if value.startswith("--property="))
+    assert properties["RuntimeMaxSec"] == "75s" and properties["TimeoutStopSec"] == "60"
+    assert properties["NotifyAccess"] == "exec"
+    q.finish(ident, "success")
+    assert len([record for record in records(q) if record["event"] == "archive"]) == 2
+    monkeypatch.setattr(gq, "Queue", lambda: q)
+    assert gq.main(["logs", ident]) == 0
+    output = capsys.readouterr().out
+    assert "6 bytes" in output and str(second) in output
+    assert ("warning: archive" in output) == first_missing
+
+
+def test_reconcile_missing_unit_skips_archive_from_another_process(gq, host, monkeypatch, tmp_path):
+    root = tmp_path / "local"
+    source = root / "results"
+    source.mkdir(parents=True)
+    (source / "data").write_bytes(b"keep")
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    q = make_queue(gq, host, monkeypatch)
+    ident = q.submit(dict(spec(), archive=[str(source)]))
+    q.tick()
+    assert q.started(ident)
+    with q.transaction() as state:
+        state["jobs"][0]["reserved"] -= 10
+    (host["systemd"] / f"gq-{ident}.json").unlink()
+    moved = tmp_path / "move-called"
+    recovery = (
+        "import gq\nfrom pathlib import Path\n"
+        f"gq.archive_module().move = lambda *args, **kwargs: Path({str(moved)!r}).write_text('called')\n"
+        f"gq.Queue(proc_locks={str(host['locks'])!r}).reconcile()\n"
+    )
+    result = subprocess.run([sys.executable, "-c", recovery], cwd=SCRIPT.parent,
+                            env={**host["env"], "GQ_OWNER": "another-process"},
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert not moved.exists()
+    assert (source / "data").read_bytes() == b"keep"
+    assert q.get(ident)["status"] == "failed"
+    assert q.get(ident)["code"] == 1
+    outcomes = [record for record in records(q) if record["event"] == "archive"]
+    assert [(record["directory"], record["outcome"], record["bytes"]) for record in outcomes] == [
+        (str(source), "skipped", 0)]
+    line = f"gq: warning: archive {source}: skipped after recovery; local data kept (0 bytes)"
+    assert (q.home / "logs" / f"{ident}.log").read_text() == line + "\n"
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_cancelled_jobs_do_not_archive(gq, queue, monkeypatch, tmp_path, running):
+    root = tmp_path / "local"
+    source = root / "results"
+    source.mkdir(parents=True)
+    (source / "data").write_bytes(b"keep")
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    ident = queue.submit(dict(spec(), archive=[str(source)]))
+    if running:
+        queue.tick()
+    queue.cancel(ident, "session-a")
+    queue.finish(ident, "signal", "killed", "15")
+    assert source.exists() and (source / "data").read_bytes() == b"keep"
+    assert queue.get(ident)["status"] == "cancelled"
+    assert not any(record["event"] == "archive" for record in records(queue))
+
+
+def test_archive_extends_stop_timeout_only_during_transfer(gq, host, monkeypatch, tmp_path):
+    root = tmp_path / "local"
+    root.mkdir()
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    q = make_queue(gq, host, monkeypatch)
+    plain = q.submit(spec())
+    ident = q.submit(dict(spec(), archive=[str(root / "results")]))
+    q.tick()
+    q.started(plain)
+    q.started(ident)
+    properties = [dict(value.removeprefix("--property=").split("=", 1)
+                       for value in args if value.startswith("--property="))
+                  for args in calls(host, "systemd-run")]
+    assert "NotifyAccess" not in properties[0] and properties[1]["NotifyAccess"] == "exec"
+    with tempfile.TemporaryDirectory(prefix="gq-notify-") as temporary:
+        address = str(Path(temporary) / "notify")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as receiver:
+            receiver.bind(address)
+            receiver.settimeout(2)
+            monkeypatch.setenv("NOTIFY_SOCKET", address)
+            q.finish(plain, "success")
+            receiver.setblocking(False)
+            with pytest.raises(BlockingIOError):
+                receiver.recv(1024)
+            receiver.settimeout(2)
+
+            def transfer(_job):
+                assert receiver.recv(1024) == b"EXTEND_TIMEOUT_USEC=60000000"
+                assert any(thread.name == "gq-archive-timeout" for thread in threading.enumerate())
+
+            monkeypatch.setattr(q, "archive", transfer)
+            monkeypatch.setattr(gq, "unit_cgroup", lambda job_id: f"/gq-{job_id}.service")
+            q.finish(ident, "success")
+            assert not any(thread.name == "gq-archive-timeout" for thread in threading.enumerate())
 
 
 def test_execute_forwards_term_to_a_command_that_has_already_started(gq, host, monkeypatch):
@@ -1222,13 +1819,27 @@ def test_wait_streams_log_and_returns_command_exit_code(queue, gq, capsys):
 
 def test_status_exposes_owner_class_resources_limit_and_estimate(queue, gq, capsys):
     ident = start(queue, "batch", owner="visible-owner", threads=12, mem=8 * GIB,
-                  gpu_mem=2 * GIB, display=True, maximum=90)
+                  gpu_mem=2 * GIB, display=True, display_shared=True, maximum=90)
     gq.status(queue)
     output = capsys.readouterr().out
     assert ident in output and "visible-owner" in output
     assert "batch" in output and "running" in output
     assert "12t 8G gpu=2G окно=1" in output
+    assert "слот=0" in output
     assert "90s" in output and "ОЦЕНКА" in output
+    assert f"Disk {queue.local_root}: free 100.0G; minimum 20G" in output
+    assert "Disk /: free 100.0G; minimum 20G" in output
+
+
+@pytest.mark.parametrize("persisted", [False, True])
+def test_status_marks_legacy_display_as_all_slots(queue, gq, capsys, persisted):
+    ident = start(queue, display=True)
+    if persisted:
+        with queue.transaction() as state:
+            next(job for job in state["jobs"] if job["id"] == ident).pop("display_shared")
+    gq.status(queue)
+    line = next(line for line in capsys.readouterr().out.splitlines() if ident in line)
+    assert "окно=все" in line
 
 
 def test_fairness_only_counts_other_sessions_still_waiting(queue):
@@ -1464,6 +2075,37 @@ def test_unit_lock_holder_detects_orphaned_children_in_its_own_cgroup(gq, tmp_pa
     assert not gq.unit_has_children("abc", membership, tmp_path)
     (group / "cgroup.procs").unlink()
     assert gq.unit_has_children("abc", membership, tmp_path), "unreadable unit fails closed"
+
+
+def test_finish_journals_oom_kill_count_and_memory_peak_from_its_unit(
+        queue, gq, tmp_path, monkeypatch):
+    ident = start(queue, display=True, display_shared=True)
+    group = f"/user.slice/gq-{ident}.service"
+    directory = tmp_path / group.lstrip("/")
+    directory.mkdir(parents=True)
+    (directory / "memory.events").write_text("low 0\nhigh 0\nmax 7\noom 2\noom_kill 1\n")
+    (directory / "memory.peak").write_text("1832411136\n")
+    membership = tmp_path / "membership"
+    membership.write_text(f"0::{group}\n")
+    assert gq.unit_cgroup(ident, membership) == group
+    assert gq.unit_cgroup("another", membership) is None
+    original_stats = gq.cgroup_memory_stats
+    monkeypatch.setattr(gq, "unit_cgroup", lambda _ident: group)
+    monkeypatch.setattr(gq, "cgroup_memory_stats",
+                        lambda job_id, saved: original_stats(job_id, saved, tmp_path))
+    queue.finish(ident, "signal", "killed", "9")
+    finished = records(queue)[-1]
+    assert finished["oom_kill"] == 1 and finished["memory_peak"] == 1832411136
+    assert finished["code"] == 137 and finished["display_slot"] == 0
+
+
+def test_missing_cgroup_counters_are_unknown_instead_of_zero(queue, gq, tmp_path):
+    assert gq.cgroup_memory_stats("missing", "/missing", tmp_path) == {
+        "oom_kill": None, "memory_peak": None}
+    ident = start(queue)
+    queue.finish(ident, "success")
+    finished = records(queue)[-1]
+    assert finished["oom_kill"] is None and finished["memory_peak"] is None
 
 
 def test_reconcile_prunes_a_thousand_old_jobs_but_wait_and_logs_use_the_archive(

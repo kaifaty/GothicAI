@@ -1,0 +1,1328 @@
+[
+  {
+    "label": "crimes-1",
+    "run": "20261019T051106Z-53629",
+    "scenario": "crimes",
+    "included": true,
+    "note": "FPS below 5 for six windows; show separately from typical render",
+    "pid": 3438197,
+    "world_load_s": 4.782812558987644,
+    "bridge_connect_s": 4.83319825399667,
+    "sampled_lifetime_s": 110.47708199999761,
+    "fps": 21.72672908962153,
+    "steady_fps": 17.903706209018406,
+    "fps_windows": 10,
+    "checks": [
+      "28",
+      "0"
+    ],
+    "phases": {
+      "game": {
+        "samples": 103,
+        "seconds": 105.392408,
+        "cores": 0.5753734356313976,
+        "rss_mean_mib": 2607.4236213592235,
+        "rss_peak_mib": 3381.508,
+        "gpu_sm_pct": 16.142857142857142,
+        "vram_peak_mib": 1223.0,
+        "gpu_board_pct": 16.66990291262136,
+        "gpu_board_max_pct": 100.0,
+        "pmon_samples": 103,
+        "gpu_sm_known_samples": 35,
+        "fps30plus_seconds": 22.547135,
+        "fps30plus_cores": 1.733701173072233,
+        "vram_whole_process_peak_mib": 1223.0
+      },
+      "server": {
+        "samples": 103,
+        "seconds": 105.392408,
+        "cores": 0.03624551834926288,
+        "rss_mean_mib": 243.1357572815534,
+        "rss_peak_mib": 245.441,
+        "fps30plus_seconds": 22.547135,
+        "fps30plus_cores": 0.08515495551372713
+      }
+    },
+    "top_threads": [
+      {
+        "tid": 3438197,
+        "comm": "Main thread",
+        "main": true,
+        "cpu_s": 20.07000000000008,
+        "cores": 0.19043117413163269
+      },
+      {
+        "tid": 3438685,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 1.57,
+        "cores": 0.014896708688921881
+      },
+      {
+        "tid": 3440706,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 1.51,
+        "cores": 0.014327407719918497
+      },
+      {
+        "tid": 3438208,
+        "comm": "Main thread",
+        "main": false,
+        "cpu_s": 1.440000000000001,
+        "cores": 0.013663223256081226
+      },
+      {
+        "tid": 3439775,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 1.4,
+        "cores": 0.013283689276745626
+      },
+      {
+        "tid": 3439061,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 1.03,
+        "cores": 0.009772999967891426
+      },
+      {
+        "tid": 3438938,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 1.02,
+        "cores": 0.009678116473057528
+      },
+      {
+        "tid": 3438420,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 0.98,
+        "cores": 0.009298582493721938
+      },
+      {
+        "tid": 3438360,
+        "comm": "Workers [1]",
+        "main": false,
+        "cpu_s": 0.9200000000000002,
+        "cores": 0.008729281524718555
+      },
+      {
+        "tid": 3438362,
+        "comm": "Workers [3]",
+        "main": false,
+        "cpu_s": 0.9100000000000001,
+        "cores": 0.008634398029884659
+      }
+    ],
+    "queue": {
+      "id": "b5f0740313a5",
+      "name": "e2e crimes",
+      "class": "quiet",
+      "threads": 4,
+      "mem": 5368709120,
+      "gpu_mem": 2147483648,
+      "display": true,
+      "display_exclusive": true,
+      "display_slot": 0,
+      "submitted": 1792386670.9523883,
+      "start": 1792387314.867654,
+      "time": 1792387429.2766829,
+      "code": 0,
+      "reason": "done",
+      "wait": 643.9152657985687,
+      "duration": 114.409019947052,
+      "oom_kill": 0,
+      "memory_peak": 2994941952,
+      "run": "20261019T051106Z-53629",
+      "other_gq_overlap_ids": []
+    },
+    "server_accept_s": 0.4332020829897374
+  },
+  {
+    "label": "crimes-2",
+    "run": "20261019T052353Z-24716",
+    "scenario": "crimes",
+    "included": true,
+    "note": "",
+    "pid": 3452641,
+    "world_load_s": 4.761757956002839,
+    "bridge_connect_s": 4.862520429014694,
+    "sampled_lifetime_s": 48.08366699999897,
+    "fps": 68.43669605614807,
+    "steady_fps": 72.37543298694378,
+    "fps_windows": 4,
+    "checks": [
+      "28",
+      "0"
+    ],
+    "phases": {
+      "game": {
+        "samples": 42,
+        "seconds": 43.07023,
+        "cores": 1.7425027846893084,
+        "rss_mean_mib": 2420.130833333333,
+        "rss_peak_mib": 3296.605,
+        "gpu_sm_pct": 16.393939393939394,
+        "vram_peak_mib": 1223.0,
+        "gpu_board_pct": 19.523809523809526,
+        "gpu_board_max_pct": 99.0,
+        "pmon_samples": 42,
+        "gpu_sm_known_samples": 33,
+        "fps30plus_seconds": 31.792773,
+        "fps30plus_cores": 1.8044980060364977,
+        "vram_whole_process_peak_mib": 1223.0
+      },
+      "server": {
+        "samples": 41,
+        "seconds": 42.042727,
+        "cores": 0.0949034368769181,
+        "rss_mean_mib": 240.8740243902439,
+        "rss_peak_mib": 242.113,
+        "fps30plus_seconds": 31.792773,
+        "fps30plus_cores": 0.09121564659559579
+      }
+    },
+    "top_threads": [
+      {
+        "tid": 3452641,
+        "comm": "Main thread",
+        "main": true,
+        "cpu_s": 26.91999999999999,
+        "cores": 0.6250256847943461
+      },
+      {
+        "tid": 3453434,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 1.6400000000000001,
+        "cores": 0.038077344838882914
+      },
+      {
+        "tid": 3453771,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 1.58,
+        "cores": 0.03668427124721647
+      },
+      {
+        "tid": 3452939,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 1.56,
+        "cores": 0.03621991338332765
+      },
+      {
+        "tid": 3452744,
+        "comm": "Workers [12]",
+        "main": false,
+        "cpu_s": 1.42,
+        "cores": 0.03296940833610593
+      },
+      {
+        "tid": 3452741,
+        "comm": "Workers [9]",
+        "main": false,
+        "cpu_s": 1.3500000000000003,
+        "cores": 0.031344155812495084
+      },
+      {
+        "tid": 3452745,
+        "comm": "Workers [13]",
+        "main": false,
+        "cpu_s": 1.3400000000000003,
+        "cores": 0.031111976880550677
+      },
+      {
+        "tid": 3452743,
+        "comm": "Workers [11]",
+        "main": false,
+        "cpu_s": 1.3300000000000003,
+        "cores": 0.03087979794860627
+      },
+      {
+        "tid": 3452735,
+        "comm": "Workers [3]",
+        "main": false,
+        "cpu_s": 1.3200000000000003,
+        "cores": 0.03064761901666186
+      },
+      {
+        "tid": 3452733,
+        "comm": "Workers [1]",
+        "main": false,
+        "cpu_s": 1.31,
+        "cores": 0.030415440084717447
+      }
+    ],
+    "queue": {
+      "id": "3c573d56a8bd",
+      "name": "e2e crimes",
+      "class": "quiet",
+      "threads": 4,
+      "mem": 5368709120,
+      "gpu_mem": 2147483648,
+      "display": true,
+      "display_exclusive": true,
+      "display_slot": 0,
+      "submitted": 1792387437.059161,
+      "start": 1792387664.1822553,
+      "time": 1792387715.3760715,
+      "code": 0,
+      "reason": "done",
+      "wait": 227.12309432029724,
+      "duration": 51.19380760192871,
+      "oom_kill": 0,
+      "memory_peak": 3021496320,
+      "run": "20261019T052353Z-24716",
+      "other_gq_overlap_ids": []
+    },
+    "server_accept_s": 0.465654366009403
+  },
+  {
+    "label": "fight_reactions_bandits-1",
+    "run": "20261019T052840Z-68378",
+    "scenario": "fight_reactions_bandits",
+    "included": true,
+    "note": "",
+    "pid": 3483947,
+    "world_load_s": 5.932824541057926,
+    "bridge_connect_s": 5.983441325020976,
+    "sampled_lifetime_s": 28.23638600006234,
+    "fps": 100.62484378905272,
+    "steady_fps": 122.96311106668,
+    "fps_windows": 2,
+    "checks": [
+      "6",
+      "1"
+    ],
+    "phases": {
+      "game": {
+        "samples": 21,
+        "seconds": 21.64637,
+        "cores": 2.8628357008079415,
+        "rss_mean_mib": 1405.1755238095238,
+        "rss_peak_mib": 1411.98,
+        "gpu_sm_pct": 17.61904761904762,
+        "vram_peak_mib": 845.0,
+        "gpu_board_pct": 28.142857142857142,
+        "gpu_board_max_pct": 47.0,
+        "pmon_samples": 21,
+        "gpu_sm_known_samples": 21,
+        "fps30plus_seconds": 12.369716,
+        "fps30plus_cores": 2.856977609392002,
+        "vram_whole_process_peak_mib": 845.0
+      },
+      "server": {
+        "samples": 20,
+        "seconds": 20.615519,
+        "cores": 0.08246211143299376,
+        "rss_mean_mib": 237.24405000000002,
+        "rss_peak_mib": 239.203,
+        "fps30plus_seconds": 12.369716,
+        "fps30plus_cores": 0.08892686159439717
+      }
+    },
+    "top_threads": [
+      {
+        "tid": 3483947,
+        "comm": "Main thread",
+        "main": true,
+        "cpu_s": 20.210000000000004,
+        "cores": 0.9336438395906567
+      },
+      {
+        "tid": 3484140,
+        "comm": "Workers [10]",
+        "main": false,
+        "cpu_s": 2.41,
+        "cores": 0.11133506449349244
+      },
+      {
+        "tid": 3484135,
+        "comm": "Workers [5]",
+        "main": false,
+        "cpu_s": 2.4000000000000004,
+        "cores": 0.11087309327152775
+      },
+      {
+        "tid": 3484139,
+        "comm": "Workers [9]",
+        "main": false,
+        "cpu_s": 2.3600000000000008,
+        "cores": 0.10902520838366898
+      },
+      {
+        "tid": 3484141,
+        "comm": "Workers [11]",
+        "main": false,
+        "cpu_s": 2.3500000000000005,
+        "cores": 0.10856323716170427
+      },
+      {
+        "tid": 3484144,
+        "comm": "Workers [14]",
+        "main": false,
+        "cpu_s": 2.3400000000000003,
+        "cores": 0.10810126593973955
+      },
+      {
+        "tid": 3484136,
+        "comm": "Workers [6]",
+        "main": false,
+        "cpu_s": 2.33,
+        "cores": 0.10763929471777485
+      },
+      {
+        "tid": 3484130,
+        "comm": "Workers [0]",
+        "main": false,
+        "cpu_s": 2.3000000000000007,
+        "cores": 0.10625338105188079
+      },
+      {
+        "tid": 3484133,
+        "comm": "Workers [3]",
+        "main": false,
+        "cpu_s": 2.3000000000000007,
+        "cores": 0.10625338105188079
+      },
+      {
+        "tid": 3484132,
+        "comm": "Workers [2]",
+        "main": false,
+        "cpu_s": 2.3000000000000003,
+        "cores": 0.10625338105188076
+      }
+    ],
+    "queue": {
+      "id": "2e74594e1cda",
+      "name": "e2e fight_reactions_bandits",
+      "class": "quiet",
+      "threads": 4,
+      "mem": 5368709120,
+      "gpu_mem": 2147483648,
+      "display": true,
+      "display_exclusive": true,
+      "display_slot": 0,
+      "submitted": 1792388377.3370006,
+      "start": 1792389052.204448,
+      "time": 1792389084.3618977,
+      "code": 1,
+      "reason": "failed",
+      "wait": 674.8674473762512,
+      "duration": 32.157440423965454,
+      "oom_kill": 0,
+      "memory_peak": 1080233984,
+      "run": "20261019T052840Z-68378",
+      "other_gq_overlap_ids": []
+    },
+    "server_accept_s": 0.4961500480421819
+  },
+  {
+    "label": "fight_reactions_bandits-2",
+    "run": "20261019T055128Z-64408",
+    "scenario": "fight_reactions_bandits",
+    "included": true,
+    "note": "",
+    "pid": 3491038,
+    "world_load_s": 5.883460736949928,
+    "bridge_connect_s": 5.933951514947694,
+    "sampled_lifetime_s": 27.987254999985453,
+    "fps": 102.48850689586249,
+    "steady_fps": 127.02378572856286,
+    "fps_windows": 2,
+    "checks": [
+      "6",
+      "1"
+    ],
+    "phases": {
+      "game": {
+        "samples": 21,
+        "seconds": 21.649913,
+        "cores": 2.8817668377943133,
+        "rss_mean_mib": 1415.8573333333334,
+        "rss_peak_mib": 1423.352,
+        "gpu_sm_pct": 16.68421052631579,
+        "vram_peak_mib": 845.0,
+        "gpu_board_pct": 26.095238095238095,
+        "gpu_board_max_pct": 36.0,
+        "pmon_samples": 21,
+        "gpu_sm_known_samples": 19,
+        "fps30plus_seconds": 12.369491,
+        "fps30plus_cores": 2.9023024379813203,
+        "vram_whole_process_peak_mib": 845.0
+      },
+      "server": {
+        "samples": 21,
+        "seconds": 21.649913,
+        "cores": 0.13117823117534005,
+        "rss_mean_mib": 230.9005238095238,
+        "rss_peak_mib": 237.789,
+        "fps30plus_seconds": 12.369491,
+        "fps30plus_cores": 0.10913943840316469
+      }
+    },
+    "top_threads": [
+      {
+        "tid": 3491038,
+        "comm": "Main thread",
+        "main": true,
+        "cpu_s": 20.31,
+        "cores": 0.9381100053381276
+      },
+      {
+        "tid": 3491166,
+        "comm": "Workers [2]",
+        "main": false,
+        "cpu_s": 2.43,
+        "cores": 0.11224063579377894
+      },
+      {
+        "tid": 3491165,
+        "comm": "Workers [1]",
+        "main": false,
+        "cpu_s": 2.4000000000000004,
+        "cores": 0.11085494893212736
+      },
+      {
+        "tid": 3491172,
+        "comm": "Workers [8]",
+        "main": false,
+        "cpu_s": 2.380000000000001,
+        "cores": 0.10993115769102632
+      },
+      {
+        "tid": 3491179,
+        "comm": "Workers [15]",
+        "main": false,
+        "cpu_s": 2.3500000000000005,
+        "cores": 0.10854547082937471
+      },
+      {
+        "tid": 3491173,
+        "comm": "Workers [9]",
+        "main": false,
+        "cpu_s": 2.3400000000000007,
+        "cores": 0.1080835752088242
+      },
+      {
+        "tid": 3491164,
+        "comm": "Workers [0]",
+        "main": false,
+        "cpu_s": 2.3400000000000003,
+        "cores": 0.10808357520882417
+      },
+      {
+        "tid": 3491178,
+        "comm": "Workers [14]",
+        "main": false,
+        "cpu_s": 2.3400000000000003,
+        "cores": 0.10808357520882417
+      },
+      {
+        "tid": 3491176,
+        "comm": "Workers [12]",
+        "main": false,
+        "cpu_s": 2.3200000000000003,
+        "cores": 0.1071597839677231
+      },
+      {
+        "tid": 3491174,
+        "comm": "Workers [10]",
+        "main": false,
+        "cpu_s": 2.2700000000000005,
+        "cores": 0.10485030586497046
+      }
+    ],
+    "queue": {
+      "id": "04200f9ac5dd",
+      "name": "e2e fight_reactions_bandits",
+      "class": "quiet",
+      "threads": 4,
+      "mem": 5368709120,
+      "gpu_mem": 2147483648,
+      "display": true,
+      "display_exclusive": true,
+      "display_slot": 0,
+      "submitted": 1792389092.204091,
+      "start": 1792389316.388295,
+      "time": 1792389347.7074075,
+      "code": 1,
+      "reason": "failed",
+      "wait": 224.18420386314392,
+      "duration": 31.31910514831543,
+      "oom_kill": 0,
+      "memory_peak": 1048432640,
+      "run": "20261019T055128Z-64408",
+      "other_gq_overlap_ids": []
+    },
+    "server_accept_s": 0.4841932449489832
+  },
+  {
+    "label": "stages-1",
+    "run": "20261019T044436Z-22170",
+    "scenario": "stages",
+    "included": false,
+    "note": "pilot: process GPU counters absent",
+    "pid": 3423926,
+    "world_load_s": 4.859380407026038,
+    "bridge_connect_s": 4.909758500987664,
+    "sampled_lifetime_s": 14.0667395000346,
+    "fps": 71.59284071592842,
+    "steady_fps": null,
+    "fps_windows": 1,
+    "checks": [
+      "7",
+      "0"
+    ],
+    "phases": {
+      "game": {
+        "samples": 8,
+        "seconds": 8.199766,
+        "cores": 2.3159195012672313,
+        "rss_mean_mib": 1534.89325,
+        "rss_peak_mib": 1752.414,
+        "gpu_sm_pct": null,
+        "vram_peak_mib": null,
+        "gpu_board_pct": 19.0,
+        "gpu_board_max_pct": 37.0,
+        "pmon_samples": 0,
+        "gpu_sm_known_samples": 0,
+        "fps30plus_seconds": 4.090906,
+        "fps30plus_cores": 1.701334741376849,
+        "vram_whole_process_peak_mib": null
+      },
+      "server": {
+        "samples": 8,
+        "seconds": 8.199766,
+        "cores": 0.15976067590001958,
+        "rss_mean_mib": 234.611625,
+        "rss_peak_mib": 253.137,
+        "fps30plus_seconds": 4.090906,
+        "fps30plus_cores": 0.1222222970107355
+      }
+    },
+    "top_threads": [
+      {
+        "tid": 3423926,
+        "comm": "Main thread",
+        "main": true,
+        "cpu_s": 6.140000000000001,
+        "cores": 0.7488018560529655
+      },
+      {
+        "tid": 3424105,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 1.62,
+        "cores": 0.1975666134862873
+      },
+      {
+        "tid": 3424053,
+        "comm": "Workers [7]",
+        "main": false,
+        "cpu_s": 0.64,
+        "cores": 0.07805100779705176
+      },
+      {
+        "tid": 3424056,
+        "comm": "Workers [10]",
+        "main": false,
+        "cpu_s": 0.63,
+        "cores": 0.07683146080022284
+      },
+      {
+        "tid": 3424046,
+        "comm": "Workers [0]",
+        "main": false,
+        "cpu_s": 0.61,
+        "cores": 0.07439236680656497
+      },
+      {
+        "tid": 3424055,
+        "comm": "Workers [9]",
+        "main": false,
+        "cpu_s": 0.61,
+        "cores": 0.07439236680656497
+      },
+      {
+        "tid": 3424047,
+        "comm": "Workers [1]",
+        "main": false,
+        "cpu_s": 0.6000000000000001,
+        "cores": 0.07317281980973604
+      },
+      {
+        "tid": 3424052,
+        "comm": "Workers [6]",
+        "main": false,
+        "cpu_s": 0.6,
+        "cores": 0.07317281980973603
+      },
+      {
+        "tid": 3424050,
+        "comm": "Workers [4]",
+        "main": false,
+        "cpu_s": 0.59,
+        "cores": 0.07195327281290709
+      },
+      {
+        "tid": 3424060,
+        "comm": "Workers [14]",
+        "main": false,
+        "cpu_s": 0.59,
+        "cores": 0.07195327281290709
+      }
+    ],
+    "queue": {
+      "id": "e427345a90c5",
+      "name": "e2e stages",
+      "class": "quiet",
+      "threads": 4,
+      "mem": 5368709120,
+      "gpu_mem": 2147483648,
+      "display": true,
+      "display_exclusive": true,
+      "display_slot": 0,
+      "submitted": 1792386227.6916628,
+      "start": 1792386572.1065764,
+      "time": 1792386589.9576054,
+      "code": 0,
+      "reason": "done",
+      "wait": 344.4149136543274,
+      "duration": 17.851020336151123,
+      "oom_kill": 0,
+      "memory_peak": 1408602112,
+      "run": "20261019T044436Z-22170",
+      "other_gq_overlap_ids": []
+    },
+    "server_accept_s": 2.749399373016786
+  },
+  {
+    "label": "stages-2",
+    "run": "20261019T050953Z-49250",
+    "scenario": "stages",
+    "included": false,
+    "note": "pilot: process GPU counters absent",
+    "pid": 3427062,
+    "world_load_s": 4.787691043980885,
+    "bridge_connect_s": 4.838104463997297,
+    "sampled_lifetime_s": 14.218087000015657,
+    "fps": 71.46426786606696,
+    "steady_fps": null,
+    "fps_windows": 1,
+    "checks": [
+      "7",
+      "0"
+    ],
+    "phases": {
+      "game": {
+        "samples": 9,
+        "seconds": 9.229262,
+        "cores": 2.3132952626899095,
+        "rss_mean_mib": 1535.5523333333333,
+        "rss_peak_mib": 1746.102,
+        "gpu_sm_pct": null,
+        "vram_peak_mib": null,
+        "gpu_board_pct": 37.333333333333336,
+        "gpu_board_max_pct": 99.0,
+        "pmon_samples": 0,
+        "gpu_sm_known_samples": 0,
+        "fps30plus_seconds": 5.122263,
+        "fps30plus_cores": 1.819508862110165,
+        "vram_whole_process_peak_mib": null
+      },
+      "server": {
+        "samples": 9,
+        "seconds": 9.229262,
+        "cores": 0.1451903136191171,
+        "rss_mean_mib": 230.98711111111112,
+        "rss_peak_mib": 237.883,
+        "fps30plus_seconds": 5.122263,
+        "fps30plus_cores": 0.1229923425940839
+      }
+    },
+    "top_threads": [
+      {
+        "tid": 3427062,
+        "comm": "Main thread",
+        "main": true,
+        "cpu_s": 6.9399999999999995,
+        "cores": 0.7519561152343491
+      },
+      {
+        "tid": 3427194,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 1.58,
+        "cores": 0.17119461989485182
+      },
+      {
+        "tid": 3427158,
+        "comm": "Workers [9]",
+        "main": false,
+        "cpu_s": 0.7200000000000001,
+        "cores": 0.07801273817993248
+      },
+      {
+        "tid": 3427150,
+        "comm": "Workers [1]",
+        "main": false,
+        "cpu_s": 0.65,
+        "cores": 0.07042816641243904
+      },
+      {
+        "tid": 3427153,
+        "comm": "Workers [4]",
+        "main": false,
+        "cpu_s": 0.63,
+        "cores": 0.06826114590744092
+      },
+      {
+        "tid": 3427162,
+        "comm": "Workers [13]",
+        "main": false,
+        "cpu_s": 0.61,
+        "cores": 0.06609412540244279
+      },
+      {
+        "tid": 3427156,
+        "comm": "Workers [7]",
+        "main": false,
+        "cpu_s": 0.6,
+        "cores": 0.06501061514994373
+      },
+      {
+        "tid": 3427157,
+        "comm": "Workers [8]",
+        "main": false,
+        "cpu_s": 0.6,
+        "cores": 0.06501061514994373
+      },
+      {
+        "tid": 3427160,
+        "comm": "Workers [11]",
+        "main": false,
+        "cpu_s": 0.6,
+        "cores": 0.06501061514994373
+      },
+      {
+        "tid": 3427152,
+        "comm": "Workers [3]",
+        "main": false,
+        "cpu_s": 0.5800000000000001,
+        "cores": 0.06284359464494561
+      }
+    ],
+    "queue": {
+      "id": "9b90b42a32e7",
+      "name": "e2e stages",
+      "class": "quiet",
+      "threads": 4,
+      "mem": 5368709120,
+      "gpu_mem": 2147483648,
+      "display": true,
+      "display_exclusive": true,
+      "display_slot": 0,
+      "submitted": 1792386598.2647786,
+      "start": 1792386643.6422682,
+      "time": 1792386661.4461887,
+      "code": 0,
+      "reason": "done",
+      "wait": 45.37748956680298,
+      "duration": 17.803911447525024,
+      "oom_kill": 0,
+      "memory_peak": 1368018944,
+      "run": "20261019T050953Z-49250",
+      "other_gq_overlap_ids": []
+    },
+    "server_accept_s": 0.44449776702094823
+  },
+  {
+    "label": "stages-cap30-1",
+    "run": "20261019T062621Z-24198",
+    "scenario": "stages",
+    "included": true,
+    "note": "",
+    "pid": 3545732,
+    "world_load_s": 5.148576306994073,
+    "bridge_connect_s": 5.199068131973036,
+    "sampled_lifetime_s": 15.500797999964561,
+    "fps": 26.592022393282015,
+    "steady_fps": null,
+    "fps_windows": 1,
+    "checks": [
+      "7",
+      "0"
+    ],
+    "phases": {
+      "game": {
+        "samples": 10,
+        "seconds": 10.251545,
+        "cores": 0.9881437640430785,
+        "rss_mean_mib": 1518.2426,
+        "rss_peak_mib": 1746.652,
+        "gpu_sm_pct": 15.25,
+        "vram_peak_mib": 973.0,
+        "gpu_board_pct": 21.7,
+        "gpu_board_max_pct": 35.0,
+        "pmon_samples": 10,
+        "gpu_sm_known_samples": 4,
+        "fps30plus_seconds": 0,
+        "fps30plus_cores": null,
+        "vram_whole_process_peak_mib": 973.0
+      },
+      "server": {
+        "samples": 10,
+        "seconds": 10.251545,
+        "cores": 0.12485915195621733,
+        "rss_mean_mib": 229.71259999999998,
+        "rss_peak_mib": 236.359,
+        "fps30plus_seconds": 0,
+        "fps30plus_cores": null
+      }
+    },
+    "top_threads": [
+      {
+        "tid": 3545732,
+        "comm": "Main thread",
+        "main": true,
+        "cpu_s": 3.75,
+        "cores": 0.3657985211009658
+      },
+      {
+        "tid": 3545944,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 0.94,
+        "cores": 0.09169349595597541
+      },
+      {
+        "tid": 3545921,
+        "comm": "Workers [15]",
+        "main": false,
+        "cpu_s": 0.19000000000000003,
+        "cores": 0.01853379173578227
+      },
+      {
+        "tid": 3545913,
+        "comm": "Workers [7]",
+        "main": false,
+        "cpu_s": 0.17,
+        "cores": 0.016582866289910448
+      },
+      {
+        "tid": 3545744,
+        "comm": "Main thread",
+        "main": false,
+        "cpu_s": 0.16,
+        "cores": 0.015607403566974539
+      },
+      {
+        "tid": 3545906,
+        "comm": "Workers [0]",
+        "main": false,
+        "cpu_s": 0.16,
+        "cores": 0.015607403566974539
+      },
+      {
+        "tid": 3545911,
+        "comm": "Workers [5]",
+        "main": false,
+        "cpu_s": 0.16,
+        "cores": 0.015607403566974539
+      },
+      {
+        "tid": 3545920,
+        "comm": "Workers [14]",
+        "main": false,
+        "cpu_s": 0.16,
+        "cores": 0.015607403566974539
+      },
+      {
+        "tid": 3545919,
+        "comm": "Workers [13]",
+        "main": false,
+        "cpu_s": 0.15999999999999998,
+        "cores": 0.015607403566974536
+      },
+      {
+        "tid": 3545916,
+        "comm": "Workers [10]",
+        "main": false,
+        "cpu_s": 0.15000000000000002,
+        "cores": 0.014631940844038632
+      }
+    ],
+    "queue": {
+      "id": "da9fdb9f71da",
+      "name": "e2e stages",
+      "class": "quiet",
+      "threads": 4,
+      "mem": 5368709120,
+      "gpu_mem": 2147483648,
+      "display": true,
+      "display_exclusive": true,
+      "display_slot": 0,
+      "submitted": 1792391186.198135,
+      "start": 1792391775.7509186,
+      "time": 1792391794.8121502,
+      "code": 0,
+      "reason": "done",
+      "wait": 589.5527837276459,
+      "duration": 19.061224222183228,
+      "oom_kill": 0,
+      "memory_peak": 1358163968,
+      "run": "20261019T062621Z-24198",
+      "other_gq_overlap_ids": []
+    },
+    "server_accept_s": 0.48565867298748344,
+    "cap_fps": 30
+  },
+  {
+    "label": "stages-normal-1",
+    "run": "20261019T061801Z-11553",
+    "scenario": "stages",
+    "included": true,
+    "note": "",
+    "pid": 3532598,
+    "world_load_s": 4.8504907750175335,
+    "bridge_connect_s": 4.951237628993113,
+    "sampled_lifetime_s": 14.642335999989882,
+    "fps": 68.07957612716186,
+    "steady_fps": null,
+    "fps_windows": 1,
+    "checks": [
+      "7",
+      "0"
+    ],
+    "phases": {
+      "game": {
+        "samples": 9,
+        "seconds": 9.237804,
+        "cores": 2.3447131326402895,
+        "rss_mean_mib": 1526.6553333333334,
+        "rss_peak_mib": 1757.43,
+        "gpu_sm_pct": 22.428571428571427,
+        "vram_peak_mib": 973.0,
+        "gpu_board_pct": 28.88888888888889,
+        "gpu_board_max_pct": 68.0,
+        "pmon_samples": 9,
+        "gpu_sm_known_samples": 7,
+        "fps30plus_seconds": 5.127678,
+        "fps30plus_cores": 1.9053459256511427,
+        "vram_whole_process_peak_mib": 973.0
+      },
+      "server": {
+        "samples": 9,
+        "seconds": 9.237804,
+        "cores": 0.15588118933341735,
+        "rss_mean_mib": 229.91666666666666,
+        "rss_peak_mib": 236.656,
+        "fps30plus_seconds": 5.127678,
+        "fps30plus_cores": 0.08580879379204388
+      }
+    },
+    "top_threads": [
+      {
+        "tid": 3532598,
+        "comm": "Main thread",
+        "main": true,
+        "cpu_s": 7.0200000000000005,
+        "cores": 0.7599208643093098
+      },
+      {
+        "tid": 3532822,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 0.9,
+        "cores": 0.0974257518345269
+      },
+      {
+        "tid": 3532769,
+        "comm": "Workers [4]",
+        "main": false,
+        "cpu_s": 0.75,
+        "cores": 0.08118812652877241
+      },
+      {
+        "tid": 3532774,
+        "comm": "Workers [9]",
+        "main": false,
+        "cpu_s": 0.73,
+        "cores": 0.07902310982133849
+      },
+      {
+        "tid": 3532779,
+        "comm": "Workers [14]",
+        "main": false,
+        "cpu_s": 0.6900000000000001,
+        "cores": 0.07469307640647063
+      },
+      {
+        "tid": 3532776,
+        "comm": "Workers [11]",
+        "main": false,
+        "cpu_s": 0.68,
+        "cores": 0.07361056805275366
+      },
+      {
+        "tid": 3532772,
+        "comm": "Workers [7]",
+        "main": false,
+        "cpu_s": 0.6799999999999999,
+        "cores": 0.07361056805275365
+      },
+      {
+        "tid": 3532773,
+        "comm": "Workers [8]",
+        "main": false,
+        "cpu_s": 0.6799999999999999,
+        "cores": 0.07361056805275365
+      },
+      {
+        "tid": 3532766,
+        "comm": "Workers [1]",
+        "main": false,
+        "cpu_s": 0.67,
+        "cores": 0.0725280596990367
+      },
+      {
+        "tid": 3532778,
+        "comm": "Workers [13]",
+        "main": false,
+        "cpu_s": 0.6699999999999999,
+        "cores": 0.07252805969903668
+      }
+    ],
+    "queue": {
+      "id": "f353bd0b5cb1",
+      "name": "e2e stages",
+      "class": "quiet",
+      "threads": 4,
+      "mem": 5368709120,
+      "gpu_mem": 2147483648,
+      "display": true,
+      "display_exclusive": true,
+      "display_slot": 0,
+      "submitted": 1792390685.151395,
+      "start": 1792390985.298405,
+      "time": 1792391003.4288478,
+      "code": 0,
+      "reason": "done",
+      "wait": 300.14700984954834,
+      "duration": 18.13043475151062,
+      "oom_kill": 0,
+      "memory_peak": 1594564608,
+      "run": "20261019T061801Z-11553",
+      "other_gq_overlap_ids": []
+    },
+    "server_accept_s": 0.5008126019965857,
+    "cap_fps": null
+  },
+  {
+    "label": "stages-normal-2",
+    "run": "20261019T062329Z-19152",
+    "scenario": "stages",
+    "included": true,
+    "note": "",
+    "pid": 3537295,
+    "world_load_s": 5.264715841971338,
+    "bridge_connect_s": 5.315171387977898,
+    "sampled_lifetime_s": 15.166701999958605,
+    "fps": 66.7,
+    "steady_fps": null,
+    "fps_windows": 1,
+    "checks": [
+      "7",
+      "0"
+    ],
+    "phases": {
+      "game": {
+        "samples": 9,
+        "seconds": 9.246839,
+        "cores": 2.340259486110659,
+        "rss_mean_mib": 1534.2856666666667,
+        "rss_peak_mib": 1762.699,
+        "gpu_sm_pct": 10.0,
+        "vram_peak_mib": 845.0,
+        "gpu_board_pct": 26.444444444444443,
+        "gpu_board_max_pct": 99.0,
+        "pmon_samples": 9,
+        "gpu_sm_known_samples": 7,
+        "fps30plus_seconds": 4.102586,
+        "fps30plus_cores": 1.6282414750779144,
+        "vram_whole_process_peak_mib": 845.0
+      },
+      "server": {
+        "samples": 9,
+        "seconds": 9.246839,
+        "cores": 0.15140306584898905,
+        "rss_mean_mib": 231.88766666666666,
+        "rss_peak_mib": 237.664,
+        "fps30plus_seconds": 4.102586,
+        "fps30plus_cores": 0.07068707132598805
+      }
+    },
+    "top_threads": [
+      {
+        "tid": 3537295,
+        "comm": "Main thread",
+        "main": true,
+        "cpu_s": 7.04,
+        "cores": 0.7613412540220502
+      },
+      {
+        "tid": 3537448,
+        "comm": "Loading thread",
+        "main": false,
+        "cpu_s": 0.97,
+        "cores": 0.10490071255701543
+      },
+      {
+        "tid": 3537440,
+        "comm": "Workers [12]",
+        "main": false,
+        "cpu_s": 0.73,
+        "cores": 0.078945897078991
+      },
+      {
+        "tid": 3537435,
+        "comm": "Workers [7]",
+        "main": false,
+        "cpu_s": 0.71,
+        "cores": 0.07678299578915562
+      },
+      {
+        "tid": 3537428,
+        "comm": "Workers [0]",
+        "main": false,
+        "cpu_s": 0.7000000000000001,
+        "cores": 0.07570154514423795
+      },
+      {
+        "tid": 3537434,
+        "comm": "Workers [6]",
+        "main": false,
+        "cpu_s": 0.7000000000000001,
+        "cores": 0.07570154514423795
+      },
+      {
+        "tid": 3537436,
+        "comm": "Workers [8]",
+        "main": false,
+        "cpu_s": 0.7000000000000001,
+        "cores": 0.07570154514423795
+      },
+      {
+        "tid": 3537437,
+        "comm": "Workers [9]",
+        "main": false,
+        "cpu_s": 0.6900000000000001,
+        "cores": 0.07462009449932026
+      },
+      {
+        "tid": 3537430,
+        "comm": "Workers [2]",
+        "main": false,
+        "cpu_s": 0.68,
+        "cores": 0.07353864385440258
+      },
+      {
+        "tid": 3537431,
+        "comm": "Workers [3]",
+        "main": false,
+        "cpu_s": 0.67,
+        "cores": 0.07245719320948489
+      }
+    ],
+    "queue": {
+      "id": "b706436173f1",
+      "name": "e2e stages",
+      "class": "quiet",
+      "threads": 4,
+      "mem": 5368709120,
+      "gpu_mem": 2147483648,
+      "display": true,
+      "display_exclusive": true,
+      "display_slot": 0,
+      "submitted": 1792391013.8056593,
+      "start": 1792391156.1231458,
+      "time": 1792391175.0000625,
+      "code": 0,
+      "reason": "done",
+      "wait": 142.3174865245819,
+      "duration": 18.87690830230713,
+      "oom_kill": 0,
+      "memory_peak": 1890304000,
+      "run": "20261019T062329Z-19152",
+      "other_gq_overlap_ids": []
+    },
+    "server_accept_s": 0.4978911209618673,
+    "cap_fps": null
+  },
+  {
+    "label": "baseline-1",
+    "scenario": "idle",
+    "run": "baseline-1",
+    "world_load_s": 4.473943942983169,
+    "result": {
+      "ok": true,
+      "loaded": true,
+      "done": true,
+      "simulated_ms": 60033,
+      "reset_wall_ms": 4324,
+      "elapsed_wall_ms": 60020,
+      "max_realtime_lag_ms": 234,
+      "graphics_device_created": false,
+      "window_created": false,
+      "audio_device_created": false,
+      "worker_execution": {
+        "serial": false,
+        "mode": "default_parallel",
+        "worker_pool_created": true,
+        "native_task_parallelism_cap": null
+      },
+      "pid": 3418584,
+      "started_mono_s": 263990.175109563,
+      "loaded_mono_s": 263994.649053506,
+      "process_to_loaded_s": 4.473943942983169,
+      "first_reset_wall_ms": 4324,
+      "exit_code": 0
+    },
+    "phases": {
+      "runner": {
+        "samples": 57,
+        "seconds": 58.185477,
+        "cores": 0.9985309904200664,
+        "rss_mean_mib": 548.4752807017544,
+        "rss_peak_mib": 548.793,
+        "gpu_board_pct": 11.228070175438596,
+        "gpu_context_samples": 0
+      }
+    },
+    "queue": {
+      "id": "c92914879ab9",
+      "name": "headless idle 60s",
+      "class": "quiet",
+      "threads": 4,
+      "mem": 5368709120,
+      "gpu_mem": 0,
+      "display": false,
+      "display_exclusive": false,
+      "display_slot": null,
+      "submitted": 1792385953.9469473,
+      "start": 1792386158.9576802,
+      "time": 1792386224.0691102,
+      "code": 0,
+      "reason": "done",
+      "wait": 205.01073288917542,
+      "duration": 65.11142206192017,
+      "oom_kill": 0,
+      "memory_peak": 444039168,
+      "run": "baseline-1",
+      "other_gq_overlap_ids": []
+    }
+  }
+]

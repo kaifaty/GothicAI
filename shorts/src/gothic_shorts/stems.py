@@ -77,7 +77,8 @@ def speaker_gains(clips: list[Clip]) -> dict[str, float]:
         for index, clip in enumerate(lines):
             inputs += ["-i", str(clip.path)]
             filters.append(f"[{index}:a]aformat=sample_rates={SAMPLE_RATE}:"
-                           f"channel_layouts=stereo,asetpts=PTS-STARTPTS[v{index}]")
+                           f"channel_layouts=stereo,{levels.DUAL_MONO},"
+                           f"asetpts=PTS-STARTPTS[v{index}]")
         samples = sum(round((clip.end - clip.start) * SAMPLE_RATE) for clip in lines)
         repeat = ""
         if 0 < samples < round(0.4 * SAMPLE_RATE):
@@ -123,6 +124,7 @@ def render(clips: list[Clip], tl: Timeline, out: Path) -> Path:
         delay = max(0, round(clip.start * SAMPLE_RATE))
         filters.append(
             f"[{index}:a]aformat=sample_rates={SAMPLE_RATE}:channel_layouts=stereo,"
+            f"{levels.DUAL_MONO},"
             f"asetpts=PTS-STARTPTS,volume={gains[clip.who]:.9f}dB,adeclick=t=1:b=3,"
             f"afade=t=in:d={fade:.9f},afade=t=out:st={duration - fade:.9f}:d={fade:.9f},"
             f"{trim}adelay=delays={delay}S:all=1[v{index}]"

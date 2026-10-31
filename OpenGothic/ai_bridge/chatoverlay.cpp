@@ -2,6 +2,8 @@
 
 #include <Tempest/Application>
 #include <Tempest/Painter>
+#include <Tempest/Pixmap>
+#include <Tempest/Log>
 
 #include <algorithm>
 #include <cstdlib>
@@ -30,6 +32,12 @@ constexpr uint64_t DealFreshMs    = 4000;   // what changed stays marked this lo
 constexpr auto     DealParchment  = "LETTERS.TGA";     // the game's letters are written on it
 constexpr auto     DealFont       = "font_10_book.tga"; // and in this ink
 constexpr auto     DealBigFont    = "font_20_book.tga";
+constexpr uint64_t FeatFadeInMs   = 300;
+constexpr uint64_t FeatFadeOutMs  = 700;
+constexpr uint64_t FeatBaseMs     = 3500;   // a toast stays this long, plus a little per letter of its line
+constexpr uint64_t FeatPerCharMs  = 35;
+constexpr uint64_t FeatMaxMs      = 7000;
+constexpr size_t   FeatQueue      = 4;      // more waiting than this: the oldest waiting ones are dropped
 
 // GOTHIC_AI_CHAT_SCALE: extra size multiplier for the chat, on top of the game's interface scale
 // the end of `text` that fits into `width` (live transcripts grow at the end)
@@ -184,7 +192,7 @@ void ChatOverlay::tick() {
     }
   // repaint while something is on screen (cursor blink, subtitles expiring), and once after it is gone
   const bool visible = active || recording || !partial.empty() || !status.empty() || hasVisibleContent() ||
-                       !deal.id.empty();
+                       !deal.id.empty() || featOnScreen();
   if(visible || wasVisible)
     update();
   wasVisible = visible;
@@ -272,7 +280,92 @@ void ChatOverlay::paintEvent(PaintEvent& e) {
   Painter p(e);
   if(!deal.id.empty())
     paintDeal(p);
+  paintFeat(p);
   paintChat(p);
+  }
+
+static uint64_t featShowMs(const std::string& text) {
+  return std::min(FeatMaxMs, FeatBaseMs + FeatPerCharMs*text.size()) + FeatFadeInMs + FeatFadeOutMs;
+  }
+
+void ChatOverlay::showFeat(std::string title, std::string text, std::string icon) {
+  while(feats.size()>FeatQueue)
+    feats.erase(feats.begin()+1);
+  feats.push_back({std::move(title),std::move(text),std::move(icon)});
+  if(feats.size()==1)
+    featShownAt = 0;  // the next frame starts it
+  update();
+  }
+
+bool ChatOverlay::featOnScreen() {
+  // the front toast is over: the next one waits for a frame (its picture loads when it starts)
+  const uint64_t now = Application::tickCount();
+  if(!feats.empty() && featShownAt!=0 && now>=featShownAt+featShowMs(feats.front().text)) {
+    feats.pop_front();
+    featShownAt = 0;
+    featIcon.reset();
+    }
+  return !feats.empty();
+  }
+
+void ChatOverlay::paintFeat(Painter& p) {
+  // a strip of the letters' parchment in the top-left corner: the picture in its own frame on the left,
+  // the title in the book ink, the line under it; it fades in and out, nothing else asks for attention
+  if(!featOnScreen())
+    return;
+  const uint64_t now = Application::tickCount();
+  auto&          f   = feats.front();
+  if(featShownAt==0) {
+    featShownAt = now;
+    featIcon.reset();
+    if(!f.icon.empty()) {
+      try {
+        featIcon = std::make_unique<Texture2d>(Resources::loadTexturePm(Pixmap(f.icon.c_str())));
+        }
+      catch(...) {
+        Log::e("[feat] can't load the picture ",f.icon);
+        }
+      }
+    }
+  const uint64_t age   = now - featShownAt;
+  const uint64_t total = featShowMs(f.text);
+  const float    alpha = age<FeatFadeInMs ? float(age)/float(FeatFadeInMs) :
+                         age+FeatFadeOutMs>total ? float(total-std::min(total,age))/float(FeatFadeOutMs) : 1.f;
+
+  const float scale = Gothic::interfaceScale(this)*chatScale();
+  auto&       title = Resources::font(DealBigFont,Resources::FontType::Normal,  scale);
+  auto&       line  = Resources::font(DealFont,   Resources::FontType::Normal,  scale);
+  const int   pad   = std::max(10,title.pixelSize()*2/3);
+  const int   iconS = featIcon!=nullptr ? int(96*scale) : 0;
+  const int   boxW  = std::min(w()-16, int(480*scale) + iconS);
+  const int   textX = pad + (iconS>0 ? iconS + pad : 0);
+  const int   textW = boxW - textX - pad;
+  // a long title wraps: everything below it moves down by its real height
+  const int   titleH = title.textSize(textW,f.title).h;
+  const int   textH  = titleH + line.textSize(textW,f.text).h + pad/3;
+  const int   boxH  = std::max(iconS,textH) + 2*pad;
+  const int   x0    = std::max(8,w()/40);
+  const int   y0    = std::max(8,h()/14) - int(float(pad)*(1.f-alpha));  // it settles in from a little above
+  const Color shade = Color(1.f,1.f,1.f,alpha);
+
+  if(auto back = Resources::loadTexture(DealParchment)) {
+    p.setBrush(Brush(*back,shade,PaintDevice::Alpha,ClampMode::ClampToEdge));
+    p.drawRect(x0,y0,boxW,boxH,0,0,back->w(),back->h());
+    } else {
+    p.setBrush(Color(0.82f,0.74f,0.55f,0.95f*alpha));
+    p.drawRect(x0,y0,boxW,boxH);
+    }
+  if(featIcon!=nullptr) {
+    p.setBrush(Brush(*featIcon,shade,PaintDevice::Alpha,ClampMode::ClampToEdge));
+    p.drawRect(x0+pad,y0+(boxH-iconS)/2,iconS,iconS,0,0,featIcon->w(),featIcon->h());
+    }
+  // the fonts have no alpha of their own: the text comes in with the parchment, once it is mostly there
+  if(alpha<0.5f)
+    return;
+  int y = y0 + pad + (boxH-2*pad-textH)/2;
+  title.drawText(p,x0+textX,y+title.pixelSize(),textW,0,f.title,AlignLeft);
+  y += titleH + pad/3;
+  line.drawText(p,x0+textX,y+line.pixelSize(),textW,0,f.text,AlignLeft);
   }
 
 // a key on the keyboard, drawn by strokes: the game's fonts draw a Latin Y like a Cyrillic У

@@ -5,7 +5,7 @@ import pytest
 
 import gothic_ai.dialogue
 from gothic_ai.dialogue import DialogueManager
-from gothic_ai.group import ANSWER, ANSWER_CUE, BY_NAME, QUIET_S, GroupTalk, Seat
+from gothic_ai.group import ANSWER, ANSWER_CUE, BY_NAME, QUIET_S, TESTIMONY, GroupTalk, Seat
 from gothic_ai.llm import FakeBackend
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.talk import TalkDesk
@@ -266,6 +266,37 @@ async def test_an_npc_speaks_to_another_by_name_and_it_answers_him():
     # ...heard after him
     t = {id(m): at for m, at in fake.says}
     assert t[id(says(fake, HILDA)[0])] >= t[id(says(fake, LOBART)[-1])] + 0.25
+
+
+@pytest.mark.parametrize("kind", [TESTIMONY, "incident"])
+async def test_a_witness_names_the_one_who_asked_it_and_he_does_not_get_an_answer_turn(kind):
+    # 2026-10-29: Hilda's «Лобарт, видела я его утром» gave Lobart an answer turn with set_intent only; his
+    # «соврал» went there, and the witness turn of his with catch_lie never came (witnesses.py reacts itself)
+    fake = FakeGame()
+    lobart = FakeBackend("Ну?", delay=0)
+    hilda = FakeBackend("Лобарт, видела я его утром. У нас во дворе стоял, у репы.", delay=0.05)
+    llm = ByName({"Лобарт": lobart, "Хильда": hilda})
+    cm, dialogue, talk, group = await _desk(fake, llm)
+    try:
+        await fake.roster(person(LOBART, "Лобарт", 3, True), person(HILDA, "Хильда", 4, True))
+        await _until(lambda: HILDA in talk.people and LOBART in talk.people, 5)
+        dialogue.open(LOBART, "Лобарт")
+        dialogue.open(HILDA, "Хильда")
+        # her testimony; or a turn of hers before it while he waits for the answer (he called her aloud)
+        group.asks = lambda npc: kind != TESTIMONY and npc == LOBART
+        dialogue.event_turn(HILDA, "[Лобарт спрашивает тебя о герое.]", tools=(), kind=kind, to=LOBART)
+        await _until(lambda: len(says(fake, HILDA)) == 2 and not dialogue.speaking(HILDA), 5)
+        await asyncio.sleep(0.2)
+    finally:
+        await cm.__aexit__(None, None, None)
+
+    assert llm.order == ["Хильда"]  # Lobart has no turn of the floor's
+    assert all(m["to"] == LOBART for m in says(fake, HILDA))
+    heard = (
+        "[Ты слышал, как Хильда говорит тебе: «Лобарт, видела я его утром. У нас во дворе стоял, "
+        "у репы.»]"
+    )
+    assert heard in notes(dialogue, LOBART)
 
 
 async def test_the_one_called_takes_a_voice_of_those_waiting():

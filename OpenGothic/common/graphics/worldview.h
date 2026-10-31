@@ -3,7 +3,7 @@
 #include <Tempest/Device>
 #include <Tempest/Shader>
 
-#include <zenkit/world/VobTree.hh>
+#include "asset/worldtypes.h"
 
 #include "graphics/mesh/landscape.h"
 #include "graphics/meshobjects.h"
@@ -20,11 +20,20 @@ class Camera;
 class ParticleFx;
 class PackedMesh;
 class gtime;
+class ChunkResidency;
+namespace asset { struct WorldMesh; }
 
 class WorldView {
   public:
     WorldView(const PackedMesh& wmesh, std::string_view skyPreset);
+    WorldView(std::pair<Tempest::Vec3,Tempest::Vec3> bounds, std::string_view skyPreset);
     ~WorldView();
+
+    void startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs);
+    void setTextureResidency(ChunkResidency* residency) { visuals.setTextureResidency(residency); }
+    void prepareLandscapeWork();
+    void finishLandscapeUpdate();
+    bool landscapeReady() const;
 
     const LightSource&        mainLight() const;
     const Tempest::Vec3&      ambientLight() const;
@@ -48,6 +57,9 @@ class WorldView {
     void setHiZ(const Tempest::Texture2d& hiZ);
     void setSceneImages(const Tempest::Texture2d& clr, const Tempest::Texture2d& depthAux, const Tempest::ZBuffer& depthNative);
     void setWindEnabled(bool enabled, uint64_t period);
+    void setClothWind(bool enabled, float scale);
+    void setOriginalClothMesh(const PackedMesh& mesh);
+    void setOriginalClothVisible(bool visible);
 
     void dbgLights      (DbgPainter& p) const;
 
@@ -71,15 +83,15 @@ class WorldView {
     MeshObjects::Mesh   addAtachView (const ProtoMesh::Attach& visual, const int32_t version);
     MeshObjects::Mesh   addStaticView(const ProtoMesh* visual, bool staticDraw = false);
     MeshObjects::Mesh   addStaticView(std::string_view visual);
-    MeshObjects::Mesh   addDecalView (const zenkit::VisualDecal& vob);
-    LightGroup::Light   addLight     (const zenkit::VLight& vob, const uint64_t timeOffset);
+    MeshObjects::Mesh   addDecalView (const asset::VisualDecal& vob);
+    LightGroup::Light   addLight     (const asset::VLight& vob, const uint64_t timeOffset);
     LightGroup::Light   addLight     (std::string_view preset, const uint64_t timeOffset);
 
     void                dbgClusters(Tempest::Painter& p, Tempest::Vec2 wsz);
 
     const SceneGlobals& sceneGlobals() const { return sGlobal; }
     const Sky&          sky() const { return gSky; }
-    const Landscape&    landscape() const { return land; }
+    const Landscape&    landscape() const { return *land; }
     const LightGroup&   lights() const { return gLights; }
     const DrawClusters& clusters() const;
     const DrawCommands& drawCommands() const;
@@ -95,7 +107,10 @@ class WorldView {
 
     MeshObjects   objGroup;
     PfxObjects    pfxGroup;
-    Landscape     land;
+    std::unique_ptr<Landscape> land;
+    std::unique_ptr<Landscape> originalCloth;
+    struct LandscapeStreaming;
+    std::unique_ptr<LandscapeStreaming> streaming;
 
     bool needToUpdateCmd(uint8_t frameId) const;
     void invalidateCmd();

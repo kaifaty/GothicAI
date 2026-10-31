@@ -18,6 +18,7 @@ from .authoring import Brief as AuthorBrief
 from .casting import KINDS, Casting
 from .game import GameError
 from .llm import LLMBackend, LLMError, Message, Tool, ToolCall, open_ahead
+from .people_knowledge import PeopleKnowledge, rumor_subject
 from .places import Place
 from .protocol import NpcSpec
 
@@ -56,7 +57,7 @@ done_journal, knows (что заказчик знает), asked (что прос
 give.description и talk.description — строка героя в меню, до 80 знаков.
 Реплика lines: speaker hero или npc, text. Записи журнала — от первого лица героя.
 В каждой стадии 1–4 цели, всего 1–5 стадий. Последняя стадия заканчивается ровно одним bring или talk.
-Цели: kind, npc, item, count, place, radius, npcs, days, talk, journal.
+Цели: kind, npc, item, count, place, radius, npcs, days, crime, talk, journal.
 - reach: place из сводки с разрешением «дойти: да» (вейпоинт выберет код)
   ИЛИ npc роли/заказчика/жителя сводки;
   radius от 200 до 3000 см, обычно 500;
@@ -65,7 +66,9 @@ give.description и talk.description — строка героя в меню, д
 - kill: npcs — список role, убить ВСЕХ персонажей каждой роли; чужих NPC убивать нельзя;
 - bring: item и count принести npc после have, либо place, где код положит вещь;
 - talk: разговор с npc;
-- wait: days от 1 до 7.
+- wait: days от 1 до 7;
+- blame: crime — id дела NPC из сводки; убедить заказчика, кто вор. Код проверит, что
+  заказчик принял обвинение через blame; истинность обвинения не является условием цели.
 npc — giver (заказчик), role человека с count=1 или id NPC из сводки. Не выдумывай других людей и вещей.
 Роли bandit враждебны герою: к ним нельзя обращаться с talk или bring.
 Для bring/talk нужен talk: description — строка героя в меню, lines — разговор, remember — память NPC.
@@ -107,6 +110,7 @@ class Goal(Input):
     radius: int = questbook.REACH_CM
     npcs: list[str] = Field(default_factory=list)
     days: int = 0
+    crime: str = ""
     talk: Talk | None = None
     journal: str = ""
 
@@ -261,7 +265,9 @@ class ChainModel:
 
 
 class ChainAuthor:
-    def __init__(self, author: Author, casting: Casting, *, crimes: Crimes | None = None) -> None:
+    def __init__(
+        self, author: Author, casting: Casting, *, crimes: Crimes | None = None, npc_crimes: bool = True,
+    ) -> None:
         self.author = author
         self.casting = casting
         self.book = author.book
@@ -269,6 +275,7 @@ class ChainAuthor:
         self.link = author.link
         self.model = ChainModel(author.model.llm)
         self.crimes = crimes
+        self.npc_crimes = npc_crimes
 
     async def brief(
         self,
@@ -280,6 +287,8 @@ class ChainAuthor:
         crime: str = "",
     ) -> Brief | None:
         deed = self.crimes.crime(crime) if self.crimes is not None and crime else None
+        if deed is None and self.crimes is not None and crime and self.npc_crimes:
+            deed = next((f for f in self.chronicle.facts("npc_crime") if f.get("id") == crime), None)
         if crime and deed is None:
             log.info("chain: unavailable crime %s", crime)
             return None
@@ -339,6 +348,8 @@ class ChainAuthor:
 
     def _crime_context(self, deed: Fact, nearby: dict[str, str]) -> str:
         assert self.crimes is not None
+        if deed.get("fact") == "npc_crime":
+            return self._npc_crime_context(deed, nearby)
         crime = deed["id"]
         out = [
             f"Дело {crime}. Правда режиссёра: {self.crimes.describe(deed)}.",
@@ -352,7 +363,11 @@ class ChainAuthor:
         if victim:
             candidates.add(victim)
         for fact in self.chronicle.facts():
-            if fact.get("crime") == crime or crime in fact.get("crime_told", []):
+            if str(fact.get("fact", "")).startswith("npc_crime"):
+                continue  # NPC evidence is never a reader of the hero's deed id namespace
+            if fact.get("fact") == "rumor" and rumor_subject(fact) != "PLAYER":
+                continue
+            if fact.get("crime") == crime or crime in self.crimes.testimony_crimes(fact):
                 candidates.update(npc for key in ("npc", "to") if (npc := fact.get(key)))
         for npc in sorted(candidates):
             known = [k for k in self.crimes.known(npc) if k.crime["id"] == crime]
@@ -378,6 +393,58 @@ class ChainAuthor:
                     f"простил: {'да' if knowledge.forgiven else 'нет'}; "
                     f"обещал молчать: {'да' if knowledge.silenced else 'нет'}."
                 )
+        return "\n".join(out)
+
+    def _npc_crime_context(self, deed: Fact, nearby: dict[str, str]) -> str:
+        assert self.crimes is not None
+        crime, culprit = deed["id"], deed["culprit"]
+        victim = deed.get("victim") or deed.get("owner") or ""
+        out = [
+            f"Дело NPC {crime}. Правда режиссёра: виновник {culprit} — {self.crimes.names(culprit)}; "
+            f"пострадавший {victim} — {self.crimes.names(victim)}; "
+            f"вещь {deed.get('item') or 'нет'}, количество {deed.get('count', 0)}.",
+            f"Место: {deed.get('waypoint') or deed.get('place')}; день {deed.get('day', 0)}, "
+            f"{deed.get('hour', 0):02}:{deed.get('minute', 0):02}; "
+            f"{'вдали' if deed.get('far') else 'рядом'}.",
+            "Люди знают только своё. Правда режиссёра не становится знанием заказчика; "
+            "подозрение и обвинение не доказывают вину. Реплики и knows опирай на знание говорящего.",
+            f"Цель blame с crime={crime} — убедить заказчика, кто вор. Она завершается, когда "
+            "заказчик принимает обвинение через blame, даже если герой подставил невиновного. "
+            "Награда законна, а отсутствие вещи у обвинённого позже может раскрыть ложь.",
+            "Кто что знает:",
+        ]
+        facts = self.chronicle.facts()
+        candidates = set(nearby) | set(deed.get("witnesses", [])) | {victim}
+        candidates.update(str(f.get("npc") or f.get("to") or "") for f in facts)
+        knowledge = PeopleKnowledge(self.chronicle)
+        for npc in sorted(candidates - {"", culprit}):
+            entries = [k for k in knowledge.of(npc) if k.key == f"npc_crime_seen:{crime}"]
+            beliefs = [f for f in facts if f.get("fact") == "blamed" and f.get("crime") == crime
+                       and f.get("npc") == npc]
+            active_belief = beliefs[-1] if beliefs else None
+            if active_belief is not None and any(
+                r.get("blamed") == active_belief.get("id") for r in facts
+                if r.get("fact") == "blame_refuted"
+            ):
+                active_belief = None
+            suspects = [f for f in facts if f.get("fact") == "npc_crime_suspected"
+                        and f.get("crime") == crime and f.get("npc") == npc]
+            if not entries and not suspects and active_belief is None and npc != victim:
+                continue
+            prefix = f"- {npc} — {self.crimes.names(npc)}; "
+            if npc == victim:
+                out.append(prefix + "пострадавший; может заметить пропажу, не зная вора.")
+            for entry in entries:
+                degree = "видел" if entry.direct else "слышал"
+                out.append(prefix + f"{degree}; кого: {entry.subject}; источник: {entry.source}.")
+            for suspect in suspects:
+                out.append(prefix + f"подозревает: {suspect['suspect']}.")
+            if active_belief is not None:
+                source = (
+                    "герой" if active_belief.get("because") == "hero_words"
+                    else active_belief.get("because", "")
+                )
+                out.append(prefix + f"винит: {active_belief['culprit']}; со слов/основание: {source}.")
         return "\n".join(out)
 
     async def chain(
@@ -541,6 +608,11 @@ class ChainAuthor:
             data = description.model_dump()
             for stage in data["stages"]:
                 for goal in stage["goals"]:
+                    if goal["kind"] == questbook.BLAME and (
+                        brief.crime is None or brief.crime.get("fact") != "npc_crime"
+                        or goal["crime"] != brief.crime["id"]
+                    ):
+                        errors.append("blame: нужен id связанного дела NPC")
                     place = goal.pop("place")
                     if place:
                         if place not in brief.places:

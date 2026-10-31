@@ -5,6 +5,7 @@
 #include "zenkit/Library.hh"
 #include "zenkit/Stream.hh"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -752,6 +753,38 @@ namespace zenkit {
 	concept DaedalusValue = std::same_as<T, std::string> || std::same_as<T, float> || std::same_as<T, int32_t> ||
 	    (std::is_enum_v<T> && sizeof(T) == 4);
 
+	/// \brief A symbol from a freshly loaded program, before registration or execution.
+	struct DaedalusSymbolRecord {
+		std::string name;
+		bool generated {false};
+		DaedalusDataType type {DaedalusDataType::VOID};
+		std::uint32_t count {0};
+		std::uint32_t flags {0};
+		std::int32_t address {-1};
+		std::int32_t parent {-1};
+		std::int32_t class_offset {-1};
+		std::uint32_t member_offset {static_cast<std::uint32_t>(-1)};
+		std::uint32_t class_size {static_cast<std::uint32_t>(-1)};
+		DaedalusDataType return_type {DaedalusDataType::VOID};
+		std::uint32_t file_index {0};
+		std::uint32_t line_start {0};
+		std::uint32_t line_count {0};
+		std::uint32_t char_start {0};
+		std::uint32_t char_count {0};
+
+		// Only nonmember INT, FLOAT and STRING symbols have source array values.
+		std::vector<std::int32_t> int_values;
+		std::vector<std::uint32_t> float_bits;
+		std::vector<std::string> string_values;
+	};
+
+	/// \brief Owned program data; each symbol's position is its original VM index.
+	struct DaedalusProgramRecord {
+		std::uint8_t version {0};
+		std::vector<DaedalusSymbolRecord> symbols;
+		std::vector<std::byte> bytecode;
+	};
+
 	/// \brief Represents a compiled daedalus script
 	class DaedalusScript {
 	public:
@@ -760,6 +793,12 @@ namespace zenkit {
 		ZKAPI DaedalusScript(DaedalusScript&& move) = default;
 
 		ZKAPI void load(Read* r);
+
+		/// \brief Exports a freshly loaded script before bindings, VM setup or execution.
+		[[nodiscard]] ZKAPI DaedalusProgramRecord export_program() const;
+
+		/// \brief Constructs an unbound script from owned program records without parsing DAT.
+		[[nodiscard]] ZKAPI static DaedalusScript from_program(DaedalusProgramRecord program);
 
 		/// \brief Registers a member offset
 		/// \param name The name of the member in the script

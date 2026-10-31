@@ -2,13 +2,15 @@
 
 #include <Tempest/Matrix4x4>
 #include <Tempest/Vec>
-#include <zenkit/Material.hh>
+#include "asset/material.h"
+#include "game/meleeimpact.h"
 
 #include <functional>
 #include <atomic>
 #include <memory>
 #include <vector>
 #include <string_view>
+#include <utility>
 
 #include "physics/physics.h"
 #include "physics/physicsnoise.h"
@@ -22,6 +24,10 @@ class PhysicVbo;
 class Skeleton;
 class HitZones;
 class Ragdoll;
+class Cloth;
+struct MeleeBladeSegment;
+struct MeleeBodyCapsule;
+struct MeleeBladeContact;
 namespace zenkit { struct INpc; }
 namespace JPH { class PhysicsSystem; }
 
@@ -50,11 +56,14 @@ class CollisionWorld final {
         Tempest::Vec3       position() const;
         Tempest::Matrix4x4  matrix() const;
         void                getAabb(JPH::Vec3& min, JPH::Vec3& max) const;
+        Tempest::Vec3       lowestPoint() const; // actual convex envelope, world centimetres
         float               mass() const; // kilograms; zero for non-dynamic bodies
         bool                isMovable() const; // native dynamic or kinematic, including doors/lifts
         Tempest::Vec3        velocity() const; // centimetres/second
         Tempest::Vec3        angularVelocity() const; // world radians/second
         bool                isSleeping() const;
+        bool                keepSleepingItem(const Tempest::Vec3& positionCm) const;
+        void                retainForItemWake();
         // World-space newton seconds. Rejects non-dynamic, zero or nonfinite input.
         bool                addImpulse(const Tempest::Vec3& impulseNs, Npc* culprit = nullptr,
                                        const Tempest::Vec3* pointCm = nullptr);
@@ -65,7 +74,7 @@ class CollisionWorld final {
         // Target submerged-volume fraction, independent of native push mass.
         // Zero uses physical density; a target above one makes the body sink.
         void                setBuoyancyFraction(float fraction);
-        void                setNoiseProfile(ItemMaterial material, zenkit::MaterialGroup surface, std::string_view what);
+        void                setNoiseProfile(ItemMaterial material, asset::MaterialGroup surface, std::string_view what);
         // The latest engine-known cause survives the short noise attribution
         // window and NPC destruction, until a new impulse replaces it.
         void                setTraceCulprit(Npc* culprit);
@@ -99,13 +108,16 @@ class CollisionWorld final {
         void*               pointer = nullptr;
         std::atomic<bool>   npcContact{false};
         ItemMaterial       noiseMaterial = MAT_WOOD;
-        zenkit::MaterialGroup noiseSurface = zenkit::MaterialGroup::STONE;
+        asset::MaterialGroup noiseSurface = asset::MaterialGroup::STONE;
         std::string         noiseWhat = "item";
         std::weak_ptr<zenkit::INpc> noiseCulprit;
         uint64_t            noiseCulpritUntilStep = 0;
         uint64_t            nextNoiseStep = 0;
         std::string         traceCause;
         std::string         debugLabel;
+        Tempest::Matrix4x4  itemRestTransform;
+        uint64_t            itemWakeUntilStep = 0;
+        bool                itemRecovered = false;
 
       friend class CollisionWorld;
       friend class DynamicBody;
@@ -124,7 +136,7 @@ class CollisionWorld final {
       Tempest::Vec3        point = {};
       Tempest::Vec3        normal = {};
       CollisionBody*       body = nullptr;
-      zenkit::MaterialGroup material = zenkit::MaterialGroup::UNDEFINED;
+      asset::MaterialGroup material = asset::MaterialGroup::UNDEFINED;
       const char*          sector = nullptr;
       Ragdoll*             ragdoll = nullptr;
       size_t               bone = size_t(-1);
@@ -134,8 +146,11 @@ class CollisionWorld final {
 
     struct CharacterMoveResult {
       Tempest::Vec3 position = {}, velocity = {}, groundNormal = {}, groundVelocity = {};
+      // Opposing, non-walkable world contact left unresolved by the stair pass.
+      Tempest::Vec3 steepContactNormal = {};
       bool grounded = false;
       bool steep = false;
+      bool steepContact = false;
       bool supportMoved = false;
       };
 
@@ -144,7 +159,8 @@ class CollisionWorld final {
       public:
         ~VirtualCharacter();
         CharacterMoveResult move(const Tempest::Vec3& displacement, uint64_t dt,
-                                 float stepHeight, float maxSlope, float mass, Npc* culprit);
+                                 float stepHeight, float maxSlope, float mass, Npc* culprit,
+                                 bool limitStairAdvance = false);
         CharacterMoveResult carry(uint64_t dt);
         void setPosition(const Tempest::Vec3& feet);
         void setDiagnosticsEnabled(bool enabled);
@@ -160,22 +176,48 @@ class CollisionWorld final {
     std::unique_ptr<VirtualCharacter> createVirtualCharacter(float radius, float height, const Tempest::Vec3& feet);
 
     void tick(uint64_t dt);
+    // Stage-0 cost probe. All entry points require OPENGOTHIC_MELEE_BENCH.
+    void configureMeleeBench(int substeps);
+    void updateMeleeBlade(const Npc* owner, const Tempest::Matrix4x4& hand, float lengthCm);
+    void removeMeleeBlade(const Npc* owner);
+    void measureMeleeBench(std::string path);
+    void reportMeleeBench();
+    void updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules);
+    void removeShadowBody(const Npc* owner);
+    // Pose time and the half-open active window use absolute game milliseconds.
+    // forward: the attacker's facing; a wall met by a blade going back or up (the wind-up,
+    // the follow-through) does not stop the swing. Zero: every wall stops it.
+    void updateShadowBlade(const Npc* owner, uint64_t swingId,
+                           const std::vector<MeleeBladeSegment>& segments, uint64_t timeMs,
+                           double activeBeginMs, double activeEndMs, float walkableCos = .7f,
+                           Tempest::Vec3 forward = {}, MeleeImpact::Weapon weapon = MeleeImpact::Weapon::OneHand);
+    std::vector<MeleeBladeContact> takeShadowBladeContacts(const Npc* owner);
+    void removeShadowBlade(const Npc* owner);
+    void flushShadowBlades();
+    // Pure capsule query in centimetres; infinity means no contact along the cast.
+    float meleeBladeAdvance(const std::vector<MeleeBladeSegment>& blades, const std::vector<MeleeBodyCapsule>& target,
+                            const Tempest::Vec3& direction, float maxAdvanceCm) const;
+    void accountMeleeReachTime(float milliseconds);
     void setWaterSurfaceCallback(std::function<bool(const Tempest::Vec3&,float,float&)> callback);
     void setBuoyancyEnabled(bool enabled);
     bool buoyancyEnabled() const;
+    void setItemWakeEnabled(bool enabled);
+    bool itemWakeEnabled() const { return itemWake; }
+    void setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback);
+    void wakeItemsInBounds(const Tempest::Vec3& min, const Tempest::Vec3& max);
     struct WaterBodySnapshot {
       const CollisionBody* body = nullptr;
       const Ragdoll* ragdoll = nullptr;
       uint32_t bone = 0, nativeId = 0;
       float targetFraction = 0;
       Tempest::Matrix4x4 transform;
-      Tempest::Vec3 worldBounds[2], velocity;
+      Tempest::Vec3 worldBounds[2], collisionBounds[2], velocity;
       float mass = 0, density = 0, waterY = 0, submergedFraction = 0;
       bool sleeping = true, inWater = false;
       };
     std::vector<WaterBodySnapshot> waterBodySnapshot() const;
     void setBBox(JPH::Vec3Arg min, JPH::Vec3Arg max);
-    void setItemHitCallback(std::function<void(Item&, zenkit::MaterialGroup, float impulse, float mass)> f);
+    void setItemHitCallback(std::function<void(Item&, asset::MaterialGroup, float impulse, float mass)> f);
     void setPhysicsNoiseEnabled(bool enabled);
     bool physicsNoiseEnabled() const;
     void setPhysicsNoiseCallback(std::function<void(const PhysicsNoise&)> callback);
@@ -192,16 +234,42 @@ class CollisionWorld final {
 
     // Diagnostic: every contact of the body's own shape at its current pose,
     // including separated ones within marginCm. Depth is positive when penetrating.
+    struct NativeTriangle {
+      bool valid = false;
+      uint32_t nativeSubShapeId = uint32_t(-1), sourceTriangle = uint32_t(-1);
+      Tempest::Vec3 normal, vertices[3];
+      float edgesCm[3] = {};
+      };
     struct Overlap {
       CollisionBody*        body = nullptr;
       int                   category = 0;
       float                 depth = 0; // centimetres
       Tempest::Vec3         axis = {}; // unit direction that moves the other body out
       Tempest::Vec3         point1 = {}, point2 = {}; // world centimetres
-      zenkit::MaterialGroup material = zenkit::MaterialGroup::UNDEFINED;
+      asset::MaterialGroup material = asset::MaterialGroup::UNDEFINED;
       const char*           sector = nullptr;
+      NativeTriangle        triangle;
       };
-    std::vector<Overlap> overlaps(const CollisionBody& body, float marginCm, uint32_t mask) const;
+    std::vector<Overlap> overlaps(const CollisionBody& body, float marginCm, uint32_t mask, bool triangles = false) const;
+    struct ItemSweepTrace {
+      uint64_t nativeStep = 0;
+      uint32_t itemBodyId = uint32_t(-1), bodyId = uint32_t(-1);
+      int category = 0;
+      bool tested = false, hit = false, triggered = false;
+      std::string status;
+      Tempest::Vec3 from, to, point, normal;
+      float fraction = 1.f, beforeCm = 0, afterCm = 0;
+      NativeTriangle triangle;
+      };
+    struct ItemSolverContact {
+      uint64_t nativeStep = 0;
+      uint32_t itemBodyId = uint32_t(-1), bodyId = uint32_t(-1);
+      bool persisted = false;
+      Overlap contact;
+      };
+    void setItemTraceTarget(const Item* item);
+    std::vector<ItemSweepTrace> takeItemSweepTrace();
+    std::vector<ItemSolverContact> takeItemSolverContacts();
 
     // Bench-only narrow-phase snapshot at the native parts' current poses.
     // Unlike contact callbacks, this also includes sleeping rigs and supports.
@@ -231,6 +299,7 @@ class CollisionWorld final {
                                                const Tempest::Matrix4x4* worldPose, size_t numBones,
                                                const Tempest::Matrix4x4& objectMatrix);
     size_t bodyCount() const;
+    JPH::Shape::Stats staticCollisionStats() const;
     float stepMilliseconds() const;
     uint64_t rayCount() const;
     uint64_t simulationStep() const;
@@ -264,9 +333,19 @@ class CollisionWorld final {
     void prepareBuoyancy(std::vector<PhysicsNoise>& splashes);
     void applyBuoyancyStep(float seconds);
     void finishBuoyancy(float seconds);
+    void stepMeleeBlades(float seconds, float fraction);
+    void stepShadowBlades(float fraction, bool bodiesLocked = false);
+    void sampleMeleeBench();
+    void wakeItems();
+    void wakeShadowItems();
+    void recoverItems();
+    void prepareItemSweeps();
+    void recoverTunneledItems();
+    void recoverItem(CollisionBody& body, const Tempest::Vec3& failedPosition);
     void fillMaterial(QueryResult& result, const JPH::Shape& shape, JPH::SubShapeID subShape) const;
     void fillRagdoll(QueryResult& result, JPH::BodyID body) const;
     JPH::PhysicsSystem& physicsSystem();
+    friend class ClothContractDriver;
     uint32_t registerRagdoll(Ragdoll& body);
     void unregisterRagdoll(Ragdoll& body);
     std::unique_ptr<Impl> impl;
@@ -274,12 +353,24 @@ class CollisionWorld final {
     std::vector<DynamicBody*> rigid;
     std::vector<Ragdoll*> ragdolls;
     uint32_t nextRagdollGroup = 1;
-    std::function<void(Item&, zenkit::MaterialGroup, float, float)> hitItem;
+    std::function<void(Item&, asset::MaterialGroup, float, float)> hitItem;
     std::function<void(const PhysicsNoise&)> physicsNoise;
     std::function<void(CollisionBody&,float,const Tempest::Vec3&,std::string_view)> bodyImpact;
     std::function<bool(const Tempest::Vec3&,float,float&)> waterSurface;
+    Cloth* cloth = nullptr;
     bool buoyancy = true;
+    bool itemWake = true;
+    std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> itemWakeCallback;
+    size_t itemWakeCursor = 0;
+    size_t itemSweepCursor = 0;
+    std::vector<std::pair<CollisionBody*,Tempest::Vec3>> itemSweeps;
+    const Item* itemTraceTarget = nullptr;
+    CollisionBody* itemSweepTraceBody = nullptr;
+    size_t itemSweepTraceIndex = size_t(-1);
+    std::vector<ItemSweepTrace> itemSweepTrace;
+    size_t itemWakeQueries = 0, itemWakeCreated = 0, itemShadowWakeCursor = 0;
     JPH::Vec3 bboxMin = JPH::Vec3::sZero();
     float accumulatedTime = 0;
     friend class Ragdoll;
+    friend class Cloth;
   };

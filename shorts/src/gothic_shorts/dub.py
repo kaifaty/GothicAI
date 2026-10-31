@@ -345,7 +345,8 @@ def _english_stem(dub: Dub, line_slots: list[Slot], recordings: list[Path], name
         trim_start = f"atrim=start={-clip.start:.9f},asetpts=PTS-STARTPTS," if clip.start < 0 else ""
         delay = max(0, round(clip.start * stems.SAMPLE_RATE))
         filters.append(
-            f"[{index}:a]aformat=sample_rates=48000:channel_layouts=stereo,asetpts=PTS-STARTPTS,"
+            f"[{index}:a]aformat=sample_rates=48000:channel_layouts=stereo,{levels.DUAL_MONO},"
+            "asetpts=PTS-STARTPTS,"
             f"volume={gains[clip.who]:.9f}dB,adeclick=t=1:b=3,"
             f"afade=t=in:d={fade:.9f},afade=t=out:st={duration - fade:.9f}:d={fade:.9f},"
             f"{trim_start}adelay=delays={delay}S:all=1[v{index}]"
@@ -774,19 +775,16 @@ def dub_compare(
             length = total + ending_length
             _check_duration(length, ru_duration)
             texts_en = english_script(ws, lang)
-            said = [line for beat in plan["beats"] for line in beat.get("lines", [])]
+            said = compare.placed_lines(plan)
             if len(texts_en) != len(said):
                 raise DubError(f"script.{lang}.txt has {len(texts_en)} lines for {len(said)} said ones")
             if not said:
                 raise DubError("В плане сравнения нет озвученных строк")
-            rows, offset = [], 0.0
-            for beat in plan["beats"]:
-                for line in beat.get("lines", []):
-                    words = line["words"]
-                    at = offset + line["at"] - beat["start"]
-                    rows.append(("voice", " ".join(word[0] for word in words), texts_en[len(rows)],
-                                 at + words[0][1], at + words[-1][2]))
-                offset += beat["end"] - beat["start"]
+            rows = [
+                ("voice", " ".join(word["text"] for word in line["words"]), text,
+                 line["words"][0]["start"], line["words"][-1]["end"])
+                for line, text in zip(said, texts_en, strict=True)
+            ]
             line_slots = slots(rows, total)
             dub = Dub(out.with_suffix(".wav"), None, ru_duration, ru_duration,
                       None, _voice_mastered(ru_report))

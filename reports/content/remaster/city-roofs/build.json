@@ -1,0 +1,6 @@
+{"set": "roofs-8", "base": "original", "registry": "data/content/remaster/city-roofs.jsonl",
+ "textures": {
+  "NW_CITY_ROOF_01.TGA": {"axes": "", "colour": {"mode": "target"}, "maps": "source", "size": 2048},
+  "NW_CITY_ROOF_04.TGA": {"axes": "", "colour": {"mode": "target"}, "maps": "source"},
+  "NW_CITY_ROOF_INSIDE_01.TGA": {"axes": "", "colour": {"mode": "target"}, "maps": "source", "size": 2048}},
+ "guard": {"luminance_ratio": [0.75, 1.25], "clipped_max": 0.01}}

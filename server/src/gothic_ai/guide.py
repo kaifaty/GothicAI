@@ -149,6 +149,10 @@ class Guide:
                 "Можешь отвести героя к месту, если захочешь: условие lead в сделке, даром или за плату. "
                 "Где место и как туда пройти — where."
             )
+        if npc == "BDT_1014_BANDIT_L" and lead.way.place.id == "CASTLEMINE_HUT":
+            return "Ты ведёшь героя к Декстеру за награду; " + (
+                "он отстал: ты ждёшь его." if lead.state == "waiting" else "он идёт за тобой."
+            )
         if lead.state == "waiting":
             return f"Ты ведёшь героя — {lead.way.title()}, но он отстал: ты ждёшь его."
         return f"Ты ведёшь героя — {lead.way.title()}; он идёт за тобой."
@@ -184,7 +188,9 @@ class Guide:
         if place is None or place.center is None or not place.points:
             return None, f"ты не знаешь такого места: «{what}». Найди его через where и назови по id"
         own = {p.id for e in entries if (p := self.book.of(e.waypoint)) is not None}
-        if place.kind == "house" and place.id not in own:
+        # Dexter's outdoor hut cluster has no entrance in the book; Brago knows this way himself.
+        dexter = npc == "BDT_1014_BANDIT_L" and place.id == "CASTLEMINE_HUT" and not meet
+        if place.kind == "house" and place.id not in own and not dexter:
             door = self.book.way_in(place, here)
             if door is None:
                 return None, f"{place.ru} — чужой дом, а где в него вход, ты не знаешь"

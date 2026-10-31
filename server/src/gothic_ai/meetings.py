@@ -17,6 +17,8 @@ and one whose meeting is over by then waited there in vain: he slept through it.
   back: it takes his word no more (trust.py), the rumor goes round (social.py), and it has it on its mind
   (concerns.py) till it has told him so. Its routine goes on.
 - It does not get there itself: no word of his is broken, a fact `meet_failed`.
+- It never intended to come: it stays at its routine; at the agreed hour `npc_broken {how: no_show}`
+  records its refusal. The hero's word is not broken, even when he does not come either.
 Meetings are facts of the chronicle: a load brings them back.
 """
 
@@ -40,6 +42,7 @@ from .guide import Guide, Way
 from .initiative import TOOLS
 from .journal import Journal
 from .llm import Tool, ToolCall
+from .npc_cheat import breach, keeps
 from .protocol import GameMessage, Loading, Session, Snapshot
 from .turn import ToolOutcome
 
@@ -69,7 +72,7 @@ RADIUS_CM = 300  # start_activity's arrive radius
 WALK_S = 600.0  # the walk there at most, real seconds
 OPEN = ("agreed", "going", "there")
 
-State = Literal["agreed", "going", "there", "kept", "missed", "failed"]
+State = Literal["agreed", "going", "there", "kept", "missed", "failed", "no_show"]
 
 
 def clock(minute: int) -> str:
@@ -181,6 +184,10 @@ class Meetings:
                     m.state = "kept"
                 case "meet_failed" if (m := self.meetings.get(f.get("meet", ""))) is not None:
                     m.state = "failed"
+                case "npc_broken" if f.get("how") == "no_show" and (
+                    m := self.meetings.get(f.get("meet", ""))
+                ):
+                    m.state = "no_show"
                 case "broken" if f.get("promise") == "meet" and (m := self.meetings.get(f.get("meet", ""))):
                     m.state = "missed"
                 case "meet_raised" if (m := self.meetings.get(f.get("meet", ""))) is not None:
@@ -274,6 +281,8 @@ class Meetings:
                     lines.append(
                         f"Ты ждёшь героя на встрече: {m.term.way.where_ru()}, до {clock(m.term.end)}."
                     )
+                case "no_show":
+                    lines.append(f"Ты не пришёл на обещанную встречу с героем: {m.term.text()}.")
                 case "missed" if not m.raised:
                     lines.append(
                         f"Герой не пришёл на встречу, о которой вы договорились: {m.term.text()}. Он не "
@@ -341,6 +350,8 @@ class Meetings:
         for m in self.meetings.values():
             if m.state not in OPEN or m.tries >= TRIES:
                 continue  # over, or it has given up getting there
+            if not keeps(self.chronicle, m.deal, "meet"):
+                continue
             if now >= m.term.end:
                 m.state = "there"  # he slept through it: tick finds him not come
             elif now >= m.term.start - m.lead_min:
@@ -353,13 +364,32 @@ class Meetings:
         """What comes of each meeting at `now` (a game minute)."""
         self.now = now
         for m in list(self.meetings.values()):
-            if m.state in OPEN and now >= m.term.end:
+            if m.state in OPEN and not keeps(self.chronicle, m.deal, "meet"):
+                if now >= m.term.start:
+                    self._no_show(m)
+            elif m.state in OPEN and now >= m.term.end:
                 self._over(m)
             elif m.state == "agreed" and now >= max(m.term.start - m.lead_min, m.retry):
                 m.state = "going"
                 self._spawn(self._walk(m, self._world))
             elif m.state == "there" and self._came(m, now):
                 self._kept(m)
+
+    def _no_show(self, m: Meeting) -> None:
+        """It broke its own word, not the hero's, without trying to walk there."""
+        m.state = "no_show"
+        breach(
+            self.chronicle,
+            m.npc,
+            m.deal,
+            "no_show",
+            meet=m.id,
+            npc_name=m.name,
+            what=m.term.text(),
+            **self._when(),
+        )
+        log.info("meeting %s: %s chose not to come", m.id, m.npc)
+        self._diary(m, f"{m.name} не пришёл на обещанную встречу.", "LOG_FAILED")
 
     async def _walk(self, m: Meeting, world: int) -> None:
         """There, and it waits till the end."""

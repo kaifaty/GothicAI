@@ -1,0 +1,76 @@
+# City set 2: city/harbour day; the market house in three views, day and 23:00.
+# The original city camera and its FPS markers are unchanged through city_night.
+# city_night is retained for the frame analyzer; the published city pair is daytime.
+# House views use the offline market-house geometry's front normal and tangent.
+# Air anchors keep the hero above collision geometry; hold fixes the camera before he falls.
+cheat god
+set time 12 0
+overlay off
+goto NW_CITY_MERCHANT_SHOP01_FRONT_03
+face 0
+cam game
+wait 6000
+shot city_a
+wait 20000
+shot city
+wait 300
+rec city_cap
+wait 3000
+stop
+set time 23 0
+wait 3000
+shot city_night
+wait 100
+
+set time 12 0
+goto NW_CITY_HABOUR_06_B
+face wp NW_CITY_HABOUR_05
+cam game
+wait 6000
+shot harbour
+wait 300
+
+goto MARKT
+face wp NW_CITY_MERCHANT_PATH_28_D
+cam game
+wait 6000
+shot market
+wait 300
+set time 23 0
+wait 3000
+shot market_night
+wait 300
+
+# Front detail: eye (9865,825,4077), target (9137,725,3745), distance 8 m.
+set time 12 0
+view hide animated morph pfx
+cam lift off
+cam look -2000
+goto pos 9137 2725 3745
+cam world 800.000 -1900.000 24.500
+wait 34
+cam hold
+wait 6000
+shot facade_close
+wait 300
+set time 23 0
+wait 3000
+shot facade_close_night
+wait 300
+
+# Opposite corner and plinth: eye (9651,350,3100), target (9162,350,3207).
+# Measured plinth spans Y=270..531; the adjoining ground is Y=270, not sea level.
+# This side avoids the market awnings and barrels in front of the other corner.
+set time 12 0
+cam look -2000
+goto pos 9162 2350 3207
+cam world 500.331 -2000.000 -12.352
+wait 34
+cam hold
+wait 6000
+shot facade_corner
+wait 300
+set time 23 0
+wait 3000
+shot facade_corner_night
+wait 500

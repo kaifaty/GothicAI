@@ -69,6 +69,86 @@ def blocker(system, kind, *, at=AT + 30, via=CITIZEN):
     system.chronicle.record(fact)
 
 
+@pytest.mark.parametrize("cover", [True, False])
+async def test_cover_silence_stops_law_only_with_cover_enabled(law, cover):
+    law.crimes.cover = cover
+    case(law)
+    law.chronicle.record({
+        "fact": "silenced", "npc": CITIZEN, "crime": "theft-1", "cover": "D1", "at": AT + 30,
+    })
+    [delivery] = law.law.deliveries()
+    assert delivery.status == ("stopped" if cover else "pending")
+
+
+@pytest.mark.parametrize("promise", ["silence", "cover"])
+@pytest.mark.parametrize("keeps", [False, True])
+async def test_broken_promise_reaches_law_and_records_one_actual_betrayal(law, promise, keeps):
+    case(law)
+    law.chronicle.record({
+        "fact": "npc_intent", "npc": CITIZEN, "deal": "D1", "keeps": keeps, "how": [promise],
+    })
+    law.chronicle.record({
+        "fact": "deal", "npc": CITIZEN, "deal": "D1", "at": AT + 30, **(
+            {"cover": {"crime": "theft-1"}} if promise == "cover" else {"silence": ["crime:theft-1"]}
+        ),
+    })
+    [delivery] = law.law.deliveries()
+    assert delivery.status == ("stopped" if keeps else "pending")
+    law.law.tick(AT + REPORT_DELAYS["theft"])
+    law.law.tick(AT + REPORT_DELAYS["theft"] + 1)
+    assert bool(law.law.known("city")) is (not keeps)
+    assert law.chronicle.facts("betrayed") == ([] if keeps else [{
+        "fact": "betrayed", "npc": CITIZEN, "deal": "D1", "how": "reported", "to": "city",
+    }])
+
+
+@pytest.mark.parametrize("promise", ["silence", "cover"])
+async def test_disabling_cheating_restores_raw_promises_for_crime_knowledge_and_law(law, promise):
+    case(law)
+    law.chronicle.record({
+        "fact": "npc_intent", "npc": CITIZEN, "deal": "D1", "keeps": False, "how": [promise],
+    })
+    law.chronicle.record({
+        "fact": "deal", "npc": CITIZEN, "deal": "D1", "at": AT + 30, **(
+            {"cover": {"crime": "theft-1"}} if promise == "cover" else {"silence": ["crime:theft-1"]}
+        ),
+    })
+    assert not law.crimes.known(CITIZEN)[0].silenced
+    law.chronicle.npc_cheat_enabled = False
+    assert law.crimes.known(CITIZEN)[0].silenced
+    assert law.law.deliveries()[0].status == "stopped"
+    assert law.law.tick(AT + REPORT_DELAYS["theft"]) == []
+    assert law.chronicle.facts("betrayed") == []
+
+
+async def test_a_report_that_arrived_before_the_promise_does_not_betray_it(law):
+    case(law)
+    law.chronicle.record({
+        "fact": "npc_intent", "npc": CITIZEN, "deal": "D1", "keeps": False, "how": ["silence"],
+    })
+    law.chronicle.record({
+        "fact": "deal", "npc": CITIZEN, "deal": "D1", "at": AT + REPORT_DELAYS["theft"] + 1,
+        "silence": ["crime:theft-1"],
+    })
+    assert len(law.law.tick(AT + REPORT_DELAYS["theft"] + 2)) == 1
+    assert law.chronicle.facts("betrayed") == []
+
+
+@pytest.mark.parametrize("cover", [True, False])
+async def test_old_covered_testimony_reaches_law_when_cover_is_disabled(law, cover):
+    law.crimes.cover = cover
+    case(law, via="")
+    law.chronicle.record({
+        "fact": "testimony", "npc": GUARD, "witness": CITIZEN,
+        "crime_saw": ["theft-1"], "crime_told": [], "cover": "D1", "at": AT + 30,
+        "guild": 2, "npctype": 0,
+    })
+    deliveries = law.law.deliveries()
+    assert len(deliveries) == int(not cover)
+    if deliveries:
+        assert (deliveries[0].crime["id"], deliveries[0].via) == ("theft-1", GUARD)
+
+
 @pytest.mark.parametrize("npc,guild", [(GUARD, 2), ("PAL_205_LORD", 1), (ANDRE, -1)])
 async def test_guard_and_lawkeeper_witnesses_inform_law_immediately(law, npc, guild):
     crime = case(law, via=npc, guild=guild)
@@ -83,6 +163,33 @@ async def test_guard_and_lawkeeper_witnesses_inform_law_immediately(law, npc, gu
     }
     assert law.law.unpaid("city") == [crime]
     assert law.law.tick(AT + 1) == []
+
+
+@pytest.mark.parametrize("npc,guild", [(CITIZEN, 3), (GUARD, 2), (ANDRE, -1)])
+async def test_allied_witness_does_not_deliver_even_after_loading(law, npc, guild):
+    crime = case(law, kind="murder", via=npc, guild=guild)
+    law.chronicle.record({"fact": "crime_side", "npc": npc, "crime": crime["id"], "why": "fought"})
+    head = law.memory.head("A")
+    law.link.receive(Session(type="session", branch="B", parent="A", parent_seq=head))
+    assert law.crimes.side(npc, crime["id"]) is not None
+    assert law.crimes.known(npc)[0].degree == "seen"
+    assert law.law.deliveries() == []
+    assert law.law.tick(AT + 2000) == []
+    assert law.law.known("city") == []
+    assert law.law.debt("city") == 0
+
+
+async def test_another_witness_still_delivers_when_one_witness_is_an_ally(law):
+    crime = case(law, kind="murder", via=GUARD, guild=2)
+    law.chronicle.record({"fact": "crime_side", "npc": GUARD, "crime": crime["id"], "why": "hostile"})
+    law.chronicle.record({
+        "fact": "crime_seen", "crime": crime["id"], "npc": CITIZEN, "guild": 3, "npctype": 0,
+    })
+    assert law.law.tick(AT) == []
+    (delivery,) = law.law.deliveries()
+    assert (delivery.via, delivery.how, delivery.due) == (CITIZEN, "witness", AT + 120)
+    (arrival,) = law.law.tick(AT + 120)
+    assert arrival["via"] == CITIZEN
 
 
 @pytest.mark.parametrize("kind,delay", [("theft", 1440), ("sheep", 1440), ("attack", 720), ("murder", 120)])
@@ -117,6 +224,61 @@ async def test_rumor_to_another_community_or_civilian_does_not_teach_the_law(law
         law.chronicle.record({"fact": "rumor", "crime": "theft-1", "to": npc, "at": AT + 1})
     assert law.law.tick(AT + 2000) == []
     assert law.law.known("city") == []
+
+
+async def test_guard_call_teaches_heard_and_arrives_through_common_path_once(law):
+    crime = case(law, via="")
+    law.crimes.people[GUARD] = {"guild": 2, "npctype": 0}
+    law.crimes.people[CITIZEN] = {"guild": 3, "npctype": 0}
+    facts = law.law.called(crime["id"], CITIZEN, [GUARD, GUARD, CITIZEN], at=AT + 1)
+    rumor, arrival = facts
+    knowledge, = law.crimes.known(GUARD)
+    assert knowledge.degree == "heard" and knowledge.source == CITIZEN
+    assert rumor["how"] == arrival["how"] == "called"
+    assert rumor["quest"] == "crime:theft-1" and rumor["kind"] == "theft"
+    assert arrival["fact"] == "crime_known" and arrival["at"] == AT + 1
+    assert arrival["via"] == CITIZEN
+    assert law.crimes.known(CITIZEN) == []
+    assert law.law.called(crime["id"], CITIZEN, [GUARD], at=AT + 2) == []
+    assert law.law.tick(AT + 2000) == []
+    assert law.law.unpaid("city") == [crime]
+
+
+async def test_guard_call_without_a_guard_or_real_law_does_not_deliver(law):
+    case(law, via="")
+    assert law.law.called("missing", CITIZEN, [GUARD], at=AT) == []
+    assert law.law.called("theft-1", CITIZEN, [], at=AT) == []
+    assert law.law.called("theft-1", CITIZEN, [CITIZEN], at=AT) == []
+    case(law, crime="loner", community=None, via="")
+    assert law.law.called("loner", CITIZEN, [GUARD], at=AT) == []
+    assert law.chronicle.facts("crime_known") == []
+
+
+async def test_ally_cannot_call_guards_or_inform_law_directly(law):
+    crime = case(law, kind="murder")
+    law.crimes.people[GUARD] = {"guild": 2, "npctype": 0}
+    law.chronicle.record({"fact": "crime_side", "npc": CITIZEN, "crime": crime["id"], "why": "quest"})
+    assert law.law.called(crime["id"], CITIZEN, [GUARD], at=AT) == []
+    assert law.law.inform(crime["id"], via=CITIZEN.lower(), how="called", at=AT) is None
+    assert law.chronicle.facts("rumor") == []
+    assert law.chronicle.facts("crime_known") == []
+
+
+async def test_a_call_or_rumor_does_not_make_an_allied_guard_report(law):
+    crime = case(law, kind="murder", via="")
+    law.crimes.people[GUARD] = {"guild": 2, "npctype": 0}
+    law.chronicle.record({"fact": "crime_side", "npc": GUARD, "crime": crime["id"], "why": "fought"})
+    assert law.law.called(crime["id"], CITIZEN, [GUARD], at=AT) == []
+    law.chronicle.record({
+        "fact": "rumor", "crime": crime["id"], "to": GUARD, "from": CITIZEN, "at": AT + 1,
+    })
+    assert law.law.tick(AT + 2000) == []
+    assert law.law.known("city") == []
+    law.chronicle.record({
+        "fact": "rumor", "crime": crime["id"], "to": ANDRE, "from": CITIZEN, "at": AT + 2,
+    })
+    (arrival,) = law.law.tick(AT + 2000)
+    assert arrival["via"] == ANDRE and arrival["how"] == "rumor"
 
 
 @pytest.mark.parametrize("kind", ["died", "silenced", "forgiven", "repaid"])

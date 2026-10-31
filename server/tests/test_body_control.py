@@ -387,6 +387,7 @@ class PendingConnection(Connection):
         self.restore_during_cancel = False
         self.cancel_error = None
         self.status_error = None
+        self.watch_error = None
 
     def ownership(self, seq=1, **updates):
         return events(event(
@@ -438,6 +439,9 @@ class PendingConnection(Connection):
                 return
             value = self.control_status
         elif cmd["type"] == "body_watch":
+            if self.watch_error is not None:
+                self.link._dispatch(Result(type="result", req=cmd["req"], ok=False, error=self.watch_error))
+                return
             value = {"generation": 1, "session_epoch": 1, "world_epoch": 1}
         else:
             raise AssertionError(cmd)
@@ -449,6 +453,73 @@ def pending_connected():
     link = conn.link = GameLink(conn)
     link._dispatch(message(packet()))
     return link, conn
+
+
+async def test_watch_replaces_idle_actor_in_full_cache_without_resetting_live_lease():
+    link, conn = pending_connected()
+    link._dispatch(message(packet(*(observation(i, entity=i) for i in range(2, 5)))))
+    conn.immediate_acquire = True
+    lease = await link.body_acquire("NPC", link.body_latest[1], "scripted", await_boundary_ms=1500)
+    latest_owned = link.body_latest[1]
+    assert set(link.body_latest) == {1, 2, 3, 4}
+    await link.body_watch(["npc", "C", "D", "E"])
+    assert conn.sent[-1]["npcs"] == ["NPC", "C", "D", "E"]
+    assert link.body_latest == {1: latest_owned}
+    assert link.body_leases == {1: lease}
+    assert (link.body_generation, link.body_session_epoch, link._body_last_seq) == (1, 1, 4)
+    link._dispatch(message(packet(
+        controlled(5), observation(6, entity=3), observation(7, entity=4), observation(8, entity=5),
+    )))
+    assert set(link.body_latest) == {1, 3, 4, 5}
+    assert link.body_latest[5].observation_seq == 8
+    assert link.body_leases == {1: lease}
+    assert link.body_stale_packets == 0
+    link._dispatch(message(packet(observation(9, entity=6))))
+    assert set(link.body_latest) == {1, 3, 4, 5}
+    assert link.body_stale_packets == 1
+
+
+async def test_failed_watch_keeps_latest_actor_cache_unchanged():
+    link, conn = pending_connected()
+    link._dispatch(message(packet(observation(2, entity=2))))
+    latest = dict(link.body_latest)
+    conn.watch_error = "release active body owners before changing body_watch"
+    with pytest.raises(GameError, match="release active body owners"):
+        await link.body_watch(["NPC", "OTHER"])
+    assert link.body_latest == latest
+    assert (link.body_generation, link.body_session_epoch, link._body_last_seq) == (1, 1, 2)
+
+
+@pytest.mark.parametrize("grant_before_receipt", [False, True])
+async def test_watch_preserves_pending_neighbor_including_unpublished_grant(grant_before_receipt):
+    link, conn = pending_connected()
+    link._dispatch(message(packet(observation(2, entity=2))))
+    own = link.body_latest[1]
+    conn.before_ack = conn.drop_acquire_ack = grant_before_receipt
+    task = asyncio.create_task(link.body_acquire(
+        "NPC", own, "scripted", await_boundary_ms=1500,
+    ))
+    await asyncio.sleep(0)
+    assert link.body_acquire_pending(1) is not grant_before_receipt
+    assert 1 in link._body_acquire_waiters and not link.body_leases
+    sent = len(conn.sent)
+    for removed in ([], ["OTHER"]):
+        with pytest.raises(GameError, match="cannot remove NPC.*acquisition is pending"):
+            await link.body_watch(removed)
+    assert len(conn.sent) == sent
+    await link.body_watch(["npc", "OTHER"])
+    assert link.body_latest == {1: own}
+    assert link.body_generation == 1 and link._body_last_seq == 2
+    if grant_before_receipt:
+        assert not link.body_leases and 1 in link._body_acquire_waiters
+        link._dispatch(Result(type="result", req=conn.acquire["req"], ok=True, value=receipt(
+            reason="acquired", acquire_request_id=conn.acquire["acquire_request_id"], observation_seq=9,
+        )))
+    else:
+        link._dispatch(conn.ownership())
+    lease = await task
+    assert link.body_leases == {1: lease} and lease.control_generation == 7
+    assert not link.body_acquire_pending(1) and not link._body_acquire_waiters
 
 
 @pytest.mark.parametrize("bad", [-1, 2001, True, "1500"])
@@ -677,8 +748,10 @@ async def test_pending_actor_removal_clears_scope_only_on_authoritative_status(s
     else:
         with pytest.raises(GameError, match="acquisition is pending"):
             await link.body_watch(["OTHER"])
-        await link.body_watch([])
-        assert conn.sent[-1]["npcs"] == []
+        with pytest.raises(GameError, match="acquisition is pending"):
+            await link.body_watch([])
+        await link.body_watch(["NPC", "OTHER"])
+        assert conn.sent[-1]["npcs"] == ["NPC", "OTHER"]
 
 
 async def orphaned_pending():
@@ -712,6 +785,7 @@ async def test_late_terminal_event_clears_orphan_and_allows_watch_and_next_acqui
         assert not link.body_leases
     await link.body_watch([])
     await link.body_watch(["NPC"])
+    link._dispatch(message(packet(observation(2))))
     conn.drop_acquire_ack = False
     conn.immediate_acquire = True
     lease = await link.body_acquire("NPC", link.body_latest[1], "scripted", await_boundary_ms=1500)
@@ -744,9 +818,11 @@ async def test_status_clears_orphan_only_when_current_world_confirms_no_request(
     )
     await link.body_control_status()
     assert link.body_acquire_pending(1) is not cleared
-    await link.body_watch([])
     if cleared:
+        await link.body_watch([])
         await link.body_watch(["NPC"])
     else:
         with pytest.raises(GameError, match="acquisition is pending"):
-            await link.body_watch(["NPC"])
+            await link.body_watch([])
+        await link.body_watch(["npc", "OTHER"])
+        assert conn.sent[-1]["npcs"] == ["NPC", "OTHER"]

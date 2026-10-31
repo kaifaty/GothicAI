@@ -1,0 +1,45 @@
+# WORLD=NEWWORLD.ZEN; a real extracted Khorinis town banner, arrow passes through.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+view full
+cloth setup NW_CITY_FLAG_01:1 city-banner
+cloth off
+cloth wind calm
+wait 12000
+rec cloth-city-off
+shot cloth-city-off-calm
+wait 3000
+cloth wind gust
+wait 10000
+shot cloth-city-off-gust
+wait 34
+cloth checkpoint city-off-gust
+stop
+cloth wind calm
+cloth on
+wait 2000
+cloth reset-stats
+wait 10000
+cloth checkpoint city-calm-10s
+cloth verify anchors
+rec cloth-city-on
+shot cloth-city-on-calm
+wait 3000
+cloth wind gust
+wait 10000
+shot cloth-city-on-gust
+wait 34
+cloth checkpoint city-gust
+cloth wind calm
+wait 5000
+cloth shoot arrow
+wait 1500
+cloth verify arrow
+cloth verify anchors
+cloth checkpoint city-after-arrow
+shot cloth-city-after-arrow
+wait 34
+stop
+physics stats

@@ -24,7 +24,7 @@ PfxEmitterMesh::PfxEmitterMesh(const PackedMesh& src) {
   mkIndex();
   }
 
-PfxEmitterMesh::PfxEmitterMesh(const zenkit::ModelMesh& library) {
+PfxEmitterMesh::PfxEmitterMesh(const asset::ModelMesh& library) {
   for(const auto &i : library.meshes) {
     auto src = phoenix_compat::pack_softskin_mesh(i);
 

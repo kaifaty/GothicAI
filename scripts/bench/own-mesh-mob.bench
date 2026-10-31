@@ -1,0 +1,47 @@
+# Fresh NEWWORLD.ZEN, noon. Compare indexed GLB and original with the same take.
+# BENCH_NW_CITY_01.ASC at (2982, -121, -5631) cm beside the wooden wall:
+# prop-survey preorder 20649, ZEN vob.id 23479. Events use the runtime mob index.
+# Its nearest exact stock waypoint is NW_CITY_HABOUR_BENCH_01 (203.28 cm).
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view nopfx
+cam lift off
+# Empty close view from the open side; keep the hero below the world.
+# Shots capture the next frame: wait before changing the scene or camera.
+goto pos 2982 -2121 -5631
+clear 5000
+cam look 2030
+cam world 330 2180 145
+wait 34
+cam hold
+wait 5000
+shot own-mesh-mob-empty
+wait 34
+# The native fixture pins the authored bench by waypoint and checks a clear
+# fixed view of the supported approach and the actual seating sockets.
+npccharacter on
+npccharacter seat NW_CITY_HABOUR_BENCH_01
+wait 1000
+npccharacter trace watched
+rec own-mesh-mob-seat novideo
+npccharacter sit
+wait 5500
+npccharacter snapshot seated
+cam look 80
+cam world 300 160 145
+wait 34
+cam hold
+shot own-mesh-mob-seated
+wait 34
+npccharacter stand
+wait 5500
+npccharacter end
+npccharacter snapshot standing
+shot own-mesh-mob-standing
+wait 34
+npccharacter trace off
+stop
+census

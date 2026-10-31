@@ -4,7 +4,7 @@
 #include <Tempest/Sound>
 #include <vector>
 
-#include <zenkit/addon/daedalus.hh>
+#include "game/definitions/definitiontypes.h"
 
 class GSoundEffect;
 
@@ -28,7 +28,7 @@ class SoundFx {
   private:
     struct SoundVar {
       SoundVar()=default;
-      SoundVar(const zenkit::ISoundEffect& sfx,Tempest::Sound&& snd);
+      SoundVar(const Def::SoundEffect& sfx,Tempest::Sound&& snd);
       SoundVar(const float vol,Tempest::Sound&& snd);
 
       Tempest::Sound snd;

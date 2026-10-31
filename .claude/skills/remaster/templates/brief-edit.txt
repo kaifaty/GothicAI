@@ -1,0 +1,18 @@
+Next step in this same thread. Same rules as before: do not read, open, list or view any files on disk and do not search the web; the only shell command allowed is `date -u +%Y-%m-%dT%H:%M:%SZ` before and after each call. Make exactly one image_gen call per texture below, with the prompt copied verbatim, as an edit of the image named in it. Do not judge the results and do not retry.
+
+Reply with only, for every call in order: texture name, attempt number, absolute PNG path, UTC start and end, the exact full prompt of that call.
+
+### {texture}
+----- prompt start -----
+Edit of {parent} (the approved concept). A flat square game texture of {what}, {width_cm} cm wide and {height_cm} cm tall, filling the whole image edge to edge, camera perpendicular, no perspective, no background, soft even light.
+
+[KEEP FROM THE CONCEPT — exactly] {keep}
+
+[LAYOUT] {layout}
+
+[CHANGE ONLY] {change}
+
+[AVOID — rejected before] {defaults}
+
+Seamless {seams}.
+----- prompt end -----

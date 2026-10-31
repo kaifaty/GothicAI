@@ -1,0 +1,38 @@
+# WORLD=OLDWORLD.ZEN; native S_WINDY and subdivided Jolt use the same fixed camera.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+view full
+cloth setup 7603 orc-standard
+cloth off
+cloth wind calm
+wait 12000
+rec cloth-orc-off
+shot cloth-orc-off-calm
+wait 3000
+cloth wind gust
+wait 10000
+shot cloth-orc-off-gust
+wait 34
+cloth checkpoint orc-off-gust
+stop
+cloth wind calm
+cloth on
+wait 2000
+cloth reset-stats
+wait 10000
+cloth checkpoint orc-calm-10s
+cloth verify anchors
+rec cloth-orc-on
+shot cloth-orc-on-calm
+wait 3000
+cloth wind gust
+wait 10000
+shot cloth-orc-on-gust
+wait 34
+cloth checkpoint orc-gust
+cloth verify anchors
+wait 3000
+stop
+physics stats

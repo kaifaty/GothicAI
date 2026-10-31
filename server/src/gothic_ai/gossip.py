@@ -38,6 +38,7 @@ from .game import GameError, GameLink
 from .incidents import classify
 from .journal import Journal
 from .llm import LLMError, Message, Tool, ToolCall, open_ahead, with_deadlines
+from .people_knowledge import rumor_subject
 from .perception import PerceptionDesk
 from .protocol import (
     Detached,
@@ -401,6 +402,10 @@ class GossipDesk:
         return staging
 
     def _stage(self, r: Rumor, a: str, b: str) -> Staging:
+        # The live scene prompt and scene memories describe news about the hero. NPC news
+        # follows the same social pass as a fact, without asking that scene model.
+        if not r.is_player:
+            return Staging("fact", why="news about an npc")
         hello = self.link.hello
         if hello is None or hello.protocol < PROTOCOL:
             return Staging("fact", why="old bridge")
@@ -685,6 +690,16 @@ class GossipDesk:
             f"Новость (знает {an}, не знает {bn}): {s.news}",
             f"{an} {self._source(r, a, an)}.",
         ]
+        crimes = self.rumors.crimes
+        crime = crimes.crime(r.crime) if crimes is not None and r.is_player and r.crime else None
+        if crime is not None and (excuse := crimes.excuse(a, r.crime)):
+            excuse = dict(excuse)
+            if social is not None and excuse.get("excuse_by_name") in {None, "", excuse["excuse_by"]}:
+                excuse["excuse_by_name"] = social.names.get(excuse["excuse_by"], excuse["excuse_by"])
+            parts.append(
+                f"Оправдание: {crimes.excuse_text(crime, excuse)}. "
+                "Рассказчик должен озвучить эту причину вместе с новостью."
+            )
         honesty = self.trust.situation(a) if self.trust is not None else None
         if honesty is not None and "\n" in honesty:
             honesty = honesty.split("\n", 1)[1]  # its own header is in the second person
@@ -696,8 +711,12 @@ class GossipDesk:
     def _source(self, r: Rumor, a: str, name: str) -> str:
         """How the teller knows it, and since when."""
         she = self._she(a, name)
-        if r.known.get(a, 0) == 0 and r.kind == "broken":
+        if r.known.get(a, 0) == 0 and not r.is_player:
+            how = "сама раскрыла это" if she else "сам раскрыл это"
+        elif r.known.get(a, 0) == 0 and r.kind == "broken":
             how = "сама не дождалась от него долга" if she else "сам не дождался от него долга"
+        elif r.known.get(a, 0) == 0 and r.kind == "fame":
+            how = "сама видела это" if she else "сам видел это"
         elif r.known.get(a, 0) == 0:
             how = "сама уличила героя" if she else "сам уличил героя"
         else:
@@ -705,7 +724,8 @@ class GossipDesk:
                 (
                     f.get("from_name") or f.get("from")
                     for f in self.chronicle.facts("rumor")
-                    if f.get("to") == a and f.get("quest") == r.quest and f.get("kind", r.kind) == r.kind
+                    if f.get("to") == a and f.get("quest") == r.quest
+                    and f.get("kind", r.kind) == r.kind and rumor_subject(f) == r.subject
                 ),
                 None,
             )
@@ -949,7 +969,7 @@ class GossipDesk:
             if o.kind != "human" or o.distance > WALK_CM or social.ties.get(a, {}).get(b) is None:
                 continue
             for r in list(rumors.rumors.values()):
-                if a not in r.known or b in r.known or not r.tells(a, day):
+                if a not in r.known or not rumors._new_to(r, a, b) or not r.tells(a, day):
                     continue
                 key = (r.key, a, b)
                 if (again := self._checked.get(key)) is not None and clock < again:
@@ -995,7 +1015,8 @@ class GossipDesk:
         )
         clock = self.rumors.clock
         when = clock_text(clock % DAY // 60, clock % 60) if clock is not None else None
-        news = news_text(r.kind, r.about_name, r.title, about_you=r.about == a)
+        news = (news_text(r.kind, r.about_name, r.title, about_you=r.about == a)
+                if r.is_player else r.description())
         sit = planner.builder.talk_to(ctx, when, b_name, gap_cm / 100, news)
         rid = f"{a}#talk_to{next(self._ids)}"
         sent = time.monotonic()
@@ -1057,7 +1078,7 @@ class GossipDesk:
 
 def _news(r: Rumor) -> str:
     """What the teller knows, in the rumor's own wording (without whose words it is)."""
-    return r.told("").removeprefix("Слух (со слов: ): ")
+    return r.description()
 
 
 def _svm(s: Scene, npc: str) -> str:

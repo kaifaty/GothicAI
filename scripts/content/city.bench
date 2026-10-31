@@ -1,0 +1,87 @@
+# City set 1: original render-feature city camera, plus four authored city sites.
+# city: reports/render-features/2026-10-18/tools/rf.bench, unchanged through its night shot.
+# market MARKT and house NW_CITY_MERCHANT_HUT_02_IN_02: evals/npc-decisions/day_people.json.
+# harbour/upper anchors: OpenGothic/common/navbench.cpp's authored region anchors.
+# Each site has the render survey's 6 s settle + 20 s ordinary-frame FPS window.
+cheat god
+set time 12 0
+overlay off
+goto NW_CITY_MERCHANT_SHOP01_FRONT_03
+face 0
+cam game
+wait 6000
+shot city_a
+wait 20000
+shot city
+wait 300
+rec city_cap
+wait 3000
+stop
+set time 23 0
+wait 3000
+shot city_night
+wait 100
+set time 12 0
+goto MARKT
+face wp NW_CITY_MERCHANT_PATH_28_D
+cam game
+wait 6000
+shot market_a
+wait 20000
+shot market
+wait 300
+rec market_cap
+wait 3000
+stop
+set time 23 0
+wait 3000
+shot market_night
+wait 100
+set time 12 0
+goto NW_CITY_HABOUR_06_B
+face wp NW_CITY_HABOUR_05
+cam game
+wait 6000
+shot harbour_a
+wait 20000
+shot harbour
+wait 300
+rec harbour_cap
+wait 3000
+stop
+set time 23 0
+wait 3000
+shot harbour_night
+wait 100
+set time 12 0
+goto NW_CITY_UPTOWN_PATH_13
+face wp NW_CITY_UPTOWN_PATH_15
+cam game
+wait 6000
+shot upper_a
+wait 20000
+shot upper
+wait 300
+rec upper_cap
+wait 3000
+stop
+set time 23 0
+wait 3000
+shot upper_night
+wait 100
+set time 12 0
+goto NW_CITY_MERCHANT_HUT_02_IN_02
+face wp NW_CITY_BED_ZURIS
+cam game
+wait 6000
+shot house_a
+wait 20000
+shot house
+wait 300
+rec house_cap
+wait 3000
+stop
+set time 23 0
+wait 3000
+shot house_night
+wait 500

@@ -4,7 +4,9 @@
 - A service that exits during the session is restarted after 1, 2, 4… s (the game reconnects by itself).
   The game exiting ends the session.
 - Every process runs in its own process group (`uv run` starts the service as its child), and stopping
-  signals the whole group: SIGTERM, SIGKILL after a grace period.
+  signals the whole group: SIGTERM, SIGKILL after a grace period. Windows has neither groups nor SIGTERM:
+  there every process runs in its own job object (winproc.py), and stopping ends the job at once. The
+  services do not handle SIGTERM on Unix either, so they end the same way.
 - Output goes to `<name>.log` in the session's log directory, a restart appends to the same file.
 - While the session runs, the health answers are polled, and a change (a TTS provider dropped out, the game
   connected) is reported as a status event.
@@ -20,17 +22,21 @@ import json
 import os
 import shlex
 import signal
+import sys
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, Literal
+from typing import TYPE_CHECKING, Any, BinaryIO, Literal
 
 import httpx
 
 from .commands import Proc, child_env
 from .state import SessionFile
+
+if TYPE_CHECKING:
+    from .winproc import Job
 
 READY_TIMEOUT_S = 180.0  # the first `uv run` of a service may install its dependencies
 STOP_GRACE_S = 5.0
@@ -39,7 +45,9 @@ STABLE_S = 60.0  # a service that ran this long restarts after the shortest dela
 STATUS_EVERY_S = 3.0
 TAIL_LINES = 40
 
-EventKind = Literal["starting", "ready", "status", "exited", "restarting", "stopped", "failed", "journal"]
+EventKind = Literal[
+    "starting", "ready", "status", "exited", "restarting", "stopped", "failed", "journal", "waiting"
+]
 JOURNAL_PREFIX = "JOURNAL "
 
 
@@ -63,6 +71,7 @@ class _Running:
     started: float
     reader: asyncio.Task[None] | None = None
     tail: deque[str] = field(default_factory=lambda: deque(maxlen=TAIL_LINES))
+    job: Job | None = None  # Windows: the process tree
 
 
 class Supervisor:
@@ -75,9 +84,11 @@ class Supervisor:
         *,
         session: SessionFile | None = None,
         echo: Callable[[str, str], None] | None = None,
+        preparation: Proc | None = None,
     ) -> None:
         self.services = services
         self.game = game
+        self.preparation = preparation
         self.log_dir = log_dir
         self.on_event = on_event
         self.session = session or SessionFile()
@@ -103,12 +114,21 @@ class Supervisor:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         tasks: list[asyncio.Task[Any]] = []
         try:
+            if self._stop.is_set():
+                return 0
+            if self.preparation is not None:
+                code = await self._prepare()
+                if code or self._stop.is_set():
+                    return code
             if not await self._start_services():
                 return 0 if self._stop.is_set() else 1
             tasks = [asyncio.create_task(self._keep(p)) for p in self.services]
             tasks.append(asyncio.create_task(self._watch_status()))
             if self.game is None:
-                await self._stop.wait()
+                if self.services:
+                    await self._stop.wait()
+                return 0
+            if self._stop.is_set():
                 return 0
             game = await self._spawn(self.game)
             ended = asyncio.create_task(_exit_code(game.process))
@@ -128,6 +148,27 @@ class Supervisor:
             await asyncio.gather(*tasks, return_exceptions=True)
             await self._stop_all()
             self.session.release()
+
+    async def _prepare(self) -> int:
+        assert self.preparation is not None
+        r = await self._spawn(self.preparation)
+        ended = asyncio.create_task(_exit_code(r.process))
+        stopping = asyncio.create_task(self._stop.wait())
+        try:
+            await asyncio.wait({ended, stopping}, return_when=asyncio.FIRST_COMPLETED)
+            if self._stop.is_set():
+                return 0  # run's finally stops the converter's process group before returning
+            code = ended.result()
+            await self._finish(r, signal.SIGTERM)
+            if code:
+                self.on_event(Event("prepare", "failed", f"exited with code {code}\n{_indent(list(r.tail))}"))
+            else:
+                self.on_event(Event("prepare", "ready", f"in {time.monotonic() - r.started:.1f}s"))
+            return code
+        finally:
+            ended.cancel()
+            stopping.cancel()
+            await asyncio.gather(ended, stopping, return_exceptions=True)
 
     async def _start_services(self) -> bool:
         """False as soon as one service fails to come up (its last output in the event), or on stop()."""
@@ -163,7 +204,7 @@ class Supervisor:
             code = await _exit_code(r.process)
             if self._stop.is_set():
                 return
-            await self._finish(r, signal.SIGKILL)  # whatever is left of its group would hold the port
+            await self._finish(r, force=True)  # whatever is left of its group would hold the port
             failures = 0 if time.monotonic() - r.started >= STABLE_S else failures + 1
             delay = RESTART_DELAYS_S[min(max(failures - 1, 0), len(RESTART_DELAYS_S) - 1)]
             self.on_event(Event(proc.name, "exited", f"code {code}\n{_indent(list(r.tail)[-10:])}"))
@@ -176,7 +217,7 @@ class Supervisor:
                 health = await self._wait_ready(proc)
             except NotReady as err:
                 self.on_event(Event(proc.name, "failed", str(err)))
-                await self._finish(self.running[proc.name], signal.SIGKILL)
+                await self._finish(self.running[proc.name], force=True)
                 continue
             self._status[proc.name] = health
             self.on_event(Event(proc.name, "ready", "after restart", health))
@@ -187,25 +228,26 @@ class Supervisor:
         log.flush()
         self.on_event(Event(proc.name, "starting"))
         proc.cwd.mkdir(parents=True, exist_ok=True)
-        process = await asyncio.create_subprocess_exec(
-            *proc.argv,
+        process, job = await _start(
+            proc.argv,
             cwd=proc.cwd,
             env=child_env(proc.env),
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,  # own process group, and Ctrl-C in the terminal reaches only us
+            # the converter's diagnostics are on stderr; _start puts every process in its own group or job
+            stdout=asyncio.subprocess.DEVNULL if proc.name == "prepare" else asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE if proc.name == "prepare" else asyncio.subprocess.STDOUT,
             limit=1 << 22,
         )
-        r = _Running(proc, process, log, time.monotonic())
+        r = _Running(proc, process, log, time.monotonic(), job=job)
         r.reader = asyncio.create_task(self._read(r))
         self.running[proc.name] = r
         self.session.add(proc.name, process.pid)
         return r
 
     async def _read(self, r: _Running) -> None:
-        assert r.process.stdout is not None
-        while (line := await r.process.stdout.readline()) and not r.log.closed:
+        stream = r.process.stderr if r.proc.name == "prepare" else r.process.stdout
+        assert stream is not None
+        while (line := await stream.readline()) and not r.log.closed:
             if r.proc.stamp:
                 line = time.strftime("%H:%M:%S ").encode() + line
             r.log.write(line)
@@ -214,6 +256,9 @@ class Supervisor:
             r.tail.append(text)
             if self.echo is not None:
                 self.echo(r.proc.name, text)
+            if r.proc.name == "prepare":
+                self.on_event(Event("prepare", "status", text))
+                continue
             if text.startswith(JOURNAL_PREFIX):
                 with contextlib.suppress(ValueError):
                     entry = json.loads(text.removeprefix(JOURNAL_PREFIX))
@@ -244,27 +289,35 @@ class Supervisor:
 
     async def _stop_all(self) -> None:
         """The game first, then the services in reverse start order (the server before ASR and TTS)."""
-        order = [n for n in ("game", *(p.name for p in reversed(self.services))) if n in self.running]
+        order = [
+            n for n in ("game", *(p.name for p in reversed(self.services)), "prepare") if n in self.running
+        ]
         for name in order:
             r = self.running[name]
+            if r.log.closed:
+                continue
             if r.process.returncode is None:
                 self.on_event(Event(name, "stopped"))
-            await self._finish(r, signal.SIGTERM)
+            await self._finish(r)
 
-    async def _finish(self, r: _Running, sig: signal.Signals) -> None:
-        """Stops the process group (SIGKILL if `sig` is not enough) and closes the log."""
-        pgid = r.process.pid
-        _killpg(pgid, sig)
-        if sig != signal.SIGKILL:
-            try:
-                await asyncio.wait_for(_exit_code(r.process), STOP_GRACE_S)
-            except TimeoutError:
-                pass
-        deadline = time.monotonic() + STOP_GRACE_S
-        while _group_alive(pgid) and time.monotonic() < deadline:  # noqa: ASYNC110 (no event for this)
-            await asyncio.sleep(0.05)  # members other than the leader, e.g. the service under `uv run`
-        _killpg(pgid, signal.SIGKILL)
-        await _exit_code(r.process)
+    async def _finish(self, r: _Running, force: bool = False) -> None:
+        """Stops the process group (SIGTERM, then SIGKILL if that is not enough; at once with `force`) and
+        closes the log. On Windows the process's job ends the whole tree at once."""
+        if r.job is not None:
+            await _end_job(r.process, r.job)
+        else:
+            pgid = r.process.pid
+            _killpg(pgid, signal.SIGKILL if force else signal.SIGTERM)
+            if not force:
+                try:
+                    await asyncio.wait_for(_exit_code(r.process), STOP_GRACE_S)
+                except TimeoutError:
+                    pass
+            deadline = time.monotonic() + STOP_GRACE_S
+            while _group_alive(pgid) and time.monotonic() < deadline:  # noqa: ASYNC110 (no event for this)
+                await asyncio.sleep(0.05)  # members other than the leader, e.g. the service under `uv run`
+            _killpg(pgid, signal.SIGKILL)
+            await _exit_code(r.process)
         await self._drain(r)
         r.log.close()
         if self.running.get(r.proc.name) is r:
@@ -306,14 +359,13 @@ async def temporary(proc: Proc, log: Path, session: SessionFile) -> AsyncIterato
     log.parent.mkdir(parents=True, exist_ok=True)
     proc.cwd.mkdir(parents=True, exist_ok=True)
     with log.open("wb") as out:
-        process = await asyncio.create_subprocess_exec(
-            *proc.argv,
+        process, job = await _start(
+            proc.argv,
             cwd=proc.cwd,
             env=child_env(proc.env),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=out,
             stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
         )
         session.add(proc.name, process.pid)
         try:
@@ -327,12 +379,50 @@ async def temporary(proc: Proc, log: Path, session: SessionFile) -> AsyncIterato
                     raise NotReady(f"{err}\n{_indent(tail)}") from None
             yield process
         finally:
-            _killpg(process.pid, signal.SIGTERM)
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(_exit_code(process), STOP_GRACE_S)
-            _killpg(process.pid, signal.SIGKILL)
-            await _exit_code(process)
+            if job is not None:
+                await _end_job(process, job)
+            else:
+                _killpg(process.pid, signal.SIGTERM)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(_exit_code(process), STOP_GRACE_S)
+                _killpg(process.pid, signal.SIGKILL)
+                await _exit_code(process)
             session.remove(proc.name)
+
+
+async def _start(argv: list[str], **kwargs: Any) -> tuple[asyncio.subprocess.Process, Job | None]:
+    """The process in a group of its own, so Ctrl-C in the terminal reaches only us. On Windows also in a
+    job of its own, which it joins while still suspended: its children are all born inside."""
+    if sys.platform != "win32":
+        process = await asyncio.create_subprocess_exec(*argv, start_new_session=True, **kwargs)
+        return process, None
+    from .winproc import CREATION_FLAGS, Job, resume
+
+    job = Job()
+    try:
+        process = await asyncio.create_subprocess_exec(*argv, creationflags=CREATION_FLAGS, **kwargs)
+    except BaseException:
+        job.close()
+        raise
+    try:
+        job.add(process.pid)
+        resume(process.pid)
+    except BaseException:
+        job.close()  # ends it if it joined; otherwise it never ran, and is ended below
+        with contextlib.suppress(OSError):
+            process.kill()
+        raise
+    return process, job
+
+
+async def _end_job(process: asyncio.subprocess.Process, job: Job) -> None:
+    """Windows: ends the whole tree and waits until none of it runs (bounded), then lets go of the job."""
+    job.terminate()
+    await _exit_code(process)
+    deadline = time.monotonic() + STOP_GRACE_S
+    while job.active() and time.monotonic() < deadline:  # noqa: ASYNC110 (no event for this)
+        await asyncio.sleep(0.05)
+    job.close()
 
 
 async def _exit_code(process: asyncio.subprocess.Process) -> int:

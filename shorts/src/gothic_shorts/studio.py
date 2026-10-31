@@ -195,6 +195,21 @@ class Studio:
                 left = self.takes(n)
                 self._choose(n, left[-1]["k"] if left else None)
 
+    def restore(self, n: int, k: int) -> None:
+        """Bring a discarded take back to voice/raw/ and choose it, without replacing any files."""
+        with self.lock:
+            wav = self.trash / f"{n:02d}-{k}.wav"
+            if not wav.is_file():
+                raise StudioError(f"line {n} has no take {k} in the trash")
+            paths = (wav, wav.with_suffix(".json"))
+            if any((self.raw / path.name).exists() for path in paths):
+                raise StudioError(f"line {n} take {k} already exists in voice/raw")
+            self.raw.mkdir(parents=True, exist_ok=True)
+            for path in paths:
+                if path.is_file():
+                    shutil.move(path, self.raw / path.name)
+            self._choose(n, k)
+
     def room(self, body: bytes) -> dict:
         with self.lock:
             wav = self.ws / "voice/room.wav"
@@ -283,6 +298,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             elif url.path == "/api/discard":
                 self.studio.discard(int(q["line"]), int(q["take"]))
+                self._json({"ok": True})
+            elif url.path == "/api/restore":
+                self.studio.restore(int(q["line"]), int(q["take"]))
                 self._json({"ok": True})
             elif url.path == "/api/room":
                 self._json(self.studio.room(body))

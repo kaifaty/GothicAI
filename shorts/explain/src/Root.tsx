@@ -2,8 +2,9 @@ import React from 'react';
 import {Composition, type CalculateMetadataFunction} from 'remotion';
 import {STING_FRAMES} from './Brand';
 import {Explainer} from './Explainer';
+import {fontsReady} from './fonts';
 import {Plan} from './schema';
-import {FPS, H, W} from './theme';
+import {FPS, FRAME, H, W} from './theme';
 
 // the dice chart demo (use --props '{"brand":false}' without assets; real plans come from the workspace)
 const demo: Plan = Plan.parse({
@@ -30,10 +31,11 @@ const demo: Plan = Plan.parse({
 });
 
 // the plan is checked here: a missing or misspelt field stops the render with its path
-const metadata: CalculateMetadataFunction<Plan> = ({props}) => {
+const metadata: CalculateMetadataFunction<Plan> = async ({props}) => {
+  await fontsReady;
   const plan = Plan.parse(props);
   const dur = plan.beats.reduce((s, b) => s + b.dur, 0);
-  return {props: plan, durationInFrames: Math.round(dur * FPS) + (plan.brand ? STING_FRAMES : 0)};
+  return {props: plan, ...FRAME[plan.format], durationInFrames: Math.round(dur * FPS) + (plan.brand ? STING_FRAMES : 0)};
 };
 
 export const Root: React.FC = () => (

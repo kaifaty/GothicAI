@@ -150,7 +150,7 @@ float AimWalk::rate() const {
   return (dir>0.f ? Forward : Back)/1000.f/v;
   }
 
-bool AimWalk::sample(float at, size_t node, zenkit::AnimationSample& out) const {
+bool AimWalk::sample(float at, size_t node, asset::AnimationSample& out) const {
   if(node>=seqNode.size() || seqNode[node]<0)
     return false;
   const auto&  d  = *seq->data;
@@ -291,7 +291,7 @@ Vec3 AimWalk::move(uint64_t dt) const {
   return Vec3(r.x*weight,0,r.z*weight);
   }
 
-void AimWalk::apply(Matrix4x4* tr, size_t numBones, const zenkit::AnimationSample* base, const Matrix4x4& m) {
+void AimWalk::apply(Matrix4x4* tr, size_t numBones, const asset::AnimationSample* base, const Matrix4x4& m) {
   twist = chest = drop = 0;
   if(!valid || base==nullptr || numBones!=skeleton->nodes.size())
     return;
@@ -322,7 +322,7 @@ void AimWalk::apply(Matrix4x4* tr, size_t numBones, const zenkit::AnimationSampl
   // it on the ground (the model goes where the steps take it, Pose::animMoveSpeed), its height and turn
   // the steps'
   auto local = [&](size_t i) {
-    zenkit::AnimationSample s;
+    asset::AnimationSample s;
     if(!sample(phase,i,s))
       return Matrix4x4();
     if(standing.size()==numBones && !stopping && !finishPose && i!=root && i!=pelvis)

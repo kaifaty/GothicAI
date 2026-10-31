@@ -2,6 +2,7 @@
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <utility>
 #include <vector>
 namespace AppCadence {
@@ -11,11 +12,17 @@ constexpr uint64_t Duration=30000000000ull;
 struct Counts { uint32_t models=0,dead=0,parts=0,asleep=0,down=0; };
 struct State {
   bool enabled=false,armed=false,complete=false,on=false,flushed=false;
+  bool logFps=false;
   uint64_t entry=0,start=0,end=0,overflow=0;
+  uint64_t logStart=0,logFrames=0;
   size_t used=0;
   std::string output;
   std::vector<uint64_t> frames;
   Counts before,after;
+  State() {
+    const auto* value=std::getenv("OPENGOTHIC_FPS_LOG");
+    logFps=value!=nullptr && value[0]=='1' && value[1]=='\0';
+    }
   };
 State& state() { static State s;return s; }
 uint64_t now() { return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()); }
@@ -30,9 +37,25 @@ bool arm(bool ragdoll) {
   s.armed=true;s.on=ragdoll;s.start=s.entry;s.end=s.start+Duration;return true;
   }
 void appFrame() {
-  auto& s=state();if(!s.armed || s.complete)return;
+  auto& s=state();if((!s.armed || s.complete) && !s.logFps)return;
+  const auto time=now();
+  if(s.logFps) {
+    if(s.logStart==0) {
+      s.logStart=time;
+      } else {
+      ++s.logFrames;
+      const auto elapsed=time-s.logStart;
+      if(elapsed>=10000000000ull) {
+        std::fprintf(stderr,"[app-cadence] mean_fps=%.2f frames=%llu elapsed_s=%.3f\n",
+          double(s.logFrames)*1e9/double(elapsed),(unsigned long long)s.logFrames,double(elapsed)/1e9);
+        std::fflush(stderr);
+        s.logStart=time;s.logFrames=0;
+        }
+      }
+    }
+  if(!s.armed || s.complete)return;
   if(s.used==Capacity) { ++s.overflow;s.complete=true;return; }
-  const auto time=now();s.frames[s.used++]=time;
+  s.frames[s.used++]=time;
   if(time>=s.end)s.complete=true; // preserve the whole final interval, including its tail
   }
 bool done() { return state().complete; }

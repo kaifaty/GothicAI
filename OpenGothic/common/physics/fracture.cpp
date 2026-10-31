@@ -1,7 +1,10 @@
 #include "fracture.h"
 #include "fracturedata.h"
+#include "resources.h"
+#include "utils/userhome.h"
 
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Tempest/Log>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -9,7 +12,9 @@
 #include <filesystem>
 #include <fstream>
 #include <locale>
+#include <mutex>
 #include <sstream>
+#include <unordered_set>
 
 namespace {
 std::string basename(std::string_view visual) {
@@ -77,43 +82,70 @@ float FractureRule::meleeDamage(Melee kind,float weaponDamage,float strength) co
   }
 
 std::shared_ptr<const FractureMesh> FractureMesh::load(std::string_view visual) {
-  std::filesystem::path root;
-  if(const auto* path=std::getenv("OPENGOTHIC_FRACTURE")) {
-    if(path[0]=='\0') return {};
-    root=path;
+  Resources::MeshReplacementSource source;
+  const bool replacement=Resources::meshReplacementLoaded(visual,&source);
+  std::filesystem::path path;
+  if(replacement) {
+    path=source.file;
+    path.replace_extension(".fracture");
     }
-  else if(const auto* home=std::getenv("HOME")) root=std::filesystem::path(home)/".local/share/gothic-ai/fracture";
-  else return {};
-  std::ifstream file(root/(basename(visual)+".fracture"));
-  file.imbue(std::locale::classic());
-  std::string tag;
-  size_t version=0,count=0;
-  if(!(file>>tag>>version) || tag!="GOTHIC_FRACTURE" || version!=1 ||
-     !(file>>tag>>count) || tag!="pieces" || count<8 || count>20) return {};
-  auto mesh=std::make_shared<FractureMesh>();
-  Physics::initialize();
-  for(size_t p=0;p<count;++p) {
-    Piece piece;
-    size_t triangles=0;
-    if(!(file>>tag>>piece.volume>>piece.center.x>>piece.center.y>>piece.center.z>>triangles) ||
-       tag!="piece" || !std::isfinite(piece.volume) || piece.volume<=0 || triangles<4 || triangles>100000) return {};
-    piece.triangles.resize(triangles);
-    std::vector<JPH::Vec3> points;
-    points.reserve(triangles*3);
-    for(auto& triangle:piece.triangles) {
-      if(!(file>>tag>>triangle.texture) || tag!="tri" || triangle.texture.size()>255) return {};
-      for(auto& v:triangle.vertices) {
-        if(!(file>>v.position.x>>v.position.y>>v.position.z>>v.normal.x>>v.normal.y>>v.normal.z>>v.uv.x>>v.uv.y) || !finite(v)) return {};
-        points.emplace_back(v.position.x*.01f,v.position.y*.01f,v.position.z*.01f);
-        }
+  else {
+    std::filesystem::path root;
+    if(const auto* dir=std::getenv("OPENGOTHIC_FRACTURE")) {
+      if(dir[0]=='\0') return {};
+      root=dir;
       }
-    JPH::ConvexHullShapeSettings settings(points.data(),int(points.size()),.001f);
-    const auto shape=settings.Create();
-    if(shape.HasError() || shape.Get()->GetVolume()<=0.f) return {};
-    piece.hull=shape.Get();
-    mesh->volume+=piece.volume;
-    mesh->pieces.push_back(std::move(piece));
+    else if(const auto home=userHome(); !home.empty()) root=home/".local/share/gothic-ai/fracture";
+    else return {};
+    path=root/(basename(visual)+".fracture");
     }
-  if(file>>tag) return {}; // Reject truncated/newer formats instead of rendering partial geometry.
+  const auto read=[&]() -> std::shared_ptr<const FractureMesh> {
+    std::ifstream file(path);
+    file.imbue(std::locale::classic());
+    std::string tag;
+    size_t version=0,count=0;
+    if(!(file>>tag>>version) || tag!="GOTHIC_FRACTURE" || version!=(replacement ? 2u : 1u)) return {};
+    if(replacement) {
+      size_t size=0;
+      uint32_t crc=0;
+      if(!(file>>tag>>size>>std::hex>>crc>>std::dec) || tag!="source" || size!=source.size || crc!=source.crc32) return {};
+      }
+    if(!(file>>tag>>count) || tag!="pieces" || count<8 || count>20) return {};
+    auto mesh=std::make_shared<FractureMesh>();
+    Physics::initialize();
+    for(size_t p=0;p<count;++p) {
+      Piece piece;
+      size_t triangles=0;
+      if(!(file>>tag>>piece.volume>>piece.center.x>>piece.center.y>>piece.center.z>>triangles) ||
+         tag!="piece" || !std::isfinite(piece.volume) || piece.volume<=0 || triangles<4 || triangles>100000) return {};
+      piece.triangles.resize(triangles);
+      std::vector<JPH::Vec3> points;
+      points.reserve(triangles*3);
+      for(auto& triangle:piece.triangles) {
+        if(!(file>>tag>>triangle.texture) || tag!="tri" || triangle.texture.size()>255) return {};
+        for(auto& v:triangle.vertices) {
+          if(!(file>>v.position.x>>v.position.y>>v.position.z>>v.normal.x>>v.normal.y>>v.normal.z>>v.uv.x>>v.uv.y) || !finite(v)) return {};
+          points.emplace_back(v.position.x*.01f,v.position.y*.01f,v.position.z*.01f);
+          }
+        }
+      JPH::ConvexHullShapeSettings settings(points.data(),int(points.size()),.001f);
+      const auto shape=settings.Create();
+      if(shape.HasError() || shape.Get()->GetVolume()<=0.f) return {};
+      piece.hull=shape.Get();
+      mesh->volume+=piece.volume;
+      mesh->pieces.push_back(std::move(piece));
+      }
+    if(file>>tag) return {}; // Reject truncated/newer formats instead of rendering partial geometry.
+    return mesh;
+  };
+  auto mesh=read();
+  if(replacement && !mesh) {
+    static std::mutex mutex;
+    static std::unordered_set<std::string> logged;
+    const auto name=basename(visual);
+    std::lock_guard<std::mutex> guard(mutex);
+    if(logged.insert(name).second)
+      Tempest::Log::i("fracture: disabled for loaded mesh replacement \"",name,".MRM\": missing, invalid or stale .fracture sidecar");
+    }
   return mesh;
   }

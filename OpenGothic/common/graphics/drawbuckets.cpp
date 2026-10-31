@@ -48,6 +48,11 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh) 
   bx.mat        = mat;
 
   bucketsDurtyBit = true;
+  for(size_t i=0;i<bucketsCpu.size();++i)
+    if(bucketsCpu[i].staticMesh==nullptr && bucketsCpu[i].animMesh==nullptr) {
+      bucketsCpu[i] = std::move(bx);
+      return Id(this,i);
+      }
   bucketsCpu.emplace_back(std::move(bx));
   return Id(this, bucketsCpu.size()-1);
   }
@@ -68,61 +73,112 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const AnimMesh& mesh) {
   return Id(this, bucketsCpu.size()-1);
   }
 
-const std::vector<DrawBuckets::Bucket>& DrawBuckets::buckets() {
+void DrawBuckets::invalidate(const StaticMesh& mesh) {
+  for(auto& bucket:bucketsCpu)
+    if(bucket.staticMesh==&mesh) {
+      bucket = Bucket();
+      bucketsDurtyBit = true;
+      }
+  }
+
+const std::vector<DrawBuckets::Bucket>& DrawBuckets::buckets() const {
   return bucketsCpu;
   }
 
-void DrawBuckets::updateBindlessArrays() {
+void DrawBuckets::updateBindlessArrays(bool updateBuffers) {
   if(!Shaders::options().doBindless)
     return;
 
   std::vector<const Tempest::Texture2d*>     tex;
+  std::vector<const Tempest::Texture2d*>     normal, orm;
   std::vector<const Tempest::StorageBuffer*> vbo, ibo;
   std::vector<const Tempest::StorageBuffer*> morphId, morph;
   for(auto& i:bucketsCpu) {
     tex.push_back(i.mat.tex);
+    if(Shaders::options().doMaterialMaps) {
+      normal.push_back(i.mat.normal!=nullptr ? i.mat.normal : &Resources::fallbackTexture());
+      orm.push_back(i.mat.orm!=nullptr ? i.mat.orm : &Resources::fallbackTexture());
+      }
+    if(!updateBuffers)
+      continue;
     if(i.staticMesh!=nullptr) {
-      ibo    .push_back(&i.staticMesh->ibo8);
-      vbo    .push_back(&i.staticMesh->vbo);
+      ibo    .push_back(&i.staticMesh->ibo8Buffer());
+      vbo    .push_back(&i.staticMesh->vboBuffer());
       morphId.push_back(i.staticMesh->morph.index);
       morph  .push_back(i.staticMesh->morph.samples);
-      } else {
+      } else if(i.animMesh!=nullptr) {
       ibo    .push_back(&i.animMesh->ibo8);
       vbo    .push_back(&i.animMesh->vbo);
+      morphId.push_back(nullptr);
+      morph  .push_back(nullptr);
+      } else {
+      ibo    .push_back(nullptr);
+      vbo    .push_back(nullptr);
       morphId.push_back(nullptr);
       morph  .push_back(nullptr);
       }
     }
 
+  // The first slots retain bucket IDs for RT and nonanimated materials.
+  // Landscape animations select their frame in the fragment shader so chunks
+  // with the same pipeline share one indirect command.
+  for(const auto& bucket:bucketsCpu)
+    if(bucket.mat.hasFrameAnimation())
+      tex.insert(tex.end(),bucket.mat.frames.begin(),bucket.mat.frames.end());
+
   // avoid shader linking stutter in vulkan
   tex    .resize(roundup(tex.size()));
-  vbo    .resize(roundup(vbo.size()));
-  ibo    .resize(roundup(ibo.size()));
-  morphId.resize(roundup(morphId.size()));
-  morph  .resize(roundup(morph.size()));
+  normal .resize(roundup(normal.size()));
+  orm    .resize(roundup(orm.size()));
 
   Resources::recycle(std::move(desc.tex));
-  Resources::recycle(std::move(desc.vbo));
-  Resources::recycle(std::move(desc.ibo));
-  Resources::recycle(std::move(desc.morphId));
-  Resources::recycle(std::move(desc.morph));
 
   auto& device = Resources::device();
   desc.tex     = device.descriptors(tex);
-  desc.vbo     = device.descriptors(vbo);
-  desc.ibo     = device.descriptors(ibo);
-  desc.morphId = device.descriptors(morphId);
-  desc.morph   = device.descriptors(morph);
+  if(updateBuffers) {
+    vbo    .resize(roundup(vbo.size()));
+    ibo    .resize(roundup(ibo.size()));
+    morphId.resize(roundup(morphId.size()));
+    morph  .resize(roundup(morph.size()));
+    Resources::recycle(std::move(desc.vbo));
+    Resources::recycle(std::move(desc.ibo));
+    Resources::recycle(std::move(desc.morphId));
+    Resources::recycle(std::move(desc.morph));
+    desc.vbo     = device.descriptors(vbo);
+    desc.ibo     = device.descriptors(ibo);
+    desc.morphId = device.descriptors(morphId);
+    desc.morph   = device.descriptors(morph);
+    }
+  if(Shaders::options().doMaterialMaps) {
+    Resources::recycle(std::move(desc.normal));
+    Resources::recycle(std::move(desc.orm));
+    desc.normal = device.descriptors(normal);
+    desc.orm    = device.descriptors(orm);
+    }
   }
 
 bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
-  if(!bucketsDurtyBit)
-    return false;
+  const auto generation=Resources::textureGeneration();
+  if(!bucketsDurtyBit) {
+    if(textureGeneration==generation)
+      return false;
+    updateBindlessArrays(false);
+    textureGeneration=generation;
+    return true;
+    }
   bucketsDurtyBit = false;
+  textureGeneration=generation;
 
   std::vector<BucketGpu> bucket;
+  uint32_t diffuseFrames=uint32_t(bucketsCpu.size());
   for(auto& i:bucketsCpu) {
     BucketGpu bx;
+    if(i.mat.hasFrameAnimation()) {
+      bx.diffuseFrames=diffuseFrames;
+      bx.frameCount=uint32_t(i.mat.frames.size());
+      bx.frameDuration=uint32_t(i.mat.texAniFPSInv);
+      diffuseFrames+=bx.frameCount;
+      }
     bx.texAniMapDirPeriod = i.mat.texAniMapDirPeriod;
     bx.waveMaxAmplitude   = i.mat.waveMaxAmplitude;
     bx.alphaWeight        = i.mat.alphaWeight;
@@ -134,6 +190,21 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       bx.bbox[1]    = Vec4(bbox[1].x,bbox[1].y,bbox[1].z,0.f);
       if(i.staticMesh->morph.anim!=nullptr)
         bx.flags |= BK_MORPH;
+      else if(i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest) {
+        bx.uvScale = i.mat.uvScale;
+        if(i.mat.normal!=nullptr)
+          bx.flags |= BK_NORMAL;
+        if(i.mat.orm!=nullptr)
+          bx.flags |= BK_ORM;
+        if(i.mat.hasMaterialMaps())
+          bx.flags |= BK_MATERIAL_MAPS;
+        if(i.mat.hasMaterialMaps() && i.mat.antitile!=Material::Antitile::Off) {
+          bx.antitileCell = i.mat.antitileCell;
+          bx.flags |= BK_ANTITILE;
+          if(i.mat.antitile==Material::Antitile::Rotate)
+            bx.flags |= BK_ANTITILE_ROTATE;
+          }
+        }
       }
     else if(i.animMesh!=nullptr) {
       auto& bbox    = i.animMesh->bbox.bbox;
@@ -151,8 +222,9 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
 
   auto& device = Resources::device();
   Resources::recycle(std::move(bucketsGpu));
-  bucketsGpu = device.ssbo(bucket);
+  bucketsGpu = device.ssbo(Uninitialized,bucket.size()*sizeof(bucket[0]));
+  bucketsGpu.updateAsync(bucket.data(),0,bucket.size()*sizeof(bucket[0]));
 
-  updateBindlessArrays();
+  updateBindlessArrays(true);
   return true;
   }

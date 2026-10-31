@@ -1,0 +1,37 @@
+# Render-feature survey (reports/render-features): two fixed spots at noon, the game's camera behind the hero.
+# Per spot: settle 6 s, shot <spot>_a, 20 s of normal frames (the timed window), shot <spot>,
+# 3 s of synchronous capture frames (rec; the runner drops the video), then a night shot.
+cheat god
+set time 12 0
+overlay off
+goto NW_CITY_MERCHANT_SHOP01_FRONT_03
+face 0
+cam game
+wait 6000
+shot city_a
+wait 20000
+shot city
+wait 300
+rec city_cap
+wait 3000
+stop
+set time 23 0
+wait 3000
+shot city_night
+wait 100
+set time 12 0
+goto NW_FARM1_OUT_01
+face 90
+cam game
+wait 6000
+shot farm_a
+wait 20000
+shot farm
+wait 300
+rec farm_cap
+wait 3000
+stop
+set time 23 0
+wait 3000
+shot farm_night
+wait 500

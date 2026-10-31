@@ -11,7 +11,7 @@ import json
 from collections.abc import AsyncIterator, Collection, Sequence
 from dataclasses import dataclass, field
 
-from .base import Done, Item, LLMEvent, Message, TextDelta, Tool, ToolCall, ToolChoice
+from .base import QUICK_SLOT, Done, Item, LLMEvent, Message, TextDelta, Tool, ToolCall, ToolChoice
 
 # with mood tags, as the persona's rules ask (the server takes them out of what is said)
 DEFAULT_REPLY = (
@@ -47,7 +47,12 @@ class FakeBackend:
         self.tool_choices: list[ToolChoice | None] = []
         self.sent_tools: list[list[Tool]] = []  # all the tools of each request
         self.cache_keys: list[str | None] = []
+        self.temperatures: list[float | None] = []
+        self.max_token_limits: list[int | None] = []
+        self.grammars: list[str | None] = []
         self.prewarms: list[tuple[str, list[Item]]] = []  # what was sent to fill the prompt cache
+        self.slot_ids: list[int | None] = []
+        self.prewarm_slot_ids: list[int | None] = []
 
     @property
     def reply(self) -> str:
@@ -57,6 +62,7 @@ class FakeBackend:
         pass
 
     async def prewarm(self, *, instructions: str, messages: Sequence[Item]) -> None:
+        self.prewarm_slot_ids.append(QUICK_SLOT.get())
         self.prewarms.append((instructions, list(messages)))
 
     async def stream(
@@ -68,10 +74,17 @@ class FakeBackend:
         tool_choice: ToolChoice | None = None,
         allowed: Collection[str] | None = None,
         cache_key: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        grammar: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         step = self.script[min(len(self.calls), len(self.script) - 1)]
+        self.slot_ids.append(QUICK_SLOT.get())
         self.sent_tools.append(list(tools or []))
         self.cache_keys.append(cache_key)
+        self.temperatures.append(temperature)
+        self.max_token_limits.append(max_tokens)
+        self.grammars.append(grammar)
         tools = [t for t in tools or [] if allowed is None or t.name in allowed]
         self.calls.append((instructions, list(messages), tools))
         self.tool_choices.append(tool_choice)

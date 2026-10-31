@@ -262,6 +262,30 @@ async def test_a_crime_witness_has_a_choice_without_a_forced_quest():
         await link_cm.__aexit__(None, None, None)
 
 
+async def test_recorded_side_clears_only_the_allied_witness_concern():
+    ally = "BAU_4300_ADDON_CAVALORN"
+    link_cm, chronicle, deals, concerns = await _setup(FakeGame(branch="A"), with_crimes=True)
+    try:
+        chronicle.record({"fact": "crime", "id": "C1", "kind": "murder", "victim": XARDAS})
+        chronicle.record({"fact": "crime_seen", "npc": ally, "crime": "C1", "guild": 8, "npctype": 0})
+        chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "C1", "guild": 8, "npctype": 0})
+        assert concerns.agenda(ally) == CRIME_WITNESS_EN
+        outsider = concerns.of(LOBART)
+        assert [c.key for c in outsider] == ["crime_witness:C1"]
+        changed = []
+        concerns.on_change.append(changed.append)
+
+        chronicle.record({"fact": "crime_side", "npc": ally, "crime": "C1", "why": "fought"})
+
+        assert changed == [ally]
+        assert concerns.of(ally) == []
+        assert concerns.current(ally, CRIME_WITNESS_EN) is None
+        assert concerns.of(LOBART) is outsider
+        assert concerns.agenda(LOBART) == CRIME_WITNESS_EN
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
 @pytest.mark.parametrize(
     ("npc", "victim", "metadata"),
     [
@@ -324,5 +348,21 @@ async def test_disabled_crimes_do_not_create_witness_concerns():
     try:
         _theft(chronicle, guild=8, npctype=0)
         assert concerns.of(LOBART) == []
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("cover", [True, False])
+async def test_old_cover_testimony_is_a_delivery_only_when_cover_is_disabled(cover):
+    link_cm, chronicle, deals, concerns = await _setup(FakeGame(branch="A"), with_crimes=True)
+    deals.crimes.cover = cover
+    try:
+        _theft(chronicle, guild=8, npctype=0)
+        assert concerns.agenda(LOBART) == CRIME_WITNESS_EN
+        chronicle.record({
+            "fact": "testimony", "npc": XARDAS, "witness": LOBART, "cover": "D1",
+            "crime_saw": ["C1"], "crime_told": [],
+        })
+        assert bool(concerns.of(LOBART)) is cover
     finally:
         await link_cm.__aexit__(None, None, None)

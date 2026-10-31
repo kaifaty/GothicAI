@@ -42,6 +42,8 @@ Instance pullInstance(uint i) {
   ret.mat[3][2] = uintBitsToFloat(instanceMem[i+11]);
   ret.fatness   = uintBitsToFloat(instanceMem[i+12]);
   ret.animPtr   = instanceMem[i+13];
+  ret.deformPtr = instanceMem[i+14];
+  ret.deformCount = instanceMem[i+15];
   return ret;
   }
 
@@ -107,6 +109,15 @@ bool projectInstance(const Cluster cluster, out vec4 aabb, out float depthMin) {
   const vec3  b[2]       = {bucket[bId].bbox[0].xyz, bucket[bId].bbox[1].xyz};
   Instance    obj        = pullInstance(instanceId);
   const float znear      = push.znear;
+
+  // The shared authored box describes the flat rest mesh. A nearby soft body
+  // can fold outside it, so use its conservative instance sphere for frustum
+  // culling and keep it out of the rest-box HiZ/small-object rejection.
+  if(obj.deformCount>0) {
+    aabb = vec4(0,0,1,1);
+    depthMin = 0;
+    return true;
+    }
 
   aabb     = vec4(1, 1, -1, -1);
   depthMin = 1;

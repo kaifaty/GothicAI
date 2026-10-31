@@ -1,0 +1,803 @@
+# Original resources; geometry-selected texture inspection cameras.
+cheat god
+set time 12 0
+overlay off
+view hide animated morph pfx
+cam lift off
+cam look 45
+
+# NW_CITY_HAFENKAI_MAUER_01.TGA | NW_CITY_WAY_TO_SHIP_10 | upper quay wall face
+# Camera: Inspection reframe: hero anchored 20 m above the surface to avoid teleport collision; camera eye and target kept in the scene.
+view hide animated morph pfx
+cam look -2000.000
+goto pos -6360 1526 -9360
+cam world 280.264 -1931.363 -9.679
+wait 34
+cam hold
+wait 600
+shot nw_city_hafenkai_mauer_01
+wait 300
+
+# NW_CITY_ROOF_04.TGA | NW_CITY_BARRACK02_SMALLTALK_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 3118 1297 8483
+cam world 659.399 580.457 160.056
+wait 34
+cam hold
+wait 600
+shot nw_city_roof_04
+wait 300
+
+# NW_CITY_HAFENKAI_BODEN_01.TGA | NW_CITY_WAY_TO_SHIP_12 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos -7172 -267 -14113
+cam world 489.600 740.287 122.719
+wait 34
+cam hold
+wait 600
+shot nw_city_hafenkai_boden_01
+wait 300
+
+# NW_CITY_WOOD_ORNAMENT_02.TGA | NW_CITY_BARRACK02_SMALLTALK_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 3196 1080 8651
+cam world 365.157 -479.720 179.070
+wait 34
+cam hold
+wait 600
+shot nw_city_wood_ornament_02
+wait 300
+
+# NW_CITY_INSIDEFLOOR_11.TGA | NW_CITY_UPTOWN_HUT_03_04 | city
+# Camera: Inspection reframe: hero anchored 20 m above the surface to avoid teleport collision; camera eye and target kept in the scene.
+view hide animated morph pfx
+cam look -1999.995
+goto pos 14796 2900 -4140
+cam world 230.534 -1760.000 134.297
+wait 34
+cam hold
+wait 600
+shot nw_city_insidefloor_11
+wait 300
+
+# NW_CITY_WOODBEAM_02.TGA | NW_CITY_HABOUR_02_B | city
+view hide animated morph pfx
+cam look 45.000
+goto pos -940 -616 -739
+cam world 708.167 85.938 -157.106
+wait 34
+cam hold
+wait 600
+shot nw_city_woodbeam_02
+wait 300
+
+# NW_CITY_ROOF_INSIDE_01.TGA | NW_CITY_HABOUR_TAVERN01_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1636 489 -699
+cam world 592.770 -564.500 -36.445
+wait 34
+cam hold
+wait 600
+shot nw_city_roof_inside_01
+wait 300
+
+# NW_CITY_BODENDIELEN_01.TGA | NW_CITY_HABOUR_TAVERN01_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1776 -231 -794
+cam world 315.290 498.887 -179.535
+wait 34
+cam hold
+wait 600
+shot nw_city_bodendielen_01
+wait 300
+
+# NW_CITY_BARREL_01.TGA | NW_CITY_PATH_HABOUR_12 | manual inspection reframe
+# Camera: Air anchor above the object; inspected outdoor surface.
+view hide animated morph pfx
+cam look -2000.000
+goto pos 1093 1863 -97
+cam world 129.408 -1922.606 81.285
+wait 34
+cam hold
+wait 600
+shot nw_city_barrel_01
+wait 300
+
+# NW_HARBOUR_WOODCRATE_01.TGA | NW_CITY_HABOUR_KASERN_CENTRE_02 | manual inspection reframe
+# Camera: Air anchor above the object; inspected outdoor surface.
+view hide animated morph pfx
+cam look -2000.000
+goto pos 4567 2814 7625
+cam world 165.000 -1935.000 -92.000
+wait 34
+cam hold
+wait 600
+shot nw_harbour_woodcrate_01
+wait 300
+
+# NW_HARBOUR_WOODCRATE_02.TGA | NW_CITY_HABOUR_KASERN_CENTRE_02 | manual inspection reframe
+# Camera: Air anchor above the object; inspected outdoor surface.
+view hide animated morph pfx
+cam look -2000.000
+goto pos 4555 2814 7538
+cam world 165.000 -1935.000 -3.000
+wait 34
+cam hold
+wait 600
+shot nw_harbour_woodcrate_02
+wait 300
+
+# NW_CITY_ROOF_01.TGA | NW_CITY_PATH_HABOUR_15 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1366 306 1706
+cam world 707.694 515.629 90.952
+wait 34
+cam hold
+wait 600
+shot nw_city_roof_01
+wait 300
+
+# NW_CITY_HAFEN_HOLZWAND_01.TGA | NW_CITY_HABOUR_TAVERN01_07 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1529 -86 -300
+cam world 571.702 113.446 -90.048
+wait 34
+cam hold
+wait 600
+shot nw_city_hafen_holzwand_01
+wait 300
+
+# NW_CITY_WALL_03.TGA | NW_CITY_HOTEL_UPTSAIRS_05 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 9137 905 3745
+cam world 479.218 102.698 24.462
+wait 34
+cam hold
+wait 600
+shot nw_city_wall_03
+wait 300
+
+# NW_CITY_BODENDIELEN_02.TGA | NW_CITY_BARRACK01_03 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 5138 705 9061
+cam world 193.642 324.180 64.041
+wait 34
+cam hold
+wait 600
+shot nw_city_bodendielen_02
+wait 300
+
+# NW_CITY_PFLASTERSTEIN_01.TGA | NW_CITY_SMALLTALK_02 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 11950 855 -2848
+cam world 485.238 742.948 -50.120
+wait 34
+cam hold
+wait 600
+shot nw_city_pflasterstein_01
+wait 300
+
+# NW_HARBOUR_WOOD_IRON_01.TGA | NW_CITY_SMITH_01_03 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 4990 465 -746
+cam world 177.628 -210.836 21.865
+wait 34
+cam hold
+wait 600
+shot nw_harbour_wood_iron_01
+wait 300
+
+# NW_CITY_INSIDEWALL_12.TGA | NW_CITYHALL_PRIVATE_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 15713 1455 -140
+cam world 315.707 -408.626 113.975
+wait 34
+cam hold
+wait 600
+shot nw_city_insidewall_12
+wait 300
+
+# NW_CITY_WOOD_01.TGA | NW_CITY_MERCHANT_PATH_37 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 10971 225 5251
+cam world 275.105 441.010 -119.194
+wait 34
+cam hold
+wait 600
+shot nw_city_wood_01
+wait 300
+
+# NW_CITY_DUNGEONWALL_05.TGA | NW_CITY_KANAL_23 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 8056 -517 3134
+cam world 184.182 66.597 116.512
+wait 34
+cam hold
+wait 600
+shot nw_city_dungeonwall_05
+wait 300
+
+# NW_CITY_FACHWERKBASEMENT_EMPTY_01.TGA | NW_CITY_UPTOWN_JUDGE_02_B | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 16806 1122 -1710
+cam world 560.442 112.045 83.448
+wait 34
+cam hold
+wait 600
+shot nw_city_fachwerkbasement_empty_01
+wait 300
+
+# NW_CITY_RICH_WALL_01.TGA | NW_CITY_LEOMAR_READ | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 14116 1555 -2995
+cam world 396.331 92.565 61.979
+wait 34
+cam hold
+wait 600
+shot nw_city_rich_wall_01
+wait 300
+
+# NW_CITY_INSIDEWALL_13.TGA | NW_CITY_REICH02_BED_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 10270 1372 -2355
+cam world 786.850 139.075 -40.510
+wait 34
+cam hold
+wait 600
+shot nw_city_insidewall_13
+wait 300
+
+# NW_CITY_DIRTYGROUND_02.TGA | NW_CITY_HABOUR_KASERN_MAIN_ENTRY | manual inspection reframe
+# Camera: Air anchor above the object; inspected outdoor surface.
+view hide animated morph pfx
+cam look -2000.000
+goto pos 4045 2750 6948
+cam world 270.185 -1710.000 51.009
+wait 34
+cam hold
+wait 600
+shot nw_city_dirtyground_02
+wait 300
+
+# NW_CITY_INSIDEWALL_11.TGA | NW_CITY_UPTOWN_HUT_03_02 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 15238 988 -3648
+cam world 678.727 126.866 -118.015
+wait 34
+cam hold
+wait 600
+shot nw_city_insidewall_11
+wait 300
+
+# NW_CITY_DUNGEONFLOOR_02.TGA | NW_CITY_KANAL_ROOM_04_03 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 9364 -684 2193
+cam world 340.604 535.446 138.566
+wait 34
+cam hold
+wait 600
+shot nw_city_dungeonfloor_02
+wait 300
+
+# NW_CITY_HAFEN_HOLZWAND_02.TGA | NW_CITY_PATH_HABOUR_13_B | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 2335 -104 1154
+cam world 469.174 86.634 0.264
+wait 34
+cam hold
+wait 600
+shot nw_city_hafen_holzwand_02
+wait 300
+
+# NW_CITY_ROPE_01.TGA | SHIP_DECK_23 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos -10152 2694 -16744
+cam world 366.189 66.264 0.452
+wait 34
+cam hold
+wait 600
+shot nw_city_rope_01
+wait 300
+
+# NW_CITY_RICH_WINDOW_01.TGA | NW_CITY_CORNELIUS | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 14647 1655 222
+cam world 414.870 94.879 133.045
+wait 34
+cam hold
+wait 600
+shot nw_city_rich_window_01
+wait 300
+
+# NW_HARBOUR_STAIRS_01.TGA | NW_CITY_UPTOWN_PATH_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 8619 438 -4749
+cam world 480.855 335.720 -179.903
+wait 34
+cam hold
+wait 600
+shot nw_harbour_stairs_01
+wait 300
+
+# NW_CITY_WOODBEAM_03.TGA | SHIP_DECK_16 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos -10074 1835 -15199
+cam world 478.719 48.590 128.896
+wait 34
+cam hold
+wait 600
+shot nw_city_woodbeam_03
+wait 300
+
+# NW_HARBOUR_FISHINGNET_01.TGA | SHIP_IN_09 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos -10215 534 -18671
+cam world 65.789 68.905 6.761
+wait 34
+cam hold
+wait 600
+shot nw_harbour_fishingnet_01
+wait 300
+
+# NW_CITY_HAFENRANDSTEIN_01.TGA | NW_CITY_WAY_TO_SHIP_05 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos -6553 -249 -4599
+cam world 542.457 409.608 114.812
+wait 34
+cam hold
+wait 600
+shot nw_city_hafenrandstein_01
+wait 300
+
+# NW_CITY_DIRTYGROUND_WEG_03.TGA | NW_CITY_PATH_HABOUR_16 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 3706 -232 2396
+cam world 399.532 621.792 6.751
+wait 34
+cam hold
+wait 600
+shot nw_city_dirtyground_weg_03
+wait 300
+
+# NW_CITY_GITTERZAUN_01.TGA | NW_CITY_TRAIN_02 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 12739 1158 307
+cam world 630.564 119.974 -34.722
+wait 34
+cam hold
+wait 600
+shot nw_city_gitterzaun_01
+wait 300
+
+# NW_CITY_BODENDIELEN_DRECK_01.TGA | NW_CITY_HABOUR_HUT_01_IN | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1591 -235 346
+cam world 286.742 450.650 8.708
+wait 34
+cam hold
+wait 600
+shot nw_city_bodendielen_dreck_01
+wait 300
+
+# NW_CITY_PFLASTERSTEIN_BORDER_01.TGA | NW_CITY_HABOUR_KASERN_CENTRE_04 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 4794 705 6740
+cam world 442.123 680.475 147.534
+wait 34
+cam hold
+wait 600
+shot nw_city_pflasterstein_border_01
+wait 300
+
+# NW_CITY_IVY_BORDER_01.TGA | NW_CITY_CITYHALL_04_B | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 14068 1039 2942
+cam world 541.580 169.827 -123.461
+wait 34
+cam hold
+wait 600
+shot nw_city_ivy_border_01
+wait 300
+
+# NW_HARBOUR_BLACKIRON_01.TGA | NW_CITY_WAY_TO_SHIP_03 | manual inspection reframe
+# Camera: Air anchor above the object; inspected outdoor surface.
+view hide animated morph pfx
+cam look -2000.000
+goto pos -2849 1799 -3989
+cam world 118.203 -1880.888 -83.000
+wait 34
+cam hold
+wait 600
+shot nw_harbour_blackiron_01
+wait 300
+
+# NW_CITY_DIRTYGROUND_WEG_02.TGA | NW_CITY_PATH_HABOUR_03 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1758 -233 -1650
+cam world 372.652 574.854 -124.064
+wait 34
+cam hold
+wait 600
+shot nw_city_dirtyground_weg_02
+wait 300
+
+# NW_CITY_RICH_BLACKWOOD_01.TGA | NW_CITY_CITYHALL_IN_03 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 15936 1465 -764
+cam world 275.951 78.182 -46.949
+wait 34
+cam hold
+wait 600
+shot nw_city_rich_blackwood_01
+wait 300
+
+# NW_CITY_WINDOW_03.TGA | NW_CITY_ANDRE_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 2986 1955 6924
+cam world 602.369 117.304 119.535
+wait 34
+cam hold
+wait 600
+shot nw_city_window_03
+wait 300
+
+# NW_CITY_RICH_WALL_HALF_01.TGA | NW_CITY_SHOP_SALANDRIL_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 12590 1251 3781
+cam world 388.761 92.116 71.017
+wait 34
+cam hold
+wait 600
+shot nw_city_rich_wall_half_01
+wait 300
+
+# NW_CITY_WOODBEAM_01.TGA | NW_CITY_HABOUR_HUT_07_IN | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 4421 49 506
+cam world 91.242 -85.614 114.650
+wait 34
+cam hold
+wait 600
+shot nw_city_woodbeam_01
+wait 300
+
+# NW_HARBOUR_FISHINGNET_04.TGA | NW_CITY_PIRATESCAMP_03 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos -2522 -239 12252
+cam world 208.397 64.239 -124.932
+wait 34
+cam hold
+wait 600
+shot nw_harbour_fishingnet_04
+wait 300
+
+# NW_HARBOUR_ROPEWALL_01.TGA | SHIP_IN_14 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos -10178 1209 -19660
+cam world 116.172 149.849 -92.134
+wait 34
+cam hold
+wait 600
+shot nw_harbour_ropewall_01
+wait 300
+
+# NW_CITY_BROKENSTONE_01.TGA | NW_CITY_PATH_HABOUR_07 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 4000 224 -1268
+cam world 299.060 81.023 -110.102
+wait 34
+cam hold
+wait 600
+shot nw_city_brokenstone_01
+wait 300
+
+# NW_CITY_FACHWERKBASEMENT_WINDOW_01.TGA | NW_CITY_SALANDRIL | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 12898 1038 2987
+cam world 411.712 94.756 -19.008
+wait 34
+cam hold
+wait 600
+shot nw_city_fachwerkbasement_window_01
+wait 300
+
+# NW_CITY_IVY_FULL_01.TGA | NW_CITY_UPTOWN_PATH_03_C | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 9776 1257 -4055
+cam world 298.516 81.236 -26.508
+wait 34
+cam hold
+wait 600
+shot nw_city_ivy_full_01
+wait 300
+
+# NW_CITY_HAFENKAI_BODEN_TRANS_01.TGA | NW_CITY_HABOUR_KASERN_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1006 -230 2464
+cam world 407.870 632.719 83.306
+wait 34
+cam hold
+wait 600
+shot nw_city_hafenkai_boden_trans_01
+wait 300
+
+# NW_HARBOUR_FISHINGNET_03.TGA | NW_CITY_PALCAMP_02 | city
+# Camera: Inspection reframe: hero anchored 20 m above the surface to avoid teleport collision; camera eye and target kept in the scene.
+view hide animated morph pfx
+cam look -2000.000
+goto pos -1468 2160 -3477
+cam world 293.993 -1910.000 -14.982
+wait 34
+cam hold
+wait 600
+shot nw_harbour_fishingnet_03
+wait 300
+
+# NW_CITY_HAFEN_GIEBEL_01.TGA | NW_CITY_HABOUR_KASERN_02 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1271 120 2836
+cam world 315.526 71.204 -162.039
+wait 34
+cam hold
+wait 600
+shot nw_city_hafen_giebel_01
+wait 300
+
+# NW_HARBOUR_CANON_01.TGA | NW_CITY_PALCAMP_11 | ground-level city cannon
+# Camera: Retake: same verified ground-level cannon near PALCAMP, clear sky; oblique upper view frames the whole barrel at 150-250 cm.
+view hide animated morph pfx
+cam look 45.000
+goto pos -5634 192 -5324
+cam world 200.077 154.715 49.921
+wait 34
+cam hold
+wait 600
+shot nw_harbour_canon_01
+wait 300
+
+# NW_CITY_DUNGEONFLOOR_03.TGA | NW_XARDAS_TOWER_IN1_11_C | whole-world fallback
+view hide animated morph pfx
+cam look 45.000
+goto pos 30730 5079 -14675
+cam world 118.293 178.062 -54.601
+wait 34
+cam hold
+wait 600
+shot nw_city_dungeonfloor_03
+wait 300
+
+# NW_HARBOUR_WOODENGATE_01.TGA | SHIP_DECK_09 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos -10274 -158 -13897
+cam world 396.548 615.428 -25.005
+wait 34
+cam hold
+wait 600
+shot nw_harbour_woodengate_01
+wait 300
+
+# NW_CITY_SHRINEFLOOR_01.TGA | NW_CITY_MERCHANT_TEMPLE_IN | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 9997 225 -496
+cam world 380.468 592.699 -42.331
+wait 34
+cam hold
+wait 600
+shot nw_city_shrinefloor_01
+wait 300
+
+# NW_CITY_FACHWERKBASEMENT_CHAIN_01.TGA | NW_CITY_MERCHANT_SHOP03_IN_02 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 8356 314 2770
+cam world 374.464 108.571 -63.830
+wait 34
+cam hold
+wait 600
+shot nw_city_fachwerkbasement_chain_01
+wait 300
+
+# NW_CITY_FLAG_01.TGA | NW_CITY_MAINSTREET_TOWER_01 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 8734 2233 -6389
+cam world 313.492 82.721 73.931
+wait 34
+cam hold
+wait 600
+shot nw_city_flag_01
+wait 300
+
+# NW_CITY_WOOD_ORNAMENT_01.TGA | NW_FARM1_INSTABLE_02 | whole-world fallback
+view hide animated morph pfx
+cam look 45.000
+goto pos 15599 2137 -16569
+cam world 62.238 -271.975 -109.698
+wait 34
+cam hold
+wait 600
+shot nw_city_wood_ornament_01
+wait 300
+
+# NW_CITY_WALL_05.TGA | NW_CITY_MERCHANT_PATH_14_B | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 7490 501 -216
+cam world 442.355 98.336 33.975
+wait 34
+cam hold
+wait 600
+shot nw_city_wall_05
+wait 300
+
+# NW_HARBOUR_CANONHOLE.TGA | NW_CITY_PALCAMP_11 | ground-level city cannon
+# Camera: Retake: same verified ground-level cannon near PALCAMP, clear sky; front quarter view looks directly into the muzzle face.
+view hide animated morph pfx
+cam look 45.000
+goto pos -5663 180 -5247
+cam world 150.106 99.559 98.176
+wait 34
+cam hold
+wait 600
+shot nw_harbour_canonhole
+wait 300
+
+# NW_HARBOUR_STAIRS_03.TGA | NW_TROLLAREA_PORTALTEMPEL_04 | whole-world fallback
+view hide animated morph pfx
+cam look 45.000
+goto pos 77806 3959 23075
+cam world 212.021 198.842 -76.914
+wait 34
+cam hold
+wait 600
+shot nw_harbour_stairs_03
+wait 300
+
+# NW_CITY_DIRTYGROUND_WEG_END_01.TGA | NW_CITY_PATH_HABOUR_02 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1268 -234 -1823
+cam world 290.581 455.196 175.588
+wait 34
+cam hold
+wait 600
+shot nw_city_dirtyground_weg_end_01
+wait 300
+
+# NW_CITY_WALL_04.TGA | NW_CITY_MERCHANT_PATH_06 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 7122 710 -1240
+cam world 484.694 103.266 -56.007
+wait 34
+cam hold
+wait 600
+shot nw_city_wall_04
+wait 300
+
+# NW_CITY_DIRTYGROUND_WEG_TRANS_02.TGA | NW_CITY_MAINSTREET_08 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 5329 194 -1784
+cam world 268.760 355.118 150.280
+wait 34
+cam hold
+wait 600
+shot nw_city_dirtyground_weg_trans_02
+wait 300
+
+# NW_CITY_TEMPLESTARROOF_01.TGA | NW_TROLLAREA_PORTAL_10 | whole-world fallback
+# Camera: Inspection reframe: hero anchored 20 m above the surface to avoid teleport collision; camera eye and target kept in the scene.
+view hide animated morph pfx
+cam look -2000.000
+goto pos 82643 5899 30198
+cam world 1398.000 -1909.000 -90.000
+wait 34
+cam hold
+wait 600
+shot nw_city_templestarroof_01
+wait 300
+
+# NW_CITY_DOOR_02.TGA | NW_CITY_KANAL_15 | main whole-world cluster
+# Camera: Inspection reframe: hero anchored 20 m above the surface to avoid teleport collision; camera eye and target kept in the scene.
+view hide animated morph pfx
+cam look -2000.000
+goto pos 1350 -2385 820
+cam world 160.000 -1925.000 180.000
+wait 34
+cam hold
+wait 600
+shot nw_city_door_02
+wait 300
+
+# NW_HARBOUR_ROPEWALL_02.TGA | NW_TAVERNE_TROLLAREA_MONSTER_02_01 | whole-world fallback
+# Camera: Inspection reframe: hero anchored 20 m above the surface to avoid teleport collision; camera eye and target kept in the scene.
+view hide animated morph pfx
+cam look -1999.891
+goto pos 45348 5481 2404
+cam world 159.841 -1900.000 -79.182
+wait 34
+cam hold
+wait 600
+shot nw_harbour_ropewall_02
+wait 300
+
+# NW_CITY_STONEWALL_02.TGA | NW_CASTLEMINE_04 | whole-world fallback
+# Camera: Inspection reframe: hero anchored 20 m above the surface to avoid teleport collision; camera eye and target kept in the scene.
+view hide animated morph pfx
+cam look -2000.000
+goto pos 59634 6363 -22884
+cam world 207.420 -1943.736 96.174
+wait 34
+cam hold
+wait 600
+shot nw_city_stonewall_02
+wait 300
+
+# NW_CITY_DOOR_01.TGA | NW_CITY_HABOUR_HUT_01_IN | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1364 -4358 522
+cam world 125.667 60.005 -174.857
+wait 34
+cam hold
+wait 600
+shot nw_city_door_01
+wait 300
+
+# NW_CITY_DOOR_03.TGA | NW_CITY_KANAL_15 | city
+view hide animated morph pfx
+cam look 45.000
+goto pos 1350 -4462 746
+cam world 115.001 58.404 -179.861
+wait 34
+cam hold
+wait 600
+shot nw_city_door_03
+wait 300
+wait 100

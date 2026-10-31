@@ -5,10 +5,11 @@ do it (stage 5), for now the console does. Each change is one operation (see pro
 goes to the game and into the memory log of the save branch, so a load brings back exactly the changes
 made before that save, like the rest of the world; the game gets them again whenever a session starts.
 
-Some dialogs are off for good, on every branch (`static`): the scripted ambush of the bandits below Xardas's
-tower (`FREED`). Their important dialogs ended in an attack the scripts decided; without them the bandits
-stand at their posts and the behavioral and conversational models decide what they do — whether they
-talk, threaten or attack (dialogue.py: an npc that means to fight the hero attacks him through the scripts).
+Some dialogs are off for good, on every branch (`static`): the scripted ambushes of the bandits below Xardas's
+tower and Alvares and Engardo at Akil's farm (`FREED`). Their important dialogs ended in an attack the scripts
+decided; without them the bandits stand at their posts and the behavioral and conversational models decide
+what they do — whether they talk, threaten or attack (dialogue.py: an npc that means to fight the hero
+attacks him through the scripts).
 They still fight back when struck, and the gang joins a fight it hears, as in the game.
 """
 
@@ -45,6 +46,17 @@ FREED = (
     "DIA_BDT_1014_BANDIT_KILLER",
     "DIA_1015_BANDIT_AMBUSH",
     "DIA_ADDON_CAVALORN_LETSKILLBANDITS",
+    # Akil's farm: the warnings, Alvares's choices and the follow-up attacks. The farm's post-fight
+    # dialogs need only both bandits dead, not AKILS_SLDSTILLTHERE or its journal topic.
+    "DIA_ALVARES_HAUAB",
+    "DIA_ALVARES_ATTACK",
+    "DIA_ALVARES_ATTACK_KERLE",
+    "DIA_ALVARES_ATTACK_SOELDNER",
+    "DIA_ALVARES_ATTACK_WITZ",
+    "DIA_ALVARES_ATTACK_AERGER",
+    "DIA_ALVARES_ATTACK_LIEFERUNG",
+    "DIA_ALVARES_SCHLUSS",
+    "DIA_ENGARDO_HALLO",
 )
 
 

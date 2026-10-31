@@ -1,0 +1,80 @@
+# Water: three harbour scenes filmed twice, OpenGothic as it was and our water physics on.
+# Each setup restores the features it needs; the off take disables all six afterwards.
+# Actions use real spells, native death and falling items in both takes. No AI server.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+view full
+ui off
+noise on
+
+# body: a farmer killed by the wind fist beside the low harbour pier
+ragdoll on
+living on
+spell feature on
+movable on
+destruction on
+water on
+water-film setup body
+off: ragdoll off
+off: living off
+off: spell feature off
+off: movable off
+off: destruction off
+off: water off
+spell equip 26
+wait 1200
+rec body
+water-film begin
+spell cast 600
+wait 6000
+water-film checkpoint
+wait 2500
+stop
+
+# fireball: newly inserted crate and barrel on dry support at the water's edge
+ragdoll on
+living on
+spell feature on
+movable on
+destruction on
+water on
+water-film setup fireball
+off: ragdoll off
+off: living off
+off: spell feature off
+off: movable off
+off: destruction off
+off: water off
+spell equip 23
+wait 1200
+rec fireball
+water-film begin
+spell cast 600
+wait 6000
+water-film checkpoint
+wait 2500
+stop
+
+# things: a sword, ore, lute and arrow fall together over deep water
+ragdoll on
+living on
+spell feature on
+movable on
+destruction on
+water on
+water-film setup things
+off: ragdoll off
+off: living off
+off: spell feature off
+off: movable off
+off: destruction off
+off: water off
+wait 600
+rec things
+water-film begin
+wait 6000
+water-film checkpoint
+wait 4500
+stop

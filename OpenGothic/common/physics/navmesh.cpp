@@ -14,6 +14,8 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
+#include <queue>
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
@@ -26,6 +28,7 @@ using Point = NavMesh::Point;
 constexpr uint32_t cacheVersion = 2;
 constexpr uint64_t hashSeed = 14695981039346656037ull;
 constexpr int maxPath = 32768;
+constexpr unsigned short groundOnlyFlag = 2;
 
 uint64_t hashBytes(uint64_t h, const void* data, size_t size) {
   const auto* bytes = static_cast<const unsigned char*>(data);
@@ -159,11 +162,125 @@ struct NavMesh::Impl {
   std::unique_ptr<dtNavMeshQuery,decltype(&dtFreeNavMeshQuery)> query{nullptr,dtFreeNavMeshQuery};
   Params params;
   Stats stats;
+  std::unordered_map<dtPolyRef,uint64_t> groundComponents;
+  std::unordered_map<dtPolyRef,Point> groundCenters;
+  // One current support's ground distances only. Never retain one world-sized
+  // table per visited support polygon in a long oracle campaign.
+  mutable dtPolyRef rasterSupport = 0;
+  mutable std::unordered_map<dtPolyRef,float> rasterGroundDistance;
 
   void initializeQuery() {
+    groundComponents.clear();groundCenters.clear();
+    rasterSupport=0;rasterGroundDistance.clear();
+    std::vector<dtPolyRef> groundPolygons;
+    // Cache v2 predates the ground-only query bit. Apply it in memory on both
+    // freshly built and cached ground polygons without changing existing routes.
+    for(int i=0; i<mesh->getMaxTiles(); ++i) {
+      const auto* tile=static_cast<const dtNavMesh&>(*mesh).getTile(i);
+      if(!tile || !tile->header) continue;
+      for(int j=0; j<tile->header->polyCount; ++j)
+        if(tile->polys[j].getType()==DT_POLYTYPE_GROUND) {
+          const auto ref=mesh->getPolyRefBase(tile)|dtPolyRef(j);
+          mesh->setPolyFlags(ref,tile->polys[j].flags|groundOnlyFlag);
+          if(tile->polys[j].flags&1) {
+            groundPolygons.push_back(ref);
+            Point center{};
+            const auto& poly=tile->polys[j];
+            for(unsigned int vertex=0;vertex<poly.vertCount;++vertex)
+              for(size_t axis=0;axis<3;++axis)
+                center[axis]+=tile->verts[size_t(poly.verts[vertex])*3+axis]/float(poly.vertCount);
+            groundCenters.emplace(ref,center);
+            }
+          }
+      }
     query.reset(dtAllocNavMeshQuery());
     if(!query || dtStatusFailed(query->init(mesh.get(),65535)))
       throw std::runtime_error("navmesh cannot initialize Detour query");
+    // Eager, ground-only BFS once per build/load. The minimum ground polygon
+    // reference names its component deterministically, including after cache load.
+    // Frame telemetry only reads this table; off-mesh connections are excluded.
+    std::sort(groundPolygons.begin(),groundPolygons.end());
+    groundComponents.reserve(groundPolygons.size());
+    for(const auto root:groundPolygons) {
+      if(groundComponents.find(root)!=groundComponents.end()) continue;
+      std::vector<dtPolyRef> pending{root};groundComponents[root]=uint64_t(root);
+      for(size_t at=0; at<pending.size(); ++at) {
+        const dtMeshTile* tile=nullptr;const dtPoly* poly=nullptr;
+        if(dtStatusFailed(mesh->getTileAndPolyByRef(pending[at],&tile,&poly))) continue;
+        for(auto link=poly->firstLink; link!=DT_NULL_LINK; link=tile->links[link].next) {
+          const auto ref=tile->links[link].ref;
+          if(!ref || groundComponents.find(ref)!=groundComponents.end()) continue;
+          const dtMeshTile* otherTile=nullptr;const dtPoly* other=nullptr;
+          if(dtStatusSucceed(mesh->getTileAndPolyByRef(ref,&otherTile,&other)) &&
+             other->getType()==DT_POLYTYPE_GROUND && (other->flags&1)) {
+            groundComponents[ref]=uint64_t(root);pending.push_back(ref);
+            }
+          }
+        }
+      }
+    }
+
+  bool containsGround(dtPolyRef ref,const Point& requested,Point& surface) const {
+    bool over=false;
+    if(groundCenters.find(ref)==groundCenters.end() ||
+       dtStatusFailed(query->closestPointOnPoly(ref,requested.data(),surface.data(),&over)) || !over ||
+       std::hypot(surface[0]-requested[0],surface[2]-requested[2])>1.e-4f) return false;
+    float height=0;
+    if(dtStatusFailed(query->getPolyHeight(ref,requested.data(),&height)) || !std::isfinite(height)) return false;
+    surface={requested[0],height,requested[2]};
+    return true;
+    }
+
+  void supportDistances(dtPolyRef root) const {
+    if(rasterSupport==root) return;
+    rasterSupport=root;rasterGroundDistance.clear();
+    using Entry=std::pair<float,dtPolyRef>;
+    std::priority_queue<Entry,std::vector<Entry>,std::greater<Entry>> pending;
+    rasterGroundDistance.emplace(root,0.f);pending.push({0.f,root});
+    while(!pending.empty()) {
+      const auto item=pending.top();pending.pop();
+      const auto found=rasterGroundDistance.find(item.second);
+      if(found==rasterGroundDistance.end() || item.first!=found->second) continue;
+      const dtMeshTile* tile=nullptr;const dtPoly* poly=nullptr;
+      if(dtStatusFailed(mesh->getTileAndPolyByRef(item.second,&tile,&poly))) continue;
+      const auto center=groundCenters.find(item.second);
+      if(center==groundCenters.end()) continue;
+      for(auto link=poly->firstLink;link!=DT_NULL_LINK;link=tile->links[link].next) {
+        const auto next=tile->links[link].ref;
+        const auto other=groundCenters.find(next);
+        if(other==groundCenters.end()) continue; // Never cross off-mesh links.
+        const float score=item.first+distance(center->second,other->second);
+        const auto old=rasterGroundDistance.find(next);
+        if(old!=rasterGroundDistance.end() && old->second<=score) continue;
+        rasterGroundDistance[next]=score;pending.push({score,next});
+        }
+      }
+    }
+
+  bool exactGroundSegment(dtPolyRef from,const Point& a,dtPolyRef to,const Point& b) const {
+    if(from==to) return true; // A covered segment of one convex ground polygon.
+    dtQueryFilter filter;filter.setIncludeFlags(groundOnlyFlag);
+    std::array<dtPolyRef,256> corridor{};
+    float fraction=0;Point normal{};int count=0;
+    const auto status=query->raycast(from,a.data(),b.data(),&filter,&fraction,normal.data(),
+                                    corridor.data(),&count,int(corridor.size()));
+    if(dtStatusFailed(status) || dtStatusDetail(status,DT_BUFFER_TOO_SMALL) || fraction<=1.f || count<=0) return false;
+    const auto last=corridor[size_t(count-1)];
+    if(last==to) return true;
+    // An endpoint exactly on a tile/polygon edge may remain in the polygon
+    // from which the ray approached it. Detour's point-in-poly is half-open,
+    // so its reference need not equal the raster's selected neighbour. Accept
+    // only a directly linked ground neighbour sharing that numerical endpoint
+    // and the same height; never use the much larger support-snap tolerance.
+    const dtMeshTile* tile=nullptr;const dtPoly* poly=nullptr;
+    if(dtStatusFailed(mesh->getTileAndPolyByRef(last,&tile,&poly))) return false;
+    bool linked=false;
+    for(auto link=poly->firstLink;link!=DT_NULL_LINK;link=tile->links[link].next)
+      linked|=tile->links[link].ref==to;
+    if(!linked) return false;
+    Point boundary{};bool over=false;
+    if(dtStatusFailed(query->closestPointOnPoly(last,b.data(),boundary.data(),&over))) return false;
+    return std::hypot(boundary[0]-b[0],boundary[2]-b[2])<=1.e-4f && std::abs(boundary[1]-b[1])<=1.e-3f;
     }
 
   bool load(uint64_t key) {
@@ -419,6 +536,10 @@ struct NavMesh::Impl {
   };
 
 NavMesh::NavMesh():impl(std::make_unique<Impl>()){}
+
+uint64_t NavMesh::cacheKey(const Geometry& geometry, const Params& params, const std::string& worldName) {
+  return geometryHash(geometry,params,worldName);
+  }
 NavMesh::~NavMesh() = default;
 NavMesh::NavMesh(NavMesh&&) noexcept = default;
 NavMesh& NavMesh::operator=(NavMesh&&) noexcept = default;
@@ -450,7 +571,7 @@ void NavMesh::buildOrLoad(const Geometry& geometry, const Params& parameters,
   impl->stats.triangles = uint64_t(geometry.triangles.size()/3);
   impl->stats.waterTriangles = uint64_t(geometry.waterTriangles.size()/3);
   const auto hashStart = Clock::now();
-  const uint64_t hash = geometryHash(geometry,parameters,worldName);
+  const uint64_t hash = cacheKey(geometry,parameters,worldName);
   const double hashSeconds = elapsed(hashStart);
   std::ostringstream key;
   key << std::hex << std::setfill('0') << std::setw(16) << hash;
@@ -468,14 +589,14 @@ void NavMesh::buildOrLoad(const Geometry& geometry, const Params& parameters,
   if(impl->stats.complete) impl->save(hash);
   }
 
-NavMesh::Path NavMesh::findPath(const Point& start, const Point& end) const {
+NavMesh::Path NavMesh::findPath(const Point& start, const Point& end, bool allowTransitions) const {
   Path result;
   if(!impl->query) { result.reason="mesh_not_built"; return result; }
   for(float value:start) if(!std::isfinite(value)) { result.reason="invalid_start"; return result; }
   for(float value:end) if(!std::isfinite(value)) { result.reason="invalid_end"; return result; }
   const float extents[3]={impl->params.nearestHorizontal,impl->params.nearestVertical,impl->params.nearestHorizontal};
   dtQueryFilter filter;
-  filter.setIncludeFlags(1);
+  filter.setIncludeFlags(allowTransitions?1:groundOnlyFlag);
   dtPolyRef startRef=0, endRef=0;
   Point snappedStart{}, snappedEnd{};
   if(dtStatusFailed(impl->query->findNearestPoly(start.data(),extents,&filter,&startRef,snappedStart.data())) || !startRef) {
@@ -546,6 +667,150 @@ NavMesh::Path NavMesh::findPath(const Point& start, const Point& end) const {
   return result;
   }
 
+NavMesh::LocalRaster NavMesh::rasterLocal(const Point& feet,float bodyYawDegrees) const {
+  for(float value:feet) if(!std::isfinite(value)) throw std::invalid_argument("navmesh raster non-finite feet");
+  if(!std::isfinite(bodyYawDegrees)) throw std::invalid_argument("navmesh raster non-finite yaw");
+  LocalRaster result;
+  result.near.size=64;result.near.cellSize=.25f;result.near.cells.resize(64*64);
+  result.far.size=100;result.far.cellSize=2.f;result.far.cells.resize(100*100);
+  if(!impl->query) return result;
+  const float radians=bodyYawDegrees*(3.14159265358979323846f/180.f);
+  const float cosine=std::cos(radians),sine=std::sin(radians);
+  const auto world=[&](float right,float forward) -> Point {
+    return {feet[0]+forward*cosine-right*sine,feet[1],feet[2]+forward*sine+right*cosine};
+    };
+  const auto local=[&](const float* point) -> std::array<float,2> {
+    const float x=point[0]-feet[0],z=point[2]-feet[2];
+    return {-x*sine+z*cosine,x*cosine+z*sine};
+    };
+  // One broad-phase query, then polygon bounding-box rasterization. No
+  // per-cell nearest-poly queries and no horizontal snapping across cracks.
+  const float extents[3]={142.f,100000.f,142.f};
+  dtQueryFilter filter;filter.setIncludeFlags(groundOnlyFlag);
+  std::vector<dtPolyRef> polygons(1024);int count=0;
+  for(;;) {
+    const auto status=impl->query->queryPolygons(feet.data(),extents,&filter,polygons.data(),&count,int(polygons.size()));
+    if(dtStatusFailed(status)) throw std::runtime_error("navmesh raster polygon query failed");
+    if(!dtStatusDetail(status,DT_BUFFER_TOO_SMALL)) break;
+    if(polygons.size()>=(1u<<20)) throw std::runtime_error("navmesh raster polygon query capacity");
+    polygons.resize(polygons.size()*2);
+    }
+  polygons.resize(size_t(count));std::sort(polygons.begin(),polygons.end());
+  dtPolyRef support=0;float supportError=std::numeric_limits<float>::infinity();
+  for(const auto ref:polygons) {
+    if(impl->groundCenters.find(ref)==impl->groundCenters.end()) continue;
+    Point surface{};bool over=false;
+    if(dtStatusFailed(impl->query->closestPointOnPoly(ref,feet.data(),surface.data(),&over))) continue;
+    const float horizontal=std::hypot(surface[0]-feet[0],surface[2]-feet[2]);
+    const float vertical=surface[1]-feet[1];
+    // Only support selection may snap. The raster below still demands exact
+    // XZ containment for every native cell, including the body and real gaps.
+    if(!std::isfinite(horizontal) || !std::isfinite(vertical) || horizontal>impl->params.nearestHorizontal ||
+       std::abs(vertical)>impl->params.climb+2.f*impl->params.cellHeight) continue;
+    const float error=horizontal*horizontal+vertical*vertical;
+    if(error<supportError || (error==supportError && ref<support)) {
+      support=ref;supportError=error;result.support=surface;
+      result.supportExact=over && horizontal<=1.e-4f;
+      result.supportSnapDistance=std::sqrt(error);result.supportHorizontalDistance=horizontal;
+      result.supportVerticalOffset=vertical;
+      }
+    }
+  if(!support) return result;
+  result.supportValid=true;result.supportPolygon=uint64_t(support);
+  impl->supportDistances(support);
+  const auto fill=[&](RasterLayer& layer) {
+    const int size=int(layer.size);const float step=layer.cellSize;
+    std::vector<float> ranks(layer.cells.size(),std::numeric_limits<float>::infinity());
+    for(const auto ref:polygons) {
+      const dtMeshTile* tile=nullptr;const dtPoly* poly=nullptr;
+      if(impl->groundCenters.find(ref)==impl->groundCenters.end() ||
+         dtStatusFailed(impl->mesh->getTileAndPolyByRef(ref,&tile,&poly))) continue;
+      float minRight=std::numeric_limits<float>::infinity(),maxRight=-minRight;
+      float minForward=minRight,maxForward=-minRight;
+      for(unsigned int vertex=0;vertex<poly->vertCount;++vertex) {
+        const auto point=local(&tile->verts[size_t(poly->verts[vertex])*3]);
+        minRight=std::min(minRight,point[0]);maxRight=std::max(maxRight,point[0]);
+        minForward=std::min(minForward,point[1]);maxForward=std::max(maxForward,point[1]);
+        }
+      const int x0=std::max(0,int(std::ceil(minRight/step+float(size)*.5f-.5f)));
+      const int x1=std::min(size-1,int(std::floor(maxRight/step+float(size)*.5f-.5f)));
+      const int z0=std::max(0,int(std::ceil(minForward/step+float(size)*.5f-.5f)));
+      const int z1=std::min(size-1,int(std::floor(maxForward/step+float(size)*.5f-.5f)));
+      const auto reachable=impl->rasterGroundDistance.find(ref);
+      const bool connected=reachable!=impl->rasterGroundDistance.end();
+      const float rank=connected ? reachable->second : std::numeric_limits<float>::infinity();
+      for(int z=z0;z<=z1;++z)for(int x=x0;x<=x1;++x) {
+        const size_t index=size_t(z)*layer.size+size_t(x);
+        const Point requested=world((float(x)+.5f-float(size)*.5f)*step,(float(z)+.5f-float(size)*.5f)*step);
+        Point surface{};
+        if(!impl->containsGround(ref,requested,surface)) continue;
+        auto& cell=layer.cells[index];
+        const float heightError=std::abs(surface[1]-feet[1]);
+        const float oldHeightError=std::abs(cell.groundHeight-feet[1]);
+        if(cell.heightValid && ((cell.traversable && !connected) ||
+           (cell.traversable==connected && (ranks[index]<rank ||
+             (ranks[index]==rank && (oldHeightError<heightError ||
+               (oldHeightError==heightError && cell.polygon<=uint64_t(ref)))))))) continue;
+        cell.heightValid=true;cell.traversable=connected;cell.groundHeight=surface[1];cell.polygon=uint64_t(ref);
+        ranks[index]=rank;
+        }
+      }
+    };
+  fill(result.near);fill(result.far);
+  // A single height per XZ cannot represent stacked floors. Keep the sheet
+  // closest in ground-walk distance to support, and remove shortcuts at its
+  // discontinuities rather than painting the lower floor green across a ledge.
+  const auto position=[&](const RasterLayer& layer,size_t index) {
+    const float right=(float(index%layer.size)+.5f-float(layer.size)*.5f)*layer.cellSize;
+    const float forward=(float(index/layer.size)+.5f-float(layer.size)*.5f)*layer.cellSize;
+    auto point=world(right,forward);point[1]=layer.cells[index].groundHeight;return point;
+    };
+  std::vector<uint8_t> nearBoundary(result.near.cells.size()),farBoundary(result.far.cells.size());
+  const auto compare=[&](const RasterLayer& a,size_t ai,const RasterLayer& b,size_t bi,
+                         std::vector<uint8_t>& amask,std::vector<uint8_t>& bmask) {
+    const auto& first=a.cells[ai];const auto& second=b.cells[bi];
+    if(!first.traversable || !second.traversable || first.polygon==second.polygon) return;
+    if(!impl->exactGroundSegment(dtPolyRef(first.polygon),position(a,ai),dtPolyRef(second.polygon),position(b,bi)) ||
+       !impl->exactGroundSegment(dtPolyRef(second.polygon),position(b,bi),dtPolyRef(first.polygon),position(a,ai))) {
+      amask[ai]=1;bmask[bi]=1;
+      }
+    };
+  const auto edges=[&](const RasterLayer& layer,std::vector<uint8_t>& mask,bool far) {
+    for(size_t z=0;z<layer.size;++z)for(size_t x=0;x<layer.size;++x) {
+      const size_t i=z*layer.size+x;
+      const float right=(float(x)+.5f-float(layer.size)*.5f)*layer.cellSize;
+      const float forward=(float(z)+.5f-float(layer.size)*.5f)*layer.cellSize;
+      if(far && std::abs(right)<8.f && std::abs(forward)<8.f) continue;
+      if(x+1<layer.size) {
+        const float other=right+layer.cellSize;
+        if(!far || !(std::abs(other)<8.f && std::abs(forward)<8.f)) compare(layer,i,layer,i+1,mask,mask);
+        }
+      if(z+1<layer.size) {
+        const float other=forward+layer.cellSize;
+        if(!far || !(std::abs(right)<8.f && std::abs(other)<8.f)) compare(layer,i,layer,i+layer.size,mask,mask);
+        }
+      }
+    };
+  edges(result.near,nearBoundary,false);edges(result.far,farBoundary,true);
+  // Compare the nearest outside far cell at each fine-layer boundary. Far
+  // cells hidden under the near layer never dictate fine-grid wall clearance.
+  for(size_t z=0;z<64;++z)for(size_t x=0;x<64;++x) {
+    if(x!=0 && x!=63 && z!=0 && z!=63) continue;
+    const float right=(float(x)+.5f-32.f)*.25f,forward=(float(z)+.5f-32.f)*.25f;
+    int fx=int(std::floor(right/2.f+50.f)),fz=int(std::floor(forward/2.f+50.f));
+    if(x==0)fx=45;else if(x==63)fx=54;
+    if(z==0)fz=45;else if(z==63)fz=54;
+    compare(result.near,z*64+x,result.far,size_t(fz)*100+size_t(fx),nearBoundary,farBoundary);
+    }
+  const auto finish=[](RasterLayer& layer,const std::vector<uint8_t>& mask) {
+    for(size_t i=0;i<layer.cells.size();++i)if(mask[i]) {
+      layer.cells[i].heightBoundary=true;layer.cells[i].traversable=false;
+      }
+    };
+  finish(result.near,nearBoundary);finish(result.far,farBoundary);
+  return result;
+  }
+
 bool NavMesh::straightWalkable(const Point& start, const Point& end) const {
   if(!impl->query) return false;
   for(float value:start) if(!std::isfinite(value)) return false;
@@ -574,6 +839,195 @@ bool NavMesh::straightWalkable(const Point& start, const Point& end) const {
                                             &t,normal.data(),corridor.data(),&count,maxPath);
   return dtStatusSucceed(status) && !dtStatusDetail(status,DT_BUFFER_TOO_SMALL) &&
          t>1.f && count>0 && corridor[size_t(count-1)]==endRef;
+  }
+
+NavMesh::GroundLocation NavMesh::groundLocation(const Point& position) const {
+  GroundLocation result;
+  if(!impl->query) return result;
+  for(float value:position) if(!std::isfinite(value)) return result;
+  dtQueryFilter filter;filter.setIncludeFlags(groundOnlyFlag);
+  const float extents[3]={impl->params.nearestHorizontal,impl->params.nearestVertical,impl->params.nearestHorizontal};
+  std::vector<dtPolyRef> polygons(64);
+  int count=0;
+  for(;;) {
+    const auto status=impl->query->queryPolygons(position.data(),extents,&filter,polygons.data(),&count,int(polygons.size()));
+    if(dtStatusFailed(status)) return result;
+    if(!dtStatusDetail(status,DT_BUFFER_TOO_SMALL)) break;
+    polygons.resize(polygons.size()*2);
+    }
+  double best=std::numeric_limits<double>::max();
+  // Detour's findNearestPoly subtracts walkableClimb from the vertical score
+  // when XZ is over a polygon. Use the true 3D surface distance instead so that
+  // a nearby bank or a stacked floor cannot win because of that scoring bias.
+  for(int i=0; i<count; ++i) {
+    Point snapped{};bool over=false;
+    if(dtStatusFailed(impl->query->closestPointOnPoly(polygons[size_t(i)],position.data(),snapped.data(),&over))) continue;
+    bool finite=true;for(float value:snapped) finite&=std::isfinite(value);
+    if(!finite) continue;
+    double squared=0;
+    for(size_t axis=0; axis<3; ++axis) squared+=std::pow(double(snapped[axis])-double(position[axis]),2);
+    if(squared>best || (squared==best && uint64_t(polygons[size_t(i)])>=result.polygon)) continue;
+    const auto component=impl->groundComponents.find(polygons[size_t(i)]);
+    if(component==impl->groundComponents.end()) continue;
+    best=squared;result.known=true;result.snapped=snapped;
+    result.polygon=uint64_t(polygons[size_t(i)]);result.component=component->second;
+    result.snapDistance=float(std::sqrt(squared));
+    result.horizontalDistance=std::hypot(snapped[0]-position[0],snapped[2]-position[2]);
+    result.verticalOffset=snapped[1]-position[1];
+    }
+  return result;
+  }
+
+std::vector<NavMesh::GroundLocation> NavMesh::nearbyGroundLocations(const Point& position) const {
+  std::vector<GroundLocation> result;
+  if(!impl->query || !impl->mesh) return result;
+  for(float value:position) if(!std::isfinite(value)) return result;
+  // Tile bounds contain the native world height range. Search every local
+  // storey rather than guessing ground Y from the actor's current pose.
+  Point center=position;
+  float low=std::numeric_limits<float>::infinity(),high=-std::numeric_limits<float>::infinity();
+  for(int i=0;i<impl->mesh->getMaxTiles();++i) {
+    const auto* tile=static_cast<const dtNavMesh&>(*impl->mesh).getTile(i);
+    if(tile==nullptr || tile->header==nullptr) continue;
+    low=std::min(low,tile->header->bmin[1]);high=std::max(high,tile->header->bmax[1]);
+    }
+  if(!std::isfinite(low) || !std::isfinite(high)) return result;
+  center[1]=(low+high)*.5f;
+  const float vertical=(high-low)*.5f+impl->params.cellHeight;
+  dtQueryFilter filter;filter.setIncludeFlags(groundOnlyFlag);
+  const float extents[3]={6.f,vertical,6.f};
+  std::array<dtPolyRef,512> polygons={};int count=0;
+  const auto status=impl->query->queryPolygons(center.data(),extents,&filter,polygons.data(),&count,int(polygons.size()));
+  if(dtStatusFailed(status) || dtStatusDetail(status,DT_BUFFER_TOO_SMALL)) return result;
+  const auto source=groundLocation(position);
+  constexpr float Pi=3.14159265358979323846f;
+  for(unsigned ring=2;ring<=6;++ring)for(unsigned angle=0;angle<16;++angle) {
+    const float radians=float(angle)*(2.f*Pi/16.f);
+    const Point sample={position[0]+float(ring)*std::cos(radians),position[1],position[2]+float(ring)*std::sin(radians)};
+    GroundLocation closest;
+    double best=std::numeric_limits<double>::max();bool bestComponent=false;
+    for(int i=0;i<count;++i) {
+      const auto ref=polygons[size_t(i)];
+      const auto component=impl->groundComponents.find(ref);
+      if(component==impl->groundComponents.end()) continue;
+      Point snapped{};bool over=false;
+      if(dtStatusFailed(impl->query->closestPointOnPoly(ref,sample.data(),snapped.data(),&over))) continue;
+      bool finite=true;for(float value:snapped) finite&=std::isfinite(value);
+      if(!finite) continue;
+      const float horizontal=std::hypot(snapped[0]-position[0],snapped[2]-position[2]);
+      if(horizontal<2.f || horizontal>6.f) continue;
+      double squared=0;
+      for(size_t axis=0;axis<3;++axis) squared+=std::pow(double(snapped[axis])-double(sample[axis]),2);
+      const bool same=source.known && component->second==source.component;
+      if(closest.known && ((bestComponent && !same) ||
+         (bestComponent==same && (squared>best || (squared==best && uint64_t(ref)>=closest.polygon))))) continue;
+      closest.known=true;closest.snapped=snapped;closest.polygon=uint64_t(ref);closest.component=component->second;
+      closest.snapDistance=distance(snapped,position);closest.horizontalDistance=horizontal;closest.verticalOffset=snapped[1]-position[1];
+      best=squared;bestComponent=same;
+      }
+    if(!closest.known) continue;
+    const bool duplicate=std::any_of(result.begin(),result.end(),[&](const GroundLocation& value) {
+      return distance(value.snapped,closest.snapped)<.01f;
+      });
+    if(!duplicate) result.push_back(closest);
+    }
+  std::sort(result.begin(),result.end(),[&](const GroundLocation& a,const GroundLocation& b) {
+    const bool aSource=source.known && a.component==source.component,bSource=source.known && b.component==source.component;
+    if(aSource!=bSource) return aSource;
+    if(a.snapDistance!=b.snapDistance) return a.snapDistance<b.snapDistance;
+    if(a.polygon!=b.polygon) return a.polygon<b.polygon;
+    return a.snapped<b.snapped;
+    });
+  return result;
+  }
+
+NavMesh::TransitionSides NavMesh::transitionSides(const Point& source, const Point& end, const Point& current) const {
+  TransitionSides sides;
+  sides.source=groundLocation(source);sides.end=groundLocation(end);sides.current=groundLocation(current);
+  if(!sides.source.known || !sides.end.known) return sides;
+  if(sides.source.component!=sides.end.component) {
+    sides.method="component";
+    sides.takeoffSide=sides.current.known && sides.current.component==sides.source.component;
+    sides.landingSide=sides.current.known && sides.current.component==sides.end.component;
+    }
+  else if(sides.source.polygon!=sides.end.polygon) {
+    sides.method="polygon";
+    sides.takeoffSide=sides.current.known && sides.current.polygon==sides.source.polygon;
+    sides.landingSide=sides.current.known && sides.current.polygon==sides.end.polygon;
+    }
+  return sides;
+  }
+
+NavMesh::TakeoffSite NavMesh::takeoffSite(const Point& source, float insetDistance,
+                                          float maxHorizontalSnap, float maxVerticalSnap) const {
+  TakeoffSite result;result.snapped=source;result.inset=source;
+  if(!impl->query) {result.reason="mesh_not_built";return result;}
+  for(float value:source) if(!std::isfinite(value)) {result.reason="invalid_source";return result;}
+  if(!std::isfinite(insetDistance) || !std::isfinite(maxHorizontalSnap) || !std::isfinite(maxVerticalSnap) ||
+     insetDistance<0 || maxHorizontalSnap<=0 || maxVerticalSnap<=0) {
+    result.reason="invalid_limits";return result;
+    }
+  dtQueryFilter filter;filter.setIncludeFlags(groundOnlyFlag);
+  const float extents[3]={maxHorizontalSnap,maxVerticalSnap,maxHorizontalSnap};
+  dtPolyRef ref=0;
+  if(dtStatusFailed(impl->query->findNearestPoly(source.data(),extents,&filter,&ref,result.snapped.data())) || !ref) {
+    result.reason="source_off_mesh";return result;
+    }
+  result.sourcePolygon=uint64_t(ref);
+  result.sourceHorizontalDistance=std::hypot(source[0]-result.snapped[0],source[2]-result.snapped[2]);
+  result.sourceVerticalDistance=std::abs(source[1]-result.snapped[1]);
+  if(result.sourceHorizontalDistance>maxHorizontalSnap || result.sourceVerticalDistance>maxVerticalSnap) {
+    result.reason="source_snap_too_far";return result;
+    }
+  const dtMeshTile* tile=nullptr;const dtPoly* poly=nullptr;
+  if(dtStatusFailed(impl->mesh->getTileAndPolyByRef(ref,&tile,&poly)) || poly->getType()!=DT_POLYTYPE_GROUND) {
+    result.reason="source_not_ground";return result;
+    }
+  Point center{};
+  for(unsigned int vertex=0; vertex<poly->vertCount; ++vertex)
+    for(size_t axis=0; axis<3; ++axis) center[axis]+=tile->verts[size_t(poly->verts[vertex])*3+axis]/poly->vertCount;
+  Point wall{},normal{};
+  if(dtStatusFailed(impl->query->findDistanceToWall(ref,result.snapped.data(),5.f,&filter,&result.sourceWallDistance,
+                                                   wall.data(),normal.data())) || !std::isfinite(result.sourceWallDistance)) {
+    result.sourceWallDistance=0;result.insetWallDistance=0;result.reason="source_wall_query_failed";return result;
+    }
+  // A tile polygon can be much longer along a boundary than across it. Its
+  // centroid then gives a nearly tangential move with negligible wall clearance.
+  // Maximize actual ground-wall clearance over bounded directions, always on
+  // this same convex polygon. Do not use findDistanceToWall's normal: at a wall
+  // its zero-length normalization can be non-finite.
+  bool found=false;
+  auto consider=[&](const Point& requested) {
+    Point adjusted{};bool over=false;
+    if(dtStatusFailed(impl->query->closestPointOnPoly(ref,requested.data(),adjusted.data(),&over)) || !over ||
+       std::hypot(adjusted[0]-requested[0],adjusted[2]-requested[2])>1.e-4f ||
+       std::abs(adjusted[1]-source[1])>maxVerticalSnap) return;
+    const float amount=std::hypot(adjusted[0]-result.snapped[0],adjusted[2]-result.snapped[2]);
+    if(amount>insetDistance+1.e-4f) return;
+    float clearance=0;
+    if(dtStatusFailed(impl->query->findDistanceToWall(ref,adjusted.data(),5.f,&filter,&clearance,wall.data(),normal.data())) ||
+       !std::isfinite(clearance)) return;
+    if(!found || clearance>result.insetWallDistance ||
+       (clearance==result.insetWallDistance && adjusted<result.inset)) {
+      found=true;result.inset=adjusted;result.insetDistance=amount;result.insetWallDistance=clearance;
+      }
+    };
+  const float dx=center[0]-result.snapped[0],dz=center[2]-result.snapped[2],length=std::hypot(dx,dz);
+  Point towardsCenter=result.snapped;
+  if(length>1.e-5f) {
+    const float amount=std::min(insetDistance,length*.5f);
+    towardsCenter[0]+=dx/length*amount;towardsCenter[2]+=dz/length*amount;
+    }
+  consider(towardsCenter);
+  for(unsigned i=0; i<32; ++i) {
+    const float angle=float(i)*(2.f*3.14159265358979323846f/32.f);
+    auto requested=result.snapped;
+    requested[0]+=std::cos(angle)*insetDistance;requested[2]+=std::sin(angle)*insetDistance;
+    consider(requested);
+    }
+  if(!found) {result.reason="inset_left_source_polygon";return result;}
+  result.valid=true;result.reason="ok";
+  return result;
   }
 
 std::vector<NavMesh::GapCandidate> NavMesh::gapCandidates(const Point& start, const Point& end,
@@ -700,6 +1154,166 @@ std::vector<NavMesh::GapCandidate> NavMesh::gapCandidates(const Point& start, co
       if(distance(candidate.start,kept.start)<0.75f && distance(candidate.end,kept.end)<0.75f) duplicate=true;
     if(!duplicate) result.push_back(candidate);
     if(result.size()==maxCandidates) break;
+    }
+  return result;
+  }
+
+NavMesh::ShortcutSearch NavMesh::shortcutCandidates(size_t siteBudget, float maxHorizontal,
+                                                    float maxVertical) const {
+  ShortcutSearch result;
+  if(!impl->query || !siteBudget || siteBudget>10000 || !std::isfinite(maxHorizontal) ||
+     !std::isfinite(maxVertical) || maxHorizontal<=0 || maxVertical<0) return result;
+  result.queryBudget=siteBudget*10;
+  dtQueryFilter filter;
+  filter.setIncludeFlags(groundOnlyFlag);
+  struct Boundary { Point a,b,center; dtPolyRef ref=0; };
+  std::vector<Boundary> boundaries;
+  std::vector<dtPolyRef> polygons;
+  for(int i=0; i<impl->mesh->getMaxTiles(); ++i) {
+    const auto* tile=static_cast<const dtNavMesh&>(*impl->mesh).getTile(i);
+    if(!tile || !tile->header) continue;
+    for(int j=0; j<tile->header->polyCount; ++j) {
+      const auto& poly=tile->polys[j];
+      if(poly.getType()!=DT_POLYTYPE_GROUND || !(poly.flags&1)) continue;
+      const auto ref=impl->mesh->getPolyRefBase(tile)|dtPolyRef(j);
+      polygons.push_back(ref);
+      Point center{};
+      for(unsigned int k=0; k<poly.vertCount; ++k)
+        for(size_t axis=0; axis<3; ++axis) center[axis]+=tile->verts[size_t(poly.verts[k])*3+axis]/poly.vertCount;
+      float vertices[64*6];dtPolyRef neighbors[64];int count=0;
+      const auto status=impl->query->getPolyWallSegments(ref,&filter,vertices,neighbors,&count,64);
+      if(dtStatusFailed(status) || dtStatusDetail(status,DT_BUFFER_TOO_SMALL))
+        throw std::runtime_error("navmesh shortcut boundary query capacity");
+      for(int edge=0; edge<count; ++edge) {
+        if(neighbors[edge]) continue;
+        const auto* p=vertices+edge*6;
+        boundaries.push_back({{p[0],p[1],p[2]},{p[3],p[4],p[5]},center,ref});
+        }
+      }
+    }
+  // Connectivity is ground-only, even when this mesh already contains accepted links.
+  // Avoid a whole-component failed Detour search for every disconnected roof/island.
+  std::unordered_map<dtPolyRef,size_t> components;
+  size_t component=0;
+  for(const auto root:polygons) {
+    if(components.find(root)!=components.end()) continue;
+    std::vector<dtPolyRef> pending{root};components[root]=component++;
+    for(size_t at=0; at<pending.size(); ++at) {
+      const dtMeshTile* tile=nullptr;const dtPoly* poly=nullptr;
+      if(dtStatusFailed(impl->mesh->getTileAndPolyByRef(pending[at],&tile,&poly))) continue;
+      for(auto link=poly->firstLink; link!=DT_NULL_LINK; link=tile->links[link].next) {
+        const auto ref=tile->links[link].ref;
+        if(!ref || components.find(ref)!=components.end()) continue;
+        const dtMeshTile* otherTile=nullptr;const dtPoly* other=nullptr;
+        if(dtStatusSucceed(impl->mesh->getTileAndPolyByRef(ref,&otherTile,&other)) &&
+           other->getType()==DT_POLYTYPE_GROUND && (other->flags&1)) {
+          components[ref]=components[root];pending.push_back(ref);
+          }
+        }
+      }
+    }
+  auto cell=[&](float value){return int(std::floor(value/maxHorizontal));};
+  auto key=[](int x,int z){return (uint64_t(uint32_t(x))<<32)|uint32_t(z);};
+  std::unordered_map<uint64_t,std::vector<size_t>> bins;
+  for(size_t i=0; i<boundaries.size(); ++i) {
+    const auto& b=boundaries[i];
+    for(int z=cell(std::min(b.a[2],b.b[2])); z<=cell(std::max(b.a[2],b.b[2])); ++z)
+      for(int x=cell(std::min(b.a[0],b.b[0])); x<=cell(std::max(b.a[0],b.b[0])); ++x)
+        bins[key(x,z)].push_back(i);
+    }
+  auto inward=[&](const Point& edge,const Boundary& boundary) {
+    auto point=edge;
+    const float dx=boundary.center[0]-edge[0],dz=boundary.center[2]-edge[2];
+    const float length=std::hypot(dx,dz);
+    if(length>1.e-5f) {
+      const float amount=std::min(.15f,length*.5f);
+      point[0]+=dx/length*amount;point[2]+=dz/length*amount;
+      }
+    Point snapped{};bool over=false;
+    if(dtStatusSucceed(impl->query->closestPointOnPoly(boundary.ref,point.data(),snapped.data(),&over)) && over)
+      return snapped;
+    return edge;
+    };
+  struct Site { ShortcutCandidate candidate; dtPolyRef from=0,to=0; };
+  constexpr size_t SitesPerCell=128;
+  std::map<std::pair<int,int>,std::vector<Site>> areas;
+  auto score=[](const Site& s){return s.candidate.horizontalDistance+.25f*s.candidate.verticalDistance;};
+  for(size_t i=0; i<boundaries.size(); ++i) {
+    const auto& source=boundaries[i];
+    const int samples=std::max(1,int(std::ceil(std::hypot(source.b[0]-source.a[0],source.b[2]-source.a[2])/2.f)));
+    for(int sample=0; sample<samples; ++sample) {
+      ++result.boundarySamples;
+      const float t=(float(sample)+.5f)/float(samples);
+      const Point edge={source.a[0]+(source.b[0]-source.a[0])*t,
+                        source.a[1]+(source.b[1]-source.a[1])*t,
+                        source.a[2]+(source.b[2]-source.a[2])*t};
+      std::unordered_set<size_t> checked;
+      for(int z=cell(edge[2]-maxHorizontal); z<=cell(edge[2]+maxHorizontal); ++z)
+        for(int x=cell(edge[0]-maxHorizontal); x<=cell(edge[0]+maxHorizontal); ++x) {
+          const auto found=bins.find(key(x,z));
+          if(found==bins.end()) continue;
+          for(const auto j:found->second) {
+            if(j==i || !checked.insert(j).second) continue;
+            const auto& target=boundaries[j];
+            if(source.ref==target.ref) continue;
+            const float dx=target.b[0]-target.a[0],dz=target.b[2]-target.a[2],length=dx*dx+dz*dz;
+            if(length<1.e-6f) continue;
+            const float along=std::clamp(((edge[0]-target.a[0])*dx+(edge[2]-target.a[2])*dz)/length,0.f,1.f);
+            const Point opposite={target.a[0]+dx*along,target.a[1]+(target.b[1]-target.a[1])*along,target.a[2]+dz*along};
+            const float acrossX=opposite[0]-edge[0],acrossZ=opposite[2]-edge[2];
+            const float horizontal=std::hypot(acrossX,acrossZ),vertical=std::abs(opposite[1]-edge[1]);
+            if(horizontal>maxHorizontal || vertical>maxVertical || (horizontal<.35f && vertical<.4f)) continue;
+            // Facing boundary interiors reject pairs running along the same wall,
+            // and avoid placing takeoff on the outside of a polygon at a corner.
+            if(acrossX*(source.center[0]-edge[0])+acrossZ*(source.center[2]-edge[2])>=-.01f ||
+               acrossX*(target.center[0]-opposite[0])+acrossZ*(target.center[2]-opposite[2])<=.01f) continue;
+            Site site;site.from=source.ref;site.to=target.ref;
+            auto& candidate=site.candidate;
+            candidate.start=inward(edge,source);candidate.end=inward(opposite,target);
+            candidate.horizontalDistance=std::hypot(candidate.end[0]-candidate.start[0],candidate.end[2]-candidate.start[2]);
+            candidate.verticalDistance=std::abs(candidate.end[1]-candidate.start[1]);
+            if(candidate.horizontalDistance>maxHorizontal || candidate.verticalDistance>maxVertical) continue;
+            auto& sites=areas[{int(std::floor(edge[0]/50.f)),int(std::floor(edge[2]/50.f))}];
+            bool duplicate=false;
+            for(const auto& previous:sites)
+              if(distance(previous.candidate.start,candidate.start)<.75f && distance(previous.candidate.end,candidate.end)<.75f) {
+                duplicate=true;break;
+                }
+            if(duplicate) continue;
+            if(sites.size()<SitesPerCell) sites.push_back(site);
+            else {
+              auto worst=std::max_element(sites.begin(),sites.end(),[&](const Site& a,const Site& b){return score(a)<score(b);});
+              if(score(site)<score(*worst)) *worst=site;
+              }
+            }
+          }
+      }
+    }
+  for(auto& area:areas) {
+    auto& sites=area.second;
+    result.geometricSites+=sites.size();
+    std::sort(sites.begin(),sites.end(),[&](const Site& a,const Site& b) {
+      if(score(a)!=score(b)) return score(a)<score(b);
+      if(a.candidate.start!=b.candidate.start) return a.candidate.start<b.candidate.start;
+      return a.candidate.end<b.candidate.end;
+      });
+    }
+  size_t tested=0;
+  for(size_t round=0; round<SitesPerCell; ++round) {
+    for(const auto& area:areas) {
+      if(round>=area.second.size()) continue;
+      if(tested++>=result.queryBudget || result.candidates.size()==siteBudget) return result;
+      const auto& site=area.second[round];auto candidate=site.candidate;
+      if(components[site.from]==components[site.to]) {
+        ++result.groundQueries;
+        const auto path=findPath(candidate.start,candidate.end,false);
+        if(!path.complete && path.reason!="disconnected") continue;
+        candidate.groundComplete=path.complete;candidate.groundDistance=path.length;
+        }
+      const float direct=distance(candidate.start,candidate.end);
+      if(candidate.groundComplete && (candidate.groundDistance<3.f*direct || candidate.groundDistance<direct+10.f)) continue;
+      result.candidates.push_back(candidate);
+      }
     }
   return result;
   }

@@ -7,8 +7,9 @@
   but does not carry (its stash, gamedata/stash.json), created into its hands as it gives them.
 - **A task.** Whom the hero kills (a person or a creature by its symbol, or a kind of them by guild) and
   what he brings, by a game day or with no day at all. The reward is the npc's word, given with the deal:
-  when the task is done, the code pays it the next time the hero talks to the npc (the user's call: the
-  word given with Y is the code's to keep). The game reports whoever the hero kills (`hero_kill`, v17);
+  when the task is done, it is paid the next time the hero talks to an npc that keeps its word. A recorded
+  dishonest intention instead makes it refuse once, with no automatic payment later. The game reports
+  whoever the hero kills (`hero_kill`, v17);
   kills before the contract don't count.
 
 The facts in the chronicle: `contract` (the terms), `contract_kill` (one more of a kill line), `contract_done`
@@ -24,7 +25,7 @@ import itertools
 import json
 import logging
 import re
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -32,7 +33,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from .chronicle import Chronicle
 from .game import GameError, GameLink
 from .journal import Journal
-from .protocol import ChatStatusCmd, DealTerm, GameMessage, HeroKill, NpcDied, Session, Snapshot
+from .npc_cheat import breach, hearers, keeps
+from .protocol import ChatStatusCmd, DealTerm, GameMessage, HeroKill, NpcDied, RosterEntry, Session, Snapshot
 
 if TYPE_CHECKING:
     from .dialogue import Conversation, DialogueManager
@@ -405,7 +407,7 @@ class Task:
         return f"{', '.join(self.parts())} ({self.when()})"
 
 
-ContractState = Literal["open", "done", "paid", "broken", "void"]
+ContractState = Literal["open", "done", "paid", "broken", "void", "unpaid"]
 
 
 @dataclass
@@ -419,6 +421,7 @@ class Contract:
     reward: Reward
     state: ContractState = "open"
     missing: str = ""  # why the last payment did not go, as told to the npc
+    deal: str = ""  # the accepted deal, whose NPC intention is recorded in the chronicle
 
     def kills_done(self) -> bool:
         return all(k.done >= k.count for k in self.kill)
@@ -456,7 +459,7 @@ class Stash:
             gives: list[dict[str, Any]] = []
             if f.get("fact") == "deal" and f.get("npc") == npc:
                 gives = f.get("npc_gives", [])
-            elif f.get("fact") == "contract_paid" and f.get("npc") == npc:
+            elif f.get("fact") in ("contract_paid", "npc_later_paid") and f.get("npc") == npc:
                 gives = f.get("gives", [])
             for g in gives:
                 if g.get("stash") and g.get("item") in out:
@@ -514,6 +517,7 @@ class Contracts:
         self.chronicle = chronicle
         self.stash = stash
         self.journal = journal or dialogue.journal
+        self.roster: Callable[[], Mapping[str, RosterEntry]] = dict
         self.contracts: dict[str, Contract] = {}  # by id, of the save branch
         self._ids = itertools.count(1)
         self._paying: dict[str, asyncio.Task[bool]] = {}
@@ -545,24 +549,24 @@ class Contracts:
                 "как из "
                 f"инвентаря (npc_gives по идентификатору): {self.stash.text(npc)}."
             )
-        mine = [c for c in self.of(npc) if c.state in ("open", "done", "broken", "void")]
+        mine = [c for c in self.of(npc) if c.state in ("open", "done", "broken", "void", "unpaid")]
         if mine:
-            lines.append(
-                "Твои поручения герою (уговор заключён; когда он исполнит, код сам отдаст ему награду, как "
-                "только он с тобой заговорит):"
-            )
+            lines.append("Твои поручения герою (уговор заключён; награда обещана за исполнение):")
             for c in mine:
                 state = {
                     "open": "",
                     "done": " — исполнено, награда ждёт его",
                     "broken": " — срок прошёл, он не сдержал слово",
                     "void": " — исполнить уже нельзя: цель погибла не от его руки",
+                    "unpaid": " — исполнено, ты не заплатил",
                 }[c.state]
                 why = f" ({c.missing})" if c.missing else ""
                 lines.append(
                     f"- {c.id}: {c.progress()}; срок: {Task(due=c.due).when()}; "
                     f"награда: {c.reward.text()}{state}{why}"
                 )
+                if c.state == "unpaid":
+                    lines.append("[Герой выполнил поручение и ждёт платы; ты решил не платить]")
         return "\n".join(lines) or None
 
     all_tools: tuple[Tool, ...] = ()
@@ -585,7 +589,14 @@ class Contracts:
         while cid in self.contracts:
             cid = f"C{next(self._ids)}"
         c = Contract(
-            cid, npc.upper(), name, [Kill(**k.fact()) for k in task.kill], task.bring, task.due, reward
+            cid,
+            npc.upper(),
+            name,
+            [Kill(**k.fact()) for k in task.kill],
+            task.bring,
+            task.due,
+            reward,
+            deal=deal,
         )
         self.contracts[cid] = c
         self.chronicle.record(
@@ -658,6 +669,39 @@ class Contracts:
         """The reward for a done task, and what the hero brings: all or nothing (the deal's check)."""
         if c.state == "paid":
             return True
+        if c.state == "unpaid":
+            return False
+        if not keeps(self.chronicle, c.deal, "contract"):
+            if not c.kills_done():
+                return False
+            if c.bring:
+                try:
+                    amounts = await self.link.story_eval(
+                        c.npc,
+                        [["call", "NPC_HASITEMS", ["inst", "OTHER"], ["sym", g.item]] for g in c.bring],
+                    )
+                except (GameError, TimeoutError) as err:
+                    log.info("contract %s: cannot check the brought items: %s", c.id, err)
+                    return False
+                if len(amounts) != len(c.bring) or any(
+                    amount is None or int(amount) < g.count
+                    for g, amount in zip(c.bring, amounts, strict=True)
+                ):
+                    return self._unpaid(c, f"он ещё не принёс: {', '.join(g.text() for g in c.bring)}")
+            c.state, c.missing = "unpaid", ""
+            breach(
+                self.chronicle,
+                c.npc,
+                c.deal,
+                "unpaid",
+                contract=c.id,
+                npc_name=c.name,
+                what=c.what(),
+                reward=c.reward.text(),
+                witnesses=hearers(self.dialogue, c.npc, self.roster()),
+                **await _day(self.link),
+            )
+            return False
         have = carried(self.link.snapshots.get(c.npc))
         kept = self.stash.left(c.npc)
         gives = []
@@ -777,6 +821,7 @@ class Contracts:
                         bring,
                         f.get("due"),
                         Reward.of(f.get("reward", {})),
+                        deal=f.get("deal", ""),
                     )
                 case "contract_kill" if (c := self.contracts.get(f.get("contract", ""))) and f.get(
                     "line", -1
@@ -790,6 +835,10 @@ class Contracts:
                     c.state = "void"
                 case "broken" if c := self.contracts.get(f.get("contract", "")):
                     c.state = "broken"
+                case "npc_broken" if f.get("how") == "unpaid" and (
+                    c := self.contracts.get(f.get("contract", ""))
+                ):
+                    c.state, c.missing = "unpaid", ""
         numbers = [int(i[1:]) for i in self.contracts if i[1:].isdigit()]
         self._ids = itertools.count(max(numbers, default=0) + 1)
 

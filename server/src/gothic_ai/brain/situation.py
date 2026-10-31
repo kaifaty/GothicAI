@@ -62,6 +62,7 @@ EVENT_OPTIONS = {
     # threats from others: the body fights or flees with the game's own combat (npc_act fight / flee)
     "monster_near": {"call_help": "shout for help", "flee": "run away", "fight": "fight it"},
     "npc_attack": {"call_help": "shout for help", "flee": "run away", "fight": "fight back"},
+    "npc_threat": {"call_help": "shout for help", "flee": "run away", "fight": "ready your weapon and fight"},
     "fight_nearby": {"call_guards": "call the guards", "fight": "join the fight", "flee": "get away"},
 }
 
@@ -211,6 +212,8 @@ class SituationBuilder:
 def news_text(kind: str, about_name: str, title: str, *, about_you: bool = False) -> str:
     """A rumor of the hero (social.Rumor: kind, about_name, title) in English, for talk_to. The title stays
     as the game has it. `about_you`: the one asked is the one he lied to."""
+    if kind == "fame":
+        return f"people say of the hero: '{title}'"
     whom = "you" if about_you else about_name
     if kind == "broken":
         return f"the hero did not pay back {whom} on time: {title}"
@@ -222,6 +225,8 @@ def news_text(kind: str, about_name: str, title: str, *, about_you: bool = False
 def news_short(kind: str, about_name: str, *, about_you: bool = False) -> str:
     """A rumor of the hero in a few words, for the do menu's chat option ("go to X to tell the news: ...").
     `about_you`: the one asked is the one he lied to."""
+    if kind == "fame":
+        return "people talk about the hero's fame"
     whom = "you" if about_you else about_name
     if kind == "broken":
         return f"the hero did not pay back {whom}"

@@ -1,6 +1,7 @@
 """TCP framing and episode parity with a synthetic, model-free runtime."""
 from __future__ import annotations
 
+import argparse
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -15,7 +16,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from gothic_body.runtime import MAX_REQUEST_BYTES, PolicyRuntime, shared_feature_packer
-from gothic_body.serving_net import PolicyTCPServer
+from gothic_body import serving_net
+from gothic_body.serving_net import PolicyTCPServer, configure_serve_net_parser
 
 
 class CounterBackend:
@@ -30,11 +32,12 @@ class CounterBackend:
         return [20.0] + [float(index) for index in range(1, 12)], (state or 0) + 1
 
 
-def make_runtime():
+def make_runtime(**kwargs):
     return PolicyRuntime(
         backend=CounterBackend(), checkpoint_sha256="frozen",
         normalizer={"feature_names": ["dt"]},
         feature_packer=lambda row, normalizer, sequence_dt_game_ms: [float(sequence_dt_game_ms)],
+        **kwargs,
     )
 
 
@@ -151,6 +154,61 @@ def running_server(runtime_factory=make_runtime):
         server.server_close()
         thread.join(timeout=5)
         assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("age_ms", (0, 250))
+def test_step_memory_only_forces_no_command_for_eligible_row_and_retains_order(age_ms):
+    policy = make_runtime(allow_stale_memory_only=True)
+    old = observation()
+    request = {**step(old, "memory", now_game_ms=old["t_game_ms"] + age_ms), "memory_only": True}
+    with running_server(lambda: policy) as port, Client(port) as client:
+        assert client.exchange({**reset(), "include_capabilities": True})["memory_only_step"] is True
+        response = client.exchange(request)
+        assert response["ok"] and response["status"] == "locked"
+        assert response["action_id"] is None and response["arbitration"] is None
+        assert response["process"]["memory_only"] and response["process"]["model_processed"]
+        assert response["process"]["stream_seq"] == 1
+        fresh = client.exchange(step(observation(2), "fresh"))
+    assert fresh["status"] == "decision" and fresh["action_id"] == 11
+    assert fresh["process"]["stream_seq"] == 2
+    assert [call[2] for call in policy.backend.calls] == [None, 1]
+    assert old["can_decide"] is True
+
+
+@pytest.mark.parametrize("flags,expected", (([], True), (["--allow-stale-memory-only"], True),
+                                           (["--no-allow-stale-memory-only"], False)))
+def test_serve_net_cli_controls_memory_only_age_bypass(tmp_path, monkeypatch, flags, expected):
+    parser = argparse.ArgumentParser()
+    configure_serve_net_parser(parser.add_subparsers(dest="command"))
+    checkpoint = tmp_path / "placeholder.pt"
+    checkpoint.write_bytes(b"synthetic-checkpoint")
+    args = parser.parse_args(["serve-net", "--checkpoint", str(checkpoint), "--host", "localhost", *flags])
+    created = []
+
+    def runtime_factory(**kwargs):
+        created.append(kwargs)
+        return object()
+
+    class Server:
+        def __init__(self, address, factory):
+            self.server_address = address
+            factory()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def serve_forever(self):
+            pass
+
+    monkeypatch.setattr(serving_net.sys, "platform", "linux")
+    monkeypatch.setattr(serving_net, "TorchBackend", lambda *args, **kwargs: CounterBackend())
+    monkeypatch.setattr(serving_net, "PolicyRuntime", runtime_factory)
+    monkeypatch.setattr(serving_net, "PolicyTCPServer", Server)
+    assert serving_net.serve_net_main(args) == 0
+    assert len(created) == 1 and created[0]["allow_stale_memory_only"] is expected
 
 
 def test_network_replays_runtime_field_for_field_and_preserves_pipeline_order():

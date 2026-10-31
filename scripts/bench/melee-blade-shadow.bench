@@ -1,0 +1,553 @@
+# Stage 1: native attacks and real authored collision, with no forced damage.
+# OPENGOTHIC_BODY_TRACE=1 WORLD=NEWWORLD.ZEN MELEE_BLADE_SHADOW=1 scripts/bench.sh melee-blade-shadow /absolute/output
+seed 73013
+cheat god
+set time 12 0
+release all
+overlay off
+goto NW_CITY_MERCHANT_PATH_09
+wait 500
+watch player
+clear 3000
+corner right go 5
+melee-shadow setup 1h
+wait 600
+
+melee-shadow weapon 1h
+wait 500
+melee-shadow target 0
+wait 600
+rec map-1h-wolf-left novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+tap forward
+wait 350
+tap forward
+wait 350
+tap forward
+wait 1600
+release all
+stop
+melee-shadow target 1
+wait 600
+rec map-1h-wolf-right novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+tap forward
+wait 350
+tap forward
+wait 350
+tap forward
+wait 1600
+release all
+stop
+melee-shadow target 2
+wait 600
+rec map-1h-bandit-wall novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+tap forward
+wait 350
+tap forward
+wait 350
+tap forward
+wait 1600
+release all
+stop
+melee-shadow wall
+wait 600
+rec map-1h-wall-only novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+release all
+stop
+melee-shadow target 2
+wait 800
+rec map-1h-live novideo
+melee-shadow live
+press action
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+release all
+wait 1200
+stop
+
+melee-shadow weapon 2h
+wait 500
+melee-shadow target 0
+wait 600
+rec map-2h-wolf-left novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+tap forward
+wait 350
+tap forward
+wait 350
+tap forward
+wait 1600
+release all
+stop
+melee-shadow target 1
+wait 600
+rec map-2h-wolf-right novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+tap forward
+wait 350
+tap forward
+wait 350
+tap forward
+wait 1600
+release all
+stop
+melee-shadow target 2
+wait 600
+rec map-2h-bandit-wall novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+tap forward
+wait 350
+tap forward
+wait 350
+tap forward
+wait 1600
+release all
+stop
+melee-shadow wall
+wait 600
+rec map-2h-wall-only novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+release all
+stop
+melee-shadow target 2
+wait 800
+rec map-2h-live novideo
+melee-shadow live
+press action
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+release all
+wait 1200
+stop
+
+melee-shadow weapon fist
+wait 500
+melee-shadow target 0
+wait 600
+rec map-fist-wolf-left novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+tap forward
+wait 350
+tap forward
+wait 350
+tap forward
+wait 1600
+release all
+stop
+melee-shadow target 1
+wait 600
+rec map-fist-wolf-right novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+tap forward
+wait 350
+tap forward
+wait 350
+tap forward
+wait 1600
+release all
+stop
+melee-shadow target 2
+wait 600
+rec map-fist-bandit-wall novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+tap forward
+wait 350
+tap forward
+wait 350
+tap forward
+wait 1600
+release all
+stop
+melee-shadow wall
+wait 600
+rec map-fist-wall-only novideo
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+release all
+stop
+melee-shadow target 2
+wait 800
+rec map-fist-live novideo
+melee-shadow live
+press action
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+release all
+wait 1200
+stop
+
+melee-shadow clear
+release all
+# Existing mortal NPC-vs-NPC reference; the hero only observes.
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+turn 210
+wait 500
+watch player
+clear 3000
+rec npc-native-seed17 novideo
+bodyduel 17 60000
+stop
+rec npc-native-seed29 novideo
+bodyduel 29 60000
+stop
+rec npc-native-seed43 novideo
+bodyduel 43 60000
+stop
+
+# Same real location as basics.m5b_bridge; blade data supplements the unmodified m5b e2e.
+release all
+goto pos 23472 1032 -10816
+wait 500
+watch player
+clear 3000
+face -45
+melee-shadow weapon 1h
+arc BDT_1013_BANDIT_L 1 145 0
+npcequip nearest ITMW_1H_COMMON_01
+stats npc nearest hpmax 100000 hp 100000
+rec m5b-blade-probes novideo
+pos
+fight all player
+press action
+tap forward
+wait 1100
+tap forward
+wait 1100
+tap left
+wait 1100
+tap forward
+wait 1100
+tap right
+wait 1100
+tap forward
+wait 1100
+tap forward
+wait 1100
+tap left
+wait 1100
+tap forward
+wait 1100
+tap right
+wait 1100
+tap forward
+wait 1100
+tap forward
+wait 1100
+tap left
+wait 1100
+tap forward
+wait 1100
+tap right
+wait 1100
+release all
+wait 1200
+pos
+stop

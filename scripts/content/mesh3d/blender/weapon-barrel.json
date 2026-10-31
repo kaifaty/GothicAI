@@ -1,0 +1,116 @@
+{
+  "id": "weapon-barrel",
+  "target": "data/content/mesh3d-market.json",
+  "seed": 1,
+  "barrel_height": 0.9,
+  "sides": 16,
+  "end_ratio": 0.84,
+  "hoops": [
+    0.1,
+    0.5,
+    0.9
+  ],
+  "hoop": [
+    0.06,
+    0.008
+  ],
+  "rim": 0.022,
+  "depth": 0.22,
+  "weapons": [
+    {
+      "kind": "sword",
+      "at": [
+        -0.12,
+        -0.05
+      ],
+      "lean": [
+        5.0,
+        -7.4
+      ],
+      "length": 1.36
+    },
+    {
+      "kind": "sword",
+      "at": [
+        -0.02,
+        0.1
+      ],
+      "lean": [
+        -7.4,
+        -2.5
+      ],
+      "length": 1.38
+    },
+    {
+      "kind": "sword",
+      "at": [
+        0.06,
+        -0.08
+      ],
+      "lean": [
+        6.2,
+        3.7
+      ],
+      "length": 1.35
+    },
+    {
+      "kind": "short",
+      "at": [
+        0.0,
+        0.0
+      ],
+      "lean": [
+        1.2,
+        0.6
+      ],
+      "length": 0.95
+    },
+    {
+      "kind": "axe",
+      "at": [
+        0.13,
+        0.06
+      ],
+      "lean": [
+        -3.7,
+        8.7
+      ],
+      "length": 1.2
+    },
+    {
+      "kind": "spear",
+      "at": [
+        -0.08,
+        0.0
+      ],
+      "lean": [
+        -1.9,
+        -3.7
+      ],
+      "length": 1.43
+    }
+  ],
+  "stave_tile": 0.38,
+  "steel_tile": 0.3,
+  "hilt": {
+    "pommel": 0.05,
+    "grip": [
+      0.14,
+      0.036
+    ],
+    "guard": [
+      0.24,
+      0.03,
+      0.026
+    ]
+  },
+  "blade_width": 0.058,
+  "axe": [
+    0.22,
+    0.18
+  ],
+  "spear": [
+    0.32,
+    0.085
+  ]
+}

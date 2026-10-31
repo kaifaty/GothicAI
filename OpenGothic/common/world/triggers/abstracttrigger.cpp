@@ -2,7 +2,7 @@
 
 #include <Tempest/Log>
 
-#include <zenkit/vobs/Trigger.hh>
+#include "asset/worldtypes.h"
 
 #include "world/objects/npc.h"
 #include "world/world.h"
@@ -10,7 +10,7 @@
 
 using namespace Tempest;
 
-AbstractTrigger::AbstractTrigger(Vob* parent, World &world, const zenkit::VirtualObject& data, Flags flags)
+AbstractTrigger::AbstractTrigger(Vob* parent, World &world, const asset::VirtualObject& data, Flags flags)
   : Vob(parent,world,data,flags & (~Flags::Static)), callback(this), vobName(data.vob_name) {
   bboxSize   = Vec3(data.bbox.max.x-data.bbox.min.x,data.bbox.max.y-data.bbox.min.y,data.bbox.max.z-data.bbox.min.z)*0.5f;
   bboxOrigin = Vec3(data.bbox.max.x+data.bbox.min.x,data.bbox.max.y+data.bbox.min.y,data.bbox.max.z+data.bbox.min.z)*0.5f;
@@ -24,12 +24,12 @@ AbstractTrigger::AbstractTrigger(Vob* parent, World &world, const zenkit::Virtua
       });
     }
 
-  using zenkit::VirtualObjectType;
+  using asset::VirtualObjectType;
 
   if(data.type == VirtualObjectType::zCTrigger            || data.type == VirtualObjectType::zCTriggerList ||
      data.type == VirtualObjectType::oCTriggerScript      || data.type == VirtualObjectType::zCMover ||
      data.type == VirtualObjectType::oCTriggerChangeLevel || data.type == VirtualObjectType::oCCSTrigger) {
-    auto& trigger = reinterpret_cast<const zenkit::VTrigger&>(data);
+    auto& trigger = reinterpret_cast<const asset::VTrigger&>(data);
     if(data.type == VirtualObjectType::zCMover) {
       maxActivationCount = (trigger.max_activation_count==0) ? 0 : uint32_t(-1);
       } else {
@@ -145,7 +145,7 @@ bool AbstractTrigger::hasTicksEnabled() const {
   }
 
 void AbstractTrigger::onIntersect(Npc& n) {
-  if(vobType==zenkit::VirtualObjectType::zCMover || vobType==zenkit::VirtualObjectType::zCCSCamera)
+  if(vobType==asset::VirtualObjectType::zCMover || vobType==asset::VirtualObjectType::zCCSCamera)
     return;
   if((n.isPlayer() ? !respondToPlayer : !respondToNpc) || !reactToOnTouch)
     return;

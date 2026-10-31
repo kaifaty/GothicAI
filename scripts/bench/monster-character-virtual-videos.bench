@@ -1,0 +1,98 @@
+# Each scene is extracted into its own fresh process by the video launcher.
+# Preparation precedes recording; actors then use ordinary native movement.
+seed 73024
+cheat god
+set time 12 0
+movable on
+off: monstercharacter off
+on: monstercharacter on
+view clean 300
+overlay off
+
+# scene wolf_terrain
+monstercharacter route wolf_terrain
+wait 600
+monstercharacter follow 350 130 90
+rec wolf_terrain
+monstercharacter begin
+wait 12000
+monstercharacter end
+stop
+
+# scene wolf_stairs
+monstercharacter route wolf_stairs
+wait 600
+monstercharacter follow 350 100 270
+view clean 300
+rec wolf_stairs
+monstercharacter begin
+wait 12000
+monstercharacter end
+stop
+
+# scene wolf_pack
+goto FP_ROAM_NW_BIGFARM_LAKE_MONSTER_02_01
+clear 3000
+monstercharacter pack
+wait 600
+monstercharacter follow 350 130 90
+rec wolf_pack
+monstercharacter begin
+wait 14000
+monstercharacter end
+stop
+
+# scene troll_props
+monstercharacter route troll_barrel
+wait 1800
+monstercharacter follow 800 230 90
+rec troll_props
+monstercharacter begin
+wait 18000
+monstercharacter end
+stop
+
+# scene cliff
+monstercharacter cliff
+wait 600
+monstercharacter follow 350 130 90
+view clean 100
+rec cliff
+monstercharacter begin
+wait 6000
+monstercharacter end
+monstercharacter cliff46
+wait 600
+monstercharacter follow 350 130 90
+view clean 100
+monstercharacter begin
+wait 6000
+monstercharacter end
+stop
+
+# scene wolf_water
+monstercharacter route wolf_water
+wait 600
+monstercharacter follow 350 130 90
+rec wolf_water
+monstercharacter begin
+wait 8000
+monstercharacter end
+monstercharacter reverse
+monstercharacter begin
+wait 8000
+monstercharacter end
+stop
+
+# scene fieldraider_bloodfly
+goto NW_XARDAS_TOWER_VALLEY_091
+clear 3000
+monstercharacter attack fieldraider
+wait 600
+monstercharacter follow 500 130 90
+view clean 100
+rec fieldraider_bloodfly
+monstercharacter attack-start
+wait 12000
+monstercharacter end
+stop

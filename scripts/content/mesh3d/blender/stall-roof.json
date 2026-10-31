@@ -1,0 +1,26 @@
+{
+  "id": "stall-roof",
+  "target": "data/content/mesh3d-market.json",
+  "zones": [
+    {"key": "OWN_PROP_WOOD_FRAME", "group": "WOOD", "role": "posts, rails and frames"},
+    {"key": "OWN_PROP_CLOTH", "group": "UNDEF", "role": "woven cloth: canvas, sacking, curtains"},
+    {"key": "OWN_PROP_ROPE", "group": "UNDEF", "role": "twisted hemp rope"},
+    {"key": "OWN_PROP_CLOTH_BAND", "group": "UNDEF", "role": "dull red woven stripes of the canvas"}
+  ],
+  "seed": 1,
+  "posts": 3,
+  "post": 0.1,
+  "arm": [0.08, 0.1, 0.1],
+  "brace": [0.6, -0.1, 0.07],
+  "cloth": 0.006,
+  "sag": [0.12, 0.24],
+  "cols_per_span": 16,
+  "rows": 6,
+  "lowest": 0.7,
+  "valance": [9, 4, 0.08, 0.05, 0.008, 0.25],
+  "stripes": [[0.015, 0.03], [0.04, 0.05]],
+  "lash": [0.01, 0.06],
+  "tiles": "market-set/tiles",
+  "stave_tile": 0.38,
+  "planks_per_tile": 4
+}

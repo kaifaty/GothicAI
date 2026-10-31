@@ -1,0 +1,47 @@
+# Same real monster skeletons/native running movement and static source mesh
+# in OFF/ON. Each route contains one isolated vertical face and a long landing.
+# Expected mechanical failures remain results, so all six cases are measured.
+seed 73024
+cheat god
+set time 12 0
+off: monstercharacter off
+on: monstercharacter on
+view full
+overlay off
+
+monstercharacter ledge wolf 20
+wait 600
+monstercharacter begin
+wait 8000
+monstercharacter end
+
+monstercharacter ledge wolf 40
+wait 600
+monstercharacter begin
+wait 8000
+monstercharacter end
+
+monstercharacter ledge wolf 55
+wait 600
+monstercharacter begin
+wait 8000
+monstercharacter end
+
+monstercharacter ledge troll 40
+wait 600
+monstercharacter begin
+wait 8000
+monstercharacter end
+
+monstercharacter ledge troll 80
+wait 600
+monstercharacter begin
+wait 8000
+monstercharacter end
+
+# The same 40 cm wolf ledge, with the blocking polygon buried below the floor.
+monstercharacter ledge wolf 40 -100
+wait 600
+monstercharacter begin
+wait 8000
+monstercharacter end

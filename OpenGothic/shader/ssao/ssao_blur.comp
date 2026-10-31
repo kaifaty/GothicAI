@@ -65,6 +65,10 @@ void main() {
   const ivec2 res      = ivec2(textureSize(depth,0).xy);
   const ivec2 groupxXY = ivec2(gl_WorkGroupID.xy * gl_WorkGroupSize.xy);
 
+  // AO texel x was traced at depth pixel x*aoRatio (ssao.comp), not at the centre of its block
+  const ivec2 aoSize   = textureSize(ssao,0);
+  const ivec2 aoRatio  = (res + aoSize - 1)/aoSize;
+
   float ssaoMax  = 0;
   vec3  clipInfo = scene.clipInfo;
   for(uint i=gl_LocalInvocationID.x; i<LANE_SIZE; i+=gl_WorkGroupSize.x)
@@ -72,8 +76,9 @@ void main() {
       ivec2 xy = ivec2(i,r) - ivec2(KERNEL_RADIUS);
       ivec2 at = groupxXY + xy;
       vec2  uv = (at+vec2(0.5)) / vec2(res);
+      vec2  ao = (vec2(at)/vec2(aoRatio) + vec2(0.5)) / vec2(aoSize);
 
-      float c  = textureLod(ssao, uv, 0).r;
+      float c  = textureLod(ssao, ao, 0).r;
       float d  = textureLod(depth, uv, 0).x;
 
       d = linearDepth(d, clipInfo);

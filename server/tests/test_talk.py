@@ -1,7 +1,12 @@
 import asyncio
+from dataclasses import replace
+
+import pytest
 
 from gothic_ai.brain.reflex import Reflexes
+from gothic_ai.crime_meet import Encounter
 from gothic_ai.dialogue import DialogueManager
+from gothic_ai.game import GameLink
 from gothic_ai.journal import Journal
 from gothic_ai.llm import FakeBackend, ToolCall
 from gothic_ai.persona import PersonaProvider
@@ -9,6 +14,7 @@ from gothic_ai.protocol import RosterEntry
 from gothic_ai.talk import TalkDesk, addressee, default_posture
 from tests.fake_game import FakeGame, connected
 from tests.fakes import FakeDecider
+from tests.test_crime_react import card
 from tests.test_dialogue import HILDA, LOBART, XARDAS, _until
 
 
@@ -482,3 +488,228 @@ async def test_a_body_provider_keeps_its_body_while_talking():
         assert not any(m["type"] in {"attach", "action", "npc_act"} for m in fake.received)
     finally:
         await cm.__aexit__(None, None, None)
+
+
+async def test_rule_refusal_blocks_voice_model_and_ends_existing_partner_until_resolved():
+    fake = FakeGame()
+    llm = FakeBackend("Снова поговорим.", delay=0)
+    cm, link, dialogue, talk = await _desk(fake, llm, FakeDecider(choice="keep_working"))
+    blocked = {XARDAS}
+    talk.refuses = blocked.__contains__
+    try:
+        await fake.roster(XARDAS_NEAR)
+        await _until(lambda: XARDAS in talk.people)
+        assert not talk.begin(XARDAS, "Ксардас")
+        assert not await talk.listen(XARDAS)
+        await fake.send(type="player_text", text="Поговорим?", focus=XARDAS)
+        await _until(lambda: any(m.get("action") == "say_svm" for m in fake.received))
+        assert talk.partner is None
+        assert not llm.calls
+        assert XARDAS not in fake.attached
+
+        blocked.clear()  # a canonical settlement changes the predicate in the same poll
+        await fake.send(type="player_text", text="А теперь?", focus=XARDAS)
+        await _until(lambda: fake.said == ["Снова поговорим."])
+        assert talk.partner is not None
+        blocked.add(XARDAS)  # newly heard murder must also close an existing conversation
+        calls = len(llm.calls)
+        await fake.send(type="player_text", text="Ты слышал?", focus=XARDAS)
+        await _until(lambda: talk.partner is None)
+        assert len(llm.calls) == calls
+    finally:
+        await cm.__aexit__(None, None, None)
+
+
+@pytest.mark.parametrize("reaction", ["refuse", "flee"])
+@pytest.mark.parametrize("victim_name", ["Браго", None])
+async def test_crime_refusal_logs_its_reason_and_shows_notice(caplog, reaction, victim_name):
+    npc, victim = "BAU_4300_ADDON_CAVALORN", "BDT_1014_BANDIT_L"
+    fake = FakeGame()
+    llm = FakeBackend("Я здесь.", delay=0)
+    cm, link, dialogue, talk = await _desk(fake, llm)
+    dialogue.personas.cards = {
+        victim: replace(card(victim), name=victim_name),
+    } if victim_name else {}
+    reason = Encounter(
+        {"fact": "crime", "id": "brago-murder", "kind": "murder", "victim": victim},
+        "stranger", reaction,
+    )
+    talk.refusal = lambda who: reason if who == npc else None
+    caplog.set_level("INFO", logger="gothic_ai.talk")
+    try:
+        await fake.roster(person(npc, "Кавалорн", 3, True))
+        await _until(lambda: npc in talk.people)
+        await fake.send(type="player_text", text="Кавалорн, всё хорошо?", focus=npc)
+        await _until(lambda: any(
+            message["type"] == "chat_status" and message["status"] == "notice"
+            for message in fake.received
+        ))
+        notice = next(message for message in fake.received if message["type"] == "chat_status")
+        assert notice["status"] == "notice"
+        assert notice["npc"] == npc
+        assert notice["detail"] == (
+            f"Кавалорн не хочет говорить: знает об убийстве. Жертва: {victim_name or victim}"
+        )
+        assert (
+            f"talk refused npc={npc} (Кавалорн) crime=brago-murder kind=murder "
+            f"victim={victim} role=stranger reaction={reaction}"
+        ) in caplog.messages
+        assert not llm.calls
+        assert talk.partner is None
+    finally:
+        await cm.__aexit__(None, None, None)
+
+
+_ASR_WORLD_WORDS = [
+    "Иннос", "Инноса", "Инносу", "Аданос", "Аданоса", "Аданосу", "Белиар", "Белиара", "Белиару",
+    "Хоринис", "Хориниса", "Хоринисе", "Долина Рудников", "Долине Рудников", "Долину Рудников",
+    "Яркендар", "Яркендаре",
+]
+
+
+@pytest.fixture
+def asr_talk():
+    link = GameLink(None)
+    dialogue = DialogueManager(link, FakeBackend("Слушаю."), PersonaProvider(None))
+    return TalkDesk(link, dialogue)
+
+
+def test_asr_hints_prioritize_focus_partner_and_world_before_others_by_name(asr_talk):
+    asr_talk.people = roster(
+        person("FAR", "Ватрас", 1, heard=2000),
+        person("FOCUS", "Лорд Хаген", 30),
+        person("DOWN", "Декстер", 0.1, activity="down"),
+        person("NEAR", "Лотар", 12, heard=200),
+        person("PARTNER", "Диего", 5),
+    )
+    assert asr_talk.begin("PARTNER", "Диего")
+
+    assert asr_talk.asr_hints("focus") == [
+        "Лорд Хаген", "Хаген", "Хагена", "Хагену", "Хагеном", "Хагене", "Диего",
+        *_ASR_WORLD_WORDS,
+        "Ватрас", "Ватраса", "Ватрасу", "Ватрасом", "Ватрасе",
+        "Лотар", "Лотара", "Лотару", "Лотаром", "Лотаре",
+    ]
+
+
+def test_asr_hints_remain_stable_when_roster_earshot_changes(asr_talk):
+    asr_talk.people = roster(
+        person("PEDRO", "Педро", 3),
+        person("LOTAR", "лотар", 4),
+        person("VATRAS", "Ватрас", 5),
+    )
+
+    before = asr_talk.asr_hints(None)
+    asr_talk.people = roster(
+        person("PEDRO", "Педро", 5),
+        person("LOTAR", "лотар", 4),
+        person("VATRAS", "Ватрас", 3),
+    )
+
+    assert asr_talk.asr_hints(None) == before == [
+        *_ASR_WORLD_WORDS,
+        "Ватрас", "Ватраса", "Ватрасу", "Ватрасом", "Ватрасе",
+        "лотар", "лотара", "лотару", "лотаром", "лотаре",
+        "Педро",
+    ]
+
+
+@pytest.mark.parametrize(("name", "expected"), [
+    ("Лотар", "Лотар Лотара Лотару Лотаром Лотаре"),
+    ("Андрей", "Андрей Андрея Андрею Андреем Андрее"),
+    ("Сара", "Сара Сары Саре Сару Сарой"),
+    ("Ольга", "Ольга Ольги Ольге Ольгу Ольгой"),
+    ("Лука", "Лука Луки Луке Луку Лукой"),
+    ("Раха", "Раха Рахи Рахе Раху Рахой"),
+    ("Мижа", "Мижа Мижи Миже Мижу Мижей"),
+    ("Саша", "Саша Саши Саше Сашу Сашей"),
+    ("Роща", "Роща Рощи Роще Рощу Рощей"),
+    ("Зича", "Зича Зичи Зиче Зичу Зичей"),
+    ("Луца", "Луца Луцы Луце Луцу Луцей"),
+    ("Тоня", "Тоня Тони Тоне Тоню Тоней"),
+    ("Кассия", "Кассия Кассии Кассию Кассией"),
+    ("Ёран", "Ёран Ёрана Ёрану Ёраном Ёране"),
+    ("ГРОМ", "ГРОМ ГРОМА ГРОМУ ГРОМОМ ГРОМЕ"),
+    ("Лорд", "Лорд"),
+    ("Брат", "Брат"),
+    ("Мастер", "Мастер"),
+    ("Диего", "Диего"),
+    ("Педро", "Педро"),
+    ("Рауль", "Рауль"),
+    ("Андре", "Андре"),
+    ("Мари", "Мари"),
+    ("Рэю", "Рэю"),
+    ("Дору", "Дору"),
+    ("Гё", "Гё"),
+])
+def test_asr_hints_name_cases_preserve_spelling_and_skip_addresses(asr_talk, name, expected):
+    asr_talk.people = roster(person("FOCUS", name, 3))
+
+    assert asr_talk.asr_hints("FOCUS") == [*expected.split(), *_ASR_WORLD_WORDS]
+
+
+def test_asr_hints_keep_full_name_and_skip_short_words_and_addresses(asr_talk):
+    name = "Лорд Хаген брат мастер де"
+    asr_talk.people = roster(person("FOCUS", name, 3))
+
+    assert asr_talk.asr_hints("FOCUS") == [
+        name, "Хаген", "Хагена", "Хагену", "Хагеном", "Хагене", *_ASR_WORLD_WORDS,
+    ]
+
+
+def test_asr_hints_skip_down_focus_and_partner(asr_talk):
+    asr_talk.people = roster(
+        person("FOCUS", "Ксардас", 1, activity="down"),
+        person("PARTNER", "Декстер", 2, activity="down"),
+        person("NEAR", "Педро", 3),
+    )
+    assert asr_talk.begin("PARTNER", "Декстер")
+
+    assert asr_talk.asr_hints("FOCUS") == [*_ASR_WORLD_WORDS, "Педро"]
+
+
+def test_asr_hints_include_partner_name_when_missing_from_roster(asr_talk):
+    assert asr_talk.begin("PARTNER", "Лотар")
+
+    assert asr_talk.asr_hints(None) == [
+        "Лотар", "Лотара", "Лотару", "Лотаром", "Лотаре", *_ASR_WORLD_WORDS,
+    ]
+
+
+def test_asr_hints_filter_each_string_to_inworld_characters(asr_talk):
+    allowed = "Герой 2.,'():!?;-"
+    invalid = ["Декстер/Диего", "Лотар_Педро", "Ёран\nКсардас", "Ватрас🙂", "[Бруно]"]
+    asr_talk.people = roster(
+        person("FOCUS", allowed, 1),
+        *(person(f"NPC_{i}", name, i + 2) for i, name in enumerate(invalid)),
+    )
+
+    hints = asr_talk.asr_hints("FOCUS")
+
+    assert allowed in hints
+    assert not any(name in hints for name in invalid)
+    assert {"Декстер", "Диего", "Лотар", "Педро", "Ёран", "Ксардас", "Ватрас", "Бруно"} <= set(hints)
+    assert all(all(c.isalpha() or c.isdigit() or c in " .,'():!?;-" for c in hint) for hint in hints)
+
+
+def test_asr_hints_deduplicate_and_limit_to_100_after_prioritizing(asr_talk):
+    asr_talk.people = roster(
+        *(person(f"NPC_{i}", f"Педро {i}", i + 1) for i in reversed(range(110))),
+        person("FAR", "Аарон", 1000),
+        person("FOCUS", "Ксардас", 50),
+        person("PARTNER", "Ватрас", 40),
+    )
+    assert asr_talk.begin("PARTNER", "Ватрас")
+
+    hints = asr_talk.asr_hints("FOCUS")
+
+    assert len(hints) == len(set(hints)) == 100
+    assert hints[:27] == [
+        "Ксардас", "Ксардаса", "Ксардасу", "Ксардасом", "Ксардасе",
+        "Ватрас", "Ватраса", "Ватрасу", "Ватрасом", "Ватрасе", *_ASR_WORLD_WORDS,
+    ]
+    assert hints[27:] == [
+        "Педро 0", "Педро", *sorted((f"Педро {i}" for i in range(1, 72)), key=str.casefold),
+    ]
+    assert "Педро 72" not in hints
+    assert "Аарон" not in hints

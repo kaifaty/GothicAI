@@ -9,13 +9,14 @@ from typing import Any
 import pytest
 
 from gothic_ai.chronicle import Chronicle
-from gothic_ai.crime_law_graph import law_var
+from gothic_ai.crime_law_graph import city_entry_program, init_ops, law_var
 from gothic_ai.crime_law_runtime import CrimeLawRuntime
 from gothic_ai.crimes import Crimes
 from gothic_ai.game import GameError
 from gothic_ai.gamedata.storygraph import Node, StoryGraph
 from gothic_ai.memory import MemoryStore
 from gothic_ai.protocol import DialogChosen, Loading, Session
+from tests.test_crime_law_graph import GateVM
 from tests.test_crimes import Link
 
 AT = 3 * 1440 + 9 * 60 + 15
@@ -89,12 +90,14 @@ async def runtime(monkeypatch):
         service.link.installs.append(service.chronicle.branch)
         service._installed = True
 
+    native_install = CrimeLawRuntime._install
     # The graph suite validates the actual program installer. Here the VM is a recording fake so
     # tests can check the runtime's clock, branch, native-payment and store ordering behavior.
     monkeypatch.setattr(CrimeLawRuntime, "_install", install)
     service = CrimeLawRuntime(link, crimes, graph, SimpleNamespace())  # type: ignore[arg-type]
     yield SimpleNamespace(
-        link=link, memory=memory, chronicle=chronicle, crimes=crimes, service=service, law=service.law
+        link=link, memory=memory, chronicle=chronicle, crimes=crimes, service=service, law=service.law,
+        native_install=native_install,
     )
     await service.close()
     await crimes.close()
@@ -103,7 +106,7 @@ async def runtime(monkeypatch):
     memory.close()
 
 
-def case(system, *, crime="theft-1", community="city", guard=False, at=AT):
+def case(system, *, crime="theft-1", community="city", guard=False, at=AT, witness=None):
     fact = {
         "fact": "crime",
         "id": crime,
@@ -117,7 +120,7 @@ def case(system, *, crime="theft-1", community="city", guard=False, at=AT):
         "count": 1,
     }
     system.chronicle.record(fact)
-    npc = ANDRE if guard else CITIZEN
+    npc = witness or (ANDRE if guard else CITIZEN)
     system.chronicle.record(
         {
             "fact": "crime_seen",
@@ -132,6 +135,24 @@ def case(system, *, crime="theft-1", community="city", guard=False, at=AT):
 
 def native_choice(system, node=PAYNOW, *, made=False):
     system.link.receive(DialogChosen(type="dialog_chosen", npc=ANDRE, node=node, made=made))
+
+
+@pytest.mark.parametrize("resolution", ["forgiven", "silenced", "absolved"])
+async def test_resolved_case_stops_native_news_without_erasing_knowledge(runtime, resolution):
+    witness = "BAU_951_HILDA"
+    crime = case(runtime, community="farm", witness=witness)
+    assert runtime.service._news_levels() == {witness: 3}
+
+    fact = {"fact": resolution, "npc": witness, "crime": crime["id"]}
+    if resolution == "absolved":
+        fact = {"fact": resolution, "community": "farm", "crimes": [crime["id"]]}
+    runtime.chronicle.record(fact)
+
+    assert runtime.crimes.known(witness)
+    assert runtime.service._news_levels() == {}
+
+    case(runtime, crime="unresolved-theft", community="farm", witness=witness)
+    assert runtime.service._news_levels() == {witness: 3}
 
 
 async def test_native_pollution_stays_locked_then_known_counters_are_written_before_opening(runtime):
@@ -184,6 +205,91 @@ async def test_native_paynow_with_unsettled_script_debt_does_not_absolve(runtime
     assert runtime.chronicle.facts("absolved") == []
     assert runtime.law.debt("city") == 50
     assert runtime.link.variables[law_var("city")] == 1
+
+
+async def test_city_entry_uses_runtime_law_and_reopens_in_the_payment_poll(runtime):
+    vm = GateVM()
+    entry = city_entry_program(
+        "DIA_MIL_310_STADTWACHE_BRIBE", "condition", [{"do": "return", "value": ["int", 1]}]
+    )
+    case(runtime)
+    await runtime.service.tick()
+    vm.variables.update(runtime.link.variables)
+    assert vm.execute(entry) == 1  # eyewitness report still travelling
+    runtime.link.clock = AT + 1440
+    await runtime.service.tick()
+    vm.variables.update(runtime.link.variables)
+    assert vm.execute(entry) == 0
+    native_choice(runtime)
+    await runtime.service.tick()
+    vm.variables.update(runtime.link.variables)
+    assert runtime.chronicle.facts("absolved")[0]["crimes"] == ["theft-1"]
+    assert vm.execute(entry) == 1
+
+
+async def test_city_entry_rebuilds_from_the_loaded_branch_law(runtime):
+    case(runtime)
+    await runtime.service.tick()
+    saved_head = runtime.memory.head("A")
+    runtime.link.clock = AT + 1440
+    await runtime.service.tick()
+    vm = GateVM("MIL_333_STADTWACHE")
+    entry = city_entry_program(
+        "DIA_MIL_333_STADTWACHE_BRIBE", "condition", [{"do": "return", "value": ["int", 1]}]
+    )
+    vm.variables.update(runtime.link.variables)
+    assert vm.execute(entry) == 0
+    runtime.link.receive(Session(type="session", branch="B", parent="A", parent_seq=saved_head))
+    runtime.link.clock = AT
+    await runtime.service.tick()
+    vm.variables.update(runtime.link.variables)
+    assert vm.execute(entry) == 1
+
+
+async def test_installer_patches_both_parts_of_entry_that_never_read_native_petz(runtime, monkeypatch):
+    service, link = runtime.service, runtime.link
+    entry = "DIA_MIL_310_STADTWACHE_BRIBE"
+    service.graph.nodes[entry] = Node(
+        entry, "dialog", "MIL_310_STADTWACHE", "", [], set(), condition=["int", 1]
+    )
+    service.graph.nodes[PAYNOW] = Node(
+        PAYNOW, "choice", ANDRE, "", [], set(), parents=["DIA_ANDRE_PETZMASTER"]
+    )
+    service.patches = SimpleNamespace(static=init_ops(service.graph), _background=[])
+    requested = []
+
+    async def program(node, part, *, own):
+        assert own
+        requested.append((node, part))
+        if node.endswith("_PAYNOW"):
+            return {"steps": [{"do": "call", "call": ["fn", "B_GRANTABSOLUTION", ["int", 2]]}]}
+        if part == "condition":
+            return {"steps": [{"do": "return", "value": ["int", 1]}]}
+        return {"steps": [{
+            "do": "set", "target": ["field", ["inst", "SELF"], "AIVAR", 14], "value": ["int", 1]
+        }]}
+
+    state = link.story_state
+
+    async def symbols(**kwargs):
+        result = await state(**kwargs)
+        result["symbols"] = {name: "var" for name in kwargs.get("symbols", [])}
+        return result
+
+    monkeypatch.setattr(link, "story_program", program, raising=False)
+    monkeypatch.setattr(link, "story_state", symbols)
+    await runtime.native_install(service)
+    assert {(entry, "condition"), (entry, "information")} <= set(requested)
+    programs = {op["part"]: op["steps"] for op in link.patches[-1] if op["node"] == entry}
+    vm = GateVM()
+    vm.variables.update({law_var("city"): 1, "DIR_CRIME_PETZ_CITY_THEFT": 1})
+    assert vm.execute(programs["condition"]) == 0
+    vm.execute(programs["information"])
+    assert vm.fields.get((vm.npc, "AIVAR", 14), 0) == 0
+    vm.variables.update({law_var("city"): 0, "DIR_CRIME_PETZ_CITY_THEFT": 0})
+    assert vm.execute(programs["condition"]) == 1
+    vm.execute(programs["information"])
+    assert vm.fields[(vm.npc, "AIVAR", 14)] == 1
 
 
 async def test_payment_covers_event_snapshot_while_report_arriving_on_tick_stays_owed(runtime):

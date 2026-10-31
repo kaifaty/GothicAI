@@ -22,13 +22,13 @@ MeshObjects::Item MeshObjects::implGet(const StaticMesh &mesh, const StaticMesh:
   Material mat = s.material;
   if(teethTex!=0 || bodyColor!=0 || texVar!=0){
     if(s.texName=="HUM_TEETH_V0.TGA"){
-      mat.tex=solveTex(s.material.tex,s.texName,teethTex,bodyColor);
+      mat.setAlbedo(solveTex(s.material.tex,s.texName,teethTex,bodyColor));
       }
     else if(s.texName=="HUM_MOUTH_V0.TGA"){
-      mat.tex=solveTex(s.material.tex,s.texName,teethTex,bodyColor);
+      mat.setAlbedo(solveTex(s.material.tex,s.texName,teethTex,bodyColor));
       }
-    else if(s.texName.find_first_of("VC")!=std::string::npos){
-      mat.tex=solveTex(s.material.tex,s.texName,texVar,bodyColor);
+    else if(Resources::hasTextureVariant(s.texName)){
+      mat.setAlbedo(solveTex(s.material.tex,s.texName,texVar,bodyColor));
       }
     }
 
@@ -41,7 +41,7 @@ MeshObjects::Item MeshObjects::implGet(const StaticMesh &mesh, const StaticMesh:
   }
 
 const Tempest::Texture2d *MeshObjects::solveTex(const Tempest::Texture2d *def, std::string_view format, int32_t v, int32_t c) {
-  if(format.find_first_of("VC")!=std::string::npos){
+  if(Resources::hasTextureVariant(format)){
     auto ntex = Resources::loadTexture(format,v,c);
     if(ntex!=nullptr)
       return ntex;
@@ -75,9 +75,19 @@ void MeshObjects::Mesh::setFatness(float f) {
     sub[i].setFatness(f);
   }
 
-void MeshObjects::Mesh::setWind(zenkit::AnimationType m, float intensity) {
+void MeshObjects::Mesh::setWind(asset::AnimationType m, float intensity) {
   for(size_t i=0;i<subCount;++i)
     sub[i].setWind(m,intensity);
+  }
+
+void MeshObjects::Mesh::setVisible(bool visible) {
+  for(size_t i=0;i<subCount;++i)
+    sub[i].setVisible(visible);
+  }
+
+void MeshObjects::Mesh::setDeformation(const std::vector<Tempest::Vec4>& vertices) {
+  for(size_t i=0;i<subCount;++i)
+    sub[i].setDeformation(vertices);
   }
 
 void MeshObjects::Mesh::startMMAnim(std::string_view anim, float intensity, uint64_t timeUntil, bool freeOnly) {
@@ -95,6 +105,15 @@ float MeshObjects::Mesh::morphWeight(std::string_view anim) const {
   for(size_t i=0;i<subCount;++i)
     w = std::max(w, sub[i].morphWeight(anim));
   return w;
+  }
+
+VisualObjects::MorphSample MeshObjects::Mesh::morphSample(std::string_view anim, uint64_t tick) const {
+  for(size_t i=0;i<subCount;++i) {
+    const auto sample = sub[i].morphSample(anim,tick);
+    if(sample.intensity>0.f)
+      return sample;
+    }
+  return {};
   }
 
 Bounds MeshObjects::Mesh::bounds() const {
@@ -231,7 +250,7 @@ MeshObjects::Mesh::Mesh(MeshObjects& owner, const ProtoMesh& mesh,
     auto& skin = mesh.skined[i];
     for(auto& m:skin.sub) {
       Material mat = m.material;
-      mat.tex=owner.solveTex(mat.tex,m.texName,texVar,bodyColor);
+      mat.setAlbedo(owner.solveTex(mat.tex,m.texName,texVar,bodyColor));
       if(mat.tex!=nullptr) {
         sub[subCount] = owner.parent->get(skin,mat,m.iboOffset,m.iboSize,*anim);
         ++subCount;
@@ -262,6 +281,16 @@ void MeshObjects::Mesh::setObjMatrix(const Tempest::Matrix4x4 &mt) {
   implSetObjMatrix(mt,skeleton==nullptr ? nullptr : skeleton->tr.data());
   }
 
+void MeshObjects::Mesh::setTextureCategory(Resources::TextureCategory category) {
+  for(size_t i=0;i<subCount;++i)
+    sub[i].setTextureCategory(category);
+  }
+
+void MeshObjects::Mesh::setTexturePosition(const Tempest::Vec3& position) {
+  for(size_t i=0;i<subCount;++i)
+    sub[i].setTexturePosition(position);
+  }
+
 void MeshObjects::Mesh::implSetObjMatrix(const Tempest::Matrix4x4& mt, const Tempest::Matrix4x4* tr) {
   const size_t binds = (binder==nullptr ? 0 : binder->bind.size());
   if(cpuOnly) {
@@ -271,12 +300,14 @@ void MeshObjects::Mesh::implSetObjMatrix(const Tempest::Matrix4x4& mt, const Tem
       }
     return;
     }
+  // Static attachments belong to the vob's cell, including animated nodes.
+  const Tempest::Vec3 texturePosition(mt[3][0],mt[3][1],mt[3][2]);
   for(size_t i=0; i<binds; ++i) {
     auto id = binder->bind[i];
-    sub[i].setObjMatrix(tr[id]);
+    sub[i].setObjMatrix(tr[id],texturePosition);
     }
   for(size_t i=binds; i<subCount; ++i)
-    sub[i].setObjMatrix(mt);
+    sub[i].setObjMatrix(mt,texturePosition);
   }
 
 const Bounds& MeshObjects::Node::bounds() const {

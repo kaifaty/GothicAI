@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/vobs/Camera.hh>
+#include "asset/worldtypes.h"
 
 #include "abstracttrigger.h"
 
@@ -9,7 +9,7 @@ class DbgPainter;
 
 class CsCamera : public AbstractTrigger {
   public:
-    CsCamera(Vob* parent, World& world, const zenkit::VCutsceneCamera& data, Flags flags);
+    CsCamera(Vob* parent, World& world, const asset::VCutsceneCamera& data, Flags flags);
 
     bool isPlayerMovable() const;
 
@@ -19,7 +19,7 @@ class CsCamera : public AbstractTrigger {
     struct KeyFrame {
       float         time = 0;
       Tempest::Vec3 c[4] = {};
-      zenkit::CameraMotion motionType = zenkit::CameraMotion::LINEAR;
+      asset::CameraMotion motionType = asset::CameraMotion::LINEAR;
 
       auto          position(float u) const -> Tempest::Vec3;
       float         arcLength() const;
@@ -27,7 +27,7 @@ class CsCamera : public AbstractTrigger {
 
     struct KbSpline {
       KbSpline() = default;
-      KbSpline(const std::vector<std::shared_ptr<zenkit::VCameraTrajectoryFrame>>& frames, const float duration, std::string_view vobName);
+      KbSpline(const std::vector<std::shared_ptr<asset::VCameraTrajectoryFrame>>& frames, const float duration, std::string_view vobName);
 
       std::vector<KeyFrame> keyframe;
       size_t                size() const { return keyframe.size(); }

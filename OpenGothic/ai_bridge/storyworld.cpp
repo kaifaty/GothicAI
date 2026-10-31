@@ -12,14 +12,19 @@
 #include <zenkit/addon/daedalus.hh>
 
 #include "game/inventory.h"
+#include "physics/dynamicworld.h"
+#include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 
 #include "eval.h"
+#include "chesttake.h"
 #include "jsonread.h"
 #include "jsonwriter.h"
 #include "npcfind.h"
+#include "npcchests.h"
+#include "npcsteal.h"
 #include "npcview.h"
 #include "storyeffects.h"
 #include "textcodec.h"
@@ -108,6 +113,7 @@ StoryWorld::StoryWorld(std::function<void(std::string&&)> send, std::function<vo
 void StoryWorld::clear() {
   tags.clear();
   deaths.clear();
+  nextScan = nextReport = 0;
   }
 
 int StoryWorld::spawn(World& world, const rapidjson::Value& msg, std::string& error) {
@@ -209,7 +215,10 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
       list.push_back(std::move(e));
       }
     }
+  std::vector<ChestTake::Request> takes;
   for(auto& e : list) {
+    if(e.kind=="chest_take")
+      takes.push_back({e.chest,e.item,e.count});
     // v39: a mission item (ITEM_MISSION) never goes from one npc to another
     const size_t id = e.kind=="give" && e.toNpc ? world.script().findSymbolIndex(e.item) : size_t(-1);
     if(auto* it = id==size_t(-1) ? nullptr : const_cast<Inventory&>(npc->inventory()).getItem(id); it!=nullptr && it->isMission()) {
@@ -217,6 +226,19 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
       return false;
       }
     }
+  // Mandatory for chest_take even without check:true: no partial take, no mission stack, and no
+  // earlier effect may run before every requested source stack passes preflight.
+  error = ChestTake::check(takes,[&](const std::string& chest, const std::string& item)
+      -> std::optional<ChestTake::Stock> {
+    auto* source = NpcChests::find(world,chest);
+    if(source==nullptr)
+      return std::nullopt;
+    const auto id = world.script().findSymbolIndex(item);
+    auto* stock = source->inventory().getItem(id);
+    return ChestTake::Stock{int64_t(source->inventory().itemCount(id)),stock!=nullptr && stock->isMission()};
+    });
+  if(!error.empty())
+    return false;
   if(JsonRead::boolean(msg,"check",false)) {
     // all or nothing (v10, a deal): each giver must have all it gives, or nothing happens; what the npc
     // creates (v17, its stash) is its own to give, and the hero must have the learning points of all
@@ -226,7 +248,7 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     int64_t                                       lp = 0;
     for(auto& e : list) {
       if(e.kind=="give")
-        need[{!e.toHero,e.item}] += e.count;
+        need[{!e.toHero && !e.toNpc,e.item}] += e.count;
       else if(e.kind=="create")
         made[e.item] += e.count;
       else if(e.kind=="teach") {
@@ -321,6 +343,10 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
       auto display = TextCodec::toUtf8(n->displayName());
       w.Key("name");
       w.String(display.data(),rapidjson::SizeType(display.size()));
+      // v48: authoritative positions for a batch of far NPCs, without running their bodies.
+      const auto pos = n->position();
+      w.Key("pos");
+      w.StartArray(); w.Double(pos.x); w.Double(pos.y); w.Double(pos.z); w.EndArray();
       }
     if(n!=nullptr && near!=nullptr) {
       // alive or dead: how far an npc would go to see for itself, and whether it sees it from here (v12)
@@ -381,6 +407,12 @@ std::string StoryWorld::state(World& world, const rapidjson::Value& msg) {
     });
   w.EndObject();
 
+  if(auto target = msg.FindMember("deed_target"); target!=msg.MemberEnd() && target->value.IsObject()) {
+    const auto preview = NpcSteal::preview(world,target->value);
+    w.Key("deed_target");
+    w.RawValue(preview.data(),preview.size(),rapidjson::kObjectType);
+    }
+
   const auto now = world.time();
   w.Key("dialog");   w.Bool(world.isInDialog());
   w.Key("cutscene"); w.Bool(world.currentCs()!=nullptr);
@@ -406,22 +438,32 @@ std::string StoryWorld::people(World& world) {
     w.Key("npc");   str(sym);
     w.Key("name");  str(name);
     w.Key("guild"); w.Uint(n->guild());
+    std::string homeRoom;
     w.Key("routine");
     w.StartArray();
     n->forEachRoutine([&](const Npc::RoutineInfo& r) {
       w.StartObject();
       w.Key("start");    w.Int(int(r.start.hour()*60+r.start.minute()));
       w.Key("end");      w.Int(int(r.end.hour()*60+r.end.minute()));
-      w.Key("state");    str(AiNpc::stateName(world,r.state));
+      const auto state = AiNpc::stateName(world,r.state);
+      w.Key("state");    str(state);
       w.Key("waypoint"); str(r.point);
       if(auto* wp = world.findPoint(r.point,false)) {
         auto p = wp->position();
+        if(state=="ZS_GOTOBED" || state=="ZS_SLEEP") {
+          // TA_Sleep schedules ZS_GotoBed. Use the same ground sector as the
+          // actor's portalName; a bed can hide it, so retain the BSP room then.
+          const auto ground = world.physic()->landRay(p+Tempest::Vec3(0,50,0),500);
+          homeRoom = ground.hasCol && ground.sector!=nullptr && ground.sector[0]!='\0' ?
+                     std::string_view(ground.sector) : world.roomAt(p);
+          }
         w.Key("pos");
         w.StartArray(); w.Int(int(p.x)); w.Int(int(p.y)); w.Int(int(p.z)); w.EndArray();
         }
       w.EndObject();
       });
     w.EndArray();
+    w.Key("home_room"); str(homeRoom);
     w.EndObject();
     }
   w.EndArray();
@@ -430,7 +472,7 @@ std::string StoryWorld::people(World& world) {
 
 void StoryWorld::tick(World& world) {
   const uint64_t now = world.tickCount();
-  if(now>=nextScan) {
+  if(now>=nextScan || nextScan>now+ScanMs) {
     nextScan = now+ScanMs;
     // deaths: of people (a quest giver, a witness) and of the director's creatures
     std::unordered_set<const Npc*> tagged;
@@ -462,7 +504,7 @@ void StoryWorld::tick(World& world) {
       send(j.finish());
       }
     }
-  if(!tags.empty() && now>=nextReport) {
+  if(!tags.empty() && (now>=nextReport || nextReport>now+ReportMs)) {
     nextReport = now+ReportMs;
     report(world);
     }

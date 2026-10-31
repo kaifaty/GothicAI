@@ -1,0 +1,1448 @@
+{
+  "source": "water-check-1/episodes/memory/water-lake-2",
+  "observation": "actual episode sensor frames before teacher decisions, not a reconstructed replay",
+  "channels": [
+    "confidence",
+    "free",
+    "wall",
+    "ledge",
+    "drop",
+    "water",
+    "movable"
+  ],
+  "near_water_cell_format": [
+    "row",
+    "column",
+    "water_byte"
+  ],
+  "observations": [
+    {
+      "elapsed_ms": 0,
+      "position_cm": [
+        48136.2305,
+        1396.37671,
+        -9499.03516
+      ],
+      "fresh_water_hits": 35,
+      "fresh_water_observed_ages_ms": {
+        "0": 35
+      },
+      "cached_water_hits": 0,
+      "near_water_cells": 44,
+      "near_origin_water_byte": 0,
+      "closest_fresh_water_hit_xz_cm": 47.74745703724249,
+      "goal_line": [
+        {
+          "distance_cm": 0,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 25,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 50,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 75,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 100,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 125,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 150,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 175,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 200,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 225,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 250,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 275,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 300,
+          "channels": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "local_plan_points": 35,
+      "local_plan_first_points_cm": [
+        [
+          0,
+          0
+        ],
+        [
+          -12.5,
+          -12.5
+        ],
+        [
+          -12.5,
+          12.5
+        ],
+        [
+          -12.5,
+          37.5
+        ],
+        [
+          -12.5,
+          62.5
+        ]
+      ],
+      "action_forward_strafe_turn_walk_jump_climb_headyaw_headpitch": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "elapsed_ms": 100,
+      "position_cm": [
+        48136.8672,
+        1394.66577,
+        -9492.97168
+      ],
+      "fresh_water_hits": 105,
+      "fresh_water_observed_ages_ms": {
+        "0": 105
+      },
+      "cached_water_hits": 0,
+      "near_water_cells": 200,
+      "near_origin_water_byte": 255,
+      "closest_fresh_water_hit_xz_cm": 5.74488837159475,
+      "goal_line": [
+        {
+          "distance_cm": 0,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 25,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 50,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 75,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 100,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 125,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 150,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 175,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 200,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 225,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 250,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 275,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 300,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "local_plan_points": 46,
+      "local_plan_first_points_cm": [
+        [
+          0,
+          0
+        ],
+        [
+          12.5,
+          -12.5
+        ],
+        [
+          37.5,
+          -37.5
+        ],
+        [
+          62.5,
+          -37.5
+        ],
+        [
+          87.5,
+          -62.5
+        ]
+      ],
+      "action_forward_strafe_turn_walk_jump_climb_headyaw_headpitch": [
+        -1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "elapsed_ms": 300,
+      "position_cm": [
+        48137.1055,
+        1387.2699,
+        -9477.45703
+      ],
+      "fresh_water_hits": 122,
+      "fresh_water_observed_ages_ms": {
+        "0": 122
+      },
+      "cached_water_hits": 0,
+      "near_water_cells": 265,
+      "near_origin_water_byte": 255,
+      "closest_fresh_water_hit_xz_cm": 2.8443188305819254,
+      "goal_line": [
+        {
+          "distance_cm": 0,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 25,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 50,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 75,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 100,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 125,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 150,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 175,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 200,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 225,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 250,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 275,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 300,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "local_plan_points": 49,
+      "local_plan_first_points_cm": [
+        [
+          0,
+          0
+        ],
+        [
+          12.5,
+          -37.5
+        ],
+        [
+          37.5,
+          -62.5
+        ],
+        [
+          62.5,
+          -87.5
+        ],
+        [
+          87.5,
+          -87.5
+        ]
+      ],
+      "action_forward_strafe_turn_walk_jump_climb_headyaw_headpitch": [
+        -1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "elapsed_ms": 500,
+      "position_cm": [
+        48137.5234,
+        1379.66943,
+        -9462.1543
+      ],
+      "fresh_water_hits": 141,
+      "fresh_water_observed_ages_ms": {
+        "0": 141
+      },
+      "cached_water_hits": 8,
+      "near_water_cells": 309,
+      "near_origin_water_byte": 255,
+      "closest_fresh_water_hit_xz_cm": 2.1547543507551485,
+      "goal_line": [
+        {
+          "distance_cm": 0,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 25,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 50,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 75,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 100,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 125,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 150,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 175,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 200,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 225,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 250,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 275,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "distance_cm": 300,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "local_plan_points": 1,
+      "local_plan_first_points_cm": [
+        [
+          0,
+          0
+        ]
+      ],
+      "action_forward_strafe_turn_walk_jump_climb_headyaw_headpitch": [
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "elapsed_ms": 14400,
+      "position_cm": [
+        48121.3359,
+        1265.02991,
+        -9293.60938
+      ],
+      "fresh_water_hits": 187,
+      "fresh_water_observed_ages_ms": {
+        "0": 187
+      },
+      "cached_water_hits": 9,
+      "near_water_cells": 892,
+      "near_origin_water_byte": 255,
+      "closest_fresh_water_hit_xz_cm": 1.52759004565808,
+      "goal_line": [
+        {
+          "distance_cm": 0,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 25,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 50,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 75,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 100,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 125,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            248,
+            0
+          ]
+        },
+        {
+          "distance_cm": 150,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            247,
+            0
+          ]
+        },
+        {
+          "distance_cm": 175,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            240,
+            0
+          ]
+        },
+        {
+          "distance_cm": 200,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            240,
+            0
+          ]
+        },
+        {
+          "distance_cm": 225,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            232,
+            0
+          ]
+        },
+        {
+          "distance_cm": 250,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 275,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            248,
+            0
+          ]
+        },
+        {
+          "distance_cm": 300,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            231,
+            0
+          ]
+        }
+      ],
+      "local_plan_points": 1,
+      "local_plan_first_points_cm": [
+        [
+          0,
+          0
+        ]
+      ],
+      "action_forward_strafe_turn_walk_jump_climb_headyaw_headpitch": [
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "elapsed_ms": 14500,
+      "position_cm": [
+        48117.9648,
+        1256.60461,
+        -9280.95703
+      ],
+      "fresh_water_hits": 173,
+      "fresh_water_observed_ages_ms": {
+        "0": 173
+      },
+      "cached_water_hits": 10,
+      "near_water_cells": 895,
+      "near_origin_water_byte": 255,
+      "closest_fresh_water_hit_xz_cm": 0.5408318020415542,
+      "goal_line": [
+        {
+          "distance_cm": 0,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 25,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 50,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0
+          ]
+        },
+        {
+          "distance_cm": 75,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            253,
+            0
+          ]
+        },
+        {
+          "distance_cm": 100,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            246,
+            0
+          ]
+        },
+        {
+          "distance_cm": 125,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            245,
+            0
+          ]
+        },
+        {
+          "distance_cm": 150,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            238,
+            0
+          ]
+        },
+        {
+          "distance_cm": 175,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            238,
+            0
+          ]
+        },
+        {
+          "distance_cm": 200,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            230,
+            0
+          ]
+        },
+        {
+          "distance_cm": 225,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            253,
+            0
+          ]
+        },
+        {
+          "distance_cm": 250,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            246,
+            0
+          ]
+        },
+        {
+          "distance_cm": 275,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            229,
+            0
+          ]
+        },
+        {
+          "distance_cm": 300,
+          "channels": [
+            255,
+            255,
+            0,
+            0,
+            0,
+            221,
+            0
+          ]
+        }
+      ],
+      "local_plan_points": 1,
+      "local_plan_first_points_cm": [
+        [
+          0,
+          0
+        ]
+      ],
+      "action_forward_strafe_turn_walk_jump_climb_headyaw_headpitch": [
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "physical_events": [
+    {
+      "elapsed_ms": 0,
+      "position_cm": [
+        48136.2305,
+        1396.37671,
+        -9499.03516
+      ],
+      "cv_active": false,
+      "supported": true,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": false,
+      "water_depth_cm": 0.228027344,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 280,
+      "hitpoints_max": 280
+    },
+    {
+      "elapsed_ms": 333,
+      "position_cm": [
+        48137.1602,
+        1386.052,
+        -9474.91211
+      ],
+      "cv_active": true,
+      "supported": true,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": false,
+      "water_depth_cm": 10.5526123,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 280,
+      "hitpoints_max": 280
+    },
+    {
+      "elapsed_ms": 1100,
+      "position_cm": [
+        48134.9531,
+        1357.33569,
+        -9428.89453
+      ],
+      "cv_active": true,
+      "supported": true,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": false,
+      "water_depth_cm": 39.2689209,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 280,
+      "hitpoints_max": 280
+    },
+    {
+      "elapsed_ms": 9800,
+      "position_cm": [
+        48134.9531,
+        1357.33569,
+        -9428.89453
+      ],
+      "cv_active": true,
+      "supported": true,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": false,
+      "water_depth_cm": 39.2689209,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 280,
+      "hitpoints_max": 280
+    },
+    {
+      "elapsed_ms": 9867,
+      "position_cm": [
+        48134.9531,
+        1357.33569,
+        -9428.89453
+      ],
+      "cv_active": true,
+      "supported": true,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": false,
+      "water_depth_cm": 39.2689209,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 235,
+      "hitpoints_max": 280
+    },
+    {
+      "elapsed_ms": 9900,
+      "position_cm": [
+        48135.207,
+        1352.71301,
+        -9421.89062
+      ],
+      "cv_active": true,
+      "supported": true,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": false,
+      "water_depth_cm": 43.8917236,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 235,
+      "hitpoints_max": 280
+    },
+    {
+      "elapsed_ms": 11867,
+      "position_cm": [
+        48131.1797,
+        1331.93958,
+        -9391.67969
+      ],
+      "cv_active": true,
+      "supported": true,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": false,
+      "water_depth_cm": 64.6651611,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 190,
+      "hitpoints_max": 280
+    },
+    {
+      "elapsed_ms": 13067,
+      "position_cm": [
+        48127.4062,
+        1306.54346,
+        -9354.46484
+      ],
+      "cv_active": true,
+      "supported": true,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": false,
+      "water_depth_cm": 90.0612793,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 145,
+      "hitpoints_max": 280
+    },
+    {
+      "elapsed_ms": 14300,
+      "position_cm": [
+        48123.6367,
+        1281.14734,
+        -9317.25
+      ],
+      "cv_active": true,
+      "supported": true,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": false,
+      "water_depth_cm": 115.457275,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 100,
+      "hitpoints_max": 280
+    },
+    {
+      "elapsed_ms": 14433,
+      "position_cm": [
+        48119.4219,
+        1259.46814,
+        -9285.72461
+      ],
+      "cv_active": true,
+      "supported": true,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": false,
+      "water_depth_cm": 137.136475,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 100,
+      "hitpoints_max": 280
+    },
+    {
+      "elapsed_ms": 14467,
+      "position_cm": [
+        48117.9648,
+        1256.05676,
+        -9280.95703
+      ],
+      "cv_active": true,
+      "supported": false,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": true,
+      "water_depth_cm": 140.547852,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 100,
+      "hitpoints_max": 280
+    },
+    {
+      "elapsed_ms": 17267,
+      "position_cm": [
+        48128.1445,
+        1240.12451,
+        -9298.10059
+      ],
+      "cv_active": false,
+      "supported": false,
+      "in_air": false,
+      "falling": false,
+      "native_jump": false,
+      "native_climb": false,
+      "swimming": false,
+      "water_depth_cm": 156.480225,
+      "deep_water_threshold_cm": 140,
+      "hitpoints": 0,
+      "hitpoints_max": 280
+    }
+  ],
+  "neutral_decisions_after_500ms": 168,
+  "singleton_paths_after_500ms": 168,
+  "additional_terminal_neutral_action_ms": 17267,
+  "neutral_count_scope": "teacher decisions at 500..17200 ms; terminal action at 17267 ms is separate"
+}

@@ -1,3 +1,4 @@
+#include "asset/fromzenkit.h"
 #include "game/navigationeye.h"
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
@@ -7,12 +8,15 @@
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 
+#include <zenkit/ModelHierarchy.hh>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <set>
 #include <stdexcept>
 
 namespace {
@@ -29,8 +33,8 @@ void near(float actual, float expected, const char* message) {
   require(std::isfinite(actual) && std::abs(actual-expected)<.001f,message);
   }
 
-zenkit::Mesh wall(float x, zenkit::MaterialGroup material = zenkit::MaterialGroup::STONE) {
-  zenkit::Mesh mesh;
+asset::WorldMesh wall(float x, asset::MaterialGroup material = asset::MaterialGroup::STONE) {
+  asset::WorldMesh mesh;
   mesh.vertices = {{x,0,-100},{x,360,-100},{x,360,100},{x,0,100}};
   mesh.materials.resize(1);
   mesh.materials[0].group = material;
@@ -89,7 +93,7 @@ void rangesAndWater() {
   NavigationEye eye(cfg);
   for(const auto& ray:eye.samples())
     near(ray.maxRangeCm,1000.f,"one range multiplier also respects short centre range");
-  DynamicWorld water(nullptr,wall(100,zenkit::MaterialGroup::WATER));
+  DynamicWorld water(nullptr,wall(100,asset::MaterialGroup::WATER));
   const auto hit = water.navigationRay(Vec3(0,180,0),Vec3(1000,180,0),nullptr);
   require(hit.hasCol && hit.kind==DynamicWorld::NavigationHit::Water,"water has its own category");
   cfg.layout = 42;
@@ -98,11 +102,118 @@ void rangesAndWater() {
   require(rejected,"unsupported layouts are rejected");
   }
 
+size_t forwardHorizon(const NavigationEye& eye) {
+  for(size_t i=0; i<eye.samples().size(); ++i)
+    if(std::abs(eye.samples()[i].yawDeg)<.001f && std::abs(eye.samples()[i].pitchDeg)<.001f)
+      return i;
+  require(false,"fixture needs a forward horizon ray");
+  return 0;
+  }
+
+void freshNearAndCachedFar() {
+  NavigationEye::Config cfg;
+  cfg.layout = 250;
+  cfg.floorSampling = NavigationEye::FloorSampling::Baseline;
+  NavigationEye eye(cfg);
+  DynamicWorld world(nullptr,wall(1500));
+  NavigationEye::Pose pose;
+  pose.origin = Vec3(0,180,0);
+  const auto first = eye.update(pose,world,nullptr,0);
+  const size_t i = forwardHorizon(eye), n = eye.rayCount();
+  require(first.updated && first.farUpdated,"first observation includes far casts");
+  require(eye.samples().size()==n && eye.memorySamples().size()==2*n,"memory slots do not inflate physical ray count");
+  require(eye.samples()[i].hit && eye.samples()[i].complete,"far wall initially observed");
+  near(eye.samples()[i].point.x,1500.f,"initial far wall location");
+  require(!eye.update(pose,world,nullptr,50).updated,"near output respects 100 ms cadence");
+
+  pose.position.x = pose.origin.x = 20;
+  const auto next = eye.update(pose,world,nullptr,100);
+  const auto& fresh = eye.samples()[i];
+  const auto& cached = eye.memorySamples()[n+i];
+  require(next.updated && !next.farUpdated && next.farCasts==0,"near-only tick does not cast far");
+  require(!fresh.hit && !fresh.complete && fresh.sampledAtMs==100 && fresh.nearSampledAtMs==100,
+          "fresh near miss reaches consumers at 10 Hz");
+  near(fresh.origin.x,20.f,"fresh near origin follows moving observer");
+  near(fresh.distanceCm,1000.f,"fresh near miss reports only observed range");
+  near(eye.memorySamples()[i].origin.x,20.f,"fresh near memory slot follows moving observer");
+  require(eye.memorySamples()[i].sampledAtMs==100,"fresh near memory slot has its own timestamp");
+  require(cached.hit && cached.complete && cached.sampledAtMs==0 && cached.nearSampledAtMs==0,
+          "cached far retains original timestamps");
+  near(cached.origin.x,0.f,"cached far retains original observer origin");
+  near(cached.point.x,1500.f,"cached far retains original hit point");
+
+  pose.forward = Vec3(0,0,1); pose.right = Vec3(-1,0,0);
+  eye.update(pose,world,nullptr,200);
+  near(eye.memorySamples()[i].direction.z,1.f,"fresh near follows rotated head");
+  near(eye.memorySamples()[n+i].direction.x,1.f,"cached far never rotates into new head frame");
+  eye.update(pose,world,nullptr,500);
+  require(eye.memorySamples()[n+i].sampledAtMs==500,"far cache refreshes on its own 500 ms cadence");
+  eye.update(pose,world,nullptr,10);
+  require(eye.samples()[i].sampledAtMs==10 && eye.memorySamples()[n+i].sampledAtMs==10,
+          "rewinding game time resets both observation slots");
+  }
+
+void floorSamplingModes() {
+  NavigationEye::Config cfg;
+  cfg.layout = 250;
+  cfg.floorSampling = NavigationEye::FloorSampling::Baseline;
+  NavigationEye baseline(cfg);
+  cfg.floorSampling = NavigationEye::FloorSampling::ForwardRows;
+  NavigationEye extra(cfg);
+  require(extra.rayCount()==273 && extra.rayCount()*4<=baseline.rayCount()*5,
+          "forward floor rows stay within 25 percent extra rays");
+  for(size_t i=0; i<baseline.rayCount(); ++i) {
+    near(extra.samples()[i].yawDeg,baseline.samples()[i].yawDeg,"extra rows retain baseline yaw");
+    near(extra.samples()[i].pitchDeg,baseline.samples()[i].pitchDeg,"extra rows retain baseline pitch");
+    near(extra.samples()[i].maxRangeCm,baseline.samples()[i].maxRangeCm,"extra rows retain baseline range");
+    }
+  asset::WorldMesh floor;
+  floor.vertices = {{-20000,0,-20000},{-20000,0,20000},{20000,0,20000},{20000,0,-20000}};
+  floor.materials.resize(1);
+  floor.materials[0].group = asset::MaterialGroup::STONE;
+  floor.polygons.vertex_indices = {0,1,2,0,2,3,2,1,0,3,2,0};
+  floor.polygons.material_indices = {0,0,0,0};
+  DynamicWorld world(nullptr,floor);
+  NavigationEye::Pose pose;
+  pose.origin = Vec3(0,180,0);
+  baseline.update(pose,world,nullptr,0);
+  extra.update(pose,world,nullptr,0);
+  const auto floorBins = [](const NavigationEye& eye) {
+    std::set<int> bins;
+    for(const auto& ray:eye.samples())
+      if(std::abs(ray.yawDeg)<.001f && ray.hit && ray.point.x>=500.f && ray.point.x<=1500.f)
+        bins.insert(int((ray.point.x-500.f)/200.f));
+    return bins.size();
+    };
+  require(floorBins(baseline)==1 && floorBins(extra)>=4,"extra rows cover distinct floor ranges from 5 to 15 metres");
+  for(size_t i=baseline.rayCount(); i<extra.rayCount(); ++i) {
+    const auto& ray = extra.samples()[i];
+    require(std::abs(ray.yawDeg)<=30.f && ray.pitchDeg>=-70.f && ray.pitchDeg<=60.f,
+            "extra rays stay in the forward human field of view");
+    near(ray.maxRangeCm,10000.f,"extra rows preserve human central range");
+    }
+
+  cfg.floorSampling = NavigationEye::FloorSampling::WalkingGazeDown;
+  NavigationEye gaze(cfg);
+  gaze.update(pose,world,nullptr,0);
+  const size_t i = forwardHorizon(gaze);
+  near(gaze.gazePitchDeg(),0.f,"stationary head retains its applied pose");
+  pose.origin.x = pose.position.x = 20;
+  gaze.update(pose,world,nullptr,100);
+  near(gaze.gazePitchDeg(),-27.f,"translation directs walking gaze a few steps ahead");
+  near(gaze.samples()[i].direction.y,std::sin(-27.f*3.14159265358979323846f/180.f),
+       "walking gaze rotates the actual sensing direction");
+  near(gaze.samples()[i].direction.length(),1.f,"gaze transform retains normalized direction");
+  require(gaze.rayCount()==baseline.rayCount(),"walking gaze adds no rays");
+  gaze.update(pose,world,nullptr,200);
+  near(gaze.gazePitchDeg(),0.f,"stopping restores the applied head pose");
+  }
+
 void staticAndMovingVobs() {
   const auto mesh = wall(100);
   const std::unique_ptr<PhysicMeshShape> shape(PhysicMeshShape::load(PackedMesh(mesh,PackedMesh::PK_Physic)));
   require(shape!=nullptr,"vob query fixture");
-  DynamicWorld world(nullptr,zenkit::Mesh{});
+  DynamicWorld world(nullptr,asset::WorldMesh{});
   auto object = world.addStaticObj(shape.get(),Tempest::Matrix4x4::mkIdentity());
   auto hit = world.navigationRay(Vec3(0,180,0),Vec3(1000,180,0),nullptr);
   require(hit.hasCol && hit.kind==DynamicWorld::NavigationHit::StaticVob,"static vob category");
@@ -113,7 +224,7 @@ void staticAndMovingVobs() {
   }
 
 zenkit::ModelHierarchy humanoidHierarchy() {
-  zenkit::ModelHierarchy source;
+  zenkit::ModelHierarchy source{};
   struct Bone { const char* name; int16_t parent; Vec3 offset; };
   const Bone bones[] = {
     {"BIP01",-1,{0,0,0}}, {"BIP01 PELVIS",0,{0,95,0}},
@@ -145,7 +256,7 @@ zenkit::ModelHierarchy humanoidHierarchy() {
 
 void livingRigQuerySemantics() {
   constexpr size_t forearm = 7;
-  Skeleton skeleton(humanoidHierarchy(),nullptr,"HUMANS.MDS");
+  Skeleton skeleton(asset::fromZenKit(humanoidHierarchy()),nullptr,"HUMANS.MDS");
   HitZones zones;
   zones.setSkeleton(&skeleton);
   require(zones.isValid(),"humanoid fixture needs real physical hit capsules");
@@ -191,7 +302,7 @@ void livingRigQuerySemantics() {
   checkGeneric(DynamicWorld::C_ActiveBody);
 
   // The engine-facing eye API sees both states as NPCs, without asking generic rays for a ragdoll.
-  DynamicWorld navigation(nullptr,zenkit::Mesh{});
+  DynamicWorld navigation(nullptr,asset::WorldMesh{});
   auto seen = navigation.createKinematicBody(skeleton,zones,pose.data(),pose.size(),object);
   require(seen && seen->isKinematic(),"navigation fixture must create a native living rig");
   const auto checkEye = [&] {
@@ -222,6 +333,8 @@ int main() {
   layoutAndPhysicalWall(500,500);
   layoutAndPhysicalWall(1000,1036);
   rangesAndWater();
+  freshNearAndCachedFar();
+  floorSamplingModes();
   staticAndMovingVobs();
   livingRigQuerySemantics();
   std::puts("navigation eye contracts passed");

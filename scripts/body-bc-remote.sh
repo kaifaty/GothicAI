@@ -2,6 +2,7 @@
 # Stage 7: all model forwards, training and arena episodes run on dev-ubuntu.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/ryzen-venv.sh"
 HOST="${GOTHIC_BODY_SSH:-dev-ubuntu}"
 REMOTE="gothic-ai/body"
 # Another engine workspace (source, build, provenance under ~/), e.g. a merged-main runner.
@@ -66,7 +67,7 @@ remote_script() {
       if [[ -n "${!variable+x}" ]]; then printf 'export %s=%q\n' "$variable" "${!variable}"; fi
     done
     cat "$ROOT/scripts/gq-job.sh"
-    declare -f freeze_engine_reference
+    declare -f ryzen_task_venv freeze_engine_reference
     cat
   } | ssh -o BatchMode=yes "$HOST" "bash -s --$remote_args"
 }
@@ -93,7 +94,7 @@ mkdir -p "$HOME/$1/source/body-service" "$HOME/$1/source/scripts/tests" "$HOME/$
 REMOTE_SCRIPT
   rsync -a --delete --exclude=.venv/ --exclude=__pycache__/ --exclude=.pytest_cache/ \
     "$ROOT/body-service/" "$HOST:$REMOTE/source/body-service/"
-  rsync -a "$ROOT/scripts/body-bc-remote.sh" "$ROOT/scripts/gq-job.sh" "$ROOT/scripts/body_demonstration_suite.py" \
+  rsync -a "$ROOT/scripts/body-bc-remote.sh" "$ROOT/scripts/gq-job.sh" "$ROOT/scripts/ryzen-venv.sh" "$ROOT/scripts/body_demonstration_suite.py" \
     "$ROOT/scripts/body_demonstration_teacher.py" "$ROOT/scripts/body_demonstration_recover.py" \
     "$ROOT/scripts/body_bc_suite.py" "$ROOT/scripts/body_setup_probe.py" \
     "$ROOT/scripts/body_policy_suite.py" "$ROOT/scripts/body_bc_report.py" \
@@ -120,8 +121,8 @@ task_root="$HOME/$1"
 [[ -d "$task_root/.venv" ]] || "$HOME/.local/bin/uv" venv --python 3.12 "$task_root/.venv"
 # A private environment; shared cached wheels may be hard-linked without changing
 # any service environment. CUDA stays disabled in all default stage-7 commands.
-"$HOME/.local/bin/uv" pip install --python "$task_root/.venv/bin/python" --offline \
-  'torch==2.14.1' numpy pytest
+export PATH="$HOME/.local/bin:$PATH"
+UV_OFFLINE=1 ryzen_task_venv "$task_root/.venv"
 "$HOME/.local/bin/uv" pip freeze --python "$task_root/.venv/bin/python" > "$task_root/provenance/body-environment.txt"
 REMOTE_SCRIPT
 }
@@ -186,7 +187,7 @@ audit="$HOME/$1/data/$2/validation/audit-code"
 mkdir -p "$audit/scripts/tests"
 REMOTE_SCRIPT
   rsync -a "$ROOT/scripts/body_bc_report.py" "$HOST:$REMOTE/data/$RUN_NAME/validation/audit-code/scripts/"
-  rsync -a "$ROOT/scripts/body-bc-remote.sh" "$ROOT/scripts/gq-job.sh" "$HOST:$REMOTE/data/$RUN_NAME/validation/audit-code/scripts/"
+  rsync -a "$ROOT/scripts/body-bc-remote.sh" "$ROOT/scripts/gq-job.sh" "$ROOT/scripts/ryzen-venv.sh" "$HOST:$REMOTE/data/$RUN_NAME/validation/audit-code/scripts/"
   rsync -a "$ROOT/scripts/tests/test_body_bc_report.py" "$HOST:$REMOTE/data/$RUN_NAME/validation/audit-code/scripts/tests/"
   remote_script "$REMOTE" "$RUN_NAME" <<'REMOTE_SCRIPT'
 set -euo pipefail
@@ -218,7 +219,7 @@ retry="$out/faults-retry-v1"
 mkdir -p "$retry/code/scripts/bench"
 REMOTE_SCRIPT
   rsync -a "$ROOT/scripts/bench/body-api.bench" "$HOST:$REMOTE/data/$RUN_NAME/faults-retry-v1/code/scripts/bench/"
-  rsync -a "$ROOT/scripts/body-bc-remote.sh" "$ROOT/scripts/gq-job.sh" "$HOST:$REMOTE/data/$RUN_NAME/faults-retry-v1/code/scripts/"
+  rsync -a "$ROOT/scripts/body-bc-remote.sh" "$ROOT/scripts/gq-job.sh" "$ROOT/scripts/ryzen-venv.sh" "$HOST:$REMOTE/data/$RUN_NAME/faults-retry-v1/code/scripts/"
   remote_script "$REMOTE" "$ENGINE" "$RUN_NAME" <<'REMOTE_SCRIPT'
 set -euo pipefail
 task_root="$HOME/$1"
@@ -846,7 +847,7 @@ case "$ACTION" in
   _faults-retry-local)
     # Only the frozen server copy enters this branch; run_phase's same heredoc
     # executes locally, retaining its resource bounds and snapshots.
-    remote_script() { { cat "$ROOT/scripts/gq-job.sh"; declare -f freeze_engine_reference; cat; } | bash -s -- "$@"; }
+    remote_script() { { cat "$ROOT/scripts/gq-job.sh"; declare -f ryzen_task_venv freeze_engine_reference; cat; } | bash -s -- "$@"; }
     run_phase stage8-faults-retry ;;
   setup|tests|audit-tests|audit-report|combat-tests|probe-tests|stage8-tests|stage8-faults|runtime-cpu-profile-tests|runtime-delivery-tests|load-delivery-tests|service-cadence-tests|visibility-boundary-tests|visibility-boundary-probe|compact-reply-tests|compact-reply-probe|pending-input-tests|pending-input-probe|block-reaction-tests|block-reaction|realtime-reference|realtime-reaction|screening-reaction|final-evaluation-tests|safe-peer-teacher-tests|safe-peer-tests|safe-peer-calibration|safe-peer-smoke|safe-peer-demos|safe-peer-dataset|safe-peer-verify|safe-peer-overfit|safe-peer-train|safe-peer-train-cuda|safe-peer-evaluate|defence-tests|defence-smoke|defence-demos|defence-dataset|defence-verify|defence-overfit|defence-train|defence-train-cuda|defence-evaluate|train-cuda|realtime-probe|probe|shadow|realtime|screening|load|load-reference|combat-geometry-preflight|combat-calibration|combat-smoke|combat-demos|stage8-dataset|stage8-verify|stage8-overfit|stage8-train|stage8-evaluate|stage8-report|probe-report|smoke|demos|recover|dataset|verify|overfit|train|evaluate|arena|arena-smoke|report) run_phase "$ACTION" ;;
   collect) collect_run ;;

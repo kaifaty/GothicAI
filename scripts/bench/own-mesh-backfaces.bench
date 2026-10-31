@@ -1,0 +1,188 @@
+# Close-ups of the market props whose parts were inside out (back-face check, 2026-10-21).
+# Copies from the market census; outdoor props from four sides, the carpet at its four edges.
+# Run with the set root and with a root of the earlier bake; OPENGOTHIC_CENSUS=<absolute out>/census.json.
+# A shot is written at the end of its frame: wait after it before the camera moves on.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view nopfx
+cam lift off
+# NW_HARBOUR_BARRELGROUP_01: staves
+goto pos 5964 -1648 -5536
+clear 3000
+cam look 2000
+cam cut
+cam world 380 2250 0
+wait 34
+cam hold
+wait 4000
+shot backfaces_barrelgroup_0
+wait 300
+# NW_HARBOUR_BARRELGROUP_01: staves
+goto pos 5964 -1648 -5536
+clear 3000
+cam look 2000
+cam cut
+cam world 380 2250 90
+wait 34
+cam hold
+wait 1500
+shot backfaces_barrelgroup_90
+wait 300
+# NW_HARBOUR_BARRELGROUP_01: staves
+goto pos 5964 -1648 -5536
+clear 3000
+cam look 2000
+cam cut
+cam world 380 2250 180
+wait 34
+cam hold
+wait 1500
+shot backfaces_barrelgroup_180
+wait 300
+# NW_HARBOUR_BARRELGROUP_01: staves
+goto pos 5964 -1648 -5536
+clear 3000
+cam look 2000
+cam cut
+cam world 380 2250 270
+wait 34
+cam hold
+wait 1500
+shot backfaces_barrelgroup_270
+wait 300
+# NW_HARBOUR_ROPE_01: rope ends
+goto pos 8282 -1709 5401
+clear 3000
+cam look 2000
+cam cut
+cam world 230 2210 0
+wait 34
+cam hold
+wait 4000
+shot backfaces_rope_0
+wait 300
+# NW_HARBOUR_ROPE_01: rope ends
+goto pos 8282 -1709 5401
+clear 3000
+cam look 2000
+cam cut
+cam world 230 2210 90
+wait 34
+cam hold
+wait 1500
+shot backfaces_rope_90
+wait 300
+# NW_HARBOUR_ROPE_01: rope ends
+goto pos 8282 -1709 5401
+clear 3000
+cam look 2000
+cam cut
+cam world 230 2210 180
+wait 34
+cam hold
+wait 1500
+shot backfaces_rope_180
+wait 300
+# NW_HARBOUR_ROPE_01: rope ends
+goto pos 8282 -1709 5401
+clear 3000
+cam look 2000
+cam cut
+cam world 230 2210 270
+wait 34
+cam hold
+wait 1500
+shot backfaces_rope_270
+wait 300
+# NW_CITY_CARPET_03: fringe on an edge
+goto pos 7115 -1719 3051
+clear 3000
+cam look 2000
+cam cut
+cam world 110 2150 36
+wait 34
+cam hold
+wait 4000
+shot backfaces_carpet_0
+wait 300
+# NW_CITY_CARPET_03: fringe on an edge
+goto pos 6856 -1719 2863
+clear 3000
+cam look 2000
+cam cut
+cam world 110 2150 216
+wait 34
+cam hold
+wait 1500
+shot backfaces_carpet_1
+wait 300
+# NW_CITY_CARPET_03: fringe on an edge
+goto pos 6892 -1719 3086
+clear 3000
+cam look 2000
+cam cut
+cam world 110 2150 126
+wait 34
+cam hold
+wait 1500
+shot backfaces_carpet_2
+wait 300
+# NW_CITY_CARPET_03: fringe on an edge
+goto pos 7080 -1719 2828
+clear 3000
+cam look 2000
+cam cut
+cam world 110 2150 306
+wait 34
+cam hold
+wait 1500
+shot backfaces_carpet_3
+wait 300
+# NW_CITY_DECO_SHIELD_01: dark backing between the boards
+goto pos 10333 -1473 6617
+clear 3000
+cam look 2000
+cam cut
+cam world 140 2057 211
+wait 34
+cam hold
+wait 4000
+shot backfaces_deco_shield
+wait 300
+# NW_CITY_OILLAMP_01: nail heads on the plate
+goto pos 8590 -1678 1091
+clear 3000
+cam look 1999
+cam cut
+cam world 90 2034 58
+wait 34
+cam hold
+wait 4000
+shot backfaces_oillamp
+wait 300
+# NW_CITY_DECO_WOLFHEAD_01: ears and the plaque boards
+goto pos 7943 -1359 -3784
+clear 3000
+cam look 2000
+cam cut
+cam world 120 2054 72
+wait 34
+cam hold
+wait 4000
+shot backfaces_wolfhead
+wait 300
+# NW_CITY_CANDLE_01: drip tops, seen from above
+goto pos 8162 -1286 3147
+clear 3000
+cam look 2000
+cam cut
+cam world 75 2045 90
+wait 34
+cam hold
+wait 4000
+shot backfaces_candle
+wait 300
+census

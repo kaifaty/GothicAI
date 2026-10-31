@@ -12,8 +12,8 @@ class Npc;
 class Item;
 class Interactive;
 
-// A snapshot at the source of a hero action. The perception queue adds only NPCs
-// that pass its ordinary delivery gates; this object never consumes a perception.
+// A snapshot at the source of an action. Hero actions retain their native
+// perception delivery; NPC actions are admitted only by an explicit server mark.
 struct HeroDeed final {
   struct Person final {
     std::string npc;
@@ -28,12 +28,23 @@ struct HeroDeed final {
   static std::shared_ptr<HeroDeed> capture(Npc& hero, std::string_view kind, Npc* victim = nullptr,
                                          const Item* item = nullptr, Interactive* chest = nullptr,
                                          size_t count = 0);
+  // Read-only preflight uses precisely the same ownership snapshot as capture.
+  // ownershipPosition selects a remote target's room before the actor walks there;
+  // position/time/waypoint still describe the actor, and the hero keeps its portal.
+  static std::shared_ptr<HeroDeed> snapshot(Npc& actor, std::string_view kind, Npc* victim = nullptr,
+                                          const Item* item = nullptr, Interactive* chest = nullptr,
+                                          size_t count = 0, const Tempest::Vec3* ownershipPosition = nullptr);
   static std::vector<InventoryItem> inventory(Npc& npc);
   static int32_t aivar(Npc& npc, std::string_view name);
   static int32_t constant(Npc& npc, std::string_view name, int32_t fallback = -1);
   void witnessed(Npc& npc);
+  void collectWitnesses(Npc& culprit, Npc* victim);
 
+  // Assigned at capture, before any witness may hold the perception. The bridge
+  // prefixes it with the save branch for both hero_deed and perception_held.
+  uint64_t id = 0;
   std::string kind;
+  Person culprit;
   std::string item;
   size_t count = 0;
   Person owner;

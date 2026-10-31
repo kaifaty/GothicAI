@@ -150,7 +150,7 @@ void BeastWatch::tick(World& world) {
       ++it;
     }
 
-  if(now>=nextReport) {
+  if(now>=nextReport || nextReport>now+ReportMs) {
     nextReport = now+ReportMs;
     report(world,*hero,now);
     }
@@ -434,6 +434,7 @@ void BeastWatch::releaseAll(World& world) {
 
 void BeastWatch::clear() {
   wolves.clear();
+  nextReport = 0;
   listed = false;
   }
 

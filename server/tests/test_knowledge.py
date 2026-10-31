@@ -9,7 +9,9 @@ from gothic_ai.gamedata.storygraph import StoryGraph, load
 from gothic_ai.knowledge import Knowledge, Partial, StoryState, brief
 from gothic_ai.llm import ToolCall, ToolResult
 from gothic_ai.llm.fake import FakeBackend, FakeStep
+from gothic_ai.memory import MemoryStore
 from gothic_ai.persona import PersonaProvider
+from gothic_ai.story import StoryPatches, freed
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
 from tests.test_director import _line, _node
@@ -17,6 +19,11 @@ from tests.test_director import _line, _node
 LOBART = "BAU_950_LOBART"
 QUEST = "MIS_LOBART_RUEBEN"
 GIL_BAU = 8
+BRAGO = "BDT_1014_BANDIT_L"
+BANDIT = "BDT_1013_BANDIT_L"
+KILLER = "DIA_BDT_1014_BANDIT_KILLER"
+AMBUSH = "DIA_BDT_1013_BANDIT_WHERE"
+AMBUSH_LINE = "Это он, точно! Держи его!"
 
 
 def _knows(info: str) -> list:
@@ -137,6 +144,45 @@ def graph(tmp_path: Path) -> StoryGraph:
     return load(path)
 
 
+@pytest.fixture
+def bandit_graph(tmp_path: Path) -> StoryGraph:
+    path = tmp_path / "bandits.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "nodes": [
+                    _node(KILLER, BRAGO, [_line(AMBUSH_LINE)], description="", important=True),
+                    _node(
+                        AMBUSH,
+                        BANDIT,
+                        [
+                            _line("Куда ты идёшь?"),
+                            {"do": "choice", "node": "DIA_BANDIT_ATTACK", "text": "Прочь с дороги!"},
+                        ],
+                        description="Куда ты идёшь?",
+                    ),
+                    _node(
+                        "DIA_BANDIT_ATTACK",
+                        BANDIT,
+                        [_line("Тогда тебе конец!")],
+                        kind="choice",
+                        parents=[AMBUSH],
+                        description="Прочь с дороги!",
+                    ),
+                ],
+                "functions": {},
+                "instances": {},
+                "vars": {},
+                "quests": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return load(path)
+
+
 class _Link:
     world = "NEWWORLD.ZEN"
 
@@ -164,6 +210,20 @@ def test_three_valued_story_logic(graph):
     assert p.truth(["call", "NPC_ISDEAD", ["inst", "BDT_1"]]) is True
     assert p.truth(["==", ["var", "UNKNOWN"], ["int", 0]]) is None
     assert p.truth(["==", ["field", ["inst", "OTHER"], "GUILD"], ["int", 7]]) is None
+
+
+def test_partial_inlines_a_function_once_unless_it_asks_the_talk_flow(graph, monkeypatch):
+    monkeypatch.setitem(graph.functions, "C_CHAPTER", {"lifted": True, "body": _chapter("==", 1)})
+    monkeypatch.setitem(graph.functions, "C_TOLD", {"lifted": True, "body": [
+        "call", "NPC_KNOWSINFO", ["inst", "OTHER"], ["sym", "DIA_OWN"]]})
+    answers = iter([0, 1])
+    p = Partial(graph, StoryState(vars={"KAPITEL": 1}), {"DIA_OWN"}, lambda info: next(answers))
+    walked = []
+    value = p.value
+    monkeypatch.setattr(p, "value", lambda e, *a: walked.append(e) or value(e, *a))
+    assert [p.truth(["fn", "C_CHAPTER"]) for _ in range(3)] == [True] * 3
+    assert walked.count(graph.functions["C_CHAPTER"]["body"]) == 1
+    assert [p.truth(["fn", "C_TOLD"]), p.truth(["fn", "C_TOLD"])] == [False, True]
 
 
 def test_what_lobart_knows_in_chapter_1(graph):
@@ -215,6 +275,90 @@ def test_recall_gives_the_topic_in_full(graph):
     assert k.recall(LOBART, "драконы") is None  # chapter 3 talk: not yet
 
 
+@pytest.mark.parametrize("heard", [False, True])
+async def test_freed_dialogs_are_absent_from_open_and_told_knowledge(bandit_graph, heard):
+    fake = FakeGame()
+    fake.vars = {"KAPITEL": 1}
+    if heard:
+        fake.known = {KILLER, AMBUSH}
+    async with connected(fake) as link:
+        vanilla = Knowledge(link, bandit_graph)
+        await vanilla.prepare(BRAGO)
+        assert AMBUSH_LINE in vanilla.situation(BRAGO)
+        assert AMBUSH_LINE in vanilla.recall(BRAGO, "Это он, точно")
+        topics = vanilla.views[BRAGO].told if heard else vanilla.views[BRAGO].open
+        assert [t.node.id for t in topics] == [KILLER]
+        await vanilla.prepare(BANDIT)
+        assert "Тогда тебе конец!" in vanilla.recall(BANDIT, "конец")
+
+        patches = StoryPatches(
+            link, MemoryStore(":memory:"), static=freed(lambda node: node in bandit_graph.nodes)
+        )
+        knowledge = Knowledge(link, bandit_graph, patches)
+        for npc in (BRAGO, BANDIT):
+            await knowledge.prepare(npc)
+            assert knowledge.dialogs(npc) == []
+            assert knowledge.views[npc].open == [] and knowledge.views[npc].told == []
+        assert "Это он, точно" not in knowledge.situation(BRAGO)
+        assert knowledge.recall(BRAGO, "Это он, точно") is None
+        assert knowledge.recall(BANDIT, "конец") is None  # disabled parent hides its attack choice
+
+        await patches.apply({"op": "enable", "node": KILLER})
+        await knowledge.prepare(BRAGO)
+        assert AMBUSH_LINE in knowledge.situation(BRAGO)
+        assert AMBUSH_LINE in knowledge.recall(BRAGO, "Это он, точно")
+
+
+async def test_branch_disable_enable_and_load_change_npc_knowledge(bandit_graph):
+    fake = FakeGame(branch="A")
+    fake.vars = {"KAPITEL": 1}
+    async with connected(fake) as link:
+        patches = StoryPatches(link, MemoryStore(":memory:"))
+        knowledge = Knowledge(link, bandit_graph, patches)
+        await _until(lambda: len(fake.graph) == 1)
+        await knowledge.prepare(BRAGO)
+        assert AMBUSH_LINE in knowledge.situation(BRAGO)
+
+        await patches.apply({"op": "disable", "node": KILLER})
+        await knowledge.prepare(BRAGO)
+        assert "Это он, точно" not in knowledge.situation(BRAGO)
+        assert knowledge.recall(BRAGO, "Это он, точно") is None
+
+        await patches.apply({"op": "enable", "node": KILLER})
+        await knowledge.prepare(BRAGO)
+        assert AMBUSH_LINE in knowledge.situation(BRAGO)
+        assert AMBUSH_LINE in knowledge.recall(BRAGO, "Это он, точно")
+
+        # Loading the save made after disable forgets the later enable.
+        await fake.send(type="session", branch="B", parent="A", parent_seq=1, reason="load")
+        await _until(lambda: patches.branch == "B" and len(fake.graph) == 4)
+        await knowledge.prepare(BRAGO)
+        assert "Это он, точно" not in knowledge.situation(BRAGO)
+        assert knowledge.recall(BRAGO, "Это он, точно") is None
+
+
+async def test_disabled_choices_and_ambient_dialogs_do_not_leak_into_recall(graph):
+    fake = FakeGame()
+    fake.vars = {"KAPITEL": 1, QUEST: 0}
+    fake.fields = {("SELF", "GUILD"): GIL_BAU}
+    async with connected(fake) as link:
+        patches = StoryPatches(link, MemoryStore(":memory:"))
+        knowledge = Knowledge(link, graph, patches)
+        await _until(lambda: len(fake.graph) == 1)
+        await knowledge.prepare(LOBART)
+        assert "Двадцать штук, не меньше." in knowledge.recall(LOBART, "работа")
+        assert "Онар нанял наёмников." in knowledge.situation(LOBART)
+
+        await patches.apply({"op": "disable", "node": "DIA_LOBART_WORKNOW_OK"})
+        await patches.apply({"op": "disable", "node": "DIA_BAU_1_STANDARD"})
+        await knowledge.prepare(LOBART)
+        assert "Могу предложить поденную работу" in knowledge.recall(LOBART, "работа")
+        assert "Двадцать штук" not in knowledge.recall(LOBART, "работа")
+        assert knowledge.recall(LOBART, "Двадцать штук") is None
+        assert "Онар" not in knowledge.situation(LOBART)
+        assert knowledge.recall(LOBART, "Онар") is None
+
+
 async def test_the_npc_knows_in_its_turn_and_recalls_the_rest(graph):
     fake = FakeGame()
     fake.vars = {"KAPITEL": 1, QUEST: 1}
@@ -244,15 +388,42 @@ async def test_the_npc_knows_in_its_turn_and_recalls_the_rest(graph):
     assert "Ты знаешь:\n[«Я ищу работу.»" in result.output
 
 
-@pytest.mark.skipif(
-    not (
-        Path(os.environ.get("GOTHIC_AI_DATA", Path.home() / ".local/share/gothic-ai")) / "story.json"
-    ).exists(),
-    reason="no story graph of the game on this machine",
-)
-def test_on_the_games_own_story():
+@pytest.fixture(scope="module")
+def real_graph():
     data = Path(os.environ.get("GOTHIC_AI_DATA", Path.home() / ".local/share/gothic-ai"))
-    graph = load(data / "story.json")
+    path = data / "story.json"
+    if not path.exists():
+        pytest.skip("no story graph of the game on this machine")
+    return load(path)
+
+
+@pytest.mark.parametrize("npc", ["SLD_840_ALVARES", "SLD_841_ENGARDO"])
+@pytest.mark.parametrize("heard", [False, True])
+async def test_akil_farm_ambushes_are_absent_from_knowledge(real_graph, npc, heard):
+    fake = FakeGame()
+    fake.vars = {"KAPITEL": 1}
+    dialogs = {n.id for n in real_graph.dialogs_of(npc) if n.important}
+    assert dialogs
+    fake.known = dialogs if heard else set()
+    async with connected(fake) as link:
+        vanilla = Knowledge(link, real_graph)
+        await vanilla.prepare(npc)
+        topics = vanilla.views[npc].told if heard else vanilla.views[npc].open
+        assert {t.node.id for t in topics} == dialogs
+
+        patches = StoryPatches(link, MemoryStore(":memory:"), static=freed(real_graph.nodes.__contains__))
+        knowledge = Knowledge(link, real_graph, patches)
+        await knowledge.prepare(npc)
+        assert knowledge.dialogs(npc) == []
+        assert knowledge.views[npc].open == [] and knowledge.views[npc].told == []
+        for node in real_graph.nodes.values():
+            if node.npc == npc:
+                for _, _, line in node.lines():
+                    assert knowledge.recall(npc, line) is None
+
+
+def test_on_the_games_own_story(real_graph):
+    graph = real_graph
     k = Knowledge(_Link(), graph)  # type: ignore[arg-type]
 
     def view(npc: str, guild: int, knows: set[str], **vars: int):

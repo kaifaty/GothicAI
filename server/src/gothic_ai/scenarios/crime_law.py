@@ -13,8 +13,19 @@ from ..game import GameError, GameLink
 from ..llm import ToolCall
 from ..llm.fake import FakeBackend, FakeStep
 from ..protocol import DialogChosen, Session
-from .common import ClaimScript, FixedDecider, _logged, _save, _until, _until_async, wait_message
-from .crimes import ANDRE, CITY_HOUSE, CITY_OWNER
+from .common import (
+    ClaimScript,
+    FixedDecider,
+    _logged,
+    _save,
+    _until,
+    _until_async,
+    prepare_npc_parking,
+    prepare_npc_pose,
+    prepare_street_theft_witness,
+    wait_message,
+)
+from .crimes import ANDRE, CITY_OWNER
 
 if TYPE_CHECKING:
     from ..crime_law_runtime import CrimeLawRuntime
@@ -29,6 +40,7 @@ PETZMASTER = "DIA_ANDRE_PETZMASTER"
 PAYNOW = f"{PETZMASTER}_PAYNOW"
 PMSCHULDEN = "DIA_ANDRE_PMSCHULDEN"
 COUNTERS = [f"PETZCOUNTER_CITY_{kind}" for kind in ("THEFT", "ATTACK", "MURDER", "SHEEPKILLER")]
+THEFT_POINT, HERO_POINT = "NW_CITY_MERCHANT_TRADE_01", "NW_CITY_MAINSTREET_03"
 
 
 async def crime_law(
@@ -43,7 +55,7 @@ async def crime_law(
 ) -> dict[str, str]:
     """Exercise native ownership, perceptions, menus, voices and payment without model calls.
 
-    Only the scene is staged: nearby people wait elsewhere, and Matteo's native theft reaction ends
+    Only the scene is staged: nearby people wait elsewhere, and Matteo's rule-based theft reaction ends
     after he has actually witnessed it. Random rumor meetings are disabled so the first scene tests
     the deadline itself. The second scene accepts an ordinary scripted silence deal before it.
     """
@@ -71,13 +83,35 @@ async def crime_law(
     async def gold() -> int:
         return int(await link.evaluate(["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", "ITMI_GOLD"]]))
 
-    async def stand(npc: str, point: str, *, face: str | None = None) -> None:
-        await link.debug("skip_important", near=npc)
-        await link.npc_act(
-            npc, "start_activity", state="ZS_STAND_WP", waypoint=point, minutes=120, place=True
+    async def stand(npc: str, point: str, *, face: str | None = None) -> bool:
+        if point == parked:
+            expected = points[point]
+            ready, detail = await prepare_npc_parking(
+                link, npc, point, (expected["x"], expected["y"], expected["z"]),
+            )
+            if not ready:
+                check("parking_pose", False, detail)
+            return ready
+        if npc == CITY_OWNER:
+            # Both actors use native public street waypoints. Keep the hero separated before
+            # the common helper's first initialization wait, without projecting through shop walls.
+            await link.debug("skip_important", near=npc)
+            await link.debug("npc_goto", npc=npc, waypoint=point)
+            await link.debug("player_goto", waypoint=HERO_POINT)
+        ready, detail = await prepare_npc_pose(
+            link, npc, point, face=face,
         )
-        if face is not None:
-            await link.npc_act(npc, "turn_to", npc=face)
+        if not ready:
+            check("pose", False, detail)
+        return ready
+
+    async def theft_posture(label: str) -> bool:
+        """Keep Matteo's initialized activity while proving actual sight and a fresh free roster."""
+        ready, detail = await prepare_street_theft_witness(
+            link, CITY_OWNER, THEFT_POINT, "ITMI_SILVERCUP",
+        )
+        detail.update(npc_point=THEFT_POINT, hero_point=HERO_POINT)
+        return check(f"{label}_witness_ready", ready, detail)
 
     async def drop() -> bool:
         try:
@@ -90,36 +124,49 @@ async def crime_law(
 
     async def theft(label: str) -> dict[str, Any] | None:
         await link.debug("time", hour=8, minute=0)
-        await link.debug("player_goto", waypoint=CITY_HOUSE)
+        await link.debug("player_goto", waypoint=HERO_POINT)
         # Find people at the real scene after the hero has activated that part of the city. Their
         # native guilds, ownership and perceptions remain unchanged throughout both scenes.
         for person in await link.story_nearby("PC_HERO", 7000):
             if person["npc"] in humans and person["npc"] != CITY_OWNER:
-                await stand(person["npc"], parked)
-        await stand(CITY_OWNER, CITY_HOUSE, face="PLAYER")
-        await asyncio.sleep(0.5)
+                if not await stand(person["npc"], parked):
+                    return None
+        if not await stand(CITY_OWNER, THEFT_POINT, face="PC_HERO"):
+            return None
         if not check(f"{label}_drop", await _until_async(drop, bool, 10), "native Matteo silver cup"):
             return None
-        await asyncio.sleep(1)
-        await link.npc_act(CITY_OWNER, "turn_to", npc="PLAYER")
+        if not await theft_posture(label):
+            return None
         before = {f["id"] for f in facts("crime")}
         await link.debug("player_take", item="ITMI_SILVERCUP", distance=800)
         await _until(lambda: any(f["id"] not in before for f in facts("crime")), 10)
         crime = next((f for f in facts("crime") if f["id"] not in before), None)
-        # A replacement activity after ASSESSTHEFT stops the fight, without hiding the witness.
-        await stand(CITY_OWNER, CITY_HOUSE, face="PLAYER")
-        await law.tick()
+        # Let layer 4a finish the held perception before replacing its fight for the law scene.
+        reacted = crime is not None and await _until(
+            lambda: any(
+                f.get("crime") == crime["id"] and f.get("npc") == CITY_OWNER
+                and f.get("verdict") == "server" for f in facts("crime_reaction")
+            ),
+            10,
+        )
         if not check(
             f"{label}_theft",
             crime is not None
+            and reacted
             and crime.get("kind") == "theft"
             and crime.get("owner") == CITY_OWNER
             and crime.get("community") == "city"
             and set(crime.get("witnesses", ())) == {CITY_OWNER}
             and any(k.crime["id"] == crime["id"] and k.degree == "seen" for k in service.known(CITY_OWNER)),
-            crime,
+            {"crime": crime, "reactions": [
+                fact for fact in facts("crime_reaction")
+                if crime is not None and fact.get("crime") == crime["id"]
+            ]},
         ):
             return None
+        if not await stand(CITY_OWNER, THEFT_POINT, face="PC_HERO"):
+            return None
+        await law.tick()
         return crime
 
     async def tomorrow() -> None:
@@ -135,7 +182,6 @@ async def crime_law(
         await link.debug("load", slot + 1)
         await loading
         await link.wait_world()
-        await asyncio.sleep(0.5)
         await law.tick()
         chosen.clear()
         return check("silence_branch", not facts("crime") and not facts("crime_known"))
@@ -153,9 +199,12 @@ async def crime_law(
         await link.debug("time", hour=8, minute=0)
         humans = {p["npc"] for p in await link.story_people()}
         points = {p["name"]: p for p in await link.waypoints() if not p.get("fp")}
-        if not check("city", {CITY_OWNER, ANDRE} <= humans and CITY_HOUSE in points, CITY_HOUSE):
+        if not check(
+            "city", {CITY_OWNER, ANDRE} <= humans and {THEFT_POINT, HERO_POINT} <= points.keys(),
+            {"owner": THEFT_POINT, "hero": HERO_POINT},
+        ):
             return _logged(results)
-        home = points[CITY_HOUSE]
+        home = points[THEFT_POINT]
         position = (home["x"], home["y"], home["z"])
         far = [
             p
@@ -186,11 +235,16 @@ async def crime_law(
             return _logged(results)
         cid = str(crime["id"])
         initial = await values(law_var("city"), *COUNTERS)
+        memory = await link.story_eval(CITY_OWNER, [
+            ["field", ["inst", "SELF"], "AIVAR", 1, "AIV_NPCSAWPLAYERCOMMIT"],
+        ])
         offered = await link.offered_dialogs(ANDRE)
+        # A held theft projects personal memory without B_MemorizePlayerCrime's native PETZ write.
+        # The law counters stay empty until the delayed report below teaches the community law.
         if not check(
             "locked_before_news",
-            not news(cid) and initial[0] == 0 and initial[1] >= 1 and PETZMASTER not in offered,
-            {"gate_and_native_counters": initial, "offered": offered},
+            not news(cid) and initial == [0, 0, 0, 0, 0] and memory == [3] and PETZMASTER not in offered,
+            {"gate_and_native_counters": initial, "owner_memory": memory, "offered": offered},
         ):
             return _logged(results)
         await tomorrow()

@@ -8,8 +8,8 @@ import math
 from typing import TYPE_CHECKING, Any
 
 from ..game import GameLink
-from ..protocol import Saved, Session
-from .common import _logged, _until, wait_message
+from ..protocol import Session
+from .common import _logged, _save_or_fail, _until, wait_message
 
 if TYPE_CHECKING:
     from ..occasions import Occasions
@@ -105,10 +105,7 @@ async def occasions(link: GameLink, service: Occasions, slot: int = 7) -> dict[s
     visited = set(service.visited)
     arrivals = len(facts("arrived"))
     await asyncio.sleep(0.5)  # the game's save must contain the chronicle's latest memory head
-    saving = asyncio.create_task(wait_message(link, Saved, timeout=60))
-    await asyncio.sleep(0)
-    await link.debug("save", slot)
-    await saving
+    await _save_or_fail(link, slot)
     loaded = asyncio.create_task(wait_message(link, Session, lambda m: m.reason == "load"))
     await asyncio.sleep(0)
     await link.debug("load", slot)

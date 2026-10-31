@@ -1,0 +1,43 @@
+{
+  "common": "Square image, 1:1. One single subject, centred, filling about 70% of the square, with even empty margin on every side. A few large, clearly separated shapes and a bold silhouette, so it still reads as a small 96-pixel icon. No text, no letters, no runes, no numbers, no border, no frame, no blood, no gore, no human faces. Medieval low-fantasy world, rough and earthy, nothing modern, nothing shiny or heroic.",
+  "styles": {
+    "woodcut": {
+      "name": "Ксилография",
+      "text": "Style: a woodcut print in black iron-gall ink on plain aged parchment. Thick carved lines, sparse coarse hatching only in the shadows, flat ink, no gradients. Black and parchment only, plus one small muted oxblood-red accent on a single detail."
+    },
+    "seal": {
+      "name": "Восковая печать",
+      "text": "Style: a round dark-red sealing-wax seal seen straight from above, slightly irregular wax edge, on plain dark wood. The subject is pressed into the wax as a deep, simple relief, like a signet impression: soft raking light from the upper left, matte wax, no shine. Only the seal, its relief and the wood."
+    },
+    "miniature": {
+      "name": "Миниатюра рукописи",
+      "text": "Style: a medieval illuminated-manuscript miniature. Flat matte colours from a small earthy palette: ochre, umber, faded vermilion, dull green, bone white, outlined in confident dark-brown ink. Plain worn vellum background, no gold, no decoration around the subject, no perspective tricks."
+    },
+    "silhouette": {
+      "name": "Силуэт тушью",
+      "text": "Style: a solid black ink silhouette, like a cut-paper shadow, on plain aged parchment. Almost no interior lines: the shapes are read from their outline alone. A thin ground line at most. One small muted oxblood-red accent on a single detail, everything else black."
+    }
+  },
+  "feats": {
+    "wolves": {
+      "title": "Волки, которых не было",
+      "text": "Сказал Лотару, что перебил стаю, — и никто не узнал правду.",
+      "emblem": "A small leather pouch of coins lying on a single wolf paw print pressed into mud. The red accent, if any, is the pouch's drawstring."
+    },
+    "yield": {
+      "title": "Сдался и выжил",
+      "text": "Встал на колени перед бандитами и ушёл живым.",
+      "emblem": "A plain iron sword lying flat on the ground, and beside it an open, empty hand resting palm up. The red accent, if any, is a strip of cloth on the sword's grip."
+    },
+    "returned": {
+      "title": "Вернул чужое",
+      "text": "Нашёл украденное у Торбена и вернул без награды.",
+      "emblem": "An outstretched hand holding out a simple pewter goblet, offering it back. The red accent, if any, is a ribbon tied around the goblet's stem."
+    },
+    "gate": {
+      "title": "Слово у ворот",
+      "text": "Прошёл в город мимо стражи, не заплатив ни монеты, — одним словом.",
+      "emblem": "A heavy wooden town gate standing slightly ajar, with a guard's halberd leaning against it. The red accent, if any, is a pennant on the halberd."
+    }
+  }
+}

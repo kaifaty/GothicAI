@@ -13,6 +13,7 @@ APP="$OUT/OpenGothic Dev.app"
 
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 ln -sf "../../../Gothic2Notr" "$APP/Contents/MacOS/Gothic2Notr"
+ln -sf "../../../content-convert" "$APP/Contents/MacOS/content-convert"
 # OpenGothic's own icon (a Windows .ico holding one 246x256 PNG), squared, in every size the Dock and
 # Finder ask for, as .icns
 if [ -f "$ROOT/OpenGothic/icon.ico" ]; then

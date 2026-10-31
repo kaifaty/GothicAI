@@ -41,7 +41,7 @@ def places():
 
 
 @asynccontextmanager
-async def world(places, *, gather=False, crimes=True):
+async def world(places, *, gather=False, crimes=True, npc_crimes=True):
     fake, clock, store = FakeGame(), Clock(), MemoryStore(":memory:")
     fake.nearest_waypoint = "ROAD_1"
     fake.vars["KAPITEL"] = 1
@@ -63,7 +63,8 @@ async def world(places, *, gather=False, crimes=True):
         chronicle = Chronicle(link, store)
         options = {} if gather else {"gather_s": 0}
         occasions = Occasions(
-            link, chronicle, places, clock=clock, busy_poll_s=0.01, crimes=crimes, **options
+            link, chronicle, places, clock=clock, busy_poll_s=0.01, crimes=crimes,
+            npc_crimes=npc_crimes, **options
         )
         yield fake, clock, chronicle, occasions
 
@@ -313,6 +314,39 @@ async def test_every_vanilla_quest_change_is_an_occasion_with_the_heros_current_
         assert chronicle.facts("occasion") == changes
 
 
+async def test_vanilla_occasion_carries_latest_outcome_and_names_without_changing_event(places):
+    async with world(places) as (fake, clock, chronicle, occasions):
+        await settle(fake, clock, occasions, "ROAD")
+        event = vanilla_quest(**{"from": "running", "to": "success"})
+        started = {**event, "from": "open", "to": "running"}
+        chronicle.record(started)
+        chronicle.record(event)
+        outcome = {
+            "fact": "quest_outcome", "quest": event["quest"], "npc": LOBART,
+            "how": "amended", "drop": [HILDA, "ITPL_BEET"],
+            "why": ["Я снял эти пункты."], "pay": "none",
+        }
+        fake.item_names["ITPL_BEET"] = "Репа"
+        chronicle.record({**outcome, "how": "done", "drop": [], "pay": "full"})
+        chronicle.record(outcome)
+        chronicle.record({**outcome, "quest": "MIS_OTHER", "how": "dropped"})
+        await occasions.poll()
+        result = await occasions.next()
+        assert result["kind"] == "vanilla"
+        assert [result["vanilla"], *(m["vanilla"] for m in result["also"])] == [
+            started,
+            {
+                **event,
+                "outcome": {
+                    "how": "amended", "drop": ["Хильда", "Репа"],
+                    "why": outcome["why"], "pay": "none",
+                },
+            },
+        ]
+        assert chronicle.facts("vanilla_quest") == [started, event]
+        assert "outcome" not in started and "outcome" not in event
+
+
 async def test_only_a_person_killed_by_the_hero_is_a_deed(places):
     async with world(places) as (fake, clock, chronicle, occasions):
         await occasions.poll()
@@ -353,6 +387,73 @@ async def test_a_crime_is_a_deed_with_its_id(places):
         [result] = occasions.pending
         assert result["kind"] == "deed" and result["crime"] == deed["id"]
         assert result["deed"] == deed
+
+
+async def test_npc_deed_has_one_occasion_per_case_including_after_load(places):
+    async with world(places) as (fake, _, chronicle, occasions):
+        await occasions.poll()
+        deed = {**crime_fact(), "fact": "npc_crime", "culprit": VINO}
+        for _ in range(2):
+            chronicle.record(deed)
+        await occasions.poll()
+        result = await occasions.next()
+        assert result["kind"] == "deed" and result["deed"] == deed
+        assert result["crime"] == deed["id"]
+        assert len(chronicle.facts("occasion")) == 1
+        await load(fake, chronicle)
+        chronicle.record(deed)
+        await occasions.poll()
+        assert occasions.pending == []
+        assert len(chronicle.facts("occasion")) == 1
+        # A separate case still has its own occasion.
+        chronicle.record({**deed, "id": "A/next-case"})
+        await occasions.poll()
+        assert len(chronicle.facts("occasion")) == 2
+
+
+async def test_npc_breaches_exposure_and_betrayal_are_context_not_occasions(places):
+    async with world(places) as (_, _, chronicle, occasions):
+        await occasions.poll()
+        for kind in ("npc_broken", "exposed", "betrayed"):
+            fact = {"fact": kind, "npc": LOBART, "liar": HILDA, "deal": "A/deal"}
+            assert not occasions._is_deed(fact)
+            assert occasions._npc_deed_key(fact) is None
+            chronicle.record(fact)
+        await occasions.poll()
+        assert occasions.pending == []
+        assert chronicle.facts("occasion") == []
+
+
+@pytest.mark.parametrize("how", ["unpaid", "no_show"])
+async def test_broken_npc_promise_never_queues_a_deed_including_after_load(places, how):
+    async with world(places) as (fake, _, chronicle, occasions):
+        await occasions.poll()
+        failure = {"fact": "npc_broken", "npc": VINO, "deal": "A/deal", "how": how}
+        chronicle.record(failure)
+        assert not occasions._events
+        await occasions.poll()
+        await load(fake, chronicle)
+        chronicle.record(failure)
+        await occasions.poll()
+        assert occasions.pending == []
+        assert chronicle.facts("occasion") == []
+
+
+async def test_no_crimes_disables_npc_deed_occasions(places):
+    async with world(places, crimes=False) as (_, _, chronicle, occasions):
+        chronicle.record({**crime_fact(), "fact": "npc_crime", "culprit": VINO})
+        chronicle.record({"fact": "npc_broken", "npc": VINO, "deal": "A/deal", "how": "unpaid"})
+        await occasions.poll()
+        assert occasions.pending == []
+
+
+async def test_npc_deed_source_can_be_disabled_separately(places):
+    async with world(places, npc_crimes=False) as (_, _, chronicle, occasions):
+        chronicle.record({"fact": "npc_crime", "id": "A/crime", "culprit": VINO})
+        chronicle.record(crime_fact())
+        await occasions.poll()
+        assert len(occasions.pending) == 1
+        assert occasions.pending[0]["deed"]["fact"] == "crime"
 
 
 @pytest.mark.parametrize("death_first", [False, True])

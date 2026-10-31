@@ -27,7 +27,8 @@ struct FractureMesh {
   std::vector<Piece> pieces;
   double volume = 0;
 
-  // OPENGOTHIC_FRACTURE, otherwise ~/.local/share/gothic-ai/fracture.
+  // Originals use v1 from OPENGOTHIC_FRACTURE, otherwise ~/.local/share/gothic-ai/fracture.
+  // Loaded GLB replacements use only their v2 sidecar, matched to the loaded bytes.
   static std::shared_ptr<const FractureMesh> load(std::string_view visual);
   };
 

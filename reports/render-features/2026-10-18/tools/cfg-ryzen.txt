@@ -1,0 +1,12 @@
+default		
+ms0	-ms 0	
+rt0	-rt 0	
+classic	-ms 0 -rt 0	
+gi1	-gi 1	
+gi2	-gi 2	
+vsm	-vsm 1	
+rtsm	-rtsm 1	
+aa1	-aa 1	
+aa2	-aa 2	
+pathtrace		toggle pathtrace
+vsm_gi2	-vsm 1 -gi 2	

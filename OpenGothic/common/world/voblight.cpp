@@ -2,7 +2,7 @@
 
 #include "world.h"
 
-VobLight::VobLight(Vob* parent, World& world, const zenkit::VLight& vob, Flags flags)
+VobLight::VobLight(Vob* parent, World& world, const asset::VLight& vob, Flags flags)
   : Vob(parent,world,vob,flags) {
 #if 0
   if(!(flags&Startup))

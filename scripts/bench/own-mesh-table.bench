@@ -1,0 +1,30 @@
+# Fresh NEWWORLD.ZEN, noon. OPENGOTHIC_CENSUS=<absolute output>/census.json.
+# Peasant table NW_CITY_TABLE_PEASANT_01 indoors in a harbour house, vob 20448 in
+# prop-survey order: origin (3924, -73, -6663) cm; candle and books stay on it.
+# The camera is held independently of the hero; no fixture prop is inserted.
+# Run the same scene with OPENGOTHIC_CONTENT= for original-mesh screenshots/FPS.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view nopfx
+cam lift off
+# Park the hero below the world so he neither enters the frame nor touches the
+# authored props. Marvin's goto pos takes integer centimetres.
+goto pos 3924 -2073 -6663
+clear 5000
+cam look 2000
+cam world 400 2190 270
+wait 34
+cam hold
+wait 5000
+shot own-mesh-table
+census
+# Completed application frames, normal game clock, no video capture.
+# character measure only arms the shared cadence window; no character fixture.
+cadence normal
+wait 34
+character measure off
+cadence wait
+character report

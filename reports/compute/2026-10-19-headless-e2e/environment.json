@@ -1,0 +1,50 @@
+{
+  "recorded_utc": "2026-10-19T04:41:01.324244+00:00",
+  "mono_s": 262692.420701465,
+  "cpu": {
+    "Architecture": "x86_64",
+    "CPU(s)": "32",
+    "Model name": "AMD Ryzen 9 3950X 16-Core Processor",
+    "Thread(s) per core": "2",
+    "Core(s) per socket": "16",
+    "Socket(s)": "1",
+    "CPU max MHz": "4763.6558",
+    "L3 cache": "64 MiB (4 instances)"
+  },
+  "gpu": "NVIDIA GeForce RTX 3080, 615.71.09, 10240",
+  "page_size": 4096,
+  "clk_tck": 100,
+  "kernel": "7.0.0-38-generic",
+  "save_sha256": "c2852f4c009f23225e1c9c70f564ca36b4c12e8220736d1c72a1dbfce8d3372f",
+  "systempack_fps": [
+    "FPS_Limit=0"
+  ],
+  "window": "640x360",
+  "audio_driver": "ALSOFT_DRIVERS=null",
+  "scenario_backend": "LLM=fake",
+  "source_commit": "bf0a2e6d743f1537836848f03ec7b251228974c7",
+  "engine_source_digest": "897ab877aaf757e951a29540d887cededabe993de6352b7ae0eb86b5f64d5de0",
+  "queue_class": "quiet",
+  "display_exclusive": true,
+  "game_physics_threads": "default (hardware_concurrency - 2)",
+  "runner_physics_threads": 0,
+  "runner_step_ms": 33,
+  "build_type": "RelWithDebInfo",
+  "render_flags": {
+    "ray_query": 1,
+    "meshlets": 1,
+    "gi": 1,
+    "aa": 1
+  },
+  "followup_source_commit": "174be153b6751f5484f59c17162c7abb69bbf5c0",
+  "fps_limit_followup": {
+    "ini": "per-run Gothic.ini [ENGINE] zMaxFps=30",
+    "systempack_fps_limit": 0,
+    "completed_runs": 3,
+    "normal_stages": 2,
+    "capped_stages": 1,
+    "capped_crimes": 0,
+    "stop_reason": "user requested wrap-up; second capped stages cancelled before admission"
+  },
+  "active_owned_jobs_after_measurement": 0
+}

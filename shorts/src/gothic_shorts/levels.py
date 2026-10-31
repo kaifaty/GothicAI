@@ -18,6 +18,9 @@ from pathlib import Path
 
 from gothic_shorts import clicks
 
+DUAL_MONO = "pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0+0.5*c1"
+DUAL_MONO_MAX_DIFF_DB = -90.0
+AAC_FALLBACK = ("-c:a", "aac", "-b:a", "256k", "-aac_pns", "0", "-aac_is", "0", "-aac_ms", "1")
 BASE_LUFS = -14.0
 TRUE_PEAK_DBTP = -1.0
 # R128 prints linear peaks to 0.001. Scale by a power of two before metering,
@@ -145,9 +148,11 @@ def duck_filter(windows: list[Window], attenuation_db: float) -> str:
         f"(({end:.9f})+{RAMP_SECONDS}-t)/{RAMP_SECONDS})))"
         for start, end in windows
     ]
+    # A balanced tree of max(): ffmpeg's expression parser has a depth limit, so a chain of one max per
+    # line fails on a long video (137 lines); the tree's depth grows with log2 of the line count.
+    while len(ramps) > 1:
+        ramps = [f"max({a},{b})" for a, b in zip(ramps[::2], ramps[1::2])] + ramps[len(ramps) - len(ramps) % 2:]
     envelope = ramps[0]
-    for ramp in ramps[1:]:
-        envelope = f"max({envelope},{ramp})"
     # Linear amplitude ramps; the plateau is exactly the requested dB reduction.
     gain = 10 ** (-attenuation_db / 20)
     return (f"aresample=48000,asetnsamples=n=48:p=0,"
@@ -230,7 +235,10 @@ def music_target(speech_lufs: float, game_pause_lufs: float | None = None) -> fl
     if not math.isfinite(speech_lufs):
         raise ValueError("Voice must have measurable EBU R128 loudness")
     target = speech_lufs - MUSIC_BELOW_VOICE_LU
-    return min(target, game_pause_lufs - MUSIC_BELOW_GAME_LU) if game_pause_lufs is not None else target
+    # A silent game stem (gameVolume 0) measures -inf: there is no game to stay under, not a muted bed.
+    if game_pause_lufs is None or not math.isfinite(game_pause_lufs):
+        return target
+    return min(target, game_pause_lufs - MUSIC_BELOW_GAME_LU)
 
 
 def music_gain(speech_lufs: float, music_pause_lufs: float,
@@ -279,7 +287,8 @@ def check_balance(speech_lufs: float | None, music_pause_lufs: float | None,
         ("music_below_game", music_pause_lufs, game_pause_lufs, "game_pause",
          MUSIC_BELOW_GAME_LU, LEVEL_TOLERANCE_LU),
     ):
-        goal = reference - below if reference is not None else None
+        # A silent game stem (-inf) leaves nothing for the music to stay under: the row does not apply.
+        goal = reference - below if reference is not None and math.isfinite(reference) else None
         allowance = f" + {tolerance:g}" if tolerance else ""
         row(key, value, goal, f"≤ {name} - {below:g} LU{allowance}" if voiced else "measured",
             value <= goal + tolerance + 1e-6
@@ -299,6 +308,29 @@ def check_mastering(report: dict, voice_lufs: float, true_peak_dbtp: float,
         {"id": "clicks", "count": len(click_times), "times_seconds": click_times,
          "target": "0 clicks (AAC)", "ok": not click_times},
     ])
+    report["ok"] = all(row["ok"] is not False for row in report["rows"])
+
+
+def dual_mono_peak(path: Path) -> float:
+    """Maximum decoded L - R in dBFS; volumedetect's silence floor is -91 dB."""
+    result = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-vn", "-af",
+         "pan=mono|c0=c0-c1,volumedetect", "-f", "null", "-"],
+        check=True, capture_output=True, text=True,
+    )
+    reading = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?)\s+dB", result.stderr)
+    if not reading:
+        raise ValueError("ffmpeg did not return the decoded L - R peak")
+    return float(reading[1])
+
+
+def check_dual_mono(report: dict, path: Path) -> None:
+    difference_db = dual_mono_peak(path)
+    report["rows"].append({
+        "id": "dual_mono", "measured_db": difference_db, "target_db": DUAL_MONO_MAX_DIFF_DB,
+        "target": f"L - R ≤ {DUAL_MONO_MAX_DIFF_DB:g} dBFS (AAC)",
+        "ok": difference_db <= DUAL_MONO_MAX_DIFF_DB,
+    })
     report["ok"] = all(row["ok"] is not False for row in report["rows"])
 
 
@@ -343,8 +375,8 @@ def check_mastered_balance(stems: dict[str, Path], speech_lufs: float,
 def print_balance(report: dict) -> None:
     print(f"{'Track / window':<20} {'Measured':>10} {'Target':>12}  Rule / result")
     for row in report["rows"]:
-        value = row.get("measured_lufs", row.get("measured_dbtp", row.get("count")))
-        target = row.get("target_lufs", row.get("target_dbtp"))
+        value = row.get("measured_lufs", row.get("measured_dbtp", row.get("measured_db", row.get("count"))))
+        target = row.get("target_lufs", row.get("target_dbtp", row.get("target_db")))
         precision = 6 if "measured_dbtp" in row else 1
         value = "—" if value is None else f"{value:.{precision}f}"
         target = "—" if target is None else f"{target:.1f}"
@@ -423,14 +455,15 @@ def aac_encoder() -> tuple[str, ...]:
 
     ffmpeg's own encoder at 192k turned one voice transient of an AI take into a lone +0.15 dBFS
     sample, 3 dB over the limiter (-2.50 dBTP before it); at 256k, and with AudioToolbox, it stays
-    near -2.6. Popen keeps the probe out of tests that replace subprocess.run.
+    near -2.6. Disable PNS and intensity stereo and force M/S to preserve identical channels on noise.
+    Popen keeps the probe out of tests that replace subprocess.run.
     """
     with subprocess.Popen(["ffmpeg", "-hide_banner", "-encoders"], stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL, text=True) as probe:
         listing = probe.communicate()[0]
     if re.search(r"^\s*A\S*\s+aac_at\b", listing, re.MULTILINE):
         return ("-c:a", "aac_at", "-b:a", "192k")
-    return ("-c:a", "aac", "-b:a", "256k")
+    return AAC_FALLBACK
 
 
 def meter_file(path: Path) -> tuple[float, float]:
@@ -527,7 +560,7 @@ class AudioGraph:
                        ending_start=ending_start, balance_corrections=balance_corrections, speech=speech)
         envelopes = "".join(f"[master_{track}_envelope]" for track in self.tracks)
         graph = [f"{mix},{processing},asplit=2[master_mix][master_pilot]",
-                 "[master_mix]pan=stereo|c0=c0|c1=c1[a]",
+                 "[master_mix]pan=stereo|c0=c0|c1=c0[a]",
                  f"[master_pilot]pan=stereo|c0=c2|c1=c2,volume={1 / LIMITER_PILOT:g},"
                  f"asplit={len(self.tracks)}{envelopes}"]
         for track in self.tracks:
@@ -553,7 +586,7 @@ def audio_graph(joined: Path, music: Path | None, voice: list[tuple[Path, float]
     if music is not None:
         inputs += ["-i", str(music)]
     if voice:
-        filters.append(f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+        filters.append(f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo,{DUAL_MONO},"
                        f"atrim=duration={length},"
                        f"{body_gain_filter(game_gain_db, total, ending_gain_db)},"
                        f"{duck_filter(speech, game_duck_db)}[g]")
@@ -562,19 +595,18 @@ def audio_graph(joined: Path, music: Path | None, voice: list[tuple[Path, float]
             inputs += ["-i", str(wav)]
             trim = f"atrim=start={-at},asetpts=PTS-STARTPTS," if at < 0 else ""
             ms = max(0, round(at * 1000))
-            filters.append(f"[{first + k}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+            filters.append(f"[{first + k}:a]aformat=sample_rates=48000:channel_layouts=stereo,{DUAL_MONO},"
                            f"{trim}adelay={ms}|{ms}[v{k}]")
         filters.append("".join(f"[v{k}]" for k in range(len(voice))) +
                        f"amix=inputs={len(voice)}:duration=longest:normalize=0,"
                        f"apad=whole_dur={length},atrim=duration={length}[vo]")
         tracks["voice"] = "vo"
     else:
-        # Preserve the original, unvoiced filter graph and gains.
-        filters.append("[0:a]anull[g]")
+        filters.append(f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo,{DUAL_MONO}[g]")
     if music is not None:
         calibrated_volume = f"{music_gain_db:.9f}dB" if math.isfinite(music_gain_db) else "0"
         volume = calibrated_volume if voice else str(music_volume)
-        format_audio = "aformat=sample_rates=48000:channel_layouts=stereo," if voice else ""
+        format_audio = f"aformat=sample_rates=48000:channel_layouts=stereo,{DUAL_MONO},"
         fades = f",afade=t=in:d=1,afade=t=out:st={total - 1.5}:d=1.5" if music_fades else ""
         filters.append(f"[1:a]{format_audio}atrim=0:{total},asetpts=PTS-STARTPTS,"
                        f"volume={volume}{fades}[m]")
@@ -802,6 +834,7 @@ def _master_voiced(audio: AudioGraph | None, report: dict | None, out: Path, len
         report.update(balance)
         report["balance_stage"] = "mastered_aac"
         check_mastering(report, voice_lufs, peak, detect_clicks(candidate))
+        check_dual_mono(report, candidate)
         if not report["ok"]:
             raise LevelsError(_gate_error(report, "mastering"))
         candidate.replace(out)

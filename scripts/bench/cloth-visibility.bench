@@ -1,0 +1,46 @@
+# WORLD=NEWWORLD.ZEN; authored harbour cloth at 30 Hz, then camera-only hide/resume.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+view full
+cloth setup densest harbour-visibility-density
+cloth camera harbour
+cloth on
+cloth wind gust
+wait 3000
+cloth wind calm
+cloth reset-stats
+wait 10000
+cloth checkpoint harbour-visibility-calm-10s
+cloth verify anchors
+cloth wind gust
+wait 10000
+cloth checkpoint harbour-visibility-gust
+cloth verify anchors
+cloth verify harbour-wind
+
+# Retain the fixture's unobstructed full-frame eye and pitch for both turns.
+cloth setup NW_SHIP_FLAG_01:1 harbour-visibility-flag
+cloth camera-range 1600
+cloth wind gust
+wait 5000
+rec cloth-harbour-visibility-on
+cloth checkpoint flag-visible-before
+shot cloth-visibility-before
+wait 2000
+cloth camera-turn 180 2000
+wait 100
+cloth checkpoint flag-hidden-before
+wait 3000
+cloth checkpoint flag-hidden-after
+cloth verify anchors
+cloth camera-turn -180 2000
+wait 100
+cloth checkpoint flag-visible-after
+shot cloth-visibility-after
+wait 5000
+cloth checkpoint flag-visible-resumed
+cloth verify anchors
+stop
+physics stats

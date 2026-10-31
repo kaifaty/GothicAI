@@ -1,0 +1,20 @@
+{
+  "id": "crate",
+  "seed": 1,
+  "post": [0.085, 0.035],
+  "batten": [0.07, 0.025],
+  "plank": 0.022,
+  "gap": [0.004, 0.01],
+  "plank_width": 0.19,
+  "tilt_deg": 0.6,
+  "proud": 0.002,
+  "rope": [0.014, 6, 10],
+  "rope_ends": "both",
+  "nails": true,
+  "nail_radius": 0.009,
+  "nail": 0.004,
+  "broken": true,
+  "lid_shift": 0.015,
+  "stave_tile": 0.4,
+  "planks_per_tile": 4
+}

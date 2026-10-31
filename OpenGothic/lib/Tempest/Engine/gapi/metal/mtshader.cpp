@@ -112,11 +112,7 @@ MtShader::MtShader(MtDevice& dev, const void* source, size_t srcSize)
     throw;
     }
   catch(const spirv_cross::CompilerError& err) {
-#if !defined(NDEBUG)
-    Log::d("cross-compile error: \"",err.what(),"\"");
-#else
-    (void)err;
-#endif
+    Log::e("cross-compile error: \"",err.what(),"\"");
     throw std::system_error(Tempest::GraphicsErrc::InvalidShaderModule);
     }
   catch(...) {
@@ -133,15 +129,11 @@ MtShader::MtShader(MtDevice& dev, const void* source, size_t srcSize)
 
   if(err!=nullptr) {
     const char* e = err->localizedDescription()->utf8String();
+    Log::e("msl compile error: \"",e,"\"");
 #if !defined(NDEBUG)
-    Log::d("cros-compile error: \"",e,"\"\n");
     Log::d(msl);
 #endif
     throw std::system_error(Tempest::GraphicsErrc::InvalidShaderModule, e);
-    }
-
-  if(stage==ShaderReflection::Stage::Mesh) {
-    Log::d(msl);
     }
 
   auto main = NsPtr<NS::String>(NS::String::string("main0",NS::UTF8StringEncoding));

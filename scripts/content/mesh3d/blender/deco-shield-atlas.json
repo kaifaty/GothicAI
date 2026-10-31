@@ -1,0 +1,84 @@
+{
+  "glb": "market-set/build/deco-shield/model.glb",
+  "maps_dir": "market-set/tiles",
+  "scales": {
+    "OWN_PROP_WOOD_PAINTED": 2.6315789,
+    "OWN_PROP_WOOD_PAINTED_LIGHT": 2.6315789,
+    "OWN_PROP_IRON_BAND": 5.0,
+    "OWN_PROP_STEEL_BLADE": 1.0,
+    "OWN_PROP_WOOD_HAFT": 1.0
+  },
+  "targets": {
+    "OWN_PROP_WOOD_PAINTED": [
+      0.12,
+      0.026,
+      0.018
+    ],
+    "OWN_PROP_WOOD_PAINTED_LIGHT": [
+      0.4671,
+      0.4282,
+      0.3234
+    ],
+    "OWN_PROP_IRON_BAND": [
+      0.0306,
+      0.0275,
+      0.0136
+    ],
+    "OWN_PROP_STEEL_BLADE": [
+      0.1725,
+      0.1977,
+      0.2218
+    ],
+    "OWN_PROP_WOOD_HAFT": [
+      0.06,
+      0.035,
+      0.02
+    ]
+  },
+  "slots": {
+    "OWN_PROP_WOOD_PAINTED": [
+      "OWN_DECOSHIELD_MARKET_WOOD",
+      "WOOD"
+    ],
+    "OWN_PROP_WOOD_PAINTED_LIGHT": [
+      "OWN_DECOSHIELD_MARKET_WOOD",
+      "WOOD"
+    ],
+    "OWN_PROP_IRON_BAND": [
+      "OWN_DECOSHIELD_MARKET_METAL",
+      "METAL"
+    ],
+    "OWN_PROP_STEEL_BLADE": [
+      "OWN_DECOSHIELD_MARKET_METAL",
+      "METAL"
+    ],
+    "OWN_PROP_WOOD_HAFT": [
+      "OWN_DECOSHIELD_MARKET_WOOD",
+      "WOOD"
+    ]
+  },
+  "metal": [
+    "OWN_PROP_IRON_BAND",
+    "OWN_PROP_STEEL_BLADE"
+  ],
+  "size": 1024,
+  "seed": 1,
+  "angle_limit": 60,
+  "margin": 0.004,
+  "tone_spread": 0.15,
+  "wet_height": 0.0,
+  "algae": 0.0,
+  "bleach": 0.0,
+  "edge_radius": 0.004,
+  "planks_per_tile": {
+    "OWN_PROP_WOOD_PAINTED": 4,
+    "OWN_PROP_WOOD_PAINTED_LIGHT": 4
+  },
+  "contrast": {
+    "OWN_PROP_WOOD_PAINTED": 1.4,
+    "OWN_PROP_WOOD_PAINTED_LIGHT": 1.4,
+    "OWN_PROP_IRON_BAND": 1.2,
+    "OWN_PROP_STEEL_BLADE": 1.1,
+    "OWN_PROP_WOOD_HAFT": 1.2
+  }
+}

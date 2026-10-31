@@ -128,7 +128,8 @@ class SceneGlobals final {
     Frustrum                          frustrum[V_Count];
 
     bool                              zWindEnabled = false;
-    Tempest::Vec2                     windDir = {0,1};
+    bool                              legacyWind = true;
+    float                             windScale = 1.f;
     uint64_t                          windPeriod = 6000;
 
     RtScene                           rtScene;

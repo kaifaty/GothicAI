@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <functional>
 #include <string>
 #include <string_view>
@@ -22,6 +23,8 @@
 //   It takes nothing but two keys: Y accepts the version shown once the hero has all he gives and the terms
 //   have not changed for a moment, N declines it (while the window is up N does not open the log; L does).
 //   A new version replaces the shown one and marks what changed.
+// - a feat of the hero (v53, docs/achievements.md): a quiet toast in the top-left corner, its picture, title
+//   and line on the parchment of the game's letters, a few seconds, no sound. Several wait their turn.
 // All strings are in the game codepage.
 class ChatOverlay final : public Tempest::UiOverlay {
   public:
@@ -84,6 +87,9 @@ class ChatOverlay final : public Tempest::UiOverlay {
     // N: "declined" (the window goes at once), or "none"
     std::string declineDeal();
 
+    // a feat toast; `icon` is a png/jpg file the game reads (empty or unreadable: no picture)
+    void showFeat(std::string title, std::string text, std::string icon);
+
   protected:
     void paintEvent    (Tempest::PaintEvent& e) override;
     void keyDownEvent  (Tempest::KeyEvent&   e) override;
@@ -104,6 +110,8 @@ class ChatOverlay final : public Tempest::UiOverlay {
     void edit(Tempest::KeyEvent& e);
     void paintChat(Tempest::Painter& p);
     void paintDeal(Tempest::Painter& p);
+    void paintFeat(Tempest::Painter& p);
+    bool featOnScreen();
     bool hasVisibleContent() const;
     void pttPress(char pendingChar);
     void pttRelease();
@@ -125,4 +133,11 @@ class ChatOverlay final : public Tempest::UiOverlay {
     Deal               deal;
     bool               yDown = false;  // Y went to the deal window
     bool               nDown = false;  // and N
+
+    struct Feat final {
+      std::string title, text, icon;
+      };
+    std::deque<Feat>                     feats;    // the front one is shown, from featShownAt
+    uint64_t                             featShownAt = 0;
+    std::unique_ptr<Tempest::Texture2d>  featIcon;
   };

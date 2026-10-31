@@ -1,0 +1,6 @@
+# material or texture stem,geometry,attachment,stiffness,island filter,linear damping per second
+NW_CITY_FLAG_01,banner,y:max:6,0.86,quad,1.5
+# The tall main flag needs less damping to settle from its extended authored pose.
+NW_SHIP_FLAG_01,flag,z:min:25,0.82,sheet,0.5
+NW_SHIP_FLAG_02,flag,z:min:25,0.82,sheet,1.5
+NW_SHIP_SAIL_02,furled-sail,ridge:20:15,0.95,bundle,1.5

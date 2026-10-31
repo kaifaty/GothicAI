@@ -1,0 +1,93 @@
+{
+  "glb": "market-set/build/crate/model.glb",
+  "maps_dir": "market-set/crate-tiles",
+  "scales": {
+    "OWN_PROP_WOOD_PLANK": 2.5,
+    "OWN_PROP_WOOD_BRACE": 2.5,
+    "OWN_PROP_IRON_NAIL": 5.0,
+    "OWN_PROP_ROPE": 6.6,
+    "OWN_PROP_WOOD_INNER": 2.5
+  },
+  "targets": {
+    "OWN_PROP_WOOD_PLANK": [
+      0.0553,
+      0.0426,
+      0.0184
+    ],
+    "OWN_PROP_WOOD_BRACE": [
+      0.048,
+      0.037,
+      0.016
+    ],
+    "OWN_PROP_IRON_NAIL": [
+      0.02,
+      0.019,
+      0.016
+    ],
+    "OWN_PROP_ROPE": [
+      0.075,
+      0.066,
+      0.046
+    ],
+    "OWN_PROP_WOOD_INNER": [
+      0.011,
+      0.0085,
+      0.0037
+    ]
+  },
+  "slots": {
+    "OWN_PROP_WOOD_PLANK": [
+      "OWN_CRATE_HARBOUR_WOOD",
+      "WOOD"
+    ],
+    "OWN_PROP_WOOD_BRACE": [
+      "OWN_CRATE_HARBOUR_WOOD",
+      "WOOD"
+    ],
+    "OWN_PROP_IRON_NAIL": [
+      "OWN_CRATE_HARBOUR_IRON",
+      "METAL"
+    ],
+    "OWN_PROP_ROPE": [
+      "OWN_CRATE_HARBOUR_ROPE",
+      "WOOD"
+    ],
+    "OWN_PROP_WOOD_INNER": [
+      "OWN_CRATE_HARBOUR_WOOD",
+      "WOOD"
+    ]
+  },
+  "metal": [
+    "OWN_PROP_IRON_NAIL"
+  ],
+  "size": 2048,
+  "seed": 1,
+  "angle_limit": 66,
+  "margin": 0.003,
+  "wet_height": 0.3,
+  "algae": 0.8,
+  "bleach": 0.0,
+  "planks_per_tile": {
+    "OWN_PROP_WOOD_PLANK": 4,
+    "OWN_PROP_WOOD_BRACE": 4
+  },
+  "contrast": {
+    "OWN_PROP_WOOD_PLANK": 1.15,
+    "OWN_PROP_WOOD_BRACE": 1.15,
+    "OWN_PROP_IRON_NAIL": 1.1,
+    "OWN_PROP_ROPE": 1.1,
+    "OWN_PROP_WOOD_INNER": 1.15
+  },
+  "edge_wear": {
+    "OWN_PROP_WOOD_PLANK": 0.2,
+    "OWN_PROP_WOOD_BRACE": 0.2,
+    "OWN_PROP_WOOD_INNER": 0.0
+  },
+  "tone_spread": 0.14,
+  "seam_dark": 0.3,
+  "seam_width": 0.04,
+  "measure_ao": {
+    "OWN_PROP_WOOD_PLANK": 0.5,
+    "OWN_PROP_WOOD_BRACE": 0.5
+  }
+}

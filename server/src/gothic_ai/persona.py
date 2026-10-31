@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import cache
@@ -17,7 +19,7 @@ from typing import TYPE_CHECKING
 from . import characters
 from .brain.day import Habit
 from .characters import Card
-from .gamedata.ou import load_npc_lines, voice_index
+from .gamedata.ou import game_lines, npc_lines, voice_index
 from .protocol import Mood
 
 if TYPE_CHECKING:
@@ -40,7 +42,10 @@ BIOGRAPHIES = {
         "Ты сдержан, высокомерен и немногословен, говоришь веско и загадочно, ценишь знание и силу, "
         "к герою относишься как наставник, который не любит повторять дважды. "
         "При себе у тебя почти ничего нет: всё полезное лежит в твоей башне, и герой может взять там, "
-        "что найдёт. Сражаться за героя ты не станешь — он должен окрепнуть сам."
+        "что найдёт. "
+        "Сам ты денег герою не предлагаешь и содержать его не станешь; но если попросит, можешь дать "
+        "немного, а больше — только в долг, который он обязан вернуть в срок. "
+        "Сражаться за героя ты не станешь — он должен окрепнуть сам."
     ),
 }
 
@@ -86,10 +91,10 @@ RULES = """Как отвечать:
 - Делай только то, что сделал бы {name}. Не обещай того, чего не можешь (колдовать, создавать предметы)."""
 
 
-# Voices for text-to-speech, as natural-language descriptions (VoxCPM2 voice design). Designed, not
-# cloned: the original voice actors' recordings are never used as references. Lobart, Hilda, Maleth, Vino
-# and Andre talk to each other in scenes (gossip.py); their voices differ by age and timbre on purpose, since
-# the original had one actor for Lobart and Vino (voice 05) and one for Maleth and Andre (08).
+# Descriptions for designed TTS voices: used in shorts and when no original snapshot or cloning
+# provider is available. In the game, tts-service uses Inworld clones of original story NPC recordings
+# when a snapshot exists (user decision 2026-10-27). Lobart, Hilda, Maleth, Vino and Andre have distinct
+# designed voices for their scenes (gossip.py), even where the original shared an actor.
 VOICES = {
     "NONE_100_XARDAS": "An old man with a deep, low, calm and wise voice, speaking slowly and gravely",
     "BAU_950_LOBART": (
@@ -227,11 +232,65 @@ class PersonaProvider:
         self.game_dir = game_dir
         self.cards = characters.load() if cards is None else cards  # gamedata/characters.json
         self.people = people  # the director's characters on this branch (cast.py), by id
+        self._lines: dict[str, str] | None = None  # the game's dialog lines, read once (gamedata/ou.py)
+        self._lines_read = False
+        self._lines_retry_at = 0.0
+        self._lines_warned = False
+        self._lines_loading = False
+        self._lines_lock = threading.Condition()
+
+    def warm(self) -> None:
+        """Read the game's lines ahead, in a thread of its own (cli.py): reading takes seconds, and the first
+        npc's persona would stall the event loop for them."""
+        self._game_lines(background=False)
+
+    def _game_lines(self, *, background: bool = True) -> dict[str, str] | None:
+        with self._lines_lock:
+            while self._lines_loading and self._lines_retry_at == 0.0:
+                self._lines_lock.wait()
+            if (
+                self._lines_read
+                or self._lines_loading
+                or self.game_dir is None
+                or time.monotonic() < self._lines_retry_at
+            ):
+                return self._lines
+            self._lines_loading = True
+            retry = background and self._lines_retry_at > 0.0
+        if retry:
+            threading.Thread(target=self._read_game_lines, name="original-lines", daemon=True).start()
+        else:
+            self._read_game_lines()
+        return self._lines
+
+    def _read_game_lines(self) -> None:
+        try:
+            lines = game_lines(self.game_dir)
+        except RuntimeError as error:
+            with self._lines_lock:
+                self._lines_retry_at = time.monotonic() + 30.0
+                if not self._lines_warned:
+                    log.warning("original lines unavailable: %s", error)
+                    self._lines_warned = True
+        else:
+            with self._lines_lock:
+                self._lines = lines
+                self._lines_read = True
+                self._original.cache_clear()
+                self._get.cache_clear()
+        finally:
+            with self._lines_lock:
+                self._lines_loading = False
+                self._lines_lock.notify_all()
 
     def get(self, npc: str, name: str) -> Persona:
         npc = npc.upper()
         person = self.people(npc)
-        return self._get(npc, name) if person is None else self._person(npc, name, person)
+        if person is not None:
+            return self._person(npc, name, person)
+        self._game_lines()
+        with self._lines_lock:
+            return self._get(npc, name)
 
     def brief(self, npc: str, name: str) -> str:
         """Who the npc is, for a prompt written for someone else (a scene of two, gossip.py). Its card speaks
@@ -246,7 +305,9 @@ class PersonaProvider:
                 ]
                 + ([person.past] if person.past else [])
             )
-        samples, index = self._original(npc)
+        self._game_lines()
+        with self._lines_lock:
+            samples, index = self._original(npc)
         whom = "неё самой" if index in FEMALE_INDEXES else "него самого"
         parts = [
             f"Карточка {name} (написана для {whom}: «ты» — это {name}):",
@@ -298,7 +359,7 @@ class PersonaProvider:
         game."""
         if self.game_dir is None:
             return (), None
-        lines = load_npc_lines(self.game_dir, npc)
+        lines = npc_lines(self._lines or {}, npc)
         samples = tuple(pick_samples([text for _, text in lines]))
         index = voice_index(lines)
         log.info("persona %s: %d original lines, %d samples, voice %s", npc, len(lines), len(samples), index)

@@ -25,7 +25,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -165,12 +165,14 @@ class ChestDesk:
         self.places = places
         self.journal = journal or Journal()
         self.crimes = crimes
+        self.npc_suspect: Callable[..., list[Mapping[str, Any]]] | None = None
         self.clock = clock
         self.branch: str | None = link.session.branch if link.session is not None else None
         self._chests: dict[str, tuple[float, list[Chest]]] = {}  # npc -> (when asked, its chests)
         self._known: dict[str, dict[str, Known]] = {}  # npc -> chest -> what it knows lies there
         self._going: set[str] = set()  # npc's on their way to a chest
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._generation = 0
         link.listeners.append(self._on_message)
 
     def _on_message(self, msg: GameMessage) -> None:
@@ -182,6 +184,7 @@ class ChestDesk:
                 self._forget()
 
     def _forget(self) -> None:
+        self._generation += 1
         self._chests.clear()
         self._known.clear()
         self._going.clear()
@@ -193,6 +196,7 @@ class ChestDesk:
         before it knows as the world's data filled it (its own from the start: what was taken out unseen
         since is missing when it looks), else as it is."""
         npc = npc.upper()
+        generation = self._generation
         cached = self._chests.get(npc)
         if cached is not None and not fresh and self.clock() - cached[0] < FRESH_S:
             return cached[1]
@@ -201,6 +205,8 @@ class ChestDesk:
         except (GameError, TimeoutError) as err:
             log.info("chests of %s: %s", npc, err or type(err).__name__)
             return cached[1] if cached is not None else []
+        if generation != self._generation:
+            return []
         self._chests[npc] = (self.clock(), found)
         known = self.known(npc)
         for c in found:
@@ -379,9 +385,12 @@ class ChestDesk:
         """The npc has opened its chest: it sees what is there now. What it took and put, and what is gone
         that it believed was there (taken unseen). Its note."""
         npc = npc.upper()
+        generation = self._generation
         before = self.known(npc).get(chest, Known(chest)).items
         took, put = parse_moved(detail)
         now = next((c for c in await self.chests(npc, fresh=True) if c.id == chest), None)
+        if generation != self._generation:
+            raise GameError("мир сменился во время осмотра сундука")
         after = items_of(now) if now is not None else {}
         names = {i: n for i, (_, n) in {**before, **after}.items()}
         missing: dict[str, int] = {}
@@ -403,6 +412,15 @@ class ChestDesk:
         note = "; ".join(parts) + "."
         if missing:
             note += f" Из сундука пропало: {text(missing)} — кто-то в нём рылся."
+            if self.npc_suspect is not None:
+                suspects = self.npc_suspect(
+                    npc, chest, missing, waypoint=now.waypoint if now is not None else "",
+                )
+                if suspects:
+                    note += (
+                        " Ты вспоминаешь людей рядом около времени пропажи; "
+                        "это подозрение, не доказательство."
+                    )
             if self.crimes is not None:
                 suspicions = self.crimes.suspect_chest(
                     npc,

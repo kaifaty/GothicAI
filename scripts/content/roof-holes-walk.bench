@@ -1,0 +1,49 @@
+# Walking and collision around the real roof holes of harbour hut B037 (scripts/content/world/roof_holes.py):
+# the street in front of the hut, the hero dropped over the big hole (1.5 x 1.6 m: through it into the hut)
+# and over a narrow one (47 cm: he stays on the roof), then a walk inside. pos logs every stop.
+cheat god
+set time 12 0
+overlay off
+cam follow 300 120 200
+walkmode walk
+
+# the street in front of the hut, along it and back
+goto pos 3517 154 -3850
+face 0
+wait 1500
+pos
+hold forward 3000
+wait 3000
+release all
+pos
+face 180
+hold forward 3000
+wait 3000
+release all
+pos
+
+# over the big hole of the front slope (centre 3505 312 -3577)
+goto pos 3505 700 -3577
+wait 4000
+pos
+shot drop-big
+wait 300
+
+# a walk where he landed
+face 90
+hold forward 2000
+wait 2000
+release all
+pos
+face 270
+hold forward 2000
+wait 2000
+release all
+pos
+
+# over the narrow hole of the front slope (centre 3601 198 -3790, 47 x 145 cm)
+goto pos 3601 600 -3790
+wait 4000
+pos
+shot drop-narrow
+wait 300

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Tempest/Vec>
-#include <zenkit/ModelAnimation.hh>
+#include "asset/modeltypes.h"
 
 #include <cstdint>
 #include <string_view>
@@ -27,7 +27,7 @@ class Serialize;
 // cross-fade comes back, to compare.
 class AnimBlend final {
   public:
-    using Sample = zenkit::AnimationSample;
+    using Sample = asset::AnimationSample;
 
     // Tuned on the bench (anim, quad-zoo): longer or with more swing out, the feet of a creature that
     // stops from a gallop stay in the air too long
@@ -47,6 +47,11 @@ class AnimBlend final {
       // the velocity across the offset (Bollo drops it too) swings the bone aside and back, up to
       // this * offset / blend time: aside up to ~20% of the offset
       float sideSpeed = 1.f;
+      // a switch into a blow (an animation with an optimal frame) of a body that holds a weapon is not
+      // longer, s: the MDS starts a blow at once, and its arc decides the hit. t_1hAttackR starts wound up
+      // behind the left shoulder and crosses the front by its third frame; blended the usual 0.3 s from
+      // the stance, it crossed with the arm still pulled to the stance, a palm short of the body
+      float blowTime  = 0.08f;
       };
 
     // For the test bench
@@ -65,6 +70,8 @@ class AnimBlend final {
 
     void           reset(size_t numBones);
     void           setLog(bool l) { log = l; }  // switches to the log (the hero, OPENGOTHIC_ANIBLEND_LOG=1)
+    // the body holds a weapon (its skeleton has the slot): its blows switch in blowTime at most
+    void           setWeaponBody(bool w) { weaponBody = w; }
 
     // What drives a bone this frame: the animation and when it started (a switch is a change of
     // either), and the key frames around the time, a then b (the velocity of the animation)
@@ -153,6 +160,7 @@ class AnimBlend final {
     uint64_t            lastTime = 0;
     uint32_t            started  = 0;
     bool                log      = false;
+    bool                weaponBody = false;
     float               lastBlend = 0;
     bool                externalDriven = false;
     Curve               externalFade;

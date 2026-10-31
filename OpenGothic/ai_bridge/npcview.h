@@ -16,13 +16,15 @@ class World;
 // - `npc_views{t, views}`: once a second, the views of the npc's nearest to the player.
 // A view: where the npc is (indoors, whose room), what it does and holds; whom it sees and what they look
 // like and do; the player, seen or not (it hears him). Sight is the engine's own, as the scripts have it
-// (Npc::canSeeNpc: the head's field of view and a ray), within the npc's senses range.
+// (Npc::canSeeNpc: the head's field of view and a ray), within the npc's senses range. Party members see
+// hostile living monsters up to 40 m in the same field of view and line of sight.
 class NpcView final {
   public:
     using Emit = std::function<void(std::string&&)>;
 
     explicit NpcView(Emit emit);
 
+    void clear();
     void tick(World& world);
     // a JSON array of the views of the npc's named in `npcs` (script symbols); unknown ones are left out
     std::string views(World& world, const rapidjson::Value& npcs);

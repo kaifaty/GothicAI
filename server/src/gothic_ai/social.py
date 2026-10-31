@@ -1,4 +1,4 @@
-"""Who knows whom, and the rumors about the hero they pass on (docs/story-graph.md, stage 5).
+"""Who knows whom, and the rumors about people they pass on (docs/story-graph.md, stage 5).
 
 Two people know each other in two ways:
 - they meet: by their daily routines (`story_people`) they are within MEET_CM of each other at the same
@@ -40,6 +40,9 @@ from typing import TYPE_CHECKING, Any, Literal
 from .chronicle import Chronicle, Fact
 from .game import GameError, GameLink
 from .gamedata.storygraph import StoryGraph, walk
+from .npc_cheat import betrayed, keeps
+from .people_knowledge import PLAYER, SOURCES, rumor_subject, source_events, source_kind
+from .promise_breach import broken_promises, silence_facts
 from .protocol import GameMessage, Session
 
 if TYPE_CHECKING:
@@ -54,7 +57,11 @@ DEAL_MAX = 6  # a quest with more people in it makes no acquaintances
 OUTLAWS = frozenset({9, 10, 11})  # bandits, convicts, seekers: they have no dealings with the rest
 # retellings away from the one lied to: a lie seen through on the spot is talked about nearby, one he took
 # a reward for goes further
-HOPS = {"caught": 2, "found_out": 3, "broken": 2, "theft": 2, "attack": 3, "murder": 4, "sheep": 2}
+HOPS = {
+    "caught": 2, "found_out": 3, "broken": 2, "theft": 2, "attack": 3, "murder": 4, "sheep": 2,
+    "fame": 3,
+}
+HOPS.update({s.kind: s.hops for root in SOURCES.values() for s in (root, *root.alternatives)})
 CRIME_KINDS = frozenset({"theft", "attack", "murder", "sheep"})
 TELLS_PER_DAY = 3  # one tells a rumor to this many a day at most: it goes round in chains, not in a flood
 FRESH_DAYS = 2  # and only while it is news: the day one heard it and the next
@@ -256,7 +263,7 @@ class Social:
 
 @dataclass
 class Rumor:
-    """News of the hero, as it goes round: who knows it, how many retellings away."""
+    """News of a person, as it goes round: who knows it, how many retellings away."""
 
     quest: str
     kind: str  # found_out: he took a reward for it; caught: he tried to
@@ -268,6 +275,18 @@ class Rumor:
     silent: set[str] = field(default_factory=set)  # promised the hero in a deal to tell nobody (deals.py)
     said: bool = False  # the lie was his words (title), not a quest: seen false (sightings.py)
     crime: str = ""  # the deed's Chronicle id, also for a lie about that deed
+    subject: str = PLAYER
+    subject_name: str = "герой"
+    text: str = ""  # the feat's account, when kind is fame
+
+    def __post_init__(self) -> None:
+        self.subject = (self.subject or PLAYER).upper()
+        if not self.is_player and self.subject_name == "герой":
+            self.subject_name = self.subject
+
+    @property
+    def is_player(self) -> bool:
+        return (self.subject or PLAYER).upper() == PLAYER
 
     @property
     def hops(self) -> int:
@@ -276,27 +295,38 @@ class Rumor:
     def tells(self, npc: str, day: int) -> bool:
         """It still passes the rumor on that day: not too far from the source, and it is still news."""
         heard = self.since.get(npc)
-        if npc in self.silent:
+        if npc in self.silent or npc == self.subject:
             return False
         fresh = 4 if self.kind == "murder" else FRESH_DAYS
         return self.known.get(npc, self.hops) < self.hops and (heard is None or day < heard + fresh)
 
     @property
     def key(self) -> str:
-        return f"{self.kind}:{self.about}:{self.quest}"
+        old = f"{self.kind}:{self.about}:{self.quest}"
+        return old if self.is_player else f"subject:{self.subject}:{old}"
 
-    def told(self, teller: str) -> str:
+    def told(self, teller: str = "") -> str:
         """The remark for the one it is told to (names stay as they are: nothing to decline)."""
+        prefix = f"Слух (со слов: {teller}): " if teller else "Слух: "
+        return prefix + self.description()
+
+    def description(self) -> str:
+        """The same subject-aware content for memories, news and a live retelling."""
+        if self.kind == "fame":
+            return f"о герое говорят: «{self.title}» — {self.text}"
+        subject = "герой" if self.is_player else self.subject_name or self.subject
+        if (source := source_kind(self.kind)) is not None:
+            return source.text.format(subject_name=subject, about_name=self.about_name, title=self.title)
         if self.kind in CRIME_KINDS:
-            return f"Слух (со слов: {teller}): {self.title}"
+            return self.title
         if self.kind == "broken" and self.quest.startswith("meet-"):  # meetings.py
             return (
-                f"Слух (со слов: {teller}): герой обещал человеку по имени {self.about_name} прийти на "
+                f"{subject} обещал человеку по имени {self.about_name} прийти на "
                 f"встречу и не пришёл — {self.title}"
             )
         if self.kind == "broken":
             return (
-                f"Слух (со слов: {teller}): герой задолжал человеку по имени {self.about_name} и не вернул "
+                f"{subject} задолжал человеку по имени {self.about_name} и не вернул "
                 f"в срок — {self.title}"
             )
         what = (
@@ -306,11 +336,11 @@ class Rumor:
             if self.said
             else f"уверял, что сделал «{self.title}», а это неправда"
         )
-        return f"Слух (со слов: {teller}): герой обманул человека по имени {self.about_name} — {what}"
+        return f"{subject} обманул человека по имени {self.about_name} — {what}"
 
 
 class Rumors:
-    """News about the hero going round the people that know each other, by the game's clock."""
+    """News about people going round the people that know each other, by the game's clock."""
 
     # class-level defaults: tests build Rumors with __new__
     stage: Callable[[Rumor, str, str], Staging] | None = None  # gossip.py: how a live pass looks
@@ -353,14 +383,24 @@ class Rumors:
             except (GameError, TimeoutError) as err:
                 log.info("rumors: %s", err or type(err).__name__)
 
-    async def tick(self) -> None:
-        """Who met whom since the last tick, and what they told each other."""
+    async def prepare_social(self) -> Social:
+        """The current world's acquaintances, loaded before a caller chooses among them."""
         if self.social is None:
             people = await self.link.story_people()
             self.social = Social(people, self.graph, self.bonds())
             if self.crimes is not None:
                 self.crimes.people = {p["npc"]: p for p in people}
             log.info("rumors: %d people, %d ties", len(self.social.names), _count(self.social))
+        return self.social
+
+    async def tick(self) -> None:
+        """Who met whom since the last tick, and what they told each other."""
+        await self.prepare_social()
+        if self.crimes is not None:
+            try:
+                await self.crimes.sides.prepare()
+            except (GameError, TimeoutError) as err:
+                log.info("rumors: crime sides: %s", err or type(err).__name__)
         state = await self.link.story_state()
         now = int(state.get("day", 0)) * DAY + int(state.get("hour", 0)) * 60 + int(state.get("minute", 0))
         if self.clock is not None and now > self.clock:
@@ -432,7 +472,7 @@ class Rumors:
         clock = self.clock
         if clock is None or self.social is None or a in self.dead or b in self.dead:
             return "no"
-        if a not in r.known or b in r.known or a in r.silent:
+        if a not in r.known or not self._new_to(r, a, b) or a in r.silent or a == r.subject:
             return "no"
         if r.crime and (
             not r.tells(a, clock // DAY)
@@ -449,12 +489,24 @@ class Rumors:
         """offer_status of a meeting: True if it passed (busy now: the view trigger asks again later)."""
         return self.offer_status(r, a, b) == "told"
 
+    def _new_to(self, r: Rumor, teller: str, listener: str) -> bool:
+        """A first telling, or the justified version of a killing heard without its reason."""
+        return listener not in r.known or bool(
+            self.crimes is not None and r.is_player and r.crime
+            and (crime := self.crimes.crime(r.crime)) is not None and crime.get("kind") == "murder"
+            and self.crimes.react is not None
+            and self.crimes.react.base_role(listener, crime) == "stranger"
+            and any(k.crime["id"] == r.crime and k.degree == "heard" for k in self.crimes.known(listener))
+            and not self.crimes.excuse(listener, r.crime)
+            and self.crimes.excuse(teller, r.crime)
+        )
+
     def _passes(self, r: Rumor, a: str, b: str, t: int, meet: bool) -> bool:
         """a tells b the rumor at minute t: the living, what each knows, a's tells that day and the lot."""
         day = t // DAY
         if a in self.dead or b in self.dead:
             return False
-        if a not in r.known or b in r.known or not r.tells(a, day):
+        if a not in r.known or not self._new_to(r, a, b) or not r.tells(a, day):
             return False
         forced = self.gate(r, a, b) if self.gate is not None else None
         if forced is not None:
@@ -504,13 +556,24 @@ class Rumors:
         self, r: Rumor, listener: str, teller: str, at: int, how: str, extra: dict[str, Any] | None = None
     ) -> Fact:
         assert self.social is not None
-        r.known[listener] = r.known[teller] + 1
-        r.since[listener] = at // DAY
+        hops = r.known[teller] + 1
+        r.known[listener] = min(r.known.get(listener, hops), hops)
+        r.since.setdefault(listener, at // DAY)
         self.tells[(r.key, teller, at // DAY)] += 1
         teller_name = self.social.names.get(teller, teller)
         name = self.social.names.get(listener, listener)
         if not r.about_name or r.about_name == r.about:
             r.about_name = self.social.names.get(r.about, r.about)
+        if not r.is_player and (not r.subject_name or r.subject_name in {r.subject, "герой"}):
+            r.subject_name = self.social.names.get(r.subject, r.subject)
+        crime = self.crimes.crime(r.crime) if self.crimes is not None and r.is_player and r.crime else None
+        excuse = {}
+        if crime is not None:
+            self.crimes.learn_side(listener, crime)
+            excuse = dict(self.crimes.excuse(teller, r.crime))
+            if excuse and excuse.get("excuse_by_name") in {None, "", excuse["excuse_by"]}:
+                origin = excuse["excuse_by"]
+                excuse["excuse_by_name"] = self.social.names.get(origin, origin)
         fact: Fact = {
             "fact": "rumor",
             "quest": r.quest,
@@ -518,18 +581,31 @@ class Rumors:
             "about": r.about,
             "about_name": r.about_name,
             "title": r.title,
+            "subject": r.subject,
+            "subject_name": r.subject_name,
             "from": teller,
             "from_name": teller_name,
             "to": listener,
             "hops": r.known[listener],
             "how": how,
             "day": at // DAY,
+            **({"feat": r.quest, "text": r.text} if r.kind == "fame" else {}),
             **({"said": True} if r.said else {}),
             **({"crime": r.crime, "at": at} if r.crime else {}),
+            **excuse,
             **(extra or {}),
         }
         self.chronicle.record(fact)
-        self.dialogue.remember(listener, name, r.told(teller_name))
+        if r.is_player:
+            for promise in broken_promises(
+                self.chronicle, teller, crime=r.crime, rumor=r.key,
+                cover=self.crimes is not None and self.crimes.cover, at=at,
+            ):
+                betrayed(self.chronicle, teller, str(promise.get("deal", "")), "told", listener)
+        remembered = r.told(teller_name)
+        if crime is not None and excuse:
+            remembered += f". {self.crimes.excuse_text(crime, excuse)}"
+        self.dialogue.remember(listener, name, remembered)
         return fact
 
     # --- the save branch --------------------------------------------------------------------
@@ -540,10 +616,26 @@ class Rumors:
         self.tells.clear()
         self.waiting = None
         for f in self.chronicle.facts():
-            self._on_fact(f)
+            self._on_fact(f, loading=True)
 
-    def _on_fact(self, f: Fact) -> None:
+    def _on_fact(self, f: Fact, *, loading: bool = False) -> None:
+        if f.get("fact") in SOURCES:
+            for event in source_events(f, self.chronicle.facts()):
+                r = Rumor(
+                    event.key, event.kind, event.about, event.about_name, event.description(),
+                    subject=event.subject, subject_name=event.subject_name,
+                )
+                r = self.rumors.setdefault(r.key, r)
+                r.known[event.source] = 0
+                r.since[event.source] = event.day
+            return
         match f.get("fact"):
+            case "feat_fame":
+                r = Rumor(f["feat"], "fame", PLAYER, "герой", f["title"], text=f["text"])
+                r = self.rumors.setdefault(r.key, r)
+                for npc in f["witnesses"]:
+                    r.known[npc] = 0
+                    r.since.setdefault(npc, int(f["day"]))
             case "found_out" | "caught":
                 r = Rumor(
                     f.get("quest", ""),
@@ -584,7 +676,7 @@ class Rumors:
                 if "day" in crime:
                     r.since[f["npc"]] = int(crime["day"])
             case "testimony" if self.crimes is not None and f.get("npc"):
-                for crime in f.get("crime_told", []):
+                for crime in self.crimes.testimony_crimes(f):
                     r = next(
                         (r for r in self.rumors.values() if r.crime == crime and r.kind in CRIME_KINDS),
                         None,
@@ -597,14 +689,20 @@ class Rumors:
                     return
                 about = f.get("about") or f.get("from", "")
                 for r in self.rumors.values():
-                    if r.quest == f.get("quest") and r.about == about and f.get("kind", r.kind) == r.kind:
-                        if f.get("to", "") not in r.known and "day" in f:
+                    if (
+                        r.quest == f.get("quest") and r.about == about
+                        and f.get("kind", r.kind) == r.kind and r.subject == rumor_subject(f)
+                    ):
+                        if "day" in f and (loading or f.get("to", "") not in r.known):
                             self.tells[(r.key, f.get("from", ""), int(f["day"]))] += 1
-                        r.known.setdefault(f.get("to", ""), int(f.get("hops", 1)))
+                        listener, hops = f.get("to", ""), int(f.get("hops", 1))
+                        r.known[listener] = min(r.known.get(listener, hops), hops)
                         if "day" in f:
                             r.since.setdefault(f.get("to", ""), int(f["day"]))
                         if not r.about_name or r.about_name == about:
                             r.about_name = f.get("about_name") or f.get("name") or about
+                        if not r.is_player and (not r.subject_name or r.subject_name == r.subject):
+                            r.subject_name = f.get("subject_name") or r.subject
             case "broken":
                 key = f.get("debt") or f.get("meet") or ""  # a debt, or a meeting he did not come to
                 r = Rumor(key, "broken", f.get("npc", ""), f.get("name") or "", f.get("what", ""))
@@ -612,11 +710,22 @@ class Rumors:
                 if "day" in f:
                     r.since[r.about] = int(f["day"])
                 self.rumors.setdefault(r.key, r)
-            case "deal" if f.get("silence"):
-                for key in f["silence"]:
-                    if key in self.rumors:
-                        self.rumors[key].silent.add(f.get("npc", ""))
+            case "deal":
+                if keeps(self.chronicle, str(f.get("deal", "")), "silence"):
+                    for key in f.get("silence", ()):
+                        if key in self.rumors:
+                            self.rumors[key].silent.add(f.get("npc", ""))
+                for promise in silence_facts(
+                    self.chronicle, f, cover=self.crimes is not None and self.crimes.cover,
+                ):
+                    for r in self.rumors.values():
+                        if r.crime == promise["crime"]:
+                            r.silent.add(promise.get("npc", ""))
             case "forgiven" | "silenced" if f.get("crime"):
+                if f.get("cover") and (self.crimes is None or not self.crimes.cover):
+                    return
+                if f.get("fact") == "silenced" and not silence_facts(self.chronicle, f):
+                    return
                 for r in self.rumors.values():
                     if r.crime == f["crime"]:
                         r.silent.add(f.get("npc", ""))
@@ -625,11 +734,11 @@ class Rumors:
 
     def _crime_silence(self, r: Rumor) -> None:
         """A settlement also applies when a later lie starts another rumor about the same deed."""
-        r.silent.update(
-            f.get("npc", "")
-            for f in self.chronicle.facts()
-            if f.get("fact") in {"forgiven", "silenced"} and f.get("crime") == r.crime
-        )
+        for f in self.chronicle.facts():
+            promises = [f] if f.get("fact") == "forgiven" else silence_facts(
+                self.chronicle, f, cover=self.crimes is not None and self.crimes.cover,
+            )
+            r.silent.update(p.get("npc", "") for p in promises if p.get("crime") == r.crime)
 
     def _on_message(self, msg: GameMessage) -> None:
         if isinstance(msg, Session):
@@ -651,7 +760,8 @@ class Rumors:
             for n, h in r.known.items():
                 by_hops[h].append(names.get(n, n))
             spread = "; ".join(f"{h}: {', '.join(sorted(ns))}" for h, ns in sorted(by_hops.items()))
-            out.append(f"{r.kind} {r.about_name} «{r.title}» — {spread}")
+            subject = "" if r.is_player else f"{r.subject_name}: "
+            out.append(f"{r.kind} {subject}{r.about_name} «{r.title}» — {spread}")
         return out
 
 

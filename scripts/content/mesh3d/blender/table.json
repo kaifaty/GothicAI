@@ -1,0 +1,29 @@
+{
+  "id": "table",
+  "seed": 1,
+  "top": 0.06,
+  "planks": 5,
+  "end_board": 0.12,
+  "gap": 0.006,
+  "width_jitter": 0.1,
+  "apron": 0.2,
+  "apron_t": 0.03,
+  "inset": 0.06,
+  "leg": 0.12,
+  "foot": 0.09,
+  "splay_deg": 8,
+  "stretcher_h": 0.15,
+  "stretcher": [
+    0.05,
+    0.06
+  ],
+  "strap": [
+    0.26,
+    0.06,
+    0.004
+  ],
+  "nail": 0.004,
+  "nail_radius": 0.008,
+  "stave_tile": 0.38,
+  "planks_per_tile": 4
+}

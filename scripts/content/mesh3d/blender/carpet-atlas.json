@@ -1,0 +1,15 @@
+{
+  "glb": "market-set/build/carpet/model.glb",
+  "maps_dir": "market-set/tiles",
+  "scales": {"OWN_PROP_CARPET": 1.0},
+  "targets": {"OWN_PROP_CARPET": [0.1902, 0.0828, 0.0591]},
+  "slots": {"OWN_PROP_CARPET": ["OWN_CARPET_MARKET_WOOL", "UNDEF"]},
+  "metal": [],
+  "size": 2048,
+  "seed": 1,
+  "tone_spread": 0.0,
+  "wet_height": 0.0,
+  "algae": 0.0,
+  "bleach": 0.1,
+  "contrast": {"OWN_PROP_CARPET": 1.0}
+}

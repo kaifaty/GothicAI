@@ -1,4 +1,4 @@
-// The look shared by the explainer series: one palette, two fonts, the Shorts safe area.
+// The look shared by the explainer series: one palette, two fonts.
 
 export const W = 1080;
 export const H = 1920;
@@ -6,6 +6,14 @@ export const FPS = 30;
 
 // the Shorts interface covers these: no text under them
 export const SAFE = {top: 150, bottom: 380, right: 150, left: 60};
+
+export const FRAME = {
+  tall: {width: W, height: H},
+  wide: {width: 1920, height: 1080},
+};
+
+// Wide videos have ordinary 5% margins, clear of the frame rather than the Shorts UI.
+export const WIDE_SAFE = {top: 54, bottom: 54, left: 96, right: 96};
 
 export const COLOR = {
   before: '#D8D8D8', // the old rule (the dice, the auto aim)

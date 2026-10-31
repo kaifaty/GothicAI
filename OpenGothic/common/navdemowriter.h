@@ -11,20 +11,26 @@
 
 // Stand-only demonstration storage. No world queries, teacher decisions or bridge traffic.
 // samples.bin.gz is gzip (level 1), followed after decompression by a 32-byte header:
-// char[8] "NAVDEMO\0", uint32 version=1|2, recordBytes, rays=238, near=64, far=100,
+// char[8] "NAVDEMO\0", uint32 version=1|2|3, recordBytes, rays=238, near=64, far=100,
 // periodMs=100. Integers and IEEE float32 are little endian, without struct padding.
 // Records match scripts/nav_demos.py::RECORD_DTYPES[version]. V2 road slots are
 // carrot direction/distance, goal direction/distance, known remainder, beyond-known.
+// V3 retains V2 roads and adds the familiar channel to each memory cell.
 class NavDemoWriter final {
   public:
     static constexpr uint32_t version = 1, rayCount = 238, nearSize = 64, farSize = 100;
     static constexpr uint32_t headerBytes = 32;
     // Memory cell: 7 uint8 channels (confidence/free/wall/ledge/drop/water/movable),
+    // V3 adds uint8 familiar after movable. All channels are round(255*p).
     // float32 height in world centimetres, uint8 heightValid. Unknown height is 0/0.
     // Each ray: f32 distance, u8 kind, f32 normalY, u32 ageMs, u32 nearAgeMs,
     // u8 complete, u8 hit. Keys: five f32 (forward/strafe/turn/headYaw/headPitch),
     // then three u8 (walk/jump/climb).
     static constexpr uint32_t recordBytes = 173838;
+    static constexpr uint32_t recordBytesV3 = recordBytes+nearSize*nearSize+farSize*farSize;
+    static constexpr uint32_t recordBytesForVersion(uint32_t formatVersion) {
+      return formatVersion==3 ? recordBytesV3 : recordBytes;
+      }
 
     struct Body final {
       // Current body frame, x=right, y=up, z=forward.

@@ -15,9 +15,19 @@ from ..game import GameError, GameLink
 from ..llm.fake import FakeBackend
 from ..protocol import DialogChosen, Session
 from ..validator import LOG_RUNNING, LOG_SUCCESS
-from .common import _logged, _save, _until, _until_async, wait_message
-from .crime_law import COUNTERS, PAYNOW, PETZMASTER, PMSCHULDEN
-from .crimes import ANDRE, CITY_HOUSE, CITY_OWNER
+from .common import (
+    _logged,
+    _save,
+    _until,
+    _until_async,
+    prepare_npc_parking,
+    prepare_npc_pose,
+    prepare_street_theft_witness,
+    wait_message,
+    wait_npc_visibility,
+)
+from .crime_law import COUNTERS, HERO_POINT, PAYNOW, PETZMASTER, PMSCHULDEN, THEFT_POINT
+from .crimes import ANDRE, CITY_OWNER
 
 if TYPE_CHECKING:
     from ..crime_law_runtime import CrimeLawRuntime
@@ -43,8 +53,8 @@ async def quest_law(
 ) -> dict[str, str]:
     """Save 1, fake model: have -> bring, native theft, reload, fine, turn-in, fine payment.
 
-    Only the scene is staged, as in crime_law: other people wait away from Matteo's house and his
-    fight is stopped after ASSESSTHEFT. Ownership, guilds and native theft perceptions stay intact.
+    Only the scene is staged, as in crime_law: other people wait away from Matteo's street and his
+    rule-based reaction finishes before he is moved. Ownership, guilds and native perceptions stay intact.
     Random rumor meetings are paused so Andre learns on the law's deadline, and the peaceful giver
     is neither a witness nor a rumor recipient. No model writes the quest or decides its outcome.
     """
@@ -69,13 +79,23 @@ async def quest_law(
     async def has(item: str, npc: str = "HERO") -> int:
         return int(await link.evaluate(["call", "NPC_HASITEMS", ["inst", npc], ["sym", item]]) or 0)
 
-    async def stand(npc: str, point: str, *, face: str | None = None) -> None:
-        await link.debug("skip_important", near=npc)
-        await link.npc_act(
-            npc, "start_activity", state="ZS_STAND_WP", waypoint=point, minutes=120, place=True
-        )
-        if face is not None:
-            await link.npc_act(npc, "turn_to", npc=face)
+    async def pose(npc: str, point: str, *, face: str | None = None) -> bool:
+        if point == parked:
+            expected = points[point]
+            ready, detail = await prepare_npc_parking(
+                link, npc, point, (expected["x"], expected["y"], expected["z"]),
+            )
+        else:
+            if npc == CITY_OWNER:
+                await link.debug("skip_important", near=npc)
+                await link.debug("npc_goto", npc=npc, waypoint=point)
+                await link.debug("player_goto", waypoint=HERO_POINT)
+            elif npc == GIVER:
+                await link.debug("player_goto", waypoint=point)
+            ready, detail = await prepare_npc_pose(link, npc, point, face=face)
+        if not ready:
+            check(current, False, {"preparation": "native pose", **detail})
+        return ready
 
     async def end(npc: str) -> None:
         await link.story_effect(npc, [{"do": "end"}])
@@ -108,15 +128,23 @@ async def quest_law(
         start = len(chosen)
         await link.debug("skip_important", near=ANDRE)
         await link.debug("player_goto", to=ANDRE, distance=250)
-        # A nearest waypoint can be across the barracks wall. Put the hero beside Andre's actual
-        # feet, with no bystander blocking their native turn/output queues.
         for person in await link.story_nearby(ANDRE, 1000):
             if person["npc"] in people and person["npc"] != ANDRE:
-                await stand(person["npc"], parked)
+                if not await pose(person["npc"], parked):
+                    return {"ready": False, "preparation": results[current]}
         keeper = await link.snapshot(ANDRE, fresh=True)
-        x, y, z = keeper.npc.pos
-        await link.debug("player_goto", pos=[x + 200, y, z])
-        await asyncio.sleep(0.5)
+        point = keeper.npc.nearest_waypoint
+        if point is None:
+            return {"ready": False, "preparation": "Andre has no native waypoint"}
+        posed, detail = await prepare_npc_pose(link, ANDRE, point, face="PC_HERO")
+        if not posed:
+            return {"ready": False, "preparation": detail}
+        # Use the initialized waypoint and prove sight instead of placing through a wall.
+        await link.debug("teleport", near=ANDRE, distance=250)
+        await link.debug("npc_goto", npc=ANDRE, waypoint=point, face="PC_HERO")
+        visible, detail = await wait_npc_visibility(link, ANDRE, "HERO", distance=700)
+        if not visible:
+            return {"ready": False, "preparation": detail}
         await link.start_talk(ANDRE)
         payment = law.graph.node(PAYNOW).description
         ready = await _until_async(link.dialog_menu, lambda menu: bool(payment) and payment in menu, 120)
@@ -162,7 +190,7 @@ async def quest_law(
         )
         prepared = (
             {GIVER, CITY_OWNER, ANDRE} <= people
-            and CITY_HOUSE in points
+            and {THEFT_POINT, HERO_POINT} <= points.keys()
             and bool(home)
             and GIVER in eligible
             and not book.rules.plot_npc(GIVER)
@@ -184,7 +212,7 @@ async def quest_law(
                 },
             )
             return _logged(results)
-        origin = points[CITY_HOUSE]
+        origin = points[THEFT_POINT]
         position = (origin["x"], origin["y"], origin["z"])
         far = [
             p
@@ -208,7 +236,8 @@ async def quest_law(
         if await has("ITMI_GOLD") < 100:
             await link.story_effect(ANDRE, [{"do": "give", "item": "ITMI_GOLD", "count": 100}])
         await law.tick()
-        await stand(GIVER, home)
+        if not await pose(GIVER, home):
+            return _logged(results)
         q = questbook.Quest(
             id=book.next_id(),
             giver=GIVER,
@@ -267,12 +296,13 @@ async def quest_law(
         await end(GIVER)
 
         current = "theft"
-        await link.debug("player_goto", waypoint=CITY_HOUSE)
+        await link.debug("player_goto", waypoint=HERO_POINT)
         for person in await link.story_nearby("PC_HERO", 7000):
             if person["npc"] in people and person["npc"] != CITY_OWNER:
-                await stand(person["npc"], parked)
-        await stand(CITY_OWNER, CITY_HOUSE, face="PLAYER")
-        await asyncio.sleep(0.5)
+                if not await pose(person["npc"], parked):
+                    return _logged(results)
+        if not await pose(CITY_OWNER, THEFT_POINT, face="PC_HERO"):
+            return _logged(results)
 
         async def drop() -> bool:
             try:
@@ -286,48 +316,10 @@ async def quest_law(
         if not await _until_async(drop, bool, 10):
             check(current, False, "Matteo could not drop the native silver cup")
             return _logged(results)
-        # Sharing a waypoint can put the hero inside Matteo's collision capsule. Give his native
-        # sight a real direction and wait for the drop/turn animations before taking the cup.
-        witness_view: dict[str, Any] = {}
-        for dx, dz in ((200, 0), (-200, 0), (0, 200), (0, -200)):
-            await link.debug("player_goto", pos=[origin["x"] + dx, origin["y"], origin["z"] + dz])
-            await link.npc_act(CITY_OWNER, "turn_to", npc="PLAYER")
-
-            async def sees_hero() -> bool:
-                nonlocal witness_view
-                views = await link.npc_view([CITY_OWNER])
-                if not views:
-                    return False
-                view = views[0]
-                snapshot = await link.snapshot(CITY_OWNER, fresh=True)
-                settled = await link.snapshot(CITY_OWNER, fresh=True)
-                state_seconds = await link.evaluate(
-                    ["call", "NPC_GETSTATETIME", ["inst", "SELF"]], npc=CITY_OWNER
-                )
-                witness_view = {
-                    "indoors": view.indoors,
-                    "state": view.state,
-                    "body": view.body,
-                    "busy": snapshot.npc.busy,
-                    "idle_ticks": [snapshot.t, settled.t],
-                    "state_seconds": state_seconds,
-                    "hero": view.hero.model_dump() if view.hero is not None else None,
-                }
-                return (
-                    view.indoors
-                    and view.body == "stand"
-                    and not snapshot.npc.busy
-                    and not settled.npc.busy
-                    and settled.t > snapshot.t
-                    and state_seconds >= 2
-                    and view.hero is not None
-                    and view.hero.seen
-                    and 100 <= view.hero.distance <= 600
-                )
-
-            if await _until_async(sees_hero, bool, 6):
-                break
-        else:
+        witness_ready, witness_view = await prepare_street_theft_witness(
+            link, CITY_OWNER, THEFT_POINT, ITEM,
+        )
+        if not witness_ready:
             check(
                 current, False, {"preparation": "Matteo must see the hero before the theft", **witness_view}
             )
@@ -336,7 +328,19 @@ async def quest_law(
         await link.debug("player_take", item=ITEM, distance=800)
         await _until(lambda: any(f["id"] not in before_crimes for f in facts("crime")), 10)
         crime = next((f for f in facts("crime") if f["id"] not in before_crimes), {})
-        await stand(CITY_OWNER, CITY_HOUSE, face="PLAYER")
+        # Finish the held perception before replacing the witness's native reaction.
+        reacted = bool(crime) and await _until(
+            lambda: any(
+                fact.get("crime") == crime["id"] and fact.get("npc") == CITY_OWNER
+                and fact.get("verdict") == "server" for fact in facts("crime_reaction")
+            ),
+            10,
+        )
+        if not reacted:
+            check(current, False, {"crime": crime, "reactions": facts("crime_reaction")})
+            return _logged(results)
+        if not await pose(CITY_OWNER, THEFT_POINT, face="PC_HERO"):
+            return _logged(results)
         await law.tick()
         cid = str(crime.get("id", ""))
         if not check(
@@ -443,7 +447,8 @@ async def quest_law(
         await _until_async(link.story_state, lambda state: not state.get("dialog"), 30)
 
         current = "turn_in"
-        await stand(GIVER, home)
+        if not await pose(GIVER, home):
+            return _logged(results)
         gold, xp, cups = (
             await has("ITMI_GOLD"),
             await link.evaluate(["field", ["inst", "HERO"], "EXP"]),

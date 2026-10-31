@@ -1,0 +1,100 @@
+# WORLD=NEWWORLD.ZEN; whole ship plus close views of authored worldmesh cloth.
+# The high-mast observer may use explicitly labeled fixture static flight.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+view full
+cloth setup densest harbour-density
+# Authored room controls: ship bow cabin and town hall, followed by open air
+# directly above each. The actual upper-yard sail is outdoors despite BUG's
+# legacy BSP leaf extending up the mast. No test cloth or prop is added.
+cloth room-check -9898.855 116.9855 -12361.95 indoor
+cloth room-check -9898.855 5000 -12361.95 outdoor
+cloth room-check -10000 0 -16000 indoor
+cloth room-check -10000 5000 -16000 outdoor
+cloth room-check 15108.85 1140.04 -369.6025 indoor
+cloth room-check 15108.85 5000 -369.6025 outdoor
+cloth room-check -9929.7305 4543.2056 -12290.5566 outdoor
+cloth camera harbour
+cloth off
+cloth wind calm
+wait 12000
+rec cloth-harbour-off
+shot cloth-harbour-off-calm
+wait 3000
+cloth wind gust
+wait 10000
+shot cloth-harbour-off-gust
+wait 34
+cloth checkpoint harbour-off-gust
+stop
+cloth wind calm
+cloth on
+wait 2000
+cloth reset-stats
+wait 10000
+cloth checkpoint harbour-calm-10s
+cloth verify anchors
+rec cloth-harbour-on
+shot cloth-harbour-on-calm
+wait 3000
+cloth wind gust
+wait 10000
+shot cloth-harbour-on-gust
+wait 34
+cloth checkpoint harbour-gust
+cloth verify anchors
+cloth verify harbour-wind
+stop
+
+# The main mast flag fills the frame for the OFF/ON motion and spell comparison.
+cloth setup NW_SHIP_FLAG_01:1 harbour-main-flag
+cloth off
+cloth wind natural
+wait 3000
+rec cloth-harbour-flag-off
+shot cloth-harbour-flag-off
+wait 10000
+stop
+cloth on
+cloth wind calm
+wait 12000
+cloth checkpoint harbour-flag-calm-10s
+rec cloth-harbour-flag-on
+shot cloth-harbour-flag-on-calm
+wait 3000
+cloth wind gust
+wait 10000
+cloth checkpoint harbour-flag-gust
+cloth shoot fireball
+wait 2000
+cloth verify fireball
+cloth verify anchors
+cloth checkpoint harbour-flag-after-fireball
+shot cloth-harbour-flag-after-fireball
+wait 34
+stop
+
+# The upper-yard sail has a clear view from below, with its whole cloth in frame.
+cloth setup NW_SHIP_SAIL_02:2 harbour-furled-sail
+cloth off
+wait 3000
+rec cloth-harbour-sail-off
+shot cloth-harbour-sail-off
+wait 10000
+stop
+cloth on
+cloth wind calm
+wait 12000
+rec cloth-harbour-sail-on
+shot cloth-harbour-sail-on-calm
+wait 3000
+cloth wind gust
+wait 10000
+cloth verify anchors
+cloth checkpoint harbour-sail-gust
+shot cloth-harbour-sail-on-gust
+wait 34
+stop
+physics stats

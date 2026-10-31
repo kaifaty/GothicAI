@@ -140,13 +140,16 @@
       <Setting key="voice.enabled" kind="toggle" title="Голосовой ввод" description="Выключено: только текстовый чат" />
       {#if s.settings.voice.enabled}
         <Setting key="voice.provider" kind="choice" options={ASR} />
+        {#if s.settings.voice.provider === "inworld" || s.settings.voice.fallback === "inworld"}
+          <Setting key="secrets.inworld_api_key" kind="secret" />
+        {/if}
         {#if s.settings.voice.provider === "voxtral" || s.settings.voice.fallback === "voxtral"}
           <Setting key="voice.voxtral_url" placeholder="http://gpu-server:47830" mono />
         {/if}
         <Setting key="voice.fallback" kind="choice" options={ASR_FALLBACK} />
         <Reach part={launcher.providers?.voice} />
         <VoiceTest />
-        <p class="faint">macOS один раз спросит доступ к микрофону для лаунчера.</p>
+        <p class="faint">{navigator.platform.startsWith("Mac") ? "macOS один раз спросит доступ к микрофону для лаунчера." : "Выберите микрофон в настройках звука GNOME и проверьте его здесь."}</p>
       {/if}
     {:else}
       <h1 class="display">Какими голосами говорят NPC</h1>

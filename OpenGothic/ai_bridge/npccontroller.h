@@ -59,11 +59,24 @@ class NpcController final {
       size_t          target   = 0;     // instance of target npc
       bool            toPlayer = false;
       float           radius   = 0;     // success radius for movement, cm
+      bool            closeApproach = false; // explicit short scene approach, with a clear ray
+      Tempest::Vec3    movedFrom;        // go_to_npc: last movement anchor for stuck detection
+      Tempest::Vec3    plannedFrom;      // where the previous route was planned
+      uint64_t        movedAt  = 0;
+      uint64_t        nextProgress = 0;
+      uint64_t        updatedAt = 0;     // last known tick/distance, safe even after the world is gone
+      double          distance = -1;
+      size_t          replans  = 0;
+      bool            byWay    = false;
+      bool            walkStarted = false;
       size_t          item     = 0;     // give_item, take_item: item instance and count (take: what it had)
       size_t          count    = 0;
       ScriptFn        state;            // fight/flee: the script state that runs it
       uint64_t        stateStart = 0;   // fight/flee: startup clock after queued speech
       const Npc*      targetNpc = nullptr; // fight/flee: exactly whom (symbols of monsters are shared)
+      std::string     animation;
+      uint64_t        holdMs = 0;
+      uint64_t        heldAt = 0;
       bool            entered  = false; // the npc is in that state already
       // use_chest (v28): the chest, what to take out and put in (item, count), how far it got
       Interactive*    chest    = nullptr;
@@ -98,6 +111,7 @@ class NpcController final {
     const Controlled* find(std::string_view symbol) const;
 
     bool startAction(World& world, Controlled& c, Action& a, const rapidjson::Value& args, std::string& err);
+    void planNpcWalk(World& world, Controlled& c, Action& a, Npc& target, bool byWay);
     void updateAction(World& world, Controlled& c, uint64_t now);
     void updateStateAction(World& world, Controlled& c, uint64_t now);
     bool startScriptState(World& world, Controlled& c, Action& a, std::string_view state, const rapidjson::Value& args,

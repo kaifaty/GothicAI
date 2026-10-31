@@ -160,6 +160,7 @@ void Bullet::onSpellWorldHit(const DynamicWorld::BulletWorldHit& hit) {
   }
 
 void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
+  TestBench::ownMeshArrowHit(hit.movable!=nullptr ? hit.movable->zenId : uint32_t(-1),hit.point,hit.normal);
   impactAt = hit.point;
   impactOwner = hit.bone;
   impactKnown = true;
@@ -189,7 +190,7 @@ void Bullet::onWorldHit(const DynamicWorld::BulletWorldHit& hit) {
     }
   }
 
-void Bullet::onCollide(zenkit::MaterialGroup matId) {
+void Bullet::onCollide(asset::MaterialGroup matId) {
   if(isFinished())
     return;
   applySpellPhysics(nullptr);
@@ -203,7 +204,7 @@ void Bullet::onCollide(zenkit::MaterialGroup matId) {
                   int(by.size()),by.data());
     TestBench::note(buf);
     }
-  if(matId != zenkit::MaterialGroup::NONE) {
+  if(matId != asset::MaterialGroup::NONE) {
     if(material < ItemMaterial::MAT_COUNT) {
       auto s = wrld->addLandHitEffect(ItemMaterial(material),matId,obj->matrix());
       s.play();

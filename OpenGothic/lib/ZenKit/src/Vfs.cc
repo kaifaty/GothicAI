@@ -131,14 +131,22 @@ namespace zenkit {
 		if (fd.zipped) {
 			auto zipped = Read::from_zipped(std::move(reader));
 			if (zipped != nullptr) {
-				return zipped;
+				reader = std::move(zipped);
+			} else {
+				// ZippedStream header validation failed (e.g. raw Ogg Vorbis audio).
+				// Fall back to raw data using the catalog entry size.
+				reader = Read::from(fd.memory, fd.raw_size);
 			}
-
-			// ZippedStream header validation failed (e.g. raw Ogg Vorbis audio).
-			// Fall back to raw data using the catalog entry size.
-			return Read::from(fd.memory, fd.raw_size);
 		}
 #endif
+
+		if (_m_open_observer != nullptr) {
+			try {
+				_m_open_observer->callback(_m_name, _m_open_observer->source);
+			} catch (...) {
+				// Optional diagnostics must not change whether a resource can be read.
+			}
+		}
 
 		return reader;
 	}
@@ -172,6 +180,10 @@ namespace zenkit {
 	}
 
 	Vfs::Vfs() : _m_root(VfsNode::directory("/")) {}
+
+	void Vfs::set_open_observer(std::function<void(std::string_view, std::string_view)> observer) {
+		_m_open_observer = std::move(observer);
+	}
 
 	VfsNode const* Vfs::resolve(std::string_view path) const noexcept {
 		auto* context = &_m_root;
@@ -404,9 +416,10 @@ namespace zenkit {
 	}
 
 	void Vfs::mount_disk(std::filesystem::path const& host, VfsOverwriteBehavior overwrite) {
+		auto source = _m_open_observer ? host.filename().string() : std::string {};
 #ifdef _ZK_WITH_MMAP
 		auto& mem = _m_data_mapped.emplace_back(host);
-		this->mount_disk(mem.data(), mem.size(), overwrite);
+		this->mount_disk(mem.data(), mem.size(), overwrite, source);
 #else
 		std::ifstream stream {host, std::ios::in | std::ios::ate | std::ios::binary};
 		auto size = stream.tellg();
@@ -414,7 +427,7 @@ namespace zenkit {
 
 		auto& data = _m_data.emplace_back(new std::byte[(size_t) size]);
 		stream.read((char*) data.get(), size);
-		this->mount_disk(data.get(), (size_t) size, overwrite);
+		this->mount_disk(data.get(), (size_t) size, overwrite, source);
 #endif
 	}
 
@@ -553,11 +566,12 @@ namespace zenkit {
 					    VfsNode* newP = parent->create(VfsNode::directory(path.filename().string(), time.count()));
 					    load_directory(newP, path);
 				    } else if (ref.file_size() > 0) {
+					    VfsNode* node;
 #ifdef _ZK_WITH_MMAP
 					    auto& mem = this->_m_data_mapped.emplace_back(path);
-					    parent->create(VfsNode::file(path.filename().string(),
-					                                 VfsFileDescriptor {mem.data(), mem.size(), false},
-					                                 time.count()));
+					    node = parent->create(VfsNode::file(path.filename().string(),
+				                                        VfsFileDescriptor {mem.data(), mem.size(), false},
+				                                        time.count()));
 #else
 					    std::ifstream stream {path, std::ios::in | std::ios::ate | std::ios::binary};
 					    auto size = stream.tellg();
@@ -566,10 +580,14 @@ namespace zenkit {
 					    auto& data = _m_data.emplace_back(new std::byte[(size_t) size]);
 					    stream.read((char*) data.get(), size);
 
-					    parent->create(VfsNode::file(path.filename().string(),
-					                                 VfsFileDescriptor {data.get(), static_cast<size_t>(size), false},
-					                                 time.count()));
+					    node = parent->create(VfsNode::file(path.filename().string(),
+				                                        VfsFileDescriptor {data.get(), static_cast<size_t>(size), false},
+				                                        time.count()));
 #endif
+					    if (_m_open_observer) {
+						    node->_m_open_observer = std::make_shared<VfsNode::OpenObserver>(
+						        VfsNode::OpenObserver {_m_open_observer, path.string()});
+					    }
 				    }
 			    }
 		    };
@@ -581,8 +599,16 @@ namespace zenkit {
 		}
 	}
 
-	void Vfs::mount_disk(std::byte const* buf, std::size_t size, VfsOverwriteBehavior overwrite) {
+	void Vfs::mount_disk(std::byte const* buf,
+	                     std::size_t size,
+	                     VfsOverwriteBehavior overwrite,
+	                     std::string_view source) {
 		auto r = Read::from(buf, size);
+		std::shared_ptr<VfsNode::OpenObserver const> observer;
+		if (_m_open_observer) {
+			observer = std::make_shared<VfsNode::OpenObserver>(
+			    VfsNode::OpenObserver {_m_open_observer, std::string {source}});
+		}
 
 		auto comment = r->read_string(256);
 		auto signature = r->read_string(16);
@@ -625,7 +651,7 @@ namespace zenkit {
 		}
 
 		std::function<bool(VfsNode*)> load_entry =
-		    [&load_entry, overwrite, catalog_offset, timestamp, zipped, &r, buf, size](VfsNode* parent) {
+		    [&load_entry, overwrite, catalog_offset, timestamp, zipped, &r, buf, size, &observer](VfsNode* parent) {
 			    auto e_name = r->read_string(64);
 			    auto e_offset = r->read_uint();
 			    auto e_size = r->read_uint();
@@ -718,10 +744,11 @@ namespace zenkit {
 				    // so ReadZipped can read the compressed stream. raw_size preserves
 				    // the catalog entry size for fallback (e.g. raw audio files).
 				    auto desc_size = zipped ? (size - e_offset) : static_cast<std::size_t>(e_size);
-				    (void) parent->create(
+				    auto* node = parent->create(
 				        VfsNode::file(e_name,
 				                      VfsFileDescriptor {buf + e_offset, desc_size, false, zipped, e_size},
 				                      timestamp));
+				    node->_m_open_observer = observer;
 			    }
 
 			    return last;

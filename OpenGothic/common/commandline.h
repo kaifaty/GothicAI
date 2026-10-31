@@ -25,10 +25,6 @@ class CommandLine {
       };
     auto                graphicsApi() const -> GraphicBackend;
     std::u16string_view rootPath() const;
-    std::u16string      scriptPath() const;
-    std::u16string      scriptPath(ScriptLang lang) const;
-    std::u16string      cutscenePath() const;
-    std::u16string      cutscenePath(ScriptLang lang) const;
     std::u16string_view modPath() const { return gmod; }
     std::u16string      nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type) const;
 
@@ -37,6 +33,7 @@ class CommandLine {
     bool                isWindowMode()     const { return isWindow;     }
     bool                isRayQuery()       const { return isRQuery;     }
     GiMethod            isRtGi()           const { return isGi;         }
+    bool                hasRtGiArg()       const { return isGiSet;      }
     bool                isMeshShading()    const { return isMeshSh;     }
     bool                isBindless()       const { return isBindlessSh; }
     bool                isVirtualShadow()  const { return isVsm;        }
@@ -47,18 +44,14 @@ class CommandLine {
     bool                doForceG1()        const { return forceG1;      }
     bool                doForceG2()        const { return forceG2;      }
     bool                doForceG2NR()      const { return forceG2NR;    }
-    bool                aaPreset()         const { return aaPresetId;   }
+    uint32_t            aaPreset()         const { return aaPresetId;   }
     std::string_view    defaultSave()      const { return saveDef;    }
 
     std::string         wrldDef;
 
   private:
-    bool                validateGothicPath() const;
-
     GraphicBackend      graphics = GraphicBackend::Vulkan;
     std::u16string      gpath, gmod;
-    std::u16string      gscript;
-    std::u16string      gcutscene;
     std::string         saveDef;
     bool                devmode      = false;
     bool                noMenu       = false;
@@ -66,20 +59,24 @@ class CommandLine {
     Benchmark           isBenchmark  = Benchmark::None;
     bool                isWindow     = false;
     bool                isDebug      = false;
-#if defined(__OSX__) || defined(__ANDROID__)
+    // ray tracing is off everywhere, -rt 1 turns it on: the scene rebuilt the whole TLAS
+    // whenever an object moved, 4-8 FPS indoors on an M1 (docs/performance.md, 2026-10-28)
     bool                isRQuery     = false;
+#if defined(__ANDROID__)
     bool                isMeshSh     = false;
+#elif defined(__OSX__)
+    bool                isMeshSh     = false;  // slower on M1 (reports/render-features/2026-10-18)
 #else
-    bool                isRQuery     = true;
     bool                isMeshSh     = true;
 #endif
     bool                isBindlessSh = true;
     bool                isVsm        = false;
     bool                isRtSm       = false;
     GiMethod            isGi         = GiMethod::None;
+    bool                isGiSet      = false;  // -gi given: else Gothic picks by the device
     bool                forceG1      = false;
     bool                forceG2      = false;
     bool                forceG2NR    = false;
-    uint32_t            aaPresetId = 0;
+    uint32_t            aaPresetId = 1;        // CMAA2; -aa 0 turns it off
   };
 

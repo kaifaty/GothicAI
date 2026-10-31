@@ -1,0 +1,82 @@
+# Pilot material comparisons: identical noon cameras for original / city-3 / B / C.
+# Six geometry-selected inspection cameras from city-intent; ceiling at city-3 house.
+cheat god
+set time 12 0
+overlay off
+view hide animated morph pfx
+cam lift off
+
+# NW_CITY_ROOF_01.TGA: roof shingles.
+cam look 45
+goto pos 1366 306 1706
+cam world 707.694 515.629 90.952
+wait 34
+cam hold
+wait 6000
+shot roof
+wait 300
+
+# NW_CITY_PFLASTERSTEIN_01.TGA: upper-quarter paving.
+cam look 45
+goto pos 11950 855 -2848
+cam world 485.238 742.948 -50.120
+wait 34
+cam hold
+wait 6000
+shot upper
+wait 300
+
+# NW_CITY_BODENDIELEN_01.TGA: house ceiling, not an inferred texture name.
+# city-3 house waypoint: [8502.5713,319.8581,3797.8501].
+# Offline geometry: BODENDIELEN_01 patch 43, two downward-facing triangles,
+# Y=547.9103 cm, normal=[0,-1,0], directly above that waypoint.
+# First upward hit from Y=400 is triangle 23 of patch 43 at Y=547.9103.
+# Anchor 20 m above ceiling so teleport collision does not move the camera.
+cam look -2000
+goto pos 8503 2548 3798
+cam world 150 -2160 90
+wait 34
+cam hold
+wait 6000
+shot house
+wait 300
+
+# NW_CITY_ROOF_INSIDE_01.TGA: tavern ceiling and interior roof module.
+cam look 45
+goto pos 1636 489 -699
+cam world 592.770 -564.500 -36.445
+wait 34
+cam hold
+wait 6000
+shot interior
+wait 300
+
+# NW_CITY_WALL_03.TGA: market-house facade.
+cam look 45
+goto pos 9137 905 3745
+cam world 479.218 102.698 24.462
+wait 34
+cam hold
+wait 6000
+shot facade
+wait 300
+
+# NW_CITY_HAFENKAI_BODEN_01.TGA: harbour quay paving.
+cam look 45
+goto pos -7172 -267 -14113
+cam world 489.600 740.287 122.719
+wait 34
+cam hold
+wait 6000
+shot quay
+wait 300
+
+# NW_HARBOUR_STAIRS_01.TGA: stairs to the upper quarter.
+cam look 45
+goto pos 8619 438 -4749
+cam world 480.855 335.720 -179.903
+wait 34
+cam hold
+wait 6000
+shot stairs
+wait 500

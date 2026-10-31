@@ -1,6 +1,8 @@
 import json
 import shutil
 import subprocess
+import sys
+from array import array
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -173,6 +175,38 @@ def test_ai_filters_only_overlay_text_and_append_the_ending(tmp_path, monkeypatc
         assert "[stingv]" not in graph and "[stinga]" not in graph
 
 
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is required")
+def test_effects_body_and_sting_render_as_dual_mono(tmp_path, monkeypatch):
+    monkeypatch.setattr(cut, "BRAND", tmp_path)
+    source = tmp_path / "effects.wav"
+    _ffmpeg(
+        "-f", "lavfi", "-i",
+        "aevalsrc=0.1*sin(2*PI*440*t)|0*t:s=48000:d=3:c=stereo",
+        "-c:a", "pcm_f32le", str(source),
+    )
+    _ffmpeg(
+        "-f", "lavfi", "-i",
+        "aevalsrc=0.1*sin(2*PI*550*t)|0.2*sin(2*PI*770*t):s=48000:d=1:c=stereo",
+        "-c:a", "aac", str(tmp_path / "sting.mp4"),
+    )
+    tl = Timeline(3, cuts=[(1, 1.5)])
+    out, duration = cut.render_effects(
+        Shot("probe", "Probe", "rec main", brand=True), source, tl, tmp_path / "joined.wav", 1,
+    )
+    decoded = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-i", str(out), "-f", "f32le", "-"],
+        check=True, capture_output=True,
+    ).stdout
+    samples = array("f", decoded)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    assert samples[::2] == samples[1::2]
+    body = samples[round(0.1 * 48000) * 2:round((duration - 0.1) * 48000) * 2:2]
+    ending = samples[round((duration + 0.1) * 48000) * 2:-round(0.1 * 48000) * 2:2]
+    assert max(abs(sample) for sample in body) == pytest.approx(0.05, abs=0.001)
+    assert max(abs(sample) for sample in ending) > 0.05
+
+
 @pytest.mark.parametrize("brand", [True, False])
 @pytest.mark.parametrize("cover_kind", [None, "default", "custom"])
 def test_compare_filters_keep_text_and_slow_marks_and_append_the_ending(
@@ -230,7 +264,8 @@ def test_compare_filters_keep_text_and_slow_marks_and_append_the_ending(
         graph = command[command.index("-filter_complex") + 1]
         assert graph.count("overlay=") == len(expected)
         assert graph.count("overlay=0:0") == len(expected)
-        assert f"[{len(inputs) - 1}]atrim=" in graph  # effects follow the remaining image inputs
+        assert (f"[{len(inputs) - 1}]aformat=sample_rates=48000:channel_layouts=stereo,"
+                f"{levels.DUAL_MONO},atrim=") in graph  # effects follow the remaining image inputs
     assert "enable='between(t,1,2)'" in beats[0][beats[0].index("-filter_complex") + 1]
     text_layers = {call.args[0].name: call.args[1] for call in text_image.call_args_list}
     assert [(item[3], item[5]) for item in text_layers["s0.png"]] == [(40, "r"), (1000, "r")]

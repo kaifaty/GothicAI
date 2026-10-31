@@ -546,6 +546,59 @@ async def test_scripted_events_are_context_only() -> None:
     assert planner.stats.scripted_events == 1
 
 
+@pytest.mark.parametrize("kind", ["theft", "attack", "murder", "sheep", "enter_room"])
+async def test_held_hero_events_are_context_without_model_calls_or_planner_verdicts(kind) -> None:
+    planner, decider, applier, clock = make()
+    planner.on_roster([entry("WITNESS", 8)], clock.t)
+    planner.npcs["WITNESS"].next_check = clock.t + 100
+    planner.on_message(parse_game_message(json.dumps({
+        "type": "perception_held", "npc": "WITNESS", "other": "PLAYER",
+        "kind": kind, "hold": "h1", "deed": None if kind == "enter_room" else "d1",
+    })))
+    await step(planner, clock, 1)
+    assert decider.calls == []
+    assert list(applier.verdicts) == []
+    assert planner.npcs["WITNESS"].holds == []
+    assert planner.npcs["WITNESS"].stimuli[-1].kind == kind
+    assert planner.stats.scripted_events == 1
+
+
+@pytest.mark.parametrize("kind,other", [
+    ("bandit_enemy", "PLAYER"), ("bandit_enemy", "CAVALORN"), ("party_enemy", "BDT_10300"),
+])
+@pytest.mark.parametrize("activity", ["routine", "body", None])
+async def test_held_bandit_sightings_are_left_to_parley_without_planner_verdicts(
+    kind, other, activity,
+) -> None:
+    planner, decider, applier, clock = make()
+    if activity is not None:
+        planner.on_roster([entry("WITNESS", 8, activity=activity)], clock.t)
+        planner.npcs["WITNESS"].next_check = clock.t + 100
+    planner.on_message(parse_game_message(json.dumps({
+        "type": "perception_held", "npc": "WITNESS", "other": other, "kind": kind, "hold": "h1",
+    })))
+    await step(planner, clock, 0.05)
+    assert not decider.calls and not applier.recent and not applier.verdicts
+    assert planner.stats.events == 0
+    if activity is not None:
+        assert not planner.npcs["WITNESS"].holds and not planner.npcs["WITNESS"].stimuli
+
+
+@pytest.mark.parametrize("crime_rooms", [False, True])
+async def test_room_observations_react_only_without_crime_rules(crime_rooms) -> None:
+    planner, decider, _, clock = make()
+    planner.crime_rooms = crime_rooms
+    planner.on_roster([entry("LOBART", 4, in_view=True)], clock.t)
+    planner.npcs["LOBART"].next_check = clock.t + 100
+    planner.on_message(parse_game_message(json.dumps({
+        "type": "npc_event", "npc": "LOBART", "other": "PLAYER", "kind": "enter_room",
+    })))
+    await step(planner, clock, 0.05)
+    assert bool(decider.calls) is not crime_rooms
+    assert planner.npcs["LOBART"].stimuli[-1].kind == "enter_room"
+    assert planner.stats.scripted_events == int(crime_rooms)
+
+
 async def test_mid_tier_reacts_only_to_salient_events() -> None:
     planner, decider, _, clock = make()
     planner.on_roster([entry("FARMER", 25)], clock.t)
@@ -832,7 +885,7 @@ def test_decisions_become_soft_actions() -> None:
     assert actions_for(d("call_help", ("npc_attack",))) == [("say_svm", {"svm": "HELP"})]
     # a call for help is shouted on the move, running away from the threat
     help_ = Decision("A", "react", "call_help", 0.9, {}, ("npc_attack",), target="WOLF")
-    assert actions_for(help_) == [("say_svm", {"svm": "HELP", "overlay": True}), ("flee", {"npc": "WOLF"})]
+    assert actions_for(help_) == [("flee", {"npc": "WOLF", "svm": "HELP"})]
     # a monster killed: a stock line, unless the npc killed it itself (its scripts end the fight with one)
     killed = Decision("A", "react", "comment", 0.9, {}, ("monster_killed",))
     assert actions_for(killed) == [("say_svm", {"svm": "GOODMONSTERKILL"})]
@@ -962,6 +1015,95 @@ async def test_threats_from_others_go_to_the_behavioral_model() -> None:
     assert len(link.sent) == 1
 
 
+@pytest.mark.parametrize("choice,svm", [("fight", "WEAPONDOWN"), ("flee", "HELP")])
+async def test_an_armed_npc_approach_has_a_voice_and_targets_the_attacker(choice, svm) -> None:
+    from gothic_ai.brain.apply import actions_for
+
+    planner, decider, applier, clock = make(FakeDecider(choice, 0.95))
+    planner.on_roster([entry("BANDIT", 5)], clock.t)
+    planner.on_event(
+        "BANDIT", "npc_threat", clock.t, other="CAVALORN", other_name="Кавалорн", distance_cm=1100
+    )
+    await step(planner, clock, 0.05)
+
+    assert decider.calls[0]["lane"] == "urgent"
+    assert "Кавалорн is hostile and running toward you with a drawn weapon." in decider.calls[0]["state"]
+    assert {"fight", "flee", "call_help"} <= decider.calls[0]["questions"]["react"]["criteria"].keys()
+    decision = applier.recent[-1]
+    assert decision.target == "CAVALORN"
+    assert actions_for(decision) == [(choice, {"npc": "CAVALORN", "svm": svm})]
+
+
+async def test_a_spoken_flight_waits_briefly_for_the_actual_npc_threat() -> None:
+    order = []
+
+    class OrderedApplier(LogApplier):
+        def apply(self, decision):
+            order.append("body")
+            super().apply(decision)
+
+        def verdict(self, hold, to, *, npc=None):
+            order.append(to)
+            super().verdict(hold, to, npc=npc)
+
+    planner, decider, _, clock = make(FakeDecider("fight", 0.95))
+    planner.applier = applier = OrderedApplier()
+    planner.on_roster([entry("BANDIT", 5)], clock.t)
+    planner.on_event("BANDIT", "player_near", clock.t)
+    assert planner.take_body("BANDIT", "flee") is None  # no assumed flight from the passive hero
+    clock.t += 1
+    planner.on_held(
+        parse_game_message(
+            json.dumps(
+                {
+                    "type": "perception_held",
+                    "hold": "h1",
+                    "npc": "BANDIT",
+                    "kind": "npc_attack",
+                    "other": "CAVALORN",
+                }
+            )
+        ),
+        clock.t,
+    )
+    await step(planner, clock, 0.05)
+    assert [(d.choice, d.target) for d in applier.recent] == [("flee", "CAVALORN")]
+    assert list(applier.verdicts) == [("h1", "server")]
+    assert order == ["body", "server"]  # the native state must exist before its held hit is swallowed
+    assert not decider.calls
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_a_flight_waiting_for_a_threat_expires_or_can_be_cancelled(cancel) -> None:
+    planner, _, applier, clock = make(FakeDecider("fight", 0.95))
+    planner.on_roster([entry("BANDIT", 5)], clock.t)
+    assert planner.take_body("BANDIT", "flee") is None
+    if cancel:
+        planner.clear_body_intent("BANDIT")
+    else:
+        clock.t += 11
+    planner.on_event("BANDIT", "npc_attack", clock.t, other="CAVALORN")
+    await step(planner, clock, 0.05)
+    assert [(d.choice, d.target) for d in applier.recent] == [("fight", "CAVALORN")]
+
+
+@pytest.mark.parametrize("activity", ["attached", "dialog", "body", "down"])
+def test_a_pending_body_choice_does_not_survive_losing_its_body(activity) -> None:
+    planner, _, _, clock = make()
+    planner.on_roster([entry("BANDIT", 5)], clock.t)
+    assert planner.take_body("BANDIT", "flee") is None
+    planner.on_roster([entry("BANDIT", 5, activity=activity)], clock.t)
+    assert planner.npcs["BANDIT"].waiting_body is None
+
+
+def test_an_explicit_intent_target_is_used_without_assuming_the_hero() -> None:
+    planner, _, applier, clock = make()
+    planner.on_roster([entry("BANDIT", 5)], clock.t)
+    flight = planner.take_body("BANDIT", "flee", target="CAVALORN")
+    assert flight is not None and flight.target == "CAVALORN"
+    assert applier.recent[-1].target == "CAVALORN"
+
+
 def test_an_attack_on_someone_else_is_a_fight_nearby() -> None:
     from gothic_ai.brain.stimuli import normalize
 
@@ -1084,6 +1226,72 @@ async def test_body_provider_blocks_pending_plans_threats_and_conversational_tak
     await step(planner, clock, 1)
     assert len(decider.calls) == 1 and not applier.recent
     assert planner.stats.discarded == 1
+
+
+@pytest.mark.parametrize("claimed", [True, False], ids=["pilot-acquires", "pilot-refuses"])
+async def test_native_held_threat_combat_waits_for_the_pilot(claimed) -> None:
+    from types import SimpleNamespace
+
+    from gothic_ai.brain.apply import GameApplier
+    from gothic_ai.cli import _native_combat_available
+
+    class Link:
+        def __init__(self):
+            self.acts = []
+            self.events = []
+
+        def body_owned(self, npc):
+            return False
+
+        async def npc_act(self, npc, action, /, **args):
+            self.acts.append((npc, action, args))
+            self.events.append(action)
+            return "n1"
+
+        async def send(self, cmd):
+            self.events.append(cmd.to)
+
+    for choice in ("fight", "flee"):
+        link = Link()
+        handled = set()
+        pilot = SimpleNamespace(
+            handles=lambda npc, handled=handled: npc in handled, _claimed_fights=set(),
+            people={"BANDIT": entry("BANDIT", 5)},
+        )
+        applier = GameApplier(
+            link, native_body=lambda npc, link=link, pilot=pilot: _native_combat_available(link, pilot, npc)
+        )
+        planner, _, _, clock = make(FakeDecider(choice, 0.95))
+        planner.applier = applier
+        planner.on_roster([entry("BANDIT", 5)], clock.t)
+        planner.on_message(parse_game_message(json.dumps({
+            "type": "perception_held", "hold": "h1", "npc": "BANDIT",
+            "kind": "npc_attack", "other": "CAVALORN"
+        })))
+        planner.tick(clock.t)
+        # The pilot can start after the model's reaction was scheduled, before its native task runs.
+        handled.add("BANDIT")
+        await settle()
+        assert not link.acts  # no lease or claimed flag yet: the acquisition window itself blocks combat
+        assert not link.events  # its server verdict must wait for this same handoff
+        if claimed:
+            if choice == "fight":
+                pilot._claimed_fights.add("BANDIT")
+            else:
+                pilot.people["BANDIT"] = entry("BANDIT", 5, activity="body")
+        handled.clear()
+        await asyncio.sleep(0.06)
+        await settle()
+        assert link.acts == ([] if claimed else [("BANDIT", choice, {"npc": "CAVALORN"})])
+        assert link.events == (["server"] if claimed else [choice, "server"])
+        if claimed and choice == "flee":
+            planner.on_roster([entry("BANDIT", 5, activity="body")], clock.t)
+            planner.on_message(parse_game_message(json.dumps({
+                "type": "perception_held", "hold": "h2", "npc": "BANDIT",
+                "kind": "npc_attack", "other": "CAVALORN"
+            })))
+            await settle()
+            assert not link.acts and link.events == ["server", "server"]
 
 
 async def test_a_threat_to_an_npc_the_planner_does_not_know_goes_to_the_scripts() -> None:
@@ -1498,7 +1706,7 @@ async def test_apply_day_asks_do_only(tmp_path) -> None:
 
 
 def test_the_day_questions_share_todays_plan_state() -> None:
-    from gothic_ai.brain.situation import NpcContext, SituationBuilder, news_short
+    from gothic_ai.brain.situation import NpcContext, SituationBuilder, news_short, news_text
 
     builder = SituationBuilder(traits={"VINO": "Cynical, fond of his drink."})
     npc = NpcContext("VINO", "Вино", 8, agenda="see the hero pay for his lie", facts=("He lied to Lobart.",))
@@ -1524,6 +1732,8 @@ def test_the_day_questions_share_todays_plan_state() -> None:
     assert news_short("caught", "Лобарт") == "the hero lied to Лобарт"
     assert news_short("found_out", "Лобарт", about_you=True) == "the hero cheated you out of a reward"
     assert news_short("broken", "Лобарт") == "the hero did not pay back Лобарт"
+    assert news_short("fame", "герой") == "people talk about the hero's fame"
+    assert news_text("fame", "герой", "Вернул чужое") == "people say of the hero: 'Вернул чужое'"
 
 
 async def test_the_hero_kills_the_monster_the_danger_is_over() -> None:

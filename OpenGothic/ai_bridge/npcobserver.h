@@ -12,10 +12,12 @@
 
 #include "game/constants.h"
 #include "game/gamescript.h"
+#include "npcsteal.h"
 
 class Npc;
 class World;
 struct PhysicsNoise;
+struct HeroDeed;
 
 // NPCs that follow their routine, as seen by the AI server's planner (protocol v5):
 // - npc_roster: npc's around the player, twice a second;
@@ -38,16 +40,20 @@ class NpcObserver final {
     void perception(World& world, Npc& self, Npc& other, Npc* victim, PercType perc);
     void physicsNoise(World& world, Npc& self, const PhysicsNoise& noise);
     void act(World& world, const rapidjson::Value& msg);
-    // threats to free npc's (monsters near or attacking, attacks by npc's) are held back from the scripts
-    // for the server's behavioral model; it answers with a verdict, or the scripts get them after HoldMs
-    bool intercept(World& world, Npc& self, Npc& other, Npc* victim, PercType perc);
+    // threats, hero deeds and room entry are held from free npc's scripts for the server;
+    // it answers with a verdict, or the scripts get them after HoldMs
+    bool intercept(World& world, Npc& self, Npc& other, Npc* victim, PercType perc,
+                   const HeroDeed* deed = nullptr, std::string_view deedId = {});
     void verdict(World& world, const rapidjson::Value& msg);
     void setHoldThreats(bool on) { holdThreats = on; }
+    void setHoldDeeds(bool on) { holdDeeds = on; }
+    void setHoldBandits(World* world, bool on);
     // the server is gone: every held threat goes to the scripts now
     void releaseAll(World& world);
     // `routine`: an npc's daily routine, its routine variants and current state (v6)
     void routine(World& world, const rapidjson::Value& msg);
     void clear();
+    void cancelDeeds(World& world);
     // A running soft act already owns movement/queues; a body lease must not overlap it.
     bool isActing(std::string_view symbol) const;
 
@@ -69,9 +75,14 @@ class NpcObserver final {
       Tempest::Vec3 at;
       float         radius  = 0;
       bool          investigate = false;
+      NpcSteal::Active theft;
+      bool          deed = false;
+      size_t        fightTarget = size_t(-1);
+      bool          nonlethal = false;
       };
 
     void emitRoster(World& world);
+    void armedApproach(World& world, Npc& self, std::string_view symbol);
     // true when the player just came close: the caller emits player_near after the roster
     bool trackProximity(World& world, Npc& npc, std::string_view symbol, float dist);
     void checkRunning(World& world, uint64_t now);
@@ -87,24 +98,33 @@ class NpcObserver final {
     uint64_t                              nextRoster = 0;
     std::unordered_map<std::string,bool>  close;      // npc -> the player is within reach
     std::unordered_map<std::string,uint64_t> lastEvent;  // "npc/kind" -> time
+    std::unordered_map<const Npc*,Tempest::Vec3> previousPositions;
     std::vector<Running>                  running;
 
     struct Held final {
       std::string id;
-      std::string key;     // "npc/other": a verdict covers that pair for a while
+      std::string key;     // actor pair, with separate deed/room keys for the hero
+      std::string item;    // restore the theft's ITEM before a late script delivery
+      std::string deed;    // hero_deed id: rules may consume it without taking the body
+      bool        room   = false;  // entry rules may warn or grant time to leave without taking the body
+      bool        bandit = false;  // sight of a hostile bandit or its prospective party target
       const Npc*  self   = nullptr;
       const Npc*  other  = nullptr;
       const Npc*  victim = nullptr;
       PercType    perc   = PERC_None;
       uint64_t    at     = 0;
       };
+    enum class HoldTo : uint8_t { Scripts, Server, Parley };
     struct Verdict final {
-      bool     server = false;  // the server acts on it (swallow repeats); false: the scripts get them
+      HoldTo   to     = HoldTo::Scripts;
       uint64_t until  = 0;
+      bool     bandit = false;
       };
     void releaseHeld(World& world, Held& h);
 
     bool                                     holdThreats = false;
+    bool                                     holdDeeds = false;
+    bool                                     holdBandits = false;
     uint64_t                                 nextHold    = 1;
     std::vector<Held>                        held;
     std::unordered_map<std::string,Verdict>  verdicts;

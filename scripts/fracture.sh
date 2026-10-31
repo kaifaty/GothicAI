@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Offline fixed-seed fracture of stock-world crates, barrels, pots and fences.
-# Requires a legally installed Gothic II. The cache contains game geometry and
-# stays outside git, just like HD textures. No game, GPU or model is started.
+# Offline fixed-seed fracture of crates, barrels, pots and fences.
+# Stock mode requires a legally installed Gothic II; its geometry stays in the
+# local cache outside git. Content mode reads only our indexed GLBs and writes
+# adjacent sidecars, without using the installation or stock fracture cache.
+# No game, GPU or model is started.
 #
 # scripts/fracture.sh [all|extract|cut|verify]
+# scripts/fracture.sh content <content-dir> [--verify]
 # env: GOTHIC_DIR (game installation), OPENGOTHIC_FRACTURE (cache directory),
 #      FRACTURE_SEED=601, FRACTURE_PIECES=12 (8–20).
 set -euo pipefail
@@ -35,10 +38,26 @@ cut() {
     --seed "${FRACTURE_SEED:-601}" --pieces "${FRACTURE_PIECES:-12}" "$@"
 }
 
+content() {
+  if [ "$#" -lt 1 ] || [ "$#" -gt 2 ] || { [ "$#" -eq 2 ] && [ "$2" != --verify ]; }; then
+    echo "usage: scripts/fracture.sh content <content-dir> [--verify]" >&2
+    exit 2
+  fi
+  local build="$ROOT/OpenGothic/build/fracture-content"
+  cmake -S "$ROOT/scripts/fracture" -B "$build" -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+  cmake --build "$build" --target fracture-gltf-extract -j2
+  uv run --quiet --no-project --with numpy==2.3.5 --with scipy==1.16.3 \
+    python "$ROOT/scripts/fracture/fracture.py" "$1" --content \
+    --extractor "$build/fracture-gltf-extract" \
+    --seed "${FRACTURE_SEED:-601}" --pieces "${FRACTURE_PIECES:-12}" "${@:2}"
+}
+
 case "${1:-all}" in
   all) extract; cut; cut --verify ;;
   extract) extract ;;
   cut) cut ;;
   verify) cut --verify ;;
-  *) echo "usage: scripts/fracture.sh [all|extract|cut|verify]" >&2; exit 2 ;;
+  content) shift; content "$@" ;;
+  *) echo "usage: scripts/fracture.sh [all|extract|cut|verify] | content <content-dir> [--verify]" >&2; exit 2 ;;
 esac

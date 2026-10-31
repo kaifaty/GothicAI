@@ -47,6 +47,8 @@ const uint L_Morph      = 11;
 const uint L_SceneClr   = 12;
 const uint L_GDepth     = 13;
 const uint L_CmdOffsets = 14;
+const uint L_Normal     = 15;
+const uint L_Orm        = 16;
 const uint L_VsmPages   = L_Shadow0;
 const uint L_VsmLights  = L_Shadow1;
 
@@ -73,7 +75,7 @@ const uint L_VsmLights  = L_Shadow1;
 #define MAT_NORMAL 1
 #endif
 
-#if (defined(FLAT_NORMAL) && !defined(DEPTH_ONLY)) || defined(FORWARD) || defined(WATER)
+#if ((defined(FLAT_NORMAL) || defined(MATERIAL_MAPS)) && !defined(DEPTH_ONLY)) || defined(FORWARD) || defined(WATER)
 #define MAT_POSITION 1
 #endif
 
@@ -127,6 +129,10 @@ layout(binding = L_Vbo,      std430) readonly buffer Vbo  { float   vertices[]; 
 #if defined(GL_FRAGMENT_SHADER) && defined(MAT_UV)
 layout(binding = L_Diffuse)          uniform  texture2D textureMain[];
 layout(binding = L_Sampler)          uniform  sampler   samplerMain;
+#if defined(MATERIAL_MAPS) && defined(GBUFFER) && (MESH_TYPE!=T_PFX)
+layout(binding = L_Normal)           uniform  texture2D textureNormal[];
+layout(binding = L_Orm)              uniform  texture2D textureOrm[];
+#endif
 #endif
 
 #if (MESH_TYPE==T_MORPH)
@@ -190,6 +196,8 @@ Instance pullInstance(uint i) {
   ret.mat[3][2] = uintBitsToFloat(instanceMem[i+11]);
   ret.fatness   = uintBitsToFloat(instanceMem[i+12]);
   ret.animPtr   = instanceMem[i+13];
+  ret.deformPtr = instanceMem[i+14];
+  ret.deformCount = instanceMem[i+15];
   return ret;
   }
 

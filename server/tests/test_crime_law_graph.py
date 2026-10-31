@@ -1,6 +1,10 @@
 import copy
+import json
 import os
+import shutil
+import subprocess
 from collections import Counter
+from functools import reduce
 from pathlib import Path
 
 import pytest
@@ -12,6 +16,8 @@ from gothic_ai.crime_law_graph import (
     absolution_program,
     ambient_ops,
     ambient_program,
+    city_entry_nodes,
+    city_entry_program,
     counter_values,
     gate_nodes,
     init_ops,
@@ -21,7 +27,7 @@ from gothic_ai.crime_law_graph import (
     validate_ops,
 )
 from gothic_ai.gamedata.storygraph import Node, StoryGraph, load, walk
-from gothic_ai.validator import Patches, Rules, Story, WorldState, validate
+from gothic_ai.validator import Patches, Rules, Story, WorldState, names_in, validate
 
 ANDRE = "MIL_311_ANDRE"
 PETZMASTER = "DIA_ANDRE_PETZMASTER"
@@ -234,7 +240,12 @@ def test_all_24_real_graph_locks_preserve_native_conditions_and_pass_validator(r
     assert validate_ops(ops, story) == []
     patched = story.then(ops)
     assert all(real_graph.nodes[node].condition == native[node] for node in nodes)
-    assert all(patched.patches.conditions[node] == [["var", law_var(group)]] for node, group in nodes.items())
+    assert all(
+        patched.patches.conditions.get(node, []) == (
+            [] if node in city_entry_nodes(real_graph) else [["var", law_var(group)]]
+        )
+        for node, group in nodes.items()
+    )
     # Only the trusted crime service receives the law-dialog exception for Hagen, Lee and Garond.
     assert validate(ops, story, Rules.of(real_graph))
 
@@ -266,3 +277,310 @@ def test_real_native_fine_and_forgiveness_paths_are_retained(real_graph):
     assert any(
         e.get("fn") == "B_MEMORIZEPLAYERCRIME" for e in real_graph.nodes["DIA_HILDA_PFANNETOOLATE"].effects
     )
+
+
+class GateVM:
+    """Execute emitted steps and real lifted gate conditions with deterministic engine answers."""
+
+    def __init__(self, npc="MIL_310_STADTWACHE"):
+        self.npc = npc
+        self.number = npc.split("_", 2)[1]
+        self.variables = {
+            law_var("city"): 0, **projection_values("city", []), "MIS_ADDON_LESTER_PICKFORCONSTANTINO": 1
+        }
+        self.fields = {(npc, "WP"): "post", ("PC_HERO", "GUILD"): 0}
+        self.items = {"ITMI_GOLD": 100, "ITWR_PASSIERSCHEIN": 1, "ITPL_MANA_HERB_01": 10}
+        self.armor = "ITAR_BAU_L"
+        self.lines = []
+
+    def value(self, expr):
+        tag, *args = expr
+        if tag in {"int", "str", "sym"}:
+            return args[0]
+        if tag == "inst":
+            return self.npc if args[0] == "SELF" else "PC_HERO" if args[0] in {"OTHER", "HERO"} else args[0]
+        if tag == "var":
+            return self.variables.get(args[0], 0)
+        if tag == "field":
+            return self.fields.get((self.value(args[0]), args[1], *args[2:3]), 0)
+        if tag == "cases":
+            pairs = zip(args[::2], args[1::2], strict=True)
+            return next((self.value(v) for c, v in pairs if self.value(c)), 0)
+        if tag == "!":
+            return int(not self.value(args[0]))
+        if tag in {"&&", "||"}:
+            return int((all if tag == "&&" else any)(self.value(a) for a in args))
+        operators = {
+            "==": lambda a, b: int(a == b), "!=": lambda a, b: int(a != b),
+            ">": lambda a, b: int(a > b), "<": lambda a, b: int(a < b),
+            ">=": lambda a, b: int(a >= b), "<=": lambda a, b: int(a <= b),
+            "+": lambda a, b: a + b, "-": lambda a, b: a - b,
+        }
+        if tag in operators:
+            return reduce(operators[tag], (self.value(a) for a in args))
+        assert tag in {"call", "fn"}, expr
+        name, *params = args
+        if name == "B_GETGREATESTPETZCRIME":
+            levels = {"SHEEPKILLER": 1, "ATTACK": 2, "THEFT": 3, "MURDER": 4}
+            return max((level for kind, level in levels.items()
+                        if self.variables.get(f"PETZCOUNTER_CITY_{kind}", 0)), default=0)
+        if name == "B_GETCURRENTABSOLUTIONLEVEL":
+            return self.variables.get("ABSOLUTIONLEVEL_CITY", 0)
+        if name == "NPC_GETDISTTOWP":
+            return 1200
+        if name == "NPC_GETNEARESTWP":
+            return "post"
+        if name == "NPC_GETTRUEGUILD":
+            return self.fields.get((self.value(params[0]), "GUILD"), 0)
+        if name == "HLP_STRCMP" or name == "HLP_ISITEM":
+            return int(self.value(params[0]) == self.value(params[1]))
+        if name == "NPC_REFUSETALK":
+            return 0
+        if name == "NPC_ISINSTATE" or name == "NPC_KNOWSINFO":
+            return 1
+        if name == "NPC_HASITEMS":
+            return self.items.get(self.value(params[1]), 0)
+        if name == "NPC_GETEQUIPPEDARMOR":
+            return self.armor
+        if name == "NPC_HASEQUIPPEDARMOR":
+            return int(bool(self.armor))
+        if name == "B_GIVEINVITEMS":
+            return int(self.items.get(self.value(params[2]), 0) >= self.value(params[3]))
+        raise AssertionError(f"unsupported gate expression: {expr}")
+
+    def execute(self, steps):
+        class Returned(Exception):
+            pass
+
+        result = None
+
+        def run(body):
+            nonlocal result
+            for step in body:
+                match step["do"]:
+                    case "set":
+                        target = step["target"]
+                        if target[0] == "var":
+                            self.variables[target[1]] = self.value(step["value"])
+                        else:
+                            assert target[0] == "field"
+                            key = (self.value(target[1]), target[2], *target[3:4])
+                            self.fields[key] = self.value(step["value"])
+                    case "if":
+                        run(step.get("then" if self.value(step["cond"]) else "else", []))
+                    case "call":
+                        if step["call"][1] == "AI_OUTPUT":
+                            self.lines.append(self.value(step["call"][-1]))
+                    case "return":
+                        result = self.value(step["value"]) if "value" in step else None
+                        raise Returned
+                    case _:
+                        raise AssertionError(step)
+
+        try:
+            run(steps)
+        except Returned:
+            pass
+        return result
+
+
+def lifted_gate_steps(node, part):
+    """Run the exported native effects, preserving their guards and native line identifiers."""
+    steps = []
+    for effect in node.condition_effects if part == "condition" else node.effects:
+        match effect["do"]:
+            case "set_field":
+                step = {
+                    "do": "set", "target": ["field", effect["of"], effect["field"], effect["index"][1]],
+                    "value": effect["value"],
+                }
+            case "set":
+                step = {"do": "set", "target": ["var", effect["var"]], "value": effect["value"]}
+            case "line":
+                step = {"do": "call", "call": ["call", "AI_OUTPUT", ["str", effect["id"]]]}
+            case _:
+                continue  # journal/XP/animation do not affect whether passage is granted
+        steps.append({"do": "if", "cond": effect["when"], "then": [step]} if "when" in effect else step)
+    if part == "condition":
+        steps.append({"do": "return", "value": node.condition})
+    return steps
+
+
+@pytest.mark.parametrize("npc", ["MIL_310_STADTWACHE", "MIL_333_STADTWACHE"])
+def test_real_gate_warns_known_thief_and_allows_previous_visitor_after_payment(real_graph, npc):
+    vm = GateVM(npc)
+    first = real_graph.nodes[f"DIA_{npc}_FIRSTWARN"]
+    condition = city_entry_program(first.id, "condition", lifted_gate_steps(first, "condition"))
+    info = city_entry_program(first.id, "information", lifted_gate_steps(first, "information"))
+    vm.variables[f"MIL_{vm.number}_SCHONMALREINGELASSEN"] = 1
+    vm.variables[f"MIL_{vm.number}_PERSONAL_ABSOLUTIONLEVEL"] = 99  # previous native bribe
+    vm.fields[(npc, "AIVAR", 14)] = 1
+    vm.variables.update(projection_values("city", [{"kind": "theft"}]))
+    vm.variables[law_var("city")] = 1
+    assert vm.execute(condition) == 1
+    assert vm.fields[(npc, "AIVAR", 14)] == 0
+    vm.execute(info)
+    theft_line = next(
+        e["id"] for e in first.effects if e.get("text") == "Мы не потерпим здесь грязных воров!"
+    )
+    assert theft_line in vm.lines
+
+    # Native GrantAbsolution clears these projections at its call site, before runtime polling.
+    vm.variables.update(projection_values("city", []))
+    vm.variables[law_var("city")] = 0
+    vm.variables["ABSOLUTIONLEVEL_CITY"] = 1
+    vm.fields[(npc, "AIVAR", 12)] = 0
+    assert vm.execute(condition) == 0
+    assert vm.fields[(npc, "AIVAR", 14)] == 1
+    permanent = real_graph.nodes[f"DIA_{npc}_PERM"]
+    permit = city_entry_program(permanent.id, "condition", lifted_gate_steps(permanent, "condition"))
+    assert vm.execute(permit) == 1
+
+
+@pytest.mark.parametrize("npc", ["MIL_305_TORWACHE", "PAL_205_TORWACHE"])
+def test_upper_gate_keeps_native_first_warning_without_law_and_blocks_known_thief(real_graph, npc):
+    first = real_graph.nodes[f"DIA_{npc}_FIRSTWARN"]
+    admission = real_graph.nodes[f"DIA_{npc}_PASSASMIL"]
+    assert first.id in city_entry_nodes(real_graph)
+    assert not any(op.get("node") == first.id for op in init_ops(real_graph))
+    first_condition = city_entry_program(first.id, "condition", lifted_gate_steps(first, "condition"))
+    admission_condition = city_entry_program(
+        admission.id, "condition", lifted_gate_steps(admission, "condition")
+    )
+    vm = GateVM(npc)
+    vm.fields[("PC_HERO", "GUILD")] = 2  # GIL_MIL: a native admission, without a known crime
+    vm.variables["PETZCOUNTER_CITY_THEFT"] = 50  # an unreported native perception must not bar it
+    assert vm.execute(first_condition) == 1  # the guard still stops a newcomer at his post
+    assert vm.variables["PETZCOUNTER_CITY_THEFT"] == 0
+    assert vm.execute(admission_condition) == 1
+
+    # A known unpaid theft revokes an old pass and leaves the native refusal warning available.
+    vm.variables[f"{npc[:7]}_SCHONMALREINGELASSEN"] = 1
+    vm.fields[(npc, "AIVAR", 14)] = 1
+    vm.variables.update(projection_values("city", [{"kind": "theft"}]))
+    vm.variables[law_var("city")] = 1
+    assert vm.execute(first_condition) == 1
+    assert vm.fields[(npc, "AIVAR", 14)] == 0
+    assert vm.execute(admission_condition) == 0
+    vm.execute(city_entry_program(first.id, "information", lifted_gate_steps(first, "information")))
+    theft_line = next(e["id"] for e in first.effects if "воров" in e.get("text", ""))
+    assert theft_line in vm.lines
+
+
+@pytest.mark.parametrize("suffix", ["BRIBE", "PASSIERSCHEIN", "ZUMSCHMIED", "CONSTANTINO", "PERM"])
+def test_real_entry_alternatives_cannot_bypass_known_theft_but_keep_native_admission(real_graph, suffix):
+    nodes = [real_graph.nodes[n] for n in city_entry_nodes(real_graph) if n.endswith("_" + suffix)]
+    assert nodes
+    for node in nodes:
+        vm = GateVM(node.npc)
+        if suffix == "PERM":
+            vm.fields[(node.npc, "AIVAR", 14)] = 1
+            vm.variables[f"{node.npc[:7]}_SCHONMALREINGELASSEN"] = 1
+        condition = city_entry_program(node.id, "condition", lifted_gate_steps(node, "condition"))
+        information = city_entry_program(node.id, "information", lifted_gate_steps(node, "information"))
+        assert vm.execute(condition) == 1
+        vm.variables.update(projection_values("city", [{"kind": "theft"}]))
+        vm.variables[law_var("city")] = 1
+        assert vm.execute(condition) == 0
+        before_fields = dict(vm.fields)
+        vm.execute(information)
+        assert vm.lines == []
+        assert vm.fields == before_fields
+        vm.variables.update(projection_values("city", []))
+        vm.variables[law_var("city")] = 0
+        assert vm.execute(condition) == 1
+        vm.execute(information)
+        assert vm.lines
+        assert vm.fields[(node.npc, "AIVAR", 14)] == 1
+
+
+@pytest.mark.parametrize(
+    "kind,blocked", [("sheep", False), ("attack", True), ("theft", True), ("murder", True)]
+)
+def test_gate_law_projects_zero_when_unknown_and_blocks_only_native_severity(kind, blocked):
+    vm = GateVM()
+    # Native witness pollution cannot block a gate before our report arrives.
+    vm.variables["PETZCOUNTER_CITY_THEFT"] = 50
+    steps = city_entry_program(
+        "DIA_MIL_310_STADTWACHE_BRIBE", "condition", [{"do": "return", "value": ["int", 1]}]
+    )
+    assert vm.execute(steps) == 1
+    assert vm.variables["PETZCOUNTER_CITY_THEFT"] == 0
+    vm.variables.update(projection_values("city", [{"kind": kind}]))
+    vm.variables[law_var("city")] = 1
+    assert vm.execute(steps) == int(not blocked)
+
+
+def test_real_gate_programs_pass_the_scoped_validator(real_graph):
+    ops = [
+        {"op": "program", "node": node, "part": part,
+         "steps": city_entry_program(node, part, [
+             {"do": "return", **({"value": ["int", 1]} if part == "condition" else {})}
+         ])}
+        for node in sorted(city_entry_nodes(real_graph))
+        for part in ("condition", "information")
+    ]
+    state = WorldState(symbols={name: "var" for name in names_in(ops)})
+    story = Story(real_graph, state).then(init_ops(real_graph))
+    assert validate_ops(ops, story) == []
+
+
+@pytest.fixture(scope="module")
+def native_program_reader(tmp_path_factory):
+    """Use the bridge's exact JSON program reader, including native return-type checks."""
+    compiler = shutil.which("c++")
+    if compiler is None:
+        pytest.skip("needs a C++ compiler for the native bridge program reader")
+    repo = Path(__file__).resolve().parents[2]
+    bridge = repo / "OpenGothic" / "ai_bridge"
+    directory = tmp_path_factory.mktemp("crime-gate-reader")
+    source = directory / "reader.cpp"
+    source.write_text(
+        '#include "exprjson.h"\n'
+        '#include <iostream>\n'
+        '#include <iterator>\n'
+        'int main() {\n'
+        '  std::string input((std::istreambuf_iterator<char>(std::cin)), {});\n'
+        '  rapidjson::Document document; document.Parse(input.c_str());\n'
+        '  if(document.HasParseError() || !document.IsArray()) return 2;\n'
+        '  bool failed = false;\n'
+        '  for(auto& item : document.GetArray()) {\n'
+        '    auto program = storygraph::readProgram(item["steps"], item["returns"].GetBool());\n'
+        '    if(!program.error.empty()) { std::cerr << program.error << "\\n"; failed = true; }\n'
+        '  }\n'
+        '  return failed ? 1 : 0;\n'
+        '}\n', encoding="utf-8",
+    )
+    executable = directory / "reader"
+    subprocess.run(
+        [compiler, "-std=c++20", "-O0", "-I", str(bridge / "storygraph"), "-I", str(bridge),
+         "-isystem", str(bridge.parent / "lib" / "rapidjson" / "include"), str(source),
+         str(bridge / "storygraph" / "exprjson.cpp"), str(bridge / "storygraph" / "expr.cpp"),
+         str(bridge / "textcodec.cpp"), "-o", str(executable)],
+        check=True, capture_output=True, text=True, timeout=60,
+    )
+    return executable
+
+
+def test_native_reader_accepts_gate_programs_and_rejects_value_in_void_information(native_program_reader):
+    programs = [
+        {"returns": part == "condition", "steps": city_entry_program(
+            f"DIA_MIL_{number}_STADTWACHE_{suffix}", part,
+            [{"do": "return", **({"value": ["int", 1]} if part == "condition" else {})}],
+        )}
+        for number in ("310", "333")
+        for suffix in ("FIRSTWARN", "BRIBE", "PASSIERSCHEIN", "ZUMSCHMIED", "CONSTANTINO", "PERM")
+        for part in ("condition", "information")
+    ]
+    accepted = subprocess.run(
+        [str(native_program_reader)], input=json.dumps(programs), text=True,
+        capture_output=True, timeout=10,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+    bad = [{"returns": False, "steps": [{"do": "return", "value": ["int", 0]}]}]
+    rejected = subprocess.run(
+        [str(native_program_reader)], input=json.dumps(bad), text=True,
+        capture_output=True, timeout=10,
+    )
+    assert rejected.returncode == 1
+    assert "the function returns nothing" in rejected.stderr

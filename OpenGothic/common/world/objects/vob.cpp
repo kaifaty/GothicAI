@@ -20,6 +20,7 @@
 #include "world/triggers/touchdamage.h"
 #include "world/triggers/cscamera.h"
 #include "world/voblight.h"
+#include "world/voblayer.h"
 #include "world/world.h"
 #include "game/serialize.h"
 
@@ -29,8 +30,9 @@ Vob::Vob(World& owner)
   : world(owner) {
   }
 
-Vob::Vob(Vob* parent, World& owner, const zenkit::VirtualObject& vob, Flags flags)
-  : world(owner), vobType(vob.type), vobObjectID(vob.id), parent(parent) {
+Vob::Vob(Vob* parent, World& owner, const asset::VirtualObject& vob, Flags flags)
+  : world(owner), vobType(vob.type), vobObjectID(vob.id),
+    layerObject(VobLayer::isAdded(vob)), parent(parent) {
   pos   = Tempest::Matrix4x4(vob.rotation.columns[0].x, vob.rotation.columns[1].x, vob.rotation.columns[2].x, vob.position.x,
                              vob.rotation.columns[0].y, vob.rotation.columns[1].y, vob.rotation.columns[2].y, vob.position.y,
                              vob.rotation.columns[0].z, vob.rotation.columns[1].z, vob.rotation.columns[2].z, vob.position.z,
@@ -153,14 +155,14 @@ void Vob::recalculateTransform() {
     }
   if(old!=position() && !isDynamic()) {
     switch(vobType) {
-      case zenkit::VirtualObjectType::oCMOB:
-      case zenkit::VirtualObjectType::oCMobBed:
-      case zenkit::VirtualObjectType::oCMobDoor:
-      case zenkit::VirtualObjectType::oCMobInter:
-      case zenkit::VirtualObjectType::oCMobContainer:
-      case zenkit::VirtualObjectType::oCMobSwitch:
-      case zenkit::VirtualObjectType::oCMobLadder:
-      case zenkit::VirtualObjectType::oCMobWheel:
+      case asset::VirtualObjectType::oCMOB:
+      case asset::VirtualObjectType::oCMobBed:
+      case asset::VirtualObjectType::oCMobDoor:
+      case asset::VirtualObjectType::oCMobInter:
+      case asset::VirtualObjectType::oCMobContainer:
+      case asset::VirtualObjectType::oCMobSwitch:
+      case asset::VirtualObjectType::oCMobLadder:
+      case asset::VirtualObjectType::oCMobWheel:
         world.invalidateVobIndex();
         break;
       default:
@@ -174,60 +176,60 @@ void Vob::recalculateTransform() {
   }
 
 
-std::unique_ptr<Vob> Vob::load(Vob* parent, World& world, const zenkit::VirtualObject& vob, Flags flags) {
+std::unique_ptr<Vob> Vob::load(Vob* parent, World& world, const asset::VirtualObject& vob, Flags flags) {
   switch(vob.type) {
-    case zenkit::VirtualObjectType::UNKNOWN:
+    case asset::VirtualObjectType::UNKNOWN:
       return nullptr;
-    case zenkit::VirtualObjectType::zCVob:
-    case zenkit::VirtualObjectType::zCVobStair:
+    case asset::VirtualObjectType::zCVob:
+    case asset::VirtualObjectType::zCVobStair:
       return std::unique_ptr<Vob>(new StaticObj(parent,world,vob,flags));
-    case zenkit::VirtualObjectType::zCVobAnimate:
+    case asset::VirtualObjectType::zCVobAnimate:
       // NOTE: engine animates all objects anyway
       return std::unique_ptr<Vob>(new StaticObj(parent,world,vob,flags));
-    case zenkit::VirtualObjectType::zCVobLevelCompo:
+    case asset::VirtualObjectType::zCVobLevelCompo:
       return std::unique_ptr<Vob>(new Vob(parent,world,vob,flags));
-    case zenkit::VirtualObjectType::oCMobFire:
-      return std::unique_ptr<Vob>(new FirePlace(parent,world,reinterpret_cast<const zenkit::VFire&>(vob),flags));
-    case zenkit::VirtualObjectType::oCMOB:
+    case asset::VirtualObjectType::oCMobFire:
+      return std::unique_ptr<Vob>(new FirePlace(parent,world,reinterpret_cast<const asset::VFire&>(vob),flags));
+    case asset::VirtualObjectType::oCMOB:
       // Irdotar bow-triggers
       // focusOverride=true
-      return std::unique_ptr<Vob>(new Interactive(parent,world,reinterpret_cast<const zenkit::VMovableObject&>(vob),flags));
-    case zenkit::VirtualObjectType::oCMobInter:
-    case zenkit::VirtualObjectType::oCMobBed:
-    case zenkit::VirtualObjectType::oCMobDoor:
-    case zenkit::VirtualObjectType::oCMobContainer:
-    case zenkit::VirtualObjectType::oCMobSwitch:
-    case zenkit::VirtualObjectType::oCMobLadder:
-    case zenkit::VirtualObjectType::oCMobWheel:
-      return std::unique_ptr<Vob>(new Interactive(parent,world,reinterpret_cast<const zenkit::VMovableObject&>(vob),flags));
+      return std::unique_ptr<Vob>(new Interactive(parent,world,reinterpret_cast<const asset::VMovableObject&>(vob),flags));
+    case asset::VirtualObjectType::oCMobInter:
+    case asset::VirtualObjectType::oCMobBed:
+    case asset::VirtualObjectType::oCMobDoor:
+    case asset::VirtualObjectType::oCMobContainer:
+    case asset::VirtualObjectType::oCMobSwitch:
+    case asset::VirtualObjectType::oCMobLadder:
+    case asset::VirtualObjectType::oCMobWheel:
+      return std::unique_ptr<Vob>(new Interactive(parent,world,reinterpret_cast<const asset::VMovableObject&>(vob),flags));
 
-    case zenkit::VirtualObjectType::zCMover:
-      return std::unique_ptr<Vob>(new MoveTrigger(parent,world,reinterpret_cast<const zenkit::VMover&>(vob),flags));
-    case zenkit::VirtualObjectType::zCCodeMaster:
-      return std::unique_ptr<Vob>(new CodeMaster(parent,world,reinterpret_cast<const zenkit::VCodeMaster&>(vob),flags));
-    case zenkit::VirtualObjectType::zCTriggerList:
-      return std::unique_ptr<Vob>(new TriggerList(parent,world,reinterpret_cast<const zenkit::VTriggerList&>(vob),flags));
-    case zenkit::VirtualObjectType::oCTriggerScript:
-      return std::unique_ptr<Vob>(new TriggerScript(parent,world,reinterpret_cast<const zenkit::VTriggerScript&>(vob),flags));
-    case zenkit::VirtualObjectType::zCTriggerWorldStart:
-      return std::unique_ptr<Vob>(new TriggerWorldStart(parent,world,reinterpret_cast<const zenkit::VTriggerWorldStart&>(vob),flags));
-    case zenkit::VirtualObjectType::oCTriggerChangeLevel:
-      return std::unique_ptr<Vob>(new ZoneTrigger(parent,world,reinterpret_cast<const zenkit::VTriggerChangeLevel&>(vob),flags));
-    case zenkit::VirtualObjectType::zCTrigger:
+    case asset::VirtualObjectType::zCMover:
+      return std::unique_ptr<Vob>(new MoveTrigger(parent,world,reinterpret_cast<const asset::VMover&>(vob),flags));
+    case asset::VirtualObjectType::zCCodeMaster:
+      return std::unique_ptr<Vob>(new CodeMaster(parent,world,reinterpret_cast<const asset::VCodeMaster&>(vob),flags));
+    case asset::VirtualObjectType::zCTriggerList:
+      return std::unique_ptr<Vob>(new TriggerList(parent,world,reinterpret_cast<const asset::VTriggerList&>(vob),flags));
+    case asset::VirtualObjectType::oCTriggerScript:
+      return std::unique_ptr<Vob>(new TriggerScript(parent,world,reinterpret_cast<const asset::VTriggerScript&>(vob),flags));
+    case asset::VirtualObjectType::zCTriggerWorldStart:
+      return std::unique_ptr<Vob>(new TriggerWorldStart(parent,world,reinterpret_cast<const asset::VTriggerWorldStart&>(vob),flags));
+    case asset::VirtualObjectType::oCTriggerChangeLevel:
+      return std::unique_ptr<Vob>(new ZoneTrigger(parent,world,reinterpret_cast<const asset::VTriggerChangeLevel&>(vob),flags));
+    case asset::VirtualObjectType::zCTrigger:
       return std::unique_ptr<Vob>(new Trigger(parent,world,vob,flags));
-    case zenkit::VirtualObjectType::zCMessageFilter:
-      return std::unique_ptr<Vob>(new MessageFilter(parent,world,reinterpret_cast<const zenkit::VMessageFilter&>(vob),flags));
-    case zenkit::VirtualObjectType::zCPFXController:
-      return std::unique_ptr<Vob>(new PfxController(parent,world,reinterpret_cast<const zenkit::VParticleEffectController&>(vob),flags));
-    case zenkit::VirtualObjectType::oCTouchDamage:
-      return std::unique_ptr<Vob>(new TouchDamage(parent,world,reinterpret_cast<const zenkit::VTouchDamage&>(vob),flags));
-    case zenkit::VirtualObjectType::zCTriggerUntouch:
+    case asset::VirtualObjectType::zCMessageFilter:
+      return std::unique_ptr<Vob>(new MessageFilter(parent,world,reinterpret_cast<const asset::VMessageFilter&>(vob),flags));
+    case asset::VirtualObjectType::zCPFXController:
+      return std::unique_ptr<Vob>(new PfxController(parent,world,reinterpret_cast<const asset::VParticleEffectController&>(vob),flags));
+    case asset::VirtualObjectType::oCTouchDamage:
+      return std::unique_ptr<Vob>(new TouchDamage(parent,world,reinterpret_cast<const asset::VTouchDamage&>(vob),flags));
+    case asset::VirtualObjectType::zCTriggerUntouch:
       return std::unique_ptr<Vob>(new Vob(parent,world,vob,flags));
-    case zenkit::VirtualObjectType::zCMoverController:
-      return std::unique_ptr<Vob>(new MoverControler(parent,world,reinterpret_cast<const zenkit::VMoverController&>(vob),flags));
-    case zenkit::VirtualObjectType::zCEarthquake:
-      return std::unique_ptr<Vob>(new Earthquake(parent,world,reinterpret_cast<const zenkit::VEarthquake&>(vob),flags));
-    case zenkit::VirtualObjectType::zCVobStartpoint: {
+    case asset::VirtualObjectType::zCMoverController:
+      return std::unique_ptr<Vob>(new MoverControler(parent,world,reinterpret_cast<const asset::VMoverController&>(vob),flags));
+    case asset::VirtualObjectType::zCEarthquake:
+      return std::unique_ptr<Vob>(new Earthquake(parent,world,reinterpret_cast<const asset::VEarthquake&>(vob),flags));
+    case asset::VirtualObjectType::zCVobStartpoint: {
       float dx = vob.rotation[2].x;
       float dy = vob.rotation[2].y;
       float dz = vob.rotation[2].z;
@@ -235,7 +237,7 @@ std::unique_ptr<Vob> Vob::load(Vob* parent, World& world, const zenkit::VirtualO
       // FIXME
       return std::unique_ptr<Vob>(new Vob(parent,world,vob,flags));
       }
-    case zenkit::VirtualObjectType::zCVobSpot: {
+    case asset::VirtualObjectType::zCVobSpot: {
       float dx = vob.rotation[2].x;
       float dy = vob.rotation[2].y;
       float dz = vob.rotation[2].z;
@@ -243,40 +245,41 @@ std::unique_ptr<Vob> Vob::load(Vob* parent, World& world, const zenkit::VirtualO
       // FIXME
       return std::unique_ptr<Vob>(new Vob(parent,world,vob,flags));
       }
-    case zenkit::VirtualObjectType::oCItem: {
-      if(flags)
-        world.addItem(reinterpret_cast<const zenkit::VItem&>(vob));
+    case asset::VirtualObjectType::oCItem: {
+      // Rebuild the complete authored catalogue before loading saved items.
+      // Trigger parents clear Static, including on their Item descendants.
+      world.addItem(reinterpret_cast<const asset::VItem&>(vob));
       // FIXME
       return std::unique_ptr<Vob>(new Vob(parent,world,vob,flags));
       }
 
-    case zenkit::VirtualObjectType::zCVobSound:
-    case zenkit::VirtualObjectType::zCVobSoundDaytime:
-    case zenkit::VirtualObjectType::oCZoneMusic:
-    case zenkit::VirtualObjectType::oCZoneMusicDefault: {
+    case asset::VirtualObjectType::zCVobSound:
+    case asset::VirtualObjectType::zCVobSoundDaytime:
+    case asset::VirtualObjectType::oCZoneMusic:
+    case asset::VirtualObjectType::oCZoneMusicDefault: {
       world.addSound(vob);
       // FIXME
       return std::unique_ptr<Vob>(new Vob(parent,world,vob,flags));
       }
-    case zenkit::VirtualObjectType::zCVobLight: {
-      return std::unique_ptr<Vob>(new VobLight(parent,world,reinterpret_cast<const zenkit::VLight&>(vob),flags));
+    case asset::VirtualObjectType::zCVobLight: {
+      return std::unique_ptr<Vob>(new VobLight(parent,world,reinterpret_cast<const asset::VLight&>(vob),flags));
       }
-    case zenkit::VirtualObjectType::zCCSCamera:
-      return std::unique_ptr<Vob>(new CsCamera(parent,world,reinterpret_cast<const zenkit::VCutsceneCamera&>(vob),flags));
-    case zenkit::VirtualObjectType::zCCamTrj_KeyFrame:
+    case asset::VirtualObjectType::zCCSCamera:
+      return std::unique_ptr<Vob>(new CsCamera(parent,world,reinterpret_cast<const asset::VCutsceneCamera&>(vob),flags));
+    case asset::VirtualObjectType::zCCamTrj_KeyFrame:
       break;
-    case zenkit::VirtualObjectType::zCZoneZFog:
-    case zenkit::VirtualObjectType::zCZoneZFogDefault:
+    case asset::VirtualObjectType::zCZoneZFog:
+    case asset::VirtualObjectType::zCZoneZFogDefault:
       break;
-    case zenkit::VirtualObjectType::zCZoneVobFarPlane:
-    case zenkit::VirtualObjectType::zCZoneVobFarPlaneDefault:
+    case asset::VirtualObjectType::zCZoneVobFarPlane:
+    case asset::VirtualObjectType::zCZoneVobFarPlaneDefault:
       // wont do: no distance culling in any plans
       break;
-    case zenkit::VirtualObjectType::zCVobLensFlare:
-    case zenkit::VirtualObjectType::zCVobScreenFX:
+    case asset::VirtualObjectType::zCVobLensFlare:
+    case asset::VirtualObjectType::zCVobScreenFX:
       break;
-    case zenkit::VirtualObjectType::oCNpc:
-    case zenkit::VirtualObjectType::oCCSTrigger:
+    case asset::VirtualObjectType::oCNpc:
+    case asset::VirtualObjectType::oCCSTrigger:
       break;
     }
 
@@ -286,7 +289,9 @@ std::unique_ptr<Vob> Vob::load(Vob* parent, World& world, const zenkit::VirtualO
 void Vob::saveVobTree(Serialize& fin) const {
   for(auto& i:child)
     i->saveVobTree(fin);
-  if(vobType==zenkit::VirtualObjectType::zCVob)
+  // Layer additions are static content, reconstructed once from the current
+  // world on every load, and never enter the base-ID save namespace.
+  if(layerObject || vobType==asset::VirtualObjectType::zCVob)
     return;
   if(vobObjectID!=uint32_t(-1))
     save(fin);
@@ -294,14 +299,14 @@ void Vob::saveVobTree(Serialize& fin) const {
 
 void Vob::loadVobTree(Serialize& fin) {
   if(fin.version()<43) {
-    if(vobType==zenkit::VirtualObjectType::zCEarthquake ||
-       vobType==zenkit::VirtualObjectType::zCCSCamera)
+    if(vobType==asset::VirtualObjectType::zCEarthquake ||
+       vobType==asset::VirtualObjectType::zCCSCamera)
       return;
     }
 
   for(auto& i:child)
     i->loadVobTree(fin);
-  if(vobObjectID!=uint32_t(-1) && vobType!=zenkit::VirtualObjectType::zCVob)
+  if(!layerObject && vobObjectID!=uint32_t(-1) && vobType!=asset::VirtualObjectType::zCVob)
     load(fin);
   }
 

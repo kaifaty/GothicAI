@@ -1,0 +1,17 @@
+# The part-1 chase at NW_CITY_TO_FARM2_09, with matching follow cameras.
+seed 73024
+cheat god
+set time 12 0
+movable on
+off: monstercharacter off
+on: monstercharacter on
+overlay off
+monstercharacter route wolf_stairs
+wait 600
+monstercharacter follow 350 100 270
+view clean 300
+rec wolf_stairs
+monstercharacter begin
+wait 12000
+monstercharacter end
+stop

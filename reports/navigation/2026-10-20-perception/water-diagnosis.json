@@ -1,0 +1,29 @@
+{
+  "method": "Diagnostic eye replay on saved 100ms physical poses; neutral body-yaw head basis and same walking gaze; original safety logs contain no navigation eye or memory snapshots",
+  "job": "2b762bafe3a7",
+  "memory_version": 2,
+  "not_original_sensor_recording": true,
+  "cases": [
+    {
+      "id": "water-bigfarm-lake-1",
+      "elapsed_ms": 300,
+      "fresh_water_hits": 73,
+      "memory_water_cells_forward_5_15m": 38,
+      "first_entry_gt10cm_ms": null
+    },
+    {
+      "id": "water-bigfarm-lake-2",
+      "elapsed_ms": 2100,
+      "fresh_water_hits": 67,
+      "memory_water_cells_forward_5_15m": 71,
+      "first_entry_gt10cm_ms": 2233
+    },
+    {
+      "id": "water-lake-2",
+      "elapsed_ms": 300,
+      "fresh_water_hits": 120,
+      "memory_water_cells_forward_5_15m": 38,
+      "first_entry_gt10cm_ms": 333
+    }
+  ]
+}

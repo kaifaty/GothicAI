@@ -1,0 +1,50 @@
+# Hands-check of the shadow melee blade: yellow line = blade in its active window,
+# grey = the rest of the swing, red dot = body part hit (with contact speed), blue = the world stopped the swing.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh melee-blade-draw /absolute/output
+seed 73013
+cheat god
+set time 12 0
+release all
+overlay off
+goto NW_CITY_MERCHANT_PATH_09
+wait 500
+watch player
+clear 3000
+corner right go 5
+melee-shadow setup 1h
+wait 600
+toggle melee_blade_draw
+ui on
+slowmo 2
+melee-shadow weapon 1h
+wait 500
+melee-shadow target 0
+wait 600
+rec blade-1h-wolf
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+tap forward
+wait 350
+tap forward
+wait 350
+tap forward
+wait 1600
+release all
+stop
+melee-shadow target 2
+wait 600
+rec blade-1h-bandit-wall
+press action
+tap left
+wait 1200
+tap right
+wait 1200
+tap forward
+wait 1400
+release all
+stop

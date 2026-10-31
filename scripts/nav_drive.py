@@ -162,8 +162,22 @@ def indices(args, pairs):
         if args.count is not None:
             selected = selected[:args.count]
     if args.resume:
+        for index in selected:
+            directory = episode_dir(args, pairs[index])
+            if completed(directory) and read_json(directory / "episode.json").get("action_mode", "argmax") != getattr(args, "action_mode", "argmax"):
+                raise ValueError(f"--resume action mode differs from the completed drive: {directory}")
         selected = [i for i in selected if not completed(episode_dir(args, pairs[i]))]
     return selected
+
+
+def policy_arguments(args, pair_index):
+    """Keep the existing greedy command unchanged; sampling is an explicit suffix."""
+    mode = getattr(args, "action_mode", "argmax")
+    if mode not in ("argmax", "sample"):
+        raise ValueError("--action-mode must be sample or argmax")
+    seed = args.mixing_seed + pair_index
+    result = f"{args.limit_ms} {args.weights} {args.teacher_beta:.9g} {seed}"
+    return result + (" sample" if mode == "sample" else "")
 
 
 def collect(args):
@@ -171,6 +185,9 @@ def collect(args):
         raise ValueError("--teacher-beta must be in [0,1]")
     if args.teacher_beta and not args.dagger_collection:
         raise ValueError("Measured drives require --teacher-beta 0; use --dagger-collection for mixed control")
+    action_mode = getattr(args, "action_mode", "argmax")
+    if action_mode not in ("argmax", "sample"):
+        raise ValueError("--action-mode must be sample or argmax")
     pairs = load_pairs(args)
     selected = indices(args, pairs)
     if args.list_indices:
@@ -207,7 +224,7 @@ def collect(args):
             name = f"drive-{pair['split']}-{pair['split_index']:03d}"
             commands = [f"roads load {args.roads}", f"roads on {pair['npc']}"]
             mixing_seed = args.mixing_seed + pair["index"]
-            policy_args = f"{args.limit_ms} {args.weights} {args.teacher_beta:.9g} {mixing_seed}"
+            policy_args = policy_arguments(args, pair["index"])
             if pair["split"] == "control":
                 commands.extend(["goto NW_FARM1_ENTRANCE_03", f"put {pair['npc']} 0 0 -1400",
                                  "goto NW_FARM1_ENTRANCE_01", "wait 1000",
@@ -231,9 +248,12 @@ def collect(args):
                 raise ValueError(f"Drive must use NAVDEMO v2 policy/teacher: {directory}")
             if episode.get("teacher_beta") != args.teacher_beta or episode.get("mixing_seed") != mixing_seed:
                 raise ValueError(f"Runner did not apply the requested mixing settings: {directory}")
+            if episode.get("action_mode", "argmax") != action_mode:
+                raise ValueError(f"Runner did not apply the requested action mode: {directory}")
             episode.update(pair, drive=True, weights=str(args.weights), limit_ms=args.limit_ms,
                            collector_wall_s=wall, selection_seed=args.selection_seed,
-                           dagger_collection=args.dagger_collection, requested_physics=getattr(args, "physics", "native"))
+                           dagger_collection=args.dagger_collection, requested_action_mode=action_mode,
+                           requested_physics=getattr(args, "physics", "native"))
             write_json(directory / "episode.json", episode)
             print(f"{name}: success={episode['success']} elapsed_ms={episode['elapsed_ms']} "
                   f"distance_cm={episode.get('distance_cm')} wall_s={wall:.2f}", flush=True)
@@ -587,7 +607,9 @@ def main():
     parser.add_argument("--teacher-beta", type=float, default=0,
                         help="Per-decision probability of applying teacher keys; measured drives require 0")
     parser.add_argument("--mixing-seed", type=int, default=1701,
-                        help="Mixed-control RNG seed, offset by the pair index")
+                        help="Action sampling and mixed-control RNG seed, offset by the pair index")
+    parser.add_argument("--action-mode", choices=("argmax", "sample"), default="argmax",
+                        help="Drive policy action selection; argmax preserves the existing measured drive")
     parser.add_argument("--dagger-collection", action="store_true", help="Mark this run as DAgger collection")
     parser.add_argument("--plot-count", type=int, default=6)
     parser.add_argument("--physics", choices=("native", "cv"), default="native")

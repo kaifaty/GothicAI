@@ -70,11 +70,16 @@ function service(session: Session, name: string, icon: Row["icon"], title: strin
 }
 
 export function duringGame(session: Session, p: Providers | null, voiceOff: boolean, speechOff: boolean): Row[] {
+  if (session.voice_enabled !== undefined) voiceOff = !session.voice_enabled;
+  if (session.tts_enabled !== undefined) speechOff = !session.tts_enabled;
   const server = session.services.server;
   const game = session.services.game;
+  const prepare = session.services.prepare;
   const connected = server?.health?.game === true;
   const gameRow: Row =
-    game?.state === "exited"
+    prepare && (prepare.state === "starting" || prepare.state === "status")
+      ? { key: "game", icon: "shield", title: "Подготовка базы игры", detail: prepare.detail, chip: "…", tone: "idle" }
+      : game?.state === "exited"
       ? { key: "game", icon: "shield", title: "Игра", detail: "Закрыта", chip: "закрыта", tone: "idle" }
       : connected
         ? { key: "game", icon: "shield", title: "Игра", detail: "Подключена к ИИ-серверу", chip: "работает", tone: "ok" }

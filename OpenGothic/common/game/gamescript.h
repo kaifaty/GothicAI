@@ -2,7 +2,6 @@
 
 #include <zenkit/DaedalusVm.hh>
 #include <zenkit/addon/daedalus.hh>
-#include <zenkit/CutsceneLibrary.hh>
 
 #include <memory>
 #include <set>
@@ -19,6 +18,7 @@
 #include "game/aistate.h"
 #include "game/questlog.h"
 #include "game/ownsymbols.h"
+#include "asset/worldtypes.h"
 
 class GameSession;
 class World;
@@ -208,8 +208,8 @@ class GameScript final {
       explicit GlobalOutput(GameScript& owner):owner(owner){}
 
       bool output   (Npc &npc, std::string_view text) override;
-      bool outputSvm(Npc& npc, std::string_view text) override;
-      bool outputOv (Npc& npc, std::string_view text) override;
+      bool outputSvm(Npc& npc, std::string_view text, std::string_view svm, Npc* target) override;
+      bool outputOv (Npc& npc, std::string_view text, std::string_view svm, Npc* target) override;
       bool printScr (Npc& npc, int time, std::string_view msg, int x,int y, std::string_view font) override;
       bool isFinished() override;
 
@@ -242,7 +242,7 @@ class GameScript final {
     void storeItem(Item* it);
 
     bool aiOutput   (Npc &from, std::string_view name, bool overlay);
-    bool aiOutputSvm(Npc &from, std::string_view name, bool overlay);
+    bool aiOutputSvm(Npc &from, std::string_view name, std::string_view svm, Npc* target, bool overlay);
 
     bool searchScheme(std::string_view sc, std::string_view listName);
 
@@ -488,7 +488,7 @@ class GameScript final {
 
     std::set<std::pair<size_t,size_t>>                          dlgKnownInfos;
     std::vector<std::shared_ptr<zenkit::IInfo>>                 dialogsInfo;
-    zenkit::CutsceneLibrary                                     dialogs;
+    std::vector<std::shared_ptr<asset::CutsceneBlock>>           dialogs;
     std::unordered_map<size_t,AiState>                          aiStates;
     std::unique_ptr<AiOuputPipe>                                aiDefaultPipe;
 

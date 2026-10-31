@@ -53,8 +53,14 @@ class Recognizer:
             except AsrError as err:
                 log.warning("%s warmup failed: %s", p.name, err)
 
-    def utterance(self, lang: str, on_partial: PartialCallback | None = None) -> Utterance:
-        return Utterance(self, lang, on_partial)
+    def utterance(
+        self,
+        lang: str,
+        on_partial: PartialCallback | None = None,
+        *,
+        hints: list[str] | None = None,
+    ) -> Utterance:
+        return Utterance(self, lang, on_partial, hints)
 
     async def recognize(self, audio: np.ndarray, lang: str) -> Recognition:
         """Text of 16 kHz mono audio. Raises AsrError when every provider failed."""
@@ -91,10 +97,17 @@ class Recognizer:
 class Utterance:
     """One utterance fed piece by piece: `begin`, `feed`..., then `finish` or `cancel`."""
 
-    def __init__(self, recognizer: Recognizer, lang: str, on_partial: PartialCallback | None) -> None:
+    def __init__(
+        self,
+        recognizer: Recognizer,
+        lang: str,
+        on_partial: PartialCallback | None,
+        hints: list[str] | None,
+    ) -> None:
         self.recognizer = recognizer
         self.lang = lang
         self.on_partial = on_partial
+        self.hints = hints
         self._chunks: list[np.ndarray] = []
         self._stream: AsrStream | None = None
         self._primary_failed = False  # its stream failed: go straight to the fallback
@@ -104,7 +117,9 @@ class Utterance:
         if not p.streaming or (p.languages is not None and self.lang not in p.languages):
             return
         try:
-            self._stream = await cast(StreamingProvider, p).open_stream(self.lang, self.on_partial)
+            self._stream = await cast(StreamingProvider, p).open_stream(
+                self.lang, self.on_partial, hints=self.hints
+            )
         except AsrError as err:
             log.warning("%s stream failed to open: %s", p.name, err)
             self._primary_failed = True

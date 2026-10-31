@@ -1,0 +1,20 @@
+# CLOTH=0 SAVE=<save produced by an unmodified older engine>; do not set WORLD.
+cloth initial legacy-save
+cloth checkpoint ini-off
+toggle cloth
+cloth checkpoint marvin-on
+toggle cloth
+cloth checkpoint marvin-off
+cheat god
+set time 12 0
+overlay off
+view full
+cloth setup NW_CITY_FLAG_01:1 legacy-save
+wait 1000
+shot cloth-legacy-off
+wait 34
+cloth on
+wait 1000
+cloth verify anchors
+cloth checkpoint after-legacy-load
+shot cloth-after-legacy-load

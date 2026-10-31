@@ -354,11 +354,11 @@ void Serialize::implRead(FpLock &fp) {
   fp.load(*this);
   }
 
-void Serialize::implWrite(const zenkit::AnimationSample& i) {
+void Serialize::implWrite(const asset::AnimationSample& i) {
   writeBytes(&i,sizeof(i));
   }
 
-void Serialize::implRead(zenkit::AnimationSample& i) {
+void Serialize::implRead(asset::AnimationSample& i) {
   if (version() < 40) {
     read(i.position.x,i.position.y,i.position.z);
     read(i.rotation.x,i.rotation.y,i.rotation.z,i.rotation.w);

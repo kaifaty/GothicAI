@@ -44,6 +44,8 @@ namespace TestBench {
   void     beforeWorldTick(uint64_t dt);
   // Runs the scenario after the world update; true if this frame has to be captured
   bool     tick(uint64_t dt, PlayerControl& player);
+  // Called after the frame's residency update; deferred metrics for perf route segments.
+  void     sampleStreaming(const World& world);
   // The captured frame: draws the overlay and writes it to the video; uiScale: the interface's (the
   // crosshair is drawn that big)
   void     capture(Tempest::Pixmap& frame, float uiScale);
@@ -58,6 +60,8 @@ namespace TestBench {
   void     destructionMeleeHit(const Npc& actor, size_t affected, float damage);
   void     movementImpulseHandoff(const Npc& actor, std::string_view backend, uint32_t fromState,
                                   uint32_t toState, const Tempest::Vec3& velocity);
+  // Native monster charge collision callback; inert outside its explicit bench fixture.
+  void     monsterCharacterCollision(const Npc& actor, const Npc* target);
   // Devmode-only live bridge stand, reusing the actual Coragon tavern fixture.
   bool     isPhysicsNoiseDebug();
   void     physicsNoiseBridgeEvent(const Npc& listener, uint64_t tick);
@@ -70,6 +74,8 @@ namespace TestBench {
                                   std::string& value, std::string& error);
   // An arrow (a bolt) has moved to (x, y, z), cm: the overlay draws the way it flew (`overlay trail`)
   void     arrowAt(const void* arrow, float x, float y, float z);
+  // Native projectile callback, observed only by the authored own-mesh barrel stand.
+  void     ownMeshArrowHit(uint32_t zenId, const Tempest::Vec3& point, const Tempest::Vec3& normal);
   // Native melee baseline telemetry. Opt in with OPENGOTHIC_BODY_TRACE=1; no events outside an active bench.
   bool     bodyTracing();
   void     bodyEvent(const Npc& actor, const Npc* target, std::string_view phase, uint64_t gameTime,

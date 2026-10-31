@@ -1,0 +1,56 @@
+{
+  "glb": "mesh3d-table-concept/meshes/mesh3d-table-concept/table.glb",
+  "maps_dir": "mesh3d-table-concept/tiles",
+  "scales": {
+    "OWN_PROP_WOOD_TOP": 2.6315789,
+    "OWN_PROP_WOOD_FRAME": 2.6315789,
+    "OWN_PROP_IRON_BRACKET": 5.0
+  },
+  "targets": {
+    "OWN_PROP_WOOD_TOP": [
+      0.0407,
+      0.03,
+      0.0221
+    ],
+    "OWN_PROP_WOOD_FRAME": [
+      0.0407,
+      0.03,
+      0.0221
+    ],
+    "OWN_PROP_IRON_BRACKET": [
+      0.0212,
+      0.0207,
+      0.0153
+    ]
+  },
+  "slots": {
+    "OWN_PROP_WOOD_TOP": [
+      "OWN_TABLE_PEASANT_WOOD",
+      "WOOD"
+    ],
+    "OWN_PROP_WOOD_FRAME": [
+      "OWN_TABLE_PEASANT_WOOD",
+      "WOOD"
+    ],
+    "OWN_PROP_IRON_BRACKET": [
+      "OWN_TABLE_PEASANT_IRON",
+      "METAL"
+    ]
+  },
+  "metal": [
+    "OWN_PROP_IRON_BRACKET"
+  ],
+  "size": 2048,
+  "seed": 1,
+  "wet_height": 0.08,
+  "algae": 0.0,
+  "planks_per_tile": {
+    "OWN_PROP_WOOD_TOP": 4,
+    "OWN_PROP_WOOD_FRAME": 4
+  },
+  "contrast": {
+    "OWN_PROP_WOOD_TOP": 1.3,
+    "OWN_PROP_WOOD_FRAME": 1.3,
+    "OWN_PROP_IRON_BRACKET": 1.2
+  }
+}
