@@ -196,6 +196,7 @@
 #       find the thief, his ask_witness/about and blame finish its goal, then reward and save/load.
 #       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt asks only the ordinary showrunner
 #       once on the same deed, records its line premise or none reason and canon, without building.
+#       GOTHIC_DIRECTOR_ASKS=N asks it N times and lists the hidden challenge kinds of its lines.
 #   frame: unseen hero chest theft, Lobart believes Malak guilty, native reclaim combat finds no goods
 #       and reveals the hero's lie; Hilda's honest testimony about Vino leads to true blame and return.
 #       Save/load restores both cases without duplicates. LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=900.
