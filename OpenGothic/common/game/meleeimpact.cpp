@@ -4,6 +4,32 @@
 #include <cmath>
 #include <cstdlib>
 
+MeleeImpact::HeavyHit MeleeImpact::heavyHit(Weapon weapon, const Tempest::Vec3& velocityCmS, float postureIncrease) {
+  if(weapon==Weapon::TwoHand)
+    return HeavyHit::TwoHanded;
+  const float speed = velocityCmS.length();
+  if(speed>0.f && -velocityCmS.y/speed>=.6f)
+    return HeavyHit::Downward;
+  return postureIncrease>=40.f ? HeavyHit::Posture : HeavyHit::None;
+  }
+
+MeleeImpact::ArmorClass MeleeImpact::armorClass(int32_t edgeProtection) {
+  return edgeProtection<40 ? ArmorClass::Light : edgeProtection<80 ? ArmorClass::Medium : ArmorClass::Heavy;
+  }
+
+float MeleeImpact::armorThresholdScale(ArmorClass armor) {
+  switch(armor) {
+    case ArmorClass::Light:  return 1.f;
+    case ArmorClass::Medium: return 1.15f;
+    case ArmorClass::Heavy:  return 1.3f;
+    }
+  std::abort();
+  }
+
+uint64_t MeleeImpact::stunDuration(std::string_view reason) {
+  return reason=="posture" ? 1500 : 1000;
+  }
+
 Tempest::Vec3 MeleeImpact::impulse(Weapon weapon, const Tempest::Vec3& velocityCmS, float surfaceAngleDeg) {
   const float mass = weapon==Weapon::Fist ? 1.5f : weapon==Weapon::OneHand ? 2.5f : 4.f;
   const float edge = .5f+.5f*std::sin(std::clamp(surfaceAngleDeg,0.f,90.f)*float(M_PI)/180.f);

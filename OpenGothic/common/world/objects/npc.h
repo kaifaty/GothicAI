@@ -984,6 +984,9 @@ class Npc final {
     void                          tickMeleeParry();
     void                          applyMeleeParry(Npc& attacker, const MeleeBladeContact* contact);
     float                         meleePostureSkillScale(const Npc& attacker) const;
+    bool                          hasMeleeSuperArmor() const;
+    float                         meleeStunBonus(const Npc& attacker) const;
+    std::string                   meleeStunReason;
     uint64_t                      meleeStunUntil = 0;
     std::optional<uint64_t>        meleeParadeOrigin;
     uint64_t                      meleeParadeEnd = 0;

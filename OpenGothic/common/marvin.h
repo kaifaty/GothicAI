@@ -106,6 +106,7 @@ class Marvin {
       C_ToggleMeleePhysicsHits,
       C_ToggleMeleeReactions,
       C_ToggleMeleePosture,
+      C_ToggleMeleeStagger,
       C_ToggleMeleeDownTactics,
       C_ToggleMeleeHitStop,
       C_ToggleMeleeStamina,
