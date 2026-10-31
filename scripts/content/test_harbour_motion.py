@@ -1,4 +1,5 @@
 import json
+import math
 
 from PIL import Image
 
@@ -44,6 +45,35 @@ def test_a_reshoot_scenario_takes_only_the_named_cameras(tmp_path, monkeypatch):
         assert 'mole' in str(e)
     else:
         raise AssertionError('an unknown camera must stop the scenario')
+
+
+def test_a_tilted_emitter_leans_with_the_wind():
+    smoke, = harbour_motion.layer_entries([
+        {'key': 'smoke', 'kind': 'emitter', 'pfx': 'OWN_SMOKE', 'position': [1, 2, 3], 'tilt': 40}])
+    assert 'yaw_deg' not in smoke
+    up = [row[1] for row in smoke['rotation']]  # the local up axis in the world
+    assert up[0] == 0 and up[2] > 0 and abs(up[1] ** 2 + up[2] ** 2 - 1) < 1e-5
+    assert abs(math.degrees(math.atan2(up[2], up[1])) - 40) < 1e-3
+    try:
+        harbour_motion.layer_entries([{'key': 'lamp', 'kind': 'light', 'position': [0, 0, 0], 'range': 1,
+                                       'color': [1, 1, 1], 'tilt': 10}])
+    except ValueError as e:
+        assert 'tilt' in str(e)
+    else:
+        raise AssertionError('only an emitter leans')
+
+
+def test_own_particles_keep_only_the_format_fields():
+    doc = harbour_motion.particle_document([
+        {'name': 'OWN_SMOKE', 'base': 'LIGHTSMOKE', 'set': {'visAlphaStart': 200.0}, 'why': 'denser'}])
+    assert doc == {'format': 1, 'effects': [{'name': 'OWN_SMOKE', 'base': 'LIGHTSMOKE', 'set': {'visAlphaStart': 200.0}}]}
+    for bad in ([{'name': 'own_smoke', 'base': 'LIGHTSMOKE', 'set': {}}],
+                [{'name': 'A', 'base': 'LIGHTSMOKE', 'set': {}}, {'name': 'A', 'base': 'A', 'set': {}}]):
+        try:
+            harbour_motion.particle_document(bad)
+        except ValueError:
+            continue
+        raise AssertionError(bad)
 
 
 def test_emitters_and_lights_keep_their_positions():

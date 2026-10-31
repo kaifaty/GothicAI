@@ -1,0 +1,27 @@
+{
+ "format": 1,
+ "effects": [
+  {
+   "name": "OWN_HARBOUR_SMOKE",
+   "base": "LIGHTSMOKE",
+   "set": {
+    "visName_S": "SMK_16BIT_A0.TGA",
+    "visTexAniFPS": 2.0,
+    "visTexAniIsLooping": 1,
+    "visTexColorStart_S": "170 170 170",
+    "visTexColorEnd_S": "190 190 190",
+    "visAlphaStart": 200.0,
+    "visAlphaEnd": 0.0,
+    "visSizeStart_S": "80 80",
+    "visSizeEndScale": 6.0,
+    "lspPartAvg": 13500.0,
+    "lspPartVar": 1500.0,
+    "velAvg": 0.04,
+    "velVar": 0.015,
+    "ppsValue": 8.0,
+    "dirAngleElevVar": 20.0,
+    "dirAngleHeadVar": 25.0
+   }
+  }
+ ]
+}

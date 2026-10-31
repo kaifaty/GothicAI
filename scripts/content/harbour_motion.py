@@ -16,7 +16,11 @@ NPCs are cleared, and the hero stands far beyond the target on the line of sight
 data/content/world/harbour-motion-placements.json into the staging set `--set`, each `--copy-to` set and the
 copy in git (data/content/world/NEWWORLD/vobs.d/). Emitters and lights take their positions as written
 (smoke at the mouth of an opening in a roof, a light inside a lantern); a mesh is put on the world mesh
-the way harbour_life.py puts its items.
+the way harbour_life.py puts its items. An emitter's `tilt` leans its up axis that many degrees towards +z,
+the world wind (common/physics/worldwind.h): a PFX that flies in its object's axes (`dirFOR_S` "object",
+as LIGHTSMOKE) drifts with the wind. The placements' `particles` are own PFX (Д2б, `particles.d`, format
+in docs/asset-migration.md): `layer` writes them as particles.d/harbour-smoke.json next to the layer, with
+a copy in git (data/content/particles.d/); a `why` note stays in the placements.
 
 `motion` measures each pair `<camera>.png` / `<camera>-b.png`: in every region of the camera (pixel boxes
 in cameras.json, `regions`) the mean absolute difference of luminance and the share of pixels that changed
@@ -39,6 +43,8 @@ CAMERAS = ROOT / 'reports/content/remaster' / ASSET / 'cameras.json'
 PLACEMENTS = ROOT / 'data/content/world/harbour-motion-placements.json'
 LAYER_COPY = ROOT / 'data/content/world/NEWWORLD/vobs.d/harbour-motion.json'
 LAYER_PATH = Path('worlds/NEWWORLD/vobs.d/harbour-motion.json')
+PARTICLES_COPY = ROOT / 'data/content/particles.d/harbour-smoke.json'
+PARTICLES_PATH = Path('particles.d/harbour-smoke.json')
 NIGHT = (0, 0)
 PAIR_MS = 700
 FAR_FACTOR, FAR_MIN_CM, FAR_ABOVE_CM = 3.0, 6000.0, 2000.0  # the hero's spot beyond the target
@@ -121,6 +127,24 @@ def yaw_matrix(entry: dict) -> list[list[float]]:
     return [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
 
 
+def tilt_matrix(degrees: float) -> list[list[float]]:
+    """World-from-local rows of a turn about x: the local up axis (0, 1, 0) leans to (0, cos, sin), towards +z."""
+    c, s = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+    return [[1.0, 0.0, 0.0], [0.0, round(c, 6), round(-s, 6)], [0.0, round(s, 6), round(c, 6)]]
+
+
+def particle_document(effects: list[dict]) -> dict:
+    """particles.d file of own PFX: name, base and the C_PARTICLEFX fields to set; notes are left out."""
+    out = []
+    for effect in effects:
+        if not re.fullmatch(r'[A-Z0-9_]+', effect['name']):
+            raise ValueError(f"particle name {effect['name']!r}: expected [A-Z0-9_]+")
+        out.append(dict(name=effect['name'], base=effect['base'], set=dict(effect['set'])))
+    if len({e['name'] for e in out}) != len(out):
+        raise ValueError('duplicate particle names')
+    return dict(format=1, effects=out)
+
+
 def layer_entries(spec: list[dict], ground=None, visuals=None) -> list[dict]:
     """Layer entries in the order of the placements: emitters and lights as written, meshes on the ground.
 
@@ -144,8 +168,13 @@ def layer_entries(spec: list[dict], ground=None, visuals=None) -> list[dict]:
             position = [parent['position'][i] + sum(rows[i][j] * offset[j] for j in range(3)) for i in range(3)]
         else:
             position = [float(v) for v in item['position']]
-        entry = dict(key=item['key'], kind=item['kind'], position=[round(v, 1) for v in position],
-                     yaw_deg=float(item.get('yaw', 0.0)))
+        entry = dict(key=item['key'], kind=item['kind'], position=[round(v, 1) for v in position])
+        if 'tilt' in item:
+            if item['kind'] != 'emitter' or 'yaw' in item:
+                raise ValueError(f"{item['key']}: tilt is for an emitter without yaw")
+            entry['rotation'] = tilt_matrix(float(item['tilt']))
+        else:
+            entry['yaw_deg'] = float(item.get('yaw', 0.0))
         if item['kind'] == 'mesh':
             entry['visual'] = item['visual']
             entry['collision'] = item.get('collision', 'mesh')
@@ -164,7 +193,8 @@ def layer_entries(spec: list[dict], ground=None, visuals=None) -> list[dict]:
 
 
 def cmd_layer(args) -> int:
-    spec = json.loads(args.placements.read_text())['items']
+    placements = json.loads(args.placements.read_text())
+    spec = placements['items']
     ground = visuals = None
     if any(item['kind'] == 'mesh' and 'position' not in item for item in spec):
         import harbour_life
@@ -173,9 +203,15 @@ def cmd_layer(args) -> int:
     entries = layer_entries(spec, ground, visuals)
     layer = json.dumps(dict(format=1, add=entries), indent=1, ensure_ascii=False) + '\n'
     staging = Path.home() / '.local/share/gothic-ai/content-staging'
-    for path in (staging / args.set / LAYER_PATH, LAYER_COPY, *(staging / name / LAYER_PATH for name in args.copy_to)):
+    sets = [staging / args.set, *(staging / name for name in args.copy_to)]
+    for path in (*(root / LAYER_PATH for root in sets), LAYER_COPY):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(layer)
+    if placements.get('particles'):
+        particles = json.dumps(particle_document(placements['particles']), indent=1, ensure_ascii=False) + '\n'
+        for path in (*(root / PARTICLES_PATH for root in sets), PARTICLES_COPY):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(particles)
     kinds = {}
     for e in entries:
         kinds[e['kind']] = kinds.get(e['kind'], 0) + 1
