@@ -37,6 +37,7 @@ MELEE_BALANCE_PYTHON selects a remote Python with torch (default: body/.venv).
 MELEE_POSTURE_SCALE multiplies the knockdown threshold in every series (sweeps).
 MELEE_DOWN_TACTICS sets GAME melee_down_tactics in every series (0 or 1).
 MELEE_HITSTOP sets GAME melee_hitstop in every series (0 or 1).
+MELEE_PARRY sets GAME melee_parry in every series (0 or 1).
 MELEE_STAMINA sets GAME melee_stamina in every series (0 or 1).
 USAGE
 }
@@ -78,7 +79,7 @@ done
 remote_script() {
   local remote_args='' remote_env='' arg key
   for arg in "$@"; do printf -v remote_args '%s %q' "$remote_args" "$arg"; done
-  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA; do
+  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA MELEE_PARRY; do
     if [[ -n "${!key:-}" ]]; then printf -v remote_env '%s %q' "$remote_env" "$key=${!key}"; fi
   done
   { cat "$ROOT/scripts/gq-job.sh"; cat; } |
@@ -172,6 +173,9 @@ for name in "${series[@]}"; do
   fi
   if [[ -n "${MELEE_STAMINA:-}" ]]; then
     scale_env+=("MELEE_STAMINA=$MELEE_STAMINA")
+  fi
+  if [[ -n "${MELEE_PARRY:-}" ]]; then
+    scale_env+=("MELEE_PARRY=$MELEE_PARRY")
   fi
   cp "$task_root/provenance/source-commit.txt" "$task_root/provenance/source.patch" \
      "$task_root/provenance/runner.sha256" "$out/"

@@ -14092,6 +14092,19 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         ",\"wall_cm\":"+ragdollVector(wall.v)+",\"wall_normal\":"+ragdollVector(wall.n));
       }
     else if(a.size()==3 && a[1]=="weapon") equip(a[2]);
+    else if(a.size()==3 && a[1]=="bandit") {
+      // melee-shadow bandit 1h|2h: the fixture's bandit takes the stock one- or two-hander in hand
+      if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
+      if(a[2]!="1h" && a[2]!="2h") {arenaAbort("melee shadow bandit expects 1h or 2h");return;}
+      auto& npc=*bench.meleeShadowActors[2];
+      const auto symbol=w.script().findSymbolIndex(a[2]=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
+      if(symbol==size_t(-1)) {arenaAbort("melee shadow bandit weapon is absent");return;}
+      npc.closeWeapon(true);
+      npc.setToFightMode(symbol);
+      if(!npc.currentMeleeWeapon() || npc.currentMeleeWeapon()->clsId()!=symbol) {
+        arenaAbort("melee shadow bandit weapon did not equip");return;
+        }
+      }
     else if(a.size()==2 && a[1]=="stamina-backstep") {
       if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
       auto& npc=*bench.meleeShadowActors[2];
@@ -16515,6 +16528,18 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       h.flags = zenkit::NpcFlag(uint32_t(h.flags) & ~uint32_t(zenkit::NpcFlag::IMMORTAL)); else
       h.flags = zenkit::NpcFlag(uint32_t(h.flags) |  uint32_t(zenkit::NpcFlag::IMMORTAL));
     say("immortal " + symName(w,n) + " " + (n->isImmortal() ? "on" : "off"));
+    }
+  else if(c=="stun") {
+    // stun <npc|nearest|player> [parried|guard_break]: the stun of melee_parry as after a parry, by the hero
+    // (or, for the hero, by the nearest npc): the look without timing a real parade
+    Npc* n = a.size()>1 && a[1]=="player" ? &pl : findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    Npc* by = n==&pl ? findNpc(w,pl,"nearest") : &pl;
+    if(n==nullptr || by==nullptr) {
+      say("stun: no npc " + line);
+      return;
+      }
+    n->startMeleeStun(*by,a.size()>2 ? a[2] : "parried");
+    say("stun " + symName(w,n) + (n->isMeleeStunned() ? " on" : " refused"));
     }
   else if(c=="clear") {
     // clear [radius]: the npcs around the hero leave the world (rats, wolves that would join in), not the
