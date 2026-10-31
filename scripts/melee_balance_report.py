@@ -12,6 +12,8 @@ import statistics
 
 ROLES = ("primary", "opponent")
 FINISH = ("T_1HSFINISH", "T_2HSFINISH")
+PARRY_COUNTS = ("parries", "guards", "guard_breaks", "parade_whiffs", "guard_stamina_spent",
+                "stuns", "stuns_parried", "stuns_guard_break", "stunned_time_s", "stun_refusal_spells")
 
 
 def read_rows(path: Path) -> list[dict]:
@@ -248,8 +250,7 @@ def episode_metrics(folder: Path, episode: dict, shared: dict, variant: str) -> 
         own["parade_ms"] = ([row["parade_ms"] for row in defence if roles(row.get("actor")) == role and
                              row.get("blocked") is True and row.get("parade_ms") is not None] if parade_schema else
                             missing(f"fighters.{role}.parade_ms", "Parade timing absent from defence journal"))
-        parry = {"parries": 0, "guards": 0, "guard_breaks": 0, "parade_whiffs": 0, "guard_stamina_spent": 0,
-                 "stuns": 0, "stuns_parried": 0, "stuns_guard_break": 0, "stunned_time_s": 0, "stun_refusal_spells": 0}
+        parry = dict.fromkeys(PARRY_COUNTS, 0)
         if not parry_available:
             for key in parry:
                 parry[key] = missing(f"fighters.{role}.{key}", "No parry, guard or stun events; melee_parry may be disabled")
@@ -421,6 +422,18 @@ def episode_metrics(folder: Path, episode: dict, shared: dict, variant: str) -> 
 
 def aggregate(variant: str, provider: str, weapon: str, episodes: list[dict]) -> dict:
     unavailable = {}
+    if any(row["fighters"][role]["parries"] is not None for row in episodes for role in ROLES):
+        # Events elsewhere in this series establish the schema; a duel without any
+        # parry events contributes zero outcomes, rather than missing measurements.
+        episodes = [{**row, "fighters": {role: dict(row["fighters"][role]) for role in ROLES},
+                     "unavailable": dict(row["unavailable"])} for row in episodes]
+        for row in episodes:
+            for role in ROLES:
+                own = row["fighters"][role]
+                if own["parries"] is None:
+                    for key in PARRY_COUNTS:
+                        own[key] = 0
+                        row["unavailable"].pop(f"fighters.{role}.{key}", None)
 
     def total(values, key):
         if any(value is None for value in values):
@@ -468,8 +481,7 @@ def aggregate(variant: str, provider: str, weapon: str, episodes: list[dict]) ->
     counts = ("swings_started", "damaging_hits", "blocks", "misses", "damage", "overhead_started", "overhead_hits",
               "prone_hits", "prone_damage", "knockdowns", "repeat_knockdowns_within_10s_after_getup", "down_time_s",
               "stamina_spent", "attack_stamina_spends", "jumpback_stamina_spends", "stamina_refusal_spells",
-              "exhaustions", "exhausted_time_s", "parries", "guards", "guard_breaks", "parade_whiffs",
-              "guard_stamina_spent", "stuns", "stuns_parried", "stuns_guard_break", "stunned_time_s", "stun_refusal_spells")
+              "exhaustions", "exhausted_time_s", *PARRY_COUNTS)
     for role in ROLES:
         own = {key: total([row["fighters"][role][key] for row in episodes], f"fighters.{role}.{key}") for key in counts}
         own["per_duel"] = {key: divide(own[key], count, f"fighters.{role}.per_duel.{key}") for key in counts}
@@ -629,7 +641,7 @@ def main() -> int:
                   "exhausted_time_s": "Time from stamina_exhausted until stamina_recovered or duel end, in game seconds",
                   "exhausted_time_fraction": "Summed exhausted fighter seconds divided by summed duel duration; both fighters together can exceed 1",
                   "mean_stamina_fraction": "Mean snapshot stamina/stamina_max; aggregates average episode means per fighter, then average both fighters",
-                  "parries": "Parry, guard, guard_break and parade_whiff events count outcomes for the defending actor; unavailable without parry/guard/stun events",
+                  "parries": "Parry, guard, guard_break and parade_whiff events count outcomes for the defending actor; eventless episodes contribute zero when any series episode has parry/guard/stun events, otherwise unavailable",
                   "guard_stamina_spent": "Sum of guard costs only; excludes parry, guard_break and parade_whiff costs",
                   "parry_fraction": "Parries divided by parries plus guards",
                   "stuns": "Count of stun_start events for the stunned actor, split by parried and guard_break reasons",
