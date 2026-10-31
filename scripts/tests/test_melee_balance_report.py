@@ -1,4 +1,4 @@
-"""Synthetic melee stamina accounting; no engine or remote calls."""
+"""Synthetic melee stamina and defence accounting; no engine or remote calls."""
 import importlib.util
 import json
 from pathlib import Path
@@ -11,6 +11,8 @@ spec.loader.exec_module(report)
 
 STAMINA_COUNTS = ("stamina_spent", "attack_stamina_spends", "jumpback_stamina_spends",
                   "stamina_refusal_spells", "exhaustions", "exhausted_time_s")
+PARRY_COUNTS = ("parries", "guards", "guard_breaks", "parade_whiffs", "guard_stamina_spent",
+                "stuns", "stuns_parried", "stuns_guard_break", "stunned_time_s", "stun_refusal_spells")
 
 
 def event(phase, time, role="primary", **fields):
@@ -47,6 +49,45 @@ def synthetic_events():
     ]
     rows += [event("stamina_refused", time, action="attack", after=0)
              for time in (2100, 2300, 2500, 2700, 2900, 5100, 5300, 5500)]
+    return sorted(rows, key=lambda row: row["t_game"])
+
+
+def synthetic_parry_events():
+    rows = synthetic_events()+[
+        event("parry", 2100, parade_ms=0, window_ms=185, cost=1),
+        event("parry", 2200, parade_ms=120, window_ms=185, cost=0),
+        event("guard", 3000, parade_ms=185, window_ms=185, cost=7, before=20, after=13),
+        event("guard", 4000, parade_ms=250, window_ms=185, cost=11, before=13, after=2),
+        event("guard_break", 6500, cost=99, before=2),
+        event("parade_whiff", 8100, cost=6),
+        event("parry", 2500, "opponent", parade_ms=60, window_ms=185, cost=1),
+        event("guard", 5000, "opponent", parade_ms=180, window_ms=120, cost=13, before=20, after=7),
+        event("guard_break", 7000, "opponent", cost=77, before=7),
+        event("parade_whiff", 6000, "opponent", cost=4),
+        event("parade_whiff", 6500, "opponent", cost=4),
+        event("stun_start", 2000, reason="parried", duration_ms=10000),
+        event("stun_refused", 2100, action="attack"),
+        event("stun_refused", 2200, action="jumpback"),
+        event("stun_end", 3000, reason="timeout"),
+        event("stun_start", 6000, reason="guard_break", duration_ms=100),
+        event("stun_refused", 6100, action="attack"),
+        event("stun_refused", 6200, action="attack"),
+        event("stun_start", 2500, "opponent", reason="guard_break", duration_ms=500),
+        event("stun_refused", 2550, "opponent", action="attack"),
+        event("stun_refused", 2600, "opponent", action="attack"),
+        event("phase_snapshot", 2750, "opponent", stunned=True),
+        event("stun_end", 3500, "opponent", reason="knockdown"),
+        event("stun_start", 9000, "opponent", reason="parried", duration_ms=100),
+        event("stun_refused", 9100, "opponent", action="attack"),
+        event("stun_refused", 9200, "opponent", action="attack"),
+    ]
+    for role, timings in (("primary", (0, 120, 185, 250)), ("opponent", (60, 180, 249, 300))):
+        rows += [event("defence_result", 4000+index*100, role, damage_kind="melee", blocked=True,
+                       parade_ms=timing, target={"name": "OPPONENT" if role == "primary" else "PRIMARY"})
+                 for index, timing in enumerate(timings)]
+    rows += [event("defence_result", 4500, damage_kind="melee", blocked=True, parade_ms=None),
+             event("defence_result", 4600, damage_kind="melee", blocked=True),
+             event("defence_result", 4700, damage_kind="melee", blocked=False, parade_ms=999)]
     return sorted(rows, key=lambda row: row["t_game"])
 
 
@@ -135,3 +176,92 @@ def test_missing_or_disabled_stamina_keeps_legacy_metrics(tmp_path, stamina_disa
         text = report.markdown([result])
         assert "| stamina_spent | null | null | null | null |" in text
         assert "| mean_stamina_fraction | — | null | null | null |" in text
+
+
+def test_parry_outcomes_stun_intervals_aggregate_timings_and_legacy_metrics(tmp_path):
+    first = episode(tmp_path/"first", synthetic_parry_events())
+    legacy = episode(tmp_path/"legacy", synthetic_events())
+    primary, opponent = (first["fighters"][role] for role in report.ROLES)
+    assert {key: primary[key] for key in PARRY_COUNTS} == {
+        "parries": 2, "guards": 2, "guard_breaks": 1, "parade_whiffs": 1, "guard_stamina_spent": 18,
+        "stuns": 2, "stuns_parried": 1, "stuns_guard_break": 1, "stunned_time_s": 6, "stun_refusal_spells": 2,
+    }
+    assert {key: opponent[key] for key in PARRY_COUNTS} == {
+        "parries": 1, "guards": 1, "guard_breaks": 1, "parade_whiffs": 2, "guard_stamina_spent": 13,
+        "stuns": 2, "stuns_parried": 1, "stuns_guard_break": 1, "stunned_time_s": 3, "stun_refusal_spells": 2,
+    }
+    assert primary["parade_ms"] == [0, 120, 185, 250]
+    assert opponent["parade_ms"] == [60, 180, 249, 300]
+    for role in report.ROLES:
+        for key in ("hit_fraction", "swings_started", *STAMINA_COUNTS, "mean_stamina_fraction"):
+            assert first["fighters"][role][key] == legacy["fighters"][role][key]
+        for key in (*PARRY_COUNTS, "parade_ms"):
+            assert legacy["fighters"][role][key] is None
+            assert f"fighters.{role}.{key}" in legacy["unavailable"]
+
+    second = episode(tmp_path/"second", [
+        event("guard", 1500, "opponent", parade_ms=500, window_ms=185, cost=5, before=10, after=5),
+        event("defence_result", 1500, "opponent", damage_kind="melee", blocked=True, parade_ms=500),
+    ], duration_ms=20000)
+    result = report.aggregate("vanilla", "native", "1h", [first, second])
+    assert {key: result["combat"][key] for key in PARRY_COUNTS} == {
+        "parries": 3, "guards": 4, "guard_breaks": 2, "parade_whiffs": 3, "guard_stamina_spent": 36,
+        "stuns": 4, "stuns_parried": 2, "stuns_guard_break": 2, "stunned_time_s": 9, "stun_refusal_spells": 4,
+    }
+    for own in (result["combat"], *(result["fighters"][role] for role in report.ROLES)):
+        for key in PARRY_COUNTS:
+            assert own["per_duel"][key] == pytest.approx(own[key]/2)
+    assert result["fighters"]["primary"]["parry_fraction"] == pytest.approx(.5)
+    assert result["fighters"]["opponent"]["parry_fraction"] == pytest.approx(1/3)
+    assert result["combat"]["parry_fraction"] == pytest.approx(3/7)
+    assert result["fighters"]["primary"]["stunned_time_fraction"] == pytest.approx(6/30)
+    assert result["fighters"]["opponent"]["stunned_time_fraction"] == pytest.approx(3/30)
+    assert result["combat"]["stunned_time_fraction"] == pytest.approx(9/30)
+    assert result["combat"]["parade_ms"] == pytest.approx({
+        "count": 9, "p10": 48, "p25": 120, "p50": 185, "p75": 250, "p90": 340,
+        "fraction_lt_120": 2/9, "fraction_lt_185": 4/9, "fraction_lt_250": 6/9,
+    })
+    assert result["fighters"]["primary"]["parade_ms"] == pytest.approx({
+        "count": 4, "p10": 36, "p25": 90, "p50": 152.5, "p75": 201.25, "p90": 230.5,
+        "fraction_lt_120": .25, "fraction_lt_185": .5, "fraction_lt_250": .75,
+    })
+    text = report.markdown([result])
+    for key in (*PARRY_COUNTS, "parry_fraction", "stunned_time_fraction",
+                *("parade_ms."+key for key in result["combat"]["parade_ms"])):
+        assert f"| {key} |" in text
+
+
+@pytest.mark.parametrize("stunned_field", [False, True], ids=["old-journal", "disabled-parry"])
+def test_parry_unavailable_without_events_keeps_block_timings(tmp_path, stunned_field):
+    legacy_phases = {row["phase"] for row in synthetic_events()} | {"defence_result"}
+    rows = [row for row in synthetic_parry_events()
+            if row["phase"] in legacy_phases]
+    for row in rows:
+        if row["phase"] == "phase_snapshot":
+            row.pop("stunned", None)
+            if stunned_field:
+                row["stunned"] = False
+    old = episode(tmp_path/"old", rows)
+    rich = episode(tmp_path/"rich", synthetic_parry_events())
+    for role in report.ROLES:
+        for key in PARRY_COUNTS:
+            assert old["fighters"][role][key] is None
+            assert f"fighters.{role}.{key}" in old["unavailable"]
+        for key in ("parade_ms", "hit_fraction", "swings_started", *STAMINA_COUNTS, "mean_stamina_fraction"):
+            assert old["fighters"][role][key] == rich["fighters"][role][key]
+    for episodes in ([old], [rich, old]):
+        result = report.aggregate("vanilla", "native", "1h", episodes)
+        for prefix, own in [("combat", result["combat"]),
+                            *((f"fighters.{role}", result["fighters"][role]) for role in report.ROLES)]:
+            for key in (*PARRY_COUNTS, "parry_fraction", "stunned_time_fraction"):
+                assert own[key] is None
+                assert f"{prefix}.{key}" in result["unavailable"]
+            for key in PARRY_COUNTS:
+                assert own["per_duel"][key] is None
+        assert result["combat"]["parade_ms"]["p50"] == pytest.approx(182.5)
+        assert result["combat"]["parade_ms"]["fraction_lt_120"] == pytest.approx(.25)
+        assert result["combat"]["parade_ms"]["fraction_lt_185"] == pytest.approx(.5)
+        assert result["combat"]["parade_ms"]["fraction_lt_250"] == pytest.approx(.75)
+        text = report.markdown([result])
+        assert "| parries | null | null | null | null |" in text
+        assert "| parry_fraction | — | null | null | null |" in text
