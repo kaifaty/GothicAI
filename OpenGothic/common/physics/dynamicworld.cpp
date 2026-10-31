@@ -2463,7 +2463,9 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
     if(b.cb!=nullptr) {
       // Pin only after the unchanged flight code has decided to stop at a solid
       // world contact. In particular, stone/metal still reflect before this test.
-      if(attachAtWorldStop && matId!=asset::MaterialGroup::NONE) {
+      // Items have no attachment pose; do not pin their stopped arrow to the world.
+      if(attachAtWorldStop && matId!=asset::MaterialGroup::NONE &&
+         (hit.body==nullptr || hit.body->category()!=C_Item)) {
         BulletWorldHit result;
         result.point=b.position();
         result.normal=hit.normal;

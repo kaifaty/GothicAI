@@ -3975,7 +3975,14 @@ namespace {
       auto apple=world.addDynamicObj(rest,appleBounds,asset::MaterialGroup::WOOD,
                                      &appleMesh,"CONTRACT_WAKE_APPLE.MRM");
       apple.restorePhysics(rest,true);
-      auto* arrow=world.bulletObj(nullptr);
+      struct ArrowContact final : DynamicWorld::BulletCallback {
+        bool stopsAtWorldHit() const override { return true; }
+        void onWorldHit(const DynamicWorld::BulletWorldHit&) override { ++attachments; }
+        void onCollide(asset::MaterialGroup) override { ++collisions; }
+        void onStop() override { ++stops; }
+        int attachments=0,collisions=0,stops=0;
+        } contact;
+      auto* arrow=world.bulletObj(&contact);
       arrow->setPosition({-40,100,0});
       arrow->setDirection({3,0,0});
       world.tick(17);
@@ -3986,6 +3993,8 @@ namespace {
         require(!apple.isSleeping() && apple.position().x>1.f,
                 "an arrow must wake and move a sleeping apple");
         requireNear(transferred,3.6f,.04f,"an Item must receive the furniture arrow momentum at actual flight speed");
+        require(contact.collisions==1 && contact.stops==1 && contact.attachments==0,
+                "an arrow stopped by a moving Item must not leave an attachment pinned to the world");
         }
       else require(apple.isSleeping() && apple.position().x==0.f,
                    "item_wake OFF must keep sleeping Items outside the arrow collision ray");
