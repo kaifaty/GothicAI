@@ -234,13 +234,30 @@ class MemoryStore:
         ).fetchall()
         return [(int(s), content) for s, content in rows]
 
-    def facts_with_time(self, branch: str) -> list[tuple[int, float, str]]:
-        """Facts with their original recording time, preserved when copied into a save branch."""
+    def feat_facts(self, branch: str) -> list[tuple[int, float, str]]:
+        """Achievement facts with their original recording time, including inherited copies."""
         rows = self._db.execute(
-            "SELECT seq, created, content FROM events WHERE branch=? AND kind='fact' ORDER BY seq",
+            "SELECT seq, created, content FROM events WHERE branch=? AND kind='fact' "
+            "AND json_extract(content, '$.fact') IN ('feat', 'feat_epilogue', 'feat_epilogue_shown') "
+            "ORDER BY seq",
             (branch,),
         ).fetchall()
         return [(int(seq), created, content) for seq, created, content in rows]
+
+    def fact_clock(self, branch: str, seq: int) -> tuple[int, int]:
+        """Chapter and day last recorded in the shared prefix of a save fork."""
+        chapter, day = self._db.execute(
+            "SELECT (SELECT CASE WHEN json_extract(content, '$.fact')='chapter' "
+            "THEN json_extract(content, '$.value') ELSE json_extract(content, '$.chapter') END "
+            "FROM events WHERE branch=? AND kind='fact' AND seq<=? "
+            "AND (json_extract(content, '$.fact')='chapter' "
+            "OR json_extract(content, '$.chapter') IS NOT NULL) ORDER BY seq DESC LIMIT 1), "
+            "(SELECT json_extract(content, '$.day') FROM events "
+            "WHERE branch=? AND kind='fact' AND seq<=? "
+            "AND json_extract(content, '$.day') IS NOT NULL ORDER BY seq DESC LIMIT 1)",
+            (branch, seq, branch, seq),
+        ).fetchone()
+        return int(chapter or 1), int(day or 0)
 
     def add_patch(self, branch: str, op: str) -> int:
         """A change to the story graph (JSON of one operation) made on this branch."""

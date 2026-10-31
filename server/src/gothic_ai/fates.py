@@ -33,20 +33,6 @@ def _root(lineage: dict[str, int], branches: dict[str, BranchInfo]) -> str | Non
     return root if branches[root].parent is None else None
 
 
-def _at(entries: list[tuple[int, float, Fact]], cutoff: int) -> tuple[int, int]:
-    chapter, day = 1, 0
-    for seq, _, fact in entries:
-        if seq > cutoff:
-            break
-        if fact.get("fact") == "chapter":
-            chapter = int(fact["value"] or 1)
-        elif "chapter" in fact:
-            chapter = int(fact["chapter"] or 1)
-        if "day" in fact:
-            day = int(fact["day"])
-    return chapter, day
-
-
 def _picture(root: Path, feat: Fact, filename: str) -> str:
     own = root / feat["id"] / filename
     fallback = CATEGORY_ICONS / feat["category"] / filename
@@ -55,7 +41,7 @@ def _picture(root: Path, feat: Fact, filename: str) -> str:
 
 
 def _feats(
-    entries: list[tuple[int, float, Fact]], art_root: Path,
+    entries: list[tuple[int, float, Fact]], art_root: Path, excluded: set[str],
 ) -> list[tuple[int, float, ChronicleFeat]]:
     epilogues = {f["feat"]: f["text"] for _, _, f in entries if f.get("fact") == "feat_epilogue"}
     shown = {f["feat"] for _, _, f in entries if f.get("fact") == "feat_epilogue_shown"}
@@ -66,7 +52,7 @@ def _feats(
             icon=_picture(art_root, fact, "icon.png"),
             epilogue=epilogues.get(fact["id"], "") if fact["id"] in shown else "",
         ))
-        for seq, created, fact in entries if fact.get("fact") == "feat"
+        for seq, created, fact in entries if fact.get("fact") == "feat" and fact["id"] not in excluded
     ]
 
 
@@ -81,12 +67,10 @@ def collect_fates(
         return [], []
     current = _lineage(branch, branches)
     root = _root(current, branches)
-    entries = {
-        branch: [
-            (seq, created, json.loads(content)) for seq, created, content in memory.facts_with_time(branch)
-        ],
-    }
-    fate = [feat for _, _, feat in _feats(entries[branch], art_root)]
+    entries = [
+        (seq, created, json.loads(content)) for seq, created, content in memory.feat_facts(branch)
+    ]
+    fate = [feat for _, _, feat in _feats(entries, art_root, set())]
     if root is None:
         return fate, []
     kept = {feat.id for feat in fate}
@@ -105,12 +89,10 @@ def collect_fates(
         while branches[common].parent is not None and cutoff <= branches[common].parent_seq:
             common = branches[common].parent
         key = common, cutoff
-        entries[other] = [
-            (seq, created, json.loads(content)) for seq, created, content in memory.facts_with_time(other)
+        entries = [
+            (seq, created, json.loads(content)) for seq, created, content in memory.feat_facts(other)
         ]
-        for seq, created, feat in _feats(entries[other], art_root):
-            if feat.id in kept:
-                continue
+        for seq, created, feat in _feats(entries, art_root, kept):
             if feat.id not in others:
                 others[feat.id] = key, created, seq, feat
             elif feat.epilogue and not others[feat.id][3].epilogue:
@@ -126,7 +108,7 @@ def collect_fates(
     for (common, cutoff), feats in sorted(
         grouped.items(), key=lambda item: (depth[item[0][0]], item[0][1]), reverse=True,
     ):
-        chapter, day = _at(entries[common], cutoff)
+        chapter, day = memory.fact_clock(common, cutoff)
         forks.append(ChronicleFork(
             chapter=chapter, day=day,
             feats=[feat for _, _, feat in sorted(feats, key=lambda item: item[:2])],

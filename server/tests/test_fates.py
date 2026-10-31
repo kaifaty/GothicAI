@@ -1,6 +1,7 @@
 """Chronicle data follows save forks without losing alternate deeds or revealing secrets."""
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -163,6 +164,30 @@ def test_picture_paths_use_existing_own_files_then_category_files(store, tmp_pat
     assert fate[1].icon == str(categories / "gold/icon.png")
     assert fate[2].engraving == fate[2].icon == ""
     assert all(Path(fate[0].model_dump()[key]).is_absolute() for key in ("engraving", "icon"))
+
+
+def test_thirty_quickloads_with_thousands_of_facts_stay_below_200_ms(store, tmp_path):
+    def fill(branch, count):
+        for n in range(1, count + 1):
+            if n % 100 == 0:
+                award(store, f"{branch}-{n}", branch, day=n)
+            else:
+                record(store, branch, fact="visited", place="FARM", day=n)
+
+    fill("A", 3000)
+    current = "A"
+    for n in range(30):
+        child = f"load-{n}"
+        store.ensure_branch(child, current, store.head(current) - 50)
+        fill(child, 200)
+        current = child
+    started = time.perf_counter()
+    fate, others = collect_fates(store, current, art_root=tmp_path)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 0.2, f"chronicle_get took {elapsed * 1000:.1f} ms after 30 quickloads"
+    assert len(fate) == 60
+    assert len(others) == sum(len(fork.feats) for fork in others) == 30
+    assert len({feat.id for feat in fate + [feat for fork in others for feat in fork.feats]}) == 90
 
 
 async def test_chronicle_get_replies_with_fate_forks_and_same_req_through_fake_game(store):
