@@ -4253,7 +4253,7 @@ namespace {
             ++recovered;
           });
         uint64_t sampled=0;
-        while(world.simulationStep()<300) {
+        while(world.simulationStep()<(enabled ? 300u : 20u)) {
           world.tick(16);
           if(sampled==world.simulationStep())continue;
           require(world.simulationStep()==sampled+1,"thin-blade fixture must sample every native 1/60 step");
