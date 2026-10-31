@@ -174,19 +174,24 @@ class SoakControlTests(unittest.TestCase):
         source = SCRIPT.read_text()
         selection = source[source.index('SCENARIO="${SCENARIO:-m0}"'):source.index('ASR="${ASR:-fake}"')]
         cases = [
-            ("memprobe", "0", "", "", "fake", 0, "--no-neural-body"),
-            ("neural-soak", "1", "", "", "fake", 0, "--no-neural-body"),
-            ("neural-soak", "1", "tcp://policy:47835", "", "fake", 0, "--no-neural-body"),
-            ("neural-soak", "0", "tcp://policy:47835", "", "fake", 0, "--neural-body--body-policyservice"),
-            ("neural-soak", "0", "", "", "fake", 2, None),
-            ("neural-soak", "1", "", "/tmp/save.sav", "fake", 2, None),
-            ("neural-soak", "1", "", "", "chatgpt", 2, None),
-            ("neural-load", "1", "tcp://policy:47835", "", "fake", 2, None),
+            ("memprobe", "0", "", "", "fake", 0, "--no-neural-body", None),
+            ("neural-soak", "1", "", "", "fake", 0, "--no-neural-body", None),
+            ("neural-soak", "1", "tcp://policy:47835", "", "fake", 0, "--no-neural-body", None),
+            ("neural-soak", "0", "tcp://policy:47835", "", "fake", 0,
+             "--neural-body--body-policyengine", None),
+            ("neural-soak", "0", "", "", "fake", 0, "--neural-body--body-policyengine", None),
+            ("neural-soak", "0", "", "", "fake", 2, None, "service"),
+            ("neural-soak", "1", "", "/tmp/save.sav", "fake", 2, None, None),
+            ("neural-soak", "1", "", "", "chatgpt", 2, None, None),
+            ("neural-load", "1", "tcp://policy:47835", "", "fake", 2, None, None),
         ]
-        for scenario, control, url, save, llm, status, body_flag in cases:
-            with self.subTest(scenario=scenario, control=control, url=url, save=save, llm=llm):
+        for scenario, control, url, save, llm, status, body_flag, policy in cases:
+            with self.subTest(scenario=scenario, control=control, url=url, save=save, llm=llm, policy=policy):
                 env = dict(os.environ, SCENARIO=scenario, GOTHIC_SOAK_CONTROL=control,
                            GOTHIC_BODY_URL=url, SAVE=save, LLM=llm, GOTHIC_TTS_RECORD="0")
+                env.pop("GOTHIC_BODY_POLICY", None)
+                if policy is not None:
+                    env["GOTHIC_BODY_POLICY"] = policy
                 result = subprocess.run(
                     ["bash", "-euc", selection + '\nprintf "%s" "${BODY_ARGS[@]}"'],
                     check=False,
