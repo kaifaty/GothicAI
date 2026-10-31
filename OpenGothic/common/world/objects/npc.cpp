@@ -5657,6 +5657,7 @@ void Npc::tick(uint64_t dt) {
     setAnim(AnimationSolver::Idle);
 
   if(isMeleeStunned()) {
+    tickMeleeStunLook();
     waitForMeleeStamina(dt);
     return;
     }
@@ -7525,7 +7526,11 @@ void Npc::meleeStunLook(const Npc& by) {
   // The blow was stopped and thrown back: the original stagger back, slowed to carry most of the
   // stun, the upper body giving way from the one who stopped it and the weapon arm thrown back
   // on the living rig, its motors bringing it into the stagger. T_STUMBLEB lasts 360 ms.
+  // Balance lost (posture) is the heavier one over 1.5 s: the trunk gives way lower and the chest
+  // is thrown back with the arm, then a second beat (tickMeleeStunLook) catches it forward.
+  const bool  posture      = meleeStunReason=="posture";
   constexpr float staggerSpeed = 0.5f;
+  meleeStunBeat = !posture;
   if(auto seq = setAnimAngGet(Anim::StumbleB))
     visual.setLayerSpeed(seq,staggerSpeed,owner.tickCount());
   Vec3 away = position()-by.position();
@@ -7533,19 +7538,37 @@ void Npc::meleeStunLook(const Npc& by) {
   away = away.length()>1e-3f ? Vec3::normalize(away) : Vec3(-std::cos(rotationRad()),0,-std::sin(rotationRad()));
   Flinch::Hit hit;
   hit.dir      = away;
-  hit.height   = 0.85f;
-  hit.twist    = 0.4f; // the weapon hand goes back first and turns the trunk after it
-  hit.strength = 0.6f;
+  hit.height   = posture ? 0.55f : 0.85f;
+  hit.twist    = posture ? 0.25f : 0.4f; // the weapon hand goes back first and turns the trunk after it
+  hit.strength = posture ? 0.85f : 0.6f;
   flinch(hit);
   if(!Gothic::physicsFlags().meleeReactions || !living)
-    return;
-  const size_t bone = visual.pose().findNode("BIP01 R FOREARM");
-  if(bone>=visual.pose().boneCount())
     return;
   const auto  ws       = weaponState();
   const float momentum = ws==WeaponState::W2H ? 30.f : (ws==WeaponState::W1H ? 22.f : 12.f);
   const Vec3  impulse  = Vec3::normalize(away+Vec3(0,0.3f,0))*(momentum*0.25f);
-  arrowImpacts.push_back({bone,visual.mapBone(bone),impulse,0.55f,by.handlePtr(),true,2.f});
+  const size_t arm = visual.pose().findNode("BIP01 R FOREARM");
+  if(arm<visual.pose().boneCount())
+    arrowImpacts.push_back({arm,visual.mapBone(arm),impulse,0.55f,by.handlePtr(),true,2.f});
+  const size_t chest = posture ? visual.pose().findNode("BIP01 SPINE2") : size_t(-1);
+  if(chest<visual.pose().boneCount())
+    arrowImpacts.push_back({chest,visual.mapBone(chest),Vec3::normalize(away)*(momentum*0.3f),0.5f,by.handlePtr(),true,1.5f});
+  }
+
+void Npc::tickMeleeStunLook() {
+  // Balance lost, second beat: the stagger back runs out (730 ms) and the body lurches forward
+  // to catch itself (the original stagger from behind, slowed), instead of standing frozen in
+  // the end of the first one for the rest of the stun.
+  if(meleeStunBeat || meleeStunReason!="posture")
+    return;
+  const auto now   = owner.tickCount();
+  const auto start = meleeStunUntil-MeleeImpact::stunDuration("posture");
+  if(now<start+700)
+    return;
+  meleeStunBeat = true;
+  constexpr float recoverSpeed = 0.6f;
+  if(auto seq = setAnimAngGet(Anim::StumbleA))
+    visual.setLayerSpeed(seq,recoverSpeed,now);
   }
 
 void Npc::endMeleeStun(std::string_view reason) {
