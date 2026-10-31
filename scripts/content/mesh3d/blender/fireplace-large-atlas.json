@@ -68,17 +68,6 @@
  "measure_ao": {
   "OWN_HEARTH_MASONRY": 0.5
  },
- "streaks": {
-  "length": 0.6,
-  "rust": 0.0,
-  "dirt": 0.6,
-  "rust_colour": [
-   0.03,
-   0.02,
-   0.01
-  ],
-  "column": 0.03
- },
  "size": 1024,
  "seed": 1,
  "angle_limit": 66,
@@ -98,7 +87,8 @@
   ]
  },
  "contrast": {
-  "OWN_HEARTH_MASONRY": 0.7
+  "OWN_HEARTH_MASONRY": 0.5,
+  "OWN_HEARTH_CARVING": 0.5
  },
  "tile_normal": {
   "OWN_HEARTH_MASONRY": 0.15,

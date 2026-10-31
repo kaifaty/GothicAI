@@ -50,22 +50,41 @@ def box(x0, x1, y0, y1, z0, z1, mat):
 
 
 def shell(rows, mat):
-    """A closed solid between rows [(y, x_half, z_front)] back to the wall: front, sides, top and bottom."""
-    part = P.new_part()
+    """A closed solid between rows [(y, x_half, z_front)] back to the wall: front, sides, top and bottom.
+    Wound by hand, each face away from the solid's centre: the top row lies on the wall (no depth), so the
+    solid has a degenerate top, and the recalculation turned the hood inside out; the engine then culled
+    its sides and the hood read as a flat slab (city-hearth, the user, 2026-10-31)."""
+    part = P.new_part(wound=True)
     ring = lambda y, xh, zf: [P.vert(b(-xh, y, zf), part), P.vert(b(xh, y, zf), part), P.vert(b(xh, y, wall), part), P.vert(b(-xh, y, wall), part)]
     rings = [ring(*r) for r in rows]
+    centre = sum((v.co for r in rings for v in r), Vector()) / (4 * len(rings))
+
+    def face(q, uv):
+        a, c = q[1].co - q[0].co, q[2].co - q[0].co
+        n = a.cross(c)
+        if n.length < 1e-9:  # a degenerate first triangle: take the other diagonal
+            n = (q[2].co - q[0].co).cross(q[3].co - q[0].co)
+        mid = sum((v.co for v in q), Vector()) / len(q)
+        if n.dot(mid - centre) < 0:
+            q, uv = q[::-1], uv[::-1]
+        P.poly(q, mat, uv)
+
     for k in range(len(rings) - 1):
         for i in range(4):
             j = (i + 1) % 4
             q = [rings[k][i], rings[k][j], rings[k + 1][j], rings[k + 1][i]]
-            P.poly(q, mat, [(v.co.x, v.co.z) if i % 2 == 0 else (v.co.y, v.co.z) for v in q])
-    P.poly(rings[0][::-1], mat, [(v.co.x, v.co.y) for v in rings[0][::-1]])
-    P.poly(rings[-1], mat, [(v.co.x, v.co.y) for v in rings[-1]])
+            if (q[0].co - q[1].co).length < 1e-6 and (q[2].co - q[3].co).length < 1e-6:
+                continue
+            face(q, [(v.co.x, v.co.z) if i % 2 == 0 else (v.co.y, v.co.z) for v in q])
+    for r in (rings[0], rings[-1]):
+        if (r[0].co - r[3].co).length > 1e-6:  # the top ring on the wall has no depth: no cap
+            face(list(r), [(v.co.x, v.co.y) for v in r])
 
 
-def course_face(p00, p10, p01, p11, normal, mat, rough=True):
+def course_face(p00, p10, p01, p11, normal, mat, rough=True, relief=1.0):
     """Lay stones in courses over the planar quad p00 (bottom left) .. p11 (top right), proud of it along
-    normal. Each stone is a closed box; rubble stones vary in height, length, depth and tilt."""
+    normal. Each stone is a closed box; rubble stones vary in height, length, depth and tilt. "relief"
+    scales how far they stand proud: on the hood the fire below lit their undersides as bright lines."""
     height = (p01 - p00).length
     h0, h1 = st["course"]
     l0, l1 = st["length"]
@@ -82,38 +101,43 @@ def course_face(p00, p10, p01, p11, normal, mat, rough=True):
         w0, w1 = (p10.lerp(p11, t0) - p00.lerp(p01, t0)).length, (p10.lerp(p11, t1) - p00.lerp(p01, t1)).length
         width = min(w0, w1)
         left = left + along * (((right - left).length - width) / 2)
-        up = (p01 - p00).normalized()
+        up = normal.cross(along).normalized()  # across the course; the face's slanted side edge sheared the stones
+        if up.dot(p01 - p00) < 0:
+            up = -up
+        square = up.dot((p01 - p00).normalized())  # the course's height across it, not along the slanted edge
         x = -rng.uniform(0, l1 * 0.6) if rough else -(l1 / 2) * (row % 2)
         while x < width - 0.02:
             ln = rng.uniform(l0, l1) if rough else l1
             xa, xb = max(x, 0.0), min(x + ln, width)
             if xb - xa > 0.06:
                 c = left + along * ((xa + xb) / 2)
-                proud = st["proud"] * (rng.uniform(0.4, 1.3) if rough else 1.0)
+                proud = st["proud"] * relief * (rng.uniform(0.4, 1.3) if rough else 1.0)
                 tilt = rng.uniform(-0.04, 0.04) if rough else 0.0
                 ax = (along + up * tilt).normalized()
-                P.board(c + normal * (proud / 2), ax, up, normal, xb - xa - gap, h - gap, proud + 0.02, mat)
+                P.board(c + normal * (proud / 2), ax, up, normal, xb - xa - gap, h * square - gap, proud + 0.02, mat)
             x += ln
         y += h
         row += 1
 
 
-def carved_band(p0, p1, y0, y1, normal, depth):
-    """A carved frieze: a moulded band with a run of leaves set alternately on the slant, like a vine."""
+def carved_band(p0, p1, up, normal, h, depth):
+    """A carved band laid on a face: a solid panel standing "depth" proud, two mouldings framing it and a
+    run of leaves set alternately on the slant, like a vine; p0..p1 its centre line, "up" across it in the
+    face. It lies on the hood and wraps its sides like the original's (a thin openwork strip hung in
+    front of the hood read as a loose fret, the user, 2026-10-31)."""
     width = (p1 - p0).length
     along = (p1 - p0).normalized()
-    up = Vector((0, 0, 1))
-    mid = (p0 + p1) / 2 + Vector((0, 0, (y0 + y1) / 2 - p0.z))
-    h = y1 - y0
-    for dy in (-h / 2 + 0.02, h / 2 - 0.02):  # the two mouldings framing it
-        P.board(mid + up * dy + normal * (depth / 2), along, up, normal, width, 0.04, depth * 1.2, CARVE)
-    n = max(6, int(width / 0.16))
+    mid = (p0 + p1) / 2
+    P.board(mid + normal * (depth / 2), along, up, normal, width, h, depth, CARVE)
+    for dy in (-h / 2 + 0.025, h / 2 - 0.025):  # the two mouldings framing it
+        P.board(mid + up * dy + normal * (depth + 0.012), along, up, normal, width + 0.01, 0.045, 0.024, CARVE)
+    n = max(3, int(width / 0.16))
     for k in range(n):
-        c = p0 + along * (width * (k + 0.5) / n) + Vector((0, 0, (y0 + y1) / 2 - p0.z))
+        c = p0 + along * (width * (k + 0.5) / n) + normal * (depth + 0.008)
         tilt = 0.7 if k % 2 == 0 else -0.7
         ax = (along * math.cos(tilt) + up * math.sin(tilt)).normalized()
-        P.board(c + normal * (depth * 0.6), ax, ax.cross(normal).normalized(), normal, width / n * 1.1, h * 0.32, depth, CARVE)
-        P.board(c + up * (h * 0.18 * (1 if k % 2 else -1)) + normal * (depth * 0.5), along, up, normal, 0.035, 0.035, depth * 1.4, CARVE)
+        P.board(c, ax, normal.cross(ax).normalized(), normal, width / n * 1.1, h * 0.3, 0.016, CARVE)
+        P.board(c + up * (h * 0.17 * (1 if k % 2 else -1)), along, up, normal, 0.035, 0.035, 0.03, CARVE)
 
 
 hx, hzf, htop = cfg["hearth"]
@@ -142,12 +166,17 @@ fz = bzf - 0.005
 course_face(b(-bx, htop, fz), b(-ox, htop, fz), b(-bx, btop, fz), b(-ox, btop, fz), front, STONE, not st["regular"])
 course_face(b(ox, htop, fz), b(bx, htop, fz), b(ox, btop, fz), b(bx, btop, fz), front, STONE, not st["regular"])
 course_face(b(-ox, otop, fz), b(ox, otop, fz), b(-ox, btop, fz), b(ox, btop, fz), front, STONE, not st["regular"])
-if och > 0:  # the cut corners of the opening: two stones set on the slant
+if och > 0:  # the cut corners of the opening: a three-sided stone fills each upper corner through the firebox
     for s in (-1, 1):
-        a = b(s * (ox - och), otop, fz)
-        c = b(s * ox, otop - och, fz)
-        P.board((a + c) / 2 + front * 0.03, (c - a).normalized(), Vector((0, 1, 0)).cross((c - a).normalized()).normalized(),
-                front, (c - a).length + 0.06, 0.12, 0.06, STONE)
+        part = P.new_part()
+        tri = [(s * ox, otop), (s * (ox - och), otop), (s * ox, otop - och)]
+        fr = [P.vert(b(x, y, fz - st["proud"]), part) for x, y in tri]
+        bk = [P.vert(b(x, y, back), part) for x, y in tri]
+        P.poly(fr, CARVE if st["regular"] else STONE, [(x, y) for x, y in tri])
+        P.poly(bk[::-1], SOOT, [(x, y) for x, y in tri[::-1]])
+        for i in range(3):
+            j = (i + 1) % 3
+            P.poly([fr[i], bk[i], bk[j], fr[j]], SOOT if i == 1 else STONE, [(0, 0), (odepth, 0), (odepth, 0.1), (0, 0.1)])
 # side faces of the block (seen from the room at an angle)
 for s in (-1, 1):
     side = Vector((s, 0, 0))
@@ -161,7 +190,7 @@ for (y0, x0, z0), (y1, x1, z1) in zip(rows, rows[1:]):
     normal = (p10 - p00).cross(p01 - p00).normalized()
     if normal.y < 0:
         normal = -normal
-    course_face(p00, p10, p01, p11, normal, STONE, not st["regular"])
+    course_face(p00, p10, p01, p11, normal, STONE, not st["regular"], relief=0.4)
 # quoins along every sloping edge of the hood: straight stones over the stepped ends of the courses
 for (y0, x0, z0), (y1, x1, z1) in zip(rows, rows[1:]):
     if abs(x1 - x0) < 0.02:
@@ -177,10 +206,33 @@ for (y0, x0, z0), (y1, x1, z1) in zip(rows, rows[1:]):
         if inward.x * s_ > 0:
             inward = -inward
         P.board((a_ + c_) / 2 + inward * 0.07 + n_ * (st["proud"] + 0.01), edge, inward, n_, (c_ - a_).length, 0.16, st["proud"] * 2 + 0.03, STONE)
-if cfg.get("carving"):
+if cfg.get("carving"):  # on the hood's lowest slope, across its front and round both sides
     y0, y1 = cfg["carving"]
-    (ya, xa, za) = rows[0]
-    carved_band(b(-xa * 0.95, (y0 + y1) / 2, za - 0.02), b(xa * 0.95, (y0 + y1) / 2, za - 0.02), y0, y1, front, 0.025)
+    (ya, xa, za), (yb, xb, zb) = rows[0], rows[1]
+    yc = (y0 + y1) / 2
+    t = (yc - ya) / (yb - ya)
+    xh, zc = xa + (xb - xa) * t, za + (zb - za) * t
+    depth = st["proud"] * 2 + 0.06  # over the quoins
+    p00, p10, p01 = b(-xa, ya, za), b(xa, ya, za), b(-xb, yb, zb)
+    n_front = (p10 - p00).cross(p01 - p00).normalized()
+    if n_front.y < 0:
+        n_front = -n_front
+    along = Vector((1, 0, 0))
+    up = n_front.cross(along).normalized()
+    if up.z < 0:
+        up = -up
+    h = (y1 - y0) / up.z
+    carved_band(b(-xh - depth, yc, zc - 0.005), b(xh + depth, yc, zc - 0.005), up, n_front, h, depth)
+    for s_ in (-1, 1):  # the sides, from the front corner back to the wall
+        a_, c_, w_ = b(s_ * xa, ya, za), b(s_ * xb, yb, zb), b(s_ * xa, ya, wall)
+        n_side = (c_ - a_).cross(w_ - a_).normalized()
+        if n_side.x * s_ < 0:
+            n_side = -n_side
+        along_s = (b(s_ * xh, yc, wall - 0.01) - b(s_ * xh, yc, zc)).normalized()
+        up_s = n_side.cross(along_s).normalized()
+        if up_s.z < 0:
+            up_s = -up_s
+        carved_band(b(s_ * xh, yc, zc - 0.005 + depth * 0.5), b(s_ * xh, yc, wall - 0.01), up_s, n_side, (y1 - y0) / up_s.z, depth)
 # the fire: an ember bed and a few logs on it
 fc = b(0, htop, bzf + odepth / 2)
 dome(P, rng, fc, min(ox * 0.8, 0.45), 0.05, EMBER, sides=14, rings=2)

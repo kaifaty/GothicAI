@@ -74,6 +74,8 @@ def cmd_models(args) -> int:
         rig.run([BLENDER, '-b', '--factory-startup', '-P', BLENDER_DIR / spec['script'], '--', BLENDER_DIR / spec['cfg'],
                  BUILD / item], cwd=ROOT, stdout=subprocess.DEVNULL)
         print(item, (BUILD / item / 'metrics.json').read_text().replace('\n', ' ')[:300])
+        if json.loads((BUILD / item / 'metrics.json').read_text()).get('inside_out_parts'):
+            sys.exit(f'{item}: closed parts inside out, the engine would cull them (parts.py prints which)')
     return 0
 
 

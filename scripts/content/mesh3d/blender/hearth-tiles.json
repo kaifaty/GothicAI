@@ -23,11 +23,11 @@
      0.025,
      0.03
     ],
-    "noise": 0.04,
+    "noise": 0.14,
     "seed": 3,
-    "relief": 0.05
+    "relief": 0.35
    },
-   "roughness": 0.25,
+   "roughness": 0.55,
    "metallic": 0.0
   },
   "own_hearth_stone": {

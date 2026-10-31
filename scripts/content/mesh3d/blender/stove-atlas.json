@@ -15,9 +15,9 @@
    0.008
   ],
   "OWN_HEARTH_RIVET": [
-   0.07,
-   0.05,
-   0.03
+   0.04,
+   0.028,
+   0.016
   ],
   "OWN_HEARTH_COPPER": [
    0.06,
@@ -25,9 +25,9 @@
    0.022
   ],
   "OWN_HEARTH_EMBER": [
-   0.14,
-   0.045,
-   0.015
+   0.32,
+   0.085,
+   0.02
   ],
   "OWN_HEARTH_WOOD": [
    0.031,
@@ -64,7 +64,7 @@
  ],
  "edge_wear": {
   "OWN_HEARTH_CAST": 0.35,
-  "OWN_HEARTH_RIVET": 0.7,
+  "OWN_HEARTH_RIVET": 0.25,
   "OWN_HEARTH_COPPER": 0.4,
   "OWN_HEARTH_EMBER": 0.0,
   "OWN_HEARTH_WOOD": 0.2

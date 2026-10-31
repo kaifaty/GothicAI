@@ -62,6 +62,10 @@ The weathering darkens before each zone is scaled to its measured mean, like the
   the grain show through, so a mossy beam is not a flat green fill (fifth review). The harbour crates had a thin dotted line of
   crevice moss and 0-0.2 % green on their lids against 1.2-6 % on the original's; round patches then read
   as stickers (asset harbour-rigging, reviews 2026-10-30).
+- "soot_under": {"zones": [KEY, ...], "dark": 0.85, "from": -0.2, "colour": [r, g, b]}: a pot hung or set over a
+  fire is black underneath. After the zones met their targets, each listed zone darkens towards the soot
+  colour where its normal points down past "from" (z of the unit normal), fully at straight down. The
+  tripod kettle's pale hammered bottom lit by the fire under it read as a lump of ash (city-hearth, R3).
 "metal_scale" multiplies the metallic of the "metal" zones: rusty, grimy iron is mostly not metal.
 """
 import json
@@ -425,7 +429,7 @@ if "despeckle" in cfg:
     colour = colour * (1 - dark[..., None]) + local * dark[..., None]
     albedo = colour * (1 - strength * (1 - ao))[..., None]
 weathering = {}
-if any(k in cfg for k in ("crevice", "streaks", "wet_roughness", "moss", "seam")):
+if any(k in cfg for k in ("crevice", "streaks", "wet_roughness", "moss", "seam", "soot_under")):
     position = lo + bake_pass("position", "EMIT", "position", samples=1, margin=16) * (hi - lo)
     texel_part = np.rint(bake_pass("part", "EMIT", "part_id", samples=1, margin=16)[:, :, 0]).astype(int)
     facing = bake_pass("facing", "EMIT", "facing", samples=1, margin=16) * 2 - 1
@@ -541,6 +545,14 @@ if "seam" in cfg:
     spec = cfg["seam"]
     dirt = spec.get("dark", 0.5) * seam
     albedo = albedo * (1 - dirt[..., None]) + np.array(spec.get("colour", [0.008, 0.007, 0.005])) * dirt[..., None]
+if "soot_under" in cfg:
+    spec = cfg["soot_under"]
+    start = spec.get("from", -0.2)
+    soot = np.clip((start - facing[..., 2]) / (1.0 + start), 0, 1) * spec.get("dark", 0.85)
+    listed = np.isin(zone_id, [keys.index(k) + 1 for k in spec["zones"] if k in keys]) & inside
+    soot *= listed
+    albedo = albedo * (1 - soot[..., None]) + np.array(spec.get("colour", [0.005, 0.0045, 0.004])) * soot[..., None]
+    weathering["soot"] = soot
 if "moss" in cfg:
     # Moss in patches, laid after each zone met its colour target so its green is the moss's own:
     # on tops (facing up), near the ground and in shaded corners, cut out of a smooth 3D noise so it
@@ -655,7 +667,8 @@ for key, (atlas_key, _group) in cfg["slots"].items():
         for name, mask in weathering.items():
             save_png(out / f"atlas-{name}.png", np.clip(mask, 0, 1))
         first = folder
-    elif not folder.exists():
+    elif folder != first:  # every atlas key shares the one atlas: a copy kept from an earlier bake went stale
+        shutil.rmtree(folder, ignore_errors=True)
         shutil.copytree(first, folder)
 
 # --- export: atlas UV only, zone materials merged into atlas materials ---

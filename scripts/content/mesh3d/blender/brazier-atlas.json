@@ -77,5 +77,18 @@
  },
  "tile_normal": {
   "OWN_HEARTH_IRON": 0.5
+ },
+ "soot_under": {
+  "zones": [
+   "OWN_HEARTH_IRON",
+   "OWN_HEARTH_RIVET"
+  ],
+  "dark": 0.85,
+  "from": -0.2,
+  "colour": [
+   0.005,
+   0.0045,
+   0.004
+  ]
  }
 }

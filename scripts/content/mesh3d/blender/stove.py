@@ -87,15 +87,19 @@ for k in range(nbars):
     P.board(b(gx, top + 0.02, zz), X, Z, Y, w, 0.016, 0.02, RIVET)
 # forged scrolls in the four corners of the front and both side faces: a curl of short bars
 def scroll(corner, ax, ay, normal, size):
-    """A C-scroll from the corner along ax, curling in toward ay; ax, ay unit vectors in the face."""
+    """A cast volute from the corner along ax, winding in toward ay; ax, ay unit vectors in the face. A low
+    relief of the plate, not a bent wire: the round bars standing off the face read as hooks."""
     pts = []
     for k in range(9):
         t = k / 8
-        ang = math.pi * 1.6 * t
-        r = size * (1 - 0.6 * t)
-        pts.append(corner + ax * (size * 0.3 + r * (1 - math.cos(ang)) * 0.5 + t * size * 0.6) + ay * (size * 0.25 + r * math.sin(ang) * 0.5))
-    for p0, p1 in zip(pts, pts[1:]):
-        bar(P, p0 + normal * 0.006, p1 + normal * 0.006, 0.014, 0.01, RIVET)
+        ang = math.pi * 1.9 * t
+        r = size * 0.45 * (1 - 0.75 * t)
+        cx_ = size * 0.55
+        pts.append(corner + ax * (cx_ - r * math.cos(ang) + (1 - t) * size * 0.25) + ay * (size * 0.4 + r * math.sin(ang)))
+    for p0, p1 in zip(pts, pts[1:]):  # flat in the plate: bar() keeps its width horizontal and stood these on edge
+        d = p1 - p0
+        P.board((p0 + p1) / 2 + normal * 0.003, d.normalized(), normal.cross(d.normalized()).normalized(), normal,
+                d.length + 0.008, 0.016, 0.006, RIVET)
 
 
 sc = cfg.get("scroll", 0.12)
@@ -135,10 +139,14 @@ for k in range(holes):  # glowing vent holes in a ring on the door
     c = b(dr * 0.6 * math.cos(t), dy + dr * 0.6 * math.sin(t), front - dt - 0.002)
     P.board(c, X, Z, Y, 0.028, 0.028, 0.004, EMBER)
 P.board(b(0, dy, front - dt - 0.002), X, Z, Y, 0.05, 0.05, 0.004, EMBER)
-stick(P, rng, b(-dr * 0.35, dy - 0.02, front - dt - 0.02), b(dr * 0.35, dy - 0.02, front - dt - 0.02), 0.008, RIVET, sides=4)
-for s in (-1, 1):  # hinges on the left, the latch bar on the right
-    bar(P, b(-dr - 0.06, dy + s * dr * 0.5, front - dt / 2), b(-dr * 0.4, dy + s * dr * 0.5, front - dt / 2), 0.04, 0.012, RIVET)
-bar(P, b(dr * 0.7, dy, front - dt - 0.006), b(dr + 0.08, dy, front - dt - 0.006), 0.035, 0.012, RIVET)
+for s in (-1, 1):  # two hinge straps on the left, from the frame onto the door
+    bar(P, b(-dr - 0.06, dy + s * dr * 0.55, front - dt - 0.004), b(-dr * 0.45, dy + s * dr * 0.55, front - dt - 0.004), 0.035, 0.01, RIVET)
+# an upright grip on the right on two short standoffs: a crossbar at the hinges' height read as one bar
+# through the whole door with them (the user, 2026-10-31)
+gx_ = dr * 0.78
+for s in (-1, 1):
+    bar(P, b(gx_, dy + s * dr * 0.22, front - dt), b(gx_, dy + s * dr * 0.22, front - dt - 0.035), 0.016, 0.016, RIVET)
+stick(P, rng, b(gx_, dy - dr * 0.26, front - dt - 0.04), b(gx_, dy + dr * 0.26, front - dt - 0.04), 0.009, RIVET, sides=6)
 # shelf on two brackets against the wall
 sx_, s0, s1, sz0, sz1 = cfg["shelf"]
 P.wood(b(0, s1 - 0.02, (sz0 + sz1) / 2), X, Y, Z, 2 * sx_, sz1 - sz0, 0.04, WOOD, 0.4)

@@ -18,9 +18,9 @@
    0.038
   ],
   "OWN_HEARTH_LIQUID": [
+   0.08,
    0.12,
-   0.18,
-   0.22
+   0.15
   ]
  },
  "slots": {
@@ -86,5 +86,18 @@
    0.011
   ],
   "column": 0.01
+ },
+ "soot_under": {
+  "zones": [
+   "OWN_HEARTH_IRON",
+   "OWN_HEARTH_RIVET"
+  ],
+  "dark": 0.85,
+  "from": -0.2,
+  "colour": [
+   0.005,
+   0.0045,
+   0.004
+  ]
  }
 }
