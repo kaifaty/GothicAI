@@ -28,6 +28,7 @@ still BDT_1013_BANDIT_L on
 immortal BDT_1013_BANDIT_L on
 watch player
 cam game
+ui on
 wait 800
 shot full
 
@@ -73,7 +74,9 @@ wait 600
 tap back
 wait 300
 shot jumpback
-wait 2000
+wait 1200
+shot exhausted
+wait 800
 stop
 
 rec sheathe
