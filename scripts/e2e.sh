@@ -222,6 +222,10 @@
 #       a temporary scenario card with courage 3 fights through native AR_THEFT to a living knockout
 #       and the cup's return. Finally deeds:false leaves theft to vanilla without a held perception.
 #       Community guards are covered by unit tests. TIMEOUT=420; no behavioral model.
+#   quest_law: a book quest advances on Matteo's stolen item while city law keeps its own case;
+#       LLM=fake, SAVE=save_slot_1.sav, TIMEOUT=600. Save/load keeps the quest and law; the giver
+#       pays before Andre's fine, completing the quest never forgives the theft, and paying the fine
+#       never repeats the quest reward. Native theft perceptions stay enabled.
 #   requires: a book quest depending on vanilla (docs/director.md, stage 5, layer 2), no model: Hilda's
 #       offer stays absent while Lobart's turnip quest is open or running, opens after its success, and
 #       the book's second stage waits for "Сковорода для Хильды" to become running. A save and a load
