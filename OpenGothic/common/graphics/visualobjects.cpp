@@ -68,25 +68,27 @@ void VisualObjects::Item::setObjMatrix(const Tempest::Matrix4x4& pos, const Vec3
   }
 
 void VisualObjects::Item::setTexturePosition(const Vec3& position) {
-  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   if(owner==nullptr)
     return;
-  std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
   auto& obj=owner->objects[id];
+  // Each animation worker owns its items; chunk callbacks only change demand
+  // after the workers join. Unchanged transforms need no shared registration.
   if(obj.textureCategory!=Resources::TextureCategory::Static || obj.texturePosition==position)
     return;
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+  std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
   obj.texturePosition=position;
   owner->updateTextureDemand(id);
   }
 
 void VisualObjects::Item::setTextureCategory(Resources::TextureCategory category) {
-  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   if(owner==nullptr)
     return;
-  std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
   auto& obj=owner->objects[id];
   if(obj.textureCategory==category)
     return;
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+  std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
   owner->setTextureDemand(obj,false);
   if(obj.textureChunkRegistered) {
     if(auto found=owner->textureChunks.find(obj.textureChunk);found!=owner->textureChunks.end()) {
