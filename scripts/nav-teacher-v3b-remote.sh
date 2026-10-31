@@ -120,6 +120,13 @@ if [[ "$phase" == cost ]]; then
     --task "$results" --runtime "$task" --assets "$GOTHIC_DIR"
   exit 0
 fi
+[[ "$phase" == build || "$phase" == retry-build ]] || { echo "Unknown phase: $phase" >&2; exit 2; }
+source "$task/source/scripts/ryzen-build.sh"
+cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
+  "${RYZEN_CMAKE_FLAGS[@]}" \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+  -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
+  -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
 if [[ "$phase" == retry-build ]]; then
   # Only the familiar hazard price changed. Journey and memory/cache checks
   # already passed; retain their first-round measurements as controls.
@@ -127,13 +134,8 @@ if [[ "$phase" == retry-build ]]; then
   touch "$results/build-passed"
   exit 0
 fi
-[[ "$phase" == build ]] || { echo "Unknown phase: $phase" >&2; exit 2; }
 if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv "$task/.venv"; fi
 uv pip install --python "$task/.venv/bin/python" numpy pytest
-cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-  -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
-  -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
 cmake --build "$task/build" --target gothic-body-runner \
   check-navigation-memory check-navmemoryteacher --parallel 3
 cxx_args=(-std=c++20 -O3 -DNDEBUG -Wall -Wconversion -Werror

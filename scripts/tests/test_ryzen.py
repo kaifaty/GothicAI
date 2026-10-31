@@ -475,6 +475,7 @@ class CacheTests(unittest.TestCase):
         (self.source / 'scripts').mkdir(parents=True)
         (self.source / 'server').mkdir()
         shutil.copyfile(GAME_HELPER, self.source / 'scripts/ryzen_game.py')
+        shutil.copyfile(SCRIPT.with_name('ryzen-build.sh'), self.source / 'scripts/ryzen-build.sh')
         (self.source / 'OpenGothic/ai_bridge/storygraph').mkdir(parents=True)
         settings = self.home / 'gothic-ai/game-settings/system'
         settings.mkdir(parents=True)
@@ -846,6 +847,10 @@ build_storygraph "$TEST_ROOT/worktree" "'''+self.story_digest+r'''"
         self.assertEqual(len(calls), 4)
         self.assertEqual([call[call.index('--target') + 1] for call in calls if '--build' in call],
                          ['Gothic2Notr', 'storygraph'])
+        for call in calls:
+            if '--build' not in call:
+                for language in ('C', 'CXX'):
+                    self.assertIn(f'-DCMAKE_{language}_FLAGS_RELWITHDEBINFO=-O2 -g1 -DNDEBUG', call)
         for entry, name in [(self.cache / self.engine_digest, 'Gothic2Notr'),
                             (self.cache / 'storygraph' / self.story_digest, 'storygraph')]:
             self.assertTrue(os.access(entry / name, os.X_OK))
@@ -980,7 +985,7 @@ remote() { "$@"; }
         # shares the engine digest: OpenGothic plus scripts/convert.
         inputs = ['OpenGothic/ai_bridge/storygraph/main.cpp', 'OpenGothic/ai_bridge/textcodec.cpp',
                   'OpenGothic/lib/ZenKit/src/Archive.cc', 'OpenGothic/common/basestore.cpp',
-                  'OpenGothic/game/main.cpp', 'scripts/convert/main.cpp']
+                  'OpenGothic/game/main.cpp', 'scripts/convert/main.cpp', 'scripts/ryzen-build.sh']
         for relative in inputs:
             path = self.source / relative
             path.parent.mkdir(parents=True, exist_ok=True)

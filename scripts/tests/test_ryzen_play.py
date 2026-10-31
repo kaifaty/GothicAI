@@ -103,6 +103,7 @@ class RyzenPlayTests(unittest.TestCase):
                 patch.object(install.Path, "cwd", return_value=repo), \
                 patch.object(install.shutil, "which", return_value="/tool"), \
                 patch.object(install.Path, "is_file", return_value=True), \
+                patch.object(install.subprocess, "check_output", return_value=b"thin-flags\0"), \
                 patch.object(install, "run") as run:
             install.prepare()
         calls = [call.args[0] for call in run.call_args_list]

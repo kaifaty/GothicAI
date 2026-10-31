@@ -16,6 +16,9 @@ from gothic_launcher.commands import Ports, Proc, preparation
 from gothic_launcher.state import AlreadyRunning, SessionFile
 from gothic_launcher.supervisor import Event, Supervisor
 
+# Process groups and signals; on Windows os.kill(pid, 0) would even end the process. Windows: test_windows.py
+pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+
 FAKE = str(Path(__file__).with_name("fake_service.py"))
 
 

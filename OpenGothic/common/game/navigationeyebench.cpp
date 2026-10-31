@@ -60,7 +60,7 @@ struct Cost {
   size_t actor=0;
   double microseconds=0;
   size_t casts=0,nearCasts=0,farCasts=0;
-  bool far=false;
+  bool farUpdated=false;
 };
 
 struct State {
@@ -285,8 +285,8 @@ std::string end(World& world) {
     double sum=0;
     uint64_t casts=0,nearCasts=0,farCasts=0;
     for(const auto& sample:state.costs) {
-      if(subset==1 && sample.far) continue;
-      if(subset==2 && !sample.far) continue;
+      if(subset==1 && sample.farUpdated) continue;
+      if(subset==2 && !sample.farUpdated) continue;
       values.push_back(sample.microseconds);sum+=sample.microseconds;
       casts+=sample.casts;nearCasts+=sample.nearCasts;farCasts+=sample.farCasts;
     }
@@ -324,7 +324,7 @@ std::string end(World& world) {
            << ",\"ray_count\":" << state.eyes.front()->rayCount() << ",\"center_range_cm\":" << state.config.centerRangeCm
            << ",\"game_ms\":" << sample.time << ",\"actor\":" << sample.actor << ",\"wall_us\":" << sample.microseconds
            << ",\"casts\":" << sample.casts << ",\"near_casts\":" << sample.nearCasts << ",\"far_casts\":" << sample.farCasts
-           << ",\"far_updated\":" << (sample.far?"true":"false") << "}\n";
+           << ",\"far_updated\":" << (sample.farUpdated?"true":"false") << "}\n";
   if(!timing) throw std::runtime_error("eye timing journal write failed");
   state.costs.clear();return out.str();
 }
