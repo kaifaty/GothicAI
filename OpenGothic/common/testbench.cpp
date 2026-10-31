@@ -7371,8 +7371,8 @@ void placedItemsArrowReport(World& world) {
 bool placedItemOwned(Npc& player,const Item& item) {
   const auto point=item.position();
   const auto ownership=HeroDeed::snapshot(player,"take_item",nullptr,&item,nullptr,0,&point);
-  return !ownership->owner.npc.empty() || ownership->ownerGuild>GIL_NONE || !ownership->roomOwner.npc.empty() ||
-         (ownership->roomGuild>GIL_NONE && ownership->roomGuild!=GIL_PUBLIC);
+  return !ownership->owner.npc.empty() || ownership->ownerGuild>int32_t(GIL_NONE) || !ownership->roomOwner.npc.empty() ||
+         (ownership->roomGuild>int32_t(GIL_NONE) && ownership->roomGuild!=int32_t(GIL_PUBLIC));
 }
 
 void placedItemsTable(World& world,Npc& player,bool owned=false) {
@@ -7536,8 +7536,8 @@ void placedItemsPickupReport(World& world,Npc& player) {
   for(const auto& name:state.theftWitnesses) {if(witnesses.size()>1)witnesses+=',';witnesses+=jsonStr(name);}
   for(const auto id:state.theftRecipients) {if(recipients.size()>1)recipients+=',';recipients+=std::to_string(id);}
   const auto after=player.itemCount(state.pickupSymbol);
-  const bool owned=!state.theftOwner.empty() || state.theftOwnerGuild>GIL_NONE || !state.theftRoomOwner.empty() ||
-                   (state.theftRoomGuild>GIL_NONE && state.theftRoomGuild!=GIL_PUBLIC);
+  const bool owned=!state.theftOwner.empty() || state.theftOwnerGuild>int32_t(GIL_NONE) || !state.theftRoomOwner.empty() ||
+                   (state.theftRoomGuild>int32_t(GIL_NONE) && state.theftRoomGuild!=int32_t(GIL_PUBLIC));
   const bool pass=state.pickupAccepted && after==state.pickupBefore+state.pickupCount && state.theftDeeds==1 && owned;
   event("placed_items_pickup","\"placed_items\":"+std::string(Gothic::physicsFlags().placedItems?"true":"false")+
     ",\"inventory_before\":"+std::to_string(state.pickupBefore)+",\"inventory_after\":"+std::to_string(after)+

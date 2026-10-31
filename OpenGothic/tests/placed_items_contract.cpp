@@ -3,12 +3,21 @@
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "resources.h"
+#include "commandline.h"
+#include "gamemusic.h"
+#include "gothic.h"
+#include "game/serialize.h"
+#include "world/objects/item.h"
+
+#include <Tempest/MemReader>
+#include <Tempest/MemWriter>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <vector>
 
@@ -327,6 +336,74 @@ void irregularSupport() {
           "an irregular support must exclude the entire Item support chain to a fixed point");
   }
 
+void moverChildSave() {
+  const auto* game=std::getenv("GOTHIC_DIR");
+  require(game!=nullptr && *game!='\0',"GOTHIC_DIR must point to prepared Gothic II settings");
+  const char* args[]={"gothic-placed-items-contract","-g",game,"-g2"};
+  CommandLine commandLine(4,args);
+  Resources resources;
+  Gothic gothic;
+  gothic.isNpcInDialogFn=[](const Npc*) { return false; };
+  gothic.setupGlobalScripts();
+  GameMusic music;
+  gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+  const auto findChild=[](World& world) -> const WorldObjects::PlacedItem& {
+    const auto& catalogue=world.placedItemCensus();
+    const auto child=std::find_if(catalogue.begin(),catalogue.end(),[](const auto& row) { return row.zenId==2839; });
+    require(child!=catalogue.end() && child->item!=nullptr,
+            "the authored catalogue must contain Item 2839 below mover 2838 on both startup and reload");
+    const auto attachments=world.vobAttachmentSnapshot(2838);
+    require(std::any_of(attachments.begin(),attachments.end(),[](const auto& row) {
+              return row.zenId==2839 && row.parentZenId==2838;
+              }),"the save fixture must contain an actual mover-child Item");
+    return *child;
+    };
+  const auto& child=findChild(*gothic.world());
+  const auto catalogueSize=gothic.world()->placedItemCensus().size();
+  const auto countItems=[](World& world) {
+    uint32_t count=0;
+    while(world.itmById(count)!=nullptr)
+      ++count;
+    return count;
+    };
+  const auto itemCount=countItems(*gothic.world());
+  const auto instance=child.instance;
+  const auto verdict=child.validation.disposition;
+  auto savedPose=child.origin;
+  savedPose.translate(25,0,0);
+  child.item->setObjMatrix(savedPose);
+  std::vector<uint8_t> bytes;
+  {
+    Tempest::MemWriter writer(bytes);
+    Serialize out(writer);
+    Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+    std::memset(preview.data(),0,4);
+    gothic.gameSession()->save(out,"placed mover child",preview);
+  }
+  {
+    Tempest::MemReader reader(bytes);
+    Serialize in(reader);
+    require(in.setEntry("worlds/NEWWORLD.ZEN/placed-items"),"mover-child identities must be written to /placed-items");
+  }
+  gothic.clearGame().reset();
+  {
+    Tempest::MemReader reader(bytes);
+    Serialize in(reader);
+    gothic.setGame(std::make_unique<GameSession>(in));
+  }
+  const auto& restored=findChild(*gothic.world());
+  require(gothic.world()->placedItemCensus().size()==catalogueSize && countItems(*gothic.world())==itemCount,
+          "loading a mover-child identity must preserve the catalogue and avoid duplicate Items");
+  require(restored.instance==instance && restored.validation.disposition==verdict &&
+          restored.item->placedItemZenId()==2839,
+          "the saved mover-child identity must restore its original census verdict");
+  for(size_t i=0;i<16;++i)
+    require(restored.item->localTransform().data()[i]==savedPose.data()[i],
+            "a moved mover-child Item must recover its exact saved pose through /placed-items");
+  std::printf("Mover child 2838 -> 2839: catalogue %zu, items %u, identity and saved pose restored\n",catalogueSize,itemCount);
+  gothic.clearGame().reset();
+  }
+
 }
 
 int main() {
@@ -338,6 +415,7 @@ int main() {
     groundBelowSupport();
     asymmetricLowestPoint();
     irregularSupport();
+    moverChildSave();
     std::puts("Placed item census contracts passed");
     return EXIT_SUCCESS;
     }
