@@ -104,10 +104,10 @@ cd "$task/source"
 if [[ "$phase" == mode ]]; then
   test -f "$results/build-passed"
   mode="${1:?memory mode}"
-  timeout 108m "$task/.venv/bin/python" -I scripts/nav_teacher_v3b.py evaluate \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3b.py evaluate \
     --task "$results" --runtime "$task" --assets "$GOTHIC_DIR" \
     --mode "$mode" --parallel 3 --budget-seconds 6300
-  timeout 10m "$task/.venv/bin/python" -I scripts/nav_teacher_v3b.py safety \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3b.py safety \
     --task "$results" --runtime "$task" --assets "$GOTHIC_DIR" \
     --mode "$mode" --budget-seconds 540
   exit 0
@@ -116,7 +116,7 @@ if [[ "$phase" == cost ]]; then
   test -f "$results/build-passed"
   # The offline replay below uses only actual eye/pose streams recorded by the
   # predeclared cases; neither teacher nor game is run again for this phase.
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3b.py cost \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3b.py cost \
     --task "$results" --runtime "$task" --assets "$GOTHIC_DIR"
   exit 0
 fi
@@ -151,7 +151,7 @@ PHASE
 build_phase=build
 [[ "$stage" != retry ]] || build_phase=retry-build
 identifier=$("$ROOT/scripts/gq" submit --class batch --threads 16 --mem 8G --max 2h --cpu-quota 1200% \
-  --name "nav teacher v3b $build_phase" -- env "${game_env[@]}" bash "$task/phase.sh" "$results" "$build_phase")
+  --name "nav teacher v3b $build_phase" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$results" "$build_phase")
 printf 'build %s\n' "$identifier"
 if [[ "$stage" == measure || "$stage" == retry ]]; then
   # Sixteen declared threads serialize these phases on the 28-thread host. Each
@@ -160,12 +160,12 @@ if [[ "$stage" == measure || "$stage" == retry ]]; then
   [[ "$stage" != retry ]] || modes=(familiar-local familiar-stranger)
   for mode in "${modes[@]}"; do
     identifier=$("$ROOT/scripts/gq" submit --class batch --threads 16 --mem 8G --max 2h --cpu-quota 1200% \
-      --name "nav teacher v3b $stage $mode" -- env "${game_env[@]}" bash "$task/phase.sh" "$results" mode "$mode")
+      --name "nav teacher v3b $stage $mode" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$results" mode "$mode")
     printf '%s %s\n' "$mode" "$identifier"
   done
 fi
 if [[ "$stage" == measure ]]; then
   identifier=$("$ROOT/scripts/gq" submit --class batch --threads 28 --mem 8G --max 2h --cpu-quota 1200% \
-    --name "nav teacher v3b paired cost" -- env "${game_env[@]}" bash "$task/phase.sh" "$results" cost)
+    --name "nav teacher v3b paired cost" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$results" cost)
   printf 'paired-cost %s\n' "$identifier"
 fi
