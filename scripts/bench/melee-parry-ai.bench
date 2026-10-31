@@ -1,0 +1,134 @@
+# Native melee parry timing and retaliation after a real parry.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local OPENGOTHIC_BODY_TRACE=1 MELEE_PARRY=1 MELEE_PARRY_AI=1 (then 0)
+seed 73013
+cheat god
+set time 12 0
+release all
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+wait 600
+melee-shadow target 2
+wait 600
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+# Move the opponent into the open field, clear of the fixture's signpost.
+turn 180
+pin BDT_1013_BANDIT_L 160 0 0
+wait 300
+pin off
+immortal BDT_1013_BANDIT_L on
+still player on
+seed 73013
+fight BDT_1013_BANDIT_L player
+wait 800
+# Fifty ordinary 1h swings; leave time for the native opponent to counter a parried hero.
+press action
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+tap forward
+wait 1400
+release all
+wait 1500

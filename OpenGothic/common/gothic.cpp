@@ -134,6 +134,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_hitstop",         1);
   defaults->set("GAME", "melee_stamina",         1);
   defaults->set("GAME", "melee_parry",           1);
+  defaults->set("GAME", "melee_parry_ai",        1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -907,6 +908,7 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_hitstop")!=0,
     settingsGetI("GAME","melee_stamina")!=0,
     settingsGetI("GAME","melee_parry")!=0,
+    settingsGetI("GAME","melee_parry_ai")!=0,
     settingsGetI("GAME","furniture_parts")!=0
     };
   }
