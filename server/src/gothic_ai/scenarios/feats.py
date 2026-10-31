@@ -109,6 +109,13 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
         saved = await _save_or_fail(link, slot)
         check("save_before_deed", True, f"slot={slot}, branch={saved.branch}, seq={saved.seq}")
 
+        if not live:
+            # Keep the debug kill in the tower, away from wildlife, with Xardas outside.
+            await link.debug("npc_goto", npc="NONE_100_XARDAS", waypoint="NW_XARDAS_TOWER_VALLEY_01")
+            nearby = await link.story_nearby("PC_HERO", 3500)
+            if not check("unwitnessed_setup", not nearby, [person["npc"] for person in nearby]):
+                return _logged(results)
+
         await link.debug("kill", instance=victim, by="PLAYER")
         if not check("hero_deed", await _until(lambda: trigger is not None, 10), f"npc={victim}"):
             return _logged(results)
@@ -153,6 +160,16 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
                 and award.get("category") in CATEGORIES,
                 f"trigger={trigger}, evidence={award.get('evidence')}, category={award.get('category')}",
             )
+            if not live:
+                check("fame", not chronicle.facts("feat_fame"), "secret")
+            else:
+                award_seq = next(seq for seq, fact in chronicle.entries("feat") if fact["id"] == award["id"])
+                dead = {fact["npc"].upper() for seq, fact in chronicle.entries("died") if seq <= award_seq}
+                fame = [fact for fact in chronicle.facts("feat_fame") if fact.get("feat") == award["id"]]
+                witnesses = sorted({npc for fact in fame for npc in fact["witnesses"]})
+                check("fame", not fame or bool(witnesses) and all(
+                    npc and npc.upper() != "PLAYER" and npc.upper() not in dead for npc in witnesses
+                ), f"public: {', '.join(witnesses)}" if fame else "secret")
             await _until(lambda: any(toast.feat == award["id"] for toast in toasts)
                          and any(f.get("id") == award["id"] for f in chronicle.facts("feat_image")),
                          200 if live else 30)
@@ -200,6 +217,8 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
         )
         check("image_rollback", not chronicle.facts("feat_image"),
               f"images={chronicle.facts('feat_image')}")
+        check("fame_rollback", not chronicle.facts("feat_fame"),
+              f"fame={chronicle.facts('feat_fame')}")
         if image_dir is not None:
             check("image_retained", image_dir.is_dir() and icon.is_file(), str(image_dir))
         return _logged(results)
