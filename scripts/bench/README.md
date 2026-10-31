@@ -931,10 +931,14 @@ recoveries. The two swords remain admitted; their thin-body support crossing
 will be investigated separately.
 The corrected functional ON/OFF passes all five result checks per mode. Mac
 ON p95 is 1.394707/1.581916/1.402624 ms; each pair is below OFF and within budget.
-Cold reload is blocked by authored Item 2839 under mover 2838: the load-time
-catalogue omits it, so its valid saved identity cannot resolve. The old main
-save loads without pose loss or duplicates but loses that one link (2330 of
-2331). Both cold cycles remain required after the catalogue fix.
+Both cold cycles now pass on Ryzen with all 2330 saved links after pickup,
+including authored Item 2839 below mover 2838. The load-time catalogue retains
+all 2331 authored Items independently of inherited trigger flags. The old main
+save restores all 2331 links with no duplicate Items; maximum cold pose error is
+0.00007079 cm. Version 55 and placement-entry schema 1 remain unchanged.
+The native placed-Item contract also moves the mover-child Item before saving
+and checks its identity and exact matrix on reload. Linux builds and all four
+physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
