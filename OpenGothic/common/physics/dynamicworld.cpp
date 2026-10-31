@@ -731,6 +731,8 @@ struct DynamicWorld::BBoxList final {
 DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, const asset::WorldMesh* originalCloth) {
   world.reset(new CollisionWorld());
   ownerWorld=owner;
+  if(owner!=nullptr)
+    splitStaticTriangles=Gothic::settingsGetI("GAME","static_collision_split")!=0;
   clothWorld=std::make_unique<Cloth>(*world);
   bodies.reset(new WorldBodies());
   movableVobs.reset(new MovableVobs());
@@ -792,8 +794,8 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
   JPH::Vec3 bbox[2] = {JPH::Vec3::sZero(), JPH::Vec3::sZero()};
   Tempest::Matrix4x4 mt;
   mt.identity();
-  if(!landMesh->isEmpty() && landMesh->shape()!=nullptr) {
-    bodies->landscape = world->addCollisionBody(landMesh->shape(),mt,materialFriction(asset::MaterialGroup::NONE),
+  if(const auto shape=landMesh->shape(splitStaticTriangles); shape!=nullptr) {
+    bodies->landscape = world->addCollisionBody(shape,mt,materialFriction(asset::MaterialGroup::NONE),
                                                C_Landscape,false,false,landMesh.get());
     bodies->landscape->setLabel("landscape");
     JPH::Vec3 min, max;
@@ -1007,20 +1009,26 @@ DynamicWorld::NpcItem DynamicWorld::addGhostObj(const Skeleton* src) {
   }
 
 DynamicWorld::Item DynamicWorld::addStaticObj(const PhysicMeshShape* shape, const Tempest::Matrix4x4& m, std::string_view label) {
-  if(shape==nullptr || shape->shape==nullptr)
+  if(shape==nullptr)
+    return Item();
+  const auto native=shape->mesh.shape(splitStaticTriangles);
+  if(native==nullptr)
     return Item();
   auto obj = std::make_unique<BodyData>();
-  obj->body = world->addCollisionBody(shape->shape,m,shape->friction(),C_Object,false,false,&shape->mesh);
+  obj->body = world->addCollisionBody(native,m,shape->friction(),C_Object,false,false,&shape->mesh);
   obj->body->setLabel(label);
   obj->body->setNoiseProfile(impactMaterial(shape->material),shape->material,"vob");
   return Item(this,obj.release());
   }
 
 DynamicWorld::Item DynamicWorld::addMovableObj(const PhysicMeshShape* shape, const Tempest::Matrix4x4& m, std::string_view label) {
-  if(shape==nullptr || shape->shape==nullptr)
+  if(shape==nullptr)
+    return Item();
+  const auto native=shape->mesh.shape();
+  if(native==nullptr)
     return Item();
   auto obj = std::make_unique<BodyData>();
-  obj->body = world->addCollisionBody(shape->shape,m,shape->friction(),C_Object,true,false,&shape->mesh);
+  obj->body = world->addCollisionBody(native,m,shape->friction(),C_Object,true,false,&shape->mesh);
   obj->body->setLabel(label);
   obj->body->setNoiseProfile(impactMaterial(shape->material),shape->material,"vob");
   return Item(this,obj.release());
@@ -1236,7 +1244,7 @@ DynamicWorld::Item DynamicWorld::addMovableVob(const ProtoMesh& proto, std::stri
     size_t largestAttach = 0;
     for(size_t i=0;i<proto.attach.size();++i) {
       const auto* source = proto.attach[i].shape.get();
-      if(source==nullptr || source->shape==nullptr)
+      if(source==nullptr || source->mesh.shape()==nullptr)
         continue;
       auto local = Tempest::Matrix4x4::mkIdentity();
       for(size_t node=0;node<proto.nodes.size();++node) {
@@ -1372,7 +1380,7 @@ void DynamicWorld::rebuildMovableVob(BodyData& obj) {
     for(const auto& part:shape.parts) {
       auto matrix = obj.origin;
       matrix.mul(part.local);
-      obj.query.push_back(world->addCollisionBody(part.source->shape,matrix,part.source->friction(),category,
+      obj.query.push_back(world->addCollisionBody(part.source->mesh.shape(),matrix,part.source->friction(),category,
                                                  enabled && !fence,enabled && !fence,&part.source->mesh));
       obj.query.back()->setPayload(&obj,P_MovableVob);
       obj.query.back()->setLabel(obj.visual);
@@ -2309,7 +2317,16 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
       ptr->cb->onCollide(b);
     }
   const bool attachAtWorldStop=!isSpell && b.cb!=nullptr && b.cb->stopsAtWorldHit();
-  const auto hit = world->rayCast(pos,to,visualMask,false);
+  auto hit = world->rayCast(pos,to,visualMask,false);
+  if(!isSpell && world->itemWakeEnabled()) {
+    // Bodyless resting Items must become queryable before the projectile ray.
+    // Stop the wake volume at the solid world hit, so walls shield Items too.
+    const auto end=hit.hasHit ? hit.point : to;
+    const Tempest::Vec3 min(std::min(pos.x,end.x)-50.f,std::min(pos.y,end.y)-50.f,std::min(pos.z,end.z)-50.f);
+    const Tempest::Vec3 max(std::max(pos.x,end.x)+50.f,std::max(pos.y,end.y)+50.f,std::max(pos.z,end.z)+50.f);
+    world->wakeItemsInBounds(min,max);
+    hit=world->rayCast(pos,to,visualMask|(1u<<C_Item),false);
+    }
   const auto matId = hit.hasHit ? hit.material : asset::MaterialGroup::NONE;
   ArrowTrace::write(b,b.cb,"world_query",dt,nullptr,hit.hasHit,hit.fraction,hit.point,hit.normal,
                     unsigned(matId),hit.body!=nullptr ? unsigned(hit.body->category()) : 0);
@@ -2358,6 +2375,10 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
   bool stopBullet = false;
   if(matId != asset::MaterialGroup::NONE) {
     notifyCloth(pos+(to-pos)*hit.fraction);
+    if(!isSpell && world->itemWakeEnabled() && hit.body!=nullptr && hit.body->category()==C_Item) {
+      auto* culprit=b.cb!=nullptr ? b.cb->origin() : nullptr;
+      hit.body->addImpulseAtPoint(b.direction()*1.2f,hit.point,culprit);
+      }
     if(!isSpell && hit.body!=nullptr && hit.body->ptrType()==P_MovableVob) {
       auto& target=*static_cast<BodyData*>(hit.body->payload());
       // Direction is cm/ms; a 120 gram arrow transfers SI momentum at its
@@ -2447,7 +2468,9 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
     if(b.cb!=nullptr) {
       // Pin only after the unchanged flight code has decided to stop at a solid
       // world contact. In particular, stone/metal still reflect before this test.
-      if(attachAtWorldStop && matId!=asset::MaterialGroup::NONE) {
+      // Items have no attachment pose; do not pin their stopped arrow to the world.
+      if(attachAtWorldStop && matId!=asset::MaterialGroup::NONE &&
+         (hit.body==nullptr || hit.body->category()!=C_Item)) {
         BulletWorldHit result;
         result.point=b.position();
         result.normal=hit.normal;
@@ -2519,6 +2542,11 @@ DynamicWorld::PhysicsStats DynamicWorld::physicsStats() const {
   return {world->stepMilliseconds(),world->bodyCount(),world->rayCount()};
   }
 
+DynamicWorld::StaticCollisionStats DynamicWorld::staticCollisionStats() const {
+  const auto stats=world->staticCollisionStats();
+  return {stats.mSizeBytes,stats.mNumTriangles};
+  }
+
 uint64_t DynamicWorld::simulationStep() const { return world->simulationStep(); }
 void DynamicWorld::configureMeleeBench(int substeps) { world->configureMeleeBench(substeps); }
 void DynamicWorld::updateMeleeBlade(const Npc* owner,const Tempest::Matrix4x4& hand,float lengthCm) { world->updateMeleeBlade(owner,hand,lengthCm); }
@@ -2527,8 +2555,8 @@ void DynamicWorld::updateShadowBody(Npc* owner,const std::vector<MeleeBodyCapsul
 void DynamicWorld::removeShadowBody(const Npc* owner) { world->removeShadowBody(owner); }
 void DynamicWorld::updateShadowBlade(const Npc* owner,uint64_t swingId,const std::vector<MeleeBladeSegment>& segments,
                                      uint64_t timeMs,double activeBeginMs,double activeEndMs,float walkableCos,
-                                     Tempest::Vec3 forward) {
-  world->updateShadowBlade(owner,swingId,segments,timeMs,activeBeginMs,activeEndMs,walkableCos,forward);
+                                     Tempest::Vec3 forward, MeleeImpact::Weapon weapon) {
+  world->updateShadowBlade(owner,swingId,segments,timeMs,activeBeginMs,activeEndMs,walkableCos,forward,weapon);
   }
 std::vector<MeleeBladeContact> DynamicWorld::takeShadowBladeContacts(const Npc* owner) { return world->takeShadowBladeContacts(owner); }
 void DynamicWorld::removeShadowBlade(const Npc* owner) { world->removeShadowBlade(owner); }

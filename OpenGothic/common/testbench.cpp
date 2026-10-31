@@ -820,6 +820,17 @@ struct Bench {
   std::vector<ItemWakeSample> itemWakeItems;
   std::vector<Npc*> itemWakeActors;
   Item* itemWakeMover=nullptr;
+  std::unique_ptr<PhysicMesh> itemWakeTable;
+  std::unique_ptr<ObjVisual> itemWakeTableVisual;
+  Vec3 itemWakeBladePoints[3],itemWakePreviousTip,itemWakePreviousGrip,itemWakeSwordRoot;
+  std::vector<Vec3> itemWakeBladePath;
+  size_t itemWakeBladePathEnd=0;
+  bool itemWakeBladeCrossed[3]{};
+  float itemWakeBladeSpeed=0,itemWakeSwordLength=0;
+  const Animation::Sequence* itemWakeSwordSequence=nullptr;
+  uint32_t itemWakeSwordOptimalFrame=0;
+  uint64_t itemWakeCalibrationEnd=0;
+  bool itemWakeCalibrationSample=false;
   Vec3 itemWakeCenter;
   std::string itemWakeCase;
   bool itemWakeSite=false,itemWakeRunning=false,itemWakePreparing=false;
@@ -3354,6 +3365,7 @@ void itemHullSetup(World& world,Npc& player,std::string_view surface) {
     arenaAbort("item hull setup expects flat, slope, stairs, table, load, terrain or giant_quad");return;
     }
   itemHullClear(world);
+  const auto collisionStats=world.physic()->staticCollisionStats();
   bench.itemHullLoad=surface=="load" || surface=="terrain" || surface=="giant_quad";bench.itemHullSurface=std::string(surface);
   if(bench.itemHullAnchor.y==0)bench.itemHullHero=player.position();
   if(surface=="terrain") {
@@ -3379,7 +3391,7 @@ void itemHullSetup(World& world,Npc& player,std::string_view surface) {
       }
     }
   else if(surface=="giant_quad") {
-    // Retain the former two-triangle load support as a report-only diagnostic.
+    // Keep the two-triangle support to catch small hulls crossing large faces.
     quad({-1200,0,-900},{-1200,0,900},{1200,0,900},{1200,0,-900});
     }
   else {
@@ -3469,6 +3481,8 @@ void itemHullSetup(World& world,Npc& player,std::string_view surface) {
   bench.itemHullStart=world.tickCount();bench.itemHullSample=uint64_t(-1);bench.itemHullCosts.clear();bench.itemHullTracing=true;
   event("item_hulls_setup","\"surface\":"+jsonStr(surface)+",\"items\":"+std::to_string(bench.itemHullDrops.size())+
     ",\"enabled\":"+(Gothic::settingsGetI("GAME","item_hulls")?"true":"false")+",\"hero_cm\":"+ragdollVector(player.position())+
+    ",\"world_load_ms\":"+ragdollNumber(float(world.loadMilliseconds()))+
+    ",\"static_shape_bytes\":"+std::to_string(collisionStats.shapeBytes)+",\"static_triangles\":"+std::to_string(collisionStats.triangles)+
     ",\"support_origin_cm\":"+ragdollVector(anchor)+",\"native_support_verified\":true");
   }
 
@@ -3532,7 +3546,7 @@ float itemHullGap(World& world,const Bench::ItemHullDrop& drop) {
 void itemHullReport(World& world) {
   itemHullSample(world);bench.itemHullTracing=false;
   const bool enabled=Gothic::settingsGetI("GAME","item_hulls")!=0;
-  const bool reportOnly=bench.itemHullSurface=="giant_quad";
+  const bool reportOnly=false;
   bool pass=true;size_t through=0,escaped=0,below=0,jitter=0,unslept=0,unsleptSupported=0;
   for(size_t i=0;i<bench.itemHullDrops.size();++i) {
     const auto& drop=bench.itemHullDrops[i];const float gap=itemHullGap(world,drop);
@@ -3576,7 +3590,7 @@ void itemHullReport(World& world) {
     }
   auto costs=bench.itemHullCosts;std::sort(costs.begin(),costs.end());
   const float p95=costs.empty()?0.f:costs[std::min(costs.size()-1,size_t(std::ceil(float(costs.size())*.95f)-1))];
-  if(bench.itemHullLoad)pass&=p95<=2.f;
+  if(bench.itemHullLoad && bench.itemHullSurface!="giant_quad")pass&=p95<=2.f;
   event("item_hulls_summary","\"surface\":"+jsonStr(bench.itemHullSurface)+",\"items\":"+std::to_string(bench.itemHullDrops.size())+
     ",\"samples\":"+std::to_string(costs.size())+",\"physics_p95_ms\":"+ragdollNumber(p95)+
     ",\"passed_through\":"+std::to_string(through)+",\"escaped_edge\":"+std::to_string(escaped)+
@@ -6228,9 +6242,189 @@ void saveMovableSession(World& world,const std::string& label) {
     std::to_string(bytes.size())+",\"world\":"+jsonStr(world.name())+",\"bodies\":"+movableRows(world));
   }
 
+bool itemWakeTableItems(World& world,Npc& player,bool sword) {
+  const auto symbol=world.script().findSymbolIndex(sword?"ITFO_BEER":"ITFO_APPLE");
+  if(symbol==size_t(-1)) {arenaAbort("item wake preparation: tabletop item instance unavailable");return false;}
+  Item definition(world,symbol,Item::T_Inventory);
+  const auto* itemMesh=Resources::loadMesh(definition.handle().visual);
+  if(!itemMesh) {arenaAbort("item wake preparation: tabletop item mesh unavailable");return false;}
+  const float itemHeight=itemMesh->bbox()[1].y-itemMesh->bbox()[0].y;
+  Vec3 center=bench.itemWakeCenter;
+  float top=center.y+80.f;
+  if(sword) {
+    center=(bench.itemWakeBladePoints[0]+bench.itemWakeBladePoints[2])*.5f;
+    top=std::min({bench.itemWakeBladePoints[0].y,bench.itemWakeBladePoints[1].y,bench.itemWakeBladePoints[2].y})-.75f*itemHeight;
+    }
+  const auto axis=sword?Vec3::normalize(bench.itemWakeBladePoints[2]-bench.itemWakeBladePoints[0]):Vec3(0,0,1);
+  std::string tableVisual;
+  std::vector<std::pair<float,std::string>> tables;
+  std::unordered_set<std::string> seen;
+  for(const auto& row:world.physic()->movableVobSnapshot()) {
+    if(row.className!="table" || !seen.insert(row.visual).second)continue;
+    const auto* mesh=Resources::loadMesh(row.visual);
+    if(!mesh)continue;
+    const auto extent=mesh->bbox()[1]-mesh->bbox()[0];
+    const float depth=std::min(extent.x,extent.z);
+    if(depth>=60.f)tables.emplace_back(depth,row.visual);
+    }
+  std::sort(tables.begin(),tables.end());
+  Matrix4x4 matrix;
+  DynamicWorld::RayLandResult supports[3];
+  Vec3 normals[3];
+  const unsigned count=sword?3u:1u;
+  const auto itemExtent=itemMesh->bbox()[1]-itemMesh->bbox()[0];
+  const float margin=.5f*std::max(itemExtent.x,itemExtent.z)+2.f;
+  const Vec3 tangent(-axis.z,0,axis.x);
+  const auto longAxis=sword?axis:tangent;
+  size_t unsupported=0,blocked=0;
+  for(const auto& candidate:tables) {
+    const auto* table=Resources::loadMesh(candidate.second);
+    const auto* bounds=table->bbox();
+    const auto extent=bounds[1]-bounds[0];
+    bench.itemWakeTable=std::make_unique<PhysicMesh>(*table,*world.physic(),false);
+    if(bench.itemWakeTable->isEmpty())continue;
+    bench.itemWakeTable->setPayloadPtr(bench.itemWakeTable.get());
+    for(const Vec3 offset:{Vec3(),Vec3(.25f,0,0),Vec3(-.25f,0,0),Vec3(0,0,.25f),Vec3(0,0,-.25f),
+                          Vec3(.25f,0,.25f),Vec3(.25f,0,-.25f),Vec3(-.25f,0,.25f),Vec3(-.25f,0,-.25f)}) {
+      matrix=Matrix4x4::mkIdentity();
+      matrix.rotateOY(std::atan2(-longAxis.z,longAxis.x)*180.f/float(M_PI)+(extent.x>=extent.z?0.f:90.f));
+      auto local=(bounds[0]+bounds[1])*.5f+Vec3(offset.x*extent.x,0,offset.z*extent.z);local.y=bounds[1].y;
+      matrix.project(local);
+      matrix.set(3,0,center.x-local.x);matrix.set(3,1,top-local.y);matrix.set(3,2,center.z-local.z);
+      if(sword) {
+        const float ahead=std::max(0.f,.5f*candidate.first-margin-3.f);
+        const float outward=std::max(0.f,.5f*std::max(extent.x,extent.z)-.2f*bench.itemWakeSwordLength-margin-3.f);
+        matrix.set(3,0,matrix.at(3,0)+tangent.x*ahead+axis.x*outward);
+        matrix.set(3,2,matrix.at(3,2)+tangent.z*ahead+axis.z*outward);
+        }
+      bench.itemWakeTable->setObjMatrix(matrix);
+      const auto first=sword?bench.itemWakeBladePoints[0]:center;
+      const auto probe=world.physic()->landRay(Vec3(first.x,top+30.f,first.z),extent.y+60.f);
+      if(!probe.hasCol || probe.uptr!=bench.itemWakeTable.get()) {++unsupported;continue;}
+      matrix.set(3,1,matrix.at(3,1)+top-probe.v.y);
+      bench.itemWakeTable->setObjMatrix(matrix);
+      bool supported=true;
+      for(unsigned i=0;i<count && supported;++i) {
+        const auto target=sword?bench.itemWakeBladePoints[i]:center;
+        const Vec3 from(target.x,top+30.f,target.z);
+        supports[i]=world.physic()->landRay(from,60.f);
+        const auto hit=world.physic()->navigationRay(from,from-Vec3(0,60.f,0),&player);
+        supported=supports[i].hasCol && supports[i].uptr==bench.itemWakeTable.get() &&
+                  std::abs(supports[i].v.y-top)<=3.f && hit.hasCol && hit.normal.y>=.98f &&
+                  (hit.point-supports[i].v).length()<.1f;
+        normals[i]=hit.normal;
+        for(const Vec3 edge:{Vec3(margin,0,0),Vec3(-margin,0,0),Vec3(0,0,margin),Vec3(0,0,-margin)}) {
+          if(!supported)break;
+          const auto side=world.physic()->landRay(from+edge,60.f);
+          supported=side.hasCol && side.uptr==bench.itemWakeTable.get() && std::abs(side.v.y-supports[i].v.y)<=3.f;
+          }
+        }
+      if(!supported) {++unsupported;continue;}
+      // A supported tabletop must not stop the authored stroke before it reaches the Items.
+      for(size_t i=0;i+1<bench.itemWakeBladePath.size() && supported;i+=2) {
+        for(float t:{0.f,.5f,1.f}) {
+          if(!supported)break;
+          const auto from=i>0 ? bench.itemWakeBladePath[i-2]+(bench.itemWakeBladePath[i]-bench.itemWakeBladePath[i-2])*t : bench.itemWakeBladePath[i];
+          const auto to=i>0 ? bench.itemWakeBladePath[i-1]+(bench.itemWakeBladePath[i+1]-bench.itemWakeBladePath[i-1])*t : bench.itemWakeBladePath[i+1];
+          const auto hit=world.physic()->sweep(from,to,2.f);
+          supported=!hit.hasCol || hit.uptr!=bench.itemWakeTable.get();
+          }
+        }
+      if(!supported) {++blocked;continue;}
+      tableVisual=candidate.second;break;
+      }
+    if(!tableVisual.empty())break;
+    bench.itemWakeTable.reset();
+    }
+  if(tableVisual.empty()) {
+    arenaAbort("item wake preparation: no usable tabletop, support_rejects="+std::to_string(unsupported)+
+               ", obstruction_rejects="+std::to_string(blocked));return false;
+    }
+  bench.itemWakeTable->setPayloadPtr(nullptr);
+  asset::VirtualObject data;data.type=asset::VirtualObjectType::zCVob;data.id=uint32_t(-1);
+  data.show_visual=true;data.cd_dynamic=true;data.cd_static=true;
+  data.visual=std::make_shared<asset::VisualMesh>();data.visual->type=asset::VisualType::MESH;data.visual->name=tableVisual;
+  bench.itemWakeTableVisual=std::make_unique<ObjVisual>();bench.itemWakeTableVisual->setVisual(data,world,false,false);
+  bench.itemWakeTableVisual->setObjMatrix(matrix);
+  std::string supportRows="[";
+  for(unsigned i=0;i<count;++i) {
+    const auto& support=supports[i];
+    const Vec3 target=support.v;
+    if(i) supportRows+=',';
+    supportRows+="{\"point_cm\":"+ragdollVector(support.v)+",\"normal\":"+ragdollVector(normals[i])+"}";
+    auto pose=Matrix4x4::mkIdentity();pose.translate(target.x,support.v.y+100.f,target.z);
+    auto* item=world.addItemDyn(symbol,pose,world.npcId(&player));
+    if(!item || !item->isDynamic()) {arenaAbort("item wake preparation: tabletop item has no body");return false;}
+    const auto bodies=world.physic()->waterBodySnapshot();
+    const auto body=std::find_if(bodies.begin(),bodies.end(),[&](const auto& row){return row.item==item;});
+    if(body==bodies.end()) {arenaAbort("item wake preparation: tabletop item has no native bounds");return false;}
+    const auto nativeCenter=(body->collisionBounds[0]+body->collisionBounds[1])*.5f;
+    const Vec3 delta(target.x-nativeCenter.x,support.v.y+.05f-body->collisionBounds[0].y,target.z-nativeCenter.z);
+    const auto at=item->position()+delta;
+    pose.set(3,0,at.x);pose.set(3,1,at.y);pose.set(3,2,at.z);
+    item->setObjMatrix(pose);
+    Bench::ItemWakeSample sample;sample.item=item;sample.name=sword?"ITFO_BEER":"ITFO_APPLE";
+    sample.initial=at;sample.boundsOrigin=at;sample.floorY=support.v.y;
+    sample.collisionBounds[0]=body->collisionBounds[0]+delta;sample.collisionBounds[1]=body->collisionBounds[1]+delta;
+    bench.itemWakeItems.push_back(sample);
+    }
+  bench.itemWakePreparing=true;
+  event("item_wake_table","\"case\":"+jsonStr(bench.itemWakeCase)+",\"visual\":"+jsonStr(tableVisual)+
+    ",\"top_cm\":"+ragdollNumber(top)+",\"items\":"+std::to_string(bench.itemWakeItems.size())+
+    ",\"blade_step_cm\":"+ragdollNumber(bench.itemWakeBladeSpeed)+",\"support_rejects\":"+std::to_string(unsupported)+
+    ",\"obstruction_rejects\":"+std::to_string(blocked)+",\"support\":"+supportRows+"]"+
+    ",\"native_support_verified\":true"+(sword?",\"dry_blade_table_clear\":true,\"dry_blade_samples\":"+
+      std::to_string(bench.itemWakeBladePath.size()/2):""));
+  return true;
+  }
+
 // The observer stays beyond CharacterVirtual's three-metre item range. Setup
 // lets native Item bodies settle and retire before a contact is introduced.
 void itemWakeFields(World& world) {
+  if(bench.itemWakeCalibrationEnd) {
+    auto& npc=*bench.itemWakeActors.front();
+    if(!bench.itemWakeCalibrationSample) {
+      if(world.tickCount()<bench.itemWakeStart)return;
+      npc.setPosition(bench.itemWakeSwordRoot);npc.setDirection({0,0,1});npc.updateTransform();
+      if(!npc.setAnim(Npc::Anim::AttackL)) {arenaAbort("item wake preparation: delayed NPC sword calibration refused");return;}
+      }
+    const auto* skeleton=npc.visualSkeleton();
+    const auto hand=skeleton?skeleton->findNode("ZS_RIGHTHAND"):size_t(-1);
+    if(!skeleton || hand>=skeleton->nodes.size()) {arenaAbort("item wake preparation: sword hand unavailable");return;}
+    const auto& matrix=npc.animationBone(hand);
+    Vec3 points[3];
+    for(unsigned i=0;i<3;++i) {points[i]=Vec3(-bench.itemWakeSwordLength*(.55f+.2f*float(i)),0,0);matrix.project(points[i]);}
+    const auto* sequence=bench.itemWakeSwordSequence;
+    const float frame=npc.animProgress(sequence->name)*float(sequence->data->numFrames);
+    // This fixture's T_1HATTACKL native window is frames 0..9 (0..400 ms).
+    // Sample frames 2..6: blending can leave the blade steep at the optimal tag alone.
+    if(npc.isAttackAnim() && frame<float(bench.itemWakeSwordOptimalFrame+4)) {
+      Vec3 grip,tip(-bench.itemWakeSwordLength,0,0);matrix.project(grip);matrix.project(tip);
+      bench.itemWakeBladePath.push_back(grip);bench.itemWakeBladePath.push_back(tip);
+      }
+    if(bench.itemWakeCalibrationSample && npc.isAttackAnim() &&
+       frame>=float(bench.itemWakeSwordOptimalFrame) && frame<float(bench.itemWakeSwordOptimalFrame+4)) {
+      const float speed=(points[2]-bench.itemWakePreviousTip).length();
+      const float span=std::abs(points[2].y-points[0].y);
+      event("item_wake_sword_calibration_sample","\"frame\":"+ragdollNumber(frame)+",\"root_cm\":"+ragdollVector(npc.position())+
+        ",\"points_cm\":["+ragdollVector(points[0])+","+ragdollVector(points[1])+","+ragdollVector(points[2])+
+        "],\"vertical_span_cm\":"+ragdollNumber(span)+",\"step_cm\":"+ragdollNumber(speed));
+      if(speed>=1.f && span<12.f && (bench.itemWakeBladeSpeed<1.f ||
+          span<std::abs(bench.itemWakeBladePoints[2].y-bench.itemWakeBladePoints[0].y))) {
+        bench.itemWakeBladeSpeed=speed;
+        for(unsigned i=0;i<3;++i)bench.itemWakeBladePoints[i]=points[i];
+        bench.itemWakeBladePathEnd=bench.itemWakeBladePath.size();
+        }
+      }
+    bench.itemWakePreviousTip=points[2];bench.itemWakeCalibrationSample=true;
+    if(world.tickCount()<bench.itemWakeCalibrationEnd)return;
+    bench.itemWakeCalibrationEnd=0;
+    if(bench.itemWakeBladeSpeed<1.f) {arenaAbort("item wake preparation: NPC sword had no horizontal stroke inside the sampled active interval");return;}
+    bench.itemWakeBladePath.resize(bench.itemWakeBladePathEnd);
+    npc.setAnim(Npc::Anim::Idle);
+    npc.setPosition(bench.itemWakeSwordRoot);npc.setDirection({0,0,1});npc.updateTransform();
+    if(!itemWakeTableItems(world,*world.player(),true))return;
+    }
   if((!bench.itemWakeRunning && !bench.itemWakePreparing) || bench.itemWakeSample==world.tickCount())return;
   if(bench.itemWakeRunning && bench.itemWakeWindow && world.tickCount()-bench.itemWakeStart>bench.itemWakeWindow)return;
   bench.itemWakeSample=world.tickCount();
@@ -6263,6 +6457,40 @@ void itemWakeFields(World& world) {
     sample.below|=at.y<sample.floorY-10000.f;
     }
   if(bench.itemWakePreparing)return;
+  if(bench.itemWakeCase=="sword") {
+    const auto& npc=*bench.itemWakeActors.front();
+    const auto hand=npc.visualSkeleton()->findNode("ZS_RIGHTHAND");
+    const auto& matrix=npc.animationBone(hand);
+    Vec3 grip,tip(-bench.itemWakeSwordLength,0,0);matrix.project(grip);matrix.project(tip);
+    const float frame=npc.animProgress(bench.itemWakeSwordSequence->name)*float(bench.itemWakeSwordSequence->data->numFrames);
+    if(frame>=float(bench.itemWakeSwordOptimalFrame) && frame<float(bench.itemWakeSwordOptimalFrame+4)) {
+      std::string crossed="[";
+      for(unsigned i=0;i<3;++i) {
+        const auto& bounds=bench.itemWakeItems[i].collisionBounds;
+        for(float t:{0.f,.5f,1.f}) {
+          const auto a=bench.itemWakeCalibrationSample?bench.itemWakePreviousGrip+(grip-bench.itemWakePreviousGrip)*t:grip;
+          const auto b=bench.itemWakeCalibrationSample?bench.itemWakePreviousTip+(tip-bench.itemWakePreviousTip)*t:tip;
+          float enter=0,exit=1;
+          for(unsigned axis=0;axis<3 && enter<=exit;++axis) {
+            const float from=axis==0?a.x:axis==1?a.y:a.z,to=axis==0?b.x:axis==1?b.y:b.z;
+            const float low=(axis==0?bounds[0].x:axis==1?bounds[0].y:bounds[0].z)-2.f;
+            const float high=(axis==0?bounds[1].x:axis==1?bounds[1].y:bounds[1].z)+2.f;
+            if(std::abs(to-from)<1.e-5f) {if(from<low || from>high)exit=-1;}
+            else {
+              const float u=(low-from)/(to-from),v=(high-from)/(to-from);
+              enter=std::max(enter,std::min(u,v));exit=std::min(exit,std::max(u,v));
+              }
+            }
+          bench.itemWakeBladeCrossed[i]|=enter<=exit;
+          }
+        if(i)crossed+=',';
+        crossed+=bench.itemWakeBladeCrossed[i]?"true":"false";
+        }
+      event("item_wake_sword_path","\"frame\":"+ragdollNumber(frame)+",\"root_cm\":"+ragdollVector(npc.position())+
+        ",\"grip_cm\":"+ragdollVector(grip)+",\"tip_cm\":"+ragdollVector(tip)+",\"crossed_item_bounds\":"+crossed+"]");
+      }
+    bench.itemWakePreviousGrip=grip;bench.itemWakePreviousTip=tip;bench.itemWakeCalibrationSample=true;
+    }
   if((bench.itemWakeCase=="debris" || bench.itemWakeCase=="event-debris") && world.tickCount()-bench.itemWakeStart>=200) {
     const auto parts=world.physic()->fragmentSnapshot();
     if(std::none_of(parts.begin(),parts.end(),[](const auto& part){return destructionOwns(part.parentId);})) {
@@ -6290,7 +6518,8 @@ void itemWakeFields(World& world) {
         box[0].y<=high.y+50.f && box[1].y>=low.y-50.f && box[0].z<=high.z+50.f && box[1].z>=low.z-50.f;
       }
     }
-  if(bench.itemWakeCase=="pile" || bench.itemWakeCase=="pile-far" || bench.itemWakeCase.starts_with("event-")) {
+  if(bench.itemWakeCase=="pile" || bench.itemWakeCase=="pile-far" || bench.itemWakeCase=="arrow" ||
+     bench.itemWakeCase=="sword" || bench.itemWakeCase.starts_with("event-")) {
     const auto step=world.physic()->simulationStep();const auto advanced=step-bench.itemWakeLastNativeStep;
     bench.itemWakeLastNativeStep=step;
     if(advanced>1) {arenaAbort("item wake preparation: measurement frame advanced multiple native steps");return;}
@@ -6325,8 +6554,9 @@ void itemWakeResetWindow(World& world,uint64_t window) {
   }
 
 void itemWakeSetup(World& world,Npc& player,std::string_view name) {
-  if(name!="ragdoll" && name!="debris" && name!="item" && name!="pile" && name!="pile-far" && name!="event") {
-    arenaAbort("item wake setup expects ragdoll, debris, item, pile, pile-far or event");return;
+  if(name!="ragdoll" && name!="debris" && name!="item" && name!="pile" && name!="pile-far" && name!="event" &&
+     name!="arrow" && name!="sword") {
+    arenaAbort("item wake setup expects ragdoll, debris, item, pile, pile-far, event, arrow or sword");return;
     }
   bench.itemWakeRunning=false;bench.itemWakePreparing=false;
   for(auto& sample:bench.itemWakeItems)world.removeItem(*sample.item);
@@ -6335,6 +6565,11 @@ void itemWakeSetup(World& world,Npc& player,std::string_view name) {
   bench.itemWakeMover=nullptr;
   for(auto* npc:bench.itemWakeActors)world.removeNpc(*npc);
   bench.itemWakeActors.clear();
+  bench.itemWakeTable.reset();bench.itemWakeTableVisual.reset();
+  bench.itemWakeCalibrationEnd=0;bench.itemWakeCalibrationSample=false;bench.itemWakeBladeSpeed=0;
+  bench.itemWakeSwordSequence=nullptr;
+  bench.itemWakeBladePath.clear();bench.itemWakeBladePathEnd=0;
+  std::fill(std::begin(bench.itemWakeBladeCrossed),std::end(bench.itemWakeBladeCrossed),false);
   bench.destructionFixtures.clear();bench.destructionIds.clear();
   if(!bench.itemWakeSite) {
     if(const auto* anchor=world.findPoint("NW_XARDAS_TOWER_VALLEY_091",false)) {
@@ -6360,6 +6595,52 @@ void itemWakeSetup(World& world,Npc& player,std::string_view name) {
   hero.y=ground.v.y;player.setPosition(hero);player.updateTransform();
   bench.cam=C_Hold;lookFrom(bench.itemWakeCenter+Vec3(0,650,850),bench.itemWakeCenter);
   bench.itemWakeCase=name;bench.itemWakePhysics.clear();bench.itemWakeSample=uint64_t(-1);
+  if(name=="arrow") {
+    itemWakeTableItems(world,player,false);
+    return;
+    }
+  if(name=="sword") {
+    Gothic::settingsSetI("GAME","melee_blade_shadow",1);
+    const auto symbol=world.script().findSymbolIndex("BDT_1013_BANDIT_L");
+    const auto sword=world.script().findSymbolIndex("ITMW_1H_COMMON_01");
+    const auto at=bench.itemWakeCenter+Vec3(0,0,-150);
+    const auto floor=world.physic()->landRay(at+Vec3(0,200,0),500.f);
+    if(symbol==size_t(-1) || sword==size_t(-1) || !floor.hasCol || floor.n.y<.98f) {
+      arenaAbort("item wake preparation: sword actor lacks native symbols or supported stance");return;
+      }
+    auto* npc=world.addNpc(symbol,floor.v);
+    if(!npc) {arenaAbort("item wake preparation: sword actor insertion failed");return;}
+    bench.itemWakeActors.push_back(npc);
+    npc->clearAiQueue();npc->clearState(true);npc->clearGoTo();npc->stopWalking();npc->setExternalControl(true);
+    npc->handle().attribute[ATR_STRENGTH]=100;npc->setTalentSkill(TALENT_1H,2);
+    npc->setToFightMode(sword);npc->setTarget(nullptr);npc->setDirection({0,0,1});npc->updateTransform();
+    const auto* weapon=npc->currentMeleeWeapon();
+    const auto* mesh=weapon?Resources::loadMesh(weapon->handle().visual):nullptr;
+    const auto* sequence=npc->setAnimAngGet(Npc::Anim::AttackL);
+    if(!mesh || !sequence) {arenaAbort("item wake preparation: native NPC sword attack unavailable");return;}
+    const auto& data=*sequence->data;
+    bool optimalFound=false;
+    for(const auto& event:data.events) {
+      if(event.type!=asset::MdsEventType::OPTIMAL_FRAME || event.frames.empty())continue;
+      const auto frame=event.frames.front();
+      const auto clamped=frame<int32_t(data.firstFrame)?0u:
+                         int64_t(frame)>=int64_t(data.firstFrame)+data.numFrames?data.numFrames-1:
+                         frame>int32_t(data.lastFrame)?data.lastFrame-data.firstFrame:uint32_t(frame)-data.firstFrame;
+      bench.itemWakeSwordOptimalFrame=sequence->reverse?data.numFrames-1-clamped:clamped;
+      optimalFound=true;break;
+      }
+    if(!optimalFound) {arenaAbort("item wake preparation: NPC sword attack has no authored optimal frame");return;}
+    bench.itemWakeSwordSequence=sequence;
+    bench.itemWakeSwordLength=-mesh->bbox()[0].x;
+    bench.itemWakeSwordRoot=floor.v;
+    npc->setAnim(Npc::Anim::Idle);
+    bench.itemWakeStart=world.tickCount()+uint64_t(sequence->totalTime())+400;
+    bench.itemWakeCalibrationEnd=bench.itemWakeStart+uint64_t(sequence->totalTime())+400;
+    event("item_wake_sword_calibration","\"npc\":"+jsonStr(TestBench::who(npc))+
+      ",\"animation\":"+jsonStr(sequence->name)+",\"optimal_frame\":"+std::to_string(bench.itemWakeSwordOptimalFrame)+
+      ",\"length_cm\":"+ragdollNumber(bench.itemWakeSwordLength)+",\"root_cm\":"+ragdollVector(bench.itemWakeSwordRoot));
+    return;
+    }
   const char* names[]{"ITMI_GOLD","ITFO_BEER","ITMW_1H_COMMON_01","ITFO_APPLE"};
   const unsigned count=(name=="pile" || name=="pile-far" || name=="event")?50:4;
   size_t initialOverlaps=0;float maximumReleaseHeight=0,gridSpacing=0;
@@ -6493,6 +6774,8 @@ void itemWakeBegin(World& world,Npc& player) {
     const auto center=(sample.collisionBounds[0]+sample.collisionBounds[1])*.5f;
     const auto floor=world.physic()->landRay(Vec3(center.x,std::max(sample.floorY+500.f,sample.collisionBounds[1].y+20.f),center.z),10000.f);
     const float offset=floor.hasCol?sample.collisionBounds[0].y-floor.v.y:std::numeric_limits<float>::infinity();
+    if(bench.itemWakeCase=="sword" && sample.item->isDynamic() && sample.item->physicsSleeping())
+      sample.item->setPhysicsDisable();
     if(sample.item->isDynamic() || sample.preparationDive || !floor.hasCol || std::abs(offset)>5.f) {
       arenaAbort("item wake preparation: invalid resting "+sample.name+", dynamic="+std::to_string(sample.item->isDynamic())+
         ", dived="+std::to_string(sample.preparationDive)+", bottom_floor_offset_cm="+ragdollNumber(offset));return;
@@ -6501,7 +6784,27 @@ void itemWakeBegin(World& world,Npc& player) {
   bench.itemWakePreparing=false;
   const auto center=bench.itemWakeCenter;
   const bool far=bench.itemWakeCase=="pile-far";
-  if(bench.itemWakeCase=="ragdoll" || bench.itemWakeCase=="pile" || far || bench.itemWakeCase=="event") {
+  if(bench.itemWakeCase=="arrow") {
+    const auto symbol=world.script().findSymbolIndex("ITRW_ARROW");
+    if(symbol==size_t(-1)) {arenaAbort("item wake preparation: arrow instance unavailable");return;}
+    const auto& sample=bench.itemWakeItems.front();
+    const auto target=(sample.collisionBounds[0]+sample.collisionBounds[1])*.5f;
+    const auto from=target+Vec3(-200,0,0);
+    const float speed=DynamicWorld::bulletSpeed;
+    Item arrow(world,symbol,Item::T_Inventory);
+    auto& bullet=world.shootArrow(arrow,from,Vec3::normalize(Archery::launch(from,target,speed)-from),speed);
+    bullet.setOrigin(&player);bullet.setPrecise(1.f);
+    event("item_wake_arrow","\"from_cm\":"+ragdollVector(from)+",\"target_cm\":"+ragdollVector(target));
+    }
+  else if(bench.itemWakeCase=="sword") {
+    auto& npc=*bench.itemWakeActors.front();
+    npc.setPosition(bench.itemWakeSwordRoot);npc.setDirection({0,0,1});npc.updateTransform();
+    bench.itemWakeCalibrationSample=false;
+    if(!npc.setAnim(Npc::Anim::AttackL)) {arenaAbort("item wake preparation: repeated native NPC sword attack refused");return;}
+    event("item_wake_sword","\"npc\":"+jsonStr(TestBench::who(&npc))+
+      ",\"animation\":"+jsonStr(npc.animNames())+",\"items\":3,\"root_cm\":"+ragdollVector(npc.position()));
+    }
+  else if(bench.itemWakeCase=="ragdoll" || bench.itemWakeCase=="pile" || far || bench.itemWakeCase=="event") {
     const unsigned count=(bench.itemWakeCase=="pile" || far)?6:1;
     for(unsigned i=0;i<count;++i) {
       const auto at=center+Vec3(count==1?0.f:(float(i%3)-1.f)*120.f,220.f,float(i/3)*120.f-40.f);
@@ -6575,7 +6878,7 @@ void itemWakeBegin(World& world,Npc& player) {
     if((sample.item->position()-player.position()).length()<1000.f) {
       arenaAbort("item wake preparation: items must remain at least ten metres from the hero");return;
       }
-  itemWakeResetWindow(world,bench.itemWakeCase.starts_with("event-")?3000:0);
+  itemWakeResetWindow(world,bench.itemWakeCase.starts_with("event-") || bench.itemWakeCase=="arrow" || bench.itemWakeCase=="sword"?3000:0);
   bench.itemWakePulse=world.tickCount()+100;
   event("item_wake_begin","\"case\":"+jsonStr(bench.itemWakeCase)+",\"bodyless_items\":"+
     std::to_string(bench.itemWakeInitiallyBodyless)+",\"ragdolls\":"+std::to_string(bench.itemWakeActors.size()));
@@ -6595,6 +6898,10 @@ void itemWakeEventDebris(World& world,Npc& player) {
 
 void itemWakeCheckpoint(World& world) {
   itemWakeFields(world);
+  if(bench.itemWakeCase=="sword" && std::any_of(std::begin(bench.itemWakeBladeCrossed),std::end(bench.itemWakeBladeCrossed),
+      [](bool crossed){return !crossed;})) {
+    arenaAbort("item wake preparation: actual sword sweep missed resting Item bounds");return;
+    }
   unsigned moved=0,created=0,falls=0,below=0;float penetration=0;std::string items="[";
   for(const auto& sample:bench.itemWakeItems) {
     moved+=sample.travel>5.f;created+=sample.bodyCreated;falls+=sample.fell;below+=sample.below;
@@ -6612,10 +6919,11 @@ void itemWakeCheckpoint(World& world) {
   const auto elapsed=bench.itemWakeSample-bench.itemWakeStart;
   const auto checkpointElapsed=world.tickCount()-bench.itemWakeStart;
   const bool safe=falls==0 && below==0;
+  const bool weapon=bench.itemWakeCase=="arrow" || bench.itemWakeCase=="sword";
   const bool pass=reportOnly || (safe && (far ? times.size()==720 && created==0 && bench.itemWakeInitiallyBodyless==50 &&
     bench.itemWakeQueryOverlaps==0 && bench.itemWakeMinimumGap>50.f : eventCase ?
     checkpointElapsed>=3000 && times.size()>=179 && times.size()<=180 && p95<=2.f :
-    enabled ? moved>0 && created>0 : moved==0 && created==0));
+    enabled ? moved>0 && created>0 && (!weapon || moved==bench.itemWakeItems.size()) : moved==0 && created==0));
   event("item_wake_checkpoint","\"case\":"+jsonStr(bench.itemWakeCase)+",\"enabled\":"+
     (enabled?"true":"false")+",\"item_hulls\":"+(Gothic::physicsFlags().itemHulls?"true":"false")+
     ",\"report_only\":"+(reportOnly?"true":"false")+",\"initially_bodyless_items\":"+std::to_string(bench.itemWakeInitiallyBodyless)+

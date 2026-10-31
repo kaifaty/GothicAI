@@ -121,6 +121,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "buoyancy",            1);
   defaults->set("GAME", "cloth",               1);
   defaults->set("GAME", "item_wake",           1);
+  defaults->set("GAME", "static_collision_split",1);
   defaults->set("GAME", "character_virtual",   1);
   defaults->set("GAME", "npc_character_virtual",1);
   defaults->set("GAME", "monster_character_virtual",1);
