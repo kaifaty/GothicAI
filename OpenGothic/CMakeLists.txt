@@ -456,6 +456,12 @@ if(NOT ANDROID AND NOT IOS)
     DEPENDS gothic-aimwalk-contract USES_TERMINAL)
   add_executable(gothic-physics-contract EXCLUDE_FROM_ALL tests/physics_contract.cpp)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-meleestamina-contract EXCLUDE_FROM_ALL
+    tests/meleestamina_contract.cpp common/game/meleestamina.cpp)
+  target_include_directories(gothic-meleestamina-contract PRIVATE common)
+  add_custom_target(check-meleestamina
+    COMMAND $<TARGET_FILE:gothic-meleestamina-contract>
+    DEPENDS gothic-meleestamina-contract USES_TERMINAL)
   add_executable(gothic-furniture-parts-contract EXCLUDE_FROM_ALL tests/furniture_parts_contract.cpp)
   target_link_libraries(gothic-furniture-parts-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-physics

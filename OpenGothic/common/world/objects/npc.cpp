@@ -54,6 +54,14 @@ namespace {
 
 constexpr float meleeMagnetTorsoGapCm = 18.f;
 
+std::string meleeStaminaIdentity(const Pose& pose, uint64_t now) {
+  auto result = std::to_string(pose.comboLength());
+  for(const auto& layer:pose.combatLayers(now))
+    result += "|" + layer.sequence->name + ":" + std::to_string(layer.origin) + ":" +
+              std::to_string(layer.combination);
+  return result;
+  }
+
 std::string meleeShadowPoint(const Vec3& p) {
   std::ostringstream out;
   out.imbue(std::locale::classic());
@@ -518,6 +526,7 @@ void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
   }
 
 void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
+  meleeStamina = {};
   meleePosture.reset();
   meleeKnockdown = false;
   meleeGetupForced = false;
@@ -3147,6 +3156,13 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
   const auto before = trace ? combatPoseIdentity() : std::string();
   auto st  = weaponState();
   auto wlk = walkMode();
+  const bool costsStamina = a==Anim::MoveBack && hasStamina() &&
+                           (st==WeaponState::Fist || st==WeaponState::W1H || st==WeaponState::W2H) &&
+                           !isSwim() && !isDive() && (!isPlayer() || !bool(wlk&WalkBit::WM_Sneak));
+  if(costsStamina && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,
+                                        !isPlayer() && !BodyController::owns(*this)))
+    return nullptr;
+  const auto staminaBefore = costsStamina ? meleeStaminaIdentity(visual.pose(),owner.tickCount()) : std::string();
   if(isPlayer() && (st==WeaponState::Bow || st==WeaponState::CBow) && !hasManualAim()) {
     const auto bs = bodyStateMasked() & BS_MAX;
     if(bs!=BS_AIMNEAR && bs!=BS_AIMFAR) {
@@ -3165,6 +3181,8 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
       }
     }
   const auto result = visual.startAnimAndGet(*this,a,comb,st,wlk);
+  if(result!=nullptr && costsStamina && staminaBefore!=meleeStaminaIdentity(visual.pose(),owner.tickCount()))
+    spendStamina("jumpback",MeleeStamina::JumpBackCost);
   if(trace)
     traceCombatAttempt(a,result!=nullptr,before,"set_anim");
   return result;
@@ -3853,6 +3871,10 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
         setAnim(Anim::Idle);
       implTurnToFai(*currentTarget,dt);
       if(action==FightAlgo::MV_ATTACK && visual.pose().isStanding()) {
+        if(!allowStaminaAction("attack",meleeAttackCost(),true)) {
+          waitForMeleeStamina(dt);
+          return true;
+          }
         const auto hit = owner.physic()->ray(collosionCenter(),currentTarget->collosionCenter());
         if(!hit.hasCol && doAttack(Anim::Attack,BS_HIT))
           implFaiWait(visual.pose().atkTotalTime()+1);
@@ -3936,6 +3958,11 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     }
 
   if(act==FightAlgo::MV_ATTACK || act==FightAlgo::MV_ATTACKL || act==FightAlgo::MV_ATTACKR) {
+    if(!bodyOverride && (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H) &&
+       !allowStaminaAction("attack",meleeAttackCost(),true)) {
+      waitForMeleeStamina(dt);
+      return true;
+      }
     //NOTE: FIGHT_DIST_CANCEL in scipts is often longer, than senses_range of npc
     const auto sense = fghAlgo.isInFocusAngle(*this,*currentTarget,5.f);
     nativeResolution.focus5=sense;
@@ -4088,6 +4115,11 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
       //NOTE: jump-back is ultimate defence, so better to use it only if npc face player directly
       consume();
       aiState.loopNextTime = owner.tickCount(); // force ZS_MM_Attack_Loop call
+      return true;
+      }
+    if(!bodyOverride && (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H) &&
+       !isDive() && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,true)) {
+      waitForMeleeStamina(dt);
       return true;
       }
     if(setAnim(Npc::Anim::MoveBack)) {
@@ -4269,6 +4301,8 @@ void Npc::traceCombatSnapshot() {
                 (unsigned long long)waitTime,(unsigned long long)outWaitTime,size_t(aiQueue.size()),int(fghAlgo.queuedAction()),
                 (unsigned long long)fghAlgo.traceChoiceId());
   TestBench::bodyEvent(*this,currentTarget,"phase_snapshot",now,std::string(values) +
+                       ",\"stamina\":" + std::to_string(stamina()) +
+                       ",\"stamina_max\":" + std::to_string(staminaMax()) +
                        ",\"process_policy\":" + std::to_string(int(processPolicy())) +
                        ",\"native_ai_normal\":" + (processPolicy()==NpcProcessPolicy::AiNormal ? "true" : "false") +
                        ",\"layers\":" + combatPoseLayers(),pose.animNames());
@@ -5393,6 +5427,7 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
+  tickMeleeStamina();
   // Only NPCs inserted in the live world are ticked. A restored NPC starts
   // with fresh shadow geometry, never a sweep from its former holding point.
   meleeShadowSuspended = false;
@@ -7216,18 +7251,122 @@ bool Npc::canFinish(Npc& oth) {
   return true;
   }
 
+bool Npc::hasStamina() const {
+  return isHuman() && Gothic::physicsFlags().meleeStamina;
+  }
+
+float Npc::staminaMax() const {
+  return hasStamina() ? MeleeStamina::maximum(attribute(ATR_STRENGTH)) : 0.f;
+  }
+
+float Npc::stamina() const {
+  return meleeStamina.initialized ? std::min(meleeStamina.current,staminaMax()) : staminaMax();
+  }
+
+float Npc::staminaFraction() const {
+  const float maximum = staminaMax();
+  return maximum>0.f ? std::clamp(stamina()/maximum,0.f,1.f) : 1.f;
+  }
+
+bool Npc::isStaminaExhausted() const {
+  return hasStamina() && meleeStamina.exhausted;
+  }
+
+void Npc::tickMeleeStamina() {
+  if(!hasStamina()) {
+    meleeStamina = {};
+    return;
+    }
+  const bool exhausted = meleeStamina.exhausted;
+  MeleeStamina::recover(meleeStamina,staminaMax(),owner.tickCount(),hasState(BS_PARADE));
+  if(exhausted && !meleeStamina.exhausted && TestBench::bodyTracing())
+    TestBench::bodyEvent(*this,currentTarget,"stamina_recovered",owner.tickCount(),
+                        "\"after\":" + std::to_string(stamina()));
+  }
+
+float Npc::meleeAttackCost() const {
+  const auto ws = weaponState();
+  if(ws==WeaponState::Fist)
+    return MeleeStamina::attackCost(0,0,true);
+  int requirement = 0;
+  if(const auto* weapon = invent.activeWeapon()) {
+    const auto& item = weapon->handle();
+    for(size_t i=0;i<zenkit::IItem::condition_count;++i)
+      if(item.cond_atr[i]==ATR_STRENGTH)
+        requirement = std::max(requirement,int(item.cond_value[i]));
+    }
+  return MeleeStamina::attackCost(requirement,hitChance(ws==WeaponState::W2H ? TALENT_2H : TALENT_1H));
+  }
+
+bool Npc::allowStaminaAction(std::string_view action, float cost, bool fullCost) {
+  tickMeleeStamina();
+  const bool allowed = fullCost ? MeleeStamina::canAfford(meleeStamina,cost,hasStamina()) :
+                                  MeleeStamina::canAct(meleeStamina,hasStamina());
+  if(!allowed && TestBench::bodyTracing())
+    TestBench::bodyEvent(*this,currentTarget,"stamina_refused",owner.tickCount(),
+                        "\"action\":" + TestBench::bodyJson(action) + ",\"after\":" + std::to_string(stamina()));
+  return allowed;
+  }
+
+void Npc::spendStamina(std::string_view action, float cost) {
+  if(!hasStamina())
+    return;
+  const float before = stamina();
+  const bool exhausted = meleeStamina.exhausted;
+  MeleeStamina::spend(meleeStamina,cost,owner.tickCount(),true);
+  if(!TestBench::bodyTracing())
+    return;
+  const auto fields = "\"action\":" + TestBench::bodyJson(action) + ",\"cost\":" + std::to_string(cost) +
+                      ",\"before\":" + std::to_string(before) + ",\"after\":" + std::to_string(stamina());
+  TestBench::bodyEvent(*this,currentTarget,"stamina_spend",owner.tickCount(),fields);
+  if(!exhausted && meleeStamina.exhausted)
+    TestBench::bodyEvent(*this,currentTarget,"stamina_exhausted",owner.tickCount(),fields);
+  }
+
+void Npc::waitForMeleeStamina(uint64_t dt) {
+  stopWalkAnimation();
+  implTurnToFai(*currentTarget,dt);
+  if(fghAlgo.isInWRange(*currentTarget,*this,owner.script())) {
+    if(currentTarget->isPrehit()) {
+      if(weaponState()==WeaponState::Fist ? blockFist() : blockSword()) {
+        implFaiWait(visual.pose().animationTotalTime());
+        return;
+        }
+      } else {
+      const auto step = owner.script().rand(2,this)==0 ? FightAlgo::MV_STRAFEL : FightAlgo::MV_STRAFER;
+      if(setAnim(step==FightAlgo::MV_STRAFEL ? Anim::MoveL : Anim::MoveR)) {
+        visual.setAnimRotate(*this,0);
+        implFaiWait(visual.pose().animationTotalTime());
+        return;
+        }
+      }
+    }
+  setAnim(Anim::Idle);
+  implFaiWait(200);
+  }
+
 bool Npc::doAttack(Anim anim, BodyState bs) {
   if(meleeKnockdown)
     return false;
+  const auto weaponSt = weaponState();
+  const bool costsStamina = hasStamina() && bs==BS_HIT &&
+                           (weaponSt==WeaponState::Fist || weaponSt==WeaponState::W1H || weaponSt==WeaponState::W2H) &&
+                           !(anim==Anim::AttackFinish && currentTarget!=nullptr && canFinish(*currentTarget));
+  if(costsStamina && !allowStaminaAction("attack",meleeAttackCost()))
+    return false;
+  // Pose accepts a repeated request for an already playing layer too. Only a new
+  // layer or combo segment pays, never a repeated input within the same swing.
+  const auto staminaBefore = costsStamina ? meleeStaminaIdentity(visual.pose(),owner.tickCount()) : std::string();
   const bool trace = TestBench::bodyTracing() && currentTarget!=nullptr;
   const auto before = trace ? combatPoseIdentity() : std::string();
   const auto result = [&](bool accepted) {
+    if(accepted && costsStamina && staminaBefore!=meleeStaminaIdentity(visual.pose(),owner.tickCount()))
+      spendStamina("attack",meleeAttackCost());
     BodyObservations::noteEvent(*this,currentTarget,accepted ? "animation_accepted" : "animation_rejected",owner.tickCount());
     if(trace)
       traceCombatAttempt(anim,accepted,before,"do_attack");
     return accepted;
     };
-  auto weaponSt = weaponState();
   if(weaponSt==WeaponState::NoWeapon || weaponSt==WeaponState::Mage)
     return result(false);
 

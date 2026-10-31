@@ -2349,6 +2349,7 @@ void writeHeader() {
     std::fprintf(bench.csv,",%s",f.column);
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",hp_player,hp_subject");
+  std::fprintf(bench.csv,",stamina_player,stamina_subject");
   std::fprintf(bench.csv,",ai_on,ai_want,ai_sigma,ai_errx,ai_erry,ai_lead,ai_pv,ai_ps");
   std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits");
   if(ragdollTrace)
@@ -9313,6 +9314,7 @@ void writeRow(Npc& pl) {
                fl.hits,fl.strength,fl.height);
   // hit points: the hero's, the watched one's (a fight's course)
   std::fprintf(bench.csv,",%d,%d",pl.attribute(ATR_HITPOINTS),bench.subject!=nullptr ? bench.subject->attribute(ATR_HITPOINTS) : -1);
+  std::fprintf(bench.csv,",%.3f,%.3f",double(pl.stamina()),bench.subject!=nullptr ? double(bench.subject->stamina()) : -1.0);
   // the watched npc's archer by hand (game/archerai)
   const auto& ai = ArcherAi::subjectProbe;
   std::fprintf(bench.csv,",%d,%d,%.3f,%.3f,%.3f,%.0f,%.2f,%.2f",int(ai.valid && ai.active),int(ai.want),ai.sigma,ai.err.x,ai.err.y,
@@ -14021,7 +14023,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     event("living_seat_shift","\"distance_cm\":80");
     }
   else if(c=="melee-shadow") {
-    // The fixture prepares stock actors and geometry; all attacks use ordinary player input/AI.
+    // The fixture prepares stock actors and geometry for the ordinary melee entry points.
     const auto equip=[&](std::string_view weapon) {
       if(weapon!="1h" && weapon!="2h" && weapon!="fist") {arenaAbort("melee shadow expects 1h, 2h or fist");return false;}
       pl.clearAiQueue();pl.clearState(false);pl.clearGoTo();pl.stopWalking();pl.closeWeapon(true);
@@ -14080,6 +14082,29 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         ",\"wall_cm\":"+ragdollVector(wall.v)+",\"wall_normal\":"+ragdollVector(wall.n));
       }
     else if(a.size()==3 && a[1]=="weapon") equip(a[2]);
+    else if(a.size()==2 && a[1]=="stamina-backstep") {
+      if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
+      auto& npc=*bench.meleeShadowActors[2];
+      if(!npc.hasStamina()) {arenaAbort("stamina backstep requires human melee stamina");return;}
+      npc.handle().attribute[ATR_STRENGTH]=10;
+      npc.closeWeapon(true);npc.setToFistMode();
+      for(unsigned i=0;i<16 && !npc.isStaminaExhausted();++i) {
+        npc.stopAnim("");
+        if(!npc.doAttack(Npc::Anim::Attack,BS_HIT)) {arenaAbort("stamina backstep could not drain the NPC");return;}
+        }
+      if(npc.stamina()!=0.f || !npc.isStaminaExhausted()) {arenaAbort("stamina backstep requires an exhausted NPC");return;}
+      npc.stopAnim("");
+      const bool meleeRefused=!npc.setAnim(Npc::Anim::MoveBack);
+      npc.closeWeapon(true);npc.stopAnim("");
+      const bool unarmedAccepted=npc.setAnim(Npc::Anim::MoveBack);
+      const bool pass=meleeRefused && unarmedAccepted && npc.weaponState()==WeaponState::NoWeapon &&
+                      npc.stamina()==0.f && npc.isStaminaExhausted();
+      event("melee_stamina_backstep","\"npc\":"+jsonStr(TestBench::who(&npc))+
+        ",\"melee_refused\":"+(meleeRefused?"true":"false")+
+        ",\"unarmed_accepted\":"+(unarmedAccepted?"true":"false")+
+        ",\"stamina\":"+ragdollNumber(npc.stamina())+",\"pass\":"+(pass?"true":"false"));
+      if(!pass) arenaAbort("exhausted unarmed NPC backstep failed");
+      }
     else if(a.size()==3 && a[1]=="target") {
       const int index=int(num(a,2,-1));
       if(index<0 || size_t(index)>=bench.meleeShadowActors.size()) {arenaAbort("melee shadow target is absent");return;}

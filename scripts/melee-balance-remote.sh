@@ -27,11 +27,17 @@ native-posture-on-2h,p30-vanilla-1h,p30-posture-on-1h.
 MELEE_BALANCE_HOST selects the SSH alias (default: ryzen).
 MELEE_BALANCE_TASK selects the Ryzen folder under ~ with source and build (default:
 gothic-ai/melee-balance), its runs land in /mnt/shared/<folder>/runs; give a branch its
-own when other sessions measure too.
+own when other sessions measure too. The runner never imports a base: with none of its
+fingerprint in <folder>/base-cache or the store /mnt/shared/gothic-ai/melee-balance/base it
+answers with an error (body_sim_bench: "runner response schema/ID mismatch"). After a sync that
+changes the importer, or in a new folder, run under gq once:
+  OPENGOTHIC_BASE_CACHE=<folder>/base-cache OPENGOTHIC_BASE_STORE=/mnt/shared/gothic-ai/melee-balance \
+    <folder>/build/opengothic/content-convert resolve-base ~/gothic-ai/body-baseline/assets
 MELEE_BALANCE_PYTHON selects a remote Python with torch (default: body/.venv).
 MELEE_POSTURE_SCALE multiplies the knockdown threshold in every series (sweeps).
 MELEE_DOWN_TACTICS sets GAME melee_down_tactics in every series (0 or 1).
 MELEE_HITSTOP sets GAME melee_hitstop in every series (0 or 1).
+MELEE_STAMINA sets GAME melee_stamina in every series (0 or 1).
 USAGE
 }
 
@@ -72,7 +78,7 @@ done
 remote_script() {
   local remote_args='' remote_env='' arg key
   for arg in "$@"; do printf -v remote_args '%s %q' "$remote_args" "$arg"; done
-  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP; do
+  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA; do
     if [[ -n "${!key:-}" ]]; then printf -v remote_env '%s %q' "$remote_env" "$key=${!key}"; fi
   done
   { cat "$ROOT/scripts/gq-job.sh"; cat; } |
@@ -163,6 +169,9 @@ for name in "${series[@]}"; do
   if [[ -n "${MELEE_HITSTOP:-}" ]]; then
     scale_env+=("MELEE_HITSTOP=$MELEE_HITSTOP")
     printf '%s\n' "$MELEE_HITSTOP" > "$out/hitstop.txt"
+  fi
+  if [[ -n "${MELEE_STAMINA:-}" ]]; then
+    scale_env+=("MELEE_STAMINA=$MELEE_STAMINA")
   fi
   cp "$task_root/provenance/source-commit.txt" "$task_root/provenance/source.patch" \
      "$task_root/provenance/runner.sha256" "$out/"
