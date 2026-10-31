@@ -242,7 +242,7 @@ def episode_metrics(folder: Path, episode: dict, shared: dict, variant: str) -> 
     parry_phases = ("parry", "guard", "guard_break", "parade_whiff", "stun_start", "stun_end", "stun_refused")
     parry_available = any(roles(row.get("actor")) in ROLES and row.get("phase") in parry_phases for row in events)
     defence = [row for row in events if row.get("phase") == "defence_result" and roles(row.get("actor")) in ROLES]
-    parade_schema = any("parade_ms" in row for row in defence)
+    parade_schema = not defence or any("parade_ms" in row for row in defence)
     for role in ROLES:
         own = result["fighters"][role]
         own["parade_ms"] = ([row["parade_ms"] for row in defence if roles(row.get("actor")) == role and

@@ -180,7 +180,9 @@ def test_missing_or_disabled_stamina_keeps_legacy_metrics(tmp_path, stamina_disa
 
 def test_parry_outcomes_stun_intervals_aggregate_timings_and_legacy_metrics(tmp_path):
     first = episode(tmp_path/"first", synthetic_parry_events())
-    legacy = episode(tmp_path/"legacy", synthetic_events())
+    legacy = episode(tmp_path/"legacy", synthetic_events()+[
+        event("defence_result", 4000, damage_kind="melee", blocked=True),
+    ])
     primary, opponent = (first["fighters"][role] for role in report.ROLES)
     assert {key: primary[key] for key in PARRY_COUNTS} == {
         "parries": 2, "guards": 2, "guard_breaks": 1, "parade_whiffs": 1, "guard_stamina_spent": 18,
@@ -192,6 +194,14 @@ def test_parry_outcomes_stun_intervals_aggregate_timings_and_legacy_metrics(tmp_
     }
     assert primary["parade_ms"] == [0, 120, 185, 250]
     assert opponent["parade_ms"] == [60, 180, 249, 300]
+    no_defence = episode(tmp_path/"no-defence", [
+        event("stamina_spend", 1500, action="attack", cost=1, before=10, after=9),
+    ])
+    with_no_defence = report.aggregate("vanilla", "native", "1h", [first, no_defence])
+    assert with_no_defence["combat"]["parade_ms"]["count"] == 8
+    assert with_no_defence["combat"]["parade_ms"]["p50"] == pytest.approx(182.5)
+    for role in report.ROLES:
+        assert no_defence["fighters"][role]["parade_ms"] == []
     for role in report.ROLES:
         for key in ("hit_fraction", "swings_started", *STAMINA_COUNTS, "mean_stamina_fraction"):
             assert first["fighters"][role][key] == legacy["fighters"][role][key]
