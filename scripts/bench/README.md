@@ -913,8 +913,10 @@ WORLD=OLDWORLD.ZEN PLACED_ITEMS=1 ITEM_DEEPEST_CONTACT=1 \
   scripts/bench.sh placed-items-diagnose-1644 "$PWD/.bench/thin-blades/1644-on"
 ```
 
-`[GAME] item_deepest_contact=1` keeps the deepest EPA point in manifolds
-involving `C_Item`; Marvin `toggle item_deepest_contact` applies on the next
+`[GAME] item_deepest_contact=1` retains the EPA pair in manifolds involving
+`C_Item` when it is more than 1 mm deeper than every clipped pair; coplanar
+face contacts keep their original support corners. Marvin
+`toggle item_deepest_contact` applies on the next
 native step. OFF uses Jolt's original clipping. See the
 [thin-blade results](../../reports/physics/2026-10-31-thin-blades/README.md).
 
