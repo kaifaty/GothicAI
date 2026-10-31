@@ -1,0 +1,52 @@
+{
+ "output": "~/.local/share/gothic-ai/content-staging/city-hearth/tiles",
+ "tiles": {
+  "own_hearth_iron": {
+   "png": "~/.local/share/gothic-ai/content-sources/city-hearth/tile-iron-attempt-2.png",
+   "axes": "uv",
+   "roughness": 0.85,
+   "metallic": 0.0
+  },
+  "own_hearth_rivet": {
+   "copy": "~/.local/share/gothic-ai/content-staging/rigging-tiles/own_prop_iron_band"
+  },
+  "own_hearth_wood": {
+   "copy": "~/.local/share/gothic-ai/content-staging/rigging-tiles/own_prop_wood_frame"
+  },
+  "own_hearth_log": {
+   "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_bark"
+  },
+  "own_hearth_liquid": {
+   "procedural": {
+    "base": [
+     0.02,
+     0.025,
+     0.03
+    ],
+    "noise": 0.04,
+    "seed": 3,
+    "relief": 0.05
+   },
+   "roughness": 0.25,
+   "metallic": 0.0
+  },
+  "own_hearth_stone": {
+   "png": "~/.local/share/gothic-ai/content-sources/city-hearth/tile-stone-attempt-1.png",
+   "axes": "uv",
+   "roughness": 0.92,
+   "metallic": 0.0
+  },
+  "own_hearth_ember": {
+   "png": "~/.local/share/gothic-ai/content-sources/city-hearth/tile-ember-attempt-2.png",
+   "axes": "uv",
+   "roughness": 0.95,
+   "metallic": 0.0
+  },
+  "own_hearth_ash": {
+   "png": "~/.local/share/gothic-ai/content-sources/city-hearth/tile-ash-attempt-2.png",
+   "axes": "uv",
+   "roughness": 0.97,
+   "metallic": 0.0
+  }
+ }
+}

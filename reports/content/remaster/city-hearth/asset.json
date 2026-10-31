@@ -547,6 +547,126 @@
       "utc": "2026-10-31T13:02:12Z",
       "thread": "01a1920c-19d2-75b3-b21e-b3c8a33194b2",
       "parent": null
+    },
+    {
+      "file": "city-hearth/tile-stone-attempt-1.png",
+      "role": "texture",
+      "texture": "tile-stone",
+      "attempt": 1,
+      "sha256": "287f3e2623c6d7b5932c0808138b4b9e6880d3e234170fbcddd39d0e62460e59",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:16:52Z",
+      "thread": "01a1921a-f508-71e0-8cb8-d7a66abc414b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-stone-attempt-2.png",
+      "role": "texture",
+      "texture": "tile-stone",
+      "attempt": 2,
+      "sha256": "4981a0c7d7ea578d8ec6729a133c92a3d2749c2b4e72c303f4753c6870993480",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:17:34Z",
+      "thread": "01a1921a-f508-71e0-8cb8-d7a66abc414b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-ember-attempt-1.png",
+      "role": "texture",
+      "texture": "tile-ember",
+      "attempt": 1,
+      "sha256": "927a1719fbd74c301697dc1c7674b993c5a3d22cbc9d86cada8b86a0a09f9e4b",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:17:16Z",
+      "thread": "01a1921b-0342-7872-ab42-3403bbb325b5",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-ember-attempt-2.png",
+      "role": "texture",
+      "texture": "tile-ember",
+      "attempt": 2,
+      "sha256": "38ab2b77055f3456cf8e263b9f543e97bc2978e1d0a4a854e84b3e5fe574fe2c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:17:47Z",
+      "thread": "01a1921b-0342-7872-ab42-3403bbb325b5",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-ash-attempt-1.png",
+      "role": "texture",
+      "texture": "tile-ash",
+      "attempt": 1,
+      "sha256": "fc689b93fafb77a5f2eb61c6413bcb23b8165cf2d3a2e39859cc64371ae50dd4",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:17:12Z",
+      "thread": "01a1921b-152c-77c0-a518-7acc61dc02b8",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-ash-attempt-2.png",
+      "role": "texture",
+      "texture": "tile-ash",
+      "attempt": 2,
+      "sha256": "9a2dc03fc281b5a89815508934293b376121b324f9b22434e35ab2051c380868",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:17:42Z",
+      "thread": "01a1921b-152c-77c0-a518-7acc61dc02b8",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-iron-attempt-1.png",
+      "role": "texture",
+      "texture": "tile-iron",
+      "attempt": 1,
+      "sha256": "555acf96d9ba9371d803e3c6f3ac3ca2fb9beda40b0c3ac208ac6cf297fc895c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:25:21Z",
+      "thread": "01a19222-7114-7cb2-ab9c-a2495c424f2f",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-iron-attempt-2.png",
+      "role": "texture",
+      "texture": "tile-iron",
+      "attempt": 2,
+      "sha256": "8842211ea17d5fb810c0fd6c6c7ebcd41495920e8734ec79ba3eceee7bb78c2d",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:25:48Z",
+      "thread": "01a19222-7114-7cb2-ab9c-a2495c424f2f",
+      "parent": null
     }
   ],
   "selected": {

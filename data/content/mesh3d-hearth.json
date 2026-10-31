@@ -1,0 +1,332 @@
+{
+ "base": "ea8c24940fb0ddcaf787e842f96babea96a5d639086fda0b69ceb4f765f77220",
+ "targets": [
+  {
+   "id": "hearth-cauldron",
+   "visual": "CAULDRON_OC",
+   "budget_tris": 2500,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_IRON",
+     "group": "METAL",
+     "role": "forged and riveted iron: cauldrons, pan, chain, fire bowl"
+    },
+    {
+     "key": "OWN_HEARTH_RIVET",
+     "group": "METAL",
+     "role": "bands and rivet heads on the iron"
+    },
+    {
+     "key": "OWN_HEARTH_LIQUID",
+     "group": "WATER",
+     "role": "the surface of what is cooking"
+    }
+   ],
+   "kind": "mob_model",
+   "bbox_min": [
+    -0.42756,
+    -0.0,
+    0.28072
+   ],
+   "bbox_max": [
+    0.42756,
+    0.8,
+    1.13584
+   ],
+   "origin_in_bbox": [
+    0.5,
+    0.0,
+    -0.328282
+   ],
+   "source_tris": 66,
+   "source_materials": [
+    "MOMESMELT01.TGA",
+    "OWODWAT_A0.TGA"
+   ],
+   "source_pose": "bind",
+   "nodes": {
+    "ZS_POS0": [
+     -0.0,
+     0.9748,
+     0.0
+    ]
+   }
+  },
+  {
+   "id": "hearth-ground-fire",
+   "visual": "FIREPLACE_GROUND",
+   "budget_tris": 2000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_STONE",
+     "group": "STONE",
+     "role": "fire-ring fieldstones, sooted inside"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    },
+    {
+     "key": "OWN_HEARTH_ASH",
+     "group": "UNDEF",
+     "role": "grey ash and burnt ground"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    }
+   ],
+   "kind": "mob_model",
+   "bbox_min": [
+    -0.5907,
+    -0.00507,
+    -0.58152
+   ],
+   "bbox_max": [
+    0.51822,
+    0.15725,
+    0.64416
+   ],
+   "origin_in_bbox": [
+    0.53268,
+    0.031263,
+    0.474447
+   ],
+   "source_tris": 150,
+   "source_materials": [
+    "MOSTSTONES02.TGA",
+    "MOWOWOODS01.TGA",
+    "NCODFLGREY01.TGA"
+   ],
+   "source_pose": "bind",
+   "nodes": {
+    "BIP01 FIRE": [
+     -0.0,
+     0.0,
+     0.0
+    ],
+    "ZS_POS0_DIST": [
+     0.0,
+     0.978,
+     1.0
+    ]
+   }
+  },
+  {
+   "id": "hearth-pan",
+   "visual": "PAN_OC",
+   "budget_tris": 2500,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_IRON",
+     "group": "METAL",
+     "role": "forged and riveted iron: cauldrons, pan, chain, fire bowl"
+    },
+    {
+     "key": "OWN_HEARTH_WOOD",
+     "group": "WOOD",
+     "role": "dark hewn sticks, poles and handles"
+    },
+    {
+     "key": "OWN_HEARTH_STONE",
+     "group": "STONE",
+     "role": "fire-ring fieldstones, sooted inside"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    },
+    {
+     "key": "OWN_HEARTH_ASH",
+     "group": "UNDEF",
+     "role": "grey ash and burnt ground"
+    }
+   ],
+   "kind": "mob_model",
+   "bbox_min": [
+    -0.43828,
+    -0.00028,
+    -0.39815
+   ],
+   "bbox_max": [
+    0.43828,
+    0.39845,
+    0.39647
+   ],
+   "origin_in_bbox": [
+    0.5,
+    0.000707,
+    0.501056
+   ],
+   "source_tris": 252,
+   "source_materials": [
+    "MOMEMETALS01.TGA",
+    "MOMEMETALS03.TGA",
+    "MOSTSTONES02.TGA",
+    "MOWOWOODS01.TGA",
+    "NCODFLGREY01.TGA"
+   ],
+   "source_pose": "bind",
+   "nodes": {
+    "ZS_POS0": [
+     0.0,
+     0.9772,
+     -0.725
+    ],
+    "BIP01 SMOKER": [
+     -0.0036,
+     0.32,
+     -0.0004
+    ]
+   }
+  },
+  {
+   "id": "hearth-tripod",
+   "visual": "OC_FIREPLACE_V5",
+   "budget_tris": 3000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_WOOD",
+     "group": "WOOD",
+     "role": "dark hewn sticks, poles and handles"
+    },
+    {
+     "key": "OWN_HEARTH_IRON",
+     "group": "METAL",
+     "role": "forged and riveted iron: cauldrons, pan, chain, fire bowl"
+    },
+    {
+     "key": "OWN_HEARTH_RIVET",
+     "group": "METAL",
+     "role": "bands and rivet heads on the iron"
+    },
+    {
+     "key": "OWN_HEARTH_LIQUID",
+     "group": "WATER",
+     "role": "the surface of what is cooking"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -0.76305,
+    -1.95373,
+    -1.28757
+   ],
+   "bbox_max": [
+    1.39731,
+    1.39202,
+    1.14297
+   ],
+   "origin_in_bbox": [
+    0.353203,
+    0.583943,
+    0.529746
+   ],
+   "source_tris": 142,
+   "source_materials": [
+    "MOMEBRAZIER.TGA",
+    "MOMECHAIN01.TGA",
+    "WAT_A0.TGA"
+   ]
+  },
+  {
+   "id": "hearth-campfire",
+   "visual": "NW_MISC_FIREPLACE_01",
+   "budget_tris": 4000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_STONE",
+     "group": "STONE",
+     "role": "fire-ring fieldstones, sooted inside"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    },
+    {
+     "key": "OWN_HEARTH_ASH",
+     "group": "UNDEF",
+     "role": "grey ash and burnt ground"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -1.0083,
+    -0.44969,
+    -0.94235
+   ],
+   "bbox_max": [
+    1.00832,
+    0.44971,
+    0.94237
+   ],
+   "origin_in_bbox": [
+    0.499995,
+    0.499989,
+    0.499995
+   ],
+   "source_tris": 1144,
+   "source_materials": [
+    "MOWOFIREPLACE01.TGA",
+    "NW_NATURE_BARK_01.TGA",
+    "NW_NATURE_STEIN_06.TGA"
+   ]
+  },
+  {
+   "id": "hearth-brazier",
+   "visual": "DT_FIREPLACE_V1",
+   "budget_tris": 3000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_IRON",
+     "group": "METAL",
+     "role": "forged and riveted iron: cauldrons, pan, chain, fire bowl"
+    },
+    {
+     "key": "OWN_HEARTH_RIVET",
+     "group": "METAL",
+     "role": "bands and rivet heads on the iron"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    },
+    {
+     "key": "OWN_HEARTH_ASH",
+     "group": "UNDEF",
+     "role": "grey ash and burnt ground"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -0.43311,
+    -0.35485,
+    -0.4333
+   ],
+   "bbox_max": [
+    0.43311,
+    0.54224,
+    0.45943
+   ],
+   "origin_in_bbox": [
+    0.5,
+    0.39556,
+    0.485364
+   ],
+   "source_tris": 304,
+   "source_materials": [
+    "MOMEKETTLE01.TGA"
+   ]
+  }
+ ]
+}
