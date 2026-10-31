@@ -14026,7 +14026,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     event("living_seat_shift","\"distance_cm\":80");
     }
   else if(c=="melee-shadow") {
-    // The fixture prepares stock actors and geometry; all attacks use ordinary player input/AI.
+    // The fixture prepares stock actors and geometry for the ordinary melee entry points.
     const auto equip=[&](std::string_view weapon) {
       if(weapon!="1h" && weapon!="2h" && weapon!="fist") {arenaAbort("melee shadow expects 1h, 2h or fist");return false;}
       pl.clearAiQueue();pl.clearState(false);pl.clearGoTo();pl.stopWalking();pl.closeWeapon(true);
@@ -14085,6 +14085,29 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         ",\"wall_cm\":"+ragdollVector(wall.v)+",\"wall_normal\":"+ragdollVector(wall.n));
       }
     else if(a.size()==3 && a[1]=="weapon") equip(a[2]);
+    else if(a.size()==2 && a[1]=="stamina-backstep") {
+      if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
+      auto& npc=*bench.meleeShadowActors[2];
+      if(!npc.hasStamina()) {arenaAbort("stamina backstep requires human melee stamina");return;}
+      npc.handle().attribute[ATR_STRENGTH]=10;
+      npc.closeWeapon(true);npc.setToFistMode();
+      for(unsigned i=0;i<16 && !npc.isStaminaExhausted();++i) {
+        npc.stopAnim("");
+        if(!npc.doAttack(Npc::Anim::Attack,BS_HIT)) {arenaAbort("stamina backstep could not drain the NPC");return;}
+        }
+      if(npc.stamina()!=0.f || !npc.isStaminaExhausted()) {arenaAbort("stamina backstep requires an exhausted NPC");return;}
+      npc.stopAnim("");
+      const bool meleeRefused=!npc.setAnim(Npc::Anim::MoveBack);
+      npc.closeWeapon(true);npc.stopAnim("");
+      const bool unarmedAccepted=npc.setAnim(Npc::Anim::MoveBack);
+      const bool pass=meleeRefused && unarmedAccepted && npc.weaponState()==WeaponState::NoWeapon &&
+                      npc.stamina()==0.f && npc.isStaminaExhausted();
+      event("melee_stamina_backstep","\"npc\":"+jsonStr(TestBench::who(&npc))+
+        ",\"melee_refused\":"+(meleeRefused?"true":"false")+
+        ",\"unarmed_accepted\":"+(unarmedAccepted?"true":"false")+
+        ",\"stamina\":"+ragdollNumber(npc.stamina())+",\"pass\":"+(pass?"true":"false"));
+      if(!pass) arenaAbort("exhausted unarmed NPC backstep failed");
+      }
     else if(a.size()==3 && a[1]=="target") {
       const int index=int(num(a,2,-1));
       if(index<0 || size_t(index)>=bench.meleeShadowActors.size()) {arenaAbort("melee shadow target is absent");return;}

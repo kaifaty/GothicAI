@@ -3159,8 +3159,8 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
   auto st  = weaponState();
   auto wlk = walkMode();
   const bool costsStamina = a==Anim::MoveBack && hasStamina() &&
-                           (!isPlayer() || ((st==WeaponState::Fist || st==WeaponState::W1H || st==WeaponState::W2H) &&
-                                            !isSwim() && !isDive() && !bool(wlk&WalkBit::WM_Sneak)));
+                           (st==WeaponState::Fist || st==WeaponState::W1H || st==WeaponState::W2H) &&
+                           !isSwim() && !isDive() && (!isPlayer() || !bool(wlk&WalkBit::WM_Sneak));
   if(costsStamina && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,
                                         !isPlayer() && !BodyController::owns(*this)))
     return nullptr;
@@ -4119,7 +4119,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
       aiState.loopNextTime = owner.tickCount(); // force ZS_MM_Attack_Loop call
       return true;
       }
-    if(!bodyOverride && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,true)) {
+    if(!bodyOverride && (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H) &&
+       !isDive() && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,true)) {
       waitForMeleeStamina(dt);
       return true;
       }
