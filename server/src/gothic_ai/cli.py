@@ -1964,6 +1964,20 @@ async def serve(args: argparse.Namespace) -> int:
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario crime_law: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
+            elif args.scenario == "quest_law":
+                assert state.crimes is not None and state.crime_law is not None and state.book is not None
+                assert state.dialogue is not None and state.rumors is not None
+                results = await scenarios.quest_law(
+                    link,
+                    state.crimes,
+                    state.crime_law,
+                    state.book,
+                    state.dialogue,
+                    state.rumors,
+                )
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario quest_law: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
             elif args.scenario == "ground":
                 assert state.dialogue is not None and state.talk is not None and state.perception is not None
                 results = await scenarios.ground_scenario(link, state.dialogue, state.talk, state.perception)
@@ -3221,6 +3235,7 @@ def main() -> None:
             "cheat",
             "crime_director",
             "crime_law",
+            "quest_law",
             "showrunner",
             "showrunner_live",
             "vanilla_line",
