@@ -9,6 +9,7 @@ import re
 import unicodedata
 import uuid
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,17 +17,19 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .chronicle import Chronicle, Fact
-from .feat_art import Artist, Picture
+from .feat_art import DEFAULT_ROOT, Artist, Picture
 from .game import GameError, GameLink
 from .journal import Journal
 from .llm import LLMBackend, LLMError, Message, Tool, ToolCall
 from .npc_tools import guild_name
 from .places import PlaceBook
-from .protocol import FeatToastCmd, GameMessage, Loading, Session
+from .protocol import FeatToastCmd, GameMessage, Loading, NpcRoster, Session
+from .quests import ATTACK_CM
 
 log = logging.getLogger(__name__)
 
 WRITE = "write_feat"
+WRITE_EPILOGUE = "write_epilogue"
 CACHE_KEY = "chronicler"
 CATEGORIES = ("deceit", "mercy", "blood", "gold", "word", "theft", "oath", "survival")
 CATEGORY_ICONS = Path(__file__).resolve().parent / "assets/feats/categories"
@@ -149,6 +152,27 @@ WRITE_TOOL = Tool(
     },
 )
 
+EPILOGUE_INSTRUCTIONS = (
+    "Допиши к записи летописи одну строку эпилога: что стало известно позже. Пиши просто, "
+    "в духе мира, в прошедшем времени, начни со слова «Позже». Не пересказывай саму запись "
+    "и не придумывай событий сверх показанных фактов."
+)
+EPILOGUE_TOOL = Tool(
+    WRITE_EPILOGUE, "Дополнить запись летописи эпилогом.",
+    {
+        "type": "object",
+        "properties": {"text": {"type": "string"}, "reason": {"type": "string"}},
+        "required": ["text", "reason"], "additionalProperties": False,
+    },
+)
+
+
+class Epilogue(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    text: str
+    reason: str
+
 
 def hero_view(seq: int, fact: Fact) -> Fact | None:
     """Return only the hero's knowledge; seq remains the separate address of this view."""
@@ -238,6 +262,40 @@ def _names(entries: list[tuple[int, Fact]]) -> set[str]:
     }
 
 
+def _foreign_names(words: str, allowed: set[str], known: set[str]) -> list[str]:
+    errors = []
+    for name in sorted(known - allowed):
+        # Match ordinary Russian case endings without treating a name as an arbitrary word prefix.
+        parts = [
+            re.escape(part[:-1] if part.endswith(("а", "я", "ь", "й")) else part)
+            + r"(?:а|я|у|ю|ом|ем|е|и|ы|ой|ей|ью|ь|й)?"
+            for part in name.split()
+        ]
+        if re.search(r"(?<!\w)" + r"\s+".join(parts) + r"(?!\w)", words.casefold()):
+            errors.append(f"Имя «{name}» отсутствует в доказательствах")
+    return errors
+
+
+def epilogue_canon(
+    text: str, evidence: list[tuple[int, Fact]], entries: list[tuple[int, Fact]],
+) -> list[str]:
+    errors = []
+    if not re.match(r"^Позже\b", text):
+        errors.append("Эпилог должен начинаться со слова «Позже»")
+    if len(text) > 140 or any(c in text for c in "\r\n\u2028\u2029"):
+        errors.append("Эпилог должен быть одной строкой до 140 знаков")
+    if any("LATIN" in unicodedata.name(c, "") for c in text):
+        errors.append("В эпилоге нельзя использовать латиницу")
+    if "!" in text:
+        errors.append("В эпилоге нельзя использовать восклицательный знак")
+    if any((unicodedata.category(c) == "So" and c not in "№°©")
+           or c in "\u200d\ufe0f\u20e3\u203c\u2049" for c in text):
+        errors.append("В эпилоге нельзя использовать эмодзи")
+    if re.search(r"поздравля|достижени|ачивк", text, flags=re.IGNORECASE):
+        errors.append("В эпилоге нельзя писать поздравления и слова о достижениях")
+    return errors + _foreign_names(text, _names(evidence), _names(entries))
+
+
 def canon(p: Proposal, trigger: int, window: list[tuple[int, Fact]], previous: list[Fact]) -> list[str]:
     """Validate an offer against precisely the facts and prior feats shown to the model."""
     if p.verdict == "none":
@@ -277,15 +335,7 @@ def canon(p: Proposal, trigger: int, window: list[tuple[int, Fact]], previous: l
     if any(f.get("trigger") in p.evidence and f.get("trigger") not in supporting for f in previous):
         errors.append("Повод прежнего достижения нельзя использовать снова")
     evidence_names = _names([(seq, f) for seq, f in window if seq in p.evidence])
-    for name in sorted(_names(window) - evidence_names):
-        # Match ordinary Russian case endings without treating a name as an arbitrary word prefix.
-        parts = [
-            re.escape(part[:-1] if part.endswith(("а", "я", "ь", "й")) else part)
-            + r"(?:а|я|у|ю|ом|ем|е|и|ы|ой|ей|ью|ь|й)?"
-            for part in name.split()
-        ]
-        if re.search(r"(?<!\w)" + r"\s+".join(parts) + r"(?!\w)", words.casefold()):
-            errors.append(f"Имя «{name}» отсутствует в доказательствах")
+    errors += _foreign_names(words, evidence_names, _names(window))
     if not p.emblem.strip() or len(p.emblem.split()) > 15:
         errors.append("Эмблема должна содержать от 1 до 15 слов")
     if not p.emblem.isascii():
@@ -298,9 +348,25 @@ def canon(p: Proposal, trigger: int, window: list[tuple[int, Fact]], previous: l
 class ChroniclerModel:
     def __init__(self, llm: LLMBackend) -> None:
         self.llm = llm
+        self._lock = asyncio.Lock()
 
     async def propose(
         self, brief: str, previous: dict[str, Any] | None = None, errors: list[str] | None = None
+    ) -> dict[str, Any] | None:
+        return await self._call(brief, INSTRUCTIONS, WRITE_TOOL, CACHE_KEY, previous, errors)
+
+    async def epilogue(
+        self, brief: str, previous: dict[str, Any] | None = None, errors: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        if self.llm.name in {"fake", "none"}:
+            return None
+        return await self._call(
+            brief, EPILOGUE_INSTRUCTIONS, EPILOGUE_TOOL, "chronicler_epilogue", previous, errors,
+        )
+
+    async def _call(
+        self, brief: str, instructions: str, tool: Tool, cache_key: str,
+        previous: dict[str, Any] | None, errors: list[str] | None,
     ) -> dict[str, Any] | None:
         messages = [Message("user", brief)]
         if previous is not None:
@@ -310,13 +376,17 @@ class ChroniclerModel:
             ))
         calls = []
         try:
-            async for event in self.llm.stream(
-                instructions=INSTRUCTIONS, messages=messages, tools=[WRITE_TOOL], cache_key=CACHE_KEY
-            ):
-                if isinstance(event, ToolCall) and event.name == WRITE:
-                    calls.append(event)
+            # Each attempt releases the lock: an epilogue retry yields to a waiting ordinary feat.
+            async with self._lock:
+                async for event in self.llm.stream(
+                    instructions=instructions, messages=messages, tools=[tool], cache_key=cache_key,
+                ):
+                    if isinstance(event, ToolCall) and event.name == tool.name:
+                        calls.append(event)
         except LLMError as error:
             log.warning("feats: model failed: %s", error)
+            return None
+        if tool.name == WRITE_EPILOGUE and not calls:
             return None
         return calls[0].arguments if len(calls) == 1 else {}
 
@@ -334,6 +404,7 @@ class Feats:
         journal: Journal | None = None, gather_s: float = 20,
         artist: Artist | None = None, image_wait_s: float = 150,
         places: PlaceBook | None = None,
+        hero_distance: Callable[[str], float | None] = lambda npc: None,
     ) -> None:
         self.link, self.chronicle = link, chronicle
         self.model = ChroniclerModel(llm)
@@ -341,7 +412,11 @@ class Feats:
         self.gather_s = gather_s
         self.artist, self.image_wait_s = artist, image_wait_s
         self.places = places
+        self.hero_distance = hero_distance
         self._work: asyncio.Task[None] | None = None
+        self._epilogue_work: asyncio.Task[None] | None = None
+        self._known_disclosures: set[int] = set()
+        self._epilogue_showing: set[tuple[int, str]] = set()
         self._drawings: set[asyncio.Task[Picture | None]] = set()
         self._toasts: set[asyncio.Task[None]] = set()
         self._pending: _Occasion | None = None
@@ -350,6 +425,7 @@ class Feats:
         self._loading = False
         chronicle.on_entry.append(self._on_entry)
         link.listeners.append(self._on_message)
+        self._reconcile_epilogues()
 
     @property
     def feats(self) -> list[Fact]:
@@ -358,6 +434,8 @@ class Feats:
     def _on_entry(self, seq: int, fact: Fact) -> None:
         if self._loading:
             return
+        if fact["fact"] in {"found_out", "caught", "feat", "feat_epilogue"}:
+            self._reconcile_epilogues()
         if not notable(seq, fact, self.chronicle.entries()):
             log.debug("feats: unremarkable occasion #%s %s", seq, fact.get("fact"))
             return
@@ -378,6 +456,130 @@ class Feats:
             if self._work is not None:
                 self._work.cancel()
                 self._work = None
+            if self._epilogue_work is not None:
+                self._epilogue_work.cancel()
+                self._epilogue_work = None
+            self._known_disclosures.clear()
+            if isinstance(message, Session):
+                self._reconcile_epilogues()
+        elif isinstance(message, NpcRoster) and not self._loading:
+            self._reconcile_epilogues()
+
+    def _revealed_feats(self) -> list[tuple[Fact, int, Fact]]:
+        entries = self.chronicle.entries()
+        disclosures = [(seq, f) for seq, f in entries if f["fact"] in {"found_out", "caught"}]
+        revealed = []
+        for feat in self.feats:
+            quests = {
+                f["quest"] for seq, f in entries if seq in feat["evidence"]
+                and f["fact"] in {"lie", "claim"} and f.get("quest")
+            }
+            first = next(((seq, f) for seq, f in disclosures if f.get("quest") in quests), None)
+            if first is not None:
+                revealed.append((feat, *first))
+        return revealed
+
+    def _near(self, npc: str) -> bool:
+        distance = self.hero_distance(npc)
+        return distance is not None and distance < ATTACK_CM
+
+    def hero_talk(self, npc: str) -> None:
+        """The hero addresses someone who knows the disclosure, including a rumor recipient."""
+        if not self._loading:
+            self._reconcile_epilogues(npc.upper())
+
+    def _reconcile_epilogues(self, talking: str | None = None) -> None:
+        revealed = self._revealed_feats()
+        epilogues = {f["feat"]: f for f in self.chronicle.facts("feat_epilogue")}
+        rumors = self.chronicle.facts("rumor") if talking else []
+        for seq, disclosure in self.chronicle.entries():
+            if disclosure["fact"] not in {"found_out", "caught"} or not disclosure.get("quest"):
+                continue
+            knows = talking == disclosure["npc"] or any(
+                r.get("quest") == disclosure["quest"] and r.get("to") == talking
+                and r.get("kind") in {"found_out", "caught"} for r in rumors
+            )
+            if knows or self._near(disclosure["npc"]):
+                self._known_disclosures.add(seq)
+        if any(feat["id"] not in epilogues for feat, _, _ in revealed):
+            if self._epilogue_work is None or self._epilogue_work.done():
+                self._epilogue_work = asyncio.create_task(self._write_epilogues(self._generation))
+        shown = {f["feat"] for f in self.chronicle.facts("feat_epilogue_shown")}
+        for feat in self.feats:
+            epilogue = epilogues.get(feat["id"])
+            if epilogue is None or feat["id"] in shown:
+                continue
+            key = (self._generation, feat["id"])
+            if key in self._epilogue_showing:
+                continue
+            if epilogue["trigger"] in self._known_disclosures:
+                self._epilogue_showing.add(key)
+                task = asyncio.create_task(self._show_epilogue(feat, epilogue, self._generation))
+                self._toasts.add(task)
+                task.add_done_callback(self._toasts.discard)
+
+    async def _write_epilogues(self, generation: int) -> None:
+        try:
+            while generation == self._generation:
+                written = {f["feat"] for f in self.chronicle.facts("feat_epilogue")}
+                pending = next(
+                    (entry for entry in self._revealed_feats() if entry[0]["id"] not in written), None,
+                )
+                if pending is None:
+                    return
+                feat, seq, disclosure = pending
+                entries = self.chronicle.entries()
+                evidence = [(n, f) for n, f in entries if n in feat["evidence"] or n == seq]
+                brief = "\n".join([
+                    f"Запись: {feat['title']}; {feat['text']}",
+                    "Факты записи и раскрытия:",
+                    *[f"#{n} " + json.dumps(f, ensure_ascii=False) for n, f in evidence],
+                ])
+                text = f"Позже {disclosure['name']} узнал правду."
+                raw, errors = None, None
+                for _ in range(2):
+                    raw = await self.model.epilogue(brief, previous=raw, errors=errors)
+                    if generation != self._generation:
+                        return
+                    if raw is None:
+                        break
+                    try:
+                        proposal = Epilogue.model_validate(raw)
+                        errors = epilogue_canon(proposal.text, evidence, entries)
+                    except ValidationError:
+                        errors = ["Неверный формат полей write_epilogue"]
+                    if not errors:
+                        text = proposal.text
+                        break
+                self.chronicle.record({
+                    "fact": "feat_epilogue", "feat": feat["id"], "text": text, "trigger": seq,
+                    **{key: disclosure[key] for key in ("npc", "name", "quest")},
+                    "day": disclosure.get("day", feat["day"]),
+                })
+        finally:
+            if self._epilogue_work is asyncio.current_task():
+                self._epilogue_work = None
+
+    async def _show_epilogue(self, feat: Fact, epilogue: Fact, generation: int) -> None:
+        try:
+            if generation != self._generation:
+                return
+            icon = CATEGORY_ICONS / feat["category"] / "icon.png"
+            root = self.artist.root if self.artist is not None else DEFAULT_ROOT
+            picture = root / feat["id"] / "icon.png"
+            if picture.is_file():
+                icon = picture
+            await self.link.send(FeatToastCmd(
+                feat=feat["id"], title=feat["title"], text=epilogue["text"],
+                icon=str(icon) if icon.is_file() else "",
+            ))
+            if generation == self._generation:
+                self.chronicle.record({"fact": "feat_epilogue_shown", "feat": feat["id"]})
+                self.journal.add("feat_epilogue", feat=feat["id"], title=feat["title"], text=epilogue["text"])
+        except GameError:
+            pass
+        finally:
+            self._epilogue_showing.discard((generation, feat["id"]))
 
     async def close(self) -> None:
         self.chronicle.on_entry.remove(self._on_entry)
@@ -389,6 +591,10 @@ class Feats:
             self._work.cancel()
             await asyncio.gather(self._work, return_exceptions=True)
             self._work = None
+        if self._epilogue_work is not None:
+            self._epilogue_work.cancel()
+            await asyncio.gather(self._epilogue_work, return_exceptions=True)
+            self._epilogue_work = None
         tasks = [*self._toasts, *self._drawings]
         for task in tasks:
             task.cancel()
