@@ -12428,7 +12428,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     return;
   }
   if(c=="navdemos") {
-    if(!Resources::isHeadless()) throw std::runtime_error("navdemos is runner-only");
+    const auto* live=std::getenv("OPENGOTHIC_NAV_LIVE");
+    // Only the explicit live stand may record navigation in a rendered bench.
+    if(!Resources::isHeadless() && (live==nullptr || std::string_view(live)!="1"))
+      throw std::runtime_error("navdemos is runner-only");
     bench.navigationOnly = true;
     NavDemos::command(a,w,pl,outDir);
     return;
@@ -15544,7 +15547,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="seed") {
     // seed <n>: the random numbers start over: the scripts' (the dice, the release), the bench's, the
     // hero's sway
-    const uint32_t s = uint32_t(num(a,1,1));
+    const auto* live=std::getenv("OPENGOTHIC_NAV_LIVE");
+    // The live suite's adjacent seeds exceed the exact integer range of float.
+    const uint32_t s = live!=nullptr && std::string_view(live)=="1" ?
+                       uint32_t(std::stoul(a.at(1))) : uint32_t(num(a,1,1));
     w.script().setSeed(s);
     bench.lcg = s*2654435761u + 1u;
     bench.monsterCharacterSeed=s;

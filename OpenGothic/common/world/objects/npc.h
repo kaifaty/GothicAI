@@ -349,6 +349,10 @@ class Npc final {
     bool      isEdgeMoveBlocked(const Tempest::Vec3& modelDirection) const {
       return mvAlgo.isEdgeMoveBlocked(modelDirection);
       }
+    // Passive stand measurement; never advances the actor or changes its guard.
+    MoveAlgo::EdgeProbe navigationEdgeAhead(const Tempest::Vec3& direction,float range) const {
+      return mvAlgo.edgeAhead(direction,range);
+      }
     // The manual stance looks from the hero's shoulder toward the crosshair, independently of the camera.
     auto      aimLookAt(const Tempest::Vec3& target) const -> Tempest::Vec3;
     void      setAimLook(const Tempest::Vec3& dir) { stanceLook = dir; }
