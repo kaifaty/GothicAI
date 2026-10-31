@@ -410,6 +410,7 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     auto settings = system.GetPhysicsSettings();
     settings.mTimeBeforeSleep = 2.f;
     settings.mPointVelocitySleepThreshold = 0.8f;
+    settings.mDeepestContactLayers = 1u<<DynamicWorld::C_Item;
     system.SetPhysicsSettings(settings);
     system.SetContactListener(this);
     }
@@ -3580,6 +3581,12 @@ void CollisionWorld::setBuoyancyEnabled(bool enabled) {
 bool CollisionWorld::buoyancyEnabled() const { return buoyancy; }
 
 void CollisionWorld::setItemWakeEnabled(bool enabled) { itemWake=enabled; }
+
+void CollisionWorld::setItemDeepestContactEnabled(bool enabled) {
+  auto settings=impl->system.GetPhysicsSettings();
+  settings.mDeepestContactLayers=enabled ? 1u<<DynamicWorld::C_Item : 0;
+  impl->system.SetPhysicsSettings(settings);
+  }
 
 void CollisionWorld::setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback) {
   itemWakeCallback=std::move(callback);
