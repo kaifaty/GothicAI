@@ -909,12 +909,12 @@ Acceptance is physics p95 ≤2 ms and ON–OFF ≤0.2 ms. The report also record
 worst entry frame, body counts and complete world loading time including census.
 Compare complete NEWWORLD loading time using the median of three runs per mode.
 
-[Recorded results](../../reports/physics/2026-10-31-placed-items/README.md): the
-previous four-world probe before `irregular` reached 947/998 (94.88978%) below
-5 cm, maximum 121.61 m and two recoveries. Six new per-step diagnoses reproduce
-the three failures with and without neighbouring Items/movable furniture.
-Their cause was not isolated in the one authorized attempt; validation awaits
-a decision before another probe or functional/performance checks.
+[Recorded results](../../reports/physics/2026-10-31-placed-items/README.md): after
+the 2 cm penetration limit and `no_ground`, the four-world probe reached
+636/660 (96.363636%) below 5 cm, maximum 123.417038 cm and two recoveries.
+The two swords still have only about 1 cm initial penetration and remain
+admitted. Validation stopped for a decision; functional/save/performance
+checks remain gated on a passing probe.
 
 `OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
