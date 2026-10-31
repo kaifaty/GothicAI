@@ -56,6 +56,7 @@ class CollisionWorld final {
         Tempest::Vec3       position() const;
         Tempest::Matrix4x4  matrix() const;
         void                getAabb(JPH::Vec3& min, JPH::Vec3& max) const;
+        Tempest::Vec3       lowestPoint() const; // actual convex envelope, world centimetres
         float               mass() const; // kilograms; zero for non-dynamic bodies
         bool                isMovable() const; // native dynamic or kinematic, including doors/lifts
         Tempest::Vec3        velocity() const; // centimetres/second
@@ -233,6 +234,12 @@ class CollisionWorld final {
 
     // Diagnostic: every contact of the body's own shape at its current pose,
     // including separated ones within marginCm. Depth is positive when penetrating.
+    struct NativeTriangle {
+      bool valid = false;
+      uint32_t nativeSubShapeId = uint32_t(-1), sourceTriangle = uint32_t(-1);
+      Tempest::Vec3 normal, vertices[3];
+      float edgesCm[3] = {};
+      };
     struct Overlap {
       CollisionBody*        body = nullptr;
       int                   category = 0;
@@ -241,8 +248,28 @@ class CollisionWorld final {
       Tempest::Vec3         point1 = {}, point2 = {}; // world centimetres
       asset::MaterialGroup material = asset::MaterialGroup::UNDEFINED;
       const char*           sector = nullptr;
+      NativeTriangle        triangle;
       };
-    std::vector<Overlap> overlaps(const CollisionBody& body, float marginCm, uint32_t mask) const;
+    std::vector<Overlap> overlaps(const CollisionBody& body, float marginCm, uint32_t mask, bool triangles = false) const;
+    struct ItemSweepTrace {
+      uint64_t nativeStep = 0;
+      uint32_t itemBodyId = uint32_t(-1), bodyId = uint32_t(-1);
+      int category = 0;
+      bool tested = false, hit = false, triggered = false;
+      std::string status;
+      Tempest::Vec3 from, to, point, normal;
+      float fraction = 1.f, beforeCm = 0, afterCm = 0;
+      NativeTriangle triangle;
+      };
+    struct ItemSolverContact {
+      uint64_t nativeStep = 0;
+      uint32_t itemBodyId = uint32_t(-1), bodyId = uint32_t(-1);
+      bool persisted = false;
+      Overlap contact;
+      };
+    void setItemTraceTarget(const Item* item);
+    std::vector<ItemSweepTrace> takeItemSweepTrace();
+    std::vector<ItemSolverContact> takeItemSolverContacts();
 
     // Bench-only narrow-phase snapshot at the native parts' current poses.
     // Unlike contact callbacks, this also includes sleeping rigs and supports.
@@ -337,6 +364,10 @@ class CollisionWorld final {
     size_t itemWakeCursor = 0;
     size_t itemSweepCursor = 0;
     std::vector<std::pair<CollisionBody*,Tempest::Vec3>> itemSweeps;
+    const Item* itemTraceTarget = nullptr;
+    CollisionBody* itemSweepTraceBody = nullptr;
+    size_t itemSweepTraceIndex = size_t(-1);
+    std::vector<ItemSweepTrace> itemSweepTrace;
     size_t itemWakeQueries = 0, itemWakeCreated = 0, itemShadowWakeCursor = 0;
     JPH::Vec3 bboxMin = JPH::Vec3::sZero();
     float accumulatedTime = 0;

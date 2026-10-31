@@ -703,7 +703,7 @@ bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displaceme
   auto& world = npc.world();
   std::vector<Item*> nearbyItems;
   world.detectItem(origin,DynamicWorld::characterItemRange,[&](Item& item) {
-    if(!item.isDynamic())
+    if(!item.isDynamic() && !(Gothic::physicsFlags().placedItems && item.isPlacedItem()))
       nearbyItems.push_back(&item);
     });
   // Creating a native body invalidates the item query index. Finish detection first,

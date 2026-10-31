@@ -1,0 +1,7 @@
+# New process with SAVE=session-placed-items.sav (also a main/legacy archive).
+# The first snapshot precedes the first native world step.
+placed-items initial
+cheat god
+placed-items census
+wait 3000
+placed-items save
