@@ -68,7 +68,7 @@ struct Episode {
   Npc* liveGuidePlayer=nullptr;
   bool liveGuideWasExternal=false,liveGuideWalking=false;
   uint64_t liveGuideLastMotionAt=0;
-  double liveGuideTraveledCm=0;
+  double liveGuideTraveledCm=0,liveGuideLagCm=300;
   Vec3 liveGuidePosition;
   std::deque<std::pair<double,Vec3>> liveGuideTrail;
   Vec3 previousTargetPosition;
@@ -254,6 +254,58 @@ void action(Episode& ep,uint64_t elapsed,const NpcKeys::KeyState& k) {
   ep.actions<<elapsed<<' '<<k.forward<<' '<<k.strafe<<' '<<k.turn<<' '
             <<int(k.walk)<<' '<<int(k.jump)<<' '<<int(k.climb)<<' '<<k.headYaw<<' '<<k.headPitch<<'\n';
   if(!ep.actions)throw std::runtime_error("navdemos action write failed");
+}
+bool livePlayerStart(Episode& ep,World& world,Npc& player,Vec3& position,NavMesh::Path& approach) {
+  const auto leader=NpcKeys::physicalPosition(*ep.npc);
+  const auto& mesh=NavBench::navigationMesh(world);
+  const auto anchor=mesh.groundLocation(meters(leader));
+  const auto candidates=mesh.nearbyGroundLocations(meters(leader));
+  const auto capsule=player.navigationCapsule();
+  auto out=file(ep,"live-guide-start.json");
+  out<<"{\"method\":\"nearest_ground_annulus\",\"minimum_cm\":200,\"maximum_cm\":600,\"leader_cm\":";
+  vector(out,leader);out<<",\"role\":"<<std::quoted(ep.liveTargetPlayer?"target":settings.liveGuidePlayer?"guide":"observer")
+     <<",\"candidate_count\":"<<candidates.size()<<",\"attempts\":[";
+  bool accepted=false,first=true;
+  for(const auto& candidate:candidates) {
+    const auto requested=cm(candidate.snapped);
+    const auto rayFrom=requested+Vec3(0,200,0);
+    const auto floor=world.physic()->landRay(rayFrom,500.f);
+    auto normal=floor.n;
+    if(floor.hasCol && normal.length()<.5f) {
+      const auto surface=world.physic()->navigationRay(floor.v+Vec3(0,2,0),floor.v-Vec3(0,2,0),&player);
+      if(surface.hasCol && (surface.point-floor.v).length()<3.f)normal=surface.normal;
+    }
+    const float normalLength=normal.length();
+    if(normalLength>.5f)normal*=1.f/normalLength;
+    const bool supported=floor.hasCol && normalLength>.5f && normal.y>=.65f && std::abs(floor.v.y-requested.y)<=100.f;
+    bool clear=false,dry=false;
+    if(supported) {
+      clear=!world.physic()->sweep(floor.v+Vec3(0,capsule.x+2,0),
+          floor.v+Vec3(0,std::max(capsule.x+2,capsule.y-capsule.x),0),capsule.x).hasCol;
+      const auto water=NavLiveProbes::waterAbove(world,floor.v);
+      dry=!water.hasCol || water.wdepth-floor.v.y<=10.f;
+    }
+    const bool connected=!anchor.known || anchor.component==candidate.component;
+    const char* reason=!connected?"different_ground_component":!floor.hasCol?"no_floor":
+                       !supported?"unsupported_floor":!clear?"capsule_blocked":!dry?"water":"accepted";
+    auto path=NavMesh::Path{};
+    if(connected && supported && clear && dry && settings.liveGuidePlayer) {
+      path=mesh.findPath(meters(floor.v),meters(leader));
+      if(!path.complete || path.corners.size()<2 || !path.transitions.empty())reason="no_ground_path_to_leader";
+    }
+    if(!first)out<<',';first=false;
+    out<<"{\"navmesh_cm\":";vector(out,requested);out<<",\"ray_from_cm\":";vector(out,rayFrom);
+    out<<",\"floor_found\":"<<floor.hasCol<<",\"floor_cm\":";
+    if(floor.hasCol)vector(out,floor.v);else out<<"null";
+    out<<",\"normal_y\":";jsonNumber(out,normal.y);
+    out<<",\"capsule_clear\":"<<clear<<",\"dry\":"<<dry<<",\"reason\":"<<std::quoted(reason)<<'}';
+    if(std::string_view(reason)!="accepted")continue;
+    position=floor.v;approach=std::move(path);accepted=true;break;
+  }
+  out<<"],\"accepted\":"<<accepted<<",\"selected_cm\":";
+  if(accepted)vector(out,position);else out<<"null";
+  out<<",\"reason\":"<<std::quoted(accepted?"accepted":"no_safe_ground_in_2_6m_annulus")<<"}\n";
+  return accepted;
 }
 double percentile(std::vector<double> values,double quantile) {
   if(values.empty())return 0;
@@ -1777,7 +1829,7 @@ void tickLiveGuide(Episode& ep,uint64_t elapsed) {
   if(movement>.001f) {
     ep.liveGuideTraveledCm+=movement;ep.liveGuideTrail.emplace_back(ep.liveGuideTraveledCm,leader);
   }
-  const double desired=ep.liveGuideTraveledCm-300.;
+  const double desired=ep.liveGuideTraveledCm-ep.liveGuideLagCm;
   while(ep.liveGuideTrail.size()>2 && ep.liveGuideTrail[1].first<=desired)ep.liveGuideTrail.pop_front();
   const auto& from=ep.liveGuideTrail[0];const auto& to=ep.liveGuideTrail[1];
   const float fraction=float(std::clamp((desired-from.first)/(to.first-from.first),0.,1.));
@@ -2273,6 +2325,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
       if(!ep.hasObservedTransition)throw std::runtime_error("navdemos watched transition is absent from the initial label path");
     }
   }
+  const bool npcWasExternal=npc->isExternalControl();
   const PrepareLegacy preparing(npc);
   if(settings.cv)npc->setProcessPolicy(NpcProcessPolicy::AiNormal);
   npc->setInteraction(nullptr,true);npc->clearAiQueue();npc->clearState(false);npc->clearSpeed();
@@ -2333,38 +2386,46 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     point=floor.v;
     npc->setPosition(point);npc->updateTransform();npc->setDirection(std::stof(a[7]));
   }
-  if(settings.liveGuidePlayer) {
-    ep.liveGuidePlayer=&player;ep.liveGuideWasExternal=player.isExternalControl();
+  const auto* liveStand=std::getenv("OPENGOTHIC_NAV_LIVE");
+  if(settings.live || settings.liveGuidePlayer || ep.liveTargetPlayer || (liveStand!=nullptr && std::string_view(liveStand)=="1")) {
+    Vec3 start;NavMesh::Path approach;
+    if(!livePlayerStart(ep,w,player,start,approach)) {
+      auto out=file(ep,"episode.json");
+      out<<"{\"success\":false,\"setup_rejected\":true,\"failure\":\"live_setup_no_safe_observer_position\","
+            "\"elapsed_ms\":0,\"decisions\":0,\"diagnostics\":\"live-guide-start.json\"}\n";
+      npc->setExternalControl(npcWasExternal);npc->clearSpeed();
+      if(ep.target) {
+        if(ep.liveTargetPlayer) {ep.target->setExternalControl(ep.liveTargetWasExternal);ep.target->clearSpeed();}
+        else w.removeNpc(*ep.target);
+        ep.target=nullptr;
+      }
+      return;
+    }
     const auto leader=NpcKeys::physicalPosition(*npc);
-    const auto behind=leader-Vec3(std::cos(npc->rotationRad()),0,std::sin(npc->rotationRad()))*300.f;
-    const auto floor=w.physic()->landRay(behind+Vec3(0,200,0),500.f);
-    auto normal=floor.n;
-    // landRay deliberately leaves object normals zero for native sliding.
-    // Inspect the same surface without changing that movement contract.
-    if(floor.hasCol && normal.length()<.5f) {
-      const auto surface=w.physic()->navigationRay(floor.v+Vec3(0,2,0),floor.v-Vec3(0,2,0),&player);
-      if(surface.hasCol && (surface.point-floor.v).length()<3.f)normal=surface.normal;
+    if(settings.liveGuidePlayer) {
+      ep.liveGuidePlayer=&player;ep.liveGuideWasExternal=player.isExternalControl();
+      // Start the trail at the selected physical floor, using the ground-only
+      // Detour prefix instead of a straight segment through nearby geometry.
+      auto points=approach.corners;points.front()=meters(start);points.back()=meters(leader);
+      double length=0;
+      for(size_t i=1;i<points.size();++i)length+=(cm(points[i])-cm(points[i-1])).length();
+      double traveled=-length;ep.liveGuideTrail.emplace_back(traveled,start);
+      for(size_t i=1;i<points.size();++i) {
+        const auto previous=cm(points[i-1]),next=cm(points[i]);const float delta=(next-previous).length();
+        if(delta<=.001f)continue;
+        traveled+=delta;ep.liveGuideTrail.emplace_back(traveled,next);
+      }
+      ep.liveGuideTrail.back().first=0;
+      ep.liveGuideLagCm=std::max(300.,length);ep.liveGuidePosition=start;
+      player.setExternalControl(true);
     }
-    const float normalLength=normal.length();
-    if(normalLength>.5f)normal*=1.f/normalLength;
-    {
-      auto out=file(ep,"live-guide-start.json");out<<std::boolalpha;
-      out<<"{\"leader_cm\":";vector(out,leader);out<<",\"requested_cm\":";vector(out,behind);
-      out<<",\"land_ray_normal\":";vector(out,floor.n);
-      out<<",\"support\":";NavLiveProbes::Detail::support(out,w,player,behind,NavBench::navigationMesh(w));
-      out<<"}\n";
-    }
-    if(!floor.hasCol || normalLength<=.5f || normal.y<.65f)
-      throw std::runtime_error("nav live: player guide start is not supported; see live-guide-start.json");
-    const auto capsule=player.navigationCapsule();
-    if(w.physic()->sweep(floor.v+Vec3(0,capsule.x+2,0),floor.v+Vec3(0,std::max(capsule.x+2,capsule.y-capsule.x),0),capsule.x).hasCol)
-      throw std::runtime_error("nav live: player guide start is obstructed; see live-guide-start.json");
-    ep.liveGuidePosition=floor.v;ep.liveGuideTrail={{-300.,floor.v},{0.,leader}};
+    if(ep.liveTargetPlayer) {ep.liveTargetPosition=start;ep.goal=start;}
     player.setInteraction(nullptr,true);player.clearAiQueue();player.clearState(false);player.clearGoTo();player.clearSpeed();
-    player.setExternalControl(true);player.setWalkMode(WalkBit::WM_Walk);player.setAnim(Npc::Anim::Idle);
-    player.setPosition(floor.v);player.setDirection(leader-floor.v);player.updateTransform();
+    player.setWalkMode(WalkBit::WM_Walk);player.setAnim(Npc::Anim::Idle);
+    player.setPosition(start);
+    player.setDirection(ep.liveTargetPlayer?ep.targetRoute[ep.targetLeg]->groundPos-start:leader-start);player.updateTransform();
   }
-  else if(!current && settings.heroNear && !ep.liveTargetPlayer) {player.setPosition(npc->position()+Vec3(0,0,500));player.updateTransform();}
+  else if(!current && settings.heroNear) {player.setPosition(npc->position()+Vec3(0,0,500));player.updateTransform();}
   NpcKeys::enable(*npc,true);ep.previousPosition=NpcKeys::physicalPosition(*npc);
   ep.began=ep.next=ep.progressAt=w.tickCount();ep.active=true;ep.wallStart=std::chrono::steady_clock::now();
   ep.expectedStart=NpcKeys::physicalPosition(*npc);

@@ -139,6 +139,20 @@ def processed(directory):
     return read_json(directory / 'summary.json').get('schema_version', read_json(directory / 'summary.json').get('schema')) == 1
 
 
+def setup_rejection(directory):
+    path = directory / 'episode.json'
+    if not path.is_file():
+        return None
+    try:
+        episode = read_json(path)
+    except (OSError, ValueError):
+        return None
+    if (episode.get('setup_rejected') is True and episode.get('success') is False
+            and episode.get('elapsed_ms') == 0 and episode.get('decisions') == 0 and episode.get('failure')):
+        return episode
+    return None
+
+
 def episode_command(case, model, seed):
     npc, start, goal = case['npc'], case['start'], case['goal']
     kind = case.get('goal_kind', 'point')
@@ -218,6 +232,9 @@ def run_episode(args, case, model, seed, directory, teacher=None, recorded=True)
     directory.mkdir(parents=True, exist_ok=True)
     if not (directory / 'identity.json').is_file():
         write_json(directory / 'identity.json', identity)
+    rejected = setup_rejection(directory)
+    if rejected:
+        return rejected
     if not raw_complete(directory, recorded):
         # This identity proves that the directory belongs to this exact attempt.
         # A stopped process may have left an old video next to a new trace.
@@ -245,9 +262,13 @@ def run_episode(args, case, model, seed, directory, teacher=None, recorded=True)
         for key in ('OPENGOTHIC_NAV_JOURNEY_MEMORY', 'OPENGOTHIC_NAV_FAMILIAR_MAP', 'OPENGOTHIC_BENCH_REALTIME'):
             environment.pop(key, None)
         with (directory / 'launcher.log').open('w') as log:
-            subprocess.run(['bash', str(ROOT / 'scripts/bench.sh'), str(scenario), str(directory)],
-                           env=environment, check=True, stdout=log, stderr=subprocess.STDOUT,
-                           timeout=min(620, remaining - 5))
+            result = subprocess.run(['bash', str(ROOT / 'scripts/bench.sh'), str(scenario), str(directory)],
+                                    env=environment, stdout=log, stderr=subprocess.STDOUT,
+                                    timeout=min(620, remaining - 5))
+        rejected = setup_rejection(directory)
+        if rejected:
+            return rejected
+        result.check_returncode()
         if not raw_complete(directory, recorded):
             raise ValueError(f'Incomplete game run: {directory}; see launcher.log and game.log')
         # The save is input, not a per-seed output. Keep only the small bench ini.
@@ -269,11 +290,12 @@ def teachers(args, cases):
     for case in sorted(cases, key=lambda row: (row['number'] != 6, row['number'], row['id'])):
         directory = teacher_directory(args, case)
         episode = run_episode(args, case, None, case['seeds'][0], directory)
-        summary = read_json(directory / 'summary.json')
+        summary = {} if episode.get('setup_rejected') else read_json(directory / 'summary.json')
         unsafe = summary.get('deep_water_entries') not in (0, None) or (case['number'] == 7 and summary.get('falls') != 0)
         if not episode.get('success') or unsafe:
             failure = dict(
                 id=case['id'], elapsed_ms=episode.get('elapsed_ms'), failure=episode.get('failure'),
+                decisions=episode.get('decisions'), setup_rejected=bool(episode.get('setup_rejected')),
                 deep_water_entries=summary.get('deep_water_entries'), falls=summary.get('falls'),
                 output=str(directory))
             failures.append(failure)
@@ -446,11 +468,12 @@ def main(argv=None):
             raise ValueError('The saved suite has no accepted Maleth fence placement')
         directory = teacher_directory(args, case)
         episode = run_episode(args, case, None, case['seeds'][0], directory)
-        summary = read_json(directory / 'summary.json')
-        validated = raw_complete(directory) and processed(directory)
+        summary = {} if episode.get('setup_rejected') else read_json(directory / 'summary.json')
+        validated = not episode.get('setup_rejected') and raw_complete(directory) and processed(directory)
         print(json.dumps(dict(stage='teacher', id=case['id'], output=str(directory), requested_seed=case['seeds'][0],
             success=bool(episode['success']), elapsed_ms=episode['elapsed_ms'],
-            decisions=episode['decisions'], deep_water_entries=summary.get('deep_water_entries'),
+            decisions=episode['decisions'], failure=episode.get('failure'),
+            setup_rejected=bool(episode.get('setup_rejected')), deep_water_entries=summary.get('deep_water_entries'),
             falls=summary.get('falls'), validated=validated)), flush=True)
         return 0 if validated and episode['success'] and summary.get('deep_water_entries') in (0, None) else 2
     policies, bc4 = models(args.weights, suite)

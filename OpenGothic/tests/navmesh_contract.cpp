@@ -35,12 +35,58 @@ void wall(NavMesh::Geometry& geometry) {
   triangle(v,t,{9.5f,0,16},{9.5f,3,16},{10.5f,3,16});
   triangle(v,t,{9.5f,0,16},{10.5f,3,16},{10.5f,0,16});
   }
+
+void nearbyGroundContract(const std::filesystem::path& cache) {
+  NavMesh mesh;
+  check(mesh.nearbyGroundLocations({0,50,0}).empty(),"unbuilt mesh must not invent observer placements");
+  NavMesh::Params params;params.tileSize=128;
+  NavMesh::Geometry geometry;
+  floor(geometry,-10,-10,10,10,50.f);
+  floor(geometry,3,-4,9,4,54.f);
+  mesh.buildOrLoad(geometry,params,cache,"nearby-ground");
+  const Point at={0,50,0};
+  const auto anchor=mesh.groundLocation(at);
+  const auto candidates=mesh.nearbyGroundLocations(at);
+  check(anchor.known && !candidates.empty() && candidates.size()<=80,
+        "a polygon containing the actor must yield bounded interior annulus placements");
+  check(candidates.front().component==anchor.component && candidates.front().snapDistance<2.1f,
+        "nearby placements must prefer the source ground component and nearest distance");
+  bool interior=false;
+  for(size_t i=0;i<candidates.size();++i) {
+    const auto& candidate=candidates[i];
+    check(candidate.known && candidate.horizontalDistance>=2.f && candidate.horizontalDistance<=6.f,
+          "every observer placement must remain in the inclusive 2-6m horizontal annulus");
+    check(candidate.component==anchor.component && candidate.snapped[1]>49.9f && candidate.snapped[1]<50.3f,
+          "a nearby balcony must not displace available ground on the actor's component");
+    if(i)check(candidate.snapDistance>=candidates[i-1].snapDistance,"same-component placements must be nearest first");
+    interior=interior || candidate.polygon==anchor.polygon;
+  }
+  check(interior,"annulus placement must sample interiors instead of only polygon closest points to the actor");
+  const auto repeated=mesh.nearbyGroundLocations(at);
+  check(repeated.size()==candidates.size(),"observer placement count must be repeatable");
+  for(size_t i=0;i<candidates.size();++i)
+    check(candidates[i].snapped==repeated[i].snapped && candidates[i].polygon==repeated[i].polygon,
+          "observer placement coordinates and ordering must be deterministic without RNG");
+  const auto above=mesh.nearbyGroundLocations({0,60,0});
+  check(!above.empty(),"observer placement must search native ground Y beyond the old 2m vertical projection extent");
+  for(const auto& candidate:above)
+    check(candidate.snapped[1]>49.9f && candidate.snapped[1]<54.3f,
+          "observer placement must return actual native ground height, never actor-relative guessed Y");
+  check(mesh.nearbyGroundLocations({100,60,100}).empty(),"missing local ground must reject placement instead of snapping across the world");
+  std::cout<<"nearby-ground contract: interior annulus, native height, component preference, deterministic ordering passed; candidates="
+           <<candidates.size()<<" elevated_pose_candidates="<<above.size()<<'\n';
+}
 }
 
-int main() {
+int main(int argc,char** argv) {
   const auto cache=std::filesystem::temp_directory_path()/
                    ("gothic-navmesh-contract-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   try {
+    nearbyGroundContract(cache);
+    if(argc==2 && std::string(argv[1])=="--nearby-ground") {
+      std::filesystem::remove_all(cache);
+      return 0;
+    }
     NavMesh::Params params;
     params.tileSize=32;
     NavMesh::Geometry geometry;

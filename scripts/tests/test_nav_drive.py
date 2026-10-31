@@ -402,6 +402,42 @@ def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
         list(live.observation_frames(root, metadata))
 
 
+def test_live_setup_rejection_preserves_diagnostics_without_rendering(tmp_path, monkeypatch):
+    import subprocess
+    import time
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    import nav_live as live
+
+    suite = tmp_path / "suite.json"
+    suite.write_text("{}")
+    case = dict(id="01-maleth-fence", number=1, npc="NPC", start="START", goal="GOAL",
+                time=[10, 0], seeds=[18102027])
+    args = SimpleNamespace(output=tmp_path, suite=suite, binary=tmp_path / "game", binary_sha256="binary",
+                           input_sha256={}, inputs=dict(save="save", roads="roads", familiar="familiar",
+                                                        links="links", cache="cache"),
+                           deadline=time.monotonic() + 300)
+    directory = live.teacher_directory(args, case)
+    rejected = dict(success=False, setup_rejected=True, failure="live_setup_no_safe_observer_position",
+                    elapsed_ms=0, decisions=0)
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        live.write_json(directory / "episode.json", rejected)
+        (directory / "live-guide-start.json").write_text('{"candidates":[]}')
+        return subprocess.CompletedProcess(command, 1)
+
+    monkeypatch.setattr(live, "check_space", lambda unused: 0)
+    monkeypatch.setattr(live.subprocess, "run", run)
+    assert live.run_episode(args, case, None, case['seeds'][0], directory) == rejected
+    failures = live.teachers(args, [case])
+    assert len(calls) == 1 and failures[0]['failure'] == rejected['failure']
+    assert failures[0]['setup_rejected'] and failures[0]['decisions'] == 0
+    assert (directory / "live-guide-start.json").read_text() == '{"candidates":[]}'
+    assert not (directory / "summary.json").exists()
+
+
 def test_live_qualification_resumes_partial_probes_and_rejects_blocked_capsule(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
     import nav_live_prepare as prepare
