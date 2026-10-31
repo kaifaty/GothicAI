@@ -22,7 +22,14 @@ OFF = {
     "places",
 }
 
-GIVEN: set[str] = set()
+GIVEN = {
+    "lie",
+    "vgive",
+    "vlie",
+    "vcheck",
+    "vspare",
+    "rumor",
+}
 
 LIVE = {
     "haggle",
