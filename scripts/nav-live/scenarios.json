@@ -146,14 +146,40 @@
       "source": {
         "dataset": "detour-val",
         "file": "/mnt/shared/gothic-ai/nav-demos-v5/input/detour-val.jsonl",
-        "selection": "User-approved visible-target pair with a positive static obstruction excluding house walls/fences; exact authored validation start/goal; teacher success,zero falls,edge>=100cm; HD,it35,BC4 each3seeds",
+        "selection": "Three authored detour-val static-obstacle pairs checked; none qualified; retained former rejected coordinates are excluded from learner runs",
         "previous_rejection": "0ROCK/FELS/CLIFF confirmations among121; rock requirement removed by user"
       },
       "stranger": false,
       "qualification_rejection": {
-        "reason": "Visible static-obstacle replacement awaits bounded teacher qualification; rock type no longer required",
+        "reason": "No static-obstacle candidate qualified in three bounded teacher runs; search closed by user",
         "previous_native_facts": "/mnt/shared/gothic-ai/nav-live/baseline/qualification/recheck-1c9a1fde8d40-a2964efaf4f4",
-        "visible_goals": 79
+        "visible_goals": 79,
+        "native_facts": "/mnt/shared/gothic-ai/nav-live/baseline/extension/943431e2590c-a2964efaf4f4/result.json",
+        "validation_candidates": 121,
+        "static_candidates": 25,
+        "teacher_attempts": [
+          {
+            "candidate": "object-3a2801249f2b49f8",
+            "failure": "path_timeout",
+            "elapsed_ms": 90000,
+            "falls": 0,
+            "minimum_edge_distance_cm": 158.046875
+          },
+          {
+            "candidate": "detour-6fe686e1fa271176",
+            "failure": "teacher_edge_clearance_below_threshold",
+            "elapsed_ms": 7733,
+            "falls": 0,
+            "minimum_edge_distance_cm": 53.0078125
+          },
+          {
+            "candidate": "detour-7979c74019067a96",
+            "failure": "teacher_fell",
+            "elapsed_ms": 16367,
+            "falls": 1,
+            "minimum_edge_distance_cm": 6.9921875
+          }
+        ]
       },
       "bc4_compare": true
     },
