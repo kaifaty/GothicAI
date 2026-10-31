@@ -6,6 +6,7 @@
 #include <Tempest/File>
 #include <Tempest/Pixmap>
 #include <Tempest/Except>
+#include <Tempest/Log>
 
 #include <string>
 #include <cassert>
@@ -262,6 +263,15 @@ Texture2d Device::texture(const Pixmap &pm, const bool mips) {
     }
 
   Texture2d t(*this,api.createTexture(dev,*p,format,mipCnt),p->w(),p->h(),1,format);
+  if(tempestLoadProbeEnabled()) {
+    size_t bytes = 0;
+    for(uint32_t mip=0; mip<t.mipCount(); ++mip) {
+      const auto blocks = Pixmap::blockCount(format,std::max(1u,pm.w()>>mip),std::max(1u,pm.h()>>mip));
+      bytes += size_t(blocks.w)*size_t(blocks.h)*Pixmap::blockSizeForFormat(format);
+      }
+    Log::i("[loadprobe-upload] data=",pm.data()," w=",t.w()," h=",t.h()," mips=",t.mipCount(),
+           " format=",formatName(format)," bytes=",bytes);
+    }
   return t;
   }
 

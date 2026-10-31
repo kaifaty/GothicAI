@@ -453,6 +453,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `press\|release\|tap <key>`, `hold <key> <ms>`, `release all` | player input; keys: `forward back left right turnl turnr jump walk sneak weapon melee bow spell action parade breath` (`left`/`right` strafe; aiming a bow: hold `action`, a shot: `tap forward` while holding it; in the manual aim holding `action` draws, releasing shoots, `parade` lowers the bow, `breath` (= walk) holds the breath) |
 | `aimwalk on\|off` | the legs stepping under the aim (graphics/mesh/aimwalk); off: forward and back do nothing while aiming |
 | `animinfo <name>...` | the hero's animations of those names: layer, frames, the nodes they move (when not all), the root's way and speed, the hips' turn at a few frames |
+| `bladepath <name>\|<overlay.MDS>...` | the tip of the hero's weapon at each frame of those animations, with the grip, the root bone (the game keeps its x, z at the actor) and the speed, in the model's frame (+z ahead); the frames of the fight tags; an overlay (`HUMANS_1HST2.MDS`) is put on for the names after it |
 | `wheel <delta>` | the mouse wheel as the window gets it (-1 down, 1 up): aiming a bow by hand, down cants it for a quick shot, up straightens it |
 | `cam auto [dist] [height]` | follow the player from the side that sees the feet; switches sides if the feet stay hidden |
 | `cam follow <dist> <height> <angle>` | follow, `angle` from the facing: 0 in front, 90 on the left |
@@ -483,7 +484,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `place <dist> <angle>`, `orbit <deg> <ms>` | the hero stands around the watched npc (angle from its facing, 0 in front) or goes around it; not where no ground is found (inside a rock: it would fall through the world) |
 | `gazeinfo` | gaze state of the watched npc to `bench.log`: why it looks, at whom |
 | `lean on\|off` | the lean into turns and on slopes |
-| `blend on\|off`, `blend param <name> <value>` | transitions between animations (`AnimBlend`; off: the old cross-fade); params `min`, `max`, `scale` (blend time, s), `turn` (rad/s), `move` (cm/s), `out`, `side` |
+| `blend on\|off`, `blend param <name> <value>` | transitions between animations (`AnimBlend`; off: the old cross-fade); params `min`, `max`, `scale` (blend time, s), `turn` (rad/s), `move` (cm/s), `out`, `side`, `blow` (the longest switch into a blow of a weapon body, s) |
 | `flinch on\|off` | the upper body giving way to blows |
 | `hit <npc\|player> <angle> [strength] [height] [twist]` | a blow from that side of it (angle from its facing, 0 in front, as `place`) to the flinch only: no damage, no stumble; strength 0..1 (1), height 0 the hips .. 1 the head (0.6), twist -1..1 about up (0) |
 | `strike <victim\|player> [attacker\|player]` | the attacker's blow lands as the game deals it (the stumble, the damage, the flinch); the victim gets its hit points back below a third |
