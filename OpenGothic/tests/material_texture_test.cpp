@@ -740,8 +740,8 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
           "Far initial loads must upload the DDS tail for every material map");
   require(noTail.tex!=nullptr && noTail.tex->w()==256,
           "a single-level DDS must remain Full in a Far loading scope");
-  Resources::textureDemand(material,Resources::TextureCategory::Static,true,6);
-  Resources::textureDemand(noTail,Resources::TextureCategory::Static,true,6);
+  Resources::textureDemand(material,Resources::TextureCategory::Static,true,4);
+  Resources::textureDemand(noTail,Resources::TextureCategory::Static,true,4);
 
   std::vector<Resources::Vertex> vertices={
     {{0,0,0},{0,0,1},{0,0},0xffffffffu},
@@ -794,29 +794,32 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
     require(commit() && !commit(),"mip replacement must refresh descriptors once without rebuilding buckets");
     };
 
-  Resources::textureDemand(material,Resources::TextureCategory::Static,true,3);
-  Resources::updateTextures(&residency);
-  require(tail() && !Resources::texturesReady() && Resources::textureStats().promotionQueue>0,
-          "requesting Full must keep Tail visible while its background read or publication is pending");
-  waitFor(true);
   Resources::textureDemand(material,Resources::TextureCategory::Static,true,2);
+  Resources::updateTextures(&residency);
+  require(tail() && !Resources::texturesReady() && Resources::textureStats().promotionQueue>0 &&
+          Resources::textureStats().nearTailCount==0,
+          "ring-two Full requests must preserve Tail while pending and remain outside the Near metric");
+  Resources::textureDemand(material,Resources::TextureCategory::Static,true,1);
+  require(Resources::textureStats().nearTailCount==3,
+          "the Near metric must count Tail maps only when an owner enters ring one");
+  waitFor(true);
   require(Resources::textureStats().promoted==3 && Resources::textureStats().nearTailCount==0,
           "promotion must complete every map and clear Near textures on Tail");
   device.waitIdle();
   Resources::resetRecycled(0);
   require(Resources::textureStats().retiredBytes==0,"completed initial mip replacements must be recyclable");
 
-  Resources::textureDemand(material,Resources::TextureCategory::Static,true,4);
+  Resources::textureDemand(material,Resources::TextureCategory::Static,true,3);
+  Resources::textureDemand(material,Resources::TextureCategory::Static,false,1);
   Resources::textureDemand(material,Resources::TextureCategory::Static,false,2);
-  Resources::textureDemand(material,Resources::TextureCategory::Static,false,3);
   std::this_thread::sleep_for(std::chrono::milliseconds(5100));
   tick();
   require(full() && Resources::textureStats().demoted==0,
-          "a ring-four owner must retain Full after the five-second hysteresis interval");
-  Resources::textureDemand(material,Resources::TextureCategory::Static,false,4);
+          "a ring-three owner must retain Full after the five-second hysteresis interval");
+  Resources::textureDemand(material,Resources::TextureCategory::Static,false,3);
   tick();
   require(full() && Resources::textureStats().demoted==0,
-          "leaving ring four must start a fresh five-second delay before demotion");
+          "leaving ring three must start a fresh five-second delay before demotion");
   std::this_thread::sleep_for(std::chrono::milliseconds(4900));
   tick();
   require(full() && Resources::textureStats().demoted==0,
@@ -834,8 +837,35 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
   Resources::resetRecycled(0);
   require(Resources::textureStats().retiredBytes==0,
           "the completed frame slot must release demoted Full payloads after its fence");
-  Resources::textureDemand(material,Resources::TextureCategory::Static,false,6);
-  Resources::textureDemand(noTail,Resources::TextureCategory::Static,false,6);
+
+  SceneGlobals scene;
+  VisualObjects visuals(scene,{{0,0,0},{1,1,0}});
+  visuals.setTextureResidency(&residency);
+  auto body=visuals.get(mesh,material,0,mesh.sub[0].iboLength,false);
+  const Tempest::Vec3 farOwner{float(4*ChunkId::Size+1),0,0};
+  body.setTextureOwner(farOwner,true);
+  body.setTextureOwner({farOwner.x+100,0,0},true);
+  auto bone=Tempest::Matrix4x4::mkIdentity();
+  bone.translate(1,0,0);
+  body.setObjMatrix(bone);
+  body.setTexturePosition({0,0,0});
+  require(tail() && Resources::textureStats().promotionQueue==0,
+          "a Far spatial body must retain Tail across same-cell movement and animated node transforms");
+  body.setTextureOwner({float(2*ChunkId::Size+1),0,0},true);
+  require(Resources::textureStats().promotionQueue==3 && Resources::textureStats().nearTailCount==0,
+          "a spatial body crossing into ring two must request Full outside the Near metric");
+  body.setTextureOwner(farOwner,true);
+  require(Resources::textureStats().promotionQueue==0,
+          "a spatial body leaving ring two must cancel unpublished Full requests");
+  body.setTextureOwner(farOwner,false);
+  require(Resources::textureStats().promotionQueue==3,
+          "the hero's always-Full ownership must request Full even in the same Far cell");
+  waitFor(true);
+  body.setTextureOwner({float(8*ChunkId::Size+1),0,0},false);
+  require(full() && Resources::texturesReady(),
+          "the hero's always-Full ownership must survive movement between distant cells");
+  Resources::textureDemand(material,Resources::TextureCategory::Static,false,4);
+  Resources::textureDemand(noTail,Resources::TextureCategory::Static,false,4);
   }
   setenv("OPENGOTHIC_TEXTURE_MIPS","0",1);
   {

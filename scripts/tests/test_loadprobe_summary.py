@@ -38,7 +38,7 @@ def test_session_and_world_change_csv(tmp_path):
                     f"tex_retired_bytes=32 tex_peak_bytes=32000 tex_live_n=4 tex_evicted=3 tex_reloaded=1\n")
             log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} tex_full_bytes=1000 tex_tail_bytes={elapsed} "
                     "tex_promoted=5 tex_demoted=2 tex_promotion_queue=1 tex_near_tail_n=2 tex_near_tail_seconds=0.125 "
-                    "tex_full_ring3_bytes=700 tex_source_hd_bytes=800 tex_source_hd_full_bytes=600\n")
+                    "tex_full_ring2_bytes=700 tex_source_hd_bytes=800 tex_source_hd_full_bytes=600\n")
             log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} "
                     f"tex_landscape_bytes={elapsed + 400} tex_landscape_n=1 tex_static_bytes=300 tex_static_n=1\n")
             log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} "
@@ -73,7 +73,7 @@ def test_session_and_world_change_csv(tmp_path):
         "full_bytes", "tail_bytes", "promoted", "demoted", "promotion_queue", "near_tail_n", "near_tail_seconds")] == [
         "1000", "10500", "5", "2", "1", "2", "0.125"]
     assert [rows[0][f"tex_{field}_warm_5s"] for field in (
-        "full_ring3_bytes", "source_hd_bytes", "source_hd_full_bytes")] == ["700", "800", "600"]
+        "full_ring2_bytes", "source_hd_bytes", "source_hd_full_bytes")] == ["700", "800", "600"]
     assert [rows[0][f"tex_{field}_warm_5s"] for field in (
         "retired_bytes", "peak_bytes", "live_n", "evicted", "reloaded", "landscape_bytes", "landscape_n",
         "static_bytes", "static_n", "dynamic_bytes", "dynamic_n", "other_bytes", "other_n")] == [

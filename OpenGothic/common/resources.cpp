@@ -1378,7 +1378,8 @@ void Resources::updateNearTailTime() {
 
 bool Resources::wantsFull(const TextureRecord& record) const {
   return !textureStreaming || textureSkipMips==0 || !record.hasTail || record.pinned ||
-         (!record.distances.empty() && record.distances.begin()->first<=3);
+         record.distances.count(TextureAlwaysFull)!=0 ||
+         (!record.distances.empty() && record.distances.begin()->first<=2);
   }
 
 void Resources::unqueueTexture(TextureRecord& record) {
@@ -1391,7 +1392,7 @@ void Resources::unqueueTexture(TextureRecord& record) {
   }
 
 void Resources::queueTexture(TextureRecord& record) {
-  if(record.resident && record.tail && !record.distances.empty() && record.distances.begin()->first<=2)
+  if(record.resident && record.tail && !record.distances.empty() && record.distances.begin()->first<=1)
     nearTailTextures.insert(&record);
   if(record.wanted()) {
     if(!record.failed) {
@@ -1400,10 +1401,10 @@ void Resources::queueTexture(TextureRecord& record) {
       else if(record.tail && wantsFull(record))
         texturePromotions.insert(&record);
       }
-    if(record.distances.empty() || record.distances.begin()->first>4) {
+    if(!wantsFull(record) && (record.distances.empty() || record.distances.begin()->first>3)) {
       if(record.demoteAt==std::chrono::steady_clock::time_point{})
         record.demoteAt=std::chrono::steady_clock::now()+std::chrono::seconds(5);
-      if(record.resident && !record.tail && record.hasTail && textureStreaming && textureSkipMips!=0 && !record.pinned && !record.failed)
+      if(record.resident && !record.tail && !record.failed)
         textureDemotions.emplace(std::make_pair(record.demoteAt,reinterpret_cast<uintptr_t>(record.texture)),&record);
       } else {
       record.demoteAt={};
@@ -1515,10 +1516,9 @@ Resources::TextureStats Resources::textureStats() {
     if(!record.tail) {
       stats.sourceFullBytes[size_t(record.sourceKind)]+=bytes;
       if(record.hasTail && inst->textureStreaming && inst->textureSkipMips!=0 &&
-         !record.pinned && record.demand[size_t(TextureCategory::Dynamic)]==0 &&
-         record.demand[size_t(TextureCategory::Other)]==0 &&
-         !record.distances.empty() && record.distances.begin()->first<=3)
-        stats.fullRing3Bytes+=bytes;
+         !record.pinned && record.distances.count(TextureAlwaysFull)==0 &&
+         !record.distances.empty() && record.distances.begin()->first<=2)
+        stats.fullRing2Bytes+=bytes;
       }
     if(record.category==TextureCategory::Other)
       continue;
@@ -1624,7 +1624,7 @@ void Resources::publishTexture() {
   auto& record=textureRecords.at(reload->identity);
   unqueueTexture(record);
   const bool full=wantsFull(record);
-  const bool hold=!record.distances.empty() && record.distances.begin()->first<=4;
+  const bool hold=!record.distances.empty() && record.distances.begin()->first<=3;
   const bool delayElapsed=record.demoteAt!=std::chrono::steady_clock::time_point{} &&
                           record.demoteAt<=std::chrono::steady_clock::now();
   if(record.wanted() && (!reload->tail || (!full && (!record.resident || (!hold && delayElapsed))))) {
@@ -1713,7 +1713,8 @@ void Resources::updateTextures(ChunkResidency* residency) {
     TextureRecord* selected=nullptr;
     const auto consider=[&](TextureRecord* candidate) {
       const auto priority=[](const TextureRecord& record) {
-        return record.pinned ? uint32_t(0) : record.distances.empty() ? UINT32_MAX : record.distances.begin()->first;
+        return record.pinned || record.distances.count(TextureAlwaysFull)!=0 ? uint32_t(0) :
+               record.distances.empty() ? UINT32_MAX : record.distances.begin()->first;
         };
       if(selected==nullptr || priority(*candidate)<priority(*selected))
         selected=candidate;

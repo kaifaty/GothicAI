@@ -48,6 +48,7 @@ class VisualObjects final {
       void     setObjMatrix(const Tempest::Matrix4x4& mt);
       void     setObjMatrix(const Tempest::Matrix4x4& mt, const Tempest::Vec3& texturePosition);
       void     setTexturePosition(const Tempest::Vec3& position);
+      void     setTextureOwner(const Tempest::Vec3& position, bool spatial);
       void     setTextureCategory(Resources::TextureCategory category);
       void     setAsGhost  (bool g);
       void     setFatness  (float f);
@@ -158,7 +159,8 @@ class VisualObjects final {
       bool                textureDemand = false;
       bool                textureChunkRegistered = false;
       bool                textureChunkedLandscape = false;
-      uint32_t            textureDistance = 0;
+      bool                textureWorldOwner = false;
+      uint32_t            textureDistance = Resources::TextureAlwaysFull;
       Tempest::Vec3       texturePosition;
       std::pair<int32_t,int32_t> textureChunk;
       };

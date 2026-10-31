@@ -152,7 +152,7 @@ class Resources final {
       uint64_t fullBytes = 0, tailBytes = 0, promoted = 0, demoted = 0;
       uint64_t promotionQueue = 0, nearTailCount = 0;
       double nearTailSeconds = 0;
-      uint64_t fullRing3Bytes = 0;
+      uint64_t fullRing2Bytes = 0;
       std::array<uint64_t,4> sourceBytes{}, sourceFullBytes{};
       std::array<uint64_t,4> categoryBytes{}, categoryCount{};
       };
@@ -170,7 +170,8 @@ class Resources final {
         bool previous;
       };
     static void                      finishTextureLoading();
-    static void                      textureDemand(const Material& material, TextureCategory category, bool add, uint32_t distance = 0);
+    static constexpr uint32_t TextureAlwaysFull = uint32_t(-1);
+    static void                      textureDemand(const Material& material, TextureCategory category, bool add, uint32_t distance = TextureAlwaysFull);
     static void                      updateTextures(ChunkResidency* residency);
     static void                      configureTextures(std::string_view budget = {}, std::string_view skipMips = {});
 

@@ -349,7 +349,7 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
                   static_cast<unsigned long long>(textures.promoted),static_cast<unsigned long long>(textures.demoted),
                   static_cast<unsigned long long>(textures.promotionQueue));
     fnt.drawText(p,x,top+4*line,text);
-    std::snprintf(text,sizeof(text),"Near on Tail: %llu textures  %.6f texture-seconds",
+    std::snprintf(text,sizeof(text),"Near (ring 1) on Tail: %llu textures  %.6f texture-seconds",
                   static_cast<unsigned long long>(textures.nearTailCount),textures.nearTailSeconds);
     fnt.drawText(p,x,top+5*line,text);
     };

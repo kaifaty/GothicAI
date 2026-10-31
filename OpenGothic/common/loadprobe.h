@@ -187,8 +187,8 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
                   textureSources[i],(unsigned long long)textures.sourceFullBytes[i]);
     Tempest::Log::i(textureBuf);
     }
-  std::snprintf(textureBuf,sizeof(textureBuf),"[loadprobe-textures] stage=%.*s t_ms=%.1f tex_full_ring3_bytes=%llu",
-                int(stage.size()),stage.data(),elapsed,(unsigned long long)textures.fullRing3Bytes);
+  std::snprintf(textureBuf,sizeof(textureBuf),"[loadprobe-textures] stage=%.*s t_ms=%.1f tex_full_ring2_bytes=%llu",
+                int(stage.size()),stage.data(),elapsed,(unsigned long long)textures.fullRing2Bytes);
   Tempest::Log::i(textureBuf);
   std::snprintf(textureBuf,sizeof(textureBuf),
                 "[loadprobe-textures] stage=%.*s t_ms=%.1f "

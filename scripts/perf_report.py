@@ -404,7 +404,8 @@ def summary_table(report):
             cells = [f"{categories[category]['bytes']/1048576:.2f} / {categories[category]['count']}"
                      if category in categories else "n/a" for category in ("landscape", "static", "dynamic", "other")]
             lines.append(f"| {view} | " + " | ".join(cells) + " |")
-        lines.extend(["", "| Pass | Full / Tail end MiB | Promoted / demoted on route | Promotion queue peak | Near on Tail peak | Near on Tail texture-seconds |",
+        lines.extend(["", "Spatial texture demand: Full within ring 2; demotion beyond ring 3; Near on Tail within ring 1.", "",
+                      "| Pass | Full / Tail end MiB | Promoted / demoted on route | Promotion queue peak | Near (ring 1) on Tail peak | Near (ring 1) on Tail texture-seconds |",
                       "|---|---:|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():
             textures = stats["streaming"]["textures"]
