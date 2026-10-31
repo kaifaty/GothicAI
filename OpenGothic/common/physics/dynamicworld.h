@@ -244,6 +244,7 @@ class DynamicWorld final {
       private:
         DynamicWorld*       owner  = nullptr;
         BodyData*           obj    = nullptr;
+      friend class DynamicWorld;
       };
 
     struct RayLandResult {
@@ -416,6 +417,27 @@ class DynamicWorld final {
       float extraPaddingCm = 0.f; // collision padding beyond the base centimetre
       };
     const ItemHull& itemHullShape(const ProtoMesh& proto, std::string_view visual);
+    struct PlacedItemCandidate {
+      const Item* body = nullptr;
+      bool mission = false;
+      std::string_view visual = {};
+      };
+    struct PlacedItemCensusEntry {
+      std::string disposition;
+      float supportGapCm = std::numeric_limits<float>::infinity();
+      float staticDepthCm = 0, furnitureDepthCm = 0, itemDepthCm = 0;
+      int supportCategory = 0;
+      std::string supportLabel;
+      Tempest::Vec3 supportNormal = {};
+      Tempest::Vec3 hullLowPointCm = {}, supportFaceNormal = {};
+      float supportSlopeDeg = std::numeric_limits<float>::quiet_NaN();
+      uint32_t supportZenId = uint32_t(-1);
+      size_t supportItemIndex = size_t(-1);
+      bool enabled = false;
+      };
+    // All handles must still have their authored poses. Decisions preserve the
+    // input order and are made together, before any candidate body is removed.
+    std::vector<PlacedItemCensusEntry> placedItemCensus(const std::vector<PlacedItemCandidate>& candidates) const;
     Item           addMovableVob(const ProtoMesh& mesh, std::string_view visual, const Tempest::Matrix4x4& matrix,
                                  float massMultiplier, bool blocksWalking, std::string_view className = {},
                                  bool legacyCollision = true, uint32_t zenId = uint32_t(-1));
@@ -501,18 +523,36 @@ class DynamicWorld final {
       };
     std::vector<WaterBodySnapshot> waterBodySnapshot() const;
     struct ItemTraceContact {
+      uint64_t nativeStep = 0;
+      bool persisted = false;
       uint32_t bodyId = uint32_t(-1), zenId = uint32_t(-1);
       int category = C_Null;
       std::string visual;
       float depth = 0; // centimetres; positive means penetration
       Tempest::Vec3 normal, point, otherPoint; // normal moves the Item out
+      bool triangle = false;
+      uint32_t nativeSubShapeId = uint32_t(-1), sourceTriangle = uint32_t(-1);
+      Tempest::Vec3 triangleNormal, triangleVertices[3];
+      float triangleEdgesCm[3] = {};
+      };
+    struct ItemTraceSweep {
+      uint64_t nativeStep = 0;
+      uint32_t itemBodyId = uint32_t(-1), bodyId = uint32_t(-1);
+      uint32_t nativeSubShapeId = uint32_t(-1), sourceTriangle = uint32_t(-1);
+      int category = C_Null;
+      bool tested = false, hit = false, triggered = false, triangle = false;
+      std::string status;
+      Tempest::Vec3 from, to, point, normal, triangleNormal, triangleVertices[3];
+      float fraction = 1.f, beforeCm = 0, afterCm = 0, triangleEdgesCm[3] = {};
       };
     struct ItemTraceSample {
       uint64_t nativeStep = 0, nativeSteps = 0, index = 0;
+      uint32_t bodyId = uint32_t(-1);
       float seconds = 0, stepSeconds = 0;
       bool beforeStep = true, active = false, sleeping = true;
       Tempest::Vec3 position, centerOfMass, velocity, bounds[2]; // cm and cm/s
-      std::vector<ItemTraceContact> contacts;
+      std::vector<ItemTraceContact> contacts, solverContacts;
+      std::vector<ItemTraceSweep> recoverySweeps;
       };
     // Opt-in benchmark diagnostics at the ordinary native tick boundaries.
     // nativeSteps reports batching; a per-step scenario must keep it <= 1.
@@ -616,6 +656,11 @@ class DynamicWorld final {
       size_t shapeBytes = 0, triangles = 0;
       };
     StaticCollisionStats staticCollisionStats() const;
+    struct StaticCollisionLoadStats {
+      bool cacheHit = false;
+      double keyMs = 0, readMs = 0, buildMs = 0, writeMs = 0;
+      };
+    const StaticCollisionLoadStats& staticCollisionLoadStats() const { return collisionLoadStats; }
     uint64_t simulationStep() const;
 
     // Called explicitly by the runner; ordinary worlds never build a navmesh.
@@ -636,6 +681,7 @@ class DynamicWorld final {
     std::string_view validateSectorName(std::string_view name) const;
 
   private:
+    friend struct WayHeightsContract;
     friend class ClothBulletBenchDriver;
     void           moveBullet(BulletBody& b, const Tempest::Vec3& dir, uint64_t dt);
     RayWaterResult implWaterRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float stepHeight,
@@ -658,6 +704,7 @@ class DynamicWorld final {
     std::unique_ptr<Cloth>             clothWorld;
     World*                            ownerWorld = nullptr;
     bool                              splitStaticTriangles = true;
+    StaticCollisionLoadStats          collisionLoadStats;
 
     std::vector<std::string>           sectors;
 

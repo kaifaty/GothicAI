@@ -97,7 +97,8 @@ Item::Item(World &owner, Serialize &fin, Type type)
 
 Item::Item(Item &&it)
   : Vob(it.world), hitem(std::move(it.hitem)),
-    pos(it.pos),amount(it.amount),equipped(it.equipped),itSlot(it.itSlot),visual(std::move(it.visual)) {
+    pos(it.pos),amount(it.amount),equipped(it.equipped),itSlot(it.itSlot),
+    placedZenId(it.placedZenId),placedAllowed(it.placedAllowed),visual(std::move(it.visual)) {
   hitem->user_ptr=this;
   setLocalTransform(it.localTransform());
   physic = std::move(it.physic);
@@ -231,6 +232,8 @@ void Item::setPhysicsDisable() {
   }
 
 bool Item::wakePhysics() {
+  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+    return false;
   const bool missing = !isDynamic();
   if(missing) {
     setPhysicsEnable(world);
@@ -242,7 +245,19 @@ bool Item::wakePhysics() {
   return missing;
   }
 
+bool Item::activatePhysics() {
+  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+    return false;
+  wakePhysics();
+  if(!isDynamic())
+    return false;
+  physic.restorePhysics(transform(),false);
+  return true;
+  }
+
 void Item::setPhysicsEnable(const MeshObjects::Mesh& view) {
+  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+    return;
   if(view.nodesCount()==0)
     return;
   auto& p = *world.physic();
@@ -252,6 +267,8 @@ void Item::setPhysicsEnable(const MeshObjects::Mesh& view) {
   }
 
 void Item::setPhysicsEnable(const ProtoMesh* mesh) {
+  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+    return;
   if(mesh==nullptr)
     return;
   auto& p = *world.physic();

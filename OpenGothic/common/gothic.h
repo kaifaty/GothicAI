@@ -72,6 +72,7 @@ class Gothic final {
       bool meleeParry = true;
       bool meleeParryAi = true;
       bool furnitureParts = true;
+      bool placedItems = true;
 
       bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
         return monsterCharacterVirtual && !down && !flying;

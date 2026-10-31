@@ -37,7 +37,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import signal
 import sys
 import time
 import zipfile
@@ -64,10 +63,14 @@ from .commands import (
     services,
     tools,
 )
-from .linux_session import LinuxSession, installation_lock
 from .settings import CONFIG_DIR, Config, Secrets, Settings
 from .state import STATE_DIR, AlreadyRunning, SessionFile
 from .supervisor import Event, NotReady, Supervisor, temporary
+
+if sys.platform != "win32":
+    from .linux_session import LinuxSession, installation_lock
+else:  # the Ryzen desktop session needs fcntl; Windows runs the Supervisor directly
+    LinuxSession = installation_lock = None
 
 log = logging.getLogger(__name__)
 
@@ -518,10 +521,11 @@ async def serve() -> int:
         sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
         sys.stdout.flush()
 
+    from .cli import on_stop_signals
+
     control = Control(write)
     closing = asyncio.Event()
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        loop.add_signal_handler(sig, closing.set)
+    on_stop_signals(loop, lambda _sig: closing.set())
     requests: set[asyncio.Task[None]] = set()
 
     async def read() -> None:

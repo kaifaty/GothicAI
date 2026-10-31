@@ -28,6 +28,7 @@
 #      BUOYANCY     optional initial GAME buoyancy setting (0 or 1), before world loading
 #      CLOTH        optional initial GAME cloth setting (0 or 1), before world loading
 #      ITEM_WAKE    optional initial GAME item_wake setting (0 or 1), before world loading
+#      PLACED_ITEMS optional initial GAME placed_items setting (0 or 1), before world loading
 #      STATIC_COLLISION_SPLIT optional initial GAME static_collision_split setting (0 or 1), before world loading
 #      CHARACTER_VIRTUAL optional initial GAME character_virtual setting (0 or 1), before world loading
 #      NPC_CHARACTER_VIRTUAL optional initial GAME npc_character_virtual setting (0 or 1)
@@ -164,7 +165,7 @@ fi
 
 # These fixtures use a prepared world and clock; skip the new-game chapter video
 # before their first command on NEWWORLD.
-if [[ "$NAME" == item-wake || "$NAME" == routine-return || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough || "$NAME" == streaming-shots || "$NAME" == furniture-parts || "$NAME" == loadprobe-idle || "$NAME" == loadprobe-chain ]]; then
+if [[ "$NAME" == placed-items* || "$NAME" == item-wake || "$NAME" == routine-return || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough || "$NAME" == streaming-shots || "$NAME" == furniture-parts || "$NAME" == loadprobe-idle || "$NAME" == loadprobe-chain ]]; then
   START_ARGS+=(-nointro)
 fi
 
@@ -228,7 +229,7 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
@@ -313,6 +314,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-
   if [[ -n "${ITEM_WAKE:-}" ]]; then
     [[ "$ITEM_WAKE" == 0 || "$ITEM_WAKE" == 1 ]] || { echo "ITEM_WAKE must be 0 or 1" >&2; exit 2; }
     printf 'item_wake=%s\n' "$ITEM_WAKE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${PLACED_ITEMS:-}" ]]; then
+    [[ "$PLACED_ITEMS" == 0 || "$PLACED_ITEMS" == 1 ]] || { echo "PLACED_ITEMS must be 0 or 1" >&2; exit 2; }
+    printf 'placed_items=%s\n' "$PLACED_ITEMS" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${STATIC_COLLISION_SPLIT:-}" ]]; then
     [[ "$STATIC_COLLISION_SPLIT" == 0 || "$STATIC_COLLISION_SPLIT" == 1 ]] || { echo "STATIC_COLLISION_SPLIT must be 0 or 1" >&2; exit 2; }

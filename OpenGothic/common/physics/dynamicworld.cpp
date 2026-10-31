@@ -1,6 +1,7 @@
 #include "dynamicworld.h"
 
 #include "collisionworld.h"
+#include "collisioncache.h"
 #include "physicmeshshape.h"
 #include "physicvbo.h"
 #include "ragdoll.h"
@@ -10,6 +11,7 @@
 #include "gothic.h"
 #include "arrowtrace.h"
 #include "frameprofile.h"
+#include "basestore.h"
 #include <Tempest/Log>
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
@@ -217,6 +219,7 @@ struct DynamicWorld::ItemTrace {
       result.seconds=float(step-firstStep)/60.f;
       result.stepSeconds=float(result.nativeSteps)/60.f;
       result.beforeStep=beforeStep;
+      result.bodyId=native.nativeId;
       result.position=native.body->position();
       result.centerOfMass=native.body->centerOfMass();
       result.velocity=native.velocity;
@@ -226,13 +229,21 @@ struct DynamicWorld::ItemTrace {
       result.bounds[1]=native.collisionBounds[1];
       constexpr uint32_t mask=(1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_Item)|(1u<<C_Ragdoll)|
                               (1u<<C_LivingBody)|(1u<<C_ActiveBody)|(1u<<C_MovableVob)|(1u<<C_Fragment);
-      for(const auto& contact:world.overlaps(*native.body,2.f,mask)) {
+      for(const auto& contact:world.overlaps(*native.body,2.f,mask,true)) {
         ItemTraceContact entry;
         entry.category=contact.category;
         entry.depth=contact.depth;
         entry.normal=-contact.axis;
         entry.point=contact.point1;
         entry.otherPoint=contact.point2;
+        entry.triangle=contact.triangle.valid;
+        entry.nativeSubShapeId=contact.triangle.nativeSubShapeId;
+        entry.sourceTriangle=contact.triangle.sourceTriangle;
+        entry.triangleNormal=contact.triangle.normal;
+        for(size_t i=0;i<3;++i) {
+          entry.triangleVertices[i]=contact.triangle.vertices[i];
+          entry.triangleEdgesCm[i]=contact.triangle.edgesCm[i];
+          }
         if(contact.body!=nullptr) {
           entry.bodyId=contact.body->nativeId();
           entry.visual=contact.body->label();
@@ -240,6 +251,63 @@ struct DynamicWorld::ItemTrace {
             entry.zenId=static_cast<const BodyData*>(contact.body->payload())->pose->zenId;
           }
         result.contacts.push_back(std::move(entry));
+        }
+      for(const auto& solver:world.takeItemSolverContacts()) {
+        if(solver.itemBodyId!=native.nativeId || solver.nativeStep<firstStep)
+          continue;
+        const auto& contact=solver.contact;
+        ItemTraceContact entry;
+        entry.nativeStep=solver.nativeStep;
+        entry.persisted=solver.persisted;
+        entry.bodyId=solver.bodyId;
+        entry.category=contact.category;
+        entry.depth=contact.depth;
+        entry.normal=-contact.axis;
+        entry.point=contact.point1;
+        entry.otherPoint=contact.point2;
+        entry.triangle=contact.triangle.valid;
+        entry.nativeSubShapeId=contact.triangle.nativeSubShapeId;
+        entry.sourceTriangle=contact.triangle.sourceTriangle;
+        entry.triangleNormal=contact.triangle.normal;
+        for(size_t i=0;i<3;++i) {
+          entry.triangleVertices[i]=contact.triangle.vertices[i];
+          entry.triangleEdgesCm[i]=contact.triangle.edgesCm[i];
+        }
+        if(contact.body!=nullptr) {
+          entry.visual=contact.body->label();
+          if(contact.body->ptrType()==P_MovableVob && contact.body->payload()!=nullptr)
+            entry.zenId=static_cast<const BodyData*>(contact.body->payload())->pose->zenId;
+        }
+        result.solverContacts.push_back(std::move(entry));
+      }
+      for(const auto& sweep:world.takeItemSweepTrace()) {
+        if(sweep.itemBodyId!=native.nativeId || sweep.nativeStep<firstStep)
+          continue;
+        ItemTraceSweep entry;
+        entry.nativeStep=sweep.nativeStep;
+        entry.itemBodyId=sweep.itemBodyId;
+        entry.bodyId=sweep.bodyId;
+        entry.category=sweep.category;
+        entry.tested=sweep.tested;
+        entry.hit=sweep.hit;
+        entry.triggered=sweep.triggered;
+        entry.status=sweep.status;
+        entry.from=sweep.from;
+        entry.to=sweep.to;
+        entry.point=sweep.point;
+        entry.normal=sweep.normal;
+        entry.fraction=sweep.fraction;
+        entry.beforeCm=sweep.beforeCm;
+        entry.afterCm=sweep.afterCm;
+        entry.triangle=sweep.triangle.valid;
+        entry.nativeSubShapeId=sweep.triangle.nativeSubShapeId;
+        entry.sourceTriangle=sweep.triangle.sourceTriangle;
+        entry.triangleNormal=sweep.triangle.normal;
+        for(size_t i=0;i<3;++i) {
+          entry.triangleVertices[i]=sweep.triangle.vertices[i];
+          entry.triangleEdgesCm[i]=sweep.triangle.edgesCm[i];
+          }
+        result.recoverySweeps.push_back(std::move(entry));
         }
       samples.push_back(std::move(result));
       lastStep=step;
@@ -845,11 +913,54 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
         originalClothMesh->addIndex(pkg.indices,sub.iboOffset,sub.iboLength,sub.material.group);
     }
 
+  auto started=std::chrono::steady_clock::now();
+  const auto elapsed=[&]() {
+    const auto now=std::chrono::steady_clock::now();
+    const auto milliseconds=std::chrono::duration<double,std::milli>(now-started).count();
+    started=now;
+    return milliseconds;
+    };
+  std::filesystem::path cacheRoot;
+  CollisionCache::Key key;
+  const auto* cacheEnabled=std::getenv("OPENGOTHIC_COLLISION_CACHE");
+  if(owner!=nullptr && (cacheEnabled==nullptr || std::string_view(cacheEnabled)!="0")) {
+    try {
+      cacheRoot=BaseStore::cacheRoot();
+      }
+    catch(const std::exception&) {
+      // An unavailable derived cache must not prevent building the collision.
+      }
+    const auto inputs=Resources::wayHeightInputs(owner->name());
+    const auto& flags=Gothic::physicsFlags();
+    key={inputs.baseFingerprint,std::filesystem::path(owner->name()).stem().string(),inputs.contentFingerprint,
+         uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)|(uint32_t(splitStaticTriangles)<<2)};
+    }
+  CollisionCache cache(cacheRoot,key);
+  collisionLoadStats.keyMs=elapsed();
+  JPH::ShapeRefC landscapeShape,waterShape;
+  if(!cache.path().empty()) {
+    collisionLoadStats.cacheHit=cache.read(landscapeShape,waterShape);
+    collisionLoadStats.readMs=elapsed();
+    }
+  if(!collisionLoadStats.cacheHit) {
+    landscapeShape=landMesh->shape(splitStaticTriangles);
+    waterShape=waterMesh->shape();
+    collisionLoadStats.buildMs=elapsed();
+    if(!cache.path().empty()) {
+      cache.save(landscapeShape.GetPtr(),waterShape.GetPtr());
+      collisionLoadStats.writeMs=elapsed();
+      }
+    }
+
+  // Cached shapes skip shape(), which normally prepares immutable source data.
+  // Contact listeners may query it concurrently once the bodies are published.
+  landMesh->prepareTriangleData();
+  waterMesh->prepareTriangleData();
   JPH::Vec3 bbox[2] = {JPH::Vec3::sZero(), JPH::Vec3::sZero()};
   Tempest::Matrix4x4 mt;
   mt.identity();
-  if(const auto shape=landMesh->shape(splitStaticTriangles); shape!=nullptr) {
-    bodies->landscape = world->addCollisionBody(shape,mt,materialFriction(asset::MaterialGroup::NONE),
+  if(landscapeShape!=nullptr) {
+    bodies->landscape = world->addCollisionBody(landscapeShape,mt,materialFriction(asset::MaterialGroup::NONE),
                                                C_Landscape,false,false,landMesh.get());
     bodies->landscape->setLabel("landscape");
     JPH::Vec3 min, max;
@@ -858,8 +969,8 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
     bbox[1] = JPH::Vec3::sMax(bbox[1],max);
     }
 
-  if(!waterMesh->isEmpty() && waterMesh->shape()!=nullptr) {
-    bodies->water = world->addCollisionBody(waterMesh->shape(),mt,0,C_Water,false,true,waterMesh.get());
+  if(waterShape!=nullptr) {
+    bodies->water = world->addCollisionBody(waterShape,mt,0,C_Water,false,true,waterMesh.get());
     JPH::Vec3 min, max;
     bodies->water->getAabb(min,max);
     bbox[0] = JPH::Vec3::sMin(bbox[0],min);
@@ -1282,6 +1393,116 @@ DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, co
   // Dynamic bodies already use LinearCast, including the smallest items.
   obj->body->setNoiseProfile(impactMaterial(mat),mat,"item");
   return Item(this,obj.release());
+  }
+
+std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
+    const std::vector<PlacedItemCandidate>& candidates) const {
+  constexpr float supportLimitCm = 4.f, penetrationLimitCm = 2.f;
+  constexpr uint32_t mask = (1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_MovableVob)|(1u<<C_Item);
+  std::vector<PlacedItemCensusEntry> result(candidates.size());
+  std::vector<bool> groundBelow(candidates.size(),true);
+  std::unordered_map<const CollisionWorld::CollisionBody*,size_t> identities;
+  for(size_t i=0;i<candidates.size();++i) {
+    const auto* handle = candidates[i].body;
+    if(handle!=nullptr && handle->obj!=nullptr && handle->obj->body!=nullptr)
+      identities.emplace(handle->obj->body.get(),i);
+    }
+  for(size_t i=0;i<candidates.size();++i) {
+    const auto* handle = candidates[i].body;
+    if(handle==nullptr || handle->obj==nullptr || handle->obj->body==nullptr)
+      continue;
+    const auto& body = *handle->obj->body;
+    JPH::Vec3 min, max;
+    body.getAabb(min,max);
+    const auto hullMin = CollisionWorld::toCentimeters(min);
+    const auto hullMax = CollisionWorld::toCentimeters(max);
+    const float height = std::max(hullMax.y-hullMin.y,1.f);
+    auto& entry = result[i];
+    const CollisionWorld::CollisionBody* support = nullptr;
+    for(const auto& hit:world->overlaps(body,supportLimitCm,mask)) {
+      const auto other = identities.find(hit.body);
+      if(hit.category==C_Item && other==identities.end())
+        continue;
+      // A downward contact near the bottom of the actual collision envelope
+      // is support. Convert normal separation to its vertical distance.
+      if(hit.axis.y<=-.6f && hit.point1.y<=hullMin.y+.3f*height) {
+        const float gap = std::max(0.f,hit.depth/hit.axis.y);
+        if(gap<entry.supportGapCm) {
+          entry.supportGapCm = gap;
+          entry.supportCategory = hit.category;
+          entry.supportNormal = hit.axis;
+          entry.supportLabel = hit.body!=nullptr ? hit.body->label() : "";
+          entry.supportZenId = hit.body!=nullptr && hit.body->ptrType()==P_MovableVob ?
+              static_cast<const BodyData*>(hit.body->payload())->pose->zenId : uint32_t(-1);
+          entry.supportItemIndex = other!=identities.end() ? other->second : size_t(-1);
+          support = hit.body;
+          }
+        }
+      if(hit.category==C_Landscape || hit.category==C_Object)
+        entry.staticDepthCm = std::max(entry.staticDepthCm,hit.depth);
+      else if(hit.category==C_MovableVob)
+        entry.furnitureDepthCm = std::max(entry.furnitureDepthCm,hit.depth);
+      else if(hit.category==C_Item) {
+        entry.itemDepthCm = std::max(entry.itemDepthCm,hit.depth);
+        // Keep the pair symmetric even if the native narrow phase reports
+        // its deepest contact from only one side.
+        auto& neighbour = result[other->second];
+        neighbour.itemDepthCm = std::max(neighbour.itemDepthCm,hit.depth);
+        }
+      }
+    entry.hullLowPointCm = body.lowestPoint();
+    if(entry.supportCategory==C_Landscape || entry.supportCategory==C_Object) {
+      const auto from = entry.hullLowPointCm+Tempest::Vec3(0,supportLimitCm,0);
+      const auto to = entry.hullLowPointCm-Tempest::Vec3(0,supportLimitCm,0);
+      const auto face = world->rayCast(from,to,(1u<<C_Landscape)|(1u<<C_Object));
+      if(face.hasHit) {
+        entry.supportFaceNormal = face.normal;
+        entry.supportSlopeDeg = std::acos(std::clamp(face.normal.y,-1.f,1.f))*180.f/float(M_PI);
+        }
+      }
+    if(entry.supportCategory==C_Object || entry.supportCategory==C_MovableVob) {
+      const auto from = body.centerOfMass();
+      const auto to = Tempest::Vec3(from.x,entry.hullLowPointCm.y-500.f,from.z);
+      const std::vector<const CollisionWorld::CollisionBody*> excluded = {support};
+      groundBelow[i] = world->rayCast(from,to,(1u<<C_Landscape)|(1u<<C_Object),false,nullptr,&excluded).hasHit;
+      }
+    }
+  for(size_t i=0;i<candidates.size();++i) {
+    auto& entry = result[i];
+    entry.disposition = candidates[i].mission ? "quest" : entry.supportGapCm>supportLimitCm ? "hangs" :
+                        entry.staticDepthCm>penetrationLimitCm ? "static" : entry.furnitureDepthCm>penetrationLimitCm ? "furniture" :
+                        entry.itemDepthCm>penetrationLimitCm ? "neighbour" : "ok";
+    if(entry.disposition=="ok" && (entry.supportCategory==C_Landscape || entry.supportCategory==C_Object)) {
+      constexpr std::string_view rootedPrefix = "ITPL_";
+      const auto visual = candidates[i].visual;
+      const bool rooted = visual.size()>=rootedPrefix.size() &&
+          std::equal(rootedPrefix.begin(),rootedPrefix.end(),visual.begin(),[](char upper,char value) {
+            return upper==char(std::toupper(static_cast<unsigned char>(value)));
+            });
+      if(rooted)
+        entry.disposition = "rooted";
+      else if(entry.supportSlopeDeg>15.f)
+        entry.disposition = "slope";
+      else if(!std::isfinite(entry.supportSlopeDeg))
+        entry.disposition = "irregular";
+      }
+    if(entry.disposition=="ok" && !groundBelow[i])
+      entry.disposition = "no_ground";
+    entry.enabled = entry.disposition=="ok";
+    }
+  // A rejected supporting Item has no collision body after the census. Follow
+  // that dependency through whole stacks, independent of their array order.
+  bool changed = true;
+  while(changed) {
+    changed = false;
+    for(auto& entry:result)
+      if(entry.enabled && entry.supportItemIndex!=size_t(-1) && !result[entry.supportItemIndex].enabled) {
+        entry.disposition = "on_excluded";
+        entry.enabled = false;
+        changed = true;
+        }
+    }
+  return result;
   }
 
 DynamicWorld::Item DynamicWorld::addMovableVob(const ProtoMesh& proto, std::string_view visual,
@@ -2656,6 +2877,7 @@ bool DynamicWorld::startItemTrace(const ::Item& item) {
   trace->item=&item;
   trace->firstStep=trace->lastStep=world->simulationStep();
   if(!trace->sample(*world,false))return false;
+  world->setItemTraceTarget(&item);
   itemTrace=std::move(trace);
   return true;
   }
@@ -2669,6 +2891,7 @@ std::vector<DynamicWorld::ItemTraceSample> DynamicWorld::takeItemTrace() {
 
 void DynamicWorld::stopItemTrace() {
   if(itemTrace)itemTrace->enabled=false;
+  world->setItemTraceTarget(nullptr);
   }
 
 void DynamicWorld::configureMeleeBench(int substeps) { world->configureMeleeBench(substeps); }
