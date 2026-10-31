@@ -6985,6 +6985,113 @@ void placedItemsProbe(World& world,Npc& player) {
   state.probing=true;placedItemsNextBatch(world,player);
 }
 
+void placedItemsDiagnose(World& world,Npc& player,uint32_t zenId,bool control) {
+  auto& state=bench.placedItems;
+  const auto& all=world.placedItemCensus();
+  const auto target=std::find_if(all.begin(),all.end(),[&](const auto& row){return row.zenId==zenId;});
+  if(target==all.end() || !target->item || !target->validation.enabled) {
+    arenaAbort("placed Item diagnosis requires an admitted ZEN-ID");return;
+  }
+  const size_t targetIndex=size_t(target-all.begin());
+  const auto cell=[](const Vec3& at) {
+    return std::tuple(int(std::floor(at.x/1200.f)),int(std::floor(at.y/1200.f)),int(std::floor(at.z/1200.f)));
+  };
+  const auto targetCell=cell(movablePosition(target->origin));
+  state.batches.assign(1,{});state.batch=0;
+  for(size_t i=0;i<all.size();++i)
+    if(all[i].validation.enabled && cell(movablePosition(all[i].origin))==targetCell)
+      state.batches[0].push_back(i);
+  for(uint32_t i=0;i<world.npcCount();++i)if(auto* npc=world.npcById(i);npc && npc!=&player) {
+    npc->clearAiQueue();npc->clearGoTo();npc->stopWalking();npc->clearSpeed();npc->setExternalControl(true);
+  }
+  placedItemsNextBatch(world,player);
+  if(!target->item->isDynamic())return;
+  size_t removedItems=0,removedFurniture=0;
+  if(control) {
+    for(size_t i=0;i<all.size();++i)if(i!=targetIndex && all[i].item) {
+      removedItems+=all[i].item->isDynamic();
+      all[i].item->setPhysicsDisable();
+      auto matrix=all[i].origin;matrix.translate(0,-100000.f,0);
+      all[i].item->setObjMatrix(matrix);
+    }
+    for(const auto& body:world.physic()->movableVobSnapshot())if(body.enabled) {
+      auto matrix=body.transform;matrix.translate(0,-100000.f,0);
+      if(!world.physic()->setMovableVobTransform(body.zenId,matrix)) {
+        arenaAbort("placed Item diagnosis cannot remove furniture collision");return;
+      }
+      ++removedFurniture;
+    }
+  }
+  if(!world.physic()->startItemTrace(*target->item)) {
+    arenaAbort("placed Item diagnosis cannot start native trace");return;
+  }
+  const auto firstStep=world.physic()->simulationStep();
+  float maximum=0;
+  // Less than one fixed-step duration prevents two native steps from being
+  // hidden between trace samples, independently of the accumulator's phase.
+  while(world.physic()->simulationStep()-firstStep<300) {
+    world.physic()->tick(16);
+    maximum=std::max(maximum,(target->item->position()-movablePosition(target->origin)).length());
+  }
+  world.physic()->stopItemTrace();
+  const auto samples=world.physic()->takeItemTrace();
+  std::ofstream file(outDir+"/placed-items-diagnose.jsonl");
+  if(!file) {arenaAbort("cannot write placed Item diagnosis trace");return;}
+  const auto triangle=[](const auto& hit) {
+    return "\"triangle\":"+std::string(hit.triangle?"true":"false")+
+      ",\"native_subshape_id\":"+std::to_string(hit.nativeSubShapeId)+
+      ",\"source_triangle\":"+std::to_string(hit.sourceTriangle)+
+      ",\"triangle_normal\":"+ragdollVector(hit.triangleNormal)+
+      ",\"triangle_vertices_cm\":["+ragdollVector(hit.triangleVertices[0])+','+
+        ragdollVector(hit.triangleVertices[1])+','+ragdollVector(hit.triangleVertices[2])+']'+
+      ",\"triangle_edges_cm\":["+ragdollNumber(hit.triangleEdgesCm[0])+','+
+        ragdollNumber(hit.triangleEdgesCm[1])+','+ragdollNumber(hit.triangleEdgesCm[2])+']';
+  };
+  uint64_t previous=firstStep,maximumGap=0;
+  size_t triggers=0,tested=0;
+  for(const auto& sample:samples) {
+    maximumGap=std::max(maximumGap,sample.nativeStep-previous);previous=sample.nativeStep;
+    std::string contacts="[",sweeps="[";
+    for(const auto& contact:sample.contacts) {
+      if(contacts.size()>1)contacts+=',';
+      contacts+="{\"body_id\":"+std::to_string(contact.bodyId)+",\"zen_id\":"+std::to_string(contact.zenId)+
+        ",\"category\":"+std::to_string(contact.category)+",\"visual\":"+jsonStr(contact.visual)+
+        ",\"depth_cm\":"+ragdollNumber(contact.depth)+",\"normal\":"+ragdollVector(contact.normal)+
+        ",\"point_cm\":"+ragdollVector(contact.point)+",\"other_point_cm\":"+ragdollVector(contact.otherPoint)+','+triangle(contact)+'}';
+    }
+    for(const auto& sweep:sample.recoverySweeps) {
+      if(sweeps.size()>1)sweeps+=',';
+      tested+=sweep.tested;triggers+=sweep.triggered;
+      sweeps+="{\"native_step\":"+std::to_string(sweep.nativeStep)+",\"item_body_id\":"+std::to_string(sweep.itemBodyId)+
+        ",\"body_id\":"+std::to_string(sweep.bodyId)+",\"category\":"+std::to_string(sweep.category)+
+        ",\"tested\":"+(sweep.tested?"true":"false")+",\"hit\":"+(sweep.hit?"true":"false")+
+        ",\"triggered\":"+(sweep.triggered?"true":"false")+",\"status\":"+jsonStr(sweep.status)+
+        ",\"from_cm\":"+ragdollVector(sweep.from)+",\"to_cm\":"+ragdollVector(sweep.to)+
+        ",\"point_cm\":"+ragdollVector(sweep.point)+",\"normal\":"+ragdollVector(sweep.normal)+
+        ",\"fraction\":"+ragdollNumber(sweep.fraction)+",\"before_cm\":"+ragdollNumber(sweep.beforeCm)+
+        ",\"after_cm\":"+ragdollNumber(sweep.afterCm)+','+triangle(sweep)+'}';
+    }
+    file<<"{\"world\":"+jsonStr(world.name())+",\"zen_id\":"+std::to_string(zenId)+
+      ",\"control\":"+(control?"true":"false")+",\"step\":"+std::to_string(sample.nativeStep)+
+      ",\"index\":"+std::to_string(sample.index)+",\"native_steps\":"+std::to_string(sample.nativeSteps)+
+      ",\"before_step\":"+(sample.beforeStep?"true":"false")+",\"seconds\":"+ragdollNumber(sample.seconds)+
+      ",\"body_id\":"+std::to_string(sample.bodyId)+",\"position_cm\":"+ragdollVector(sample.position)+
+      ",\"com_cm\":"+ragdollVector(sample.centerOfMass)+",\"velocity_cm_s\":"+ragdollVector(sample.velocity)+
+      ",\"bounds_min_cm\":"+ragdollVector(sample.bounds[0])+",\"bounds_max_cm\":"+ragdollVector(sample.bounds[1])+
+      ",\"active\":"+(sample.active?"true":"false")+",\"sleeping\":"+(sample.sleeping?"true":"false")+
+      ",\"contacts\":"+contacts+"],\"recovery_sweeps\":"+sweeps+"]}\n";
+  }
+  const auto steps=world.physic()->simulationStep()-firstStep;
+  event("placed_items_diagnose",placedItemRow(world,*target)+",\"control\":"+(control?"true":"false")+
+    ",\"section_items\":"+std::to_string(state.batches[0].size())+",\"removed_item_bodies\":"+std::to_string(removedItems)+
+    ",\"removed_furniture\":"+std::to_string(removedFurniture)+",\"native_steps\":"+std::to_string(steps)+
+    ",\"samples\":"+std::to_string(samples.size())+",\"maximum_native_step_gap\":"+std::to_string(maximumGap)+
+    ",\"max_shift_cm\":"+ragdollNumber(maximum)+",\"final_shift_cm\":"+
+    ragdollNumber((target->item->position()-movablePosition(target->origin)).length())+
+    ",\"recovery_rays_tested\":"+std::to_string(tested)+",\"recovery_triggers\":"+std::to_string(triggers)+
+    ",\"trace_complete\":"+(!samples.empty() && maximumGap<=1 && steps>=300?"true":"false"));
+}
+
 void placedItemsFields(World& world,Npc& player,PlayerControl& ctrl) {
   auto& state=bench.placedItems;
   if(state.probing) {
@@ -13607,6 +13714,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="placed-items" && a.size()==2 && a[1]=="pickup-report")placedItemsPickupReport(w,pl);
   else if(c=="placed-items" && a.size()==2 && a[1]=="census")placedItemsCensus(w);
   else if(c=="placed-items" && a.size()==2 && a[1]=="probe")placedItemsProbe(w,pl);
+  else if(c=="placed-items" && (a.size()==3 || (a.size()==4 && a[3]=="control")) && a[1]=="diagnose")
+    placedItemsDiagnose(w,pl,uint32_t(std::stoul(a[2])),a.size()==4);
   else if(c=="placed-items" && a.size()==2 && a[1]=="performance")placedItemsPerformance(w,pl);
   else if(c=="placed-items" && a.size()==2 && a[1]=="performance-report")placedItemsPerformanceReport(w);
   else if(c=="item-hulls" && a.size()==2 && a[1]=="census")itemHullCensus(w);

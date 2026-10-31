@@ -217,6 +217,7 @@ struct DynamicWorld::ItemTrace {
       result.seconds=float(step-firstStep)/60.f;
       result.stepSeconds=float(result.nativeSteps)/60.f;
       result.beforeStep=beforeStep;
+      result.bodyId=native.nativeId;
       result.position=native.body->position();
       result.centerOfMass=native.body->centerOfMass();
       result.velocity=native.velocity;
@@ -226,13 +227,21 @@ struct DynamicWorld::ItemTrace {
       result.bounds[1]=native.collisionBounds[1];
       constexpr uint32_t mask=(1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_Item)|(1u<<C_Ragdoll)|
                               (1u<<C_LivingBody)|(1u<<C_ActiveBody)|(1u<<C_MovableVob)|(1u<<C_Fragment);
-      for(const auto& contact:world.overlaps(*native.body,2.f,mask)) {
+      for(const auto& contact:world.overlaps(*native.body,2.f,mask,true)) {
         ItemTraceContact entry;
         entry.category=contact.category;
         entry.depth=contact.depth;
         entry.normal=-contact.axis;
         entry.point=contact.point1;
         entry.otherPoint=contact.point2;
+        entry.triangle=contact.triangle.valid;
+        entry.nativeSubShapeId=contact.triangle.nativeSubShapeId;
+        entry.sourceTriangle=contact.triangle.sourceTriangle;
+        entry.triangleNormal=contact.triangle.normal;
+        for(size_t i=0;i<3;++i) {
+          entry.triangleVertices[i]=contact.triangle.vertices[i];
+          entry.triangleEdgesCm[i]=contact.triangle.edgesCm[i];
+          }
         if(contact.body!=nullptr) {
           entry.bodyId=contact.body->nativeId();
           entry.visual=contact.body->label();
@@ -240,6 +249,35 @@ struct DynamicWorld::ItemTrace {
             entry.zenId=static_cast<const BodyData*>(contact.body->payload())->pose->zenId;
           }
         result.contacts.push_back(std::move(entry));
+        }
+      for(const auto& sweep:world.takeItemSweepTrace()) {
+        if(sweep.itemBodyId!=native.nativeId || sweep.nativeStep<firstStep)
+          continue;
+        ItemTraceSweep entry;
+        entry.nativeStep=sweep.nativeStep;
+        entry.itemBodyId=sweep.itemBodyId;
+        entry.bodyId=sweep.bodyId;
+        entry.category=sweep.category;
+        entry.tested=sweep.tested;
+        entry.hit=sweep.hit;
+        entry.triggered=sweep.triggered;
+        entry.status=sweep.status;
+        entry.from=sweep.from;
+        entry.to=sweep.to;
+        entry.point=sweep.point;
+        entry.normal=sweep.normal;
+        entry.fraction=sweep.fraction;
+        entry.beforeCm=sweep.beforeCm;
+        entry.afterCm=sweep.afterCm;
+        entry.triangle=sweep.triangle.valid;
+        entry.nativeSubShapeId=sweep.triangle.nativeSubShapeId;
+        entry.sourceTriangle=sweep.triangle.sourceTriangle;
+        entry.triangleNormal=sweep.triangle.normal;
+        for(size_t i=0;i<3;++i) {
+          entry.triangleVertices[i]=sweep.triangle.vertices[i];
+          entry.triangleEdgesCm[i]=sweep.triangle.edgesCm[i];
+          }
+        result.recoverySweeps.push_back(std::move(entry));
         }
       samples.push_back(std::move(result));
       lastStep=step;
@@ -1363,6 +1401,8 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
         entry.disposition = "rooted";
       else if(entry.supportSlopeDeg>15.f)
         entry.disposition = "slope";
+      else if(!std::isfinite(entry.supportSlopeDeg))
+        entry.disposition = "irregular";
       }
     entry.enabled = entry.disposition=="ok";
     }
@@ -2753,6 +2793,7 @@ bool DynamicWorld::startItemTrace(const ::Item& item) {
   trace->item=&item;
   trace->firstStep=trace->lastStep=world->simulationStep();
   if(!trace->sample(*world,false))return false;
+  world->setItemTraceTarget(&item);
   itemTrace=std::move(trace);
   return true;
   }
@@ -2766,6 +2807,7 @@ std::vector<DynamicWorld::ItemTraceSample> DynamicWorld::takeItemTrace() {
 
 void DynamicWorld::stopItemTrace() {
   if(itemTrace)itemTrace->enabled=false;
+  world->setItemTraceTarget(nullptr);
   }
 
 void DynamicWorld::configureMeleeBench(int substeps) { world->configureMeleeBench(substeps); }

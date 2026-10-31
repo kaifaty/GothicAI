@@ -206,6 +206,35 @@ void asymmetricLowestPoint() {
           "rotated asymmetric support must use its lowest edge centroid rather than its bounds center");
   }
 
+void irregularSupport() {
+  Resources resources;
+  constexpr const char* visual = "CONTRACT_PLACED_IRREGULAR.MRM";
+  ProtoMesh proto(PackedMesh(box({20,20,20}),PackedMesh::PK_Visual),visual);
+  ProtoMesh ledge(PackedMesh(box({10,10,100},true),PackedMesh::PK_Visual),"CONTRACT_PLACED_LEDGE.MRM");
+  Bounds bounds;
+  bounds.assign(proto.bboxMesh);
+  DynamicWorld world(nullptr,asset::WorldMesh{});
+  // The ledge supports the right side of the bottom hull. The ray through
+  // that hull's actual lowest-face centroid misses the ledge at x=5..15 cm.
+  auto support = world.addStaticObj(ledge.attach[0].shape.get(),at(10,-5),"CONTRACT_PLACED_LEDGE.MRM");
+  require(!support.isEmpty(),"irregular support fixture must install its static ledge");
+  std::vector<DynamicWorld::Item> bodies;
+  bodies.reserve(3);
+  for(const auto& origin:{at(0,11),at(0,33),at(0,55)}) {
+    bodies.push_back(world.addDynamicObj(origin,bounds,asset::MaterialGroup::WOOD,&proto,visual,true));
+    bodies.back().restorePhysics(origin,true);
+    }
+  const auto result = world.placedItemCensus({{&bodies[2],false,visual},
+    {&bodies[1],false,visual},{&bodies[0],false,visual}});
+  require(result[2].supportCategory==DynamicWorld::C_Object && result[2].supportGapCm<=4.f &&
+          !std::isfinite(result[2].supportSlopeDeg),
+          "irregular support must retain a valid overlap but no static face below its true lowest point");
+  require(result[2].disposition=="irregular",
+          "a missing static support-face ray must exclude an otherwise admitted item as irregular");
+  require(result[1].disposition=="on_excluded" && result[0].disposition=="on_excluded",
+          "an irregular support must exclude the entire Item support chain to a fixed point");
+  }
+
 }
 
 int main() {
@@ -214,6 +243,7 @@ int main() {
     rootedAndStack();
     slopes();
     asymmetricLowestPoint();
+    irregularSupport();
     std::puts("Placed item census contracts passed");
     return EXIT_SUCCESS;
     }

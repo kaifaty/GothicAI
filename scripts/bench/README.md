@@ -839,7 +839,8 @@ adds classification time, admitted gap buckets (0–1, 1–2, 2–4 cm) and the 
 After the original geometric reasons, `rooted` excludes `ItPl_*` on landscape or
 `C_Object`; `slope` excludes static supports steeper than 15°. Its normal comes
 from a downward ray at the collision shape's lowest point, rather than the
-nearest overlap contact. `on_excluded` propagates rejected Item supports through
+nearest overlap contact. `irregular` rejects static support when this ray misses
+a face; it follows `slope` and precedes `on_excluded`. `on_excluded` propagates rejected Item supports through
 whole stacks. Plants on furniture or admitted Items use the ordinary rules.
 `placed-items-probe.jsonl` records maximum and final travel
 for every admitted Item. The reader requires at least 95% of the combined sample
@@ -852,6 +853,13 @@ Pass the previous four run directories with `--previous-runs` to include the
 new facet-slope distributions of their >10 cm outliers, alongside admitted Items,
 in 5° bins. A missing facet normal is counted separately. Recovery messages name
 the ZEN-ID whenever the recovered Item has an authored link.
+
+`placed-items diagnose <ZEN-ID> [control]` advances that Item's original 12 m
+section for 300 native steps and writes `placed-items-diagnose.jsonl`. Each step
+records center, velocity, nearby native contacts, triangle indices, normals and
+edge lengths, plus the recovery ray result. `control` removes other Items and
+movable furniture while retaining landscape and static objects. The command
+requires an admitted Item and uses `tick(16)` to prevent batched native steps.
 
 `PLACED_ITEMS=0` selects the existing body-creation paths. `[GAME] placed_items`
 defaults to 1; Marvin `toggle placed_items` changes it during play. The census is

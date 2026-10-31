@@ -528,13 +528,29 @@ class DynamicWorld final {
       std::string visual;
       float depth = 0; // centimetres; positive means penetration
       Tempest::Vec3 normal, point, otherPoint; // normal moves the Item out
+      bool triangle = false;
+      uint32_t nativeSubShapeId = uint32_t(-1), sourceTriangle = uint32_t(-1);
+      Tempest::Vec3 triangleNormal, triangleVertices[3];
+      float triangleEdgesCm[3] = {};
+      };
+    struct ItemTraceSweep {
+      uint64_t nativeStep = 0;
+      uint32_t itemBodyId = uint32_t(-1), bodyId = uint32_t(-1);
+      uint32_t nativeSubShapeId = uint32_t(-1), sourceTriangle = uint32_t(-1);
+      int category = C_Null;
+      bool tested = false, hit = false, triggered = false, triangle = false;
+      std::string status;
+      Tempest::Vec3 from, to, point, normal, triangleNormal, triangleVertices[3];
+      float fraction = 1.f, beforeCm = 0, afterCm = 0, triangleEdgesCm[3] = {};
       };
     struct ItemTraceSample {
       uint64_t nativeStep = 0, nativeSteps = 0, index = 0;
+      uint32_t bodyId = uint32_t(-1);
       float seconds = 0, stepSeconds = 0;
       bool beforeStep = true, active = false, sleeping = true;
       Tempest::Vec3 position, centerOfMass, velocity, bounds[2]; // cm and cm/s
       std::vector<ItemTraceContact> contacts;
+      std::vector<ItemTraceSweep> recoverySweeps;
       };
     // Opt-in benchmark diagnostics at the ordinary native tick boundaries.
     // nativeSteps reports batching; a per-step scenario must keep it <= 1.
