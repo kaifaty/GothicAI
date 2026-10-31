@@ -227,6 +227,7 @@ class Resources final {
                                                         std::u16string_view hostPath = {});
 
     static std::filesystem::path      worldBaseDir(std::string_view world);
+    static std::filesystem::path      contentDir();
     static std::filesystem::path      worldOverrideDir(std::string_view world);
     struct WayHeightInputs {
       std::string baseFingerprint;
