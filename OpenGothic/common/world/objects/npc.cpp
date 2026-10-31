@@ -1548,10 +1548,8 @@ void Npc::cacheMeleeShadowWindows(const Animation::Sequence* seq, float length, 
   for(const auto& event:data.events)
     if(event.type==asset::MdsEventType::OPTIMAL_FRAME)
       for(const auto frame:event.frames) {
-        // The same clamp as Sequence::processEvents, including truncated MAN ranges.
-        const auto clamped = frame<int32_t(data.firstFrame) ? 0u :
-                             (int64_t(frame)>=int64_t(data.firstFrame)+data.numFrames ? data.numFrames-1 :
-                              (frame>int32_t(data.lastFrame) ? data.lastFrame-data.firstFrame : uint32_t(frame)-data.firstFrame));
+        // The same frame as Sequence::processEvents, including truncated MAN ranges.
+        const auto clamped = data.optimalFrame(frame);
         optimal.push_back(seq->reverse ? data.numFrames-1-clamped : clamped);
         }
   std::sort(optimal.begin(),optimal.end());

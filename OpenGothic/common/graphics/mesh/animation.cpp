@@ -425,7 +425,7 @@ void Animation::Sequence::processEvents(uint64_t barrier, uint64_t sTime, uint64
   for(auto& e:d.events) {
     if(e.type == asset::MdsEventType::OPTIMAL_FRAME) {
       for(auto i:e.frames) {
-        uint64_t fr = frameClamp(i,d.firstFrame,d.numFrames,d.lastFrame);
+        uint64_t fr = d.optimalFrame(i);
         if((frameA<=fr && fr<frameB) ^ invert)
           processEvent(e,ev,uint64_t(float(fr)*1000.f/fpsRate)+sTime);
         }
@@ -607,6 +607,16 @@ void Animation::AnimData::setupMoveTr() {
     translate.y = samples[0].position.y;
     translate.z = samples[0].position.z;
     }
+  }
+
+uint32_t Animation::AnimData::optimalFrame(int32_t frame) const {
+  // A side swing cut from the middle of a shared ASC counts its fight tags from its own first frame, as the
+  // hit end and the combo window are read: t_1hAttackR is frames 21..40 of the file whose 1..19 are
+  // t_1hAttackL and carries L's tags. A tag before the first frame is such a count; read as a frame of the
+  // file it clamped to 0, and the blow fell at the start of the backswing.
+  if(frame<int32_t(firstFrame))
+    frame += int32_t(firstFrame)-1;
+  return uint32_t(frameClamp(frame,firstFrame,numFrames,lastFrame));
   }
 
 void Animation::AnimData::setupEvents(float fpsRate) {
