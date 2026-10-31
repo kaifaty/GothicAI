@@ -4,7 +4,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST="${MELEE_BALANCE_HOST:-ryzen}"
-TASK="gothic-ai/melee-balance"
+# Sessions running matrices at once give each its own folder: a sync while another builds mixes their code.
+TASK="${MELEE_BALANCE_TASK:-gothic-ai/melee-balance}"
 ACTION=all
 EPISODES=64
 SEED=100000
@@ -24,6 +25,7 @@ Usage: scripts/melee-balance-remote.sh [all|sync|build|run|report] [options]
 Default series: native-vanilla-1h,native-posture-on-1h,native-vanilla-2h,
 native-posture-on-2h,p30-vanilla-1h,p30-posture-on-1h.
 MELEE_BALANCE_HOST selects the SSH alias (default: ryzen).
+MELEE_BALANCE_TASK selects the Ryzen folder of sources and build (default: gothic-ai/melee-balance).
 MELEE_BALANCE_PYTHON selects a remote Python with torch (default: body/.venv).
 MELEE_POSTURE_SCALE multiplies the knockdown threshold in every series (sweeps).
 MELEE_DOWN_TACTICS sets GAME melee_down_tactics in every series (0 or 1).
