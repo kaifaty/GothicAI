@@ -71,6 +71,9 @@ void MtBuffer::updateAsync(const void* data, size_t off, size_t size) {
 
 void MtDevice::uploadBuffer(MTL::Buffer& target, const void* data, size_t off, size_t size, bool wait) {
   auto pool = NsPtr<NS::AutoreleasePool>::init();
+  // Metal can wait for a free command-buffer slot; completion handlers need
+  // bufferUploadSync to retire previous uploads while that wait is in progress.
+  auto cmd = queue->commandBuffer();
   constexpr size_t maxStagingBytes = 128u*1024u*1024u;
   std::unique_lock<std::mutex> guard(bufferUploadSync);
   // Retire the oldest copies before allocating more staging. A single buffer
@@ -87,7 +90,6 @@ void MtDevice::uploadBuffer(MTL::Buffer& target, const void* data, size_t off, s
 
   // Retained references keep both buffers alive after the staging owner exits.
   // Consuming draws commit later on this same queue and see the completed copy.
-  auto cmd = queue->commandBuffer();
   auto enc = cmd->blitCommandEncoder();
   enc->copyFromBuffer(stage.get(),0, &target,off, size);
   enc->endEncoding();
