@@ -239,6 +239,58 @@ def episode_metrics(folder: Path, episode: dict, shared: dict, variant: str) -> 
             missing(f"fighters.{role}.mean_stamina_fraction", "No stamina snapshots with a positive stamina_max"))
         own.update(stamina)
 
+    parry_phases = ("parry", "guard", "guard_break", "parade_whiff", "stun_start", "stun_end", "stun_refused")
+    parry_available = any(roles(row.get("actor")) in ROLES and row.get("phase") in parry_phases for row in events)
+    defence = [row for row in events if row.get("phase") == "defence_result" and roles(row.get("actor")) in ROLES]
+    parade_schema = not defence or any("parade_ms" in row for row in defence)
+    for role in ROLES:
+        own = result["fighters"][role]
+        own["parade_ms"] = ([row["parade_ms"] for row in defence if roles(row.get("actor")) == role and
+                             row.get("blocked") is True and row.get("parade_ms") is not None] if parade_schema else
+                            missing(f"fighters.{role}.parade_ms", "Parade timing absent from defence journal"))
+        parry = {"parries": 0, "guards": 0, "guard_breaks": 0, "parade_whiffs": 0, "guard_stamina_spent": 0,
+                 "stuns": 0, "stuns_parried": 0, "stuns_guard_break": 0, "stunned_time_s": 0, "stun_refusal_spells": 0}
+        if not parry_available:
+            for key in parry:
+                parry[key] = missing(f"fighters.{role}.{key}", "No parry, guard or stun events; melee_parry may be disabled")
+            own.update(parry)
+            continue
+        stunned_since = None
+        stunned_ms = 0
+        refusing = False
+        for row in events:
+            if roles(row.get("actor")) != role:
+                continue
+            phase = row.get("phase")
+            if phase in ("parry", "guard", "guard_break", "parade_whiff"):
+                key = {"parry": "parries", "guard": "guards", "guard_break": "guard_breaks",
+                       "parade_whiff": "parade_whiffs"}[phase]
+                parry[key] += 1
+                if phase == "guard":
+                    parry["guard_stamina_spent"] += row["cost"]
+            elif phase == "stun_start":
+                parry["stuns"] += 1
+                parry["stuns_"+row["reason"]] += 1
+                if stunned_since is None:
+                    stunned_since = row["t_game"]
+                refusing = False
+            elif phase == "stun_end":
+                if stunned_since is not None:
+                    stunned_ms += max(0, row["t_game"]-stunned_since)
+                    stunned_since = None
+                refusing = False
+            elif phase == "stun_refused":
+                parry["stun_refusal_spells"] += int(not refusing)
+                refusing = True
+        parry["stunned_time_s"] = stunned_ms/1000
+        if stunned_since is not None:
+            stun_end = end if end is not None else start+duration*1000 if start is not None and duration is not None else None
+            if stun_end is None:
+                parry["stunned_time_s"] = missing(f"fighters.{role}.stunned_time_s", "Episode end time unavailable for open stun")
+            else:
+                parry["stunned_time_s"] += max(0, stun_end-stunned_since)/1000
+        own.update(parry)
+
     def rows_for(name):
         local = journal(folder, name)
         # A final in-flight window may flush on the next reset, after the local
@@ -382,6 +434,21 @@ def aggregate(variant: str, provider: str, weapon: str, episodes: list[dict]) ->
             return None
         return numerator/denominator
 
+    def parade_distribution(groups, prefix):
+        samples = [value for group in groups for value in group] if all(group is not None for group in groups) else None
+        distribution = {"count": len(samples) if samples is not None else None}
+        for quantile in (10, 25, 50, 75, 90):
+            key = f"p{quantile}"
+            distribution[key] = percentile(samples or [], quantile/100)
+        for window in (120, 185, 250):
+            key = f"fraction_lt_{window}"
+            distribution[key] = divide(sum(value < window for value in samples) if samples is not None else None,
+                                       len(samples) if samples is not None else None, prefix+"."+key)
+        for key, value in distribution.items():
+            if value is None:
+                unavailable[prefix+"."+key] = "Parade timing unavailable in one or more episodes or no timed blocked contacts"
+        return distribution
+
     count = len(episodes)
     durations = [row["duration_s"] for row in episodes]
     timed = all(value is not None for value in durations)
@@ -401,7 +468,8 @@ def aggregate(variant: str, provider: str, weapon: str, episodes: list[dict]) ->
     counts = ("swings_started", "damaging_hits", "blocks", "misses", "damage", "overhead_started", "overhead_hits",
               "prone_hits", "prone_damage", "knockdowns", "repeat_knockdowns_within_10s_after_getup", "down_time_s",
               "stamina_spent", "attack_stamina_spends", "jumpback_stamina_spends", "stamina_refusal_spells",
-              "exhaustions", "exhausted_time_s")
+              "exhaustions", "exhausted_time_s", "parries", "guards", "guard_breaks", "parade_whiffs",
+              "guard_stamina_spent", "stuns", "stuns_parried", "stuns_guard_break", "stunned_time_s", "stun_refusal_spells")
     for role in ROLES:
         own = {key: total([row["fighters"][role][key] for row in episodes], f"fighters.{role}.{key}") for key in counts}
         own["per_duel"] = {key: divide(own[key], count, f"fighters.{role}.per_duel.{key}") for key in counts}
@@ -409,8 +477,12 @@ def aggregate(variant: str, provider: str, weapon: str, episodes: list[dict]) ->
                 ("damage_per_hit", own["damage"], own["damaging_hits"]), ("damage_per_s", own["damage"], seconds),
                 ("prone_damage_fraction", own["prone_damage"], own["damage"]),
                 ("down_time_fraction", own["down_time_s"], seconds),
-                ("exhausted_time_fraction", own["exhausted_time_s"], seconds)):
+                ("exhausted_time_fraction", own["exhausted_time_s"], seconds),
+                ("stunned_time_fraction", own["stunned_time_s"], seconds),
+                ("parry_fraction", own["parries"], total([own["parries"], own["guards"]], f"fighters.{role}.parry_fraction"))):
             own[key] = divide(numerator, denominator, f"fighters.{role}.{key}")
+        own["parade_ms"] = parade_distribution([row["fighters"][role]["parade_ms"] for row in episodes],
+                                               f"fighters.{role}.parade_ms")
         key = f"fighters.{role}.mean_stamina_fraction"
         own["mean_stamina_fraction"] = divide(total([row["fighters"][role]["mean_stamina_fraction"]
                                                     for row in episodes], key), count, key)
@@ -425,8 +497,12 @@ def aggregate(variant: str, provider: str, weapon: str, episodes: list[dict]) ->
             ("damage_per_hit", combined["damage"], combined["damaging_hits"]),
             ("damage_per_s", combined["damage"], seconds),
             ("prone_damage_fraction", combined["prone_damage"], combined["damage"]),
-            ("exhausted_time_fraction", combined["exhausted_time_s"], seconds)):
+            ("exhausted_time_fraction", combined["exhausted_time_s"], seconds),
+            ("stunned_time_fraction", combined["stunned_time_s"], seconds),
+            ("parry_fraction", combined["parries"], total([combined["parries"], combined["guards"]], "combat.parry_fraction"))):
         combined[key] = divide(numerator, denominator, "combat."+key)
+    combined["parade_ms"] = parade_distribution([row["fighters"][role]["parade_ms"] for row in episodes for role in ROLES],
+                                                "combat.parade_ms")
     combined["mean_stamina_fraction"] = divide(total([result["fighters"][role]["mean_stamina_fraction"]
                                                      for role in ROLES], "combat.mean_stamina_fraction"),
                                                len(ROLES), "combat.mean_stamina_fraction")
@@ -491,13 +567,17 @@ def markdown(series: list[dict]) -> str:
         for key in ("swings_started", "damaging_hits", "blocks", "misses", "damage", "knockdowns",
                     "repeat_knockdowns_within_10s_after_getup", "prone_hits", "prone_damage", "overhead_started", "overhead_hits",
                     "stamina_spent", "attack_stamina_spends", "jumpback_stamina_spends", "stamina_refusal_spells",
-                    "exhaustions", "exhausted_time_s"):
+                    "exhaustions", "exhausted_time_s", "parries", "guards", "guard_breaks", "parade_whiffs",
+                    "guard_stamina_spent", "stuns", "stuns_parried", "stuns_guard_break", "stunned_time_s", "stun_refusal_spells"):
             lines.append(f"| {key} | {fmt(row['combat'][key])} | {fmt(row['combat']['per_duel'][key])} | "
                          f"{fmt(row['fighters']['primary']['per_duel'][key])} | {fmt(row['fighters']['opponent']['per_duel'][key])} |")
         for key in ("hit_fraction", "damage_per_hit", "damage_per_s", "prone_damage_fraction",
-                    "exhausted_time_fraction", "mean_stamina_fraction"):
+                    "exhausted_time_fraction", "mean_stamina_fraction", "parry_fraction", "stunned_time_fraction"):
             lines.append(f"| {key} | — | {fmt(row['combat'][key])} | {fmt(row['fighters']['primary'][key])} | "
                          f"{fmt(row['fighters']['opponent'][key])} |")
+        for key in ("count", "p10", "p25", "p50", "p75", "p90", "fraction_lt_120", "fraction_lt_185", "fraction_lt_250"):
+            lines.append(f"| parade_ms.{key} | — | {fmt(row['combat']['parade_ms'][key])} | "
+                         f"{fmt(row['fighters']['primary']['parade_ms'][key])} | {fmt(row['fighters']['opponent']['parade_ms'][key])} |")
         lines.append(f"| down_time_fraction | — | — | {fmt(row['fighters']['primary']['down_time_fraction'])} | "
                      f"{fmt(row['fighters']['opponent']['down_time_fraction'])} |")
         lines.extend(["", "Blade windows classified by the target's posture at swing start:", "",
@@ -549,6 +629,14 @@ def main() -> int:
                   "exhausted_time_s": "Time from stamina_exhausted until stamina_recovered or duel end, in game seconds",
                   "exhausted_time_fraction": "Summed exhausted fighter seconds divided by summed duel duration; both fighters together can exceed 1",
                   "mean_stamina_fraction": "Mean snapshot stamina/stamina_max; aggregates average episode means per fighter, then average both fighters",
+                  "parries": "Parry, guard, guard_break and parade_whiff events count outcomes for the defending actor; unavailable without parry/guard/stun events",
+                  "guard_stamina_spent": "Sum of guard costs only; excludes parry, guard_break and parade_whiff costs",
+                  "parry_fraction": "Parries divided by parries plus guards",
+                  "stuns": "Count of stun_start events for the stunned actor, split by parried and guard_break reasons",
+                  "stunned_time_s": "Time from stun_start until stun_end or duel end, in game seconds; overlapping starts do not double count time",
+                  "stunned_time_fraction": "Summed stunned fighter seconds divided by summed duel duration; both fighters together can exceed 1",
+                  "stun_refusal_spells": "One fighter's consecutive stun_refused events within a stun count as one spell; stun_start and stun_end reset the series",
+                  "parade_ms": "Known non-null timings of blocked defence_result contacts, independent of melee_parry; aggregate quantiles pool samples with linear interpolation at (n-1)*p, fractions use strictly less than 120/185/250 ms",
                   "swings_by_target_posture": "Unique blade windows classified at game_time_ms: lying from knockdown inclusive to getup_start exclusive; rising until recover/cancel exclusive; hits require a physical result=hit on the intended arena opponent",
                   "overhead_swings": "Finish-animation blade windows for every target posture; independent of legacy animation-hook overhead_started/overhead_hits counts",
                   "overhead_start_distance_cm": "fightDistanceTo at blade-window creation when recorded; older logs fall back to distance between captured root positions; sample method is retained, percentiles use all known distances",
