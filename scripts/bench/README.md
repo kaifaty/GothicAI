@@ -829,7 +829,9 @@ WORLD=NEWWORLD.ZEN PLACED_ITEMS=1 RYZEN_CLEAN_IDLE_HOURS=0 \
   RYZEN_LOCK_WAIT=1200 TIMEOUT=3600 RYZEN_MAX=75m \
   scripts/bench.sh placed-items-census "$PWD/.bench/placed-items-NEWWORLD"
 # Repeat with OLDWORLD.ZEN, ADDONWORLD.ZEN and DRAGONISLAND.ZEN.
-python3 scripts/placed_items_report.py .bench/placed-items-{NEWWORLD,OLDWORLD,ADDONWORLD,DRAGONISLAND}
+python3 scripts/placed_items_report.py \
+  .bench/placed-items-{NEWWORLD,OLDWORLD,ADDONWORLD,DRAGONISLAND} \
+  --known-exceptions reports/physics/2026-10-31-placed-items/known-exceptions.csv
 ```
 
 `placed-items-census.jsonl` records each ZEN-ID, original pose, instance, visual,
@@ -857,6 +859,11 @@ Pass the previous four run directories with `--previous-runs` to include the
 new facet-slope distributions of their >10 cm outliers, alongside admitted Items,
 in 5° bins. A missing facet normal is counted separately. Recovery messages name
 the ZEN-ID whenever the recovered Item has an authored link.
+`--known-exceptions` reads `world,zen_id,reason` CSV rows and prints those Items
+separately. They still count toward the 95% fraction, but are omitted from the
+maximum-travel and recovery gates. Raw maximum/recovery totals remain visible
+beside `gate_max_shift_cm` and `gate_recovered`. The agreed file contains exactly
+NEWWORLD 18261, OLDWORLD 1644 and ADDONWORLD 6863; every other excess still fails.
 
 `placed-items diagnose <ZEN-ID> [control]` advances that Item's original 12 m
 section for 300 native steps and writes `placed-items-diagnose.jsonl`. Each step
@@ -912,9 +919,10 @@ Compare complete NEWWORLD loading time using the median of three runs per mode.
 [Recorded results](../../reports/physics/2026-10-31-placed-items/README.md): after
 the 2 cm penetration limit and `no_ground`, the four-world probe reached
 636/660 (96.363636%) below 5 cm, maximum 123.417038 cm and two recoveries.
-The two swords still have only about 1 cm initial penetration and remain
-admitted. Validation stopped for a decision; functional/save/performance
-checks remain gated on a passing probe.
+The three agreed exceptions preserve that fraction and raw evidence; with the
+CSV the reader passes, with a gated maximum of 74.7259445 cm and zero other
+recoveries. The two swords remain admitted; their thin-body support crossing
+will be investigated separately.
 
 `OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
