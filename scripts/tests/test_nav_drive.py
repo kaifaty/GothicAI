@@ -390,9 +390,21 @@ def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
     assert report["minimum_water_distance_cm"] == 250 and report["minimum_water_distance_censored"] is False
     assert report["path_to_teacher_ratio"] is None
     assert report["follow_band_fraction"] == pytest.approx(11/12)
+    assert report['follow_mean_distance_m'] == pytest.approx(2.45)
     assert (root / "timeline.png").read_bytes().startswith(b"\x89PNG")
     probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(root / "topdown.mp4")], capture_output=True, text=True, check=True)
     assert float(json.loads(probe.stdout)["format"]["duration"]) == pytest.approx(.6, abs=.051)
+    (root / 'target-trajectory.txt').write_text('0 0 0 0 100\n200 0 0 0 300\n1000 0 0 0 900\n1200 0 0 0 9999\n')
+    protected = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in root.iterdir() if path.name != 'summary.json'}
+    refreshed = live.refresh_follow_summary(root)
+    assert refreshed['follow_mean_distance_m'] == pytest.approx(11/3)
+    assert {key: value for key, value in refreshed.items() if key not in ('follow_mean_distance_m', 'metric_sources')} == {
+        key: value for key, value in report.items() if key not in ('follow_mean_distance_m', 'metric_sources')}
+    assert {key: value for key, value in refreshed['metric_sources'].items() if key != 'follow_mean_distance'} == {
+        key: value for key, value in report['metric_sources'].items() if key != 'follow_mean_distance'}
+    assert all((path.read_bytes(), path.stat().st_mtime_ns) == value for path, value in protected.items())
+    summary_time = (root / 'summary.json').stat().st_mtime_ns
+    assert live.refresh_follow_summary(root) == refreshed and (root / 'summary.json').stat().st_mtime_ns == summary_time
     observations = root / "live-observations.bin.gz"
     with gzip.open(observations, "rb") as stream:
         truncated = stream.read()[:-1]
@@ -730,16 +742,23 @@ def test_live_qualification_keeps_place_failures_and_never_runs_learners(tmp_pat
                                  input_sha256=live_args.input_sha256)
     added = []
 
-    def learner(args, case, model, seed, directory, teacher=None):
-        added.append((case['id'], model['name'], seed))
+    def learner(args, case, model, seed, directory, teacher=None, recorded=True):
+        if not directory.is_relative_to(output / 'smoke'):
+            added.append((case['id'], model['name'], seed))
         live.write_json(directory / 'episode.json', dict(success=True, elapsed_ms=1000, decisions=10))
-        live.write_json(directory / 'summary.json', dict(schema=1))
-        live.write_json(directory / 'identity.json', dict(actual=live.actual_inputs(args, case, model, seed)))
+        summary = dict(schema=1)
+        if case['number'] == 3:
+            index = live.ACTION_SEEDS.index(seed)
+            summary.update(follow_band_fraction=(.2, .9, .6)[index], follow_mean_distance_m=(20, 2, 6)[index],
+                           standing_seconds=(50, 2, 10)[index])
+        live.write_json(directory / 'summary.json', summary)
+        live.write_json(directory / 'identity.json', dict(actual=live.actual_inputs(args, case, model, seed, recorded)))
         for name in ('source.mp4', 'topdown.mp4', 'timeline.png', 'actions.txt', 'trajectory.txt',
                      'live-format.json', 'live-decisions.jsonl', 'live-observations.bin.gz'):
             (directory / name).write_bytes(b'fixture')
         if model['name'] == 'bc4':
-            assert teacher == live.teacher_directory(args, next(case for case in final_cases if case['number'] == 10))
+            base_id = case['id'].rsplit('-', 1)[0] if case['number'] == 10 else case['id']
+            assert teacher == live.teacher_directory(args, next(row for row in live.suite_cases(live.read_json(args.suite)) if row['id'] == base_id))
 
     for case, model, seed in planned[:36]:
         learner(final_args, case, model, seed, live.run_directory(output, case, model, seed))
@@ -758,6 +777,44 @@ def test_live_qualification_keeps_place_failures_and_never_runs_learners(tmp_pat
     assert marker['completed'] == marker['expected'] == 54
     assert marker['reused_runs'] == 36 and marker['newly_completed_runs'] == len(added) == 18
     assert len(marker['excluded_placements']) == 3 and all(path.read_bytes() == data for path, data in ready.items())
+    extended = json.loads(json.dumps(final))
+    extended['scenarios'][2].update(teacher_qualification_required=False, bc4_compare=True)
+    extended['scenarios'][3]['bc4_compare'] = True
+    follow = extended['scenarios'][2]
+    reference = live.teacher_directory(final_args, follow)
+    live.write_json(reference / 'episode.json', dict(success=False, failure='tracking_failed', goal_kind='follow',
+                                                    elapsed_ms=90000, decisions=900))
+    live.write_json(reference / 'summary.json', dict(schema=1, deep_water_entries=0, falls=0,
+        follow_band_fraction=.282457, follow_mean_distance_m=14.954769, standing_seconds=20))
+    follow_outcome = next(row for row in extended['teacher_qualification']['placements'] if row['id'] == identifiers[2])
+    follow_outcome.update(passed=False, elapsed_ms=90000, decisions=900)
+    assert len(list(live.runs(live.eligible_cases(extended, live.suite_cases(extended)), policies, bc4))) == 63
+    next(row for row in extended['teacher_qualification']['placements'] if row['id'] == identifiers[3])['passed'] = True
+    extended_suite = tmp_path / 'extended-suite.json'
+    live.write_json(extended_suite, extended)
+    live.write_json(output / 'qualified-suite.json', extended)
+    assert len(list(live.runs(live.eligible_cases(extended, live.suite_cases(extended)), policies, bc4))) == 72
+    ready = {path: path.read_bytes() for case, model, seed in planned
+             for path in live.run_directory(output, case, model, seed).iterdir()}
+    added.clear()
+    teacher_checks = []
+    with monkeypatch.context() as extension:
+        extension.setattr(live, 'models', lambda *unused: (policies, bc4))
+        extension.setattr(live, 'run_episode', learner)
+        extension.setattr(live, 'teachers', lambda args, cases: teacher_checks.extend(case['id'] for case in cases) or [])
+        assert live.main(['baseline', '--suite', str(extended_suite), '--output', str(output),
+                          '--runtime', str(runtime), '--weights', args.weights]) == 0
+    marker = live.read_json(output / 'complete.json')
+    assert marker['completed'] == marker['expected'] == 72
+    assert marker['reused_runs'] == 54 and marker['newly_completed_runs'] == len(added) == 18
+    assert sum(model == 'bc4' for identifier, model, seed in added) == 6
+    assert identifiers[2] not in teacher_checks and not marker['full_suite_qualified']
+    assert all(path.read_bytes() == data for path, data in ready.items())
+    row = next(line for line in (output / 'README.md').read_text().splitlines() if '| 3. ' in line)
+    assert 'unqualified teacher reference' in row and '28.2457%' in row and '14.954769m' in row
+    assert 'median [18102029' in row and 'worst [18102027' in row
+    final_suite = extended_suite
+    gate = live.read_json(output / 'smoke.json')
     for name in ('base-cache', '.venv', 'uv-cache', 'navmesh-cache', 'requalification-worker'):
         (runtime / name).mkdir(exist_ok=True)
     source = runtime / 'source/snapshot/phase.sh'
@@ -818,3 +875,157 @@ def test_live_qualification_resumes_partial_probes_and_rejects_blocked_capsule(t
     probe = dict(detour_complete=True, route_sample_count=2, route_deep_water_samples=0,
                  route_no_floor_samples=0, start_support=dict(support, capsule_clear=False), goal_support=support)
     assert not prepare.supported_route(probe)
+
+
+def test_live_extension_checks_budget_and_compares_follow_with_a_safe_counter(tmp_path, monkeypatch, capsys):
+    import time
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    import nav_live as live
+    import nav_live_prepare as prepare
+    import nav_live_render as render
+
+    monkeypatch.setenv('GOTHIC_DIR', str(tmp_path))
+    output, runtime = tmp_path / 'round', tmp_path / 'runtime'
+    inputs = {}
+    for name in ('save', 'roads', 'familiar', 'links'):
+        path = tmp_path / 'input' / name
+        live.write_json(path, {})
+        inputs[name] = str(path)
+    binaries = []
+    for content in ('old game', 'new game'):
+        source = runtime / 'extension-binaries' / content / 'Gothic2Notr'
+        source.parent.mkdir(parents=True)
+        source.write_text(content)
+        digest = live.sha256(source)
+        pin = runtime / 'binaries' / digest / source.name
+        pin.parent.mkdir(parents=True)
+        pin.write_bytes(source.read_bytes())
+        binaries.append(dict(path=str(pin), sha256=digest))
+    rescued = runtime / 'extension-binaries'
+    (rescued / 'gothic-body-runner').write_text('native runner')
+    (rescued / 'navmesh-cache').mkdir()
+    (rescued / 'navmesh-cache/world.navmesh').write_text('accepted mesh')
+    identifiers = ['01-maleth-fence', '02-routine-return', '03-follow-hero', '04-visible-detour',
+                   '05-wall-pocket', '06-harbour-water', '07-cliff-trail', '08-market-crowd',
+                   '09-door-stairs', '10-local-stranger']
+    scenarios = [dict(id=identifier, number=number, name=f'Scene {number}', npc='NPC',
+        start=f'START{number}', goal=f'GOAL{number}', goal_kind='point', time=[10, 0], limit_ms=90000,
+        training_eligible=False, split='validation', source='fixture', qualification_evidence=dict(checked=True),
+        evaluation_binary=binaries[0] if number in (1, 2, 5, 6, 7, 8) else binaries[1])
+        for number, identifier in enumerate(identifiers, 1)]
+    scenarios[1]['variants'] = [dict(id=name, seeds=[seed]) for name, seed in
+                               zip(('forest-tree', 'farm-edge', 'forest-pine'), live.ACTION_SEEDS)]
+    scenarios[2].update(goal_kind='follow', target='PC_HERO', live_target='player-walk',
+        route=['ROUTE0', 'ROUTE1', 'ROUTE2', 'ROUTE3'],
+        target_route_evidence=dict(complete=True, legs=[dict(supported_route=True)] * 4),
+        qualification_rejection=dict(reason='old teacher failed'))
+    scenarios[3].update(npc='NONE_100_XARDAS', goal_kind='object')
+    scenarios[8]['variants'] = [dict(id='door'), dict(id='stairs', qualification_rejection=dict(reason='No indoor ascent'))]
+    native_root = output / 'qualification/previous'
+    frozen = dict(schema_version=1, training_eligible=False, seeds=live.ACTION_SEEDS,
+        inputs=inputs, scenarios=scenarios, evaluation_binary=binaries[1], qualification_source=str(native_root),
+        semantic_confirmation_required=[identifiers[2], identifiers[3]],
+        unresolved_geometry=[dict(id=identifiers[2], reason='old teacher failed')], qualified_suite_sha256='stale')
+    actual_args = SimpleNamespace(binary=Path(binaries[1]['path']), output=output,
+        input_sha256={name: live.sha256(path) for name, path in inputs.items()})
+    outcomes = []
+    for case in live.suite_cases(frozen):
+        passed = case['number'] not in (3, 4) and not case['id'].endswith('-stairs')
+        directory = live.teacher_directory(actual_args, case)
+        live.write_json(directory / 'episode.json', dict(success=passed, elapsed_ms=180000, decisions=1800,
+            goal_kind=case['goal_kind'], failure=None if passed else 'timeout'))
+        live.write_json(directory / 'summary.json', dict(schema=1, deep_water_entries=0, falls=0,
+                                                       minimum_edge_distance_cm=200))
+        live.write_json(directory / 'identity.json', dict(actual=live.actual_inputs(actual_args, case, None, case['seeds'][0])))
+        outcomes.append(dict(id=case['id'], passed=passed, elapsed_ms=180000, decisions=1800,
+            falls=0, deep_water_entries=0, output=str(directory)))
+    frozen['teacher_qualification'] = dict(complete=False, binary_sha256=binaries[1]['sha256'], placements=outcomes)
+    live.write_json(output / 'qualified-suite.json', frozen)
+    current = json.loads(json.dumps(frozen))
+    current['scenarios'][2].update(teacher_qualification_required=False, bc4_compare=True)
+    current['scenarios'][3].update(name='Visible fixed obstacle', bc4_compare=True)
+    suite = tmp_path / 'suite.json'
+    live.write_json(suite, current)
+    for pin in binaries:
+        Path(pin['path']).unlink()
+    live.write_json(output / 'runtime.json', dict(wall_seconds=5000))
+    args = SimpleNamespace(suite=suite, output=output, runtime=runtime, weights='HD,it35')
+    monkeypatch.setattr(live, 'phase_deadline', lambda: time.monotonic() + 2700)
+    assert prepare.extend(args) == 2
+    budget = json.loads(capsys.readouterr().out)
+    assert budget['needed_seconds'] == 2800 and budget['deficit_seconds'] > 0
+    assert not any(Path(pin['path']).exists() for pin in binaries)
+    monkeypatch.setattr(live, 'phase_deadline', lambda: time.monotonic() + 3300)
+    monkeypatch.setattr(live, 'check_space', lambda unused: 0)
+    monkeypatch.setattr(live, 'raw_complete', lambda directory, *unused: (directory / 'episode.json').is_file())
+    monkeypatch.setattr(live, 'processed', lambda directory: (directory / 'summary.json').is_file())
+    support = dict(supported=True, dry=True, capsule_clear=True, ground_known=True, ground_snap_cm=0, height_delta_cm=0)
+    validation, probes = [], []
+    for index in range(121):
+        identifier = f'detour-{index:03d}'
+        validation.append(dict(id=identifier, split='validation', start=f'cm:{1000 + index},750,0',
+            goal='cm:0,800,0', goal_kind='object', target_type='house',
+            obstacle_type='wall_or_fence' if index == 2 else 'unknown'))
+        probes.append(dict(label='rock-' + identifier, npc='NONE_100_XARDAS',
+            start=validation[-1]['start'], goal=validation[-1]['goal'], goal_visible=index < 79,
+            direct_obstruction=dict(hit=True, label='COUNTER' if index == 0 else 'HOUSEWALL', point_cm=[100, 840, 0]),
+            direct_sensor=dict(hit=True, kind='static_vob', point_cm=[100, 840, 0]), detour_complete=True,
+            detour_length_cm=1500, route_sample_count=2, route_no_floor_samples=0, route_deep_water_samples=0,
+            start_support=support, goal_support=dict(support, height_delta_cm=-50)))
+    (tmp_path / 'input/detour-val.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in validation))
+    native_file = native_root / 'native/group/live-probes.jsonl'
+    native_file.parent.mkdir(parents=True)
+    native_file.write_text(''.join(json.dumps(row) + '\n' for row in probes))
+    live.write_json(native_root / 'rock-sectors/candidate-order.json', [row['id'] for row in validation])
+    (native_root / 'rock-sectors/physics-results.jsonl').write_text(''.join(json.dumps(
+        dict(kind='ray', id=index, sector='ARMORY')) + '\n' for index in range(121)))
+    monkeypatch.setattr(prepare, 'test_pairs', lambda unused: set())
+    worker_args, point_queries, teacher_calls, baseline_calls = [], [], [], []
+
+    def worker(options, *unused):
+        worker_args.append(options)
+        return SimpleNamespace(close=lambda: None)
+
+    def native(worker, cases, *unused):
+        point_queries.extend(cases)
+        return {case['probe_label']: dict(file='new-start.jsonl', probe=dict(probes[0],
+            start_support=support, goal_support=support, route_min_edge_clearance_cm=200)) for case in cases}
+
+    def teacher(options, case, model, seed, directory):
+        assert model is None
+        teacher_calls.append(case)
+        live.write_json(directory / 'episode.json', dict(success=True, elapsed_ms=1000, decisions=10, failure=None))
+        live.write_json(directory / 'summary.json', dict(schema=1, deep_water_entries=0, falls=0, minimum_edge_distance_cm=100))
+        live.write_json(directory / 'identity.json', dict(actual=live.actual_inputs(options, case, model, seed)))
+
+    def refresh(directory):
+        summary = dict(live.read_json(directory / 'summary.json'), follow_mean_distance_m=42)
+        live.write_json(directory / 'summary.json', summary)
+        return summary
+
+    monkeypatch.setattr(prepare, 'Worker', worker)
+    monkeypatch.setattr(prepare, 'probe_groups', native)
+    monkeypatch.setattr(live, 'run_episode', teacher)
+    monkeypatch.setattr(render, 'refresh_follow_summary', refresh)
+    monkeypatch.setattr(live, 'main', lambda argv: baseline_calls.append(argv) or 0)
+    before = {path: path.read_bytes() for path in (output / 'teacher').rglob('identity.json')}
+    assert prepare.extend(args) == 0
+    assert len(worker_args) == 1 and worker_args[0].watchdog_seconds == 120
+    assert len(point_queries) == len(teacher_calls) == 1
+    assert point_queries[0]['start'] == point_queries[0]['goal'] == validation[0]['start']
+    assert teacher_calls[0]['source']['id'] == validation[0]['id'] and teacher_calls[0]['limit_ms'] == 90000
+    assert teacher_calls[0]['goal'] == validation[0]['goal'] and teacher_calls[0]['name'] == 'Visible fixed obstacle'
+    assert all(path.read_bytes() == contents for path, contents in before.items())
+    assert len(baseline_calls) == 1 and baseline_calls[0][0] == 'baseline' and '--shard' not in baseline_calls[0]
+    checked = live.read_json(output / 'qualified-suite.json')
+    assert checked['scenarios'][2]['teacher_qualification_required'] is False
+    assert checked['scenarios'][2]['bc4_compare'] and checked['scenarios'][3]['bc4_compare']
+    assert 'qualification_rejection' not in checked['scenarios'][2]
+    assert not checked['full_suite_qualified'] and not checked['teacher_qualification']['complete']
+    assert checked['semantic_confirmation_required'] == [] and 'qualified_suite_sha256' not in checked
+    extension = next((output / 'extension').iterdir())
+    assert live.read_json(extension / 'suite.json') == checked
+    result = live.read_json(extension / 'result.json')
+    assert result['validation_candidates'] == 121 and result['visible_goals'] == 79
+    assert result['static_candidates'] == 1 and result['selected_static'] == validation[0]['id']

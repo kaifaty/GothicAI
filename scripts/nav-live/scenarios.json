@@ -115,7 +115,7 @@
         0
       ],
       "limit_ms": 180000,
-      "source": "New fixed market and narrow-street route; user-approved walk-only hero at100cm/s with2s pauses/turns, no running; horizon180s for the same route at half the prior walking speed; threshold remains80% in2-5m band; IMMORTAL prevents external damage; previous teacher4.566/89.967s in-band,862 start_not_found decisions",
+      "source": "Fixed market and narrow-street route; hero100cm/s, horizon180s, pauses/turns unchanged; HD,it35,BC4 each3seeds are included by user authorization even though v3b reference is unqualified (28.245734% in2-5m band,14.954769m mean distance,90s standing); pass threshold remains80%",
       "prepare_commands": [
         "immortal player on"
       ],
@@ -125,15 +125,13 @@
         18102028,
         18102029
       ],
-      "qualification_rejection": {
-        "reason": "Teacher follow fraction0.282457339 is below the unchanged0.8 threshold over180s; user decision pending",
-        "diagnostic_reference": "/mnt/shared/gothic-ai/nav-live/baseline/teacher/03-follow-hero-recheck-1c9a1fde8d40-a2964efaf4f4"
-      }
+      "teacher_qualification_required": false,
+      "bc4_compare": true
     },
     {
       "id": "04-visible-detour",
       "number": 4,
-      "name": "Visible target beyond terrain",
+      "name": "Visible target beyond a static obstacle",
       "training_eligible": false,
       "split": "validation",
       "npc": "NONE_100_XARDAS",
@@ -144,29 +142,20 @@
         12,
         0
       ],
-      "limit_ms": 180000,
+      "limit_ms": 90000,
       "source": {
         "dataset": "detour-val",
         "file": "/mnt/shared/gothic-ai/nav-demos-v5/input/detour-val.jsonl",
-        "selection": "Positive native ROCK/FELS/CLIFF sector witness, visible target, complete supported Detour; highest Detour/direct first; teacher success,0falls,minimum edge>=100cm; at most3 teacher candidates; no test routes"
+        "selection": "User-approved visible-target pair with a positive static obstruction excluding house walls/fences; exact authored validation start/goal; teacher success,zero falls,edge>=100cm; HD,it35,BC4 each3seeds",
+        "previous_rejection": "0ROCK/FELS/CLIFF confirmations among121; rock requirement removed by user"
       },
       "stranger": false,
       "qualification_rejection": {
-        "reason": "no confirmed rock candidate passed the bounded safe teacher check",
-        "native_facts": "/mnt/shared/gothic-ai/nav-live/baseline/qualification/recheck-1c9a1fde8d40-a2964efaf4f4",
-        "candidates_probed": 121,
-        "typed_rock_metadata": 0,
-        "confirmed_rock_sectors": 0,
-        "supported_routes": 93,
-        "visible_goals": 79,
-        "supported_visible_rock_candidates": 0,
-        "rejection_counts": {
-          "unconfirmed_rock_semantics": 121,
-          "unsupported_routes": 28,
-          "invisible_goals": 42
-        },
-        "teacher_attempts": []
-      }
+        "reason": "Visible static-obstacle replacement awaits bounded teacher qualification; rock type no longer required",
+        "previous_native_facts": "/mnt/shared/gothic-ai/nav-live/baseline/qualification/recheck-1c9a1fde8d40-a2964efaf4f4",
+        "visible_goals": 79
+      },
+      "bc4_compare": true
     },
     {
       "id": "05-wall-pocket",

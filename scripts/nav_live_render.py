@@ -163,6 +163,52 @@ def _entries(values) -> int:
     return sum(bool(value) and (i == 0 or not bool(values[i-1])) for i, value in enumerate(values))
 
 
+def follow_mean_distance(directory: Path, episode: dict, decisions: list[dict] | None = None):
+    """Whole-run left-sample mean, preferring recorded physical distances."""
+    elapsed = float(episode["elapsed_ms"])
+    if elapsed <= 0:
+        return None, "zero-length follow run"
+    target = directory / "target-trajectory.txt"
+    if target.is_file():
+        recorded = np.loadtxt(target, ndmin=2)
+        if recorded.shape[1] < 5:
+            raise ValueError("Invalid follow target trajectory columns")
+        times, distances = recorded[:, 0], recorded[:, 4]
+        source = "target-trajectory.txt column 5 (physical 3D distance_cm)"
+    else:
+        if decisions is None:
+            decisions = json_rows(directory / "live-decisions.jsonl")
+        times = np.array([row["elapsed_ms"] for row in decisions], dtype=float)
+        distances = np.array([np.linalg.norm(np.asarray(row["goal_cm"])-row["position_cm"]) for row in decisions])
+        source = "live-decisions.jsonl 3D goal_cm minus position_cm"
+    if (not len(times) or times[0] != 0 or times[-1] > elapsed
+            or not np.isfinite(times).all() or not np.isfinite(distances).all()
+            or (np.diff(times) <= 0).any() or (distances < 0).any()):
+        raise ValueError("Invalid whole-run follow distance samples")
+    durations = np.diff(np.r_[times, elapsed])
+    mean = float(np.dot(distances, durations) / elapsed / 100)
+    return mean, source + "; left-sample time weighting over whole elapsed run, including initial gap and final sample-to-end interval"
+
+
+def refresh_follow_summary(directory) -> dict:
+    """Add only the follow mean/source to a summary; retain all recording files."""
+    directory = Path(directory)
+    episode = read_json(directory / "episode.json")
+    summary = read_json(directory / "summary.json")
+    if episode.get("goal_kind") != "follow":
+        return summary
+    mean, source = follow_mean_distance(directory, episode)
+    if (summary.get("follow_mean_distance_m") == mean
+            and summary.get("metric_sources", {}).get("follow_mean_distance") == source):
+        return summary
+    summary["follow_mean_distance_m"] = mean
+    summary.setdefault("metric_sources", {})["follow_mean_distance"] = source
+    temporary = directory / "summary.tmp.json"
+    temporary.write_text(json.dumps(summary, indent=2, allow_nan=False)+"\n", encoding="utf-8")
+    temporary.replace(directory / "summary.json")
+    return summary
+
+
 def summarize(directory: Path, metadata: dict, decisions: list[dict], teacher_directory: Path | None = None, scenario: dict | None = None) -> dict:
     episode = read_json(directory / "episode.json")
     elapsed_ms = int(episode["elapsed_ms"])
@@ -201,6 +247,7 @@ def summarize(directory: Path, metadata: dict, decisions: list[dict], teacher_di
     # Measure the entire follow window, including first contact and pauses.
     distances = np.array([np.linalg.norm(np.asarray(row["goal_cm"])-row["position_cm"]) for row in decisions])
     in_band = (distances >= 200) & (distances <= 500)
+    mean_distance, mean_source = follow_mean_distance(directory, episode, decisions) if following else (None, "null outside follow runs")
     summary = {
         "schema": 1, "success": bool(episode["success"]), "elapsed_seconds": elapsed_ms / 1000,
         "path_length_m": travelled / 100, "teacher_path_length_m": None if teacher_length is None else teacher_length / 100,
@@ -216,6 +263,7 @@ def summarize(directory: Path, metadata: dict, decisions: list[dict], teacher_di
         "minimum_observed_edge_distance_cm": minimum("observed_edge_distance_cm"),
         "minimum_observed_water_distance_cm": minimum("observed_water_distance_cm"),
         "follow_band_fraction": float(dt[in_band].sum() / dt.sum()) if following and dt.sum() else None,
+        "follow_mean_distance_m": mean_distance,
         "decision_count": len(decisions), "thresholds": THRESHOLDS,
         "metric_sources": {
             "path_length": "episode.travel_cm or recorded trajectory (3D)",
@@ -224,6 +272,7 @@ def summarize(directory: Path, metadata: dict, decisions: list[dict], teacher_di
             "deep_water_and_falls": "physical perception-safety frames; null when absent",
             "minimum_distances": "minimum sampled native radial probe clearance; censor=true means >=probe radius; null when unavailable; probe geometry/resolution in clearance_probe",
             "follow_band": "whole elapsed run, including initial gap and target pauses; 3D goal distance",
+            "follow_mean_distance": mean_source,
         },
         "trace_sha256": {name: file_hash(directory / name) for name in RAW_FILES},
     }

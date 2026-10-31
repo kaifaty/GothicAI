@@ -12,14 +12,14 @@ while [[ $# -gt 0 ]]; do
     --round) round="${2:?round required}"; shift 2 ;;
     --stage) stage="${2:?stage required}"; shift 2 ;;
     -h|--help)
-      echo 'Usage: scripts/nav-live.sh --weights PATH[,PATH] --round LABEL [--stage prepare|qualify|requalify|teacher|smoke|baseline|report|clean]'
+      echo 'Usage: scripts/nav-live.sh --weights PATH[,PATH] --round LABEL [--stage prepare|qualify|requalify|extend|teacher|smoke|baseline|report|clean]'
       echo 'Each invocation submits its phase and exits. Default: prepare, qualify, then baseline after its gate is complete.'
       exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 [[ -n "$weights" && "$round" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo 'Weights and a safe round label are required' >&2; exit 2; }
-case "$stage" in auto|prepare|qualify|requalify|teacher|smoke|baseline|report|clean) ;; *) echo "Unknown stage: $stage" >&2; exit 2 ;; esac
+case "$stage" in auto|prepare|qualify|requalify|extend|teacher|smoke|baseline|report|clean) ;; *) echo "Unknown stage: $stage" >&2; exit 2 ;; esac
 [[ -f "$suite" ]] || { echo "Missing suite: $suite" >&2; exit 2; }
 suite="$(cd "$(dirname "$suite")" && pwd)/$(basename "$suite")"
 # Inventory the exact submitted code; later invocations never edit queued sources.
@@ -249,7 +249,7 @@ PY
 )"
   export OPENGOTHIC_BASE
 fi
-if [[ "$phase" == qualify || "$phase" == requalify || "$phase" == teacher || "$phase" == smoke || "$phase" == baseline ]]; then
+if [[ "$phase" == qualify || "$phase" == requalify || "$phase" == extend || "$phase" == teacher || "$phase" == smoke || "$phase" == baseline ]]; then
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
   desktop_found=0
@@ -279,7 +279,11 @@ if [[ "$phase" == qualify || "$phase" == requalify || "$phase" == teacher || "$p
   command -v ffmpeg >/dev/null
   command -v ffprobe >/dev/null
 fi
-if [[ "$phase" == prepare || "$phase" == qualify || "$(cat "$task/build-snapshot" 2>/dev/null)" != "$snapshot" ]]; then
+if [[ "$phase" == extend ]]; then
+  if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv --python 3.12 "$task/.venv"; fi
+  uv pip install --python "$task/.venv/bin/python" numpy pillow
+fi
+if [[ "$phase" != extend && ( "$phase" == prepare || "$phase" == qualify || "$(cat "$task/build-snapshot" 2>/dev/null)" != "$snapshot" ) ]]; then
   python3 - <<'PY'
 from pathlib import Path
 import shutil
@@ -325,20 +329,20 @@ ENGINE
   touch "$task/build-passed-$snapshot"
   printf '%s\n' "$snapshot" > "$task/build-snapshot"
 fi
-if [[ "$phase" == qualify || "$phase" == requalify ]]; then
+if [[ "$phase" == qualify || "$phase" == requalify || "$phase" == extend ]]; then
   "$task/.venv/bin/python" -B "$source/scripts/nav_live_prepare.py" "--$phase" \
     --runtime "$task" --output "$output" --suite "$source/suite.json" --weights "$weights"
 elif [[ "$phase" != prepare ]]; then
   "$task/.venv/bin/python" -B "$source/scripts/nav_live.py" "$phase" \
     --suite "$run_suite" --runtime "$task" --output "$output" --weights "$weights" --shard "$shard"
 fi
-if [[ "$phase" == baseline ]]; then
+if [[ "$phase" == baseline || "$phase" == extend ]]; then
   python3 - "$source/scripts" "$task" "$output" "$run_suite" <<'CLEAN'
 from pathlib import Path
 import sys
 sys.path.insert(0,sys.argv[1])
 from nav_live import cleanup
-cleanup(Path(sys.argv[2]),Path(sys.argv[3]),Path(sys.argv[4]))
+cleanup(Path(sys.argv[2]),Path(sys.argv[3]))
 CLEAN
 fi
 printf 'phase_wall_seconds=%s\n' "$((SECONDS-started))"
@@ -348,7 +352,7 @@ for shard in "${shards[@]}"; do
   log_dir="$log_prefix-$shard"
   ssh ryzen "mkdir -p '$log_dir'"
   display=()
-  [[ "$stage" == qualify || "$stage" == requalify || "$stage" == teacher || "$stage" == smoke || "$stage" == baseline ]] && display=(--display --display-shared)
+  [[ "$stage" == qualify || "$stage" == requalify || "$stage" == extend || "$stage" == teacher || "$stage" == smoke || "$stage" == baseline ]] && display=(--display --display-shared)
   max_time=59m
   threads=16; cpu_quota=1200%; memory=10G
   if [[ "$stage" == teacher ]]; then

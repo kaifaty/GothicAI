@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import shutil
+import time
 from types import SimpleNamespace
 
 from nav_live import read_json, sha256, suite_cases, write_json
@@ -636,6 +637,237 @@ def requalify(args):
         suite=str(destination))), flush=True)
     return 0
 
+def extend(args):
+    from nav_live import actual_inputs, case_binary, check_space, main as run_round, phase_deadline
+    from nav_live import processed, raw_complete, report, run_episode, teacher_directory, teacher_outcome
+    from nav_live_render import refresh_follow_summary
+
+    deadline = phase_deadline()
+    used = read_json(args.output / 'runtime.json')['wall_seconds']
+    available = math.floor(min(10800 - used, deadline - time.monotonic()))
+    if available < 2800:
+        print(json.dumps(dict(event='extension_budget_insufficient', available_seconds=available,
+            needed_seconds=2800, deficit_seconds=2800 - available, global_used_seconds=used)), flush=True)
+        return 2
+    check_space(args.output)
+    rescued = args.runtime / 'extension-binaries'
+    games = sorted(rescued.glob('*/Gothic2Notr'))
+    if not games:
+        raise ValueError('The extension requires the rescued evaluation binaries')
+    for source in games:
+        digest = sha256(source)
+        target = args.runtime / 'binaries' / digest / 'Gothic2Notr'
+        if target.is_file():
+            if sha256(target) != digest:
+                raise ValueError('A restored evaluation binary differs from its saved reference')
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_name(target.name + f'.tmp-{os.getpid()}')
+            shutil.copy2(source, temporary)
+            if sha256(temporary) != digest:
+                raise ValueError('The rescued evaluation binary changed while restoring it')
+            temporary.replace(target)
+    runner = rescued / 'gothic-body-runner'
+    if not runner.is_file():
+        raise ValueError('The extension requires the rescued native runner')
+    cache = args.runtime / 'navmesh-cache'
+    meshes = sorted((rescued / 'navmesh-cache').glob('*.navmesh'))
+    if not meshes:
+        raise ValueError('The extension requires its rescued accepted navigation mesh')
+    cache.mkdir(parents=True, exist_ok=True)
+    for source in meshes:
+        target = cache / source.name
+        if target.is_file() and sha256(target) != sha256(source):
+            raise ValueError('The restored navigation mesh differs from its accepted cache')
+        if not target.is_file():
+            shutil.copy2(source, target)
+
+    destination = args.output / 'qualified-suite.json'
+    frozen = read_json(destination)
+    current = read_json(args.suite)
+    if frozen['inputs'] != current['inputs']:
+        raise ValueError('The extension cannot change the frozen input files')
+    current_follow = next(case for case in suite_cases(current) if case['number'] == 3)
+    current_static = next(case for case in suite_cases(current) if case['number'] == 4)
+    if (current_follow.get('teacher_qualification_required') is not False
+            or current_follow.get('bc4_compare') is not True or current_static.get('bc4_compare') is not True):
+        raise ValueError('The extension requires the explicit follow waiver and both BC4 comparisons')
+    evaluation = frozen['evaluation_binary']
+    binary = Path(evaluation['path'])
+    if not binary.is_absolute() or sha256(binary) != evaluation['sha256']:
+        raise ValueError('The restored current evaluation binary differs from the frozen suite')
+    inputs = frozen['inputs']
+    live_args = SimpleNamespace(suite=destination, runtime=args.runtime, output=args.output,
+        binary=binary, deadline=deadline, inputs=dict(inputs, cache=str(cache)),
+        input_sha256={name: sha256(inputs[name]) for name in ('save', 'roads', 'familiar', 'links')})
+    cases = suite_cases(frozen)
+    old_outcomes = {row['id']: row for row in frozen['teacher_qualification']['placements']}
+    for case in cases:
+        case_binary(live_args, case)
+        outcome = old_outcomes[case['id']]
+        if outcome.get('elapsed_ms', 0) <= 0 or outcome.get('decisions', 0) <= 0:
+            continue
+        reference = teacher_directory(live_args, case)
+        if (outcome['output'] != str(reference) or not raw_complete(reference) or not processed(reference)
+                or read_json(reference / 'identity.json').get('actual') != actual_inputs(live_args, case, None, case['seeds'][0])):
+            raise ValueError(f"An existing teacher reference differs from its actual inputs: {case['id']}")
+    follow = next(case for case in cases if case['number'] == 3)
+    follow_reference = teacher_directory(live_args, follow)
+    if (not raw_complete(follow_reference) or not processed(follow_reference)
+            or follow.get('target_route_evidence', {}).get('complete') is not True):
+        raise ValueError('The follow comparison requires its complete recorded reference and checked target route')
+    refresh_follow_summary(follow_reference)
+    follow_scenario = next(row for row in frozen['scenarios'] if row['number'] == 3)
+    follow_scenario.pop('qualification_rejection', None)
+    follow_scenario['teacher_qualification_required'] = False
+    follow_scenario['bc4_compare'] = True
+    static = next(case for case in cases if case['number'] == 4)
+    root = Path(inputs['roads']).parent
+    validation = rows(root / 'detour-val.jsonl')
+    if len(validation) != 121 or any(row['split'] != 'validation' for row in validation):
+        raise ValueError('The static-obstacle extension requires the exact 121 validation candidates')
+    source_qualification = Path(frozen['qualification_source'])
+    native = {}
+    for path in sorted(source_qualification.glob('native/*/live-probes.jsonl')):
+        for probe in rows(path):
+            if not probe['label'].startswith('rock-'):
+                continue
+            identifier = probe['label'][5:]
+            if identifier in native:
+                raise ValueError('Duplicate saved native validation probe')
+            native[identifier] = dict(probe=probe, file=str(path))
+    order = read_json(source_qualification / 'rock-sectors/candidate-order.json')
+    rays = [row for row in rows(source_qualification / 'rock-sectors/physics-results.jsonl') if row['kind'] == 'ray']
+    if (set(native) != {row['id'] for row in validation} or len(order) != 121 or len(set(order)) != 121
+            or set(order) != set(native) or len(rays) != 121 or {row['id'] for row in rays} != set(range(121))):
+        raise ValueError('Incomplete saved native validation evidence for the extension')
+    sectors = {order[ray['id']]: ray for ray in rays}
+    generation = sha256(args.suite)[:12] + '-' + evaluation['sha256'][:12]
+    extension = args.output / 'extension' / generation
+    extension.mkdir(parents=True, exist_ok=True)
+    excluded = test_pairs(inputs)
+    candidates = []
+    banned = ('WALL', 'FENCE', 'ZAUN', 'HOLZWAND', 'HOUSEWALL')
+    for row in validation:
+        evidence = native[row['id']]
+        probe = evidence['probe']
+        if any(probe[field] != row[field] for field in ('start', 'goal')) or probe['npc'] != static['npc']:
+            raise ValueError('Saved native probe differs from its frozen validation route')
+        obstruction, sensor = probe['direct_obstruction'], probe['direct_sensor']
+        sector = sectors[row['id']]
+        label = obstruction['label'].strip()
+        if (row.get('obstacle_type') == 'wall_or_fence'
+                or any(token in (label + ' ' + sector.get('sector', '')).upper() for token in banned)):
+            continue
+        kind = sensor['kind']
+        if not ((kind == 'static_vob' and label)
+                or (kind == 'world' and row.get('target_type') in ('cave', 'landmark'))):
+            continue
+        if (not probe['goal_visible'] or not obstruction['hit'] or not sensor['hit']
+                or math.dist(sensor['point_cm'], obstruction['point_cm']) > 3
+                or not probe['detour_complete'] or probe['route_sample_count'] < 2
+                or probe['route_no_floor_samples'] or probe['route_deep_water_samples']):
+            continue
+        if not all(probe[field]['supported'] and probe[field]['dry'] and probe[field]['capsule_clear']
+                and probe[field]['ground_known'] and probe[field]['ground_snap_cm'] <= 75
+                and abs(probe[field]['height_delta_cm']) <= tolerance
+                for field, tolerance in (('start_support', 20), ('goal_support', 75))):
+            continue
+        candidate = {key: value for key, value in static.items() if key not in
+            ('qualification_rejection', 'teacher_reference', 'evaluation_binary', 'qualification_evidence', 'qualification_selection', 'variants')}
+        candidate.update(name=current_static['name'], start=row['start'], goal=row['goal'], goal_kind=row['goal_kind'], limit_ms=90000,
+            teacher_minimum_edge_cm=100, bc4_compare=True,
+            source=dict(dataset='detour-val', id=row['id'], place_id=row.get('place_id'),
+                target_type=row.get('target_type'), file=str(root / 'detour-val.jsonl'),
+                selection='Visible fixed obstacle; house walls and fences excluded; safe recorded teacher required'),
+            qualification_evidence=dict(evidence, static_obstacle=dict(kind=kind, label=label,
+                sector=sector.get('sector', ''), sector_file=str(source_qualification / 'rock-sectors/physics-results.jsonl'))))
+        if not isolated(candidate, excluded):
+            raise ValueError('A static-obstacle candidate overlaps a protected test route')
+        candidates.append(candidate)
+    candidates.sort(key=lambda case: (case['qualification_evidence']['probe']['direct_sensor']['kind'] != 'static_vob',
+        case['qualification_evidence']['probe']['detour_length_cm'], case['source']['id']))
+    point_cases = [dict(candidate, goal=candidate['start'], goal_kind='point',
+        probe_label='static-start-' + candidate['source']['id']) for candidate in candidates]
+    options = SimpleNamespace(output=args.runtime / 'extension-worker', runner=runner,
+        assets=Path(os.environ['GOTHIC_DIR']), save=Path(inputs['save']), cache=cache,
+        links=Path(inputs['links']), roads=Path(inputs['roads']), npc=static['npc'],
+        ini=None, seed=static['seeds'][0], physics='cv', watchdog_seconds=120, limit_ms=90000)
+    if point_cases:
+        worker = Worker(options, 3, None)
+        try:
+            starts = probe_groups(worker, point_cases, extension, static['seeds'][0])
+        finally:
+            worker.close()
+    else:
+        starts = {}
+    accepted = []
+    for candidate in candidates:
+        evidence = starts['static-start-' + candidate['source']['id']]
+        clearance = evidence['probe']['route_min_edge_clearance_cm']
+        if not supported_route(evidence['probe']) or clearance is None or not math.isfinite(clearance) or clearance < 100:
+            continue
+        candidate['qualification_evidence']['start_clearance_probe'] = evidence
+        accepted.append(candidate)
+    attempts, chosen, chosen_outcome = [], None, None
+    result = dict(validation_candidates=len(validation), visible_goals=sum(row['probe']['goal_visible'] for row in native.values()),
+        static_candidates=len(candidates), safe_start_candidates=len(accepted), teacher_attempts=attempts,
+        waived_teacher_placements=[follow['id']], selected_static=None, full_suite_qualified=False)
+    write_json(extension / 'result.json', result)
+    for candidate in accepted[:3]:
+        candidate['teacher_reference'] = str(args.output / 'teacher' /
+            f"04-visible-detour-static-{generation}-{candidate['source']['id']}")
+        run_episode(live_args, candidate, None, candidate['seeds'][0], teacher_directory(live_args, candidate))
+        outcome = teacher_outcome(live_args, candidate)
+        minimum = outcome.get('minimum_edge_distance_cm')
+        safe = (outcome['passed'] and outcome.get('deep_water_entries') == 0 and outcome.get('falls') == 0
+            and minimum is not None and math.isfinite(minimum) and minimum >= 100)
+        attempts.append(dict(candidate=candidate['source']['id'], outcome=outcome, safe=safe))
+        write_json(extension / 'result.json', result)
+        if safe:
+            chosen, chosen_outcome = candidate, outcome
+            break
+    static_scenario = next(row for row in frozen['scenarios'] if row['number'] == 4)
+    static_scenario['name'] = current_static['name']
+    static_scenario['bc4_compare'] = True
+    frozen['unresolved_geometry'] = [row for row in frozen.get('unresolved_geometry', []) if row['id'] not in (follow['id'], static['id'])]
+    frozen['semantic_confirmation_required'] = [identifier for identifier in frozen.get('semantic_confirmation_required', [])
+        if identifier not in (follow['id'], static['id'])]
+    if chosen is not None:
+        static_scenario.clear()
+        static_scenario.update({key: value for key, value in chosen.items() if key != 'scenario_id'})
+        old_outcomes[static['id']] = chosen_outcome
+        result['selected_static'] = chosen['source']['id']
+    else:
+        reason = 'No visible fixed obstacle passed the bounded safe teacher check'
+        frozen['unresolved_geometry'].append(dict(id=static['id'], reason=reason,
+            static_candidates=len(candidates), safe_start_candidates=len(accepted), native_facts=str(extension)))
+        old_outcomes[static['id']] = dict(id=static['id'], passed=False, failure=reason,
+            elapsed_ms=0, decisions=0, falls=None, deep_water_entries=None, output=str(extension))
+    outcomes = [old_outcomes[case['id']] for case in suite_cases(frozen)]
+    strict_passed = [row['id'] for row in outcomes if row.get('passed') and row.get('falls') == 0]
+    frozen['teacher_qualification'] = dict(frozen['teacher_qualification'], complete=False,
+        passed_placements=len(strict_passed), placements=outcomes, waived_placements=[follow['id']])
+    frozen['qualification_status'] = 'partial'
+    frozen['full_suite_qualified'] = False
+    frozen.pop('qualified_suite_sha256', None)
+    snapshot = extension / 'suite.json'
+    if snapshot.is_file() and read_json(snapshot) != frozen:
+        raise ValueError('The immutable extension suite differs from its resumed inputs')
+    write_json(destination, frozen)
+    if not snapshot.is_file():
+        write_json(snapshot, frozen)
+    result.update(strict_teacher_passed=strict_passed, snapshot=str(snapshot))
+    write_json(extension / 'result.json', result)
+    live_args.suite = snapshot
+    report(live_args, suite_cases(frozen), [], None)
+    code = run_round(['baseline', '--suite', str(snapshot), '--runtime', str(args.runtime),
+        '--output', str(args.output), '--weights', args.weights])
+    result['baseline_exit_code'] = code
+    write_json(extension / 'result.json', result)
+    return code
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', type=Path, required=True)
@@ -643,12 +875,13 @@ def main(argv=None):
     parser.add_argument('--suite', type=Path, required=True)
     parser.add_argument('--qualify', action='store_true')
     parser.add_argument('--requalify', action='store_true')
+    parser.add_argument('--extend', action='store_true')
     parser.add_argument('--weights')
     args = parser.parse_args(argv)
-    if args.qualify or args.requalify:
+    if args.qualify or args.requalify or args.extend:
         if not args.weights:
             parser.error('--qualify requires --weights')
-        return requalify(args) if args.requalify else qualify(args)
+        return extend(args) if args.extend else requalify(args) if args.requalify else qualify(args)
     suite = read_json(args.suite)
     cases = suite_cases(suite)
     inputs = suite['inputs']

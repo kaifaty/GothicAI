@@ -61,6 +61,8 @@ def suite_cases(suite):
                 raise ValueError('Each live case needs its fixed seed or three distinct seeds')
             if case.get('goal_kind', 'point') not in ('point', 'object', 'follow', 'approach'):
                 raise ValueError('Unsupported live goal kind')
+            if case.get('teacher_qualification_required') is False and case['number'] != 3:
+                raise ValueError('Only the fixed follow comparison may use an unqualified teacher reference')
             for field in ('id', 'npc', 'start', 'goal'):
                 if not isinstance(case[field], str) or not case[field] or any(char.isspace() for char in case[field]):
                     raise ValueError(f'Invalid scenario token: {field}')
@@ -344,15 +346,18 @@ def teachers(args, cases):
 
 
 def eligible_cases(suite, cases):
-    passed = {row['id'] for row in suite.get('teacher_qualification', {}).get('placements', [])
+    placements = suite.get('teacher_qualification', {}).get('placements', [])
+    passed = {row['id'] for row in placements
               if row.get('passed') and row.get('falls') == 0}
+    references = {row['id'] for row in placements if row.get('elapsed_ms', 0) > 0 and row.get('decisions', 0) > 0}
+    passed.update(case['id'] for case in cases if case.get('teacher_qualification_required') is False and case['id'] in references)
     excluded = set(suite.get('semantic_confirmation_required', []))
     excluded.update(row['id'] for row in suite.get('unresolved_geometry', []))
     return [case for case in cases if case['id'] in passed - excluded and case.get('qualification_evidence')]
 
 
 def smoke(args, cases, policies, unresolved=None):
-    failures = teachers(args, cases)
+    failures = teachers(args, [case for case in cases if case.get('teacher_qualification_required', True)])
     unresolved = [*(unresolved or []), *failures]
     rejected_ids = {value['id'] for value in failures}
     passed = [case for case in cases if case['id'] not in rejected_ids]
@@ -378,7 +383,8 @@ def smoke(args, cases, policies, unresolved=None):
         suite_sha256=sha256(args.suite), binary_sha256=sha256(args.binary), repeatable=repeatable,
         model_sha256=model['sha256'],
         recording_actions_identical=equal_recording, result=line, unresolved=unresolved,
-        teacher_placements_passed=[row['id'] for row in passed],
+        teacher_placements_passed=[row['id'] for row in passed if row.get('teacher_qualification_required', True)],
+        unqualified_reference_placements=[row['id'] for row in passed if row.get('teacher_qualification_required') is False],
         excluded_placements=[case['id'] for case in suite_cases(read_json(args.suite))
                              if case['id'] not in {row['id'] for row in passed}],
         recorded_runs=[directory.relative_to(args.output).as_posix() for directory in directories[:2]]))
@@ -408,6 +414,9 @@ def runs(cases, policies, bc4):
                 controlled = dict(case, stranger=stranger, id=case['id'] + ('-stranger' if stranger else '-local'))
                 for seed in case['seeds']:
                     yield controlled, bc4, seed
+        elif case['number'] in (3, 4) and case.get('bc4_compare') and bc4 is not None:
+            for seed in case['seeds']:
+                yield case, bc4, seed
 
 
 def run_directory(output, case, model, seed):
@@ -423,12 +432,25 @@ def completed_run(args, case, model, seed):
         return False
 
 
+def follow_statistics(directory):
+    value = read_json(Path(directory) / 'summary.json')
+    if 'follow_mean_distance_m' not in value:
+        from nav_live_render import refresh_follow_summary
+        value = refresh_follow_summary(directory)
+    band = value.get('follow_band_fraction')
+    distance = value.get('follow_mean_distance_m')
+    standing = value.get('standing_seconds')
+    return ('band 2–5m ' + (f'{100 * band:.4f}%' if band is not None else 'unavailable')
+            + '; mean hero distance ' + (f'{distance:.6f}m' if distance is not None else 'unavailable')
+            + '; standing ' + (f'{standing:.2f}s' if standing is not None else 'unavailable'))
+
+
 def report(args, cases, policies, bc4):
     suite = read_json(args.suite)
     eligible = eligible_cases(suite, cases)
     eligible_ids = {case['id'] for case in eligible}
     all_runs = list(runs(eligible, policies, bc4))
-    columns = [model['name'] for model in policies] + (['bc4 local', 'bc4 stranger'] if bc4 is not None else [])
+    columns = [model['name'] for model in policies] + (['bc4', 'bc4 local', 'bc4 stranger'] if bc4 is not None else [])
     lines = ['# Navigation live suite — ' + args.output.name, '',
              'Facts from the fixed evaluation-only suite. Seeds and places are never training inputs.', '',
              '| Scenario | v3b |' + (' ' + ' | '.join(columns) + ' |' if columns else ''),
@@ -441,8 +463,8 @@ def report(args, cases, policies, bc4):
         scenario = next(case for case in cases if case['number'] == number)
         for column in columns:
             selected = [(case, model, seed) for case, model, seed in all_runs
-                        if case['number'] == number and (model['name'] == column or
-                        (model['name'] == 'bc4' and column == ('bc4 stranger' if case['stranger'] else 'bc4 local')))]
+                        if case['number'] == number and column == (model['name'] if model['name'] != 'bc4' else
+                        ('bc4 stranger' if case['stranger'] else 'bc4 local') if case['number'] == 10 else 'bc4')]
             if not selected:
                 cells.append('excluded' if not any(case['number'] == number for case in eligible) else '—')
                 continue
@@ -453,6 +475,9 @@ def report(args, cases, policies, bc4):
                     complete = False
                     continue
                 value = read_json(directory / 'summary.json')
+                if number == 3:
+                    follow_statistics(directory)
+                    value = read_json(directory / 'summary.json')
                 episode = read_json(directory / 'episode.json')
                 rows.append((bool(episode.get('success')), float(episode.get('elapsed_ms', 0)) / 1000,
                              seed, case['id'], directory, value))
@@ -461,7 +486,12 @@ def report(args, cases, policies, bc4):
                 continue
             # Failures rank worse than arrivals, then longer elapsed time. Each
             # fixed variant remains listed so scenario 2 does not hide a start.
-            rows.sort(key=lambda row: (not row[0], row[1], row[2], row[3]))
+            if number == 3:
+                rows.sort(key=lambda row: (-(row[5].get('follow_band_fraction') if row[5].get('follow_band_fraction') is not None else -1),
+                    row[5].get('follow_mean_distance_m') if row[5].get('follow_mean_distance_m') is not None else float('inf'),
+                    row[5].get('standing_seconds') if row[5].get('standing_seconds') is not None else float('inf'), row[2]))
+            else:
+                rows.sort(key=lambda row: (not row[0], row[1], row[2], row[3]))
             median, worst = rows[len(rows) // 2], rows[-1]
             links = []
             for label, row in (('median', median), ('worst', worst)):
@@ -469,11 +499,14 @@ def report(args, cases, policies, bc4):
                 links.append(f"{label} [{row[2]} / {row[3]}]({relative}/topdown.mp4), "
                              f"[video]({relative}/source.mp4), [timeline]({relative}/timeline.png), "
                              f"[summary]({relative}/summary.json)")
-            cells.append(f'{sum(row[0] for row in rows)}/{len(selected)} arrived; ' + '; '.join(links))
+                if number == 3:
+                    links[-1] += '; ' + follow_statistics(row[4])
+            count = f'{sum(row[0] for row in rows)}/{len(selected)} met follow threshold' if number == 3 else f'{sum(row[0] for row in rows)}/{len(selected)} arrived'
+            cells.append(count + '; ' + '; '.join(links))
         references = []
         for case in (item for item in cases if item['number'] == number):
             failure = unresolved.get(case['id'])
-            if failure:
+            if failure and case.get('teacher_qualification_required', True):
                 counts = (f"; {failure['candidates_probed']} candidates, {failure['supported_routes']} supported routes"
                           if 'candidates_probed' in failure else '')
                 facts = f"{case['id']}: unqualified; {failure['reason']}{counts}"
@@ -488,7 +521,7 @@ def report(args, cases, policies, bc4):
             rejected = setup_rejection(directory)
             if rejected or (processed(directory) and raw_complete(directory)):
                 outcome = teacher_outcome(args, case)
-                if case['id'] in eligible_ids and (not outcome['passed'] or
+                if case['id'] in eligible_ids and ((not outcome['passed'] and case.get('teacher_qualification_required', True)) or
                         read_json(directory / 'identity.json').get('actual') != actual_inputs(args, case, None, case['seeds'][0])):
                     complete = False
                 teacher_passed += int(outcome['passed'])
@@ -498,6 +531,10 @@ def report(args, cases, policies, bc4):
                          f"deep water {outcome['deep_water_entries']}, falls {outcome['falls']}")
                 if outcome['failure']:
                     facts += '; ' + outcome['failure']
+                if case.get('teacher_qualification_required') is False:
+                    facts += '; unqualified teacher reference; comparison explicitly included'
+                if number == 3:
+                    facts += '; ' + follow_statistics(directory)
                 if outcome['passed'] and case['id'] not in eligible_ids:
                     facts += '; excluded: scene type unconfirmed'
                 if case.get('target_route_evidence'):
@@ -534,7 +571,7 @@ def report(args, cases, policies, bc4):
     complete = complete and smoke_gate(args, policies[0]) is True
     lines += [f'Teacher placements passed: {teacher_passed}/{len(cases)}.',
               f'Eligible placements: {len(eligible)}/{len(cases)}; excluded placements are omitted from learner runs.',
-              f'Qualified subset complete: {str(complete).lower()}; full suite qualified: {str(len(eligible) == len(cases)).lower()}.',
+              f'Qualified subset complete: {str(complete).lower()}; full suite qualified: {str(len(eligible) == len(cases) and all(case.get("teacher_qualification_required", True) for case in cases)).lower()}.',
               f'Completed learner runs: {sum(completed_run(args, c, m, s) for c, m, s in all_runs)}/{len(all_runs) or getattr(args, "expected_learner_runs", 0)}.',
               f'Storage: {check_space(args.output)} bytes; limit {MAX_BYTES} bytes.', '']
     temporary = args.output / f'README.md.{os.getpid()}.tmp'
@@ -572,7 +609,7 @@ def cleanup(runtime, output, suite_path=None):
     if any(sha256(pin['path']) != pin['sha256'] for pin in pins if Path(pin['path']).exists() or not started):
         raise ValueError('Local cleanup refused: an evaluation binary differs from its snapshot')
     names = ('build', 'binaries', 'base-cache', '.venv', 'uv-cache', 'navmesh-cache',
-             'requalification-worker', 'qualification-worker', 'preparation-worker')
+             'requalification-worker', 'qualification-worker', 'preparation-worker', 'extension-worker', 'extension-binaries')
     marker['local_cleanup'] = dict(status='started', paths=[str(runtime / name) for name in names])
     write_json(marker_path, marker)
     for name in names:
@@ -655,14 +692,14 @@ def main(argv=None):
                                   excluded=[case['id'] for case in cases if case not in eligible])), flush=True)
             return 2
         qualification = suite.get('teacher_qualification', {})
-        passed = {row['id']: row for row in qualification.get('placements', []) if row.get('passed')}
+        references = {row['id']: row for row in qualification.get('placements', [])}
         if qualification.get('binary_sha256') != sha256(args.binary):
             raise ValueError('Complete v3b qualification with this binary first')
         for case in eligible:
             directory = teacher_directory(args, case)
-            if (passed[case['id']]['output'] != str(directory) or not raw_complete(directory) or not processed(directory)
+            if (references[case['id']]['output'] != str(directory) or not raw_complete(directory) or not processed(directory)
                     or read_json(directory / 'identity.json').get('actual') != actual_inputs(args, case, None, case['seeds'][0])
-                    or not teacher_outcome(args, case)['passed']):
+                    or (case.get('teacher_qualification_required', True) and not teacher_outcome(args, case)['passed'])):
                 raise ValueError(f"Missing qualified v3b reference for current inputs: {case['id']}")
     if args.stage == 'teacher':
         case = next(row for row in cases if row['number'] == 1)
@@ -698,7 +735,7 @@ def main(argv=None):
                 reused_runs += 1
                 continue
             # Scenario variants have an independent teacher path.
-            base_id = case['id'].rsplit('-', 1)[0] if model['name'] == 'bc4' else case['id']
+            base_id = case['id'].rsplit('-', 1)[0] if model['name'] == 'bc4' and case['number'] == 10 else case['id']
             reference_case = next(row for row in cases if row['id'] == base_id)
             reference = teacher_directory(args, reference_case)
             run_episode(args, case, model, seed, run_directory(args.output, case, model, seed), reference)
@@ -707,7 +744,7 @@ def main(argv=None):
     if complete:
         expected = len(list(runs(eligible, policies, bc4)))
         write_json(args.output / 'complete.json', dict(schema_version=1, complete=True, qualified_subset_complete=True,
-            full_suite_qualified=len(eligible) == len(cases),
+            full_suite_qualified=len(eligible) == len(cases) and all(case.get('teacher_qualification_required', True) for case in cases),
             excluded_placements=[case['id'] for case in cases if case not in eligible], completed=expected, expected=expected,
             reused_runs=reused_runs, newly_completed_runs=newly_completed_runs,
             suite_path=str(args.suite), suite_sha256=sha256(args.suite), evaluation_binary_sha256=sha256(args.binary),
