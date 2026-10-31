@@ -984,9 +984,12 @@ async def serve(args: argparse.Namespace) -> int:
         # what really happened, the director's quests and the hero's lies about them (story graph, stage 4)
         state.chronicle = Chronicle(link, memory)
         feat_image_root = None
-        if not args.no_feats and args.scenario in {None, "feats"}:
+        if not args.no_feats and (
+            args.scenario in {None, "feats"}
+            or (args.scenario == "vanilla_line_live" and os.environ.get("GOTHIC_FORCE_CHALLENGE") == "1")
+        ):
             artist = None
-            if not args.no_feat_images:
+            if not args.no_feat_images and args.scenario in {None, "feats"}:
                 if args.scenario == "feats":
                     feat_image_root = TemporaryDirectory(prefix="feat-images-")
                     artist = (
@@ -2190,8 +2193,12 @@ async def serve(args: argparse.Namespace) -> int:
                 exit_code = 1 if bad else 0
             elif args.scenario in {"vanilla_line", "vanilla_line_live"}:
                 assert state.showrunner is not None and state.questlog is not None
-                scenario = getattr(scenario_vanilla_line, args.scenario)
-                results = await scenario(link, state.showrunner, state.questlog)
+                if args.scenario == "vanilla_line_live":
+                    results = await scenario_vanilla_line.vanilla_line_live(
+                        link, state.showrunner, state.questlog, journal
+                    )
+                else:
+                    results = await scenario_vanilla_line.vanilla_line(link, state.showrunner, state.questlog)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
                 exit_code = 1 if bad else 0

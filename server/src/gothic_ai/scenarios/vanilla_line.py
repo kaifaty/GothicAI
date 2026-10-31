@@ -6,13 +6,17 @@ import asyncio
 import copy
 import json
 import logging
+import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 from .. import questbook
 from ..attitudes import non_hostile
+from ..challenges import KINDS
 from ..game import GameLink
+from ..journal import Journal
 from ..llm import Done, Item, LLMEvent, Message, Tool, ToolCall, ToolChoice
 from ..llm.fake import FakeBackend
 from ..protocol import Session
@@ -279,7 +283,9 @@ async def vanilla_line(
     return _logged(results)
 
 
-async def vanilla_line_live(link: GameLink, director: Showrunner, quests: QuestLog) -> dict[str, str]:
+async def vanilla_line_live(
+    link: GameLink, director: Showrunner, quests: QuestLog, journal: Journal
+) -> dict[str, str]:
     """The real consumer responds to taking and completing the scripts' quest, with live builders."""
     results: dict[str, str] = {}
 
@@ -289,8 +295,6 @@ async def vanilla_line_live(link: GameLink, director: Showrunner, quests: QuestL
     if director.model.llm.name != "chatgpt":
         return _logged({"live_model": "failed (vanilla_line_live requires LLM=chatgpt)"})
     turnips = Turnips(link, director, quests)
-    await turnips.prepare()
-    check("prepared", True)
 
     async def resolve(state: str, trigger: Callable[[], Awaitable[None]]) -> dict[str, Any] | None:
         service = director.occasions
@@ -357,10 +361,30 @@ async def vanilla_line_live(link: GameLink, director: Showrunner, quests: QuestL
                 await loop
 
     real_clock = director.clock
-    wall = [real_clock()]
-    director.clock = lambda: wall[0]
+    force_challenge = os.environ.get("GOTHIC_FORCE_CHALLENGE") == "1"
+    instructions, sink = director.model.instructions, journal.sink
+    hint_chance = patch("gothic_ai.challenges._chance", return_value=0.0)
+    declined: list[dict[str, Any]] = []
+
+    def keep(entry: dict[str, Any]) -> None:
+        if entry.get("kind") == "feat_declined":
+            declined.append(entry)
+        if sink is not None:
+            sink(entry)
+
     outcomes = lines = completed = 0
     try:
+        if force_challenge:
+            director.model.instructions += (
+                "\nПроверочный прогон: каждая линия, которую ты строишь, получает ровно одно скрытое "
+                "условие challenge — выбери из четырёх самое уместное для её людей и сюжета."
+            )
+            hint_chance.start()
+            journal.sink = keep
+        await turnips.prepare()
+        check("prepared", True)
+        wall = [real_clock()]
+        director.clock = lambda: wall[0]
         for index, (state, trigger) in enumerate((("running", turnips.take), ("success", turnips.finish))):
             if index:
                 before = await link.story_state()
@@ -385,6 +409,31 @@ async def vanilla_line_live(link: GameLink, director: Showrunner, quests: QuestL
             if fact["fact"] == "line_none":
                 continue
             lines += 1
+            challenge = None
+            if force_challenge:
+                line_seq = next(seq for seq, entry in director.chronicle.entries("line") if entry == fact)
+                challenges = [
+                    (seq, entry) for seq, entry in director.chronicle.entries("challenge")
+                    if entry.get("line") == line_seq
+                ]
+                challenge = challenges[0] if len(challenges) == 1 else None
+                check(
+                    f"challenge_{lines}",
+                    challenge is not None and challenge[1].get("kind") in KINDS,
+                    challenges,
+                )
+
+                def hint(
+                    seq: int | None = challenge[0] if challenge is not None else None,
+                ) -> dict[str, Any] | None:
+                    return next((
+                        entry for entry in director.chronicle.facts("challenge_hint")
+                        if seq is not None and entry.get("challenge") == seq
+                    ), None)
+
+                if challenge is not None:
+                    await _until(hint, 30)
+                check(f"challenge_hint_{lines}", hint() is not None, hint())
             safe = await _giver_ok(link, director, fact)
             check(f"{state}_giver", safe, {"giver": fact.get("giver"), "follows": fact.get("follows")})
             if not safe:
@@ -409,12 +458,58 @@ async def vanilla_line_live(link: GameLink, director: Showrunner, quests: QuestL
             )
             log.info("vanilla line live %s passage: %s", state, json.dumps(played, ensure_ascii=False))
             check(f"{state}_completed", passed)
+            if force_challenge:
+                def challenge_outcomes(
+                    challenge_seq: int | None = challenge[0] if challenge is not None else None,
+                ) -> list[tuple[int, dict[str, Any]]]:
+                    return [
+                        (seq, entry) for seq, entry in director.chronicle.entries()
+                        if entry.get("fact") in {"challenge_met", "challenge_failed"}
+                        and challenge_seq is not None and entry.get("challenge") == challenge_seq
+                    ]
+
+                if challenge is not None:
+                    await _until(challenge_outcomes, 30)
+                resolved = challenge_outcomes()
+                check(
+                    f"challenge_outcome_{lines}", len(resolved) == 1,
+                    [
+                        {"kind": entry.get("kind"), "outcome": entry["fact"], "why": entry.get("why", "")}
+                        for _, entry in resolved
+                    ] or {
+                        "kind": challenge[1].get("kind") if challenge is not None else None,
+                        "outcome": "missing",
+                        "why": "no outcome within 30 s" if challenge is not None else "no challenge",
+                    },
+                )
+                if len(resolved) == 1 and resolved[0][1]["fact"] == "challenge_met":
+                    met_seq = resolved[0][0]
+
+                    def feat_decision(trigger: int = met_seq) -> dict[str, Any] | None:
+                        return next((
+                            entry for entry in [*director.chronicle.facts("feat"), *declined]
+                            if entry.get("trigger") == trigger
+                        ), None)
+
+                    await _until(feat_decision, 240)
+                    decision = feat_decision()
+                    check(
+                        f"challenge_feat_{lines}", decision is not None,
+                        decision.get("title", decision.get("reason", "")) if decision is not None
+                        else "no feat or refusal within 240 s",
+                    )
             if not passed:
                 break
             completed += 1
         check("all_outcomes", outcomes == 2, f"{outcomes}/2")
         check("at_least_one_line", lines >= 1, f"{lines}/2")
         check("all_lines_completed", completed == lines, f"{completed}/{lines}")
+        if force_challenge and not lines:
+            check("challenge_lines", False, "no lines")
     finally:
         director.clock = real_clock
+        if force_challenge:
+            director.model.instructions = instructions
+            hint_chance.stop()
+            journal.sink = sink
     return _logged(results)
