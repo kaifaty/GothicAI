@@ -3,7 +3,7 @@ import test from 'node:test';
 import {CombatData, Plan} from '../src/schema.ts';
 import {inCone, interpolatePath, quadraticParameterAtLength, quadraticPoint} from '../src/parts/diagramMath.ts';
 import {arcPoint, lineAt, settledText, tagLineCentre} from '../src/parts/carryMath.ts';
-import {shown} from '../src/parts/anim.ts';
+import {shown, textUntil} from '../src/parts/anim.ts';
 import {holdPush, travelDur} from '../src/parts/timing.ts';
 import {sampleHp, selectAction, smoothedTrack, sourceFrame, transformPoint, zoomScale} from '../src/parts/followMath.ts';
 
@@ -694,4 +694,13 @@ test('frame 0: a punch-in zoom and an instant base layer are there on the cut', 
   assert.equal(shown(0, 0, undefined, 0), 1);
   assert.equal(shown(0, 0), 0);
   assert.equal(shown(0.5, 0, 1, 0), 1, 'fadeIn 0 со сроком не падает');
+});
+
+test('texts: one without until gives way to the next at its place, not to one elsewhere', () => {
+  const texts = [{at: 1, y: 880}, {at: 2, y: 300}, {at: 3, y: 880}, {at: 4, y: 880, until: 6}, {at: 5}];
+  assert.equal(textUntil(texts, 0), 3);
+  assert.equal(textUntil(texts, 1), undefined);
+  assert.equal(textUntil(texts, 2), 4);
+  assert.equal(textUntil(texts, 3), 6);
+  assert.equal(textUntil(texts, 4), undefined);
 });

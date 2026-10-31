@@ -32,3 +32,12 @@ export const keyframes = (t: number, keys: [number, number][]) => {
     {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.quad)},
   );
 };
+
+// when a short text without its own `until` goes: when the next text of its beat comes in at the same place, so the
+// two never lie on each other; the old one's fade out ends as the new one starts
+export const textUntil = (texts: {at: number; until?: number; y?: number}[], i: number) => {
+  const x = texts[i];
+  if (x.until !== undefined) return x.until;
+  const next = texts.filter((n) => n.at > x.at && n.y === x.y).sort((a, b) => a.at - b.at)[0];
+  return next?.at;
+};
