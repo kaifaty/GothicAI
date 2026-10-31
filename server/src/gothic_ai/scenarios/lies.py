@@ -1124,9 +1124,7 @@ async def rumor_spread(
     )
     off.silent("дано: Лобарт молчит (ложь уже раскрыта)", who=giver, when="репа")
     await link.debug("type", text=f"{name}, репа уже в амбаре, все двадцать штук. Давай плату.")
-    ok = await _until(lambda: any(f.get("quest") == RUEBEN for f in facts("caught")), 60)
-    if not ok:
-        return _logged(results)
+    await _until(lambda: any(f.get("quest") == RUEBEN for f in facts("caught")), 60)
     before = {f["to"] for f in facts("rumor")}
 
     # the next morning: the meetings in between
