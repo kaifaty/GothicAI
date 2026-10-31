@@ -474,6 +474,7 @@ namespace Tempest {
           bool     storeAndAtomicFs  = false;
 
           bool     memoryModel       = false;
+          bool     spatialUpscale    = false;
 
           bool     hasSamplerFormat(TextureFormat f) const;
           bool     hasAttachFormat (TextureFormat f) const;
@@ -586,6 +587,7 @@ namespace Tempest {
 
         virtual void generateMipmap(Texture& image, uint32_t texWidth, uint32_t texHeight, uint32_t mipLevels) = 0;
         virtual void copy(Buffer& dest, size_t offset, Texture& src, uint32_t width, uint32_t height, uint32_t mip) = 0;
+        virtual void upscale(Texture& src, Texture& dst);
 
         virtual bool isRecording() const = 0;
         virtual void begin(Detail::SyncHint hint);

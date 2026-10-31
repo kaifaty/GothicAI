@@ -2,7 +2,7 @@
 
 #include <Tempest/CommandBuffer>
 #include <unordered_set>
-#include <zenkit/vobs/Light.hh>
+#include "asset/worldtypes.h"
 
 #include "lightsource.h"
 #include "resources.h"
@@ -43,8 +43,8 @@ class LightGroup final {
       friend class LightGroup;
       };
 
-    Light  add(const zenkit::LightPreset& vob);
-    Light  add(const zenkit::VLight& vob);
+    Light  add(const asset::LightPreset& vob);
+    Light  add(const asset::VLight& vob);
     Light  add(std::string_view preset);
     size_t size() const { return lightSourceData.size(); }
 
@@ -83,9 +83,9 @@ class LightGroup final {
     void                       markAsDurtyNoSync(size_t id);
     void                       resetDurty();
 
-    const zenkit::LightPreset& findPreset(std::string_view preset) const;
+    const asset::LightPreset& findPreset(std::string_view preset) const;
 
-    std::vector<zenkit::LightPreset> presets;
+    std::vector<asset::LightPreset> presets;
 
     std::mutex                       sync;
     std::vector<size_t>              freeList;

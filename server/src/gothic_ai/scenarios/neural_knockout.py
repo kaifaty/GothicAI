@@ -279,7 +279,7 @@ async def neural_knockout_segment(
             if not check("talk_to_attack", bool(
                 ready and lines and lease and lease.npc == npc
                 and lease.provider == "neural-body" and lease.mode == "realtime"
-                and resets.get(client) and fight._fallbacks == 0
+                and (pilot.policy == "engine" or resets.get(client)) and fight._fallbacks == 0
             ), f"lines={len(lines)}, symbol={symbol}, "
                f"lease={lease.control_generation if lease else 0}, "
                f"decisions={fight._decisions if fight else 0}, "

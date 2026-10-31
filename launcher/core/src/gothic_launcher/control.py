@@ -60,6 +60,7 @@ from .commands import (
     latest_save,
     load_config,
     new_log_dir,
+    preparation,
     services,
     tools,
 )
@@ -384,12 +385,14 @@ class Control:
                 self.session["state"] = "waiting"
                 self.session["services"]["queue"] = {"state": "waiting", "detail": "Ожидаем допуска gq"}
             else:
+                game_proc = game(config, layout, ports, save=save, new=mode == "new")
                 self.supervisor = Supervisor(
                     services(config, layout, ports, cwd=log_dir),
-                    game(config, layout, ports, save=save, new=mode == "new"),
+                    game_proc,
                     log_dir,
                     self._on_event,
                     session=lock,
+                    preparation=preparation(layout.game_bin, layout.game_dir, log_dir, game_proc.env),
                 )
                 if sys.platform == "linux":
                     self.session["voice_enabled"] = config.settings.voice.enabled
@@ -447,7 +450,7 @@ class Control:
             svc.update(state=e.kind, detail=e.detail)
             if e.data:
                 svc["health"] = e.data
-            if e.kind == "failed":
+            if e.kind == "failed" and (e.proc != "queue" or self.session["failed"] is None):
                 self.session["failed"] = {"proc": e.proc, "detail": e.detail}
         self.write({"event": "service", "data": asdict(e)})
 

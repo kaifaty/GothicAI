@@ -4,6 +4,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -51,7 +52,7 @@ def owned_process(command, payload=None):
 def create_settings(path, source, repo, home):
     """Copy only non-secret settings; no Mac paths or existing Ryzen settings."""
     settings = {key: dict(source.get(key, {})) for key in ("game", "llm", "voice", "tts")}
-    settings["game"]["dir"] = str(home / "gothic-ai/game")
+    settings["game"]["dir"] = str(home / "gothic-ai/game-settings")
     settings["voice"].pop("mic_device", None)
     settings["paths"] = {"repo": str(repo), "uv": str(home / ".local/bin/uv")}
     lines = []
@@ -68,7 +69,22 @@ def create_settings(path, source, repo, home):
         with path.open("x") as stream:
             stream.write("\n".join(lines))
     except FileExistsError:
-        print(f"Keeping existing {path}", flush=True)
+        text = path.read_text()
+        # Change only the installation input; keep all personal settings and comments.
+        section = re.search(r"(?m)^\[game\][ \t]*(?:#.*)?$", text)
+        value = f'dir = {json.dumps(settings["game"]["dir"])}'
+        if section is None:
+            text += f"\n[game]\n{value}\n"
+        else:
+            end = re.search(r"(?m)^\[", text[section.end():])
+            stop = section.end() + end.start() if end else len(text)
+            game = text[section.end():stop]
+            game, replaced = re.subn(r"(?m)^[ \t]*dir[ \t]*=.*$", value, game, count=1)
+            if not replaced:
+                game = f"\n{value}" + game
+            text = text[:section.end()] + game + text[stop:]
+        path.write_text(text)
+        print(f"Updated game.dir in {path} (personal settings kept)", flush=True)
         return False
     print(f"Created {path} (no secrets copied)", flush=True)
     return True
@@ -140,6 +156,9 @@ def desktop_entry(repo, launcher_ready=True):
 
 def remote_install(action, payload, source):
     home = Path.home()
+    helper = {"__name__": "ryzen_game"}
+    exec(compile(payload["game_helper"], "ryzen_game.py", "exec"), helper)
+    helper["game_environment"](home=home)
     repo = home / "gothic-ai/play"
     repo.parent.mkdir(parents=True, exist_ok=True)
     with (repo.parent / "play.install.lock").open("a") as lock:
@@ -155,8 +174,6 @@ def remote_install(action, payload, source):
             raise ValueError("Installed gq lacks --interactive: run scripts/gq install ryzen on the Mac")
         if not (home / ".local/bin/uv").is_file():
             raise ValueError("Missing ~/.local/bin/uv on Ryzen")
-        if not (home / "gothic-ai/game").is_dir():
-            raise ValueError("Missing ~/gothic-ai/game on Ryzen")
         if not repo.exists():
             if action == "update":
                 raise ValueError("No ~/gothic-ai/play: run scripts/ryzen-play.sh install first")
@@ -207,8 +224,11 @@ def main(argv=None):
             settings = tomllib.load(stream)
         # Never read secrets.toml/chatgpt.json or put private settings in argv/logs.
         source = Path(__file__).read_text()
+        game_helper = Path(__file__).with_name("ryzen_game.py").read_text()
         payload = {"origin": origin, "settings": {key: settings.get(key, {}) for key in ("game", "llm", "voice", "tts")},
-                   "installer": source}
+                   "installer": source, "game_helper": game_helper}
+        run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "ryzen",
+             shlex.join(["python3", "-c", game_helper, "--check"])])
         sync_content()
         command = shlex.join(["python3", "-c", source, "__remote", args.action])
         return owned_process(["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",

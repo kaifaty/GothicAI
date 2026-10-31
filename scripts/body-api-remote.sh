@@ -62,7 +62,8 @@ free_kib=$(df -Pk "$task_root" | awk 'NR==2 {print $4}')
 REMOTE_SCRIPT
   rsync -a --delete --exclude=build/ --exclude=.git/ --exclude=.DS_Store --exclude='*.o' --exclude='*.a' \
     "$ROOT/OpenGothic/" "$HOST:$REMOTE/source/OpenGothic/"
-  rsync -a "$ROOT/scripts/body-api-remote.sh" "$ROOT/scripts/body_api_suite.py" \
+  rsync -a --exclude=build/ --exclude=__pycache__/ "$ROOT/scripts/convert" "$HOST:$REMOTE/source/scripts/"
+  rsync -a "$ROOT/scripts/body-api-remote.sh" "$ROOT/scripts/body_api_suite.py" "$ROOT/scripts/base-ensure.sh" \
     "$ROOT/scripts/body_api_report.py" "$ROOT/scripts/body_observe_suite.py" \
     "$ROOT/scripts/body_headless_suite.py" \
     "$ROOT/scripts/body_headless_parity.py" "$ROOT/scripts/body_baseline_report.py" "$HOST:$REMOTE/source/scripts/"

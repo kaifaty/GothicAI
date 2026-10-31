@@ -3,6 +3,7 @@ import gzip
 import hashlib
 import importlib.util
 import json
+import lzma
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -333,7 +334,7 @@ def write_bc3_manifest(tmp_path, families=("point", "follow_below_gate")):
     return source, output, path, manifest, records, layout
 
 
-def test_bc3_manifest_uses_exact_train_refs_including_failed_follow(tmp_path):
+def test_bc3_manifest_uses_exact_train_refs_including_failed_follow(tmp_path, monkeypatch):
     source, output, path, manifest, records, layout = write_bc3_manifest(tmp_path)
     # Even a real extra successful recording is not admitted without a train ref.
     write_episode(source, "not-selected", records, layout, "not-selected", navigation_memory_version=3)
@@ -359,6 +360,30 @@ def test_bc3_manifest_uses_exact_train_refs_including_failed_follow(tmp_path):
         assert not cached["detour_valid"].any()
         for name in ("near", "far", "vector"):
             np.testing.assert_allclose(cached[name], expected[name], atol=1 / 255)
+    direct = data.training_index(source, path)
+    for name in ("class_counts", "action_change", "action_change_weight", "auxiliary", "splits"):
+        assert direct[name] == index[name]
+    relocated = tmp_path / "relocated"
+    for entry in manifest["episodes"]:
+        original = Path(entry["episode"])
+        directory = relocated / original.relative_to(source)
+        directory.mkdir(parents=True)
+        samples = directory / "samples.bin.xz"
+        with gzip.open(original / "samples.bin.gz", "rb") as stream:
+            samples.write_bytes(lzma.compress(stream.read(), preset=6))
+        metadata = json.loads((original / "episode.json").read_text())
+        metadata["navdemo_storage"] = {"source_samples_sha256": entry["samples_sha256"],
+                                       "samples_sha256": hashlib.sha256(samples.read_bytes()).hexdigest()}
+        metadata["nav_bc_stats"] = data.episode_stats(original, 3, chunk_records=2)
+        (directory / "episode.json").write_text(json.dumps(metadata))
+    def unexpected_stats(*_args, **_kwargs):
+        raise AssertionError("Converted metadata must avoid a statistics pass")
+    monkeypatch.setattr(data, "episode_stats", unexpected_stats)
+    converted = data.training_index(relocated, path)
+    for name in ("class_counts", "action_change", "action_change_weight", "auxiliary", "splits"):
+        assert converted[name] == index[name]
+    assert all(entry["file"].endswith(".xz") for entry in converted["episodes"])
+    assert not (relocated / "index.json").exists()
 
 
 @pytest.mark.parametrize("relative", ["point/train/point-0", "../outside", "/outside"])
@@ -430,6 +455,22 @@ def test_compact_v5_manifest_uses_supplied_root_and_only_eligible_train(tmp_path
     np.testing.assert_allclose(cached["near"][:, 10, 3, 4], [1, 128 / 255])
     np.testing.assert_allclose(cached["far"][:, 10, 10, 70], [128 / 255, 1])
     assert cached["aux_near"].shape == (2, 9, 32, 32)
+    direct = data.training_index(source, path, "hd-familiar")
+    for name in ("class_counts", "action_change", "action_change_weight", "auxiliary", "splits"):
+        assert direct[name] == index[name]
+    with gzip.open(directory / "samples.bin.gz", "rb") as stream:
+        (directory / "samples.bin.xz").write_bytes(lzma.compress(stream.read(), preset=6))
+    metadata["navdemo_storage"] = {"source_samples_sha256": entry["samples_sha256"],
+        "samples_sha256": hashlib.sha256((directory / "samples.bin.xz").read_bytes()).hexdigest()}
+    metadata["nav_bc_stats"] = data.episode_stats(directory / "samples.bin.gz", None)
+    (directory / "episode.json").write_text(json.dumps(metadata))
+    converted = data.training_index(source, path, "hd-familiar")
+    assert converted["class_counts"] == index["class_counts"]
+    packed = data.encode_episode(directory, layout, None, "hd-familiar", chunk_records=1)
+    assert data.nav_demos.samples_path(directory).suffix == ".xz"
+    expanded = data.unpack_cached(packed)
+    for name in cached:
+        assert cached[name].tobytes() == expanded[name].tobytes()
     dagger = tmp_path / "dagger" / "point" / "learner"
     dagger.mkdir(parents=True)
     (dagger / "samples.bin.gz").write_bytes((directory / "samples.bin.gz").read_bytes())

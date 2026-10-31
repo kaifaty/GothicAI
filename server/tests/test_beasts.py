@@ -6,6 +6,7 @@ from gothic_ai import beasts
 from gothic_ai.beasts import BeastDesk, chances, rules_tone
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.llm import FakeBackend
+from gothic_ai.llm.base import QUICK_SLOT
 from gothic_ai.orders import Orders
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import BeastEntry
@@ -14,6 +15,18 @@ from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
 from tests.test_orders import GORN, _follows, fights
 from tests.test_talk import person
+
+
+async def test_wolf_tone_never_inherits_an_npc_slot():
+    quick = FakeBackend("threat", delay=0)
+    async with connected(FakeGame()) as link:
+        desk = BeastDesk(link, quick=quick)
+        token = QUICK_SLOT.set(2)
+        try:
+            await desk.tone("Прочь!")
+        finally:
+            QUICK_SLOT.reset(token)
+    assert quick.slot_ids == [None]
 
 
 def wolf(n: int = 1, metres: float = 10, state: str = "threaten", **extra) -> dict:

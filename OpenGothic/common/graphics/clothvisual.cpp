@@ -1,8 +1,8 @@
 #include "clothvisual.h"
+#include "asset/modeltypes.h"
 
 #include <Tempest/Log>
-#include <zenkit/MorphMesh.hh>
-#include <zenkit/MultiResolutionMesh.hh>
+#include "asset/staticmesh.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -117,7 +117,7 @@ struct Geometry {
   std::vector<Vec3> sourcePositions;
   std::vector<uint32_t> sourceVertexIds;
   std::vector<ClothGeometry::SourceWeights> sourceWeights;
-  std::vector<zenkit::MorphAnimation> animations;
+  std::vector<asset::MorphAnimation> animations;
   std::vector<std::vector<int32_t>> morphIndices;
   bool coarsePhysics = false;
   bool explicitAlphaTest = false;
@@ -131,7 +131,7 @@ struct Geometry {
 // Packed vertices retain the dense index across meshlets and UV seams.
 void tessellate(Geometry& out, const std::vector<ClothGeometry::Vertex>& vertices,
                 const std::vector<uint32_t>& indices, const std::vector<uint32_t>& pins,
-                const std::vector<zenkit::Material>& materials,
+                const std::vector<asset::Material>& materials,
                 const std::vector<uint32_t>& triangleMaterials, std::string_view visual,
                 bool coarsePhysics = false) {
   const auto dense = ClothGeometry::subdivide(vertices,indices,pins);
@@ -146,14 +146,14 @@ void tessellate(Geometry& out, const std::vector<ClothGeometry::Vertex>& vertice
   out.physicsTriangles = coarsePhysics ? indices : dense.indices;
   out.triangles = dense.indices;
 
-  zenkit::MultiResolutionMesh mesh;
+  asset::StaticMesh mesh;
   mesh.sub_meshes.resize(materials.size());
   for(size_t i=0;i<materials.size();++i) {
     auto& sub = mesh.sub_meshes[i];
     sub.mat = materials[i];
     // Active cloth gets wind from Jolt. A native material wave must not add a
     // second displacement to the already simulated vertices.
-    sub.mat.wave_mode = zenkit::WaveMode::NONE;
+    sub.mat.wave_mode = asset::WaveMode::NONE;
     sub.mat.wave_max_amplitude = 0;
     sub.wedges.reserve(dense.vertices.size());
     for(uint32_t id=0;id<dense.vertices.size();++id) {
@@ -251,13 +251,11 @@ std::shared_ptr<Geometry> loadGeometry(std::string_view visual, const Definition
   const bool morph = FileExt::hasExt(resource,"MMS") || FileExt::hasExt(resource,"MMB");
   FileExt::exchangeExt(resource,"3DS","MRM");
   FileExt::exchangeExt(resource,"MMS","MMB");
-  zenkit::MultiResolutionMesh source;
+  asset::StaticMesh source;
   bool replaced = false;
-  std::vector<zenkit::MorphAnimation> animations;
+  std::vector<asset::MorphAnimation> animations;
   if(morph) {
-    auto reader = Resources::getFileBuffer(resource);
-    zenkit::MorphMesh mesh;
-    mesh.load(reader.get());
+    auto mesh = Resources::loadMorphData(resource);
     source = std::move(mesh.mesh);
     animations = std::move(mesh.animations);
     }
@@ -269,7 +267,7 @@ std::shared_ptr<Geometry> loadGeometry(std::string_view visual, const Definition
   out->animations = std::move(animations);
   std::vector<ClothGeometry::Vertex> vertices;
   std::vector<uint32_t> indices, triangleMaterials;
-  std::vector<zenkit::Material> materials;
+  std::vector<asset::Material> materials;
   std::vector<uint32_t> compact(packed.vertices.size(),uint32_t(-1));
   for(const auto& sub:packed.subMeshes) {
     if(!matches(def.material,sub.material.name))
@@ -345,7 +343,7 @@ struct ClothVisual::State {
   Matrix4x4 matrix = Matrix4x4::mkIdentity();
   Matrix4x4 referenceTransform = Matrix4x4::mkIdentity();
   uint64_t referenceTick = uint64_t(-1);
-  zenkit::AnimationType mode = zenkit::AnimationType::NONE;
+  asset::AnimationType mode = asset::AnimationType::NONE;
   float strength = 0;
   std::vector<Vec4> deformation;
   std::vector<Vec3> references, normals, interpolatedPositions;
@@ -524,7 +522,7 @@ bool ClothVisual::supports(std::string_view visual) {
   }
 
 std::unique_ptr<ClothVisual> ClothVisual::create(MeshObjects::Mesh& view, World& world,
-                                               const zenkit::VirtualObject& vob, bool enableCollision) {
+                                               const asset::VirtualObject& vob, bool enableCollision) {
   const auto* def = definition(vob.visual->name);
   if(def==nullptr || view.isEmpty())
     return nullptr;
@@ -539,13 +537,13 @@ std::unique_ptr<ClothVisual> ClothVisual::create(MeshObjects::Mesh& view, World&
     state.world = &world;
     state.geometry = std::move(geometry);
     state.nativeCollision = enableCollision;
-    state.nativeMovable = vob.visual->type==zenkit::VisualType::MORPH_MESH;
+    state.nativeMovable = vob.visual->type==asset::VisualType::MORPH_MESH;
     state.mode = vob.anim_mode;
     state.strength = vob.anim_strength;
-    if(state.strength!=0 && state.mode==zenkit::AnimationType::NONE)
-      state.mode = zenkit::AnimationType::WIND_ALT;
+    if(state.strength!=0 && state.mode==asset::AnimationType::NONE)
+      state.mode = asset::AnimationType::WIND_ALT;
     if(state.strength==0)
-      state.mode = zenkit::AnimationType::NONE;
+      state.mode = asset::AnimationType::NONE;
     state.bindPhysics(def->stiffness,vob.visual->name,vob.id);
     if(!state.physics)
       return nullptr;
@@ -562,7 +560,7 @@ std::unique_ptr<ClothVisual> ClothVisual::create(MeshObjects::Mesh& view, World&
     }
   }
 
-std::unique_ptr<ClothVisual> ClothVisual::createSurface(World& world, const zenkit::Mesh& source,
+std::unique_ptr<ClothVisual> ClothVisual::createSurface(World& world, const asset::WorldMesh& source,
                                                       const std::vector<uint32_t>& pinnedSourcePositionIds,
                                                       std::string visual, uint32_t id, float stiffness, float linearDamping) {
   try {

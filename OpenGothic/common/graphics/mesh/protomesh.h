@@ -5,10 +5,8 @@
 #include <Tempest/Device>
 #include <Tempest/Matrix4x4>
 
-#include <zenkit/Model.hh>
-#include <zenkit/ModelMesh.hh>
-#include <zenkit/ModelHierarchy.hh>
-#include <zenkit/MorphMesh.hh>
+#include "asset/staticmesh.h"
+#include "asset/modeltypes.h"
 
 #include "graphics/mesh/submesh/staticmesh.h"
 #include "graphics/mesh/submesh/animmesh.h"
@@ -23,10 +21,10 @@ class ProtoMesh {
     using Vertex = Resources::VertexA;
 
     ProtoMesh(PackedMesh&&  pm, std::string_view fname);
-    ProtoMesh(PackedMesh&&  pm, const std::vector<zenkit::MorphAnimation>& aniList, std::string_view fname);
-    ProtoMesh(const zenkit::Model& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest = false);
-    ProtoMesh(const zenkit::ModelHierarchy& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname);
-    ProtoMesh(const zenkit::ModelMesh& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest = false);
+    ProtoMesh(PackedMesh&&  pm, const std::vector<asset::MorphAnimation>& aniList, std::string_view fname);
+    ProtoMesh(const asset::ModelHierarchy& hierarchy, const asset::ModelMesh& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest = false);
+    ProtoMesh(const asset::ModelHierarchy& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname);
+    ProtoMesh(const asset::ModelMesh& lib, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest = false);
     ProtoMesh(const Material& mat, std::vector<Resources::Vertex> vbo, std::vector<uint32_t> ibo); //decals
     ProtoMesh(ProtoMesh&&)=delete;
     ProtoMesh& operator=(ProtoMesh&&)=delete;
@@ -62,6 +60,7 @@ class ProtoMesh {
       std::string                      name;
       bool                             hasNode=false;
       std::unique_ptr<PhysicMeshShape> shape;
+      std::vector<Tempest::Vec3>       hullVertices; // exact indexed visual vertices, centimetres
       };
 
     struct Pos {
@@ -98,6 +97,7 @@ class ProtoMesh {
     size_t                         skinedNodesCount() const;
     size_t                         findNode(std::string_view name,size_t def=size_t(-1)) const;
     const Tempest::Vec3*           bbox() const;
+    void                           appendItemVertices(std::vector<Tempest::Vec3>& vertices) const;
     // Lowest point of the exact indexed body skin, using the renderer's four
     // bone weights and fatness displacement. No GPU access or pose changes.
     bool                           minSkinnedVertex(const Tempest::Matrix4x4* worldBones, size_t count,
@@ -109,11 +109,11 @@ class ProtoMesh {
     void                           setupScheme(std::string_view s);
     void                           shapeOfAttach(const std::vector<std::vector<Tempest::Vec3>>& attachPoints);
     void                           shapeOfSkin(const PackedMesh& pkg);
-    void                           remap(const zenkit::MorphAnimation& a,
+    void                           remap(const asset::MorphAnimation& a,
                                          const std::vector<uint32_t>& vertId,
                                          std::vector<int32_t>& remapId,
                                          std::vector<Tempest::Vec4>& samples,
                                          size_t idOffset);
 
-    Morph                          mkAnimation(const zenkit::MorphAnimation& a);
+    Morph                          mkAnimation(const asset::MorphAnimation& a);
   };

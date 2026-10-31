@@ -1053,6 +1053,83 @@ def test_detour_drive_is_sampled_record_off_and_keeps_policy_outputs_separate(tm
     assert calls == [(policy, 19, seed) for policy in ("bc3", "it35") for seed in rl.ACTION_SEEDS]
 
 
+def test_eval_screen_reader_keeps_frozen_scenarios_and_three_action_seeds(tmp_path):
+    manifest, groups = validation_manifest(tmp_path)
+    _, detour = frozen_detour(tmp_path)
+    safety = dict(id="water-case", family="safety", goal_kind="point", split="validation",
+                  region="water", start="A", goal="B", seed=7, limit_ms=240000)
+    scenarios = [*rl.validation_scenarios(manifest), detour, safety]
+    path = tmp_path / "eval-screen.jsonl"
+    entries = [dict(scenario=value, action_seeds=list(rl.ACTION_SEEDS)) for value in scenarios]
+    rl.write_pairs(path, entries)
+    rl.write_pairs(path, entries)
+    assert rl.eval_screen_jobs(path) == [(index, value, seed) for index, value in enumerate(scenarios)
+                                         for seed in rl.ACTION_SEEDS]
+    assert groups["point"][0] == rl.eval_screen_jobs(path)[0][1]
+
+
+@pytest.mark.parametrize("corruption", ["test", "seeds", "duplicate", "unsafe"])
+def test_eval_screen_reader_rejects_test_or_changed_selection(tmp_path, corruption):
+    _, groups = validation_manifest(tmp_path)
+    value = groups["point"][0]
+    entry = dict(scenario=value, action_seeds=list(rl.ACTION_SEEDS))
+    entries = [entry]
+    if corruption == "test":
+        value["split"] = "test"
+    elif corruption == "seeds":
+        entry["action_seeds"] = [rl.ACTION_SEEDS[0]]
+    elif corruption == "duplicate":
+        entries.append(entry)
+    else:
+        value["id"] = "../unsafe"
+    path = tmp_path / "eval-screen.jsonl"
+    rl.write_pairs(path, entries)
+    with pytest.raises(ValueError):
+        rl.eval_screen_jobs(path)
+
+
+def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(tmp_path, monkeypatch,
+                                                                            validation_disk_space):
+    _, groups = validation_manifest(tmp_path)
+    _, detour = frozen_detour(tmp_path)
+    safety = dict(id="water-case", family="safety", goal_kind="point", split="validation",
+                  region="water", start="A", goal="B", seed=7, limit_ms=240000)
+    scenarios = [groups["point"][0], detour, safety]
+    path = tmp_path / "eval-screen.jsonl"
+    rl.write_pairs(path, [dict(scenario=value, action_seeds=list(rl.ACTION_SEEDS)) for value in scenarios])
+    arguments = ["nav_rl.py", "drive", "--output", str(tmp_path / "screen-run"),
+                 "--cache", str(tmp_path / "cache"), "--weights", "/hd.navbc", "--eval-screen", str(path)]
+    captured = []
+    monkeypatch.setattr(rl, "drive", lambda args: captured.append(args))
+    monkeypatch.setattr(rl.sys, "argv", arguments)
+    rl.main()
+    args = captured[0]
+    assert args.lean and args.manifest is None and args.pairs is None
+    monkeypatch.setattr(rl.sys, "argv", [*arguments, "--action-seeds", "7"])
+    with pytest.raises(SystemExit):
+        rl.main()
+    stub_validation_runner(monkeypatch)
+    calls = []
+    def scenario(worker, runner, name, commands, directory):
+        family = directory.parent.parent.name
+        value = next(value for value in scenarios if value["family"] == family)
+        seed = int(directory.name.removeprefix("seed-"))
+        assert "navdemos record off" in commands
+        if family == "safety":
+            assert "navdemos perception-monitor on" in commands
+        metadata = validation_runner_metadata(value, seed)
+        metadata.update(start=value["start"], goal=value["goal"], record=False, teacher_control_decisions=0)
+        rl.write_json(directory / "episode.json", metadata)
+        calls.append((family, value["id"], seed))
+    monkeypatch.setattr(rl, "scenario", scenario)
+    measured = lambda directory: dict(success=False, split="validation", recording="text_only")
+    monkeypatch.setattr(rl, "detour_episode_metrics", measured)
+    monkeypatch.setattr(rl, "lean_validation_episode_metrics", measured)
+    rl.drive_validation(args)
+    assert calls == [(value["family"], value["id"], seed) for value in scenarios for seed in rl.ACTION_SEEDS]
+    assert len(list(args.output.rglob("drive-metrics.json"))) == 9
+
+
 def test_detour_text_metrics_count_executed_rising_edges_without_teacher_labels(tmp_path):
     _, value = frozen_detour(tmp_path)
     directory = tmp_path / "episode"
@@ -1595,3 +1672,91 @@ def test_object_detour_summary_rejects_missing_or_invalid_selected_probe(tmp_pat
     episode = dict(id=identifier, family="object", start="A", goal="B", action_seed=7, success=False)
     with pytest.raises(ValueError, match=identifier):
         rl.object_detour_summary([episode], path)
+
+
+def test_eval_screen_freeze_is_immutable_and_rejects_test(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    screen = rl.module("nav_eval_screen")
+    scenarios = {f"point/p{i}": dict(id=f"p{i}", family="point", split="validation", region="market",
+        start=f"A{i}", goal=f"B{i}", goal_kind="point", seed=7, recorded=False, episode=None) for i in range(2)}
+    episodes = [dict(value, action_seed=seed, success=True, collector_wall_s=1)
+                for value in scenarios.values() for seed in rl.ACTION_SEEDS]
+    history = dict(scenarios=scenarios, models={model: episodes for model in screen.MODELS})
+    path = tmp_path / "screen.jsonl"
+    selected, _ = screen.freeze(history, path)
+    original = path.read_bytes()
+    assert selected == set(scenarios)
+    assert len(rl.eval_screen_jobs(path)) == 6
+    screen.freeze(history, path)
+    assert path.read_bytes() == original
+    scenarios["point/p0"]["start"] = "CHANGED"
+    with pytest.raises(ValueError, match="Refusing to replace"):
+        screen.freeze(history, path)
+    scenarios["point/p0"]["split"] = "test"
+    with pytest.raises(ValueError, match="cannot include test"):
+        screen.freeze(history, tmp_path / "test.jsonl")
+    assert path.read_bytes() == original
+
+
+def test_eval_screen_agreement_uses_paired_routes_and_pooled_follow(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    screen = rl.module("nav_eval_screen")
+    monkeypatch.setattr(screen, "METRICS", ("point", "follow_below_gate"))
+    def episodes(wins, band):
+        return [dict(id=f"p{i}", family="point", action_seed=seed, success=win)
+                for i, win in enumerate(wins) for seed in rl.ACTION_SEEDS] + [
+            dict(id=f"f{i}", family="follow_below_gate", action_seed=seed,
+                 follow_in_band_ms=value, follow_observed_ms=observed)
+            for i, (value, observed) in enumerate(zip(band, (10, 90))) for seed in rl.ACTION_SEEDS]
+    full = dict(it35=episodes([0, 0, 0], [0, 0]), bc3=episodes([1, 1, 1], [10, 0]),
+                hd=episodes([1, 1, 0], [10, 90]), bc4=episodes([0, 0, 0], [0, 0]))
+    delta = screen.paired_difference(full["hd"], full["it35"], "point")
+    assert delta["delta"] == pytest.approx(2 / 3)
+    assert delta["se"] == pytest.approx(1 / 3)  # Three routes, not nine independent seeds.
+    assert delta["routes"] == 3
+    following = screen.paired_difference(full["bc3"], full["it35"], "follow_below_gate")
+    assert following["left"] == .1  # Pooled 10/100, not the mean episode fraction .5.
+    sample = dict(full, it35=full["bc3"], bc3=full["it35"])
+    result = screen.agreement(full, sample)
+    assert len(result) == 12  # Six pairs for each of two metrics.
+    pair = next(row for row in result if (row["metric"], row["left"], row["right"]) == ("point", "it35", "bc3"))
+    assert pair["significant"] and not pair["agrees"]
+    noise = next(row for row in result if (row["metric"], row["left"], row["right"]) == ("point", "it35", "hd"))
+    assert not noise["significant"] and noise["agrees"] is None  # Exactly two SE is not above two SE.
+
+
+def test_eval_screen_reuses_only_matching_finished_runner(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    screen = rl.module("nav_eval_screen")
+    source, runs = tmp_path / "source", tmp_path / "runs"
+    (source / "OpenGothic").mkdir(parents=True)
+    native = source / "OpenGothic/runner.cpp"
+    native.write_text("native source")
+    (source / "scripts").mkdir()
+    launcher = source / "scripts/nav-eval-screen-remote.sh"
+    launcher.write_text("fixed build command")
+    previous, output = runs / "first", runs / "next"
+    previous.mkdir(parents=True)
+    output.mkdir()
+    source_sha = screen.reuse_runner(source, runs, output)
+    binary = previous / "gothic-body-runner"
+    binary.write_bytes(b"finished runner")
+    rl.write_json(previous / "timing.json", dict(runner_source_sha256=source_sha,
+        runner_sha256=hashlib.sha256(binary.read_bytes()).hexdigest()))
+    screen.reuse_runner(source, runs, output)
+    assert not (output / binary.name).exists()  # No successful summary yet.
+    rl.write_json(previous / "metrics.json", {})
+    screen.reuse_runner(source, runs, output)
+    copied = output / binary.name
+    assert copied.read_bytes() == binary.read_bytes() and copied.stat().st_mode & 0o100
+    copied.unlink()
+    binary.write_bytes(b"changed runner")
+    screen.reuse_runner(source, runs, output)
+    assert not copied.exists()  # Damaged artifacts must rebuild.
+    binary.write_bytes(b"finished runner")
+    native.write_text("changed native source")
+    assert screen.reuse_runner(source, runs, output) != source_sha and not copied.exists()
+    native.write_text("native source")
+    launcher.write_text("changed build command")
+    assert screen.reuse_runner(source, runs, output) != source_sha and not copied.exists()

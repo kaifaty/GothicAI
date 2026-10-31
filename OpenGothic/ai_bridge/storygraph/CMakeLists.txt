@@ -1,12 +1,12 @@
 # storygraph: lifts the story layer of a compiled GOTHIC.DAT (dialogs, quest variables) into a graph.
 # See docs/story-graph.md in the monorepo.
 #
-# Standalone build (only ZenKit, no engine):
+# Standalone build (shared base importer, no game):
 #   cmake -S OpenGothic/ai_bridge/storygraph -B OpenGothic/ai_bridge/storygraph/build -G Ninja
 #   cmake --build OpenGothic/ai_bridge/storygraph/build
 
 cmake_minimum_required(VERSION 3.21)
-project(StoryGraph CXX)
+project(StoryGraph LANGUAGES C CXX)
 
 if(PROJECT_IS_TOP_LEVEL)
   set(CMAKE_CXX_STANDARD 20)
@@ -18,6 +18,13 @@ if(PROJECT_IS_TOP_LEVEL)
   set(ZK_ENABLE_ASAN         OFF CACHE INTERNAL "")
   set(ZK_ENABLE_DEPRECATION  OFF CACHE INTERNAL "")
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../lib/ZenKit ${CMAKE_CURRENT_BINARY_DIR}/zenkit)
+  add_library(miniz STATIC ../../lib/miniz/miniz.c)
+  set(DM_BUILD_STATIC ON CACHE INTERNAL "")
+  set(DM_ENABLE_ASAN OFF CACHE INTERNAL "")
+  add_subdirectory(../../lib/dmusic dmusic EXCLUDE_FROM_ALL)
+  include(../../cmake/BaseImport.cmake)
+  # basestore.cpp, linked into the tool below, also resolves the video part
+  include(../../cmake/VideoImport.cmake)
 endif()
 
 set(STORYGRAPH_SOURCES
@@ -54,8 +61,9 @@ endif()
 option(STORYGRAPH_TOOL "build the storygraph command line tool" ${PROJECT_IS_TOP_LEVEL})
 if(STORYGRAPH_TOOL)
   add_executable(storygraph main.cpp scan.cpp check.cpp check.h fuzz.cpp saveworld.cpp saveworld.h
-                            effects.cpp effects.h execcheck.cpp execcheck.h snapshot.h)
-  target_link_libraries(storygraph PRIVATE StoryGraph)
+                            effects.cpp effects.h execcheck.cpp execcheck.h snapshot.h
+                            ../../common/basestore.cpp)
+  target_link_libraries(storygraph PRIVATE StoryGraph gothic-base-import gothic-video-import)
   if(NOT MSVC)
     target_compile_options(storygraph PRIVATE -Wall -Wconversion -Werror)
   endif()

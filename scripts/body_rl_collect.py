@@ -27,6 +27,10 @@ score) is then from the learner's side, with the arena's own reason kept as aren
 --wall-share mixes near_wall arenas into one collection. Each learner row also keeps its game time,
 both health fractions and, at a decision, the log-probability of the sampled action under the
 sampling distribution (PPO's behaviour policy).
+
+Envs take the next episode from one shared queue, so a long duel does not leave the other envs
+idle at the end. Every episode samples from its own streams (sampling seed and episode seed):
+its rows do not depend on the number of workers or on which env played it.
 """
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ import math
 import multiprocessing
 import os
 from pathlib import Path
+import queue
 import random
 import shutil
 import threading
@@ -170,10 +175,10 @@ class SharedBackend:
                 slot["result"] = error
 
 
-def run_worker(process: int, options: dict, env_shards: list[tuple[int, list[list]]]) -> dict:
+def run_worker(process: int, options: dict, envs: list[int], tasks) -> dict:
     os.environ.update(TRAINING_ENV)
     import numpy
-    from body_arena_env import LEASE_KEYS, ArenaInfrastructureError
+    from body_arena_env import LEASE_KEYS, ArenaInfrastructureError, preserve_melee_journals
     from body_policy_suite import PolicyArenaRunner, PolicyEpisodeEnv
     from gothic_body.runtime import PolicyRuntime, TorchBackend, actor_identity
     from body_fast_features import pack_features as fast_pack_features
@@ -233,7 +238,7 @@ def run_worker(process: int, options: dict, env_shards: list[tuple[int, list[lis
             self.entity, self.runtime, self.temperature, self.rng, self.learner = entity, runtime, temperature, rng, learner
             self.stream = 0
 
-    def run_env(worker: int, tasks: list[list]) -> dict:
+    def run_env(worker: int) -> dict:
         base.torch.set_num_threads(1)  # per thread: keep the one-thread kernels of the realtime runtime
         output = Path(options["output"])/f"worker-{worker:02d}"
         output.mkdir(parents=True)
@@ -247,15 +252,16 @@ def run_worker(process: int, options: dict, env_shards: list[tuple[int, list[lis
         lean = options.get("lean_runtime", True)
         policy = PolicyRuntime(backend=backend, checkpoint_sha256=checkpoint_sha256, max_actors=4, inference_cpu_threads=1,
                                lean=lean, feature_packer=fast_pack_features if lean else None)
-        rng = random.Random(options["sampling_seed"]*1000+worker)
-        # The opponent's own stream of samples: the learner's stays as without a pool.
-        opponent_rng = random.Random(options["sampling_seed"]*1000+worker+500)
         rivals = {path: PolicyRuntime(backend=model, checkpoint_sha256=digest, max_actors=4, inference_cpu_threads=1,
                                       lean=lean, feature_packer=fast_pack_features if lean else None)
                   for path, (model, digest) in pool.items()}
         summaries = []
         try:
-            for task, seed, side, distance, geometry, against, seat_role in tasks:
+            while True:
+                try:
+                    task, seed, side, distance, geometry, against, seat_role = tasks.get_nowait()
+                except queue.Empty:
+                    break
                 name = f"ep-{task}-{seed}-{side}-{distance}"
                 episode_dir = output/name
                 owned = against != "native"
@@ -270,11 +276,16 @@ def run_worker(process: int, options: dict, env_shards: list[tuple[int, list[lis
                 adversary_sent = task != "block"
                 primary, opponent = initial["primary_entity_id"], initial["opponent_entity_id"]
                 me, rival = (primary, opponent) if seat_role == "primary" else (opponent, primary)
-                seats = [Seat(me, policy, options["temperature"], rng, True)]
+                # The episode's own streams of samples; the opponent's leaves the learner's as without a pool.
+                seats = [Seat(me, policy, options["temperature"], random.Random(f"{options['sampling_seed']}:{seed}"), True)]
                 if owned:
                     env.acquire(opponent)
-                    seats.append(Seat(rival, rivals[against], options["opponent_temperature"], opponent_rng, False))
+                    seats.append(Seat(rival, rivals[against], options["opponent_temperature"],
+                                      random.Random(f"{options['sampling_seed']}:{seed}:opponent"), False))
                 reset_s = time.monotonic()-started
+                if options["keep_journals"] and summaries:
+                    previous = summaries[-1]
+                    preserve_melee_journals(output / "run", output / previous["name"], previous["seed"])
                 for seat in seats:
                     seat.runtime.begin_episode(initial["session_epoch"], initial["world_epoch"], initial_game_ms=initial["game_ms"])
                 by_entity = {seat.entity: seat for seat in seats}
@@ -397,18 +408,23 @@ def run_worker(process: int, options: dict, env_shards: list[tuple[int, list[lis
                 summaries.append(summary)
                 with (output/"episodes.jsonl").open("a") as stream_file:
                     stream_file.write(json.dumps(summary)+"\n")
-                if not options["keep_journals"]:
+                if options["keep_journals"]:
+                    preserve_melee_journals(output / "run", episode_dir, seed)
+                else:
                     shutil.rmtree(episode_dir, ignore_errors=True)
             runner.call({"cmd": "close"})
+            if options["keep_journals"] and summaries:
+                previous = summaries[-1]
+                preserve_melee_journals(output / "run", output / previous["name"], previous["seed"])
         finally:
             runner.terminate()
         return {"worker": worker, "episodes": len(summaries)}
 
-    if len(env_shards) == 1:
-        results = [run_env(*env_shards[0])]
+    if len(envs) == 1:
+        results = [run_env(envs[0])]
     else:
-        with ThreadPoolExecutor(max_workers=len(env_shards)) as pool:
-            results = [future.result() for future in [pool.submit(run_env, index, tasks) for index, tasks in env_shards]]
+        with ThreadPoolExecutor(max_workers=len(envs)) as pool:
+            results = [future.result() for future in [pool.submit(run_env, index) for index in envs]]
     return {"process": process, "envs": results, "batch_sizes": dict(backend.batches)}
 
 
@@ -473,13 +489,15 @@ def main() -> int:
                                                         "quality_credit": False, "options": options,
                                                         "training_env": TRAINING_ENV}, indent=2)+"\n")
     started = time.monotonic()
-    # Env i always plays tasks[i::envs] with sampling seed i, however envs are grouped into processes.
-    envs = args.workers*args.envs_per_worker
-    shards = [(index, tasks[index::envs]) for index in range(envs) if tasks[index::envs]]
-    groups = [shards[index:index+args.envs_per_worker] for index in range(0, len(shards), args.envs_per_worker)]
+    envs = min(args.workers*args.envs_per_worker, len(tasks))
+    groups = [list(range(index, min(index+args.envs_per_worker, envs))) for index in range(0, envs, args.envs_per_worker)]
     batch_sizes: Counter = Counter()
-    with ProcessPoolExecutor(max_workers=len(groups), mp_context=multiprocessing.get_context("spawn")) as pool:
-        futures = [pool.submit(run_worker, index, options, group) for index, group in enumerate(groups)]
+    context = multiprocessing.get_context("spawn")
+    with context.Manager() as manager, ProcessPoolExecutor(max_workers=len(groups), mp_context=context) as pool:
+        pending = manager.Queue()
+        for task in tasks:
+            pending.put(task)
+        futures = [pool.submit(run_worker, index, options, group, pending) for index, group in enumerate(groups)]
         for future in futures:
             batch_sizes.update({int(size): count for size, count in future.result()["batch_sizes"].items()})
     wall = time.monotonic()-started

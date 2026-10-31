@@ -13,9 +13,9 @@
 #include "utils/string_frm.h"
 #include "world.h"
 #include "gamemusic.h"
-#include "gothic.h"
 #include "resources.h"
 #include "testbench.h"
+#include "frameprofile.h"
 
 namespace {
 bool usesSimulationAudioClock() {
@@ -102,14 +102,14 @@ WorldSound::WorldSound(GameSession &game, World& owner)
 WorldSound::~WorldSound() {
   }
 
-void WorldSound::setDefaultZone(const zenkit::VZoneMusic &vob) {
+void WorldSound::setDefaultZone(const asset::VZoneMusic &vob) {
   def.reset(new Zone());
   def->bbox[0] = {vob.bbox.min.x, vob.bbox.min.y, vob.bbox.min.z};
   def->bbox[1] = {vob.bbox.max.x, vob.bbox.max.y, vob.bbox.max.z};
   def->name    = vob.vob_name;
   }
 
-void WorldSound::addZone(const zenkit::VZoneMusic &vob) {
+void WorldSound::addZone(const asset::VZoneMusic &vob) {
   Zone z;
   z.bbox[0] = {vob.bbox.min.x, vob.bbox.min.y, vob.bbox.min.z};
   z.bbox[1] = {vob.bbox.max.x, vob.bbox.max.y, vob.bbox.max.z};
@@ -118,10 +118,10 @@ void WorldSound::addZone(const zenkit::VZoneMusic &vob) {
   zones.emplace_back(std::move(z));
   }
 
-void WorldSound::addSound(const zenkit::VSound &vob) {
+void WorldSound::addSound(const asset::VSound &vob) {
   WSound s;
   s.vobName   = vob.vob_name;
-  s.loop      = vob.mode==zenkit::SoundMode::LOOP;
+  s.loop      = vob.mode==asset::SoundMode::LOOP;
   s.active    = vob.initially_playing;
   s.delay     = uint64_t(vob.random_delay * 1000);
   s.delayVar  = uint64_t(vob.random_delay_var * 1000);
@@ -130,8 +130,8 @@ void WorldSound::addSound(const zenkit::VSound &vob) {
   s.pos       = {vob.position.x,vob.position.y,vob.position.z};
   s.sndRadius = vob.radius;
 
-  if(vob.type==zenkit::VirtualObjectType::zCVobSoundDaytime) {
-    auto& prDay = (const zenkit::VSoundDaytime&) vob;
+  if(vob.type==asset::VirtualObjectType::zCVobSoundDaytime) {
+    auto& prDay = (const asset::VSoundDaytime&) vob;
     float b     = prDay.start_time;
     float e     = prDay.end_time;
 
@@ -223,6 +223,7 @@ Sound WorldSound::implAddSimulationSound(const Tempest::Sound& snd, float volume
   }
 
 void WorldSound::tick(Npc& player) {
+  FrameProfile::Scope timing(FrameProfile::Zone::Sound);
   std::lock_guard<std::mutex> guard(sync);
 
   auto cx = game.camera().listenerPosition();

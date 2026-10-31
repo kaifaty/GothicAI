@@ -7,6 +7,9 @@ namespace Tempest {
 namespace Detail {
 
 class VDevice;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+struct VFrameProfileQueries;
+#endif
 
 struct VFence : public AbstractGraphicsApi::Fence {
   using ResPtr  = Detail::DSharedPtr<const AbstractGraphicsApi::Shared*>;
@@ -26,6 +29,9 @@ struct VFence : public AbstractGraphicsApi::Fence {
   VkResult            status = VK_SUCCESS;
 
   std::vector<ResPtr> holdRes;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  std::shared_ptr<VFrameProfileQueries> profileQueries;
+#endif
   };
 
 }}

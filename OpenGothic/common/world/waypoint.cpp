@@ -16,7 +16,7 @@ static std::string upcaseof(std::string_view src) {
 WayPoint::WayPoint() {
   }
 
-WayPoint::WayPoint(const zenkit::WayPoint &dat)
+WayPoint::WayPoint(const asset::WayPoint &dat)
   : pos(dat.position.x, dat.position.y, dat.position.z),
     dir(dat.direction.x, dat.direction.y, dat.direction.z),
     underWater(dat.under_water),

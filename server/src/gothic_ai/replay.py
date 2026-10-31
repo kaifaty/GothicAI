@@ -9,23 +9,29 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import aclosing
 from typing import Any
 
 from . import npc_tools
 from .dialogue import (
     _FIRST_SENTENCE,
+    _LETTERS,
     QUICK_HINT,
     REACT_HINT,
     REACTION_S,
     SOUND_SAID,
+    SVM_HINT,
+    SVM_REPLY_S,
+    SVM_WORDS_MAX,
     SentenceSplitter,
     TurnState,
     first_words,
     first_words_outcome,
     is_pure_sound,
     paragraph_end,
+    svm_hint,
+    svm_text,
     to_game_text,
 )
 from .llm import Done, Item, LLMBackend, LLMError, Message, TextDelta, ToolCall, ToolResult
@@ -34,6 +40,20 @@ from .turn import MAX_STEPS, ToolOutcome, go_on, tool_choice, tool_output
 from .vanilla import VanillaQuests
 
 Resolver = Callable[[ToolCall, dict[str, Any]], ToolOutcome | None]
+
+
+def _quick_context(record: dict[str, Any]) -> tuple[list[Item], str]:
+    added = record["steps"][0]["added"]
+    situation_at = next(i for i in range(len(added) - 1, -1, -1) if added[i].get("role") == "developer")
+    situation = next(
+        (e["situation"] for e in record.get("events", []) if e["kind"] == "first_words" and "situation" in e),
+        None,
+    )
+    if situation is None:
+        situation = added[situation_at]["content"].split(SOUND_SAID.split("{}", 1)[0], 1)[0]
+        situation = situation.removesuffix("\n" + QUICK_HINT).rstrip()
+    history = [item for data in added[:situation_at] if (item := item_from_json(data)) is not None]
+    return history, situation
 
 
 async def replay_first_words(
@@ -47,16 +67,7 @@ async def replay_first_words(
     previous: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Replay only the quick first reaction, with independent repetition history for each run."""
-    added = record["steps"][0]["added"]
-    situation_at = next(i for i in range(len(added) - 1, -1, -1) if added[i].get("role") == "developer")
-    situation = next(
-        (e["situation"] for e in record.get("events", []) if e["kind"] == "first_words" and "situation" in e),
-        None,
-    )
-    if situation is None:
-        situation = added[situation_at]["content"].split(SOUND_SAID.split("{}", 1)[0], 1)[0]
-        situation = situation.removesuffix("\n" + QUICK_HINT).rstrip()
-    history = [item for data in added[:situation_at] if (item := item_from_json(data)) is not None]
+    history, situation = _quick_context(record)
     phrase = record["trigger"]["text"]
     request = [*history, Message("developer", situation + "\n" + hint), Message("user", phrase)]
     results = []
@@ -103,6 +114,75 @@ async def replay_first_words(
         "temperature": temperature,
         "runs": results,
     }
+
+
+async def replay_svm_lines(
+    llm: LLMBackend,
+    record: dict[str, Any],
+    instructions: str,
+    lines: Sequence[dict[str, Any]],
+    *,
+    names: Mapping[str, str],
+    hint: str = SVM_HINT,
+    history: bool = False,
+    runs: int = 1,
+) -> list[dict[str, Any]]:
+    """Compare SVM replacements against one NPC's last recorded situation."""
+    recorded_history, situation = _quick_context(record)
+    results = []
+    for line in lines:
+        target = (line.get("target") or "").upper()
+        target_name = names.get(target, target) if target else None
+        prompt = svm_hint(
+            line["svm"], line["text"], target_name=target_name,
+            self_target=target == record["npc"].upper(), hint=hint,
+        )
+        request = [*(recorded_history if history else []), Message("developer", situation + "\n" + prompt)]
+        attempts = []
+        for _ in range(runs):
+            started = time.monotonic()
+            text = ""
+            outcome = "said"
+            error = ""
+            try:
+                async with (
+                    asyncio.timeout(SVM_REPLY_S),
+                    aclosing(llm.stream(
+                        instructions=instructions, messages=request, tools=[], temperature=0.7,
+                    )) as events,
+                ):
+                    async for event in events:
+                        if isinstance(event, TextDelta):
+                            text += event.text
+                            if _FIRST_SENTENCE.search(text) or paragraph_end(text) is not None:
+                                break
+            except TimeoutError:
+                outcome = "late"
+            except LLMError as err:
+                outcome, error = "error", str(err)
+            words, _ = first_words(svm_text(text))
+            words = to_game_text(words)
+            elapsed = time.monotonic() - started
+            if outcome == "said":
+                if elapsed >= SVM_REPLY_S:
+                    outcome = "late"
+                elif len(_LETTERS.findall(words)) > SVM_WORDS_MAX:
+                    outcome = "too_long"
+                elif not _LETTERS.findall(words):
+                    outcome = "nothing"
+            attempt = {
+                "text": text, "words": words, "outcome": outcome,
+                "first_phrase_ms": round(elapsed * 1000),
+            }
+            if error:
+                attempt["error"] = error
+            attempts.append(attempt)
+        results.append({
+            "turn": record.get("id"), "npc": record["npc"], "svm": line["svm"],
+            "text": line["text"], "target": target, "situation": situation, "hint": prompt,
+            "history": history, "temperature": 0.7, "runs": attempts,
+        })
+    return results
 
 
 async def replay(

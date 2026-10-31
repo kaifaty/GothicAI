@@ -57,12 +57,12 @@ bool GameScript::GlobalOutput::output(Npc& npc, std::string_view text) {
   return owner.aiOutput(npc,text,false);
   }
 
-bool GameScript::GlobalOutput::outputSvm(Npc &npc, std::string_view text) {
-  return owner.aiOutputSvm(npc,text,false);
+bool GameScript::GlobalOutput::outputSvm(Npc &npc, std::string_view text, std::string_view svm, Npc* target) {
+  return owner.aiOutputSvm(npc,text,svm,target,false);
   }
 
-bool GameScript::GlobalOutput::outputOv(Npc &npc, std::string_view text) {
-  return owner.aiOutputSvm(npc,text,true);
+bool GameScript::GlobalOutput::outputOv(Npc &npc, std::string_view text, std::string_view svm, Npc* target) {
+  return owner.aiOutputSvm(npc,text,svm,target,true);
   }
 
 bool GameScript::GlobalOutput::printScr(Npc& npc, int time, std::string_view msg, int x, int y, std::string_view font) {
@@ -461,51 +461,9 @@ void GameScript::loadDialogOU() {
   const std::string prefix = std::string(Gothic::inst().defaultOutputUnits());
   const std::array<std::string,2> names = {prefix + ".BIN", prefix + ".DAT"};
 
-  const auto version = Gothic::inst().version().game==1 ? zenkit::GameVersion::GOTHIC_1
-                                                        : zenkit::GameVersion::GOTHIC_2;
-
   for(auto& OU:names) {
-    if(Resources::hasFile(OU)) {
-      std::unique_ptr<zenkit::Read> read;
-      auto zen = Resources::openReader(OU, read);
-      dialogs = std::move(*zen->read_object<zenkit::CutsceneLibrary>(version));
+    if(Resources::loadBaseOutputUnits(OU,vmLang,dialogs))
       return;
-      }
-
-    const size_t segment = OU.find_last_of("\\/");
-    if(segment!=std::string::npos && Resources::hasFile(OU.substr(segment+1))) {
-      std::unique_ptr<zenkit::Read> read;
-      auto zen = Resources::openReader(OU.substr(segment+1), read);
-      dialogs = std::move(*zen->read_object<zenkit::CutsceneLibrary>(version));
-      return;
-      }
-
-    char16_t str16[256] = {};
-    for(size_t i=0; OU[i] && i<255; ++i)
-      str16[i] = char16_t(OU[i]);
-
-    auto gcutscene = CommandLine::inst().cutscenePath();
-    auto full      = FileUtil::caseInsensitiveSegment(gcutscene,str16,Dir::FT_File);
-    if(!FileUtil::exists(std::u16string(full)) && vmLang>=0) {
-      gcutscene = CommandLine::inst().cutscenePath(ScriptLang(vmLang));
-      full      = FileUtil::caseInsensitiveSegment(gcutscene,str16,Dir::FT_File);
-      }
-
-    try {
-      auto buf = zenkit::Read::from(full);
-      if(buf==nullptr)
-        continue;
-      Resources::censusFile(full);
-      auto zen = zenkit::ReadArchive::from(buf.get());
-      if(zen==nullptr)
-        continue;
-      // auto zen = Resources::openReader(full);
-      dialogs = std::move(*zen->read_object<zenkit::CutsceneLibrary>(version));
-      return;
-      }
-    catch(...){
-      // loop to next possible path
-      }
     }
   Log::e("none of Zen-files for OU could be loaded");
   }
@@ -1372,15 +1330,20 @@ bool GameScript::aiOutput(Npc &npc, std::string_view outputname, bool overlay) {
   return true;
   }
 
-bool GameScript::aiOutputSvm(Npc &npc, std::string_view outputname, bool overlay) {
+bool GameScript::aiOutputSvm(Npc &npc, std::string_view outputname, std::string_view svm, Npc* target, bool overlay) {
   if(overlay) {
     if(tickCount()<svmBarrier)
       return true;
     svmBarrier = tickCount()+messageTime(outputname);
     }
 
-  if(!outputname.empty())
+  if(!outputname.empty()) {
+    if(auto& fn = Gothic::inst().interceptSvm; fn && fn(npc,svm,outputname,target,overlay)) {
+      npc.setAiOutputBarrier(messageTime(outputname),overlay);
+      return true;
+      }
     return aiOutput(npc,outputname,overlay);
+    }
   return true;
   }
 
@@ -1416,10 +1379,10 @@ std::string_view GameScript::messageByName(std::string_view id) const {
   if(auto& fn = Gothic::inst().externalMessageFn; fn && fn(id,ext,extTime))
     return ext;
 
-  auto blk = dialogs.block_by_name(id);
+  auto blk = OutputUnits::blockByName(dialogs,id);
   if(blk == nullptr)
     return "";
-  auto msg = blk->get_message();
+  auto msg = OutputUnits::message(*blk);
   if(msg == nullptr)
     return "";
   return msg->text;

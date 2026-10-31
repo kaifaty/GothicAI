@@ -1,13 +1,15 @@
 #pragma once
 
-#include <zenkit/Font.hh>
+#include "asset/font.h"
 
 #include <Tempest/Painter>
+
+#include <memory>
 
 class GthFont final {
   public:
     GthFont();
-    GthFont(zenkit::Read& data, std::string_view ftex, const Tempest::Color &cl);
+    GthFont(asset::Font data, const Tempest::Texture2d* texture, const Tempest::Color &cl);
     GthFont(const GthFont&) = default;
     GthFont(GthFont&&)      = default;
 
@@ -27,7 +29,7 @@ class GthFont final {
     auto lineCount(int w, std::string_view txt) const -> int32_t;
 
   private:
-    std::shared_ptr<zenkit::Font>  pfnt;
+    std::shared_ptr<asset::Font>   pfnt;
     const Tempest::Texture2d*      tex       = nullptr;
     uint32_t                       fntHeight = 0;
     float                          scale     = 0;

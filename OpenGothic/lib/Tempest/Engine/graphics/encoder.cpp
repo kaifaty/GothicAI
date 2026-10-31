@@ -319,6 +319,18 @@ void Encoder<CommandBuffer>::copy(const Texture2d& src, uint32_t mip, StorageBuf
   impl->copy(*dest.impl.impl.handler,offset,tx,w,h,mip);
   }
 
+void Encoder<CommandBuffer>::upscale(const Attachment& src, StorageImage& dst) {
+  if(state.stage==Rendering)
+    throw std::system_error(Tempest::GraphicsErrc::ComputeCallInRenderPass);
+  if(!src.tImpl.impl.handler || !dst.tImpl.impl.handler)
+    throw std::system_error(Tempest::GraphicsErrc::InvalidTexture);
+  impl->upscale(*src.tImpl.impl.handler, *dst.tImpl.impl.handler);
+  // the backend may close its compute encoder
+  state.curPipeline = nullptr;
+  state.curCompute  = nullptr;
+  state.stage       = None;
+  }
+
 void Encoder<CommandBuffer>::generateMipmaps(Attachment& tex) {
   uint32_t w = tex.w(), h = tex.h();
   impl->generateMipmap(*textureCast<Texture2d&>(tex).impl.handler,w,h,mipCount(w,h));

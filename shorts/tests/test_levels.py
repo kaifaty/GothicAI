@@ -2193,3 +2193,15 @@ def test_music_fades_can_be_disabled_without_changing_the_music_edges(publicatio
     for start, end in [(0.1, 0.2), (11.8, 11.9)]:
         assert rms(plain, start, end) == pytest.approx(middle, rel=0.001)
         assert rms(faded, start, end) < middle * 0.25
+
+
+def test_music_target_ignores_a_silent_game_stem():
+    assert levels.music_target(-14.0, -math.inf) == pytest.approx(-14.0 - levels.MUSIC_BELOW_VOICE_LU)
+    assert levels.music_target(-14.0, None) == pytest.approx(-14.0 - levels.MUSIC_BELOW_VOICE_LU)
+
+
+def test_music_below_game_does_not_apply_without_game():
+    report = levels.check_balance(-14.0, -25.0, -28.0, -math.inf, -math.inf)
+    rows = {row["id"]: row for row in report["rows"]}
+    assert rows["music_below_game"]["ok"] is None
+    assert rows["music_pause"]["ok"] is True

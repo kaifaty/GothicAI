@@ -8,7 +8,7 @@
 
 using namespace Tempest;
 
-MoveTrigger::MoveTrigger(Vob* parent, World& world, const zenkit::VMover& mover, Flags flags)
+MoveTrigger::MoveTrigger(Vob* parent, World& world, const asset::VMover& mover, Flags flags)
   :AbstractTrigger(parent,world,mover,flags) {
   moverKeyFrames  = mover.keyframes;
   behavior        = mover.behavior;
@@ -59,7 +59,7 @@ MoveTrigger::MoveTrigger(Vob* parent, World& world, const zenkit::VMover& mover,
 
   auto tr = transform();
   if(frame<moverKeyFrames.size())
-    tr = mkMatrix(moverKeyFrames[frame]);
+    tr = mkMatrix({moverKeyFrames[frame].position,moverKeyFrames[frame].rotation});
   tr.inverse();
   pos0 = localTransform();
   pos0.mul(tr);
@@ -152,28 +152,28 @@ void MoveTrigger::onTrigger(const TriggerEvent& e) {
 
   auto prev = state;
   switch(behavior) {
-    case zenkit::MoverBehavior::TOGGLE: {
+    case asset::MoverBehavior::TOGGLE: {
       if((frame==0 && state==Idle) || state==Close)
         state = Open; else
         state = Close;
       break;
       }
-    case zenkit::MoverBehavior::TRIGGER_CONTROL: {
+    case asset::MoverBehavior::TRIGGER_CONTROL: {
       if(frame==0 && state==Idle)
         state = Open;
       break;
       }
-    case zenkit::MoverBehavior::OPEN_TIME: {
+    case asset::MoverBehavior::OPEN_TIME: {
       if(state==OpenTimed)
         frameTime = 0; else
         state     = Open;
       break;
       }
-    case zenkit::MoverBehavior::LOOP: {
+    case asset::MoverBehavior::LOOP: {
       state = Loop;
       break;
       }
-    case zenkit::MoverBehavior::SINGLE_KEYS: {
+    case asset::MoverBehavior::SINGLE_KEYS: {
       return;
       }
     }
@@ -183,7 +183,7 @@ void MoveTrigger::onTrigger(const TriggerEvent& e) {
 void MoveTrigger::onUntrigger(const TriggerEvent& e) {
   if(keyframes.size()<2 || keyframes[0].ticks==0)
     return;
-  if(behavior!=zenkit::MoverBehavior::TRIGGER_CONTROL)
+  if(behavior!=asset::MoverBehavior::TRIGGER_CONTROL)
     return;
   if(frame>0 && state==Idle) {
     state       = Close;
@@ -197,20 +197,20 @@ void MoveTrigger::onGotoMsg(const TriggerEvent& evt) {
     return;
   if(evt.move.key<0 || keyframes.size()<size_t(evt.move.key))
     return;
-  if(behavior!=zenkit::MoverBehavior::SINGLE_KEYS)
+  if(behavior!=asset::MoverBehavior::SINGLE_KEYS)
     return;
   if(state!=Idle)
     return;
   state = SingleKey;
   switch(evt.move.msg) {
-    case zenkit::MoverMessageType::NEXT:
+    case asset::MoverMessageType::NEXT:
       targetFrame = nextFrame(frame);
       break;
-    case zenkit::MoverMessageType::PREVIOUS:
+    case asset::MoverMessageType::PREVIOUS:
       targetFrame = prevFrame(frame);
       break;
-    case zenkit::MoverMessageType::FIXED_DIRECT:
-    case zenkit::MoverMessageType::FIXED_ORDER:
+    case asset::MoverMessageType::FIXED_DIRECT:
+    case asset::MoverMessageType::FIXED_ORDER:
       targetFrame = uint32_t(evt.move.key);
       break;
     }
@@ -251,7 +251,7 @@ void MoveTrigger::postProcessTrigger() {
     emitSound(sfxOpenEnd);
   if(state==Close)
     emitSound(sfxCloseEnd);
-  if(behavior==zenkit::MoverBehavior::OPEN_TIME && state==Open) {
+  if(behavior==asset::MoverBehavior::OPEN_TIME && state==Open) {
     state = OpenTimed;
     return;
     }
@@ -262,14 +262,14 @@ void MoveTrigger::postProcessTrigger() {
 
 uint32_t MoveTrigger::nextFrame(uint32_t i) const {
   uint32_t size = uint32_t(keyframes.size());
-  if(behavior==zenkit::MoverBehavior::LOOP)
+  if(behavior==asset::MoverBehavior::LOOP)
     return (i+1)%size;
   return std::min<uint32_t>(i+1, size-1);
   }
 
 uint32_t MoveTrigger::prevFrame(uint32_t i) const {
   uint32_t size = uint32_t(keyframes.size());
-  if(behavior==zenkit::MoverBehavior::LOOP)
+  if(behavior==asset::MoverBehavior::LOOP)
     return (i+size-1)%size;
   return std::max<uint32_t>(i, 1) - 1;
   }
@@ -321,25 +321,25 @@ float MoveTrigger::calcProgress(uint32_t f1, uint32_t f2) const {
   bool start = (f1==0 && state!=Loop);
   bool end   = (f2==moverKeyFrames.size()-1 && state!=Loop);
   switch(speedType) {
-    case zenkit::MoverSpeedType::CONSTANT:
+    case asset::MoverSpeedType::CONSTANT:
       break;
-    case zenkit::MoverSpeedType::SLOW_START_END:
-    case zenkit::MoverSpeedType::SEGMENT_SLOW_START_END:
-      if((start && end) || speedType==zenkit::MoverSpeedType::SEGMENT_SLOW_START_END)
+    case asset::MoverSpeedType::SLOW_START_END:
+    case asset::MoverSpeedType::SEGMENT_SLOW_START_END:
+      if((start && end) || speedType==asset::MoverSpeedType::SEGMENT_SLOW_START_END)
         a = (3 - 2*a) * a*a;
       else if(start)
         a = (2 - a) * a*a;
       else if(end)
         a = ((1 - a)*a + 1)*a;
       break;
-    case zenkit::MoverSpeedType::SLOW_START:
-    case zenkit::MoverSpeedType::SEGMENT_SLOW_START:
-      if(start || speedType==zenkit::MoverSpeedType::SEGMENT_SLOW_START)
+    case asset::MoverSpeedType::SLOW_START:
+    case asset::MoverSpeedType::SEGMENT_SLOW_START:
+      if(start || speedType==asset::MoverSpeedType::SEGMENT_SLOW_START)
         a = (2 - a) * a*a;
       break;
-    case zenkit::MoverSpeedType::SLOW_END:
-    case zenkit::MoverSpeedType::SEGMENT_SLOW_END:
-      if(end || speedType==zenkit::MoverSpeedType::SEGMENT_SLOW_END)
+    case asset::MoverSpeedType::SLOW_END:
+    case asset::MoverSpeedType::SEGMENT_SLOW_END:
+      if(end || speedType==asset::MoverSpeedType::SEGMENT_SLOW_END)
         a = ((1 - a)*a + 1)*a;
       break;
     }
@@ -347,12 +347,13 @@ float MoveTrigger::calcProgress(uint32_t f1, uint32_t f2) const {
   }
 
 Matrix4x4 MoveTrigger::calcTransform(uint32_t f1, uint32_t f2, float a) const {
-  zenkit::AnimationSample fr      = {};
+  asset::AnimationSample fr      = {};
   Vec3                    forward = {};
-  if(lerpType==zenkit::MoverLerpType::LINEAR) {
+  if(lerpType==asset::MoverLerpType::LINEAR) {
     auto& pos1 = moverKeyFrames[f1].position;
     auto& pos2 = moverKeyFrames[f2].position;
-    fr      = mix(moverKeyFrames[f1],moverKeyFrames[f2],a);
+    fr      = mix({moverKeyFrames[f1].position,moverKeyFrames[f1].rotation},
+                  {moverKeyFrames[f2].position,moverKeyFrames[f2].rotation},a);
     forward = {pos2.x-pos1.x,pos2.y-pos1.y,pos2.z-pos1.z};
     } else {
     auto& kF0 = moverKeyFrames[prevFrame(f1)].position;

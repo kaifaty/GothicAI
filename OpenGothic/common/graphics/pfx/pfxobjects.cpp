@@ -89,9 +89,9 @@ PfxBucket& PfxObjects::getBucket(const ParticleFx &decl) {
   return bucket.back();
   }
 
-PfxBucket& PfxObjects::getBucket(const Material& mat, const zenkit::VirtualObject& vob) {
+PfxBucket& PfxObjects::getBucket(const Material& mat, const asset::VirtualObject& vob) {
   Tempest::Vec2 dimension {};
-  if(auto decal = dynamic_cast<const zenkit::VisualDecal*>(vob.visual.get()))
+  if(auto decal = dynamic_cast<const asset::VisualDecal*>(vob.visual.get()))
     dimension = Tempest::Vec2{decal->dimension.x, decal->dimension.y};
 
   for(auto& i:spriteEmit)

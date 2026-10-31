@@ -104,7 +104,8 @@ class CrimeLaw:
         total = sum(counters.values())
         if total and total == counters["SHEEPKILLER"]:
             return 100  # PETZMASTER's CRIME_SHEEPKILLER branch replaces the computed total
-        return min(1000, 50 * total + (500 if counters["MURDER"] else 0))
+        surrendered = sum(bool(f.get("surrendered")) for f in self.unpaid(community))
+        return min(1000, 50 * total + (500 if counters["MURDER"] else 0) + 250 * surrendered)
 
     def inform(self, crime: str, *, via: str, how: str, at: int) -> Fact | None:
         """The common arrival path: delayed reports and an on-scene call teach law once."""

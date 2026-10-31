@@ -6,7 +6,7 @@
 
 using namespace Tempest;
 
-Skeleton::Skeleton(const zenkit::ModelHierarchy& src, const Animation* anim, std::string_view name)
+Skeleton::Skeleton(const asset::ModelHierarchy& src, const Animation* anim, std::string_view name)
       :fileName(name), anim(anim) {
   bbox   [0] = {src.bbox.min.x, src.bbox.min.y, src.bbox.min.z};
   bbox   [1] = {src.bbox.max.x, src.bbox.max.y, src.bbox.max.z};

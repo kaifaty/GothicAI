@@ -94,7 +94,8 @@ void BodyArena::configure(const Config& config, uint64_t generation) {
   if(config.scenario!="distance" && config.scenario!="attack" && config.scenario!="block" &&
      config.scenario!="native_duel" && config.scenario!="reset_stress")
     throw std::invalid_argument("unknown arena scenario");
-  if(config.side>1 || !std::isfinite(config.distanceCm) || config.distanceCm<80 || config.distanceCm>2000 ||
+  if((config.weapon!="1h" && config.weapon!="2h") || (config.weapon=="2h" && config.scenario!="native_duel") ||
+     config.side>1 || !std::isfinite(config.distanceCm) || config.distanceCm<80 || config.distanceCm>2000 ||
      config.timeoutMs<33 || config.timeoutMs>60000 ||
      !std::isfinite(config.yawOffsetDeg) || std::abs(config.yawOffsetDeg)>45 ||
      !std::isfinite(config.opponentYawOffsetDeg) || std::abs(config.opponentYawOffsetDeg)>45 ||
@@ -151,7 +152,8 @@ void BodyArena::setSink(std::function<void(std::string_view)> sink) { state().si
 void BodyArena::setup(World& world, Npc& player) {
   auto& s=state();
   if(!s.enabled || s.ready) throw std::runtime_error("arena setup requires a fresh configured reset");
-  const char* names[]={"BDT_1003_BANDIT_M","PAL_255_RITTER","ItMw_1h_Common_01","ItAr_Leather_L",
+  const bool twoHanded=s.config.weapon=="2h";
+  const char* names[]={"BDT_1003_BANDIT_M","PAL_255_RITTER",twoHanded ? "ITMW_2H_BAU_AXE" : "ItMw_1h_Common_01","ItAr_Leather_L",
                        "ZS_ATTACK","FAI_HUMAN_MASTER","AIV_ATTACKREASON","AR_KILL"};
   size_t ids[std::size(names)]={};
   for(size_t i=0;i<std::size(names);++i) {
@@ -198,19 +200,20 @@ void BodyArena::setup(World& world, Npc& player) {
     handle.flags=zenkit::NpcFlag(uint32_t(handle.flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
     handle.attribute[ATR_HITPOINTS]=handle.attribute[ATR_HITPOINTSMAX]=s.config.loadFixture ? 3000 : 300;
     handle.attribute[ATR_STRENGTH]=handle.attribute[ATR_DEXTERITY]=60;
-    handle.hitchance[TALENT_1H]=60; npc->setTalentSkill(TALENT_1H,2);
+    const auto talent=twoHanded ? TALENT_2H : TALENT_1H;
+    handle.hitchance[talent]=60; npc->setTalentSkill(talent,2);
     handle.protection[PROT_EDGE]=handle.protection[PROT_BLUNT]=30;
     handle.guild=role==0 ? GIL_BDT : GIL_PAL;
     handle.fight_tactic=world.script().findSymbol(names[5])->get_int();
     handle.aivar[size_t(attackReason)]=world.script().findSymbol(names[7])->get_int();
     const auto sword=npc->currentMeleeWeapon();
-    if(sword==nullptr || sword->is2H() || npc->currentArmor()==nullptr || npc->currentRangedWeapon()!=nullptr || npc->isImmortal())
+    if(sword==nullptr || sword->is2H()!=twoHanded || npc->currentArmor()==nullptr || npc->currentRangedWeapon()!=nullptr || npc->isImmortal())
       throw std::runtime_error("arena melee profile validation failed");
     // A canonical control-save setup includes already drawn swords. This initializer has no
     // runtime command counterpart: subsequent motion, defence and damage use the normal executor.
     const_cast<Pose&>(npc->visual.pose()).stopAllAnim();
-    npc->visual.setToFightMode(WeaponState::W1H);
-    npc->invent.switchActiveWeapon(*npc,1); npc->hnpc->weapon=3; npc->updateWeaponSkeleton();
+    npc->visual.setToFightMode(twoHanded ? WeaponState::W2H : WeaponState::W1H);
+    npc->invent.switchActiveWeapon(*npc,1); npc->hnpc->weapon=twoHanded ? 4 : 3; npc->updateWeaponSkeleton();
     npc->waitTime=npc->aniWaitTime=npc->faiWaitTime=npc->outWaitTime=0;
     npc->fghAlgo.onClearTarget(); npc->setAnimRotate(0); npc->setAnim(Npc::Anim::Idle);
     npc->setPosition(positions[role^s.config.side]);
@@ -409,6 +412,11 @@ std::string BodyArena::actorJson(Npc& actor, unsigned i) {
   auto out=jsonStream();
   const auto& s=state(); const auto pos=actor.position();
   const auto weapon=actor.currentMeleeWeapon(); const auto armor=actor.currentArmor();
+  const auto* weaponSymbol=weapon==nullptr ? nullptr : actor.world().script().findSymbol(weapon->clsId());
+  // Retain the original snapshot spelling for the stock one-handed sword.
+  const auto weaponName=weaponSymbol==nullptr ? std::string_view() :
+                        weapon->clsId()==actor.world().script().findSymbolIndex("ItMw_1h_Common_01") ?
+                        std::string_view("ItMw_1h_Common_01") : std::string_view(weaponSymbol->name());
   const auto body=actor.bodyObservationState(); const auto control=BodyController::snapshot(actor);
   const auto* target=actor.currentTarget;
   out << "{\"entity_id\":" << BodyObservations::entityId(actor)
@@ -420,7 +428,7 @@ std::string BodyArena::actorJson(Npc& actor, unsigned i) {
       << ",\"str\":" << actor.attribute(ATR_STRENGTH) << ",\"dex\":" << actor.attribute(ATR_DEXTERITY)
       << ",\"onehand\":" << actor.hitChance(TALENT_1H) << ",\"onehand_talent\":" << unsigned(actor.talentSkill(TALENT_1H))
       << ",\"edge_protection\":" << actor.protection(PROT_EDGE) << ",\"blunt_protection\":" << actor.protection(PROT_BLUNT)
-      << ",\"weapon_symbol\":" << (weapon==nullptr ? 0 : weapon->clsId()) << ",\"weapon\":" << quoted(weapon==nullptr ? "" : "ItMw_1h_Common_01")
+      << ",\"weapon_symbol\":" << (weapon==nullptr ? 0 : weapon->clsId()) << ",\"weapon\":" << quoted(weaponName)
       << ",\"armor_symbol\":" << (armor==nullptr ? 0 : armor->clsId()) << ",\"armor\":" << quoted(armor==nullptr ? "" : "ItAr_Leather_L")
       << ",\"weapon_damage\":" << (weapon==nullptr ? 0 : weapon->handle().damage_total)
       << ",\"weapon_length\":" << (weapon==nullptr ? 0 : weapon->handle().range)
@@ -449,6 +457,8 @@ std::string BodyArena::actorJson(Npc& actor, unsigned i) {
   for(size_t k=0;k<control.mask.size();++k) { if(k>0) out << ','; out << control.mask[k]; }
   out << "],\"blocked_hits\":" << s.blocked[i] << ",\"received_damage\":" << s.damage[i]
       << ",\"outgoing_damage\":" << s.damage[i^1];
+  if(s.config.weapon=="2h")
+    out << ",\"twohand\":" << actor.hitChance(TALENT_2H) << ",\"twohand_talent\":" << unsigned(actor.talentSkill(TALENT_2H));
   if(s.config.loadFixture) out << ",\"pair_index\":" << i/2;
   out << '}';
   return out.str();

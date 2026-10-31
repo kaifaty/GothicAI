@@ -443,7 +443,7 @@ class _Recorded:
 
 
 class _ByNpc:
-    """A scripted model for each npc: the one whose «Ты — {name}» its instructions have; `default` else."""
+    """A scripted model selected by its npc cache key, then its persona prefix; `default` else."""
 
     name = "fake"
 
@@ -463,7 +463,9 @@ class _ByNpc:
         allowed: Collection[str] | None = None,
         cache_key: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
-        llm = next((b for name, b in self.by.items() if f"Ты — {name}" in instructions), self.default)
+        llm = self.by.get(cache_key) if cache_key is not None else None
+        if llm is None:
+            llm = next((b for name, b in self.by.items() if f"Ты — {name}" in instructions), self.default)
         return llm.stream(
             instructions=instructions,
             messages=messages,

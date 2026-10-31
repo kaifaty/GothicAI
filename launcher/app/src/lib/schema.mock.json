@@ -171,7 +171,7 @@
       "type": "string"
      },
      "fallback": {
-      "default": "voxcpm",
+      "default": "none",
       "description": "none: без запасного",
       "title": "Запасные голоса",
       "type": "string"

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import importlib.util
+import os
 from pathlib import Path
 import time
 from types import SimpleNamespace
@@ -130,7 +131,7 @@ def runner_args(options, index):
     task = options.task
     attempt = getattr(options, "attempt", 1)
     return SimpleNamespace(output=output_for(task, attempt) / "workers" / str(index), attempt=attempt,
-        runner=task / "build/opengothic/gothic-body-runner", assets=Path.home() / "gothic-ai/game",
+        runner=task / "build/opengothic/gothic-body-runner", assets=Path(os.environ.get("GOTHIC_DIR", Path.home() / "gothic-ai/game-settings")),
         save=task / "input/save.sav", cache=task / "cache", links=task / "input/accepted-links.txt",
         roads=task / "input/places.json", npc="BAU_954_MALETH", ini=None, seed=20102026,
         physics="cv", watchdog_seconds=900, limit_ms=options.limit_ms)
@@ -433,6 +434,7 @@ def main():
     validate.add_argument("--attempt", type=int, choices=(1, 2), default=1)
     validate.add_argument("--episodes-per-kind", type=int, help="Final attempt requires exactly 10 of each kind")
     options = parser.parse_args()
+    os.environ.update(module("ryzen_game").game_environment())
     if not options.task.is_absolute() or options.limit_ms <= 0:
         parser.error("An absolute task path and a positive limit are required")
     if options.attempt == 2 and options.episodes_per_kind != 10:

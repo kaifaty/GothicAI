@@ -1,0 +1,34 @@
+{
+  "deceit": {
+    "title": "Обман",
+    "emblem": "A coiled snake raised to strike, its body in thick loops. The red accent is its forked tongue."
+  },
+  "mercy": {
+    "title": "Пощада",
+    "emblem": "A sword in its scabbard, the hilt tied to the scabbard with a cord so it cannot be drawn. The red accent is the cord."
+  },
+  "blood": {
+    "title": "Кровь",
+    "emblem": "A heavy woodcutter's axe driven into a chopping block. The red accent is a strip of cloth wound round the haft."
+  },
+  "gold": {
+    "title": "Золото",
+    "emblem": "A set of iron merchant's scales with a small heap of coins in one pan. The red accent is a tassel hanging from the beam."
+  },
+  "word": {
+    "title": "Слово",
+    "emblem": "A rolled parchment scroll tied with a cord. The red accent is the cord's knot."
+  },
+  "theft": {
+    "title": "Кража",
+    "emblem": "An opened iron padlock with a bent lockpick still in its keyhole. The red accent is a scrap of cloth tied to the lockpick."
+  },
+  "oath": {
+    "title": "Клятва",
+    "emblem": "Two hands clasped in a firm handshake, seen from the side, sleeves at the wrists. The red accent is a cord wound round the joined hands."
+  },
+  "survival": {
+    "title": "Выживание",
+    "emblem": "A small campfire of three crossed logs ringed by stones. The red accent is the flame."
+  }
+}

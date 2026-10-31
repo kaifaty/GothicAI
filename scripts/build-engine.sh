@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the game (OpenGothic/build/opengothic/Gothic2Notr). Everything it needs is in the repository,
+# Builds the game and adjacent content-convert (OpenGothic/build/opengothic/). Everything it needs is in the repository,
 # including the engine's libraries (OpenGothic/lib, see OpenGothic/lib/VENDORED.md).
 #
 #   scripts/build-engine.sh                 # RelWithDebInfo

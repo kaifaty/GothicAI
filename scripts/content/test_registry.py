@@ -335,3 +335,54 @@ def test_concept_requires_top_level_raw_source_and_utc(tmp_path):
     del entry['utc']
     with pytest.raises(registry.RegistryError, match='UTC timestamp'):
         registry.validate_entry(entry)
+
+
+def world_chunk_entry(digest):
+    return {
+        "id": "harbour-stairs-newworld-1-1", "kind": "worldchunk", "replaces": ["NEWWORLD/1_-1"],
+        "pipeline": "blender-world-edit", "models": [], "prompt": "", "negative": "", "seed": None,
+        "parameters": {"steps": 12}, "status": "draft",
+        "tool": {"script": "scripts/content/world/harbour_stairs.py", "commit": "a" * 40},
+        "inputs": [{"input": "converted world mesh NEWWORLD/1_-1", "sha256": "b" * 64}],
+        "files": {"glb": {"path": "stairs-3/worlds/NEWWORLD/chunks/1_-1.glb", "sha256": digest}},
+    }
+
+
+def test_world_chunk_edit(tmp_path):
+    import hashlib
+    glb = tmp_path / "stairs-3/worlds/NEWWORLD/chunks/1_-1.glb"
+    glb.parent.mkdir(parents=True)
+    glb.write_bytes(b"glb")
+    entry = world_chunk_entry(hashlib.sha256(b"glb").hexdigest())
+    registry.validate_entry(entry, content_root=tmp_path)
+    with pytest.raises(registry.RegistryError, match="sha256 mismatch"):
+        registry.validate_entry(world_chunk_entry("c" * 64), content_root=tmp_path)
+    bad = world_chunk_entry("c" * 64)
+    bad["inputs"][0]["input"] = "original mesh NEWWORLD/1_-1"
+    with pytest.raises(registry.RegistryError, match="worldchunk.inputs"):
+        registry.validate_entry(bad)
+    bad = world_chunk_entry("c" * 64)
+    bad["replaces"] = ["NEWWORLD.ZEN"]
+    with pytest.raises(registry.RegistryError, match="worldchunk.replaces"):
+        registry.validate_entry(bad)
+
+
+def test_world_chunk_edits(tmp_path):
+    entry = world_chunk_entry("c" * 64)
+    entry["tool"]["script"] = "scripts/content/world/world_edit.py"
+    entry["edits"] = [{"script": "scripts/content/world/harbour_stairs.py", "sha256": "d" * 64},
+                      {"script": "scripts/content/world/roof_holes.py", "sha256": "e" * 64,
+                       "inputs": [{"path": "data/content/world/roof01-holes.json", "sha256": "f" * 64}]}]
+    registry.validate_entry(entry)
+    bad = json.loads(json.dumps(entry))
+    bad["edits"].append(dict(bad["edits"][0]))
+    with pytest.raises(registry.RegistryError, match="appears twice"):
+        registry.validate_entry(bad)
+    bad = json.loads(json.dumps(entry))
+    bad["tool"]["script"] = "scripts/content/world/harbour_stairs.py"
+    with pytest.raises(registry.RegistryError, match="worldchunk.edits"):
+        registry.validate_entry(bad)
+    bad = json.loads(json.dumps(entry))
+    bad["edits"][1]["inputs"][0]["sha256"] = "x"
+    with pytest.raises(registry.RegistryError, match="inputs"):
+        registry.validate_entry(bad)

@@ -42,6 +42,7 @@ from ..talk import TalkDesk
 from .common import (
     FixedDecider,
     _ByNpc,
+    _clear_beasts,
     _logged,
     _m5b_player_weapon,
     _OnWords,
@@ -87,7 +88,7 @@ async def neural_talk_scenario(
     from .neural_load import _policy_resets
 
     if pilot is None:
-        raise GameError("scenario neural-talk requires GOTHIC_BODY_URL and --neural-body")
+        raise GameError("scenario neural-talk requires --neural-body and an available body policy")
     if dialogue.llm.name != "fake":
         raise GameError("scenario neural-talk requires LLM=fake")
     stalls: list[HeroFightWait] = []
@@ -214,7 +215,9 @@ async def neural_talk_scenario(
                 s.npc == npc and s.lease is None and id(s) not in previous for s in pilot.summaries
             )
             if not check("talk_to_attack", bool(ready and len(lines) > mark and first_lease
-                                                and first_lease.npc == npc and resets.get(first_client)),
+                                                and first_lease.npc == npc and (
+                                                    pilot.policy == "engine" or resets.get(first_client)
+                                                )),
                          f"lines={len(lines) - mark}, symbol={symbol}, "
                          f"lease={first_lease.control_generation if first_lease else 0}, "
                          f"decisions={first._decisions if first else 0}, "
@@ -281,7 +284,9 @@ async def neural_talk_scenario(
             second_client = second.client if second else None
             if not check("return_to_second_fight", bool(
                 ready and second_lease and second_lease != first_lease
-                and second_client is not first_client and resets.get(second_client)
+                and (pilot.policy == "engine" or (
+                    second_client is not first_client and resets.get(second_client)
+                ))
                 and second._fallbacks == 0
             ), f"branch={branch}, lease={second_lease.control_generation if second_lease else 0}, "
                f"previous_lease={first_lease.control_generation if first_lease else 0}, "
@@ -337,7 +342,7 @@ async def neural_talk_scenario(
 async def neural_group_scenario(link: GameLink, pilot: BodyPilot | None) -> dict[str, str]:
     """Three independent P30 leases in a native melee against the hero and his companion."""
     if pilot is None:
-        raise GameError("scenario neural-group requires GOTHIC_BODY_URL and --neural-body")
+        raise GameError("scenario neural-group requires --neural-body and an available body policy")
     await link.wait_world()
     if link.hello is None or link.hello.protocol < 45 or pilot.max_fights < 3:
         raise GameError("scenario neural-group requires protocol >=45 and --neural-body-max >=3")
@@ -550,7 +555,7 @@ async def neural_group_scenario(link: GameLink, pilot: BodyPilot | None) -> dict
         decisions = sum(summary.decisions for summary in npc_summaries)
         fallbacks = sum(summary.fallbacks for summary in npc_summaries)
         # A bandit may finish with the companion and then attack the hero. Check
-        # every lease and service episode, with a separate end/release clock.
+        # every lease and policy episode, with a separate end/release clock.
         for episode, summary in enumerate(npc_summaries or [None], 1):
             prefix = f"neural_group_{index}"
             if len(npc_summaries) > 1:
@@ -578,8 +583,14 @@ async def neural_group_scenario(link: GameLink, pilot: BodyPilot | None) -> dict
             check(f"{prefix}_release", bool(
                 summary and summary.release_confirmed and released_in is not None and released_in <= 2
             ), f"confirmed={summary.release_confirmed if summary else False}, after_down_s={released_in}")
-            p95 = summary.service_p95_ms if summary else None
-            check(f"{prefix}_service_p95", p95 is not None and p95 <= 20, f"p95_ms={p95}, maximum_ms=20")
+            if summary is not None and summary.policy == "engine":
+                p99 = summary.engine_p99_us if summary else None
+                check(f"{prefix}_engine_p99", p99 is not None and p99 <= 2000,
+                      f"p99_us={p99}, maximum_us=2000")
+            else:
+                p95 = summary.service_p95_ms if summary else None
+                check(f"{prefix}_service_p95", p95 is not None and p95 <= 20,
+                      f"p95_ms={p95}, maximum_ms=20")
             check(f"{prefix}_summary", summary is not None,
                   f"npc={npc}, decisions={summary.decisions}, fallback={summary.fallbacks}, "
                   f"acquire_refusals={dict(summary.acquire_refusals)}, "
@@ -603,7 +614,7 @@ async def _neural_fight_scenario(
 ) -> dict[str, str]:
     scenario = "neural-companion" if companion else "neural"
     if pilot is None:
-        raise GameError(f"scenario {scenario} requires GOTHIC_BODY_URL and --neural-body")
+        raise GameError(f"scenario {scenario} requires --neural-body and an available body policy")
     await link.wait_world()
     npc = "DIR_NPC_NEURAL_BANDIT"
     target = "DIR_NPC_NEURAL_COMPANION" if companion else "PLAYER"
@@ -740,6 +751,7 @@ async def _neural_fight_scenario(
     link.raw_body_listeners.append(observe)
     started = time.monotonic()
     try:
+        log.info("neural arena before combat: beasts_cleared=%d", await _clear_beasts(link, npc))
         if companion:
             await link.debug("npc_goto", npc=npc, waypoint=arena, face="PC_HERO")
             await link.debug("npc_goto", npc=target, to=npc, distance=250, face=npc)
@@ -803,7 +815,7 @@ async def _neural_fight_scenario(
               bool(summary and summary.target_kind == "companion" and summary.target_name == target_name),
               f"kind={summary.target_kind if summary else None}, "
               f"name={summary.target_name if summary else None}, expected={target_name}")
-    minimum = 6 if companion else 10
+    minimum = 6 if companion and summary is not None and summary.policy == "service" else 10
     check("neural_decisions", summary is not None and summary.decisions >= minimum,
           f"decisions={summary.decisions if summary else None}, minimum={minimum}")
     check("neural_fallback", summary is not None and summary.fallbacks == 0,
@@ -823,8 +835,12 @@ async def _neural_fight_scenario(
         bool(summary and summary.release_confirmed and released_in is not None and released_in <= 2),
         f"confirmed={summary.release_confirmed if summary else False}, after_down_s={released_in}",
     )
-    p95 = summary.service_p95_ms if summary else None
-    check("neural_service_p95", p95 is not None and p95 <= 20, f"p95_ms={p95}, maximum_ms=20")
+    if summary is not None and summary.policy == "engine":
+        p99 = summary.engine_p99_us if summary else None
+        check("neural_engine_p99", p99 is not None and p99 <= 2000, f"p99_us={p99}, maximum_us=2000")
+    else:
+        p95 = summary.service_p95_ms if summary else None
+        check("neural_service_p95", p95 is not None and p95 <= 20, f"p95_ms={p95}, maximum_ms=20")
     await asyncio.sleep(0.3)
     check(
         "neural_idle",

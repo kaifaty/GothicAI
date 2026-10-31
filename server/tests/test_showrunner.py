@@ -140,7 +140,7 @@ class World:
 
 
 @asynccontextmanager
-async def world(story_graph, *proposals, gather_s=0):
+async def world(story_graph, *proposals, gather_s=0, feat_challenges=True):
     fake, clock = FakeGame(branch="A"), Clock()
     clock.t = 100_000.0
     llm = FakeBackend(
@@ -197,7 +197,9 @@ async def world(story_graph, *proposals, gather_s=0):
             busy_poll_s=0.01,
             gather_s=gather_s,
         )
-        runner = Showrunner(occasions, author, chains, casting, llm, clock=clock)
+        runner = Showrunner(
+            occasions, author, chains, casting, llm, clock=clock, feat_challenges=feat_challenges,
+        )
         state = World(fake, clock, runner, author, chains, casting, llm)
 
         async def make_chain(
@@ -1240,6 +1242,50 @@ async def test_two_canon_failures_stop_without_any_builder(graph):
         w.author.quest.assert_not_called()
         assert (await w.showrunner.decide(occasion()))["fact"] == "line_rejected"
         assert len(w.llm.calls) == 2
+
+
+async def test_canon_rejects_an_unknown_challenge_kind(graph):
+    async with world(graph) as w:
+        brief = await w.showrunner.brief(occasion())
+        errors = w.showrunner.canon(Proposal.of(proposal(challenge={"kind": "win"})), brief)
+        assert any("unknown challenge" in error for error in errors)
+
+
+async def test_accepted_line_records_its_challenge_with_people_and_time(graph):
+    async with world(graph, proposal(
+        kind="stranger", giver="", place=HOME, challenge={"kind": "no_blood"},
+    )) as w:
+        make_chain = w.chains.chain.side_effect
+
+        async def chain(*args, **kwargs):
+            quests = await make_chain(*args, **kwargs)
+            w.chronicle.record({
+                "fact": "chain", "quests": [q.id for q in quests], "roles": {"witness": [LOBART]},
+            })
+            return quests
+
+        w.chains.chain.side_effect = chain
+        result = await w.showrunner.decide(occasion())
+        [(seq, recorded)] = w.chronicle.entries("line")
+        assert recorded == result
+        assert w.chronicle.facts("challenge") == [{
+            "fact": "challenge", "kind": "no_blood", "line": seq,
+            "quests": result["quests"], "people": sorted([OWN, LOBART]),
+            "chapter": 1, "day": 10, "hour": 8, "minute": 0,
+        }]
+        instructions, _, [tool] = w.llm.calls[0]
+        assert "challenge" in instructions
+        assert "challenge" in tool.parameters["properties"]
+
+
+async def test_disabled_challenges_are_absent_from_the_model_request(graph):
+    async with world(graph, proposal(), feat_challenges=False) as w:
+        assert (await w.showrunner.decide(occasion()))["fact"] == "line"
+        instructions, _, [tool] = w.llm.calls[0]
+        assert "challenge" not in instructions
+        assert "challenge" not in tool.parameters["properties"]
+        assert "challenge" not in tool.parameters["required"]
+        assert w.chronicle.facts("challenge") == []
 
 
 def passed_premise(call):

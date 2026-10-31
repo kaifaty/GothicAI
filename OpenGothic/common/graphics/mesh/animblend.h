@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Tempest/Vec>
-#include <zenkit/ModelAnimation.hh>
+#include "asset/modeltypes.h"
 
 #include <cstdint>
 #include <string_view>
@@ -27,7 +27,7 @@ class Serialize;
 // cross-fade comes back, to compare.
 class AnimBlend final {
   public:
-    using Sample = zenkit::AnimationSample;
+    using Sample = asset::AnimationSample;
 
     // Tuned on the bench (anim, quad-zoo): longer or with more swing out, the feet of a creature that
     // stops from a gallop stay in the air too long

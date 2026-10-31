@@ -15,7 +15,7 @@ static uint64_t mkUInt64(uint32_t a, uint32_t b) {
   return (uint64_t(a)<<32) | uint64_t(b);
   };
 
-static bool isVisuallySame(const zenkit::Material& a, const zenkit::Material& b) {
+static bool isVisuallySame(const asset::Material& a, const asset::Material& b) {
   return
           // a.name                         == b.name && // mat name
     a.group                        == b.group &&
@@ -101,7 +101,7 @@ void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices,
                                 std::vector<uint32_t>& indices,
                                 std::vector<uint8_t>& indices8,
                                 std::vector<Cluster>& instances,
-                                const zenkit::Mesh& mesh) {
+                                const asset::WorldMesh& mesh) {
   if(indSz==0)
     return;
 
@@ -169,7 +169,7 @@ void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices, std::vector<Verte
                                 std::vector<uint32_t>& indices, std::vector<uint8_t>& indices8,
                                 std::vector<uint32_t>* verticesId,
                                 const std::vector<zenkit::Vec3>& vboList,
-                                const std::vector<zenkit::MeshWedge>& wedgeList,
+                                const std::vector<asset::MeshWedge>& wedgeList,
                                 const std::vector<SkeletalData>* skeletal) {
   if(indSz==0)
     return;
@@ -342,11 +342,11 @@ void PackedMesh::Meshlet::clear() {
   indSz  = 0;
   }
 
-void PackedMesh::Meshlet::updateBounds(const zenkit::Mesh& mesh) {
+void PackedMesh::Meshlet::updateBounds(const asset::WorldMesh& mesh) {
   updateBounds(mesh.vertices);
   }
 
-void PackedMesh::Meshlet::updateBounds(const zenkit::MultiResolutionMesh& mesh) {
+void PackedMesh::Meshlet::updateBounds(const asset::StaticMesh& mesh) {
   updateBounds(mesh.positions);
   }
 
@@ -405,7 +405,7 @@ void PackedMesh::Meshlet::merge(const Meshlet& other) {
   }
 
 
-PackedMesh::PackedMesh(const zenkit::Mesh& mesh, PkgType type) {
+PackedMesh::PackedMesh(const asset::WorldMesh& mesh, PkgType type) {
   if(type==PK_VisualLnd && Resources::hasGraphicsDevice() && Shaders::options().doSoftwareRT) {
     packBVH(mesh);
     }
@@ -426,7 +426,7 @@ PackedMesh::PackedMesh(const zenkit::Mesh& mesh, PkgType type) {
     }
   }
 
-PackedMesh::PackedMesh(const zenkit::MultiResolutionMesh& mesh, PkgType type, bool explicitAlphaTest) {
+PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest) {
   subMeshes.resize(mesh.sub_meshes.size());
   /* NOTE: some mods do have corrupted content description,
    * using alpha_test==0, for some of vegetation
@@ -443,13 +443,13 @@ PackedMesh::PackedMesh(const zenkit::MultiResolutionMesh& mesh, PkgType type, bo
   // MASK explicitly, including when both occur in one mesh.
   if(explicitAlphaTest) {
     for(auto& sub:subMeshes) {
-      sub.alphaTest = sub.material.alpha_func!=zenkit::AlphaFunction::NONE;
+      sub.alphaTest = sub.material.alpha_func!=asset::AlphaFunction::NONE;
       sub.alphaTestRequired = sub.alphaTest;
       }
     }
   }
 
-PackedMesh::PackedMesh(const zenkit::SoftSkinMesh& skinned) {
+PackedMesh::PackedMesh(const asset::SoftSkinMesh& skinned) {
   auto& mesh = skinned.mesh;
   subMeshes.resize(mesh.sub_meshes.size());
   {
@@ -484,7 +484,7 @@ PackedMesh::PackedMesh(const zenkit::SoftSkinMesh& skinned) {
   packMeshletsObj(mesh,PK_Visual,&vertices);
   }
 
-void PackedMesh::packPhysics(const zenkit::Mesh& mesh, PkgType type) {
+void PackedMesh::packPhysics(const asset::WorldMesh& mesh, PkgType type) {
   auto& vbo = mesh.vertices;
   auto& ibo = mesh.polygons.vertex_indices;
   vertices.reserve(vbo.size());
@@ -505,7 +505,7 @@ void PackedMesh::packPhysics(const zenkit::Mesh& mesh, PkgType type) {
       p.mat   = uint8_t(m.group);
       } else {
       // offset named materials
-      p.mat   = uint32_t(zenkit::MaterialGroup::NONE) + mid[i];
+      p.mat   = uint32_t(asset::MaterialGroup::NONE) + mid[i];
       }
     prim.push_back(p);
     }
@@ -524,11 +524,11 @@ void PackedMesh::packPhysics(const zenkit::Mesh& mesh, PkgType type) {
     SubMesh sub;
     sub.iboOffset = indices.size();
 
-    if(mId < size_t(zenkit::MaterialGroup::NONE)) {
+    if(mId < size_t(asset::MaterialGroup::NONE)) {
       sub.material.name  = "";
-      sub.material.group = zenkit::MaterialGroup(mId);
+      sub.material.group = asset::MaterialGroup(mId);
       } else {
-      auto& m = mat[mId-size_t(zenkit::MaterialGroup::NONE)];
+      auto& m = mat[mId-size_t(asset::MaterialGroup::NONE)];
       sub.material.name  = m.name;
       sub.material.group = m.group;
       }
@@ -560,12 +560,12 @@ void PackedMesh::packPhysics(const zenkit::Mesh& mesh, PkgType type) {
     }
   }
 
-void PackedMesh::packBVH(const zenkit::Mesh& mesh) {
+void PackedMesh::packBVH(const asset::WorldMesh& mesh) {
   packBVH2(mesh);
   // packCWBVH8(mesh);
   }
 
-void PackedMesh::quadAddPrim(Fragment& f, const zenkit::Mesh& mesh, uint32_t prim0, uint32_t prim1, uint32_t iMin, uint32_t iMax) {
+void PackedMesh::quadAddPrim(Fragment& f, const asset::WorldMesh& mesh, uint32_t prim0, uint32_t prim1, uint32_t iMin, uint32_t iMax) {
   auto& ibo = mesh.polygons.vertex_indices;
 
   f.prim0 = prim0;
@@ -601,8 +601,8 @@ void PackedMesh::quadAddPrim(Fragment& f, const zenkit::Mesh& mesh, uint32_t pri
   f.ibo[3] = i1;
   }
 
-std::vector<PackedMesh::Fragment> PackedMesh::packQuads(const zenkit::Mesh& mesh) {
-  auto pullVert = [&](const zenkit::Mesh& mesh, uint32_t i) {
+std::vector<PackedMesh::Fragment> PackedMesh::packQuads(const asset::WorldMesh& mesh) {
+  auto pullVert = [&](const asset::WorldMesh& mesh, uint32_t i) {
     auto v = mesh.vertices[i];
     return Tempest::Vec3(v.x, v.y, v.z);
     };
@@ -814,7 +814,7 @@ void PackedMesh::computeBbox(Tempest::Vec3& bbmin, Tempest::Vec3& bbmax, const F
     }
   }
 
-void PackedMesh::packBVH2(const zenkit::Mesh& mesh) {
+void PackedMesh::packBVH2(const asset::WorldMesh& mesh) {
   auto frag = packQuads(mesh);
 
   std::vector<BVHNode> nodes;
@@ -824,9 +824,9 @@ void PackedMesh::packBVH2(const zenkit::Mesh& mesh) {
   bvhNodes = std::move(nodes);
   }
 
-uint32_t PackedMesh::packBVH2(const zenkit::Mesh& mesh, std::vector<BVHNode>& nodes,
+uint32_t PackedMesh::packBVH2(const asset::WorldMesh& mesh, std::vector<BVHNode>& nodes,
                               Fragment* frag, size_t size, size_t parentSz) {
-  auto pullVert = [&](const zenkit::Mesh& mesh, uint32_t i) {
+  auto pullVert = [&](const asset::WorldMesh& mesh, uint32_t i) {
     auto v = mesh.vertices[i];
     return Tempest::Vec3(v.x, v.y, v.z);
     };
@@ -885,7 +885,7 @@ uint32_t PackedMesh::packBVH2(const zenkit::Mesh& mesh, std::vector<BVHNode>& no
   return uint32_t(nId | BVH_BoxNode);
   }
 
-void PackedMesh::packCWBVH8(const zenkit::Mesh& mesh) {
+void PackedMesh::packCWBVH8(const asset::WorldMesh& mesh) {
   //TODO: quad packing in leaf nodes
   auto frag = packQuads(mesh);
 
@@ -897,8 +897,8 @@ void PackedMesh::packCWBVH8(const zenkit::Mesh& mesh) {
   bvh8Nodes = std::move(nodes);
   }
 
-PackedMesh::CWBVH8 PackedMesh::packCWBVH8(const zenkit::Mesh& mesh, std::vector<UVec4>& nodes, Fragment* frag, size_t size) {
-  auto pullVert = [&](const zenkit::Mesh& mesh, uint32_t i) {
+PackedMesh::CWBVH8 PackedMesh::packCWBVH8(const asset::WorldMesh& mesh, std::vector<UVec4>& nodes, Fragment* frag, size_t size) {
+  auto pullVert = [&](const asset::WorldMesh& mesh, uint32_t i) {
     auto v = mesh.vertices[i];
     return Tempest::Vec3(v.x, v.y, v.z);
     };
@@ -972,7 +972,7 @@ PackedMesh::CWBVH8 PackedMesh::packCWBVH8(const zenkit::Mesh& mesh, std::vector<
   }
 
 
-PackedMesh::CWBVH8 PackedMesh::packCWBVH8(const zenkit::Mesh& mesh, std::vector<UVec4>& nodes,
+PackedMesh::CWBVH8 PackedMesh::packCWBVH8(const asset::WorldMesh& mesh, std::vector<UVec4>& nodes,
                                           const std::vector<uint32_t>& ibo, Fragment* frag, size_t size) {
   auto pullVert = [&](uint32_t i) {
     auto v = mesh.vertices[i];
@@ -1046,7 +1046,7 @@ PackedMesh::CWBVH8 PackedMesh::packCWBVH8(const zenkit::Mesh& mesh, std::vector<
   return node;
   }
 
-void PackedMesh::packCW8Blocks(Block* out, uint32_t& outSz, const zenkit::Mesh& mesh, std::vector<UVec4>& nodes,
+void PackedMesh::packCW8Blocks(Block* out, uint32_t& outSz, const asset::WorldMesh& mesh, std::vector<UVec4>& nodes,
                                Fragment* frag, size_t size, uint8_t depth) {
   Tempest::Vec3 bbmin = {}, bbmax = {};
   bbmin = frag[0].bbmin;
@@ -1236,7 +1236,7 @@ PackedMesh::CWBVH8 PackedMesh::nodeFromBlocks(Block* block) {
   return node;
   }
 
-void PackedMesh::packMeshletsLnd(const zenkit::Mesh& mesh) {
+void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
   auto& ibo  = mesh.polygons.vertex_indices;
   auto& feat = mesh.polygons.feature_indices;
   auto& mid  = mesh.polygons.material_indices;
@@ -1312,7 +1312,7 @@ void PackedMesh::packMeshletsLnd(const zenkit::Mesh& mesh) {
     }
   }
 
-void PackedMesh::packMeshletsObj(const zenkit::MultiResolutionMesh& mesh, PkgType type,
+void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
                                  const std::vector<SkeletalData>* skeletal) {
   auto* vId = (type==PK_VisualMorph) ? &verticesId : nullptr;
 
@@ -1351,8 +1351,8 @@ void PackedMesh::packMeshletsObj(const zenkit::MultiResolutionMesh& mesh, PkgTyp
     }
   }
 
-std::vector<PackedMesh::Meshlet> PackedMesh::buildMeshlets(const zenkit::Mesh* mesh,
-                                                           const zenkit::SubMesh* proto_mesh,
+std::vector<PackedMesh::Meshlet> PackedMesh::buildMeshlets(const asset::WorldMesh* mesh,
+                                                           const asset::SubMesh* proto_mesh,
                                                            PrimitiveHeap& heap, std::vector<bool>& used) {
   heap.sort();
   std::fill(used.begin(), used.end(), false);
@@ -1423,7 +1423,7 @@ std::vector<PackedMesh::Meshlet> PackedMesh::buildMeshlets(const zenkit::Mesh* m
   return meshlets;
   }
 
-bool PackedMesh::addTriangle(Meshlet& dest, const zenkit::Mesh* mesh, const zenkit::SubMesh* sm, size_t id) {
+bool PackedMesh::addTriangle(Meshlet& dest, const asset::WorldMesh* mesh, const asset::SubMesh* sm, size_t id) {
   if(mesh!=nullptr) {
     size_t id3  = id*3;
     auto&  ibo  = mesh->polygons.vertex_indices;
@@ -1509,7 +1509,7 @@ void PackedMesh::dbgUtilization(const std::vector<Meshlet>& meshlets) {
     Log::d("");
   }
 
-void PackedMesh::dbgMeshlets(const zenkit::Mesh& mesh, const std::vector<Meshlet*>& meshlets) {
+void PackedMesh::dbgMeshlets(const asset::WorldMesh& mesh, const std::vector<Meshlet*>& meshlets) {
   std::ofstream out("dbg.obj");
 
   size_t off = 1;

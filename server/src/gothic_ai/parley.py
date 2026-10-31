@@ -260,7 +260,10 @@ class Parley:
         if threat and threat.get("status") == "active" and not threat.get("answered"):
             self.chronicle.record({**threat, "answered": True})
 
-    async def accept_deal(self, npc: str, hours: int | None = None, *, now: int | None = None) -> None:
+    async def accept_deal(
+        self, npc: str, hours: int | None = None, *, now: int | None = None,
+        native_attitude: str = "ATT_NEUTRAL",
+    ) -> None:
         npc = npc.upper()
         if not self.bandit(npc):
             return
@@ -298,7 +301,7 @@ class Parley:
             calm.append((conv, conv.intent))
         # The accepted truce cancels queued attacks and ends existing fights without waiting for speech.
         for conv, intent in calm:
-            await self.dialogue._calm(conv, intent)
+            await self.dialogue._calm(conv, intent, native_attitude=native_attitude)
 
     def tick(self) -> None:
         if self._loading:
@@ -364,18 +367,22 @@ class Parley:
             return None
         return self._balance(npc) or self._last_balance.get(npc)
 
-    def _balance(self, npc: str) -> str | None:
+    def _balance(self, npc: str, *, combat: bool = False) -> str | None:
         snap = self.link.snapshots.get(npc)
         if snap is None or snap.player is None:
             return None
         view = self.perception.view(npc) if self.perception else None
+        guild = self.dialogue.guild_of(npc) or self._guilds.get(npc)
+        allies = {guild} if combat and guild not in KILLERS else KILLERS
         band = {
             npc,
-            *(o.id for o in snap.nearby_npcs if o.guild in KILLERS and not o.dead and o.distance <= NEAR_CM),
+            *(o.id for o in snap.nearby_npcs if o.guild in allies and (not combat or not self.companion(o.id))
+              and not o.dead and o.distance <= NEAR_CM),
         }
         if view:
             band.update(
-                o.id for o in view.sees if o.guild in KILLERS and o.body != "dead" and o.distance <= NEAR_CM
+                o.id for o in view.sees if o.guild in allies and (not combat or not self.companion(o.id))
+                and o.body != "dead" and o.distance <= NEAR_CM
             )
         down = {o.id for o in view.sees if o.body in {"down", "dead"}} if view else set()
         down |= {who for who in band if who in self._roster and self._roster[who].activity == "down"}
@@ -416,6 +423,10 @@ class Parley:
         )
         self._last_balance[npc] = line
         return line
+
+    def combat_balance(self, npc: str) -> str | None:
+        """The same comparison for a human fighting the hero, including non-bandits."""
+        return self._balance(npc.upper(), combat=True)
 
     def situation(self, npc: str) -> str | None:
         npc = npc.upper()

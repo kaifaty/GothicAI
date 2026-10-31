@@ -73,6 +73,10 @@ if [[ "${1:-}" == --remote ]]; then
   [[ "$TASK" == "$HOME/gothic-ai/texture-intent" && "$RUN" =~ ^[a-zA-Z0-9_-]+$ && "$EXPECTED" =~ ^[0-9]+$ ]] || exit 2
   INPUT="$TASK/inputs/$RUN"
   export INTENT_CAPTURE_ROOT="$INPUT/runtime"
+  game_environment="$(python3 "$(dirname "$0")/ryzen_game.py")"
+  eval "$game_environment"
+  GAME_BIN="$INTENT_CAPTURE_ROOT/build/opengothic/Gothic2Notr" \
+    bash "$(dirname "$0")/base-ensure.sh" "$GOTHIC_DIR"
   OUT="$TASK/runs/$RUN"
   [[ ! -e "$OUT" ]] || { echo "capture output already exists: $OUT" >&2; exit 2; }
   mkdir -p "$OUT"
@@ -103,6 +107,12 @@ done
 [[ -r "$SCENARIO" && -n "$OUT" && "$EXPECTED" =~ ^[0-9]+$ && "$EXPECTED" -gt 0 ]] || {
   echo 'need --scenario FILE --output OUTSIDE_GIT and a positive expected shot count' >&2; exit 2;
 }
+GAME_ENV=()
+for name in OPENGOTHIC_BASE OPENGOTHIC_BASE_FINGERPRINT OPENGOTHIC_VIDEOS_FINGERPRINT OPENGOTHIC_BASE_CACHE OPENGOTHIC_BASE_STORE; do
+  [[ ! ${!name+x} ]] || GAME_ENV+=("$name=${!name}")
+done
+printf -v GAME_CHECK '%q ' env ${GAME_ENV[@]+"${GAME_ENV[@]}"} python3 -c "$(cat "$ROOT/scripts/ryzen_game.py")" --check
+ssh -T -o BatchMode=yes -o ConnectTimeout=10 "$HOST" "$GAME_CHECK"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd -P)"
 case "$OUT" in "$ROOT"|"$ROOT"/*) echo '--output must be outside git' >&2; exit 2 ;; esac
@@ -131,11 +141,12 @@ fi
 [[ -r "$SAVE" ]] || { echo "missing standard bench save: $SAVE" >&2; exit 2; }
 cp "$SAVE" "$STAGING/save_slot_1.sav"
 TOOLS="$ROOT/reports/render-features/2026-10-18/tools"
-cp "$ROOT/scripts/content/capture-intent.sh" "$STAGING/tools/"
+cp "$ROOT/scripts/content/capture-intent.sh" "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$STAGING/tools/"
 cp "$TOOLS/gpu-nvidia.py" "$TOOLS/discard-ffmpeg.sh" "$STAGING/tools/"
 python3 - "$TOOLS/run-ryzen.sh" "$STAGING/tools/run-ryzen.sh" <<'PY'
 from pathlib import Path
 import sys
+import re
 source, output = map(Path, sys.argv[1:])
 text = source.read_text()
 replacements = {
@@ -146,6 +157,9 @@ for old, new in replacements.items():
     if text.count(old) != 1:
         raise SystemExit(f'render-feature Ryzen runner changed: {old}')
     text = text.replace(old, new)
+text, count = re.subn(r'(?<= -g )"[^"]+"', '"${GOTHIC_DIR:?}"', text, count=1)
+if count != 1:
+    raise SystemExit("render-feature runner game argument changed")
 output.write_text(text)
 PY
 DIGEST="$(python3 - "$ROOT/OpenGothic" <<'PY'
@@ -174,7 +188,6 @@ df -h "$HOME"
 bin="$HOME/gothic-ai/engine-cache/$digest/Gothic2Notr"
 [[ -x "$bin" ]] || { echo "no source-matching engine cache for $digest" >&2; exit 2; }
 grep -aq OPENGOTHIC_CONTENT "$bin" || { echo 'cached engine lacks OPENGOTHIC_CONTENT' >&2; exit 2; }
-[[ -d "$HOME/gothic-ai/game/Data" ]]
 # 71 1080p PNGs plus the binary/save/runtime snapshot need room before submission.
 available=$(df -Pk "$HOME" | awk 'NR==2 {print $4}')
 (( available >= 2097152 )) || { echo 'less than 2 GiB available on Ryzen' >&2; exit 2; }
@@ -183,6 +196,7 @@ mkdir "$task/inputs/$run"
 runtime="$task/inputs/$run/runtime"
 mkdir -p "$runtime/build/opengothic" "$runtime/tools" "$runtime/hd-textures/textures" "$task/inputs/$run/content"
 cp -p "$bin" "$runtime/build/opengothic/Gothic2Notr"
+cp -p "$(dirname "$bin")/content-convert" "$runtime/build/opengothic/content-convert"
 printf '%s\n' "$digest" >"$runtime/build/source.sha256"
 SH
 RUNTIME="$TASK/inputs/$RUN/runtime"
@@ -198,7 +212,7 @@ set +e
 GQ_OWNER=texture-intent "$ROOT/scripts/gq" --host "$HOST" run \
   --class quick --threads 4 --mem 5G --gpu-mem 4G --display --display-shared \
   --max 20m --name 'city texture intent daytime captures' -- \
-  bash "$RUNTIME/tools/capture-intent.sh" --remote "$TASK" "$RUN" "$EXPECTED" 2>&1 | tee "$STAGING/capture.log"
+  env ${GAME_ENV[@]+"${GAME_ENV[@]}"} bash "$RUNTIME/tools/capture-intent.sh" --remote "$TASK" "$RUN" "$EXPECTED" 2>&1 | tee "$STAGING/capture.log"
 rc="${PIPESTATUS[0]}"
 set -e
 rsync -a -- "$HOST:$TASK/runs/$RUN/" "$STAGING/captures/" || { [[ "$rc" != 0 ]] || rc=1; }

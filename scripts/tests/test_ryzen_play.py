@@ -3,6 +3,7 @@ import fcntl
 import importlib.machinery
 import importlib.util
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -24,6 +25,19 @@ def load(name, filename):
 
 install = load("ryzen_play", "ryzen-play.sh")
 session = load("ryzen_play_session", "ryzen-play-session.sh")
+GAME_HELPER = (Path(__file__).resolve().parents[1] / "ryzen_game.py").read_text()
+
+
+def prepared_game(home):
+    system = home / "gothic-ai/game-settings/system"
+    system.mkdir(parents=True)
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (system / name).write_text("[GAME]\n")
+    (home / "gothic-ai/game-base.json").write_text(json.dumps({"base": "a" * 64, "videos": ""}))
+
+
+def payload():
+    return {"origin": "origin", "settings": {}, "game_helper": GAME_HELPER}
 
 
 class RyzenPlayTests(unittest.TestCase):
@@ -55,7 +69,7 @@ class RyzenPlayTests(unittest.TestCase):
             self.assertTrue(install.create_settings(path, source, repo, home))
             content = path.read_text()
             result = tomllib.loads(content)
-            self.assertEqual(result["game"]["dir"], str(home / "gothic-ai/game"))
+            self.assertEqual(result["game"]["dir"], str(home / "gothic-ai/game-settings"))
             self.assertEqual(result["paths"], {"repo": str(repo), "uv": str(home / ".local/bin/uv")})
             for section in ("llm", "tts"):
                 self.assertEqual(result[section], source[section])
@@ -67,7 +81,15 @@ class RyzenPlayTests(unittest.TestCase):
             self.assertEqual(list(path.parent.iterdir()), [path])
             path.write_text("# user's settings\n")
             self.assertFalse(install.create_settings(path, source, repo, home))
-            self.assertEqual(path.read_text(), "# user's settings\n")
+            self.assertEqual(path.read_text(), "# user's settings\n\n[game]\ndir = "
+                             + json.dumps(str(home / "gothic-ai/game-settings")) + "\n")
+            path.write_text('[game]\ndir = "/old/install"\ndev_mode = true\n'
+                            '[paths]\ngame_home = "/personal/saves"\n')
+            install.create_settings(path, source, repo, home)
+            self.assertEqual(tomllib.loads(path.read_text()), {
+                "game": {"dir": str(home / "gothic-ai/game-settings"), "dev_mode": True},
+                "paths": {"game_home": "/personal/saves"},
+            })
 
     def test_prepare_keeps_build_and_all_uv_sync_inside_the_queue(self):
         repo = Path("/tmp/play")
@@ -106,12 +128,13 @@ class RyzenPlayTests(unittest.TestCase):
                         patch.object(install, "run") as sync, \
                         patch.object(install, "owned_process") as remote:
                     def after_sync(command, payload):
-                        sync.assert_called_once()
+                        self.assertEqual(sync.call_count, 2)
                         self.assertEqual(command[-2], "ryzen")
                         return 0
 
                     remote.side_effect = after_sync
                     self.assertEqual(install.main([action]), 0)
+                    self.assertIn("--check", sync.call_args_list[0].args[0][-1])
                     command = sync.call_args.args[0]
                     self.assertEqual(command[:4], ["rsync", "-a", "--delete", "--checksum"])
                     self.assertEqual([arg for arg in command if arg.startswith("--include=")],
@@ -181,7 +204,7 @@ class RyzenPlayTests(unittest.TestCase):
             binary = repo / "launcher/app/src-tauri/target/release/gothic-launcher"
             binary.parent.mkdir(parents=True)
             binary.touch(mode=0o755)
-            (home / "gothic-ai/game").mkdir()
+            prepared_game(home)
             uv = home / ".local/bin/uv"
             uv.parent.mkdir(parents=True)
             uv.touch()
@@ -221,7 +244,7 @@ class RyzenPlayTests(unittest.TestCase):
                         patch.object(install, "run") as run, \
                         patch.object(install.subprocess, "check_output", side_effect=["main\n", "origin\n", ""]), \
                         patch.object(install, "owned_process", return_value=result) as build:
-                    self.assertEqual(install.remote_install(action, {"origin": "origin", "settings": {}}, "source"), result)
+                    self.assertEqual(install.remote_install(action, payload(), "source"), result)
                     run.assert_called_once_with(["git", "-C", repo, "pull", "--ff-only"])
                     build.assert_called_once()
                     entry = (home / ".local/share/applications/gothic-ai.desktop").read_text()
@@ -239,7 +262,7 @@ class RyzenPlayTests(unittest.TestCase):
         for queue_source in (None, "#!/bin/sh\nprintf '%s\\n' '--display'\n", "#!/bin/sh\nexit 1\n"):
             with self.subTest(queue_source=queue_source), tempfile.TemporaryDirectory() as directory:
                 home = Path(directory)
-                (home / "gothic-ai/game").mkdir(parents=True)
+                prepared_game(home)
                 uv = home / ".local/bin/uv"
                 uv.parent.mkdir(parents=True)
                 uv.touch()
@@ -253,7 +276,7 @@ class RyzenPlayTests(unittest.TestCase):
                         patch.object(install.subprocess, "check_output") as metadata, \
                         patch.object(install, "owned_process") as build:
                     with self.assertRaisesRegex(ValueError, "scripts/gq install ryzen"):
-                        install.remote_install("install", {"origin": "origin", "settings": {}}, "source")
+                        install.remote_install("install", payload(), "source")
                     run.assert_not_called()
                     metadata.assert_not_called()
                     build.assert_not_called()
@@ -262,8 +285,9 @@ class RyzenPlayTests(unittest.TestCase):
     def test_update_refuses_active_session_before_touching_checkout(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
+            prepared_game(home)
             lock_path = home / "gothic-ai/play.install.lock"
-            lock_path.parent.mkdir(parents=True)
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
             content = home / ".local/share/gothic-ai/play-content"
             content.mkdir(parents=True)
             (content / "old-file").write_text("still playing")
@@ -277,7 +301,7 @@ class RyzenPlayTests(unittest.TestCase):
                         patch.object(install.subprocess, "check_output") as metadata, \
                         patch.object(install, "owned_process") as build:
                     with self.assertRaisesRegex(ValueError, "playing"):
-                        install.remote_install("update", {"origin": "origin", "settings": {}}, "source")
+                        install.remote_install("update", payload(), "source")
                     run.assert_not_called()
                     metadata.assert_not_called()
                     build.assert_not_called()

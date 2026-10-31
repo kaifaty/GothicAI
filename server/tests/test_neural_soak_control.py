@@ -41,6 +41,8 @@ class NativeWorld:
         self.heals = 0
         self.conversations = 0
         self.weapons = []
+        self.weapon_state = "none"
+        self.saved_weapons = []
 
     def emit(self, message):
         for listener in tuple(self.listeners):
@@ -121,6 +123,7 @@ class NativeWorld:
             attacks = [step["call"] for step in operation["steps"]
                        if step["call"][:2] == ["fn", "B_ATTACK"]]
             if attacks:
+                assert self.weapon_state == "melee"
                 self.wave_sizes.append(len(attacks))
                 self.wave_started = self.now
         self.reply()
@@ -134,6 +137,8 @@ class NativeWorld:
             self.heals += 1
         elif command == "load":
             saved = self.saves[args[0]]
+            self.weapon_state = next(state for slot, state in reversed(self.saved_weapons)
+                                     if slot == args[0])
             self.loads.append(saved)
             self.body_generation += 1
             self.branch = f"loaded-{self.body_generation}"
@@ -159,6 +164,7 @@ class NativeWorld:
         saved = Saved(type="saved", branch=self.branch, seq=len(self.save_slots) + 1)
         self.saves[slot] = saved
         self.save_slots.append(slot)
+        self.saved_weapons.append((slot, self.weapon_state))
         return saved
 
 
@@ -180,6 +186,7 @@ def control_world(tmp_path, monkeypatch):
 
     async def weapon(link, kind, **kwargs):
         link.weapons.append(kind)
+        link.weapon_state = kind
 
     monkeypatch.setenv("GOTHIC_SOAK_CONTROL", "1")
     monkeypatch.setenv("GOTHIC_SOAK_SECONDS", "180")
@@ -231,6 +238,7 @@ async def test_control_runs_native_waves_death_and_scheduled_loads(
     assert result["extra"]["scheduled_loads"] == [10, 20]
     assert len(world.loads) == 3
     assert world.save_slots.count(8) == 2
+    assert all(state == "none" for slot, state in world.saved_weapons if slot == 7)
     assert world.wave_sizes == [3, 4, 3, 4]
     assert len(result["extra"]["waves"]) == 4
     assert result["extra"]["waves"][-1]["end"] == "escape_duration"

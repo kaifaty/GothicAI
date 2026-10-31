@@ -321,6 +321,7 @@ void writeView(Writer& w, World& world, Npc& npc) {
            !Gothic::inst().isNpcInDialog(npc);
     };
   w.Key("theft_ready"); w.Bool(perceptionReady(PERC_ASSESSTHEFT));
+  w.Key("senses_range"); w.Int(npc.handle().senses_range);
   w.Key("theft_range"); w.Double(npc.perceptionRange(PERC_ASSESSTHEFT));
   w.Key("others_damage_ready"); w.Bool(perceptionReady(PERC_ASSESSOTHERSDAMAGE));
   w.Key("others_damage_range"); w.Double(npc.perceptionRange(PERC_ASSESSOTHERSDAMAGE));

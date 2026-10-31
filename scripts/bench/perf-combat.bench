@@ -1,0 +1,45 @@
+# Eight native one-handed bandits attack an immortal, stationary hero.
+# Native control is reproducible without a server; P30 leases are a separate live option.
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+clear 3000
+watch player
+stats hpmax 100000 hp 100000
+immortal player on
+still player on
+arc BDT_1002_BANDIT_L 8 400 45
+fight all player
+cam look 100
+cam world 1000 650 0
+# Ten real seconds after the teleport for loading and native simulation.
+wait 10000
+cam hold
+perf sample perf-combat/view-1
+wait 8000
+perf stop
+cam world 1000 650 90
+wait 34
+cam hold
+perf sample perf-combat/view-2
+wait 8000
+perf stop
+cam world 1000 650 180
+wait 34
+cam hold
+perf sample perf-combat/view-3
+wait 8000
+perf stop
+cam world 1000 650 270
+wait 34
+cam hold
+perf sample perf-combat/view-4
+wait 8000
+perf stop

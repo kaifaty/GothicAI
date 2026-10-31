@@ -354,7 +354,9 @@ def combat_shouts(log_file: Path, npc: str) -> list[int]:
     """Only successful native audio playback logs count; a queued or suppressed SVM is insufficient."""
     if not log_file.exists():
         return []
-    pattern = re.compile(rf"\[ai\] {re.escape(npc)} combat shout \S+ audio_ms=(\d+) game_ms=(\d+)")
+    pattern = re.compile(
+        rf"\[ai\] {re.escape(npc)} combat shout \S+ audio_ms=(\d+)(?: replaced=0)? game_ms=(\d+)"
+    )
     return [int(t) for ms, t in pattern.findall(log_file.read_text(errors="replace")) if int(ms) > 0]
 
 

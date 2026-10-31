@@ -11,9 +11,11 @@ namespace Dx8 {
 
 class Band final {
   public:
+    Band()=default;
     Band(Riff &input);
 
     struct Instrument final {
+      Instrument()=default;
       Instrument(Riff &input);
 
       DMUS_IO_INSTRUMENT header;

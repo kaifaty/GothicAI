@@ -77,9 +77,11 @@ class Supervisor:
         *,
         session: SessionFile | None = None,
         echo: Callable[[str, str], None] | None = None,
+        preparation: Proc | None = None,
     ) -> None:
         self.services = services
         self.game = game
+        self.preparation = preparation
         self.log_dir = log_dir
         self.on_event = on_event
         self.session = session or SessionFile()
@@ -105,12 +107,21 @@ class Supervisor:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         tasks: list[asyncio.Task[Any]] = []
         try:
+            if self._stop.is_set():
+                return 0
+            if self.preparation is not None:
+                code = await self._prepare()
+                if code or self._stop.is_set():
+                    return code
             if not await self._start_services():
                 return 0 if self._stop.is_set() else 1
             tasks = [asyncio.create_task(self._keep(p)) for p in self.services]
             tasks.append(asyncio.create_task(self._watch_status()))
             if self.game is None:
-                await self._stop.wait()
+                if self.services:
+                    await self._stop.wait()
+                return 0
+            if self._stop.is_set():
                 return 0
             game = await self._spawn(self.game)
             ended = asyncio.create_task(_exit_code(game.process))
@@ -130,6 +141,27 @@ class Supervisor:
             await asyncio.gather(*tasks, return_exceptions=True)
             await self._stop_all()
             self.session.release()
+
+    async def _prepare(self) -> int:
+        assert self.preparation is not None
+        r = await self._spawn(self.preparation)
+        ended = asyncio.create_task(_exit_code(r.process))
+        stopping = asyncio.create_task(self._stop.wait())
+        try:
+            await asyncio.wait({ended, stopping}, return_when=asyncio.FIRST_COMPLETED)
+            if self._stop.is_set():
+                return 0  # run's finally stops the converter's process group before returning
+            code = ended.result()
+            await self._finish(r, signal.SIGTERM)
+            if code:
+                self.on_event(Event("prepare", "failed", f"exited with code {code}\n{_indent(list(r.tail))}"))
+            else:
+                self.on_event(Event("prepare", "ready", f"in {time.monotonic() - r.started:.1f}s"))
+            return code
+        finally:
+            ended.cancel()
+            stopping.cancel()
+            await asyncio.gather(ended, stopping, return_exceptions=True)
 
     async def _start_services(self) -> bool:
         """False as soon as one service fails to come up (its last output in the event), or on stop()."""
@@ -194,8 +226,8 @@ class Supervisor:
             cwd=proc.cwd,
             env=child_env(proc.env),
             stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            stdout=asyncio.subprocess.DEVNULL if proc.name == "prepare" else asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE if proc.name == "prepare" else asyncio.subprocess.STDOUT,
             start_new_session=True,  # own process group, and Ctrl-C in the terminal reaches only us
             limit=1 << 22,
         )
@@ -206,8 +238,9 @@ class Supervisor:
         return r
 
     async def _read(self, r: _Running) -> None:
-        assert r.process.stdout is not None
-        while (line := await r.process.stdout.readline()) and not r.log.closed:
+        stream = r.process.stderr if r.proc.name == "prepare" else r.process.stdout
+        assert stream is not None
+        while (line := await stream.readline()) and not r.log.closed:
             if r.proc.stamp:
                 line = time.strftime("%H:%M:%S ").encode() + line
             r.log.write(line)
@@ -216,6 +249,9 @@ class Supervisor:
             r.tail.append(text)
             if self.echo is not None:
                 self.echo(r.proc.name, text)
+            if r.proc.name == "prepare":
+                self.on_event(Event("prepare", "status", text))
+                continue
             if text.startswith(JOURNAL_PREFIX):
                 with contextlib.suppress(ValueError):
                     entry = json.loads(text.removeprefix(JOURNAL_PREFIX))
@@ -246,9 +282,13 @@ class Supervisor:
 
     async def _stop_all(self) -> None:
         """The game first, then the services in reverse start order (the server before ASR and TTS)."""
-        order = [n for n in ("game", *(p.name for p in reversed(self.services))) if n in self.running]
+        order = [
+            n for n in ("game", *(p.name for p in reversed(self.services)), "prepare") if n in self.running
+        ]
         for name in order:
             r = self.running[name]
+            if r.log.closed:
+                continue
             if r.process.returncode is None:
                 self.on_event(Event(name, "stopped"))
             await self._finish(r, signal.SIGTERM)

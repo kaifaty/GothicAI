@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+import faulthandler
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
+import time
 from types import SimpleNamespace
 
 
 ARCHIVE = Path("/mnt/shared/gothic-ai/nav-dagger4")
+V4 = Path("/mnt/shared/gothic-ai/archive/nav-demos-v4-20261029")
 V5 = Path("/mnt/shared/gothic-ai/nav-demos-v5")
+V5_RECORDINGS = Path("/mnt/shared/gothic-ai/nav-lean-data/corpus-v5")
+BASELINE = Path("/mnt/shared/gothic-ai/archive/nav-dagger3-20261030")
+SCREEN_HD = Path("/mnt/shared/gothic-ai/nav-eval-screen/runs/20261030T214924Z-e9cc38adb/metrics.json")
+REPORT = "2026-10-31-dagger4-r1"
 SEEDS = (18102027, 18102028, 18102029)
 FAMILIES = ("point", "object", "approach", "follow_below_gate", "jump")
 COUNTS = dict(point=180, object=537, approach=303, follow_below_gate=306, jump=135, safety=30)
@@ -27,16 +36,16 @@ def phases():
     result.append(dict(kind="assemble"))
     result += [dict(kind="train", epoch=epoch) for epoch in range(1, 21)]
     result.append(dict(kind="parity"))
-    for model in ("bc3", "hd", "r1"):
-        for family in (*FAMILIES, "safety", "detour"):
-            for seeds in ((seed,) for seed in SEEDS) if family in ("object", "detour") else (SEEDS,):
-                result.append(dict(kind="validate", model=model, family=family, seeds=seeds))
+    result += [dict(kind="screen"), dict(kind="screen-gate")]
+    for family in (*FAMILIES, "safety", "detour"):
+        for seeds in ((seed,) for seed in SEEDS) if family in ("object", "detour") else (SEEDS,):
+            result.append(dict(kind="validate", model="r1", family=family, seeds=seeds))
     result.append(dict(kind="compare"))
     return result
 
 
 def resources(phase):
-    if phase["kind"] == "validate":
+    if phase["kind"] in ("validate", "screen"):
         return ["--threads", "28", "--cpu-quota", "2800%", "--mem", "20G"]
     result = ["--threads", "6", "--cpu-quota", "600%", "--mem", "16G"]
     if phase["kind"] in ("train", "parity"):
@@ -90,7 +99,7 @@ def run_command(command):
 def prepare_part(task, phase):
     import nav_bc_data as data
     v4 = phase["corpus"] == "v4"
-    source = Path.home() / "gothic-ai/nav-demos-v4" if v4 else V5 / "recordings"
+    source = V4 if v4 else V5_RECORDINGS
     manifest = source / "manifest.json" if v4 else task / "input/v5-compact.json"
     dagger = [] if v4 else [ARCHIVE / f"round1/phase-{number}" for number in range(1, 7)]
     result = data.prepare_manifest(source, part_cache(task, phase["corpus"], phase["start"]), manifest,
@@ -151,7 +160,7 @@ def train_epoch(task, phase):
     history = read_json(output / "history.json") if (output / "history.json").is_file() else []
     if len(history) != epoch - 1:
         raise ValueError(f"Epoch {epoch} requires exactly {epoch - 1} completed epochs")
-    command = [python(task), "-B", "-I", scripts(task) / "nav_bc_train.py", "train",
+    command = [python(task), "-X", "faulthandler", "-B", "-I", scripts(task) / "nav_bc_train.py", "train",
         "--cache", cache(task, "v4"), "--aggregate-cache", cache(task, "v5-dagger"),
         "--balance-v4-cache", cache(task, "v4"), "--output", output,
         "--epochs", str(epoch), "--batch", "8", "--segment", "64", "--lr", ".0003",
@@ -176,11 +185,11 @@ def train_epoch(task, phase):
 
 def parity(task):
     from nav_bc_data import load_training_manifest
-    source = Path.home() / "gothic-ai/nav-demos-v4"
+    source = V4
     _, entries = load_training_manifest(source / "manifest.json", source)
     entry = next(value for value in entries if value["decisions"] >= 1000)
     output = ARCHIVE / "round1/run/parity"
-    run_command([python(task), "-B", "-I", scripts(task) / "check_nav_policy.py", "--weights", weights(task, "r1"),
+    run_command([python(task), "-X", "faulthandler", "-B", "-I", scripts(task) / "check_nav_policy.py", "--weights", weights(task, "r1"),
         "--source", entry["directory"], "--output", output, "--steps", "1000", "--torch"])
     contract = task / "build/opengothic/gothic-navpolicy-contract"
     run_command([contract, weights(task, "r1"), output / "parity.bin.gz"])
@@ -188,10 +197,142 @@ def parity(task):
     emit("dagger4_recorded_parity_complete", steps=1000, source=str(entry["directory"]), memory_version=4)
 
 
+def screen_command(task):
+    output = ARCHIVE / "round1/screen"
+    command = [python(task), "-X", "faulthandler", "-B", "-I", scripts(task) / "nav_rl.py", "drive",
+        "--eval-screen", task / f"source/reports/navigation/2026-10-31-eval-screen/eval-screen.jsonl",
+        "--runner", task / "build/opengothic/gothic-body-runner", "--assets", os.environ["GOTHIC_DIR"],
+        "--save", task / "input/save.sav", "--cache", task / "validation-cache",
+        "--links", task / "input/accepted-links.txt", "--jump-links", task / "input/jump-links.txt",
+        "--roads", task / "input/places.json", "--weights", weights(task, "r1"), "--output", output,
+        "--physics", "cv", "--parallel", "18", "--action-mode", "sample", "--limit-ms", "30000",
+        "--watchdog-seconds", "900", "--resume"]
+    return command, output
+
+
+def screen(task):
+    checked_weights(task, "r1")
+    command, output = screen_command(task)
+    started = time.monotonic()
+    run_command(command)
+    run_command([python(task), "-X", "faulthandler", "-B", "-I", scripts(task) / "nav_rl.py", "summarize",
+                 "--source", output, "--output", output])
+    result = read_json(output / "metrics.json")
+    if len(result["episodes"]) != 168:
+        raise ValueError("Round-one screen must finish all 168 frozen episodes")
+    check_episodes(task, "r1", result["episodes"])
+    emit("dagger4_screen_complete", episodes=168, arrived=sum(bool(entry["success"]) for entry in result["episodes"]),
+         seconds=time.monotonic() - started)
+
+
+def screen_comparison(task):
+    import nav_rl as rl
+    from nav_eval_screen import METRICS, paired_difference
+    jobs = rl.eval_screen_jobs(task / "source/reports/navigation/2026-10-31-eval-screen/eval-screen.jsonl")
+    expected = {(value["family"], value["id"], seed) for _, value, seed in jobs}
+    candidate = read_json(ARCHIVE / "round1/screen/metrics.json")["episodes"]
+    reference = read_json(SCREEN_HD)["episodes"]
+    for name, episodes in (("r1", candidate), ("hd", reference)):
+        if (len(episodes) != 168 or len(expected) != 168
+                or {(entry["family"], entry["id"], entry["action_seed"]) for entry in episodes} != expected):
+            raise ValueError(f"{name} screen does not match the exact frozen 168 episode cohort")
+    comparisons = {metric: paired_difference(candidate, reference, metric) for metric in METRICS}
+    return dict(screen_gate_result(comparisons), screen_successes=dict(
+        r1=sum(bool(entry["success"]) for entry in candidate), hd=sum(bool(entry["success"]) for entry in reference)))
+
+
+def screen_gate_result(comparisons):
+    complete = all(value["delta"] is not None and value["se"] is not None for value in comparisons.values())
+    inferior = [metric for metric, value in comparisons.items() if value["delta"] is not None
+        and value["se"] is not None and (value["delta"] > 2 * value["se"]
+        if metric in ("harmful_fall", "water", "swimming") else value["delta"] < -2 * value["se"])]
+    return dict(complete=complete, passed=complete and not inferior, inferior_metrics=inferior, comparisons=comparisons)
+
+
+def finish_report(task, gate):
+    history = read_json(ARCHIVE / "round1/run/history.json")
+    if len(history) != 20:
+        raise ValueError("The round-one report requires all 20 completed training epochs")
+    controls = [read_json(ARCHIVE / f"round1/phase-{number}/control-metrics.json") for number in range(1, 7)]
+    final = history[-1]
+    lines = ["# DAgger4 round 1 — 2026-10-31", "",
+        f"Training: {len(history)} epochs; HD initialization; batch 8; segment 64; learning rate 0.0003; seed 17.",
+        f"Training loss: {history[0]['loss']} → {final['loss']}; total epoch time: {sum(epoch['seconds'] for epoch in history)} s.",
+        f"Final epoch source decisions: `{json.dumps(final['source_decisions'], sort_keys=True)}`.",
+        f"Final epoch weighted family shares: `{json.dumps(final['weighted_family_shares'], sort_keys=True)}`.",
+        "Aggregate: v4 602/405626 + v5 700/405599 + DAgger 600/568845 (episodes/decisions).",
+        "DAgger teacher-controlled decisions: 188259; loss weight 0.5; sampled DAgger decisions capped at 50%.",
+        "Student: HD input without familiar; journey memory 4; sampled execution. Temperature search: not run.", "",
+        "Recorded parity: 1000 v4 train steps; Torch/NumPy/C++ checks passed.", "",
+        f"Screen: complete={gate['complete']}, passed={gate['passed']}; 168 frozen episodes.",
+        f"Screen successes: `{json.dumps(gate['screen_successes'], sort_keys=True)}` /168; totals do not determine the gate.",
+        f"HD screen reference: `{SCREEN_HD}`.", "",
+        "| Criterion | R1 | HD | R1 − HD | Paired SE | Routes |",
+        "|---|---:|---:|---:|---:|---:|"]
+    for metric, value in gate["comparisons"].items():
+        lines.append(f"| {metric} | {value['left']} | {value['right']} | {value['delta']} | {value['se']} | {value['routes']} |")
+    lines += ["", "Screen noise boundary: two paired route standard errors; three seeds grouped within each route.",
+              "Lower is better for harmful_fall, water and swimming; higher is better for the other criteria.",
+              f"Criteria beyond the adverse boundary: {', '.join(gate['inferior_metrics']) or 'none'}.", ""]
+    lines += ["DAgger collection: phase 1 is retained unchanged in the aggregate.", "",
+              "| Phase | Episodes | Decisions | Teacher decisions | Teacher / all decisions, % |",
+              "|---|---:|---:|---:|---:|"]
+    for number, control in enumerate(controls, start=1):
+        counts = control["all"]
+        lines.append(f"| {number} | {counts['episodes']} | {counts['decisions']} | {counts['teacher_control_decisions']} "
+                     f"| {100 * counts['teacher_control_decisions'] / counts['decisions']:.2f} |")
+    reasons = ("heading", "memory_danger", "stall", "beta")
+    lines += ["", "Teacher-control reasons below are percentages of all decisions in the corresponding family and phase group.", "",
+              "| Phases | Family | Episodes | Decisions | Teacher decisions | Teacher, % | Heading, % | Memory danger, % | Stall, % | Beta, % |",
+              "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    for group, values in (("1", controls[:1]), ("2–6", controls[1:]), ("1–6", controls)):
+        families = {}
+        for control in values:
+            for family, counts in [("all", control["all"]), *control["by_family"].items()]:
+                total = families.setdefault(family, Counter())
+                for key in ("episodes", "decisions", "teacher_control_decisions"):
+                    total[key] += counts[key]
+                for reason in reasons:
+                    total[reason] += counts["by_reason"][reason]["decisions"]
+        for family, counts in families.items():
+            shares = " | ".join(f"{100 * counts[reason] / counts['decisions']:.2f}" for reason in reasons)
+            lines.append(f"| {group} | {family} | {counts['episodes']} | {counts['decisions']} | {counts['teacher_control_decisions']} "
+                         f"| {100 * counts['teacher_control_decisions'] / counts['decisions']:.2f} | {shares} |")
+    lines.append("")
+    lines += ["Full validation: not run; screen gate did not pass.", "", "Nav-live: not run.",
+              "Chain stopped at the screen gate; full validation and nav-live were not started.",
+              "Test: not run. Round 2: not started.", ""]
+    content = "\n".join(lines)
+    for destination in (ARCHIVE / f"reports/{REPORT}/README.md", task / f"source/reports/navigation/{REPORT}/README.md"):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content)
+    emit("dagger4_round1_report_written", report=str(ARCHIVE / f"reports/{REPORT}/README.md"))
+
+
+def cleanup_runtime(task):
+    for name in ("hot-cache", "validation-cache", "base-cache", "base-store", "build"):
+        directory = task / name
+        if directory.exists():
+            shutil.rmtree(directory)
+    emit("dagger4_runtime_removed", task=str(task))
+
+
+def screen_gate(task):
+    gate = screen_comparison(task)
+    emit("dagger4_screen_gate", **gate)
+    if not gate["passed"]:
+        finish_report(task, gate)
+        cleanup_runtime(task)
+        if not gate["complete"]:
+            raise ValueError("Screen is incomplete: every criterion needs an observed denominator and paired SE")
+        return False
+    return True
+
+
 def validation_command(task, phase):
     family = phase["family"]
     output = ARCHIVE / "round1" / ("detour-validation" if family == "detour" else "validation") / phase["model"]
-    command = [python(task), "-B", "-I", scripts(task) / "nav_rl.py", "drive"]
+    command = [python(task), "-X", "faulthandler", "-B", "-I", scripts(task) / "nav_rl.py", "drive"]
     if family == "detour":
         command += ["--detour-scenarios", task / "input/detour-val.jsonl"]
     else:
@@ -200,7 +341,7 @@ def validation_command(task, phase):
             command += ["--indices", "0", "--safety-fixtures", task / "input/fixtures.json", "--fence-control"]
         if family == "jump":
             command += ["--jump-links", task / "input/jump-links.txt"]
-    command += ["--runner", task / "build/opengothic/gothic-body-runner", "--assets", Path.home() / "gothic-ai/game",
+    command += ["--runner", task / "build/opengothic/gothic-body-runner", "--assets", os.environ["GOTHIC_DIR"],
         "--save", task / "input/save.sav", "--cache", task / "validation-cache",
         "--links", task / "input/accepted-links.txt", "--roads", task / "input/places.json",
         "--weights", weights(task, phase["model"]), "--output", output, "--physics", "cv", "--parallel", "18",
@@ -239,7 +380,7 @@ def validate(task, phase):
     checked_weights(task, phase["model"])
     command, output = validation_command(task, phase)
     run_command(command)
-    summary = [python(task), "-B", "-I", scripts(task) / "nav_rl.py", "summarize", "--source", output, "--output", output]
+    summary = [python(task), "-X", "faulthandler", "-B", "-I", scripts(task) / "nav_rl.py", "summarize", "--source", output, "--output", output]
     if phase["family"] != "detour":
         summary += ["--object-probes", task / "input/object-probes.jsonl"]
     run_command(summary)
@@ -258,22 +399,33 @@ def validate(task, phase):
 def compare(task):
     results, identity = {}, {}
     for model in ("bc3", "hd", "r1"):
-        normal = read_json(ARCHIVE / f"round1/validation/{model}/metrics.json")
-        detour = read_json(ARCHIVE / f"round1/detour-validation/{model}/metrics.json")
+        if model == "r1":
+            normal = read_json(ARCHIVE / "round1/validation/r1/metrics.json")
+            detour = read_json(ARCHIVE / "round1/detour-validation/r1/metrics.json")
+        else:
+            normal = read_json(BASELINE / f"hd-validation/{model}/metrics.json")
+            detour = read_json(BASELINE / ("hd-detour/metrics.json" if model == "hd" else "detour-baseline/bc3/metrics.json"))
         if len(normal["episodes"]) != 1491 or len(detour["episodes"]) != 363 or len(normal["setup_rejections"]) != 2:
             raise ValueError(f"Incomplete {model} validation")
         for name, value in (("validation", normal), ("detour", detour)):
-            pairs = {(entry["id"], entry["action_seed"]) for entry in value["episodes"]}
+            pairs = {(entry["family"], entry["id"], entry["action_seed"]) for entry in value["episodes"]}
             if len(pairs) != len(value["episodes"]) or name in identity and pairs != identity[name]:
                 raise ValueError("Validation models do not share identical paired cohorts")
             identity[name] = pairs
-            check_episodes(task, model, value["episodes"])
+            if any(entry["teacher_control_decisions"] != 0 or entry["recording"] != "text_only" for entry in value["episodes"]):
+                raise ValueError("Paired validation requires lean episodes without teacher control")
+            if model == "r1":
+                check_episodes(task, model, value["episodes"])
         results[model] = dict(point=normal["by_family"]["point"]["arrived"],
             object=normal["by_family"]["object"]["arrived"], detour=detour["all"]["arrived"],
             by_family=normal["by_family"])
     losses = {name: results["hd"][name] - results["r1"][name] for name in ("point", "detour")}
     emit("dagger4_round1_validation_complete", models=results, decline_vs_hd=losses,
-         stop_before_round2=any(value > 5 for value in losses.values()), automatically_start_round2=False)
+         automatically_start_round2=False, report_pending_live=True, next_action="nav-live.sh --round dagger4-r1")
+    gate = screen_comparison(task)
+    if not gate["passed"]:
+        raise ValueError("Completed full validation must retain its passed screen gate")
+    cleanup_runtime(task)
 
 
 def enqueue(task, step, request, queue):
@@ -282,7 +434,8 @@ def enqueue(task, step, request, queue):
         queue.disk_check()
         command = [str(queue.GQ), "submit", "--class", "batch", *resources(phases()[step]), "--max", "2h",
             "--name", f"nav dagger4 round1 step {step + 1}/{len(phases())} {phases()[step]['kind']}", "--",
-            str(python(task)), "-B", "-I", str(Path(__file__).resolve()), "--task", str(task), "--step", str(step)]
+            str(python(task)), "-X", "faulthandler", "-I", str(scripts(task) / "nav_job.py"), "--max-seconds", "7200", "--",
+            str(python(task)), "-X", "faulthandler", "-B", "-I", str(Path(__file__).resolve()), "--task", str(task), "--step", str(step)]
         result = subprocess.run(command, check=True, capture_output=True, text=True,
                                 env={**os.environ, "GQ_OWNER": "nav-dagger4"})
         identifier = result.stdout.strip()
@@ -312,6 +465,8 @@ def run(task, step, queue):
         os.dup2(stream.fileno(), 1)
         os.dup2(stream.fileno(), 2)
     queue.disk_check()
+    if shutil.disk_usage(task).free < 20 * 1024**3:
+        raise ValueError("Round-one phase requires at least 20 GiB free")
     emit("dagger4_round1_phase_started", step=step, **phase)
     if phase["kind"] == "prepare":
         prepare_part(task, phase)
@@ -321,6 +476,12 @@ def run(task, step, queue):
         train_epoch(task, phase)
     elif phase["kind"] == "parity":
         parity(task)
+    elif phase["kind"] == "screen":
+        screen(task)
+    elif phase["kind"] == "screen-gate":
+        if not screen_gate(task):
+            emit("dagger4_round1_stopped", step=step, reason="screen_gate")
+            return
     elif phase["kind"] == "validate":
         validate(task, phase)
     else:
@@ -335,6 +496,7 @@ def run(task, step, queue):
 
 
 def main():
+    faulthandler.enable()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", type=Path, required=True)
     parser.add_argument("--step", type=int, choices=range(len(phases())), required=True)
@@ -346,8 +508,15 @@ def main():
     import nav_demos_v4_chain as queue
     if args.enqueue is not None:
         return enqueue(args.task, args.step, args.enqueue, queue)
+    from ryzen_game import game_environment
+    os.environ.update(game_environment())
+    os.environ.update(OPENGOTHIC_BASE_CACHE=str(args.task / "base-cache"),
+        OPENGOTHIC_BASE_STORE=str(args.task / "base-store"),
+        OPENGOTHIC_BASE="/mnt/shared/gothic-ai/base/" + os.environ["OPENGOTHIC_BASE_FINGERPRINT"])
+    if not (Path(os.environ["OPENGOTHIC_BASE"]) / "base.json").is_file():
+        raise ValueError("Prepared read-only base is missing")
     os.environ.update(UV_CACHE_DIR=str(Path.home() / ".cache/uv"), TMPDIR=str(args.task / "tmp"),
-        OMP_NUM_THREADS="1" if phases()[args.step]["kind"] == "validate" else "6",
+        OMP_NUM_THREADS="1" if phases()[args.step]["kind"] in ("validate", "screen") else "6",
         OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENGOTHIC_BODY_TRACE="0",
         PYTHONUNBUFFERED="1", PYTHONDONTWRITEBYTECODE="1")
     os.environ.pop("OPENGOTHIC_NAV_JOURNEY_MEMORY", None)

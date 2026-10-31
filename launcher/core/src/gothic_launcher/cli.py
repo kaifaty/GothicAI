@@ -5,6 +5,8 @@
     gothic-launcher up --no-game        only the services, on their usual ports, until Ctrl-C
     gothic-launcher login               sign in to ChatGPT (once)
     gothic-launcher config show | set KEY [VALUE] | unset KEY | import-env [FILE]
+    gothic-launcher check [DIR]         check the ready base or installation, without provider requests
+    gothic-launcher prepare [DIR]       prepare the base and videos, without starting services or game
     gothic-launcher control             the launcher window's link to the core (see control.py)
     gothic-launcher play                Ryzen desktop session (also used by the terminal fallback)
 
@@ -35,6 +37,7 @@ from .commands import (
     latest_save,
     load_config,
     new_log_dir,
+    preparation,
     services,
     tools,
 )
@@ -77,13 +80,17 @@ def _up(args: argparse.Namespace, session: SessionFile) -> int:
         print(f"server health: http://127.0.0.1:{ports.server}/health", flush=True)
     if args.no_game:
         print(f"the game connects to ws://127.0.0.1:{ports.server} (its default)")
+    game_proc = None if args.no_game else game(config, layout, ports, save=save, new=args.new)
     sup = Supervisor(
         services(config, layout, ports, cwd=log_dir),
-        None if args.no_game else game(config, layout, ports, save=save, new=args.new),
+        game_proc,
         log_dir,
         print_event,
         session=session,
         echo=_echo if args.verbose else None,
+        preparation=(
+            preparation(layout.game_bin, layout.game_dir, log_dir, game_proc.env) if game_proc else None
+        ),
     )
     return asyncio.run(_run(sup))
 
@@ -117,6 +124,19 @@ def play(args: argparse.Namespace) -> int:
                 print(f"server health: {url}", flush=True)
 
     return asyncio.run(_controlled_session(Control(write), "new" if args.smoke else "continue", args.smoke))
+
+
+def prepare(args: argparse.Namespace) -> int:
+    config = _config()
+    if args.dir is not None:
+        config.settings.game.dir = args.dir
+    layout = find_layout(config)
+    log_dir = new_log_dir()
+    sup = Supervisor(
+        [], None, log_dir, print_event,
+        preparation=preparation(layout.game_bin, layout.game_dir, log_dir, layout.game_env),
+    )
+    return asyncio.run(_run(sup))
 
 
 def session_worker(args: argparse.Namespace) -> int:
@@ -206,7 +226,7 @@ def _describe(e: Event) -> str | None:
         case "ready":
             return " ".join(filter(None, ["ready", e.detail, _providers(data)]))
         case "status":
-            if e.proc == "microphone":
+            if e.proc in ("microphone", "prepare"):
                 return e.detail
             if not data.get("ok"):
                 return "not answering"
@@ -307,6 +327,7 @@ def _smoke_settings(config: Config) -> None:
     llm = config.settings.llm
     llm.backend, llm.model, llm.base_url = "fake", None, None
     llm.decider_url, llm.quick_url, llm.body_url, llm.quick = None, None, None, False
+    llm.body_policy, llm.body_net = "service", None
     config.settings.voice.enabled = False
     config.settings.tts.enabled = False
 
@@ -339,6 +360,10 @@ def main() -> None:
 
     sub.add_parser("login", help="sign in to ChatGPT")
     sub.add_parser("control", help="serve the launcher window: JSON lines on stdin and stdout")
+    p = sub.add_parser("check", help="check the ready game base or installation without provider requests")
+    p.add_argument("dir", nargs="?", type=Path, help="game settings directory (default: game.dir)")
+    p = sub.add_parser("prepare", help="prepare the game base and videos without starting game or services")
+    p.add_argument("dir", nargs="?", type=Path, help="game directory (default: game.dir)")
 
     p = sub.add_parser("config", help="show or change the settings")
     actions = p.add_subparsers(dest="action", required=True)
@@ -359,6 +384,8 @@ def main() -> None:
                 code = up(args)
             case "play":
                 code = play(args)
+            case "prepare":
+                code = prepare(args)
             case "_session":
                 code = session_worker(args)
             case "login":
@@ -369,6 +396,12 @@ def main() -> None:
                 code = control.main()
             case "config":
                 code = config_cmd(args)
+            case "check":
+                from .checks import game_folder
+
+                items = game_folder(args.dir if args.dir is not None else _config().settings.game.dir)
+                print(json.dumps([item.plain() for item in items], ensure_ascii=False))
+                code = 0 if all(item.ok for item in items) else 1
             case _:
                 code = 2
     except (SettingsError, LaunchError, AlreadyRunning) as err:

@@ -13,6 +13,7 @@
 #include "game/archerai.h"
 #include "game/gamescript.h"
 #include "game/ragdollsave.h"
+#include "game/meleeimpact.h"
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
 #include "world/aiqueue.h"
@@ -97,6 +98,13 @@ class Npc final {
 
     void       drawVobBox(DbgPainter& p) const;
     void       drawVobRay(DbgPainter& p, const Npc& npc) const;
+    // Debug overlay of the shadow melee blade: its pose during a swing and the latest contacts.
+    void       drawMeleeShadow(DbgPainter& p, uint64_t now) const;
+    void       updateMeleeShadow();
+    void       resolveMeleeContacts();
+    static bool skipMeleeAlly(bool player, bool selectedTarget, bool sameGuild, bool sameParty, bool enemy) {
+      return !player && !selectedTarget && (sameGuild || sameParty || !enemy);
+      }
 
     bool       setPosition (float x,float y,float z);
     bool       setPosition (const Tempest::Vec3& pos);
@@ -303,6 +311,10 @@ class Npc final {
     void      fistShoot();
     bool      blockFist();
     bool      finishingMove();
+    bool      isMeleeDownStrike(Anim anim, WeaponState ws) const;
+    // Frames of the finishing chop's stroke down: from the top the blade's tip falls from to where it rests at its lowest.
+    static std::optional<std::pair<uint32_t,uint32_t>> meleeFinishStroke(const std::vector<float>& tipHeight);
+    static bool isFinishSequence(const Animation::Sequence& seq);
     void      swingSword();
     bool      swingSwordL();
     bool      swingSwordR();
@@ -336,6 +348,10 @@ class Npc final {
     bool      isAimWalkStopped() const { return stanceWalkStopped; }
     bool      isEdgeMoveBlocked(const Tempest::Vec3& modelDirection) const {
       return mvAlgo.isEdgeMoveBlocked(modelDirection);
+      }
+    // Passive stand measurement; never advances the actor or changes its guard.
+    MoveAlgo::EdgeProbe navigationEdgeAhead(const Tempest::Vec3& direction,float range) const {
+      return mvAlgo.edgeAhead(direction,range);
       }
     // The manual stance looks from the hero's shoulder toward the crosshair, independently of the camera.
     auto      aimLookAt(const Tempest::Vec3& target) const -> Tempest::Vec3;
@@ -386,6 +402,10 @@ class Npc final {
     bool      isLie() const;
     bool      isUnconscious() const;
     bool      isDown() const;
+    bool      isMeleeKnockedDown() const { return meleeKnockdown; }
+    static bool canAccumulateMeleePosture(bool enabled, bool blocked, bool knockedDown, bool down) {
+      return enabled && !blocked && !knockedDown && !down;
+      }
     bool      isAttack() const;
     bool      isTalk() const;
     // whom this npc talks or listens to, for a while: it looks at them (gaze)
@@ -509,6 +529,8 @@ class Npc final {
     const Skeleton* visualSkeleton() const { return visual.visualSkeleton(); }
     const Ragdoll* ragdollBody() const { return ragdoll.get(); }
     const Ragdoll* livingBody() const { return living.get(); }
+    enum class MeleeBenchMode : uint8_t { Off, Base, Full, Chain, Blade };
+    void configureMeleeBench(MeleeBenchMode mode, bool dynamicPelvis);
     struct ArrowPhysicsProbe {
       size_t bone = size_t(-1);
       Tempest::Vec3 point, impulseNs;
@@ -516,6 +538,8 @@ class Npc final {
       uint32_t hits = 0, applied = 0, corpseImpulses = 0;
       };
     const ArrowPhysicsProbe& arrowPhysicsProbe() const { return arrowPhysics; }
+    // the last blade or fist blow handed to the living rig
+    const ArrowPhysicsProbe& meleeReactionProbe() const { return meleeReaction; }
     const Tempest::Matrix4x4& animationBone(size_t bone) const { return visual.pose().bone(bone); }
     const Tempest::Matrix4x4& renderedBone(size_t bone) const { return visual.renderedBone(bone); }
     using ArrowPinProbe = MdlVisual::ArrowPinProbe;
@@ -531,6 +555,7 @@ class Npc final {
     void      prepareLivingBody();
     void      syncRagdoll();
     void      suspendRagdoll();
+    void      finishMeleeShadowSwing(bool remove=true, bool discard=false);
     bool      setRagdollDown(bool death);
     void      addRagdollImpulse(const Tempest::Vec3& impulse);
     float     physicsMass() const;
@@ -600,6 +625,10 @@ class Npc final {
     bool      whirlTo(float dx, float dz, float step, uint64_t dt);
     bool      isRotationAllowed() const;
     auto      playAnimByName(std::string_view name, BodyState bs) -> const Animation::Sequence*;
+    bool      setPlayerPose(bool kneel);
+    void      tickPeeStream();
+    bool      tickPlayerPose();
+    bool      isPlayerKneeling() const { return playerKneeling; }
 
     bool      checkGoToNpcdistance(const Npc& other);
 
@@ -610,6 +639,7 @@ class Npc final {
 
     auto      currentWayPoint() const -> const WayPoint* { return currentFp; }
     auto      currentGoToPoint() const -> const WayPoint* { return go2.wp; }
+    auto      navigationPath() const -> const WayPath& { return wayPath; }
     auto      currentTaPoint() const -> const WayPoint*;
     void      attachToPoint(const WayPoint* p);
     GoToHint  moveHint() const { return go2.flag; }
@@ -630,6 +660,7 @@ class Npc final {
     float     navigationClearance() const {
       return physic.groundOffset()+physic.capsuleHeight()*0.5f;
       }
+    auto      navigationPhysicsPosition() const -> Tempest::Vec3 { return physic.position(); }
     // Direct, owned ground-position target for bench-controlled walks; no waypoint graph lookup.
     // Uses a 20 cm arrival radius even after a collision, to preserve navmesh corners.
     // Returns false while airborne or while leaving an interaction, so the caller can retry.
@@ -670,7 +701,7 @@ class Npc final {
     bool      doAttack(Anim anim, BodyState bs);
     void      commitSpell();
     // ignoreDefence is reserved for a confirmed contact in the devmode npc_hit fixture.
-    void      takeDamage(Npc& other, const Bullet* b, bool ignoreDefence = false);
+    void      takeDamage(Npc& other, const Bullet* b, bool ignoreDefence = false, float meleeScale = 1.f, const MeleeBladeContact* contact = nullptr);
     void      takeDamage(Npc& other, const Bullet* b, const VisualFx* vfx, int32_t splId);
     bool      isTargetableBySpell(TargetType t) const;
 
@@ -793,8 +824,8 @@ class Npc final {
     bool      hasAutoroll() const;
     bool      prepareTurn();
     void      stopWalkAnimation();
-    void      takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32_t splId, bool isSpell);
-    void      hitReaction(const Npc& other, const Bullet* b, int32_t damage, bool stumble);
+    void      takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32_t splId, bool isSpell, float meleeScale = 1.f, const MeleeBladeContact* contact = nullptr);
+    void      hitReaction(const Npc& other, const Bullet* b, int32_t damage, bool stumble, const MeleeBladeContact* contact = nullptr);
     void      takeFallDamage(const Tempest::Vec3& fallSpeed);
     void      takeDrownDamage();
 
@@ -817,7 +848,7 @@ class Npc final {
     void               updateCharacterVisualHeight();
     bool               updateLyingVisualHeight();
     void               releaseRagdoll(bool blend);
-    bool               recoverRagdoll();
+    bool               recoverRagdoll(bool force = false);
     bool               createRagdoll();
     void               updateRagdollQuestAnchor();
     void               checkRagdollQuestHazard();
@@ -825,6 +856,8 @@ class Npc final {
     bool               recoverSpellThrow();
     void               queueArrowPhysics(const Bullet& bullet);
     void               dispatchArrowPhysics(Ragdoll& body);
+    bool               queueMeleeReaction(const Npc& other, const Tempest::Vec3& at, const MeleeBladeContact* contact);
+    Tempest::Vec3      meleeImpulse(const Npc& attacker, const MeleeBladeContact* contact) const;
     bool               hasQueuedPhysicalSpellState(const AiQueue& queue) const;
 
     World&                         owner;
@@ -870,16 +903,47 @@ class Npc final {
 
     DynamicWorld::NpcItem          physic;
     std::unique_ptr<Ragdoll>       living;
+    MeleeBenchMode                meleeBench = MeleeBenchMode::Off;
+    bool                          meleeBenchDynamicPelvis = false;
     uint64_t                      livingRetryTick = 0;
     bool                          livingNeedsRebuild = false;
     bool                          livingWasFrozen = false;
     bool                          livingWasInteracting = false;
+    MeleeBenchMode meleeBenchMode() const;
+    void updateMeleeBenchBlade();
+    struct MeleeShadow;
+    struct MeleeReach;
+    mutable std::unique_ptr<MeleeShadow> meleeShadow;
+    bool                          meleeShadowBody = false;
+    bool                          meleeShadowSuspended = false;
+    struct MeleeShadowMark final {
+      Tempest::Vec3 point;
+      uint64_t      time  = 0;
+      bool          world = false;
+      std::string   label;
+      };
+    std::vector<MeleeBladeSegment> meleeShadowDrawPose;
+    bool                          meleeShadowDrawActive = false;
+    std::vector<MeleeShadowMark>  meleeShadowMarks;
+    void          noteMeleeShadowMarks(const std::vector<MeleeBladeContact>& contacts);
+    void syncMeleeShadowSwing();
+    void cacheMeleeShadowWindows(const Animation::Sequence* sequence, float length, bool normalY) const;
+    MeleeReach sampleMeleeReach(const Npc& target, Pose& sampled, const Pose::CombatLayer& attack, float yawDelta) const;
+    void consumeMeleeContacts();
+    void meleeHitStop(Npc& target, const MeleeBladeContact& hit, float multiplier, bool blocked);
+    void stopMeleeSwing();
+    void noteMeleeStep(const Tempest::Vec3& root, const Tempest::Vec3& offered, const Tempest::Vec3& moved, uint64_t dt);
+    auto meleeStep(uint64_t dt) -> Tempest::Vec3;
+    void clearMeleeShadow();
     ArrowPhysicsProbe             arrowPhysics;
+    ArrowPhysicsProbe             meleeReaction;
     struct ArrowImpact {
       size_t bone;
       Tempest::Vec3 point, impulseNs;
       float strength;
       std::weak_ptr<zenkit::INpc> culprit;
+      bool melee = false;
+      float stiffness = 1.f;
       };
     std::vector<ArrowImpact>       arrowImpacts;
     Tempest::Vec3                  pendingSpellImpulse = {};
@@ -896,6 +960,16 @@ class Npc final {
     uint64_t                      ragdollStartTick = 0;
     bool                          ragdollLegacyDown = false;
     bool                          ragdollRecovering = false;
+    void                          applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, bool blocked, float before);
+    bool                          tickMeleePosture(uint64_t dt);
+    MeleeImpact::Posture           meleePosture;
+    bool                          meleeKnockdown = false;
+    bool                          meleeDownStrike = false; // the chop from above at one lying is playing
+    bool                          meleeGetupForced = false;
+    uint64_t                      meleeFallTick = 0, meleeRiseTick = 0;
+    uint64_t                      meleeSlowSince = 0;
+    uint32_t                      meleeReturnCount = 0;
+    Tempest::Vec3                 meleeSavePosition;
     RagdollSave::QuestReturn       ragdollQuestReturn;
     bool                          ragdollQuestSpellThrow = false;
     uint64_t                      ragdollQuestSampleTick = 0;
@@ -963,6 +1037,9 @@ class Npc final {
     AiQueue                        aiQueue;
     AiQueue                        aiQueueOverlay;
     Npc*                           nativeCombatQueueTarget=nullptr; // only during this actor's ZS_ATTACK callback
+    bool                           playerKneeling=false;
+    std::unique_ptr<Effect>        peeStream;
+    bool                           playerPoseExiting=false;
     bool                           externalCtrl=false; // transient, not serialized
     bool                           percPassThrough=false; // passPerception: no interception
     std::vector<Routine>           routines;

@@ -16,6 +16,7 @@ import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'ryzen.sh'
 BENCH_SCRIPT = SCRIPT.with_name('bench.sh')
+GAME_HELPER = SCRIPT.with_name('ryzen_game.py')
 
 
 def function(name):
@@ -43,9 +44,16 @@ class KilledGameRetryTests(unittest.TestCase):
         binaries = root / 'bin'
         (source / 'scripts').mkdir(parents=True)
         (source / 'server').mkdir()
-        (root / 'home/gothic-ai/game/Data').mkdir(parents=True)
+        shutil.copyfile(GAME_HELPER, source / 'scripts/ryzen_game.py')
+        settings = root / 'home/gothic-ai/game-settings/system'
+        settings.mkdir(parents=True)
+        for name in ('Gothic.ini', 'SystemPack.ini'):
+            (settings / name).touch()
+        (settings.parent.parent / 'game-base.json').write_text(json.dumps({'base': 'c' * 64, 'videos': ''}))
         binaries.mkdir()
         shutil.copyfile(SCRIPT.with_name('e2e.sh'), source / 'scripts/e2e.sh')
+        # Base preparation has its own tests; here the base is already ready.
+        (source / 'scripts/base-ensure.sh').write_text('exit 0\n')
         # Keep the production shell monitor, but replace its services and game.
         uv = binaries / 'uv'
         uv.write_text(f'#!{sys.executable}\n' + r'''
@@ -93,11 +101,12 @@ while True:
         for executable in binaries.iterdir():
             executable.chmod(0o755)
         harness = '\n'.join([
-            'set -euo pipefail', function('e2e_window_position'), function('remote_run'),
+            'set -euo pipefail', function('e2e_window_position'), function('game_settings'), function('remote_run'),
             'ROOT="$TEST_ROOT/source"',
             'toolchain() { :; }',
             'desktop() { RYZEN_SCREEN_SIZE=1920x1080; }',
             'require_prepared() { :; }',
+            'export RYZEN_STORYGRAPH_BIN=/usr/bin/true',
             'export RYZEN_GAME_BIN="$TEST_ROOT/bin/game"',
             'remote_run e2e "$TEST_ROOT/state" run',
         ])
@@ -411,334 +420,44 @@ remote_probe e2e "$TEST_ROOT/state" run "$TEST_SCENARIO"
 
 
 class AutoCleanTests(unittest.TestCase):
-    gib = 1024 ** 3
+    def test_controller_marks_only_own_session_and_preserves_other_data(self):
+        with tempfile.TemporaryDirectory(prefix='ryzen-autoclean-test-') as directory:
+            home = Path(directory) / 'home'
+            worktrees = home / 'gothic-ai/e2e'
+            own = worktrees / 'own'
+            own.mkdir(parents=True)
+            (own / '.last-used').touch()
+            stale = worktrees / 'stale'
+            (stale / 'build').mkdir(parents=True)
+            data = stale / 'result.bin'
+            data.write_text('preserve until verified archive')
+            (stale / 'build/object.o').write_text('rebuildable')
+            for path in [*worktrees.rglob('*'), worktrees]:
+                os.utime(path, (time.time() - 3 * 86400,) * 2)
+            before = {path: path.stat().st_mtime_ns for path in stale.rglob('*')}
+            harness = 'set -euo pipefail\n' + function('auto_clean') + '\nauto_clean\n'
+            result = subprocess.run(['bash', '-c', harness], capture_output=True, text=True,
+                                    timeout=5, env=dict(os.environ, HOME=str(home),
+                                                       WORKTREE_LOCK=str(worktrees / 'own.lock')))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertLess(time.time() - (own / '.last-used').stat().st_mtime, 10)
+            self.assertEqual({path: path.stat().st_mtime_ns for path in stale.rglob('*')}, before)
+            self.assertEqual(data.read_text(), 'preserve until verified archive')
 
-    def setUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory(prefix='ryzen-autoclean-test-'))).resolve()
-        self.home = self.root / 'home'
-        self.worktrees = self.home / 'gothic-ai/e2e'
-        self.worktrees.mkdir(parents=True)
-        self.bin = self.root / 'bin'
-        self.bin.mkdir()
-        self.free_space = self.root / 'free-bytes'
-        self.free_space.write_text(str(100 * self.gib))
-        self.calls = self.root / 'uv-calls.jsonl'
-        self.env = dict(os.environ, HOME=str(self.home), CLEAN_IDLE_HOURS='48',
-                        WORKTREE_LOCK=str(self.worktrees / 'own.lock'),
-                        TEST_FREE_SPACE=str(self.free_space), TEST_UV_CALLS=str(self.calls),
-                        PATH=str(self.bin) + os.pathsep + os.environ['PATH'])
-        # Run the real heredoc with an isolated disk size, without depending on
-        # the machine's free space or installing Linux flock on macOS.
-        python = self.bin / 'python3'
-        python.write_text(f'#!{sys.executable}\n' + r'''
-import collections
-import os
-from pathlib import Path
-import shutil
-import sys
-usage = collections.namedtuple('usage', 'total used free')
-def disk_usage(path):
-    free = int(Path(os.environ['TEST_FREE_SPACE']).read_text())
-    return usage(200 * 1024 ** 3, 200 * 1024 ** 3 - free, free)
-shutil.disk_usage = disk_usage
-sys.argv = sys.argv[1:]
-assert sys.argv[0] == '-', sys.argv
-exec(compile(sys.stdin.read(), '<auto-clean-test>', 'exec'), {'__name__': '__main__'})
-''')
-        python.chmod(0o755)
-        flock = self.bin / 'flock'
-        flock.write_text(f'#!{sys.executable}\n' + r'''
-import fcntl
-import os
-from pathlib import Path
-import sys
-import time
-if sys.argv[1] == '-n':
-    try:
-        fcntl.flock(int(sys.argv[2]), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        sys.exit(1)
-else:
-    assert sys.argv[1] == '-w', sys.argv
-    # Delay the legacy wrapper after exec 9>lock but before its flock call.
-    Path(os.environ['TEST_FLOCK_OPENED']).touch()
-    while not Path(os.environ['TEST_FLOCK_CONTINUE']).exists():
-        time.sleep(0.02)
-    deadline = time.monotonic() + float(sys.argv[2])
-    while True:
-        try:
-            fcntl.flock(int(sys.argv[3]), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            break
-        except BlockingIOError:
-            Path(os.environ['TEST_FLOCK_WAITING']).touch()
-            if time.monotonic() >= deadline:
-                sys.exit(1)
-            time.sleep(0.02)
-''')
-        flock.chmod(0o755)
-        uv = self.home / '.local/bin/uv'
-        uv.parent.mkdir(parents=True)
-        uv.write_text(f'#!{sys.executable}\n' + r'''
-import json
-import os
-from pathlib import Path
-import sys
-import time
-with Path(os.environ['TEST_UV_CALLS']).open('a') as stream:
-    stream.write(json.dumps(sys.argv[1:]) + '\n')
-if os.environ.get('TEST_UV_STARTED'):
-    Path(os.environ['TEST_UV_STARTED']).touch()
-time.sleep(float(os.environ.get('TEST_UV_DELAY', '0')))
-print('fake uv progress')
-print('fake uv diagnostics', file=sys.stderr)
-if int(os.environ.get('TEST_UV_EXIT', '0')):
-    sys.exit(int(os.environ['TEST_UV_EXIT']))
-space = Path(os.environ['TEST_FREE_SPACE'])
-space.write_text(str(int(space.read_text()) + 2 * 1024 ** 3))
-''')
-        uv.chmod(0o755)
-
-    def shell(self, *, popen=False):
-        harness = 'set -euo pipefail\n' + function('auto_clean') + '\nauto_clean\n'
-        if popen:
-            return subprocess.Popen(['bash', '-c', harness], env=self.env,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        result = subprocess.run(['bash', '-c', harness], env=self.env,
-                                capture_output=True, text=True, timeout=10)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        return result
-
-    @staticmethod
-    def age(path, hours):
-        timestamp = time.time() - hours * 3600
-        os.utime(path, (timestamp, timestamp))
-
-    def worktree(self, name, *, hours=49, marker=True):
-        state = self.worktrees / name
-        (state / 'source').mkdir(parents=True)
-        (state / 'source/code.py').write_text('source')
-        if marker:
-            (state / '.last-used').touch()
-        for path in [*state.rglob('*'), state]:
-            self.age(path, hours)
-        (self.worktrees / (name + '.lock')).touch()
-        return state
-
-    def uv_calls(self):
-        return [json.loads(line) for line in self.calls.read_text().splitlines()] if self.calls.exists() else []
-
-    def test_removes_idle_unlocked_worktree_but_preserves_lock_inode(self):
-        stale = self.worktree('stale')
-        stale_lock = self.worktrees / 'stale.lock'
-        lock_inode = stale_lock.stat().st_ino
-        fresh = self.worktree('fresh', hours=1)
-        own = self.worktree('own')
-        locked = self.worktree('locked')
-        with (self.worktrees / 'locked.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            result = self.shell()
-        self.assertFalse(stale.exists())
-        self.assertEqual(stale_lock.stat().st_ino, lock_inode)
-        for state in (fresh, own, locked):
-            self.assertTrue(state.exists(), state)
-            self.assertTrue(state.with_suffix('.lock').exists(), state)
-        self.assertLess(time.time() - (own / '.last-used').stat().st_mtime, 10)
-        self.assertEqual(len(result.stdout.splitlines()), 1, result.stdout)
-        self.assertIn('stale', result.stdout)
-        self.assertEqual(self.uv_calls(), [])
-
-    def test_cleanup_preserves_lock_for_legacy_waiter_that_already_opened_it(self):
-        stale = self.worktree('legacy')
-        lock_path = self.worktrees / 'legacy.lock'
-        inode = lock_path.stat().st_ino
-        opened = self.root / 'legacy-opened'
-        proceed = self.root / 'legacy-continue'
-        waiting = self.root / 'legacy-waiting'
-        acquired = self.root / 'legacy-acquired'
-        finish = self.root / 'legacy-finish'
-        # Keep the old take_lock implementation here: older worktrees have no
-        # inode check and must still serialize with every subsequent wrapper.
-        harness = r'''
-set -euo pipefail
-LOCK_WAIT=5
-take_lock() {
-  mkdir -p "$(dirname "$WORKTREE_LOCK")"
-  exec 9>"$WORKTREE_LOCK"
-  local started=$SECONDS monitor waiter status
-  echo "Ryzen: waiting for worktree lock $WORKTREE_LOCK (up to ${LOCK_WAIT}s)"
-  (IFS= read -r unused || kill -TERM "$$") <&0 &
-  monitor=$!
-  flock -w "$LOCK_WAIT" 9 &
-  waiter=$!
-  trap 'kill "$monitor" "$waiter" 2>/dev/null || true; exit 143' HUP INT TERM
-  wait "$waiter" && status=0 || status=$?
-  kill "$monitor" 2>/dev/null || true
-  wait "$monitor" 2>/dev/null || true
-  trap - HUP INT TERM
-  [[ "$status" == 0 ]] || { echo 'Ryzen занят' >&2; exit 75; }
-  echo "Ryzen: lock acquired in $((SECONDS - started))s"
-}
-take_lock
-touch "$TEST_ACQUIRED"
-while [[ ! -e "$TEST_FINISH" ]]; do sleep 0.02; done
-'''
-        legacy = subprocess.Popen(
-            ['bash', '-c', harness], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, start_new_session=True,
-            env=dict(self.env, WORKTREE_LOCK=str(lock_path),
-                     TEST_FLOCK_OPENED=str(opened), TEST_FLOCK_CONTINUE=str(proceed),
-                     TEST_FLOCK_WAITING=str(waiting), TEST_ACQUIRED=str(acquired),
-                     TEST_FINISH=str(finish)),
-        )
-        try:
-            wait_for(opened)
-            self.shell()
-            self.assertFalse(stale.exists())
-            self.assertEqual(lock_path.stat().st_ino, inode)
-            # The next wrapper can recreate this directory, but its lock must
-            # conflict with the fd that the legacy wrapper opened before GC.
-            stale.mkdir()
-            with lock_path.open('a') as contender:
-                fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                proceed.touch()
-                wait_for(waiting)
-                self.assertFalse(acquired.exists())
-                fcntl.flock(contender, fcntl.LOCK_UN)
-                wait_for(acquired)
-                with self.assertRaises(BlockingIOError):
-                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            finish.touch()
-            stdout, stderr = legacy.communicate(timeout=5)
-            self.assertEqual(legacy.returncode, 0, stdout + stderr)
-            self.assertIn('lock acquired', stdout)
-        finally:
-            if legacy.poll() is None:
-                os.killpg(legacy.pid, signal.SIGKILL)
-                legacy.communicate(timeout=5)
-
-    def test_missing_marker_uses_newest_mtime_through_two_levels(self):
-        old = self.worktree('old-without-marker', marker=False)
-        fresh = self.worktree('fresh-file', marker=False)
-        self.age(fresh / 'source/code.py', 1)
-        fresh_directory = self.worktree('fresh-directory', marker=False)
-        self.age(fresh_directory / 'source', 1)
-        self.shell()
-        self.assertFalse(old.exists())
-        self.assertTrue(fresh.exists())
-        self.assertTrue(fresh_directory.exists())
-
-    def test_missing_marker_ignores_files_below_two_levels(self):
-        old = self.worktree('deep-file', marker=False)
-        deeper = old / 'source/nested'
-        deeper.mkdir()
-        (deeper / 'fresh.py').write_text('fresh, but below the fallback depth')
-        self.age(deeper, 49)
-        self.age(deeper.parent, 49)
-        self.shell()
-        self.assertFalse(old.exists())
-
-    def test_marker_takes_precedence_over_newer_source_files(self):
-        old = self.worktree('old-marker')
-        self.age(old / 'source/code.py', 1)
-        self.shell()
-        self.assertFalse(old.exists())
-
-    def test_configured_idle_hours_changes_cutoff(self):
-        state = self.worktree('two-days-old')
-        self.env['CLEAN_IDLE_HOURS'] = '72'
-        self.shell()
-        self.assertTrue(state.exists())
-        self.env['CLEAN_IDLE_HOURS'] = '24'
-        self.shell()
-        self.assertFalse(state.exists())
-
-    def test_zero_idle_hours_disables_worktree_cleanup_but_allows_prune(self):
-        old = self.worktree('disabled')
-        self.env['CLEAN_IDLE_HOURS'] = '0'
-        self.free_space.write_text(str(59 * self.gib))
-        self.shell()
-        self.assertTrue(old.exists())
-        self.assertTrue((self.worktrees / 'disabled.lock').exists())
-        self.assertEqual(self.uv_calls(), [['cache', 'prune']])
-
-    def test_symlinks_and_other_task_directories_are_preserved(self):
-        sentinels = []
-        for name in ('engine-cache', 'body-training', 'nav-probe'):
-            directory = self.home / 'gothic-ai' / name
-            directory.mkdir()
-            sentinel = directory / 'keep'
-            sentinel.write_text(name)
-            self.age(sentinel, 100)
-            self.age(directory, 100)
-            sentinels.append(sentinel)
-        outside = self.root / 'outside'
-        outside.mkdir()
-        (outside / 'keep').write_text('outside')
-        self.age(outside, 100)
-        symlink = self.worktrees / 'outside-link'
-        symlink.symlink_to(outside, target_is_directory=True)
-        self.shell()
-        self.assertTrue(symlink.is_symlink())
-        self.assertEqual((outside / 'keep').read_text(), 'outside')
-        for sentinel in sentinels:
-            self.assertEqual(sentinel.read_text(), sentinel.parent.name)
-
-    def test_prune_only_below_sixty_gib_and_reports_one_line(self):
-        for free in (61 * self.gib, 60 * self.gib):
-            self.free_space.write_text(str(free))
-            self.shell()
-            self.assertEqual(self.uv_calls(), [])
-            self.assertFalse((self.worktrees / '.uv-prune').exists())
-        self.free_space.write_text(str(60 * self.gib - 1))
-        result = self.shell()
-        self.assertEqual(self.uv_calls(), [['cache', 'prune']])
-        self.assertTrue((self.worktrees / '.uv-prune').is_file())
-        self.assertEqual(len(result.stdout.splitlines()), 2, result.stdout)
-        self.assertNotIn('fake uv', result.stdout + result.stderr)
-
-    def test_prune_waits_twelve_hours_after_success(self):
-        marker = self.worktrees / '.uv-prune'
-        marker.touch()
-        self.free_space.write_text(str(10 * self.gib))
-        self.age(marker, 11.9)
-        self.shell()
-        self.assertEqual(self.uv_calls(), [])
-        self.age(marker, 12.1)
-        self.shell()
-        self.assertEqual(self.uv_calls(), [['cache', 'prune']])
-        self.shell()
-        self.assertEqual(self.uv_calls(), [['cache', 'prune']])
-
-    def test_failed_prune_also_waits_twelve_hours_before_retry(self):
-        self.free_space.write_text(str(10 * self.gib))
-        self.env['TEST_UV_EXIT'] = '2'
-        result = self.shell()
-        self.assertIn('failed', result.stdout)
-        marker = self.worktrees / '.uv-prune'
-        self.assertTrue(marker.exists())
-        self.env['TEST_UV_EXIT'] = '0'
-        self.shell()
-        self.assertEqual(self.uv_calls(), [['cache', 'prune']])
-        self.age(marker, 12.1)
-        self.shell()
-        self.assertEqual(self.uv_calls(), [['cache', 'prune'], ['cache', 'prune']])
-        self.assertTrue(marker.exists())
-
-    def test_simultaneous_low_disk_checks_prune_once(self):
-        self.free_space.write_text(str(10 * self.gib))
-        started = self.root / 'uv-started'
-        self.env.update(TEST_UV_STARTED=str(started), TEST_UV_DELAY='0.5')
-        first = self.shell(popen=True)
-        try:
-            wait_for(started)
-            self.shell()
-            stdout, stderr = first.communicate(timeout=10)
-            self.assertEqual(first.returncode, 0, stdout + stderr)
-        finally:
-            if first.poll() is None:
-                first.kill()
-                first.communicate(timeout=5)
-        self.assertEqual(self.uv_calls(), [['cache', 'prune']])
+    def test_controller_rejects_marker_symlink(self):
+        with tempfile.TemporaryDirectory(prefix='ryzen-autoclean-test-') as directory:
+            home = Path(directory) / 'home'
+            own = home / 'gothic-ai/e2e/own'
+            own.mkdir(parents=True)
+            outside = Path(directory) / 'outside'
+            outside.write_text('keep')
+            (own / '.last-used').symlink_to(outside)
+            harness = 'set -euo pipefail\n' + function('auto_clean') + '\nauto_clean\n'
+            result = subprocess.run(['bash', '-c', harness], capture_output=True, text=True,
+                                    timeout=5, env=dict(os.environ, HOME=str(home),
+                                                       WORKTREE_LOCK=str(own.with_suffix('.lock'))))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(outside.read_text(), 'keep')
 
 
 class CacheTests(unittest.TestCase):
@@ -755,8 +474,13 @@ class CacheTests(unittest.TestCase):
         self.bin.mkdir()
         (self.source / 'scripts').mkdir(parents=True)
         (self.source / 'server').mkdir()
+        shutil.copyfile(GAME_HELPER, self.source / 'scripts/ryzen_game.py')
         (self.source / 'OpenGothic/ai_bridge/storygraph').mkdir(parents=True)
-        (self.home / 'gothic-ai/game/Data').mkdir(parents=True)
+        settings = self.home / 'gothic-ai/game-settings/system'
+        settings.mkdir(parents=True)
+        for name in ('Gothic.ini', 'SystemPack.ini'):
+            (settings / name).touch()
+        (settings.parent.parent / 'game-base.json').write_text(json.dumps({'base': 'c' * 64, 'videos': ''}))
         (self.state / 'inputs/run').mkdir(parents=True)
         (self.source / 'scripts/e2e.sh').write_text('"$GAME_BIN" --test\n')
         self.env = dict(os.environ, HOME=str(self.home), TEST_ROOT=str(self.root),
@@ -780,9 +504,14 @@ if '--build' in args:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text('#!/usr/bin/env python3\nimport os, sys\nfrom pathlib import Path\n'
                       'Path(os.environ["TEST_GAME_PATH"]).write_text(str(Path(sys.argv[0]).resolve()))\n'
-                      'assert Path(sys.argv[0]).with_name("runtime.dat").read_text() == "runtime"\n')
+                      'if sys.argv[0].endswith("Gothic2Notr"):\n'
+                      '    assert Path(sys.argv[0]).with_name("runtime.dat").read_text() == "runtime"\n')
     output.chmod(0o755)
     output.with_name('runtime.dat').write_text('runtime')
+    if target == 'Gothic2Notr':
+        converter = output.with_name('content-convert')
+        converter.write_text('#!/bin/sh\nexit 0\n')
+        converter.chmod(0o755)
 else:
     build = Path(args[args.index('-B') + 1])
     build.mkdir(parents=True, exist_ok=True)
@@ -821,6 +550,10 @@ Path(os.environ['TEST_GAME_PATH']).write_text(str(Path(sys.argv[0]).resolve()))
 assert Path(sys.argv[0]).with_name('runtime.dat').read_text() == 'runtime'
 ''')
         binary.chmod(0o755)
+        if kind == 'engine':
+            converter = entry / 'content-convert'
+            converter.write_text('#!/bin/sh\nexit 0\n')
+            converter.chmod(0o755)
         (entry / 'runtime.dat').write_text(marker)
         timestamp = time.time() - age
         os.utime(entry, (timestamp, timestamp))
@@ -828,11 +561,28 @@ assert Path(sys.argv[0]).with_name('runtime.dat').read_text() == 'runtime'
 
     def test_cache_hit_runs_cached_game_without_a_worktree_build(self):
         cached = self.entry(self.engine_digest)
-        self.entry(self.story_digest, 'storygraph')
-        result = self.shell(r'''
+        storygraph = self.entry(self.story_digest, 'storygraph') / 'storygraph'
+        storygraph.write_text(f'#!{sys.executable}\n' + r'''
+import os
+from pathlib import Path
+import sys
+assert sys.argv[1:] == [os.environ['GOTHIC_DIR'], '--ou-messages']
+fingerprint = os.environ['OPENGOTHIC_BASE_FINGERPRINT']
+(Path(os.environ['TEST_ROOT']) / 'selected-base').write_text(fingerprint)
+''')
+        selected = self.root / 'selected-base'
+        (self.source / 'scripts/e2e.sh').write_text(
+            'test "$(cat "$TEST_ROOT/selected-base")" = "$OPENGOTHIC_BASE_FINGERPRINT"\n'
+            '"$GAME_BIN" --test\n')
+        # The pre-server selection must work with both a missing and a stale selection.
+        for previous in (None, 'd' * 64):
+            if previous is not None:
+                selected.write_text(previous)
+            result = self.shell(r'''
 remote_probe e2e "$TEST_ROOT/worktree" run stages
 remote_run e2e "$TEST_ROOT/worktree" run
 ''')
+            self.assertEqual(selected.read_text(), 'c' * 64)
         self.assertIn(f'engine from cache {self.engine_digest[:12]} (0s)', result.stdout)
         self.assertEqual((self.root / 'game-path').read_text(), str(cached / 'Gothic2Notr'))
         self.assertFalse((self.state / 'build').exists())
@@ -840,6 +590,159 @@ remote_run e2e "$TEST_ROOT/worktree" run
         self.assertFalse((self.root / 'cmake-calls.jsonl').exists())
         self.assertEqual((self.source / 'OpenGothic/ai_bridge/storygraph/build/storygraph').resolve(),
                          self.cache / 'storygraph' / self.story_digest / 'storygraph')
+
+    def test_game_settings_loads_fingerprints_without_installation(self):
+        result = self.shell(r'''
+game_settings
+python3 - <<'PY'
+import json
+import os
+print(json.dumps({key: os.environ[key] for key in
+    ('GOTHIC_DIR', 'OPENGOTHIC_BASE_FINGERPRINT', 'OPENGOTHIC_VIDEOS_FINGERPRINT')}))
+PY
+''')
+        self.assertEqual(json.loads(result.stdout), {
+            'GOTHIC_DIR': str(self.home / 'gothic-ai/game-settings'),
+            'OPENGOTHIC_BASE_FINGERPRINT': 'c' * 64,
+            'OPENGOTHIC_VIDEOS_FINGERPRINT': '',
+        })
+        self.assertFalse((self.home / 'gothic-ai' / 'game').exists())
+
+        stamp = r'''python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+Path(os.environ['TEST_ROOT'], 'received-env.json').write_text(json.dumps({key: os.environ[key] for key in
+    ('GOTHIC_DIR', 'OPENGOTHIC_BASE_FINGERPRINT', 'OPENGOTHIC_VIDEOS_FINGERPRINT')}))
+PY
+if [[ -n "${LOG_DIR:-}" ]]; then : >"$LOG_DIR/game.log"; fi
+'''
+        for filename in ('e2e.sh', 'bench.sh'):
+            (self.source / 'scripts' / filename).write_text(stamp)
+        self.env['GOTHIC_DIR'] = '/Volumes/x'
+        # Exercise the real Mac forwarding list, then enter a fresh remote environment.
+        forwarding = SCRIPT.read_text().split('BASE_ENV_ARGS=()\n', 1)[1].split('if [[ "$ACTION" != clean ]]', 1)[0]
+        for action in ('e2e', 'bench', 'pytest'):
+            with self.subTest(action=action):
+                entry = 'remote_bench' if action == 'bench' else f'remote_run {action}'
+                self.shell('BASE_ENV_ARGS=()\n' + forwarding + r'''
+unset GOTHIC_DIR
+for assignment in ${BASE_ENV_ARGS[@]+"${BASE_ENV_ARGS[@]}"}; do export "$assignment"; done
+require_prepared() { :; }
+build_storygraph() { export RYZEN_STORYGRAPH_BIN=/usr/bin/true; }
+export RYZEN_STORYGRAPH_BIN=/usr/bin/true RYZEN_GAME_BIN=/usr/bin/true
+ffmpeg() { :; }
+uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
+''' + entry + ' "$TEST_ROOT/worktree" run smoke\n')
+                received = json.loads((self.root / 'received-env.json').read_text())
+                self.assertEqual(received, {
+                    'GOTHIC_DIR': str(self.home / 'gothic-ai/game-settings'),
+                    'OPENGOTHIC_BASE_FINGERPRINT': 'c' * 64,
+                    'OPENGOTHIC_VIDEOS_FINGERPRINT': '',
+                })
+
+    def test_game_settings_rejects_bad_setup_and_preserves_caller_overrides(self):
+        import runpy
+
+        environment = runpy.run_path(str(GAME_HELPER))["game_environment"]
+        overrides = {
+            "GOTHIC_DIR": "/custom/settings",
+            "OPENGOTHIC_BASE": "/custom/base",
+            "OPENGOTHIC_BASE_FINGERPRINT": "e" * 64,
+            "OPENGOTHIC_VIDEOS_FINGERPRINT": "",
+            "OPENGOTHIC_BASE_CACHE": "/custom/cache",
+            "OPENGOTHIC_BASE_STORE": "",
+        }
+        self.assertEqual(environment(self.home, overrides), overrides)
+        self.assertEqual(environment(self.home, overrides, assets="/custom/assets")["GOTHIC_DIR"],
+                         "/custom/assets")
+        self.assertEqual(environment(self.home, {"OPENGOTHIC_BASE_FINGERPRINT": ""})[
+            "OPENGOTHIC_BASE_FINGERPRINT"], "c" * 64)
+        manifest = self.home / "gothic-ai/game-base.json"
+        for contents in ('{}', '{"base": "invalid", "videos": ""}'):
+            manifest.write_text(contents)
+            with self.assertRaisesRegex(ValueError, "Run scripts/ryzen.sh setup first"):
+                environment(self.home, {})
+        manifest.unlink()
+        with self.assertRaisesRegex(ValueError, "Run scripts/ryzen.sh setup first"):
+            environment(self.home, {})
+        self.assertFalse(manifest.exists())
+        self.assertEqual(environment(self.home, overrides), overrides)
+
+    def test_pytest_requires_setup_and_uses_game_settings(self):
+        storygraph = self.bin / 'storygraph'
+        storygraph.write_text(f'#!{sys.executable}\n' + r'''
+import os
+from pathlib import Path
+import sys
+assert sys.argv[1:] == [os.environ['GOTHIC_DIR'], '--ou-messages']
+(Path(os.environ['TEST_ROOT']) / 'selected-base').write_text(os.environ['OPENGOTHIC_BASE_FINGERPRINT'])
+''')
+        storygraph.chmod(0o755)
+        self.env.pop('GOTHIC_DIR', None)
+        commands = r'''
+build_storygraph() { export RYZEN_STORYGRAPH_BIN="$TEST_ROOT/bin/storygraph"; }
+uv() {
+  test "$(cat "$TEST_ROOT/selected-base")" = "$OPENGOTHIC_BASE_FINGERPRINT"
+  printf '%s\n' "$GOTHIC_DIR" "$@" >"$TEST_ROOT/pytest-env"
+}
+remote_run pytest "$TEST_ROOT/worktree" run -rs tests/test_storygraph.py
+'''
+        self.shell(commands)
+        self.assertEqual((self.root / 'pytest-env').read_text().splitlines(), [
+            str(self.home / 'gothic-ai/game-settings'), 'run', 'pytest', '-rs', 'tests/test_storygraph.py',
+        ])
+        (self.root / 'pytest-env').unlink()
+        (self.home / 'gothic-ai/game-base.json').unlink()
+        shutil.rmtree(self.home / 'gothic-ai/game-settings')
+        with self.assertRaisesRegex(AssertionError, 'Run scripts/ryzen.sh setup first'):
+            self.shell(commands)
+        self.assertFalse((self.root / 'pytest-env').exists())
+        self.assertFalse((self.home / 'gothic-ai/game-base.json').exists())
+        self.assertFalse((self.home / 'gothic-ai/game-settings').exists())
+        self.assertFalse((self.home / 'gothic-ai' / 'game').exists())
+
+    def test_setup_removes_only_its_temporary_copy_on_failure_or_interrupt(self):
+        import hashlib
+
+        game = self.root / 'installation'
+        game.mkdir()
+        part = self.root / 'mac-base'
+        part.mkdir()
+        pointers = self.home / '.cache/gothic-ai/base/current'
+        pointers.mkdir(parents=True)
+        pointer = pointers / (hashlib.sha256(str(game).encode()).hexdigest() + '.json')
+        pointer.write_text(json.dumps({'version': 1, 'gothic': str(game),
+                                      'base': {'fingerprint': 'c' * 64, 'path': str(part)}}))
+        remote_cache = self.root / 'remote/.cache/gothic-ai/base'
+        foreign = remote_cache / '.setup-another-session'
+        foreign.mkdir(parents=True)
+        (foreign / 'keep').touch()
+        setup = SCRIPT.read_text().split('if [[ "$ACTION" == setup ]]; then\n', 1)[1]
+        setup = setup.split('\nfi\n\n# Codex worktrees', 1)[0]
+        harness = r'''
+set -euo pipefail
+ACTION=setup RYZEN_HOST=test
+toolchain() { :; }
+remote() { HOME="$TEST_ROOT/remote" "$@"; }
+verify_base_part() { [[ "$4" != full ]] || return 23; }
+rsync() {
+  case "$TEST_FAILURE" in
+    rsync) return 23 ;;
+    interrupt) kill -INT "$$" ;;
+    verification) return 0 ;;
+  esac
+}
+'''+setup
+        for failure, status in (('rsync', 23), ('verification', 23), ('interrupt', 130)):
+            with self.subTest(failure=failure):
+                result = subprocess.run(
+                    ['bash', '-c', harness], capture_output=True, text=True, timeout=5,
+                    env=dict(self.env, GOTHIC_DIR=str(game), TEST_FAILURE=failure),
+                )
+                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                self.assertEqual(list(remote_cache.glob('.setup-*')), [foreign])
+                self.assertTrue((foreign / 'keep').exists())
 
     def test_e2e_ports_size_and_position_follow_the_assigned_slot(self):
         self.entry(self.engine_digest)
@@ -947,6 +850,7 @@ build_storygraph "$TEST_ROOT/worktree" "'''+self.story_digest+r'''"
                             (self.cache / 'storygraph' / self.story_digest, 'storygraph')]:
             self.assertTrue(os.access(entry / name, os.X_OK))
         self.assertEqual((self.cache / self.engine_digest / 'runtime.dat').read_text(), 'runtime')
+        self.assertTrue(os.access(self.cache / self.engine_digest / 'content-convert', os.X_OK))
         self.assertTrue((self.state / 'build/opengothic/Gothic2Notr').exists())
         self.assertTrue((self.state / 'storygraph-build/storygraph').exists())
 
@@ -991,6 +895,9 @@ remote_run e2e "$TEST_ROOT/worktree" run
             binary = source / 'Gothic2Notr'
             binary.write_bytes((name.encode() + b'\n') * 200000)
             binary.chmod(0o755)
+            converter = source / 'content-convert'
+            converter.write_text('#!/bin/sh\nexit 0\n')
+            converter.chmod(0o755)
             (source / 'runtime.dat').write_text(name)
         processes = []
         try:
@@ -1068,41 +975,40 @@ remote() { "$@"; }
         self.assertTrue((engine / 'Gothic2Notr').exists())
         self.assertTrue((storygraph / 'storygraph').exists())
 
-    def test_storygraph_digest_tracks_dependencies_independently(self):
-        inputs = ['ai_bridge/storygraph/main.cpp', 'ai_bridge/textcodec.cpp',
-                  'ai_bridge/textcodec.h', 'lib/ZenKit/src/Archive.cc',
-                  'lib/rapidjson/include/rapidjson/document.h']
-        for relative in inputs + ['game/main.cpp']:
-            path = self.source / 'OpenGothic' / relative
+    def test_storygraph_digest_tracks_engine_and_converter_sources(self):
+        # storygraph links base and video import from the engine tree, so it
+        # shares the engine digest: OpenGothic plus scripts/convert.
+        inputs = ['OpenGothic/ai_bridge/storygraph/main.cpp', 'OpenGothic/ai_bridge/textcodec.cpp',
+                  'OpenGothic/lib/ZenKit/src/Archive.cc', 'OpenGothic/common/basestore.cpp',
+                  'OpenGothic/game/main.cpp', 'scripts/convert/main.cpp']
+        for relative in inputs:
+            path = self.source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(relative)
 
-        def digest(kind=''):
+        def digest(function):
             result = subprocess.run(
-                ['bash', '-c', definitions() + '\nROOT="$TEST_ROOT/source"\nsource_digest ' + kind],
+                ['bash', '-c', definitions() + '\nROOT="$TEST_ROOT/source"\n' + function],
                 env=self.env, capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             return result.stdout.strip()
 
-        original = digest('storygraph')
+        original = digest('storygraph_digest')
+        self.assertEqual(digest('source_digest'), original)
         for relative in inputs:
             with self.subTest(source=relative):
-                path = self.source / 'OpenGothic' / relative
+                path = self.source / relative
                 path.write_text(relative + ' changed')
-                self.assertNotEqual(digest('storygraph'), original)
+                self.assertNotEqual(digest('storygraph_digest'), original)
                 path.write_text(relative)
-        engine_before = digest()
-        (self.source / 'OpenGothic/game/main.cpp').write_text('engine-only edit')
-        self.assertEqual(digest('storygraph'), original)
-        self.assertNotEqual(digest(), engine_before)
-        engine_before = digest()
-        for relative in ['ai_bridge/storygraph/build/generated.cpp', 'build/generated.cpp',
-                         'lib/ZenKit/build/generated.cpp']:
-            path = self.source / 'OpenGothic' / relative
+        self.assertEqual(digest('storygraph_digest'), original)
+        for relative in ['OpenGothic/ai_bridge/storygraph/build/generated.cpp',
+                         'OpenGothic/build/generated.cpp', 'OpenGothic/lib/ZenKit/build/generated.cpp',
+                         'scripts/convert/build/generated.cpp', 'scripts/other/tool.py']:
+            path = self.source / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('generated output')
-        self.assertEqual(digest('storygraph'), original)
-        self.assertEqual(digest(), engine_before)
+        self.assertEqual(digest('storygraph_digest'), original)
 
 
 class TunnelTests(unittest.TestCase):
@@ -1386,7 +1292,7 @@ printf '%s\n' "${ENV_ARGS[@]-}"
         self.assertIn('Missing OPENGOTHIC_CONTENT directory:', result.stderr)
         self.assertFalse((self.root / 'rsync.jsonl').exists())
 
-    def test_bench_routes_supplied_content_to_ryzen(self):
+    def test_bench_routes_content_and_remote_base_paths_to_ryzen(self):
         scripts = self.root / 'scripts'
         scripts.mkdir()
         shutil.copyfile(BENCH_SCRIPT, scripts / 'bench.sh')
@@ -1408,7 +1314,9 @@ out = Path(sys.argv[3])
         content.mkdir()
         for index, value in enumerate((None, '', str(content))):
             with self.subTest(content=value):
-                env = dict(self.env, BENCH_HOST='ryzen')
+                env = dict(self.env, BENCH_HOST='ryzen',
+                           OPENGOTHIC_BASE_CACHE='/home/ryzen/gothic-ai/p18d/cache',
+                           OPENGOTHIC_BASE_STORE='/home/ryzen/gothic-ai/p18d/store')
                 env.pop('KEEP', None)
                 if value is not None:
                     env['OPENGOTHIC_CONTENT'] = value

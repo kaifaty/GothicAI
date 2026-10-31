@@ -202,13 +202,13 @@ MeshObjects::Mesh WorldView::addStaticView(std::string_view visual) {
   return MeshObjects::Mesh();
   }
 
-MeshObjects::Mesh WorldView::addDecalView(const zenkit::VisualDecal& vob) {
+MeshObjects::Mesh WorldView::addDecalView(const asset::VisualDecal& vob) {
   if(auto mesh=Resources::decalMesh(vob))
     return MeshObjects::Mesh(objGroup,*mesh,0,0,0,true);
   return MeshObjects::Mesh();
   }
 
-LightGroup::Light WorldView::addLight(const zenkit::VLight& vob, const uint64_t timeOffset) {
+LightGroup::Light WorldView::addLight(const asset::VLight& vob, const uint64_t timeOffset) {
   auto l = gLights.add(vob);
   l.setTimeOffset(timeOffset);
   return l;

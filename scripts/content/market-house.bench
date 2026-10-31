@@ -38,3 +38,27 @@ cam hold
 wait 6000
 shot facade
 wait 500
+
+# Basement close views (2026-10-22): world cm from market-house-measurement.json, as remaster.py bench writes them.
+# basement-window: 4 m from the basement window, eye ground + 170 cm
+cam look -540.000
+goto pos 8970.000 940.000 4008.000
+cam world 397.271 -500.000 25.016893
+wait 34
+cam hold
+wait 6000
+set time 12 0
+shot basement-window
+wait 300
+
+# basement-chain: 2.5 m from the chain wall, inside the arcade, eye ground + 170 cm
+cam look -540.000
+goto pos 8680.000 940.000 4120.000
+cam world 250.599 -500.000 118.610460
+wait 34
+cam hold
+wait 6000
+set time 12 0
+shot basement-chain
+wait 300
+

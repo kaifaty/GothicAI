@@ -549,6 +549,33 @@ void WorldObjects::updateAnimation(uint64_t dt) {
       return;
     i->updateAnimation(dt);
     });
+  // Retiring a shadow window can also run damage scripts here. Scripts may
+  // append or remove NPCs, so retain neither vector iterators nor references.
+  for(size_t i=0;i<npcArr.size();) {
+    auto* npc = npcArr[i].get();
+    if(skipFar && npc->processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(*npc))
+      ++i;
+    else if(frozen && npc!=pl && !BodyArena::isActor(*npc))
+      ++i;
+    else {
+      npc->updateMeleeShadow();
+      if(i<npcArr.size() && npcArr[i].get()==npc)
+        ++i;
+      else if(const auto at=npcId(npc); at!=uint32_t(-1))
+        i=size_t(at)+1;
+      }
+    }
+  // Query the final published interval before callers can decide a terminal
+  // combat outcome. The flush does not advance physics, animation or clocks.
+  owner.physic()->flushShadowBlades();
+  for(size_t i=0;i<npcArr.size();) {
+    auto* npc = npcArr[i].get();
+    npc->resolveMeleeContacts();
+    if(i<npcArr.size() && npcArr[i].get()==npc)
+      ++i;
+    else if(const auto at=npcId(npc); at!=uint32_t(-1))
+      i=size_t(at)+1;
+    }
   if(!frozen)
     interactiveObj.parallelFor([dt](Interactive& i){
       i.updateAnimation(dt);
@@ -621,12 +648,17 @@ void WorldObjects::detectNpc(const float x, const float y, const float z,
 
 void WorldObjects::detectItem(const float x, const float y, const float z,
                               const float r, const std::function<void(Item&)>& f) {
-  float maxDist=r*r;
-  for(auto& i:itemArr) {
-    auto qDist = (i->position()-Vec3(x,y,z)).quadLength();
+  const Vec3 center(x,y,z);
+  const float maxDist=r*r;
+  std::vector<Item*> nearby;
+  items.find(center,r,[&](Item& item) {
+    const auto qDist = (item.position()-center).quadLength();
     if(qDist<maxDist)
-      f(*i);
-    }
+      nearby.push_back(&item);
+    });
+  // Spell callbacks can create bodies and invalidate this same spatial index.
+  for(auto* item:nearby)
+    f(*item);
   }
 
 void WorldObjects::detectMover(const std::function<void(MoveTrigger&)>& f) {
@@ -708,7 +740,7 @@ void WorldObjects::stopEffect(const VisualFx& vfx) {
     i->stopEffect(vfx);
   }
 
-Item* WorldObjects::addItem(const zenkit::VItem& vob) {
+Item* WorldObjects::addItem(const asset::VItem& vob) {
   size_t inst = owner.script().findSymbolIndex(vob.instance);
   Item*  it   = addItem(inst,"");
   if(it==nullptr)
@@ -830,7 +862,7 @@ void WorldObjects::addStatic(StaticObj* obj) {
   objStatic.push_back(obj);
   }
 
-void WorldObjects::addRoot(const std::shared_ptr<zenkit::VirtualObject>& vob, bool startup) {
+void WorldObjects::addRoot(const std::shared_ptr<asset::VirtualObject>& vob, bool startup) {
   auto p = Vob::load(nullptr,owner,*vob,(startup ? Vob::Startup : Vob::None) | Vob::Static);
   if(p==nullptr)
     return;
@@ -960,6 +992,11 @@ void WorldObjects::marchCsCameras(DbgPainter& p) const {
     if(auto c = dynamic_cast<CsCamera*>(i)) {
       c->debugDraw(p);
       }
+  }
+
+void WorldObjects::drawMeleeShadow(DbgPainter& p) const {
+  for(auto& i:npcNear)
+    i->drawMeleeShadow(p,owner.tickCount());
   }
 
 void WorldObjects::drawVobBoxNpcNear(DbgPainter& p) const {

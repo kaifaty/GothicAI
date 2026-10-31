@@ -20,22 +20,6 @@ using namespace FileUtil;
 
 static CommandLine* instance = nullptr;
 
-static const char16_t* toString(ScriptLang lang) {
-  switch(lang) {
-    case ScriptLang::EN: return u"Scripts_EN";
-    case ScriptLang::DE: return u"Scripts_DE";
-    case ScriptLang::PL: return u"Scripts_PL";
-    case ScriptLang::RU: return u"Scripts_RU";
-    case ScriptLang::FR: return u"Scripts_FR";
-    case ScriptLang::ES: return u"Scripts_ES";
-    case ScriptLang::IT: return u"Scripts_IT";
-    case ScriptLang::CZ: return u"Scripts_CZ";
-    case ScriptLang::NONE:
-      break;
-    }
-  return u"Scripts";
-  }
-
 static bool boolArg(std::string_view v) {
   return std::string_view(v)!="0" && std::string_view(v)!="false";
   }
@@ -184,21 +168,9 @@ CommandLine::CommandLine(int argc, const char** argv) {
   if(gpath.size()>0 && gpath.back()!='/')
     gpath.push_back('/');
 
-  gscript   = nestedPath({u"_work",u"Data",u"Scripts",   u"_compiled"},Dir::FT_Dir);
-  gcutscene = nestedPath({u"_work",u"Data",u"Scripts",   u"content",u"CUTSCENE"},Dir::FT_Dir);
-
   gmod    = TextCodec::toUtf16(mod);
   if(!gmod.empty())
     gmod = nestedPath({u"system",gmod.c_str()},Dir::FT_File);
-
-  if(!validateGothicPath()) {
-    if(gpath.empty()) {
-      Log::e("Gothic path is not provided. Please use command line argument -g <path>");
-      } else {
-      Log::e("Invalid gothic path: \"",TextCodec::toUtf8(gpath),"\"");
-      }
-    throw GothicNotFoundException("gothic not found!"); // TODO: user-friendly message-box
-    }
   }
 
 const CommandLine& CommandLine::inst() {
@@ -214,36 +186,6 @@ std::u16string_view CommandLine::rootPath() const {
   return gpath;
   }
 
-std::u16string CommandLine::scriptPath() const {
-  return gscript;
-  }
-
-std::u16string CommandLine::scriptPath(ScriptLang lang) const {
-  const char16_t* scripts = toString(lang);
-  return nestedPath({u"_work",u"Data",scripts,u"_compiled"},Dir::FT_Dir);
-  }
-
-std::u16string CommandLine::cutscenePath() const {
-  return gcutscene;
-  }
-
-std::u16string CommandLine::cutscenePath(ScriptLang lang) const {
-  const char16_t* scripts = toString(lang);
-  return nestedPath({u"_work",u"Data",scripts},Dir::FT_Dir);
-  }
-
 std::u16string CommandLine::nestedPath(const std::initializer_list<const char16_t*>& name, Tempest::Dir::FileType type) const {
   return FileUtil::nestedPath(gpath, name, type);
-  }
-
-bool CommandLine::validateGothicPath() const {
-  if(gpath.empty())
-    return false;
-  if(!FileUtil::exists(gscript))
-    return false;
-  if(!FileUtil::exists(nestedPath({u"Data"},Dir::FT_Dir)))
-    return false;
-  if(!FileUtil::exists(nestedPath({u"_work",u"Data"},Dir::FT_Dir)))
-    return false;
-  return true;
   }

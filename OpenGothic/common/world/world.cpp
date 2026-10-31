@@ -29,6 +29,7 @@
 #include "resources.h"
 #include "frameprofile.h"
 #include "testbench.h"
+#include "loadprobe.h"
 #include "physics/physicsnoise.h"
 #include "physics/cloth.h"
 #include "physics/worldcloth.h"
@@ -92,22 +93,22 @@ const char* materialTag(ItemMaterial src) {
   return "UD";
   }
 
-const char* materialTag(zenkit::MaterialGroup src) {
+const char* materialTag(asset::MaterialGroup src) {
   switch(src) {
-    case zenkit::MaterialGroup::UNDEFINED:
-    case zenkit::MaterialGroup::NONE:
+    case asset::MaterialGroup::UNDEFINED:
+    case asset::MaterialGroup::NONE:
       return "UD";
-    case zenkit::MaterialGroup::METAL:
+    case asset::MaterialGroup::METAL:
       return "ME";
-    case zenkit::MaterialGroup::STONE:
+    case asset::MaterialGroup::STONE:
       return "ST";
-    case zenkit::MaterialGroup::WOOD:
+    case asset::MaterialGroup::WOOD:
       return "WO";
-    case zenkit::MaterialGroup::EARTH:
+    case asset::MaterialGroup::EARTH:
       return "EA";
-    case zenkit::MaterialGroup::WATER:
+    case asset::MaterialGroup::WATER:
       return "WA";
-    case zenkit::MaterialGroup::SNOW:
+    case asset::MaterialGroup::SNOW:
       return "SA"; // sand?
     }
   return "UD";
@@ -116,39 +117,46 @@ const char* materialTag(zenkit::MaterialGroup src) {
 World::World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress)
   :wname(std::move(file)), game(game), wsound(game,*this), wobj(*this) {
   const auto loadStarted = std::chrono::steady_clock::now();
-  const auto* entry = Resources::vdfsIndex().find(wname);
-
-  if(entry == nullptr) {
-    Tempest::Log::e("unable to open Zen-file: \"",wname,"\"");
-    return;
-    }
-
+  if(LoadProbe::enabled())
+    LoadProbe::mark("world_begin",-1,"world="+std::string(wname));
   try {
-    auto          buf = entry->open_read();
-    zenkit::World world;
-    world.load(buf.get(), version().game == 1 ? zenkit::GameVersion::GOTHIC_1
-                                              : zenkit::GameVersion::GOTHIC_2);
-
+    WorldData::Data world;
+    asset::WorldMesh worldMesh;
+    Resources::loadWorld(world,worldMesh,wname,&chunks);
+    if(LoadProbe::enabled())
+      LoadProbe::mark("world_read_total",LoadProbe::msSince(loadStarted));
+    residency = ChunkResidency::create(chunks);
     loadProgress(20);
-    auto& worldMesh = world.world_mesh;
-    windRooms.reset(worldMesh,world.world_bsp_tree);
+    windRooms.reset(world.bsp.mode,std::move(world.rooms));
     auto worldCloth=WorldCloth::extract(worldMesh);
 
-    auto wdynamicFut = std::async(std::launch::async, [&]() {
+    const bool probeSerial = LoadProbe::serial();
+    const auto probeLaunch = probeSerial ? std::launch::deferred : std::launch::async;
+    double probePhysicsMs = 0, probeViewMs = 0;
+    auto wdynamicFut = std::async(probeLaunch, [&]() {
       Workers::setThreadName("Loading: BVH thread");
-      return std::unique_ptr<DynamicWorld>(new DynamicWorld(this,worldMesh,&worldCloth.original));
+      const auto t = LoadProbe::now();
+      auto ret = std::unique_ptr<DynamicWorld>(new DynamicWorld(this,worldMesh,&worldCloth.original));
+      probePhysicsMs = LoadProbe::msSince(t);
+      return ret;
       });
     std::future<std::unique_ptr<WorldView>> wviewFut;
     if(!Resources::isHeadless()) {
-      wviewFut = std::async(std::launch::async, [&]() {
+      wviewFut = std::async(probeLaunch, [&]() {
         Workers::setThreadName("Loading: PackedMesh thread");
+        const auto t = LoadProbe::now();
         PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);
+        if(LoadProbe::enabled())
+          LoadProbe::mark("landscape_pack",LoadProbe::msSince(t),
+                          "vertices="+std::to_string(vmesh.vertices.size())+" indices="+std::to_string(vmesh.indices.size())+
+                          " meshlet_bytes="+std::to_string(vmesh.vertices.size()*sizeof(vmesh.vertices[0])+vmesh.indices.size()*sizeof(vmesh.indices[0])));
         auto view=std::make_unique<WorldView>(vmesh,wname);
         if(!worldCloth.original.polygons.material_indices.empty()) {
           PackedMesh originalCloth(worldCloth.original,PackedMesh::PK_VisualLnd);
           view->setOriginalClothMesh(originalCloth);
           view->setOriginalClothVisible(!Gothic::physicsFlags().cloth);
           }
+        probeViewMs = LoadProbe::msSince(t);
         return view;
         });
       }
@@ -156,38 +164,62 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     loadProgress(30);
 
     {
-      bsp.nodes             = std::move(world.world_bsp_tree.nodes);
-      bsp.sectors           = std::move(world.world_bsp_tree.sectors);
-      bsp.leaf_node_indices = std::move(world.world_bsp_tree.leaf_node_indices);
+      bsp.nodes             = std::move(world.bsp.nodes);
+      bsp.sectors           = std::move(world.bsp.sectors);
+      bsp.leaf_node_indices = std::move(world.bsp.leaf_node_indices);
       bsp.sectorsData.resize(bsp.sectors.size());
-      world.world_bsp_tree  = zenkit::BspTree();
+      world.bsp  = asset::BspTree();
     }
     loadProgress(50);
 
+    auto probeT = LoadProbe::now();
     if(wviewFut.valid())
       wview = wviewFut.get();
+    if(LoadProbe::enabled())
+      LoadProbe::mark("landscape_view",probeViewMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
     loadProgress(60);
 
+    probeT = LoadProbe::now();
     wdynamic = wdynamicFut.get();
+    wdynamic->setFurniturePartsEnabled(Gothic::physicsFlags().furnitureParts);
+    if(LoadProbe::enabled())
+      LoadProbe::mark("physics_static",probePhysicsMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
+    probeT = LoadProbe::now();
     wdynamic->cloth().setExposureTest([this](const Tempest::Vec3& point) { return !isIndoor(point); });
     wdynamic->setPhysicsNoiseEnabled(Gothic::physicsFlags().physicsNoise);
     wdynamic->setDestructionEnabled(Gothic::physicsFlags().destruction);
     wdynamic->setBuoyancyEnabled(Gothic::physicsFlags().buoyancy);
     wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
+    wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
     wdynamic->setPhysicsNoiseCallback([this](const PhysicsNoise& noise) { emitPhysicsNoise(noise); });
     for(auto& surface:worldCloth.surfaces)
       if(auto visual=ClothVisual::createSurface(*this,surface.mesh,surface.pins,surface.visual,surface.id,surface.stiffness,surface.linearDamping))
         clothSurfaces.push_back(std::move(visual));
-    world.world_mesh = zenkit::Mesh();
+    if(LoadProbe::enabled())
+      LoadProbe::mark("cloth_surfaces",LoadProbe::msSince(probeT),"surfaces="+std::to_string(clothSurfaces.size()));
+    probeT = LoadProbe::now();
+    worldMesh = {};
     loadProgress(70);
 
     globFx.reset(new GlobalEffects(*this));
-    wmatrix.reset(new WayMatrix(*this, *world.way_net));
-    for(auto& vob:world.world_vobs)
+    wmatrix.reset(new WayMatrix(*this, *world.waynet));
+    if(LoadProbe::enabled())
+      LoadProbe::mark("waynet",LoadProbe::msSince(probeT));
+    probeT = LoadProbe::now();
+    for(auto& vob:world.vobs)
       wobj.addRoot(vob,startup);
+    if(LoadProbe::enabled())
+      LoadProbe::mark("vobs",LoadProbe::msSince(probeT),
+                      "items="+std::to_string(wobj.itmCount())+" mobsi="+std::to_string(wobj.mobsiCount()));
+    probeT = LoadProbe::now();
     wdynamic->finalizeMovableVobs();
+    if(LoadProbe::enabled())
+      LoadProbe::mark("movable_vobs",LoadProbe::msSince(probeT));
 
+    probeT = LoadProbe::now();
     wmatrix->buildIndex();
+    if(LoadProbe::enabled())
+      LoadProbe::mark("waynet_index",LoadProbe::msSince(probeT));
     loadProgress(100);
     }
   catch(...) {
@@ -195,6 +227,8 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     throw;
     }
   worldLoadMs = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-loadStarted).count();
+  if(LoadProbe::enabled())
+    LoadProbe::mark("world_end",worldLoadMs);
   }
 
 World::~World() {
@@ -582,13 +616,13 @@ MeshObjects::Mesh World::addStaticView(std::string_view visual) {
   return view()->addStaticView(visual);
   }
 
-MeshObjects::Mesh World::addDecalView(const zenkit::VisualDecal& decal) {
+MeshObjects::Mesh World::addDecalView(const asset::VisualDecal& decal) {
   if(Resources::isHeadless())
     return MeshObjects::Mesh();
   return view()->addDecalView(decal);
   }
 
-LightGroup::Light World::addLight(const zenkit::VLight& vob) {
+LightGroup::Light World::addLight(const asset::VLight& vob) {
   if(Resources::isHeadless())
     return LightGroup::Light();
   return view()->addLight(vob, tickCount());
@@ -645,7 +679,7 @@ std::string_view World::roomAt(const Tempest::Vec3& p) {
   return "";
   }
 
-std::string_view World::roomAt(const zenkit::BspNode& node) {
+std::string_view World::roomAt(const asset::BspNode& node) {
   const std::string* ret=nullptr;
   size_t       count=0;
   auto         id = &node-bsp.nodes.data();(void)id;
@@ -690,11 +724,13 @@ void World::scaleTime(uint64_t& dt) {
 
 void World::tick(uint64_t dt) {
   wdynamic->setTraceTime(traceTime(*this));
+  wdynamic->setFurniturePartsEnabled(Gothic::physicsFlags().furnitureParts);
   wdynamic->setMovableVobsEnabled(Gothic::physicsFlags().movableVobs);
   wdynamic->setPhysicsNoiseEnabled(Gothic::physicsFlags().physicsNoise);
   wdynamic->setDestructionEnabled(Gothic::physicsFlags().destruction);
   wdynamic->setBuoyancyEnabled(Gothic::physicsFlags().buoyancy);
   wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
+  wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
   if(!Gothic::physicsFlags().arrowSticking)
     stuckArrows.clear();
   static bool doTicks=true;
@@ -906,6 +942,10 @@ void World::marchCsCameras(DbgPainter& p) const {
   wobj.marchCsCameras(p);
   }
 
+void World::drawMeleeShadow(DbgPainter& p) const {
+  wobj.drawMeleeShadow(p);
+  }
+
 void World::drawVobBoxNpcNear(DbgPainter& p) const {
   wobj.drawVobBoxNpcNear(p);
   }
@@ -949,7 +989,7 @@ Item *World::addItem(size_t itemInstance, std::string_view at) {
   return wobj.addItem(itemInstance,at);
   }
 
-Item* World::addItem(const zenkit::VItem& vob) {
+Item* World::addItem(const asset::VItem& vob) {
   return wobj.addItem(vob);
   }
 
@@ -1243,7 +1283,7 @@ Sound World::addWeaponHitEffect(Npc& src, const Bullet* srcArrow, Npc& reciver) 
     return addHitEffect("FI",armor,"MAM",pos);
   }
 
-Sound World::addLandHitEffect(ItemMaterial src, zenkit::MaterialGroup reciver, const Tempest::Matrix4x4& pos) {
+Sound World::addLandHitEffect(ItemMaterial src, asset::MaterialGroup reciver, const Tempest::Matrix4x4& pos) {
   // IHI - item hits item
   // IHL - Item hits Level
   return addHitEffect(materialTag(src),materialTag(reciver),"IHL",pos);
@@ -1252,11 +1292,11 @@ Sound World::addLandHitEffect(ItemMaterial src, zenkit::MaterialGroup reciver, c
 void World::emitPhysicsNoise(const PhysicsNoise& noise) {
   // Gothic has no CS_IHL_CL_* instances. Its existing clay contact samples are
   // named for the reverse pair (wood/metal/stone hitting clay).
-  const auto surface = noise.surface==zenkit::MaterialGroup::UNDEFINED || noise.surface==zenkit::MaterialGroup::NONE ?
+  const auto surface = noise.surface==asset::MaterialGroup::UNDEFINED || noise.surface==asset::MaterialGroup::NONE ?
                        "ST" : materialTag(noise.surface);
-  const auto claySurface = noise.surface==zenkit::MaterialGroup::WOOD ? "WO" :
-                           noise.surface==zenkit::MaterialGroup::METAL ? "ME" : "ST";
-  const bool splash = noise.surface==zenkit::MaterialGroup::WATER;
+  const auto claySurface = noise.surface==asset::MaterialGroup::WOOD ? "WO" :
+                           noise.surface==asset::MaterialGroup::METAL ? "ME" : "ST";
+  const bool splash = noise.surface==asset::MaterialGroup::WATER;
   // Reuse the native splash sample already used by MoveAlgo::emitWaterSplash.
   std::string name = splash ? "CS_INTRO_WATERSPLASH.WAV" :
                      noise.material==MAT_CLAY ? std::string("CS_IHL_")+claySurface+"_CL.wav" :
@@ -1344,15 +1384,15 @@ void World::addFreePoint(const Tempest::Vec3& pos, const Tempest::Vec3& dir, std
   wmatrix->addFreePoint(pos,dir,name);
   }
 
-void World::addSound(const zenkit::VirtualObject& vob) {
-  if(vob.type==zenkit::VirtualObjectType::zCVobSound || vob.type==zenkit::VirtualObjectType::zCVobSoundDaytime) {
-    wsound.addSound(reinterpret_cast<const zenkit::VSound&>(vob));
+void World::addSound(const asset::VirtualObject& vob) {
+  if(vob.type==asset::VirtualObjectType::zCVobSound || vob.type==asset::VirtualObjectType::zCVobSoundDaytime) {
+    wsound.addSound(reinterpret_cast<const asset::VSound&>(vob));
     }
-  else if(vob.type==zenkit::VirtualObjectType::oCZoneMusic) {
-    wsound.addZone(reinterpret_cast<const zenkit::VZoneMusic&>(vob));
+  else if(vob.type==asset::VirtualObjectType::oCZoneMusic) {
+    wsound.addZone(reinterpret_cast<const asset::VZoneMusic&>(vob));
     }
-  else if(vob.type==zenkit::VirtualObjectType::oCZoneMusicDefault) {
-    wsound.setDefaultZone(reinterpret_cast<const zenkit::VZoneMusicDefault&>(vob));
+  else if(vob.type==asset::VirtualObjectType::oCZoneMusicDefault) {
+    wsound.setDefaultZone(reinterpret_cast<const asset::VZoneMusicDefault&>(vob));
     }
   }
 
@@ -1503,6 +1543,11 @@ void World::detectNpc(const Tempest::Vec3& p, const float r, const std::function
 
 void World::detectItem(const Tempest::Vec3& p, const float r, const std::function<void(Item&)>& f) {
   wobj.detectItem(p.x,p.y,p.z,r,f);
+  }
+
+WayPath World::wayTo(const WayPoint& begin, const WayPoint& end) const {
+  const auto* first = &begin;
+  return wmatrix->wayTo(&first,1,begin.position(),end);
   }
 
 WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {

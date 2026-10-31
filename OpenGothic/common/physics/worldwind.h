@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Tempest/Matrix4x4>
-#include <zenkit/vobs/VirtualObject.hh>
+#include "asset/worldtypes.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -21,15 +21,15 @@ inline Tempest::Vec3 sample(uint64_t timeMs, uint64_t periodMs, bool enabled, fl
 
 inline Tempest::Matrix4x4 shaderMatrix(const Tempest::Matrix4x4& object,
                                        uint64_t timeMs, uint64_t periodMs, bool enabled,
-                                       zenkit::AnimationType mode, float intensity,
+                                       asset::AnimationType mode, float intensity,
                                        float scale = 1.f, bool legacy = false) {
   auto out = object;
   if(!enabled || periodMs==0)
     return out;
   float magnitude = 0;
-  if(mode==zenkit::AnimationType::WIND && intensity>0.f)
+  if(mode==asset::AnimationType::WIND && intensity>0.f)
     magnitude = .03f;
-  else if(mode==zenkit::AnimationType::WIND_ALT && intensity>0.f && intensity<=1.f)
+  else if(mode==asset::AnimationType::WIND_ALT && intensity>0.f && intensity<=1.f)
     magnitude = intensity*.1f;
   const auto velocity = legacy ? Tempest::Vec3(0,0,4) : sample(timeMs,periodMs,true,scale);
   const Tempest::Vec2 direction(velocity.x*.25f,velocity.z*.25f);

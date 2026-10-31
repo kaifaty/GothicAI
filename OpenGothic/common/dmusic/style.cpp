@@ -1,10 +1,7 @@
-#include "mixer.h"
 #include "style.h"
 
 #include <stdexcept>
-#include <Tempest/Log>
 
-using namespace Tempest;
 using namespace Dx8;
 
 Style::Part::Part(Riff &input) {
@@ -44,11 +41,4 @@ void Style::implRead(Riff &input) {
     else if(input.isListId("part"))
       parts.emplace_back(Part(input));
     }
-  }
-
-const Style::Part* Style::findPart(const GUID &guid) const {
-  for(auto& i:parts)
-    if(i.header.guidPartID==guid)
-      return &i;
-  return nullptr;
   }

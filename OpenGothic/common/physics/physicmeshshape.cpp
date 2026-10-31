@@ -19,7 +19,7 @@ PhysicMeshShape* PhysicMeshShape::load(PackedMesh&& packed) {
   }
 
 PhysicMeshShape::PhysicMeshShape(PackedMesh&& sPacked)
-  :mesh(std::move(sPacked)), shape(mesh.shape()) {
+  :mesh(std::move(sPacked)) {
   size_t largest = 0;
   for(auto& i:sPacked.subMeshes) {
     frict += DynamicWorld::materialFriction(i.material.group);

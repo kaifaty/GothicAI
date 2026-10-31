@@ -622,6 +622,7 @@ void BodyObservations::sample(Npc& npc, uint64_t now, bool force) {
   actor->lastPeriodic = periodic;
   actor->motionDiscontinuity = false;
   actor->events.clear();
+  BodyController::onObservation(npc,s.queue.back());
   }
 
 std::string BodyObservations::drainJson() {

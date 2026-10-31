@@ -212,6 +212,20 @@ def test_three_valued_story_logic(graph):
     assert p.truth(["==", ["field", ["inst", "OTHER"], "GUILD"], ["int", 7]]) is None
 
 
+def test_partial_inlines_a_function_once_unless_it_asks_the_talk_flow(graph, monkeypatch):
+    monkeypatch.setitem(graph.functions, "C_CHAPTER", {"lifted": True, "body": _chapter("==", 1)})
+    monkeypatch.setitem(graph.functions, "C_TOLD", {"lifted": True, "body": [
+        "call", "NPC_KNOWSINFO", ["inst", "OTHER"], ["sym", "DIA_OWN"]]})
+    answers = iter([0, 1])
+    p = Partial(graph, StoryState(vars={"KAPITEL": 1}), {"DIA_OWN"}, lambda info: next(answers))
+    walked = []
+    value = p.value
+    monkeypatch.setattr(p, "value", lambda e, *a: walked.append(e) or value(e, *a))
+    assert [p.truth(["fn", "C_CHAPTER"]) for _ in range(3)] == [True] * 3
+    assert walked.count(graph.functions["C_CHAPTER"]["body"]) == 1
+    assert [p.truth(["fn", "C_TOLD"]), p.truth(["fn", "C_TOLD"])] == [False, True]
+
+
 def test_what_lobart_knows_in_chapter_1(graph):
     _, view = _view(graph, knows={"DIA_LOBART_HALLO"})
     assert [t.node.id for t in view.told] == ["DIA_LOBART_HALLO"]

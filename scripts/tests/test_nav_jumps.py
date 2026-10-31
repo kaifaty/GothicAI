@@ -1,6 +1,10 @@
 """Budget and exact historical-link coverage for the CV probe collector."""
 import importlib.util
 import json
+import os
+import shlex
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -119,3 +123,69 @@ def test_discovery_counts_new_directed_links_only():
     reverse = dict(old, start=old["end"], end=old["start"], id=3)
     climb = dict(old, type=2, id=4)
     assert jumps.novel_links([repeated, reverse, climb, climb], [old]) == [reverse, climb]
+
+
+def test_remote_launch_requires_setup_before_directories_or_queue(tmp_path, monkeypatch):
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    calls = tmp_path / "ssh-calls"
+    ssh = tools / "ssh"
+    ssh.write_text(f"#!{sys.executable}\n" + """import os
+from pathlib import Path
+import subprocess
+import sys
+with Path(os.environ["SSH_CALLS"]).open("a") as stream:
+    stream.write("ssh\\n")
+command = sys.argv[-1]
+if '"$HOME/gothic-ai/bin/gq"' in command:
+    Path(os.environ["SSH_QUEUE"]).write_text(command)
+    raise SystemExit(0)
+remote_env = {key: value for key, value in os.environ.items()
+              if key != "GOTHIC_DIR" and not key.startswith("OPENGOTHIC_BASE")
+              and key != "OPENGOTHIC_VIDEOS_FINGERPRINT"}
+raise SystemExit(subprocess.run(["bash", "-c", command], env=remote_env).returncode)
+""")
+    ssh.chmod(0o755)
+    rsync = tools / "rsync"
+    rsync.write_text("#!/bin/sh\nexit 0\n")
+    rsync.chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+    for key in tuple(os.environ):
+        if key == "GOTHIC_DIR" or key.startswith("OPENGOTHIC_BASE") or key == "OPENGOTHIC_VIDEOS_FINGERPRINT":
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("SSH_CALLS", str(calls))
+    queue = tmp_path / "queue-command"
+    monkeypatch.setenv("SSH_QUEUE", str(queue))
+    for filename, action in (("nav-jumps-remote.sh", "build"), ("ryzen.sh", "pytest")):
+        calls.write_text("")
+        monkeypatch.setenv("GOTHIC_DIR", "/Volumes/x")
+        script = Path(__file__).resolve().parents[1] / filename
+        result = subprocess.run(["bash", str(script), action], capture_output=True, text=True)
+        assert result.returncode == 1
+        assert "Run scripts/ryzen.sh setup first" in result.stderr
+        assert calls.read_text().splitlines() == ["ssh"]
+        assert not (home / "gothic-ai").exists()
+
+    settings = home / "gothic-ai/game-settings"
+    (settings / "system").mkdir(parents=True)
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (settings / "system" / name).write_text("")
+    fingerprints = {"base": "a" * 64, "videos": "b" * 64}
+    (home / "gothic-ai/game-base.json").write_text(json.dumps(fingerprints))
+    monkeypatch.setenv("GOTHIC_DIR", "/Volumes/x")
+    monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", "/custom/base-cache")
+    script = Path(__file__).resolve().parents[1] / "nav-jumps-remote.sh"
+    result = subprocess.run(["bash", str(script), "recheck"], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    payload = shlex.split(queue.read_text())
+    assert str(home / "gothic-ai/nav-jumps/source/scripts/nav_job.py") in payload
+    assert payload[payload.index("--max-seconds") + 1] == "7200"
+    assert "/Volumes/x" not in queue.read_text()
+    assert not any(value.startswith("GOTHIC_DIR=") for value in payload)
+    assert f"OPENGOTHIC_BASE_FINGERPRINT={fingerprints['base']}" in payload
+    assert f"OPENGOTHIC_VIDEOS_FINGERPRINT={fingerprints['videos']}" in payload
+    assert "OPENGOTHIC_BASE_CACHE=/custom/base-cache" in payload
+    assert payload[payload.index("--assets") + 1] == str(settings)

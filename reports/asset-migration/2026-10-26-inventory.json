@@ -1,0 +1,1411 @@
+{
+  "audit_revision": "7d18eb5dc0fb0a6903bc502f1ce0515ba3211f1e",
+  "source_description": "One local Gothic II installation; absolute host path omitted.",
+  "generated_utc": "2026-10-26T20:47:57.031435+00:00",
+  "method": "Read VDF/MOD header and catalog only; list loose _work files by stat; no game/decoder/model/jobs. Counts are raw records and case-insensitive distinct paths/names, not runtime VFS winners or reachability.",
+  "standard_archive_scope": "Data/**/*.vdf (case-insensitive suffix), excludes .mod; installscript.vdf outside Data excluded",
+  "standard_archive_count": 21,
+  "standard_archive_catalog_file_records_total": 31445,
+  "standard_archive_counts": {
+    ".WAV": {
+      "archive_records": 22382,
+      "distinct_casefold_virtual_paths": 22124,
+      "distinct_casefold_basenames": 22116
+    },
+    ".OGG": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    },
+    ".FNT": {
+      "archive_records": 23,
+      "distinct_casefold_virtual_paths": 9,
+      "distinct_casefold_basenames": 9
+    },
+    ".DAT": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    },
+    ".BIN": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    },
+    ".SGT": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    },
+    ".STY": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    },
+    ".DLS": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    },
+    ".BIK": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    }
+  },
+  "standard_archives": [
+    {
+      "path": "Data/Anims.vdf",
+      "size": 37559130,
+      "mtime_ns": 1791664656652541200,
+      "header_timestamp_dos": 761641907,
+      "header_timestamp_local_unspecified_timezone": "2002-11-05T23:29:38",
+      "catalog_entry_count": 3514,
+      "catalog_file_count": 3510,
+      "catalog_sha256": "98df7bfb3bc5850b05eea0541f7b7bdd8ed1f56b0a0e8c67edef2125079aa4b7",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Anims_Addon.vdf",
+      "size": 12587040,
+      "mtime_ns": 1791664657245546100,
+      "header_timestamp_dos": 788303374,
+      "header_timestamp_local_unspecified_timezone": "2003-07-28T17:48:28",
+      "catalog_entry_count": 1194,
+      "catalog_file_count": 1190,
+      "catalog_sha256": "7953b965cf7b72061722a0805b29826a59efaf12e6b55e32d96775a87ec92cdc",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Fonts_Russian.vdf",
+      "size": 1998711,
+      "mtime_ns": 1791665053382827600,
+      "header_timestamp_dos": 841314304,
+      "header_timestamp_local_unspecified_timezone": "2005-01-05T14:00:00",
+      "catalog_entry_count": 18,
+      "catalog_file_count": 14,
+      "catalog_sha256": "190d040f6a983599db4b0c6cd9232fbb9089cb3bd738aa33f436af4cbe900625",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Meshes.vdf",
+      "size": 15251140,
+      "mtime_ns": 1791664656948543600,
+      "header_timestamp_dos": 761542797,
+      "header_timestamp_local_unspecified_timezone": "2002-11-04T07:04:26",
+      "catalog_entry_count": 1123,
+      "catalog_file_count": 1119,
+      "catalog_sha256": "a010208d9e2dc39156918c5b44e6684b5c4b2a96cba11b7b7e9fb158b6433ad3",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Meshes_Addon.vdf",
+      "size": 4825724,
+      "mtime_ns": 1791664657049544500,
+      "header_timestamp_dos": 788303383,
+      "header_timestamp_local_unspecified_timezone": "2003-07-28T17:48:46",
+      "catalog_entry_count": 263,
+      "catalog_file_count": 259,
+      "catalog_sha256": "1feafa6142e6ba4e18ec3609b6ce499daad25066b04ca65ade6a9837445e37f4",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Sounds.vdf",
+      "size": 155747102,
+      "mtime_ns": 1791664660415572300,
+      "header_timestamp_dos": 761542800,
+      "header_timestamp_local_unspecified_timezone": "2002-11-04T07:04:32",
+      "catalog_entry_count": 972,
+      "catalog_file_count": 968,
+      "catalog_sha256": "d00675cf16423ea9773763fa46cd420510c169ad889f49df91d6fd4fac3d9ebc",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Sounds_Addon.vdf",
+      "size": 52713864,
+      "mtime_ns": 1791664661257579300,
+      "header_timestamp_dos": 788303386,
+      "header_timestamp_local_unspecified_timezone": "2003-07-28T17:48:52",
+      "catalog_entry_count": 239,
+      "catalog_file_count": 235,
+      "catalog_sha256": "c9b1f66b7ff8e66543900c673debfb5f2bc6cb0170f6e9f06994b98f98d61ecb",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Sounds_bird_01.vdf",
+      "size": 84792,
+      "mtime_ns": 1791664660229570800,
+      "header_timestamp_dos": 764648213,
+      "header_timestamp_local_unspecified_timezone": "2002-12-19T19:24:42",
+      "catalog_entry_count": 5,
+      "catalog_file_count": 1,
+      "catalog_sha256": "50ee3e0c4fe32b585a2a61bfe95b769ff809376d65664239a32daaccaf1f867e",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Speech1.vdf",
+      "size": 747777384,
+      "mtime_ns": 1791665075095007400,
+      "header_timestamp_dos": 764643940,
+      "header_timestamp_local_unspecified_timezone": "2002-12-19T17:19:08",
+      "catalog_entry_count": 7456,
+      "catalog_file_count": 7452,
+      "catalog_sha256": "a51d5a698df16f33e9309833abe251cec3e6df369651240e160bd1a1bc33a275",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Speech2.vdf",
+      "size": 622012726,
+      "mtime_ns": 1791665085843096500,
+      "header_timestamp_dos": 764644176,
+      "header_timestamp_local_unspecified_timezone": "2002-12-19T17:26:32",
+      "catalog_entry_count": 8106,
+      "catalog_file_count": 8102,
+      "catalog_sha256": "a79f9dbfba346d94d89eed8dc6461f878b95feb112c72afe3b24d8b0cd06925d",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Speech_Addon.vdf",
+      "size": 672937550,
+      "mtime_ns": 1791665097683194500,
+      "header_timestamp_dos": 792552279,
+      "header_timestamp_local_unspecified_timezone": "2003-09-29T12:26:46",
+      "catalog_entry_count": 5366,
+      "catalog_file_count": 5362,
+      "catalog_sha256": "88433c68ef6cbf4ecc1044d06f6dc2be57605ef04f33cecadcf6d7c576da370f",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Speech_Parlan_engl.vdf",
+      "size": 118692,
+      "mtime_ns": 1791665094961172000,
+      "header_timestamp_dos": 775262007,
+      "header_timestamp_local_unspecified_timezone": "2003-01-21T17:57:46",
+      "catalog_entry_count": 5,
+      "catalog_file_count": 1,
+      "catalog_sha256": "ef45039f2a811299c5adaba9ceb47fec8827b279622d93017b8c4a6143cf96bc",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Speech_RU_Fix.vdf",
+      "size": 21557768,
+      "mtime_ns": 1791665098375200300,
+      "header_timestamp_dos": 1417756393,
+      "header_timestamp_local_unspecified_timezone": "2022-04-01T07:55:18",
+      "catalog_entry_count": 245,
+      "catalog_file_count": 241,
+      "catalog_sha256": "a2a87375e507786740fb4c304909de7beadd5b71dc32b04d4c97c43cfecabb2e",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Speech_heyou_citygde_engl.vdf",
+      "size": 121514,
+      "mtime_ns": 1791665097287191300,
+      "header_timestamp_dos": 775262007,
+      "header_timestamp_local_unspecified_timezone": "2003-01-21T17:57:46",
+      "catalog_entry_count": 9,
+      "catalog_file_count": 5,
+      "catalog_sha256": "8d6b6973cc2a66c05c7fff012e8772b033007980a2dc5d9e5df805b0a82d6cdf",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/SystemPack.vdf",
+      "size": 64857,
+      "mtime_ns": 1791664698804890400,
+      "header_timestamp_dos": 1345349171,
+      "header_timestamp_local_unspecified_timezone": "2020-01-16T12:49:38",
+      "catalog_entry_count": 1,
+      "catalog_file_count": 1,
+      "catalog_sha256": "ba8924c414715120b602e07846fd4105a8bd03e0ab9adcd32989dc3c716a95e5",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Textures.vdf",
+      "size": 329914625,
+      "mtime_ns": 1791664703370419000,
+      "header_timestamp_dos": 761743599,
+      "header_timestamp_local_unspecified_timezone": "2002-11-07T09:07:30",
+      "catalog_entry_count": 2543,
+      "catalog_file_count": 2535,
+      "catalog_sha256": "ea43f5b23d8df04aefbf02b1a45b77ba9f931b34b6adf33e7f4d3cea6e10484f",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Textures_Addon.vdf",
+      "size": 160070361,
+      "mtime_ns": 1791664705896949100,
+      "header_timestamp_dos": 788303404,
+      "header_timestamp_local_unspecified_timezone": "2003-07-28T17:49:24",
+      "catalog_entry_count": 421,
+      "catalog_file_count": 412,
+      "catalog_sha256": "ef81fb52aced7b02651707fb85abe8cf0fc4f3ebab0852f8d1f13f00b6691fb3",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Textures_Russian.vdf",
+      "size": 3445422,
+      "mtime_ns": 1791665097785195400,
+      "header_timestamp_dos": 841308160,
+      "header_timestamp_local_unspecified_timezone": "2005-01-05T11:00:00",
+      "catalog_entry_count": 17,
+      "catalog_file_count": 13,
+      "catalog_sha256": "160506dd47a0518cd4e45ab6d4bbbc57bc45e4df4c42a1edfa64c6b05f568050",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Worlds.vdf",
+      "size": 100822945,
+      "mtime_ns": 1791664706886957300,
+      "header_timestamp_dos": 761694689,
+      "header_timestamp_local_unspecified_timezone": "2002-11-06T17:15:02",
+      "catalog_entry_count": 12,
+      "catalog_file_count": 7,
+      "catalog_sha256": "c6a9df4e0258b5c3ff0f6816e7493ba4863b5e52afb569363559c649cedce596",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/Worlds_Addon.vdf",
+      "size": 135671400,
+      "mtime_ns": 1791664708074967100,
+      "header_timestamp_dos": 788615901,
+      "header_timestamp_local_unspecified_timezone": "2003-08-01T10:22:58",
+      "catalog_entry_count": 9,
+      "catalog_file_count": 3,
+      "catalog_sha256": "b56e6c4206919b4cbca50e739ff11325848a549ebbfac19ddbf4d054d6414424",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/speech3.vdf",
+      "size": 1064820,
+      "mtime_ns": 1791665085249091500,
+      "header_timestamp_dos": 846557996,
+      "header_timestamp_local_unspecified_timezone": "2005-03-21T14:25:24",
+      "catalog_entry_count": 19,
+      "catalog_file_count": 15,
+      "catalog_sha256": "9869c9a99579230563c7c35cee98b96120614b35846d1e51a2626353790ec507",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    }
+  ],
+  "mod_archive_count": 2,
+  "mod_archive_counts": {
+    ".WAV": {
+      "archive_records": 23,
+      "distinct_casefold_virtual_paths": 23,
+      "distinct_casefold_basenames": 23
+    },
+    ".OGG": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    },
+    ".FNT": {
+      "archive_records": 7,
+      "distinct_casefold_virtual_paths": 7,
+      "distinct_casefold_basenames": 7
+    },
+    ".DAT": {
+      "archive_records": 7,
+      "distinct_casefold_virtual_paths": 7,
+      "distinct_casefold_basenames": 7
+    },
+    ".BIN": {
+      "archive_records": 1,
+      "distinct_casefold_virtual_paths": 1,
+      "distinct_casefold_basenames": 1
+    },
+    ".SGT": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    },
+    ".STY": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    },
+    ".DLS": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    },
+    ".BIK": {
+      "archive_records": 0,
+      "distinct_casefold_virtual_paths": 0,
+      "distinct_casefold_basenames": 0
+    }
+  },
+  "mod_archives": [
+    {
+      "path": "Data/ModVDF/g2_classic.mod",
+      "size": 115310252,
+      "mtime_ns": 1791664706886957300,
+      "header_timestamp_dos": 1433966685,
+      "header_timestamp_local_unspecified_timezone": "2022-11-24T19:02:58",
+      "catalog_entry_count": 612,
+      "catalog_file_count": 593,
+      "catalog_sha256": "4e741565b9c26d494aa560426f425178ad96f508e6ad62f6e8bb98044b88efe0",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    },
+    {
+      "path": "Data/ModVDF/g2_classic_ru.mod",
+      "size": 13711028,
+      "mtime_ns": 1791665053679830000,
+      "header_timestamp_dos": 1433966735,
+      "header_timestamp_local_unspecified_timezone": "2022-11-24T19:04:30",
+      "catalog_entry_count": 29,
+      "catalog_file_count": 21,
+      "catalog_sha256": "2737b9b7ed6b534cb259a96bc7a678add1db34e85ef927d795e483dbcf4dc528",
+      "signature_hex": "5053564453435f56322e30300a0d0a0d",
+      "volume_flags": 80
+    }
+  ],
+  "loose_scope": "All files recursively under _work with selected extensions; no payload read",
+  "loose_counts": {
+    ".WAV": {
+      "files": 0,
+      "distinct_casefold_basenames": 0,
+      "bytes": 0
+    },
+    ".OGG": {
+      "files": 0,
+      "distinct_casefold_basenames": 0,
+      "bytes": 0
+    },
+    ".FNT": {
+      "files": 0,
+      "distinct_casefold_basenames": 0,
+      "bytes": 0
+    },
+    ".DAT": {
+      "files": 8,
+      "distinct_casefold_basenames": 8,
+      "bytes": 8839689
+    },
+    ".BIN": {
+      "files": 1,
+      "distinct_casefold_basenames": 1,
+      "bytes": 6110935
+    },
+    ".SGT": {
+      "files": 43,
+      "distinct_casefold_basenames": 43,
+      "bytes": 254960
+    },
+    ".STY": {
+      "files": 40,
+      "distinct_casefold_basenames": 40,
+      "bytes": 1792126
+    },
+    ".DLS": {
+      "files": 24,
+      "distinct_casefold_basenames": 24,
+      "bytes": 98317372
+    },
+    ".BIK": {
+      "files": 21,
+      "distinct_casefold_basenames": 21,
+      "bytes": 359956068
+    }
+  },
+  "loose_files": [
+    {
+      "path": "_work/Data/Music/AddonWorld/ADT_Day_Std.sgt",
+      "size": 4428,
+      "mtime_ns": 1791664705005941700,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/ADW_Day_Fgt.sgt",
+      "size": 4408,
+      "mtime_ns": 1791664707085561000,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/ADW_Day_Std.sgt",
+      "size": 4420,
+      "mtime_ns": 1791664705005941700,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/AWC_Day_Std.sgt",
+      "size": 4440,
+      "mtime_ns": 1791664708176505700,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/BDT_Day_Std.sgt",
+      "size": 4412,
+      "mtime_ns": 1791664707084958900,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/BIB_Day_Std.sgt",
+      "size": 4440,
+      "mtime_ns": 1791664708175968000,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/CAN_Day_Std.sgt",
+      "size": 4440,
+      "mtime_ns": 1791664710998316900,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/PIR_Day_Std.sgt",
+      "size": 4410,
+      "mtime_ns": 1791664708176505700,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/SHO_Day_Fgt.sgt",
+      "size": 4412,
+      "mtime_ns": 1791664705301944200,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/SHO_Day_Std.sgt",
+      "size": 4400,
+      "mtime_ns": 1791664707184315800,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/STO_Day_Std.sgt",
+      "size": 4448,
+      "mtime_ns": 1791664707184315800,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/SWP_Day_Std.sgt",
+      "size": 4388,
+      "mtime_ns": 1791664707184315800,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/_AdanosTemple.sty",
+      "size": 28694,
+      "mtime_ns": 1791664708176738800,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/_AddonWorld.sty",
+      "size": 58852,
+      "mtime_ns": 1791664705401945000,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/_AddonWorldEntrance.sty",
+      "size": 22874,
+      "mtime_ns": 1791664710996991400,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/_BanditsCamp.sty",
+      "size": 19738,
+      "mtime_ns": 1791664707184315800,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/_BibCanyon.sty",
+      "size": 41402,
+      "mtime_ns": 1791664707184315800,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/_Canyon.sty",
+      "size": 45400,
+      "mtime_ns": 1791664711318994000,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/_PiratesCamp.sty",
+      "size": 37254,
+      "mtime_ns": 1791664708176505700,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/_ShowDown.sty",
+      "size": 41446,
+      "mtime_ns": 1791664711344994200,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/_StonePlates.sty",
+      "size": 36240,
+      "mtime_ns": 1791664707183959800,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/_Swamp.sty",
+      "size": 20578,
+      "mtime_ns": 1791664707184315800,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/__DLS_Accordion.dls",
+      "size": 2104664,
+      "mtime_ns": 1791664711750997600,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/__DLS_Bass.dls",
+      "size": 2090712,
+      "mtime_ns": 1791664708854973600,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/__DLS_Celli.dls",
+      "size": 7199192,
+      "mtime_ns": 1791664711843998400,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/__DLS_Fiddle.dls",
+      "size": 4250198,
+      "mtime_ns": 1791664708854973600,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/__DLS_Guitar.dls",
+      "size": 1227456,
+      "mtime_ns": 1791664711094992200,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/__DLS_Harp.dls",
+      "size": 863728,
+      "mtime_ns": 1791664707579963000,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/__DLS_Horn.dls",
+      "size": 5583952,
+      "mtime_ns": 1791664709052975200,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/__DLS_MonoPerc.dls",
+      "size": 2360840,
+      "mtime_ns": 1791664711245993400,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/__DLS_RareIngame.dls",
+      "size": 24711202,
+      "mtime_ns": 1791664712339002500,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/AddonWorld/__DLS_Violins.dls",
+      "size": 5969330,
+      "mtime_ns": 1791664712636004900,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/BAN_DayFgt.sgt",
+      "size": 6346,
+      "mtime_ns": 1791664708073967100,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/BAN_DayStd.sgt",
+      "size": 6382,
+      "mtime_ns": 1791664712241001700,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DI_DayStd.sgt",
+      "size": 7240,
+      "mtime_ns": 1791664712438003300,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLC_DayFgt.sgt",
+      "size": 6368,
+      "mtime_ns": 1791664707878965500,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLC_DayStd.sgt",
+      "size": 6896,
+      "mtime_ns": 1791664712439276300,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Alpenhorn.dls",
+      "size": 696726,
+      "mtime_ns": 1791664706390953200,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Bass.dls",
+      "size": 2420906,
+      "mtime_ns": 1791664708176968000,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Brass.dls",
+      "size": 4683306,
+      "mtime_ns": 1791664712636004900,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Daduk.dls",
+      "size": 1213066,
+      "mtime_ns": 1791664708287968900,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_DragonIsland.dls",
+      "size": 1967334,
+      "mtime_ns": 1791664712834006600,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Flute.dls",
+      "size": 7199558,
+      "mtime_ns": 1791664713035008200,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Guitar.dls",
+      "size": 3223924,
+      "mtime_ns": 1791664712636004900,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Harp.dls",
+      "size": 940834,
+      "mtime_ns": 1791664708506930700,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Metronom.dls",
+      "size": 32324,
+      "mtime_ns": 1791664712736005800,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Organ.dls",
+      "size": 2595222,
+      "mtime_ns": 1791664709743981000,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Percussions.dls",
+      "size": 11641062,
+      "mtime_ns": 1791664713407011300,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Piano.dls",
+      "size": 1324278,
+      "mtime_ns": 1791664708853973600,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Rare.dls",
+      "size": 2217714,
+      "mtime_ns": 1791664713034008200,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/DLS_Strings.dls",
+      "size": 1799844,
+      "mtime_ns": 1791664710091983900,
+      "extension": ".DLS"
+    },
+    {
+      "path": "_work/Data/Music/newworld/Default.sgt",
+      "size": 6382,
+      "mtime_ns": 1791664709151976100,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/FRI_DayStd.sgt",
+      "size": 6790,
+      "mtime_ns": 1791664708957974500,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/Gamestart.sgt",
+      "size": 6344,
+      "mtime_ns": 1791664713035008200,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/KAS_DayStd.sgt",
+      "size": 7234,
+      "mtime_ns": 1791664713132009000,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/KH_DayFgt.sgt",
+      "size": 7200,
+      "mtime_ns": 1791664708958582400,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/KH_DayStd.sgt",
+      "size": 6376,
+      "mtime_ns": 1791664708958582400,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/Khorinis.sty",
+      "size": 40832,
+      "mtime_ns": 1791664713132009000,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/LEU_DayStd.sgt",
+      "size": 6860,
+      "mtime_ns": 1791664713132009000,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/LOB_DayStd.sgt",
+      "size": 6374,
+      "mtime_ns": 1791664708957974500,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/MAY_DayFgt.sgt",
+      "size": 6746,
+      "mtime_ns": 1791664713407011300,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/MAY_DayStd.sgt",
+      "size": 6746,
+      "mtime_ns": 1791664709051975200,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/MI_DayStd.sgt",
+      "size": 6764,
+      "mtime_ns": 1791664709743981000,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/MO_DayStd.sgt",
+      "size": 6368,
+      "mtime_ns": 1791664713407011300,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/NW_DayFgt.sgt",
+      "size": 6356,
+      "mtime_ns": 1791664709052975200,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/NW_DayStd.sgt",
+      "size": 5318,
+      "mtime_ns": 1791664709151976100,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/NW_DayStd_A0.sgt",
+      "size": 6382,
+      "mtime_ns": 1791664713132009000,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/NW_DayStd_A1.sgt",
+      "size": 6382,
+      "mtime_ns": 1791664713261010100,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/NW_DayThr.sgt",
+      "size": 6364,
+      "mtime_ns": 1791664708351969400,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/NW_MonoTest.sgt",
+      "size": 6332,
+      "mtime_ns": 1791664707183959800,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/NewWorld.sty",
+      "size": 77776,
+      "mtime_ns": 1791664709842981800,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/OWD_DayStd.sgt",
+      "size": 6774,
+      "mtime_ns": 1791664713261010100,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/OWP_DayFgt.sgt",
+      "size": 6338,
+      "mtime_ns": 1791664707184315800,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/OWP_DayStd.sgt",
+      "size": 6374,
+      "mtime_ns": 1791664713260010100,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/PIE_DayStd.sgt",
+      "size": 6338,
+      "mtime_ns": 1791664707282960600,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/WOO_DayFgt.sgt",
+      "size": 6314,
+      "mtime_ns": 1791664709745925800,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/WOO_DayStd.sgt",
+      "size": 6366,
+      "mtime_ns": 1791664713260010100,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/WOO_DayThr.sgt",
+      "size": 6314,
+      "mtime_ns": 1791664713260010100,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/XT_DayStd.sgt",
+      "size": 6546,
+      "mtime_ns": 1791664709742981000,
+      "extension": ".SGT"
+    },
+    {
+      "path": "_work/Data/Music/newworld/Xardas Tower.sty",
+      "size": 20162,
+      "mtime_ns": 1791664713407011300,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Banditen.sty",
+      "size": 70062,
+      "mtime_ns": 1791664713408881300,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_DragonIsland.sty",
+      "size": 41008,
+      "mtime_ns": 1791664709842981800,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_DragonLocationFGT.sty",
+      "size": 32276,
+      "mtime_ns": 1791664713409069400,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_DragonLocationStd.sty",
+      "size": 65354,
+      "mtime_ns": 1791664709151976100,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Earth.sty",
+      "size": 20308,
+      "mtime_ns": 1791664707975966300,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Friedhof.sty",
+      "size": 54102,
+      "mtime_ns": 1791664709151976100,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Gamestart.sty",
+      "size": 20042,
+      "mtime_ns": 1791664713407011300,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Graveyard.sty",
+      "size": 12476,
+      "mtime_ns": 1791664707678963900,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Idylle.sty",
+      "size": 34590,
+      "mtime_ns": 1791664709151976100,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Kaserne.sty",
+      "size": 48210,
+      "mtime_ns": 1791664713493012000,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Khorinis.sty",
+      "size": 86784,
+      "mtime_ns": 1791664713526012300,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Leuchtturm.sty",
+      "size": 46734,
+      "mtime_ns": 1791664707283892600,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_LobardsHof.sty",
+      "size": 49720,
+      "mtime_ns": 1791664707481962200,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Love.sty",
+      "size": 23062,
+      "mtime_ns": 1791664707481962200,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Mayatempel.sty",
+      "size": 28218,
+      "mtime_ns": 1791664707579963000,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Monastry.sty",
+      "size": 45950,
+      "mtime_ns": 1791664707879965500,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Monastry_Indoor.sty",
+      "size": 33066,
+      "mtime_ns": 1791664713526012300,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_NewWorld.sty",
+      "size": 176258,
+      "mtime_ns": 1791664713526012300,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_OW_DragonLocation.sty",
+      "size": 32254,
+      "mtime_ns": 1791664707579963000,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_OW_Path.sty",
+      "size": 66768,
+      "mtime_ns": 1791664709842981800,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_OldWorld.sty",
+      "size": 46236,
+      "mtime_ns": 1791664709842981800,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Oldcamp.sty",
+      "size": 14296,
+      "mtime_ns": 1791664709256976900,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Orcs.sty",
+      "size": 13002,
+      "mtime_ns": 1791664709249976900,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Pier.sty",
+      "size": 63450,
+      "mtime_ns": 1791664709253976900,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Taverne.sty",
+      "size": 50158,
+      "mtime_ns": 1791664709842981800,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Wood.sty",
+      "size": 99724,
+      "mtime_ns": 1791664708288968900,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Music/newworld/_Xardas Tower.sty",
+      "size": 26770,
+      "mtime_ns": 1791664709249976900,
+      "extension": ".STY"
+    },
+    {
+      "path": "_work/Data/Scripts/CONTENT/CUTSCENE/OU.BIN",
+      "size": 6110935,
+      "mtime_ns": 1791665098079197800,
+      "extension": ".BIN"
+    },
+    {
+      "path": "_work/Data/Scripts/_compiled/CAMERA.DAT",
+      "size": 7750,
+      "mtime_ns": 1791664707678963900,
+      "extension": ".DAT"
+    },
+    {
+      "path": "_work/Data/Scripts/_compiled/FIGHT.DAT",
+      "size": 42312,
+      "mtime_ns": 1791664709420978300,
+      "extension": ".DAT"
+    },
+    {
+      "path": "_work/Data/Scripts/_compiled/GOTHIC.DAT",
+      "size": 7551463,
+      "mtime_ns": 1791665097881196200,
+      "extension": ".DAT"
+    },
+    {
+      "path": "_work/Data/Scripts/_compiled/MENU.DAT",
+      "size": 130151,
+      "mtime_ns": 1791665097485192900,
+      "extension": ".DAT"
+    },
+    {
+      "path": "_work/Data/Scripts/_compiled/MUSIC.DAT",
+      "size": 14859,
+      "mtime_ns": 1791664713525012300,
+      "extension": ".DAT"
+    },
+    {
+      "path": "_work/Data/Scripts/_compiled/PARTICLEFX.DAT",
+      "size": 647240,
+      "mtime_ns": 1791664709945982600,
+      "extension": ".DAT"
+    },
+    {
+      "path": "_work/Data/Scripts/_compiled/SFX.DAT",
+      "size": 269088,
+      "mtime_ns": 1791664709945982600,
+      "extension": ".DAT"
+    },
+    {
+      "path": "_work/Data/Scripts/_compiled/VISUALFX.DAT",
+      "size": 176826,
+      "mtime_ns": 1791664713724013900,
+      "extension": ".DAT"
+    },
+    {
+      "path": "_work/Data/Video/Credits.bik",
+      "size": 19509916,
+      "mtime_ns": 1791664714506020400,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Credits2.bik",
+      "size": 58824680,
+      "mtime_ns": 1791664714802022900,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Credits_Extro.bik",
+      "size": 19777544,
+      "mtime_ns": 1791664715742030700,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/DragonAttack.bik",
+      "size": 11294764,
+      "mtime_ns": 1791665098968205200,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Extro_AllesWirdGut.bik",
+      "size": 6070052,
+      "mtime_ns": 1791665098375200300,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Extro_DJG.bik",
+      "size": 15962436,
+      "mtime_ns": 1791664716338035600,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Extro_KDF.bik",
+      "size": 15815896,
+      "mtime_ns": 1791664717330043800,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Extro_PAL.bik",
+      "size": 16229264,
+      "mtime_ns": 1791664717330043800,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Extro_Raven.bik",
+      "size": 12019876,
+      "mtime_ns": 1791664717429044600,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Extro_Xardas.bik",
+      "size": 12042124,
+      "mtime_ns": 1791665098969205200,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/FishFood.bik",
+      "size": 4879444,
+      "mtime_ns": 1791664717824047900,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Intro.bik",
+      "size": 27105484,
+      "mtime_ns": 1791665098968205200,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Intro_Addon.bik",
+      "size": 29074656,
+      "mtime_ns": 1791665099266207700,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Logo1.bik",
+      "size": 6178996,
+      "mtime_ns": 1791664716487036800,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Logo2.bik",
+      "size": 3142420,
+      "mtime_ns": 1791664716487036800,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/LoveScene.bik",
+      "size": 7814036,
+      "mtime_ns": 1791664719508061900,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/OrcAttack.bik",
+      "size": 9368216,
+      "mtime_ns": 1791665099562210100,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/OreHeap.bik",
+      "size": 19071868,
+      "mtime_ns": 1791664718022049500,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Portal_Raven.bik",
+      "size": 12575324,
+      "mtime_ns": 1791664719012057700,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/Ship.bik",
+      "size": 15263332,
+      "mtime_ns": 1791664719013057800,
+      "extension": ".BIK"
+    },
+    {
+      "path": "_work/Data/Video/g2_classic_credits.bik",
+      "size": 37935740,
+      "mtime_ns": 1791664719311060200,
+      "extension": ".BIK"
+    }
+  ],
+  "font_records": [
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_10_BOOK.FNT",
+      "basename": "FONT_10_BOOK.FNT",
+      "size": 4379,
+      "archive": "Data/Fonts_Russian.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_20_BOOK.FNT",
+      "basename": "FONT_20_BOOK.FNT",
+      "size": 4379,
+      "archive": "Data/Fonts_Russian.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_DEFAULT.FNT",
+      "basename": "FONT_DEFAULT.FNT",
+      "size": 4379,
+      "archive": "Data/Fonts_Russian.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_10_WHITE.FNT",
+      "basename": "FONT_OLD_10_WHITE.FNT",
+      "size": 4384,
+      "archive": "Data/Fonts_Russian.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_10_WHITE_HI.FNT",
+      "basename": "FONT_OLD_10_WHITE_HI.FNT",
+      "size": 4387,
+      "archive": "Data/Fonts_Russian.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_20_WHITE.FNT",
+      "basename": "FONT_OLD_20_WHITE.FNT",
+      "size": 4384,
+      "archive": "Data/Fonts_Russian.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_20_WHITE_HI.FNT",
+      "basename": "FONT_OLD_20_WHITE_HI.FNT",
+      "size": 4387,
+      "archive": "Data/Fonts_Russian.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_10_BOOK.FNT",
+      "basename": "FONT_10_BOOK.FNT",
+      "size": 4379,
+      "archive": "Data/Textures.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_20_BOOK.FNT",
+      "basename": "FONT_20_BOOK.FNT",
+      "size": 4379,
+      "archive": "Data/Textures.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_DEFAULT.FNT",
+      "basename": "FONT_DEFAULT.FNT",
+      "size": 4379,
+      "archive": "Data/Textures.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_10_WHITE.FNT",
+      "basename": "FONT_OLD_10_WHITE.FNT",
+      "size": 4384,
+      "archive": "Data/Textures.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_10_WHITE_HI.FNT",
+      "basename": "FONT_OLD_10_WHITE_HI.FNT",
+      "size": 4387,
+      "archive": "Data/Textures.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_20_WHITE.FNT",
+      "basename": "FONT_OLD_20_WHITE.FNT",
+      "size": 4384,
+      "archive": "Data/Textures.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_20_WHITE_HI.FNT",
+      "basename": "FONT_OLD_20_WHITE_HI.FNT",
+      "size": 4387,
+      "archive": "Data/Textures.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_10_BOOK.FNT",
+      "basename": "FONT_10_BOOK.FNT",
+      "size": 4379,
+      "archive": "Data/Textures_Addon.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_10_BOOK_HI.FNT",
+      "basename": "FONT_10_BOOK_HI.FNT",
+      "size": 4379,
+      "archive": "Data/Textures_Addon.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_20_BOOK.FNT",
+      "basename": "FONT_20_BOOK.FNT",
+      "size": 4379,
+      "archive": "Data/Textures_Addon.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_20_BOOK_HI.FNT",
+      "basename": "FONT_20_BOOK_HI.FNT",
+      "size": 4379,
+      "archive": "Data/Textures_Addon.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_DEFAULT.FNT",
+      "basename": "FONT_DEFAULT.FNT",
+      "size": 4379,
+      "archive": "Data/Textures_Addon.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_10_WHITE.FNT",
+      "basename": "FONT_OLD_10_WHITE.FNT",
+      "size": 4384,
+      "archive": "Data/Textures_Addon.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_10_WHITE_HI.FNT",
+      "basename": "FONT_OLD_10_WHITE_HI.FNT",
+      "size": 4387,
+      "archive": "Data/Textures_Addon.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_20_WHITE.FNT",
+      "basename": "FONT_OLD_20_WHITE.FNT",
+      "size": 4384,
+      "archive": "Data/Textures_Addon.vdf"
+    },
+    {
+      "virtual_path": "/_WORK/DATA/TEXTURES/_COMPILED/FONT_OLD_20_WHITE_HI.FNT",
+      "basename": "FONT_OLD_20_WHITE_HI.FNT",
+      "size": 4387,
+      "archive": "Data/Textures_Addon.vdf"
+    }
+  ],
+  "unique_font_names": [
+    "FONT_10_BOOK.FNT",
+    "FONT_10_BOOK_HI.FNT",
+    "FONT_20_BOOK.FNT",
+    "FONT_20_BOOK_HI.FNT",
+    "FONT_DEFAULT.FNT",
+    "FONT_OLD_10_WHITE.FNT",
+    "FONT_OLD_10_WHITE_HI.FNT",
+    "FONT_OLD_20_WHITE.FNT",
+    "FONT_OLD_20_WHITE_HI.FNT"
+  ],
+  "dataset_fingerprint": {
+    "sha256": "481c79e012a7e998aadfa6afcbae6cb01dc1fce0b3db926f687f8cad23503a40",
+    "covers": "Canonical JSON (sorted keys) of standard/mod archive metadata incl catalog SHA256 and all selected loose-file path/size/mtime_ns. Does not hash archive or loose payloads."
+  }
+}

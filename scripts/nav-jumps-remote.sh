@@ -6,17 +6,33 @@ stage="${1:?Usage: nav-jumps-remote.sh build|bootstrap|pilot|recheck|candidates|
 attempt="${2:-1}"
 export GQ_OWNER=nav-jumps
 host=ryzen
+# Validate the shared settings before creating task directories or queue jobs.
+game_env=()
+for key in OPENGOTHIC_VIDEOS_FINGERPRINT ${!OPENGOTHIC_BASE@}; do
+  [[ -z "${!key+x}" ]] || game_env+=("$key=${!key}")
+done
+printf -v game_command '%q ' env ${game_env[@]+"${game_env[@]}"} python3 -c "$(cat "$ROOT/scripts/ryzen_game.py")"
+game_settings="$(ssh -o ConnectTimeout=10 "$host" "$game_command")"
+eval "$game_settings"
+game_env=()
+for key in OPENGOTHIC_VIDEOS_FINGERPRINT ${!OPENGOTHIC_BASE@}; do
+  [[ -z "${!key+x}" ]] || game_env+=("$key=${!key}")
+done
 task="$(ssh -o ConnectTimeout=10 "$host" 'printf "%s/gothic-ai/nav-jumps" "$HOME"')"
 source_dir="$task/source"
+ssh "$host" "mkdir -p '$source_dir/scripts'"
+rsync -rt --no-links "$ROOT/scripts/nav_job.py" "$host:$source_dir/scripts/"
 write_record_script() {
     ssh "$host" "cat > '$task/record.sh'" <<'RECORD'
 #!/usr/bin/env bash
 set -euo pipefail
 task="$(cd "$(dirname "$0")" && pwd)"
+game_settings="$(python3 "$task/source/scripts/ryzen_game.py")"
+eval "$game_settings"
 export OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1
 df -h "$HOME"
 cd "$task/source"
-"$task/.venv/bin/python" -I - "$HOME/gothic-ai/nav-demos-jumps" <<'PY'
+"$task/.venv/bin/python" -X faulthandler -I - "$HOME/gothic-ai/nav-demos-jumps" <<'PY'
 from collections import Counter
 import json
 from pathlib import Path
@@ -40,13 +56,13 @@ if any(not (pilot/"episodes"/f"{row['route_index']:04d}"/"transition-frames.json
     raise RuntimeError("Pilot lacks physical-frame transition evidence")
 print(f"Full recording admitted by {pilot}",flush=True)
 PY
-"$task/.venv/bin/python" -I "$task/source/scripts/nav_jump_record.py" \
-  --runner "$task/build/opengothic/gothic-body-runner" --assets "$HOME/gothic-ai/game" \
+"$task/.venv/bin/python" -X faulthandler -I "$task/source/scripts/nav_jump_record.py" \
+  --runner "$task/build/opengothic/gothic-body-runner" --assets "$GOTHIC_DIR" \
   --save "$task/input/save.sav" --cache "$task/cache-transitions-cv" \
   --links "$task/accepted-links-cv.txt" --roads "$task/input/places.json" \
   --routes "$task/routes/routes.jsonl" --output "$HOME/gothic-ai/nav-demos-jumps/final" \
   --storage-root "$HOME/gothic-ai/nav-demos-jumps" --count 267
-"$task/.venv/bin/python" -I "$task/source/scripts/nav_demos.py" check "$HOME/gothic-ai/nav-demos-jumps/final"
+"$task/.venv/bin/python" -X faulthandler -I "$task/source/scripts/nav_demos.py" check "$HOME/gothic-ai/nav-demos-jumps/final"
 RECORD
 }
 case "$stage" in
@@ -66,6 +82,8 @@ case "$stage" in
 #!/usr/bin/env bash
 set -euo pipefail
 task="$(cd "$(dirname "$0")" && pwd)"
+game_settings="$(python3 "$task/source/scripts/ryzen_game.py")"
+eval "$game_settings"
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
 export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
 export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1
@@ -93,24 +111,24 @@ fi
 "$task/.venv/bin/python" -m pytest -q "${tests[@]}"
 if [[ "${1:-}" == bootstrap ]]; then
   for phase in recheck candidates; do
-    args=(--runner "$task/build/opengothic/gothic-body-runner" --assets "$HOME/gothic-ai/game"
+    args=(--runner "$task/build/opengothic/gothic-body-runner" --assets "$GOTHIC_DIR"
       --save "$task/input/save.sav" --cache "$task/cache-ground" --output "$task/$phase")
     if [[ "$phase" == recheck ]]; then
       args+=(--links "$task/input/accepted-links-legacy.txt")
     else
       args+=(--site-budget 1200)
     fi
-    "$task/.venv/bin/python" -I "$task/source/scripts/nav_jumps.py" "$phase" "${args[@]}"
+    "$task/.venv/bin/python" -X faulthandler -I "$task/source/scripts/nav_jumps.py" "$phase" "${args[@]}"
   done
 elif [[ "${1:-}" == pilot ]]; then
-  "$task/.venv/bin/python" -I "$task/source/scripts/nav_jumps.py" pilot \
-    --runner "$task/build/opengothic/gothic-body-runner" --assets "$HOME/gothic-ai/game" \
+  "$task/.venv/bin/python" -X faulthandler -I "$task/source/scripts/nav_jumps.py" pilot \
+    --runner "$task/build/opengothic/gothic-body-runner" --assets "$GOTHIC_DIR" \
     --save "$task/input/save.sav" --cache "$task/cache-ground" --output "$task/pilot-grounded" \
     --links "$task/candidates/candidates.txt" --exclude-links "$task/recheck/accepted-links-cv.txt"
 elif [[ "${1:-}" == record-pilot || "${1:-}" == demo-pilot ]]; then
   pilot_output="$HOME/gothic-ai/nav-demos-jumps/repair-${2:?attempt}"
   if [[ "$1" == demo-pilot ]]; then pilot_output="$HOME/gothic-ai/nav-demos-jumps/demo-check"; fi
-  pilot_indices="$("$task/.venv/bin/python" -I - "$HOME/gothic-ai/nav-demos-jumps" <<'PY'
+  pilot_indices="$("$task/.venv/bin/python" -X faulthandler -I - "$HOME/gothic-ai/nav-demos-jumps" <<'PY'
 from collections import Counter
 import json
 from pathlib import Path
@@ -121,26 +139,26 @@ if len(episodes)!=30 or Counter(row["type"] for row in episodes)!={"jump":10,"cl
 print(",".join(str(row["route_index"]) for row in episodes))
 PY
 )"
-  "$task/.venv/bin/python" -I "$task/source/scripts/nav_jump_record.py" \
-    --runner "$task/build/opengothic/gothic-body-runner" --assets "$HOME/gothic-ai/game" \
+  "$task/.venv/bin/python" -X faulthandler -I "$task/source/scripts/nav_jump_record.py" \
+    --runner "$task/build/opengothic/gothic-body-runner" --assets "$GOTHIC_DIR" \
     --save "$task/input/save.sav" --cache "$task/cache-transitions-cv" \
     --links "$task/accepted-links-cv.txt" --roads "$task/input/places.json" \
     --routes "$task/routes/routes.jsonl" --indices "$pilot_indices" --count 30 --require-70pct \
     --output "$pilot_output" --storage-root "$HOME/gothic-ai/nav-demos-jumps"
-  "$task/.venv/bin/python" -I "$task/source/scripts/nav_demos.py" check "$pilot_output"
+  "$task/.venv/bin/python" -X faulthandler -I "$task/source/scripts/nav_demos.py" check "$pilot_output"
 
 fi
 BUILD
     "$ROOT/scripts/gq" submit --class batch --threads 4 --mem 6G --max 2h \
-      --name "nav jumps $stage engine runner tests" -- bash "$task/build.sh" "$stage" "$attempt"
+      --name "nav jumps $stage engine runner tests" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/build.sh" "$stage" "$attempt"
     ;;
   recheck|candidates|discover)
     ssh "$host" 'df -h "$HOME"'
     output="$task/$stage"
     [[ "$stage" != discover ]] || output="$task/discover-grounded"
-    args=("$task/.venv/bin/python" -I "$source_dir/scripts/nav_jumps.py" "$stage"
+    args=("$task/.venv/bin/python" -X faulthandler -I "$source_dir/scripts/nav_jumps.py" "$stage"
       --runner "$task/build/opengothic/gothic-body-runner"
-      --assets "${task%/nav-jumps}/game" --save "$task/input/save.sav"
+      --assets "$GOTHIC_DIR" --save "$task/input/save.sav"
       --cache "$task/cache-ground" --output "$output")
     if [[ "$stage" == recheck ]]; then
       args+=(--links "$task/input/accepted-links-legacy.txt")
@@ -150,22 +168,24 @@ BUILD
       args+=(--site-budget 1200)
     fi
     "$ROOT/scripts/gq" submit --class batch --threads 2 --mem 6G --max 2h \
-      --name "nav jumps $stage CV" -- env OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 "${args[@]}"
+      --name "nav jumps $stage CV" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 "${args[@]}"
     ;;
   routes)
     # This phase uses the verified runner; only the changed route selector is synced.
     ssh "$host" "mkdir -p '$source_dir/scripts/tests'"
-    rsync -a "$ROOT/scripts/nav_jump_routes.py" "$host:$source_dir/scripts/"
+    rsync -a "$ROOT/scripts/nav_jump_routes.py" "$ROOT/scripts/ryzen_game.py" "$host:$source_dir/scripts/"
     rsync -a "$ROOT/scripts/tests/test_nav_jump_routes.py" "$host:$source_dir/scripts/tests/"
     ssh "$host" "cat > '$task/routes.sh'" <<'ROUTES'
 #!/usr/bin/env bash
 set -euo pipefail
 task="$(cd "$(dirname "$0")" && pwd)"
+game_settings="$(python3 "$task/source/scripts/ryzen_game.py")"
+eval "$game_settings"
 export OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1
 df -h "$HOME"
 cd "$task/source"
 "$task/.venv/bin/python" -m pytest -q scripts/tests/test_nav_jump_routes.py
-"$task/.venv/bin/python" -I - "$task" <<'PY'
+"$task/.venv/bin/python" -X faulthandler -I - "$task" <<'PY'
 from collections import Counter
 import importlib.util
 import json
@@ -187,47 +207,49 @@ probe.write_links(destination, combined)
 print(json.dumps(dict(verified_links=len(combined), old=len(old), new=len(new),
                       by_type=dict(Counter(probe.TYPES[row["type"]] for row in combined)))), flush=True)
 PY
-"$task/.venv/bin/python" -I "$task/source/scripts/nav_jump_routes.py" run \
-  --runner "$task/build/opengothic/gothic-body-runner" --assets "$HOME/gothic-ai/game" \
+"$task/.venv/bin/python" -X faulthandler -I "$task/source/scripts/nav_jump_routes.py" run \
+  --runner "$task/build/opengothic/gothic-body-runner" --assets "$GOTHIC_DIR" \
   --save "$task/input/save.sav" --cache "$task/cache-transitions-cv" \
   --links "$task/accepted-links-cv.txt" --roads "$task/input/places.json" --places "$task/input/places.json" \
   --output "$task/routes" --per-link 3
 ROUTES
     "$ROOT/scripts/gq" submit --class batch --threads 2 --mem 6G --max 2h \
-      --name "nav jumps routes v2 max3 per transition" -- bash "$task/routes.sh"
+      --name "nav jumps routes v2 max3 per transition" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/routes.sh"
     ;;
   record)
     # Record the approved route set with the existing CV runner and private cache.
     ssh "$host" "mkdir -p '$source_dir/scripts/tests'"
-    rsync -a "$ROOT/scripts/nav_jump_record.py" "$host:$source_dir/scripts/"
+    rsync -a "$ROOT/scripts/nav_jump_record.py" "$ROOT/scripts/ryzen_game.py" "$host:$source_dir/scripts/"
     rsync -a "$ROOT/scripts/tests/test_nav_jump_record.py" "$host:$source_dir/scripts/tests/"
     write_record_script
     "$ROOT/scripts/gq" submit --class batch --threads 2 --mem 6G --max 2h \
-      --name "nav jumps record 267 teacher v2 CV 240s" -- bash "$task/record.sh"
+      --name "nav jumps record 267 teacher v2 CV 240s" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/record.sh"
     ;;
   analyze)
     # Offline only: verify every attempt, then explain successful demos from
     # learner_input. No engine, teacher rollout or model training is started.
     ssh "$host" "mkdir -p '$source_dir/scripts/tests' '$task/analysis'"
-    rsync -a "$ROOT/scripts/nav_jump_observability.py" "$host:$source_dir/scripts/"
+    rsync -a "$ROOT/scripts/nav_jump_observability.py" "$ROOT/scripts/ryzen_game.py" "$host:$source_dir/scripts/"
     rsync -a "$ROOT/scripts/tests/test_nav_jump_observability.py" "$host:$source_dir/scripts/tests/"
     ssh "$host" "cat > '$task/analysis.sh'" <<'ANALYSIS'
 #!/usr/bin/env bash
 set -euo pipefail
 task="$(cd "$(dirname "$0")" && pwd)"
+game_settings="$(python3 "$task/source/scripts/ryzen_game.py")"
+eval "$game_settings"
 export OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1
 cd "$task/source"
 df -h "$HOME"
 "$task/.venv/bin/python" -m pytest -q scripts/tests/test_nav_jump_observability.py
-"$task/.venv/bin/python" -I "$task/source/scripts/nav_demos.py" check \
+"$task/.venv/bin/python" -X faulthandler -I "$task/source/scripts/nav_demos.py" check \
   "$HOME/gothic-ai/nav-demos-jumps/final" > "$task/analysis/navdemo-check.json"
-"$task/.venv/bin/python" -I "$task/source/scripts/nav_jump_observability.py" \
+"$task/.venv/bin/python" -X faulthandler -I "$task/source/scripts/nav_jump_observability.py" \
   "$HOME/gothic-ai/nav-demos-jumps/final" --successful-only \
   --success-criterion demo_goal_action_landing_side_v1 \
   --output "$task/analysis/observability.json" --csv "$task/analysis/decisions.csv"
 ANALYSIS
     "$ROOT/scripts/gq" submit --class batch --threads 2 --mem 6G --max 30m \
-      --name "nav jumps final NAVDEMO check and learner observability" -- bash "$task/analysis.sh"
+      --name "nav jumps final NAVDEMO check and learner observability" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 1800 -- env "${game_env[@]}" bash "$task/analysis.sh"
     ;;
   *) echo "Unknown phase: $stage" >&2; exit 2 ;;
 esac

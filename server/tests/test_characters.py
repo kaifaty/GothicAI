@@ -136,12 +136,16 @@ def test_law_conditions_do_not_disable_card_samples(graph):
                 "чего стоит чужак и сколько с него можно содрать, "
                 "а дерёшься, когда это выгодно или когда тебе перечат после твоего последнего слова. "
                 "Слабых давишь, сильных проверяешь на испуг, лжецов не прощаешь. "
-                "О своих делах и о тех, кто тебе платит, держишь язык за зубами."
+                "О своих делах и о тех, кто тебе платит, держишь язык за зубами. "
+                "Побеждённых ты любишь унижать: сдавшегося можешь и обобрать, "
+                "и обмочить у всех на виду — чтобы помнил, кто тут главный."
             ),
             en=(
                 "Curt, commanding gang leader; greedy and calculating — sizes a stranger up and squeezes "
                 "him before fighting; fights when it pays or when defied after his last word; bullies the "
-                "weak, tests the strong, never forgives a liar; keeps his paymasters secret."
+                "weak, tests the strong, never forgives a liar; keeps his paymasters secret. "
+                "Likes to humiliate the beaten: robs a man who gives up and may piss on him "
+                "in front of everyone, so he remembers who is boss."
             ),
             greed=4,
             honesty=2,

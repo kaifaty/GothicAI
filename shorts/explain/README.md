@@ -101,7 +101,35 @@ the original plan gains and ducking for Studio and drafts; they do not run the p
   of the picture, to its left or right with `side`, lines appearing one by one, a roll counter that stops on the
   real number), `strokes` (a line drawing itself between two points of the picture; with `cut` it stops at a wall:
   solid up to it, dashed past it, a cross on it) and `fans` (a sector opening from a point): lines of sight and the
-  bow's focus from the bench's `sight` export;
+  bow's focus from the bench's `sight` export; `paths` (a line drawing itself through several points, smoothed
+  unless `curve: false`, `arrow` puts a head on its tip, `dash` makes it dashed): an arrow's flight, a route;
+- motion (`src/parts/motion.ts`, one set for the series; its durations in `src/parts/timing.ts`): `texts` and
+  `tags` come in with `enter`: `rise` (default, a few pixels up), `pop` (a spring with a small overshoot) or
+  `slide` (from the left). Attached parts settle `MOTION.follow` (0.06 s) after their body: a tag's pin lands
+  first and its box opens from it, a text's band arrives first and its words settle into it. A beat's `enter`
+  (`fade`, `slide`, `wipe`, `zoom`, `flash`; `dur` defaults to 0.5 s for `slide` and `wipe`, where the whole
+  frame travels, and 0.35 s for the rest) is its transition: the beat starts
+  at its own time and the one before stays under it for `dur`, silent, so no time of the voice, the captions
+  or the publication's edge fades moves; `flash` is a hard cut with a white flash. `zoom` eases in and out
+  (cubic) unless `ease: "linear"`, for a slow push across a whole beat. The footage of a beat followed by a
+  transition must run `dur` past the beat's end;
+- a held picture pushes in by itself, so a long hold does not read as a frozen screen: a `card`, a `still`, or
+  `footage` after its `freeze`, held 2 s or more, scales linearly across the hold by 1 % a second held, between
+  3 and 5 % (`holdPush` in `timing.ts`), so a longer hold pushes slower, not further. The whole beat pushes
+  about the centre of the safe area, with its tags, lines, texts and carry, so everything stays on its target;
+  the captions and the hook stay still. A beat's own `zoom` replaces it (a plan cannot set both), `push: 0`
+  turns it off (a beat where an exact frame matters), `push: 0.03`-`0.05` sets the scale; live footage and
+  `split` do not push;
+- `carry` on a beat (not the first) carries one thing across the cut into it, so the two beats share it instead
+  of swapping pictures: `from: {tag, line}` takes a line of a tag of the beat before (its text, colour and the
+  place `Tags` draws it on the cut, computed with `measureText`; the line leaves its box at the cut), or
+  `from: [x, y]` with `text` a point of that picture. It flies along an arc (`arc`, 0.15 of the distance,
+  upward; 0 is straight) to `to` (frame pixels of this beat), in-out, growing to `size`, starting `at` (0: on
+  the cut) and taking `dur`, by default as long as its travel asks: 0.35 s up to 300 px, about +40 % for twice
+  the distance, at most 0.6 s (`travelDur` in `timing.ts`). Onto a card its dark pill fades out on the way.
+  It is drawn over the beat's own entrance, so it does not move with a `slide` or `wipe` coming in, and stays
+  until `until` or the beat's end. Take `to` from a still of the card; whatever the carried thing causes (a
+  point, a marker, a counter) appears on its landing, at `at` plus its duration (the strips report gives it);
 - `split` keeps the same field names in either format: `src`/`from` are the first half, `srcBottom`/`fromBottom`
   the second; `labels` and `labelColors` follow that order. In `wide`, labels sit at the top of each half and
   a thin vertical line divides the pictures. Footage and stills cover their frame or half-frame;
@@ -429,6 +457,18 @@ Seven further beats demonstrate the diagrams: `observation-rays` (184 numbers an
 `self-imitation-flow` (2016 duels and best 25%), `one-tick` (game/bench alignment), and `service-flow`
 (Mac ⇄ Ryzen with packets). Ray distances are labelled `демо`; the cone path illustrates geometry.
 Neither example supplies recorded telemetry.
+Motion check: `python3 scripts/strips.py "$W/render/draft.mp4" "$W/plan.json" "$W/render/strips"` writes a strip
+of consecutive frames for every planned movement (entries, transitions, cuts, lines, zooms, freezes) and a
+`report.md` with the jumps nobody planned: a snap (a change in one frame while the frames around it hold) and a
+one-frame flash. It also checks the motion language of the plan: a duration the plan sets off the series' set
+(0.2 / 0.35 / 0.5 / 0.6 s; a line longer than 0.6 s, a linear zoom shorter than its beat, a carry outside
+0.35-0.6 s), two things of one beat entering less than 0.08 s apart, a thing entering under its beat's own
+transition; and lists every stretch where the picture holds still longer than `--still` (3 s by default):
+nothing outside the caption band changes by 0.03 of 255 per frame (a card or a freeze changes by 0.000-0.001,
+a hero idling in footage by 0.05-0.1). A slow push alone changes less than that, so a pushed hold is still
+listed, with its beats and whether their push runs there (`push`: yes, part, no); a `push` below 0.03 is a
+motion-language note. The draft may be a `--scale 0.5` render; only ffmpeg runs. Its tests
+are `shorts/tests/test_strips.py`.
 Schema and geometry checks: `node --test tests/charts.test.mjs` (Node 22.18+ for native TypeScript
 stripping), including rejection of wide-only cards in tall and interpolation of `cone.path`.
 
@@ -436,6 +476,30 @@ Remotion is under the [Remotion License](https://www.remotion.pro/license): free
 up to three people. The versions are pinned in `package.json`.
 
 ## План и журнал
+
+- 2026-10-30: a held picture (a card, a still, a freeze) of 2 s or more pushes in by itself, 3-5 % across the
+  hold (`holdPush`), the user's choice over the old rule that nothing drifts on its own; `push: 0` turns it off.
+  The strips report marks which still holds it covers. On a 27 s card the title moves 1 px at a time (Chrome
+  snaps text to pixels); `will-change: transform` made it smooth but cost a third of the text's sharpness.
+- 2026-10-29: `strips.py` checks the motion language of the plan (durations off the set, two entrances at once,
+  an entrance under a transition) and lists holds longer than `--still`, the last of the review of third-party
+  motion skills (motion-art-direction, motion-video-kit's frozen-time). On the combat-AI video it found the
+  cards that hold 8-11 s unchanged under the voice; the bow short's longest hold is 2.8 s.
+
+- 2026-10-29: `carry`, a thing carried across a cut (the shared actor of motion-video-kit and onetake): a tag
+  line or a point of the beat before flies along an arc into the next beat, its duration by travel.
+  `parts/Carry.tsx` draws it, `parts/carryMath.ts` finds the tag line and the arc; `strips.py` gives it a strip.
+
+- 2026-10-29: follow-through and duration by travel, from the review of third-party motion skills
+  (animation-principles, motion-video-kit, Disney rules): a tag's box follows its pin and a text's words follow
+  their band by `MOTION.follow` (0.06 s); `slide` and `wipe` transitions default to 0.5 s instead of 0.35 s,
+  since the whole frame travels (an explicit `dur` in a plan is kept). The durations moved to
+  `src/parts/timing.ts`, shared by the schema; `scripts/strips.py` uses the same defaults. A plan that relied on
+  the old 0.35 s slide needs its footage to run 0.5 s past the beat or an explicit `dur: 0.35`.
+
+- 2026-10-25: added the motion set: `enter` for texts and tags (`rise`, `pop`, `slide`), beat transitions
+  (`fade`, `slide`, `wipe`, `zoom`, `flash`) that keep every time of the plan, `paths` drawn through points with an
+  arrowhead (`@remotion/paths`), an eased `zoom`, and `scripts/strips.py`. Tried on the combat-AI short.
 
 - 2026-10-19: the published game stem fades over 30 ms at every beat edge and at `freeze`, sample by sample
   in `explain.render`. The combat-AI video's click at 432.27 s needed per-beat `afade` copies of each clip;

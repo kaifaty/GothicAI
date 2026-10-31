@@ -408,6 +408,7 @@ bool NpcController::startAction(World& world, Controlled& c, Action& a, const ra
     a.target   = target->instanceSymbol();
     if(a.type=="go_to_npc") {
       a.radius    = float(integer(args,"radius",400));
+      a.closeApproach = JsonRead::boolean(args,"close",false);
       a.deadline  = 60000;
       a.updatedAt = a.start;
       planNpcWalk(world,c,a,*target,!npc.canSeeNpc(*target,true));
@@ -424,7 +425,14 @@ bool NpcController::startAction(World& world, Controlled& c, Action& a, const ra
       err = "unknown animation: " + name;
       return false;
       }
-    a.deadline = 15000;
+    const auto hold = integer(args,"hold_ms",0);
+    if(hold<0 || hold>60000) {
+      err = "play_ani hold_ms must be in [0, 60000]";
+      return false;
+      }
+    a.animation = name;
+    a.holdMs = uint64_t(hold);
+    a.deadline = 15000+a.holdMs;
     npc.aiPush(AiQueue::aiPlayAnim(name));
     return true;
     }
@@ -711,13 +719,15 @@ void NpcController::planNpcWalk(World& world, Controlled& c, Action& a, Npc& tar
     } else {
     Tempest::Log::i("[ai] ",c.symbol," go_to_npc ",a.id,step,npcId(world,target),": direct, ",a.distance/100.," m, ",seen);
     }
-  npc.aiPush(AiQueue::aiGoToNpc(&target));
+  if(a.closeApproach)
+    npc.aiPush(AiQueue::aiGoToNpc(&target,int(a.radius))); else
+    npc.aiPush(AiQueue::aiGoToNpc(&target));
   }
 
 void NpcController::updateAction(World& world, Controlled& c, uint64_t now) {
   auto& a = *c.act;
   a.updatedAt = now;
-  if(now<a.start+GraceMs)
+  if(a.holdMs==0 && now<a.start+GraceMs)
     return;
   if(a.state.isValid()) {
     updateStateAction(world,c,now);
@@ -726,6 +736,24 @@ void NpcController::updateAction(World& world, Controlled& c, uint64_t now) {
 
   if(c.npc->haveOutput())
     a.deadline = now + a.timeout; // queued speech goes first, the clock starts after it
+  if(a.holdMs>0) {
+    if(c.npc->animProgress(a.animation)>=0.f) {
+      if(a.heldAt==0)
+        a.heldAt = now;
+      if(now>=a.heldAt+a.holdMs) {
+        c.npc->clearAiQueue();
+        finishAction(c,"done","");
+        }
+      }
+    else if(a.heldAt!=0) {
+      finishAction(c,"failed","held animation was interrupted");
+      }
+    else if(now>=a.deadline) {
+      c.npc->clearAiQueue();
+      finishAction(c,"timeout","animation did not start");
+      }
+    return;
+    }
   if(a.pace=="hero")
     keepHeroPace(world,*c.npc);
   if(a.type=="go_to_npc") {
@@ -815,7 +843,7 @@ void NpcController::updateAction(World& world, Controlled& c, uint64_t now) {
       return;
       }
     const double d = std::sqrt(double(c.npc->qDistTo(*target)));
-    if(d<=a.radius)
+    if(d<=a.radius && (!a.closeApproach || c.npc->canSeeNpc(*target,true)))
       finishAction(c,"done","",d); else
       finishAction(c,"failed","stopped away from target",d);
     return;
@@ -1103,7 +1131,8 @@ void NpcController::emitSnapshot(World& world, Npc& npc, std::string_view symbol
   j.num("rot",double(npc.rotation()))
    .integer("hp",npc.attribute(ATR_HITPOINTS))
    .integer("hp_max",npc.attribute(ATR_HITPOINTSMAX))
-   .boolean("busy",npc.isAiBusy());
+   .boolean("busy",npc.isAiBusy())
+   .str("animations",npc.animNames());
   if(!action.empty())
     j.str("action",action); else
     j.null("action");
@@ -1146,7 +1175,9 @@ void NpcController::emitSnapshot(World& world, Npc& npc, std::string_view symbol
         j.null(key);
       };
     j.object("player")
-       .str("name",TextCodec::toUtf8(pl->displayName()));
+       .str("name",TextCodec::toUtf8(pl->displayName()))
+       .str("animations",pl->animNames())
+       .boolean("kneeling",pl->isPlayerKneeling());
     writePos(j,"pos",pl->position());
     // v32: where he faces, for where places are from him (places.py)
     const auto ax = heroAxes(*pl);

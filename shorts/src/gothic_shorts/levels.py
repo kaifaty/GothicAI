@@ -235,7 +235,10 @@ def music_target(speech_lufs: float, game_pause_lufs: float | None = None) -> fl
     if not math.isfinite(speech_lufs):
         raise ValueError("Voice must have measurable EBU R128 loudness")
     target = speech_lufs - MUSIC_BELOW_VOICE_LU
-    return min(target, game_pause_lufs - MUSIC_BELOW_GAME_LU) if game_pause_lufs is not None else target
+    # A silent game stem (gameVolume 0) measures -inf: there is no game to stay under, not a muted bed.
+    if game_pause_lufs is None or not math.isfinite(game_pause_lufs):
+        return target
+    return min(target, game_pause_lufs - MUSIC_BELOW_GAME_LU)
 
 
 def music_gain(speech_lufs: float, music_pause_lufs: float,
@@ -284,7 +287,8 @@ def check_balance(speech_lufs: float | None, music_pause_lufs: float | None,
         ("music_below_game", music_pause_lufs, game_pause_lufs, "game_pause",
          MUSIC_BELOW_GAME_LU, LEVEL_TOLERANCE_LU),
     ):
-        goal = reference - below if reference is not None else None
+        # A silent game stem (-inf) leaves nothing for the music to stay under: the row does not apply.
+        goal = reference - below if reference is not None and math.isfinite(reference) else None
         allowance = f" + {tolerance:g}" if tolerance else ""
         row(key, value, goal, f"≤ {name} - {below:g} LU{allowance}" if voiced else "measured",
             value <= goal + tolerance + 1e-6

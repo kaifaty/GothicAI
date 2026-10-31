@@ -10,6 +10,18 @@ fi
 stage="$1"
 case "$stage" in smoke|train|validate-main|validate-detour|validate-follow|validate-jump|validate-safety|diagnose-quick|diagnose-data|diagnose-memory|diagnose-familiar) ;; *) echo "Unknown phase: $stage" >&2; exit 2 ;; esac
 export GQ_OWNER=nav-bc4
+# Validate the shared settings before creating task directories or queue jobs.
+game_env=()
+for key in OPENGOTHIC_VIDEOS_FINGERPRINT ${!OPENGOTHIC_BASE@}; do
+  [[ -z "${!key+x}" ]] || game_env+=("$key=${!key}")
+done
+printf -v game_command '%q ' env ${game_env[@]+"${game_env[@]}"} python3 -c "$(cat "$ROOT/scripts/ryzen_game.py")"
+game_settings="$(ssh -o ConnectTimeout=10 ryzen "$game_command")"
+eval "$game_settings"
+game_env=()
+for key in OPENGOTHIC_VIDEOS_FINGERPRINT ${!OPENGOTHIC_BASE@}; do
+  [[ -z "${!key+x}" ]] || game_env+=("$key=${!key}")
+done
 task="$(ssh -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-bc4" "$HOME"')"
 archive=/mnt/shared/gothic-ai/nav-bc4
 ssh ryzen "bash -s -- '$task' '$archive' '$stage'" <<'INPUTS'
@@ -61,6 +73,8 @@ ssh ryzen "cat > '$task/phase.sh'" <<'PHASE'
 #!/usr/bin/env bash
 set -euo pipefail
 task="$(cd "$(dirname "$0")" && pwd)"
+game_settings="$(python3 "$task/source/scripts/ryzen_game.py")"
+eval "$game_settings"
 archive=/mnt/shared/gothic-ai/nav-bc4
 corpus=/mnt/shared/gothic-ai/nav-demos-v5/recordings
 stage="${1:?phase}"
@@ -78,9 +92,8 @@ python3 -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home())
 python="$task/.venv/bin/python"
 if [[ "$stage" == smoke ]]; then
   rm -f -- "$archive/smoke/passed"
-  if [[ ! -x "$python" ]]; then uv venv --python 3.12 "$task/.venv"; fi
-  uv pip install --python "$python" numpy pytest
-  uv pip install --python "$python" 'torch==2.9.1+cu128' --index-url https://download.pytorch.org/whl/cu128
+  source "$task/source/scripts/ryzen-venv.sh"
+  ryzen_task_venv "$task/.venv"
   "$python" -B -m pytest -q -p no:cacheprovider \
     scripts/tests/test_nav_bc_data.py scripts/tests/test_nav_bc_model.py \
     scripts/tests/test_nav_bc_train.py scripts/tests/test_nav_bc_contract.py scripts/tests/test_nav_rl.py
@@ -92,12 +105,12 @@ if [[ "$stage" == smoke ]]; then
   for version in 1 2 3; do
     demo=2
     if [[ "$version" == 1 ]]; then demo=1; fi
-    "$python" -B -I scripts/check_nav_policy.py --weight-version "$version" --navdemo-version "$demo" \
+    "$python" -X faulthandler -B -I scripts/check_nav_policy.py --weight-version "$version" --navdemo-version "$demo" \
       --output "$archive/smoke/legacy-v$version" --steps 8
     "$task/build/opengothic/gothic-navpolicy-contract" \
       "$archive/smoke/legacy-v$version/fixture.navbc" "$archive/smoke/legacy-v$version/parity.bin.gz"
   done
-  "$python" -B -I - "$task" "$archive" "$corpus" <<'INITIALIZE'
+  "$python" -X faulthandler -B -I - "$task" "$archive" "$corpus" <<'INITIALIZE'
 import json
 from pathlib import Path
 import sys
@@ -118,13 +131,14 @@ header = export_weights(model, archive / "smoke/initial.navbc",
 print(json.dumps(dict(event="bc4_initialization", version=header["version"],
     memory_version=header["preprocessing"]["navigation_memory_version"], **initialization)))
 INITIALIZE
-  "$python" -B -I scripts/check_nav_policy.py --weights "$archive/smoke/initial.navbc" \
+  "$python" -X faulthandler -B -I scripts/check_nav_policy.py --weights "$archive/smoke/initial.navbc" \
     --source "$corpus" --output "$archive/smoke/parity" --steps 1000 --torch
   "$task/build/opengothic/gothic-navpolicy-contract" \
     "$archive/smoke/initial.navbc" "$archive/smoke/parity/parity.bin.gz"
   "$task/build/opengothic/gothic-navpolicy-contract" --memory "$archive/smoke/initial.navbc"
-  "$python" -B -I - "$task" "$archive" "$corpus" <<'DRIVE'
+  "$python" -X faulthandler -B -I - "$task" "$archive" "$corpus" <<'DRIVE'
 import json
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -135,7 +149,7 @@ task, archive, corpus = map(Path, sys.argv[1:])
 _, entries = data.load_training_manifest(task / "input/v5-compact.json", corpus)
 entries = [entry for entry in entries if entry["family"] == "point"][:2]
 args = SimpleNamespace(output=archive / "smoke/drive", cache=task / "smoke-cache",
-    runner=task / "build/opengothic/gothic-body-runner", assets=Path.home() / "gothic-ai/game",
+    runner=task / "build/opengothic/gothic-body-runner", assets=Path(os.environ["GOTHIC_DIR"]),
     save=task / "input/save.sav", links=task / "input/accepted-links.txt", roads=task / "input/places.json",
     weights=archive / "smoke/initial.navbc", familiar_map=task / "input/familiar.bin",
     ini=None, physics="cv", seed=17, watchdog_seconds=900)
@@ -170,21 +184,23 @@ elif [[ "$stage" == train ]]; then
   test -x "$python"
   test ! -e "$archive/bc4/last.pt"
   nvidia-smi
-  "$python" -B -I scripts/nav_bc_data.py prepare --source "$corpus" \
-    --manifest "$task/input/v5-compact.json" --output "$task/cache" --input-variant hd-familiar
-  "$python" -B -I scripts/nav_bc_train.py train --cache "$task/cache" --output "$archive/bc4" \
+  trap 'rm -rf -- "$task/cache"' EXIT
+  "$python" -X faulthandler -B -I scripts/nav_bc_data.py prepare \
+    --source /mnt/shared/gothic-ai/nav-lean-data/corpus-v5 --manifest "$task/input/v5-compact.json" \
+    --input-variant hd-familiar --output "$task/cache"
+  "$python" -X faulthandler -B -I scripts/nav_bc_train.py train \
+    --cache "$task/cache" --output "$archive/bc4" \
     --init "$task/input/hd/last.pt" --epochs 20 --batch 8 --segment 64 \
     --lr .0003 --seed 17 --device cuda --threads 6
-  "$python" -B -I scripts/check_nav_policy.py --weights "$archive/bc4/policy.navbc" \
+  "$python" -X faulthandler -B -I scripts/check_nav_policy.py --weights "$archive/bc4/policy.navbc" \
     --source "$corpus" --output "$archive/bc4/parity" --steps 1000 --torch
   "$task/build/opengothic/gothic-navpolicy-contract" \
     "$archive/bc4/policy.navbc" "$archive/bc4/parity/parity.bin.gz"
-  rm -rf -- "$task/cache"
 elif [[ "$stage" == diagnose-quick ]]; then
   rm -f -- "$archive/diagnostics/smoke-passed"
   "$python" -B -m pytest -q -p no:cacheprovider scripts/tests/test_nav_rl.py
   cmake --build "$task/build" --target gothic-body-runner --parallel 3
-  "$python" -B -I - "$task" "$archive" <<'DIAGNOSE'
+  "$python" -X faulthandler -B -I - "$task" "$archive" <<'DIAGNOSE'
 import json
 import os
 from pathlib import Path
@@ -201,7 +217,7 @@ try:
         os.environ["OPENGOTHIC_NAV_JOURNEY_MEMORY"] = override
         args = SimpleNamespace(output=archive / "diagnostics/smoke" / name,
             cache=task / "smoke-cache", runner=task / "build/opengothic/gothic-body-runner",
-            assets=Path.home() / "gothic-ai/game", save=task / "input/save.sav",
+            assets=Path(os.environ["GOTHIC_DIR"]), save=task / "input/save.sav",
             links=task / "input/accepted-links.txt", roads=task / "input/places.json",
             familiar_map=task / "input/familiar.bin", weights=weights, npc="BAU_954_MALETH",
             ini=None, physics="cv", seed=17, watchdog_seconds=900, lean=True,
@@ -232,8 +248,8 @@ finally:
 (archive / "diagnostics/smoke-passed").write_text("Memory override and residency diagnostics passed\n")
 DIAGNOSE
 elif [[ "$stage" == diagnose-data ]]; then
-  "$python" -B -I scripts/nav_bc4_diagnose.py outcomes --task "$task" --archive "$archive"
-  "$python" -B -I scripts/nav_bc4_diagnose.py corpus --task "$task" --archive "$archive"
+  "$python" -X faulthandler -B -I scripts/nav_bc4_diagnose.py outcomes --task "$task" --archive "$archive"
+  "$python" -X faulthandler -B -I scripts/nav_bc4_diagnose.py corpus --task "$task" --archive "$archive"
 elif [[ "$stage" == diagnose-memory || "$stage" == diagnose-familiar ]]; then
   test -f "$archive/diagnostics/smoke-passed"
   if [[ "$stage" == diagnose-memory ]]; then
@@ -255,16 +271,16 @@ elif [[ "$stage" == diagnose-memory || "$stage" == diagnose-familiar ]]; then
     selection=()
     if [[ "$residency" == stranger ]]; then selection=(--stranger); fi
     output="$archive/diagnostics/detour/$name"
-    "$python" -B -I scripts/nav_rl.py drive --detour-scenarios "$task/input/detour-val.jsonl" \
+    "$python" -X faulthandler -B -I scripts/nav_rl.py drive --detour-scenarios "$task/input/detour-val.jsonl" \
       --runner "$task/build/opengothic/gothic-body-runner" \
-      --assets "$HOME/gothic-ai/game" --save "$task/input/save.sav" \
+      --assets "$GOTHIC_DIR" --save "$task/input/save.sav" \
       --cache "$task/validation-detour-cache" --links "$task/input/accepted-links.txt" \
       --roads "$task/input/places.json" --familiar-map "$task/input/familiar.bin" \
       --weights "$weights" --output "$output" --physics cv --parallel 18 \
       --action-mode sample --action-seeds 18102027 --limit-ms 240000 \
       --watchdog-seconds 900 --resume "${selection[@]}"
-    "$python" -B -I scripts/nav_rl.py summarize --source "$output" --output "$output"
-    "$python" -B -I - "$name" "$output" "$journey" "$atlas" "$residency" <<'CONTROL'
+    "$python" -X faulthandler -B -I scripts/nav_rl.py summarize --source "$output" --output "$output"
+    "$python" -X faulthandler -B -I - "$name" "$output" "$journey" "$atlas" "$residency" <<'CONTROL'
 import json
 from pathlib import Path
 import sys
@@ -322,31 +338,31 @@ elif [[ "$stage" == validate-* ]]; then
       validate-safety) selection=(--families point --indices 0
         --safety-fixtures "$task/input/fixtures.json" --fence-control) ;;
     esac
-    "$python" -B -I scripts/nav_rl.py drive \
+    "$python" -X faulthandler -B -I scripts/nav_rl.py drive \
       --manifest /mnt/shared/gothic-ai/nav-demos-v5/manifest.json --lean \
       --runner "$task/build/opengothic/gothic-body-runner" \
-      --assets "$HOME/gothic-ai/game" --save "$task/input/save.sav" \
+      --assets "$GOTHIC_DIR" --save "$task/input/save.sav" \
       --cache "$task/validation-main-cache" --links "$task/input/accepted-links.txt" \
       --roads "$task/input/places.json" \
       --familiar-map "$task/input/familiar.bin" --weights "$archive/bc4/policy.navbc" \
       --output "$output" --physics cv --parallel 18 \
       --action-mode sample --action-seeds 18102027,18102028,18102029 \
       --limit-ms 30000 --watchdog-seconds 900 --resume "${selection[@]}"
-    "$python" -B -I scripts/nav_rl.py summarize --source "$output" --output "$output" \
+    "$python" -X faulthandler -B -I scripts/nav_rl.py summarize --source "$output" --output "$output" \
       --object-probes "$task/input/object-probes.jsonl"
   else
     output="$archive/detour-validation/bc4"
-    "$python" -B -I scripts/nav_rl.py drive --detour-scenarios "$task/input/detour-val.jsonl" \
+    "$python" -X faulthandler -B -I scripts/nav_rl.py drive --detour-scenarios "$task/input/detour-val.jsonl" \
       --runner "$task/build/opengothic/gothic-body-runner" \
-      --assets "$HOME/gothic-ai/game" --save "$task/input/save.sav" \
+      --assets "$GOTHIC_DIR" --save "$task/input/save.sav" \
       --cache "$task/validation-detour-cache" --links "$task/input/accepted-links.txt" \
       --roads "$task/input/places.json" --familiar-map "$task/input/familiar.bin" \
       --weights "$archive/bc4/policy.navbc" --output "$output" --physics cv --parallel 18 \
       --action-mode sample --action-seeds 18102027,18102028,18102029 \
       --limit-ms 240000 --watchdog-seconds 900 --resume
-    "$python" -B -I scripts/nav_rl.py summarize --source "$output" --output "$output"
+    "$python" -X faulthandler -B -I scripts/nav_rl.py summarize --source "$output" --output "$output"
   fi
-  "$python" -B -I - "$stage" "$output" <<'COHORT'
+  "$python" -X faulthandler -B -I - "$stage" "$output" <<'COHORT'
 import json
 from pathlib import Path
 import sys
@@ -388,20 +404,20 @@ df -h "$HOME" /mnt/shared
 PHASE
 if [[ "$stage" == smoke ]]; then
   "$ROOT/scripts/gq" submit --class quick --threads 12 --cpu-quota 1200% --mem 12G --max 45m \
-    --name 'nav bc4 format and two train smoke episodes' -- bash "$task/phase.sh" smoke
+    --name 'nav bc4 format and two train smoke episodes' -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 2700 -- env "${game_env[@]}" bash "$task/phase.sh" smoke
 elif [[ "$stage" == train ]]; then
   "$ROOT/scripts/gq" submit --class batch --threads 6 --cpu-quota 600% --mem 10G --gpu-mem 4G --max 2h \
-    --name 'nav bc4 v5 training and recorded parity' -- bash "$task/phase.sh" train
+    --name 'nav bc4 v5 training and recorded parity' -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" train
 elif [[ "$stage" == diagnose-quick ]]; then
   "$ROOT/scripts/gq" submit --class quick --threads 12 --cpu-quota 1200% --mem 12G --max 45m \
-    --name 'nav bc4 diagnostic overrides and two train-free smoke episodes' -- bash "$task/phase.sh" diagnose-quick
+    --name 'nav bc4 diagnostic overrides and two train-free smoke episodes' -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 2700 -- env "${game_env[@]}" bash "$task/phase.sh" diagnose-quick
 elif [[ "$stage" == diagnose-data ]]; then
   "$ROOT/scripts/gq" submit --class batch --threads 6 --cpu-quota 600% --mem 4G --max 2h \
-    --name 'nav bc4 validation outcomes and corpus diagnostics' -- bash "$task/phase.sh" diagnose-data
+    --name 'nav bc4 validation outcomes and corpus diagnostics' -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" diagnose-data
 elif [[ "$stage" == diagnose-memory || "$stage" == diagnose-familiar ]]; then
   "$ROOT/scripts/gq" submit --class batch --threads 28 --cpu-quota 2800% --mem 20G --max 2h \
-    --name "nav bc4 $stage one-seed detour controls" -- bash "$task/phase.sh" "$stage"
+    --name "nav bc4 $stage one-seed detour controls" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$stage"
 else
   "$ROOT/scripts/gq" submit --class batch --threads 28 --cpu-quota 2800% --mem 20G --max 2h \
-    --name "nav bc4 $stage three-seed lean validation" -- bash "$task/phase.sh" "$stage"
+    --name "nav bc4 $stage three-seed lean validation" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$stage"
 fi

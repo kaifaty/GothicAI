@@ -3,7 +3,7 @@
 # Usage: capture-materials.sh --content-root <registry content root> --output <local binary output>
 # Optional: --registry <jsonl> --id <resource id> (repeatable).
 # All writes on Ryzen stay in ~/gothic-ai/material-bakeoff; the engine cache and
-# installed game are only read. The exact source-matching cached engine is copied
+# shared settings are only read. The exact source-matching cached engine is copied
 # to our runtime before entering gq. No engine build or GPU model is started.
 set -euo pipefail
 
@@ -14,6 +14,10 @@ if [[ "${1:-}" == --remote ]]; then
   [[ "$RUN" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo 'invalid capture run id' >&2; exit 2; }
   CAPTURE="$TASK/inputs/$RUN"
   export MATERIAL_CAPTURE_ROOT="$CAPTURE/runtime"
+  game_environment="$(python3 "$(dirname "$0")/ryzen_game.py")"
+  eval "$game_environment"
+  GAME_BIN="$MATERIAL_CAPTURE_ROOT/build/opengothic/Gothic2Notr" \
+    bash "$(dirname "$0")/base-ensure.sh" "$GOTHIC_DIR"
   OUT="$TASK/runs/$RUN"
   mkdir -p "$OUT"
   count=0
@@ -79,6 +83,12 @@ while (( $# )); do
   esac
 done
 [[ -n "$CONTENT" && -n "$OUT" ]] || { echo 'need --content-root and --output (see --help)' >&2; exit 2; }
+GAME_ENV=()
+for name in OPENGOTHIC_BASE OPENGOTHIC_BASE_FINGERPRINT OPENGOTHIC_VIDEOS_FINGERPRINT OPENGOTHIC_BASE_CACHE OPENGOTHIC_BASE_STORE; do
+  [[ ! ${!name+x} ]] || GAME_ENV+=("$name=${!name}")
+done
+printf -v GAME_CHECK '%q ' env ${GAME_ENV[@]+"${GAME_ENV[@]}"} python3 -c "$(cat "$ROOT/scripts/ryzen_game.py")" --check
+ssh -T -o BatchMode=yes -o ConnectTimeout=10 "$HOST" "$GAME_CHECK"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 case "$OUT" in "$ROOT"|"$ROOT"/*) echo '--output must be outside git (binary captures)' >&2; exit 2 ;; esac
@@ -114,12 +124,17 @@ TOOLS="$ROOT/reports/render-features/2026-10-18/tools"
 python3 - "$TOOLS/run-ryzen.sh" "$STAGING/tools/run-ryzen.sh" "$TOOLS/rf.bench" "$STAGING/tools/city.bench" <<'PY'
 from pathlib import Path
 import sys
+import re
 runner, output, bench, scenario = map(Path, sys.argv[1:])
 source = runner.read_text()
 old = 'R="$HOME/gothic-ai/render-features"'
 if source.count(old) != 1:
     raise SystemExit('render-feature runner task-root assignment changed')
-output.write_text(source.replace(old, 'R="${MATERIAL_CAPTURE_ROOT:?}"'))
+source = source.replace(old, 'R="${MATERIAL_CAPTURE_ROOT:?}"')
+source, count = re.subn(r'(?<= -g )"[^"]+"', '"${GOTHIC_DIR:?}"', source, count=1)
+if count != 1:
+    raise SystemExit("render-feature runner game argument changed")
+output.write_text(source)
 lines = []
 for line in bench.read_text().splitlines():
     # Preserve the original position, camera and 26 s settling interval.
@@ -133,7 +148,7 @@ else:
 scenario.write_text('\n'.join(lines) + '\n')
 PY
 cp "$TOOLS/gpu-nvidia.py" "$TOOLS/discard-ffmpeg.sh" "$STAGING/tools/"
-cp "$ROOT/scripts/content/capture-materials.sh" "$STAGING/tools/"
+cp "$ROOT/scripts/content/capture-materials.sh" "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$STAGING/tools/"
 cp "$SAVE" "$STAGING/save_slot_1.sav"
 TASK="$(ssh -T -o BatchMode=yes -o ConnectTimeout=10 "$HOST" 'printf "%s" "$HOME/gothic-ai/material-bakeoff"')"
 # Quoting is done by bash printf %q, never by interpolating a JSON string.
@@ -146,7 +161,6 @@ df -h "$HOME"
 bin="$HOME/gothic-ai/engine-cache/$digest/Gothic2Notr"
 [[ -x "$bin" ]] || { echo "no engine cache for source $digest; prepare this revision through gq first" >&2; exit 2; }
 grep -aq 'OPENGOTHIC_CONTENT' "$bin" || { echo 'cached engine lacks PBR content support' >&2; exit 2; }
-[[ -d "$HOME/gothic-ai/game/Data" ]]
 mkdir -p "$task/inputs"
 # A run owns every mutable input, including the runner and its root helpers.
 # Reserve without -p so a duplicate run id cannot overwrite a queued capture.
@@ -154,6 +168,7 @@ mkdir "$task/inputs/$run"
 runtime="$task/inputs/$run/runtime"
 mkdir -p "$runtime/build/opengothic" "$runtime/tools" "$runtime/hd-textures/textures" "$task/inputs/$run/content"
 cp -p "$bin" "$runtime/build/opengothic/Gothic2Notr"
+cp -p "$(dirname "$bin")/content-convert" "$runtime/build/opengothic/content-convert"
 printf '%s\n' "$digest" >"$runtime/build/source.sha256"
 SH
 RUNTIME="$TASK/inputs/$RUN/runtime"
@@ -167,7 +182,7 @@ GQ_OWNER=material-bakeoff "$ROOT/scripts/gq" --host "$HOST" run \
   --class quick --threads 4 --mem 5G --gpu-mem 4G --display --display-exclusive \
   --max "${MATERIAL_CAPTURE_MAX:-20m}" --wait-max "${RYZEN_LOCK_WAIT:-900}" \
   --name 'material bakeoff city captures' -- \
-  bash "$RUNTIME/tools/capture-materials.sh" --remote "$TASK" "$RUN" 2>&1 | tee "$STAGING/capture.log"
+  env ${GAME_ENV[@]+"${GAME_ENV[@]}"} bash "$RUNTIME/tools/capture-materials.sh" --remote "$TASK" "$RUN" 2>&1 | tee "$STAGING/capture.log"
 rc="${PIPESTATUS[0]}"
 set -e
 rsync -a -- "$HOST:$TASK/runs/$RUN/" "$STAGING/captures/" || { [[ "$rc" != 0 ]] || rc=1; }

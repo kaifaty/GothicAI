@@ -15,7 +15,7 @@ const state: State = {
     game: { dir: scenario === "fresh" ? null : "/Games/Gothic II", dev_mode: false, chat_scale: null },
     llm: { backend: "chatgpt", model: null, base_url: null, reasoning_effort: "low" },
     voice: { enabled: true, provider: "inworld", fallback: "chatgpt", voxtral_url: "http://gpu-server:47830", mic_device: null },
-    tts: { enabled: true, provider: "inworld", fallback: "voxcpm", voxcpm_url: "ws://gpu-server:47831", loudness: null },
+    tts: { enabled: true, provider: "inworld", fallback: "none", voxcpm_url: "ws://gpu-server:47831", loudness: null },
     paths: { repo: null, uv: null, game_bin: null, game_home: null },
   },
   secrets: { openai_api_key: false, inworld_api_key: true },

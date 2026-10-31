@@ -10,7 +10,7 @@ SoundDefinitions::SoundDefinitions() {
 
   vm->enumerate_instances_by_class_name("C_SFX", [this, &vm](zenkit::DaedalusSymbol& s) {
     try {
-      this->sfx[s.name()] = vm->init_instance<zenkit::ISoundEffect>(&s);
+      this->sfx[s.name()] = vm->init_instance<Def::SoundEffect>(&s);
       }
     catch(const zenkit::DaedalusScriptError&) {
       // There was an error during initialization. Ignore it.
@@ -18,12 +18,12 @@ SoundDefinitions::SoundDefinitions() {
   });
   }
 
-const zenkit::ISoundEffect& SoundDefinitions::operator[](std::string_view name) const {
+const Def::SoundEffect& SoundDefinitions::operator[](std::string_view name) const {
   std::string buf(name); // FIXME
   auto i = sfx.find(buf);
   if(i!=sfx.end())
     return *i->second;
-  static const zenkit::ISoundEffect s {};
+  static const Def::SoundEffect s {};
   return s;
   }
 

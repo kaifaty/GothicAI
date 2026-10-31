@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from gothic_ai import cli
-from gothic_ai.dialogue import QUICK_HINT, REACT_HINT, SOUND_SAID, DialogueManager
+from gothic_ai.dialogue import QUICK_HINT, REACT_HINT, SOUND_SAID, DialogueManager, svm_hint
 from gothic_ai.llm import FakeBackend, FakeStep, LLMError, Message, TextDelta, ToolCall, ToolResult
 from gothic_ai.persona import PersonaProvider
-from gothic_ai.replay import replay, replay_first_words
+from gothic_ai.replay import replay, replay_first_words, replay_svm_lines
 from gothic_ai.trace import TraceWriter, find_turn, item_json
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
@@ -131,6 +131,88 @@ async def test_model_error_is_reported_with_its_partial_text():
     assert result["runs"][0]["outcome"] == "error"
     assert result["runs"][0]["text"] == "Гм"
     assert result["runs"][0]["error"] == "connection lost"
+
+
+@pytest.mark.parametrize("history", [False, True])
+@pytest.mark.parametrize("use_event", [False, True])
+async def test_svm_replay_uses_the_recorded_situation_and_optional_history(history, use_event):
+    turn = _turn(
+        events=[{"kind": "first_words", "situation": SITUATION}] if use_event else [],
+        situation="Ignored developer situation." if use_event else SITUATION + SOUND_SAID.format("Хм!")
+        + "\n" + QUICK_HINT,
+    )
+    quick = FakeBackend("[angry] (кричит) Помогите, на меня напали! Дальше не произношу.", delay=0)
+    native = {"svm": "$HELP", "text": "(в испуге) Помогите!", "target": "PC_HERO"}
+
+    results = await replay_svm_lines(
+        quick, turn, "Recorded persona.", [native], names={"PC_HERO": "герой"}, history=history,
+    )
+
+    instructions, request, tools = quick.calls[0]
+    expected_history = [
+        Message("developer", "An earlier note from history."),
+        Message("user", "Раньше ты был смелее."),
+        Message("assistant", "Ничего ты не знаешь."),
+    ] if history else []
+    assert request == [*expected_history, Message(
+        "developer", SITUATION + "\n" + svm_hint("$HELP", "Помогите!", target_name="герой"),
+    )]
+    assert instructions == "Recorded persona." and tools == []
+    assert quick.temperatures == [0.7]
+    assert results[0]["runs"][0]["words"] == "Помогите, на меня напали!"
+    assert results[0]["runs"][0]["outcome"] == "said"
+    assert results[0]["runs"][0]["first_phrase_ms"] >= 0
+
+
+@pytest.mark.parametrize("history", [False, True])
+def test_svm_cli_uses_last_turn_and_target_names_and_writes_results(monkeypatch, tmp_path, capsys, history):
+    trace = tmp_path / "traces.jsonl"
+    svm_file = tmp_path / "svm.jsonl"
+    hint = tmp_path / "hint.txt"
+    out = tmp_path / "results.jsonl"
+    hint.write_text("[{event}: «{text}»; {to}]", encoding="utf-8")
+    turn = _turn(turn="last", situation="Last situation.")
+    target = "BDT_1014_BANDIT_L"
+    turn["snapshot"] = {"nearby_npcs": [{"id": target, "name": "Браго"}]}
+    rows = [
+        {"type": "instructions", "hash": "persona", "text": "Recorded persona."},
+        _turn(turn="old"), _turn(npc="ANOTHER_NPC"), turn,
+    ]
+    trace.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
+    natives = [
+        {"svm": "$ENEMYKILLED", "text": "Ты заслужил это, подонок!", "target": target},
+        {"svm": "$HELP", "text": "Помогите!", "target": ""},
+    ]
+    svm_file.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in natives), encoding="utf-8")
+    quick = FakeBackend(script=[
+        FakeStep("(потягиваюсь) Вон отсюда!"), FakeStep("(дьявольский смех) Ну вот!"),
+        FakeStep("(зевает)"), FakeStep("(зевает)"),
+    ], delay=0)
+    monkeypatch.setattr(cli, "make_quick", lambda url: quick)
+    monkeypatch.setattr("sys.argv", [
+        "gothic-ai", "replay-svm-lines", str(trace), "--svm-file", str(svm_file),
+        "--quick-url", "http://quick:9000/v1", "--npc", NPC.lower(), "--runs", "2",
+        *(["--history"] if history else []), "--hint-file", str(hint), "--out", str(out),
+    ])
+
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+
+    assert exit.value.code == 0 and len(quick.calls) == 4
+    assert all(c[0] == "Recorded persona." and len(c[1]) == (4 if history else 1) for c in quick.calls)
+    assert all(c[1][-1].content.startswith("Last situation.\n") for c in quick.calls)
+    assert " — Браго" in quick.calls[0][1][-1].content
+    assert "обращаясь к Браго" in quick.calls[0][1][-1].content
+    assert "вслух" in quick.calls[2][1][-1].content
+    printed = capsys.readouterr().out.splitlines()
+    assert len(printed) == 2 and printed[0].startswith(f"{NPC} | $ENEMYKILLED | ")
+    assert "[said," in printed[0]
+    results = [json.loads(row) for row in out.read_text(encoding="utf-8").splitlines()]
+    assert [r["turn"] for r in results] == ["last", "last"]
+    assert [r["svm"] for r in results] == ["$ENEMYKILLED", "$HELP"]
+    assert all(r["history"] is history and len(r["runs"]) == 2 for r in results)
+    assert [r["words"] for r in results[0]["runs"]] == ["Вон отсюда!", "Ну вот!"]
+    assert all(r["words"] == "" and r["outcome"] == "nothing" for r in results[1]["runs"])
 
 
 @pytest.mark.parametrize(

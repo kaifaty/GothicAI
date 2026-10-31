@@ -154,10 +154,11 @@ AiQueue::AiAction AiQueue::aiWhirlToNpc(Npc *other) {
   return a;
   }
 
-AiQueue::AiAction AiQueue::aiGoToNpc(Npc *other) {
+AiQueue::AiAction AiQueue::aiGoToNpc(Npc *other, int distance) {
   AiAction a;
   a.act    = AI_GoToNpc;
   a.target = other;
+  a.i0     = distance;
   return a;
   }
 

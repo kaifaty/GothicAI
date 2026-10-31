@@ -5,7 +5,7 @@
 #include "world/world.h"
 #include "game/serialize.h"
 
-CodeMaster::CodeMaster(Vob* parent, World &world, const zenkit::VCodeMaster& cm, Flags flags)
+CodeMaster::CodeMaster(Vob* parent, World &world, const asset::VCodeMaster& cm, Flags flags)
   :AbstractTrigger(parent,world,cm,flags), keys(cm.slaves.size()) {
   target              = cm.target;
   slaves              = cm.slaves;

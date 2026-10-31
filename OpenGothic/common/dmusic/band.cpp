@@ -1,6 +1,5 @@
 #include "band.h"
 
-#include <Tempest/Log>
 #include <stdexcept>
 
 using namespace Dx8;

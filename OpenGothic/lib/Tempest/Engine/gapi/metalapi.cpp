@@ -23,6 +23,21 @@
 
 #include <Metal/Metal.hpp>
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "frameprofile.h"
+
+void Tempest::Detail::profileGpu(MTL::CommandBuffer* cmd) {
+  auto* record=FrameProfile::gpuSubmitted();
+  if(record==nullptr) return;
+  cmd->addCompletedHandler(^(MTL::CommandBuffer* completed) {
+    if(completed->status()==MTL::CommandBufferStatusCompleted)
+      FrameProfile::gpuCompleted(record,completed->GPUStartTime(),completed->GPUEndTime());
+    else
+      FrameProfile::gpuCompleted(record,0,0);
+    });
+  }
+#endif
+
 using namespace Tempest;
 using namespace Tempest::Detail;
 
@@ -203,6 +218,9 @@ std::shared_ptr<AbstractGraphicsApi::Fence> MetalApi::submit(Device* d, CommandB
     throw DeviceLostException();
 
   MTL::CommandBuffer& cmd = *cx.impl;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileGpu(&cmd);
+#endif
   dx->onSubmit();
   cmd.addCompletedHandler(^(MTL::CommandBuffer* c){
     const MTL::CommandBufferStatus s = c->status();

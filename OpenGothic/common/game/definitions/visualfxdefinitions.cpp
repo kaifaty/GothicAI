@@ -33,7 +33,7 @@ const VisualFx* VisualFxDefinitions::get(std::string_view name) {
   return &vfx;
   }
 
-std::shared_ptr<zenkit::IEffectBase> VisualFxDefinitions::implGet(std::string_view name) {
+std::shared_ptr<Def::EffectBase> VisualFxDefinitions::implGet(std::string_view name) {
   if(!vm || name.empty())
     return nullptr;
 
@@ -44,7 +44,7 @@ std::shared_ptr<zenkit::IEffectBase> VisualFxDefinitions::implGet(std::string_vi
     }
 
   try {
-    return vm->init_instance<zenkit::IEffectBase>(id);
+    return vm->init_instance<Def::EffectBase>(id);
     }
   catch (const zenkit::DaedalusScriptError&) {
     return nullptr;

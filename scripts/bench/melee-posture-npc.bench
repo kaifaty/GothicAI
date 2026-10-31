@@ -1,0 +1,38 @@
+# Stage 3 logic: two native one-handed humans beside the same real wall.
+# Save the paladin during a physical knockdown, without making him unconscious.
+seed 73013
+cheat god
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+wait 600
+melee-shadow target 2
+wait 600
+# Keep the old shadow fixture's two noncombat wolves outside the duel.
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+arc PAL_255_RITTER 1 0 0
+npcequip PAL_255_RITTER ITMW_1H_COMMON_01
+stats npc PAL_255_RITTER hpmax 100000 hp 100000 str 60
+stats npc BDT_1013_BANDIT_L str 60
+watch PAL_255_RITTER
+place 900 90
+release all
+rec posture-npc-1h
+fight PAL_255_RITTER BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L PAL_255_RITTER
+waitragdoll PAL_255_RITTER knockdown 60000
+ragdoll session-save PAL_255_RITTER stage3-down
+waitragdoll PAL_255_RITTER getup 9000
+wait 1000
+stop

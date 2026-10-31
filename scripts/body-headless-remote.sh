@@ -66,7 +66,8 @@ free_kib=$(df -Pk "$task_root" | awk 'NR==2 {print $4}')
 REMOTE_SCRIPT
   rsync -a --delete --exclude=build/ --exclude=.git/ --exclude=.DS_Store \
     --exclude='*.o' --exclude='*.a' "$ROOT/OpenGothic/" "$HOST:$REMOTE/source/OpenGothic/"
-  rsync -a "$ROOT/scripts/body-headless-remote.sh" "$ROOT/scripts/body_headless_suite.py" \
+  rsync -a --exclude=build/ --exclude=__pycache__/ "$ROOT/scripts/convert" "$HOST:$REMOTE/source/scripts/"
+  rsync -a "$ROOT/scripts/body-headless-remote.sh" "$ROOT/scripts/body_headless_suite.py" "$ROOT/scripts/base-ensure.sh" \
     "$ROOT/scripts/body_headless_ipc_probe.py" \
     "$ROOT/scripts/body_baseline_report.py" "$ROOT/scripts/body_headless_parity.py" \
     "$HOST:$REMOTE/source/scripts/"
@@ -173,6 +174,9 @@ assets="$HOME/gothic-ai/body-baseline/assets"
 save="$reference/run/save_slot_1.sav"
 cp "$binary" "$out/reference/gothic-body-runner"
 cp "$rendered" "$out/reference/Gothic2Notr"
+if [[ -x "$(dirname "$rendered")/content-convert" ]]; then
+  cp "$(dirname "$rendered")/content-convert" "$out/reference/"
+fi
 cp "$task_root/provenance/source-head.txt" "$task_root/provenance/source.patch" \
    "$task_root/provenance/configure.log" "$task_root/provenance/build.log" "$out/"
 if gq_available; then

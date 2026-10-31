@@ -9,10 +9,11 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
 #pragma GCC diagnostic ignored "-Wunused-function"
-#include "tsf.h"
+// The engine's TinySoundFont, explicitly: GothicKit's vendored tsf.h may come first on an include path.
+#include "../../lib/TinySoundFont/tsf.h"
 #pragma GCC diagnostic pop
 #else
-#include "tsf.h"
+#include "../../lib/TinySoundFont/tsf.h"
 #endif
 
 using namespace Dx8;

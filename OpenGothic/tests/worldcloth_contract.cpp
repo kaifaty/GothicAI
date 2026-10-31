@@ -18,7 +18,7 @@ namespace {
     std::exit(EXIT_FAILURE);
     }
 
-  bool sameFlags(const zenkit::PolygonFlagSet& a, const zenkit::PolygonFlagSet& b) {
+  bool sameFlags(const asset::PolygonFlagSet& a, const asset::PolygonFlagSet& b) {
     return a.is_portal==b.is_portal && a.is_occluder==b.is_occluder &&
            a.is_sector==b.is_sector && a.should_relight==b.should_relight &&
            a.is_outdoor==b.is_outdoor && a.is_ghost_occluder==b.is_ghost_occluder &&
@@ -26,7 +26,7 @@ namespace {
            a.is_lod==b.is_lod && a.normal_axis==b.normal_axis;
     }
 
-  bool sameMaterial(const zenkit::Material& a, const zenkit::Material& b) {
+  bool sameMaterial(const asset::Material& a, const asset::Material& b) {
     return std::tie(a.name,a.group,a.color,a.smooth_angle,a.texture,a.texture_scale,
                     a.texture_anim_fps,a.texture_anim_map_mode,a.texture_anim_map_dir,
                     a.disable_collision,a.disable_lightmap,a.dont_collapse,a.detail_object,
@@ -41,58 +41,23 @@ namespace {
                     b.wave_max_amplitude,b.wave_grid_size,b.ignore_sun,b.alpha_func,b.default_mapping);
     }
 
-  bool sameFeature(const zenkit::VertexFeature& a, const zenkit::VertexFeature& b) {
+  bool sameFeature(const asset::VertexFeature& a, const asset::VertexFeature& b) {
     return a.texture==b.texture && a.light==b.light && a.normal==b.normal;
     }
 
-  bool sameBox(const zenkit::OrientedBoundingBox& a, const zenkit::OrientedBoundingBox& b) {
-    if(a.center!=b.center || a.half_width!=b.half_width || a.children.size()!=b.children.size())
-      return false;
-    for(size_t at=0;at<3;++at)
-      if(a.axes[at]!=b.axes[at])
-        return false;
-    for(size_t at=0;at<a.children.size();++at)
-      if(!sameBox(a.children[at],b.children[at]))
-        return false;
-    return true;
-    }
-
-  // The landscape's authored arrays and raw polygon plane data are immutable.
-  // Only the triangulated PolygonList is partitioned for render/collision.
-  bool sameAuthoredData(const zenkit::Mesh& a, const zenkit::Mesh& b) {
-    if(a.name!=b.name ||
-       std::tie(a.date.year,a.date.month,a.date.day,a.date.hour,a.date.minute,a.date.second)!=
-       std::tie(b.date.year,b.date.month,b.date.day,b.date.hour,b.date.minute,b.date.second) ||
-       a.bbox.min!=b.bbox.min || a.bbox.max!=b.bbox.max || !sameBox(a.obb,b.obb) ||
-       a.vertices!=b.vertices || a.materials.size()!=b.materials.size() ||
-       a.features.size()!=b.features.size() || a.lightmaps.size()!=b.lightmaps.size() ||
-       a.geometry.size()!=b.geometry.size() ||
-       a.polygon_vertex_indices!=b.polygon_vertex_indices || a.polygon_feature_indices!=b.polygon_feature_indices)
+  // Extraction partitions only triangles; the source arrays remain unchanged.
+  bool sameAuthoredData(const asset::WorldMesh& a, const asset::WorldMesh& b) {
+    if(a.name!=b.name || a.bbox.min!=b.bbox.min || a.bbox.max!=b.bbox.max ||
+       a.vertices!=b.vertices || a.materials.size()!=b.materials.size() || a.features.size()!=b.features.size())
       return false;
     for(size_t at=0;at<a.materials.size();++at)
-      if(!sameMaterial(a.materials[at],b.materials[at]))
-        return false;
+      if(!sameMaterial(a.materials[at],b.materials[at])) return false;
     for(size_t at=0;at<a.features.size();++at)
-      if(!sameFeature(a.features[at],b.features[at]))
-        return false;
-    for(size_t at=0;at<a.lightmaps.size();++at) {
-      const auto& x = a.lightmaps[at];
-      const auto& y = b.lightmaps[at];
-      if(x.image!=y.image || x.normals[0]!=y.normals[0] || x.normals[1]!=y.normals[1] || x.origin!=y.origin)
-        return false;
-      }
-    for(size_t at=0;at<a.geometry.size();++at) {
-      const auto& x = a.geometry[at];
-      const auto& y = b.geometry[at];
-      if(x.material!=y.material || x.lightmap!=y.lightmap || !sameFlags(x.flags,y.flags) ||
-         x.index_count!=y.index_count || x.index_offset!=y.index_offset ||
-         x.plane_distance!=y.plane_distance || x.plane_normal!=y.plane_normal)
-        return false;
-      }
+      if(!sameFeature(a.features[at],b.features[at])) return false;
     return true;
     }
 
-  bool samePolygonList(const zenkit::PolygonList& a, const zenkit::PolygonList& b) {
+  bool samePolygonList(const asset::PolygonList& a, const asset::PolygonList& b) {
     if(a.material_indices!=b.material_indices || a.lightmap_indices!=b.lightmap_indices ||
        a.vertex_indices!=b.vertex_indices || a.feature_indices!=b.feature_indices || a.flags.size()!=b.flags.size())
       return false;
@@ -102,7 +67,7 @@ namespace {
     return true;
     }
 
-  bool sameFace(const zenkit::Mesh& a, size_t af, const zenkit::Mesh& b, size_t bf) {
+  bool sameFace(const asset::WorldMesh& a, size_t af, const asset::WorldMesh& b, size_t bf) {
     if(!sameMaterial(a.materials[a.polygons.material_indices[af]],b.materials[b.polygons.material_indices[bf]]) ||
        a.polygons.lightmap_indices[af]!=b.polygons.lightmap_indices[bf] ||
        !sameFlags(a.polygons.flags[af],b.polygons.flags[bf]))
@@ -116,7 +81,7 @@ namespace {
     return true;
     }
 
-  void preservedFaces(const zenkit::Mesh& source, const std::vector<const zenkit::Mesh*>& parts) {
+  void preservedFaces(const asset::WorldMesh& source, const std::vector<const asset::WorldMesh*>& parts) {
     std::vector<bool> seen(source.polygons.material_indices.size(),false);
     size_t outputFaces = 0;
     for(const auto* mesh:parts) {
@@ -125,7 +90,6 @@ namespace {
               mesh->polygons.flags.size()==mesh->polygons.material_indices.size() &&
               mesh->polygons.lightmap_indices.size()==mesh->polygons.material_indices.size(),
               "each extracted mesh has complete triangulated polygon data");
-      require(mesh->lightmaps.size()==source.lightmaps.size(),"compaction retains authored lightmap slots");
       for(size_t face=0;face<mesh->polygons.material_indices.size();++face) {
         bool found = false;
         for(size_t original=0;original<seen.size();++original)
@@ -141,16 +105,16 @@ namespace {
             "base and cloth together preserve every source face exactly once");
     }
 
-  uint32_t addMaterial(zenkit::Mesh& mesh, const std::string& name, const std::string& texture) {
-    zenkit::Material material;
+  uint32_t addMaterial(asset::WorldMesh& mesh, const std::string& name, const std::string& texture) {
+    asset::Material material;
     material.name = name;
     material.texture = texture;
-    material.group = zenkit::MaterialGroup::WOOD;
+    material.group = asset::MaterialGroup::WOOD;
     material.color = {12,34,56,178};
     material.smooth_angle = 47.25f;
     material.texture_scale = {128.f,256.f};
     material.texture_anim_fps = 7.5f;
-    material.texture_anim_map_mode = zenkit::AnimationMapping::LINEAR;
+    material.texture_anim_map_mode = asset::AnimationMapping::LINEAR;
     material.texture_anim_map_dir = {.25f,-.125f};
     material.disable_collision = false;
     material.disable_lightmap = true;
@@ -160,21 +124,21 @@ namespace {
     material.force_occluder = true;
     material.environment_mapping = true;
     material.environment_mapping_strength = .125f;
-    material.wave_mode = zenkit::WaveMode::WALL_AMBIENT;
-    material.wave_speed = zenkit::WaveSpeed::SLOW;
+    material.wave_mode = asset::WaveMode::WALL_AMBIENT;
+    material.wave_speed = asset::WaveSpeed::SLOW;
     material.wave_max_amplitude = 11.5f;
     material.wave_grid_size = 91.f;
     material.ignore_sun = true;
-    material.alpha_func = zenkit::AlphaFunction::BLEND;
+    material.alpha_func = asset::AlphaFunction::BLEND;
     material.default_mapping = {.5f,.75f};
     const auto id = uint32_t(mesh.materials.size());
     mesh.materials.push_back(material);
     return id;
     }
 
-  void addTriangle(zenkit::Mesh& mesh, uint32_t material, const std::array<uint32_t,3>& indices) {
+  void addTriangle(asset::WorldMesh& mesh, uint32_t material, const std::array<uint32_t,3>& indices) {
     const auto face = uint32_t(mesh.polygons.material_indices.size());
-    zenkit::PolygonFlagSet flags = {};
+    asset::PolygonFlagSet flags = {};
     flags.is_occluder = uint8_t(face%2);
     flags.is_sector = uint8_t((face/2)%2);
     flags.should_relight = uint8_t((face/3)%2);
@@ -186,15 +150,6 @@ namespace {
     mesh.polygons.material_indices.push_back(material);
     mesh.polygons.lightmap_indices.push_back(lightmap);
     mesh.polygons.flags.push_back(flags);
-    zenkit::Polygon raw = {};
-    raw.material = material;
-    raw.lightmap = lightmap;
-    raw.flags = flags;
-    raw.index_count = 3;
-    raw.index_offset = mesh.polygon_vertex_indices.size();
-    raw.plane_distance = float(face)+.125f;
-    raw.plane_normal = {.125f,.25f,float(face)+.5f};
-    mesh.geometry.push_back(raw);
     for(size_t corner=0;corner<3;++corner) {
       const auto feature = uint32_t(mesh.features.size());
       mesh.features.push_back({{float(face)*.03125f+float(corner)*.125f,
@@ -203,12 +158,10 @@ namespace {
                                {.25f,float(corner)*.125f,1.f}});
       mesh.polygons.vertex_indices.push_back(indices[corner]);
       mesh.polygons.feature_indices.push_back(feature);
-      mesh.polygon_vertex_indices.push_back(indices[corner]);
-      mesh.polygon_feature_indices.push_back(feature);
       }
     }
 
-  uint32_t addBanner(zenkit::Mesh& mesh, uint32_t material, float x) {
+  uint32_t addBanner(asset::WorldMesh& mesh, uint32_t material, float x) {
     const auto first = uint32_t(mesh.polygons.material_indices.size());
     const auto base = uint32_t(mesh.vertices.size());
     mesh.vertices.insert(mesh.vertices.end(),{{x,600,0},{x+200,600,0},{x+200,300,0},{x,300,0}});
@@ -217,7 +170,7 @@ namespace {
     return first;
     }
 
-  void addFinial(zenkit::Mesh& mesh, uint32_t material) {
+  void addFinial(asset::WorldMesh& mesh, uint32_t material) {
     const auto base = uint32_t(mesh.vertices.size());
     for(size_t ring=0;ring<2;++ring)
       for(size_t side=0;side<8;++side) {
@@ -235,7 +188,7 @@ namespace {
       }
     }
 
-  uint32_t addGrid(zenkit::Mesh& mesh, uint32_t material, bool sail) {
+  uint32_t addGrid(asset::WorldMesh& mesh, uint32_t material, bool sail) {
     const uint32_t side = sail ? 5 : 3;
     const auto first = uint32_t(mesh.polygons.material_indices.size());
     const auto base = uint32_t(mesh.vertices.size());
@@ -276,21 +229,14 @@ namespace {
   }
 
 int main() {
-  zenkit::Mesh source;
+  asset::WorldMesh source;
   source.name = "SYNTHETIC_WORLD_CLOTH";
-  source.date = {2026,10,18,12,34,56};
   source.bbox = {{-100,-200,-300},{4000,1000,500}};
-  source.obb.center = {11,22,33};
-  source.obb.axes[0] = {1,0,0};
-  source.obb.axes[1] = {0,1,0};
-  source.obb.axes[2] = {0,0,1};
-  source.obb.half_width = {100,200,300};
-  source.lightmaps.push_back({nullptr,{{.5f,0,0},{0,.25f,0}},{12,34,56}});
   const auto other = addMaterial(source,"UNSUPPORTED_CLOTH","UNKNOWN_FLAG.TGA");
   const auto sail = addMaterial(source,"MATERIAL_WITH_TEXTURE_RULE","nw_ship_sail_02.tga");
   const auto flag = addMaterial(source,"nw_ship_flag_01","SYNTHETIC_FLAG.TGA");
   const auto city = addMaterial(source,"NW_CITY_FLAG_01","SYNTHETIC_CITY.TGA");
-  source.materials[sail].wave_mode = zenkit::WaveMode::NONE;
+  source.materials[sail].wave_mode = asset::WaveMode::NONE;
   addBanner(source,other,-800);
   const auto sailFirst = addGrid(source,sail,true);
   const auto flagFirst = addGrid(source,flag,false);
@@ -301,9 +247,9 @@ int main() {
   const auto original = source;
   auto extracted = WorldCloth::extract(source);
   require(extracted.surfaces.size()==4,"two city sheets, a ship flag and a sail are extracted");
-  require(sameAuthoredData(source,original),"extraction leaves landscape arrays, raw polygon planes and source indices unchanged");
+  require(sameAuthoredData(source,original),"extraction leaves landscape arrays and source indices unchanged");
   preservedFaces(original,{&source,&extracted.original});
-  std::vector<const zenkit::Mesh*> surfaces;
+  std::vector<const asset::WorldMesh*> surfaces;
   std::set<uint32_t> ids;
   size_t bannerCount = 0, flagCount = 0, sailCount = 0;
   for(const auto& surface:extracted.surfaces) {
@@ -318,7 +264,7 @@ int main() {
       }
     else if(surface.visual.starts_with("NW_SHIP_FLAG_01:")) {
       requirePins(surface,"flag");
-      require(surface.mesh.materials.front().wave_mode==zenkit::WaveMode::WALL_AMBIENT,
+      require(surface.mesh.materials.front().wave_mode==asset::WaveMode::WALL_AMBIENT,
               "original ship material wave_mode=3 survives extraction for native OFF fallback");
       ++flagCount;
       }
@@ -354,7 +300,7 @@ int main() {
             "surface order, synthetic identity, compact data and attachments are deterministic");
     }
 
-  zenkit::Mesh unsupported;
+  asset::WorldMesh unsupported;
   addMaterial(unsupported,"UNSUPPORTED_CLOTH","UNKNOWN_FLAG.TGA");
   addBanner(unsupported,0,-800);
   const auto unsupportedOriginal = unsupported;

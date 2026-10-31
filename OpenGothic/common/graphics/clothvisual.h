@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Tempest/Matrix4x4>
-#include <zenkit/vobs/VirtualObject.hh>
+#include "asset/worldtypes.h"
 #include <memory>
 #include <string>
 #include <string_view>
@@ -22,8 +22,8 @@ class ClothVisual final {
   public:
     static bool supports(std::string_view visual);
     static std::unique_ptr<ClothVisual> create(MeshObjects::Mesh& view, World& world,
-                                               const zenkit::VirtualObject& vob, bool enableCollision);
-    static std::unique_ptr<ClothVisual> createSurface(World& world, const zenkit::Mesh& source,
+                                               const asset::VirtualObject& vob, bool enableCollision);
+    static std::unique_ptr<ClothVisual> createSurface(World& world, const asset::WorldMesh& source,
                                                      const std::vector<uint32_t>& pinnedSourcePositionIds,
                                                      std::string visual, uint32_t id, float stiffness, float linearDamping);
     ~ClothVisual();

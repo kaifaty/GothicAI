@@ -230,7 +230,7 @@ void ObjVisual::setVisual(const zenkit::IItem& hitem, World& world, bool staticD
     }
   }
 
-void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool staticDraw, bool enablePhysics) {
+void ObjVisual::setVisual(const asset::VirtualObject& vob, World& world, bool staticDraw, bool enablePhysics) {
   cleanup();
 
   const bool       enableCollision = vob.cd_dynamic && enablePhysics; // collide with player
@@ -243,14 +243,14 @@ void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool s
   assert(!FileExt::hasExt(visName,"ZEN"));
 
   switch (vob.visual->type) {
-    case zenkit::VisualType::MESH:
-    case zenkit::VisualType::MULTI_RESOLUTION_MESH: {
+    case asset::VisualType::MESH:
+    case asset::VisualType::MULTI_RESOLUTION_MESH: {
       auto view = Resources::loadMesh(visName);
       if(!view)
         return;
       setType(M_Mesh);
       mesh.proto = view;
-      const bool windy = (vob.anim_mode!=zenkit::AnimationType::NONE && vob.anim_strength>0);
+      const bool windy = (vob.anim_mode!=asset::AnimationType::NONE && vob.anim_strength>0);
       if(vob.show_visual) {
         mesh.view = world.addStaticView(view,staticDraw);
         mesh.view.setWind(vob.anim_mode,vob.anim_strength);
@@ -262,8 +262,8 @@ void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool s
         }
       break;
       }
-    case zenkit::VisualType::MODEL:
-    case zenkit::VisualType::MORPH_MESH:{
+    case asset::VisualType::MODEL:
+    case asset::VisualType::MORPH_MESH:{
       // *.MDS; *.ASC; *.MMS
       auto visual = std::string(visName);
       FileExt::exchangeExt(visual,"ASC","MDL");
@@ -273,7 +273,7 @@ void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool s
         return;
       // Authored cloth morph meshes have no skeleton. Keep their normal mesh
       // morph animation as the distant fallback while binding nearby Jolt cloth.
-      if(vob.visual->type==zenkit::VisualType::MORPH_MESH && ClothVisual::supports(visName)) {
+      if(vob.visual->type==asset::VisualType::MORPH_MESH && ClothVisual::supports(visName)) {
         setType(M_Mesh);
         mesh.proto = view;
         if(vob.show_visual) {
@@ -303,21 +303,21 @@ void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool s
         }
       break;
       }
-    case zenkit::VisualType::DECAL: {
+    case asset::VisualType::DECAL: {
       // *.TGA
-      if(vob.sprite_camera_facing_mode!=zenkit::SpriteAlignment::NONE) {
+      if(vob.sprite_camera_facing_mode!=asset::SpriteAlignment::NONE) {
         setType(M_Pfx);
         pfx = PfxEmitter(world,vob);
         pfx.setActive(true);
         pfx.setLooped(true);
         }
-      else if(auto decal = dynamic_cast<const zenkit::VisualDecal*>(vob.visual.get())) {
+      else if(auto decal = dynamic_cast<const asset::VisualDecal*>(vob.visual.get())) {
         setType(M_Mesh);
         mesh.view = world.addDecalView(*decal);
         }
       break;
       }
-    case zenkit::VisualType::PARTICLE_EFFECT: {
+    case asset::VisualType::PARTICLE_EFFECT: {
       // *.PFX
       setType(M_Pfx);
       pfx = PfxEmitter(world,vob);
@@ -325,8 +325,8 @@ void ObjVisual::setVisual(const zenkit::VirtualObject& vob, World& world, bool s
       pfx.setLooped(true);
       break;
       }
-    case zenkit::VisualType::AI_CAMERA:
-    case zenkit::VisualType::UNKNOWN:
+    case asset::VisualType::AI_CAMERA:
+    case asset::VisualType::UNKNOWN:
       break;
     }
   }

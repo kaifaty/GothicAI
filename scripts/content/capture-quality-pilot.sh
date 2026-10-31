@@ -28,6 +28,8 @@ BUILD_TASK="$TASK"
 [[ "$TASK" != gothic-ai/remaster-* ]] || BUILD_TASK=gothic-ai/remaster-engine
 
 if [[ "${1:-}" == --remote-prepare ]]; then
+  game_environment="$(python3 "$(dirname "$0")/ryzen_game.py")"
+  eval "$game_environment"
   task="$HOME/$BUILD_TASK"
   export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
   export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
@@ -47,6 +49,8 @@ if [[ "${1:-}" == --remote-capture ]]; then
   [[ "$variant" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || exit 2
   [[ "$TASK" != gothic-ai/harbour-house || "$variant" == original ]] || exit 2
   task="$HOME/$TASK"
+  game_environment="$(python3 "$(dirname "$0")/ryzen_game.py")"
+  eval "$game_environment"
   out="$task/runs/$variant"
   mkdir -p "$out/run"
   cp "$task/save_slot_1.sav" "$out/run/save_slot_1.sav"
@@ -80,21 +84,29 @@ INI
   export OPENGOTHIC_TEXTURES='' OPENGOTHIC_FRACTURE=''
   export OPENGOTHIC_CENSUS="$out/census.json"
   export OPENGOTHIC_BENCH="$task/scripts/$SCENARIO" OPENGOTHIC_BENCH_OUT="$out"
-  game="$HOME/gothic-ai/game"
+  game="$GOTHIC_DIR"
   if [[ "$TASK" == gothic-ai/harbour-house ]]; then
-    # Keep the wide survey lens isolated from the shared installation.
+    # Keep the wide survey lens isolated from the shared settings.
     python3 - "$game" "$task/game" <<'PYGAME'
 from pathlib import Path
 import re
 import sys
 source, target = map(Path, sys.argv[1:])
+if target.is_symlink():
+    target.unlink()
 target.mkdir(exist_ok=True)
+for entry in target.iterdir():
+    if entry.is_symlink():
+        entry.unlink()
 for entry in source.iterdir():
     if entry.name.lower() != 'system' and not (target / entry.name).exists():
         (target / entry.name).symlink_to(entry)
 system = next(entry for entry in source.iterdir() if entry.name.lower() == 'system')
 local_system = target / system.name
 local_system.mkdir(exist_ok=True)
+for entry in local_system.iterdir():
+    if entry.is_symlink():
+        entry.unlink()
 for entry in system.iterdir():
     if entry.name.lower() != 'systempack.ini' and not (local_system / entry.name).exists():
         (local_system / entry.name).symlink_to(entry)
@@ -108,6 +120,8 @@ if not count:
 PYGAME
     game="$task/game"
   fi
+  GAME_BIN="$HOME/$BUILD_TASK/build/opengothic/Gothic2Notr" \
+    bash "$(dirname "$0")/base-ensure.sh" "$game"
   rc=0
   (cd "$out/run" && timeout 240 "$HOME/$BUILD_TASK/build/opengothic/Gothic2Notr" \
     -g "$game" -g2 -window -devmode -save 1) >"$out/game.log" 2>&1 || rc=$?
@@ -127,17 +141,27 @@ if [[ "${1:-}" == --compose || "${1:-}" == --compose-2 || "${1:-}" == --compose-
   exec uv run --no-project --with pillow python "$ROOT/scripts/content/capture-quality-pilot.py" "${1#--}" "${2:?captures}" "${3:?output}"
 fi
 
+if [[ "${1:-}" == --prepare || "${1:-}" == --scenario || "${1:-}" == --capture ]]; then
+  GAME_ENV=()
+  for name in OPENGOTHIC_BASE OPENGOTHIC_BASE_FINGERPRINT OPENGOTHIC_VIDEOS_FINGERPRINT OPENGOTHIC_BASE_CACHE OPENGOTHIC_BASE_STORE; do
+    [[ ! ${!name+x} ]] || GAME_ENV+=("$name=${!name}")
+  done
+  printf -v GAME_CHECK '%q ' env ${GAME_ENV[@]+"${GAME_ENV[@]}"} python3 -c "$(cat "$ROOT/scripts/ryzen_game.py")" --check
+  ssh -T -o BatchMode=yes -o ConnectTimeout=10 "$HOST" "$GAME_CHECK"
+fi
+
 if [[ "${1:-}" == --prepare ]]; then
-  ssh -T "$HOST" "mkdir -p ~/$BUILD_TASK/source/OpenGothic ~/$TASK/scripts ~/$TASK/content/original/materials ~/$TASK/runs; df -h ~"
+  ssh -T "$HOST" "mkdir -p ~/$BUILD_TASK/source/OpenGothic ~/$BUILD_TASK/source/scripts ~/$TASK/scripts ~/$TASK/content/original/materials ~/$TASK/runs; df -h ~"
   rsync -a --delete --exclude=.git --exclude=build --exclude=__pycache__ \
     "$ROOT/OpenGothic/" "$HOST:$BUILD_TASK/source/OpenGothic/"
+  rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$HOST:$BUILD_TASK/source/scripts/convert/"
   rsync -a "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
-    "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
+    "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
   common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
   rsync -a "${SAVE:-$(dirname "$common")/save_slot_1.sav}" "$HOST:$TASK/save_slot_1.sav"
   GQ_OWNER="${TASK##*/}" "$ROOT/scripts/gq" --host "$HOST" run --class quick \
     --threads 8 --mem 10G --max 25m --wait-max 900 --name 'pilot engine build' -- \
-    env QUALITY_PILOT_TASK="$TASK" bash "$TASK/scripts/capture-quality-pilot.sh" --remote-prepare
+    env ${GAME_ENV[@]+"${GAME_ENV[@]}"} QUALITY_PILOT_TASK="$TASK" bash "$TASK/scripts/capture-quality-pilot.sh" --remote-prepare
   exit 0
 fi
 
@@ -147,7 +171,7 @@ if [[ "${1:-}" == --scenario ]]; then
   common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
   rsync -a "${SAVE:-$(dirname "$common")/save_slot_1.sav}" "$HOST:$TASK/save_slot_1.sav"
   rsync -a "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
-    "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
+    "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
   exit 0
 fi
 
@@ -165,12 +189,12 @@ if [[ "${1:-}" == --capture ]]; then
     ssh -T "$HOST" "printf '{}\\n' >~/$TASK/content/original/materials/materials.json"
   fi
   rsync -a "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
-    "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
+    "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
   rc=0
   GQ_OWNER="${TASK##*/}" "$ROOT/scripts/gq" --host "$HOST" run --class quick \
     --threads 4 --mem 5G --gpu-mem 4G --display --display-exclusive \
     --max 6m --wait-max 900 --name "pilot $variant captures" -- \
-    env QUALITY_PILOT_TASK="$TASK" QUALITY_PILOT_SCENARIO="$SCENARIO" \
+    env ${GAME_ENV[@]+"${GAME_ENV[@]}"} QUALITY_PILOT_TASK="$TASK" QUALITY_PILOT_SCENARIO="$SCENARIO" \
     bash "$TASK/scripts/capture-quality-pilot.sh" --remote-capture "$variant" || rc=$?
   rsync -a "$HOST:$TASK/runs/$variant/" "$out/$variant/"
   exit "$rc"

@@ -1,11 +1,11 @@
 #include "triggerscript.h"
 
-#include <zenkit/vobs/Trigger.hh>
+#include "asset/worldtypes.h"
 #include <Tempest/Log>
 
 #include "world/world.h"
 
-TriggerScript::TriggerScript(Vob* parent, World &world, const zenkit::VTriggerScript& data, Flags flags)
+TriggerScript::TriggerScript(Vob* parent, World &world, const asset::VTriggerScript& data, Flags flags)
   :AbstractTrigger(parent,world,data,flags) {
   function = data.function;
   }

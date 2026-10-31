@@ -29,6 +29,8 @@ ENV_KEYS = {
     "GOTHIC_DECIDER_URL": "llm.decider_url",
     "GOTHIC_QUICK_LLM_URL": "llm.quick_url",
     "GOTHIC_BODY_URL": "llm.body_url",
+    "GOTHIC_BODY_POLICY": "llm.body_policy",
+    "OPENGOTHIC_BODY_NET": "llm.body_net",
     "GOTHIC_ASR_PROVIDER": "voice.provider",
     "GOTHIC_ASR_FALLBACK": "voice.fallback",
     "GOTHIC_VOXTRAL_URL": "voice.voxtral_url",
@@ -50,7 +52,8 @@ class _Section(BaseModel):
 
 class GameSettings(_Section):
     dir: Path | None = Field(
-        None, title="Папка игры", description="Gothic II с аддоном «Ночь Ворона» и русской локализацией"
+        None, title="Папка игры",
+        description="Каталог настроек с готовой базой; для первого импорта — установленная Gothic II",
     )
     dev_mode: bool = Field(
         False, title="Режим разработчика", description="Консоль Marvin (F2) и отладочные команды ИИ"
@@ -82,12 +85,22 @@ class LlmSettings(_Section):
         title="Адрес модели реплик в бою",
         description="Gemma на llama.cpp (http://…/v1). Пусто: сервер decider, порт 47834",
     )
+    body_policy: Literal["engine", "service"] = Field(
+        "engine",
+        title="Политика боя",
+        description="engine: сеть P30 в движке; service: внешний TCP-сервис",
+    )
+    body_net: Path | None = Field(
+        None,
+        title="Файл сети боя",
+        description="Файл .bodynet. Пусто: ~/.local/share/gothic-ai/body/nets/p30.bodynet",
+    )
     body_url: str | None = Field(
         None,
-        title="Адрес сети боя",
+        title="Адрес запасного сервиса боя",
         description=(
-            "Сеть тела P30 (tcp://…:47835) ведёт бой NPC с одноручным мечом против героя. "
-            "Пусто: бой ведут скрипты"
+            "Сеть тела P30 (tcp://…:47835): для service или когда сеть движка не загружена. "
+            "Пусто: доступна только сеть в движке"
         ),
     )
 
@@ -104,8 +117,11 @@ class VoiceSettings(_Section):
 
 class TtsSettings(_Section):
     enabled: bool = Field(True, title="Озвучка NPC", description="Выключено: только субтитры")
+    original_voices: bool = Field(
+        True, title="Оригинальные голоса", description="Клоны оригинальных голосов сюжетных NPC в Inworld"
+    )
     provider: str = Field("inworld", title="Голоса", description="inworld, voxcpm или openai:…")
-    fallback: str = Field("voxcpm", title="Запасные голоса", description="none: без запасного")
+    fallback: str = Field("none", title="Запасные голоса", description="none: без запасного")
     voxcpm_url: str | None = Field(None, title="Адрес VoxCPM2")
     loudness: float | Literal["none"] | None = Field(
         None,

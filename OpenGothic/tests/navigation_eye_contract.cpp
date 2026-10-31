@@ -1,3 +1,4 @@
+#include "asset/fromzenkit.h"
 #include "game/navigationeye.h"
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
@@ -6,6 +7,8 @@
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+
+#include <zenkit/ModelHierarchy.hh>
 
 #include <algorithm>
 #include <cmath>
@@ -30,8 +33,8 @@ void near(float actual, float expected, const char* message) {
   require(std::isfinite(actual) && std::abs(actual-expected)<.001f,message);
   }
 
-zenkit::Mesh wall(float x, zenkit::MaterialGroup material = zenkit::MaterialGroup::STONE) {
-  zenkit::Mesh mesh;
+asset::WorldMesh wall(float x, asset::MaterialGroup material = asset::MaterialGroup::STONE) {
+  asset::WorldMesh mesh;
   mesh.vertices = {{x,0,-100},{x,360,-100},{x,360,100},{x,0,100}};
   mesh.materials.resize(1);
   mesh.materials[0].group = material;
@@ -90,7 +93,7 @@ void rangesAndWater() {
   NavigationEye eye(cfg);
   for(const auto& ray:eye.samples())
     near(ray.maxRangeCm,1000.f,"one range multiplier also respects short centre range");
-  DynamicWorld water(nullptr,wall(100,zenkit::MaterialGroup::WATER));
+  DynamicWorld water(nullptr,wall(100,asset::MaterialGroup::WATER));
   const auto hit = water.navigationRay(Vec3(0,180,0),Vec3(1000,180,0),nullptr);
   require(hit.hasCol && hit.kind==DynamicWorld::NavigationHit::Water,"water has its own category");
   cfg.layout = 42;
@@ -164,10 +167,10 @@ void floorSamplingModes() {
     near(extra.samples()[i].pitchDeg,baseline.samples()[i].pitchDeg,"extra rows retain baseline pitch");
     near(extra.samples()[i].maxRangeCm,baseline.samples()[i].maxRangeCm,"extra rows retain baseline range");
     }
-  zenkit::Mesh floor;
+  asset::WorldMesh floor;
   floor.vertices = {{-20000,0,-20000},{-20000,0,20000},{20000,0,20000},{20000,0,-20000}};
   floor.materials.resize(1);
-  floor.materials[0].group = zenkit::MaterialGroup::STONE;
+  floor.materials[0].group = asset::MaterialGroup::STONE;
   floor.polygons.vertex_indices = {0,1,2,0,2,3,2,1,0,3,2,0};
   floor.polygons.material_indices = {0,0,0,0};
   DynamicWorld world(nullptr,floor);
@@ -210,7 +213,7 @@ void staticAndMovingVobs() {
   const auto mesh = wall(100);
   const std::unique_ptr<PhysicMeshShape> shape(PhysicMeshShape::load(PackedMesh(mesh,PackedMesh::PK_Physic)));
   require(shape!=nullptr,"vob query fixture");
-  DynamicWorld world(nullptr,zenkit::Mesh{});
+  DynamicWorld world(nullptr,asset::WorldMesh{});
   auto object = world.addStaticObj(shape.get(),Tempest::Matrix4x4::mkIdentity());
   auto hit = world.navigationRay(Vec3(0,180,0),Vec3(1000,180,0),nullptr);
   require(hit.hasCol && hit.kind==DynamicWorld::NavigationHit::StaticVob,"static vob category");
@@ -221,7 +224,7 @@ void staticAndMovingVobs() {
   }
 
 zenkit::ModelHierarchy humanoidHierarchy() {
-  zenkit::ModelHierarchy source;
+  zenkit::ModelHierarchy source{};
   struct Bone { const char* name; int16_t parent; Vec3 offset; };
   const Bone bones[] = {
     {"BIP01",-1,{0,0,0}}, {"BIP01 PELVIS",0,{0,95,0}},
@@ -253,7 +256,7 @@ zenkit::ModelHierarchy humanoidHierarchy() {
 
 void livingRigQuerySemantics() {
   constexpr size_t forearm = 7;
-  Skeleton skeleton(humanoidHierarchy(),nullptr,"HUMANS.MDS");
+  Skeleton skeleton(asset::fromZenKit(humanoidHierarchy()),nullptr,"HUMANS.MDS");
   HitZones zones;
   zones.setSkeleton(&skeleton);
   require(zones.isValid(),"humanoid fixture needs real physical hit capsules");
@@ -299,7 +302,7 @@ void livingRigQuerySemantics() {
   checkGeneric(DynamicWorld::C_ActiveBody);
 
   // The engine-facing eye API sees both states as NPCs, without asking generic rays for a ragdoll.
-  DynamicWorld navigation(nullptr,zenkit::Mesh{});
+  DynamicWorld navigation(nullptr,asset::WorldMesh{});
   auto seen = navigation.createKinematicBody(skeleton,zones,pose.data(),pose.size(),object);
   require(seen && seen->isKinematic(),"navigation fixture must create a native living rig");
   const auto checkEye = [&] {

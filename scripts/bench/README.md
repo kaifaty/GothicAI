@@ -21,6 +21,84 @@ or other Mac-only game paths require local execution (`auto` falls back, `ryzen`
 For performance comparisons (before/after or FPS), run both takes on the same machine:
 pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
 
+`streaming-flythrough` is the baseline for runtime chunks before unloading: a god-mode hero
+follows the existing WayMatrix path from `NW_CITY_MERCHANT_TRADE_04` through
+`NW_CITY_HABOUR_BENCH_01` to `NW_FOREST_PATH_16`. `route <speed_cm_s> <wp1> <wp2> ...`
+blocks command execution until the connected path is complete. Each frame places the hero at
+the interpolated path position, including waypoint height, using the normal simulation step.
+The two passes use 500 cm/s (run) and 2000 cm/s (fly), with ten seconds to settle before each.
+It records no video. The engine keeps the entire world loaded.
+
+`scripts/bench.sh streaming-flythrough` starts a fresh `NEWWORLD`, selects `quiet` on Ryzen,
+and enables frame profiling only for this bench's build. Output `frameprofile.csv` contains
+submitted frame intervals; `streaming.csv` contains residency update/work times, counts and
+Near/Far transitions. `report.md` / `report.json` report each pass's frame p50/p99/max,
+Near/Far transitions (entering or leaving that state), peak Near count, and update/work p99.
+The run fails if either route does not finish or either pass lacks metrics. Use the same
+host, resolution and content overrides for later comparisons; `OPENGOTHIC_STREAMING=0`
+disables the manager and deliberately cannot produce this residency baseline.
+
+## Frame profile
+
+### Как работает сейчас
+
+Build with `cmake -S OpenGothic -B OpenGothic/build -G Ninja
+-DCMAKE_BUILD_TYPE=RelWithDebInfo -DOPENGOTHIC_ENABLE_FRAME_PROFILE=ON`, then
+`cmake --build OpenGothic/build --target Gothic2Notr`. Set
+`OPENGOTHIC_FRAME_PROFILE=/absolute/path/frames.csv` when starting the game.
+For a short existing scenario use `BENCH_HOST=ryzen
+OPENGOTHIC_FRAME_PROFILE=<absolute output>/frames.csv scripts/bench.sh cloth-on <absolute output>`;
+the Ryzen engine must also have been configured with the option ON (the runner normally builds it OFF).
+The recorder buffers up to 20,000 render attempts and writes once at shutdown. Clear the environment
+variable to disable recording; build with the option OFF (default) to remove all clocks and Metal handlers.
+
+Every attempt has a row, including fence-busy returns and captures. Existing columns retain their names.
+The complete column set is:
+
+| Columns | Units / meaning |
+|---|---|
+| `attempt`, `cmd_id` | Zero-based attempt number; reusable command slot, not a unique frame id |
+| `dt` | Simulation step, milliseconds |
+| `segment`, `frame` | Bench recording name and frame number within that recording; empty/zero outside recordings |
+| `begin_ns`, `observer_ns`, `end_ns` | Absolute `steady_clock` timestamps, nanoseconds; observer is zero when not sampled |
+| `outcome` | 0 unfinished, 1 submitted, 2 fence busy, 3 capture, 4 error |
+| `flags` | Bitmask: 1 submit completed (CPU), 2 present completed (CPU), 4 capture requested, 8 capture read completed, 16 fence busy, 32 error |
+| `overflow` | Number of attempts beyond the buffer limit, repeated in every row |
+| `<zone>_ns`, `<zone>_calls`, `<zone>_first_ns`, `<zone>_last_ns` | Elapsed sum in nanoseconds, call count, first start and last end as absolute `steady_clock` nanoseconds; all zero if unused |
+| `palette_calls`, `identical_calls`, `patch_calls`, `patch_blocks` | Counts |
+| `palette_bytes`, `identical_bytes`, `patch_bytes`, `grow_bytes`, `upload_execution_bytes` | Bytes |
+| `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of Metal command buffer `GPUEndTime-GPUStartTime` in nanoseconds; 1 only when all submitted buffers have valid timing; submitted buffer count |
+
+The complete `<zone>` list (each produces all four columns above):
+`tick`, `finish_step`, `camera`, `observations`, `bench`, `fence_poll`, `recycle`, `ui`,
+`encode`, `submit`, `present`, `limiter`, `world_logic`, `prepare`, `physics`, `sync`, `world_misc`,
+`parallel_animation`, `native_export`, `forced_sync_animation`, `actor_animation_elapsed_sum`,
+`pose_elapsed_sum`, `palette_elapsed_sum`, `storage_join`, `storage_commit`, `storage_pack`,
+`storage_dispatch`, `storage_grow`, `storage_upload_execution_elapsed`, `bodynet`, `cloth`, `water`,
+`destruction`, `ai_bridge`, `sound`, `encode_shadows`, `encode_main`, `encode_water`, `encode_post`, `encode_ui`.
+
+`bodynet` sums the full local P30 policy step over active NPCs; service policies do not enter it.
+`cloth` covers main-thread preparation and the 30 Hz solver/finish; `water` sums main-thread buoyancy
+preparation/finish and the synchronous Jolt step listener, which may run on a worker.
+`destruction` covers deferred fracture, movable/fragment synchronization and cleanup; fragment dynamics
+remain inside `physics`. `ai_bridge` measures the inbound queue and message parsing/dispatch on main;
+`sound` measures the main-thread listener/effects update, including its mutex wait, not the audio mixer.
+The five `encode_*` zones measure sequential CPU command recording, not GPU execution.
+Zones can nest; worker elapsed sums (including storage uploads) must not be added to enclosing wall time.
+Actor/pose/palette zones only cover the actors selected by the bench.
+
+Metal captures the exact attempt record at command submission and updates atomic counters from that
+buffer's completed handler, including presentation, uploads/readback and acceleration-structure builds
+submitted during the attempt. Slot reuse cannot redirect a late completion to a later attempt.
+There are no added waits. Missing/failed/incomplete timing gives `gpu_done=0,gpu_ns=0`;
+`gpu_buffers` still counts captured Metal submissions. Vulkan and other backends currently write three zeros.
+Pending completions at CSV flush are left incomplete. This is diagnostic timing, not a performance stand.
+
+### План и журнал
+
+- 2026-10-28: Metal completion timing and buffer counts; P30, cloth, water, fracture, inbound bridge,
+  sound and major render encoding zones. Validation: Mac/Linux builds and the existing Ryzen cloth bench.
+
 `own-mesh-barrel` frames the complete authored `NW_HARBOUR_BARREL_01` cargo barrel
 in Khorinis harbour at noon, writes `own-mesh-barrel.png`, then measures thirty
 seconds of normal app cadence without video. Use a fresh `WORLD=NEWWORLD.ZEN`, `MOVABLE_VOBS=0`,
@@ -85,6 +163,15 @@ over a 30-second normal-cadence window without recording video.
 `python3 scripts/water_bodies_compare.py deep DIR`, `shallow DIR`,
 `reload SAVED_DIR LOADED_DIR` and `perf ON_DIR OFF_DIR` check the native parts,
 immersion, sleep, 30-second stability and the 2 ms physics p95 budget.
+
+`p18b-base` checks a selected base through the native world transition path:
+`NEWWORLD` → `ADDONWORLD` → `OLDWORLD` → `DRAGONISLAND` → `NEWWORLD`, then native
+`playvideo LOGO2`. Run with `WORLD=NEWWORLD.ZEN`, `MUSIC=1`, the task base/cache/store,
+and an absolute census/output path. `world <ZEN> [waypoint]` requests the existing
+`World::triggerChangeWorld` transition and waits for native loading;
+`world-check <ZEN>` fails unless that world is current. Both commands use only indexed worlds.
+Successful benchmark music selection logs `Dx8 music: <SGT>` after the mixer accepts it.
+A normal startup logs `Main menu ready: <id>` after menu initialization; no keyboard driver is needed.
 
 A run takes the game start (~10 s from a save) plus the scenario time. On Mac the game window is minimized,
 does not take the focus and plays no sound, so it can run while someone works on the same machine.
@@ -331,6 +418,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 
 | Command | |
 |---|---|
+| `playvideo <name>` | Marvin command calling the game video player; case-insensitive name, optional `.bik`. Explicitly requests the player even with `-nointro`; the first request starts lazy preparation and is skipped while the part is not ready. Negative `scaleVideos` still disables playback. The scenario pauses during playback and resumes afterwards; `pos` records position, world tick and world time in `events.jsonl`. |
 | `wait <ms>` | game time |
 | `waitarrive [timeout ms]` | until the player has walked where it was sent |
 | `goto <waypoint>`, `goto pos <x> <y> <z>` | teleport (`pos`: where no waypoint is, a roof, a rock) |
@@ -364,6 +452,8 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `watch <npc\|nearest\|player>` | the camera and the gaze metrics follow this npc (a script symbol, `NONE_100_XARDAS`) |
 | `talk <npc\|nearest> <ms>` | the npc and the hero talk to each other that long (no words): they look at each other |
 | `freeze <npc\|nearest> [off]` | the npc leaves what it does and stands still, like a body the AI server attaches |
+| `ani <npc\|nearest\|player> <name>` | it plays that animation, as `play_ani` does (`T_STAND_2_PEE` goes on to its loop `S_PEE`) |
+| `heropose kneel\|none` | the hero kneels as after a surrender (`player_pose`), or gets up |
 | `place <dist> <angle>`, `orbit <deg> <ms>` | the hero stands around the watched npc (angle from its facing, 0 in front) or goes around it; not where no ground is found (inside a rock: it would fall through the world) |
 | `gazeinfo` | gaze state of the watched npc to `bench.log`: why it looks, at whom |
 | `lean on\|off` | the lean into turns and on slopes |
@@ -409,6 +499,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `aim-walk.bench` | steps with the bow drawn (forward and back while aiming by hand): the legs sneak under the aim, the hero moves as they step; on open grass from the side (no overlay), in front, behind, the game's camera with shots on the way, crouched; the hits at 10 m standing and stepping. CSV `m_walk aw_w aw_speed aw_twist aw_chest aw_drop` |
 | `aim-cant.bench` | the bow canted for a quick shot (the mouse wheel, `wheel <delta>`: down cants, up straightens): round the arrow, the top limb toward the drawing hand; from the side, in front, as the target sees it, behind, the game's camera, aimed up and down; the hits upright and canted at 8 and 25 m. CSV `m_cant bd_cant` |
 | `crossbow.bench` | the crossbow by hand: a weak and a strong shooter (`stats ... reload x`: the reload by strength), lowered loaded and raised, lowered right after a shot; the bolt lies in the left hand, the aim lines it up (`bowgeom` prints where it lies) |
+| `humiliate-look.bench` | the humiliation after a surrender staged without the AI server: the hero kneels, Lobart 100 cm in front plays `T_STAND_2_PEE` and the aimed stream `PFX_GAI_PEE` arcs to the hero's chest; stills round them and a 2 s video from the side. Judge it at `TEMPEST_WINDOW_SIZE=1600x1000`: at 800x600 the stream is a few pixels |
 | `give <item> [count]`, `equip <item>` | into the hero's inventory; `equip` puts it on whatever the strength (`ItRw_Bow_L_01`, `ItRw_Arrow`, `ItRw_Crossbow_L_01`, `ItRw_Bolt`, `ItRu_FireBolt`) |
 | `put <npc\|nearest> <dist> <angle>` | the npc stands there on the ground from the hero (angle from the hero's facing), frozen |
 | `pin <npc\|nearest> <dist> <angle> <height>`, `pin off` | the npc hangs there from the hero, `height` above the hero's feet, every frame: a target above or below |
@@ -454,7 +545,7 @@ Talking, for shorts (`shorts/`; needs the AI server, see `shorts/README.md`):
 | `near <npc> [dist] [deg]`, `approach <npc>`, `face npc <npc>` | the hero in front of an npc (teleport), walks up to it, turns to it |
 | `cam shoulder\|face\|two <npc> [dist] [height] [side\|deg]`, `cam cut`, `cam smooth <k>` | shots of the hero and an npc; they glide from one to the next unless `cut`. `cam face` with an npc's name is this shot, with a number the close-up above. `cam two arena`: the two participants of a body arena, a yellow dot over the primary (`bodyreplay`, `scripts/body_replay_film.py`) |
 | `caption <text>`, `mark <text>` | events for the cut of a short |
-| `ai <...>` | the AI bridge's console: `ai attach <npc>`, `ai ptt start [<wav>]\|stop\|cancel` |
+| `ai <...>` | the AI bridge's console: `ai attach <npc>`, `ai skip <npc>` (its important dialogs count as told: it does not stop the hero), `ai ptt start [<wav>]\|stop\|cancel` |
 
 Every talking command writes `events.jsonl` (what was said when, in frames of the recording). A line of the
 AI is `npc line <npc>: <text>` in `bench.log`, `npc line <npc> -> <to>: <text>` when it is said to another npc

@@ -16,6 +16,7 @@ def _flag(v: str | bool) -> bool:
 class FakeProvider:
     name = "fake"
     rate = 16000
+    supports_cloning = False
     tone_phase_step = 1 / 8
     tone_frequency_hz = rate * tone_phase_step / math.tau
 

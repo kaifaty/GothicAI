@@ -47,19 +47,20 @@ class Chronicle:
         self.branch: str | None = None
         self.tags: dict[str, Tag] = {}
         self.on_fact: list[Callable[[Fact], None]] = []  # every new fact, after it is written
-        self._hero_kills: dict[str, bool] = {}  # hero_kill precedes npc_died; its explicit monster flag
+        self.on_entry: list[Callable[[int, Fact], None]] = []
+        self._hero_kills: dict[str, HeroKill] = {}  # hero_kill precedes npc_died
         self._background: set[asyncio.Task[Any]] = set()
         # the branch's facts as read so far: each read takes only the newer rows (by seq), since trust,
         # deals and the rumors read them on every turn
         self._cached: str | None = None
         self._seq = 0
-        self._all: list[Fact] = []
-        self._by_kind: dict[str | None, list[Fact]] = {}
+        self._all: list[tuple[int, Fact]] = []
+        self._by_kind: dict[str | None, list[tuple[int, Fact]]] = {}
         link.listeners.append(self._on_message)
         if link.session is not None:
             self._on_session(link.session)
 
-    def record(self, fact: Fact) -> None:
+    def record(self, fact: Fact) -> int | None:
         if self.branch is None:
             log.warning("no session: fact not kept %s", fact)
             return
@@ -69,10 +70,17 @@ class Chronicle:
         self._spawn(self.link.send(MemoryCmd(branch=self.branch, seq=seq)))
         for listener in self.on_fact:
             listener(fact)
+        for listener in self.on_entry:
+            listener(seq, fact)
+        return seq
 
     def facts(self, kind: str | None = None) -> list[Fact]:
         """The branch's facts (of one `kind`), oldest first. The list is the caller's own, but the dicts
         in it are shared by every reader: read them, never change them."""
+        return [fact for _, fact in self.entries(kind)]
+
+    def entries(self, kind: str | None = None) -> list[tuple[int, Fact]]:
+        """The branch's facts with their save sequence numbers, oldest first, optionally by kind."""
         if self.branch is None:
             return []
         if self._cached != self.branch:
@@ -80,8 +88,8 @@ class Chronicle:
         # facts written straight into the store (tests, another chronicle) are seen too
         for seq, content in self.memory.facts_since(self.branch, self._seq):
             f = json.loads(content)
-            self._all.append(f)
-            self._by_kind.setdefault(f.get("fact"), []).append(f)
+            self._all.append((seq, f))
+            self._by_kind.setdefault(f.get("fact"), []).append((seq, f))
             self._seq = seq
         return list(self._all) if kind is None else list(self._by_kind.get(kind, ()))
 
@@ -109,9 +117,9 @@ class Chronicle:
             case HeroKill():
                 # Only humans and tagged monsters also produce npc_died. Do not retain every wild kill.
                 self._hero_kills.clear()
-                self._hero_kills[msg.npc] = msg.monster
+                self._hero_kills[msg.npc] = msg
             case NpcDied():
-                monster = self._hero_kills.pop(msg.npc, None)
+                kill = self._hero_kills.pop(msg.npc, None)
                 self.record(
                     {
                         "fact": "died",
@@ -119,7 +127,7 @@ class Chronicle:
                         "name": msg.name,
                         "tag": msg.tag,
                         "killer": msg.killer,
-                        **({"monster": monster} if monster is not None else {}),
+                        **({"monster": kill.monster, "guild": kill.guild} if kill is not None else {}),
                     }
                 )
             case StoryWorld():

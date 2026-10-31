@@ -3,14 +3,13 @@
 #include <Tempest/Dir>
 #include <Tempest/Log>
 
-#include <zenkit/Archive.hh>
-
 #include "graphics/shaders.h"
 #include "graphics/sceneglobals.h"
 #include "utils/string_frm.h"
 #include "world/world.h"
 #include "utils/dbgpainter.h"
 #include "gothic.h"
+#include "worlddata.h"
 
 using namespace Tempest;
 
@@ -116,30 +115,19 @@ uint64_t LightGroup::Light::effectPrefferedTime() const {
 
 LightGroup::LightGroup(const SceneGlobals& scene) {
   try {
-    std::unique_ptr<zenkit::Read> read;
-    auto zen = Resources::openReader("LIGHTPRESETS.ZEN", read);
-
-    zenkit::ArchiveObject obj {};
-    auto count = zen->read_int();
-    for(int i = 0; i < count; ++i) {
-      zen->read_object_begin(obj);
-
-      zenkit::LightPreset preset {};
-      preset.load(*zen, Gothic::inst().version().game == 1 ? zenkit::GameVersion::GOTHIC_1
-                                                           : zenkit::GameVersion::GOTHIC_2);
-      presets.emplace_back(std::move(preset));
-
-      if(!zen->read_object_end()) {
-        zen->skip_object(true);
-        }
+    WorldData::ZenFile base;
+    if(Resources::loadBaseZen("LIGHTPRESETS.ZEN","light_presets",base)) {
+      presets = std::move(base.light_presets);
+      return;
       }
+    Log::e("unable to load base light presets");
     }
   catch(...) {
     Log::e("unable to load Zen-file: \"LIGHTPRESETS.ZEN\"");
     }
   }
 
-LightGroup::Light LightGroup::add(const zenkit::LightPreset& vob) {
+LightGroup::Light LightGroup::add(const asset::LightPreset& vob) {
   LightSource l;
   l.setPosition(Vec3(0, 0, 0));
   l.setDebugName(vob.preset);
@@ -172,8 +160,8 @@ LightGroup::Light LightGroup::add(const zenkit::LightPreset& vob) {
   return lx;
   }
 
-LightGroup::Light LightGroup::add(const zenkit::VLight& vob) {
-  auto l = add(static_cast<const zenkit::LightPreset&>(vob));
+LightGroup::Light LightGroup::add(const asset::VLight& vob) {
+  auto l = add(static_cast<const asset::LightPreset&>(vob));
   l.setPosition(Vec3(vob.position.x,vob.position.y,vob.position.z));
   return l;
   }
@@ -301,14 +289,14 @@ void LightGroup::resetDurty() {
   std::memset(duryBit.data(), 0, duryBit.size()*sizeof(duryBit[0]));
   }
 
-const zenkit::LightPreset& LightGroup::findPreset(std::string_view preset) const {
+const asset::LightPreset& LightGroup::findPreset(std::string_view preset) const {
   for(auto& i:presets) {
     if(i.preset!=preset)
       continue;
     return i;
     }
   Log::e("unknown light preset: \"",preset,"\"");
-  static zenkit::LightPreset zero {};
+  static asset::LightPreset zero {};
   return zero;
   }
 

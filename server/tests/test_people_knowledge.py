@@ -1,6 +1,8 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from gothic_ai.chronicle import Fact
 from gothic_ai.people_knowledge import SOURCES, PeopleKnowledge, rumor_subject, source_event, source_events
 
@@ -27,6 +29,33 @@ def _rumor(subject=HILDA, name="Хильда", key="T1", **extra) -> Fact:
 
 def _desk(facts: list[Fact]) -> PeopleKnowledge:
     return PeopleKnowledge(SimpleNamespace(facts=lambda: list(facts)))
+
+
+@pytest.mark.parametrize(("kind", "text"), [
+    ("no_blood", "Лобарт не терпит, когда при нём льётся кровь"),
+    ("no_reward", "Лобарт больше ценит тех, кто помогает не ради платы"),
+    ("secret_kept", "Лобарт ценит тех, кто умеет держать язык за зубами"),
+    ("mercy", "Лобарт говорит, что пощадить труднее, чем убить"),
+])
+def test_challenge_hints_keep_the_exact_words_about_the_giver(kind, text):
+    fact = {
+        "fact": "challenge_hint", "id": "CH1", "challenge": 12, "kind": kind,
+        "npc": LOBART, "name": "Лобарт", "witnesses": [HILDA],
+        "witness_names": {HILDA: "Хильда"},
+    }
+    desk = _desk([fact])
+    [entry] = desk.of(HILDA)
+    assert entry.subject == LOBART and entry.description() == text
+    assert desk.warning(HILDA, LOBART) == f"({text})"
+    rumor = {
+        "fact": "rumor", "kind": entry.kind, "subject": entry.subject,
+        "subject_name": entry.subject_name, "quest": entry.key,
+        "about": entry.about, "about_name": entry.about_name,
+        "from": HILDA, "from_name": "Хильда", "to": VINO, "hops": 1,
+    }
+    heard = _desk([fact, rumor])
+    assert heard.of(VINO)[0].description() == text
+    assert heard.warning(VINO, LOBART) == f"(ты слышал, что {text}; со слов: Хильда)"
 
 
 def test_accusation_rumor_preserves_owner_belief_without_proving_theft():

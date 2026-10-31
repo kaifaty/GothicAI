@@ -45,7 +45,7 @@ class VisualObjects final {
       void     setObjMatrix(const Tempest::Matrix4x4& mt);
       void     setAsGhost  (bool g);
       void     setFatness  (float f);
-      void     setWind     (zenkit::AnimationType m, float intensity);
+      void     setWind     (asset::AnimationType m, float intensity);
       void     setVisible  (bool visible);
       // Two vec4 entries (local position, local normal) per packed vertex.
       void     setDeformation(const std::vector<Tempest::Vec4>& vertices);
@@ -137,7 +137,7 @@ class VisualObjects final {
 
       Material::AlphaFunc alpha = Material::Solid;
       MorphAnim           morphAnim[Resources::MAX_MORPH_LAYERS];
-      zenkit::AnimationType wind        = zenkit::AnimationType::NONE;
+      asset::AnimationType wind        = asset::AnimationType::NONE;
       float               windIntensity = 0;
       float               fatness       = 0;
       bool                isGhost       = false;

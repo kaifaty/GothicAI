@@ -118,6 +118,9 @@ def arguments(tmp_path):
     settings.write_text('[llm]\nbody_url = "tcp://policy.invalid:9000"\n')
     save = tmp_path / "save.sav"
     save.write_bytes(b"fixture save")
+    converter = tmp_path / "content-convert"
+    converter.write_text("#!/bin/sh\nexit 0\n")
+    converter.chmod(0o755)
     return SimpleNamespace(shot="live-group", output=tmp_path / "take", settings=settings,
                            duration=25, save=save, game=tmp_path / "Gothic2Notr", assets=tmp_path / "assets")
 

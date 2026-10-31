@@ -1,0 +1,60 @@
+{
+ "cameras": [
+  {
+   "name": "front",
+   "eye": [
+    3383,
+    284,
+    -4413
+   ],
+   "target": [
+    3533,
+    150,
+    -3832
+   ],
+   "note": "hut B037 from the street, 6 m, eye 4 m above the ground (roof-holes.bench front)"
+  },
+  {
+   "name": "eave-close",
+   "eye": [
+    3180,
+    110,
+    -4050
+   ],
+   "target": [
+    3288,
+    164,
+    -3805
+   ],
+   "note": "eave of B037's front slope from 2.7 m, eye 2.5 m above the ground"
+  },
+  {
+   "name": "verge-close",
+   "eye": [
+    2850,
+    250,
+    -3700
+   ],
+   "target": [
+    3100,
+    300,
+    -3550
+   ],
+   "note": "verge of B037's west gable from 3 m"
+  },
+  {
+   "name": "huts-east",
+   "eye": [
+    5200,
+    400,
+    300
+   ],
+   "target": [
+    3600,
+    250,
+    1200
+   ],
+   "note": "huts B036 and B035 from the lane, 18 m"
+  }
+ ]
+}

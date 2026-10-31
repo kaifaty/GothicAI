@@ -10,16 +10,16 @@ static Tempest::Color toColor(zenkit::Color v) {
   return c;
   }
 
-Material::Material(const zenkit::Material& m, bool enableAlphaTest, bool requireAlphaTest)
+Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireAlphaTest)
   :alphaTestEnabled(enableAlphaTest), alphaTestRequired(enableAlphaTest && requireAlphaTest),
    sourceAlphaFunc(m.alpha_func),
    sourceMaterialGroup(m.group), sourceColorAlpha(m.color.a) {
   loadFrames(m);
 
   Resources::MaterialMaps maps;
-  if(m.group!=zenkit::MaterialGroup::WATER && !hasFrameAnimation() &&
-     m.wave_mode==zenkit::WaveMode::NONE &&
-     (m.texture_anim_map_mode==zenkit::AnimationMapping::NONE ||
+  if(m.group!=asset::MaterialGroup::WATER && !hasFrameAnimation() &&
+     m.wave_mode==asset::WaveMode::NONE &&
+     (m.texture_anim_map_mode==asset::AnimationMapping::NONE ||
       (m.texture_anim_map_dir.x==0.f && m.texture_anim_map_dir.y==0.f))) {
     maps = Resources::loadMaterialMaps(m.texture);
     // Our colour also determines alpha classification; consulting the original
@@ -46,7 +46,7 @@ Material::Material(const zenkit::Material& m, bool enableAlphaTest, bool require
     alpha = Solid;
     }
 
-  if(m.texture_anim_map_mode!=zenkit::AnimationMapping::NONE && tex!=nullptr) {
+  if(m.texture_anim_map_mode!=asset::AnimationMapping::NONE && tex!=nullptr) {
     auto texAniMapDir = m.texture_anim_map_dir;
     if(texAniMapDir.x!=0.f)
       texAniMapDirPeriod.x = int(1.f/texAniMapDir.x);
@@ -54,14 +54,14 @@ Material::Material(const zenkit::Material& m, bool enableAlphaTest, bool require
       texAniMapDirPeriod.y = int(1.f/texAniMapDir.y);
     }
 
-  if(m.wave_mode!=zenkit::WaveMode::NONE)
+  if(m.wave_mode!=asset::WaveMode::NONE)
     waveMaxAmplitude = m.wave_max_amplitude;
 
   if(m.environment_mapping!=0)
     ; // envMapping = m.environment_mapping_strength;
 
-  if(isSolid() && m.group!=zenkit::MaterialGroup::WATER &&
-     !hasFrameAnimation() && !hasUvAnimation() && m.wave_mode==zenkit::WaveMode::NONE) {
+  if(isSolid() && m.group!=asset::MaterialGroup::WATER &&
+     !hasFrameAnimation() && !hasUvAnimation() && m.wave_mode==asset::WaveMode::NONE) {
     if(!maps.present)
       maps = Resources::loadMaterialMaps(m.texture);
     normal  = maps.normal;
@@ -73,8 +73,8 @@ Material::Material(const zenkit::Material& m, bool enableAlphaTest, bool require
     }
   }
 
-Material::Material(const zenkit::VisualDecal& decal)
-  :alphaTestEnabled(true), sourceAlphaFunc(decal.alpha_func), sourceColorAlpha(decal.alpha_weight) {
+Material::Material(const asset::VisualDecal& decal)
+  :alphaTestEnabled(true), sourceAlphaFunc(static_cast<asset::AlphaFunction>(decal.alpha_func)), sourceColorAlpha(decal.alpha_weight) {
   tex = Resources::loadTexture(decal.name);
   if(tex==nullptr && !decal.name.empty())
     tex = Resources::loadTexture("DEFAULT.TGA");
@@ -85,7 +85,7 @@ Material::Material(const zenkit::VisualDecal& decal)
   alphaWeight  = float(decal.alpha_weight)/255.f;
   }
 
-Material::Material(const zenkit::IParticleEffect& src) {
+Material::Material(const Def::ParticleEffect& src) {
   tex = Resources::loadTexture(src.vis_name_s);
   loadFrames(src.vis_name_s, src.vis_tex_ani_fps);
 
@@ -154,36 +154,36 @@ bool Material::isTesselated(AlphaFunc alpha) {
   return (alpha==Material::Water);
   }
 
-Material::AlphaFunc Material::loadAlphaFunc(zenkit::AlphaFunction zenAlpha,
-                                            zenkit::MaterialGroup matGroup,
+Material::AlphaFunc Material::loadAlphaFunc(asset::AlphaFunction zenAlpha,
+                                            asset::MaterialGroup matGroup,
                                             uint8_t clrAlpha,
                                             const Tempest::Texture2d* tex,
                                             bool enableAlphaTest, bool requireAlphaTest) {
   Material::AlphaFunc alpha = Material::AlphaFunc::AlphaTest;
   switch(zenAlpha) {
-    case zenkit::AlphaFunction::BLEND:
+    case asset::AlphaFunction::BLEND:
       alpha = Material::AlphaFunc::Transparent;
       break;
-    case zenkit::AlphaFunction::ADD:
+    case asset::AlphaFunction::ADD:
       alpha = Material::AlphaFunc::AdditiveLight;
       break;
-    case zenkit::AlphaFunction::SUBTRACT:
+    case asset::AlphaFunction::SUBTRACT:
       // FIXME: no such materials in game found
       alpha = Material::AlphaFunc::AdditiveLight;
       break;
-    case zenkit::AlphaFunction::MULTIPLY:
+    case asset::AlphaFunction::MULTIPLY:
       alpha = Material::AlphaFunc::Multiply;
       break;
-    case zenkit::AlphaFunction::MULTIPLY_ALT:
+    case asset::AlphaFunction::MULTIPLY_ALT:
       alpha = Material::AlphaFunc::Multiply2;
       break;
-    case zenkit::AlphaFunction::DEFAULT:
-    case zenkit::AlphaFunction::NONE:
+    case asset::AlphaFunction::DEFAULT:
+    case asset::AlphaFunction::NONE:
       alpha = Material::AlphaFunc::AlphaTest;
       break;
     }
 
-  if(matGroup == zenkit::MaterialGroup::WATER)
+  if(matGroup == asset::MaterialGroup::WATER)
     alpha = Material::AlphaFunc::Water;
 
   if(clrAlpha!=255 && alpha==Material::AlphaFunc::Solid) {
@@ -209,7 +209,7 @@ Material::AlphaFunc Material::loadAlphaFunc(zenkit::AlphaFunction zenAlpha,
   return alpha;
   }
 
-void Material::loadFrames(const zenkit::Material& m) {
+void Material::loadFrames(const asset::Material& m) {
   loadFrames(m.texture, m.texture_anim_fps);
   }
 

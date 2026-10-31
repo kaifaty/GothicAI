@@ -85,7 +85,7 @@ def test_validation_commands_explicitly_disable_recording_and_oracle(tmp_path, t
     for split in ("train", "test"):
         with pytest.raises(ValueError, match="Only v3/v2 moving validation"):
             validation.command_sequence(args_for(tmp_path), scenario(split=split), teacher)
-    assert args_for(tmp_path).assets == Path.home() / "gothic-ai/game"
+    assert args_for(tmp_path).assets == Path.home() / "gothic-ai/game-settings"
 
 
 def measured(kind, teacher, index=0, success=True, observed=100, in_band=100, contacted=True):

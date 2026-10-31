@@ -1,7 +1,6 @@
 #pragma once
 
-#include <zenkit/ModelScript.hh>
-#include <zenkit/ModelAnimation.hh>
+#include "asset/modeltypes.h"
 
 #include <Tempest/Vec>
 #include <memory>
@@ -20,7 +19,7 @@ class Animation final {
       };
 
     struct EvTimed final {
-      zenkit::MdsEventType def = zenkit::MdsEventType::UNKNOWN;
+      asset::MdsEventType def = asset::MdsEventType::UNKNOWN;
       std::string_view     item;
       std::string_view     slot[2] = {};
       uint64_t             time    = 0;
@@ -34,12 +33,12 @@ class Animation final {
     struct EvCount final {
       uint8_t              def_opt_frame = 0;
       uint8_t              groundSounds = 0;
-      zenkit::MdsFightMode weaponCh = zenkit::MdsFightMode::INVALID;
+      asset::MdsFightMode weaponCh = asset::MdsFightMode::INVALID;
       std::vector<EvTimed> timed;
       std::vector<EvMorph> morph;
       };
 
-    struct MdsParticleEffect : zenkit::MdsParticleEffect {
+    struct MdsParticleEffect : asset::MdsParticleEffect {
       bool pfxStop = false;
       };
 
@@ -47,7 +46,7 @@ class Animation final {
       Tempest::Vec3                               translate={};
       Tempest::Vec3                               moveTr={};
 
-      std::vector<zenkit::AnimationSample>        samples;
+      std::vector<asset::AnimationSample>        samples;
       std::vector<uint32_t>                       nodeIndex;
       std::vector<Tempest::Vec3>                  tr;
       bool                                        hasMoveTr=false;
@@ -57,13 +56,13 @@ class Animation final {
       float                                       fpsRate   =60.f;
       uint32_t                                    numFrames =0;
 
-      std::vector<zenkit::MdsSoundEffectGround>   gfx;
-      std::vector<zenkit::MdsSoundEffect>         sfx;
+      std::vector<asset::MdsSoundEffectGround>   gfx;
+      std::vector<asset::MdsSoundEffect>         sfx;
       std::vector<MdsParticleEffect>              pfx;
-      std::vector<zenkit::MdsModelTag>            tag;
-      std::vector<zenkit::MdsEventTag>            events;
+      std::vector<asset::MdsModelTag>            tag;
+      std::vector<asset::MdsEventTag>            events;
 
-      std::vector<zenkit::MdsMorphAnimation>      mmStartAni;
+      std::vector<asset::MdsMorphAnimation>      mmStartAni;
 
       std::vector<uint64_t>                       defHitEnd;   // hit-end time
       std::vector<uint64_t>                       defParFrame;
@@ -75,12 +74,12 @@ class Animation final {
 
     struct Sequence final {
       Sequence()=default;
-      Sequence(const zenkit::MdsAnimation& hdr, std::string_view name);
+      Sequence(const asset::MdsAnimation& hdr, std::string_view name);
 
-      bool                                   isRotate() const { return bool(flags & zenkit::AnimationFlags::ROTATE); }
-      bool                                   isMove()   const { return bool(flags & zenkit::AnimationFlags::MOVE);   }
-      bool                                   isFly()    const { return bool(flags & zenkit::AnimationFlags::FLY);    }
-      bool                                   isIdle()   const { return bool(flags & zenkit::AnimationFlags::IDLE);   }
+      bool                                   isRotate() const { return bool(flags & asset::AnimationFlags::ROTATE); }
+      bool                                   isMove()   const { return bool(flags & asset::AnimationFlags::MOVE);   }
+      bool                                   isFly()    const { return bool(flags & asset::AnimationFlags::FLY);    }
+      bool                                   isIdle()   const { return bool(flags & asset::AnimationFlags::IDLE);   }
       bool                                   isFinished(uint64_t now, uint64_t sTime, uint16_t comboLen) const;
       float                                  atkTotalTime(uint16_t comboLen) const;
       bool                                   canInterrupt(uint64_t now, uint64_t sTime, uint16_t comboLen) const;
@@ -103,7 +102,7 @@ class Animation final {
       std::string                            name, askName;
       const char*                            shortName = nullptr;
       uint32_t                               layer     = 0;
-      zenkit::AnimationFlags                 flags     = zenkit::AnimationFlags::NONE;
+      asset::AnimationFlags                 flags     = asset::AnimationFlags::NONE;
       uint64_t                               blendIn   = 0;
       uint64_t                               blendOut  = 0;
       AnimClass                              animCls   = Transition;
@@ -117,12 +116,12 @@ class Animation final {
       std::shared_ptr<AnimData>              data;
 
       private:
-        static void                          processEvent(const zenkit::MdsEventTag& e, EvCount& ev, uint64_t time);
+        static void                          processEvent(const asset::MdsEventTag& e, EvCount& ev, uint64_t time);
         bool                                 extractFrames(uint64_t &frameA, uint64_t &frameB, bool &invert, uint64_t barrier, uint64_t sTime, uint64_t now) const;
       };
 
 
-    Animation(zenkit::ModelScript &p, std::string_view name, bool ignoreErrChunks);
+    Animation(asset::ModelScript &p, std::string_view name, bool ignoreErrChunks);
 
     const Sequence*    sequence(std::string_view name) const;
     const Sequence*    sequenceAsc(std::string_view name) const;
@@ -130,12 +129,12 @@ class Animation final {
     std::string_view   defaultMesh() const;
 
   private:
-    Sequence&          loadMAN(const zenkit::MdsAnimation& hdr, std::string_view name);
+    Sequence&          loadMAN(const asset::MdsAnimation& hdr, std::string_view name);
     void               setupIndex();
 
     mutable const Sequence*                  sqHot = nullptr;
     std::vector<Sequence>                    sequences;
-    std::vector<zenkit::MdsAnimationAlias>   ref;
+    std::vector<asset::MdsAnimationAlias>   ref;
     std::vector<std::string>                 mesh;
-    zenkit::MdsSkeleton                      meshDef;
+    asset::MdsSkeleton                      meshDef;
   };

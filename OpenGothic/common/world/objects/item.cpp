@@ -17,16 +17,16 @@ using namespace Tempest;
 
 namespace {
 
-zenkit::MaterialGroup physicsMaterial(int32_t material) {
+asset::MaterialGroup physicsMaterial(int32_t material) {
   // Script ItemMaterial values do not match the world mesh MaterialGroup enum.
   switch(material) {
-    case MAT_WOOD:    return zenkit::MaterialGroup::WOOD;
-    case MAT_STONE:   return zenkit::MaterialGroup::STONE;
-    case MAT_METAL:   return zenkit::MaterialGroup::METAL;
-    case MAT_LEATHER: return zenkit::MaterialGroup::WOOD;
-    case MAT_CLAY:    return zenkit::MaterialGroup::EARTH;
-    case MAT_GLAS:    return zenkit::MaterialGroup::STONE;
-    default:         return zenkit::MaterialGroup::UNDEFINED;
+    case MAT_WOOD:    return asset::MaterialGroup::WOOD;
+    case MAT_STONE:   return asset::MaterialGroup::STONE;
+    case MAT_METAL:   return asset::MaterialGroup::METAL;
+    case MAT_LEATHER: return asset::MaterialGroup::WOOD;
+    case MAT_CLAY:    return asset::MaterialGroup::EARTH;
+    case MAT_GLAS:    return asset::MaterialGroup::STONE;
+    default:         return asset::MaterialGroup::UNDEFINED;
     }
   }
 
@@ -230,11 +230,24 @@ void Item::setPhysicsDisable() {
   world.invalidateVobIndex();
   }
 
+bool Item::wakePhysics() {
+  const bool missing = !isDynamic();
+  if(missing) {
+    setPhysicsEnable(world);
+    if(!isDynamic())
+      return false;
+    physic.restorePhysics(transform(),true);
+    }
+  physic.retainForItemWake();
+  return missing;
+  }
+
 void Item::setPhysicsEnable(const MeshObjects::Mesh& view) {
   if(view.nodesCount()==0)
     return;
   auto& p = *world.physic();
-  physic = p.addDynamicObj(transform(),view.bounds(),physicsMaterial(hitem->material));
+  physic = p.addDynamicObj(transform(),view.bounds(),physicsMaterial(hitem->material),
+                           view.protoMesh(),hitem->visual,Gothic::physicsFlags().itemHulls);
   physic.setItem(this);
   }
 
@@ -244,7 +257,8 @@ void Item::setPhysicsEnable(const ProtoMesh* mesh) {
   auto& p = *world.physic();
   Bounds b;
   b.assign(mesh->bboxMesh);
-  physic = p.addDynamicObj(transform(),b,physicsMaterial(hitem->material));
+  physic = p.addDynamicObj(transform(),b,physicsMaterial(hitem->material),
+                           mesh,hitem->visual,Gothic::physicsFlags().itemHulls);
   physic.setItem(this);
   }
 

@@ -9,13 +9,13 @@
 #include "eval.h"
 #include "execcheck.h"
 #include "model.h"
+#include "programdata.h"
 #include "saveworld.h"
 #include "snapshot.h"
 #include "textcodec.h"
 
 #include <zenkit/DaedalusVm.hh>
 #include <zenkit/Logger.hh>
-#include <zenkit/Stream.hh>
 #include <zenkit/addon/daedalus.hh>
 #include <zenkit/vobs/Misc.hh>
 
@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
 
 using namespace storygraph;
 namespace fs = std::filesystem;
@@ -342,11 +343,14 @@ bool checkSave(const char* datPath, const Model& m, const fs::path& dir, const c
 namespace storygraph {
 
 std::unique_ptr<zenkit::DaedalusVm> loadVm(const char* datPath) {
-  zenkit::DaedalusScript script;
-  auto r = zenkit::Read::from(fs::path(datPath));
-  if(r==nullptr)
-    return nullptr;
-  script.load(r.get());
+  const fs::path file(datPath);
+  const auto index = ProgramData::readIndex(file.parent_path());
+  const auto expected = index.programs.find(file.stem().string());
+  std::string actual;
+  auto program = ProgramData::readProgram(file,&actual);
+  if(expected==index.programs.end() || actual!=expected->second)
+    throw std::runtime_error("program record identity differs from its index");
+  auto script = zenkit::DaedalusScript::from_program(std::move(program));
   zenkit::register_all_script_classes(script);
   return std::make_unique<zenkit::DaedalusVm>(std::move(script),
                                               zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);

@@ -3,7 +3,7 @@
 #include <Tempest/Painter>
 #include <Tempest/Matrix4x4>
 
-#include <zenkit/world/WayNet.hh>
+#include "asset/worldtypes.h"
 
 #include <vector>
 #include <functional>
@@ -13,10 +13,11 @@
 
 class World;
 class DbgPainter;
+class WayHeights;
 
 class WayMatrix final {
   public:
-    WayMatrix(World& owner, const zenkit::WayNet& dat);
+    WayMatrix(World& owner, const asset::WayNet& dat);
 
     const WayPoint* findWayPoint (const Tempest::Vec3& at, const std::function<bool(const WayPoint&)>& filter) const;
     const WayPoint* findFreePoint(const Tempest::Vec3& at, std::string_view name, const std::function<bool(const WayPoint&)>& filter) const;
@@ -38,6 +39,12 @@ class WayMatrix final {
     WayPath         wayTo(const WayPoint** begin, size_t beginSz, const Tempest::Vec3 exactBegin, const WayPoint& end) const;
 
   private:
+    friend struct WorldDataContract;
+    friend struct WayHeightsContract;
+    struct BuildStats {
+      size_t points = 0, hits = 0, misses = 0;
+      double keyMs = 0, adjustMs = 0, indexMs = 0, laddersMs = 0, totalMs = 0, writeMs = 0;
+      } stats;
     struct WayEdge {
       size_t a = 0;
       size_t b = 0;
@@ -70,7 +77,7 @@ class WayMatrix final {
     mutable uint16_t                      pathGen=0;
     mutable std::vector<const WayPoint*>  stk[2];
 
-    void                   adjustWaypoints(std::vector<WayPoint> &wp);
+    void                   adjustWaypoints(std::vector<WayPoint>& wp, WayHeights& heights);
     void                   calculateLadderPoints();
 
     const FpIndex&         findFpIndex(std::string_view name) const;

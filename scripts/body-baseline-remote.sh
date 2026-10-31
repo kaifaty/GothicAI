@@ -42,7 +42,8 @@ free_kib=$(df -Pk "$task_root" | awk 'NR==2 {print $4}')
 REMOTE_SCRIPT
   rsync -a --exclude=build/ --exclude=.git/ --exclude=.DS_Store --exclude='*.o' --exclude='*.a' \
     "$ROOT/OpenGothic/" "$HOST:$REMOTE/source/OpenGothic/"
-  rsync -a "$ROOT/scripts/body-baseline-toolchain.sh" "$ROOT/scripts/body-baseline-remote.sh" \
+  rsync -a --exclude=build/ --exclude=__pycache__/ "$ROOT/scripts/convert" "$HOST:$REMOTE/source/scripts/"
+  rsync -a "$ROOT/scripts/body-baseline-toolchain.sh" "$ROOT/scripts/body-baseline-remote.sh" "$ROOT/scripts/base-ensure.sh" \
     "$ROOT/scripts/body_baseline_report.py" \
     "$HOST:$REMOTE/source/scripts/"
   rsync -a "$ROOT/scripts/bench/body-melee.bench" "$HOST:$REMOTE/source/scripts/bench/"
@@ -148,6 +149,9 @@ cp "$task_root/reference/save_slot_1.sav" "$out/run/save_slot_1.sav"
 # Keep the pre-headless binary and instrumented source even after later builds replace the checkout.
 mkdir -p "$out/reference"
 cp "$binary" "$out/reference/Gothic2Notr"
+if [[ -x "$(dirname "$binary")/content-convert" ]]; then
+  cp "$(dirname "$binary")/content-convert" "$out/reference/"
+fi
 [[ ! -f "$task_root/reference/source.patch" ]] || cp "$task_root/reference/source.patch" "$out/source.patch"
 suite_source="$task_root/source"
 source_provenance="$task_root/reference"
@@ -273,6 +277,8 @@ else
   --setenv="ASAN_OPTIONS=abort_on_error=0:halt_on_error=1:detect_leaks=0:exitcode=86:allow_addr2line=1:log_path=$out/asan")
 fi
 GQ_JOB_ID_FILE="$out/gq-job-id" "${launch[@]}" \
+  bash -ec 'GAME_BIN="$1" bash "$2" "$3"; shift 3; exec "$@"' bash \
+  "$out/reference/Gothic2Notr" "$suite_source/scripts/base-ensure.sh" "$task_root/assets" \
   /usr/bin/time -v -o "$out/resources.txt" \
   /usr/bin/xvfb-run -a -s '-screen 0 640x480x24' "$out/reference/Gothic2Notr" \
   -g "$task_root/assets" -g2 -window -devmode -save 1 > "$out/launcher.log" 2>&1 &

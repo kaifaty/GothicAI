@@ -14,17 +14,20 @@ import {
 import './fonts';
 import {BrandSting, STING_FRAMES} from './Brand';
 import {Captions} from './parts/Captions';
+import {Carry} from './parts/Carry';
 import {BarsView, DotsView, FormulaView, StatsView} from './parts/Cards';
 import {BigView, CellsView, LineView, TableView} from './parts/WideCards';
 import {ConeView, FlowView, GridView, RaysView, TicksView} from './parts/WideDiagrams';
 import {DiceChart} from './parts/DiceChart';
 import {CombatOverlay} from './parts/CombatOverlay';
 import {sourceFrame, zoomScale, type Viewport} from './parts/followMath';
+import {enterStyle, exitStyle, flashOpacity, type TransitionType} from './parts/motion';
+import {holdPush} from './parts/timing';
 import {Sight} from './parts/Sight';
 import {Tags} from './parts/Tags';
 import {Hook, Texts} from './parts/Texts';
 import type {Beat, Plan} from './schema';
-import {COLOR, FONT, OUTLINE, WIDE_SAFE} from './theme';
+import {COLOR, FONT, OUTLINE, SAFE, WIDE_SAFE} from './theme';
 
 // the voice speaks in these spans (seconds of the short): the game ducks under them
 type Spans = [number, number][];
@@ -95,8 +98,11 @@ const HalfLabel: React.FC<{text: string; top: number; color: string; left?: numb
   </div>
 );
 
-const BeatView: React.FC<{beat: Beat; start: number; spans: Spans; duck: number; game: number; stem?: Plan['stem']}> = ({
+const BeatView: React.FC<{
+  beat: Beat; next?: Beat; start: number; spans: Spans; duck: number; game: number; stem?: Plan['stem'];
+}> = ({
   beat,
+  next,
   start,
   spans,
   duck,
@@ -105,8 +111,9 @@ const BeatView: React.FC<{beat: Beat; start: number; spans: Spans; duck: number;
 }) => {
   const {fps, width, height} = useVideoConfig();
   const wide = width > height;
+  // past its end the beat only lies under the next one's transition: silent, so the stems keep their edges
   const volume = (f: number) =>
-    stem ? (stem === 'game' ? beat.game : 0) : game * beat.game * ducked(start + f / fps, spans, duck);
+    f / fps >= beat.dur ? 0 : stem ? (stem === 'game' ? beat.game : 0) : game * beat.game * ducked(start + f / fps, spans, duck);
   let body: React.ReactNode = null;
   const split = beat.kind === 'split';
   const viewport: Viewport = {left: 0, top: 0,
@@ -175,12 +182,53 @@ const BeatView: React.FC<{beat: Beat; start: number; spans: Spans; duck: number;
         <CombatOverlay follow={beat.followBottom} hp={beat.hpBottom} from={beat.fromBottom} beat={beat} viewport={bottomViewport}
           insetTop={beat.labels ? (wide ? 122 : 106) : 32} />
       )}
-      <Sight strokes={beat.strokes} fans={beat.fans} />
-      <Tags tags={beat.tags} />
+      <Sight strokes={beat.strokes} fans={beat.fans} paths={beat.paths} scope={beat.id.replace(/[^\w-]/g, '_')} />
+      <Tags tags={beat.tags} carried={next?.carry && !Array.isArray(next.carry.from)
+        ? {...next.carry.from, at: beat.dur} : undefined} />
       <Texts texts={beat.texts} />
     </AbsoluteFill>
   );
 };
+
+// a beat in its transitions: coming in over the one before (its `enter`), going out under the next one's
+const Moving: React.FC<{beat: Beat; next?: Beat; children: React.ReactNode}> = ({beat, next, children}) => {
+  const {fps, width, height} = useVideoConfig();
+  const wide = width > height;
+  const t = useCurrentFrame() / fps;
+  let style: React.CSSProperties = {};
+  let flash = 0;
+  if (beat.enter && t < beat.enter.dur) {
+    const p = t / beat.enter.dur;
+    if (beat.enter.type === 'flash') flash = flashOpacity(p);
+    else style = enterStyle(beat.enter.type, p, wide);
+  } else if (next?.enter && t >= beat.dur) {
+    style = exitStyle(next.enter.type as TransitionType, (t - beat.dur) / next.enter.dur, wide);
+  }
+  return (
+    <AbsoluteFill style={style}>
+      {children}
+      {flash > 0 && <AbsoluteFill style={{background: '#fff', opacity: flash}} />}
+    </AbsoluteFill>
+  );
+};
+
+// a held picture pushing in slowly (holdPush): the whole beat with its pins, lines, texts and carry, about the
+// centre of the safe area (where a card is composed), so everything on it stays on its target; the captions and
+// the hook stay still above it. Chrome keeps text sharp by stepping it a whole pixel at a time (about every 0.6 s
+// at full size); `will-change: transform` makes the move smooth but blurs text by a third, so it is not used
+const Push: React.FC<{beat: Beat; children: React.ReactNode}> = ({beat, children}) => {
+  const {fps, width, height} = useVideoConfig();
+  const safe = width > height ? WIDE_SAFE : SAFE;
+  const push = holdPush(beat);
+  const t = useCurrentFrame() / fps;
+  if (!push) return <>{children}</>;
+  const s = interpolate(t, [push.at, push.at + push.dur], [1, push.scale], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const origin = `${(safe.left + width - safe.right) / 2}px ${(safe.top + height - safe.bottom) / 2}px`;
+  return <AbsoluteFill style={{transform: `scale(${s})`, transformOrigin: origin}}>{children}</AbsoluteFill>;
+};
+
+// how long a beat lies under the next one: the next one's transition, except a flash (a hard cut)
+const tail = (next?: Beat) => (next?.enter && next.enter.type !== 'flash' ? next.enter.dur : 0);
 
 // the music bed: under the beats, fading in and out, lower while the voice speaks (slow ramps)
 const Music: React.FC<{music: NonNullable<Plan['music']>; spans: Spans; frames: number; stem?: boolean}> = ({
@@ -210,13 +258,26 @@ export const Explainer: React.FC<Plan> = (plan) => {
   return (
     <AbsoluteFill style={{background: '#000'}}>
       <Sequence durationInFrames={contentFrames} layout="none" name="beats">
-        {plan.beats.map((beat) => {
+        {plan.beats.map((beat, i) => {
           const from = Math.round(t * fps);
           const start = t;
           t += beat.dur;
+          const next = plan.beats[i + 1];
           return (
-            <Sequence key={beat.id} from={from} durationInFrames={Math.round(t * fps) - from} name={beat.id}>
-              <BeatView beat={beat} start={start} spans={spans} duck={plan.duck} game={plan.gameVolume} stem={plan.stem} />
+            <Sequence key={beat.id} from={from} durationInFrames={Math.round((t + tail(next)) * fps) - from} name={beat.id}>
+              <Moving beat={beat} next={next}>
+                <Push beat={beat}>
+                  <BeatView beat={beat} next={next} start={start} spans={spans} duck={plan.duck} game={plan.gameVolume} stem={plan.stem} />
+                </Push>
+              </Moving>
+              {beat.carry && i > 0 && (
+                // over the beat's own entrance, so it does not move with the frame coming in; out with the beat
+                <Moving beat={{...beat, enter: undefined}} next={next}>
+                  <Push beat={beat}>
+                    <Carry beat={beat} prev={plan.beats[i - 1]} />
+                  </Push>
+                </Moving>
+              )}
             </Sequence>
           );
         })}

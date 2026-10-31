@@ -22,7 +22,9 @@ from gothic_ai.protocol import (
     BeastCmd,
     BeastEvent,
     Beasts,
+    BodyPolicy,
     Chest,
+    CombatHit,
     DebugCmd,
     GraphPatchCmd,
     HeroDeed,
@@ -48,11 +50,31 @@ from gothic_ai.protocol import (
     StoryNpcCmd,
     StoryProgramCmd,
     StoryStateCmd,
+    SvmLine,
+    SvmModeCmd,
     ThreatControlCmd,
     TriggerFired,
     parse_game_message,
 )
 from tests.fake_game import FakeGame
+
+
+@pytest.mark.parametrize("counters", [{}, {
+    "selected_actions": {"continue": 2, "wait_200": 3},
+    "accepted_actions": {"wait_200": 3}, "hidden_reset": 1,
+}])
+def test_body_policy_optional_interval_counters(counters):
+    msg = parse_game_message(_json({
+        "type": "body_policy", "session_epoch": 1, "world_epoch": 2, "entity_id": 3,
+        "control_generation": 4, "goal_version": 5, "target_entity_id": 6,
+        "t_game_ms": 1000, "t_wall_ms": 2000, "decisions": 3, "fallbacks": {},
+        "steps": 20, "p50_us": 50, "p99_us": 100, "final": False, "reason": "",
+        "future_counter": 7, **counters,
+    }))
+    assert isinstance(msg, BodyPolicy)
+    assert msg.selected_actions == counters.get("selected_actions", {})
+    assert msg.accepted_actions == counters.get("accepted_actions", {})
+    assert msg.hidden_reset == counters.get("hidden_reset", 0)
 
 
 def test_parses_snapshot_from_game():
@@ -80,6 +102,29 @@ def test_action_result_ok_only_when_done():
 def test_unknown_message_type_is_rejected():
     with pytest.raises(ValidationError):
         parse_game_message('{"type":"nope"}')
+
+
+@pytest.mark.parametrize("kind", ["melee", "ranged", "spell"])
+def test_v51_combat_hit_reports_actual_health_loss(kind):
+    msg = parse_game_message(_json({
+        "type": "combat_hit", "npc": "X", "by": "PLAYER", "damage": 7,
+        "hp": 23, "hp_max": 100, "down": False, "dead": False, "kind": kind,
+    }))
+    assert isinstance(msg, CombatHit)
+    assert (msg.npc, msg.by, msg.damage, msg.hp, msg.hp_max, msg.kind) == ("X", "PLAYER", 7, 23, 100, kind)
+
+
+def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
+    assert PROTOCOL_VERSION == 54
+    msg = parse_game_message(_json({
+        "type": "svm_line", "id": "svm-1", "npc": "X", "svm": "$KILLENEMY",
+        "text": "Ещё одним монстром меньше.", "target": "WOLF", "overlay": True,
+    }))
+    assert isinstance(msg, SvmLine)
+    assert (msg.id, msg.npc, msg.svm, msg.text, msg.target, msg.overlay) == (
+        "svm-1", "X", "$KILLENEMY", "Ещё одним монстром меньше.", "WOLF", True,
+    )
+    assert json.loads(SvmModeCmd(replace=True).to_json()) == {"type": "svm_mode", "replace": True}
 
 
 def test_hero_deed_retains_ownership_ids_and_engine_witnesses():

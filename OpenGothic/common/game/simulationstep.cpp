@@ -48,7 +48,7 @@ void SimulationStep::observerCamera(uint64_t dt) {
   if(player!=nullptr && !camera->isCutscene() && !camera->isFree()) {
     camera->setAimAnchor(player->position());
     auto spin = camera->spin();
-    if(player->interactive()==nullptr && !player->isDown())
+    if(player->interactive()==nullptr && !player->isDown() && !player->isMeleeKnockedDown())
       spin.y = player->rotation();
     if(player->isDive() && !camera->isMarvin())
       spin.x = -player->rotationY();
@@ -68,6 +68,8 @@ void SimulationStep::observerCamera(uint64_t dt) {
           mode = Camera::Mobsi;
         else if(player->isDead())
           mode = Camera::Death;
+        else if(player->isMeleeKnockedDown())
+          mode = Camera::Normal;
         else if(player->isDive())
           mode = Camera::Dive;
         else if(player->isSwim())

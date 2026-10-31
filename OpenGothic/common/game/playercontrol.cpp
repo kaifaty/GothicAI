@@ -104,8 +104,18 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
 
   if(w!=nullptr && w->isCutsceneLock())
     return;
+  if(pl!=nullptr && pl->isMeleeKnockedDown() && (c==nullptr || !c->isFree())) {
+    clearInput();
+    return;
+    }
 
   handleMovementAction(KeyCodec::ActionMapping{a,mapping}, true);
+  if(pl!=nullptr && (a==Action::Forward || a==Action::Back || a==Action::Left || a==Action::Right ||
+                    a==Action::RotateL || a==Action::RotateR || a==Action::Jump ||
+                    a==Action::ActionGeneric || a==Action::ActionLeft || a==Action::ActionRight ||
+                    a==Action::Parade || a==Action::Weapon || a==Action::WeaponMele ||
+                    a==Action::WeaponBow || (a>=Action::WeaponMage3 && a<=Action::WeaponMage10)))
+    pl->setPlayerPose(false);
 
   if(pl!=nullptr && !pl->spellFrozen() && pl->interactive()!=nullptr && c!=nullptr && !c->isFree()) {
     auto inter = pl->interactive();
@@ -266,6 +276,10 @@ void PlayerControl::onKeyReleased(KeyCodec::Action a, KeyCodec::Mapping mapping)
 
   auto w  = Gothic::inst().world();
   auto pl = w ? w->player() : nullptr;
+  if(pl!=nullptr && pl->isMeleeKnockedDown()) {
+    clearInput();
+    return;
+    }
 
   if(a==KeyCodec::Map && pl!=nullptr) {
     w->script().playerHotKeyScreenMap(*pl);
@@ -308,6 +322,11 @@ bool PlayerControl::isPressed(KeyCodec::Action a) const {
   }
 
 void PlayerControl::onRotateMouse(float dAngleX, float dAngleY) {
+  if(dAngleX!=0.f) {
+    if(auto* w = Gothic::inst().world())
+      if(auto* pl = w->player())
+        pl->setPlayerPose(false);
+    }
   rotMouse  += dAngleX;
   rotMouseY += dAngleY;
   }
@@ -342,6 +361,11 @@ void PlayerControl::drawVobRay(DbgPainter& p) const {
   }
 
 void PlayerControl::tickFocus() {
+  auto w = Gothic::inst().world();
+  if(auto pl = w!=nullptr ? w->player() : nullptr; pl!=nullptr && pl->isMeleeKnockedDown()) {
+    clearFocus();
+    return;
+    }
   if(manualAiming) {
     // aiming by hand: the focus is under the crosshair
     auto w = Gothic::inst().world();
@@ -402,7 +426,7 @@ bool PlayerControl::interact(Interactive &it) {
   if(w==nullptr || w->player()==nullptr)
     return false;
   auto pl = w->player();
-  if(w->player()->isDown())
+  if(pl->isDown() || pl->isMeleeKnockedDown())
     return true;
   if(!canInteract())
     return false;
@@ -422,10 +446,12 @@ bool PlayerControl::interact(Npc &other) {
   if(w==nullptr || w->player()==nullptr)
     return false;
   auto pl = w->player();
-  if(pl->isDown())
+  if(pl->isDown() || pl->isMeleeKnockedDown())
     return true;
   if(!canInteract())
     return false;
+  if(other.isMeleeKnockedDown())
+    return true;
   auto state = pl->bodyStateMasked();
   if(other.isDown()) {
     if(state!=BS_STAND && state!=BS_SNEAK && state!=BS_SWIM && state!=BS_DIVE)
@@ -449,7 +475,7 @@ bool PlayerControl::interact(Item &item) {
   auto pl = w->player();
   if(item.isTorchBurn() && pl->isUsingTorch())
     return false;
-  if(pl->isDown())
+  if(pl->isDown() || pl->isMeleeKnockedDown())
     return true;
   if(!canInteract())
     return false;
@@ -521,7 +547,7 @@ bool PlayerControl::canInteract() const {
   if(w==nullptr || w->player()==nullptr)
     return false;
   auto pl = w->player();
-  if(pl->spellFrozen() || pl->weaponState()!=WeaponState::NoWeapon || pl->isAiBusy())
+  if(pl->spellFrozen() || pl->isMeleeKnockedDown() || pl->weaponState()!=WeaponState::NoWeapon || pl->isAiBusy())
     return false;
   return true;
   }
@@ -594,7 +620,7 @@ Focus PlayerControl::findFocus(const Focus* prev) const {
   auto c = Gothic::inst().camera();
   if(w==nullptr)
     return Focus();
-  if(w->player()!=nullptr && w->player()->isDown())
+  if(w->player()!=nullptr && (w->player()->isDown() || w->player()->isMeleeKnockedDown()))
     return Focus();
   if(c!=nullptr && c->isCutscene())
     return Focus();
@@ -666,11 +692,29 @@ bool PlayerControl::tickMove(uint64_t dt) {
   if(pl==nullptr)
     return true;
 
+  if(pl->isMeleeKnockedDown()) {
+    clearInput();
+    rotMouse = rotMouseY = 0;
+    runAngleDest = 0;
+    if(manualAiming || pl->hasManualAim() || pl->archer().isRaised())
+      endManualAim(*pl);
+    manualAiming = false;
+    return true;
+    }
+
   if(pl->spellFrozen()) {
     // Input must not move an attached actor or change root lean outside Npc::tick.
     // Explicit Marvin teleports above already leave the scripted state first.
     clearInput();
     rotMouse = rotMouseY = 0;
+    runAngleDest = 0;
+    return true;
+    }
+
+  if(movement.forwardBackward.any() || movement.strafeRightLeft.any() || movement.turnRightLeft.any() ||
+     ctrl[Action::ActionGeneric] || ctrl[Action::Jump])
+    pl->setPlayerPose(false);
+  if(pl->tickPlayerPose()) {
     runAngleDest = 0;
     return true;
     }

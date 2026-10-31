@@ -4,8 +4,10 @@ import asyncio
 import logging
 import time
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
+from .. import triggers
 from ..bodies import Bodies
 from ..brain import Decider, NpcPlanner
 from ..brain.reflex import Reflexes
@@ -29,6 +31,7 @@ from ..protocol import (
     LineStarted,
     NpcActResult,
     NpcActType,
+    NpcDied,
     NpcEvent,
     NpcIdle,
     NpcRoster,
@@ -38,6 +41,7 @@ from ..protocol import (
     SayCmd,
     Session,
     Snapshot,
+    SvmLine,
     ThreatControlCmd,
 )
 from ..talk import TalkDesk
@@ -54,6 +58,7 @@ from .common import (
     _until,
     _until_async,
     attach_when_free,
+    prepare_npc_pose,
     wait_message,
 )
 from .responses_server import ResponsesServer, reply
@@ -561,6 +566,254 @@ async def m4_planner_bridge(
     for name, outcome in results.items():
         log.info("%-20s %s", name, outcome)
     return results
+
+
+async def _svm_kill_event(
+    link: GameLink, dialogue: DialogueManager, *, log_dir: Path
+) -> dict[str, str]:
+    """A free companion kills a tagged beast through the game's own combat state."""
+    npc, beast, tag = "BAU_4300_ADDON_CAVALORN", "SCAVENGER", "svm_native_kill"
+    arena = "NW_FARM1_FIELD_06"
+    messages: list[GameMessage] = []
+    starts: dict[str, bool] = {}
+    arrivals: dict[str, float] = {}
+    voice_starts: dict[str, float] = {}
+
+    def record(message: GameMessage) -> None:
+        messages.append(message)
+        if isinstance(message, SvmLine) and message.npc == npc:
+            arrivals[message.id] = time.monotonic()
+        elif isinstance(message, LineStarted) and message.npc == npc:
+            starts[message.line] = message.voiced
+            voice_starts[message.line] = time.monotonic()
+
+    def trace(event_id: str) -> dict[str, Any] | None:
+        if dialogue.trace is None or not dialogue.trace.path().exists():
+            return None
+        return next((row for row in read_trace(dialogue.trace.path())
+                     if row.get("type") == "svm_line" and row.get("id") == event_id), None)
+
+    def kill_svm() -> SvmLine | None:
+        killed = False
+        for message in messages:
+            if isinstance(message, NpcDied) and message.tag == tag and message.killer == npc:
+                killed = True
+            elif killed and isinstance(message, SvmLine) and message.npc == npc:
+                return message
+        return None
+
+    async def health(value: int, trigger_id: str) -> bool:
+        field = ["field", ["inst", beast], "ATTRIBUTE", 0]
+        steps = [
+            {"do": "set", "target": ["field", ["inst", beast], "ATTRIBUTE", 1],
+             "value": ["int", value]},
+            {"do": "set", "target": field, "value": ["int", value]},
+        ]
+        await link.patch_graph([triggers.trigger(trigger_id, triggers.STATE, steps)])
+        try:
+            return await _until_async(lambda: link.story_eval(npc, [field]),
+                                      lambda values: values == [value] or
+                                      (value == 5 and values == [0]), 5)
+        finally:
+            await link.patch_graph([triggers.removal(trigger_id)])
+
+    await link.debug("skip_important", near=npc)
+    await link.debug("player_goto", waypoint=arena)
+    ready, detail = await prepare_npc_pose(
+        link, npc, arena, require_perception_ready=False,
+    )
+    if not ready:
+        return {"native_event_ready": f"failed ({detail})"}
+    await link.debug("teleport", near=npc, distance=900)
+    await link.story_effect(npc, [{"do": "party", "value": 1}])
+    lines_before = set(dialogue._lines)
+    game_log = log_dir / "game.log"
+    native_before = game_log.read_text(encoding="utf-8", errors="replace").count(
+        f"[ai] native svm {npc} "
+    )
+    link.listeners.insert(0, record)
+    try:
+        spawned = await link.story_spawn(beast, tag=tag, near=npc, distance=350)
+        # Keep this one beast alive through the native opening shout and its speech cooldown.
+        if spawned != 1 or not await health(100000, "DIR_SVM_BEAST_HEALTH"):
+            return {"native_event_ready": "failed (beast health preparation failed)"}
+        prepared = await link.snapshot(npc, fresh=True)
+        log.info("svm native kill preparation: npc=%s target=%s spawned=%d party=%s "
+                 "npc_hp=%s state=%s hero_cm=%s target_view=%s", npc, beast, spawned,
+                 link.party.get(npc), prepared.npc.hp,
+                 detail.get("view", {}).get("state"),
+                 prepared.player.distance if prepared.player else None,
+                 [other.model_dump() for other in prepared.nearby_npcs if other.id == beast])
+        if prepared.player is None or prepared.player.distance > 3000:
+            return {"native_event_ready": "failed (beast or nearby hero unavailable)"}
+        # No attach, scripted output or debug kill: ZS_ATTACK chooses and lands the lethal hit.
+        # This is the native reason for defending a human from a beast. The guild-enemy
+        # reason randomly suppresses a party member's victory line in B_Say_AttackEnd.
+        await link.npc_act(npc, "fight", npc=beast, reason="AR_MONSTERVSHUMAN")
+        await asyncio.sleep(8)
+
+        def quiet() -> bool:
+            conv = dialogue.conversations.get(npc)
+            return not dialogue._svm_busy(npc) and (conv is None or not conv.svm_pending)
+
+        if not await _until(quiet, 8) or not await health(5, "DIR_SVM_BEAST_FINISH"):
+            return {"native_event_ready": "failed (opening shout has not settled or beast unavailable)"}
+        log.info("svm native kill ready: npc=%s target=%s hp=5 reason=AR_MONSTERVSHUMAN "
+                 "party=%s native_combat=true", npc, beast, link.party.get(npc))
+        killed = await _until(lambda: any(isinstance(msg, NpcDied) and msg.tag == tag
+                                        and msg.killer == npc for msg in messages), 35)
+        results = {"native_event_kill": f"{'done' if killed else 'failed'} "
+                   f"(tag={tag}, killer={npc}, events="
+                   f"{[msg.model_dump() for msg in messages if isinstance(msg, NpcDied)]})"}
+        if not killed:
+            return results
+        intercepted = await _until(lambda: kill_svm() is not None, 8)
+        if not intercepted:
+            results["native_event_svm"] = "failed (native kill produced no svm_line within 8s)"
+            return results
+        event = kill_svm()
+        assert event is not None
+        if not await _until(lambda: trace(event.id) is not None, 8):
+            results["native_event_svm"] = f"failed ({event.svm}, no trace within 8s)"
+            return results
+        row = trace(event.id)
+        assert row is not None
+        answer = row.get("answer", "")
+        line = next((line for line in dialogue._lines.keys() - lines_before
+                     if dialogue._lines[line][0] == answer), None)
+        voiced = line is not None and await _until(lambda: line in starts, 8) and starts[line]
+        logged = game_log.read_text(encoding="utf-8", errors="replace")
+        native = logged.count(f"[ai] native svm {npc} ") - native_before
+        ok = row["outcome"] == "said" and voiced and f"[ai] voice {line} starts" in logged and native == 0
+        game_voice_ms = (voice_starts[line] - arrivals[event.id]) * 1000 if voiced else None
+        results["native_event_svm"] = (
+            f"{'done' if ok else 'failed'} ({event.svm}: {event.text!r} -> {answer!r}; "
+            f"outcome={row['outcome']}, first_phrase_ms={row.get('first_phrase_ms')}, "
+            f"voice_ms={row.get('voice_ms')}, game_voice_ms={game_voice_ms}, "
+            f"line={line}, voiced={bool(voiced)}, native={native})"
+        )
+        return results
+    finally:
+        link.listeners.remove(record)
+
+
+async def svm_lines(
+    link: GameLink, dialogue: DialogueManager, *, log_dir: Path
+) -> dict[str, str]:
+    """Hear ten live quick-model SVM lines, or the native line after the model goes away."""
+    npc = "NONE_100_XARDAS"
+    await link.wait_world()
+    await link.debug("skip_important", near=npc)
+    await attach_when_free(link, npc)
+    await link.debug("player_goto", to=npc, distance=250)
+    events: list[SvmLine] = []
+    starts: dict[str, bool] = {}
+
+    def record(message: GameMessage) -> None:
+        if isinstance(message, SvmLine) and message.npc == npc:
+            events.append(message)
+        elif isinstance(message, LineStarted) and message.npc == npc:
+            starts[message.line] = message.voiced
+
+    results: dict[str, str] = {}
+
+    def game_log() -> str:
+        return (log_dir / "game.log").read_text(encoding="utf-8", errors="replace")
+
+    def trace(event_id: str) -> dict[str, Any] | None:
+        if dialogue.trace is None or not dialogue.trace.path().exists():
+            return None
+        return next(
+            (row for row in read_trace(dialogue.trace.path())
+             if row.get("type") == "svm_line" and row.get("id") == event_id),
+            None,
+        )
+
+    async def native_line() -> None:
+        before = len(events)
+        native_before = game_log().count(f"[ai] native svm {npc} $NOTNOW ")
+        action = await link.act(npc, "say_svm", svm="$NOTNOW", overlay=False, npc="PLAYER")
+        following = await link.act(npc, "wait", ms=1)
+        native_after = game_log().count(f"[ai] native svm {npc} $NOTNOW ")
+        replace = dialogue.svm_lines and dialogue.quick is not None and dialogue._svm_available
+        ok = (not replace and action.status == following.status == "done" and len(events) == before
+              and native_after == native_before + 1)
+        results["native_fallback"] = (
+            f"{'done' if ok else 'failed'} (replace={str(replace).lower()}, "
+            f"native={native_after - native_before}, "
+            f"svm_line={len(events) - before}, action={action.status}, next={following.status})"
+        )
+
+    link.listeners.insert(0, record)
+    try:
+        await link.act(npc, "turn_to", npc="PLAYER")
+        await asyncio.sleep(3.1)
+        if not dialogue.svm_lines or dialogue.quick is None or not dialogue._svm_available:
+            await native_line()
+            return _logged(results)
+
+        svms = (
+            "NOTNOW", "GETOUTOFHERE", "WEAPONDOWN", "DIRTYTHIEF", "STOPMAGIC", "NOTBAD",
+            "NEVERHITMEAGAIN", "HELP", "OHMYGODITSAFIGHT", "GOODMONSTERKILL", "WHATWASTHAT",
+        )
+        said = errors = late = 0
+        for index in range(2 * len(svms)):
+            svm = f"${svms[index % len(svms)]}"
+            overlay = index % 2 == 0
+            before, lines_before = len(events), set(dialogue._lines)
+            native_before = game_log().count(f"[ai] native svm {npc} ")
+            action = await link.act(npc, "say_svm", svm=svm, overlay=overlay, npc="PLAYER")
+            if not await _until(lambda before=before: len(events) > before, 3):
+                results["intercept"] = f"failed ({svm}, action={action.status}, no svm_line)"
+                break
+            event = events[before]
+            valid = (event.svm == svm and bool(event.text) and event.target == "PC_HERO"
+                     and event.overlay == overlay)
+            if not valid or not await _until(lambda event=event: trace(event.id) is not None, 8):
+                results["trace"] = f"failed ({event.id}, valid={valid}, no result within 8s)"
+                break
+            row = trace(event.id)
+            assert row is not None
+            outcome, answer = row["outcome"], row.get("answer", "")
+            errors = errors + 1 if outcome == "error" else 0
+            late = late + 1 if outcome == "late" else 0
+            log.info("svm sample %s: %r -> %r (%s, %.1f ms)",
+                     event.id, event.text, answer, outcome, row["elapsed_ms"])
+            if late == 2:
+                results["deadline"] = "failed (two consecutive late SVM requests; stop)"
+                break
+            if not dialogue._svm_available:
+                results["model_errors"] = f"done ({errors} scenario errors, replacement disabled)"
+                await asyncio.sleep(0.2)
+                await native_line()
+                break
+            if outcome == "said":
+                line = next((line for line in dialogue._lines.keys() - lines_before
+                             if dialogue._lines[line][0] == answer), None)
+                voiced = line is not None and await _until(lambda line=line: line in starts, 8)
+                if voiced:
+                    voiced = starts[line]
+                played = voiced and f"[ai] voice {line} starts" in game_log()
+                native_after = game_log().count(f"[ai] native svm {npc} ")
+                ok = bool(played and native_after == native_before)
+                said += 1
+                results[f"gemma_{said:02}"] = (
+                    f"{'done' if ok else 'failed'} ({event.text!r} -> {answer!r}; "
+                    f"first_phrase_ms={row['first_phrase_ms']:.1f}, voice_ms={row['voice_ms']:.1f}, "
+                    f"line={line}, voiced={bool(voiced)}, native={native_after - native_before})"
+                )
+                if not ok or said == 10:
+                    break
+            # Do not make the next SVM compete with this NPC's last words or overlay voice.
+            await asyncio.sleep(4)
+        if "native_fallback" not in results:
+            results["samples"] = f"{'done' if said == 10 else 'failed'} ({said}/10 live Gemma lines)"
+            if said == 10:
+                results.update(await _svm_kill_event(link, dialogue, log_dir=log_dir))
+        return _logged(results)
+    finally:
+        link.listeners.remove(record)
+        await link.act(npc, "return_to_routine")
 
 
 async def m5_turn_loop(

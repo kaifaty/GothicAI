@@ -275,6 +275,8 @@ async def run(args) -> dict[str, Any]:
     existing = subprocess.run(["pgrep", "-fl", "Gothic2Notr"], text=True, capture_output=True)
     if existing.returncode == 0:
         raise RuntimeError(f"another game already owns the machine; wait for it:\n{existing.stdout.strip()}")
+    subprocess.run(["bash", str(Path(__file__).with_name("base-ensure.sh")), str(args.gothic_dir)],
+                   env=dict(os.environ, GAME_BIN=str(args.game_bin)), check=True)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     cases = ([f"trial-{i + 1}" for i in range(args.trials)] if "trials" in args.cases else [])

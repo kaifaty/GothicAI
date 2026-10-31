@@ -35,14 +35,14 @@ class PfxObjects final {
 
   private:
     struct SpriteEmitter {
-      zenkit::SpriteAlignment     visualCamAlign = zenkit::SpriteAlignment::NONE;
+      asset::SpriteAlignment     visualCamAlign = asset::SpriteAlignment::NONE;
       int32_t                     zBias          = 0;
       Tempest::Vec2               decalDim = {};
       std::unique_ptr<ParticleFx> pfx;
       };
 
     PfxBucket&                    getBucket(const ParticleFx& decl);
-    PfxBucket&                    getBucket(const Material& mat, const zenkit::VirtualObject& vob);
+    PfxBucket&                    getBucket(const Material& mat, const asset::VirtualObject& vob);
 
     WorldView&                    world;
     const SceneGlobals&           scene;

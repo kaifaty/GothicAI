@@ -64,7 +64,7 @@ namespace zenkit {
 			material.load(*mats);
 		}
 
-		if (version == VERSION_G2) {
+		if (version == 0x705 || version == 0x805 || version == VERSION_G2) {
 			this->alpha_test = r->read_byte() != 0;
 		}
 

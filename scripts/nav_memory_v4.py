@@ -58,7 +58,7 @@ def frozen_cases(task):
 def args_for(task, output, npc="BAU_954_MALETH"):
     from types import SimpleNamespace
     return SimpleNamespace(output=output, runner=task / "build/opengothic/gothic-body-runner",
-        assets=task.parent / "game", save=task / "input/save.sav", cache=task / "cache",
+        assets=Path(os.environ.get("GOTHIC_DIR", Path.home() / "gothic-ai/game-settings")), save=task / "input/save.sav", cache=task / "cache",
         links=task / "input/accepted-links.txt", roads=task / "input/places.json", ini=None,
         npc=npc, seed=22102026, physics="cv", watchdog_seconds=900, limit_ms=LIMIT_MS)
 
@@ -328,6 +328,7 @@ def main():
     parser.add_argument("--parallel", type=int, choices=(1, 2, 3), default=3)
     parser.add_argument("--budget-seconds", type=float, default=6600)
     options = parser.parse_args()
+    os.environ.update(module("ryzen_game").game_environment())
     if not options.task.is_absolute() or not 0 < options.budget_seconds <= 6900:
         parser.error("An absolute task path and a wall budget in (0,6900] seconds are required")
     options.task = options.task.resolve()

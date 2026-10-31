@@ -80,27 +80,28 @@ def load_episodes(collect_dirs, timeout_ms: int):
     """Usable episodes: no fallback of either actor, at least one decision, PPO arrays present."""
     episodes, skipped = [], {"fallback": 0, "no_decision": 0}
     for directory in collect_dirs:
-        for path in sorted(Path(directory).glob("worker-*/episodes.jsonl")):
-            for line in path.read_text().splitlines():
-                summary = json.loads(line)
-                if summary.get("fallbacks") or summary.get("opponent_fallbacks"):
-                    skipped["fallback"] += 1
-                    continue
-                npz = path.parent/f"{summary['name']}.npz"
-                if not npz.exists():
-                    skipped["no_decision"] += 1
-                    continue
-                arrays = dict(numpy.load(npz))
-                if "logp" not in arrays:
-                    raise ValueError(f"{npz} has no behaviour log-probabilities: collected before stage 9.3")
-                decisions, rewards, dts = episode_rewards(arrays, summary, timeout_ms)
-                if len(decisions) == 0:
-                    skipped["no_decision"] += 1
-                    continue
-                if summary.get("temperature") != 1.0:
-                    raise ValueError("PPO needs rollouts sampled at temperature 1")
-                episodes.append({"summary": summary, "arrays": arrays, "decisions": decisions,
-                                 "rewards": rewards, "dts": dts})
+        # Envs share one episode queue: order by episode, not by the env that happened to play it.
+        rows = sorted(((path, json.loads(line)) for path in Path(directory).glob("worker-*/episodes.jsonl")
+                       for line in path.read_text().splitlines()), key=lambda row: (row[1]["seed"], row[1]["name"]))
+        for path, summary in rows:
+            if summary.get("fallbacks") or summary.get("opponent_fallbacks"):
+                skipped["fallback"] += 1
+                continue
+            npz = path.parent/f"{summary['name']}.npz"
+            if not npz.exists():
+                skipped["no_decision"] += 1
+                continue
+            arrays = dict(numpy.load(npz))
+            if "logp" not in arrays:
+                raise ValueError(f"{npz} has no behaviour log-probabilities: collected before stage 9.3")
+            decisions, rewards, dts = episode_rewards(arrays, summary, timeout_ms)
+            if len(decisions) == 0:
+                skipped["no_decision"] += 1
+                continue
+            if summary.get("temperature") != 1.0:
+                raise ValueError("PPO needs rollouts sampled at temperature 1")
+            episodes.append({"summary": summary, "arrays": arrays, "decisions": decisions,
+                             "rewards": rewards, "dts": dts})
     return episodes, skipped
 
 

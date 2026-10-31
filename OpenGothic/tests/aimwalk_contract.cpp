@@ -3,6 +3,10 @@
 #include "graphics/mesh/footik.h"
 #include "graphics/mesh/ikmath.h"
 #include "graphics/mesh/skeleton.h"
+#include "asset/fromzenkit.h"
+
+#include <zenkit/ModelHierarchy.hh>
+#include <zenkit/ModelAnimation.hh>
 
 #include <algorithm>
 #include <array>
@@ -11,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace {
@@ -62,7 +67,7 @@ Matrix4x4 objectAt(const Vec3& origin, float yaw) {
   }
 
 zenkit::ModelHierarchy hierarchy() {
-  zenkit::ModelHierarchy result;
+  zenkit::ModelHierarchy result{};
   struct Bone final { const char* name; int16_t parent; Vec3 offset; };
   // Slightly bent knees give the solver a stable bend plane and room to settle the pelvis.
   const Bone bones[] = {
@@ -91,13 +96,13 @@ zenkit::ModelHierarchy hierarchy() {
   }
 
 struct Fixture final {
-  Skeleton skeleton{hierarchy(),nullptr,"HUMANS.MDS"};
-  std::vector<zenkit::AnimationSample> base;
+  Skeleton skeleton{asset::fromZenKit(hierarchy()),nullptr,"HUMANS.MDS"};
+  std::vector<asset::AnimationSample> base;
   Animation::Sequence sequence;
 
   Fixture() {
     for(const auto& node:skeleton.nodes) {
-      zenkit::AnimationSample sample;
+      asset::AnimationSample sample;
       sample.position = {node.tr.at(3,0),node.tr.at(3,1),node.tr.at(3,2)};
       sample.rotation = {1,0,0,0};
       base.push_back(sample);
@@ -140,6 +145,66 @@ struct Fixture final {
   };
 
 using Contacts = std::array<Vec3,2>;
+
+void testImportedHierarchyAndSamples() {
+  zenkit::ModelHierarchy source{};
+  source.nodes.resize(3);
+  const Matrix4x4 local[] = {objectAt({7,8,9},.31f),objectAt({-5,4,3},-.27f),objectAt({2,-6,1},.43f)};
+  const int16_t parents[] = {2,-1,-1};
+  for(size_t i=0;i<source.nodes.size();++i) {
+    auto& node=source.nodes[i];
+    node.name="IMPORT_NODE_"+std::to_string(i);
+    node.parent_index=parents[i];
+    std::memcpy(&node.transform,&local[i],sizeof(local[i]));
+    }
+  source.root_translation={11,-22,33};
+  source.bbox={{-40,-2,-30},{40,160,35}};
+  source.collision_bbox={{-20,0,-15},{20,150,18}};
+  const auto own=asset::fromZenKit(source);
+  require(own.nodes.size()==source.nodes.size(),"hierarchy import must retain every bone");
+  for(size_t i=0;i<source.nodes.size();++i)
+    require(own.nodes[i].name==source.nodes[i].name && own.nodes[i].parent_index==parents[i] &&
+            std::memcmp(&own.nodes[i].transform,&source.nodes[i].transform,sizeof(source.nodes[i].transform))==0,
+            "hierarchy import must preserve bone order, parents and matrix bytes");
+  require(std::memcmp(&own.bbox,&source.bbox,sizeof(source.bbox))==0 &&
+          std::memcmp(&own.collision_bbox,&source.collision_bbox,sizeof(source.collision_bbox))==0 &&
+          std::memcmp(&own.root_translation,&source.root_translation,sizeof(source.root_translation))==0,
+          "hierarchy import must preserve both bounds and root translation");
+  const Skeleton skeleton(own,nullptr,"IMPORTED.MDS");
+  require(!skeleton.ordered && skeleton.rootNodes==std::vector<size_t>({1,2}) &&
+          skeleton.nodes[0].parent==2,"runtime skeleton must retain unordered bones and multiple roots");
+  auto firstRoot=local[1],secondRoot=local[2];
+  firstRoot.translate(11,-22,33);
+  secondRoot.translate(11,-22,33);
+  const Matrix4x4 expected[]={secondRoot*local[0],firstRoot,secondRoot};
+  for(size_t i=0;i<3;++i)
+    for(int column=0;column<4;++column)
+      for(int row=0;row<4;++row)
+        near(skeleton.tr[i].at(column,row),expected[i].at(column,row),.0001f,
+             "imported skeleton must keep accumulated bind transforms and translate every root");
+
+  zenkit::ModelAnimation animation{};
+  animation.samples={{{.25f,-0.f,3.f},{1,0,0,0}},{{10,2,-4},{-1,-0.f,-0.f,-0.f}}};
+  const auto imported=asset::fromZenKit(animation);
+  require(imported.samples.size()==animation.samples.size(),"animation import must retain the sample count");
+  for(size_t i=0;i<animation.samples.size();++i)
+    require(std::memcmp(&imported.samples[i],&animation.samples[i],sizeof(animation.samples[i]))==0,
+            "animation import must preserve sample bytes, signed zero and quaternion order");
+  const auto sample=mix(imported.samples[0],imported.samples[1],.25f);
+  near(Vec3(sample.position.x,sample.position.y,sample.position.z),{2.6875f,.5f,1.25f},.000001f,
+       "imported samples must retain linear position interpolation");
+  near(sample.rotation.w,1.f,.000001f,"opposite quaternion signs must retain the shortest interpolation");
+  near(sample.rotation.x,0.f,.000001f,"imported quaternion X must retain its component");
+  near(sample.rotation.y,0.f,.000001f,"imported quaternion Y must retain its component");
+  near(sample.rotation.z,0.f,.000001f,"imported quaternion Z must retain its component");
+  const auto transformed=mkMatrix(sample);
+  auto expectedSample=Matrix4x4::mkIdentity();
+  expectedSample.translate(2.6875f,.5f,1.25f);
+  for(int column=0;column<4;++column)
+    for(int row=0;row<4;++row)
+      near(transformed.at(column,row),expectedSample.at(column,row),.000001f,
+           "imported sample matrices must retain their translation and rotation");
+  }
 
 struct Actor final {
   const Fixture& fixture;
@@ -489,6 +554,7 @@ void testSettledStanceFloor(const Fixture& fixture) {
 int main() {
   AimWalk::setEnabled(true);
   FootIk::setEnabled(true);
+  testImportedHierarchyAndSamples();
   const Fixture fixture;
   testWalkingRootMotion(fixture);
   for(float direction:{-1.f,1.f})

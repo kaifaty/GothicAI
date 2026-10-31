@@ -25,10 +25,6 @@ class CommandLine {
       };
     auto                graphicsApi() const -> GraphicBackend;
     std::u16string_view rootPath() const;
-    std::u16string      scriptPath() const;
-    std::u16string      scriptPath(ScriptLang lang) const;
-    std::u16string      cutscenePath() const;
-    std::u16string      cutscenePath(ScriptLang lang) const;
     std::u16string_view modPath() const { return gmod; }
     std::u16string      nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type) const;
 
@@ -54,12 +50,8 @@ class CommandLine {
     std::string         wrldDef;
 
   private:
-    bool                validateGothicPath() const;
-
     GraphicBackend      graphics = GraphicBackend::Vulkan;
     std::u16string      gpath, gmod;
-    std::u16string      gscript;
-    std::u16string      gcutscene;
     std::string         saveDef;
     bool                devmode      = false;
     bool                noMenu       = false;
@@ -67,14 +59,14 @@ class CommandLine {
     Benchmark           isBenchmark  = Benchmark::None;
     bool                isWindow     = false;
     bool                isDebug      = false;
-#if defined(__ANDROID__)
+    // ray tracing is off everywhere, -rt 1 turns it on: the scene rebuilt the whole TLAS
+    // whenever an object moved, 4-8 FPS indoors on an M1 (docs/performance.md, 2026-10-28)
     bool                isRQuery     = false;
+#if defined(__ANDROID__)
     bool                isMeshSh     = false;
 #elif defined(__OSX__)
-    bool                isRQuery     = true;   // shadows of point lights; works on M1 without hardware RT
     bool                isMeshSh     = false;  // slower on M1 (reports/render-features/2026-10-18)
 #else
-    bool                isRQuery     = true;
     bool                isMeshSh     = true;
 #endif
     bool                isBindlessSh = true;

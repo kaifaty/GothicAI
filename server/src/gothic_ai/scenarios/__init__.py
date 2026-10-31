@@ -11,9 +11,15 @@ from .basics import m5b_bridge as m5b_bridge
 from .basics import m5c_free_npc as m5c_free_npc
 from .basics import m5e_talk as m5e_talk
 from .basics import m6_knows as m6_knows
+from .basics import svm_lines as svm_lines
 from .basics import tts_lines as tts_lines
 from .basics import websocket as websocket
 from .cheat import cheat_scenario as cheat_scenario
+from .combat import combat_barks as combat_barks
+from .combat import hero_yield as hero_yield
+from .combat import humiliate as humiliate
+from .combat import mercy as mercy
+from .combat import surrender_live as surrender_live
 from .companions import calm_scenario as calm_scenario
 from .companions import companion_scenario as companion_scenario
 from .companions import neural_companion_scenario as neural_companion_scenario
@@ -40,6 +46,7 @@ from .deals import deal_demo as deal_demo
 from .deals import deal_window as deal_window
 from .deals import haggle as haggle
 from .deals import xardas_money as xardas_money
+from .feats import feats as feats
 from .frame import frame as frame
 from .gate import gate_scenario as gate_scenario
 from .gate import gate_vouch_scenario as gate_vouch_scenario
@@ -57,6 +64,7 @@ from .load import load_rewind as load_rewind
 from .memprobe import memprobe_scenario as memprobe_scenario
 from .neural_load import neural_load_scenario as neural_load_scenario
 from .neural_soak import neural_soak_scenario as neural_soak_scenario
+from .neural_still import neural_still_scenario as neural_still_scenario
 from .npc_deeds import npc_deeds as npc_deeds
 from .npc_director import npc_director as npc_director
 from .npc_far import npc_far as npc_far

@@ -8,8 +8,8 @@ import sys
 
 
 KINDS = (
-    "texture", "mesh", "model", "skeleton", "anim", "morph", "world",
-    "sound", "speech", "music", "script", "cutscene", "font", "video", "other",
+    "texture", "basetexture", "mesh", "basemesh", "basemodel", "model", "skeleton", "anim", "morph", "world", "worldmesh", "baseworld", "basezen",
+    "sound", "basesound", "speech", "basespeech", "music", "basemusic", "script", "baseprogram", "cutscene", "baseoutputunits", "font", "basefont", "video", "basevideo", "other",
 )
 
 
@@ -19,7 +19,7 @@ def _normalized(value):
 
 def _replacement_key(row):
     name = _normalized(row["name"])
-    if row["kind"] == "texture":
+    if row["kind"] in ("texture", "basetexture"):
         if name.endswith(".tga"):
             name = name[:-4]
         elif name.endswith(".tex"):
@@ -55,6 +55,7 @@ def summarize(documents):
     originals = set()
     original_aliases = set()
     replacements = set()
+    base = set()
     accesses = {}
     for index, document in enumerate(documents):
         validate_document(document, f"прогон {index + 1}")
@@ -67,7 +68,22 @@ def summarize(documents):
                 accesses[key] = dict(row)
             else:
                 accesses[key]["opens"] += row["opens"]
-        replacements.update(_replacement_key(row) for row in document["replacements"])
+        for row in document["replacements"]:
+            resource = _replacement_key(row)
+            if row["kind"] in ("basetexture", "basemesh", "basemodel", "basefont", "baseprogram", "baseoutputunits", "basesound", "basespeech", "basemusic", "basevideo", "baseworld", "basezen", "worldmesh"):
+                base.add(resource)
+                original_kind = "world" if resource[0] in ("basezen", "worldmesh") else resource[0].removeprefix("base")
+                if resource[0] == "baseprogram":
+                    original_kind = "script"
+                if resource[0] == "baseoutputunits":
+                    original_kind = "cutscene"
+                if resource[0] == "basemodel":
+                    original_kind = {".mdh": "skeleton", ".man": "anim", ".mmb": "morph"}.get(
+                        Path(resource[1]).suffix, "model"
+                    )
+                original_aliases.add((original_kind, resource[1]))
+            else:
+                replacements.add(resource)
 
     # A replacement does not eliminate a resource opened from an original source
     # elsewhere in the same session or another supplied run.
@@ -76,7 +92,10 @@ def summarize(documents):
     for kind in KINDS:
         original_count = sum(key[0] == kind for key in originals)
         own_count = sum(key[0] == kind for key in own)
-        if original_count or own_count:
+        base_count = sum(key[0] == kind for key in base)
+        if base_count:
+            counts.append({"kind": kind, "original": 0, "own": 0, "base": base_count})
+        elif original_count or own_count:
             counts.append({"kind": kind, "original": original_count, "own": own_count})
     ranking = sorted(
         accesses.values(),
@@ -99,22 +118,25 @@ def render_markdown(summary):
         "Оригинальные файлы считаются по фактическому имени без учёта регистра "
         "и объединяются между прогонами. Для сопоставления подмен текстуры "
         "NAME.TGA и NAME-C.TEX считаются одним ресурсом. "
-        "Ресурс считается своим, только если ни один его оригинал не открывался ни в одном прогоне.",
+        "Ресурс считается своим, только если ни один его оригинал не открывался ни в одном прогоне. "
+        "Сконвертированный оригинал учитывается отдельно как basetexture/basemesh/basemodel/basefont/baseprogram/baseoutputunits/basesound/basespeech/basemusic/basevideo/baseworld/basezen (прежний меш мира — worldmesh) и не считается своим.",
         "",
-        "| Вид | Оригинальных файлов | Подменено своими | Доля своих |",
-        "|---|---:|---:|---:|",
+        "| Вид | Оригинальных файлов | Подменено своими | Из базы | Доля своих |",
+        "|---|---:|---:|---:|---:|",
     ]
-    total_original = total_own = 0
+    total_original = total_own = total_base = 0
     for row in summary["counts"]:
         original, own = row["original"], row["own"]
-        share = 100 * own / (original + own)
-        lines.append(f"| {row['kind']} | {original} | {own} | {share:.1f}% |")
+        base = row.get("base", 0)
+        share = 100 * own / (original + own + base)
+        lines.append(f"| {row['kind']} | {original} | {own} | {base} | {share:.1f}% |")
         total_original += original
         total_own += own
-    total = total_original + total_own
+        total_base += base
+    total = total_original + total_own + total_base
     share = 100 * total_own / total if total else 0
     lines.extend([
-        f"| **Всего** | **{total_original}** | **{total_own}** | **{share:.1f}%** |",
+        f"| **Всего** | **{total_original}** | **{total_own}** | **{total_base}** | **{share:.1f}%** |",
         "",
         "## Топ-20 оригинальных файлов по числу открытий",
         "",

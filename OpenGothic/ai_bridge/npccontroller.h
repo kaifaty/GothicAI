@@ -59,6 +59,7 @@ class NpcController final {
       size_t          target   = 0;     // instance of target npc
       bool            toPlayer = false;
       float           radius   = 0;     // success radius for movement, cm
+      bool            closeApproach = false; // explicit short scene approach, with a clear ray
       Tempest::Vec3    movedFrom;        // go_to_npc: last movement anchor for stuck detection
       Tempest::Vec3    plannedFrom;      // where the previous route was planned
       uint64_t        movedAt  = 0;
@@ -73,6 +74,9 @@ class NpcController final {
       ScriptFn        state;            // fight/flee: the script state that runs it
       uint64_t        stateStart = 0;   // fight/flee: startup clock after queued speech
       const Npc*      targetNpc = nullptr; // fight/flee: exactly whom (symbols of monsters are shared)
+      std::string     animation;
+      uint64_t        holdMs = 0;
+      uint64_t        heldAt = 0;
       bool            entered  = false; // the npc is in that state already
       // use_chest (v28): the chest, what to take out and put in (item, count), how far it got
       Interactive*    chest    = nullptr;

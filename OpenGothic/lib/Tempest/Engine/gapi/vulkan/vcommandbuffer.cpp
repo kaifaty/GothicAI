@@ -13,9 +13,46 @@
 #include "vtexture.h"
 #include "vframebuffermap.h"
 #include "vaccelerationstructure.h"
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "frameprofile.h"
+#endif
 
 using namespace Tempest;
 using namespace Tempest::Detail;
+
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+VFrameProfileQueries::~VFrameProfileQueries() {
+  vkDestroyQueryPool(device,pool,nullptr);
+  }
+
+void VFrameProfileQueries::complete(bool success) {
+  uint64_t triangles=0;
+  if(success && valid && count>0) {
+    uint64_t values[MaxQueries]={};
+    success=vkGetQueryPoolResults(device,pool,0,count,sizeof(uint64_t)*count,values,sizeof(uint64_t),
+                                 VK_QUERY_RESULT_64_BIT)==VK_SUCCESS;
+    for(uint32_t i=0;i<count;++i) triangles+=values[i];
+    }
+  FrameProfile::geometryCompleted(record,triangles,success && valid);
+  record=nullptr;
+  }
+
+void VCommandBuffer::profileDraw() {
+  FrameProfile::add(FrameProfile::Amount::DrawCalls,1);
+  if(profileQueries==nullptr) return;
+  auto& query=*profileQueries;
+  const bool triangles=curDrawPipeline!=nullptr && curDrawPipeline->tp==Topology::Triangles;
+  if(query.active && !triangles) {
+    vkCmdEndQuery(impl,query.pool,query.count-1);
+    query.active=false;
+    }
+  if(!query.active && triangles) {
+    if(query.count==VFrameProfileQueries::MaxQueries) { query.valid=false; return; }
+    vkCmdBeginQuery(impl,query.pool,query.count++,0);
+    query.active=true;
+    }
+  }
+#endif
 
 static VkAttachmentLoadOp mkLoadOp(const AccessOp op) {
   switch (op) {
@@ -225,6 +262,26 @@ void VCommandBuffer::begin(SyncHint hint) {
     beginInfo.pInheritanceInfo = nullptr;
     vkAssert(vkBeginCommandBuffer(impl,&beginInfo));
     }
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  if(FrameProfile::enabled() && device.profilePipelineStatistics) {
+    if(profileQueries==nullptr) {
+      auto query=std::make_shared<VFrameProfileQueries>();
+      query->device=device.device.impl;
+      VkQueryPoolCreateInfo info={};
+      info.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+      info.queryType=VK_QUERY_TYPE_PIPELINE_STATISTICS;
+      info.queryCount=VFrameProfileQueries::MaxQueries;
+      // Counts GPU-generated indirect/mesh/tessellated triangles as they reach clipping.
+      info.pipelineStatistics=VK_QUERY_PIPELINE_STATISTIC_CLIPPING_INVOCATIONS_BIT;
+      vkAssert(vkCreateQueryPool(device.device.impl,&info,nullptr,&query->pool));
+      profileQueries=std::move(query);
+      }
+    profileQueries->count=0;
+    profileQueries->active=false;
+    profileQueries->valid=true;
+    vkCmdResetQueryPool(impl,profileQueries->pool,0,VFrameProfileQueries::MaxQueries);
+    }
+#endif
   }
 
 void VCommandBuffer::begin() {
@@ -351,6 +408,12 @@ void VCommandBuffer::beginRendering(const FrameBufferDesc& fbo, size_t fboSize, 
   }
 
 void VCommandBuffer::endRendering() {
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  if(profileQueries!=nullptr && profileQueries->active) {
+    vkCmdEndQuery(impl,profileQueries->pool,profileQueries->count-1);
+    profileQueries->active=false;
+    }
+#endif
   vkCmdEndRenderingKHR(impl);
   resState.onUavUsage(bindings.read, bindings.write, PipelineStage::S_Graphics);
   resState.flush(*this);
@@ -650,6 +713,9 @@ void VCommandBuffer::draw(const AbstractGraphicsApi::Buffer* ivbo, size_t stride
     }
   implSetUniforms(PipelineStage::S_Graphics);
   implSetPushData(PipelineStage::S_Graphics);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileDraw();
+#endif
   vkCmdDraw(impl, uint32_t(vsize), uint32_t(instanceCount), uint32_t(voffset), uint32_t(firstInstance));
   }
 
@@ -664,6 +730,9 @@ void VCommandBuffer::drawIndexed(const AbstractGraphicsApi::Buffer* ivbo, size_t
   vkCmdBindIndexBuffer(impl, ibo.impl, 0, nativeFormat(cls));
   implSetUniforms(PipelineStage::S_Graphics);
   implSetPushData(PipelineStage::S_Graphics);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileDraw();
+#endif
   vkCmdDrawIndexed    (impl, uint32_t(isize), uint32_t(instanceCount), uint32_t(ioffset), int32_t(voffset), uint32_t(firstInstance));
   }
 
@@ -675,12 +744,18 @@ void VCommandBuffer::drawIndirect(const AbstractGraphicsApi::Buffer& indirect, s
   implSetUniforms(PipelineStage::S_Graphics);
   implSetPushData(PipelineStage::S_Graphics);
   //resState.flush(*this);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileDraw();
+#endif
   vkCmdDrawIndirect(impl, ind.impl, VkDeviceSize(offset), 1, 0);
   }
 
 void VCommandBuffer::dispatchMesh(size_t x, size_t y, size_t z) {
   implSetUniforms(PipelineStage::S_Graphics);
   implSetPushData(PipelineStage::S_Graphics);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileDraw();
+#endif
   device.vkCmdDrawMeshTasks(impl, uint32_t(x), uint32_t(y), uint32_t(z));
   }
 
@@ -692,6 +767,9 @@ void VCommandBuffer::dispatchMeshIndirect(const AbstractGraphicsApi::Buffer& ind
   implSetUniforms(PipelineStage::S_Graphics);
   implSetPushData(PipelineStage::S_Graphics);
   //resState.flush(*this);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileDraw();
+#endif
   device.vkCmdDrawMeshTasksIndirect(impl, ind.impl, VkDeviceSize(offset), 1, 0);
   }
 

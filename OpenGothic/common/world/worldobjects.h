@@ -3,7 +3,7 @@
 #include <vector>
 #include <memory>
 
-#include <zenkit/vobs/Misc.hh>
+#include "asset/worldtypes.h"
 
 #include "bullet.h"
 #include "spaceindex.h"
@@ -105,7 +105,7 @@ class WorldObjects final {
     void           stopEffect(const VisualFx& vfx);
 
     Item*          addItem   (size_t itemInstance, std::string_view at);
-    Item*          addItem   (const zenkit::VItem &vob);
+    Item*          addItem   (const asset::VItem &vob);
     Item*          addItem   (size_t itemInstance, const Tempest::Vec3& pos);
     Item*          addItem   (size_t itemInstance, const Tempest::Vec3& pos, const Tempest::Vec3& dir);
     Item*          addItemDyn(size_t itemInstance, const Tempest::Matrix4x4& pos, size_t owner);
@@ -118,7 +118,7 @@ class WorldObjects final {
 
     void           addInteractive(Interactive*         obj);
     void           addStatic     (StaticObj*           obj);
-    void           addRoot       (const std::shared_ptr<zenkit::VirtualObject>& vob, bool startup);
+    void           addRoot       (const std::shared_ptr<asset::VirtualObject>& vob, bool startup);
     void           invalidateVobIndex();
     std::vector<Vob::AttachmentSnapshot> vobAttachmentSnapshot(uint32_t zenId) const;
 
@@ -135,6 +135,7 @@ class WorldObjects final {
     void           marchInteractives(DbgPainter& p) const;
     void           marchCsCameras   (DbgPainter& p) const;
     void           drawVobBoxNpcNear(DbgPainter& p) const;
+    void           drawMeleeShadow  (DbgPainter& p) const;
 
     Interactive*   availableMob(const Npc& pl, std::string_view name);
     void           setMobRoutine(gtime time, std::string_view scheme, int32_t state);
@@ -147,6 +148,7 @@ class WorldObjects final {
     void           resetPositionToTA();
 
   private:
+    friend struct WorldDataContract;
     void           saveItemPhysics(Serialize& fout) const;
     void           loadItemPhysics(Serialize& fin);
 

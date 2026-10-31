@@ -44,6 +44,7 @@ class Renderer final {
       };
     Tempest::Size internalResolution(Tempest::Size src) const;
     float         internalResolutionScale() const;
+    Tempest::Size effectResolution() const;
 
     void updateCamera(const WorldView& wview, const Camera &camera);
     bool requiresRtScene() const;
@@ -94,6 +95,7 @@ class Renderer final {
     void drawAmbient      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawTonemapping  (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawCMAA2        (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
+    void drawUpscale      (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawReflections  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawUnderwater   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawFog          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
@@ -133,6 +135,8 @@ class Renderer final {
 
       bool           zEnvMappingEnabled = false;
       bool           zCloudShadowScale  = false;
+      bool           halfResAoFog       = true;
+      bool           spatialUpscale     = false;
       bool           zFogRadial         = false;
 
       bool           zWindEnabled       = false;
@@ -212,6 +216,11 @@ class Renderer final {
       Tempest::StorageBuffer    controlBuffer;
       Tempest::StorageBuffer    indirectBuffer;
       } cmaa2;
+
+    struct Upscale {
+      Tempest::Attachment       input;  // tonemapped frame at internal resolution
+      Tempest::StorageImage     output; // MetalFX result at swapchain resolution
+      } upscale;
 
     struct {
       Tempest::StorageImage     hiZ;

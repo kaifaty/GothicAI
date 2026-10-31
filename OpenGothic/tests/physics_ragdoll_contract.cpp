@@ -1,9 +1,13 @@
+#include "asset/fromzenkit.h"
+#include "baseimport.h"
+#include "commandline.h"
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
 #include "physics/physicmeshshape.h"
 #include "graphics/bounds.h"
 #include "graphics/mesh/hitzones.h"
+#include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/animmath.h"
@@ -17,18 +21,25 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 
+#include <zenkit/ModelHierarchy.hh>
+#include <zenkit/ModelScript.hh>
+#include <zenkit/Stream.hh>
+#include <zenkit/Vfs.hh>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unistd.h>
 #include <vector>
 
 #if defined(__GNUC__)
@@ -110,7 +121,7 @@ float scaleVolume(const Tempest::Matrix4x4& matrix) {
   }
 
 zenkit::ModelHierarchy hierarchy() {
-  zenkit::ModelHierarchy source;
+  zenkit::ModelHierarchy source{};
   struct Bone { const char* name; int16_t parent; Tempest::Vec3 offset; };
   // A small human hierarchy with actual limb chains and a nonphysical root.
   const Bone bones[] = {
@@ -142,7 +153,7 @@ zenkit::ModelHierarchy hierarchy() {
   }
 
 struct Fixture final {
-  Skeleton skeleton{hierarchy(),nullptr,"HUMANS.MDS"};
+  Skeleton skeleton{asset::fromZenKit(hierarchy()),nullptr,"HUMANS.MDS"};
   HitZones zones;
 
   Fixture() { zones.setSkeleton(&skeleton); require(zones.isValid(),"synthetic hierarchy must have hit capsules"); }
@@ -263,7 +274,7 @@ void testKinematicPoseAndInteraction() {
     CollisionWorld world;
     const auto emptyCount=world.bodyCount();
     auto thinSource=hierarchy(); thinSource.nodes.resize(1);
-    Skeleton thin(thinSource,nullptr,"NO_PHYSICAL_BONES.MDS");
+    Skeleton thin(asset::fromZenKit(thinSource),nullptr,"NO_PHYSICAL_BONES.MDS");
     HitZones thinZones; thinZones.setSkeleton(&thin);
     require(!world.createKinematicBody(thin,thinZones,thin.tr.data(),thin.tr.size(),at(0,0,0)),
             "a skeleton without compatible physical owners must safely decline a live rig");
@@ -495,6 +506,11 @@ void testScaledMassAndInertia() {
       hit=fixture.create(hitWorld,object); control=fixture.create(controlWorld,object);
       require(hit->restore(initial) && control->restore(initial),"scaled corpse state must restore into a fresh native rig");
     }
+    else {
+      // A fresh corpse starts with fading muscles that resist the impulse;
+      // restoring its own state leaves the bare body the restored case has.
+      require(hit->restore(initial) && control->restore(initial),"a fresh corpse must accept its own state");
+    }
     const auto part=std::find_if(initial.parts.begin(),initial.parts.end(),[](const auto& p) { return p.bone==7; });
     require(part!=initial.parts.end(),"mass/inertia oracle needs a physical forearm");
     const auto point=part->centerOfMassMeters*100.f+Tempest::Vec3(12*scale,0,0);
@@ -521,12 +537,27 @@ void testScaledMassAndInertia() {
   }
 
 void testItemMassImpulseAndWake() {
+  Resources resources;
+  const auto tetrahedron=[](float scale) {
+    asset::StaticMesh mesh;
+    mesh.positions={{-10*scale,-20*scale,-30*scale},{10*scale,-20*scale,-30*scale},
+                    {-10*scale,20*scale,-30*scale},{-10*scale,-20*scale,30*scale}};
+    mesh.bbox={{-10*scale,-20*scale,-30*scale},{10*scale,20*scale,30*scale}};
+    mesh.sub_meshes.resize(1);
+    auto& part=mesh.sub_meshes[0];
+    part.mat.group=asset::MaterialGroup::WOOD;
+    for(size_t i=0;i<mesh.positions.size();++i)
+      part.wedges.push_back({{0,1,0},{0,0},uint16_t(i)});
+    part.triangles={{{0,2,1}},{{0,1,3}},{{0,3,2}},{{1,2,3}}};
+    return mesh;
+    };
+  ProtoMesh proto(PackedMesh(tetrahedron(1),PackedMesh::PK_Visual),"CONTRACT_ITEM.MRM");
   DynamicWorld::Item empty;
   require(empty.mass()==0 && empty.isSleeping() && empty.velocity().quadLength()==0 && !empty.addImpulse({1,0,0}),
           "an empty item handle must safely reject impulse and report no dynamic state");
-  zenkit::Mesh ground;
+  asset::WorldMesh ground;
   ground.vertices={{-1000,0,-1000},{1000,0,-1000},{1000,0,1000},{-1000,0,1000}};
-  ground.materials.resize(1); ground.materials[0].group=zenkit::MaterialGroup::STONE;
+  ground.materials.resize(1); ground.materials[0].group=asset::MaterialGroup::STONE;
   ground.polygons.material_indices={0,0}; ground.polygons.vertex_indices={0,1,2,0,2,3};
   DynamicWorld world(nullptr,ground);
   std::unique_ptr<PhysicMeshShape> shape(PhysicMeshShape::load(PackedMesh(ground,PackedMesh::PK_Physic)));
@@ -538,9 +569,27 @@ void testItemMassImpulseAndWake() {
             "static and animation-driven handles must never accept dynamic impulses");
   Bounds bounds; bounds.bbox[0]={-10,-20,-30}; bounds.bbox[1]={10,20,30};
   auto matrix=at(0,300,0); matrix.rotateOY(31); matrix.scale(.5f,2.f,3.f);
-  auto body=world.addDynamicObj(matrix,bounds,zenkit::MaterialGroup::WOOD);
-  const float expected=.2f*.4f*.6f*700.f*3.f;
-  near(body.mass(),expected,.001f,"native item mass must include material density, source volume and nonuniform object scale");
+  auto body=world.addDynamicObj(matrix,bounds,asset::MaterialGroup::WOOD,&proto,"contract_item.mrm");
+  // This tetrahedron occupies exactly one sixth of its bounds. Keep the old
+  // tolerance while replacing the bounds-volume oracle with the actual hull.
+  const float expected=.2f*.4f*.6f/6.f*700.f*3.f;
+  near(body.mass(),expected,.001f,"native item mass must use hull volume, material density and the nonuniform scale determinant");
+  const auto& hull=world.itemHullShape(proto,"CONTRACT_ITEM.MRM");
+  require(hull.shape!=nullptr && hull.fallbackReason.empty(),"four noncoplanar mesh points must build an item hull");
+  near(hull.volume,.2f*.4f*.6f/6.f,.000001f,"item hull volume must be the tetrahedron volume rather than its bounds");
+  near(hull.originalShape->GetVolume(),hull.volume,.000001f,"item mass and water must retain the uninflated hull volume");
+  const auto originalBounds=hull.originalShape->GetLocalBounds();
+  const auto collisionBounds=hull.shape->GetLocalBounds();
+  const auto originalCenter=hull.originalShape->GetCenterOfMass(),collisionCenter=hull.shape->GetCenterOfMass();
+  for(int axis=0;axis<3;++axis) {
+    near(collisionBounds.mMin[axis]+collisionCenter[axis],originalBounds.mMin[axis]+originalCenter[axis]-.01f,.0001f,
+         "the Item collision shell must extend one centimetre below each source axis bound");
+    near(collisionBounds.mMax[axis]+collisionCenter[axis],originalBounds.mMax[axis]+originalCenter[axis]+.01f,.0001f,
+         "the Item collision shell must extend one centimetre above each source axis bound");
+    }
+  require(&hull==&world.itemHullShape(proto,"CoNtRaCt_ItEm.MrM"),"item hull cache keys must be case insensitive");
+  auto legacy=world.addDynamicObj(at(700,300,0),bounds,asset::MaterialGroup::WOOD,&proto,"CONTRACT_ITEM.MRM",false);
+  near(legacy.mass(),.2f*.4f*.6f*700.f,.001f,"item_hulls=0 must preserve the previous bounds-volume material mass");
   require(!body.addImpulse({std::numeric_limits<float>::quiet_NaN(),0,0}) &&
           !body.addImpulse({0,std::numeric_limits<float>::infinity(),0}) && !body.addImpulse({0,0,0}),
           "nonfinite or zero item impulses must be harmless no-ops");
@@ -551,9 +600,71 @@ void testItemMassImpulseAndWake() {
   require(body.isSleeping(),"a dropped item must settle and retain a queryable sleeping native body");
   require(body.addImpulse({expected,0,0}) && !body.isSleeping(),"a spell-sized impulse must awaken the sleeping native item immediately");
   near(body.velocity().x,100,.001f,"the woken item's mass must still govern its actual native velocity");
-  Bounds tiny; tiny.bbox[0]={-1,-1,-1}; tiny.bbox[1]={1,1,1};
-  auto small=world.addDynamicObj(at(500,300,0),tiny,zenkit::MaterialGroup::WOOD);
-  near(small.mass(),.02f*.02f*.02f*700.f,.000001f,"minimum collision padding must not inflate a small item's material mass");
+  Bounds tiny; tiny.bbox[0]={-1,-2,-3}; tiny.bbox[1]={1,2,3};
+  ProtoMesh tinyProto(PackedMesh(tetrahedron(.1f),PackedMesh::PK_Visual),"CONTRACT_TINY_ITEM.MRM");
+  auto small=world.addDynamicObj(at(500,102,0),tiny,asset::MaterialGroup::WOOD,&tinyProto,"CONTRACT_TINY_ITEM.MRM");
+  auto oldSmall=world.addDynamicObj(at(-500,102,0),tiny,asset::MaterialGroup::WOOD,&tinyProto,"CONTRACT_TINY_ITEM.MRM",false);
+  near(small.mass(),.05f,.000001f,"small hull items must keep the fifty gram minimum mass");
+  int sleepFrames=-1,oldSleepFrames=-1;
+  for(int frame=0;frame<600 && (sleepFrames<0 || oldSleepFrames<0);++frame) {
+    world.tick(frame%3==2 ? 16 : 17);
+    if(sleepFrames<0 && small.isSleeping())sleepFrames=frame+1;
+    if(oldSleepFrames<0 && oldSmall.isSleeping())oldSleepFrames=frame+1;
+    }
+  std::printf("Small item hull: mass %.9g kg, sleep ON %.3f s, OFF %.3f s\n",
+              double(small.mass()),double(sleepFrames)/60.,double(oldSleepFrames)/60.);
+  require(sleepFrames>0 && oldSleepFrames>0 && sleepFrames<=oldSleepFrames,
+          "a small mesh hull must sleep no later than the legacy body in the same drop");
+  auto lowest=std::numeric_limits<float>::max();
+  const auto settled=small.matrix();
+  const auto& smallHull=world.itemHullShape(tinyProto,"CONTRACT_TINY_ITEM.MRM");
+  for(auto point:smallHull.vertices) {
+    settled.project(point);
+    lowest=std::min(lowest,point.y);
+    }
+  std::printf("Small item hull: support gap %.9g cm, extra padding %.9g cm, inner radius %.9g cm\n",
+              double(lowest),double(smallHull.extraPaddingCm),double(smallHull.shape->GetInnerRadius()*100.f));
+  near(smallHull.shape->GetInnerRadius(),.03f,.0001f,
+       "a thin Item collision shell must have three centimetres from COM to its nearest support plane");
+  require(lowest>=-1.05f && lowest<=1.05f+smallHull.extraPaddingCm,
+          "a sleeping item's visible hull must stay within the authorised one centimetre range plus its thin-shell padding");
+  for(int frame=0;frame<60;++frame) world.tick(frame%3==2 ? 16 : 17);
+  require(small.isSleeping(),"a small sleeping hull must not wake or jitter on level ground");
+  for(int c=0;c<4;++c)
+    for(int r=0;r<4;++r)
+      exact(small.matrix().at(c,r),settled.at(c,r),"a sleeping item hull must retain its exact transform");
+  near(oldSmall.mass(),.02f*.04f*.06f*700.f,.000001f,"item_hulls=0 must retain even a sub-fifty-gram legacy mass");
+  auto triangle=tetrahedron(1);
+  triangle.positions.resize(3);
+  triangle.sub_meshes[0].wedges.resize(3);
+  triangle.sub_meshes[0].triangles={{{0,2,1}}};
+  ProtoMesh incomplete(PackedMesh(triangle,PackedMesh::PK_Visual),"CONTRACT_TRIANGLE.MRM");
+  const auto& fallback=world.itemHullShape(incomplete,"CONTRACT_TRIANGLE.MRM");
+  require(fallback.shape==nullptr && !fallback.fallbackReason.empty(),"fewer than four referenced mesh vertices must report a box fallback");
+  auto boxed=world.addDynamicObj(at(-700,300,0),bounds,asset::MaterialGroup::WOOD,&incomplete,"CONTRACT_TRIANGLE.MRM");
+  near(boxed.mass(),.2f*.4f*.6f*700.f,.001f,"a failed hull must preserve the legacy box and its material mass");
+
+  auto cube=tetrahedron(1);
+  cube.positions={{-20,-20,-20},{20,-20,-20},{20,20,-20},{-20,20,-20},
+                  {-20,-20,20},{20,-20,20},{20,20,20},{-20,20,20}};
+  cube.bbox={{-20,-20,-20},{20,20,20}};
+  auto& part=cube.sub_meshes[0];part.wedges.clear();
+  for(size_t i=0;i<cube.positions.size();++i)
+    part.wedges.push_back({{0,1,0},{0,0},uint16_t(i)});
+  part.triangles={{{0,2,1}},{{0,3,2}},{{4,5,6}},{{4,6,7}},{{0,1,5}},{{0,5,4}},
+                  {{3,7,6}},{{3,6,2}},{{0,4,7}},{{0,7,3}},{{1,2,6}},{{1,6,5}}};
+  ProtoMesh cubeProto(PackedMesh(cube,PackedMesh::PK_Visual),"CONTRACT_SLOP_ITEM.MRM");
+  Bounds cubeBounds;cubeBounds.assign(cubeProto.bboxMesh);
+  DynamicWorld contactWorld(nullptr,ground);
+  auto precise=contactWorld.addDynamicObj(at(-100,14,0),cubeBounds,asset::MaterialGroup::WOOD,&cubeProto,"CONTRACT_SLOP_ITEM.MRM");
+  auto ordinary=contactWorld.addDynamicObj(at(100,14,0),cubeBounds,asset::MaterialGroup::WOOD);
+  for(int frame=0;frame<360;++frame)contactWorld.tick(frame%3==2 ? 16 : 17);
+  const float preciseGap=precise.position().y-20.f,ordinaryGap=ordinary.position().y-20.f;
+  std::printf("Item contact slop: hull gap %.9g cm, ordinary gap %.9g cm\n",double(preciseGap),double(ordinaryGap));
+  require(precise.isSleeping() && ordinary.isSleeping(),"penetration slop fixtures must reach genuine native sleep");
+  // One centimetre of padding centres the unchanged two centimetre slop range.
+  near(preciseGap,-1.f,.05f,"a deeply penetrating Item shell must retain one centimetre of visible penetration");
+  near(ordinaryGap,-2.f,.05f,"an ordinary body must retain main's two centimetre penetration allowance");
   }
 
 void testCorpseRayMetadata() {
@@ -605,7 +716,7 @@ void testProjectileWorldStopOptIn() {
     bool stopsAtWorldHit() const override { return enabled; }
     bool isPrecise() const override { return precise; }
     void onMove() override { ++moves; order+='M'; }
-    void onCollide(zenkit::MaterialGroup) override { ++materials; order+='C'; }
+    void onCollide(asset::MaterialGroup) override { ++materials; order+='C'; }
     void onWorldHit(const DynamicWorld::BulletWorldHit& value) override {
       ++worlds; order+='W'; hit=value;
       near((body->position()-value.point).length(),0,0,"attachment must observe the unchanged stopped projectile position");
@@ -614,8 +725,8 @@ void testProjectileWorldStopOptIn() {
       }
     void onStop() override { ++stops; order+='S'; }
     };
-  const auto wallAt=[](float x, zenkit::MaterialGroup material, bool fromRight=false) {
-    zenkit::Mesh wall;
+  const auto wallAt=[](float x, asset::MaterialGroup material, bool fromRight=false) {
+    asset::WorldMesh wall;
     wall.vertices={{x,-2000,-2000},{x,2000,-2000},{x,0,2000}};
     wall.materials.resize(1); wall.materials[0].group=material;
     wall.polygons.material_indices={0};
@@ -624,7 +735,7 @@ void testProjectileWorldStopOptIn() {
     };
   const Tempest::Vec3 from{0,500,0},direction{3,0,0};
   const auto to=from+direction*100.f-Tempest::Vec3(0,.5f*DynamicWorld::gravity*100.f*100.f,0);
-  for(const auto material:{zenkit::MaterialGroup::STONE,zenkit::MaterialGroup::METAL})
+  for(const auto material:{asset::MaterialGroup::STONE,asset::MaterialGroup::METAL})
     for(const bool enabled:{false,true})
       for(const int previousHits:{0,3}) {
         DynamicWorld world(nullptr,wallAt(100,material));
@@ -658,11 +769,11 @@ void testProjectileWorldStopOptIn() {
         }
 
   for(const bool enabled:{false,true}) {
-    DynamicWorld world(nullptr,wallAt(100,zenkit::MaterialGroup::WOOD));
+    DynamicWorld world(nullptr,wallAt(100,asset::MaterialGroup::WOOD));
     Callback callback; callback.enabled=enabled;
     auto* arrow=world.bulletObj(&callback); callback.body=arrow;
     const auto expected=world.ray(from,to);
-    require(expected.hasCol && expected.mat==zenkit::MaterialGroup::WOOD,"terminal contract must hit a soft wall");
+    require(expected.hasCol && expected.mat==asset::MaterialGroup::WOOD,"terminal contract must hit a soft wall");
     arrow->setPosition(from); arrow->setDirection(direction);
     world.tick(100);
     require(callback.worlds==int(enabled) && callback.materials==1 && callback.stops==1 && callback.moves==1 &&
@@ -682,7 +793,7 @@ void testProjectileWorldStopOptIn() {
   // The old speed*fraction gate moves to the wall but does not count, reflect,
   // collide or stop for this near-contact sample. Attachment must not widen it.
   for(const bool enabled:{false,true}) {
-    DynamicWorld world(nullptr,wallAt(100,zenkit::MaterialGroup::STONE));
+    DynamicWorld world(nullptr,wallAt(100,asset::MaterialGroup::STONE));
     Callback callback; callback.enabled=enabled;
     auto* arrow=world.bulletObj(&callback); callback.body=arrow;
     arrow->setPosition({95,500,0}); arrow->setDirection(direction);
@@ -699,7 +810,7 @@ void testProjectileWorldStopOptIn() {
   for(const bool enabled:{false,true})
     for(const bool precise:{false,true})
       for(const bool wallBehind:{false,true}) {
-        DynamicWorld world(nullptr,wallBehind ? wallAt(-160,zenkit::MaterialGroup::WOOD,true) : zenkit::Mesh{});
+        DynamicWorld world(nullptr,wallBehind ? wallAt(-160,asset::MaterialGroup::WOOD,true) : asset::WorldMesh{});
         auto pose=fixture.skeleton.tr;
         const auto object=at(0,300,0);
         for(auto& frame:pose) frame=object*frame;
@@ -733,7 +844,7 @@ void testProjectileWorldStopOptIn() {
         }
 
   for(const bool enabled:{false,true}) {
-    DynamicWorld world(nullptr,wallAt(100,zenkit::MaterialGroup::STONE));
+    DynamicWorld world(nullptr,wallAt(100,asset::MaterialGroup::STONE));
     Callback callback; callback.enabled=enabled;
     auto* spell=world.bulletObj(&callback); callback.body=spell;
     spell->setSpellId(1); spell->setPosition(from); spell->setDirection(direction);
@@ -746,7 +857,7 @@ void testProjectileWorldStopOptIn() {
     }
 
   for(const bool enabled:{false,true}) {
-    DynamicWorld world(nullptr,zenkit::Mesh{});
+    DynamicWorld world(nullptr,asset::WorldMesh{});
     Callback callback; callback.enabled=enabled;
     auto* arrow=world.bulletObj(&callback); callback.body=arrow;
     arrow->setPosition(from); arrow->setDirection(direction); arrow->addPathLen(10001);
@@ -769,16 +880,16 @@ void testSpellWorldImpactMetadata() {
       ++worlds; order+='W'; hit=value;
       DynamicWorld::BulletCallback::onSpellWorldHit(value);
       }
-    void onCollide(zenkit::MaterialGroup material) override {
-      require(material==zenkit::MaterialGroup::STONE,"default spell world-hit callback must preserve the old selected material callback");
+    void onCollide(asset::MaterialGroup material) override {
+      require(material==asset::MaterialGroup::STONE,"default spell world-hit callback must preserve the old selected material callback");
       ++materials; order+='C';
       }
     void onStop() override { ++stops; order+='S'; }
     void onMove() override { ++moves; order+='M'; }
     };
-  zenkit::Mesh wall;
+  asset::WorldMesh wall;
   wall.vertices={{100,-2000,-2000},{100,2000,-2000},{100,0,2000}};
-  wall.materials.resize(1); wall.materials[0].group=zenkit::MaterialGroup::STONE;
+  wall.materials.resize(1); wall.materials[0].group=asset::MaterialGroup::STONE;
   wall.polygons.material_indices={0}; wall.polygons.vertex_indices={0,1,2};
   DynamicWorld world(nullptr,wall);
   Callback callback;
@@ -829,10 +940,43 @@ void testDropSleepWake() {
   require(world.bodyCount()==emptyCount,"destroying the owner must remove all ragdoll parts and joints");
   }
 
+void testAnatomicalHipAndAnkle() {
+  // The fixture's bind faces +Z with its left at +X. Hard kicks drive a hip
+  // backwards and a foot sideways, beyond what any human joint allows.
+  Fixture fixture;
+  CollisionWorld world;
+  auto body=fixture.create(world,at(0,4000,0));
+  // Let the muscles of the moment of death fade first.
+  for(int i=0;i<70;++i) world.tick(17);
+  const auto frame=[&](size_t bone) {
+    for(const auto& part:body->state().parts) if(part.bone==bone) return part.transform;
+    require(false,"anatomy oracle needs the part");
+    return Tempest::Matrix4x4();
+    };
+  const auto local=[](const Tempest::Matrix4x4& m, const Tempest::Vec3& v) {
+    const auto* d=m.data();
+    return Tempest::Vec3(d[0]*v.x+d[1]*v.y+d[2]*v.z,d[4]*v.x+d[5]*v.y+d[6]*v.z,d[8]*v.x+d[9]*v.y+d[10]*v.z);
+    };
+  const float deg=180.f/float(3.14159265358979323846);
+  require(body->queueHit(13,position(frame(13)),{0,0,-30},1),"a corpse calf must accept a kick");
+  require(body->queueHit(19,position(frame(19)),{40,0,0},1),"a corpse toe must accept a kick");
+  float hipBack=0,footOut=0;
+  for(int i=0;i<40;++i) {
+    world.tick(17);
+    const auto thigh=local(frame(1),position(frame(13))-position(frame(12)));
+    hipBack=std::max(hipBack,std::atan2(-thigh.z,-thigh.y)*deg);
+    const auto foot=local(frame(17),position(frame(19))-position(frame(18)));
+    footOut=std::max(footOut,std::asin(std::clamp(-foot.x/foot.length(),-1.f,1.f))*deg);
+    }
+  std::printf("anatomical limits hip_extension_deg=%.3f foot_out_deg=%.3f\n",double(hipBack),double(footOut));
+  require(hipBack<22.f,"a hip must not extend backwards beyond its anatomical range");
+  require(footOut<22.f,"a foot must not turn out beyond its anatomical range");
+  }
+
 zenkit::ModelHierarchy insectHierarchy() {
   // A Bloodfly-like insect: its root is the thorax itself and carries six
   // legs, two wing pairs, pincers and a tail directly, with no pelvis bone.
-  zenkit::ModelHierarchy source;
+  zenkit::ModelHierarchy source{};
   auto add=[&](const char* name, int16_t parent, Tempest::Vec3 offset) {
     zenkit::ModelHierarchyNode node;
     node.name=name;
@@ -870,7 +1014,7 @@ zenkit::ModelHierarchy insectHierarchy() {
 void testInsectRootBody() {
   // Without a thorax part, every limb hung off the first leg segment and the
   // corpse exploded into screen-sized triangles once it landed.
-  Skeleton skeleton{insectHierarchy(),nullptr,"Bloodfly.mds"};
+  Skeleton skeleton{asset::fromZenKit(insectHierarchy()),nullptr,"Bloodfly.mds"};
   HitZones zones;
   zones.setSkeleton(&skeleton);
   require(zones.isValid(),"insect fixture must have hit capsules");
@@ -938,7 +1082,7 @@ struct WaterRagdollFixture final {
   HitZones zones;
 
   explicit WaterRagdollFixture(const char* name,bool quadruped=false)
-    :skeleton(quadruped ? wolfHierarchy() : hierarchy(),nullptr,name) {
+    :skeleton(asset::fromZenKit(quadruped ? wolfHierarchy() : hierarchy()),nullptr,name) {
     zones.setSkeleton(&skeleton);
     require(zones.isValid(),"water ragdoll fixture must have valid anatomical capsules");
     }
@@ -1172,7 +1316,7 @@ void testRagdollWaterExcludesLivingReactions() {
   require(living && control,"living water exclusion needs native kinematic controls");
   std::vector<PhysicsNoise> noises;
   wet.setPhysicsNoiseEnabled(true);
-  wet.setPhysicsNoiseCallback([&](const PhysicsNoise& noise) { if(noise.surface==zenkit::MaterialGroup::WATER) noises.push_back(noise); });
+  wet.setPhysicsNoiseCallback([&](const PhysicsNoise& noise) { if(noise.surface==asset::MaterialGroup::WATER) noises.push_back(noise); });
   tickWater(wet,10); tickWater(dry,10);
   require(living->isKinematic() && wet.waterBodySnapshot().empty(),"animation driven living parts must stay outside buoyancy");
   const auto point=position(pose[6])+Tempest::Vec3(10,0,0);
@@ -1206,7 +1350,7 @@ void testRagdollWaterSplashOnceAndMomentum() {
     waterSurface(world);
     world.setPhysicsNoiseEnabled(true);
     std::vector<PhysicsNoise> noises;
-    world.setPhysicsNoiseCallback([&](const PhysicsNoise& noise) { if(noise.surface==zenkit::MaterialGroup::WATER) noises.push_back(noise); });
+    world.setPhysicsNoiseCallback([&](const PhysicsNoise& noise) { if(noise.surface==asset::MaterialGroup::WATER) noises.push_back(noise); });
     auto object=at(0,35.f,0); object.rotateOX(90); object.scale(scale);
     auto body=fixture.create(world,object,{0,-speed,0});
     // All horizontal parts enter in the same short impact. A single corpse
@@ -1483,7 +1627,7 @@ void replayCreation(const char* input) {
       for(const auto& value:array.GetArray()) require(value.IsNumber() && std::isfinite(value.GetDouble()),"creation replay vector must be finite");
       return Tempest::Vec3(float(array[0].GetDouble()),float(array[1].GetDouble()),float(array[2].GetDouble()));
       };
-    zenkit::ModelHierarchy source;
+    zenkit::ModelHierarchy source{};
     // Captured Skeleton::nodes already include root_translation on the root.
     // Adding it again would change the fixture instead of replaying the input.
     source.root_translation={0,0,0};
@@ -1499,7 +1643,7 @@ void replayCreation(const char* input) {
       std::memcpy(&output.transform,&local,sizeof(local));
       source.nodes.push_back(std::move(output)); worldPose.push_back(matrix(node["world"]));
       }
-    Skeleton skeleton(source,nullptr,capture["skeleton"].GetString());
+    Skeleton skeleton(asset::fromZenKit(source),nullptr,capture["skeleton"].GetString());
     for(size_t i=0;i<skeleton.tr.size();++i) {
       const auto expected=matrix(capture["nodes"][rapidjson::SizeType(i)]["bind"]);
       for(size_t c=0;c<16;++c)
@@ -1624,7 +1768,7 @@ void testAnatomicalKneeWithLongitudinalBoneAxis() {
   auto foot=at(-40,0,0); foot.rotateOZ(-90);
   std::memcpy(&source.nodes[13].transform,&calf,sizeof(calf));
   std::memcpy(&source.nodes[14].transform,&foot,sizeof(foot));
-  Skeleton skeleton(source,nullptr,"HUMANS_LONGITUDINAL_BIND.MDS");
+  Skeleton skeleton(asset::fromZenKit(source),nullptr,"HUMANS_LONGITUDINAL_BIND.MDS");
   HitZones zones; zones.setSkeleton(&skeleton);
   auto object=at(0,700,0); object.scale(.9f,1.f,1.f);
   for(const float degrees:{-30.f,30.f}) {
@@ -1650,8 +1794,10 @@ void testAnatomicalKneeWithLongitudinalBoneAxis() {
     const float final=kneeAngle();
     std::printf("anatomical calf bindX=longitudinal input_deg=%.9g initial_deg=%.9g after60_deg=%.9g\n",
                 double(degrees),double(initial),double(final));
+    // The limit snaps a hyperextended knee straight; a corpse's light knee
+    // friction lets that swing carry on into some flexion, never backwards.
     if(degrees<0)
-      require(final>-5.f && final<15.f,"a knee must correct thirty-degree anatomical hyperextension toward its straight limit");
+      require(final>-5.f && final<45.f,"a knee must correct thirty-degree anatomical hyperextension toward its straight limit");
     else
       require(final>5.f && final<60.f,"a knee must allow positive anatomical flexion rather than locking the projected local-axis plane");
     }
@@ -1694,7 +1840,7 @@ void testPoseOverlayAndRecovery() {
 
 void testRecoveryMatchesAnimBlendAndSaves() {
   constexpr size_t count=3;
-  zenkit::AnimationSample from[count],to[count],physical[count],ordinary[count];
+  asset::AnimationSample from[count],to[count],physical[count],ordinary[count];
   for(size_t i=0;i<count;++i) {
     from[i].rotation={1,0,0,0}; from[i].position={float(i*20),float(i*13),float(i*8)};
     to[i].rotation={std::cos(.3f*float(i+1)),std::sin(.3f*float(i+1)),0,0};
@@ -1722,7 +1868,7 @@ void testRecoveryMatchesAnimBlendAndSaves() {
   for(const uint64_t saveTick:{uint64_t(2000),uint64_t(2048)}) {
     AnimBlend before,after;
     before.reset(count); before.transitionFrom(from,count,2000);
-    zenkit::AnimationSample first[count],second[count];
+    asset::AnimationSample first[count],second[count];
     std::copy_n(from,count,first);
     if(saveTick>2000) before.apply(to,first,count,saveTick);
     std::vector<uint8_t> bytes;
@@ -1878,9 +2024,22 @@ void testMalformedRecoveryArchive() {
   }
 
 void testPoseActualDriverSave() {
-  // Real MAN readers, AnimationSolver name resolution, Pose layers and its legacy ZIP entry:
+  // Imported MAN data, AnimationSolver name resolution, Pose layers and its legacy ZIP entry:
   // an ordinary offset must already be active when the physical handoff takes ownership.
-  Resources resources;
+  auto pattern=(std::filesystem::temp_directory_path()/"gothic-pose-driver-XXXXXX").string();
+  const auto* directory=mkdtemp(pattern.data());
+  require(directory!=nullptr,"pose driver fixture directory must be created");
+  const std::filesystem::path root=directory;
+  const auto base=root/"base";
+  std::filesystem::create_directories(root/"Data");
+  std::filesystem::create_directories(root/"_work/Data/Scripts/_compiled");
+  {
+    const std::byte marker {1};
+    zenkit::Vfs vfs;
+    vfs.mount(zenkit::VfsNode::file("FIXTURE.BIN",{&marker,1,false}),"/");
+    auto archive=zenkit::Write::to(root/"Data/FIXTURE.VDF");
+    vfs.save(archive.get(),zenkit::GameVersion::GOTHIC_2);
+  }
   const auto source=hierarchy();
   const size_t count=source.nodes.size();
   zenkit::ModelScript script;
@@ -1919,19 +2078,45 @@ void testPoseActualDriverSave() {
     bytes.insert(bytes.end(),header.begin(),header.end());
     append(bytes,uint16_t(0xa090)); append(bytes,uint32_t(samples.size()));
     bytes.insert(bytes.end(),samples.begin(),samples.end());
-    auto* memory=new std::byte[bytes.size()];
-    std::memcpy(memory,bytes.data(),bytes.size());
     const std::string file=std::string("POSE_RETURN-")+names[kind]+".MAN";
-    auto& vfs=const_cast<zenkit::Vfs&>(Resources::vdfsIndex());
-    vfs.mount(zenkit::VfsNode::file(file,zenkit::VfsFileDescriptor(memory,bytes.size(),true)),"/");
+    std::ofstream output(root/"_work"/file,std::ios::binary);
+    output.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
+    require(bool(output),"synthetic MAN import input must be written");
     zenkit::MdsAnimation ani{};
     ani.name=names[kind]; ani.next=names[kind]; ani.layer=0;
     ani.direction=zenkit::AnimationDirection::FORWARD;
     ani.first_frame=0; ani.last_frame=31; ani.fps=60;
     script.animations.push_back(std::move(ani));
     }
-  Animation animation(script,"POSE_RETURN",false);
-  Skeleton skeleton(source,&animation,"POSE_RETURN.MDS");
+  require(BaseImport::convertModels(root,base/"models",false)==0,"pose driver models must import into the base");
+  require(BaseImport::convertTextures(root,base/"textures",false)==0,"pose driver texture index must import");
+  require(BaseImport::convertMeshes(root,base/"meshes",false)==0,"pose driver mesh index must import");
+  require(BaseImport::convertZen(root,base/"zen",false)==0,"pose driver ZEN index must import");
+  require(BaseImport::convertFonts(root,base/"fonts",false)==0,"pose driver font index must import");
+  require(BaseImport::convertPrograms(root,base/"programs",false)==0,"pose driver program index must import");
+  require(BaseImport::convertOutputUnits(root,base/"outputunits",false)==0,"pose driver output unit index must import");
+  require(BaseImport::convertAudio(root,base/"audio",false)==0,"pose driver audio index must import");
+  require(BaseImport::convertMusic(root,base/"music",false)==0,"pose driver music index must import");
+  {
+    // Synthetic installation without remaining-family inputs: a labelled empty manifest.
+    std::filesystem::create_directories(base/"sources");
+    std::ofstream output(base/"sources/sources.json",std::ios::binary);
+    output<<"{\"format\":\"gothic-sources\",\"version\":1,\"synthetic\":\"pose driver fixture without remaining-family inputs\"}\n";
+    require(bool(output),"pose driver source manifest must be written");
+  }
+  BaseImport::writeBaseMetadata(base,BaseImport::identify(root));
+  const auto* oldBase=std::getenv("OPENGOTHIC_BASE");
+  const bool hadBase=oldBase!=nullptr;
+  const std::string previousBase=hadBase ? oldBase : "";
+  setenv("OPENGOTHIC_BASE",base.c_str(),1);
+  const auto game=root.string();
+  const char* args[]={"gothic-ragdoll-contract","-g",game.c_str()};
+  CommandLine commandLine(3,args);
+  Resources resources;
+  Resources::loadBase();
+  auto ownScript=asset::fromZenKit(script);
+  Animation animation(ownScript,"POSE_RETURN",false);
+  Skeleton skeleton(asset::fromZenKit(source),&animation,"POSE_RETURN.MDS");
   AnimationSolver solver;
   solver.setSkeleton(&skeleton);
   const auto old=solver.solveFrm(names[0]);
@@ -2000,12 +2185,15 @@ void testPoseActualDriverSave() {
              "loaded and uninterrupted poses must agree on the next ordinary transition");
       }
     }
+  if(hadBase) setenv("OPENGOTHIC_BASE",previousBase.c_str(),1);
+  else unsetenv("OPENGOTHIC_BASE");
+  std::filesystem::remove_all(root);
   }
 
 void testPoseAffineRecoveryAndSaves() {
   {
     // Stretch can be the only offset: its clock must survive even when all rigid curves are idle.
-    zenkit::AnimationSample still;
+    asset::AnimationSample still;
     still.rotation={1,0,0,0}; still.position={0,0,0};
     auto shown=still;
     AnimBlend clock;
@@ -2024,7 +2212,7 @@ void testPoseAffineRecoveryAndSaves() {
     local.rotateOY(b==1 ? 35.f : -27.f);
     std::memcpy(&source.nodes[b].transform,&local,sizeof(local));
     }
-  Skeleton skeleton(source,nullptr,"AFFINE_HUMAN.MDS");
+  Skeleton skeleton(asset::fromZenKit(source),nullptr,"AFFINE_HUMAN.MDS");
   AnimationSolver solver;
   solver.setSkeleton(&skeleton);
   auto object=at(120,-30,90); object.rotateOY(29); object.scale(.9f,1.f,1.f);
@@ -2105,7 +2293,7 @@ void testPhysicalVelocityHandoff() {
   {
     // Compare a moving physical source and moving target against the existing ordinary switch.
     // Neither side's velocity may silently become zero at the handoff.
-    zenkit::AnimationSample previous,current,target,next,shown,ordinary;
+    asset::AnimationSample previous,current,target,next,shown,ordinary;
     previous.position={19.97f,0,0}; previous.rotation={1,0,0,0};
     current=previous; current.position.x=20.f;
     target=previous; target.position.x=0.f;
@@ -2144,20 +2332,20 @@ void testPhysicalVelocityHandoff() {
         }
       }
     }
-  zenkit::ModelHierarchy source;
+  zenkit::ModelHierarchy source{};
   zenkit::ModelHierarchyNode node;
   node.name="BIP01"; node.parent_index=-1;
   const auto identity=Tempest::Matrix4x4::mkIdentity();
   std::memcpy(&node.transform,&identity,sizeof(identity)); source.nodes.push_back(node);
   source.bbox.min={-1,-1,-1}; source.bbox.max={1,1,1}; source.collision_bbox=source.bbox;
-  Skeleton skeleton(source,nullptr,"VELOCITY.MDS");
+  Skeleton skeleton(asset::fromZenKit(source),nullptr,"VELOCITY.MDS");
   AnimationSolver solver; solver.setSkeleton(&skeleton);
   Animation::Sequence target;
   target.name="moving-root-target"; target.animCls=Animation::Loop;
   target.data=std::make_shared<Animation::AnimData>();
   target.data->numFrames=32; target.data->fpsRate=10.f; target.data->nodeIndex={0};
   for(int i=0;i<32;++i) {
-    zenkit::AnimationSample sample;
+    asset::AnimationSample sample;
     sample.rotation={1,0,0,0}; sample.position={float(i)*10.f,float(i)*.6f,0};
     target.data->samples.push_back(sample);
     }
@@ -2236,7 +2424,7 @@ void testOriginReplayCopy(Pose& pose) {
 
 void testOriginReplayHierarchySeed() {
   for(const bool unordered:{false,true}) {
-    zenkit::ModelHierarchy source;
+    zenkit::ModelHierarchy source{};
     const int16_t parentsOrdered[]={-1,0,1,2,1,4};
     const int16_t parentsUnordered[]={1,-1,0,2,1,4};
     for(int16_t i=0;i<6;++i) {
@@ -2246,7 +2434,7 @@ void testOriginReplayHierarchySeed() {
       std::memcpy(&node.transform,&local,sizeof(local)); source.nodes.push_back(node);
       }
     source.bbox.min={-30,0,-30}; source.bbox.max={30,80,30}; source.collision_bbox=source.bbox;
-    Skeleton skeleton(source,nullptr,unordered ? "REPLAY_UNORDERED.MDS" : "REPLAY_FULL_SEED.MDS");
+    Skeleton skeleton(asset::fromZenKit(source),nullptr,unordered ? "REPLAY_UNORDERED.MDS" : "REPLAY_FULL_SEED.MDS");
     require(skeleton.ordered!=unordered,"origin fixture must exercise the selected hierarchy branch");
     Pose pose; pose.setSkeleton(&skeleton);
     auto object=at(23446.3984375f,1122.7470703125f,-10364.30859375f); object.rotateOY(74); object.scale(.9f,1.f,1.f);
@@ -2298,7 +2486,7 @@ void testPoseFarWorldAttachments() {
     std::memcpy(&node.transform,&local,sizeof(local)); source.nodes.push_back(node);
     return source.nodes.size()-1;
     };
-  const zenkit::AnimationSample actualRoot{{67.9932175f,11.873786f,90.8665161f},
+  const asset::AnimationSample actualRoot{{67.9932175f,11.873786f,90.8665161f},
                                          {.694189906f,-.213284492f,.381034523f,.572208703f}};
   const auto rootFrame=mkMatrix(actualRoot);
   std::memcpy(&source.nodes[0].transform,&rootFrame,sizeof(rootFrame));
@@ -2308,7 +2496,7 @@ void testPoseFarWorldAttachments() {
   const auto rightSlot=add("ZS_RIGHTHAND",11,arrow);
   const auto leftSlot=add("ZS_LEFTHAND",8,at(0,1,0));
   const auto unkeyed=add("UNKEYED_FOOT_ATTACHMENT",14,at(3,7,5));
-  Skeleton skeleton(source,nullptr,"FAR_WORLD.MDS");
+  Skeleton skeleton(asset::fromZenKit(source),nullptr,"FAR_WORLD.MDS");
   AnimationSolver solver; solver.setSkeleton(&skeleton);
   Animation::Sequence stance,steps;
   for(auto* sequence:{&stance,&steps}) {
@@ -2319,7 +2507,7 @@ void testPoseFarWorldAttachments() {
     for(size_t frame=0;frame<data.numFrames;++frame)
       for(auto b:data.nodeIndex) {
         const auto local=skeleton.nodes[b].tr;
-        zenkit::AnimationSample sample;
+        asset::AnimationSample sample;
         const auto q=IkMath::toQuat(IkMath::transpose(IkMath::rotationOf(local)));
         sample.rotation={q.w,q.x,q.y,q.z};
         sample.position={local.at(3,0),local.at(3,1),local.at(3,2)};
@@ -2485,7 +2673,7 @@ void testPoseFarWorldAttachments() {
   }
 
 void testFiniteRecoveryHierarchy() {
-  zenkit::ModelHierarchy source;
+  zenkit::ModelHierarchy source{};
   const auto identity=Tempest::Matrix4x4::mkIdentity();
   constexpr uint32_t count=8;
   for(uint32_t b=0;b<count;++b) {
@@ -2494,7 +2682,7 @@ void testFiniteRecoveryHierarchy() {
     std::memcpy(&node.transform,&identity,sizeof(identity)); source.nodes.push_back(node);
     }
   source.bbox.min={-1,-1,-1}; source.bbox.max={1,1,1}; source.collision_bbox=source.bbox;
-  Skeleton skeleton(source,nullptr,"FINITE_LOCALS.MDS");
+  Skeleton skeleton(asset::fromZenKit(source),nullptr,"FINITE_LOCALS.MDS");
   Pose pose; pose.setSkeleton(&skeleton); pose.setObjectMatrix(identity,true); pose.update(1000,true);
   const auto ordinary=std::vector<Tempest::Matrix4x4>(pose.transform(),pose.transform()+pose.boneCount());
   const AnimBlend::Sample unit{{0,0,0},{1,0,0,0}}, unused{{0,0,0},{0,0,0,0}};
@@ -2766,6 +2954,7 @@ int main(int argc, const char** argv) {
     testFiniteRecoveryHierarchy();
     testBenchmarkSleepPolicy();
     testDropSleepWake();
+    testAnatomicalHipAndAnkle();
     testInsectRootBody();
     testRagdollWaterWolfHockTargetIndependentOfMass();
     testRagdollWaterFloatSleepRestoreAndToggle();

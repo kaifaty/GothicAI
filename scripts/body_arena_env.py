@@ -22,6 +22,24 @@ PROVIDER = "stage5-scripted"
 LEASE_KEYS = ("entity_id", "session_epoch", "world_epoch", "control_generation")
 
 
+def preserve_melee_journals(workdir: Path, episode_dir: Path, seed: int) -> None:
+    """Keep this completed duel before the runner's bounded journals rotate."""
+    for name in ("melee-blade-shadow", "melee-posture"):
+        sources = [path for suffix in (".previous.jsonl", ".jsonl")
+                   if (path := workdir / (name + suffix)).is_file()]
+        if not sources:
+            continue
+        destination = episode_dir / (name + ".jsonl")
+        seen = set(destination.read_text().splitlines(keepends=True)) if destination.is_file() else set()
+        with destination.open("a") as output:
+            for path in sources:
+                with path.open() as source:
+                    for line in source:
+                        if line not in seen and json.loads(line).get("arena_seed") == seed:
+                            output.write(line)
+                            seen.add(line)
+
+
 class ArenaInfrastructureError(RuntimeError):
     """A failed environment/transport is separate from a game-time truncation."""
 

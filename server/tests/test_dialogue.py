@@ -4,18 +4,23 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from copy import deepcopy
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from websockets.asyncio.server import serve
 
 from gothic_ai import dialogue as dialogue_module
 from gothic_ai.dialogue import QUIET_STYLE, SCENE_GAP_S, TTS_PAUSE, DialogueManager, FirstReaction
+from gothic_ai.game import GameLink
 from gothic_ai.journal import Journal
 from gothic_ai.llm import Done, LLMError, LLMEvent, Message, TextDelta, Tool, ToolCall, ToolResult
 from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.persona import MOOD_DELIVERY, PersonaProvider
-from gothic_ai.protocol import NpcRoster
+from gothic_ai.protocol import Hello, LineStarted, NpcDied, NpcRoster, Snapshot, SvmLine
 from gothic_ai.scenarios import basics as scenarios
+from gothic_ai.talk import TalkDesk
+from gothic_ai.trace import TraceWriter
 from gothic_ai.tts import Speech, TtsClient, TtsError
 from tests.fake_game import FakeGame, connected
 
@@ -28,6 +33,319 @@ async def _until(predicate, timeout: float = 3.0) -> None:
     async with asyncio.timeout(timeout):
         while not predicate():  # noqa: ASYNC110 - polling a fake is fine in tests
             await asyncio.sleep(0.01)
+
+
+@pytest.mark.parametrize(("quick", "enabled", "available", "replace"), [
+    (True, True, True, True), (False, True, True, False),
+    (True, False, True, False), (True, True, False, False),
+])
+async def test_svm_mode_waits_for_hello_and_requires_an_available_quick_model(
+    quick, enabled, available, replace,
+):
+    conn = SimpleNamespace(send=AsyncMock())
+    link = GameLink(conn)
+    llm = FakeBackend()
+    dialogue = DialogueManager(
+        link, llm, PersonaProvider(None), quick=llm if quick else None,
+        svm_lines=enabled,
+    )
+    dialogue._svm_available = available
+    conn.send.assert_not_awaited()
+    link._dispatch(Hello(type="hello", protocol=50, client="fake", codepage="cp1251"))
+    await asyncio.gather(*dialogue._background)
+    assert [json.loads(call.args[0]) for call in conn.send.await_args_list] == [
+        {"type": "svm_mode", "replace": replace},
+    ]
+    assert llm.calls == []
+
+
+@pytest.mark.parametrize(("svm", "target", "event", "to", "native", "prompt_text", "target_state"), [
+    (
+        "$ENEMYKILLED", LOBART, "ты только что убил противника — Лобарт", "обращаясь к Лобарт",
+        "(дьявольский смех) Ты показал себя!", "Ты показал себя!", None,
+    ),
+    *[
+        (
+            "$ENEMYKILLED", LOBART, "ты только что убил противника — Лобарт", "обращаясь к Лобарт",
+            "Ты заслужил это!", "Ты заслужил это!", state,
+        )
+        for state in ("died", "down", "snapshot", "revived")
+    ],
+    ("$HELP", None, "на тебя напали, ты зовёшь на помощь", "вслух", "Помогите!", "Помогите!", None),
+    ("$AWAKE", XARDAS.lower(), "ты проснулся и зеваешь", "вслух", "(зевает)", "зевает", None),
+    (
+        "$HELP", "PC_HERO", "на тебя напали, ты зовёшь на помощь", "обращаясь к герой",
+        "Помогите!", "Помогите!", None,
+    ),
+    ("$UNKNOWN", LOBART, "", "обращаясь к Лобарт", "(зевает)", "зевает", None),
+])
+async def test_svm_uses_persona_and_situation_without_history_and_voices_twelve_words(
+    tmp_path, svm, target, event, to, native, prompt_text, target_state,
+):
+    phrase = "Я ещё покажу тебе как надо встречать незваных гостей у моих ворот."
+    quick = FakeBackend(f"[angry] (потягиваюсь) {phrase} Это уже вторая фраза.", delay=0, chunk=200)
+    llm = FakeBackend()
+    fake = FakeGame()
+    writer = TraceWriter(tmp_path)
+    line = SvmLine(
+        type="svm_line", id="svm-1", npc=XARDAS, svm=svm,
+        text=native, target=target, overlay=False,
+    )
+    async with scene_tts(per_char=0.0001) as (url, requests), connected(fake) as link:
+        dialogue = DialogueManager(
+            link, llm, PersonaProvider(None), quick=quick, tts=TtsClient(url), trace=writer,
+        )
+        link.snapshots[XARDAS] = Snapshot.model_validate(fake.snapshot(XARDAS))
+        dialogue._nearby[XARDAS] = ("Ксардас", 3000)
+        dialogue._nearby[LOBART] = ("Лобарт", 100)
+        if target_state in {"died", "revived"}:
+            link._dispatch(NpcDied(type="npc_died", npc=LOBART, name="Лобарт", killer=XARDAS))
+        if target_state in {"down", "revived"}:
+            link._dispatch(NpcRoster.model_validate({
+                "type": "npc_roster", "t": 1, "full": False,
+                "npcs": [{"id": LOBART, "name": "Лобарт", "distance": 100,
+                          "activity": "down" if target_state == "down" else "routine"}],
+            }))
+        if target_state == "snapshot":
+            target_snapshot = fake.snapshot(LOBART)
+            target_snapshot["npc"].update(name="Лобарт", hp=0)
+            link._dispatch(Snapshot.model_validate(target_snapshot))
+        dialogue.remember(XARDAS, "Ксардас", "Ты защищаешь свою башню от зверей")
+        conv = dialogue.conversations[XARDAS]
+        assert conv.history
+        brief = dialogue._brief(conv)
+        started = time.monotonic()
+        dialogue._on_message(line)
+        await _until(lambda: not dialogue._svm_tasks and bool(fake.say_ends))
+
+    assert fake.said == [phrase] and fake.voiced == [True]
+    (say,) = [message for message, _ in fake.says]
+    recipient = target if (target or "").upper() != XARDAS else None
+    if target_state in {"died", "down", "snapshot"}:
+        recipient = None
+    assert say["overlay"] is True and say.get("to") == recipient and say["mood"] == "angry"
+    assert not say.get("reply") and not say.get("filler")
+    assert [request["text"] for request in requests] == [phrase]
+    assert llm.calls == [] and quick.temperatures == [0.7]
+    (instructions, messages, tools), = quick.calls
+    assert instructions == conv.persona.instructions and len(messages) == 1
+    assert messages[0].role == "developer"
+    context = messages[0].content
+    assert brief in context
+    assert "Ты защищаешь свою башню от зверей" not in context
+    moment = f"Сейчас: {event}. " if event else ""
+    assert (
+        f"[{moment}В этот момент обычно говорят: «{prompt_text}» — эти слова не повторяй. "
+        f"Скажи то же по смыслу по-своему, одной короткой фразой — как сказал бы ты, {to}.]"
+    ) in context
+    assert tools == [] and conv.reply is None and conv.talked_at == float("-inf")
+    assert conv.history[-1] == Message("developer", f"[Ты сказал вслух: «{phrase}»]")
+    assert conv.said_at >= started and len(conv.svm_phrases) == 1
+    (record,) = [json.loads(raw) for raw in writer.path().read_text().splitlines()]
+    assert record.items() >= line.model_dump(mode="json").items()
+    assert record["outcome"] == "said" and record["answer"] == phrase
+    assert 0 <= record["elapsed_ms"] < 2000 and "t" in record
+    assert 0 <= record["first_phrase_ms"] <= record["voice_ms"] <= record["elapsed_ms"]
+
+
+@pytest.mark.parametrize(("phrase", "answer", "outcome"), [
+    (
+        "Я ещё покажу тебе как надо встречать незваных гостей у моих старых ворот.",
+        "Я ещё покажу тебе как надо встречать незваных гостей у моих старых ворот.", "too_long",
+    ),
+    ("(дьявольский смех)", "", "nothing"),
+])
+async def test_svm_thirteen_words_or_only_stage_directions_are_silent_and_traced(
+    tmp_path, phrase, answer, outcome,
+):
+    quick = FakeBackend(phrase, delay=0, chunk=200)
+    conn = SimpleNamespace(send=AsyncMock())
+    writer = TraceWriter(tmp_path)
+    dialogue = DialogueManager(
+        GameLink(conn), FakeBackend(), PersonaProvider(None), quick=quick, trace=writer,
+    )
+    dialogue._nearby[XARDAS] = ("Ксардас", 100)
+    dialogue._on_message(SvmLine(
+        type="svm_line", id="long", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True,
+    ))
+    await _until(lambda: not dialogue._svm_tasks)
+    conn.send.assert_not_awaited()
+    assert dialogue.conversations[XARDAS].history == []
+    (record,) = [json.loads(raw) for raw in writer.path().read_text().splitlines()]
+    assert record["outcome"] == outcome and record["answer"] == answer
+    assert record["elapsed_ms"] >= 0
+
+
+async def test_svm_deadline_is_two_seconds_and_lateness_does_not_count_as_an_error(tmp_path):
+    assert dialogue_module.SVM_REPLY_S == 2.0
+    quick = FakeBackend("Убирайся!", delay=0, first=2.2)
+    conn = SimpleNamespace(send=AsyncMock())
+    writer = TraceWriter(tmp_path)
+    dialogue = DialogueManager(
+        GameLink(conn), FakeBackend(), PersonaProvider(None), quick=quick, trace=writer,
+    )
+    dialogue._nearby[XARDAS] = ("Ксардас", 100)
+    dialogue._svm_errors = 2
+    dialogue._on_message(SvmLine(
+        type="svm_line", id="late", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True,
+    ))
+    await _until(lambda: not dialogue._svm_tasks)
+    conn.send.assert_not_awaited()
+    assert dialogue._svm_errors == 2 and dialogue._svm_available
+    assert dialogue.conversations[XARDAS].history == []
+    (record,) = [json.loads(raw) for raw in writer.path().read_text().splitlines()]
+    assert record["outcome"] == "late" and record["answer"] == ""
+    assert 1950 <= record["elapsed_ms"] < 2800
+
+
+@pytest.mark.parametrize("busy", ["turn", "recent", "scene"])
+async def test_svm_does_not_interrupt_a_turn_or_a_line_said_in_the_last_three_seconds(tmp_path, busy):
+    assert dialogue_module.SVM_QUIET_S == 3.0
+    quick = FakeBackend("Убирайся!", delay=0)
+    conn = SimpleNamespace(send=AsyncMock())
+    writer = TraceWriter(tmp_path)
+    dialogue = DialogueManager(
+        GameLink(conn), FakeBackend(), PersonaProvider(None), quick=quick, trace=writer,
+    )
+    dialogue._nearby[XARDAS] = ("Ксардас", 100)
+    if busy == "scene":
+        dialogue._on_message(LineStarted(type="line_started", npc=XARDAS, line="scene", voiced=True))
+    conv = dialogue.open(XARDAS, "Ксардас", warm=False)
+    if busy == "turn":
+        conv.reply = asyncio.create_task(asyncio.Event().wait())
+    elif busy == "recent":
+        await dialogue._say(conv, "Стой.", None)
+        assert time.monotonic() - conv.said_at < 3
+        conn.send.reset_mock()
+    try:
+        dialogue._on_message(SvmLine(
+            type="svm_line", id="busy", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True,
+        ))
+        assert dialogue._svm_tasks == {} and quick.calls == []
+        conn.send.assert_not_awaited()
+        (record,) = [json.loads(raw) for raw in writer.path().read_text().splitlines()]
+        assert record["outcome"] == "busy" and record["elapsed_ms"] >= 0
+    finally:
+        if conv.reply is not None:
+            conv.reply.cancel()
+            await asyncio.gather(conv.reply, return_exceptions=True)
+
+
+@pytest.mark.parametrize("source", ["roster", "snapshot"])
+async def test_svm_beyond_thirty_metres_is_silent_without_opening_a_conversation(tmp_path, source):
+    conn = SimpleNamespace(send=AsyncMock())
+    link = GameLink(conn)
+    quick = FakeBackend(delay=0)
+    writer = TraceWriter(tmp_path)
+    dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), quick=quick, trace=writer)
+    if source == "roster":
+        dialogue._nearby[XARDAS] = ("Ксардас", 3000.1)
+    else:
+        snapshot = FakeGame().snapshot(XARDAS)
+        snapshot["player"]["distance"] = 3000.1
+        link.snapshots[XARDAS] = Snapshot.model_validate(snapshot)
+    dialogue._on_message(SvmLine(
+        type="svm_line", id="far", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True,
+    ))
+    assert dialogue._svm_tasks == {} and quick.calls == [] and dialogue.conversations == {}
+    conn.send.assert_not_awaited()
+    (record,) = [json.loads(raw) for raw in writer.path().read_text().splitlines()]
+    assert record["outcome"] == "far" and record["elapsed_ms"] >= 0
+
+
+async def test_svm_has_one_pending_line_per_npc_three_slots_and_yields_to_quick_words(tmp_path):
+    quick = FakeBackend("К оружию!", delay=0, first=60)
+    conn = SimpleNamespace(send=AsyncMock())
+    writer = TraceWriter(tmp_path)
+    dialogue = DialogueManager(
+        GameLink(conn), FakeBackend(), PersonaProvider(None), quick=quick, trace=writer,
+    )
+    for npc in (XARDAS, LOBART, HILDA, "MIL_320_SPEAKER"):
+        dialogue._nearby[npc] = (npc, 100)
+    line = SvmLine(type="svm_line", id="first", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True)
+    dialogue._on_message(line)
+    dialogue._on_message(line.model_copy(update={"id": "same-npc"}))
+    for npc in (LOBART, HILDA):
+        dialogue._on_message(line.model_copy(update={"id": npc, "npc": npc}))
+    dialogue._on_message(line.model_copy(update={"id": "fourth", "npc": "MIL_320_SPEAKER"}))
+    assert len(dialogue._svm_tasks) == 3
+    tasks = list(dialogue._svm_tasks.values())
+    await _until(lambda: len(quick.calls) == 3)
+    quick.first = 0
+    conv = dialogue.open("MIL_320_SPEAKER", "Стражник", warm=False)
+    words, _ = await asyncio.wait_for(dialogue._quick_words(conv, []), 0.5)
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await _until(lambda: not dialogue._svm_tasks)
+    assert words == "К оружию!" and all(task.cancelled() for task in tasks)
+    conn.send.assert_not_awaited()
+    records = [json.loads(raw) for raw in writer.path().read_text().splitlines()]
+    assert {r["id"]: r["outcome"] for r in records} == {
+        "first": "busy", "same-npc": "busy", LOBART: "busy", HILDA: "busy", "fourth": "busy",
+    }
+    assert all(r["elapsed_ms"] >= 0 for r in records)
+
+
+async def test_svm_repeats_are_normalized_and_only_the_last_five_said_phrases_count(tmp_path, monkeypatch):
+    replies = ["Первый.", "Второй.", "Третий.", "Четвёртый.", "Пятый.", "ПЕРВЫЙ!!!", "Шестой.", "Первый."]
+    quick = FakeBackend(script=[FakeStep(text) for text in replies], delay=0)
+    writer = TraceWriter(tmp_path)
+    dialogue = DialogueManager(
+        GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(), PersonaProvider(None),
+        quick=quick, trace=writer,
+    )
+    dialogue._nearby[XARDAS] = ("Ксардас", 100)
+    monkeypatch.setattr(dialogue, "_say", AsyncMock(wraps=dialogue._say))
+    conv = dialogue.open(XARDAS, "Ксардас", warm=False)
+    line = SvmLine(type="svm_line", id="repeat", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True)
+    for index in range(len(replies)):
+        conv.said_at = float("-inf")
+        conv.overlay_free_at = 0
+        for sent in dialogue._sent:
+            dialogue._sent[sent] = float("-inf")  # earlier sends expired during the skipped cooldown
+        dialogue._on_message(line.model_copy(update={"id": str(index)}))
+        await _until(lambda: not dialogue._svm_tasks)
+    records = [json.loads(raw) for raw in writer.path().read_text().splitlines()]
+    assert [r["outcome"] for r in records] == ["said"] * 5 + ["repeat", "said", "said"]
+    assert [r["answer"] for r in records] == replies
+    assert dialogue._say.await_count == 7 and len(conv.svm_phrases) == 5
+    assert len(conv.history) == 7 and "ПЕРВЫЙ!!!" not in str(conv.history)
+
+
+async def test_svm_three_errors_restore_original_lines_then_probes_restore_replacement(tmp_path, monkeypatch):
+    assert dialogue_module.SVM_RECOVER_S == 30.0
+    monkeypatch.setattr(dialogue_module, "SVM_RECOVER_S", 0.05)
+    quick = FakeBackend("Снова на ногах!", delay=0)
+    monkeypatch.setattr(quick, "stream", FailingBackend().stream)
+    probe = AsyncMock(side_effect=[LLMError("still unavailable"), None])
+    monkeypatch.setattr(quick, "prewarm", probe)
+    conn = SimpleNamespace(send=AsyncMock())
+    link = GameLink(conn)
+    writer = TraceWriter(tmp_path)
+    dialogue = DialogueManager(link, FakeBackend(), PersonaProvider(None), quick=quick, trace=writer)
+    dialogue._nearby[XARDAS] = ("Ксардас", 100)
+    link._dispatch(Hello(type="hello", protocol=50, client="fake", codepage="cp1251"))
+    await asyncio.gather(*dialogue._background)
+    line = SvmLine(type="svm_line", id="error", npc=XARDAS, svm="$THREATEN", text="Берегись!", overlay=True)
+    for index in range(3):
+        dialogue._on_message(line.model_copy(update={"id": str(index)}))
+        await _until(lambda: not dialogue._svm_tasks)
+        assert dialogue._svm_errors == index + 1
+        assert dialogue._svm_available is (index < 2)
+    await _until(lambda: len(conn.send.await_args_list) == 2)
+    assert [json.loads(c.args[0]) for c in conn.send.await_args_list] == [
+        {"type": "svm_mode", "replace": True}, {"type": "svm_mode", "replace": False},
+    ]
+    dialogue._on_message(line.model_copy(update={"id": "unavailable"}))
+    assert dialogue._svm_tasks == {}
+    await _until(lambda: dialogue._svm_available)
+    await _until(lambda: len(conn.send.await_args_list) == 3)
+    assert json.loads(conn.send.await_args.args[0]) == {"type": "svm_mode", "replace": True}
+    assert probe.await_count == 2 and dialogue._svm_errors == 0
+    assert all(call.kwargs["messages"] == [] for call in probe.await_args_list)
+    records = [json.loads(raw) for raw in writer.path().read_text().splitlines()]
+    assert len(records) == 4 and all(r["outcome"] == "error" for r in records)
+    assert all(r["answer"] == "" and r["elapsed_ms"] >= 0 for r in records)
+    assert dialogue.conversations[XARDAS].history == []
 
 
 async def test_player_phrases_get_replies_line_by_line():
@@ -793,6 +1111,161 @@ async def one_voice_dialogue(with_tts, llm, *, queued=(), audio_s=0.1):
             await asyncio.gather(*tasks, return_exceptions=True)
 
 
+@pytest.mark.parametrize("trigger", ["player", "event"])
+@pytest.mark.parametrize("with_tts", [True, False])
+async def test_a_turn_cancels_svm_waiting_to_be_heard(tmp_path, trigger, with_tts):
+    words = "Вон отсюда!"
+    note = Message("developer", f"[Ты сказал вслух: «{words}»]")
+    llm = FakeBackend("Теперь я тебя слушаю.", delay=0, first=60)
+    writer = TraceWriter(tmp_path)
+    async with one_voice_dialogue(with_tts, llm) as (fake, dialogue, conv):
+        dialogue.trace = writer
+        if with_tts:
+            held = dialogue.tts.held[words] = asyncio.Event()
+        else:
+            await dialogue._say(conv, "Сначала я должен закончить свою прежнюю мысль.", None, overlay=True)
+            await _until(lambda: bool(fake.said))
+            await dialogue.link.snapshot(XARDAS, fresh=True)
+            conv.said_at -= 3.05  # the cooldown passed while the long overlay is still running
+            dialogue._spoke_at[XARDAS] -= 3.05
+        previous = list(fake.said)
+        dialogue.quick = FakeBackend(words, delay=0)
+        dialogue._nearby[XARDAS] = ("Ксардас", 100)
+        conv.talked_at = float("-inf")
+        svm = SvmLine(
+            type="svm_line", id="svm-held", npc=XARDAS, svm="$GETOUTOFHERE",
+            text="Убирайся отсюда!", overlay=True,
+        )
+        dialogue._on_message(svm)
+        if with_tts:
+            await _until(lambda: words in dialogue.tts.requested and not dialogue._svm_tasks)
+            assert conv.voice.empty()  # TTS already owns the line
+        else:
+            await _until(lambda: any(text == words for text, _ in dialogue._lines.values()))
+            assert XARDAS in dialogue._svm_tasks  # _say is waiting for the previous overlay
+        assert fake.said == previous and not writer.path().exists()
+        assert not conv.svm_phrases and note not in conv.history
+
+        dialogue.quick = None  # isolate the held SVM from the new turn's first words
+        turn = (dialogue.say_as_player(XARDAS, "Подожди, поговорим.", overlay=True)
+                if trigger == "player"
+                else dialogue.event_turn(XARDAS, "[Событие: герой заговорил]", overlay=True))
+        await _until(lambda: bool(llm.calls))
+        if with_tts:
+            held.set()
+            await asyncio.wait_for(conv.voice.join(), 1)
+        else:
+            dialogue._reset_overlay(conv)
+            await _until(lambda: not dialogue._svm_tasks)
+        await dialogue.link.snapshot(XARDAS, fresh=True)  # drain preceding game messages
+        assert not turn.done()
+        assert fake.said == previous and not fake.say_chunks
+        assert not conv.svm_phrases and note not in conv.history
+        (record,) = [r for r in map(json.loads, writer.path().read_text().splitlines())
+                     if r["type"] == "svm_line"]
+        outcome = "dropped" if with_tts and trigger == "player" else "busy"
+        assert record["id"] == "svm-held" and record["outcome"] == outcome
+        assert record["answer"] == words and record["elapsed_ms"] >= 0
+
+        turn.cancel()
+        await asyncio.gather(turn, return_exceptions=True)
+        dialogue.quick = FakeBackend(words, delay=0)
+        conv.said_at = conv.talked_at = float("-inf")
+        conv.overlay_free_at = 0
+        dialogue._on_message(svm.model_copy(update={"id": "svm-retry"}))
+        await _until(lambda: fake.said == [*previous, words] and bool(conv.svm_phrases))
+        assert len(conv.svm_phrases) == 1 and conv.history.count(note) == 1
+        records = [r for r in map(json.loads, writer.path().read_text().splitlines())
+                   if r["type"] == "svm_line"]
+        assert [(r["id"], r["outcome"]) for r in records] == [
+            ("svm-held", outcome), ("svm-retry", "said"),
+        ]
+
+
+@pytest.mark.parametrize("drop", ["queue", "interrupt"])
+async def test_queued_svm_counts_for_cooldown_and_repeats_and_finishes_its_dropped_trace(tmp_path, drop):
+    words = "Вон отсюда!"
+    note = Message("developer", f"[Ты сказал вслух: «{words}»]")
+    writer = TraceWriter(tmp_path)
+    async with one_voice_dialogue(True, FakeBackend()) as (fake, dialogue, conv):
+        dialogue.trace = writer
+        blocker = "Сначала закончу мысль." if drop == "queue" else words
+        held = dialogue.tts.held[blocker] = asyncio.Event()
+        if drop == "queue":
+            await dialogue._say(conv, blocker, None)
+            await _until(lambda: blocker in dialogue.tts.requested)
+        dialogue.quick = FakeBackend(words, delay=0)
+        dialogue._nearby[XARDAS] = ("Ксардас", 100)
+        conv.said_at = float("-inf")
+        svm = SvmLine(
+            type="svm_line", id="queued", npc=XARDAS, svm="$GETOUTOFHERE",
+            text="Убирайся отсюда!", overlay=True,
+        )
+        dialogue._on_message(svm)
+        await _until(lambda: bool(conv.svm_pending) and not dialogue._svm_tasks)
+        assert conv.voice.qsize() == (1 if drop == "queue" else 0)
+
+        conv.said_at = float("-inf")  # the pending line's own clock enforces its cooldown
+        dialogue._on_message(svm.model_copy(update={"id": "recent"}))
+        assert len(dialogue.quick.calls) == 1
+        for line in conv.svm_pending:
+            dialogue._sent[line] -= 3.05
+        dialogue.quick = FakeBackend("ВОН ОТСЮДА!!!", delay=0)
+        dialogue._on_message(svm.model_copy(update={"id": "repeat"}))
+        await _until(lambda: not dialogue._svm_tasks)
+        assert not conv.svm_phrases and note not in conv.history
+
+        if drop == "queue":
+            dialogue._drop_unvoiced(conv)
+        else:
+            assert dialogue.interrupt(XARDAS)
+        assert not conv.svm_pending
+        held.set()
+        await asyncio.wait_for(conv.voice.join(), 1)
+        await dialogue.link.snapshot(XARDAS, fresh=True)
+        assert words not in fake.said and not conv.svm_phrases and note not in conv.history
+        records = [r for r in map(json.loads, writer.path().read_text().splitlines())
+                   if r["type"] == "svm_line"]
+        assert [(r["id"], r["outcome"]) for r in records] == [
+            ("recent", "busy"), ("repeat", "repeat"), ("queued", "dropped"),
+        ]
+
+
+async def test_a_started_svm_is_audible_and_can_be_interrupted():
+    words = "Вон отсюда!"
+    previous = "Наш разговор пока закончен."
+    llm = FakeBackend(previous, delay=0)
+    async with one_voice_dialogue(True, llm, audio_s=2.0) as (fake, dialogue, conv):
+        talk = TalkDesk(dialogue.link, dialogue)
+        assert talk.begin(XARDAS, "Ксардас")
+        await dialogue.say_as_player(XARDAS, "Расскажи.")
+        await _until(
+            lambda: bool(fake.say_ends) and dialogue.started_at(fake.says[0][0]["line"]) is not None
+        )
+        old_line = fake.says[0][0]["line"]
+        assert conv.last_lines == [old_line] and conv.reply_id
+        old_at = time.monotonic() - 4  # the earlier answer ended and its cooldown passed
+        dialogue._lines[old_line] = (previous, old_at)
+        dialogue._spoke_at[XARDAS] = conv.said_at = conv.overlay_free_at = old_at
+        dialogue.quick = FakeBackend(words, delay=0)
+        dialogue._nearby[XARDAS] = ("Ксардас", 100)
+        dialogue._on_message(SvmLine(
+            type="svm_line", id="speaking", npc=XARDAS, svm="$GETOUTOFHERE",
+            text="Убирайся отсюда!", overlay=True,
+        ))
+        await _until(
+            lambda: len(fake.say_ends) == 2 and dialogue.started_at(fake.says[1][0]["line"]) is not None
+        )
+        assert not conv.svm_pending
+        assert dialogue.audible(XARDAS) and dialogue.speaking(XARDAS)
+        history = list(conv.history)
+        await fake.send(type="ptt_start", focus=XARDAS)
+        await _until(lambda: bool(fake.hushed))
+        assert fake.hushed == [{"type": "hush", "npc": XARDAS}]
+        assert conv.history == history
+        assert not dialogue.audible(XARDAS) and not dialogue.speaking(XARDAS)
+
+
 @pytest.mark.parametrize("with_tts", [True, False])
 @pytest.mark.parametrize("first_started", [True, False])
 async def test_an_overlay_event_cuts_the_unheard_previous_reply(with_tts, first_started):
@@ -923,6 +1396,26 @@ async def test_interrupt_releases_the_overlay_wait_for_the_next_reply(with_tts, 
 
         assert next(at for m, at in fake.says if m["text"] == answer) < old_free_at
         assert not any(m["text"] == second for m, _ in fake.says)
+
+
+async def test_an_event_turn_that_must_act_requires_a_call_on_its_first_step_only():
+    # a witness's answer (witnesses.py): the npc decides by catch_lie or set_intent, not by words alone
+    intent = ToolCall("set_intent", {"goal": "none", "target": None, "attitude": "wary", "agenda": None})
+    llm = FakeBackend(script=[FakeStep("", [intent]), FakeStep("Ну смотри у меня.")], delay=0)
+    fake = FakeGame()
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue.open(XARDAS, "Ксардас", warm=False)
+        turn = dialogue.event_turn(XARDAS, "[Ответ: …]", tools=("set_intent",), act=True)
+        assert turn is not None
+        await turn
+        assert llm.tool_choices == ["required", None]
+        assert dialogue.conversations[XARDAS].intent.attitude == "wary"
+        # with no tool offered there is nothing to require
+        turn = dialogue.event_turn(XARDAS, "[Событие: …]", tools=(), act=True)
+        assert turn is not None
+        await turn
+        assert llm.tool_choices[2] is None
 
 
 async def test_an_overlay_hushes_at_first_sound_and_drops_only_old_unvoiced_lines():
@@ -1193,6 +1686,94 @@ async def test_notes_do_not_warm_the_quick_model_but_talking_to_the_npc_does(mon
     assert heard == "[Ты слышал, как Лобарт и Хильда говорили о герое: Лобарт: «Слыхала?» — Хильда: «Да ну?»]"
 
 
+async def test_quick_slots_evict_the_least_recent_idle_npc(monkeypatch):
+    monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
+    quick = FakeBackend("Есть!", delay=0)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    for npc in (XARDAS, LOBART, HILDA):
+        conv = dialogue.open(npc, npc, warm=False)
+        dialogue._start_prewarm(conv, [XARDAS, LOBART, HILDA])
+    await asyncio.gather(*list(dialogue._prewarms.values()))
+    assert dialogue._quick_slots == {XARDAS: 0, LOBART: 1, HILDA: 2}
+    assert quick.prewarm_slot_ids == [0, 1, 2]
+    async with dialogue._quick_request(XARDAS):
+        await dialogue._quick_words(dialogue.conversations[LOBART], [])
+        await dialogue._quick_words(dialogue.conversations[HILDA], [])
+        newcomer = dialogue.open("NEW", "Стражник", warm=False)
+        await dialogue._quick_words(newcomer, [])
+        assert dialogue._quick_slots == {XARDAS: 0, HILDA: 2, "NEW": 1}
+    await dialogue._quick_words(dialogue.open("LAST", "Последний", warm=False), [])
+    assert dialogue._quick_slots == {HILDA: 2, "NEW": 1, "LAST": 0}
+    assert quick.slot_ids == [1, 2, 1, 0]
+
+
+async def test_a_real_quick_request_cancels_its_warm_and_blocks_new_warms(monkeypatch):
+    from gothic_ai.llm.base import QUICK_SLOT
+
+    monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
+    quick = FakeBackend("Есть!", delay=0)
+    started, cancelled = asyncio.Event(), asyncio.Event()
+    warm_slots = []
+
+    async def held_warm(**kwargs):
+        warm_slots.append(QUICK_SLOT.get())
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(quick, "prewarm", held_warm)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    dialogue._start_prewarm(conv, [LOBART])
+    await asyncio.wait_for(started.wait(), 1)
+    words, _ = await asyncio.wait_for(dialogue._quick_words(conv, []), 1)
+    await _until(lambda: cancelled.is_set() and not dialogue._prewarms)
+    assert words == "Есть!" and quick.slot_ids == warm_slots == [0]
+    async with dialogue._quick_request(LOBART):
+        dialogue._start_prewarm(conv, [LOBART])
+        await asyncio.sleep(0)
+        assert not dialogue._prewarms and warm_slots == [0]
+
+
+@pytest.mark.parametrize("kind", ["first_words", "svm", "combat_bark", "fight", "order"])
+async def test_all_npc_quick_requests_use_the_prewarmed_slot(kind, monkeypatch):
+    from gothic_ai.combat_barks import CombatBarks
+    from gothic_ai.protocol import CombatHit
+
+    monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
+    quick = FakeBackend("[pain] Ай!", delay=0)
+    async with connected(FakeGame()) as link:
+        dialogue = DialogueManager(link, FakeBackend("", delay=0), PersonaProvider(None), quick=quick)
+        conv = dialogue.open(LOBART, "Лобарт", warm=False)
+        dialogue._nearby[LOBART] = ("Лобарт", 100)
+        dialogue._start_prewarm(conv, [LOBART])
+        await _until(lambda: bool(quick.prewarms))
+        if kind == "first_words":
+            await dialogue._quick_words(conv, [])
+        elif kind == "svm":
+            dialogue._start_svm(SvmLine(type="svm_line", id="s", npc=LOBART,
+                                        svm="$NOTNOW", text="Нет!", overlay=True))
+            await asyncio.gather(*list(dialogue._svm_tasks.values()))
+        elif kind == "combat_bark":
+            barks = CombatBarks(dialogue)
+            link._dispatch(NpcRoster(type="npc_roster", t=0, npcs=[
+                {"id": LOBART, "name": "Лобарт", "distance": 100},
+            ]))
+            link._dispatch(CombatHit(type="combat_hit", npc=LOBART, by="PLAYER", damage=5,
+                                    hp=95, hp_max=100, down=False, dead=False, kind="melee"))
+            await barks.task
+        elif kind == "fight":
+            dialogue.in_fight = lambda npc: True
+            await dialogue.event_turn(LOBART, "[Бой!]")
+        else:
+            await dialogue.acknowledge(LOBART, "Лобарт")
+        assert quick.slot_ids and set(quick.slot_ids) == {quick.prewarm_slot_ids[0]}
+
+
 @pytest.mark.parametrize("distance", [600, 1200])
 async def test_a_new_focused_npc_is_warmed_only_within_eight_metres(distance, monkeypatch):
     monkeypatch.setattr(dialogue_module, "PREWARM_DELAY_S", 0)
@@ -1386,6 +1967,7 @@ async def test_a_line_in_a_fight_is_the_quick_models_and_the_turns_model_only_ac
     brief, full = _situation_of(quick_messages), _situation_of(messages)
     assert dialogue_module.QUICK_HINT in brief and "Цели для намерения" not in brief
     assert "Цели для намерения" in full and "Ты уже сказал вслух: «Это он! Держи его!»" in full
+    assert "Твою реплику уже произносят вслух." not in full
     history = dialogue.conversations[XARDAS].history
     assert history[-1].content.startswith("[Ты напал") or history[-2].content == "Это он! Держи его!"
     assert any(m.role == "assistant" and m.content == "Это он! Держи его!" for m in history)
@@ -1428,7 +2010,104 @@ async def test_out_of_a_fight_the_quick_model_only_says_the_first_words():
     _, messages, _ = llm.calls[0]
     situation = _situation_of(messages)
     assert "Ты уже сказал вслух: «Тьфу!»" in situation and dialogue_module.REACT_HINT not in situation
+    assert all("Твою реплику уже произносят вслух." not in _situation_of(call[1]) for call in llm.calls)
     assert [m.content for m in dialogue.conversations[XARDAS].history][:2] == ["Ты старый дурак", "Не спеши."]
+
+
+@pytest.mark.parametrize("combat", [True, False])
+async def test_sol_overlaps_first_words_only_for_a_hero_combat_phrase(combat, monkeypatch):
+    fake = FakeGame()
+    quick = FakeBackend("[angry] Стой!", delay=0)
+    llm = FakeBackend("Сам справлюсь!", delay=0)
+    probe_started, probe_done = asyncio.Event(), asyncio.Event()
+    words_started, words_done = asyncio.Event(), asyncio.Event()
+    full_started = asyncio.Event()
+    stream = quick.stream
+
+    async def held_words(**kwargs):
+        words_started.set()
+        await words_done.wait()
+        async for event in stream(**kwargs):
+            yield event
+
+    async def probe(conv, request):
+        probe_started.set()
+        await probe_done.wait()
+
+    monkeypatch.setattr(quick, "stream", held_words)
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), quick=quick)
+        dialogue.fights_hero = lambda npc: combat
+        dialogue.surrender_hold = probe
+        situation = dialogue._situation
+
+        async def prepare_situation(*args, **kwargs):
+            if not kwargs.get("brief"):
+                full_started.set()
+            return await situation(*args, **kwargs)
+
+        monkeypatch.setattr(dialogue, "_situation", prepare_situation)
+        dialogue.open(XARDAS, "Ксардас", warm=False)
+        turn = dialogue.say_as_player(XARDAS, "Хватит!")
+        try:
+            if combat:
+                await asyncio.wait_for(probe_started.wait(), 2)
+                assert not words_started.is_set() and not llm.calls
+                assert full_started.is_set()  # native context preparation overlaps the probe too
+                probe_done.set()
+            await asyncio.wait_for(words_started.wait(), 2)
+            if combat:
+                await _until(lambda: bool(llm.calls))
+                assert not turn.done() and not fake.said
+            else:
+                await asyncio.sleep(0.02)
+                assert not llm.calls
+            words_done.set()
+            await turn
+            await _until(lambda: len(fake.said) == (1 if combat else 2))
+        finally:
+            words_done.set()
+            turn.cancel()
+            await asyncio.gather(turn, return_exceptions=True)
+
+    situation = _situation_of(llm.calls[0][1])
+    assert ("Ты уже сказал вслух: «Стой!»" in situation) is not combat
+    instruction = (
+        "Твою реплику уже произносят вслух. Не пиши текст: если нужно действие, сразу вызови инструмент; "
+        "если делать ничего не нужно, ответь пустым сообщением."
+    )
+    assert (instruction in situation) is combat
+    assert not combat or situation.endswith(instruction)
+    assert fake.said == (["Стой!"] if combat else ["Стой!", "Сам справлюсь!"])
+
+
+@pytest.mark.parametrize("failed", [False, True])
+@pytest.mark.parametrize("silent", [False, True])
+async def test_empty_parallel_first_words_voice_sol_once(failed, silent, tmp_path):
+    from gothic_ai.trace import find_turn
+
+    fake = FakeGame()
+    reply = "[angry] Сам справлюсь!"
+    llm = FakeBackend(script=[FakeStep("" if silent else reply), FakeStep(reply)], delay=0)
+    writer = TraceWriter(tmp_path)
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None),
+                                   quick=FailingBackend() if failed else FakeBackend("", delay=0),
+                                   trace=writer)
+        dialogue.fights_hero = lambda npc: True
+        dialogue.open(XARDAS, "Ксардас", warm=False)
+        await dialogue.say_as_player(XARDAS, "Хватит!")
+        await _until(lambda: fake.said == ["Сам справлюсь!"])
+    assert len(llm.calls) == (2 if silent else 1)
+    assert "Твою реплику уже произносят вслух." in _situation_of(llm.calls[0][1])
+    if silent:
+        assert llm.tool_choices[-1] == "none"
+        assert "Твою реплику уже произносят вслух." not in _situation_of(llm.calls[-1][1])
+    assert dialogue.conversations[XARDAS].history[-1].content == "Сам справлюсь!"
+    turn, _ = find_turn(writer.path(), None)
+    assert turn["status"] == "completed"
+    assert any(event["kind"] == "quick_fallback" for event in turn["events"])
+    assert any(event["kind"] == "quick_failed" for event in turn["events"]) is failed
 
 
 @pytest.mark.parametrize("reply", ["Держи свиток.", "Ишь ты! Держи свиток."])
@@ -1830,3 +2509,385 @@ async def test_a_rejection_after_the_quick_fight_line_keeps_the_next_step_silent
     assert "ничего не говори" not in result.output
     history = dialogue.conversations[XARDAS].history
     assert history[-1].content == "Держись!"
+
+
+async def test_surrender_probe_uses_a_separate_slot_and_leaves_the_npc_cache_intact():
+    quick = FakeBackend(script=[FakeStep("да"), FakeStep("Ладно!")], delay=0)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    conv.talked_at = time.monotonic()
+    slot = dialogue._quick_slot(LOBART)
+    history = [Message("assistant", "Я тебя проучу!")]
+    dialogue._prewarm_history[LOBART] = history
+    request = [Message("assistant", "Я тебя проучу!"),
+               Message("developer", dialogue._brief(conv) + "\n" + dialogue_module.QUICK_HINT),
+               Message("user", "Сдаюсь, забирай золото, только не бей")]
+    assert await dialogue._surrendering(conv, request)
+    assert dialogue._quick_slots[LOBART] == slot
+    assert dialogue._prewarm_history[LOBART] is history
+    words, _ = await dialogue._quick_words(conv, request)
+    assert words == "Ладно!"
+    assert quick.slot_ids[0] != slot and quick.slot_ids[1] == slot
+    assert quick.calls[0][0] != conv.persona.instructions
+    assert quick.calls[1][0] == conv.persona.instructions
+    assert request[-1].content in " ".join(m.content for m in quick.calls[0][1])
+    assert quick.calls[1][1] == request
+    assert quick.temperatures == [0, None]
+    assert quick.max_token_limits == [4, None]
+    assert quick.grammars == ['root ::= "да" | "нет"', None]
+    assert not conv.history
+
+
+async def test_fight_first_words_wait_for_the_surrender_probe():
+    quick = FakeBackend("Ладно!", delay=0)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def probe(conv, request):
+        started.set()
+        await release.wait()
+
+    async with connected(FakeGame()) as link:
+        dialogue = DialogueManager(link, FakeBackend("", delay=0), PersonaProvider(None), quick=quick)
+        dialogue.in_fight = lambda npc: True
+        dialogue.surrender_hold = probe
+        conv = dialogue.open(LOBART, "Лобарт", warm=False)
+        turn = dialogue.say_as_player(LOBART, "Сдаюсь, только не бей", overlay=True)
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            assert not quick.calls
+        finally:
+            release.set()
+            await turn
+        assert quick.calls and conv.history[-1].content == "Ладно!"
+
+
+async def test_surrender_probe_blocks_new_prewarming_svm_and_combat_barks(monkeypatch):
+    from gothic_ai.combat_barks import CombatBarks
+    from gothic_ai.protocol import CombatHit
+
+    quick = FakeBackend("да", delay=0)
+    rows = []
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick,
+                               trace=SimpleNamespace(write=rows.append))
+    barks = CombatBarks(dialogue, rng=lambda: 0)
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    other = dialogue.open(HILDA, "Хильда", warm=False)
+    dialogue.link.snapshots[HILDA] = Snapshot.model_validate(FakeGame().snapshot(HILDA))
+    dialogue.link._dispatch(NpcRoster(type="npc_roster", t=0, npcs=[dict(
+        id=HILDA, name="Хильда", guild=8, distance=100, activity="fight",
+    )]))
+    dialogue._quick_slot(LOBART)
+    started, release = asyncio.Event(), asyncio.Event()
+    stream = quick.stream
+
+    async def held_probe(**options):
+        started.set()
+        await release.wait()
+        async for event in stream(**options):
+            yield event
+
+    monkeypatch.setattr(quick, "stream", held_probe)
+    conv.talked_at = time.monotonic()
+    task = asyncio.create_task(dialogue._surrendering(conv, [Message("user", "Пощади!")]))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        dialogue._start_prewarm(other, [HILDA])
+        dialogue._start_svm(SvmLine(type="svm_line", id="held", npc=HILDA,
+                                  svm="$THREATEN", text="Берегись!", overlay=True))
+        dialogue.link._dispatch(CombatHit(type="combat_hit", npc=HILDA, by="PLAYER", damage=10,
+                                         hp=90, hp_max=100, down=False, dead=False, kind="melee"))
+        assert not dialogue._prewarms and not dialogue._svm_tasks and barks.task is None
+        assert not quick.prewarms and not quick.calls
+        assert {(row["type"], row["outcome"]) for row in rows} == {
+            ("svm_line", "busy"), ("combat_bark", "busy"),
+        }
+    finally:
+        release.set()
+        accepted = await task
+    assert accepted and dialogue._surrender_probes == 0
+
+
+async def test_surrender_probe_evicts_only_the_least_recent_idle_foreign_slot():
+    quick = FakeBackend("да", delay=0)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    for npc in (LOBART, HILDA, XARDAS):
+        dialogue._quick_slot(npc)
+        dialogue._prewarm_history[npc] = [Message("assistant", npc)]
+    owner_slot, evicted_slot = dialogue._quick_slots[LOBART], dialogue._quick_slots[HILDA]
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    conv.talked_at = time.monotonic()
+    assert await dialogue._surrendering(conv, [Message("user", "Пощади!")])
+    assert quick.slot_ids == [evicted_slot]
+    assert dialogue._quick_slots == {LOBART: owner_slot, XARDAS: 2}
+    assert set(dialogue._prewarm_history) == {LOBART, XARDAS}
+    assert set(dialogue._quick_used) == {LOBART, XARDAS}
+
+
+@pytest.mark.parametrize("unavailable", ["busy", "locked"])
+async def test_surrender_probe_skips_when_only_its_own_or_busy_slots_remain(unavailable):
+    quick = FakeBackend("да", delay=0)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    for npc in (LOBART, HILDA, XARDAS):
+        dialogue._quick_slot(npc)
+    slots = dict(dialogue._quick_slots)
+    for slot in (1, 2):
+        if unavailable == "busy":
+            dialogue._quick_busy[slot] = 1
+        else:
+            await dialogue._quick_locks[slot].acquire()
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    conv.talked_at = time.monotonic()
+    try:
+        assert not await dialogue._surrendering(conv, [Message("user", "Пощади!")])
+        assert dialogue._quick_slots == slots and not quick.calls
+    finally:
+        for slot in (1, 2):
+            if unavailable == "locked":
+                dialogue._quick_locks[slot].release()
+
+
+@pytest.mark.parametrize("reply", ["нет", "Я тебя не пощажу", ""])
+async def test_surrender_probe_requires_an_affirmative_model_answer(reply):
+    quick = FakeBackend(reply, delay=0)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    conv.talked_at = time.monotonic()
+    assert not await dialogue._surrendering(conv, [Message("user", "Сдаюсь! Не бей! Пощади!")])
+
+
+async def test_surrender_probe_includes_the_opponents_current_combat_words():
+    quick = FakeBackend("да", delay=0)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    dialogue.surrender_context = lambda npc: "Сдаёшься?"
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    conv.talked_at = time.monotonic()
+    assert await dialogue._surrendering(conv, [Message("user", "Да")])
+    assert quick.calls[0][1] == [Message(
+        "user", "Перед этим противник сказал: «Сдаёшься?»\nРеплика игрока: «Да»",
+    )]
+
+
+@pytest.mark.parametrize("failure", ["unavailable", "error", "deadline", "expired"])
+async def test_surrender_probe_failure_keeps_the_current_combat(failure):
+    quick = (None if failure == "unavailable" else FailingBackend() if failure == "error"
+             else FakeBackend("да", first=0.1, delay=0))
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    conv.talked_at = time.monotonic() - (2.1 if failure == "expired" else 1.99)
+    started = time.monotonic()
+    assert not await dialogue._surrendering(conv, [Message("user", "Пощади!")])
+    assert time.monotonic() - started < 0.1
+    if failure == "expired":
+        assert not quick.calls
+
+
+SURRENDER_PHRASES = [
+    ("Сдаюсь, забирай золото, только не бей", True),
+    ("Пацаны, обоссыте, но не бейте", True),
+    ("Браго, сдаюсь! Обоссы, но не бей", True),
+    ("Хватит, хватит, твоя взяла", True),
+    ("Не бей, я заплачу", True),
+    ("Пощади, я все понял", True),
+    ("Ладно, сдаюсь. Больше не буду", True),
+    ("Пощади меня!", True),
+    ("Стой, я проиграл, оставь в живых", True),
+    ("Я больше не сопротивляюсь, только отпусти", True),
+    ("Возьми все, что у меня есть, и прекрати бить", True),
+    ("Опускаю меч. Твоя победа", True),
+    ("Не убивай меня, прошу", True),
+    ("Ладно, твоя взяла. Хватит драться", True),
+    ("Я не хочу умирать. Сдаюсь", True),
+    ("Сдавайся!", False),
+    ("Сдохни, тварь", False),
+    ("Я сдаюсь? Еще чего!", False),
+    ("Отдай мой меч", False),
+    ("Ты кто такой?", False),
+    ("Ты сдаёшься или мне тебя добить?", False),
+    ("На колени, сейчас же!", False),
+    ("Плати, или я тебя убью", False),
+    ("Я тебя не пощажу", False),
+    ("Клади оружие и отдай золото", False),
+    ("Я заставлю тебя просить пощады", False),
+    ("Ты пожалеешь, что связался со мной", False),
+    ("Я не сдамся", False),
+    ("Забирайся прочь, трус", False),
+    ("Ты мне за все заплатишь", False),
+]
+
+
+async def test_surrender_recognition_live_gemma():
+    import os
+    import statistics
+    import tomllib
+    from contextlib import aclosing
+    from pathlib import Path
+
+    import httpx
+
+    from gothic_ai.executor import Intent
+    from gothic_ai.llm import make_quick, quick_url
+
+    url = quick_url(os.environ.get("GOTHIC_QUICK_LLM_URL"), os.environ.get("GOTHIC_DECIDER_URL"))
+    settings = Path.home() / ".config/gothic-ai/settings.toml"
+    if url is None and settings.is_file():
+        configured = tomllib.loads(settings.read_text(encoding="utf-8")).get("llm", {})
+        url = quick_url(configured.get("quick_url"), configured.get("decider_url"))
+    if url is None:
+        pytest.skip("no quick model configured")
+    async with httpx.AsyncClient(timeout=2) as client:
+        try:
+            response = await client.get(url.rstrip("/") + "/models")
+            response.raise_for_status()
+        except httpx.HTTPError:
+            pytest.skip("the configured quick model is unavailable")
+    quick = make_quick(url)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    conv = dialogue.open("BDT_1014_BANDIT_L", "Браго", warm=False)
+    conv.intent = Intent(goal="fight", target="PLAYER", attitude="hostile")
+    dialogue.link.snapshots[conv.npc] = Snapshot.model_validate(FakeGame().snapshot(conv.npc))
+    history = [Message("user", "Отстань от меня."), Message("assistant", "Я тебя проучу!")]
+    situation = Message("developer", dialogue._brief(conv) + "\n" + dialogue_module.QUICK_HINT)
+    observed, durations, cache_timings, overheads, pairs = [], [], [], [], []
+
+    async def warm() -> None:
+        async with dialogue._quick_request(conv.npc):
+            await quick.prewarm(instructions=conv.persona.instructions, messages=history)
+
+    async def first_delta(request) -> float:
+        started = time.monotonic()
+        async with aclosing(dialogue._quick_stream(
+            conv.npc, instructions=conv.persona.instructions, messages=request, tools=[], temperature=0,
+        )) as events:
+            async for event in events:
+                if isinstance(event, TextDelta) and event.text:
+                    return time.monotonic() - started
+        raise AssertionError("the live quick model produced no first words")
+
+    try:
+        await warm()
+        owner_slot = dialogue._quick_slots[conv.npc]
+        cases = [(phrase, expected, None) for phrase, expected in SURRENDER_PHRASES]
+        cases.append(("Да", True, "Сдаёшься?"))
+        for phrase, expected, context in cases:
+            dialogue.surrender_context = lambda npc, words=context: words
+            request = [*history, situation, Message("user", phrase)]
+            conv.talked_at = started = time.monotonic()
+            actual = await dialogue._surrendering(conv, request)
+            durations.append(time.monotonic() - started)
+            cache_timings.append({slot: dict(timing) for slot, timing in quick.timings.items()
+                                  if slot != owner_slot})
+            observed.append((phrase, expected, actual))
+            assert dialogue._quick_slots[conv.npc] == owner_slot
+        dialogue.surrender_context = lambda npc: None
+        for index, (phrase, _) in enumerate(SURRENDER_PHRASES[:10]):
+            request = [*history, situation, Message("user", phrase)]
+            order = [True, False] if index % 2 == 0 else [False, True]
+            measurements = {}
+            for probe in order:
+                await warm()
+                if probe:
+                    conv.talked_at = started = time.monotonic()
+                    await dialogue._surrendering(conv, request)
+                    probe_elapsed = time.monotonic() - started
+                    elapsed = probe_elapsed + await first_delta(request)
+                else:
+                    elapsed = await first_delta(request)
+                measurements[probe] = elapsed
+            overheads.append(measurements[True] - measurements[False])
+            pairs.append({
+                "probe_first": order[0],
+                "baseline_ms": round(measurements[False] * 1000, 1),
+                "sequential_ms": round(measurements[True] * 1000, 1),
+            })
+    finally:
+        await quick.aclose()
+    positives = sum(expected for _, expected, _ in observed)
+    correct_yes = sum(expected and actual for _, expected, actual in observed)
+    false_yes = sum(not expected and actual for _, expected, actual in observed)
+    print(json.dumps({
+        "mode": "sequential",
+        "phrases": len(observed), "correct_yes": correct_yes, "positive_count": positives,
+        "false_yes": false_yes, "negative_count": len(observed) - positives,
+        "probe_median_ms": round(statistics.median(durations) * 1000, 1),
+        "probe_max_ms": round(max(durations) * 1000, 1),
+        "first_words_overhead_ms": [round(value * 1000, 1) for value in overheads],
+        "first_words_overhead_median_ms": round(statistics.median(overheads) * 1000, 1),
+        "first_words_overhead_p90_ms": round(sorted(overheads)[8] * 1000, 1),
+        "first_words_overhead_max_ms": round(max(overheads) * 1000, 1),
+        "first_words_pairs": pairs,
+        "cache_timings": cache_timings,
+        "mismatches": [row for row in observed if row[1] != row[2]],
+    }, ensure_ascii=False))
+    assert false_yes == 0, observed
+    assert correct_yes == positives, observed
+
+
+async def test_surrender_probe_keeps_to_the_classifier_slot_when_the_server_has_one():
+    quick = FakeBackend("да", delay=0)
+    quick.slot_count = AsyncMock(return_value=dialogue_module.CLASSIFIER_SLOT + 1)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    dialogue._check_slots()
+    await dialogue._slot_check
+    for npc in (LOBART, HILDA, XARDAS):
+        dialogue._quick_slot(npc)
+        dialogue._prewarm_history[npc] = [Message("assistant", npc)]
+    slots = dict(dialogue._quick_slots)
+    for slot in range(dialogue_module.PREWARM_SLOTS):
+        dialogue._quick_busy[slot] = 1  # every npc slot busy: the classifier needs none of them
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    conv.talked_at = time.monotonic()
+    assert await dialogue._surrendering(conv, [Message("user", "Пощади!")])
+    assert await dialogue._surrendering(conv, [Message("user", "Пощади!")])
+    assert quick.slot_ids == [dialogue_module.CLASSIFIER_SLOT] * 2
+    assert dialogue._quick_slots == slots and set(dialogue._prewarm_history) == {LOBART, HILDA, XARDAS}
+
+
+@pytest.mark.parametrize("count", [None, dialogue_module.CLASSIFIER_SLOT])
+async def test_surrender_probe_borrows_an_npc_slot_without_a_classifier_slot(count):
+    quick = FakeBackend("да", delay=0)
+    quick.slot_count = AsyncMock(return_value=count)
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick)
+    dialogue._check_slots()
+    await dialogue._slot_check
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    conv.talked_at = time.monotonic()
+    assert await dialogue._surrendering(conv, [Message("user", "Пощади!")])
+    assert quick.slot_ids[0] in range(dialogue_module.PREWARM_SLOTS)
+
+
+async def test_surrender_probe_keeps_its_deadline_when_the_request_swallows_the_cancel(monkeypatch):
+    quick = FakeBackend("да", delay=0)
+    rows = []
+    dialogue = DialogueManager(GameLink(SimpleNamespace(send=AsyncMock())), FakeBackend(),
+                               PersonaProvider(None), quick=quick, trace=SimpleNamespace(write=rows.append))
+    answered = asyncio.Event()
+
+    async def deaf(**options):  # httpx swallows a cancel that lands while it connects
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            await asyncio.sleep(0.3)
+        answered.set()
+        yield TextDelta("да")
+
+    monkeypatch.setattr(quick, "stream", deaf)
+    conv = dialogue.open(LOBART, "Лобарт", warm=False)
+    conv.talked_at = time.monotonic() - 1.8
+    started = time.monotonic()
+    assert not await dialogue._surrendering(conv, [Message("user", "Пощади!")])
+    assert time.monotonic() - started < 0.25 and not answered.is_set()
+    assert rows[-1]["outcome"] == "late"
+    slot = rows[-1]["slot"]
+    assert dialogue._quick_busy[slot] == 1  # held until the request really ends
+    await asyncio.wait_for(answered.wait(), 1)
+    await _until(lambda: dialogue._quick_busy[slot] == 0)

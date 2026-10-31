@@ -11,6 +11,7 @@ import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from functools import lru_cache
 import importlib.util
 import math
 import os
@@ -47,6 +48,7 @@ MOVING_SPLITS = dict(harbour="train", market="train", port_streets="train", uppe
 INPUTS = ("training-pairs.jsonl", "ppo-validation.jsonl", "holdout-cv.jsonl", "places.json",
           "accepted-links.txt", "object-candidates.jsonl", "object-probes.jsonl", "moving-scenarios.jsonl",
           "jump-routes.jsonl", "jump-links.txt", "save.sav")
+LIVE_SUITE = Path(__file__).with_name("nav-live") / "scenarios.json"
 
 
 def atomic_json(path, value):
@@ -300,9 +302,30 @@ def version(value):
     return 2 if family(value) == "jump" else 3
 
 
+@lru_cache(maxsize=1)
+def live_exclusions(path):
+    suite = v3.read_json(path)
+    if suite.get("training_eligible") is not False:
+        raise ValueError("The live navigation suite must be excluded from training")
+    identifiers, pairs = set(), set()
+    for scenario in suite["scenarios"]:
+        variants = [dict(scenario, **variant) for variant in scenario.get("variants", [])]
+        for value in variants:
+            value["id"] = scenario["id"] + "-" + value["id"]
+        for value in [scenario, *variants]:
+            if value.get("training_eligible") is not False:
+                raise ValueError("A live navigation scenario is eligible for training")
+            identifiers.add(value["id"])
+            pairs.update(v3.legs(value))
+    return identifiers, pairs
+
+
 def directory_for(task, value):
     if value.get("split") != "train":
         raise ValueError("Validation and test recordings are forbidden")
+    live_ids, live_pairs = live_exclusions(LIVE_SUITE)
+    if value["id"] in live_ids or not v3.isolated(value, live_pairs):
+        raise ValueError("Live navigation suite recordings are forbidden")
     identifier = value["id"]
     if Path(identifier).name != identifier or identifier in ("", ".", ".."):
         raise ValueError("Unsafe recording scenario ID")
@@ -543,7 +566,7 @@ class StorageBudget:
 def runner_args(options, index, jump=False):
     task = options.task
     return SimpleNamespace(output=task / "recording-workers" / str(index) / ("jumps" if jump else "v3"),
-        runner=task / "build/opengothic/gothic-body-runner", assets=Path.home() / "gothic-ai/game",
+        runner=task / "build/opengothic/gothic-body-runner", assets=Path(os.environ.get("GOTHIC_DIR", Path.home() / "gothic-ai/game-settings")),
         save=task / "input/save.sav", cache=task / "recording-cache" / ("jumps" if jump else "v3"),
         links=task / "input" / ("jump-links.txt" if jump else "accepted-links.txt"),
         roads=task / "input/places.json", npc="BAU_954_MALETH", ini=None, seed=SEED,
@@ -1357,6 +1380,7 @@ def main():
     parser.add_argument("--limit-ms", type=int, default=240000)
     parser.add_argument("--max-bytes", type=int)
     options = parser.parse_args()
+    os.environ.update(module("ryzen_game").game_environment())
     if options.max_bytes is None:
         options.max_bytes = V5_MAX_BYTES if v5(options) else v3.MAX_BYTES
     if not options.task.is_absolute() or options.limit_ms != jumps.LIMIT_MS:

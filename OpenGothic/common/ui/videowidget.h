@@ -24,7 +24,6 @@ class VideoWidget : public Tempest::Widget {
     void mouseDownEvent(Tempest::MouseEvent& event) override;
 
   private:
-    struct Input;
     struct Sound;
     struct SoundContext;
     struct Context;

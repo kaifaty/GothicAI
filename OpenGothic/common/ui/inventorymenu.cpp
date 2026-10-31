@@ -108,7 +108,7 @@ void InventoryMenu::close() {
   }
 
 void InventoryMenu::open(Npc &pl) {
-  if(pl.isDown() || pl.isMonster() || pl.isInAir() || pl.isSlide() || (pl.interactive()!=nullptr))
+  if(pl.isDown() || pl.isMeleeKnockedDown() || pl.isMonster() || pl.isInAir() || pl.isSlide() || (pl.interactive()!=nullptr))
     return;
   if(pl.bodyStateMasked()==BS_UNCONSCIOUS || pl.bodyStateMasked()==BS_LIE)
     return;
@@ -131,7 +131,7 @@ void InventoryMenu::open(Npc &pl) {
   }
 
 void InventoryMenu::trade(Npc &pl, Npc &tr) {
-  if(pl.isDown())
+  if(pl.isDown() || pl.isMeleeKnockedDown())
     return;
   state  = State::Trade;
   player = &pl;
@@ -146,7 +146,7 @@ void InventoryMenu::trade(Npc &pl, Npc &tr) {
   }
 
 bool InventoryMenu::ransack(Npc &pl, Npc &tr) {
-  if(pl.isDown())
+  if(pl.isDown() || pl.isMeleeKnockedDown())
     return false;
   auto it = tr.inventory().iterator(Inventory::T_Ransack);
   if(!it.isValid())
@@ -167,7 +167,7 @@ bool InventoryMenu::ransack(Npc &pl, Npc &tr) {
   }
 
 void InventoryMenu::open(Npc &pl, Interactive &ch) {
-  if(pl.isDown())
+  if(pl.isDown() || pl.isMeleeKnockedDown())
     return;
   const bool needToPicklock = ch.needToLockpick(pl);
   if(!pl.setInteraction(&ch))
@@ -205,7 +205,7 @@ void InventoryMenu::onWorldChanged() {
   }
 
 void InventoryMenu::tick(uint64_t /*dt*/) {
-  if(player!=nullptr && (player->isDown() || player->bodyStateMasked()==BS_UNCONSCIOUS)) {
+  if(player!=nullptr && (player->isDown() || player->isMeleeKnockedDown() || player->bodyStateMasked()==BS_UNCONSCIOUS)) {
     close();
     return;
     }

@@ -9,6 +9,7 @@ import pytest
 from gothic_ai.characters import Card
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.commands import Order
+from gothic_ai.crime_law import CrimeLaw
 from gothic_ai.crime_sides import FIGHT_MEMORY_SECONDS
 from gothic_ai.crimes import COMMUNITIES, Crimes, pickpocket_outcome
 from gothic_ai.dialogue import DialogueManager
@@ -19,7 +20,7 @@ from gothic_ai.llm.fake import FakeBackend
 from gothic_ai.memory import MemoryStore
 from gothic_ai.orders import Orders
 from gothic_ai.persona import PersonaProvider
-from gothic_ai.protocol import HeroDeed, Loading, NpcEvent, NpcViews, Perception, Session
+from gothic_ai.protocol import HeroDeed, Loading, NpcEvent, NpcRoster, NpcViews, Perception, Session
 from gothic_ai.questbook import Goal, Progress, Quest, Stage, Talk
 
 LOBART = "BAU_950_LOBART"
@@ -27,9 +28,66 @@ HILDA = "BAU_951_HILDA"
 LEE = "SLD_800_LEE"
 
 
+@pytest.mark.parametrize("status", ["pending", "spared", "attacked"])
+async def test_surrendered_murder_has_no_fight_excuse_and_costs_more(system, status):
+    crimes, chronicle = system.crimes, system.chronicle
+    chronicle.record({"fact": "surrender", "npc": LOBART, "until": 5 * 1440, "status": status})
+    crimes.sides.note_fight(HILDA, LOBART)
+    crime = crimes.record(deed(
+        kind="murder", victim=LOBART, victim_guild=8, victim_enemy=True, victim_started_fight=True,
+        witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 8}],
+    ))
+    assert crime["surrendered"] and "lawful_fight" not in crime
+    assert crimes.side(HILDA, crime["id"]) is None
+    assert crimes.sides.heard_reason(HILDA, crime) is None
+    assert "убил того, кто сдался" in crimes.situation(HILDA)
+    chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
+    assert CrimeLaw(crimes).debt("farm") == 800
+
+
+@pytest.mark.parametrize("surrender,enabled", [(False, True), (True, False), ("expired", True)])
+async def test_ordinary_murder_stays_as_before_mercy(system, surrender, enabled):
+    crimes, chronicle = system.crimes, system.chronicle
+    crimes.mercy = enabled
+    if surrender:
+        chronicle.record({"fact": "surrender", "npc": LOBART,
+                          "until": 3 * 1440 if surrender == "expired" else 5 * 1440, "status": "spared"})
+    crimes.sides.note_fight(HILDA, LOBART)
+    crime = crimes.record(deed(
+        kind="murder", victim=LOBART, victim_guild=8, victim_enemy=True,
+        witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 8}],
+    ))
+    assert crime["lawful_fight"] and "surrendered" not in crime
+    assert crimes.side(HILDA, crime["id"])["why"] == "fought"
+    chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
+    assert CrimeLaw(crimes).debt("farm") == 550
+
+
+@pytest.mark.parametrize("enabled,ticks,broken", [(True, 60999, True), (True, 61000, False),
+                                                  (False, 1000, False)])
+async def test_hero_yield_betrayal_reaches_witness_with_ordinary_attack_debt(system, enabled, ticks, broken):
+    crimes, chronicle = system.crimes, system.chronicle
+    crimes.mercy = enabled
+    chronicle.record({"fact": "hero_yield", "id": "yield-1", "npc": LOBART,
+                      "t": 1000, "deadline": 61000, "until": 5 * 1440})
+    system.link.receive(NpcRoster(type="npc_roster", t=ticks, npcs=[]))
+    crime = crimes.record(deed(
+        kind="attack", victim=LOBART, victim_guild=8, victim_started_fight=True,
+        witnesses=[HILDA], witnesses_metadata=[{"npc": HILDA, "guild": 8}],
+    ))
+    if not broken:
+        assert crime is None
+        return
+    assert crime["kind"] == "attack" and crime["yield_broken"] and "surrendered" not in crime
+    assert "сдался в бою" in crimes.situation(HILDA) and "ударил его" in crimes.situation(HILDA)
+    chronicle.record({"fact": "crime_known", "community": "farm", "crime": crime["id"]})
+    assert CrimeLaw(crimes).debt("farm") == 50
+
+
 class Link:
     def __init__(self) -> None:
         self.listeners: list[Any] = []
+        self.hello = None
         self.session = Session(type="session", branch="A")
         self.sent: list[Any] = []
 

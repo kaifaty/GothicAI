@@ -19,14 +19,17 @@ from __future__ import annotations
 import asyncio
 import base64
 import itertools
+import json
 import logging
 import re
 import time
 import uuid
 from collections import deque
-from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterator
-from contextlib import aclosing
+from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Coroutine, Iterator
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, field, replace
+from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from . import commands, executor, npc_tools
@@ -39,6 +42,7 @@ from .llm import (
     Item,
     LLMBackend,
     LLMError,
+    LLMEvent,
     Message,
     Role,
     TextDelta,
@@ -49,6 +53,7 @@ from .llm import (
     open_ahead,
     with_deadlines,
 )
+from .llm.base import QUICK_SLOT
 from .memory import Entry, MemoryStore, NpcMemory
 from .persona import MOOD_DELIVERY, Persona, PersonaProvider
 from .protocol import (
@@ -57,11 +62,13 @@ from .protocol import (
     ChatStatusCmd,
     ChatTextCmd,
     GameMessage,
+    Hello,
     HushCmd,
     LineStarted,
     LineVoice,
     MemoryCmd,
     Mood,
+    NpcDied,
     NpcRoster,
     NpcViews,
     PttStart,
@@ -70,6 +77,8 @@ from .protocol import (
     SayEndCmd,
     Session,
     Snapshot,
+    SvmLine,
+    SvmModeCmd,
 )
 from .quest_tools import AMEND
 from .trace import CallTrace, StepTrace, TraceWriter, TurnTrace
@@ -112,6 +121,11 @@ LLM_FIRST_S, LLM_IDLE_S, STEP_RETRIES = 15.0, 15.0, 1
 # is the conversational model's after all
 QUICK_FIRST_S, QUICK_IDLE_S = 3.0, 2.0
 QUICK_HINT = "Сейчас горячо: ответь сразу, одной-двумя короткими фразами."
+SURRENDER_CLASSIFIER = (
+    "Ты классифицируешь реплики игрока в бою в ролевой игре. Ответь «да», если игрок сам сдаётся, "
+    "признаёт поражение или просит пощады/не бить его. Ответь «нет», если он угрожает, "
+    "требует сдаться противника, спрашивает или говорит что-то другое."
+)
 # the quick model's first words to the hero's phrase; "—": nothing (the answer is quick itself)
 REACT_HINT = (
     "Герой только что это сказал. Отреагируй вслух сразу, одной короткой фразой до восьми слов, "
@@ -124,10 +138,26 @@ ACK_HINT = (
     "(«Есть!», «Иду!», «Стою.»)."
 )
 SOUND_SAID = "\nТы уже сказал вслух: «{}» — ответ продолжает это, не повторяй его."
+PARALLEL_ACT_HINT = (
+    "Твою реплику уже произносят вслух. Не пиши текст: если нужно действие, сразу вызови инструмент; "
+    "если делать ничего не нужно, ответь пустым сообщением."
+)
 PREWARM_DELAY_S = 0.1  # notes come in bursts: the quick model's cache is filled once they are in
 TALK_WARM_S = 300.0  # an npc the hero spoke to this recently is kept warm in the quick model's cache
 PREWARM_CM = 800.0  # a new npc the hero looks at this close is warmed before he speaks
 PREWARM_SLOTS = 3  # the quick model's concurrent prompt-cache slots
+# a server slot past those, when the quick server has one, holds only the surrender classifier's prompt:
+# switching a slot from an npc's prompt makes llama.cpp copy its state to RAM first, up to 2 s
+CLASSIFIER_SLOT = PREWARM_SLOTS
+SVM_REPLY_S = 2.0  # from svm_line arrival to the first complete sentence; late lines stay silent
+SVM_WORDS_MAX = 12
+SVM_QUIET_S = 3.0
+SVM_RECOVER_S = 30.0
+SVM_HINT = (
+    "[Сейчас: {event}. В этот момент обычно говорят: «{text}» — эти слова не повторяй. "
+    "Скажи то же по смыслу по-своему, одной короткой фразой — как сказал бы ты, {to}.]"
+)
+SVM_EVENTS = json.loads((Path(__file__).parent / "gamedata" / "svm_events.json").read_text(encoding="utf-8"))
 SUMMARY_FIRST_S = 60.0  # the summary is not waited for by anyone: more patience
 MAX_HISTORY = 40  # messages in the prompt; older ones are folded into a summary
 KEEP_RECENT = 16  # messages left verbatim after folding
@@ -241,6 +271,26 @@ def first_words(text: str) -> tuple[str, Mood | None]:
     if _NOTHING.match(words):
         return "", None
     return words.lstrip("—–- "), mood  # "— Пошли тогда.": the dash of a written reply is not said
+
+
+def svm_text(text: str) -> str:
+    """An SVM line without parenthesized stage directions."""
+    return re.sub(r"\([^)]*\)", "", text).strip()
+
+
+def svm_hint(
+    svm: str, text: str, *, target_name: str | None = None, self_target: bool = False,
+    hint: str = SVM_HINT,
+) -> str:
+    event = SVM_EVENTS.get(svm.upper(), {}).get("event", "").format(
+        target=f" — {target_name}" if target_name else "",
+    )
+    if not event:
+        hint = hint.replace("Сейчас: {event}. ", "")
+    return hint.format(
+        event=event, text=svm_text(text) or text.replace("(", "").replace(")", "").strip(),
+        to=f"обращаясь к {target_name}" if target_name and not self_target else "вслух",
+    )
 
 
 def line_duration(text: str) -> float:
@@ -518,6 +568,11 @@ class Conversation:
     talked_at: float = float("-inf")  # the hero last spoke to it (the quick model is kept warm for a while)
     first_words: str = ""  # the last it said at once to the hero's phrase: not the same twice in a row
     first_sounds: deque[bool] = field(default_factory=lambda: deque(maxlen=4))
+    said_at: float = float("-inf")
+    svm_phrases: deque[str] = field(default_factory=lambda: deque(maxlen=5))
+    # queued or synthesizing, before its first sound: line -> finish its SVM trace
+    svm_pending: dict[str, Callable[[str], None]] = field(default_factory=dict)
+    bark_pending: dict[str, Callable[[str], None]] = field(default_factory=dict)
 
     @property
     def history(self) -> list[Message]:
@@ -662,6 +717,7 @@ class DialogueManager:
         trace: TraceWriter | None = None,
         budget: Budget | None = None,
         quick: LLMBackend | None = None,
+        svm_lines: bool = True,
     ) -> None:
         self.link = link
         self.journal = journal or Journal()  # lines and actions for the launcher (see journal.py)
@@ -698,6 +754,9 @@ class DialogueManager:
         # the npc fights the hero right now (the scripts' attack, talk.py; companions are not asked): talked
         # to, it may call it off (`_calm`)
         self.fights_hero: Callable[[str], bool] = lambda npc: False
+        self.surrender_hold: Callable[[Conversation, list[Item]], Awaitable[None]] | None = None
+        self.surrender_context: Callable[[str], str | None] = lambda npc: None
+        self.hero_fight_held: Callable[[str], bool] = lambda npc: False
         # an npc called off its fight with the hero (npc): a companion fighting it lets it be (orders.py)
         self.on_calm: list[Callable[[str], None]] = []
         # an npc turned on the hero by its own decision (npc): his companions stand up for him (orders.py)
@@ -714,10 +773,26 @@ class DialogueManager:
         # the npc is in a fight (incidents.py): its lines come from the quick model, if there is one
         self.in_fight: Callable[[str], bool] = lambda npc: False
         self.quick = quick
+        self.svm_lines = svm_lines
+        self._svm_available = True
+        self._svm_errors = 0
+        self._svm_tasks: dict[str, asyncio.Task[str | None]] = {}
+        self._svm_probe: asyncio.Task[None] | None = None
+        self._spoke_at: dict[str, float] = {}  # includes scenes before a conversation is opened
         self.quick_first_s, self.quick_idle_s = QUICK_FIRST_S, QUICK_IDLE_S
         self._prewarms: dict[str, asyncio.Task[None]] = {}  # npc -> filling the quick model's cache
         self._prewarm_history: dict[str, list[Message]] = {}  # pending or warmed histories
+        self._quick_slots: dict[str, int] = {}
+        self._quick_used: dict[str, int] = {}
+        self._quick_clock = itertools.count()
+        self._quick_busy = [0] * (CLASSIFIER_SLOT + 1)
+        self._quick_locks = [asyncio.Lock() for _ in range(CLASSIFIER_SLOT + 1)]
+        self._classifier_slot: int | None = None  # CLASSIFIER_SLOT once the quick server is known to have it
+        self._slot_check: asyncio.Task[None] | None = None
+        self._quick_free = asyncio.Event()
+        self._surrender_probes = 0
         self._nearby: dict[str, tuple[str, float]] = {}  # human npc -> name, distance to the hero in cm
+        self._svm_down: dict[str, bool] = {}  # latest known deaths, roster and snapshot health
         self._focus: str | None = None
         # what the npc sees (perception.py), in place of the snapshot's omniscient lines
         self.sight: Callable[[str, Snapshot | None], Sight | None] | None = None
@@ -746,24 +821,39 @@ class DialogueManager:
         self._story_voices: set[asyncio.Task[float | None]] = set()
         self._background: set[asyncio.Task[Any]] = set()
         link.listeners.append(self._on_message)
+        if getattr(link, "hello", None) is not None:
+            self._svm_mode()
         if link.session is not None:
             self._switch_branch(link.session)
 
     def _on_message(self, msg: GameMessage) -> None:
         match msg:
+            case Hello():
+                self._svm_mode()
+                self._check_slots()
+            case SvmLine():
+                self._start_svm(msg)
             case Session():
                 self._switch_branch(msg)
             case LineStarted():
+                self._spoke_at[msg.npc.upper()] = time.monotonic()
                 if msg.line in self._lines:
                     self._lines[msg.line] = (self._lines[msg.line][0], time.monotonic())
                 if (started := self._starts.pop(msg.line, None)) is not None:
                     started.set()
             case PttStart():
                 self.prewarm_listeners(msg.focus)  # while he speaks
+            case NpcDied():
+                self._svm_down[msg.npc.upper()] = True
+            case Snapshot():
+                if msg.npc.hp <= 0:
+                    self._svm_down[msg.npc.id.upper()] = True
+                self._svm_down.update((e.id.upper(), True) for e in msg.nearby_npcs if e.dead)
             case NpcRoster():
                 if msg.full:
                     self._nearby.clear()
                 self._nearby.update((e.id.upper(), (e.name, e.distance)) for e in msg.npcs)
+                self._svm_down.update((e.id.upper(), e.activity == "down") for e in msg.npcs)
                 self._prewarm_focus()
             case NpcViews():
                 self._focus = next(
@@ -777,6 +867,194 @@ class DialogueManager:
             case LineVoice():
                 self._spawn_story_voice(msg)
 
+    def _svm_mode(self) -> None:
+        self._spawn(self.link.send(SvmModeCmd(
+            replace=self.svm_lines and self.quick is not None and self._svm_available,
+        )))
+
+    def _start_svm(self, msg: SvmLine) -> None:
+        received = time.monotonic()
+        npc = msg.npc.upper()
+        attempt: dict[str, Any] = {"outcome": "busy", "answer": ""}
+
+        def record(outcome: str | None = None) -> None:
+            if outcome is not None:
+                attempt["outcome"] = outcome
+            attempt["elapsed_ms"] = round((time.monotonic() - received) * 1000, 1)
+            if outcome == "said":
+                attempt["voice_ms"] = attempt["elapsed_ms"]
+            log.info("svm_line %s %s «%s» -> %r (%s, %.1f ms)", npc, msg.svm, msg.text,
+                     attempt["answer"], attempt["outcome"], attempt["elapsed_ms"])
+            if self.trace is not None:
+                self.trace.write({**msg.model_dump(mode="json"), "t": round(time.time(), 3), **attempt})
+
+        if not self.svm_lines or self.quick is None or not self._svm_available:
+            attempt["outcome"] = "error"
+        elif self._distance(npc) > 3000:
+            attempt["outcome"] = "far"
+        elif (
+            npc == "PLAYER" or npc in self._svm_tasks or len(self._svm_tasks) >= PREWARM_SLOTS
+            or self._surrender_probes or self._svm_busy(npc)
+        ):
+            pass
+        else:
+            conv = self.open(npc, self._nearby.get(npc, (npc, 0))[0], warm=False)
+            task = asyncio.create_task(self._svm_line(conv, msg, received, attempt, record))
+            self._svm_tasks[npc] = task
+
+            def finished(done: asyncio.Task[str | None]) -> None:
+                if self._svm_tasks.get(npc) is done:
+                    del self._svm_tasks[npc]
+                if done.cancelled() or done.result() is None:
+                    record()  # also records cancellation before the coroutine's first step
+
+            task.add_done_callback(finished)
+            return
+        record()
+
+    def _svm_busy(self, npc: str) -> bool:
+        conv = self.conversations.get(npc)
+        queued_at = max(
+            (self._sent[line] for line in conv.svm_pending), default=float("-inf"),
+        ) if conv is not None else float("-inf")
+        return (
+            (conv is not None and conv.reply is not None and not conv.reply.done())
+            or time.monotonic() - max(
+                conv.said_at if conv is not None else float("-inf"),
+                self._spoke_at.get(npc, float("-inf")),
+                queued_at,
+            ) < SVM_QUIET_S
+        )
+
+    async def _svm_line(
+        self, conv: Conversation, msg: SvmLine, received: float, attempt: dict[str, Any],
+        record: Callable[[str], None],
+    ) -> str | None:
+        assert self.quick is not None
+        text = ""
+        target = (msg.target or "").upper()
+        target_name = None
+        target_down = False
+        if target:
+            snap = self.link.snapshots.get(target)
+            nearby = self.link.snapshots.get(conv.npc)
+            seen = next(
+                (n for n in nearby.nearby_npcs if n.id.upper() == target), None,
+            ) if nearby else None
+            target_down = (snap is not None and snap.npc.hp <= 0) or (seen is not None and seen.dead)
+            card = self.personas.cards.get(target)
+            target_name = (
+                "герой" if target in {"PLAYER", "PC_HERO"} else
+                snap.npc.name if snap is not None else
+                (seen.name if seen else None) or self._nearby.get(target, ("", 0))[0]
+                or (card.name if card else target)
+            )
+        hint = svm_hint(msg.svm, msg.text, target_name=target_name, self_target=target == conv.npc)
+        try:
+            async with (
+                asyncio.timeout_at(received + SVM_REPLY_S),
+                aclosing(self._quick_stream(
+                    conv.npc, instructions=conv.persona.instructions,
+                    messages=[Message("developer", f"{self._brief(conv)}\n{hint}")],
+                    tools=[], temperature=0.7,
+                )) as events,
+            ):
+                async for event in events:
+                    if isinstance(event, TextDelta):
+                        text += event.text
+                        if _FIRST_SENTENCE.search(text) or paragraph_end(text) is not None:
+                            break
+            self._svm_errors = 0
+            words, mood = first_words(svm_text(text))
+            words = to_game_text(words)
+            attempt["answer"] = words
+            attempt["first_phrase_ms"] = round((time.monotonic() - received) * 1000, 1)
+            phrase = " ".join(_LETTERS.findall(words.casefold()))
+            if time.monotonic() >= received + SVM_REPLY_S:
+                attempt["outcome"] = "late"
+            elif self._svm_busy(conv.npc):
+                attempt["outcome"] = "busy"
+            elif len(_LETTERS.findall(words)) > SVM_WORDS_MAX:
+                attempt["outcome"] = "too_long"
+            elif phrase in conv.svm_phrases or any(
+                phrase == " ".join(_LETTERS.findall(self._lines[line][0].casefold()))
+                for line in conv.svm_pending
+            ):
+                attempt["outcome"] = "repeat"
+            elif not phrase:
+                attempt["outcome"] = "nothing"
+            else:
+                line = await self._say(
+                    conv, words, None, overlay=True, mood=mood,
+                    to=msg.target if target != conv.npc and not self._svm_down.get(
+                        target, target_down,
+                    ) else None,
+                )
+                if line is not None:
+                    conv.svm_pending[line] = record
+                    if self.tts is None:
+                        self._svm_started(conv, line)
+                    return line  # its first sound or cancellation finishes the trace
+        except TimeoutError:
+            attempt["answer"] = first_words(svm_text(text))[0]
+            attempt["outcome"] = "late"
+        except LLMError as err:
+            attempt["outcome"] = "error"
+            attempt["error"] = str(err)
+            log.info("%s: SVM quick model failed: %s", conv.npc, err)
+            self._svm_errors += 1
+            if self._svm_errors >= 3 and self._svm_available:
+                self._svm_available = False
+                self._svm_mode()
+                self._svm_probe = asyncio.create_task(self._recover_svm())
+        except GameError:
+            attempt["outcome"] = "error"
+        except asyncio.CancelledError:
+            attempt["outcome"] = "busy"
+            raise
+
+    def _svm_started(self, conv: Conversation, line: str) -> None:
+        if record := conv.svm_pending.pop(line, None):
+            conv.earlier_lines.append(line)
+            self._line_replies[line] = line
+            words = self._lines[line][0]
+            conv.svm_phrases.append(" ".join(_LETTERS.findall(words.casefold())))
+            self._note(conv, f"Ты сказал вслух: «{words}»")
+            record("said")
+
+    def _bark_started(self, conv: Conversation, line: str) -> None:
+        if record := conv.bark_pending.pop(line, None):
+            conv.earlier_lines.append(line)
+            self._line_replies[line] = line
+            self._note(conv, f"Ты сказал вслух: «{self._lines[line][0]}»")
+            record("said")
+
+    async def _recover_svm(self) -> None:
+        assert self.quick is not None
+        while not self._svm_available:
+            try:
+                await asyncio.wait_for(self.link.closed.wait(), SVM_RECOVER_S)
+                return
+            except TimeoutError:
+                pass
+            try:
+                async with asyncio.timeout(SVM_REPLY_S):
+                    warm = getattr(self.quick, "prewarm", None)
+                    if warm is not None:
+                        await warm(instructions="Ответь одним словом.", messages=[])
+                    else:
+                        async with aclosing(self.quick.stream(
+                            instructions="Ответь одним словом.", messages=[], tools=[],
+                        )) as events:
+                            async for event in events:
+                                if isinstance(event, TextDelta) and event.text.strip():
+                                    break
+                self._svm_errors = 0
+                self._svm_available = True
+                self._svm_mode()
+            except (LLMError, TimeoutError):
+                continue
+
     # --- memory -------------------------------------------------------------------------
 
     def _switch_branch(self, session: Session) -> None:
@@ -786,11 +1064,18 @@ class DialogueManager:
                 for task in conv.tasks():
                     task.cancel()
             self.conversations.clear()
+            for task in self._svm_tasks.values():
+                task.cancel()
+            self._svm_tasks.clear()
+            self._spoke_at.clear()
             for task in self._prewarms.values():
                 task.cancel()
             self._prewarms.clear()
             self._prewarm_history.clear()
+            self._quick_slots.clear()
+            self._quick_used.clear()
             self._nearby.clear()
+            self._svm_down.clear()
             self._focus = None
             self.branch = session.branch
         head = self.memory.ensure_branch(session.branch, session.parent, session.parent_seq)
@@ -875,7 +1160,8 @@ class DialogueManager:
     def _fighting(self, conv: Conversation) -> bool:
         """The npc's lines are the quick model's: there is one, and the npc is in a fight."""
         return self.quick is not None and (
-            self.in_fight(conv.npc) or conv.intent.goal in executor.INCIDENT_GOALS
+            self.in_fight(conv.npc) or self.fights_hero(conv.npc)
+            or conv.intent.goal in executor.INCIDENT_GOALS
         )
 
     def _listening(self, conv: Conversation) -> bool:
@@ -924,12 +1210,17 @@ class DialogueManager:
             self._start_prewarm(conv, candidates)
 
     def _start_prewarm(self, conv: Conversation, candidates: list[str]) -> None:
+        if self._surrender_probes:
+            return
         self._open_ahead(conv.npc)
         warm = getattr(self.quick, "prewarm", None)
         if warm is None:
             return
         if conv.reply is not None and not conv.reply.done():
             return  # its turn is on (warming now would hold up its line): once it is over
+        slot = self._quick_slot(conv.npc)
+        if slot is None or self._quick_busy[slot]:
+            return
         for other, task in self._prewarms.items():
             if other not in candidates:
                 task.cancel()
@@ -937,7 +1228,7 @@ class DialogueManager:
         if (old := self._prewarms.get(conv.npc)) is not None:
             old.cancel()
         self._prewarm_history[conv.npc] = conv.history
-        task = asyncio.create_task(self._prewarm(conv, warm))
+        task = asyncio.create_task(self._prewarm(conv, warm, slot))
         self._prewarms[conv.npc] = task
 
         def forget(t: asyncio.Task[None], npc: str = conv.npc) -> None:
@@ -964,25 +1255,209 @@ class DialogueManager:
         """The conversational model's connection for the npc, opened before its turn (openai_responses.py)."""
         open_ahead(self.llm, npc)
 
-    async def _prewarm(self, conv: Conversation, warm: Callable[..., Awaitable[None]]) -> None:
+    async def _prewarm(self, conv: Conversation, warm: Callable[..., Awaitable[None]], slot: int) -> None:
         await asyncio.sleep(PREWARM_DELAY_S)
-        if conv.reply is not None and not conv.reply.done():
+        if ((conv.reply is not None and not conv.reply.done()) or self._quick_busy[slot]
+            or self._quick_slots.get(conv.npc) != slot):
             return  # a turn started during the debounce: warming waits for its reply
         started = time.monotonic()
+        token = QUICK_SLOT.set(slot)
         try:
             await warm(instructions=conv.persona.instructions, messages=conv.history)
         except LLMError as err:
             self._prewarm_history.pop(conv.npc, None)
             log.info("%s: the quick model was not warmed: %s", conv.npc, err)
             return
+        finally:
+            QUICK_SLOT.reset(token)
         log.debug("%s: the quick model warmed in %.2fs", conv.npc, time.monotonic() - started)
 
+    def _quick_slot(self, npc: str) -> int | None:
+        npc = npc.upper()
+        if npc not in self._quick_slots:
+            free = (set(range(PREWARM_SLOTS)) - set(self._quick_slots.values())
+                    - {s for s, count in enumerate(self._quick_busy) if count})
+            if free:
+                slot = min(free)
+            else:
+                idle = [n for n, s in self._quick_slots.items() if not self._quick_busy[s]]
+                if not idle:
+                    return None
+                old = min(idle, key=self._quick_used.__getitem__)
+                slot = self._quick_slots.pop(old)
+                del self._quick_used[old]
+                self._prewarm_history.pop(old, None)
+                if warm := self._prewarms.get(old):
+                    warm.cancel()
+            self._quick_slots[npc] = slot
+        self._quick_used[npc] = next(self._quick_clock)
+        return self._quick_slots[npc]
+
+    @asynccontextmanager
+    async def _quick_request(self, npc: str) -> AsyncIterator[None]:
+        started, requested_at = time.monotonic(), time.time()
+        while (slot := self._quick_slot(npc)) is None:
+            self._quick_free.clear()
+            await self._quick_free.wait()
+        slotted = time.monotonic()
+        self._quick_busy[slot] += 1  # includes requests waiting for this NPC's previous real request
+        if warm := self._prewarms.get(npc.upper()):
+            warm.cancel()  # do not wait for a prewarm or share its slot with a real request
+        try:
+            async with self._quick_locks[slot]:
+                conv = self.conversations.get(npc.upper())
+                if self.trace is not None and conv is not None and conv.trigger is not None and (
+                    conv.trigger.role == "user" and conv.reply is not None and not conv.reply.done()
+                ):
+                    self.trace.write({
+                        "type": "quick_request", "t": round(time.time(), 3), "npc": npc,
+                        "requested_at": requested_at, "slot": slot,
+                        "slot_wait_ms": round((slotted - started) * 1000, 1),
+                        "lock_wait_ms": round((time.monotonic() - slotted) * 1000, 1),
+                    })
+                token = QUICK_SLOT.set(slot)
+                try:
+                    yield
+                finally:
+                    QUICK_SLOT.reset(token)
+        finally:
+            self._quick_busy[slot] -= 1
+            self._quick_free.set()
+
+    async def _quick_stream(self, npc: str, **options: Any) -> AsyncIterator[LLMEvent]:
+        assert self.quick is not None
+        async with self._quick_request(npc), aclosing(self.quick.stream(**options)) as events:
+            async for event in events:
+                yield event
+
+    def _check_slots(self) -> None:
+        count = getattr(self.quick, "slot_count", None)
+        if count is None or (self._slot_check is not None and not self._slot_check.done()):
+            return  # each hello asks again: the quick server may have been restarted with other slots
+
+        async def check() -> None:
+            slots = await count()
+            self._classifier_slot = CLASSIFIER_SLOT if slots is not None and slots > CLASSIFIER_SLOT else None
+            log.info("quick model: %s slots, surrender classifier %s", slots,
+                     "on its own slot" if self._classifier_slot is not None else "borrows an npc slot")
+
+        task = self._slot_check = asyncio.create_task(check())
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _surrendering(
+        self, conv: Conversation, request: list[Item], *, opponent: str | None = None,
+    ) -> bool:
+        """Classify outside the persona on its own slot, or else an idle slot other than the speaker's.
+
+        Cancel warming and SVM generation first. Without CLASSIFIER_SLOT on the server, select an idle
+        foreign LRU slot: never touch the speaker's prefix or another foreground request; no spare slot
+        means no hold.
+        """
+        entered, wall = time.monotonic(), time.time()
+        attempt: dict[str, Any] = {
+            "type": "surrender_probe", "t": round(wall, 3), "npc": conv.npc,
+            "received_at": wall - (entered - conv.talked_at),
+            "entered_ms": round((entered - conv.talked_at) * 1000, 1),
+            "slot_wait_ms": 0.0, "outcome": "unavailable",
+        }
+        self._surrender_probes += 1
+        try:
+            if (self.quick is None or getattr(self.quick, "_id_slot_supported", True) is False
+                    or entered >= conv.talked_at + 2.0):
+                return False
+            async with asyncio.timeout_at(conv.talked_at + 2.0):
+                background = {task for task in (*self._prewarms.values(), *self._svm_tasks.values())
+                              if not task.done()}
+                for task in background:
+                    task.cancel()
+                if background:
+                    await asyncio.gather(*background, return_exceptions=True)
+                attempt["cancel_ms"] = round((time.monotonic() - entered) * 1000, 1)
+                if self._classifier_slot is not None:
+                    slot = self._classifier_slot
+                else:
+                    own = self._quick_slots.get(conv.npc)
+                    slots = [s for s in range(PREWARM_SLOTS)
+                             if s != own and not self._quick_busy[s] and not self._quick_locks[s].locked()]
+                    if not slots:
+                        attempt["outcome"] = "no_slot"
+                        return False
+                    owners = {s: n for n, s in self._quick_slots.items()}
+                    slot = min(slots, key=lambda s: self._quick_used.get(owners.get(s), -1))
+                    if old := owners.get(slot):
+                        del self._quick_slots[old]
+                        self._quick_used.pop(old, None)
+                        self._prewarm_history.pop(old, None)
+                        self._prewarms.pop(old, None)
+                attempt["slot"] = slot
+                phrase = next(m.content for m in reversed(request)
+                              if isinstance(m, Message) and m.role == "user")
+                context = self.surrender_context(conv.npc) if opponent is None else opponent
+                text_in = (f"Перед этим противник сказал: «{context}»\n" if context else "")
+                text_in += f"Реплика игрока: «{phrase}»"
+                # its own task, its slot held until the request really ends: httpx may swallow a cancel
+                # that lands while it connects, and the deadline must not wait for the answer (2026-10-28)
+                classify = asyncio.create_task(self._classify(slot, text_in, conv.talked_at, attempt))
+                try:
+                    text = await asyncio.shield(classify)
+                except asyncio.CancelledError:
+                    classify.cancel()
+                    self._background.add(classify)
+
+                    def abandoned(done: asyncio.Task[str]) -> None:
+                        self._background.discard(done)
+                        if not done.cancelled() and (error := done.exception()) is not None:
+                            log.info("%s: late surrender probe: %s", conv.npc, error)
+
+                    classify.add_done_callback(abandoned)
+                    raise
+                answer = text.strip().lower()
+                attempt.update(answer=answer, outcome="yes" if answer == "да" else "no")
+                return answer == "да"
+        except (LLMError, TimeoutError) as error:
+            attempt.update(outcome="late" if isinstance(error, TimeoutError) else "error",
+                           error=type(error).__name__)
+            return False
+        finally:
+            self._surrender_probes -= 1
+            attempt["completed_ms"] = round((time.monotonic() - conv.talked_at) * 1000, 1)
+            log.info("%s: surrender probe %s", conv.npc, json.dumps(attempt, ensure_ascii=False))
+            if self.trace is not None:
+                self.trace.write(attempt)
+
+    async def _classify(self, slot: int, text_in: str, talked_at: float, attempt: dict[str, Any]) -> str:
+        text = ""
+        self._quick_busy[slot] += 1
+        QUICK_SLOT.set(slot)  # this task's own context
+        locked = time.monotonic()
+        try:
+            async with self._quick_locks[slot]:
+                attempt["lock_wait_ms"] = round((time.monotonic() - locked) * 1000, 1)
+                attempt["request_ms"] = round((time.monotonic() - talked_at) * 1000, 1)
+                async with aclosing(self.quick.stream(
+                    instructions=SURRENDER_CLASSIFIER, messages=[Message("user", text_in)],
+                    tools=[], temperature=0, max_tokens=4, grammar='root ::= "да" | "нет"',
+                )) as events:
+                    async for event in events:
+                        if isinstance(event, TextDelta):
+                            first = round((time.monotonic() - talked_at) * 1000, 1)
+                            attempt.setdefault("first_token_ms", first)
+                            text += event.text
+        finally:
+            attempt["timings"] = dict(getattr(self.quick, "timings", {}).get(slot, {}))
+            self._quick_busy[slot] -= 1
+            self._quick_free.set()
+        return text
+
     def _yield_to(self, npc: str) -> None:
-        """The quick model's slots go to `npc`'s words: the others' warming waits. Its own goes on,
-        the words wait for it: it reads what they need (a fight's first line: the incident warmed it)."""
+        """Prioritize this NPC over other warming and SVM requests; its own warm is cancelled
+        when the real request acquires its slot."""
         for other, task in list(self._prewarms.items()):
             if other != npc:
                 task.cancel()
+        for task in self._svm_tasks.values():
+            task.cancel()
 
     def _brief(self, conv: Conversation) -> str:
         """What the npc perceives now, briefly: the situation of the quick model's words."""
@@ -1014,8 +1489,9 @@ class DialogueManager:
             async with (
                 asyncio.timeout(REACTION_S),
                 aclosing(
-                    self.quick.stream(
-                        instructions=conv.persona.instructions, messages=request, tools=[], **options
+                    self._quick_stream(
+                        conv.npc, instructions=conv.persona.instructions, messages=request,
+                        tools=[], **options
                     )
                 ) as events,
             ):
@@ -1037,6 +1513,16 @@ class DialogueManager:
 
     def _reply(self, conv: Conversation, turn: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
         """The npc's turn; once it is over, its history (grown by it) warms the quick model."""
+        if svm := self._svm_tasks.get(conv.npc):
+            svm.cancel()
+        conv.hushed.update(conv.bark_pending)
+        for record in conv.bark_pending.values():
+            record("busy")
+        conv.bark_pending.clear()
+        conv.hushed.update(conv.svm_pending)
+        for record in conv.svm_pending.values():
+            record("busy")
+        conv.svm_pending.clear()
         conv.reply = asyncio.create_task(turn)
         conv.reply.add_done_callback(lambda _: self.prewarm(conv.npc))
         return conv.reply
@@ -1085,6 +1571,14 @@ class DialogueManager:
         conv.reply = None
 
     def _drop_unvoiced(self, conv: Conversation, lines: Collection[str] | None = None) -> None:
+        for line in tuple(conv.bark_pending):
+            if lines is None or line in lines:
+                conv.hushed.add(line)
+                conv.bark_pending.pop(line)("busy")
+        for line in tuple(conv.svm_pending):
+            if lines is None or line in lines:
+                conv.hushed.add(line)
+                conv.svm_pending.pop(line)("dropped")
         if conv.voice is not None:
             for _ in range(conv.voice.qsize()):
                 item = conv.voice.get_nowait()
@@ -1158,9 +1652,14 @@ class DialogueManager:
         """The hero speaks while the npc answers: it stops at once (its voice, the lines it did not say
         yet, the turn if it is still thinking) and remembers being interrupted. False if it was silent."""
         conv = self.conversations.get(npc.upper())
-        if conv is None or not self.speaking(npc):
+        if conv is None or not (self.speaking(npc) or conv.svm_pending):
             return False
-        said, _, _ = self._said(conv)
+        running = conv.reply is not None and not conv.reply.done()
+        replying = running or any(
+            self._line_replies.get(line) != line and self._to_hear(conv, line, time.monotonic())
+            for line in (*conv.earlier_lines, *conv.last_lines)
+        )
+        said, _, _ = self._said(conv) if replying else ([], False, False)
         spoken = " ".join(said)
         conv.hushed.update(
             line
@@ -1168,15 +1667,16 @@ class DialogueManager:
             if self._lines.get(line, ("", None))[1] is None
         )
         conv.earlier_lines = []
-        running = conv.reply is not None and not conv.reply.done()
         if running:
             conv.cut = spoken  # the turn remembers only this (see _turn)
         self._cancel(conv)
         self._drop_unvoiced(conv)
         self._reset_overlay(conv)
         log.info("%s interrupted after %d line(s)", conv.npc, len(said))
-        self._spawn(self.link.send(HushCmd(npc=conv.npc, reply=conv.reply_id or None, said=spoken or None)))
-        if not running:
+        self._spawn(self.link.send(HushCmd(
+            npc=conv.npc, reply=(conv.reply_id or None) if replying else None, said=spoken or None,
+        )))
+        if not running and replying:
             self._note(conv, f"Герой перебил тебя{f'; ты успел сказать: «{spoken}»' if spoken else ''}")
         return True
 
@@ -1295,13 +1795,16 @@ class DialogueManager:
         tools: Collection[str] | None = None,
         kind: str = "incident",
         to: str | None = None,
+        act: bool = False,
     ) -> asyncio.Task[None] | None:
         """A turn about something that happened (an incident): the npc may speak and change its intent.
         While a turn is running the event waits for the next one's situation instead of interrupting.
         `tools` limits what the model is offered (an npc nobody controls cannot hand over items); the names
         may be of the extensions' tools too (deals.py: an offer declined, the npc may offer again). `kind`
         names the trigger in the turn's trace (an npc that comes up to the hero: "initiative"); `to`: the
-        npc its lines are said to (another spoke to it, group.py), unless one of them calls someone else."""
+        npc its lines are said to (another spoke to it, group.py), unless one of them calls someone else.
+        `act`: its first step must call one of `tools` (a witness's answer: catch_lie, or set_intent if it
+        believes him), so words alone do not stand for a decision of code's."""
         conv = self.conversations.get(npc.upper())
         if conv is None:
             return None
@@ -1314,7 +1817,7 @@ class DialogueManager:
         else:
             offered = [t for t in offered if t.name in tools]
         turn = self._turn(
-            conv, Message("developer", cue), kind, relevant, overlay=overlay, tools=offered, to=to
+            conv, Message("developer", cue), kind, relevant, overlay=overlay, tools=offered, to=to, act=act
         )
         return self._reply(conv, turn)
 
@@ -1412,19 +1915,23 @@ class DialogueManager:
         *,
         filler: bool = False,
         to: str | None = None,
-    ) -> None:
+        bark: Callable[[str], None] | None = None,
+    ) -> str | None:
         """A line of the npc's, voiced if there is TTS. `filler`: its first words before the answer (the
         npc goes on thinking after them, protocol v14); `reply` None: not a line of a reply's text; `to`:
         the npc it is said to (v15: the two look at each other), None: the hero."""
         text = to_game_text(text)
         if not text:
             return
+        conv.said_at = time.monotonic()
         line = f"AIB_{next(self._line_ids)}"
         if reply is not None:  # first words and answers to orders are not the reply's: no gesture is too late
             conv.last_lines.append(line)
             self._line_replies[line] = reply
         self._lines[line] = (text, None)
         self._sent[line] = time.monotonic()
+        if bark is not None:
+            conv.bark_pending[line] = bark
         if self.floor is not None:
             self._line_seats[line] = self.floor.seat(conv.npc)
         log.info("%s: %s", conv.persona.name, text)
@@ -1450,11 +1957,23 @@ class DialogueManager:
                     to=to,
                 )
             )
-            return
+            self._bark_started(conv, line)
+            return line
         if conv.voice is None:
             conv.voice = asyncio.Queue()
             conv.voicing = asyncio.create_task(self._voice(conv, conv.voice))
+
+            def finished(_done: asyncio.Task[None]) -> None:
+                while conv.bark_pending:
+                    _, record = conv.bark_pending.popitem()
+                    record("busy")
+                while conv.svm_pending:
+                    _, record = conv.svm_pending.popitem()
+                    record("busy")
+
+            conv.voicing.add_done_callback(finished)
         conv.voice.put_nowait((line, text, reply, overlay, mood, filler, to))
+        return line
 
     async def _voice(self, conv: Conversation, queue: asyncio.Queue[QueuedLine]) -> None:
         """Voices the lines one by one and streams them to the game: `say` goes out with the first
@@ -1493,6 +2012,7 @@ class DialogueManager:
                                 return
                         started = True
                         spoken_at = time.monotonic()
+                        conv.said_at = spoken_at
                         await self.link.send(
                             SayCmd(
                                 npc=conv.npc,
@@ -1507,6 +2027,8 @@ class DialogueManager:
                                 to=to,
                             )
                         )
+                        self._svm_started(conv, line)
+                        self._bark_started(conv, line)
 
                     async def chunk(pcm: bytes, line: str = line) -> None:
                         if line in conv.hushed:
@@ -1562,9 +2084,15 @@ class DialogueManager:
                             to=to,
                         )
                     )
+                    self._svm_started(conv, line)
+                    self._bark_started(conv, line)
             except GameError:
                 pass
             finally:
+                if record := conv.bark_pending.pop(line, None):
+                    record("busy" if line in conv.hushed else "error")
+                if record := conv.svm_pending.pop(line, None):
+                    record("busy" if line in conv.hushed else "error")
                 queue.task_done()
 
     async def _wait_floor(self, conv: Conversation, line: str) -> None:
@@ -1834,6 +2362,7 @@ class DialogueManager:
         tools: list[Tool] | None = None,
         body: str | None = None,
         to: str | None = None,
+        act: bool = False,
     ) -> None:
         """A turn on the conversation's floor (group.py): it thinks once those before it have their text
         ready; with no voice left for it (three to a phrase of the hero's) it says nothing."""
@@ -1847,7 +2376,9 @@ class DialogueManager:
                 log.info("%s: no voice left in the conversation, its %s turn is dropped", conv.npc, kind)
                 return
         try:
-            await self._speak(conv, trigger, kind, relevant, overlay=overlay, tools=tools, body=body, to=to)
+            await self._speak(
+                conv, trigger, kind, relevant, overlay=overlay, tools=tools, body=body, to=to, act=act
+            )
         finally:
             if self.floor is not None:
                 self.floor.done(conv.npc)
@@ -1863,6 +2394,7 @@ class DialogueManager:
         tools: list[Tool] | None = None,
         body: str | None = None,
         to: str | None = None,
+        act: bool = False,
     ) -> None:
         """One turn of the conversational model: up to MAX_STEPS calls (see turn.py). Text streams to the
         subtitles and the voice as it comes; tool calls are handled after their step. `body`: what the
@@ -1870,7 +2402,8 @@ class DialogueManager:
         line first and the conversational model's steps only act (`_quick_line`, `_act_on_line`)."""
         conv.trigger = trigger
         await self._status(conv, "thinking")
-        quick = self._fighting(conv)  # the quick model says the whole line
+        quick = kind != "mercy" and self._fighting(conv)  # surrender is the conversational model's decision
+        parallel = quick and kind == "player" and self.fights_hero(conv.npc)
         # the hero's phrase (not on the move): the quick model's first words, the answer goes on from them
         react = kind == "player" and not overlay and not quick and self.quick is not None
         trace = TurnTrace(
@@ -1888,6 +2421,7 @@ class DialogueManager:
             self._yield_to(conv.npc)
         first: asyncio.Task[str] | None = None
         full: asyncio.Task[tuple[str, Snapshot | None, Sight | None]] | None = None
+        quick_line: asyncio.Task[bool] | None = None
         try:
             # the quick model's words do not wait for the extensions: they ready the whole situation meanwhile
             situation_text, snap, sight = await self._situation(conv, body, brief=quick or react)
@@ -1930,18 +2464,31 @@ class DialogueManager:
             started=time.monotonic(),
             filler=sound,
             to=to.upper() if to else None,
+            act=act and bool(tools),
         )
         conv.reply_id = state.reply
         trace.record["tools"] = [t.name for t in state.tools]
         speaker = self.llm
         try:
-            if quick and full is not None and await self._quick_line(conv, state, request, trace):
+            if parallel:
+                ready = asyncio.Event()
+                quick_line = asyncio.create_task(self._quick_line(conv, state, request, trace, ready=ready))
+                await ready.wait()  # the situation must include the surrender probe's outcome
+                assert full is not None
+                status = await self._act_on_line(conv, state, trigger, full, sound, trace,
+                                                 quick_line=quick_line)
+                if await quick_line:
+                    assert self.quick is not None
+                    speaker = self.quick
+            elif quick and full is not None and await self._quick_line(conv, state, request, trace):
                 assert self.quick is not None
                 speaker = self.quick
                 status = await self._act_on_line(conv, state, trigger, full, sound, trace)
             else:
                 if quick and full is not None:  # the quick model said nothing: the whole situation, as usual
                     situation_text, _, state.sight = await full
+                    if self.hero_fight_held(conv.npc):
+                        situation_text, _, state.sight = await self._situation(conv, body)
                     if state.dynamic_tools:
                         state.tools = self._offered(conv.npc, state.sight)
                     if sound:
@@ -1980,6 +2527,9 @@ class DialogueManager:
             raise
         finally:
             conv.acting = False
+            if quick_line is not None:
+                quick_line.cancel()
+                await asyncio.gather(quick_line, return_exceptions=True)
             if full is not None:
                 full.cancel()  # done by now, unless the turn ended before the line
 
@@ -2021,6 +2571,7 @@ class DialogueManager:
         trace: TurnTrace,
         *,
         speak: bool = True,
+        quick_line: asyncio.Task[bool] | None = None,
     ) -> str:
         """The conversational model's steps of a turn; tool calls are handled after each (see turn.py).
         `speak` False: the quick model said the npc's line, these steps only act on it, their words unsaid.
@@ -2029,25 +2580,60 @@ class DialogueManager:
         retries = STEP_RETRIES
         first_said = to_game_text(state.filler)
         for step in range(MAX_STEPS):
-            st = trace.step(added, tool_choice(step), silent=not speak)
+            choice: ToolChoice | None = "required" if state.act and step == 0 else tool_choice(step)
+            st = trace.step(added, choice, silent=not speak)
             while True:
                 said = state.text.strip()
                 try:
-                    done = await self._step(conv, state, request, tool_choice(step), st, speak=speak)
+                    st.started_s = round(time.time() - trace.started, 3)
+                    done = await self._step(conv, state, request, choice, st, speak=speak)
                     break
                 except LLMError as err:
                     # asked again only if nothing of this step was said: else the npc would repeat it
-                    if not err.retryable or retries <= 0 or state.text.strip() != said:
+                    if not err.retryable or retries <= 0 or (speak and state.text.strip() != said):
                         raise
                     retries -= 1
                     log.warning("%s: %s; asking the model again", conv.npc, err)
                     trace.event("retry", error=str(err))
+            if quick_line is not None:
+                if await quick_line:
+                    conv.acting = True
+                    await self._status(conv, "idle")
+                    if not state.overlay:  # tool words are overlays; let an ordinary line finish first
+                        if conv.voice is not None:
+                            await conv.voice.join()
+                        while self.audible(conv.npc):  # noqa: ASYNC110 - playback ends by clock, not event
+                            await asyncio.sleep(0.05)
+                else:
+                    # Gemma said nothing: voice Sol's buffer, or ask once for speech without tools.
+                    speak = True
+                    st.silent = False
+                    trace.event("quick_fallback", step=trace.steps.index(st))
+                    if done.text:
+                        state.first_delta = time.monotonic() - state.started
+                        pieces = state.spoken(
+                            state.moods.feed(done.text),
+                            {t.name for t in self._request_tools(state.tools)}, conv.npc,
+                        )
+                        await self._feed_lines(conv, state, pieces)
+                        await self._say_rest(conv, state)
+                    else:
+                        request = [
+                            replace(item, content=item.content.removesuffix("\n" + PARALLEL_ACT_HINT))
+                            if isinstance(item, Message) and item.role == "developer" else item
+                            for item in request
+                        ]
+                        spoken = trace.step(request, "none")
+                        spoken.started_s = round(time.time() - trace.started, 3)
+                        await self._step(conv, state, request, "none", spoken)
+                quick_line = None
             if state.relevant is not None and not state.relevant() and not (speak and state.text.strip()):
                 raise StaleTurn  # the incident is over: nothing said yet, or only late acts are left
             calls = [i for i in done.items if isinstance(i, ToolCall)]
             outcomes = []
             for call in calls:
                 before = [t.name for t in state.tools]
+                trace.event("tool_start", step=trace.steps.index(st), name=call.name, call_id=call.call_id)
                 outcomes.append(await self._tool(conv, call, state))
                 after = [t.name for t in state.tools]
                 if before != after:
@@ -2071,17 +2657,33 @@ class DialogueManager:
         return "completed"
 
     async def _quick_line(
-        self, conv: Conversation, state: TurnState, request: list[Item], trace: TurnTrace
+        self, conv: Conversation, state: TurnState, request: list[Item], trace: TurnTrace,
+        *, ready: asyncio.Event | None = None,
     ) -> bool:
         """The npc's line in a fight, from the quick model. False if it said nothing (it failed or went
         quiet first): the conversational model speaks then, as in any other turn."""
         assert self.quick is not None
-        st = trace.step(request, None, llm=getattr(self.quick, "model", None) or self.quick.name)
+        player = conv.trigger is not None and conv.trigger.role == "user"
+        slot = self._quick_slot(conv.npc) if player and self.surrender_hold is not None else None
+        if slot is not None:
+            self._quick_busy[slot] += 1  # keep the speaker's prefix while the other slot classifies
         try:
-            await self._step(conv, state, request, None, st, quick=True)
-        except LLMError as err:
-            log.warning("%s: the quick model failed: %s", conv.npc, err)
-            trace.event("quick_failed", error=str(err))
+            try:
+                if slot is not None and self.surrender_hold is not None:
+                    await self.surrender_hold(conv, request)
+            finally:
+                if ready is not None:
+                    ready.set()
+            st = trace.step(request, None, llm=getattr(self.quick, "model", None) or self.quick.name)
+            try:
+                await self._step(conv, state, request, None, st, quick=True)
+            except LLMError as err:
+                log.warning("%s: the quick model failed: %s", conv.npc, err)
+                trace.event("quick_failed", error=str(err))
+        finally:
+            if slot is not None:
+                self._quick_busy[slot] -= 1
+                self._quick_free.set()
         return bool(state.text.strip())
 
     async def _act_on_line(
@@ -2092,24 +2694,34 @@ class DialogueManager:
         full: asyncio.Task[tuple[str, Snapshot | None, Sight | None]],
         sound: str,
         trace: TurnTrace,
+        *,
+        quick_line: asyncio.Task[bool] | None = None,
     ) -> str:
         """After the quick model's line: the conversational model, on the whole situation, decides what the
         npc does about it (a bandit that shouted "Держи его!" attacks). Its words are not said; a failure
         only loses the acts, the line is said already."""
-        conv.acting = True  # the hero may speak again: a new turn, not an interruption
-        await self._status(conv, "idle")
+        if quick_line is None:
+            conv.acting = True  # the hero may speak again: a new turn, not an interruption
+            await self._status(conv, "idle")
         situation_text, _, state.sight = await full
+        if self.hero_fight_held(conv.npc):
+            situation_text, _, state.sight = await self._situation(conv, None)
         if state.dynamic_tools:
             state.tools = self._offered(conv.npc, state.sight)
-        said = " ".join(s for s in (sound, state.text.strip()) if s)
-        situation_text += (
-            f"\nТы уже сказал вслух: «{said}». Новых слов не нужно: реши, что ты делаешь, и сделай это "
-            "инструментами, если нужно."
-        )
+        if quick_line is None:
+            said = " ".join(s for s in (sound, state.text.strip()) if s)
+            situation_text += (
+                f"\nТы уже сказал вслух: «{said}». Новых слов не нужно: реши, что ты делаешь, и сделай это "
+                "инструментами, если нужно."
+            )
+        else:
+            situation_text += "\n" + PARALLEL_ACT_HINT
         request: list[Item] = [*conv.history, Message("developer", situation_text), trigger]
         try:
-            return await self._steps(conv, state, request, trace, speak=False)
+            return await self._steps(conv, state, request, trace, speak=False, quick_line=quick_line)
         except LLMError as err:
+            if quick_line is not None and not await quick_line:
+                raise  # neither model supplied a line
             log.warning("%s: no acts on its line: %s", conv.npc, err)
             self.journal.add("llm_error", npc=conv.npc, name=conv.persona.name, detail=str(err))
             trace.event("act_failed", error=str(err))
@@ -2180,7 +2792,8 @@ class DialogueManager:
             state.text += " "
         try:
             try:
-                events = llm.stream(
+                stream = partial(self._quick_stream, conv.npc) if quick else llm.stream
+                events = stream(
                     instructions=conv.persona.instructions,
                     messages=request,
                     tools=[] if quick else self._request_tools(state.tools),
@@ -2313,6 +2926,8 @@ class DialogueManager:
                 return ToolOutcome("Принято: поднимешь после реплики.", "accepted")
         for ext in self.extensions:
             if (outcome := await ext.handle(self, conv, call, snap)) is not None:
+                if call.name == "surrender" and outcome.status == "accepted":
+                    state.tools = [tool for tool in state.tools if tool.name != "surrender"]
                 if call.name == AMEND and outcome.status == "accepted" and state.dynamic_tools:
                     from .vanilla import ACCEPT, ACCEPT_NOW
 
@@ -2536,13 +3151,17 @@ class DialogueManager:
         log.info("%s: the incident is over, intent back to %s", conv.npc, intent.goal)
         self._change_intent(conv, intent, self.link.snapshots.get(conv.npc), body=body)
 
-    async def _attack_hero(self, conv: Conversation, intent: Intent) -> tuple[str, bool]:
+    async def _attack_hero(
+        self, conv: Conversation, intent: Intent, *, resume: bool = False,
+    ) -> tuple[str, bool]:
         """The npc turns on the hero, after its words: the scripts' own attack (B_Attack), held or free, so
         the fight goes as the game's do. A bandit means to kill and its gang joins it; anyone else gives him
         a beating until he is down."""
         if conv.intent is not intent:
             return "", True  # it changed its mind before it was done talking
-        if self.fight_reason is not None:
+        if self.hero_fight_held(conv.npc):
+            return "Ты опустил оружие и слушаешь героя; решение о сдаче ещё не принято.", True
+        if not resume and self.fight_reason is not None:
             if why := self.fight_reason(conv.npc, self.link.snapshots.get(conv.npc)):
                 self._change_intent(
                     conv, conv.calm or Intent(), self.link.snapshots.get(conv.npc), body=False
@@ -2559,14 +3178,21 @@ class DialogueManager:
             listener(conv.npc)
         return "Ты напал на героя.", True
 
-    async def _calm(self, conv: Conversation, intent: Intent) -> tuple[str, bool]:
+    async def _calm(
+        self, conv: Conversation, intent: Intent, *, effects: list[dict[str, Any]] | None = None,
+        native_attitude: str | None = None,
+    ) -> tuple[str, bool]:
         """The npc calls off its fight with the hero, after its words, and keeps to it: its attitude to him
         is set as the scripts set it (they would fall on him again otherwise), the fight ends now."""
         if conv.intent is not intent:
             return "", True  # it changed its mind before it was done talking
-        attitude = CALM_ATTITUDES.get(intent.attitude, "ATT_NEUTRAL")
+        attitude = native_attitude
+        if attitude is None:
+            attitude = CALM_ATTITUDES.get(intent.attitude, "ATT_NEUTRAL")
         try:
-            await self.link.story_effect(conv.npc, [{"do": "calm", "attitude": attitude}])
+            await self.link.story_effect(
+                conv.npc, [*(effects or []), {"do": "calm", "attitude": attitude}], check=bool(effects),
+            )
         except (GameError, TimeoutError) as err:
             return f"Тело не прекратило драку ({err})", False
         log.info("%s calls off its fight with the hero (%s)", conv.npc, attitude)
@@ -2630,6 +3256,7 @@ class TurnState:
     tools: list[Tool] = field(default_factory=list)  # offered to the model in this turn
     dynamic_tools: bool = False  # no explicit tools: amendments refresh the offered list
     to: str | None = None  # the npc its lines are said to now, None: the hero
+    act: bool = False  # its first step must call a tool (event_turn)
 
     def spoken(
         self,

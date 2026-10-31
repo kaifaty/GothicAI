@@ -148,9 +148,10 @@ class SoakControlTests(unittest.TestCase):
         source = SCRIPT.read_text()
         selection = source[source.index('SCENARIO="${SCENARIO:-m0}"'):source.index('ASR="${ASR:-fake}"')]
         cases = [
+            ("memprobe", "0", "", "", "fake", 0, "--no-neural-body"),
             ("neural-soak", "1", "", "", "fake", 0, "--no-neural-body"),
             ("neural-soak", "1", "tcp://policy:47835", "", "fake", 0, "--no-neural-body"),
-            ("neural-soak", "0", "tcp://policy:47835", "", "fake", 0, "--neural-body"),
+            ("neural-soak", "0", "tcp://policy:47835", "", "fake", 0, "--neural-body--body-policyservice"),
             ("neural-soak", "0", "", "", "fake", 2, None),
             ("neural-soak", "1", "", "/tmp/save.sav", "fake", 2, None),
             ("neural-soak", "1", "", "", "chatgpt", 2, None),

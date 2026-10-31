@@ -1,4 +1,5 @@
 #include "navpolicy.h"
+#include "navlivetrace.h"
 
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -27,6 +28,50 @@ namespace {
 void require(bool condition,const std::string& message) {
   if(!condition) throw std::runtime_error(message);
   }
+
+void liveFormatContract() {
+  struct Temporary final {
+    std::filesystem::path path=std::filesystem::temp_directory_path()/
+      ("gothic-nav-live-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    ~Temporary() {std::error_code error;std::filesystem::remove_all(path,error);}
+  } temporary;
+  require(std::filesystem::create_directory(temporary.path),"cannot create live trace fixture directory");
+  NavigationMemory::View memory;
+  memory.near.size=64;memory.near.cellCm=25;memory.near.cells.resize(64*64);
+  memory.far.size=100;memory.far.cellCm=200;memory.far.cells.resize(100*100);
+  memory.near.cells[0].wall=.5f;memory.far.cells[0].familiar=1;
+  std::vector<NavigationEye::Ray> rays(NavDemoWriter::rayCount);
+  rays[0].point={100,200,300};rays[0].hit=true;rays[0].kind=NavigationEye::HitKind::World;
+  NavDemoWriter::Snapshot sample;sample.gameMs=1000;sample.memory=&memory;sample.eye=&rays;
+  NavMesh::Path path;path.complete=true;path.corners={{1,2,3},{4,5,6}};
+  NavLiveTrace trace(temporary.path,nullptr,path,rays.size(),true,{},false,true);
+  trace.observation(sample,nullptr,0,0);
+  sample.gameMs=1100;trace.observation(sample,nullptr,100,1);
+  sample.gameMs=1400;trace.observation(sample,nullptr,400,4);trace.finish();
+  std::ifstream meta(temporary.path/"live-format.json");
+  const std::string json{std::istreambuf_iterator<char>(meta),std::istreambuf_iterator<char>()};
+  rapidjson::Document format;format.Parse(json.c_str());
+  require(!format.HasParseError() && format["schema"].GetUint()==1,"invalid live trace metadata");
+  require(format["maps"]["near"]["shape"][0].GetUint()==8 && format["maps"]["far"]["shape"][1].GetUint()==100,
+          "teacher trace map shape mismatch");
+  require(format["detour_cm"][0][0].GetFloat()==100,"live Detour path is not in centimetres");
+  const auto& target=format["target_script"];
+  require(std::string(target["mode"].GetString())=="player-walk" && target["walk_cm_s"].GetInt()==100 &&
+          target["run_cm_s"].GetInt()==0 && target["run_leg_index"].IsNull() && target["run_leg_prefix_ms"].GetInt()==0,
+          "live player-walk metadata must match the 100cm/s script without a run burst");
+  const size_t recordBytes=16+(64*64+100*100)*8+rays.size()*55;
+  std::vector<uint8_t> bytes(12+recordBytes*2+1);
+  gzFile input=gzopen((temporary.path/"live-observations.bin.gz").string().c_str(),"rb");
+  require(input!=nullptr,"cannot read live trace fixture");
+  const int read=gzread(input,bytes.data(),unsigned(bytes.size()));
+  const int closed=gzclose(input);
+  require(read==int(bytes.size()-1) && closed==Z_OK,"live trace record count/size mismatch");
+  require(std::memcmp(bytes.data(),"NAVLIVE\0",8)==0 && bytes[8]==1,"live trace header mismatch");
+  require(bytes[12+16+2*64*64]==128,"live memory probability quantization mismatch");
+  require(bytes[12+16+64*64*8+7*100*100]==255,"live familiar channel mismatch");
+  require(bytes[12+recordBytes]==144 && bytes[13+recordBytes]==1,"live observation cadence mismatch");
+  std::cout<<"{\"contract\":\"nav_live_format\",\"records\":2,\"ray_bytes\":55,\"record_bytes\":"<<recordBytes<<"}\n";
+}
 
 void memoryContract(const std::string& weights) {
   const NavPolicy original(weights);
@@ -656,6 +701,10 @@ int main(int argc,char** argv) {
       replayActions(argv[2],argv[3],argv[4],argv[5]);
       return 0;
       }
+    if(argc==2 && std::string(argv[1])=="--live-format") {
+      liveFormatContract();
+      return 0;
+      }
     if(argc==3 && std::string(argv[1])=="--memory") {
       memoryContract(argv[2]);
       return 0;
@@ -677,6 +726,7 @@ int main(int argc,char** argv) {
       return 0;
       }
     std::cerr<<"usage: gothic-navpolicy-contract WEIGHTS FIXTURE\n"
+             <<"       gothic-navpolicy-contract --live-format\n"
              <<"       gothic-navpolicy-contract --memory WEIGHTS\n"
              <<"       gothic-navpolicy-contract --replay-actions WEIGHTS SAMPLES.bin.gz EPISODE.json OUTPUT.jsonl\n"
              <<"       gothic-navpolicy-contract --benchmark WEIGHTS FIXTURE [--npcs 20] [--decisions 2000]\n";

@@ -1,0 +1,74 @@
+{
+  "asset": "harbour-stairs-kasern",
+  "title": "Лестница от порта к казармам",
+  "kind": "building",
+  "created": "2026-10-30",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "harbour-stairs-kasern"
+  ],
+  "sources": [],
+  "selected": {},
+  "reviews": [
+    {
+      "id": "r3l-stairs-yard",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-30",
+      "path": "reviews/r3l-stairs-yard/merged.json"
+    },
+    {
+      "id": "r3l-stairs-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-30",
+      "path": "reviews/r3l-stairs-close/merged.json"
+    },
+    {
+      "id": "r3l-stairs-landing",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-30",
+      "path": "reviews/r3l-stairs-landing/merged.json"
+    },
+    {
+      "id": "r4-stairs-yard",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-30",
+      "path": "reviews/r4-stairs-yard/merged.json"
+    },
+    {
+      "id": "r4-stairs-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "DISPUTED",
+      "date": "2026-10-30",
+      "path": "reviews/r4-stairs-close/merged.json"
+    },
+    {
+      "id": "r4-stairs-landing",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "PASS",
+      "date": "2026-10-30",
+      "path": "reviews/r4-stairs-landing/merged.json"
+    }
+  ],
+  "gates": [
+    {
+      "gate": "ingame",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-30",
+      "quote": "Принять как есть (рекомендую)",
+      "note": "Со двора лестница темнее на 13–16 % (рецензенты по r4-stairs-yard): тень на подступенках — честное следствие объёма, порог ±10 % по тону для настоящих ступеней на месте нарисованных не применяется."
+    }
+  ],
+  "build": null,
+  "backup": null
+}

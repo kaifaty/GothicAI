@@ -5,6 +5,18 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 stage="${1:?Usage: nav-perception-remote.sh build|compare|evaluate|safety|water}"
 case "$stage" in build|compare|evaluate|safety|water) ;; *) echo "Unknown phase: $stage" >&2; exit 2;; esac
 export GQ_OWNER=nav-perception
+# Validate the shared settings before creating task directories or queue jobs.
+game_env=()
+for key in OPENGOTHIC_VIDEOS_FINGERPRINT ${!OPENGOTHIC_BASE@}; do
+  [[ -z "${!key+x}" ]] || game_env+=("$key=${!key}")
+done
+printf -v game_command '%q ' env ${game_env[@]+"${game_env[@]}"} python3 -c "$(cat "$ROOT/scripts/ryzen_game.py")"
+game_settings="$(ssh -o ConnectTimeout=10 ryzen "$game_command")"
+eval "$game_settings"
+game_env=()
+for key in OPENGOTHIC_VIDEOS_FINGERPRINT ${!OPENGOTHIC_BASE@}; do
+  [[ -z "${!key+x}" ]] || game_env+=("$key=${!key}")
+done
 task="$(ssh -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-perception" "$HOME"')"
 ssh ryzen "mkdir -p '$task/source' '$task/input'"
 rsync -a --exclude=build --exclude='build-*' --exclude=__pycache__ \
@@ -16,6 +28,8 @@ ssh ryzen "cat > '$task/phase.sh'" <<'PHASE'
 #!/usr/bin/env bash
 set -euo pipefail
 task="$(cd "$(dirname "$0")" && pwd)"
+game_settings="$(python3 "$task/source/scripts/ryzen_game.py")"
+eval "$game_settings"
 stage="${1:?phase}"
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
 export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
@@ -40,8 +54,8 @@ else
     scripts/tests/test_nav_perception_safety.py
 fi
 if [[ "$stage" == compare ]]; then
-  "$task/.venv/bin/python" -I scripts/nav_perception.py prepare --task "$task"
-  "$task/.venv/bin/python" -I scripts/nav_perception.py replay --task "$task"
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_perception.py prepare --task "$task"
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_perception.py replay --task "$task"
 elif [[ "$stage" == water ]]; then
   cat > "$task/input/water-new-seeds.txt" <<'SHORES'
 water-new-port 41 -125 780
@@ -51,8 +65,8 @@ water-new-shipwreck -319 -455 22600
 water-new-mountainlake 42515 2918 -25361
 SHORES
   safety_status=0
-  "$task/.venv/bin/python" -I scripts/nav_perception_safety.py --task "$task" \
-    --runner "$task/build/opengothic/gothic-body-runner" --assets "$HOME/gothic-ai/game" \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_perception_safety.py --task "$task" \
+    --runner "$task/build/opengothic/gothic-body-runner" --assets "$GOTHIC_DIR" \
     --save "$task/input/save.sav" --cache "$task/safety-cache" --roads "$task/input/places.json" \
     --links "$HOME/gothic-ai/nav-jumps/accepted-links-cv.txt" \
     --routes "$HOME/gothic-ai/nav-jumps/routes/routes.jsonl" \
@@ -60,11 +74,11 @@ SHORES
     --water-baseline "$task/safety-check-1/fixtures.json" --new-shores 3 \
     --shore-seeds "$task/input/water-new-seeds.txt" --output "$task/water-check-1" || safety_status=$?
   evaluation_status=0
-  "$task/.venv/bin/python" -I scripts/nav_perception_eval.py --task "$task" \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_perception_eval.py --task "$task" \
     --mode gaze --teachers memory --memory-version 3 --parallel 3 \
     --output "$task/evaluation-water-1" || evaluation_status=$?
   coverage_status=0
-  "$task/.venv/bin/python" -I scripts/nav_perception.py replay --task "$task" \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_perception.py replay --task "$task" \
     --mode gaze --output "$task/replay-water" || coverage_status=$?
   if [[ "$safety_status" != 0 || "$evaluation_status" != 0 || "$coverage_status" != 0 ]]; then
     echo "Water measurements: safety=$safety_status evaluation=$evaluation_status coverage=$coverage_status" >&2
@@ -73,8 +87,8 @@ SHORES
 elif [[ "$stage" == evaluate || "$stage" == safety ]]; then
   # Both independent measurements run even if one reports a failed criterion.
   safety_status=0
-  "$task/.venv/bin/python" -I scripts/nav_perception_safety.py --task "$task" \
-    --runner "$task/build/opengothic/gothic-body-runner" --assets "$HOME/gothic-ai/game" \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_perception_safety.py --task "$task" \
+    --runner "$task/build/opengothic/gothic-body-runner" --assets "$GOTHIC_DIR" \
     --save "$task/input/save.sav" --cache "$task/safety-cache" --roads "$task/input/places.json" \
     --links "$HOME/gothic-ai/nav-jumps/accepted-links-cv.txt" \
     --routes "$HOME/gothic-ai/nav-jumps/routes/routes.jsonl" \
@@ -82,7 +96,7 @@ elif [[ "$stage" == evaluate || "$stage" == safety ]]; then
     --output "$task/safety-check-1" --per-kind 3 || safety_status=$?
   evaluation_status=0
   if [[ "$stage" == evaluate ]]; then
-    "$task/.venv/bin/python" -I scripts/nav_perception_eval.py --task "$task" \
+    "$task/.venv/bin/python" -X faulthandler -I scripts/nav_perception_eval.py --task "$task" \
       --mode gaze --memory-version 3 --parallel 3 || evaluation_status=$?
   fi
   if [[ "$safety_status" != 0 || "$evaluation_status" != 0 ]]; then
@@ -92,4 +106,4 @@ elif [[ "$stage" == evaluate || "$stage" == safety ]]; then
 fi
 PHASE
 "$ROOT/scripts/gq" submit --class batch --threads 12 --mem 8G --max 2h --cpu-quota 1200% \
-  --name "nav perception $stage" -- bash "$task/phase.sh" "$stage"
+  --name "nav perception $stage" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$stage"

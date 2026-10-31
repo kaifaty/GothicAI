@@ -159,6 +159,25 @@ sys.exit(subprocess.run(args[index + 4:], cwd=cwd, env=env).returncode)
     return {"root": tmp_path, "home": home, "env": env}
 
 
+@pytest.mark.parametrize("script,args,output", [
+    ("physics-e2e-remote.sh", ["run", "bullet", "missing-converter"], "runs"),
+    ("physics-e2e-front-diagnostic.sh", ["missing-converter"], "diagnostics"),
+])
+def test_physics_requires_converter_before_run_setup(remote, script, args, output):
+    binary = remote["home"] / "gothic-ai/physics-stage1/bullet/reference/opengothic/Gothic2Notr"
+    binary.parent.mkdir(parents=True)
+    executable(binary, "raise SystemExit('unexpected game launch')\n")
+    executable(remote["root"] / "bin/flock", "raise SystemExit(97)\n")
+    result = subprocess.run(["bash", str(SCRIPTS / script), *args],
+                            env=remote["env"], stdin=subprocess.DEVNULL,
+                            text=True, capture_output=True, timeout=5)
+    assert result.returncode == 1
+    assert f"Missing converter: {binary.with_name('content-convert')}" in result.stderr
+    assert "Rebuild the engine" in result.stderr
+    assert not (remote["home"] / "gothic-ai/physics-stage1/e2e" / output / "missing-converter").exists()
+    assert not (remote["home"] / "gothic-ai/body-simulation.lock").exists()
+
+
 def prepare(remote, task_name, suite):
     if task_name in ("body-arena", "body"):
         prepare(remote, "body-api", "body_api_suite.py")
@@ -168,6 +187,7 @@ def prepare(remote, task_name, suite):
         (source / directory).mkdir(parents=True)
     (source / "scripts" / suite).write_text(SUITE)
     (source / "scripts/snapshot_dependency.py").write_text('VERSION = "v1"\n')
+    shutil.copy2(SCRIPTS / "base-ensure.sh", source / "scripts/base-ensure.sh")
     (source / "scripts/body_trajectory_report.py").write_text(REPORT)
     (source / "OpenGothic/native.cpp").write_text("v1")
     for name in ("body-api.bench", "body-observe.bench", "body-melee.bench", "body-headless-senses.bench", "body-arena.bench"):
@@ -184,6 +204,13 @@ def prepare(remote, task_name, suite):
         path = build / "opengothic" / name
         path.write_text("v1")
         path.chmod(0o755)
+    executable(build / "opengothic/content-convert", '''import json
+import os
+from pathlib import Path
+import sys
+(Path(os.environ["FAKE_REMOTE"]) / "base-ensure-call.json").write_text(json.dumps({
+    "version": "v1", "args": sys.argv[1:], "queued": os.environ.get("FAKE_GQ_JOB")}))
+''')
     (build / "libOpenGothic.a").write_text("v1")
     return task
 
@@ -407,6 +434,8 @@ Path("log.txt").write_text("test runner\\n")
         stdout, stderr = process.communicate(timeout=5)
         assert process.returncode == 0, stdout + stderr + (out / "launcher.log").read_text()
         assert set(json.loads((out / "baseline-result.json").read_text()).values()) == {"v1"}
+        assert json.loads((remote["root"] / "base-ensure-call.json").read_text()) == {
+            "version": "v1", "args": ["resolve", str(task / "assets")], "queued": "1"}
         assert set(json.loads((out / "report-result.json").read_text()).values()) == {"v1"}
         manifest = json.loads((out / "manifest.json").read_text())
         assert manifest["scenario_sha256"] == manifest["config_sha256"] == hashlib.sha256(b"v1").hexdigest()

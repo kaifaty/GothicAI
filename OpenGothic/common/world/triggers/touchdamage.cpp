@@ -4,7 +4,7 @@
 #include "world/world.h"
 #include "game/serialize.h"
 
-TouchDamage::TouchDamage(Vob* parent, World &world, const zenkit::VTouchDamage& dmg, Flags flags)
+TouchDamage::TouchDamage(Vob* parent, World &world, const asset::VTouchDamage& dmg, Flags flags)
   :AbstractTrigger(parent,world,dmg,flags) {
   barrier        = dmg.barrier;
   blunt          = dmg.blunt;

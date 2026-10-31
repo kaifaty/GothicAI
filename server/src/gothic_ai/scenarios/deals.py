@@ -490,7 +490,9 @@ async def xardas_money(
             "Отклонено: даром ты даёшь герою не больше 50 золотых за всё время, осталось 20. "
             "Больше — только в долг: что он вернёт, впиши в hero_later."
         )
-        rejected = await _until(lambda: expected in script.outputs[outputs:], 30)
+        rejected = await _until(lambda: any(
+            result.startswith(expected) for result in script.outputs[outputs:]
+        ), 30)
         window = await link.deal_window()
         check(
             "over",

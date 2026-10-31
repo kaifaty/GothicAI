@@ -1,15 +1,18 @@
 #pragma once
 
-#include <zenkit/Mesh.hh>
+#include "asset/worldmesh.h"
+#include "game/meleeimpact.h"
 #include "physics/physicsnoise.h"
 #include "physics/charactervirtualdiagnostics.h"
 #include "physics/navmesh.h"
 #include "physics/fracture.h"
 
 #include <Tempest/Matrix4x4>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <limits>
+#include <vector>
 
 class PhysicMeshShape;
 class PhysicVbo;
@@ -31,6 +34,34 @@ class Serialize;
 class CollisionWorld;
 class Cloth;
 
+// Query-only melee geometry. Positions and radii are world centimetres.
+struct MeleeBladeSegment final {
+  Tempest::Vec3 from, to, edgeNormal;
+  float radiusCm = 2.f;
+  };
+
+struct MeleeBodyCapsule final {
+  Tempest::Vec3 from, to;
+  float radiusCm = 0;
+  size_t bone = size_t(-1);
+  uint8_t zone = 0;
+  };
+
+struct MeleeBladeContact final {
+  Npc* npc = nullptr;
+  size_t bone = size_t(-1);
+  uint8_t zone = 0;
+  Tempest::Vec3 point;
+  Tempest::Vec3 normal;
+  Tempest::Vec3 velocityCmS;
+  asset::MaterialGroup material = asset::MaterialGroup::STONE;
+  float bladeFraction = 0, speedCmS = 0, surfaceAngleDeg = 0;
+  bool world = false;
+  bool stopsSwing = false;
+  bool windup = false;     // a wall met by a blade going back or up (wind-up, follow-through): passed
+  uint64_t step = 0;
+  };
+
 class DynamicWorld final {
   private:
     struct BodyData;
@@ -41,6 +72,8 @@ class DynamicWorld final {
     struct BulletsList;
     struct BBoxList;
     struct MovableVobs;
+    struct ItemHulls;
+    struct ItemTrace;
 
   public:
     static constexpr float gravityMS   = 9.8f; // meters per second^2
@@ -49,7 +82,7 @@ class DynamicWorld final {
     static constexpr float spellSpeed  = 1; // centimeters per milliseconds
     static constexpr float characterItemRange = 300.f; // centimetres around the opt-in hero
 
-    DynamicWorld(World *world, const zenkit::Mesh& mesh, const zenkit::Mesh* originalCloth = nullptr);
+    DynamicWorld(World *world, const asset::WorldMesh& mesh, const asset::WorldMesh* originalCloth = nullptr);
     DynamicWorld(const DynamicWorld&)=delete;
     ~DynamicWorld();
 
@@ -198,6 +231,7 @@ class DynamicWorld final {
         Tempest::Vec3 velocity() const; // centimetres/second; zero without dynamics
         Tempest::Vec3 angularVelocity() const; // world radians/second; zero without dynamics
         bool isSleeping() const;
+        void retainForItemWake();
         bool touchedByNpc() const;
         // World-space newton seconds (kg * metres/second), with native wake.
         bool addImpulse(const Tempest::Vec3& impulseNs, Npc* culprit = nullptr);
@@ -215,7 +249,7 @@ class DynamicWorld final {
     struct RayLandResult {
       Tempest::Vec3           v={};
       Tempest::Vec3           n={};
-      zenkit::MaterialGroup   mat    = zenkit::MaterialGroup::UNDEFINED;
+      asset::MaterialGroup   mat    = asset::MaterialGroup::UNDEFINED;
       bool                    hasCol = false;
       float                   hitFraction = 0;
 
@@ -255,7 +289,7 @@ class DynamicWorld final {
       Tempest::Vec3          point = {}; // world centimetres
       Tempest::Vec3          normal = {}; // unit world normal, unchanged winding
       Tempest::Vec3          incoming = {}; // original flight segment, before any reflection
-      zenkit::MaterialGroup material = zenkit::MaterialGroup::UNDEFINED;
+      asset::MaterialGroup material = asset::MaterialGroup::UNDEFINED;
       // Borrowed only for onWorldHit; game code owns the attachment lifetime.
       Ragdoll*              ragdoll = nullptr;
       size_t                bone = size_t(-1);
@@ -268,7 +302,7 @@ class DynamicWorld final {
       virtual Npc* origin() const { return nullptr; }
       virtual void onStop(){}
       virtual void onMove(){}
-      virtual void onCollide(zenkit::MaterialGroup matId){(void)matId;}
+      virtual void onCollide(asset::MaterialGroup matId){(void)matId;}
       virtual bool onCollide(Npc& other){(void)other; return true; }
       // Requests an attachment after a legacy world stop; never changes flight.
       virtual bool stopsAtWorldHit() const { return false; }
@@ -371,13 +405,26 @@ class DynamicWorld final {
     NpcItem        addGhostObj  (const Skeleton* src);
     Item           addStaticObj (const PhysicMeshShape *src, const Tempest::Matrix4x4& m, std::string_view label = {});
     Item           addMovableObj(const PhysicMeshShape *src, const Tempest::Matrix4x4& m, std::string_view label = {});
-    Item           addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& bbox, zenkit::MaterialGroup mat);
+    Item           addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& bbox, asset::MaterialGroup mat);
+    Item           addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& bbox, asset::MaterialGroup mat,
+                                  const ProtoMesh* proto, std::string_view visual, bool hulls = true);
+    struct ItemHull {
+      JPH::ShapeRefC shape, originalShape;
+      std::vector<Tempest::Vec3> vertices; // hull vertices in visual-local centimetres
+      std::string fallbackReason;
+      float volume = 0.f, boundsVolume = 0.f; // cubic metres, before object scale
+      float extraPaddingCm = 0.f; // collision padding beyond the base centimetre
+      };
+    const ItemHull& itemHullShape(const ProtoMesh& proto, std::string_view visual);
     Item           addMovableVob(const ProtoMesh& mesh, std::string_view visual, const Tempest::Matrix4x4& matrix,
                                  float massMultiplier, bool blocksWalking, std::string_view className = {},
                                  bool legacyCollision = true, uint32_t zenId = uint32_t(-1));
     void           setMovableVobsEnabled(bool enabled);
+    void           setFurniturePartsEnabled(bool enabled);
+    bool           furniturePartsEnabled() const;
     void           setDestructionEnabled(bool enabled);
     void           setBuoyancyEnabled(bool enabled);
+    void           setItemWakeEnabled(bool enabled);
     bool           buoyancyEnabled() const;
     bool           destructionEnabled() const;
     Cloth&         cloth();
@@ -410,9 +457,10 @@ class DynamicWorld final {
       uint32_t           zenId = uint32_t(-1);
       std::string        visual, className, disposition;
       bool               blocksWalking = false, legacyCollision = true, enabled = false, sleeping = true, touchedByNpc = false;
+      size_t             collisionParts = 1;
       float              mass = 0;
       float              hullVolume = 0, density = 0, massMultiplier = 1;
-      zenkit::MaterialGroup material = zenkit::MaterialGroup::UNDEFINED;
+      asset::MaterialGroup material = asset::MaterialGroup::UNDEFINED;
       bool               destructible = false, broken = false;
       float              health = 0, maxHealth = 0, impactThreshold = 0;
       Tempest::Matrix4x4 transform, origin;
@@ -439,6 +487,7 @@ class DynamicWorld final {
     struct WaterBodySnapshot {
       uintptr_t id = 0, parentId = 0;
       const Ragdoll* ragdoll = nullptr;
+      const ::Item* item = nullptr;
       uint32_t bone = 0;
       float targetFraction = 0;
       uint32_t zenId = uint32_t(-1);
@@ -446,11 +495,50 @@ class DynamicWorld final {
       int category = C_Null;
       std::string visual;
       Tempest::Matrix4x4 transform;
-      Tempest::Vec3 worldBounds[2], velocity;
+      Tempest::Vec3 worldBounds[2], collisionBounds[2], velocity;
       float mass = 0, density = 0, waterY = 0, submergedFraction = 0;
       bool sleeping = true, inWater = false;
       };
     std::vector<WaterBodySnapshot> waterBodySnapshot() const;
+    struct ItemTraceContact {
+      uint32_t bodyId = uint32_t(-1), zenId = uint32_t(-1);
+      int category = C_Null;
+      std::string visual;
+      float depth = 0; // centimetres; positive means penetration
+      Tempest::Vec3 normal, point, otherPoint; // normal moves the Item out
+      };
+    struct ItemTraceSample {
+      uint64_t nativeStep = 0, nativeSteps = 0, index = 0;
+      float seconds = 0, stepSeconds = 0;
+      bool beforeStep = true, active = false, sleeping = true;
+      Tempest::Vec3 position, centerOfMass, velocity, bounds[2]; // cm and cm/s
+      std::vector<ItemTraceContact> contacts;
+      };
+    // Opt-in benchmark diagnostics at the ordinary native tick boundaries.
+    // nativeSteps reports batching; a per-step scenario must keep it <= 1.
+    bool startItemTrace(const ::Item& item);
+    std::vector<ItemTraceSample> takeItemTrace();
+    void stopItemTrace();
+    void configureMeleeBench(int substeps);
+    void updateMeleeBlade(const Npc* owner, const Tempest::Matrix4x4& hand, float lengthCm);
+    void removeMeleeBlade(const Npc* owner);
+    void measureMeleeBench(std::string path);
+    void reportMeleeBench();
+    void updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules);
+    void removeShadowBody(const Npc* owner);
+    // Pose time and the half-open active window use absolute game milliseconds.
+    // forward: the attacker's facing; a wall met by a blade going back or up (the wind-up,
+    // the follow-through) does not stop the swing. Zero: every wall stops it.
+    void updateShadowBlade(const Npc* owner, uint64_t swingId,
+                           const std::vector<MeleeBladeSegment>& segments, uint64_t timeMs,
+                           double activeBeginMs, double activeEndMs, float walkableCos = .7f,
+                           Tempest::Vec3 forward = {}, MeleeImpact::Weapon weapon = MeleeImpact::Weapon::OneHand);
+    std::vector<MeleeBladeContact> takeShadowBladeContacts(const Npc* owner);
+    void removeShadowBlade(const Npc* owner);
+    void flushShadowBlades();
+    float meleeBladeAdvance(const std::vector<MeleeBladeSegment>& blades, const std::vector<MeleeBodyCapsule>& target,
+                            const Tempest::Vec3& direction, float maxAdvanceCm) const;
+    void accountMeleeReachTime(float milliseconds);
     struct RagdollSupport {
       size_t        bone = 0;
       uint32_t      partBodyId = uint32_t(-1), supportBodyId = uint32_t(-1);
@@ -524,14 +612,19 @@ class DynamicWorld final {
       uint64_t rays = 0;
       };
     PhysicsStats physicsStats() const;
+    struct StaticCollisionStats {
+      size_t shapeBytes = 0, triangles = 0;
+      };
+    StaticCollisionStats staticCollisionStats() const;
+    uint64_t simulationStep() const;
 
     // Called explicitly by the runner; ordinary worlds never build a navmesh.
     NavMesh::Geometry navigationGeometry() const;
 
     void           deleteObj(BulletBody* obj);
 
-    static float   materialFriction(zenkit::MaterialGroup mat);
-    static float   materialDensity (zenkit::MaterialGroup mat);
+    static float   materialFriction(asset::MaterialGroup mat);
+    static float   materialDensity (asset::MaterialGroup mat);
 
     static float   rayBox(const Tempest::Vec3& orig, const Tempest::Vec3& dir, const float TMax,
                           const Tempest::Matrix4x4& obj, const Tempest::Vec3& min, const Tempest::Vec3& max,
@@ -561,8 +654,10 @@ class DynamicWorld final {
     void           loadDestructionVobs(Serialize& fin);
 
     std::unique_ptr<CollisionWorld>    world;
+    std::unique_ptr<ItemTrace>         itemTrace;
     std::unique_ptr<Cloth>             clothWorld;
     World*                            ownerWorld = nullptr;
+    bool                              splitStaticTriangles = true;
 
     std::vector<std::string>           sectors;
 
@@ -575,6 +670,7 @@ class DynamicWorld final {
     std::unique_ptr<BulletsList>       bulletList;
     std::unique_ptr<BBoxList>          bboxList;
     std::unique_ptr<MovableVobs>       movableVobs;
+    std::unique_ptr<ItemHulls>         itemHulls;
     int64_t                           traceTime = -1;
     Tempest::Vec3                     fragmentObserver;
     bool                              hasFragmentObserver = false;

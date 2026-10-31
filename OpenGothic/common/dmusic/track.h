@@ -11,9 +11,11 @@ namespace Dx8 {
 
 class Track final {
   public:
+    Track()=default;
     Track(Riff& input);
 
     struct StyleRef  {
+      StyleRef()=default;
       StyleRef(Riff &chunk);
 
       uint16_t  stmp=0;
@@ -21,12 +23,14 @@ class Track final {
       };
 
     struct StyleTrack {
+      StyleTrack()=default;
       StyleTrack(Riff &chunk);
       std::vector<StyleRef> styles;
       };
 
     class Chord {
       public:
+        Chord()=default;
         Chord(Riff &chunk);
 
         uint32_t                      header=0;
@@ -38,6 +42,7 @@ class Track final {
 
     class CommandTrack {
       public:
+        CommandTrack()=default;
         CommandTrack(Riff &chunk);
 
         std::vector<DMUS_IO_COMMAND> commands;

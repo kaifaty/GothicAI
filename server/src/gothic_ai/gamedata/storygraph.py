@@ -1,6 +1,6 @@
 """The story layer of the game as a graph: dialogs, choices, quests and the variables between them.
 
-`storygraph` (OpenGothic/ai_bridge/storygraph) lifts it out of GOTHIC.DAT into JSON, see
+`storygraph` (OpenGothic/ai_bridge/storygraph) lifts the imported program record into JSON, see
 docs/story-graph.md. Nodes are dialogs (C_INFO) and the choices they offer; a dialog has a condition
 (when it is offered) and both have effects (lines, variables, items, journal, choices...), each effect
 with the guard it runs under.
@@ -15,6 +15,7 @@ is in `functions`), `["cases", guard, value, ...]` (the first true guard picks t
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -23,13 +24,15 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from gothic_ai.gamedata import base
+
 log = logging.getLogger(__name__)
 
 VERSION = 1
+ALGORITHM_VERSION = 1
 # the converter, built in the repository (docs/story-graph.md, stage 1)
 REPO = Path(__file__).resolve().parents[4]
 TOOL = REPO / "OpenGothic" / "ai_bridge" / "storygraph" / "build" / "storygraph"
-DAT_PATH = ("_work", "Data", "Scripts", "_compiled", "GOTHIC.DAT")
 
 Expr = list
 
@@ -190,36 +193,52 @@ def load(path: Path) -> StoryGraph:
     )
 
 
-def find_dat(game_dir: Path) -> Path | None:
-    """GOTHIC.DAT of the installation (names in any case)."""
-    path = game_dir
-    for part in DAT_PATH:
-        if not path.is_dir():
-            return None
-        path = next((p for p in path.iterdir() if p.name.upper() == part.upper()), path / part)
-    return path if path.is_file() else None
-
-
 def ensure(game_dir: Path, cache: Path, tool: Path | None = None) -> Path | None:
-    """The graph of the game's scripts as JSON in `cache`, made again by the converter when the scripts or
-    the converter are newer; None if there is neither a cache nor the means to make one."""
+    """Cache the graph by ready-base identity and converter, without probing installation files."""
+    with base.resolve(game_dir) as selected:
+        return _ensure(selected, cache, tool)
+
+
+def _ensure(selected: base.Base, cache: Path, tool: Path | None) -> Path | None:
     tool = tool or Path(os.environ.get("STORYGRAPH_TOOL", TOOL))
-    dat = find_dat(game_dir)
-    sources = [p for p in (dat, tool) if p is not None and p.exists()]
-    if cache.exists() and all(cache.stat().st_mtime >= p.stat().st_mtime for p in sources):
+    stamp = cache.with_suffix(".base.json")
+    source = {"base_fingerprint": selected.fingerprint, "algorithm_version": ALGORITHM_VERSION}
+    try:
+        previous = json.loads(stamp.read_text())
+    except (OSError, ValueError):
+        previous = {}
+    if not tool.exists():
+        if (
+            cache.is_file()
+            and isinstance(previous, dict)
+            and all(previous.get(key) == value for key, value in source.items())
+        ):
+            log.warning("story graph: converter unavailable, converter freshness unverified: %s", tool)
+            return cache
+        log.warning("story graph: converter unavailable: %s", tool)
+        return None
+    source["converter_sha256"] = hashlib.sha256(tool.read_bytes()).hexdigest()
+    if cache.is_file() and previous == source:
         return cache
-    if dat is None or not tool.exists():
-        return cache if cache.exists() else None
     cache.parent.mkdir(parents=True, exist_ok=True)
     tmp = cache.with_suffix(".tmp")
     try:
-        cmd = [str(tool), str(dat), "--json", str(tmp)]
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        cmd = [str(tool), str(selected.path), "--json", str(tmp)]
+        subprocess.run(
+            cmd,
+            env={**os.environ, "OPENGOTHIC_BASE": str(selected.path)},
+            check=True,
+            capture_output=True,
+            timeout=1800,
+        )
     except (OSError, subprocess.SubprocessError) as err:
         log.warning("story graph: %s failed: %s", tool, err)
-        return cache if cache.exists() else None
+        return None
     tmp.replace(cache)
-    log.info("story graph: %s from %s", cache, dat)
+    temporary = stamp.with_suffix(".tmp")
+    temporary.write_text(json.dumps(source), encoding="utf-8")
+    temporary.replace(stamp)
+    log.info("story graph: %s from base %s", cache, selected.fingerprint)
     return cache
 
 

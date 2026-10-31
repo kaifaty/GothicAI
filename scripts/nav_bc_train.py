@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Train/evaluate navigation imitation on cached, pair-disjoint demonstrations.
+"""Train navigation imitation on direct recordings or prepared tensor caches.
 
 Run on Ryzen through gq (batch class). No simulator or server is involved.
 Example: python scripts/nav_bc_train.py train --cache /abs/cache --output /abs/run
+Direct: python scripts/nav_bc_train.py train --source /abs/recordings \
+    --manifest /abs/manifest.json --input-variant hd-familiar --output /abs/run
+Optional prefetch: --loader-workers 4 --loader-prefetch 1 (default: synchronous).
 Torch is imported only by this training/validation driver, never by the numpy reader.
 """
 from __future__ import annotations
 
 import argparse
+from collections import deque
+from concurrent.futures import ProcessPoolExecutor
 import json
+import multiprocessing
 from pathlib import Path
 import random
 import sys
@@ -22,8 +28,9 @@ from torch import nn
 from nav_bc_data import (CACHE_VERSION, BC3_CACHE_VERSION, HD_CACHE_VERSION, BC4_CACHE_VERSION, HEADS, CLASSES, BC3_HEADS,
                          BC3_CLASSES, PREPROCESSING, HD_PREPROCESSING, BC4_PREPROCESSING,
                          HD_NEAR_SHAPE, HD_FAR_SHAPE, BC4_NEAR_SHAPE, BC4_FAR_SHAPE,
-                         VECTOR_SIZE, load_cached, unpack_cached)
+                         VECTOR_SIZE, encode_episode, load_cached, training_index, unpack_cached)
 from nav_bc_model import NavPolicy, export_weights
+import nav_demos
 
 
 def write_json(path, value):
@@ -121,7 +128,106 @@ def family_balance_weights(entries, v4_entries):
 
 
 def load(cache, ep, *, packed=False):
+    if ep.get("storage") == "navdemo":
+        samples = cache / ep["file"]
+        arrays = encode_episode(samples, nav_demos.ray_layout(samples), ep["teacher_version"], ep["input_variant"])
+        if len(arrays["labels"]) != ep["steps"]:
+            raise ValueError(f"record count differs from training index: {samples}")
+        return arrays if packed else unpack_cached(arrays)
     return load_cached(cache / ep["file"], packed=packed)
+
+
+def _loader_worker_init():
+    # Workers encode numpy arrays; they never run a model or consume training RNG.
+    torch.set_num_threads(1)
+
+
+def _load_packed(cache, entry):
+    return load(cache, entry, packed=True)
+
+
+class BatchLoader:
+    """Decode/encode direct episodes in worker processes, preserving batch order.
+
+    Only packed arrays cross process boundaries. The current batch and at most
+    ``prefetch`` following batches are retained, including across epoch boundaries.
+    Spawn remains safe after the training process has initialized CUDA.
+    """
+    def __init__(self, cache, workers=0, prefetch=1):
+        if not 0 <= workers <= 8 or not 1 <= prefetch <= 3:
+            raise ValueError("loader requires 0-8 workers and 1-3 prefetched batches")
+        self.cache = Path(cache)
+        self.workers, self.prefetch = workers, prefetch
+        self.executor = None
+        self.batch_wait_seconds = []
+        self.pending = deque()
+        self.iterating = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        if self.executor is not None:
+            self.executor.shutdown(wait=True, cancel_futures=True)
+        self.pending.clear()
+
+    def wait_stats(self):
+        """Parent batch loading/waiting time, excluding model work."""
+        waits = self.batch_wait_seconds
+        return dict(load_wait_seconds=sum(waits),
+                    load_wait_first_batch_seconds=waits[0] if waits else 0.,
+                    load_wait_after_first_seconds=sum(waits[1:]),
+                    load_wait_max_batch_seconds=max(waits, default=0.),
+                    load_wait_per_batch_seconds=waits.copy())
+
+    def loaded_batches(self, batches, *, packed=False, next_batches=None):
+        if self.iterating:
+            raise ValueError("finish the current batch iterator before starting another epoch")
+        if (len(self.pending) > len(batches)
+                or any(entries != batch for (entries, _), batch in zip(self.pending, batches))):
+            raise ValueError("prefetched batches differ from the next training epoch")
+        self.iterating = True
+        self.batch_wait_seconds = []
+        try:
+            if not self.workers or not any(entry.get("storage") == "navdemo" for batch in batches for entry in batch):
+                for entries in batches:
+                    started = time.perf_counter()
+                    group = [load(self.cache, entry, packed=packed) for entry in entries]
+                    self.batch_wait_seconds.append(time.perf_counter() - started)
+                    yield entries, group
+                    del group
+                return
+            if self.executor is None:
+                self.executor = ProcessPoolExecutor(max_workers=self.workers,
+                    mp_context=multiprocessing.get_context("spawn"), initializer=_loader_worker_init)
+            remaining = iter(batches[len(self.pending):])
+            following = iter(next_batches or [])
+
+            def submit():
+                entries = next(remaining, None)
+                if entries is None:
+                    entries = next(following, None)
+                if entries is None:
+                    return False
+                self.pending.append((entries, [self.executor.submit(_load_packed, self.cache, entry)
+                                               for entry in entries]))
+                return True
+
+            while len(self.pending) < 1 + self.prefetch and submit():
+                pass
+            for _ in batches:
+                entries, futures = self.pending.popleft()
+                started = time.perf_counter()
+                group = [future.result() for future in futures]
+                self.batch_wait_seconds.append(time.perf_counter() - started)
+                # Fill before yielding so the current tail overlaps the next
+                # epoch's first batches within the same bounded queue.
+                while len(self.pending) < self.prefetch and submit():
+                    pass
+                yield entries, group if packed else [unpack_cached(episode) for episode in group]
+                del group, futures
+        finally:
+            self.iterating = False
 
 
 def metrics(truth, prediction):
@@ -281,10 +387,16 @@ def checkpoint_model(path, device):
 
 
 def train(args):
-    cache, out = Path(args.cache), Path(args.output)
+    source = getattr(args, "source", None)
+    cache, out = Path(source or args.cache), Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
-    index = (aggregate_training_index(cache, args.aggregate_cache, args.balance_v4_cache)
-             if args.aggregate_cache or args.balance_v4_cache else read_index(cache))
+    if source:
+        index = training_index(cache, Path(args.manifest), args.input_variant)
+    else:
+        extra_caches = getattr(args, "aggregate_cache", [])
+        balance_cache = getattr(args, "balance_v4_cache", None)
+        index = (aggregate_training_index(cache, extra_caches, balance_cache)
+                 if extra_caches or balance_cache else read_index(cache))
     if index["cache_version"] in (BC3_CACHE_VERSION, HD_CACHE_VERSION, BC4_CACHE_VERSION):
         return train_bc3(args, index)
     train_eps = [e for e in index["episodes"] if e["split"] == "train"]
@@ -313,52 +425,55 @@ def train(args):
     write_json(out / "training_config.json", {**vars(args), "architecture": model.architecture(),
                "class_counts": [c.tolist() for c in counts], "class_weights": [w.cpu().tolist() for w in weights],
                "loss_head_weights": [2, 1, 2, 1, 1, 1], "max_dagger_fraction": .5})
-    for epoch in range(len(history), args.epochs):
-        started = time.perf_counter()
-        model.train()
-        batches = training_batches(train_eps, args.batch, args.seed + epoch)
-        sample_rng = np.random.default_rng(args.seed + epoch)
-        total_loss = total_steps = 0
-        for entries in batches:
-            group = [load(cache, meta) for meta in entries]
-            dagger_rows = [meta.get("source_kind") == "dagger" for meta in entries]
-            hidden = None
-            for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
-                features, labels, mask = batch_tensors(group, start, args.segment, device,
-                                                       dagger_rows, sample_rng)
-                if not mask.any():
-                    break
-                optimizer.zero_grad(set_to_none=True)
-                logits, hidden = model(**features, hidden=hidden)
-                hidden = hidden.detach()
-                loss = sum(scale * nn.functional.cross_entropy(logits[h][mask], labels[:, :, j][mask], weight=weights[j])
-                           for j, (h, scale) in enumerate(zip(HEADS, (2, 1, 2, 1, 1, 1)))) / 8
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), 1.)
-                optimizer.step()
-                n = int(mask.sum())
-                total_loss += loss.item() * n
-                total_steps += n
-        validation = evaluate(model, cache, val_eps, device)
-        score = (validation["model"]["turn"]["macro_f1"] + validation["model"]["forward"]["balanced_accuracy"]) / 2
-        record = {"epoch": epoch + 1, "loss": total_loss / total_steps,
-                  "seconds": time.perf_counter()-started, "validation": validation, "score": score}
-        history.append(record)
-        is_best = score > best
-        best = max(best, score)
-        state = {"config": config, "model": model.state_dict(), "optimizer": optimizer.state_dict(),
-                 "history": history, "best": best}
-        torch.save(state, out / "last.pt")
-        if is_best:
-            torch.save(state, out / "best.pt")
-        write_json(out / "history.json", history)
-        print(json.dumps({k: v for k, v in record.items() if k != "validation"} |
-              {"turn_f1": validation["model"]["turn"]["macro_f1"],
-               "forward_accuracy": validation["model"]["forward"]["accuracy"],
-               "forward_balanced": validation["model"]["forward"]["balanced_accuracy"],
-               "action_change_steps": validation["action_change"]["steps"],
-               "action_change_all_heads": validation["action_change"]["all_heads_accuracy"],
-               "best": is_best}), flush=True)
+    with BatchLoader(cache, getattr(args, "loader_workers", 0), getattr(args, "loader_prefetch", 1)) as loader:
+        for epoch in range(len(history), args.epochs):
+            started = time.perf_counter()
+            model.train()
+            batches = training_batches(train_eps, args.batch, args.seed + epoch)
+            next_batches = (training_batches(train_eps, args.batch, args.seed + epoch + 1)
+                            if epoch + 1 < args.epochs else None)
+            sample_rng = np.random.default_rng(args.seed + epoch)
+            total_loss = total_steps = 0
+            for entries, group in loader.loaded_batches(batches, next_batches=next_batches):
+                dagger_rows = [meta.get("source_kind") == "dagger" for meta in entries]
+                hidden = None
+                for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
+                    features, labels, mask = batch_tensors(group, start, args.segment, device,
+                                                           dagger_rows, sample_rng)
+                    if not mask.any():
+                        break
+                    optimizer.zero_grad(set_to_none=True)
+                    logits, hidden = model(**features, hidden=hidden)
+                    hidden = hidden.detach()
+                    loss = sum(scale * nn.functional.cross_entropy(logits[h][mask], labels[:, :, j][mask], weight=weights[j])
+                               for j, (h, scale) in enumerate(zip(HEADS, (2, 1, 2, 1, 1, 1)))) / 8
+                    loss.backward()
+                    nn.utils.clip_grad_norm_(model.parameters(), 1.)
+                    optimizer.step()
+                    n = int(mask.sum())
+                    total_loss += loss.item() * n
+                    total_steps += n
+            validation = evaluate(model, cache, val_eps, device)
+            score = (validation["model"]["turn"]["macro_f1"] + validation["model"]["forward"]["balanced_accuracy"]) / 2
+            record = {"epoch": epoch + 1, "loss": total_loss / total_steps,
+                      "seconds": time.perf_counter()-started, "validation": validation, "score": score,
+                      **loader.wait_stats()}
+            history.append(record)
+            is_best = score > best
+            best = max(best, score)
+            state = {"config": config, "model": model.state_dict(), "optimizer": optimizer.state_dict(),
+                     "history": history, "best": best}
+            torch.save(state, out / "last.pt")
+            if is_best:
+                torch.save(state, out / "best.pt")
+            write_json(out / "history.json", history)
+            print(json.dumps({k: v for k, v in record.items() if k != "validation"} |
+                  {"turn_f1": validation["model"]["turn"]["macro_f1"],
+                   "forward_accuracy": validation["model"]["forward"]["accuracy"],
+                   "forward_balanced": validation["model"]["forward"]["balanced_accuracy"],
+                   "action_change_steps": validation["action_change"]["steps"],
+                   "action_change_all_heads": validation["action_change"]["all_heads_accuracy"],
+                   "best": is_best}), flush=True)
 
 
 def initialize_bc3(model, path, index):
@@ -500,7 +615,7 @@ def bc3_loss(logits, auxiliary, labels, mask, targets, class_weights, change_wei
 
 def train_bc3(args, index):
     """Fixed-epoch BC on manifest train only; selection requires closed-loop validation."""
-    cache, out = Path(args.cache), Path(args.output)
+    cache, out = Path(getattr(args, "source", None) or args.cache), Path(args.output)
     if any(entry["split"] != "train" for entry in index["episodes"]):
         raise ValueError("BC3 cache must contain only manifest training episodes")
     random.seed(args.seed)
@@ -545,80 +660,83 @@ def train_bc3(args, index):
         max_dagger_fraction=.5, dagger_teacher_control_weight=.5,
         selection="fixed final epoch; closed-loop validation pending"))
     dagger_weights = {}
-    for epoch in range(len(history), args.epochs):
-        started = time.perf_counter()
-        model.train()
-        total, steps, losses = 0., 0, {}
-        source_steps = dict(teacher=0, dagger=0)
-        weighted_family_steps = {}
-        epoch_batches = training_batches(index["episodes"], args.batch, args.seed + epoch)
-        epoch_weights = None
-        if "family_balance" in index:
-            epoch_weights, _ = epoch_family_balance(epoch_batches, cache, args.segment, args.seed + epoch,
-                index["family_balance"]["v4_decisions"], dagger_weights)
-            for entry in index["episodes"]:
-                entry["family_weight"] = epoch_weights.get(entry["family"], 1.)
-        sample_rng = np.random.default_rng(args.seed + epoch)
-        for entries in epoch_batches:
-            group = [load(cache, entry, packed=hd) for entry in entries]
-            dagger_rows = [entry.get("source_kind") == "dagger" for entry in entries]
-            hidden = None
-            for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
-                # Keep HD episodes packed and expand this truncated-BPTT segment
-                # plus one future decision for the unchanged next-near target.
-                segment_group = ([unpack_cached(ep, start, start + args.segment + 1) for ep in group]
-                                 if hd else group)
-                segment_start = 0 if hd else start
-                # Legacy batching uses six labels; BC3 explicitly supplies its five heads.
-                features, labels, mask = batch_tensors(segment_group, segment_start, args.segment, device,
-                                                      dagger_rows, sample_rng, heads=BC3_HEADS)
-                if not mask.any():
-                    break
-                targets = bc3_targets(segment_group, segment_start, args.segment, device)
-                for row, entry in enumerate(entries):
-                    targets["sample_weight"][row] *= entry.get("family_weight", 1.)
-                    count = int(mask[row].sum())
-                    source_steps["dagger" if dagger_rows[row] else "teacher"] += count
-                    if "family" in entry:
-                        family = entry["family"]
-                        weighted_family_steps[family] = weighted_family_steps.get(family, 0.) + float(
-                            targets["sample_weight"][row][mask[row]].sum())
-                optimizer.zero_grad(set_to_none=True)
-                logits, hidden, auxiliary = model(**features, hidden=hidden, return_auxiliary=True)
-                hidden = hidden.detach()
-                loss, terms = bc3_loss(logits, auxiliary, labels, mask, targets, weights, change_weight)
-                if not torch.isfinite(loss):
-                    raise ValueError("nonfinite BC3 loss")
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), 1.)
-                optimizer.step()
-                count = int(mask.sum())
-                total += loss.item() * count
-                steps += count
-                for name, value in terms.items():
-                    losses[name] = losses.get(name, 0.) + value.item() * count
-                del segment_group
-            del group
-        record = dict(epoch=epoch + 1, loss=total / steps, decisions=steps,
-                      seconds=time.perf_counter() - started,
-                      source_decisions=source_steps,
-                      weighted_family_decisions=weighted_family_steps,
-                      weighted_family_shares={family: count / sum(weighted_family_steps.values())
-                                              for family, count in weighted_family_steps.items()},
-                      losses={name: value / steps for name, value in losses.items()})
-        if epoch_weights is not None:
-            record["family_weights"] = epoch_weights
-            for family, minimum in index["family_balance"]["minimum_shares"].items():
-                if record["weighted_family_shares"].get(family, 0.) + 1e-6 < minimum:
-                    raise ValueError(f"actual epoch {family} decision share is below the v4 floor")
-        history.append(record)
-        torch.save(dict(config=config, model=model.state_dict(), optimizer=optimizer.state_dict(),
-                        history=history, navigation_memory_version=index["navigation_memory_version"],
-                        preprocessing={**index["preprocessing"], "eye_layout": index["eye_layout"]}), out / "last.pt")
-        export_weights(model, out / "policy.navbc",
-                       preprocessing={**index["preprocessing"], "eye_layout": index["eye_layout"]})
-        write_json(out / "history.json", history)
-        print(json.dumps(record), flush=True)
+    with BatchLoader(cache, getattr(args, "loader_workers", 0), getattr(args, "loader_prefetch", 1)) as loader:
+        for epoch in range(len(history), args.epochs):
+            started = time.perf_counter()
+            model.train()
+            total, steps, losses = 0., 0, {}
+            source_steps = dict(teacher=0, dagger=0)
+            weighted_family_steps = {}
+            epoch_batches = training_batches(index["episodes"], args.batch, args.seed + epoch)
+            epoch_weights = None
+            if "family_balance" in index:
+                epoch_weights, _ = epoch_family_balance(epoch_batches, cache, args.segment, args.seed + epoch,
+                    index["family_balance"]["v4_decisions"], dagger_weights)
+                for entry in index["episodes"]:
+                    entry["family_weight"] = epoch_weights.get(entry["family"], 1.)
+            sample_rng = np.random.default_rng(args.seed + epoch)
+            next_batches = (training_batches(index["episodes"], args.batch, args.seed + epoch + 1)
+                            if epoch + 1 < args.epochs else None)
+            for entries, group in loader.loaded_batches(epoch_batches, packed=hd, next_batches=next_batches):
+                dagger_rows = [entry.get("source_kind") == "dagger" for entry in entries]
+                hidden = None
+                for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
+                    # Keep HD episodes packed and expand this truncated-BPTT segment
+                    # plus one future decision for the unchanged next-near target.
+                    segment_group = ([unpack_cached(ep, start, start + args.segment + 1) for ep in group]
+                                     if hd else group)
+                    segment_start = 0 if hd else start
+                    # Legacy batching uses six labels; BC3 explicitly supplies its five heads.
+                    features, labels, mask = batch_tensors(segment_group, segment_start, args.segment, device,
+                                                          dagger_rows, sample_rng, heads=BC3_HEADS)
+                    if not mask.any():
+                        break
+                    targets = bc3_targets(segment_group, segment_start, args.segment, device)
+                    for row, entry in enumerate(entries):
+                        targets["sample_weight"][row] *= entry.get("family_weight", 1.)
+                        count = int(mask[row].sum())
+                        source_steps["dagger" if dagger_rows[row] else "teacher"] += count
+                        if "family" in entry:
+                            family = entry["family"]
+                            weighted_family_steps[family] = weighted_family_steps.get(family, 0.) + float(
+                                targets["sample_weight"][row][mask[row]].sum())
+                    optimizer.zero_grad(set_to_none=True)
+                    logits, hidden, auxiliary = model(**features, hidden=hidden, return_auxiliary=True)
+                    hidden = hidden.detach()
+                    loss, terms = bc3_loss(logits, auxiliary, labels, mask, targets, weights, change_weight)
+                    if not torch.isfinite(loss):
+                        raise ValueError("nonfinite BC3 loss")
+                    loss.backward()
+                    nn.utils.clip_grad_norm_(model.parameters(), 1.)
+                    optimizer.step()
+                    count = int(mask.sum())
+                    total += loss.item() * count
+                    steps += count
+                    for name, value in terms.items():
+                        losses[name] = losses.get(name, 0.) + value.item() * count
+                    del segment_group
+                del group
+            record = dict(epoch=epoch + 1, loss=total / steps, decisions=steps,
+                          seconds=time.perf_counter() - started,
+                          source_decisions=source_steps,
+                          weighted_family_decisions=weighted_family_steps,
+                          weighted_family_shares={family: count / sum(weighted_family_steps.values())
+                                                  for family, count in weighted_family_steps.items()},
+                          losses={name: value / steps for name, value in losses.items()},
+                          **loader.wait_stats())
+            if epoch_weights is not None:
+                record["family_weights"] = epoch_weights
+                for family, minimum in index["family_balance"]["minimum_shares"].items():
+                    if record["weighted_family_shares"].get(family, 0.) + 1e-6 < minimum:
+                        raise ValueError(f"actual epoch {family} decision share is below the v4 floor")
+            history.append(record)
+            torch.save(dict(config=config, model=model.state_dict(), optimizer=optimizer.state_dict(),
+                            history=history, navigation_memory_version=index["navigation_memory_version"],
+                            preprocessing={**index["preprocessing"], "eye_layout": index["eye_layout"]}), out / "last.pt")
+            export_weights(model, out / "policy.navbc",
+                           preprocessing={**index["preprocessing"], "eye_layout": index["eye_layout"]})
+            write_json(out / "history.json", history)
+            print(json.dumps(record), flush=True)
 
 
 def timed_step(step, iterations):
@@ -745,7 +863,14 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     for command in ("train", "evaluate", "verify", "plot"):
         p = sub.add_parser(command)
-        p.add_argument("--cache", required=True)
+        if command == "train":
+            recordings = p.add_mutually_exclusive_group(required=True)
+            recordings.add_argument("--cache")
+            recordings.add_argument("--source", help="read NAVDEMO recordings directly without a prepared cache")
+            p.add_argument("--manifest", help="frozen training manifest for --source")
+            p.add_argument("--input-variant", choices=("compact", "hd", "hd-familiar"), default="compact")
+        else:
+            p.add_argument("--cache", required=True)
         p.add_argument("--output", required=True)
         p.add_argument("--threads", type=int, default=6)
         p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -753,6 +878,10 @@ def main():
             p.add_argument("--epochs", type=int, default=20)
             p.add_argument("--batch", type=int, default=8)
             p.add_argument("--segment", type=int, default=64)
+            p.add_argument("--loader-workers", type=int, choices=range(9), default=0,
+                           help="optional direct-recording loader processes; default 0 loads synchronously")
+            p.add_argument("--loader-prefetch", type=int, choices=(1, 2, 3), default=1,
+                           help="following packed batches to prefetch")
             p.add_argument("--lr", type=float, default=3e-4)
             p.add_argument("--seed", type=int, default=17)
             p.add_argument("--resume", action="store_true")
@@ -764,10 +893,18 @@ def main():
             p.add_argument("--steps", type=int, default=1000)
             p.add_argument("--iterations", type=int, default=1000)
     args = parser.parse_args()
+    source = getattr(args, "source", None)
     if any(not Path(value).is_absolute() for value in
-           (args.cache, args.output, *getattr(args, "aggregate_cache", []),
+           (source or args.cache, args.output, *getattr(args, "aggregate_cache", []),
             *([args.balance_v4_cache] if getattr(args, "balance_v4_cache", None) else []))):
-        parser.error("cache and output must be absolute paths")
+        parser.error("cache/source and output must be absolute paths")
+    if source:
+        if not args.manifest or not Path(args.manifest).is_absolute():
+            parser.error("--source requires an absolute --manifest")
+        if args.aggregate_cache or args.balance_v4_cache:
+            parser.error("--source cannot be combined with aggregate or family-balance caches")
+    elif getattr(args, "manifest", None):
+        parser.error("--manifest requires --source")
     {"train": train, "evaluate": final_evaluate, "verify": verify, "plot": plot}[args.command](args)
 
 

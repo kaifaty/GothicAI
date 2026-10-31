@@ -12,6 +12,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 from types import SimpleNamespace
@@ -213,7 +214,7 @@ def prepare(task, archive_root):
         if shutil.disk_usage(task).free < 20 * 1024**3 + 512 * 1024**2:
             raise ValueError("Water preparation needs the 20 GiB local disk reserve")
         args = SimpleNamespace(output=output, runner=task / "build/opengothic/gothic-body-runner",
-            assets=Path.home() / "gothic-ai/game", save=source / "save.sav", cache=task / "cache",
+            assets=Path(os.environ.get("GOTHIC_DIR", Path.home() / "gothic-ai/game-settings")), save=source / "save.sav", cache=task / "cache",
             links=source / "accepted-links.txt", roads=source / "places.json", ini=None,
             npc="BAU_954_MALETH", seed=SEED, watchdog_seconds=3600)
         v3.checked_paths(args)
@@ -238,6 +239,7 @@ def main():
     parser.add_argument("--task", type=Path, required=True)
     parser.add_argument("--archive-root", type=Path, required=True)
     options = parser.parse_args()
+    os.environ.update(module("ryzen_game").game_environment())
     prepare(options.task, options.archive_root)
 
 

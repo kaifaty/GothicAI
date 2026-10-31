@@ -4,8 +4,7 @@
 #include <Tempest/SoundEffect>
 #include <Tempest/Point>
 
-#include <zenkit/vobs/Zone.hh>
-#include <zenkit/vobs/Sound.hh>
+#include "asset/worldtypes.h"
 
 #include <mutex>
 
@@ -24,9 +23,9 @@ class WorldSound final {
     WorldSound(GameSession& game, World& world);
     ~WorldSound();
 
-    void    setDefaultZone(const zenkit::VZoneMusic& vob);
-    void    addZone       (const zenkit::VZoneMusic& vob);
-    void    addSound      (const zenkit::VSound&     vob);
+    void    setDefaultZone(const asset::VZoneMusic& vob);
+    void    addZone       (const asset::VZoneMusic& vob);
+    void    addSound      (const asset::VSound&     vob);
 
     // `voice`: the loudness of the line, for lip sync
     Sound   addDlgSound(std::string_view s, const Tempest::Vec3& pos, float range, uint64_t &timeLen,

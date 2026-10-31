@@ -9,7 +9,7 @@
 
 using namespace Tempest;
 
-StaticObj::StaticObj(Vob* parent, World& world, const zenkit::VirtualObject& vob, Flags flags)
+StaticObj::StaticObj(Vob* parent, World& world, const asset::VirtualObject& vob, Flags flags)
   : Vob(parent, world, vob, flags) {
   const auto* rule = MovableVobs::classify(vob);
   // Static draw instances still update transforms and culling through

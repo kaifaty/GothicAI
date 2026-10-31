@@ -1,0 +1,52 @@
+# Harbour stairs below the upper-town path (NW_HARBOUR_STAIRS_01, docs/asset-migration.md step П2):
+# the inspection view of harbour-quay.bench, a view from the plaza, then the hero walks up and down.
+cheat god
+set time 12 0
+overlay off
+cam lift off
+
+# Inspection view, as in harbour-quay.bench.
+view hide animated morph pfx
+cam look 45.000
+goto pos 8619 438 -4749
+cam world 480.855 335.720 -179.903
+wait 34
+cam hold
+wait 6000
+shot stairs_inspect
+wait 300
+
+# From the plaza: the hero 3 m before the first step, the camera behind him, looking up the flight.
+goto pos 8080 270 -4950
+face 12
+cam world 330 150 192
+wait 3000
+cam hold
+wait 3000
+shot stairs_plaza
+wait 300
+
+# Low and close: the camera at knee height beside the first steps.
+cam world 160 40 140
+wait 1500
+cam hold
+wait 2000
+shot stairs_low
+wait 300
+
+# Walk up the flight and back down; pos logs where the hero ends up.
+cam follow 300 90 200
+pos
+walkmode walk
+hold forward 6500
+wait 6500
+release all
+wait 500
+pos
+shot stairs_top
+face 192
+hold forward 6500
+wait 6500
+release all
+wait 500
+pos

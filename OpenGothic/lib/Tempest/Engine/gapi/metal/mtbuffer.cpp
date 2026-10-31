@@ -5,6 +5,10 @@
 
 #include "utility/compiller_hints.h"
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "gapi/metalapi.h"
+#endif
+
 using namespace Tempest::Detail;
 
 MtBuffer::MtBuffer() {
@@ -62,6 +66,9 @@ void MtBuffer::update(const void *data, size_t off, size_t size) {
   auto enc = cmd->blitCommandEncoder();
   enc->copyFromBuffer(stage.get(),0, impl.get(),off, size);
   enc->endEncoding();
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileGpu(cmd);
+#endif
   cmd->commit();
   // TODO: implement proper upload engine
   cmd->waitUntilCompleted();
@@ -77,6 +84,9 @@ void MtBuffer::read(void *data, size_t off, size_t size) {
   auto enc = cmd->blitCommandEncoder();
   enc->copyFromBuffer(impl.get(),off,stage.get(),0, size);
   enc->endEncoding();
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profileGpu(cmd);
+#endif
   cmd->commit();
 
   cmd->waitUntilCompleted();

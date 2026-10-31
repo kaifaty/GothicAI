@@ -120,6 +120,8 @@ def macos_window_size(size: str) -> str:
 
 
 def render(args) -> int:
+    subprocess.run(["bash", str(Path(__file__).with_name("base-ensure.sh")), str(args.assets.resolve())],
+                   env=dict(os.environ, GAME_BIN=str(args.game.resolve())), check=True)
     failures = 0
     macos = sys.platform == "darwin"
     window_size = macos_window_size(args.size) if macos else args.size

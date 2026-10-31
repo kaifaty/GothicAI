@@ -13,6 +13,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 from types import SimpleNamespace
@@ -258,7 +259,7 @@ def prepare(task, corpus):
         raise ValueError("Detour geometry already exists; inspect it before starting another phase")
     require_room(task)
     args = SimpleNamespace(output=output, runner=task / "build/opengothic/gothic-body-runner",
-        assets=Path.home() / "gothic-ai/game", save=corpus / "input/save.sav", cache=task / "navmesh-cache",
+        assets=Path(os.environ.get("GOTHIC_DIR", Path.home() / "gothic-ai/game-settings")), save=corpus / "input/save.sav", cache=task / "navmesh-cache",
         links=corpus / "input/jump-links.txt", roads=corpus / "input/places.json", ini=None,
         npc="BAU_954_MALETH", seed=SEED, watchdog_seconds=1800)
     v3.checked_paths(args)
@@ -353,6 +354,8 @@ if __name__ == "__main__":
     parser.add_argument("--task", type=Path, required=True)
     parser.add_argument("--corpus", type=Path, required=True)
     options = parser.parse_args()
+    if options.command == "prepare":
+        os.environ.update(module("ryzen_game").game_environment())
     if (not options.task.is_absolute() or not options.corpus.is_absolute()
             or options.task.resolve().is_relative_to(options.corpus.resolve())
             or options.corpus.resolve().is_relative_to(options.task.resolve())):

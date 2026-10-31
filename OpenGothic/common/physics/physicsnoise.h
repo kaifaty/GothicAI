@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Tempest/Vec>
-#include <zenkit/Material.hh>
+#include "asset/material.h"
 #include "game/constants.h"
 #include <cstdint>
 #include <string>
@@ -15,7 +15,7 @@ struct PhysicsNoise {
   float radius = 0;
   float impulse = 0;
   ItemMaterial material = MAT_WOOD;
-  zenkit::MaterialGroup surface = zenkit::MaterialGroup::STONE;
+  asset::MaterialGroup surface = asset::MaterialGroup::STONE;
   std::string what;
   uint64_t body = 0;
   Npc* culprit = nullptr;

@@ -2,6 +2,7 @@
 
 #include <Tempest/Signal>
 #include <cstddef>
+#include <zenkit/Vfs.hh>
 
 #include "project/projectitem.h"
 
@@ -17,6 +18,8 @@ class ProjectMgr {
 
     static ProjectMgr& inst();
 
+    const zenkit::Vfs& vdfsIndex() const { return sources; }
+
     size_t       vdfCount() const;
     ProjectItem  vdf(size_t id);
     ProjectItem  root();
@@ -26,6 +29,7 @@ class ProjectMgr {
     Tempest::Signal<void()> onGpuAssetChanged;
 
   private:
+    zenkit::Vfs sources;
     std::shared_ptr<ProjectItem::Data> mkIndex(const zenkit::VfsNode& node, size_t depth, const std::string& prefix);
     ProjectItem  find(const ProjectItem& itm, std::string_view name);
 

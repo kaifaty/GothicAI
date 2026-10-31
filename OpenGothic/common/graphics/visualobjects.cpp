@@ -75,15 +75,15 @@ void VisualObjects::Item::setFatness(float f) {
     }
   }
 
-void VisualObjects::Item::setWind(zenkit::AnimationType m, float intensity) {
+void VisualObjects::Item::setWind(asset::AnimationType m, float intensity) {
   if(owner==nullptr)
     return;
 
-  if(intensity!=0 && m==zenkit::AnimationType::NONE)
-    m = zenkit::AnimationType::WIND_ALT;
+  if(intensity!=0 && m==asset::AnimationType::NONE)
+    m = asset::AnimationType::WIND_ALT;
 
   if(intensity==0)
-    m = zenkit::AnimationType::NONE;
+    m = asset::AnimationType::NONE;
 
   auto& obj = owner->objects[id];
 
@@ -94,9 +94,9 @@ void VisualObjects::Item::setWind(zenkit::AnimationType m, float intensity) {
   if(prev==m)
     return;
 
-  if(prev!=zenkit::AnimationType::NONE)
+  if(prev!=asset::AnimationType::NONE)
     owner->objectsWind.erase(id);
-  if(m!=zenkit::AnimationType::NONE)
+  if(m!=asset::AnimationType::NONE)
     owner->objectsWind.insert(id);
   }
 
@@ -425,7 +425,7 @@ void VisualObjects::free(size_t id) {
   clustersMem.free(obj.clusterId, numCluster);
   updateRtAs(id);
 
-  if(obj.wind!=zenkit::AnimationType::NONE)
+  if(obj.wind!=asset::AnimationType::NONE)
     objectsWind.erase(id);
   if(obj.type==DrawCommands::Morph)
     objectsMorph.erase(id);

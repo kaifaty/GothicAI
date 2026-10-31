@@ -52,7 +52,7 @@ sync_sources() {
 set -euo pipefail
 mkdir -p "$HOME/$1/source/scripts/bench" "$HOME/$1/source/evals/npc-body" "$HOME/$1/provenance" "$HOME/$1/data"
 REMOTE_SCRIPT
-  rsync -a "$ROOT/scripts/body-trajectories-remote.sh" "$ROOT/scripts/body_trajectory_recorder.py" \
+  rsync -a "$ROOT/scripts/body-trajectories-remote.sh" "$ROOT/scripts/body_trajectory_recorder.py" "$ROOT/scripts/base-ensure.sh" \
     "$ROOT/scripts/body_trajectory_dataset.py" "$ROOT/scripts/body_trajectory_suite.py" \
     "$ROOT/scripts/body_trajectory_report.py" \
     "$ROOT/scripts/body_arena_env.py" "$ROOT/scripts/body_arena_suite.py" "$ROOT/scripts/body_arena_report.py" \

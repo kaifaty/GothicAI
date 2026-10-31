@@ -23,12 +23,15 @@
 #include "gothic.h"
 #include "build.h"
 #include "commandline.h"
+#include "resources.h"
+#include "basestoreimport.h"
 #include "editorsettings.h"
 #include "ui/uistyle.h"
 #include "workers/dataworker.h"
 #include "project/projectmgr.h"
 
 #include <dmusic.h>
+#include <cstdlib>
 
 std::string_view selectDevice(const Tempest::AbstractGraphicsApi& api) {
   auto d = api.devices();
@@ -93,23 +96,9 @@ int main(int argc,const char** argv) {
     }
   CrashLog::setup();
 
-  zenkit::Logger::set(zenkit::LogLevel::INFO, [] (zenkit::LogLevel lvl, const char* cat, const char* message) {
-    (void)cat;
-    switch (lvl) {
-      case zenkit::LogLevel::ERROR:
-        Tempest::Log::e("[zenkit] ", message);
-        break;
-      case zenkit::LogLevel::WARNING:
-        Tempest::Log::e("[zenkit] ", message);
-        break;
-      case zenkit::LogLevel::INFO:
-        Tempest::Log::i("[zenkit] ", message);
-        break;
-      case zenkit::LogLevel::DEBUG:
-      case zenkit::LogLevel::TRACE:
-        Tempest::Log::d("[zenkit] ", message); // unused
-        break;
-      }
+  zenkit::Logger::set(zenkit::LogLevel::INFO, [](auto level, const char* component, const char* message) {
+    BaseImport::onZenkitLog(level,component,message);
+    Resources::zenkitLog(level,component,message);
     });
   Dm_setLogger(DmLogLevel_INFO, [](void* ctx, DmLogLevel lvl, char const* msg) {
     switch (lvl) {
@@ -132,6 +121,13 @@ int main(int argc,const char** argv) {
   Workers::setThreadName("Main thread");
 
   CommandLine          cmd{argc,argv};
+  BaseImport::Files mounted;
+  const auto* explicitBase=std::getenv("OPENGOTHIC_BASE");
+  const auto* fingerprint=std::getenv("OPENGOTHIC_BASE_FINGERPRINT");
+  if((explicitBase && *explicitBase) || !fingerprint || !*fingerprint)
+    for(const auto& archive:BaseImport::runtimeArchives(cmd.rootPath()))
+      if(!archive.mod) mounted.emplace_back(archive.name,archive.size);
+  auto base=BaseStore::ensure(cmd.rootPath(),mounted,[](std::string_view message) { Tempest::Log::i(message); });
   auto                 api     = mkApi(cmd);
   const auto           gpuName = selectDevice(*api);
   CrashLog::setGpu(gpuName);

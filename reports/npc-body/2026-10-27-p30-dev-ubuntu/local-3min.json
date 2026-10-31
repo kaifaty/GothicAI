@@ -1,0 +1,105 @@
+{
+ "mode": "load",
+ "label": "dev-ubuntu-local",
+ "host": "dev-ubuntu",
+ "port": 47835,
+ "streams": 4,
+ "duration_s": 180.0,
+ "elapsed_s": 180.0016750789946,
+ "started_at": "2026-10-27T20:13:21.506367Z",
+ "ended_at": "2026-10-27T20:16:21.508054Z",
+ "valid_for_ms": 100,
+ "call_timeout_ms": 1000,
+ "seed": 0,
+ "steps": 13170,
+ "responses": 13170,
+ "decisions": 1135,
+ "fallback": 0,
+ "timeouts": 0,
+ "errors": 0,
+ "reconnects": 0,
+ "stale": 2,
+ "stale_fraction": 0.00015186028853454822,
+ "per_stream": [
+  {
+   "stream": 0,
+   "phase_s": 0.8444218515250481,
+   "steps": 3288,
+   "responses": 3288,
+   "decisions": 284,
+   "fallback": 0,
+   "timeouts": 0,
+   "errors": 0,
+   "reconnects": 0,
+   "stale": 0
+  },
+  {
+   "stream": 1,
+   "phase_s": 0.7579544029403025,
+   "steps": 3287,
+   "responses": 3287,
+   "decisions": 283,
+   "fallback": 0,
+   "timeouts": 0,
+   "errors": 0,
+   "reconnects": 0,
+   "stale": 0
+  },
+  {
+   "stream": 2,
+   "phase_s": 0.420571580830845,
+   "steps": 3296,
+   "responses": 3296,
+   "decisions": 284,
+   "fallback": 0,
+   "timeouts": 0,
+   "errors": 0,
+   "reconnects": 0,
+   "stale": 2
+  },
+  {
+   "stream": 3,
+   "phase_s": 0.25891675029296335,
+   "steps": 3299,
+   "responses": 3299,
+   "decisions": 284,
+   "fallback": 0,
+   "timeouts": 0,
+   "errors": 0,
+   "reconnects": 0,
+   "stale": 0
+  }
+ ],
+ "rtt_ms": {
+  "p50": 2.3065390123520046,
+  "p95": 5.0398450111970305,
+  "p99": 19.045363005716354,
+  "p99.9": 61.01315698469989,
+  "max": 91.46074301679619
+ },
+ "age_ms": {
+  "p99": 25.031329016201198,
+  "max": 113.33804499008693
+ },
+ "lag_ms": {
+  "p99": 4.244487994583324,
+  "max": 79.3867250031326
+ },
+ "rtt_by_minute": [
+  {
+   "minute": 0,
+   "steps": 4387,
+   "p99": 31.661300017731264
+  },
+  {
+   "minute": 1,
+   "steps": 4366,
+   "p99": 10.477200004970655
+  },
+  {
+   "minute": 2,
+   "steps": 4417,
+   "p99": 6.929447990842164
+  }
+ ]
+}

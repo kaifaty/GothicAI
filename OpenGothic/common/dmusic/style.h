@@ -14,9 +14,11 @@ class Mixer;
 
 class Style final {
   public:
+    Style()=default;
     Style(Riff& riff);
 
     struct Part final {
+      Part()=default;
       Part(Riff& riff);
 
       DMUS_IO_STYLEPART               header;

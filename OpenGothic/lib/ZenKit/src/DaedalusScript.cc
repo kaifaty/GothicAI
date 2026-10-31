@@ -6,6 +6,8 @@
 #include "Internal.hh"
 
 #include <algorithm>
+#include <cstring>
+#include <limits>
 
 namespace zenkit {
 	DaedalusSymbolNotFound::DaedalusSymbolNotFound(std::string&& sym_name)
@@ -118,6 +120,156 @@ namespace zenkit {
 		r->read(code.data(), text_size);
 
 		this->_m_text = Read::from(std::move(code));
+	}
+
+	DaedalusProgramRecord DaedalusScript::export_program() const {
+		if (!_m_text) throw DaedalusScriptError {"cannot export an unloaded program"};
+
+		DaedalusProgramRecord program;
+		program.version = _m_version;
+		program.symbols.reserve(_m_symbols.size());
+		for (auto const& sym : _m_symbols) {
+			auto& record = program.symbols.emplace_back();
+			record.name = sym._m_name;
+			record.generated = sym._m_generated;
+			record.type = sym._m_type;
+			record.count = sym._m_count;
+			record.flags = sym._m_flags;
+			record.address = sym._m_address;
+			record.parent = sym._m_parent;
+			record.class_offset = sym._m_class_offset;
+			record.member_offset = sym._m_member_offset;
+			record.class_size = sym._m_class_size;
+			record.return_type = sym._m_return_type;
+			record.file_index = sym._m_file_index;
+			record.line_start = sym._m_line_start;
+			record.line_count = sym._m_line_count;
+			record.char_start = sym._m_char_start;
+			record.char_count = sym._m_char_count;
+
+			if (sym.is_member()) continue;
+			switch (sym.type()) {
+			case DaedalusDataType::INT:
+				record.int_values.resize(sym._m_count);
+				std::copy_n(std::get<std::unique_ptr<std::int32_t[]>>(sym._m_value).get(),
+				            sym._m_count,
+				            record.int_values.begin());
+				break;
+			case DaedalusDataType::FLOAT:
+				record.float_bits.resize(sym._m_count);
+				if (sym._m_count != 0) {
+					std::memcpy(record.float_bits.data(),
+					            std::get<std::unique_ptr<float[]>>(sym._m_value).get(),
+					            sym._m_count * sizeof(std::uint32_t));
+				}
+				break;
+			case DaedalusDataType::STRING:
+				record.string_values.resize(sym._m_count);
+				std::copy_n(std::get<std::unique_ptr<std::string[]>>(sym._m_value).get(),
+				            sym._m_count,
+				            record.string_values.begin());
+				break;
+			default:
+				// FUNCTION variables have an uninitialized runtime slot, not a source value.
+				break;
+			}
+		}
+
+		program.bytecode.resize(size());
+		auto position = _m_text->tell();
+		_m_text->seek(0, Whence::BEG);
+		if (!program.bytecode.empty()) _m_text->read(program.bytecode.data(), program.bytecode.size());
+		_m_text->seek(static_cast<ssize_t>(position), Whence::BEG);
+		return program;
+	}
+
+	DaedalusScript DaedalusScript::from_program(DaedalusProgramRecord program) {
+		if (program.symbols.size() > std::numeric_limits<std::uint32_t>::max() - 1 - MAX_ADDED_SYMBOLS) {
+			throw DaedalusScriptError {"program has too many symbols"};
+		}
+		if (program.bytecode.size() > std::numeric_limits<std::uint32_t>::max()) {
+			throw DaedalusScriptError {"program bytecode is too large"};
+		}
+
+		DaedalusScript script;
+		script._m_version = program.version;
+		auto symbol_count = static_cast<std::uint32_t>(program.symbols.size());
+		script._m_symbols.reserve(symbol_count + 1 + MAX_ADDED_SYMBOLS);
+		script._m_symbols.resize(symbol_count);
+		script._m_symbols_by_name.reserve(symbol_count + 1);
+		script._m_symbols_by_address.reserve(symbol_count);
+		for (std::uint32_t i = 0; i < symbol_count; ++i) {
+			auto& record = program.symbols[i];
+			bool member = (record.flags & DaedalusSymbolFlag::MEMBER) != 0;
+			if (record.int_values.size() != (!member && record.type == DaedalusDataType::INT ? record.count : 0) ||
+			    record.float_bits.size() != (!member && record.type == DaedalusDataType::FLOAT ? record.count : 0) ||
+			    record.string_values.size() != (!member && record.type == DaedalusDataType::STRING ? record.count : 0)) {
+				throw DaedalusScriptError {"invalid program values for symbol " + std::to_string(i)};
+			}
+
+			auto& sym = script._m_symbols[i];
+			sym._m_name = std::move(record.name);
+			sym._m_generated = record.generated;
+			sym._m_type = record.type;
+			sym._m_count = record.count;
+			sym._m_flags = record.flags;
+			sym._m_address = record.address;
+			sym._m_parent = record.parent;
+			sym._m_class_offset = record.class_offset;
+			sym._m_member_offset = record.member_offset;
+			sym._m_class_size = record.class_size;
+			sym._m_return_type = record.return_type;
+			sym._m_file_index = record.file_index;
+			sym._m_line_start = record.line_start;
+			sym._m_line_count = record.line_count;
+			sym._m_char_start = record.char_start;
+			sym._m_char_count = record.char_count;
+
+			if (!sym.is_member()) {
+				switch (sym.type()) {
+				case DaedalusDataType::INT: {
+					std::unique_ptr<std::int32_t[]> values {new std::int32_t[sym._m_count]};
+					std::copy(record.int_values.begin(), record.int_values.end(), values.get());
+					sym._m_value = std::move(values);
+					break;
+				}
+				case DaedalusDataType::FLOAT: {
+					std::unique_ptr<float[]> values {new float[sym._m_count]};
+					if (sym._m_count != 0) {
+						std::memcpy(values.get(), record.float_bits.data(), sym._m_count * sizeof(std::uint32_t));
+					}
+					sym._m_value = std::move(values);
+					break;
+				}
+				case DaedalusDataType::STRING: {
+					std::unique_ptr<std::string[]> values {new std::string[sym._m_count]};
+					std::move(record.string_values.begin(), record.string_values.end(), values.get());
+					sym._m_value = std::move(values);
+					break;
+				}
+				case DaedalusDataType::INSTANCE:
+					sym._m_value = std::shared_ptr<DaedalusInstance> {nullptr};
+					break;
+				case DaedalusDataType::FUNCTION:
+					if (!sym.is_const()) {
+						// Match source loading: this slot is initialized only by subsequent execution.
+						sym._m_value = std::unique_ptr<std::int32_t[]>(new std::int32_t[1]);
+					}
+					break;
+				default:
+					break;
+				}
+			}
+
+			script._m_symbols_by_name[sym.name()] = i;
+			sym._m_index = i;
+			if (sym.type() == DaedalusDataType::PROTOTYPE || sym.type() == DaedalusDataType::INSTANCE ||
+			    (sym.type() == DaedalusDataType::FUNCTION && sym.is_const() && !sym.is_member())) {
+				script._m_symbols_by_address[sym.address()] = i;
+			}
+		}
+		script._m_text = Read::from(std::move(program.bytecode));
+		return script;
 	}
 
 	DaedalusInstruction DaedalusScript::instruction_at(std::uint32_t address) const {

@@ -4,6 +4,14 @@
 
 **Готов, 13 октября 2026 года:** полная серия `stage5-v2` проверила 100 dirty restorations, микроэпизоды и mirrored native/scripted сравнения. [Результаты, throughput и границы](../reports/npc-body/2026-10-13-arena/validation-notes.md), машинный отчёт (3,9 МБ, в репозитории не хранится: dev-ubuntu `~/gothic-ai/body-arena/reports/stage5-v2-final/body-arena.json`).
 
+## Как работает сейчас
+
+`native_duel` поддерживает `arena.weapon:"1h"` (также по умолчанию) и `"2h"`. Одноручный профиль и ответы без поля сохранены; двуручный использует `ITMW_2H_BAU_AXE`, `TALENT_2H=60`, master-анимации и `W2H` (`hnpc->weapon=4`), остальные характеристики прежние. Snapshot пишет действительное оружие; для `2h` дополнительно `twohand`/`twohand_talent`. Неизвестное оружие или `2h` вне `native_duel` отклоняются при reset. Проверка — `body_setup_probe.weapon_contract` на реальном runner.
+
+[`body_sim_bench.py`](../scripts/body_sim_bench.py) принимает `--weapon 1h|2h`. `--checkpoint` разрешён только с `1h`; `--policy-only` запускает одну P30-серию без повторения native. Вариант `vanilla` выключает `melee_blade_shadow`, `melee_physics_hits`, `melee_posture`, сохраняя окружение, fork-prefix/reset, trace и watch варианта `posture-on`. Это контроль этих трёх флагов на текущем движке. При включённых журналах строки клинка/равновесия сохраняются по эпизодам до ротации общего файла. Журнал клинка содержит `arena_seed`, слои анимации — `is_attack`, событие урона — состояние нокдауна до удара и анимацию атакующего; механика не меняется.
+
+[`melee_balance_report.py`](../scripts/melee_balance_report.py) читает папки с `bench.json`, пишет `balance.json` и `balance.md`, выводит таблицы в stdout. Серия — вариант × native/P30 × оружие; недоступные метрики имеют `null` и причину. Полная матрица запускается одной командой `scripts/melee-balance-remote.sh`: синхронизация этого checkout, Linux-сборка игры/runner, отдельная заявка `gq quiet` на серию и отчёт. По умолчанию 64 дуэли, seed 100000, 60000 мс; `--episodes`, `--seed`, `--timeout-ms`, `--series`, `--run-name` меняют прогон. Данные — только `~/gothic-ai/melee-balance/` и `/mnt/shared/gothic-ai/melee-balance/`, база через их собственные кэш/хранилище. [Короткая проверка и команды полной матрицы](../reports/melee-physics/2026-10-29-balance/README.md).
+
 ## Reset и начало эпизода
 
 `reset` загружает неизменный контрольный save и исполняет [body-arena.bench](../scripts/bench/body-arena.bench) до marker арены. Native `BodyArena` создаёт двух смертных бойцов: primary `BDT_1003_BANDIT_M` и opponent `PAL_255_RITTER`. У обоих 300 HP, strength/dexterity 60, one-hand chance 60%, master one-hand animations, sword `ItMw_1h_Common_01`, leather armour и edge/blunt protection 30. Статы устанавливаются после equipment callbacks.
@@ -21,7 +29,7 @@ Setup задаёт seed до создания NPC и повторно перед
 | `arena_reaction_activate` | Включить защитника на подготовленной границе `block` или `reset_stress` с `reaction_hold:true` |
 | Обычный body API | Lease, heartbeat, primitive, lifecycle events и numeric observations |
 
-`arena` содержит `scenario`, `seed`, `side`, `distance_cm`, `timeout_ms`. Native bounds: seed uint32, side 0/1, distance 80–2000 см, timeout 33–60000 игровых мс. Runner поддерживает `mode=lockstep` и `realtime` при fixed 30 Hz simulation и time multiplier 1. В realtime после reset мир также ждёт успешного `arena_start`; wall задержка до старта не создаёт накопленных тиков. `arena_step` разрешён только в lockstep. Наблюдения идут на 20 Hz; terminal получает дополнительный настоящий post-simulation sample, если последний periodic sample старее terminal game time.
+`arena` содержит `scenario`, `seed`, `side`, `distance_cm`, `timeout_ms` и необязательный `weapon`. Native bounds: seed uint32, side 0/1, distance 80–2000 см, timeout 33–60000 игровых мс. Runner поддерживает `mode=lockstep` и `realtime` при fixed 30 Hz simulation и time multiplier 1. В realtime после reset мир также ждёт успешного `arena_start`; wall задержка до старта не создаёт накопленных тиков. `arena_step` разрешён только в lockstep. Наблюдения идут на 20 Hz; terminal получает дополнительный настоящий post-simulation sample, если последний periodic sample старее terminal game time.
 
 `native_with_scripted_opponent` предназначен для микроэпизодов: primary должен быть без lease, opponent — с lease. Primary запускает обычный `ZS_ATTACK`, а действия opponent проходят через боевой API. Для `native_duel` сохраняются native оба участника либо scripted primary с native opponent.
 
@@ -92,3 +100,7 @@ scripts/body-arena-remote.sh collect stage5-validation
 Runs/provenance и Python слой находятся в `~/gothic-ai/body-arena/`. Для этого worktree переиспользуется private incremental engine cache `~/gothic-ai/body-api/source` и `build`; предыдущие runs сохраняют отдельные source archives и бинарники. Новый run получает собственные неизменные binary/source copies.
 
 Transient user unit использует CPUQuota 200%, MemoryMax 12G, TasksMax 128, Nice 10 и RuntimeMax 2400 с. Shared simulation lock допускает один серверный engine процесс. ASR/TTS и продовые контейнеры не изменяются. На Mac возвращаются компактные manifests/reports; большие журналы, assets, saves и бинарники остаются на dev-ubuntu. Smoke проверяет запуск и основные сценарии, но не заменяет полный gate.
+
+## План и журнал
+
+- 2026-10-29: добавлены двуручный профиль дуэли, полностью выключенный контроль трёх флагов, отчёт метрик и запускатель матрицы. Короткая проверка описана в [отчёте](../reports/melee-physics/2026-10-29-balance/README.md); полная матрица и выводы о балансе выполняются отдельно.

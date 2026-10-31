@@ -71,6 +71,7 @@ class MainWindow : public Tempest::Window {
 
     void drawBar(Tempest::Painter& p, const Tempest::Texture2d *bar, int x, int y, float v, Tempest::AlignFlag flg);
     void drawMsg(Tempest::Painter& p);
+    void drawChunks(Tempest::Painter& p, const World& world, const Camera& camera);
     void drawProgress(Tempest::Painter& p, int x, int y, int w, int h, float v);
     void drawLoading (Tempest::Painter& p,int x,int y,int w,int h);
     void drawSaving  (Tempest::Painter& p);
@@ -80,7 +81,7 @@ class MainWindow : public Tempest::Window {
     void loadGame (std::string_view slot);
     void saveGame (std::string_view slot, std::string_view name);
 
-    void onVideo(std::string_view fname);
+    void onVideo(std::string_view fname, bool explicitRequest);
     void onStartLoading();
     void onWorldLoaded();
     void onSessionExit();

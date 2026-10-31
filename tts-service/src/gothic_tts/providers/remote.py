@@ -15,6 +15,7 @@ class OpenAISpeech:
 
     name = "openai"
     rate = 24000  # response_format=pcm
+    supports_cloning = False
 
     def __init__(
         self,

@@ -75,7 +75,7 @@ void MeshObjects::Mesh::setFatness(float f) {
     sub[i].setFatness(f);
   }
 
-void MeshObjects::Mesh::setWind(zenkit::AnimationType m, float intensity) {
+void MeshObjects::Mesh::setWind(asset::AnimationType m, float intensity) {
   for(size_t i=0;i<subCount;++i)
     sub[i].setWind(m,intensity);
   }

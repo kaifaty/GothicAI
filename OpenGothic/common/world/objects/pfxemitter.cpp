@@ -39,7 +39,7 @@ PfxEmitter::PfxEmitter(PfxObjects& owner, const ParticleFx* decl) {
     shpMesh = owner.world.addView(decl->shpMesh_S,0,0,0);
   }
 
-PfxEmitter::PfxEmitter(World& world, const zenkit::VirtualObject& vob) {
+PfxEmitter::PfxEmitter(World& world, const asset::VirtualObject& vob) {
   if(Resources::isHeadless()) {
     if(FileExt::hasExt(vob.visual->name,"PFX")) {
       cpuDecl = Gothic::inst().loadParticleFx(vob.visual->name);
@@ -56,7 +56,7 @@ PfxEmitter::PfxEmitter(World& world, const zenkit::VirtualObject& vob) {
     bucket = &owner.getBucket(*decl);
     id     = bucket->allocEmitter();
     }
-  else if(auto decal = dynamic_cast<const zenkit::VisualDecal*>(vob.visual.get())) {
+  else if(auto decal = dynamic_cast<const asset::VisualDecal*>(vob.visual.get())) {
     Material mat(*decal);
     std::lock_guard<std::recursive_mutex> guard(owner.sync);
     bucket = &owner.getBucket(mat,vob);

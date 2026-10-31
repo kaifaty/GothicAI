@@ -1,0 +1,70 @@
+{
+ "set": "quay-4",
+ "base": "original",
+ "registry": "data/content/remaster/harbour-quay.jsonl",
+ "textures": {
+  "NW_CITY_HAFENKAI_MAUER_01.TGA": {
+   "axes": "",
+   "colour": {
+    "mode": "target"
+   },
+   "maps": "source",
+   "size": 1024
+  },
+  "NW_CITY_HAFENKAI_BODEN_01.TGA": {
+   "axes": "",
+   "colour": {
+    "mode": "target"
+   },
+   "maps": "source",
+   "size": 1024
+  },
+  "NW_CITY_HAFENKAI_BODEN_TRANS_01.TGA": {
+   "axes": "",
+   "colour": {
+    "mode": "target"
+   },
+   "maps": "source",
+   "size": 1024
+  },
+  "NW_CITY_HAFENRANDSTEIN_01.TGA": {
+   "axes": "",
+   "colour": {
+    "mode": "target"
+   },
+   "maps": "source",
+   "size": 2048
+  },
+  "NW_HARBOUR_STAIRS_01.TGA": {
+   "axes": "",
+   "colour": {
+    "mode": "target"
+   },
+   "maps": "source",
+   "size": 1024
+  },
+  "NW_HARBOUR_STAIRS_03.TGA": {
+   "axes": "",
+   "colour": {
+    "mode": "target"
+   },
+   "maps": "source",
+   "size": 1024
+  },
+  "NW_HARBOUR_WOOD_IRON_01.TGA": {
+   "axes": "",
+   "colour": {
+    "mode": "target"
+   },
+   "maps": "source",
+   "size": 2048
+  }
+ },
+ "guard": {
+  "luminance_ratio": [
+   0.75,
+   1.25
+  ],
+  "clipped_max": 0.01
+ }
+}

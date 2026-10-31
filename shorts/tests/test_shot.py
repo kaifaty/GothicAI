@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from gothic_launcher.commands import Layout, Ports, Proc
+from gothic_launcher.commands import Layout, Ports
 from gothic_launcher.settings import Config
 
 from gothic_shorts import film
@@ -81,11 +81,11 @@ def test_film_records_effects_and_separate_voices_without_game_music(tmp_path, m
     layout = Layout(tmp_path, Path("uv"), Path("game-bin"), tmp_path / "game", tmp_path)
     monkeypatch.setattr(film, "voice_lines", Mock(return_value={}))
     monkeypatch.setattr(film.Ports, "free", lambda: Ports(10001, 10002, 10003))
-    monkeypatch.setattr(film, "services", Mock(return_value=[Proc("server", ["serve"], tmp_path)]))
     supervisor = Mock(return_value=Mock(run=AsyncMock(return_value=0)))
     monkeypatch.setattr(film, "Supervisor", supervisor)
 
-    take = film.film(shot, Config.load(tmp_path / "config"), layout)
+    config = Config.load(tmp_path / "config")
+    take = film.film(shot, config, layout)
 
     assert (take / "run" / "Gothic.ini").read_text() == (
         "[INTERNAL]\nvidResIndex=0\n[SOUND]\nsoundVolume=0.7\nmusicVolume=0\nmusicEnabled=0\n"
@@ -94,6 +94,9 @@ def test_film_records_effects_and_separate_voices_without_game_music(tmp_path, m
     game = supervisor.call_args.args[1]
     assert game.env["OPENGOTHIC_BENCH_VOICE_STEM"] == "1"
     assert game.env["TEMPEST_AUDIO_LOOPBACK"] == "48000"
+    tts = next(proc for proc in supervisor.call_args.args[0] if proc.name == "tts")
+    assert "--no-original-voices" in tts.argv
+    assert config.settings.tts.original_voices is True
 
 
 @pytest.mark.parametrize(

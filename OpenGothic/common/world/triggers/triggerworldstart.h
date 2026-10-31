@@ -6,7 +6,7 @@ class World;
 
 class TriggerWorldStart : public AbstractTrigger {
   public:
-    TriggerWorldStart(Vob* parent, World& world, const zenkit::VTriggerWorldStart& data, Flags flags);
+    TriggerWorldStart(Vob* parent, World& world, const asset::VTriggerWorldStart& data, Flags flags);
 
     void onTrigger(const TriggerEvent& evt) override;
 

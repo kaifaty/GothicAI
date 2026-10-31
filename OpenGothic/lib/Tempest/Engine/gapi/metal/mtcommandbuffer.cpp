@@ -11,6 +11,20 @@
 #include "mtswapchain.h"
 #include "mtaccelerationstructure.h"
 
+#include <cstdlib>
+
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+// OPENGOTHIC_GPU_SKIP="SSAO,Fog-LUTs": draws and dispatches under these debug markers are dropped,
+// so the GPU time a pass costs shows up in the frame profile (docs/performance.md); the picture breaks
+static bool skipPass(const std::string& label) {
+  static const std::string skip = [] { auto v = std::getenv("OPENGOTHIC_GPU_SKIP"); return v!=nullptr ? ","+std::string(v)+"," : std::string(); }();
+  return !skip.empty() && !label.empty() && skip.find(","+label+",")!=std::string::npos;
+  }
+#define T_SKIP_PASS() if(skipPass(activeLabel)) return
+#else
+#define T_SKIP_PASS()
+#endif
+
 using namespace Tempest;
 using namespace Tempest::Detail;
 
@@ -163,7 +177,7 @@ void MtCommandBuffer::setEncoder(MtCommandBuffer::EncType e, MTL::RenderPassDesc
     case E_Draw: {
       if(encDraw!=nullptr) {
         if(isDbgRegion) {
-          encBlit->popDebugGroup();
+          encDraw->popDebugGroup();
           isDbgRegion = false;
           }
         encDraw->endEncoding();
@@ -543,6 +557,7 @@ void MtCommandBuffer::clearUseResource() {
 
 void MtCommandBuffer::draw(const AbstractGraphicsApi::Buffer* ivbo, size_t stride, size_t offset, size_t vertexCount,
                            size_t firstInstance, size_t instanceCount) {
+  T_SKIP_PASS();
   auto* vbo = reinterpret_cast<const MtBuffer*>(ivbo);
 
   if(T_UNLIKELY(stride!=vboStride)) {
@@ -563,6 +578,7 @@ void MtCommandBuffer::draw(const AbstractGraphicsApi::Buffer* ivbo, size_t strid
 void MtCommandBuffer::drawIndexed(const AbstractGraphicsApi::Buffer* ivbo, size_t stride, size_t voffset,
                                   const AbstractGraphicsApi::Buffer& iibo, Detail::IndexClass icls, size_t ioffset, size_t isize,
                                   size_t firstInstance, size_t instanceCount) {
+  T_SKIP_PASS();
   auto*    vbo     = reinterpret_cast<const MtBuffer*>(ivbo);
   auto&    ibo     = reinterpret_cast<const MtBuffer&>(iibo);
   auto     iboType = nativeFormat(icls);
@@ -584,6 +600,7 @@ void MtCommandBuffer::drawIndexed(const AbstractGraphicsApi::Buffer* ivbo, size_
   }
 
 void MtCommandBuffer::drawIndirect(const AbstractGraphicsApi::Buffer& indirect, size_t offset) {
+  T_SKIP_PASS();
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
   auto& ind = reinterpret_cast<const MtBuffer&>(indirect);
@@ -591,6 +608,7 @@ void MtCommandBuffer::drawIndirect(const AbstractGraphicsApi::Buffer& indirect, 
   }
 
 void MtCommandBuffer::dispatchMesh(size_t x, size_t y, size_t z) {
+  T_SKIP_PASS();
   if(x==0 || y==0 || z==0)
     return; // validation warning
   implSetUniforms(S_Graphics);
@@ -600,6 +618,7 @@ void MtCommandBuffer::dispatchMesh(size_t x, size_t y, size_t z) {
   }
 
 void MtCommandBuffer::dispatchMeshIndirect(const AbstractGraphicsApi::Buffer& indirect, size_t offset) {
+  T_SKIP_PASS();
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
   auto& ind = reinterpret_cast<const MtBuffer&>(indirect);
@@ -607,6 +626,7 @@ void MtCommandBuffer::dispatchMeshIndirect(const AbstractGraphicsApi::Buffer& in
   }
 
 void MtCommandBuffer::dispatch(size_t x, size_t y, size_t z) {
+  T_SKIP_PASS();
   if(x==0 || y==0 || z==0)
     return; // validation warning
   implSetUniforms(S_Compute);
@@ -615,6 +635,7 @@ void MtCommandBuffer::dispatch(size_t x, size_t y, size_t z) {
   }
 
 void MtCommandBuffer::dispatchIndirect(const AbstractGraphicsApi::Buffer& indirect, size_t offset) {
+  T_SKIP_PASS();
   implSetUniforms(S_Compute);
   implSetPushData(S_Compute);
   auto& ind = reinterpret_cast<const MtBuffer&>(indirect);
@@ -780,6 +801,21 @@ void MtCommandBuffer::setPipeline(AbstractGraphicsApi::Pipeline &p) {
 
   bindings.durty  = true;
   pushData.durty  = true;
+  }
+
+void MtCommandBuffer::upscale(AbstractGraphicsApi::Texture& src, AbstractGraphicsApi::Texture& dst) {
+  T_SKIP_PASS();
+  // MetalFX encodes its own passes: no encoder may be open on the command buffer
+  setEncoder(E_None,nullptr);
+
+  auto& s      = reinterpret_cast<MtTexture&>(src);
+  auto& d      = reinterpret_cast<MtTexture&>(dst);
+  auto& scaler = device.spatialScaler(*s.impl, *d.impl);
+  scaler.setInputContentWidth (s.impl->width());
+  scaler.setInputContentHeight(s.impl->height());
+  scaler.setColorTexture (s.impl.get());
+  scaler.setOutputTexture(d.impl.get());
+  scaler.encodeToCommandBuffer(impl.get());
   }
 
 void MtCommandBuffer::copy(AbstractGraphicsApi::Buffer& dest, size_t offset,

@@ -65,6 +65,7 @@ from .protocol import (
     NpcView,
     NpcViewCmd,
     PingCmd,
+    PlayerPoseCmd,
     PlayerState,
     Pong,
     RaiseDeadCmd,
@@ -91,9 +92,15 @@ from .protocol import (
 
 log = logging.getLogger(__name__)
 
+# the game's answer to a story effect on an npc whose body P30 owns (aibridge.cpp, story_effect): it lets go
+# at the next safe boundary, the effect is sent again
+BODY_RELEASING = "body control is releasing"
+STORY_EFFECT_RETRY = 0.05
+
 # requests answered with `result`
 _Request = (
     AttachCmd
+    | PlayerPoseCmd
     | BeastCmd
     | BodyAcquireCmd
     | BodyActionCmd
@@ -437,6 +444,9 @@ class GameLink:
             raise GameError(res.error or "request failed")
         return res
 
+    async def player_pose(self, pose: Literal["kneel", "none"], timeout: float = 5.0) -> None:
+        await self._request(PlayerPoseCmd(req=self._next_id("p"), pose=pose), timeout)
+
     async def attach(self, npc: str, timeout: float = 5.0) -> None:
         self._require_native_body(npc)
         await self._request(AttachCmd(req=self._next_id("r"), npc=npc), timeout)
@@ -514,6 +524,7 @@ class GameLink:
         mode: BodyMode = "realtime", timeout_ms: int = 500, timeout: float = 5.0,
         await_boundary_ms: int = 0, cancel_event: asyncio.Event | None = None,
         retain_on_timeout: bool = False,
+        policy: Literal["engine"] | None = None,
     ) -> BodyLease:
         """Claim a watched actor using its real process/world/target IDs, without changing native state."""
         if mode != "realtime":
@@ -525,6 +536,7 @@ class GameLink:
             target_entity_id=observation.target.entity_id,
             await_boundary_ms=await_boundary_ms,
             acquire_request_id=(secrets.randbits(63) or 1) if await_boundary_ms else 0,
+            policy=policy,
         )
         if (
             observation.entity_id in self._body_acquisitions
@@ -893,8 +905,20 @@ class GameLink:
 
             await play_gate_effects(self, npc.upper(), effects)
             return
-        cmd = StoryEffectCmd(req=self._next_id("s"), npc=npc.upper(), effects=effects, check=check or None)
-        await self._request(cmd, timeout)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            cmd = StoryEffectCmd(
+                req=self._next_id("s"), npc=npc.upper(), effects=effects, check=check or None,
+            )
+            try:
+                await self._request(cmd, max(deadline - loop.time(), 0.1))
+                break
+            except GameError as err:
+                # P30 owns the npc's body: the game asked it to let go and ran none of the effects
+                if not str(err).startswith(BODY_RELEASING) or loop.time() + STORY_EFFECT_RETRY >= deadline:
+                    raise
+            await asyncio.sleep(STORY_EFFECT_RETRY)
         for e in effects:
             if e.get("do") == "party":
                 self.party[npc.upper()] = (next(self._party_writes), 1 if e.get("value") else 0)

@@ -3,21 +3,27 @@
 #include <Tempest/Font>
 #include <Tempest/Texture2d>
 #include <Tempest/Device>
+#include <Tempest/Pixmap>
 #include <Tempest/SoundDevice>
 
-#include <zenkit/Vfs.hh>
-#include <zenkit/MultiResolutionMesh.hh>
-#include <zenkit/world/VobTree.hh>
+#include "asset/staticmesh.h"
+#include "asset/modeltypes.h"
+#include "basestore.h"
+#include "programdata.h"
+#include "outputunits.h"
+#include "audiodata.h"
+#include "musicdata.h"
+#include "asset/worldtypes.h"
+#include <dmusic.h>
 
 #include <tuple>
 #include <string_view>
 #include <map>
+#include <set>
+#include <thread>
 
 #include "graphics/material.h"
 #include "sound/soundfx.h"
-
-struct DmSegment;
-struct DmLoader;
 
 class StaticMesh;
 class ProtoMesh;
@@ -27,10 +33,12 @@ class AttachBinder;
 class PfxEmitterMesh;
 class GthFont;
 class ContentCensus;
+struct ChunkTable;
 
-namespace zenkit {
-class ModelMesh;
-}
+namespace asset { struct WorldMesh; }
+
+namespace WorldData { struct Data; struct ZenFile; }
+namespace VideoData { class Reader; }
 
 namespace Dx8 {
 class DirectMusic;
@@ -39,11 +47,13 @@ class PatternList;
 
 class Resources final {
   public:
-    // Simulation resources: archives, geometry, skeletons and animation data,
+    // Simulation resources: base geometry, skeletons and animation data,
     // without constructing a graphics or audio device.
     Resources();
     explicit Resources(Tempest::Device& device);
     ~Resources();
+
+    static void zenkitLog(zenkit::LogLevel level, const char* component, const char* message);
 
     enum class FontType : uint8_t {
       Normal,
@@ -87,14 +97,13 @@ class Resources final {
       Tempest::Vec3 color;
       };
 
-    using VobTree = std::vector<std::shared_ptr<zenkit::VirtualObject>>;
+    using VobTree = std::vector<std::shared_ptr<asset::VirtualObject>>;
 
     static Tempest::Device&          device();
     static bool                      hasGraphicsDevice() { return inst!=nullptr && inst->dev!=nullptr; }
     static bool                      isHeadless() { return inst!=nullptr && inst->dev==nullptr; }
     static const char*               renderer();
-    static void                      mountWork(const std::filesystem::path& path);
-    static void                      loadVdfs(const std::vector<std::u16string> &modvdfs, bool modFilter);
+    static void                      loadBase();
 
     static const Tempest::Sampler&   shadowSampler();
 
@@ -114,7 +123,7 @@ class Resources final {
     static const Tempest::Texture2d* loadTexture(std::string_view name, int32_t v, int32_t c);
     static       Tempest::Texture2d  loadTexturePm(const Tempest::Pixmap& pm);
     static auto                      loadTextureAnim(std::string_view name) -> std::vector<const Tempest::Texture2d*>;
-    static       Material            loadMaterial(const zenkit::Material& src, bool enableAlphaTest,
+    static       Material            loadMaterial(const asset::Material& src, bool enableAlphaTest,
                                                    bool requireAlphaTest = false);
 
     struct MaterialMaps {
@@ -134,8 +143,8 @@ class Resources final {
 
     static const AttachBinder*       bindMesh       (const ProtoMesh& anim, const Skeleton& s);
     static const ProtoMesh*          loadMesh       (std::string_view name);
-    // All static visual readers share the same indexed GLB/original MRM path.
-    static zenkit::MultiResolutionMesh loadVisualMesh(std::string_view name, bool* replaced = nullptr);
+    // All static visual readers share the selected base and content overrides.
+    static asset::StaticMesh loadVisualMesh(std::string_view name, bool* replaced = nullptr);
     struct MeshReplacementSource {
       std::filesystem::path file;
       size_t size = 0;
@@ -147,11 +156,16 @@ class Resources final {
     static const PfxEmitterMesh*     loadEmiterMesh (std::string_view name);
     static const Skeleton*           loadSkeleton   (std::string_view name);
     static const Animation*          loadAnimation  (std::string_view name);
+    static bool                      loadAnimationData(std::string_view name, asset::ModelAnimation& out);
+    static asset::MorphMesh           loadMorphData(std::string_view name);
     static Tempest::Sound            loadSoundBuffer(std::string_view name);
 
     static Dx8::PatternList          loadDxMusic(std::string_view name);
     static DmSegment*                loadMusicSegment(char const* name);
-    static const ProtoMesh*          decalMesh(const zenkit::VisualDecal& decal);
+    static std::unique_ptr<VideoData::Reader> loadVideo(std::string_view name);
+    static void                      startVideoBase();
+    static void                      videoFrameRead(std::string_view name);
+    static const ProtoMesh*          decalMesh(const asset::VisualDecal& decal);
 
     static const VobTree*            loadVobBundle(std::string_view name);
 
@@ -182,28 +196,77 @@ class Resources final {
     static void recycle(Tempest::ZBuffer&& img);
     static void recycle(Tempest::AccelerationStructure&& rtas);
 
-    static std::vector<uint8_t>      getFileData(std::string_view name);
-    static bool                      getFileData(std::string_view name, std::vector<uint8_t>& dat);
-    static std::unique_ptr<zenkit::Read> getFileBuffer(std::string_view name);
-    static auto                      openReader(std::string_view name, std::unique_ptr<zenkit::Read>& read) -> std::unique_ptr<zenkit::ReadArchive>;
-    static bool                      hasFile    (std::string_view fname);
+    static bool                      hasWorld(std::string_view name);
+    static int                       baseLanguage();
+    static zenkit::DaedalusScript     loadBaseProgram(std::string_view request, int language);
+    static bool                      loadBaseOutputUnits(std::string_view request, int language,
+                                                        std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks);
+    static zenkit::DaedalusScript     loadBaseProgram(std::string_view request, int language,
+                                                     std::string_view branch, std::u16string_view hostPath = {});
+    static bool                      loadBaseOutputUnits(std::string_view request, int language,
+                                                        std::string_view branch,
+                                                        std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks,
+                                                        std::u16string_view hostPath = {});
 
-    static const zenkit::Vfs&        vdfsIndex();
+    static std::filesystem::path      worldBaseDir(std::string_view world);
+    static std::filesystem::path      worldOverrideDir(std::string_view world);
+    struct WayHeightInputs {
+      std::string baseFingerprint;
+      std::string contentFingerprint;
+      };
+    static WayHeightInputs           wayHeightInputs(std::string_view world);
     static void                      censusFile(std::u16string_view path);
+    static void                      censusProfile(std::string_view game, std::string_view outputUnits, int language);
+    static void                      loadWorld(WorldData::Data& world, asset::WorldMesh& worldMesh, std::string_view name,
+                                               ChunkTable* chunks = nullptr);
+    static bool                      loadBaseZen(std::string_view name, std::string_view kind, WorldData::ZenFile& out);
     static bool                      writeCensus();
 
     static const Tempest::IndexBuffer<uint16_t>&   cubeIbo();
 
   private:
+    friend struct BaseContentContract;
+    friend struct WorldDataContract;
+    friend struct AssetDigest;
     static Resources* inst;
     void initCensus();
 
-    struct Archive {
-      std::u16string name;
-      int64_t        time=0;
-      uint16_t       ord=0;
-      bool           isMod=false;
+    struct BaseIndex {
+      std::filesystem::path dir;
+      std::vector<std::pair<std::string,uintmax_t>> archives;
+      std::vector<std::pair<std::string,uintmax_t>> looseFiles;
+      std::map<std::string,std::string> files;
+      bool enabled = false;
+
+      void load(const std::filesystem::path& root, const char* kind);
+      void validate(const std::vector<std::pair<std::string,uintmax_t>>& mounted);
       };
+    BaseIndex baseTextures, baseMeshes, baseZen, baseModels, baseFonts;
+    ProgramData::Index basePrograms;
+    OutputUnits::Index baseOutputUnits;
+    AudioData::Index baseAudio;
+    MusicData::Index baseMusic;
+    std::vector<std::pair<std::string,uintmax_t>> baseArchives;
+    std::set<std::string> baseWorlds;
+    BaseStore::Selection automaticBase;
+    std::string          baseFingerprint;
+    struct VideoBase;
+    std::shared_ptr<VideoBase> videoBase;
+    std::mutex videoStartSync;
+    std::thread videoWorker;
+    static std::filesystem::path baseDir();
+    void indexBaseContent();
+    static std::filesystem::path baseModelFile(std::string_view name);
+    static bool loadHierarchyData(std::string_view name, asset::ModelHierarchy& out);
+    static bool loadModelMeshData(std::string_view name, asset::ModelMesh& out);
+    static bool loadModelData(std::string_view name, asset::Model& out);
+    static bool loadModelScriptData(std::string_view name, asset::ModelScript& out);
+
+    struct TextureData {
+      Tempest::Pixmap pixmap;
+      bool useMipmap = false;
+      };
+    static TextureData decodeBaseTexture(const std::filesystem::path& path, bool forceMips);
 
     struct DecalK {
       Material mat;
@@ -220,8 +283,6 @@ class Resources final {
 
     using TextureCache = std::unordered_map<std::string,std::unique_ptr<Tempest::Texture2d>>;
 
-    int64_t               vdfTimestamp(const std::u16string& name);
-    void                  detectVdf(std::vector<Archive>& ret, const std::u16string& root);
 
     void                  indexHdTextures();
     void                  indexMaterialMaps();
@@ -229,16 +290,20 @@ class Resources final {
     const Tempest::Texture2d* implLoadMaterialTexture(const std::string& path, bool normalMap);
     Tempest::Texture2d*   implLoadTexture(std::string_view cname, bool forceMips);
     Tempest::Texture2d    implLoadTextureUncached(std::string_view name, bool forceMips);
-    Tempest::Texture2d    implLoadTextureUncached(std::string_view name, zenkit::Read& data, bool forceMips);
+    bool                 hasTexture(std::string_view name) const;
     ProtoMesh*            implLoadMesh(std::string_view name);
     std::unique_ptr<ProtoMesh> implLoadMeshMain(std::string name);
-    bool                  replaceModelMesh(zenkit::ModelMesh& mesh, std::unique_ptr<Skeleton>& skeleton,
+    bool                  replaceModelMesh(asset::ModelMesh& mesh, std::unique_ptr<Skeleton>& skeleton,
                                            std::string_view visual, std::string_view meshFile);
     std::unique_ptr<Animation> implLoadAnimation(std::string name);
-    ProtoMesh*            implDecalMesh(const zenkit::VisualDecal& decal);
+    ProtoMesh*            implDecalMesh(const asset::VisualDecal& decal);
     Tempest::Sound        implLoadSoundBuffer(std::string_view name);
     Dx8::PatternList      implLoadDxMusic(std::string_view name);
     DmSegment*            implLoadMusicSegment(char const* name);
+    DmResult              readGkMusic(std::string_view name, const char* kind, std::vector<uint8_t>& bytes) noexcept;
+    std::vector<uint8_t>  readDxMusic(const std::vector<std::u16string>& paths, const char16_t* name, const char* kind);
+    std::vector<uint8_t>  readMusicRecord(std::string_view provider, std::string_view request,
+                                        const char* kind, const MusicData::Source& source);
     GthFont&              implLoadFont(std::string_view fname, FontType type, const float scale);
     PfxEmitterMesh*       implLoadEmiterMesh(std::string_view name);
     const VobTree*        implLoadVobBundle(std::string_view name);
@@ -279,9 +344,8 @@ class Resources final {
     std::unique_ptr<Dx8::DirectMusic> dxMusic;
     DmLoader*                         dmLoader = nullptr;
     std::unique_ptr<ContentCensus>     census;
-    zenkit::Vfs                       gothicAssets;
 
-    std::vector<uint8_t>              fBuff, ddsBuf;
+    std::vector<uint8_t>              fBuff;
     Tempest::IndexBuffer<uint16_t>    cube;
 
     struct DeleteQueue {
@@ -312,6 +376,7 @@ class Resources final {
     struct MeshOverride {
       std::filesystem::path file;
       std::string replacement;
+      std::string initialStamp;
       bool loaded = false;
       size_t sourceSize = 0;
       uint32_t sourceCrc32 = 0;

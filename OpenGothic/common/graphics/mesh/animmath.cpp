@@ -41,8 +41,8 @@ zenkit::Quat slerp(const zenkit::Quat& x, const zenkit::Quat& y, float a) {
   // return (sin((1.f - a) * angle) * x + sin(a * angle) * z) / sin(angle);
   }
 
-zenkit::AnimationSample mix(const zenkit::AnimationSample& x, const zenkit::AnimationSample& y, float a) {
-  zenkit::AnimationSample r {};
+asset::AnimationSample mix(const asset::AnimationSample& x, const asset::AnimationSample& y, float a) {
+  asset::AnimationSample r {};
 
   r.rotation   = slerp(x.rotation,y.rotation,a);
   r.position.x = mix(x.position.x,y.position.x,a);
@@ -73,7 +73,7 @@ static Tempest::Matrix4x4 mkMatrix(float x,float y,float z,float w,
   return Tempest::Matrix4x4(reinterpret_cast<float*>(m));
   }
 
-Tempest::Matrix4x4 mkMatrix(const zenkit::AnimationSample& s) {
+Tempest::Matrix4x4 mkMatrix(const asset::AnimationSample& s) {
   return mkMatrix(s.rotation.x,s.rotation.y,s.rotation.z,s.rotation.w,
                   s.position.x,s.position.y,s.position.z);
   }

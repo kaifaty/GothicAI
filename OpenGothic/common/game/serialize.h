@@ -16,7 +16,7 @@
 
 #include <zenkit/DaedalusVm.hh>
 #include <zenkit/addon/daedalus.hh>
-#include <zenkit/ModelAnimation.hh>
+#include "asset/modeltypes.h"
 
 #include "gametime.h"
 #include "constants.h"
@@ -143,8 +143,8 @@ class Serialize {
     void implWrite(const Tempest::Matrix4x4& i) { writeBytes(&i,sizeof(i)); }
     void implRead (Tempest::Matrix4x4& i)       { readBytes (&i,sizeof(i)); }
 
-    void implWrite(const zenkit::AnimationSample& i);
-    void implRead (zenkit::AnimationSample& i);
+    void implWrite(const asset::AnimationSample& i);
+    void implRead (asset::AnimationSample& i);
 
     // strings
     void implWrite(const std::string&              s);

@@ -1,9 +1,8 @@
 #pragma once
 
-#include <zenkit/Mesh.hh>
-#include <zenkit/MultiResolutionMesh.hh>
-#include <zenkit/SoftSkinMesh.hh>
-#include <zenkit/Material.hh>
+#include "asset/worldmesh.h"
+#include "asset/staticmesh.h"
+#include "asset/material.h"
 
 #include <Tempest/Vec>
 #include <utility>
@@ -32,7 +31,7 @@ class PackedMesh {
       };
 
     struct SubMesh final {
-      zenkit::Material material;
+      asset::Material material;
       size_t           iboOffset = 0;
       size_t           iboLength = 0;
       bool             alphaTest = true;
@@ -82,9 +81,9 @@ class PackedMesh {
     std::vector<BVHNode>  bvhNodes;
     std::vector<UVec4>    bvh8Nodes;
 
-    PackedMesh(const zenkit::MultiResolutionMesh& mesh, PkgType type, bool explicitAlphaTest = false);
-    PackedMesh(const zenkit::Mesh& mesh, PkgType type);
-    PackedMesh(const zenkit::SoftSkinMesh& mesh);
+    PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false);
+    PackedMesh(const asset::WorldMesh& mesh, PkgType type);
+    PackedMesh(const asset::SoftSkinMesh& mesh);
 
     void debug(std::ostream &out) const;
 
@@ -115,19 +114,19 @@ class PackedMesh {
 
       void    flush(std::vector<Vertex>& vertices,
                     std::vector<uint32_t>& indices, std::vector<uint8_t>& indices8,
-                    std::vector<Cluster>& instances, const zenkit::Mesh& mesh);
+                    std::vector<Cluster>& instances, const asset::WorldMesh& mesh);
 
       void    flush(std::vector<Vertex>& vertices, std::vector<VertexA>& verticesA,
                     std::vector<uint32_t>& indices, std::vector<uint8_t>& indices8,
                     std::vector<uint32_t>* verticesId, const std::vector<zenkit::Vec3>& vbo,
-                    const std::vector<zenkit::MeshWedge>& wedgeList,
+                    const std::vector<asset::MeshWedge>& wedgeList,
                     const std::vector<SkeletalData>* skeletal);
       bool    validate() const;
 
       bool    insert(const Vert& a, const Vert& b, const Vert& c);
       void    clear();
-      void    updateBounds(const zenkit::Mesh& mesh);
-      void    updateBounds(const zenkit::MultiResolutionMesh& mesh);
+      void    updateBounds(const asset::WorldMesh& mesh);
+      void    updateBounds(const asset::StaticMesh& mesh);
       void    updateBounds(const std::vector<zenkit::Vec3>& vbo);
       bool    canMerge(const Meshlet& other) const;
       bool    hasIntersection(const Meshlet& other) const;
@@ -176,46 +175,46 @@ class PackedMesh {
       };
     static_assert(sizeof(CWBVH8)==80);
 
-    bool   addTriangle(Meshlet& dest, const zenkit::Mesh* mesh, const zenkit::SubMesh* proto_mesh, size_t id);
+    bool   addTriangle(Meshlet& dest, const asset::WorldMesh* mesh, const asset::SubMesh* proto_mesh, size_t id);
 
-    void   packPhysics(const zenkit::Mesh& mesh, PkgType type);
+    void   packPhysics(const asset::WorldMesh& mesh, PkgType type);
 
     // bvh common
-    static void quadAddPrim(Fragment& f, const zenkit::Mesh& shp, uint32_t prim0, uint32_t prim1, uint32_t iMin, uint32_t iMax);
-    static auto packQuads(const zenkit::Mesh& mesh) -> std::vector<PackedMesh::Fragment>;
+    static void quadAddPrim(Fragment& f, const asset::WorldMesh& shp, uint32_t prim0, uint32_t prim1, uint32_t iMin, uint32_t iMax);
+    static auto packQuads(const asset::WorldMesh& mesh) -> std::vector<PackedMesh::Fragment>;
 
     static auto findNodeSplit(const Fragment* frag, size_t size, const bool useSah) -> std::pair<uint32_t, float>;
     static auto findNodeSplitSah(Fragment* frag, size_t size) -> std::pair<uint32_t, bool>;
     static void packBlocks(Block* out, uint32_t& outSz, uint8_t destSz, Fragment* frag, size_t size);
     static void computeBbox(Tempest::Vec3& bbmin, Tempest::Vec3& bbmax, const Fragment* frag, size_t size);
-    void        packBVH(const zenkit::Mesh& mesh);
+    void        packBVH(const asset::WorldMesh& mesh);
 
     // bvh2
-    void     packBVH2(const zenkit::Mesh& mesh);
-    uint32_t packBVH2(const zenkit::Mesh& mesh, std::vector<BVHNode>& nodes, Fragment* frag, size_t size, size_t parentSz);
+    void     packBVH2(const asset::WorldMesh& mesh);
+    uint32_t packBVH2(const asset::WorldMesh& mesh, std::vector<BVHNode>& nodes, Fragment* frag, size_t size, size_t parentSz);
 
     // cwbvh8
-    void     packCWBVH8(const zenkit::Mesh& mesh);
-    CWBVH8   packCWBVH8(const zenkit::Mesh& mesh, std::vector<UVec4>& nodes, Fragment* frag, size_t size);
+    void     packCWBVH8(const asset::WorldMesh& mesh);
+    CWBVH8   packCWBVH8(const asset::WorldMesh& mesh, std::vector<UVec4>& nodes, Fragment* frag, size_t size);
 
-    CWBVH8   packCWBVH8(const zenkit::Mesh& mesh, std::vector<UVec4>& nodes,
+    CWBVH8   packCWBVH8(const asset::WorldMesh& mesh, std::vector<UVec4>& nodes,
                         const std::vector<uint32_t>& ibo, Fragment* frag, size_t size);
-    void     packCW8Blocks(Block* out, uint32_t& outSz, const zenkit::Mesh& mesh, std::vector<UVec4>& nodes,
+    void     packCW8Blocks(Block* out, uint32_t& outSz, const asset::WorldMesh& mesh, std::vector<UVec4>& nodes,
                            Fragment* frag, size_t size, uint8_t depth);
     CWBVH8   nodeFromBlocks(Block* block);
     void     orderBlocks(Block* block, const uint32_t numBlocks, const Tempest::Vec3 bbmin, const Tempest::Vec3 bbmax);
 
     //
-    void   packMeshletsLnd(const zenkit::Mesh& mesh);
-    void   packMeshletsObj(const zenkit::MultiResolutionMesh& mesh, PkgType type,
+    void   packMeshletsLnd(const asset::WorldMesh& mesh);
+    void   packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
                            const std::vector<SkeletalData>* skeletal);
 
-    std::vector<Meshlet> buildMeshlets(const zenkit::Mesh* mesh, const zenkit::SubMesh* proto_mesh,
+    std::vector<Meshlet> buildMeshlets(const asset::WorldMesh* mesh, const asset::SubMesh* proto_mesh,
                                        PrimitiveHeap& heap, std::vector<bool>& used);
 
     void   computeBbox();
 
     void   dbgUtilization(const std::vector<Meshlet>& meshlets);
-    void   dbgMeshlets(const zenkit::Mesh& mesh, const std::vector<Meshlet*>& meshlets);
+    void   dbgMeshlets(const asset::WorldMesh& mesh, const std::vector<Meshlet*>& meshlets);
   };
 

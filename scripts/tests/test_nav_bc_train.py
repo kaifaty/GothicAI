@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import json
+import lzma
+import random
 import sys
 from types import SimpleNamespace
 
@@ -10,6 +12,83 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import nav_bc_train as train
+
+
+@pytest.mark.parametrize("version,input_variant,workers,prefetch", [
+    (2, "hd", 4, 1), (3, "hd-familiar", 8, 3)])
+def test_parallel_loader_preserves_packed_bytes_batch_order_and_training_rng(
+        tmp_path, version, input_variant, workers, prefetch):
+    demos = train.nav_demos
+    entries = []
+    layout = np.tile(np.array([0, 0, 1000], dtype=np.float32), (demos.RAY_COUNT, 1))
+    for number, steps in enumerate((2, 4, 3)):
+        directory = tmp_path / str(number)
+        directory.mkdir()
+        (directory / "episode.json").write_text(json.dumps({"eye_layout": layout.tolist()}))
+        records = np.zeros(steps, dtype=demos.RECORD_DTYPES[version])
+        records["time_ms"] = np.arange(steps) * demos.PERIOD_MS
+        records["eye"]["distance_cm"] = 1000
+        records["roads"]["carrot_direction"][:, 2] = 1
+        records["keys"]["forward"] = number - 1
+        records["keys"]["turn"] = np.arange(steps) % 3 - 1
+        if version == 3:
+            records["memory_near"]["channels"][:, 3, 4, 7] = 128 + number
+            records["memory_far"]["channels"][:, 60, 70, 7] = 255 - number
+        samples = directory / "samples.bin.xz"
+        with lzma.open(samples, "wb") as stream:
+            stream.write(demos.HEADER.pack(demos.MAGIC, version, demos.RECORD_BYTES_BY_VERSION[version],
+                demos.RAY_COUNT, demos.NEAR_SIZE, demos.FAR_SIZE, demos.PERIOD_MS))
+            stream.write(records.tobytes())
+        entries.append(dict(id=str(number), storage="navdemo", file=samples.relative_to(tmp_path).as_posix(),
+            teacher_version=None, input_variant=input_variant, steps=steps))
+    expected = {entry["id"]: train.load(tmp_path, entry, packed=True) for entry in entries}
+    random.seed(317)
+    np.random.seed(317)
+    train.torch.manual_seed(317)
+    python_rng, numpy_rng = random.getstate(), np.random.get_state()
+    torch_rng = train.torch.random.get_rng_state().clone()
+    epoch_batches = [train.training_batches(entries, 1, seed) for seed in (17, 18)]
+    with train.BatchLoader(tmp_path, workers=workers, prefetch=prefetch) as loader:
+        executor = None
+        for epoch, batches in enumerate(epoch_batches):
+            next_batches = epoch_batches[epoch + 1] if epoch + 1 < len(epoch_batches) else None
+            actual_order = []
+            for batch, group in loader.loaded_batches(batches, packed=True, next_batches=next_batches):
+                executor = executor or loader.executor
+                assert loader.executor is executor
+                assert len(loader.pending) <= prefetch
+                actual_order.append([entry["id"] for entry in batch])
+                for entry, episode in zip(batch, group):
+                    reference = expected[entry["id"]]
+                    assert episode.keys() == reference.keys()
+                    for name, values in episode.items():
+                        assert values.dtype == reference[name].dtype
+                        assert values.shape == reference[name].shape
+                        assert values.tobytes() == reference[name].tobytes()
+            assert actual_order == [[entry["id"] for entry in batch] for batch in batches]
+            waits = loader.wait_stats()
+            per_batch = waits["load_wait_per_batch_seconds"]
+            assert len(per_batch) == len(batches)
+            assert all(value >= 0 for value in per_batch)
+            assert waits["load_wait_seconds"] == sum(per_batch)
+            assert waits["load_wait_first_batch_seconds"] == per_batch[0]
+            assert waits["load_wait_after_first_seconds"] == sum(per_batch[1:])
+            assert waits["load_wait_max_batch_seconds"] == max(per_batch)
+            if next_batches is not None:
+                assert [batch for batch, _ in loader.pending] == next_batches[:prefetch]
+                # Wait until the queued prefix is decoded, then remove only its
+                # source files: the next epoch must consume the retained bytes.
+                for batch, futures in loader.pending:
+                    for entry, future in zip(batch, futures):
+                        future.result()
+                        (tmp_path / entry["file"]).unlink()
+            else:
+                assert not loader.pending
+    assert random.getstate() == python_rng
+    numpy_after = np.random.get_state()
+    assert numpy_after[0] == numpy_rng[0] and numpy_after[2:] == numpy_rng[2:]
+    np.testing.assert_array_equal(numpy_after[1], numpy_rng[1])
+    assert train.torch.equal(train.torch.random.get_rng_state(), torch_rng)
 
 
 def test_training_batches_cap_dagger_and_retain_every_episode():

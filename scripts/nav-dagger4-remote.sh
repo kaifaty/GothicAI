@@ -19,31 +19,30 @@ if [[ "$stage" == train-r1 ]]; then
   ssh ryzen "bash -s -- '$task' '$archive'" <<'TRAIN_INPUTS'
 set -euo pipefail
 task="$1"; archive="$2"
+previous=/mnt/shared/gothic-ai/archive/nav-dagger4-20261031
+hd=/mnt/shared/gothic-ai/archive/nav-dagger3-20261030
+v4=/mnt/shared/gothic-ai/archive/nav-demos-v4-20261029
+v5=/mnt/shared/gothic-ai/archive/nav-demos-v5-20261030
 df -h "$HOME" /mnt/shared
-test -x "$task/.venv/bin/python"
-test -x "$task/build/opengothic/gothic-body-runner"
-test -x "$task/build/opengothic/gothic-navpolicy-contract"
-test ! -e "$archive/round1/run/last.pt"
 for phase in 1 2 3 4 5 6; do test -f "$archive/round1/phase-$phase/passed"; done
-test -f "$HOME/gothic-ai/nav-demos-v4/manifest.json"
+test -f "$archive/round1/phases/00.passed"
+test -f "$archive/round1/phases/01.passed"
+test ! -e "$archive/round1/phases/02.passed"
+test ! -e "$archive/round1/run/last.pt"
+test -f "$v4/manifest.json"
 test -f /mnt/shared/gothic-ai/nav-demos-v5/manifest.json
-mkdir -p "$task/input" "$task/tmp" "$task/hot-cache" "$archive/input/hd" "$archive/logs" "$archive/round1/validation/setup-rejections"
+test -d /mnt/shared/gothic-ai/nav-lean-data/corpus-v5
+test -f /mnt/shared/gothic-ai/nav-eval-screen/runs/20261030T214924Z-e9cc38adb/metrics.json
+mkdir -p "$task/input" "$task/tmp" "$task/source" "$archive/input/hd" "$archive/logs" "$archive/round1/validation/setup-rejections"
 copy_input() { if [[ -f "$2" ]]; then cmp "$1" "$2"; else cp "$1" "$2"; fi; }
-copy_input "$HOME/gothic-ai/nav-dagger3/hd-run/last.pt" "$archive/input/hd/last.pt"
-copy_input "$HOME/gothic-ai/nav-dagger3/hd-run/policy.navbc" "$archive/input/hd/policy.navbc"
-copy_input "$HOME/gothic-ai/nav-bc3/run/it35/policy.navbc" "$archive/input/bc3.navbc"
-for name in fixtures.json object-probes.jsonl detour-val.jsonl; do
-  copy_input "$HOME/gothic-ai/nav-demos-v5/input/$name" "$task/input/$name"
+for name in last.pt policy.navbc; do copy_input "$hd/hd-run/$name" "$archive/input/hd/$name"; done
+for name in save.sav places.json accepted-links.txt jump-links.txt round1-train.jsonl; do
+  copy_input "$previous/input/$name" "$task/input/$name"
 done
-cmp "$task/input/detour-val.jsonl" "$HOME/gothic-ai/nav-dagger3/detours/detour-val.jsonl"
-for source in "$HOME/gothic-ai/nav-dagger3/hd-validation/setup-rejections/"*.json; do
+for name in fixtures.json object-probes.jsonl detour-val.jsonl; do copy_input "$v5/input/$name" "$task/input/$name"; done
+cmp "$task/input/detour-val.jsonl" "$hd/detours/detour-val.jsonl"
+for source in "$hd/hd-validation/setup-rejections/"*.json; do
   copy_input "$source" "$archive/round1/validation/setup-rejections/$(basename "$source")"
-done
-for mode in ordinary jump; do
-  mkdir -p "$task/validation-cache/$mode"
-  for source in "$HOME/gothic-ai/nav-dagger3/hd-measure-cache/$mode/"*.navmesh; do
-    copy_input "$source" "$task/validation-cache/$mode/$(basename "$source")"
-  done
 done
 python3 - "$task" "$archive" <<'TRAIN_CHECK'
 from collections import Counter
@@ -57,34 +56,72 @@ if shutil.disk_usage(task).free < 50 * 1024**3:
 events = [json.loads(line) for line in (archive / "logs/collection-chain.log").read_text().splitlines()]
 if events[-1] != dict(event="dagger4_chain_complete", phase=6):
     raise ValueError("Round 1 collection chain has not completed phase 6")
-all_counts, families, phases = Counter(), {}, []
+counts = Counter()
 for number in range(1, 7):
     metrics = json.loads((archive / f"round1/phase-{number}/control-metrics.json").read_text())
     if metrics["all"]["episodes"] != 100:
         raise ValueError("Every round 1 phase must contain 100 completed train episodes")
-    phases.append(dict(phase=number, **metrics))
     for key in ("episodes", "decisions", "teacher_control_decisions"):
-        all_counts[key] += metrics["all"][key]
-    for family, values in metrics["by_family"].items():
-        counts = families.setdefault(family, Counter())
-        for key in ("episodes", "decisions", "teacher_control_decisions", "dagger_interventions", "dart_decisions"):
-            counts[key] += values[key]
-        for reason, value in values["by_reason"].items():
-            counts[reason] += value["decisions"]
-if (all_counts["episodes"], all_counts["decisions"], all_counts["teacher_control_decisions"]) != (600, 568845, 188259):
+        counts[key] += metrics["all"][key]
+if (counts["episodes"], counts["decisions"], counts["teacher_control_decisions"]) != (600, 568845, 188259):
     raise ValueError("Round 1 frozen collection totals differ")
-def summary(counts):
-    return dict(counts, teacher_control_fraction=counts["teacher_control_decisions"] / counts["decisions"])
-result = dict(all=summary(all_counts), by_family={key: summary(value) for key, value in families.items()}, by_phase=phases)
-(archive / "round1/control-metrics.json").write_text(json.dumps(result, indent=2) + "\n")
-print(json.dumps(dict(event="dagger4_round1_collection_verified", all=result["all"], by_family=result["by_family"])))
+print(json.dumps(dict(event="dagger4_round1_collection_preserved", **counts)))
 TRAIN_CHECK
 TRAIN_INPUTS
-  rsync -rt --no-links --exclude=__pycache__ "$ROOT/scripts/" "ryzen:$task/source/scripts/"
+  rsync -a --no-links --exclude=build --exclude='build-*' --exclude=__pycache__ --exclude=.pytest_cache --exclude=.git \
+    "$ROOT/OpenGothic" "$ROOT/scripts" "$ROOT/AGENTS.md" "ryzen:$task/source/"
   rsync -rt --no-links "$ROOT/reports/navigation/2026-10-22-demos-v5/manifest.json" "ryzen:$task/input/v5-compact.json"
-  "$ROOT/scripts/gq" submit --class batch --threads 6 --cpu-quota 600% --mem 16G --max 2h \
-    --name 'nav dagger4 round1 prepare v4 part 1/7' -- "$task/.venv/bin/python" -B -I \
-    "$task/source/scripts/nav_dagger4_round.py" --task "$task" --step 0
+  ssh ryzen "mkdir -p '$task/source/reports/navigation/2026-10-31-eval-screen'"
+  rsync -rt --no-links "$ROOT/reports/navigation/2026-10-31-eval-screen/eval-screen.jsonl" \
+    "ryzen:$task/source/reports/navigation/2026-10-31-eval-screen/"
+  ssh ryzen "cat > '$task/restart-r1.sh'" <<'RESTART_PHASE'
+#!/usr/bin/env bash
+set -euo pipefail
+task="$(cd "$(dirname "$0")" && pwd)"
+archive=/mnt/shared/gothic-ai/nav-dagger4
+previous=/mnt/shared/gothic-ai/archive/nav-dagger4-20261031
+hd=/mnt/shared/gothic-ai/archive/nav-dagger3-20261030
+exec > >(tee -a "$archive/logs/restart-r1-20261031.log") 2>&1
+export TMPDIR="$task/tmp" UV_CACHE_DIR="$HOME/.cache/uv"
+export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
+export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
+export OMP_NUM_THREADS=6 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 OPENGOTHIC_BODY_TRACE=0
+unset OPENGOTHIC_NAV_JOURNEY_MEMORY OPENGOTHIC_NAV_FAMILIAR_MAP
+eval "$(python3 "$task/source/scripts/ryzen_game.py")"
+export OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
+export OPENGOTHIC_BASE="/mnt/shared/gothic-ai/base/$OPENGOTHIC_BASE_FINGERPRINT"
+test -f "$OPENGOTHIC_BASE/base.json"
+cd "$task/source"
+if [[ ! -x "$task/.venv/bin/python" ]]; then uv venv --python 3.12 "$task/.venv"; fi
+python="$task/.venv/bin/python"
+uv pip install --python "$python" numpy pytest
+uv pip install --python "$python" 'torch==2.9.1+cu128' --index-url https://download.pytorch.org/whl/cu128
+mkdir -p "$task/hot-cache/v4-parts"
+# Only the two completed caches are reused; the unfinished third part is rebuilt.
+for part in part-00 part-01; do
+  test -f "$previous/hot-cache/v4-parts/$part/index.json"
+  mkdir -p "$task/hot-cache/v4-parts/$part"
+  rsync -rt --no-links "$previous/hot-cache/v4-parts/$part/" "$task/hot-cache/v4-parts/$part/"
+done
+for mode in ordinary jump; do
+  mkdir -p "$task/validation-cache/$mode"
+  cp "$hd/hd-measure-cache/$mode/"*.navmesh "$task/validation-cache/$mode/"
+done
+"$python" -X faulthandler -B -m pytest -q -p no:cacheprovider --basetemp "$task/tmp/restart-tests" \
+  scripts/tests/test_nav_bc_data.py scripts/tests/test_nav_bc_train.py scripts/tests/test_nav_rl.py
+cmake -S OpenGothic -B "$task/build" -G Ninja \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+  -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
+  -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
+cmake --build "$task/build" --target gothic-body-runner gothic-navpolicy-contract --parallel 3
+"$task/build/opengothic/gothic-navpolicy-contract" --live-format
+"$task/build/opengothic/gothic-navpolicy-contract" --memory "$archive/smoke/policy.navbc"
+"$python" -X faulthandler -B -I scripts/nav_dagger4_round.py --task "$task" --step 2
+RESTART_PHASE
+  "$ROOT/scripts/gq" submit --class batch --threads 6 --cpu-quota 600% --mem 16G --gpu-mem 4G --max 2h \
+    --name 'nav dagger4 r1 restart and v4 preparation part 3' -- python3 -X faulthandler -I \
+    "$task/source/scripts/nav_job.py" --max-seconds 7200 -- bash "$task/restart-r1.sh"
   exit
 fi
 if [[ "$stage" == collect-r1 || "$stage" == calibrate ]]; then
@@ -226,9 +263,9 @@ unset OPENGOTHIC_NAV_FAMILIAR_MAP
 cd "$task/source"
 python="$task/.venv/bin/python"
 df -h "$HOME" /mnt/shared
-"$python" -B -I -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home()).free >= 70*1024**3, "Collection needs 70 GiB free including its reserve"'
-indices="$("$python" -B -I -c 'import sys; phase=int(sys.argv[1]); print(",".join(map(str,range((phase-1)*100,phase*100))))' "$phase")"
-"$python" -B -I scripts/nav_rl.py drive --dagger-scenarios "$task/input/round1-train.jsonl" \
+"$python" -X faulthandler -B -I -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home()).free >= 70*1024**3, "Collection needs 70 GiB free including its reserve"'
+indices="$("$python" -X faulthandler -B -I -c 'import sys; phase=int(sys.argv[1]); print(",".join(map(str,range((phase-1)*100,phase*100))))' "$phase")"
+"$python" -X faulthandler -B -I scripts/nav_rl.py drive --dagger-scenarios "$task/input/round1-train.jsonl" \
   --indices "$indices" --runner "$task/build/opengothic/gothic-body-runner" \
   --assets "$HOME/gothic-ai/game" --save "$task/input/save.sav" \
   --cache "$task/smoke-cache" --links "$task/input/accepted-links.txt" \
@@ -236,7 +273,7 @@ indices="$("$python" -B -I -c 'import sys; phase=int(sys.argv[1]); print(",".joi
   --weights "$archive/smoke/policy.navbc" --output "$output" --physics cv --parallel 12 \
   --teacher-beta 0.1 --action-mode sample --action-seeds 23102027 --limit-ms 240000 \
   --watchdog-seconds 900 --resume
-"$python" -B -I - "$output" "$destination" "$task/input/round1-train.jsonl" <<'ROUND_ARCHIVE'
+"$python" -X faulthandler -B -I - "$output" "$destination" "$task/input/round1-train.jsonl" <<'ROUND_ARCHIVE'
 import hashlib
 import json
 from pathlib import Path
@@ -317,7 +354,9 @@ def main():
             command = [str(v4.GQ), "submit", "--class", "batch", "--threads", "18",
                 "--cpu-quota", "1800%", "--mem", "16G", "--max", "2h", "--name",
                 f"nav dagger4 round1 collect phase {phase}/6", "--",
-                str(task / ".venv/bin/python"), "-B", "-I", str(Path(__file__).resolve()),
+                "python3", "-X", "faulthandler", "-I", str(task / "source/scripts/nav_job.py"),
+                "--max-seconds", "7200", "--", str(task / ".venv/bin/python"),
+                "-X", "faulthandler", "-B", "-I", str(Path(__file__).resolve()),
                 "--task", str(task), "--phase", str(phase)]
             result = subprocess.run(command, check=True, capture_output=True, text=True,
                                     env={**os.environ, "GQ_OWNER": "nav-dagger4"})
@@ -388,10 +427,10 @@ test -f "$archive/round1/phase-1/passed"
 test ! -e "$archive/calibration/quick/passed"
 cmp "$task/input/round1-train.jsonl" "$archive/round1/round1-train.jsonl"
 cmake --build "$task/build" --target gothic-body-runner gothic-navpolicy-contract --parallel 3
-"$python" -B -I scripts/nav_rl.py dagger-calibrate \
+"$python" -X faulthandler -B -I scripts/nav_rl.py dagger-calibrate \
   --source "$archive/round1/phase-1" --output "$archive/calibration/offline" \
   --weights "$archive/smoke/policy.navbc" --runner "$task/build/opengothic/gothic-navpolicy-contract"
-"$python" -B -I - "$archive/calibration/offline/calibration.json" "$task/input/round1-train.jsonl" <<'CALIBRATE_OFFLINE'
+"$python" -X faulthandler -B -I - "$archive/calibration/offline/calibration.json" "$task/input/round1-train.jsonl" <<'CALIBRATE_OFFLINE'
 import json
 from pathlib import Path
 import sys
@@ -412,7 +451,7 @@ print(json.dumps(dict(event="dagger4_offline_threshold_estimate", approximate=Tr
     **result["estimate"])), flush=True)
 CALIBRATE_OFFLINE
 "$task/build/opengothic/gothic-navpolicy-contract" --memory "$archive/smoke/policy.navbc"
-"$python" -B -I scripts/nav_rl.py drive --dagger-scenarios "$task/input/round1-train.jsonl" \
+"$python" -X faulthandler -B -I scripts/nav_rl.py drive --dagger-scenarios "$task/input/round1-train.jsonl" \
   --indices 0,1,2,3,4,5 --runner "$task/build/opengothic/gothic-body-runner" \
   --assets "$HOME/gothic-ai/game" --save "$task/input/save.sav" \
   --cache "$task/smoke-cache" --links "$task/input/accepted-links.txt" \
@@ -420,7 +459,7 @@ CALIBRATE_OFFLINE
   --weights "$archive/smoke/policy.navbc" --output "$task/calibration/quick" --physics cv --parallel 6 \
   --teacher-beta 0.1 --action-mode sample --action-seeds 23102027 --limit-ms 240000 \
   --watchdog-seconds 900 --resume
-"$python" -B -I - "$task" "$archive" <<'CALIBRATE_VERIFY'
+"$python" -X faulthandler -B -I - "$task" "$archive" <<'CALIBRATE_VERIFY'
 import hashlib
 import json
 from pathlib import Path
@@ -484,7 +523,8 @@ print(json.dumps(dict(event="dagger4_calibration_passed", next_action="bash scri
 CALIBRATE_VERIFY
 CALIBRATE_PHASE
     "$ROOT/scripts/gq" submit --class quick --threads 12 --cpu-quota 1200% --mem 16G --max 45m \
-      --name 'nav dagger4 threshold replay and six-family quick' -- bash "$task/calibrate.sh"
+      --name 'nav dagger4 threshold replay and six-family quick' -- python3 -X faulthandler -I \
+      "$task/source/scripts/nav_job.py" --max-seconds 2700 -- bash "$task/calibrate.sh"
     exit
   fi
   if [[ "$phase" == 2 ]]; then
@@ -510,7 +550,7 @@ cmp "$task/input/round1-train.jsonl" "$archive/round1/round1-train.jsonl"
 cmake --build "$task/build" --target gothic-body-runner --parallel 3
 "$python" -B -m pytest -q -p no:cacheprovider --basetemp "$task/tmp/pytest-follow-check" \
   scripts/tests/test_nav_rl.py -k dagger
-"$python" -B -I scripts/nav_rl.py drive --dagger-scenarios "$task/input/round1-train.jsonl" \
+"$python" -X faulthandler -B -I scripts/nav_rl.py drive --dagger-scenarios "$task/input/round1-train.jsonl" \
   --indices 27,87 --runner "$task/build/opengothic/gothic-body-runner" \
   --assets "$HOME/gothic-ai/game" --save "$task/input/save.sav" \
   --cache "$task/smoke-cache" --links "$task/input/accepted-links.txt" \
@@ -518,7 +558,7 @@ cmake --build "$task/build" --target gothic-body-runner --parallel 3
   --weights "$archive/smoke/policy.navbc" --output "$task/calibration/follow-check" --physics cv --parallel 2 \
   --teacher-beta 0.1 --action-mode sample --action-seeds 23102027 --limit-ms 240000 \
   --watchdog-seconds 900 --resume
-"$python" -B -I - "$task" "$archive" <<'FOLLOW_CHECK_VERIFY'
+"$python" -X faulthandler -B -I - "$task" "$archive" <<'FOLLOW_CHECK_VERIFY'
 import hashlib
 import json
 from pathlib import Path
@@ -595,11 +635,14 @@ print(json.dumps(dict(event="dagger4_follow_stall_continued", next_phase=2, next
 FOLLOW_CHECK_VERIFY
 FOLLOW_CHECK_PHASE
     "$ROOT/scripts/gq" submit --class quick --threads 6 --cpu-quota 600% --mem 12G --max 25m \
-      --name 'nav dagger4 follow-band stall quick before phase 2' -- bash "$task/follow-check.sh"
+      --name 'nav dagger4 follow-band stall quick before phase 2' -- python3 -X faulthandler -I \
+      "$task/source/scripts/nav_job.py" --max-seconds 1500 -- bash "$task/follow-check.sh"
     exit
   fi
   "$ROOT/scripts/gq" submit --class batch --threads 18 --cpu-quota 1800% --mem 16G --max 2h \
-    --name "nav dagger4 round1 collect phase $phase/6" -- "$task/.venv/bin/python" -B -I "$task/chain-r1.py" --task "$task" --phase "$phase"
+    --name "nav dagger4 round1 collect phase $phase/6" -- python3 -X faulthandler -I \
+    "$task/source/scripts/nav_job.py" --max-seconds 7200 -- "$task/.venv/bin/python" \
+    -X faulthandler -B -I "$task/chain-r1.py" --task "$task" --phase "$phase"
   exit
 fi
 ssh ryzen "bash -s -- '$task' '$archive'" <<'INPUTS'
@@ -672,7 +715,7 @@ cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
   -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
 cmake --build "$task/build" --target gothic-body-runner gothic-navpolicy-contract --parallel 3
-"$python" -B -I - "$task" <<'EXPORT'
+"$python" -X faulthandler -B -I - "$task" <<'EXPORT'
 import json
 from pathlib import Path
 import sys
@@ -700,7 +743,7 @@ if exported["version"] != 3 or exported["preprocessing"]["navigation_memory_vers
     raise ValueError("HD export must retain format 3 and select memory 4")
 EXPORT
 "$task/build/opengothic/gothic-navpolicy-contract" --memory "$task/smoke/policy.navbc"
-"$python" -B -I scripts/nav_rl.py drive --dagger-scenarios "$task/input/smoke-train.jsonl" \
+"$python" -X faulthandler -B -I scripts/nav_rl.py drive --dagger-scenarios "$task/input/smoke-train.jsonl" \
   --runner "$task/build/opengothic/gothic-body-runner" \
   --assets "$HOME/gothic-ai/game" --save "$task/input/save.sav" \
   --cache "$task/smoke-cache" --links "$task/input/accepted-links.txt" \
@@ -708,7 +751,7 @@ EXPORT
   --weights "$task/smoke/policy.navbc" --output "$task/smoke" --physics cv --parallel 1 \
   --teacher-beta 0.1 --action-mode sample --action-seeds 23102026 --limit-ms 12000 \
   --watchdog-seconds 900 --resume
-"$python" -B -I - "$task" "$archive" <<'VERIFY'
+"$python" -X faulthandler -B -I - "$task" "$archive" <<'VERIFY'
 import hashlib
 import json
 from pathlib import Path
@@ -751,4 +794,5 @@ print(json.dumps(dict(event="dagger4_smoke_passed", episodes=2, archive=str(targ
 VERIFY
 PHASE
 "$ROOT/scripts/gq" submit --class quick --threads 6 --cpu-quota 600% --mem 12G --max 35m \
-  --name 'nav dagger4 train-only water+jump smoke' -- bash "$task/smoke.sh"
+  --name 'nav dagger4 train-only water+jump smoke' -- python3 -X faulthandler -I \
+  "$task/source/scripts/nav_job.py" --max-seconds 2100 -- bash "$task/smoke.sh"
