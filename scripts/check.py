@@ -32,17 +32,21 @@ LOCKED_PROJECTS = (
     "libs/chatgpt-auth", "shorts", "site", "decider-service",
 )
 PYTEST = ("pytest", "-q", "-rs")
-CPU_TORCH = ("--index", "https://download.pytorch.org/whl/cpu", "--with", "torch>=2.5,<3")
+# The pip interface scopes the CPU index to torch; uv run's --index affects all packages.
 GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", *PYTEST)) for p in LOCKED_PROJECTS) + (
     Group("body-service", "body-service", (
-        "uv", "run", "--no-project", *CPU_TORCH, "--with", "./body-service",
-        "--with", "pytest", *PYTEST,
+        "bash", "-c", 'uv venv --allow-existing .venv && '
+        'uv pip install --python .venv/bin/python --torch-backend cpu '
+        '--default-index https://pypi.org/simple "torch>=2.5,<3" pytest . && '
+        'exec .venv/bin/pytest -q -rs "$@"', "pytest",
     )),
-    Group("scripts", ".", (
-        "uv", "run", "--no-project", *CPU_TORCH, "--with", "numpy",
-        "--with", "pillow", "--with", "matplotlib", "--with", "websockets",
-        "--with", "./body-service", "--with", "./launcher/core", "--with", "pytest", *PYTEST,
-    ), scopes=("scripts",), dependencies=("launcher/core", "server", "body-service")),
+    Group("scripts", "scripts", (
+        "bash", "-c", 'uv venv --allow-existing .venv && '
+        'uv pip install --python .venv/bin/python --torch-backend cpu '
+        '--default-index https://pypi.org/simple "torch>=2.5,<3" pytest numpy pillow '
+        'matplotlib websockets ../body-service ../launcher/core && '
+        'exec .venv/bin/pytest -q -rs --ignore=content --ignore=meshes --ignore=fracture "$@"', "pytest",
+    ), dependencies=("launcher/core", "server", "body-service")),
     Group("content", "scripts/content", (
         "uv", "run", "--no-project", "--with", "pytest", "--with", "numpy",
         "--with", "pillow", "--with", "scipy", "--with", "shapely",
@@ -52,8 +56,9 @@ GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", *PYTEST)) for p in LOCKED_P
     Group("fracture", "scripts/fracture", (
         "uv", "run", "--no-project", "--with", "pytest", "--with", "numpy", "--with", "scipy", *PYTEST,
     )),
-    *(Group(name, ".", ("env", "PYTHONPATH=scripts", "uv", "run", "--no-project", "--with", "pytest", *PYTEST),
-            scopes=(directory,), dependencies=("scripts",))
+    *(Group(name, directory, ("env", "PYTHONPATH=" + os.path.relpath("scripts", directory),
+                             "uv", "run", "--no-project", "--with", "pytest", *PYTEST),
+            dependencies=("scripts",))
       for name, directory in (
           ("npc-body-guard", "reports/npc-body/2026-10-14-combat/guard-reader-v1/code"),
           ("npc-body-separation", "reports/npc-body/2026-10-14-combat/service-separation/validation/code"),
@@ -237,6 +242,7 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
     tests = discover_tests(root, groups)
     changed = sorted(set(changed_files))
     reasons: dict[str, set[str]] = defaultdict(set)
+    whole_groups: dict[str, set[str]] = defaultdict(set)
 
     def select(paths: Iterable[str], reason: str) -> None:
         for path in paths:
@@ -244,7 +250,10 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
 
     all_tests = {p for paths in tests.values() for p in paths}
     if event == "workflow_dispatch" or any(p in {"scripts/check.py", ".github/workflows/tests.yml"} for p in changed):
-        select(all_tests, "workflow_dispatch" if event == "workflow_dispatch" else "selector or workflow changed (rule 9)")
+        reason = "workflow_dispatch" if event == "workflow_dispatch" else "selector or workflow changed (rule 9)"
+        select(all_tests, reason)
+        for group in groups:
+            whole_groups[group.name].add(reason)
     else:
         if event != "pull_request":
             raise ValueError(f"Unsupported event: {event}")
@@ -262,7 +271,9 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
             if group and PurePosixPath(path).name in {"pyproject.toml", "uv.lock"}:
                 affected = {group.name} | {name for name, values in deps.items() if group.name in values}
                 for name in affected:
-                    select(tests[name], reason + ": project dependencies changed (rules 4/5)")
+                    full_reason = reason + ": project dependencies changed (rules 4/5)"
+                    select(tests[name], full_reason)
+                    whole_groups[name].add(full_reason)
             elif group and PurePosixPath(path).name == "conftest.py":
                 parent = str(PurePosixPath(path).parent) + "/"
                 select((p for p in tests[group.name] if p.startswith(parent)), reason + ": fixture scope (rule 3)")
@@ -287,22 +298,19 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
         selected = [p for p in tests[group.name] if p in reasons]
         if not selected:
             continue
-        if len(selected) * 5 > len(tests[group.name]) * 3:
-            select(tests[group.name], "more than 60% selected: whole group (rule 10)")
+        if not whole_groups[group.name] and len(selected) * 5 > len(tests[group.name]) * 3:
+            reason = "more than 60% selected (rule 10)"
+            select(tests[group.name], reason)
+            whole_groups[group.name].add(reason)
             selected = tests[group.name]
+        whole_group = "; ".join(sorted(whole_groups[group.name])) or None
         directory = root / group.directory
         # Commands use the group's working directory; paths in the plan remain repository-relative.
-        arguments = [str((root / p).relative_to(directory)) for p in selected]
-        command = list(group.command)
-        # Local package requirements are relative to the working directory too.
-        for index, value in enumerate(command):
-            if value.startswith("./"):
-                command[index] = os.path.relpath(root / value, directory)
-                if "/" not in command[index]:
-                    command[index] = "./" + command[index]
+        arguments = [] if whole_group else [str((root / p).relative_to(directory)) for p in selected]
         result.append({"name": group.name, "dir": group.directory,
-                       "command": shlex.join([*command, *arguments]), "timeout": group.timeout,
-                       "files": selected, "reasons": {p: sorted(reasons[p]) for p in selected}})
+                       "command": shlex.join([*group.command, *arguments]), "timeout": group.timeout,
+                       "files": selected, "whole_group": whole_group,
+                       "reasons": {} if whole_group else {p: sorted(reasons[p]) for p in selected}})
     return result
 
 
@@ -334,6 +342,9 @@ def main() -> int:
         print(json.dumps([{k: v for k, v in group.items() if k != "reasons"} for group in selections], separators=(",", ":")))
         return 0
     for group in selections:
+        if group["whole_group"]:
+            print(f"{group['name']}: whole group: {group['whole_group']}", flush=True)
+            continue
         print(f"{group['name']}: {group['command']}", flush=True)
         for path, reasons in group["reasons"].items():
             print(f"  {path}: {'; '.join(reasons)}", flush=True)

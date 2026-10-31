@@ -97,6 +97,7 @@ def test_changed_test_selects_itself(repository):
     assert selected_files(matrix) == {path}
     assert [group["name"] for group in matrix] == ["lib"]
     assert "tests/test_unused.py" in matrix[0]["command"]
+    assert matrix[0]["whole_group"] is None
     assert set(matrix[0]["reasons"]) == {path}
     assert matrix[0]["reasons"][path]
 
@@ -153,14 +154,33 @@ def test_test_helper_selects_its_importers(repository):
 
 
 @pytest.mark.parametrize("filename", ["pyproject.toml", "uv.lock"])
-def test_project_config_selects_whole_group(repository, filename):
+def test_project_config_selects_whole_group(repository, filename, monkeypatch, capsys):
     expected = {path for path in all_files(repository) if path.startswith("app/")}
-    assert selected_files(selection(repository, f"app/{filename}")) == expected
+    matrix = selection(repository, f"app/{filename}")
+    assert selected_files(matrix) == expected
+    assert matrix[0]["whole_group"]
+    assert matrix[0]["command"] == "uv run --locked pytest -q -rs"
+    assert matrix[0]["reasons"] == {}
+
+    root, groups = repository
+    monkeypatch.setattr(check, "__file__", str(root / "scripts/check.py"))
+    monkeypatch.setattr(check, "GROUPS", groups)
+    monkeypatch.setattr(check, "changed_paths", lambda *args, **kwargs: [f"app/{filename}"])
+    monkeypatch.setattr(sys, "argv", ["check.py", "plan"])
+    assert check.main() == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith("app: whole group: ")
+    assert filename in lines[0]
+    assert "tests/" not in lines[0]
 
 
 @pytest.mark.parametrize("filename", ["pyproject.toml", "uv.lock"])
 def test_path_dependency_config_selects_all_dependent_groups(repository, filename):
-    assert selected_files(selection(repository, f"lib/{filename}")) == all_files(repository)
+    matrix = selection(repository, f"lib/{filename}")
+    assert selected_files(matrix) == all_files(repository)
+    assert all(group["whole_group"] for group in matrix)
+    assert all(group["command"] == "uv run --locked pytest -q -rs" for group in matrix)
 
 
 def test_non_python_resource_matches_filename(repository):
@@ -203,17 +223,31 @@ def test_docs_and_images_select_nothing(repository):
 
 @pytest.mark.parametrize("path", ["scripts/check.py", ".github/workflows/tests.yml"])
 def test_selector_or_workflow_change_selects_everything(repository, path):
-    assert selected_files(selection(repository, path)) == all_files(repository)
+    matrix = selection(repository, path)
+    assert selected_files(matrix) == all_files(repository)
+    assert all(group["whole_group"] for group in matrix)
+    assert all(group["command"] == "uv run --locked pytest -q -rs" for group in matrix)
+    assert all(group["reasons"] == {} for group in matrix)
 
 
 def test_workflow_dispatch_selects_everything(repository):
-    assert selected_files(selection(repository, event="workflow_dispatch")) == all_files(repository)
+    matrix = selection(repository, event="workflow_dispatch")
+    assert selected_files(matrix) == all_files(repository)
+    assert all(group["whole_group"] for group in matrix)
+    assert all(group["command"] == "uv run --locked pytest -q -rs" for group in matrix)
 
 
 def test_more_than_sixty_percent_expands_to_whole_group(repository):
     paths = sorted(path for path in all_files(repository) if path.startswith("app/"))
-    assert selected_files(selection(repository, *paths[:3])) == set(paths[:3])
-    assert selected_files(selection(repository, *paths[:4])) == set(paths)
+    partial = selection(repository, *paths[:3])
+    assert selected_files(partial) == set(paths[:3])
+    assert partial[0]["whole_group"] is None
+    assert all(str(Path(path).relative_to("app")) in partial[0]["command"] for path in paths[:3])
+    whole = selection(repository, *paths[:4])
+    assert selected_files(whole) == set(paths)
+    assert whole[0]["whole_group"]
+    assert whole[0]["command"] == "uv run --locked pytest -q -rs"
+    assert whole[0]["reasons"] == {}
 
 
 def test_local_changes_include_commits_index_worktree_and_untracked(repository):
