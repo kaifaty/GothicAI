@@ -759,7 +759,10 @@ struct Bench {
       };
     std::vector<DynamicWorld::Item> loadBodies;
     std::vector<PhysicsSample> loadSamples;
-    uint64_t loadWarmUntil=0,loadEnd=0,loadLastNative=0,loadZeroFrames=0;
+    uint64_t loadWarmUntil=0,loadEnd=0,loadLastNative=0,loadZeroFrames=0,loadNextWake=0;
+    size_t loadWakeResets=0;
+    Vec3 loadBounds[2];
+    float loadResetPoseError=0,loadResetVelocityError=0,loadResetAngularError=0;
     size_t loadMinimumActive=10,loadDecomposed=0;
     bool loadRunning=false;
     bool traceApple=false;
@@ -4309,20 +4312,25 @@ void furnitureRagdollReport(World& world) {
   auto& fixture=bench.furnitureParts;const auto table=furnitureBody(world,fixture.table);
   if(!table || !fixture.corpse || !fixture.corpse->ragdollBody()) {arenaAbort("furniture ragdoll setup required");return;}
   auto inverse=table->transform;inverse.inverse();size_t inside=0,total=0;std::string parts="[";
+  float maximumInset=0,maximumTablePenetration=0;size_t tableContacts=0;
   for(const auto& body:world.physic()->waterBodySnapshot()) {
     if(body.ragdoll!=fixture.corpse->ragdollBody())continue;
     auto center=(body.collisionBounds[0]+body.collisionBounds[1])*.5f;inverse.project(center);++total;
-    const bool under=center.x>table->localBounds[0].x+5.f && center.x<table->localBounds[1].x-5.f &&
-      center.z>table->localBounds[0].z+5.f && center.z<table->localBounds[1].z-5.f &&
-      center.y>table->localBounds[0].y-5.f && center.y<table->localBounds[1].y-15.f;
-    inside+=under;
+    const float inset=std::min({center.x-table->localBounds[0].x,table->localBounds[1].x-center.x,
+                               center.z-table->localBounds[0].z,table->localBounds[1].z-center.z});
+    const bool under=inset>0 && center.y>table->localBounds[0].y-5.f && center.y<table->localBounds[1].y-15.f;
+    inside+=under;if(under)maximumInset=std::max(maximumInset,inset);
     if(parts.size()>1)parts+=',';
     parts+="{\"bone\":"+std::to_string(body.bone)+",\"center_local_cm\":"+ragdollVector(center)+
-      ",\"under_tabletop\":"+(under?"true":"false")+"}";
+      ",\"footprint_inset_cm\":"+ragdollNumber(inset)+",\"under_tabletop\":"+(under?"true":"false")+"}";
     }
+  for(const auto& contact:world.physic()->ragdollSupports(*fixture.corpse->ragdollBody(),2.f))
+    if(contact.zenId==fixture.table) {++tableContacts;maximumTablePenetration=std::max(maximumTablePenetration,contact.depth);}
   const bool enabled=world.physic()->furniturePartsEnabled(),pass=total>0 && (!enabled || inside>0);
   event("furniture_parts_ragdoll_result","\"enabled\":"+std::string(enabled?"true":"false")+
     ",\"native_parts\":"+std::to_string(total)+",\"parts_under_tabletop\":"+std::to_string(inside)+
+    ",\"maximum_under_tabletop_center_inset_cm\":"+ragdollNumber(maximumInset)+
+    ",\"table_contacts\":"+std::to_string(tableContacts)+",\"maximum_table_penetration_cm\":"+ragdollNumber(maximumTablePenetration)+
     ",\"parts\":"+parts+"],\"pass\":"+(pass?"true":"false"));
   world.removeNpc(*fixture.corpse);fixture.corpse=nullptr;
   if(!pass)arenaAbort("furniture ragdoll mechanic failed after native settling");
@@ -4455,6 +4463,9 @@ void furniturePerformance(World& world,Npc& player) {
   fixture.loadSamples.clear();fixture.loadSamples.reserve(720);fixture.loadMinimumActive=10;
   fixture.loadWarmUntil=world.tickCount()+2000;fixture.loadEnd=fixture.loadWarmUntil+10000;
   fixture.loadLastNative=world.physic()->simulationStep();fixture.loadZeroFrames=0;fixture.loadRunning=true;
+  fixture.loadNextWake=world.tickCount()+1000;fixture.loadWakeResets=0;
+  fixture.loadBounds[0]=mesh->bbox()[0];fixture.loadBounds[1]=mesh->bbox()[1];
+  fixture.loadResetPoseError=fixture.loadResetVelocityError=fixture.loadResetAngularError=0;
   for(auto& body:fixture.loadBodies)body.addImpulse(Vec3(body.mass()*.3f,0,0));
   event("furniture_parts_performance_setup","\"world\":"+jsonStr(world.name())+",\"waypoint\":"+jsonStr(waypoint)+
     ",\"furniture\":10,\"decomposed_furniture\":"+std::to_string(fixture.loadDecomposed)+
@@ -4478,8 +4489,26 @@ void furniturePerformanceSample(World& world,uint64_t dt) {
     else ++fixture.loadZeroFrames;
     }
   if(world.tickCount()>=fixture.loadEnd)return;
-  // Maintain a bounded ten-centimetre back-and-forth motion. Reversing the
-  // impulse every frame can leave every body below Jolt's sleep threshold.
+  // The game's two-second sleep test permits bounded motion within 1.6 m.
+  // Reset only these ten bodies' sleep timers every second, preserving their
+  // poses and velocities through the existing native restore API.
+  if(world.tickCount()>=fixture.loadNextWake) {
+    fixture.loadNextWake=world.tickCount()+1000;
+    for(auto& body:fixture.loadBodies) {
+      const auto pose=body.matrix();const auto velocity=body.velocity(),angular=body.angularVelocity();
+      body.restorePhysics(pose,false,velocity,angular);++fixture.loadWakeResets;
+      const auto restored=body.matrix();
+      for(unsigned i=0;i<8;++i) {
+        Vec3 point(fixture.loadBounds[i&1].x,fixture.loadBounds[(i>>1)&1].y,fixture.loadBounds[(i>>2)&1].z);
+        auto before=point,after=point;pose.project(before);restored.project(after);
+        fixture.loadResetPoseError=std::max(fixture.loadResetPoseError,(after-before).length());
+        }
+      fixture.loadResetVelocityError=std::max(fixture.loadResetVelocityError,(body.velocity()-velocity).length());
+      fixture.loadResetAngularError=std::max(fixture.loadResetAngularError,(body.angularVelocity()-angular).length());
+      }
+    }
+  // A bounded horizontal drive exercises ordinary floor contacts as well.
+
   const float speed=(world.tickCount()/500)%2==0?.2f:-.2f;
   for(auto& body:fixture.loadBodies)
     body.addImpulse(Vec3(body.mass()*(speed-body.velocity().x*.01f),0,0));
@@ -4498,13 +4527,18 @@ void furniturePerformanceReport(World& world) {
     costs.push_back(sample.milliseconds);steps+=sample.nativeSteps;maxSteps=std::max(maxSteps,sample.nativeSteps);
     }
   std::fclose(file);std::sort(costs.begin(),costs.end());const float p95=costs[size_t(std::ceil(.95*double(costs.size())))-1];
-  const bool pass=fixture.loadMinimumActive==10 && steps>=590 && p95<=2.f;
+  const bool pass=fixture.loadMinimumActive==10 && steps>=590 && p95<=2.f &&
+    fixture.loadResetPoseError<=.001f && fixture.loadResetVelocityError<=.001f && fixture.loadResetAngularError<=.000001f;
   event("furniture_parts_performance","\"world\":"+jsonStr(world.name())+",\"enabled\":"+
     (world.physic()->furniturePartsEnabled()?"true":"false")+",\"furniture\":10,\"decomposed_furniture\":"+
     std::to_string(fixture.loadDecomposed)+",\"minimum_active_furniture\":"+std::to_string(fixture.loadMinimumActive)+
     ",\"samples\":"+std::to_string(costs.size())+",\"native_steps\":"+std::to_string(steps)+
     ",\"max_native_steps_per_sample\":"+std::to_string(maxSteps)+",\"zero_native_frames\":"+std::to_string(fixture.loadZeroFrames)+
     ",\"warmup_ms\":2000,\"measurement_ms\":10000,\"p95_step_ms\":"+ragdollNumber(p95)+
+    ",\"keep_awake_interval_ms\":1000,\"keep_awake_resets\":"+std::to_string(fixture.loadWakeResets)+
+    ",\"maximum_reset_pose_error_cm\":"+ragdollNumber(fixture.loadResetPoseError)+
+    ",\"maximum_reset_velocity_error_cm_s\":"+ragdollNumber(fixture.loadResetVelocityError)+
+    ",\"maximum_reset_angular_error_rad_s\":"+ragdollNumber(fixture.loadResetAngularError)+
     ",\"peak_rss_bytes\":"+std::to_string(furniturePeakMemory())+",\"world_load_ms\":"+ragdollNumber(float(world.loadMilliseconds()))+
     ",\"timing_source\":\"loaded NEWWORLD DynamicWorld::physicsStats after ordinary world update\",\"pass\":"+(pass?"true":"false"));
   fixture.loadBodies.clear();
