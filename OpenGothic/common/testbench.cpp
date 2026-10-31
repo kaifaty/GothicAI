@@ -7232,10 +7232,7 @@ void itemWakeSetup(World& world,Npc& player,std::string_view name) {
     bool optimalFound=false;
     for(const auto& event:data.events) {
       if(event.type!=asset::MdsEventType::OPTIMAL_FRAME || event.frames.empty())continue;
-      const auto frame=event.frames.front();
-      const auto clamped=frame<int32_t(data.firstFrame)?0u:
-                         int64_t(frame)>=int64_t(data.firstFrame)+data.numFrames?data.numFrames-1:
-                         frame>int32_t(data.lastFrame)?data.lastFrame-data.firstFrame:uint32_t(frame)-data.firstFrame;
+      const auto clamped=data.optimalFrame(event.frames.front());
       bench.itemWakeSwordOptimalFrame=sequence->reverse?data.numFrames-1-clamped:clamped;
       optimalFound=true;break;
       }
@@ -15511,6 +15508,17 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     for(size_t i=1; i<a.size(); ++i)
       say("animinfo " + pl.animInfo(a[i]));
     }
+  else if(c=="bladepath") {
+    // bladepath <name>|<overlay.MDS>...: the tip of the hero's weapon at each frame of those animations (model
+    // frame); an overlay (HUMANS_1HST2.MDS) is put on for the names after it
+    const auto* weapon = pl.currentMeleeWeapon();
+    const auto* mesh = weapon!=nullptr ? Resources::loadMesh(weapon->handle().visual) : nullptr;
+    const float length = mesh!=nullptr ? -mesh->bbox()[0].x : 0.f;
+    for(size_t i=1; i<a.size(); ++i)
+      if(a[i].size()>4 && a[i].substr(a[i].size()-4)==".MDS")
+        pl.addOverlay(a[i],0); else
+        say("bladepath " + pl.bladePath(a[i],length));
+    }
   else if(c=="aimwalk") {
     // aimwalk on|off: the legs step under the aim (graphics/mesh/aimwalk)
     AimWalk::setEnabled(a.size()<2 || a[1]!="off");
@@ -16578,7 +16586,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       say("unknown lean command: " + line);
     }
   else if(c=="blend") {
-    // blend on|off, blend param <min|scale|max> <value>: transitions between animations (AnimBlend)
+    // blend on|off, blend param <min|scale|max|turn|move|out|side|blow> <value>: transitions between animations
+    // (AnimBlend)
     const std::string m = a.size()>1 ? a[1] : "";
     if(m=="on" || m=="off")
       AnimBlend::setEnabled(m=="on");

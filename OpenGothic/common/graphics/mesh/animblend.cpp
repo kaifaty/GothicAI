@@ -117,6 +117,8 @@ bool AnimBlend::setParam(std::string_view name, float v) {
     prm.outSpeed = v;
   else if(name=="side")
     prm.sideSpeed = v;
+  else if(name=="blow")
+    prm.blowTime = v;
   else
     return false;
   return true;
@@ -368,14 +370,19 @@ void AnimBlend::prepare(size_t i, const Sample& target, const Sample& shown, flo
 // time per bone bent the legs of a stumbling waran apart). A large offset takes longer, not to whip
 void AnimBlend::begin(uint64_t now) {
   float time = prm.minTime;
+  bool  blow = false;
   for(auto& sw:pend) {
     time = std::max(time,sw.time);
     if(prm.turnSpeed>0)
       time = std::max(time,1.875f*sw.angle/prm.turnSpeed);
     if(prm.moveSpeed>0)
       time = std::max(time,1.875f*sw.len/prm.moveSpeed);
+    const auto* seq = cur[sw.bone].seq;
+    blow = blow || (weaponBody && seq!=nullptr && seq->data!=nullptr && seq->isAttackAnim());
     }
   time      = std::min(time,std::max(prm.maxTime,prm.minTime));
+  if(weaponBody && blow)
+    time = std::min(time,prm.blowTime);
   lastBlend = std::max(lastBlend,time);
   if(externalDriven && externalClockPending) {
     externalFade.init(1.f,0.f,time,0.f);
