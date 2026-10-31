@@ -189,6 +189,56 @@ def episode_metrics(folder: Path, episode: dict, shared: dict, variant: str) -> 
                 missing(f"fighters.{role}.{key}", "Zero denominator")
         result["fighters"][role] = own
 
+    stamina_phases = ("stamina_spend", "stamina_refused", "stamina_exhausted", "stamina_recovered")
+    stamina_available = any(roles(row.get("actor")) in ROLES and
+                            (row.get("phase") in stamina_phases or row.get("phase") == "phase_snapshot" and
+                             ("stamina" in row or "stamina_max" in row)) for row in events)
+    for role in ROLES:
+        own = result["fighters"][role]
+        stamina = {"stamina_spent": 0, "attack_stamina_spends": 0, "jumpback_stamina_spends": 0,
+                   "stamina_refusal_spells": 0, "exhaustions": 0, "exhausted_time_s": 0,
+                   "mean_stamina_fraction": None}
+        if not stamina_available:
+            for key in stamina:
+                stamina[key] = missing(f"fighters.{role}.{key}", "Stamina events and snapshot fields absent from journal")
+            own.update(stamina)
+            continue
+        refusing = False
+        exhausted_since = None
+        exhausted_ms = 0
+        fractions = []
+        for row in events:
+            if roles(row.get("actor")) != role:
+                continue
+            phase = row.get("phase")
+            if phase == "stamina_spend":
+                stamina["stamina_spent"] += row["cost"]
+                if row["action"] in ("attack", "jumpback"):
+                    stamina[row["action"]+"_stamina_spends"] += 1
+                refusing = False
+            elif phase == "stamina_refused":
+                stamina["stamina_refusal_spells"] += int(not refusing)
+                refusing = True
+            elif phase == "stamina_exhausted":
+                stamina["exhaustions"] += 1
+                if exhausted_since is None:
+                    exhausted_since = row["t_game"]
+            elif phase == "stamina_recovered" and exhausted_since is not None:
+                exhausted_ms += max(0, row["t_game"]-exhausted_since)
+                exhausted_since = None
+            elif phase == "phase_snapshot" and "stamina" in row and row.get("stamina_max", 0) > 0:
+                fractions.append(row["stamina"]/row["stamina_max"])
+        stamina["exhausted_time_s"] = exhausted_ms/1000
+        if exhausted_since is not None:
+            stamina_end = end if end is not None else start+duration*1000 if start is not None and duration is not None else None
+            if stamina_end is None:
+                stamina["exhausted_time_s"] = missing(f"fighters.{role}.exhausted_time_s", "Episode end time unavailable for open exhaustion")
+            else:
+                stamina["exhausted_time_s"] += max(0, stamina_end-exhausted_since)/1000
+        stamina["mean_stamina_fraction"] = (statistics.mean(fractions) if fractions else
+            missing(f"fighters.{role}.mean_stamina_fraction", "No stamina snapshots with a positive stamina_max"))
+        own.update(stamina)
+
     def rows_for(name):
         local = journal(folder, name)
         # A final in-flight window may flush on the next reset, after the local
@@ -349,15 +399,21 @@ def aggregate(variant: str, provider: str, weapon: str, episodes: list[dict]) ->
         for key in result["duration_s"]:
             unavailable["duration_s."+key] = "One or more episode durations are unavailable"
     counts = ("swings_started", "damaging_hits", "blocks", "misses", "damage", "overhead_started", "overhead_hits",
-              "prone_hits", "prone_damage", "knockdowns", "repeat_knockdowns_within_10s_after_getup", "down_time_s")
+              "prone_hits", "prone_damage", "knockdowns", "repeat_knockdowns_within_10s_after_getup", "down_time_s",
+              "stamina_spent", "attack_stamina_spends", "jumpback_stamina_spends", "stamina_refusal_spells",
+              "exhaustions", "exhausted_time_s")
     for role in ROLES:
         own = {key: total([row["fighters"][role][key] for row in episodes], f"fighters.{role}.{key}") for key in counts}
         own["per_duel"] = {key: divide(own[key], count, f"fighters.{role}.per_duel.{key}") for key in counts}
         for key, numerator, denominator in (("hit_fraction", own["damaging_hits"], own["swings_started"]),
                 ("damage_per_hit", own["damage"], own["damaging_hits"]), ("damage_per_s", own["damage"], seconds),
                 ("prone_damage_fraction", own["prone_damage"], own["damage"]),
-                ("down_time_fraction", own["down_time_s"], seconds)):
+                ("down_time_fraction", own["down_time_s"], seconds),
+                ("exhausted_time_fraction", own["exhausted_time_s"], seconds)):
             own[key] = divide(numerator, denominator, f"fighters.{role}.{key}")
+        key = f"fighters.{role}.mean_stamina_fraction"
+        own["mean_stamina_fraction"] = divide(total([row["fighters"][role]["mean_stamina_fraction"]
+                                                    for row in episodes], key), count, key)
         own["overhead_swings"] = combine_swing_metrics([row["fighters"][role]["overhead_swings"] for row in episodes])
         own["swings_by_target_posture"] = {
             state: combine_swing_metrics([row["fighters"][role]["swings_by_target_posture"][state] for row in episodes])
@@ -368,8 +424,12 @@ def aggregate(variant: str, provider: str, weapon: str, episodes: list[dict]) ->
     for key, numerator, denominator in (("hit_fraction", combined["damaging_hits"], combined["swings_started"]),
             ("damage_per_hit", combined["damage"], combined["damaging_hits"]),
             ("damage_per_s", combined["damage"], seconds),
-            ("prone_damage_fraction", combined["prone_damage"], combined["damage"])):
+            ("prone_damage_fraction", combined["prone_damage"], combined["damage"]),
+            ("exhausted_time_fraction", combined["exhausted_time_s"], seconds)):
         combined[key] = divide(numerator, denominator, "combat."+key)
+    combined["mean_stamina_fraction"] = divide(total([result["fighters"][role]["mean_stamina_fraction"]
+                                                     for role in ROLES], "combat.mean_stamina_fraction"),
+                                               len(ROLES), "combat.mean_stamina_fraction")
     result["combat"] = combined
     combined["overhead_swings"] = combine_swing_metrics([result["fighters"][role]["overhead_swings"] for role in ROLES])
     combined["swings_by_target_posture"] = {
@@ -429,10 +489,13 @@ def markdown(series: list[dict]) -> str:
         lines.extend(["", f"## {row['variant']} / {row['provider']} / {row['weapon']}", "",
                       "| Metric | Total | Both / duel | Primary / duel | Opponent / duel |", "|---|---:|---:|---:|---:|"])
         for key in ("swings_started", "damaging_hits", "blocks", "misses", "damage", "knockdowns",
-                    "repeat_knockdowns_within_10s_after_getup", "prone_hits", "prone_damage", "overhead_started", "overhead_hits"):
+                    "repeat_knockdowns_within_10s_after_getup", "prone_hits", "prone_damage", "overhead_started", "overhead_hits",
+                    "stamina_spent", "attack_stamina_spends", "jumpback_stamina_spends", "stamina_refusal_spells",
+                    "exhaustions", "exhausted_time_s"):
             lines.append(f"| {key} | {fmt(row['combat'][key])} | {fmt(row['combat']['per_duel'][key])} | "
                          f"{fmt(row['fighters']['primary']['per_duel'][key])} | {fmt(row['fighters']['opponent']['per_duel'][key])} |")
-        for key in ("hit_fraction", "damage_per_hit", "damage_per_s", "prone_damage_fraction"):
+        for key in ("hit_fraction", "damage_per_hit", "damage_per_s", "prone_damage_fraction",
+                    "exhausted_time_fraction", "mean_stamina_fraction"):
             lines.append(f"| {key} | — | {fmt(row['combat'][key])} | {fmt(row['fighters']['primary'][key])} | "
                          f"{fmt(row['fighters']['opponent'][key])} |")
         lines.append(f"| down_time_fraction | — | — | {fmt(row['fighters']['primary']['down_time_fraction'])} | "
@@ -481,6 +544,11 @@ def main() -> int:
                   "damage": "Actual positive HP loss; damage events name victim as actor and attacker as target",
                   "blocks": "Successful blocks performed by this fighter, including repeated contacts if journaled",
                   "down_time": "Knockdown until recover/cancel or duel end, including the get-up transition",
+                  "stamina_spent": "Sum of stamina_spend costs; attack_stamina_spends and jumpback_stamina_spends count spend events by action",
+                  "stamina_refusal_spells": "One fighter's consecutive stamina_refused events without a stamina_spend by that fighter count as one spell",
+                  "exhausted_time_s": "Time from stamina_exhausted until stamina_recovered or duel end, in game seconds",
+                  "exhausted_time_fraction": "Summed exhausted fighter seconds divided by summed duel duration; both fighters together can exceed 1",
+                  "mean_stamina_fraction": "Mean snapshot stamina/stamina_max; aggregates average episode means per fighter, then average both fighters",
                   "swings_by_target_posture": "Unique blade windows classified at game_time_ms: lying from knockdown inclusive to getup_start exclusive; rising until recover/cancel exclusive; hits require a physical result=hit on the intended arena opponent",
                   "overhead_swings": "Finish-animation blade windows for every target posture; independent of legacy animation-hook overhead_started/overhead_hits counts",
                   "overhead_start_distance_cm": "fightDistanceTo at blade-window creation when recorded; older logs fall back to distance between captured root positions; sample method is retained, percentiles use all known distances",

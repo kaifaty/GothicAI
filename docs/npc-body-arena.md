@@ -12,6 +12,8 @@
 
 [`melee_balance_report.py`](../scripts/melee_balance_report.py) читает папки с `bench.json`, пишет `balance.json` и `balance.md`, выводит таблицы в stdout. Серия — вариант × native/P30 × оружие; недоступные метрики имеют `null` и причину. Полная матрица запускается одной командой `scripts/melee-balance-remote.sh`: синхронизация этого checkout, Linux-сборка игры/runner, отдельная заявка `gq quiet` на серию и отчёт. По умолчанию 64 дуэли, seed 100000, 60000 мс; `--episodes`, `--seed`, `--timeout-ms`, `--series`, `--run-name` меняют прогон. Данные — только `~/gothic-ai/melee-balance/` и `/mnt/shared/gothic-ai/melee-balance/`, база через их собственные кэш/хранилище. [Короткая проверка и команды полной матрицы](../reports/melee-physics/2026-10-29-balance/README.md).
 
+Отчёт также считает выносливость по `body_combat` в `events.jsonl`: сумму затрат, число трат на атаку и отскок, серии отказов без успешной траты того же бойца между ними, число истощений и время до восстановления или конца дуэли. Суммы и значения на дуэль выводятся для каждого бойца и обоих вместе; доля истощения — сумма секунд истощения / длительность дуэлей (для обоих вместе может превышать 1). Средний запас — среднее `stamina/stamina_max` по `phase_snapshot`, в серии усредняются эпизодные средние каждого бойца, затем оба бойца. Без событий и полей выносливости эти показатели недоступны; без снимков недоступен средний запас. Проверка: `uv run --with pytest pytest scripts/tests/test_melee_balance_report.py -q`, синтетические эпизоды без игры.
+
 ## Reset и начало эпизода
 
 `reset` загружает неизменный контрольный save и исполняет [body-arena.bench](../scripts/bench/body-arena.bench) до marker арены. Native `BodyArena` создаёт двух смертных бойцов: primary `BDT_1003_BANDIT_M` и opponent `PAL_255_RITTER`. У обоих 300 HP, strength/dexterity 60, one-hand chance 60%, master one-hand animations, sword `ItMw_1h_Common_01`, leather armour и edge/blunt protection 30. Статы устанавливаются после equipment callbacks.
@@ -103,4 +105,5 @@ Transient user unit использует CPUQuota 200%, MemoryMax 12G, TasksMax 
 
 ## План и журнал
 
+- 2026-10-31: отчёт матрицы дополнен показателями выносливости и синтетическими тестами; старые записи сохраняют прежние метрики и отмечают выносливость как недоступную.
 - 2026-10-29: добавлены двуручный профиль дуэли, полностью выключенный контроль трёх флагов, отчёт метрик и запускатель матрицы. Короткая проверка описана в [отчёте](../reports/melee-physics/2026-10-29-balance/README.md); полная матрица и выводы о балансе выполняются отдельно.
