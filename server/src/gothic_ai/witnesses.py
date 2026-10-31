@@ -261,6 +261,7 @@ class Witnesses:
         self._shown: dict[str, dict[str, Told]] = {}  # asker -> exact testimony evidence row, last turn
         self._npc_rows: set[tuple[str, str]] = set()  # NPC testimony cannot catch a hero lie by itself
         self._asking: set[str] = set()  # askers with a question under way
+        self._called: set[str] = set()  # ...and the witnesses they asked: each speaks from its testimony only
         self._expired: set[str] = set()  # far answers whose concern is over, notified
         sightings.hearsay = self
         link.listeners.append(self._on_message)
@@ -278,6 +279,7 @@ class Witnesses:
                 self._shown.clear()
                 self._npc_rows.clear()
                 self._asking.clear()
+                self._called.clear()
 
     def _load(self) -> None:
         """The far questions of the branch not asked yet, from its facts."""
@@ -477,6 +479,7 @@ class Witnesses:
         if view is not None and (why := _busy(view.state, view.body)) is not None:
             return ToolOutcome(f"Отклонено: {c.name} {why}.", "rejected")
         self._asking.add(npc)
+        self._called.add(c.npc)
         self.journal.add(
             "ask_witness", npc=npc, name=conv.persona.name, witness=c.npc, tier=c.tier, said=said
         )
@@ -486,6 +489,7 @@ class Witnesses:
                 return await self._ask(conv, c, said, now, about, about_name)
             finally:
                 self._asking.discard(npc)
+                self._called.discard(c.npc)
 
         dialogue.after_speech(conv, job)
         how = "окликнешь — подойдёт" if c.tier == "near" else "дойдёшь, спросишь и вернёшься"
@@ -515,6 +519,11 @@ class Witnesses:
     def asking(self, npc: str) -> bool:
         """It waits for the answer to its question (group.py gives it no answer turn meanwhile)."""
         return npc.upper() in self._asking
+
+    def called(self, npc: str) -> bool:
+        """It is asked as a witness: it speaks from its testimony cue, not on an answer turn to the asker's
+        question said aloud (group.py, interject.py)."""
+        return npc.upper() in self._called
 
     def any(self, npc: str) -> bool:
         """Whether a witness told it of seeing the hero (catch_lie is offered then)."""
