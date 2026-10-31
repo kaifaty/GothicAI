@@ -1,4 +1,5 @@
 #include "pfxemitter.h"
+#include "loadprobe.h"
 
 #include <Tempest/Log>
 
@@ -30,6 +31,7 @@ PfxEmitter::PfxEmitter(World& world, const ParticleFx* decl) {
   }
 
 PfxEmitter::PfxEmitter(PfxObjects& owner, const ParticleFx* decl) {
+  LoadProbe::Vobs::Scope probe("pfx");
   if(decl==nullptr || (decl->visMaterial.tex==nullptr && !decl->hasTrails()))
     return;
   std::lock_guard<std::recursive_mutex> guard(owner.sync);
@@ -40,6 +42,7 @@ PfxEmitter::PfxEmitter(PfxObjects& owner, const ParticleFx* decl) {
   }
 
 PfxEmitter::PfxEmitter(World& world, const asset::VirtualObject& vob) {
+  LoadProbe::Vobs::Scope probe("pfx");
   if(Resources::isHeadless()) {
     if(FileExt::hasExt(vob.visual->name,"PFX")) {
       cpuDecl = Gothic::inst().loadParticleFx(vob.visual->name);

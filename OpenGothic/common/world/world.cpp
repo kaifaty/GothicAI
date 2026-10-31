@@ -256,14 +256,18 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     wmatrix.reset(new WayMatrix(*this, *world.waynet));
     if(LoadProbe::enabled())
       LoadProbe::mark("waynet",LoadProbe::msSince(probeT));
-    probeT = LoadProbe::now();
+    double probeVobsMs=0;
+    {
+    LoadProbe::Vobs::Stage probe;
     {
     Resources::TextureLoadScope textureLoadScope{bool(residency)};
     for(auto& vob:world.vobs)
       wobj.addRoot(vob,startup);
     }
+    probeVobsMs=probe.stop();
+    }
     if(LoadProbe::enabled())
-      LoadProbe::mark("vobs",LoadProbe::msSince(probeT),
+      LoadProbe::mark("vobs",probeVobsMs,
                       "items="+std::to_string(wobj.itmCount())+" mobsi="+std::to_string(wobj.mobsiCount()));
     probeT = LoadProbe::now();
     wdynamic->finalizeMovableVobs();
