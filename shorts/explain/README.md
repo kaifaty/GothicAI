@@ -145,7 +145,7 @@ the original plan gains and ducking for Studio and drafts; they do not run the p
   filling up to a count), `stats` (the character's numbers greying out under a question), and the wide-only
   `line`, `big`, `table`, `cells`, `rays`, `cone`, `ticks`, `grid`, `flow` described below. A tall card is drawn
   `CARD_LIFT` (80 px) above its own coordinates, so its lowest labels clear the captions by about 100 px; its
-  source line stays at 1440. Its title and frame (axes, panel, first row) are there from the cut, so frame 0 is
+  source line sits at 1470, clear of three lines of captions. Its title and frame (axes, panel, first row) are there from the cut, so frame 0 is
   a finished picture; the rest enters on its words;
   each but `stats` names its `source`;
 - `lines`: the voice's words with their times, a sentence per line (`gothic-shorts words`); the captions are

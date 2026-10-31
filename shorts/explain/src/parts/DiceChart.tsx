@@ -2,7 +2,7 @@ import React from 'react';
 import {AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
 import {chance, exeChance, MAX_DIST, MIN_DIST, type Curve} from '../dice';
 import type {DiceChart as Spec} from '../schema';
-import {CARD_LIFT, COLOR, FONT, OUTLINE} from '../theme';
+import {CARD_LIFT, COLOR, FONT, OUTLINE, SOURCE_TOP} from '../theme';
 import {keyframes, shown} from './anim';
 
 const STYLE: Record<Curve, {color: string; width: number}> = {
@@ -210,7 +210,7 @@ export const DiceChart: React.FC<{spec: Spec}> = ({spec}) => {
         </div>
       ))}
 
-      <div style={{position: 'absolute', left: wide ? 96 : X0 - 20, top: wide ? 850 : 1440 + CARD_LIFT, opacity: axes, ...label(28, COLOR.before), fontWeight: 600, ...(wide ? {width: 1728, whiteSpace: 'normal'} : {})}}>
+      <div style={{position: 'absolute', left: wide ? 96 : X0 - 20, top: wide ? 850 : SOURCE_TOP + CARD_LIFT, opacity: axes, ...label(28, COLOR.before), fontWeight: 600, ...(wide ? {width: 1728, whiteSpace: 'normal'} : {})}}>
         {spec.source}
       </div>
     </AbsoluteFill>

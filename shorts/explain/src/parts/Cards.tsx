@@ -1,7 +1,7 @@
 import React from 'react';
 import {AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {BarsCard as Bars, DotsCard as Dots, FormulaCard as Formula, StatsCard as Stats} from '../schema';
-import {CARD_LIFT, COLOR, FONT, OUTLINE, SAFE, W} from '../theme';
+import {CARD_LIFT, COLOR, FONT, OUTLINE, SAFE, SOURCE_TOP, W} from '../theme';
 import {rise, shown} from './anim';
 
 // cards: what has no picture in the world. Numbers are computed here from the plan's inputs, not typed in.
@@ -21,7 +21,7 @@ const text = (size: number, color: string = COLOR.text, weight = 800): React.CSS
 const Source: React.FC<{text: string}> = ({text: s}) => {
   const {width, height} = useVideoConfig();
   const wide = width > height;
-  return <div style={{position: 'absolute', left: wide ? 96 : LEFT, top: wide ? 850 : 1440 + CARD_LIFT, width: wide ? 1728 : WIDTH, ...text(28, COLOR.before, 600)}}>{s}</div>;
+  return <div style={{position: 'absolute', left: wide ? 96 : LEFT, top: wide ? 850 : SOURCE_TOP + CARD_LIFT, width: wide ? 1728 : WIDTH, ...text(28, COLOR.before, 600)}}>{s}</div>;
 };
 
 const useT = () => useCurrentFrame() / useVideoConfig().fps;

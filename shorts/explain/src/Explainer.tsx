@@ -135,7 +135,7 @@ const BeatView: React.FC<{
     else if (card.type === 'ticks') body = <TicksView spec={card} />;
     else if (card.type === 'grid') body = <GridView spec={card} />;
     else if (card.type === 'flow') body = <FlowView spec={card} />;
-    // a tall card is lifted clear of the captions (its source line compensates and stays at 1440)
+    // a tall card is lifted clear of the captions (its source line compensates: SOURCE_TOP)
     if (!wide) body = <AbsoluteFill style={{transform: `translateY(${-CARD_LIFT}px)`}}>{body}</AbsoluteFill>;
   } else if (beat.kind === 'split' && beat.src && beat.srcBottom) {
     const half = height / 2;
@@ -259,8 +259,9 @@ export const Explainer: React.FC<Plan> = (plan) => {
   const spans: Spans = plan.lines.filter((l) => l.length > 0).map((l) => [l[0].start, l[l.length - 1].end]);
   // the times of tall splits: there the captions sit just under the seam, off the bottom half's subject
   const seams: [number, number][] = [];
+  const onFrame = (s: number) => Math.round(s * fps) / fps; // as the beats' Sequences start
   plan.beats.reduce((at, b) => {
-    if (b.kind === 'split') seams.push([at, at + b.dur]);
+    if (b.kind === 'split') seams.push([onFrame(at), onFrame(at + b.dur)]);
     return at + b.dur;
   }, 0);
   let t = 0;
