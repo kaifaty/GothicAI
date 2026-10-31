@@ -4234,7 +4234,7 @@ namespace {
       auto matrix=Tempest::Matrix4x4::mkIdentity();
       for(int c=0;c<4;++c)
         for(int r=0;r<3;++r)
-          matrix.at(c,r)=transform.GetColumn4(c)[r]*(c==3 ? 100.f : 1.f);
+          matrix.set(c,r,transform.GetColumn4(c)[r]*(c==3 ? 100.f : 1.f));
       const float planeY=vertices[0].y*100.f;
       for(const bool enabled:{false,true}) {
         CollisionWorld world;
