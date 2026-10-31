@@ -20,7 +20,11 @@ remote_script() {
       printf -v remote_env '%s %q' "$remote_env" "$key=${!key}"
     fi
   done
-  { cat "$ROOT/scripts/gq-job.sh"; cat; } |
+  {
+    cat "$ROOT/scripts/gq-job.sh"
+    if [[ "$HOST" == ryzen ]]; then cat "$ROOT/scripts/ryzen-build.sh"; else printf 'RYZEN_CMAKE_FLAGS=()\n'; fi
+    cat
+  } |
     ssh -o BatchMode=yes "$HOST" "env$remote_env bash -s --$remote_args"
 }
 
@@ -96,6 +100,8 @@ if gq_available; then
   build_command="$(cat <<'GQ_BUILD'
 set -euo pipefail
 task_root="$1"
+shift
+RYZEN_CMAKE_FLAGS=("$@")
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
 export PATH="$VULKAN_SDK/bin:$PATH"
 # Jolt on x86-64-v3 (AVX2, F16C, BMI1, LZCNT; never FMA) where the host has it: same results, shorter tick.
@@ -103,17 +109,17 @@ jolt_x86=portable
 grep -qw avx2 /proc/cpuinfo && grep -qw f16c /proc/cpuinfo && grep -qw bmi1 /proc/cpuinfo &&
   grep -qw abm /proc/cpuinfo && jolt_x86=x86-64-v3
 nice -n 10 cmake -S "$task_root/source/OpenGothic" -B "$task_root/build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DOPENGOTHIC_JOLT_X86="$jolt_x86" \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"} -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DOPENGOTHIC_JOLT_X86="$jolt_x86" \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
   > "$task_root/provenance/configure.log" 2>&1
-nice -n 10 cmake --build "$task_root/build" --target gothic-body-runner Gothic2Notr gothic-body-resolver-test --parallel 2 \
+nice -n 10 cmake --build "$task_root/build" --target gothic-body-runner gothic-body-resolver-test --parallel 2 \
   > "$task_root/provenance/build.log" 2>&1 || { tail -80 "$task_root/provenance/build.log" >&2; exit 1; }
 "$task_root/build/opengothic/gothic-body-resolver-test" > "$task_root/provenance/resolver-tests.json"
 tail -8 "$task_root/provenance/build.log"
 GQ_BUILD
 )"
   gq_job --class quick --threads 3 --mem 6G --max 30m --name "body-api-build" -- \
-    bash -c "$build_command" bash "$task_root"
+    bash -c "$build_command" bash "$task_root" ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"}
 else
   export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
   export PATH="$VULKAN_SDK/bin:$PATH"
@@ -121,10 +127,10 @@ else
   grep -qw avx2 /proc/cpuinfo && grep -qw f16c /proc/cpuinfo && grep -qw bmi1 /proc/cpuinfo &&
     grep -qw abm /proc/cpuinfo && jolt_x86=x86-64-v3
   nice -n 10 cmake -S "$task_root/source/OpenGothic" -B "$task_root/build" -G Ninja \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DOPENGOTHIC_JOLT_X86="$jolt_x86" \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"} -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DOPENGOTHIC_JOLT_X86="$jolt_x86" \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
     > "$task_root/provenance/configure.log" 2>&1
-  nice -n 10 cmake --build "$task_root/build" --target gothic-body-runner Gothic2Notr gothic-body-resolver-test --parallel 2 \
+  nice -n 10 cmake --build "$task_root/build" --target gothic-body-runner gothic-body-resolver-test --parallel 2 \
     > "$task_root/provenance/build.log" 2>&1 || { tail -80 "$task_root/provenance/build.log" >&2; exit 1; }
   "$task_root/build/opengothic/gothic-body-resolver-test" > "$task_root/provenance/resolver-tests.json"
   tail -8 "$task_root/provenance/build.log"

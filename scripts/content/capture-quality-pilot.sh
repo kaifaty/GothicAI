@@ -36,8 +36,9 @@ if [[ "${1:-}" == --remote-prepare ]]; then
   export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
   export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
   mkdir -p "$task/build"
+  source "$(dirname "$0")/ryzen-build.sh"
   cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "${RYZEN_CMAKE_FLAGS[@]}" \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
     >"$task/build/configure.log" 2>&1 || { tail -40 "$task/build/configure.log"; exit 1; }
   cmake --build "$task/build" --target Gothic2Notr --parallel 8 \
@@ -177,7 +178,7 @@ if [[ "${1:-}" == --prepare ]]; then
   rsync -a --delete --exclude=.git --exclude=build --exclude=__pycache__ \
     "$ROOT/OpenGothic/" "$HOST:$BUILD_TASK/source/OpenGothic/"
   rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$HOST:$BUILD_TASK/source/scripts/convert/"
-  rsync -a "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
+  rsync -a "$ROOT/scripts/ryzen-build.sh" "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
     "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
   common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
   rsync -a "${SAVE:-$(dirname "$common")/save_slot_1.sav}" "$HOST:$TASK/save_slot_1.sav"

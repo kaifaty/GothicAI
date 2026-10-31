@@ -117,16 +117,20 @@ def prepare():
             raise ValueError(f"Missing tool: {tool}")
     if not (sdk / "include/vulkan/vulkan.h").is_file() or not (sdk / "lib/libvulkan.so").is_file():
         raise ValueError(f"Incomplete user Vulkan SDK: {sdk}")
+    flags = subprocess.check_output([
+        "bash", "-euc", 'source "$1"; printf "%s\\0" "${RYZEN_CMAKE_FLAGS[@]}"',
+        "ryzen-build", str(repo / "scripts/ryzen-build.sh"),
+    ]).decode().split("\0")[:-1]
     build = repo / "OpenGothic/build"
     run(["cmake", "-S", repo / "OpenGothic", "-B", build, "-G", "Ninja",
-         "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+         "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", *flags,
          "-DOPENGOTHIC_ENABLE_APP_CADENCE=ON", f"-DCMAKE_CXX_FLAGS=-I{sdk}/include",
          f"-DCMAKE_EXE_LINKER_FLAGS=-L{sdk}/lib"])
     run(["cmake", "--build", build, "--target", "Gothic2Notr", "--parallel", "12"])
     # The server's NPC knowledge/director needs this converter on a fresh machine.
     graph = repo / "OpenGothic/ai_bridge/storygraph"
     run(["cmake", "-S", graph, "-B", graph / "build", "-G", "Ninja",
-         "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+         "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5", *flags,
          "-DCMAKE_CXX_FLAGS=-include algorithm"])
     run(["cmake", "--build", graph / "build", "--target", "storygraph", "--parallel", "12"])
     for project in ("server", "asr-service", "tts-service", "launcher/core"):

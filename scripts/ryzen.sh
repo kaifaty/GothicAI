@@ -155,6 +155,7 @@ root = Path(sys.argv[1])
 digest = hashlib.sha256()
 if sys.argv[2] == 'ON':
     digest.update(b'OPENGOTHIC_ENABLE_FRAME_PROFILE=ON\0')
+digest.update((root / 'scripts/ryzen-build.sh').read_bytes())
 for source in ('OpenGothic', 'scripts/convert'):
     for path in sorted((root / source).rglob('*')):
         if 'build' in path.relative_to(root).parts:
@@ -274,8 +275,10 @@ build_storygraph() {
     mkdir -p "$build"
     # Standalone execcheck.cpp uses std::find without <algorithm>. Supply the header
     # in the build flags so the wrapper works on GCC 15 without editing engine sources.
+    source "$ROOT/scripts/ryzen-build.sh"
     cmake -S "$ROOT/OpenGothic/ai_bridge/storygraph" -B "$build" -G Ninja \
       -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+      "${RYZEN_CMAKE_FLAGS[@]}" \
       -DCMAKE_CXX_FLAGS='-include algorithm' \
       >"$build/configure.log" 2>&1 || { local rc=$?; cat "$build/configure.log"; return "$rc"; }
     cmake --build "$build" --target storygraph --parallel "${RYZEN_JOBS:-12}" \
@@ -423,8 +426,10 @@ build_engine() {
     [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo 'RYZEN_JOBS must be positive' >&2; exit 2; }
     mkdir -p "$state/build"
     # Reconfigure on tree changes: OpenGothic's source globs need this for new .cpp files.
+    source "$ROOT/scripts/ryzen-build.sh"
     cmake -S "$ROOT/OpenGothic" -B "$state/build" -G Ninja \
       -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+      "${RYZEN_CMAKE_FLAGS[@]}" \
       -DOPENGOTHIC_ENABLE_APP_CADENCE=ON -DOPENGOTHIC_ENABLE_FRAME_PROFILE="$frame_profile" \
       -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
       >"$state/build/configure.log" 2>&1 || { local rc=$?; cat "$state/build/configure.log"; return "$rc"; }
