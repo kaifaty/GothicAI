@@ -28,7 +28,7 @@ void MeleeImpact::Posture::tick(uint64_t nowMs, uint64_t dtMs) {
   }
 
 // Balance sweeps only: OPENGOTHIC_MELEE_POSTURE_SCALE multiplies the knockdown threshold.
-static float postureThresholdScale() {
+float MeleeImpact::postureThresholdScale() {
   static const float scale = [] {
     const char* text = std::getenv("OPENGOTHIC_MELEE_POSTURE_SCALE");
     const float value = text==nullptr ? 1.f : std::strtof(text,nullptr);
@@ -37,9 +37,14 @@ static float postureThresholdScale() {
   return scale;
   }
 
+float MeleeImpact::postureIncrease(float impulseNs, float bodyMassKg, float thresholdScale, float balanceScale) {
+  const float threshold = 120.f*thresholdScale*balanceScale*bodyMassKg/75.f;
+  return 100.f*impulseNs/threshold;
+  }
+
 bool MeleeImpact::Posture::hit(float impulseNs, float bodyMassKg, uint64_t nowMs, float thresholdScale) {
-  const float threshold = 120.f*thresholdScale*postureThresholdScale()*bodyMassKg/75.f;
-  value = std::min(nowMs<immuneUntilMs ? 60.f : 100.f,value+100.f*impulseNs/threshold);
+  value = std::min(nowMs<immuneUntilMs ? 60.f : 100.f,
+                   value+postureIncrease(impulseNs,bodyMassKg,thresholdScale,postureThresholdScale()));
   lastHitMs = nowMs;
   return value>=100.f;
   }

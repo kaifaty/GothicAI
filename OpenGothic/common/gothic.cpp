@@ -122,6 +122,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "buoyancy",            1);
   defaults->set("GAME", "cloth",               1);
   defaults->set("GAME", "item_wake",           1);
+  defaults->set("GAME", "placed_items",        1);
   defaults->set("GAME", "static_collision_split",1);
   defaults->set("GAME", "character_virtual",   1);
   defaults->set("GAME", "npc_character_virtual",1);
@@ -133,6 +134,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_down_tactics",    1);
   defaults->set("GAME", "melee_hitstop",         1);
   defaults->set("GAME", "melee_stamina",         1);
+  defaults->set("GAME", "melee_parry",           1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -905,7 +907,9 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","item_hulls")!=0,
     settingsGetI("GAME","melee_hitstop")!=0,
     settingsGetI("GAME","melee_stamina")!=0,
-    settingsGetI("GAME","furniture_parts")!=0
+    settingsGetI("GAME","melee_parry")!=0,
+    settingsGetI("GAME","furniture_parts")!=0,
+    settingsGetI("GAME","placed_items")!=0
     };
   }
 

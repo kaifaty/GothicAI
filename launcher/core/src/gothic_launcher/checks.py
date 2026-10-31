@@ -8,7 +8,9 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import os
 import re
+import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -61,6 +63,15 @@ class Check:
 def find_games(extra: list[Path] | None = None) -> list[Path]:
     """Folders that look like Gothic II (they have a Data folder): Steam libraries, Wine bottles with
     Steam or GOG, the usual places. A copy made by hand elsewhere is not found: the player picks it."""
+    if sys.platform == "win32":
+        steam_roots = []
+        for steam in _windows_steam():
+            steam_roots += [steam, *_steam_libraries(steam / "steamapps" / "libraryfolders.vdf")]
+        places = [root / "steamapps" / "common" for root in steam_roots] + steam_roots
+        x86 = Path(os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)")
+        places += [Path("C:/"), Path("C:/GOG Games"), x86 / "GOG Galaxy" / "Games", x86 / "JoWooD"]
+        places += [Path.home() / "Games"]
+        return _gothic_folders(places, extra)
     steam_roots = [STEAM, *_steam_libraries(STEAM / "steamapps" / "libraryfolders.vdf")]
     for bottles in BOTTLES:
         for drive in _children(bottles, lambda p: p / "drive_c"):
@@ -68,6 +79,10 @@ def find_games(extra: list[Path] | None = None) -> list[Path]:
             steam_roots += [drive / "GOG Games", drive / "Program Files (x86)" / "GOG Galaxy" / "Games"]
     places = [root / "steamapps" / "common" for root in steam_roots] + steam_roots
     places += [Path.home() / "Games", Path("/Applications"), Path.home()]
+    return _gothic_folders(places, extra)
+
+
+def _gothic_folders(places: list[Path], extra: list[Path] | None) -> list[Path]:
     candidates = [place / name for place in places for name in GAME_FOLDERS] + (extra or [])
     found: dict[Path, Path] = {}
     for c in candidates:
@@ -77,12 +92,24 @@ def find_games(extra: list[Path] | None = None) -> list[Path]:
 
 
 def _steam_libraries(vdf: Path) -> list[Path]:
-    """`"path"  "/Volumes/Games/SteamLibrary"` lines of libraryfolders.vdf."""
+    """`"path"  "/Volumes/Games/SteamLibrary"` lines of libraryfolders.vdf (UTF-8, also on Windows)."""
     try:
-        text = vdf.read_text(errors="replace")
+        text = vdf.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
     return [Path(m.group(1).replace("\\\\", "\\")) for m in re.finditer(r'"path"\s+"([^"]+)"', text)]
+
+
+def _windows_steam() -> list[Path]:
+    """Where Steam says it is installed (its own registry value), then its default folder."""
+    roots: list[Path] = []
+    with contextlib.suppress(OSError, ImportError):
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+            roots.append(Path(winreg.QueryValueEx(key, "SteamPath")[0]))
+    x86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
+    return [*roots, Path(x86) / "Steam"]
 
 
 def _children(folder: Path, pick: Callable[[Path], Path]) -> list[Path]:

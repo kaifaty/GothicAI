@@ -1321,9 +1321,12 @@ void Pose::setAnimSpeed(std::string_view name, float k) {
 
 void Pose::setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now) {
   for(auto& l:lay)
-    if(l.seq==seq && now>l.sAnim && k>0.f) {
-      const double played = double(layerTime(l,now)-l.sAnim);
-      l.sAnim = now-uint64_t(played/double(k));
+    if(l.seq==seq && k>0.f) {
+      // a layer started this very tick takes the pace from its start
+      if(now>l.sAnim) {
+        const double played = double(layerTime(l,now)-l.sAnim);
+        l.sAnim = now-uint64_t(played/double(k));
+        }
       l.speed = k;
       l.catchFrom = 0; // a speed set on purpose; a hit stop under way still keeps it (endHitStop)
       }

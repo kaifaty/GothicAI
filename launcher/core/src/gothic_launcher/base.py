@@ -2,18 +2,48 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
 import re
 from pathlib import Path, PurePosixPath
 
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None  # type: ignore[assignment]
+
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def _digest(value: object) -> bool:
     return isinstance(value, str) and _SHA256.fullmatch(value) is not None
+
+
+def _share(lease) -> None:
+    """A shared lock on the whole lease file, held until it is closed. Windows: LockFileEx over the same
+    range as the engine's lease (common/basestore.cpp), so its cleanup skips a base in use here."""
+    if fcntl is not None:
+        fcntl.flock(lease, fcntl.LOCK_SH)
+        return
+    import ctypes
+    import msvcrt
+
+    class Overlapped(ctypes.Structure):  # OVERLAPPED
+        _fields_ = [
+            ("Internal", ctypes.c_void_p),
+            ("InternalHigh", ctypes.c_void_p),
+            ("Offset", ctypes.c_uint32),
+            ("OffsetHigh", ctypes.c_uint32),
+            ("hEvent", ctypes.c_void_p),
+        ]
+
+    lock = ctypes.WinDLL("kernel32", use_last_error=True).LockFileEx  # type: ignore[attr-defined]
+    lock.restype = ctypes.c_int
+    lock.argtypes = (ctypes.c_void_p, *(ctypes.c_uint32,) * 4, ctypes.POINTER(Overlapped))
+    handle = msvcrt.get_osfhandle(lease.fileno())  # type: ignore[attr-defined]
+    if not lock(handle, 0, 0, 0xFFFFFFFF, 0xFFFFFFFF, ctypes.byref(Overlapped())):
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
 
 
 def _checked(raw: bytes, entry: dict, name: str) -> bytes:
@@ -32,7 +62,7 @@ class Base:
         self._lease = None
         if self.path.parent == cache and _digest(self.path.name):
             self._lease = (cache / f"{self.path.name}.use").open("a+b")
-            fcntl.flock(self._lease, fcntl.LOCK_SH)
+            _share(self._lease)
         try:
             metadata = json.loads((self.path / "base.json").read_bytes())
             if (

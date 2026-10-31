@@ -12,12 +12,21 @@
 #include <fstream>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
+#else
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -45,22 +54,54 @@ class BaseStore::Lock {
         throw std::system_error(error,std::generic_category(),"lock base");
         }
 #else
-      (void)path;
-      (void)mode;
-      (void)cancelled;
-      throw std::runtime_error("automatic base import requires Unix file locks");
+      // LockFileEx is flock's counterpart: held per handle, shared or exclusive, released with the handle
+      // or the process. The lock files are never read or written, so its mandatory ranges block nothing.
+      if(cancelled && cancelled->load()) throw std::runtime_error("video preparation cancelled");
+      file=::CreateFileW(path.c_str(),GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+                         nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+      if(file==INVALID_HANDLE_VALUE)
+        throw std::system_error(int(::GetLastError()),std::system_category(),"open base lock");
+      DWORD flags=mode==Shared ? 0 : LOCKFILE_EXCLUSIVE_LOCK;
+      if(mode==TryExclusive || cancelled!=nullptr)
+        flags|=LOCKFILE_FAIL_IMMEDIATELY;
+      for(;;) {
+        OVERLAPPED whole={};
+        if(::LockFileEx(file,flags,0,MAXDWORD,MAXDWORD,&whole)) break;
+        const DWORD error=::GetLastError();
+        if(cancelled && !cancelled->load() && mode!=TryExclusive && error==ERROR_LOCK_VIOLATION) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(20));
+          continue;
+          }
+        ::CloseHandle(file);
+        file=INVALID_HANDLE_VALUE;
+        if(cancelled && cancelled->load()) throw std::runtime_error("video preparation cancelled");
+        if(mode==TryExclusive && error==ERROR_LOCK_VIOLATION) return;
+        throw std::system_error(int(error),std::system_category(),"lock base");
+        }
 #endif
       }
     ~Lock() {
 #ifndef _WIN32
       ::close(fd);
+#else
+      if(file!=INVALID_HANDLE_VALUE) {
+        OVERLAPPED whole={};
+        ::UnlockFileEx(file,0,MAXDWORD,MAXDWORD,&whole);
+        ::CloseHandle(file);
+        }
 #endif
       }
     Lock(const Lock&)=delete;
     Lock& operator=(const Lock&)=delete;
+#ifndef _WIN32
     bool acquired() const { return fd>=0; }
   private:
     int fd=-1;
+#else
+    bool acquired() const { return file!=INVALID_HANDLE_VALUE; }
+  private:
+    HANDLE file=INVALID_HANDLE_VALUE;
+#endif
   };
 
 namespace {
@@ -91,11 +132,30 @@ bool hasInstallation(const fs::path& gothic) {
     });
   }
 
+// The Python readers (base.py) name and compare pointer paths as str(Path.resolve()) in UTF-8. On Windows
+// that is the native format, and a narrow path string would be in the ANSI code page instead.
+std::string pointerPath(const fs::path& path) {
+#ifdef _WIN32
+  const auto text=fs::weakly_canonical(path).u8string();
+  return std::string(reinterpret_cast<const char*>(text.data()),text.size());
+#else
+  return fs::weakly_canonical(path).generic_string();
+#endif
+  }
+
+fs::path pointedPath(std::string_view text) {
+#ifdef _WIN32
+  return fs::path(std::u8string(reinterpret_cast<const char8_t*>(text.data()),text.size()));
+#else
+  return fs::path(text);
+#endif
+  }
+
 // Only pointer I/O holds this lock; imports keep their independent cache locks.
 class Current {
   public:
     Current(const fs::path& cache, const fs::path& gothic, const std::atomic_bool* cancelled=nullptr)
-      :gothic(fs::weakly_canonical(gothic).generic_string()),cancelled(cancelled) {
+      :gothic(pointerPath(gothic)),cancelled(cancelled) {
       file=cache/"current"/(BaseImport::sha256(this->gothic)+".json");
       fs::create_directories(file.parent_path());
       Lock lock(file.parent_path()/".lock",Lock::Exclusive,cancelled);
@@ -111,7 +171,7 @@ class Current {
       if(snapshot && *snapshot!=part["snapshot"].GetString()) return false;
       identity={part["fingerprint"].GetString(),part["identity"].GetString()};
       if(!fingerprintName(identity.fingerprint)) return false;
-      path=fs::path(part["path"].GetString());
+      path=pointedPath({part["path"].GetString(),part["path"].GetStringLength()});
       return path.is_absolute();
       }
 
@@ -130,7 +190,7 @@ class Current {
         }
       rapidjson::Value part(rapidjson::kObjectType);
       auto& allocator=json.GetAllocator();
-      part.AddMember("path",string(fs::weakly_canonical(path).generic_string()),allocator);
+      part.AddMember("path",string(pointerPath(path)),allocator);
       part.AddMember("fingerprint",string(identity.fingerprint),allocator);
       part.AddMember("identity",string(identity.json),allocator);
       part.AddMember("snapshot",string(savedSnapshot),allocator);
@@ -333,8 +393,14 @@ void BaseStore::setPublication(bool enabled) { publicationEnabled=enabled; }
 
 fs::path BaseStore::cacheRoot() {
   fs::path cache;
+#ifdef _WIN32
+  // Wide environment variables preserve Unicode Windows paths.
+  if(const auto* env=_wgetenv(L"OPENGOTHIC_BASE_CACHE")) cache=env;
+  else if(const auto* local=_wgetenv(L"LOCALAPPDATA"); local && *local) cache=fs::path(local)/"gothic-ai"/"base";
+#else
   if(const auto* env=std::getenv("OPENGOTHIC_BASE_CACHE")) cache=env;
   else if(const auto* home=std::getenv("HOME")) cache=fs::path(home)/".cache/gothic-ai/base";
+#endif
   if(cache.empty()) throw std::runtime_error("base cache path is empty");
   return fs::weakly_canonical(fs::absolute(cache));
   }

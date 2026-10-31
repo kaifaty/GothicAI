@@ -10,6 +10,8 @@
 # QUALITY_PILOT_TASK=gothic-ai/harbour-hut selects harbour-hut.bench (six views, normal game FOV; original or a staging set such as hut-1).
 # QUALITY_PILOT_TASK=gothic-ai/remaster-ASSET selects ASSET.bench; a set must replace every entry of its own index.
 # QUALITY_PILOT_SCENARIO=FILE.bench overrides the scenario, e.g. the same cameras at another time of day.
+# QUALITY_PILOT_TIMEOUT=SECONDS gives the game longer than 240 s (a long scenario on a busy Ryzen).
+# QUALITY_PILOT_INI="SECTION.key=value ..." adds Gothic.ini settings, e.g. INTERNAL.halfResAoFog=0.
 # --compose-house CAPTURES OUTPUT writes original / pilot-3b / house-1 boards.
 # --compose-house-2 CAPTURES OUTPUT writes original / house-1 / house-2 boards.
 set -euo pipefail
@@ -34,8 +36,9 @@ if [[ "${1:-}" == --remote-prepare ]]; then
   export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
   export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
   mkdir -p "$task/build"
+  source "$(dirname "$0")/ryzen-build.sh"
   cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "${RYZEN_CMAKE_FLAGS[@]}" \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
     >"$task/build/configure.log" 2>&1 || { tail -40 "$task/build/configure.log"; exit 1; }
   cmake --build "$task/build" --target Gothic2Notr --parallel 8 \
@@ -62,6 +65,26 @@ soundVolume=0
 musicVolume=0
 musicEnabled=0
 INI
+  if [[ -n "${QUALITY_PILOT_INI:-}" ]]; then
+    # SECTION.key=value items, space separated: one render setting against another in the same scenario
+    python3 - "$out/run/Gothic.ini" ${QUALITY_PILOT_INI} <<'PYINI'
+import sys
+path, items = sys.argv[1], sys.argv[2:]
+sections, order = {}, []
+for line in open(path).read().splitlines():
+    if line.startswith('['):
+        order.append(line[1:-1]); sections[order[-1]] = []
+    elif line:
+        sections[order[-1]].append(line)
+for item in items:
+    section, setting = item.split('.', 1)
+    key = setting.split('=', 1)[0]
+    if section not in sections:
+        order.append(section); sections[section] = []
+    sections[section] = [l for l in sections[section] if l.split('=', 1)[0] != key] + [setting]
+open(path, 'w').write(''.join(f'[{s}]\n' + ''.join(l + '\n' for l in sections[s]) for s in order))
+PYINI
+  fi
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
   connected=0
@@ -123,7 +146,7 @@ PYGAME
   GAME_BIN="$HOME/$BUILD_TASK/build/opengothic/Gothic2Notr" \
     bash "$(dirname "$0")/base-ensure.sh" "$game"
   rc=0
-  (cd "$out/run" && timeout 240 "$HOME/$BUILD_TASK/build/opengothic/Gothic2Notr" \
+  (cd "$out/run" && timeout "${QUALITY_PILOT_TIMEOUT:-240}" "$HOME/$BUILD_TASK/build/opengothic/Gothic2Notr" \
     -g "$game" -g2 -window -devmode -save 1) >"$out/game.log" 2>&1 || rc=$?
   printf '%s\n' "$rc" >"$out/exit.txt"
   [[ "$rc" == 0 ]] || { tail -30 "$out/game.log"; exit "$rc"; }
@@ -155,7 +178,7 @@ if [[ "${1:-}" == --prepare ]]; then
   rsync -a --delete --exclude=.git --exclude=build --exclude=__pycache__ \
     "$ROOT/OpenGothic/" "$HOST:$BUILD_TASK/source/OpenGothic/"
   rsync -a --delete --exclude='/build*/' "$ROOT/scripts/convert/" "$HOST:$BUILD_TASK/source/scripts/convert/"
-  rsync -a "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
+  rsync -a "$ROOT/scripts/ryzen-build.sh" "$ROOT/scripts/content/capture-quality-pilot.sh" "$ROOT/scripts/content/capture-quality-pilot.py" \
     "$ROOT/scripts/base-ensure.sh" "$ROOT/scripts/ryzen_game.py" "$ROOT/scripts/content/$SCENARIO" "$HOST:$TASK/scripts/"
   common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
   rsync -a "${SAVE:-$(dirname "$common")/save_slot_1.sav}" "$HOST:$TASK/save_slot_1.sav"

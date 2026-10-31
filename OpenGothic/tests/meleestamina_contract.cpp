@@ -68,5 +68,8 @@ int main() {
   require(spend(state,100.f,3000,false),"disabled flag accepts action at zero");
   requireNear(state.current,0.f,"disabled flag does not spend");
   require(state.lastSpend==2800,"disabled flag leaves spend time unchanged");
+  drain(state,10.f,3200);
+  require(state.current==0.f && state.exhausted && state.lastSpend==3200 && state.lastUpdate==3200,
+          "accepted defence at exhaustion restarts recovery delay without leaving zero");
   std::puts("melee stamina contract passed");
   }

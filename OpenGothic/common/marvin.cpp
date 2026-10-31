@@ -192,6 +192,7 @@ Marvin::Marvin() {
     {"toggle buoyancy",           C_ToggleBuoyancy},
     {"toggle cloth",              C_ToggleCloth},
     {"toggle item_wake",          C_ToggleItemWake},
+    {"toggle placed_items",       C_TogglePlacedItems},
     {"toggle character_virtual",  C_ToggleCharacterVirtual},
     {"toggle npc_character_virtual",C_ToggleNpcCharacterVirtual},
     {"toggle monster_character_virtual",C_ToggleMonsterCharacterVirtual},
@@ -202,6 +203,7 @@ Marvin::Marvin() {
     {"toggle melee_down_tactics", C_ToggleMeleeDownTactics},
     {"toggle melee_hitstop",      C_ToggleMeleeHitStop},
     {"toggle melee_stamina",      C_ToggleMeleeStamina},
+    {"toggle melee_parry",        C_ToggleMeleeParry},
     };
   }
 
@@ -631,6 +633,12 @@ bool Marvin::exec(std::string_view v) {
       print(enabled ? "Item wake: ON" : "Item wake: OFF");
       return true;
       }
+    case C_TogglePlacedItems: {
+      const bool enabled = !Gothic::physicsFlags().placedItems;
+      Gothic::settingsSetI("GAME","placed_items",enabled ? 1 : 0);
+      print(enabled ? "Placed items: ON" : "Placed items: OFF");
+      return true;
+      }
     case C_ToggleCharacterVirtual: {
       const bool enabled = !Gothic::physicsFlags().characterVirtual;
       Gothic::settingsSetI("GAME","character_virtual",enabled ? 1 : 0);
@@ -689,6 +697,12 @@ bool Marvin::exec(std::string_view v) {
       const bool enabled = !Gothic::physicsFlags().meleeStamina;
       Gothic::settingsSetI("GAME","melee_stamina",enabled ? 1 : 0);
       print(enabled ? "Melee stamina: ON" : "Melee stamina: OFF");
+      return true;
+      }
+    case C_ToggleMeleeParry: {
+      const bool enabled = !Gothic::physicsFlags().meleeParry;
+      Gothic::settingsSetI("GAME","melee_parry",enabled ? 1 : 0);
+      print(enabled ? "Melee parry: ON" : "Melee parry: OFF");
       return true;
       }
     }

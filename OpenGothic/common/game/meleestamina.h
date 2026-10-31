@@ -19,5 +19,6 @@ namespace MeleeStamina {
   void  recover(State& state, float maximum, uint64_t now, bool parade);
   bool  canAct(const State& state, bool enabled);
   bool  canAfford(const State& state, float cost, bool enabled);
+  void  drain(State& state, float cost, uint64_t now);
   bool  spend(State& state, float cost, uint64_t now, bool enabled);
   }

@@ -115,3 +115,8 @@ Keep these when updating a library from upstream.
   in the same order before a save's world loads, so the npc's of the save find their symbols by index. The
   code names its own instance (`self` in an instance's body), so `GameScript::initializeInstanceNpc` binds
   that instance to the new npc while the code runs.
+- `ZenKit/` archive writers (`ArchiveAscii.cc`, `ArchiveBinary.cc`, `ArchiveBinsafe.cc`): on `_WIN32` the
+  header date is written with `%#d.%#m` instead of glibc's `%-d.%-m`. The Microsoft CRT has no `-` flag, and
+  its `strftime` sends an invalid format to the invalid-parameter handler, which by default ends the process
+  when an archive is written. The written date is the same; other platforms keep the upstream format. ZenKit sources are base
+  format inputs (`cmake/BaseImport.cmake`), so this patch changes `BaseFormatSha256` on every platform.

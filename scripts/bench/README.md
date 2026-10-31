@@ -841,6 +841,132 @@ forest), `NW_XARDAS_TOWER_IN1_*` (ramp inside the tower), `NW_XARDAS_STAIRS_01`.
 
 ## Engine side
 
+### Placed world Items (physics stage 8, step 5)
+
+`placed-items-census` checks the immutable authored-geometry census and wakes
+every admitted Item for five seconds, in 12 m sections. Each section advances
+at least 300 real fixed native steps synchronously, sampling after every tick;
+rendering and game-clock time do not pace the physical interval. All admitted
+neighbouring supports within 22 m are installed asleep before the section wakes.
+It never captures images.
+Run all four fresh worlds through Ryzen's queue:
+
+```bash
+WORLD=NEWWORLD.ZEN PLACED_ITEMS=1 RYZEN_CLEAN_IDLE_HOURS=0 \
+  RYZEN_LOCK_WAIT=1200 TIMEOUT=3600 RYZEN_MAX=75m \
+  scripts/bench.sh placed-items-census "$PWD/.bench/placed-items-NEWWORLD"
+# Repeat with OLDWORLD.ZEN, ADDONWORLD.ZEN and DRAGONISLAND.ZEN.
+python3 scripts/placed_items_report.py \
+  .bench/placed-items-{NEWWORLD,OLDWORLD,ADDONWORLD,DRAGONISLAND} \
+  --known-exceptions reports/physics/2026-10-31-placed-items/known-exceptions.csv
+```
+
+`placed-items-census.jsonl` records each ZEN-ID, original pose, instance, visual,
+exclusive exclusion reason, support gap and penetration depths. The census event
+adds classification time, admitted gap buckets (0–1, 1–2, 2–4 cm) and the densest
+20 m neighbourhood among all source Items (ties prefer more admitted Items).
+After the original geometric reasons, `rooted` excludes `ItPl_*` on landscape or
+`C_Object`; `slope` excludes static supports steeper than 15°. Its normal comes
+from a downward ray at the collision shape's lowest point, rather than the
+nearest overlap contact. `irregular` rejects static support when this ray misses
+a face; it follows `slope`. `no_ground` then rejects Items on static objects or
+movable furniture when a downward COM ray, excluding that support, finds no
+landscape or other static object within 5 m below the hull bottom. Penetration
+into static geometry, furniture or another Item is limited to 2 cm; the support
+gap remains 4 cm. `on_excluded` propagates rejected Item supports through
+whole stacks. Plants on furniture or admitted Items use the ordinary rules.
+`placed-items-probe.jsonl` records maximum and final travel
+for every admitted Item. The reader requires at least 95% of the combined sample
+to move less than 5 cm, maximum travel at most 100 cm, and zero `item recovered`
+messages. Every displacement over 10 cm remains in the output with its original
+contact measurements. These limits are fixed; a failed 95% gate requires a decision.
+For linked recoveries the reader also measures the logged pre-reset pose, so a
+reset inside a native tick cannot hide an excursion from the regular samples.
+Pass the previous four run directories with `--previous-runs` to include the
+new facet-slope distributions of their >10 cm outliers, alongside admitted Items,
+in 5° bins. A missing facet normal is counted separately. Recovery messages name
+the ZEN-ID whenever the recovered Item has an authored link.
+`--known-exceptions` reads `world,zen_id,reason` CSV rows and prints those Items
+separately. They still count toward the 95% fraction, but are omitted from the
+maximum-travel and recovery gates. Raw maximum/recovery totals remain visible
+beside `gate_max_shift_cm` and `gate_recovered`. The agreed file contains exactly
+NEWWORLD 18261, OLDWORLD 1644 and ADDONWORLD 6863; every other excess still fails.
+
+`placed-items diagnose <ZEN-ID> [control]` advances that Item's original 12 m
+section for 300 native steps and writes `placed-items-diagnose.jsonl`. Each step
+records center, velocity, nearby native contacts, triangle indices, normals and
+edge lengths, plus the recovery ray result. `solver_contacts` records the real
+`OnContactAdded`/`Persisted` manifold separately from geometric snapshots. `control` removes other Items and
+movable furniture while retaining landscape and static objects. The command
+requires an authored Item and uses `tick(16)` to prevent batched native steps.
+For an excluded Item it records the verdict and verifies that neither wake nor
+activation can create a body, without attempting to simulate that Item.
+
+`PLACED_ITEMS=0` selects the existing body-creation paths. `[GAME] placed_items`
+defaults to 1; Marvin `toggle placed_items` changes it during play. The census is
+computed even when the feature starts disabled, so enabling it later uses the
+same original geometry. Dropped Items retain their existing physics path.
+In OFF, the existing CharacterVirtual path creates bodies within its nearby Item
+radius and can push them; the walk check records this observed behavior.
+
+`placed-items` runs the native hero passage, arrow, tavern-table and owned pickup
+checks in NEWWORLD with `PLACED_ITEMS=1` and `=0`. Both modes choose the same
+authored floor food and supported lane; nearby NPCs are removed using the
+`item-wake` fixture pattern. The arrow aims at native collision bounds. The
+Dead Harpy table tests admitted Items; `owned-table` also selects a real mixed
+table with excluded Items and native private-room ownership for the theft check.
+Ownership fields are never rewritten. Failed result events preserve the final
+FAIL while allowing later independent checks to run. It snapshots ownership before
+the checks and saves after pickup (including removal/reordering of world Items):
+`session-placed-items.sav` and `placed-items-saved.jsonl` describe the same Items.
+Start `placed-items-reload` in two successive new processes, using the preceding
+process's archive as `SAVE` each time (leave `WORLD` unset). Its first command
+captures every Item before the first native step, then saves again. Verify both
+cycles with:
+
+```bash
+python3 scripts/placed_items_report.py --save-chain \
+  .bench/placed-items-on .bench/placed-items-reload-1 .bench/placed-items-reload-2
+```
+
+The reader checks saved poses within 0.01 cm, ZEN linkage, instance, owner,
+flags and count; linked native bodies must enter asleep and excluded Items must
+have no body. Also load an actual main save with no `placed-items` entry through
+`placed-items-reload`: only unchanged instance/pose matches acquire a link.
+
+`placed-items-performance` selects the densest source-Item 20 m neighbourhood from
+the census, measures entry frames and ten steady seconds after two seconds of
+warmup. Run three fresh processes per mode on the M1 Pro with `BENCH_HOST=local`,
+`WORLD=NEWWORLD.ZEN`, `RYZEN_CLEAN_IDLE_HOURS=0` and `PLACED_ITEMS=0`/`1`.
+Before each pair, record `uptime` and `pgrep -fl '[G]othic2Notr' || echo absent`.
+Wait up to 30 minutes for load average to fall to 12 or below, and always wait
+for any existing game. If physics p95 exceeds 2 ms in both modes, repeat the
+pair in the same scene on a clean `origin/main`. ON–OFF is the main comparison
+under high background load. `placed-items-performance.csv` contains native physics
+time, frame time, total/placed body counts and `proximity_created`. The latter
+counts only the new proximity budget; the existing `item_wake` budget is separate.
+Acceptance is physics p95 ≤2 ms and ON–OFF ≤0.2 ms. The report also records the
+worst entry frame, body counts and complete world loading time including census.
+Compare complete NEWWORLD loading time using the median of three runs per mode.
+
+[Recorded results](../../reports/physics/2026-10-31-placed-items/README.md): after
+the 2 cm penetration limit and `no_ground`, the four-world probe reached
+636/660 (96.363636%) below 5 cm, maximum 123.417038 cm and two recoveries.
+The three agreed exceptions preserve that fraction and raw evidence; with the
+CSV the reader passes, with a gated maximum of 74.7259445 cm and zero other
+recoveries. The two swords remain admitted; their thin-body support crossing
+will be investigated separately.
+The corrected functional ON/OFF passes all five result checks per mode. Mac
+ON p95 is 1.394707/1.581916/1.402624 ms; each pair is below OFF and within budget.
+Both cold cycles now pass on Ryzen with all 2330 saved links after pickup,
+including authored Item 2839 below mover 2838. The load-time catalogue retains
+all 2331 authored Items independently of inherited trigger flags. The old main
+save restores all 2331 links with no duplicate Items; maximum cold pose error is
+0.00007079 cm. Version 55 and placement-entry schema 1 remain unchanged.
+The native placed-Item contract also moves the mover-child Item before saving
+and checks its identity and exact matrix on reload. Linux builds and all four
+physics contracts pass after explicit signed Guild comparisons in the fixture.
+
 `OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs

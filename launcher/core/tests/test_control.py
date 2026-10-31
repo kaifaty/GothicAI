@@ -1,5 +1,4 @@
 import asyncio
-import fcntl
 import json
 import sys
 import zipfile
@@ -15,6 +14,9 @@ from gothic_launcher.commands import LaunchError, Ports, Proc
 from gothic_launcher.control import Control
 from gothic_launcher.state import AlreadyRunning, SessionFile
 from tests.test_supervisor import FAKE, gone
+
+# the window's sessions on POSIX process groups, and the Linux install lock; Windows: test_windows.py
+fcntl = pytest.importorskip("fcntl", reason="POSIX process groups and the Linux install lock")
 
 NPC_LINE = {"kind": "npc", "npc": "NONE_100_XARDAS", "name": "Ксардас", "text": "Придержи язык."}
 

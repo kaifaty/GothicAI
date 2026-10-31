@@ -34,6 +34,9 @@ if(MSVC)
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
   add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
   add_definitions(-D_ITERATOR_DEBUG_LEVEL=0)
+  # std::stable_sort of Jolt's 16-byte aligned contacts (physics/collisionworld.cpp) needs the conforming
+  # aligned_storage; without this MSVC stops with C2338 instead of choosing a layout silently
+  add_definitions(-D_ENABLE_EXTENDED_ALIGNED_STORAGE)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /wd4800")
 endif()
 
@@ -184,6 +187,13 @@ add_definitions(-DMINIZ_NO_STDIO)
 add_library(miniz STATIC EXCLUDE_FROM_ALL "lib/miniz/miniz.h" "lib/miniz/miniz.c")
 target_link_libraries(${PROJECT_NAME} miniz)
 include(cmake/BaseImport.cmake)
+if(MSVC)
+  # musicnative.c (runtime) and basemusic.c/musicnativeimport.c (import) read dmusic's private structs
+  # with C11 _Atomic counters; dmusic opts its own sources in the same way. Set here, not in
+  # BaseImport.cmake: that file is a base format input, and a flag must not change the base fingerprint.
+  target_compile_options(gothic-base-runtime PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+  target_compile_options(gothic-base-import PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+endif()
 include(cmake/VideoImport.cmake)
 target_link_libraries(${PROJECT_NAME} gothic-base-runtime gothic-video-runtime)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/convert/CMakeLists.txt")
@@ -456,12 +466,20 @@ if(NOT ANDROID AND NOT IOS)
     DEPENDS gothic-aimwalk-contract USES_TERMINAL)
   add_executable(gothic-physics-contract EXCLUDE_FROM_ALL tests/physics_contract.cpp)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
+  target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-meleestamina-contract EXCLUDE_FROM_ALL
     tests/meleestamina_contract.cpp common/game/meleestamina.cpp)
   target_include_directories(gothic-meleestamina-contract PRIVATE common)
   add_custom_target(check-meleestamina
     COMMAND $<TARGET_FILE:gothic-meleestamina-contract>
     DEPENDS gothic-meleestamina-contract USES_TERMINAL)
+  add_executable(gothic-meleeparry-contract EXCLUDE_FROM_ALL
+    tests/meleeparry_contract.cpp common/game/meleeparry.cpp)
+  target_include_directories(gothic-meleeparry-contract PRIVATE common)
+  add_custom_target(check-meleeparry
+    COMMAND $<TARGET_FILE:gothic-meleeparry-contract>
+    DEPENDS gothic-meleeparry-contract USES_TERMINAL)
   add_executable(gothic-furniture-parts-contract EXCLUDE_FROM_ALL tests/furniture_parts_contract.cpp)
   target_link_libraries(gothic-furniture-parts-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-physics

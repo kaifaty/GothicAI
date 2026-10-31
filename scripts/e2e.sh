@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end check: starts the AI server with a scenario, then a new game in OpenGothic.
+# LLM=off forbids model calls except explicit scenario givens (given/silent); the default remains fake.
 #   check_walk: new game, no SAVE, LLM=fake; Cavalorn walks from Xardas's stairs to Brago's
 #       unseen body in the bandit cave using the native waynet, sees it and returns to the hero
 #   follow_back: new game, no SAVE, LLM=fake; repeated set_intent follow_hero recalls Cavalorn
@@ -125,6 +126,8 @@
 #       load rolls back feat/image facts while retaining picture files; no SAVE.
 #       LLM=fake uses a scripted chronicler and picture; LLM=chatgpt uses the real chronicler and Artist,
 #       requires authenticated codex on the host for image_gen; TIMEOUT defaults to 1020 in live mode.
+#   feat_fame: new game, no SAVE; a witness and a hearer receive fame in the real conversation prompt,
+#       an uninformed control does not; LLM=chatgpt checks wolf/pelt recognition, LLM=fake logs replies.
 #   repair: Lobart gives the hero the turnip quest and dies; the director finds the quest without an ending,
 #       its model proposes a repair (scripted with LLM=fake: first the dead Lobart, rejected by the validator,
 #       then Hilda), and the hero ends the quest with Hilda for Lobart's reward (story graph, stage 5)
@@ -421,6 +424,7 @@ E2E_DEFAULT_TIMEOUT=240
 if [[ "$SCENARIO" == memprobe ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == feats && "$LLM" == chatgpt ]]; then E2E_DEFAULT_TIMEOUT=1020; fi
+if [[ "$SCENARIO" == feat_fame ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 TIMEOUT="${TIMEOUT:-$E2E_DEFAULT_TIMEOUT}"
 if [[ "${GOTHIC_TTS_RECORD:-0}" == 1 && "$SCENARIO" != tts ]]; then
   echo 'GOTHIC_TTS_RECORD requires SCENARIO=tts' >&2
@@ -446,6 +450,10 @@ if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty || "$SCENAR
 fi
 if [[ "$SCENARIO" == feats && ( ( "$LLM" != fake && "$LLM" != chatgpt ) || -n "${SAVE:-}" ) ]]; then
   echo 'scenario feats requires LLM=fake or LLM=chatgpt and a new game (unset SAVE)' >&2
+  exit 2
+fi
+if [[ "$SCENARIO" == feat_fame && ( ( "$LLM" != fake && "$LLM" != chatgpt ) || -n "${SAVE:-}" ) ]]; then
+  echo 'scenario feat_fame requires LLM=fake or LLM=chatgpt and a new game (unset SAVE)' >&2
   exit 2
 fi
 if [[ "$SCENARIO" == neural-soak && "$LLM" != fake ]]; then
@@ -527,6 +535,11 @@ fi
 FEAT_ARGS=()
 if [[ "${GOTHIC_NO_FEAT_CHALLENGES:-0}" == 1 ]]; then
   FEAT_ARGS=(--no-feat-challenges)
+fi
+if [[ "$SCENARIO" == feat_fame ]]; then
+  FEAT_ARGS+=(--no-director --no-feats --no-feat-challenges --no-occasions --no-questlog --no-crimes)
+  BRAIN_ARGS=(--no-brain)
+  QUICK_ARGS=(--no-quick)
 fi
 
 ASR_PID=""

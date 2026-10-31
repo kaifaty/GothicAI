@@ -56,6 +56,7 @@
 #include "dmusic/directmusic.h"
 #include "utils/fileext.h"
 #include "utils/gthfont.h"
+#include "utils/userhome.h"
 
 #include "gothic.h"
 #include "contentcensus.h"
@@ -940,15 +941,20 @@ void Resources::BaseIndex::validate(const std::vector<std::pair<std::string,uint
     throw std::runtime_error("selected base archives differ from base index: "+dir.string());
   }
 
-std::filesystem::path Resources::worldOverrideDir(std::string_view world) {
+std::filesystem::path Resources::contentDir() {
   if(const char* dir = std::getenv("OPENGOTHIC_CONTENT")) {
     if(dir[0]=='\0')
       return {};
-    return worldContentDir(dir,world);
+    return dir;
     }
-  if(const char* home = std::getenv("HOME"))
-    return worldContentDir(std::filesystem::path(home)/".local/share/gothic-ai/content",world);
+  if(const auto home=userHome(); !home.empty())
+    return home/".local/share/gothic-ai/content";
   return {};
+  }
+
+std::filesystem::path Resources::worldOverrideDir(std::string_view world) {
+  const auto root=contentDir();
+  return root.empty() ? std::filesystem::path{} : worldContentDir(root,world);
   }
 
 Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
@@ -982,6 +988,14 @@ Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
           if(entry.is_regular_file()) files.push_back(entry.path());
           }
       files.push_back(contentWorld.parent_path().parent_path()/"meshes/meshes.json");
+      // A layer file containing a collidable mesh is also rejected when one of its emitters
+      // loses its custom PFX. Include definitions even though emitters have no collision.
+      const auto particles=contentWorld.parent_path().parent_path()/"particles.d";
+      if(fs::is_directory(particles)) {
+        if(fs::is_symlink(particles)) return {};
+        for(const auto& entry:fs::directory_iterator(particles))
+          if(entry.is_regular_file() && entry.path().extension()==".json") files.push_back(entry.path());
+        }
       }
     // Indexed replacements may be shared by several worlds. The key must not
     // depend on which of them this process has already loaded.
@@ -1018,8 +1032,8 @@ void Resources::indexMeshOverrides() {
     if(dir[0]=='\0')
       return;
     root = dir;
-    } else if(const char* home = std::getenv("HOME")) {
-    root = std::filesystem::path(home)/".local/share/gothic-ai/content";
+    } else if(const auto home=userHome(); !home.empty()) {
+    root = home/".local/share/gothic-ai/content";
     } else {
     return;
     }
@@ -1140,8 +1154,8 @@ void Resources::indexMaterialMaps() {
     if(dir[0]=='\0')
       return;
     root = dir;
-    } else if(const char* home = std::getenv("HOME")) {
-    root = std::filesystem::path(home)/".local/share/gothic-ai/content";
+    } else if(const auto home=userHome(); !home.empty()) {
+    root = home/".local/share/gothic-ai/content";
     } else {
     return;
     }

@@ -4,19 +4,22 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from gothic_ai import feats as feats_module
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.feat_art import STYLE_VERSION, Artist, Picture
-from gothic_ai.feats import Feats, Proposal, canon, hero_view, notable
+from gothic_ai.feats import Feats, Proposal, canon, epilogue_canon, hero_view, notable
 from gothic_ai.journal import Journal
 from gothic_ai.llm import LLMError, ToolCall
 from gothic_ai.llm.fake import FakeBackend, FakeStep
+from gothic_ai.llm.off import OffBackend
 from gothic_ai.memory import MemoryStore
 from gothic_ai.places import PlaceBook
-from gothic_ai.protocol import Loading, Session
+from gothic_ai.protocol import Loading, NpcRoster, Session
+from gothic_ai.quests import ATTACK_CM
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
 
@@ -79,6 +82,7 @@ class FakeArtist(Artist):
 @asynccontextmanager
 async def world(
     *answers, gather_s=0, history=(), backend=None, artist=None, image_wait_s=150, places=None,
+    fame=True, hero_distance=lambda npc: None,
 ):
     fake = FakeGame(branch="A")
     fake.day = 10
@@ -94,7 +98,8 @@ async def world(
         chronicle = Chronicle(link, store)
         chronicler = Feats(
             link, chronicle, llm, journal=Journal(journal.append), gather_s=gather_s,
-            artist=artist, image_wait_s=image_wait_s, places=places,
+            artist=artist, image_wait_s=image_wait_s, places=places, fame=fame,
+            hero_distance=hero_distance,
         )
         try:
             yield fake, chronicle, chronicler, llm, journal
@@ -113,6 +118,10 @@ async def settled(chronicler):
     {"fact": "died", "killer": "OTHER", "name": "SECRET"},
     {"fact": "surrender", "status": "offered"},
     {"fact": "feat", "title": "SECRET"},
+    {"fact": "feat_fame", "feat": "F1", "title": "SECRET"},
+    {"fact": "rumor", "kind": "fame", "title": "SECRET"},
+    {"fact": "feat_epilogue", "feat": "old", "text": "SECRET"},
+    {"fact": "feat_epilogue_shown", "feat": "old"},
     {"fact": "challenge", "kind": "no_blood", "people": ["SECRET"]},
     {"fact": "challenge_hint", "kind": "no_blood", "npc": "SECRET", "witnesses": ["SECRET"]},
     {"fact": "challenge_dropped", "kind": "no_blood", "line": 1, "why": "no_fight", "people": ["SECRET"]},
@@ -120,6 +129,61 @@ async def settled(chronicler):
 ])
 def test_hidden_facts_have_no_hero_view(fact):
     assert hero_view(1, fact) is None
+    assert not notable(1, fact, [(1, fact)])
+
+
+@pytest.mark.parametrize(("history", "occasion", "evidence", "witnesses", "fame"), [
+    ([], crime(witnesses=["PLAYER", "MALETH", "MALETH"]), [1], ["MALETH"], True),
+    ([], {"fact": "quest_outcome", "npc": "LOBART", "how": "amended", "pay": "none"},
+     [1], ["LOBART"], True),
+    ([{"fact": "quest_outcome", "npc": "LOBART", "how": "amended", "pay": "none"},
+      {"fact": "quest_given", "npc": "XARDAS"}],
+     {"fact": "challenge_met", "kind": "no_reward", "evidence": [1, 2]},
+     [3], ["LOBART"], True),
+    ([], crime(), [1], [], True),
+    ([crime(witnesses=["MALETH"])],
+     {"fact": "died", "npc": "LOBART", "killer": "PLAYER"}, [1, 2], ["MALETH"], True),
+    ([], crime(kind="attack"), [1], ["LOBART"], True),
+    ([{"fact": "lie", "npc": "LOBART", "quest": "WOLVES"}],
+     crime(witnesses=["LOBART"]), [1, 2], [], True),
+    ([{"fact": "claim", "npc": "LOBART", "quest": "WOLVES", "truth": False}], crime(witnesses=["LOBART"]),
+     [1, 2], [], True),
+    ([crime(witnesses=["LOBART"])],
+     {"fact": "challenge_met", "kind": "secret_kept", "evidence": [1], "challenge": 8},
+     [1, 2], [], True),
+    ([{"fact": "died", "npc": "LOBART", "killer": "OTHER"}],
+     crime(witnesses=["LOBART"]), [2], [], True),
+    ([], crime(witnesses=["LOBART"]), [1], [], False),
+    ([{"fact": "crime_seen", "crime": "C1", "npc": "MALETH"},
+      {"fact": "crime_seen", "crime": "OTHER", "npc": "LOBART"}],
+     crime(), [3], ["MALETH"], True),
+    ([{"fact": "testimony", "witness": "MALETH", "npc": "LOBART",
+       "crime_saw": ["C1"], "crime_told": ["C1"]},
+      {"fact": "testimony", "witness": "OTHER", "npc": "ANDRE", "crime_told": ["C2"]}],
+     crime(), [3], ["LOBART", "MALETH"], True),
+    ([{"fact": "initiative", "npc": "LOBART", "seen_by": ["PLAYER", "MALETH"]}],
+     crime(), [1, 2], [], True),
+    ([{"fact": "vanilla_quest", "quest": "Q1", "giver": "XARDAS"},
+      {"fact": "quest_given", "quest": "Q1", "npc": "XARDAS"}],
+     {"fact": "died", "npc": "BANDIT", "killer": "PLAYER"}, [1, 2, 3], [], True),
+])
+async def test_fame_uses_occasion_and_living_crime_witnesses(history, occasion, evidence, witnesses, fame):
+    async with world(proposal(evidence=evidence), history=history, fame=fame) as (
+        _, chronicle, chronicler, _, _,
+    ):
+        chronicle.record(occasion)
+        await settled(chronicler)
+        [award] = chronicle.facts("feat")
+        expected = [{
+            "fact": "feat_fame", "feat": award["id"], "title": award["title"],
+            "text": award["text"], "witnesses": witnesses, "day": award["day"],
+        }] if witnesses else []
+        assert chronicle.facts("feat_fame") == expected
+        if any(fact["fact"] in {"lie", "claim"} for fact in history):
+            chronicle.record(revelation(npc="LOBART", name="Лобарт"))
+            chronicler.hero_talk("LOBART")
+            await _until(lambda: bool(chronicle.facts("feat_epilogue_shown")))
+            assert not chronicle.facts("feat_fame")
 
 
 @pytest.mark.parametrize(("fact", "removed"), [
@@ -446,6 +510,8 @@ async def test_hidden_truth_never_reaches_the_chronicler():
             {"fact": "blamed", "name": "СКРЫТОЕ_ОБВИНЕНИЕ"},
             {"fact": "found_out", "name": "СКРЫТОЕ_РАСКРЫТИЕ"},
             {"fact": "npc_intent", "name": "СКРЫТЫЙ_ЗАМЫСЕЛ"},
+            {"fact": "feat_epilogue", "feat": "old", "text": "СКРЫТЫЙ_ЭПИЛОГ"},
+            {"fact": "feat_epilogue_shown", "feat": "СКРЫТЫЙ_ПОКАЗ"},
             {"fact": "died", "killer": "OTHER", "name": "ЧУЖАЯ_ЖЕРТВА"},
         ]:
             chronicle.record(fact)
@@ -455,7 +521,7 @@ async def test_hidden_truth_never_reaches_the_chronicler():
         assert len(llm.calls) == 1
         text = llm.calls[0][1][0].content
         for hidden in ("СКРЫТОЕ_ОБВИНЕНИЕ", "СКРЫТОЕ_РАСКРЫТИЕ", "СКРЫТЫЙ_ЗАМЫСЕЛ",
-                       "ЧУЖАЯ_ЖЕРТВА", "ТАЙНЫЙ_СВИДЕТЕЛЬ"):
+                       "ЧУЖАЯ_ЖЕРТВА", "ТАЙНЫЙ_СВИДЕТЕЛЬ", "СКРЫТЫЙ_ЭПИЛОГ", "СКРЫТЫЙ_ПОКАЗ"):
             assert hidden not in text
         assert not chronicle.facts("feat")
 
@@ -622,3 +688,323 @@ async def test_story_state_timeout_drops_only_the_active_occasion(monkeypatch, c
         assert len(llm.calls) == 1
         assert llm.calls[0][1][0].content.startswith(f"Повод: #{latest} truce ")
         assert f"#{first}" in caplog.text and "TimeoutError" in caplog.text
+
+
+def lie(**changes):
+    return {"fact": "lie", "quest": "WOLVES", "npc": "LOTAR", "name": "Лотар", **changes}
+
+
+def revelation(**changes):
+    return {
+        "fact": "found_out", "quest": "WOLVES", "npc": "LOTAR", "name": "Лотар",
+        "how": "нашёл волков живыми", "day": 10, **changes,
+    }
+
+
+@pytest.mark.parametrize(("kind", "evidence_kind", "npc", "name"), [
+    ("found_out", "lie", "LOTAR", "Лотар"), ("caught", "claim", "HILDA", "Хильда"),
+])
+async def test_epilogue_matches_a_lie_in_evidence_and_stays_hidden_far_away(kind, evidence_kind, npc, name):
+    history = [lie(fact=evidence_kind, npc=npc, name=name), feat(evidence=[1], category="deceit")]
+    async with world(history=history, hero_distance=lambda npc: ATTACK_CM + 1) as (
+        fake, chronicle, chronicler, llm, journal,
+    ):
+        trigger = chronicle.record(revelation(fact=kind, npc=npc, name=name))
+        await _until(lambda: bool(chronicle.facts("feat_epilogue")))
+        [epilogue] = chronicle.facts("feat_epilogue")
+        assert epilogue == {
+            "fact": "feat_epilogue", "feat": "old", "text": "Позже обман раскрылся.",
+            "trigger": trigger, "npc": npc, "name": name, "quest": "WOLVES", "day": 10,
+        }
+        assert chronicler.feats == [history[1]] and not llm.calls
+        chronicler.hero_talk("STRANGER")
+        chronicle.link._dispatch(NpcRoster(type="npc_roster", t=1, npcs=[]))
+        await asyncio.sleep(0)
+        assert not chronicle.facts("feat_epilogue_shown")
+        assert not any(msg["type"] == "feat_toast" for msg in fake.received)
+        assert not any(entry["kind"] == "feat_epilogue" for entry in journal)
+
+
+@pytest.mark.parametrize("evidence", [crime(), lie(quest="OTHER")])
+async def test_epilogue_requires_matching_lie_evidence(evidence):
+    async with world(history=[evidence, feat(evidence=[1], category="deceit")]) as (
+        _, chronicle, chronicler, llm, _,
+    ):
+        chronicle.record(revelation())
+        await settled(chronicler)
+        await asyncio.sleep(0)
+        assert not chronicle.facts("feat_epilogue") and not llm.calls
+
+
+async def test_only_one_epilogue_per_feat_even_for_another_lie():
+    history = [lie(), lie(quest="SHEEP"), feat(evidence=[1, 2], category="deceit")]
+    async with world(history=history) as (_, chronicle, _, _, _):
+        trigger = chronicle.record(revelation())
+        await _until(lambda: bool(chronicle.facts("feat_epilogue")))
+        chronicle.record(revelation(fact="caught"))
+        chronicle.record(revelation(quest="SHEEP"))
+        await asyncio.sleep(0)
+        [epilogue] = chronicle.facts("feat_epilogue")
+        assert epilogue["trigger"] == trigger
+
+
+@pytest.mark.parametrize("learning", ["near", "talk"])
+async def test_revelation_before_feat_is_recovered_when_the_feat_is_written(learning):
+    distances = {"LOTAR": ATTACK_CM - 1 if learning == "near" else ATTACK_CM + 1}
+    async with world(history=[lie()], hero_distance=distances.get) as (_, chronicle, chronicler, _, _):
+        chronicle.record(revelation())
+        if learning == "talk":
+            chronicler.hero_talk("LOTAR")
+        distances["LOTAR"] = ATTACK_CM + 1
+        chronicle.record(feat(evidence=[1], category="deceit"))
+        await _until(lambda: bool(chronicle.facts("feat_epilogue")))
+        assert chronicle.facts("feat_epilogue")[0]["trigger"] == 2
+        await _until(lambda: bool(chronicle.facts("feat_epilogue_shown")))
+
+
+@pytest.mark.parametrize("text", [
+    "Лотар нашёл волков живыми.", "Позже Лотар нашёл wolves.", "Позже Хильда узнала правду.",
+    "Позже Лотар узнал правду!", "Позже Лотар узнал правду 🐺.",
+    "Позже записали достижение.", "Позже " + "я" * 140,
+])
+def test_epilogue_canon_rejects_invalid_text(text):
+    evidence = [(1, lie()), (3, revelation())]
+    entries = [*evidence, (4, {"fact": "deal", "name": "Хильда"})]
+    assert epilogue_canon(text, evidence, entries)
+    assert not epilogue_canon("Позже Лотар нашёл волков живыми.", evidence, entries)
+
+
+def test_epilogue_canon_uses_third_person():
+    evidence = [(1, lie(npc="MATTEO", name="Маттео")), (3, revelation(npc="MATTEO", name="Маттео"))]
+    for pronoun in ("мне", "МНЕ"):
+        assert epilogue_canon(f"Позже Маттео открыл ящик при {pronoun}.", evidence, evidence) == [
+            "Эпилог пишется в третьем лице",
+        ]
+    assert not epilogue_canon("Позже Маттео открыл ящик при герое.", evidence, evidence)
+
+
+async def test_epilogue_without_model_uses_fallback_without_attempts():
+    backend = OffBackend()
+    assert await feats_module.ChroniclerModel(backend).epilogue("The lie was revealed.") is None
+    assert backend.attempts == []
+
+
+async def test_epilogue_model_gets_full_disclosure_and_retries_before_fallback():
+    backend = FakeBackend(tool_calls=[ToolCall("write_epilogue", {
+        "text": "Лотар нашёл волков.", "reason": "Раскрытие лжи.",
+    })], delay=0)
+    backend.name = "test"
+    disclosure = revelation(blamed="B1", witness_name="Грег", hidden_detail="полная правда")
+    history = [lie(), feat(evidence=[1], category="deceit")]
+    async with world(backend=backend, history=history) as (_, chronicle, _, llm, _):
+        chronicle.record(disclosure)
+        await _until(lambda: bool(chronicle.facts("feat_epilogue")))
+        [epilogue] = chronicle.facts("feat_epilogue")
+        assert epilogue["text"] == "Позже обман раскрылся."
+        assert len(llm.calls) == 2
+        instructions, messages, tools = llm.calls[0]
+        assert instructions == (
+            "Допиши к записи летописи одну строку эпилога: что стало известно позже. "
+            "Пиши просто, в духе мира, в прошедшем времени, начни со слова «Позже». "
+            "Пиши со стороны летописи: о людях в третьем лице, героя называй «герой» или не называй; "
+            "поля фактов написаны со стороны NPC, их «ты» и «тебе» — это герой. "
+            "Не пересказывай саму запись и не придумывай событий сверх показанных фактов."
+        )
+        assert [tool.name for tool in tools] == ["write_epilogue"]
+        brief = messages[0].content
+        assert history[1]["title"] in brief and history[1]["text"] in brief
+        for key, value in disclosure.items():
+            assert key in brief and str(value) in brief
+        assert "Отклонено" in llm.calls[1][1][-1].content
+
+
+async def test_epilogue_model_can_correct_its_first_answer():
+    backend = FakeBackend(script=[
+        FakeStep(tool_calls=[ToolCall("write_epilogue", {"text": "Неверно.", "reason": ""})]),
+        FakeStep(tool_calls=[ToolCall("write_epilogue", {
+            "text": "Позже Лотар нашёл волков живыми.", "reason": "Сам увидел волков.",
+        })]),
+    ], delay=0)
+    backend.name = "test"
+    async with world(backend=backend, history=[lie(), feat(evidence=[1], category="deceit")]) as (
+        _, chronicle, _, _, _,
+    ):
+        chronicle.record(revelation())
+        await _until(lambda: bool(chronicle.facts("feat_epilogue")))
+        assert chronicle.facts("feat_epilogue")[0]["text"] == "Позже Лотар нашёл волков живыми."
+        assert len(backend.calls) == 2
+
+
+async def test_epilogue_retry_yields_to_an_ordinary_feat(monkeypatch):
+    backend = FakeBackend(script=[
+        FakeStep(tool_calls=[ToolCall("write_epilogue", {"text": "Неверно.", "reason": ""})]),
+        FakeStep(tool_calls=[ToolCall("write_feat", proposal(verdict="none"))]),
+        FakeStep(tool_calls=[ToolCall("write_epilogue", {
+            "text": "Позже Лотар нашёл волков живыми.", "reason": "Раскрытие лжи.",
+        })]),
+    ], delay=0)
+    backend.name = "test"
+    started, release, model_ready = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    stream = backend.stream
+
+    async def hold_first_call(**kwargs):
+        if not started.is_set():
+            started.set()
+            await release.wait()
+        async for event in stream(**kwargs):
+            yield event
+
+    monkeypatch.setattr(backend, "stream", hold_first_call)
+    async with world(backend=backend, history=[lie(), feat(evidence=[1], category="deceit")]) as (
+        _, chronicle, chronicler, _, _,
+    ):
+        story_state = chronicle.link.story_state
+
+        async def ready(**kwargs):
+            state = await story_state(**kwargs)
+            model_ready.set()
+            return state
+
+        monkeypatch.setattr(chronicle.link, "story_state", ready)
+        chronicle.record(revelation())
+        await _until(started.is_set)
+        chronicle.record(crime())
+        await _until(model_ready.is_set)
+        release.set()
+        await _until(lambda: bool(chronicle.facts("feat_epilogue")))
+        await settled(chronicler)
+        assert [tools[0].name for _, _, tools in backend.calls] == [
+            "write_epilogue", "write_feat", "write_epilogue",
+        ]
+
+
+@pytest.mark.parametrize("already_shown", [False, True])
+async def test_roster_does_not_read_long_history_without_pending_epilogues(already_shown):
+    history = [
+        lie(), feat(evidence=[1], category="deceit"), revelation(),
+        {"fact": "feat_epilogue", "feat": "old", "text": "Позже обман раскрылся.",
+         "trigger": 3, "npc": "LOTAR", "name": "Лотар", "quest": "WOLVES", "day": 10},
+        {"fact": "feat_epilogue_shown", "feat": "old"},
+    ] if already_shown else []
+    history += [revelation(quest="OTHER", npc="STRANGER", name="Чужой")]
+    history += [{"fact": "npc_intent", "npc": "STRANGER", "plan": str(i)} for i in range(5000)]
+    async with world(history=history) as (_, chronicle, chronicler, _, _):
+        with (
+            patch.object(chronicle, "entries", wraps=chronicle.entries) as entries,
+            patch.object(chronicle, "facts", wraps=chronicle.facts) as facts,
+            patch.object(chronicler, "_near", wraps=chronicler._near) as near,
+        ):
+            for tick in range(2):
+                chronicle.link._dispatch(NpcRoster(type="npc_roster", t=tick, npcs=[]))
+            assert entries.call_count == facts.call_count == near.call_count == 0
+
+
+@pytest.mark.parametrize(("near_at_reveal", "with_picture"), [(True, False), (False, True)])
+async def test_epilogue_toast_when_near_at_disclosure_or_on_later_approach(
+    tmp_path, monkeypatch, near_at_reveal, with_picture,
+):
+    distances = {"LOTAR": ATTACK_CM - 1 if near_at_reveal else ATTACK_CM + 1}
+    history = [lie(), feat(evidence=[1], category="deceit")]
+    if not near_at_reveal:
+        history += [{"fact": "npc_intent", "plan": str(i)} for i in range(5000)]
+    monkeypatch.setattr(feats_module, "DEFAULT_ROOT", tmp_path)
+    icon = feats_module.CATEGORY_ICONS / "deceit/icon.png"
+    if with_picture:
+        icon = tmp_path / "old/icon.png"
+        icon.parent.mkdir()
+        icon.write_bytes(b"icon")
+        history.append({"fact": "feat_image", "id": "old", "hash": "image", "style": STYLE_VERSION})
+    async with world(history=history, hero_distance=distances.get) as (
+        fake, chronicle, chronicler, _, journal,
+    ):
+        chronicle.record(revelation())
+        await _until(lambda: bool(chronicle.facts("feat_epilogue")))
+        if not near_at_reveal:
+            assert not chronicle.facts("feat_epilogue_shown")
+            chronicle.record(revelation(quest="OTHER", npc="STRANGER", name="Чужой"))
+            distances["LOTAR"] = ATTACK_CM - 1
+            with (
+                patch.object(chronicle, "entries", wraps=chronicle.entries) as entries,
+                patch.object(chronicle, "facts", wraps=chronicle.facts) as facts,
+                patch.object(chronicler, "_near", wraps=chronicler._near) as near,
+            ):
+                chronicle.link._dispatch(NpcRoster(type="npc_roster", t=1, npcs=[]))
+                kinds = [call.args[0] if call.args else call.kwargs.get("kind")
+                         for call in [*entries.call_args_list, *facts.call_args_list]]
+                assert None not in kinds and "rumor" not in kinds
+                assert [call.args for call in near.call_args_list] == [("LOTAR",)]
+        await _until(lambda: bool(chronicle.facts("feat_epilogue_shown")))
+        await _until(lambda: any(msg["type"] == "feat_toast" for msg in fake.received))
+        [toast] = [msg for msg in fake.received if msg["type"] == "feat_toast"]
+        assert toast["feat"] == "old" and toast["title"] == history[1]["title"]
+        assert toast["text"] == "Позже обман раскрылся."
+        assert toast["icon"] == str(icon)
+        assert chronicle.facts("feat_epilogue_shown") == [{"fact": "feat_epilogue_shown", "feat": "old"}]
+        assert [{k: v for k, v in entry.items() if k != "t"} for entry in journal] == [{
+            "kind": "feat_epilogue", "feat": "old", "title": history[1]["title"],
+            "text": "Позже обман раскрылся.",
+        }]
+        chronicler.hero_talk("LOTAR")
+        chronicle.link._dispatch(NpcRoster(type="npc_roster", t=2, npcs=[]))
+        await asyncio.sleep(0)
+        assert len([msg for msg in fake.received if msg["type"] == "feat_toast"]) == 1
+
+
+@pytest.mark.parametrize(("kind", "partner"), [("found_out", "JORA"), ("caught", "JORA"), (None, "LOTAR")])
+async def test_talking_to_discoverer_or_rumor_recipient_shows_epilogue(kind, partner):
+    history = [lie(), feat(evidence=[1], category="deceit")]
+    async with world(history=history) as (fake, chronicle, chronicler, _, _):
+        chronicle.record(revelation())
+        await _until(lambda: bool(chronicle.facts("feat_epilogue")))
+        if kind is not None:
+            chronicle.record({"fact": "rumor", "quest": "OTHER", "kind": kind, "to": partner})
+            chronicler.hero_talk(partner)
+            await asyncio.sleep(0)
+            assert not chronicle.facts("feat_epilogue_shown")
+            chronicle.record({"fact": "rumor", "quest": "WOLVES", "kind": "lie", "to": partner})
+            chronicler.hero_talk(partner)
+            await asyncio.sleep(0)
+            assert not chronicle.facts("feat_epilogue_shown")
+            chronicle.record({"fact": "rumor", "quest": "WOLVES", "kind": kind, "to": partner})
+        chronicler.hero_talk(partner)
+        await _until(lambda: bool(chronicle.facts("feat_epilogue_shown")))
+        await _until(lambda: any(msg["type"] == "feat_toast" for msg in fake.received))
+
+
+async def test_load_before_show_can_show_again_but_load_after_show_does_not_repeat():
+    history = [lie(), feat(evidence=[1], category="deceit")]
+    async with world(history=history) as (fake, chronicle, chronicler, _, _):
+        chronicle.record(revelation())
+        await _until(lambda: bool(chronicle.facts("feat_epilogue")))
+        [(before_show, _)] = chronicle.entries("feat_epilogue")
+        chronicler.hero_talk("LOTAR")
+        await _until(lambda: bool(chronicle.facts("feat_epilogue_shown")))
+        await _until(lambda: len([msg for msg in fake.received if msg["type"] == "feat_toast"]) == 1)
+        chronicle.link._dispatch(Session(
+            type="session", branch="B", parent="A", parent_seq=before_show, reason="load",
+        ))
+        assert not chronicle.facts("feat_epilogue_shown")
+        chronicle.record(revelation(fact="caught"))
+        await asyncio.sleep(0)
+        assert len(chronicle.facts("feat_epilogue")) == 1
+        assert not chronicle.facts("feat_epilogue_shown")
+        chronicler.hero_talk("LOTAR")
+        await _until(lambda: bool(chronicle.facts("feat_epilogue_shown")))
+        await _until(lambda: len([msg for msg in fake.received if msg["type"] == "feat_toast"]) == 2)
+        [(after_show, _)] = chronicle.entries("feat_epilogue_shown")
+        chronicle.link._dispatch(Session(
+            type="session", branch="C", parent="B", parent_seq=after_show, reason="load",
+        ))
+        chronicler.hero_talk("LOTAR")
+        chronicle.record(revelation())
+        await asyncio.sleep(0)
+        assert len([msg for msg in fake.received if msg["type"] == "feat_toast"]) == 2
+        assert len(chronicle.facts("feat_epilogue_shown")) == 1
+        chronicle.link._dispatch(Session(
+            type="session", branch="D", parent="A", parent_seq=2, reason="load",
+        ))
+        assert not chronicle.facts("feat_epilogue")
+        chronicle.record(revelation(fact="caught"))
+        chronicler.hero_talk("LOTAR")
+        await _until(lambda: bool(chronicle.facts("feat_epilogue_shown")))
+        await _until(lambda: len([msg for msg in fake.received if msg["type"] == "feat_toast"]) == 3)

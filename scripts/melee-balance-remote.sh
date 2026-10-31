@@ -37,6 +37,7 @@ MELEE_BALANCE_PYTHON selects a remote Python with torch (default: body/.venv).
 MELEE_POSTURE_SCALE multiplies the knockdown threshold in every series (sweeps).
 MELEE_DOWN_TACTICS sets GAME melee_down_tactics in every series (0 or 1).
 MELEE_HITSTOP sets GAME melee_hitstop in every series (0 or 1).
+MELEE_PARRY sets GAME melee_parry in every series (0 or 1).
 MELEE_STAMINA sets GAME melee_stamina in every series (0 or 1).
 USAGE
 }
@@ -78,10 +79,14 @@ done
 remote_script() {
   local remote_args='' remote_env='' arg key
   for arg in "$@"; do printf -v remote_args '%s %q' "$remote_args" "$arg"; done
-  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA; do
+  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA MELEE_PARRY; do
     if [[ -n "${!key:-}" ]]; then printf -v remote_env '%s %q' "$remote_env" "$key=${!key}"; fi
   done
-  { cat "$ROOT/scripts/gq-job.sh"; cat; } |
+  {
+    cat "$ROOT/scripts/gq-job.sh"
+    if [[ "$HOST" == ryzen ]]; then cat "$ROOT/scripts/ryzen-build.sh"; else printf 'RYZEN_CMAKE_FLAGS=()\n'; fi
+    cat
+  } |
     ssh -o BatchMode=yes "$HOST" "env$remote_env bash -s --$remote_args"
 }
 
@@ -112,6 +117,8 @@ gq_job --class quick --threads 4 --mem 8G --max 60m --name 'melee balance build'
   bash -c '
 set -euo pipefail
 task_root="$1"
+shift
+RYZEN_CMAKE_FLAGS=("$@")
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
 export PATH="$VULKAN_SDK/bin:$PATH"
 jolt_x86=portable
@@ -119,15 +126,15 @@ if grep -qw avx2 /proc/cpuinfo && grep -qw f16c /proc/cpuinfo && grep -qw bmi1 /
   jolt_x86=x86-64-v3
 fi
 cmake -S "$task_root/source/OpenGothic" -B "$task_root/build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"} -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DOPENGOTHIC_JOLT_X86="$jolt_x86" \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
   > "$task_root/provenance/configure.log" 2>&1 || { cat "$task_root/provenance/configure.log" >&2; exit 1; }
-cmake --build "$task_root/build" --target gothic-body-runner Gothic2Notr --parallel 4 \
+cmake --build "$task_root/build" --target gothic-body-runner --parallel 4 \
   > "$task_root/provenance/build.log" 2>&1 || { tail -80 "$task_root/provenance/build.log" >&2; exit 1; }
 sha256sum "$task_root/build/opengothic/gothic-body-runner" > "$task_root/provenance/runner.sha256"
 tail -8 "$task_root/provenance/build.log"
-' bash "$task_root"
+' bash "$task_root" ${RYZEN_CMAKE_FLAGS[@]+"${RYZEN_CMAKE_FLAGS[@]}"}
 REMOTE
 }
 
@@ -172,6 +179,9 @@ for name in "${series[@]}"; do
   fi
   if [[ -n "${MELEE_STAMINA:-}" ]]; then
     scale_env+=("MELEE_STAMINA=$MELEE_STAMINA")
+  fi
+  if [[ -n "${MELEE_PARRY:-}" ]]; then
+    scale_env+=("MELEE_PARRY=$MELEE_PARRY")
   fi
   cp "$task_root/provenance/source-commit.txt" "$task_root/provenance/source.patch" \
      "$task_root/provenance/runner.sha256" "$out/"
