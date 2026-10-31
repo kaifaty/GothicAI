@@ -980,6 +980,7 @@ class Npc final {
     void                          waitForMeleeStamina(uint64_t dt);
     bool                          allowMeleeStunAction(std::string_view action);
     void                          endMeleeStun(std::string_view reason);
+    void                          meleeStunLook(const Npc& by);
     void                          tickMeleeParry();
     void                          applyMeleeParry(Npc& attacker, const MeleeBladeContact* contact);
     float                         meleePostureSkillScale(const Npc& attacker) const;

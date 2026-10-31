@@ -7333,10 +7333,38 @@ void Npc::startMeleeStun(Npc& by, std::string_view reason) {
   stopMeleeSwing();
   clearGoTo();
   mvAlgo.clearSpeed();
+  meleeStunLook(by);
   if(TestBench::bodyTracing())
     TestBench::bodyEvent(*this,&by,"stun_start",owner.tickCount(),
                         "\"reason\":"+TestBench::bodyJson(reason)+
                         ",\"duration_ms\":"+std::to_string(MeleeParry::StunDuration));
+  }
+
+void Npc::meleeStunLook(const Npc& by) {
+  // The blow was stopped and thrown back: the original stagger back, slowed to carry most of the
+  // stun, the upper body giving way from the one who stopped it and the weapon arm thrown back
+  // on the living rig, its motors bringing it into the stagger. T_STUMBLEB lasts 360 ms.
+  constexpr float staggerSpeed = 0.5f;
+  if(auto seq = setAnimAngGet(Anim::StumbleB))
+    visual.setLayerSpeed(seq,staggerSpeed,owner.tickCount());
+  Vec3 away = position()-by.position();
+  away.y = 0;
+  away = away.length()>1e-3f ? Vec3::normalize(away) : Vec3(-std::cos(rotationRad()),0,-std::sin(rotationRad()));
+  Flinch::Hit hit;
+  hit.dir      = away;
+  hit.height   = 0.85f;
+  hit.twist    = 0.4f; // the weapon hand goes back first and turns the trunk after it
+  hit.strength = 0.6f;
+  flinch(hit);
+  if(!Gothic::physicsFlags().meleeReactions || !living)
+    return;
+  const size_t bone = visual.pose().findNode("BIP01 R FOREARM");
+  if(bone>=visual.pose().boneCount())
+    return;
+  const auto  ws       = weaponState();
+  const float momentum = ws==WeaponState::W2H ? 30.f : (ws==WeaponState::W1H ? 22.f : 12.f);
+  const Vec3  impulse  = Vec3::normalize(away+Vec3(0,0.3f,0))*(momentum*0.25f);
+  arrowImpacts.push_back({bone,visual.mapBone(bone),impulse,0.55f,by.handlePtr(),true,2.f});
   }
 
 void Npc::endMeleeStun(std::string_view reason) {
