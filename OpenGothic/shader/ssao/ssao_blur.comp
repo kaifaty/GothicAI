@@ -34,12 +34,9 @@ void sampleAt(ivec2 at, vec2 s) {
   samples[at.x][at.y] = s;
   }
 
-vec2 blurPass(ivec2 pAt, ivec2 res, ivec2 dir) {
+vec2 blurPass(ivec2 pAt, ivec2 dir) {
   const float R2     = (KERNEL_RADIUS*KERNEL_RADIUS);
-  const vec2  center = sampleAt(ivec2(gl_LocalInvocationID.xy));
-
-  if(gl_GlobalInvocationID.x>=res.x || gl_GlobalInvocationID.y>=res.y)
-    return center;
+  const vec2  center = sampleAt(pAt);
 
   float cTotal = center.x;
   float wTotal = 1.0;
@@ -99,15 +96,21 @@ void main() {
     }
   barrier();
 
-  for(uint r=gl_LocalInvocationID.y; r<LANE_SIZE; r+=gl_WorkGroupSize.y)
-  {
-    ivec2 at  = ivec2(gl_LocalInvocationID.x, r);
-    vec2  hor = blurPass(at, res, ivec2(1,0));
-    sampleAt(at, hor);
-  }
+  // Horizontal pass over every row the vertical pass reads: local -KERNEL_RADIUS .. 8+KERNEL_RADIUS-1,
+  // two rows per thread (needs 2*KERNEL_RADIUS <= 8). Rows past the image edge are clamped copies of
+  // the edge row and are blurred like it. Results wait in registers until every thread has read its row.
+  const ivec2 at0  = ivec2(gl_LocalInvocationID.xy) - ivec2(0, KERNEL_RADIUS);
+  const ivec2 at1  = at0 + ivec2(0, gl_WorkGroupSize.y);
+  const bool  row1 = at1.y < int(gl_WorkGroupSize.y) + KERNEL_RADIUS;
+  vec2 hor0 = blurPass(at0, ivec2(1,0));
+  vec2 hor1 = row1 ? blurPass(at1, ivec2(1,0)) : vec2(0);
+  barrier();
+  sampleAt(at0, hor0);
+  if(row1)
+    sampleAt(at1, hor1);
   barrier();
 
-  vec2 vert = blurPass(ivec2(gl_LocalInvocationID.xy), res, ivec2(0,1));
+  vec2 vert = blurPass(ivec2(gl_LocalInvocationID.xy), ivec2(0,1));
   if(gl_GlobalInvocationID.x<res.x && gl_GlobalInvocationID.y<res.y)
     imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(vert.x));
 
