@@ -192,7 +192,7 @@ def episode_metrics(folder: Path, episode: dict, shared: dict, variant: str) -> 
     stamina_phases = ("stamina_spend", "stamina_refused", "stamina_exhausted", "stamina_recovered")
     stamina_available = any(roles(row.get("actor")) in ROLES and
                             (row.get("phase") in stamina_phases or row.get("phase") == "phase_snapshot" and
-                             ("stamina" in row or "stamina_max" in row)) for row in events)
+                             row.get("stamina_max", 0) > 0) for row in events)
     for role in ROLES:
         own = result["fighters"][role]
         stamina = {"stamina_spent": 0, "attack_stamina_spends": 0, "jumpback_stamina_spends": 0,
@@ -200,7 +200,7 @@ def episode_metrics(folder: Path, episode: dict, shared: dict, variant: str) -> 
                    "mean_stamina_fraction": None}
         if not stamina_available:
             for key in stamina:
-                stamina[key] = missing(f"fighters.{role}.{key}", "Stamina events and snapshot fields absent from journal")
+                stamina[key] = missing(f"fighters.{role}.{key}", "No stamina events or snapshots with a positive stamina_max")
             own.update(stamina)
             continue
         refusing = False

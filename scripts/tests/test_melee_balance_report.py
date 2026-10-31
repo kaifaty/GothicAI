@@ -107,10 +107,15 @@ def test_aggregate_and_markdown_include_stamina_totals_rates_and_means(tmp_path)
         assert f"| {key} |" in text
 
 
-def test_old_journal_keeps_stamina_unavailable_without_changing_legacy_metrics(tmp_path):
+@pytest.mark.parametrize("stamina_disabled", [False, True], ids=["old-journal", "disabled-stamina"])
+def test_missing_or_disabled_stamina_keeps_legacy_metrics(tmp_path, stamina_disabled):
     rich = episode(tmp_path/"rich", synthetic_events())
     old_rows = [{key: value for key, value in row.items() if key not in ("stamina", "stamina_max")}
                 for row in synthetic_events() if not row["phase"].startswith("stamina_")]
+    if stamina_disabled:
+        for row in old_rows:
+            if row["phase"] == "phase_snapshot":
+                row.update(stamina=0, stamina_max=0)
     old = episode(tmp_path/"old", old_rows)
     for role in report.ROLES:
         for key in (*STAMINA_COUNTS, "mean_stamina_fraction"):
