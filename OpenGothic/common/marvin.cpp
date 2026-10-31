@@ -201,6 +201,7 @@ Marvin::Marvin() {
     {"toggle melee_posture",      C_ToggleMeleePosture},
     {"toggle melee_down_tactics", C_ToggleMeleeDownTactics},
     {"toggle melee_hitstop",      C_ToggleMeleeHitStop},
+    {"toggle melee_stamina",      C_ToggleMeleeStamina},
     };
   }
 
@@ -682,6 +683,12 @@ bool Marvin::exec(std::string_view v) {
       const bool enabled = !Gothic::physicsFlags().meleeHitStop;
       Gothic::settingsSetI("GAME","melee_hitstop",enabled ? 1 : 0);
       print(enabled ? "Melee hit stop: ON" : "Melee hit stop: OFF");
+      return true;
+      }
+    case C_ToggleMeleeStamina: {
+      const bool enabled = !Gothic::physicsFlags().meleeStamina;
+      Gothic::settingsSetI("GAME","melee_stamina",enabled ? 1 : 0);
+      print(enabled ? "Melee stamina: ON" : "Melee stamina: OFF");
       return true;
       }
     }

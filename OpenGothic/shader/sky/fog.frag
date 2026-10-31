@@ -133,9 +133,10 @@ vec4 fog(vec2 uv, float z) {
   imageStore(occlusionLut, ivec2(invocationID.xy), uvec4(occlusion));
   return vec4(0);
 #else
-  // every bit = one sample of shadowmap
-  const float occlusionScale = textureSize(depth,0).x/imageSize(occlusionLut).x;
-  const ivec2 coord          = ivec2(gl_FragCoord.xy/occlusionScale);
+  // every bit = one sample of shadowmap; a LUT texel covers occlusionRatio pixels (halfResAoFog)
+  const ivec2 occlusionSize  = imageSize(occlusionLut);
+  const ivec2 occlusionRatio = (textureSize(depth,0) + occlusionSize - 1)/occlusionSize;
+  const ivec2 coord          = ivec2(gl_FragCoord.xy)/occlusionRatio;
   const uint  occlusion      = imageLoad(occlusionLut, coord).r;
   [[dont_unroll]]
   for(int i=0; i<steps; i++) {
@@ -207,13 +208,16 @@ void main_comp() {
   if(invocationID.x>=size.x || invocationID.y>=size.y)
     return;
 
-  inPos = vec2(invocationID.xy+vec2(0.5))/vec2(size);
+  // trace from the top-left depth pixel of the texel's block: the block centre lies on a pixel border
+  const ivec2 depthSize = textureSize(depth,0);
+  const ivec2 depthPix  = min(ivec2(invocationID.xy)*((depthSize + size - 1)/size), depthSize-1);
+  inPos = vec2(depthPix+vec2(0.5))/vec2(depthSize);
   inPos = inPos*2.0 - vec2(1.0);
 
   vec2  uv     = inPos*vec2(0.5)+vec2(0.5);
   vec3  view   = normalize(inverse(vec3(inPos,1.0)));
   vec3  sunDir = scene.sunDir;
-  float z      = min(textureLod(depth,uv,0).r, dFogMax);
+  float z      = min(texelFetch(depth,depthPix,0).r, dFogMax);
 
   fog(uv,z);
   }

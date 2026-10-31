@@ -33,13 +33,14 @@ PREMISE = (
 
 
 class ShowrunnerScript:
-    """First a forbidden giver, then an eligible one; after the budget's pause, no new line."""
+    """A canon retry, a peaceful line, a refusal after the pause, then a crime line."""
 
     name = "showrunner-script"
 
     def __init__(self, giver: str, plot: str) -> None:
         self.giver, self.plot = giver, plot
         self.calls: list[str] = []
+        self.crime = ""
 
     async def aclose(self) -> None:
         pass
@@ -56,14 +57,16 @@ class ShowrunnerScript:
     ) -> AsyncIterator[LLMEvent]:
         self.calls.append("\n".join(m.content for m in messages if isinstance(m, Message)))
         n = len(self.calls)
+        builds = n <= 2 or n == 4
         args = {
-            "kind": "quest" if n <= 2 else "none",
-            "giver": self.plot if n == 1 else self.giver if n == 2 else "",
+            "kind": "quest" if builds else "none",
+            "giver": self.plot if n == 1 else self.giver if builds else "",
             "place": "",
             "new_people": False,
-            "premise": PREMISE if n <= 2 else "",
-            "reason": "надо убрать дрянь с дороги" if n <= 2 else "герою пока хватает поручений",
-            "challenge": {"kind": "no_blood"} if n <= 2 else None,
+            "premise": PREMISE if builds else "",
+            "reason": "надо убрать дрянь с дороги" if builds else "герою пока хватает поручений",
+            "challenge": {"kind": "no_blood"} if builds else None,
+            "crime": self.crime if n == 4 else "",
         }
         call = ToolCall("propose_line", args, f"showrunner{n}")
         yield call
@@ -81,6 +84,7 @@ class ErrandScript:
         self.place, self.where, self.item, self.item_name = place, where, item, name
         self.gold, self.xp = gold, xp
         self.neighbor = neighbor
+        self.title = "Дрянь на дороге"
         self.calls: list[str] = []
 
     @classmethod
@@ -145,7 +149,7 @@ class ErrandScript:
                 "cast": [],
                 "quests": [
                     {
-                        "title": "Дрянь на дороге",
+                        "title": self.title,
                         "give": talk("Что стряслось на дороге?", "Кто-то выбросил там припасы. Надо убрать."),
                         "stages": [
                             {
@@ -304,46 +308,20 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         )
         quests = line.get("quests", [])
         line_seq = next(seq for seq, fact in director.chronicle.entries("line") if fact == line)
-        challenge = next(
-            (
-                (seq, fact)
-                for seq, fact in director.chronicle.entries("challenge")
-                if fact.get("line") == line_seq
+        dropped = [
+            fact for fact in director.chronicle.facts("challenge_dropped")
+            if fact.get("line") == line_seq
+        ]
+        check(
+            "challenge_dropped",
+            dropped == [{
+                "fact": "challenge_dropped", "kind": "no_blood", "line": line_seq,
+                "why": "no_fight", "people": sorted([giver, builder.neighbor]),
+            }]
+            and not any(
+                fact.get("line") == line_seq for fact in director.chronicle.facts("challenge")
             ),
-            None,
-        )
-        check(
-            "challenge",
-            challenge is not None
-            and challenge[1].get("kind") == "no_blood"
-            and challenge[1].get("quests") == quests
-            and giver in challenge[1].get("people", []),
-            challenge,
-        )
-
-        def challenge_hint() -> dict[str, Any] | None:
-            return next((
-                fact for fact in director.chronicle.facts("challenge_hint")
-                if challenge is not None and fact.get("challenge") == challenge[0]
-            ), None)
-
-        await _until(challenge_hint, 5)
-        hint = challenge_hint()
-        sources = hint.get("witnesses", []) if hint is not None else []
-        check(
-            "challenge_hint",
-            hint is not None and hint.get("kind") == "no_blood" and hint.get("npc") == giver
-            and sources == [builder.neighbor],
-            hint,
-        )
-        knowledge = PeopleKnowledge(director.chronicle)
-        check(
-            "challenge_hint_known",
-            hint is not None and len(sources) == 1 and any(
-                entry.key == f"challenge_hint:{hint['id']}" and entry.subject == giver
-                and entry.direct for entry in knowledge.of(sources[0])
-            ),
-            sources,
+            dropped,
         )
         made = [director.book.all()[q] for q in quests if q in director.book.all()]
         check(
@@ -487,6 +465,81 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         results.update({f"passage_{key}": value for key, value in played.items()})
         await director.book.settle(giver)
         check("completed", bool(made) and all(director.book.progress(q.id).state == "done" for q in made))
+
+        check(
+            "challenge_unearned",
+            not any(
+                fact.get("line") == line_seq for fact in director.chronicle.facts("challenge_met")
+            ),
+        )
+
+        # A victim can notice this fixture theft without knowing who took the item. No witness
+        # accuses the hero, so the original giver and hint source remain available for the next line.
+        at = await link.story_state()
+        script.crime = f"showrunner-theft-{line_seq}"
+        builder.title = "Пропавшие припасы"
+        director.chronicle.record({
+            "fact": "crime", "id": script.crime, "kind": "theft", "victim": giver, "owner": giver,
+            "item": builder.item, "count": 1, "witnesses": [], "waypoint": waypoint,
+            **{key: at[key] for key in ("day", "hour", "minute")},
+        })
+        line = await director.decide({
+            **occasion, "kind": "deed", "crime": script.crime,
+            **{key: at[key] for key in ("day", "hour", "minute")},
+        })
+        check("crime_line", line is not None and line.get("fact") == "line", line)
+        if line is None or line.get("fact") != "line":
+            return _logged(results)
+        quests = line.get("quests", [])
+        line_seq = next(seq for seq, fact in director.chronicle.entries("line") if fact == line)
+        challenge = next(
+            (
+                (seq, fact)
+                for seq, fact in director.chronicle.entries("challenge")
+                if fact.get("line") == line_seq
+            ),
+            None,
+        )
+        check(
+            "challenge",
+            challenge is not None
+            and challenge[1].get("kind") == "no_blood"
+            and challenge[1].get("quests") == quests
+            and giver in challenge[1].get("people", []),
+            challenge,
+        )
+
+        def challenge_hint() -> dict[str, Any] | None:
+            return next((
+                fact for fact in director.chronicle.facts("challenge_hint")
+                if challenge is not None and fact.get("challenge") == challenge[0]
+            ), None)
+
+        await _until(challenge_hint, 5)
+        hint = challenge_hint()
+        sources = hint.get("witnesses", []) if hint is not None else []
+        check(
+            "challenge_hint",
+            hint is not None and hint.get("kind") == "no_blood" and hint.get("npc") == giver
+            and sources == [builder.neighbor],
+            hint,
+        )
+        knowledge = PeopleKnowledge(director.chronicle)
+        check(
+            "challenge_hint_known",
+            hint is not None and len(sources) == 1 and any(
+                entry.key == f"challenge_hint:{hint['id']}" and entry.subject == giver
+                and entry.direct for entry in knowledge.of(sources[0])
+            ),
+            sources,
+        )
+        made = [director.book.all()[q] for q in quests if q in director.book.all()]
+        played = await play_book_chain(link, director.book, made)
+        results.update({f"crime_passage_{key}": value for key, value in played.items()})
+        await director.book.settle(giver)
+        check(
+            "crime_completed", bool(made) and all(director.book.progress(q.id).state == "done" for q in made),
+        )
 
         def challenge_met() -> dict[str, Any] | None:
             return next(

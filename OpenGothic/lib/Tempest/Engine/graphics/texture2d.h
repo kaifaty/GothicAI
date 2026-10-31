@@ -3,6 +3,9 @@
 #include <Tempest/AbstractGraphicsApi>
 #include "../utility/dptr.h"
 
+#include <cstdint>
+#include <memory>
+
 namespace Tempest {
 
 class Device;
@@ -28,14 +31,25 @@ class Texture2d final {
     TextureFormat format()   const { return frm; }
     uint32_t      mipCount() const;
 
+    Texture2d     shared() const;
+    void          markRetired();
+
+    // Sampled asset payloads, excluding render attachments and storage images.
+    static uint64_t liveBytes();
+    static uint64_t liveCount();
+    static uint64_t peakBytes();
+
   private:
-    Texture2d(Tempest::Device& dev, AbstractGraphicsApi::PTexture&& impl, uint32_t w, uint32_t h, uint32_t d, TextureFormat frm);
+    Texture2d(Tempest::Device& dev, AbstractGraphicsApi::PTexture&& impl, uint32_t w, uint32_t h, uint32_t d, TextureFormat frm,
+              bool trackPayload = true);
 
     Detail::DSharedPtr<AbstractGraphicsApi::Texture*> impl;
     TextureFormat                                     frm  = Undefined;
     int                                               texW = 0;
     int                                               texH = 0;
     int                                               texD = 0;
+    struct PayloadAccounting;
+    std::shared_ptr<PayloadAccounting>                 accounting;
 
   friend class Tempest::Device;
   friend class Tempest::DescriptorSet;

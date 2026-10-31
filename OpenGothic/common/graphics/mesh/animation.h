@@ -70,6 +70,8 @@ class Animation final {
 
       void                                        setupMoveTr();
       void                                        setupEvents(float fpsRate);
+      // the frame of the sequence an optimal-frame tag (DEF_OPT_FRAME) points at
+      uint32_t                                    optimalFrame(int32_t frame) const;
       };
 
     struct Sequence final {

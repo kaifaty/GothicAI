@@ -85,7 +85,7 @@ const std::vector<DrawBuckets::Bucket>& DrawBuckets::buckets() const {
   return bucketsCpu;
   }
 
-void DrawBuckets::updateBindlessArrays() {
+void DrawBuckets::updateBindlessArrays(bool updateBuffers) {
   if(!Shaders::options().doBindless)
     return;
 
@@ -99,6 +99,8 @@ void DrawBuckets::updateBindlessArrays() {
       normal.push_back(i.mat.normal!=nullptr ? i.mat.normal : &Resources::fallbackTexture());
       orm.push_back(i.mat.orm!=nullptr ? i.mat.orm : &Resources::fallbackTexture());
       }
+    if(!updateBuffers)
+      continue;
     if(i.staticMesh!=nullptr) {
       ibo    .push_back(&i.staticMesh->ibo8Buffer());
       vbo    .push_back(&i.staticMesh->vboBuffer());
@@ -126,25 +128,27 @@ void DrawBuckets::updateBindlessArrays() {
 
   // avoid shader linking stutter in vulkan
   tex    .resize(roundup(tex.size()));
-  vbo    .resize(roundup(vbo.size()));
-  ibo    .resize(roundup(ibo.size()));
-  morphId.resize(roundup(morphId.size()));
-  morph  .resize(roundup(morph.size()));
   normal .resize(roundup(normal.size()));
   orm    .resize(roundup(orm.size()));
 
   Resources::recycle(std::move(desc.tex));
-  Resources::recycle(std::move(desc.vbo));
-  Resources::recycle(std::move(desc.ibo));
-  Resources::recycle(std::move(desc.morphId));
-  Resources::recycle(std::move(desc.morph));
 
   auto& device = Resources::device();
   desc.tex     = device.descriptors(tex);
-  desc.vbo     = device.descriptors(vbo);
-  desc.ibo     = device.descriptors(ibo);
-  desc.morphId = device.descriptors(morphId);
-  desc.morph   = device.descriptors(morph);
+  if(updateBuffers) {
+    vbo    .resize(roundup(vbo.size()));
+    ibo    .resize(roundup(ibo.size()));
+    morphId.resize(roundup(morphId.size()));
+    morph  .resize(roundup(morph.size()));
+    Resources::recycle(std::move(desc.vbo));
+    Resources::recycle(std::move(desc.ibo));
+    Resources::recycle(std::move(desc.morphId));
+    Resources::recycle(std::move(desc.morph));
+    desc.vbo     = device.descriptors(vbo);
+    desc.ibo     = device.descriptors(ibo);
+    desc.morphId = device.descriptors(morphId);
+    desc.morph   = device.descriptors(morph);
+    }
   if(Shaders::options().doMaterialMaps) {
     Resources::recycle(std::move(desc.normal));
     Resources::recycle(std::move(desc.orm));
@@ -154,9 +158,16 @@ void DrawBuckets::updateBindlessArrays() {
   }
 
 bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
-  if(!bucketsDurtyBit)
-    return false;
+  const auto generation=Resources::textureGeneration();
+  if(!bucketsDurtyBit) {
+    if(textureGeneration==generation)
+      return false;
+    updateBindlessArrays(false);
+    textureGeneration=generation;
+    return true;
+    }
   bucketsDurtyBit = false;
+  textureGeneration=generation;
 
   std::vector<BucketGpu> bucket;
   uint32_t diffuseFrames=uint32_t(bucketsCpu.size());
@@ -214,6 +225,6 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   bucketsGpu = device.ssbo(Uninitialized,bucket.size()*sizeof(bucket[0]));
   bucketsGpu.updateAsync(bucket.data(),0,bucket.size()*sizeof(bucket[0]));
 
-  updateBindlessArrays();
+  updateBindlessArrays(true);
   return true;
   }

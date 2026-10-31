@@ -2,15 +2,28 @@
 
 #include <Tempest/File>
 #include <Tempest/Except>
+#include <Tempest/TextCodec>
 
 #include "pixmapcodec.h"
+#include "image/pixmapcodecdds.h"
 #include "thirdparty/squish/squish.h"
 
 #include <vector>
+#include <cstdio>
 #include <cstring>
 #include <cassert>
 
 using namespace Tempest;
+
+bool tempestLoadProbeEnabled();
+
+static void probeTextureFile(const Pixmap& image, std::string_view path) {
+  if(tempestLoadProbeEnabled())
+    // Log splits lines at 255 bytes; resolved file paths can exceed that limit.
+    std::fprintf(stdout,"[loadprobe-texture] data=%p w=%u h=%u mips=%u format=%s bytes=%zu path=%.*s\n",
+                 image.data(),image.w(),image.h(),image.mipCount(),formatName(image.format()),
+                 image.dataSize(),int(path.size()),path.data());
+  }
 
 static bool isFloat32Frm(TextureFormat f) {
   switch (f) {
@@ -316,25 +329,41 @@ Pixmap::Pixmap(uint32_t w, uint32_t h, TextureFormat frm)
 Pixmap::Pixmap(const char* path) {
   RFile f(path);
   impl.reset(new Impl(f));
+  probeTextureFile(*this,path);
   }
 
 Pixmap::Pixmap(std::string_view path) {
   RFile f(path);
   impl.reset(new Impl(f));
+  probeTextureFile(*this,path);
   }
 
 Pixmap::Pixmap(const char16_t *path) {
   RFile f(path);
   impl.reset(new Impl(f));
+  if(tempestLoadProbeEnabled())
+    probeTextureFile(*this,TextCodec::toUtf8(path));
   }
 
 Pixmap::Pixmap(std::u16string_view path) {
   RFile f(path);
   impl.reset(new Impl(f));
+  if(tempestLoadProbeEnabled())
+    probeTextureFile(*this,TextCodec::toUtf8(path));
   }
 
 Pixmap::Pixmap(IDevice &input) {
   impl.reset(new Impl(input));
+  }
+
+Pixmap Pixmap::loadDdsMipTail(IDevice& input, uint32_t firstMip, uint32_t minSize) {
+  Pixmap ret;
+  std::unique_ptr<Impl,Deleter> image(new Impl());
+  image->data = PixmapCodecDDS::loadMipTail(input,firstMip,minSize,image->w,image->h,
+                                          image->frm,image->mipCnt,image->dataSz);
+  if(image->data!=nullptr)
+    ret.impl = std::move(image);
+  return ret;
   }
 
 Pixmap::Pixmap(const Pixmap &src)

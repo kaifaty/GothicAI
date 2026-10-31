@@ -2,11 +2,14 @@
 
 #include <cassert>
 
+#include "frameprofile.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/shaders.h"
+#include "graphics/visualobjects.h"
 #include "pfxobjects.h"
 #include "particlefx.h"
 #include "world/objects/npc.h"
+#include "world/chunkresidency.h"
 
 using namespace Tempest;
 
@@ -68,9 +71,61 @@ PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlob
       item.pShadow = Shaders::inst().materialPipeline(mat, DrawCommands::Pfx, Shaders::T_Shadow, false);
       }
     }
+  if(decl.isDecal() && (textureResidency=visual.textureResidencyManager())!=nullptr) {
+    textureSubscription=textureResidency->subscribe([this](ChunkId chunk, ChunkResidency::State, ChunkResidency::State next) {
+      FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+      std::lock_guard<std::recursive_mutex> guard(this->parent.sync);
+      const auto found=textureChunks.find({chunk.x,chunk.z});
+      if(found==textureChunks.end())
+        return;
+      for(auto id:found->second)
+        setTextureDemand(impl[id],next!=ChunkResidency::State::Outside);
+      });
+    }
   }
 
 PfxBucket::~PfxBucket() {
+  std::lock_guard<std::recursive_mutex> guard(parent.sync);
+  if(textureResidency)
+    textureResidency->unsubscribe(textureSubscription);
+  for(auto& emitter:impl)
+    setTextureDemand(emitter,false);
+  }
+
+void PfxBucket::setTextureDemand(ImplEmitter& emitter, bool active) {
+  std::lock_guard<std::recursive_mutex> guard(parent.sync);
+  if(emitter.textureDemand==active)
+    return;
+  const auto category=decl.isDecal() ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic;
+  Resources::textureDemand(decl.visMaterial,category,active);
+  if(decl.hasTrails()) {
+    Material trail;
+    trail.tex=decl.trlTexture;
+    Resources::textureDemand(trail,category,active);
+    }
+  emitter.textureDemand=active;
+  }
+
+void PfxBucket::updateTextureDemand(size_t id) {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+  std::lock_guard<std::recursive_mutex> guard(parent.sync);
+  auto& emitter=impl[id];
+  if(decl.isDecal()) {
+    const auto chunk=ChunkId::fromPosition(emitter.pos.x,emitter.pos.z);
+    const std::pair key{chunk.x,chunk.z};
+    if(emitter.st==S_Free || key!=emitter.textureChunk) {
+      if(auto found=textureChunks.find(emitter.textureChunk);found!=textureChunks.end()) {
+        found->second.erase(id);
+        if(found->second.empty())
+          textureChunks.erase(found);
+        }
+      }
+    emitter.textureChunk=key;
+    if(emitter.st!=S_Free)
+      textureChunks[key].insert(id);
+    }
+  const bool active=emitter.st!=S_Free && (!decl.isDecal() || visual.textureChunkActive(emitter.pos));
+  setTextureDemand(emitter,active);
   }
 
 bool PfxBucket::isEmpty() const {
@@ -147,6 +202,7 @@ size_t PfxBucket::allocEmitter() {
     auto& b = impl[i];
     if(b.st==S_Free) {
       b.st = S_Inactive;
+      updateTextureDemand(i);
       return i;
       }
     }
@@ -154,6 +210,7 @@ size_t PfxBucket::allocEmitter() {
   auto& e = impl.back();
   e.block = size_t(-1); // no backup memory
   e.st    = S_Inactive;
+  updateTextureDemand(impl.size()-1);
   for(size_t i=0; i<Resources::MaxFramesInFlight; ++i)
     forceUpdate[i] = true;
 
@@ -172,6 +229,7 @@ void PfxBucket::freeEmitter(size_t& id) {
     }
   for(size_t i=0; i<Resources::MaxFramesInFlight; ++i)
     forceUpdate[i] = true;
+  updateTextureDemand(id);
   v.next.reset();
   id = size_t(-1);
   shrink();
@@ -445,9 +503,9 @@ void PfxBucket::tickTrail(ParState& ps, ImplEmitter& emitter, uint64_t dt) {
 void PfxBucket::tick(uint64_t dt, const Vec3& viewPos) {
   if(decl.isDecal()) {
     implTickDecals(dt,viewPos);
-    return;
+    } else {
+    implTickCommon(dt,viewPos);
     }
-  implTickCommon(dt,viewPos);
   }
 
 void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
@@ -478,8 +536,10 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
         if(p.count==0 && (emitter.st==S_Fade || !nearby)) {
           // free mem
           freeBlock(emitter.block);
-          if(emitter.st==S_Fade)
+          if(emitter.st==S_Fade) {
             emitter.st = S_Free;
+            updateTextureDemand(size_t(&emitter-impl.data()));
+            }
           doShrink = true;
           continue;
           }
@@ -518,6 +578,7 @@ void PfxBucket::implTickDecals(uint64_t, const Vec3&) {
       p.count = 0;
       freeBlock(emitter.block);
       emitter.st = S_Free;
+      updateTextureDemand(size_t(&emitter-impl.data()));
       }
     }
   }

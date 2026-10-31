@@ -14,6 +14,7 @@
 #include "game/gamescript.h"
 #include "game/ragdollsave.h"
 #include "game/meleeimpact.h"
+#include "game/meleestamina.h"
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
 #include "world/aiqueue.h"
@@ -319,6 +320,11 @@ class Npc final {
     bool      swingSwordL();
     bool      swingSwordR();
     bool      blockSword();
+    bool      hasStamina() const;
+    float     stamina() const;
+    float     staminaMax() const;
+    float     staminaFraction() const;
+    bool      isStaminaExhausted() const;
     auto      beginCastSpell() -> BeginCastResult;
     void      endCastSpell(bool playerCtrl = false);
     void      setActiveSpellInfo(int32_t info);
@@ -391,6 +397,7 @@ class Npc final {
     void        fitHitZones() { visual.fitHitZones(); }
     std::string bowDump() const { return visual.bowDump(); }
     std::string animInfo(std::string_view name) const { return visual.animInfo(name); }
+    std::string bladePath(std::string_view name, float length) const { return visual.bladePath(name,length); }
     // ms the animation of that name takes as this one plays it (its overlays: the trained archers' reload)
     float       animTime(std::string_view name) const { return visual.animTime(name); }
     // the test bench: hit, it neither stumbles nor flinches (a target that keeps its pose)
@@ -963,6 +970,12 @@ class Npc final {
     void                          applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, bool blocked, float before);
     bool                          tickMeleePosture(uint64_t dt);
     MeleeImpact::Posture           meleePosture;
+    MeleeStamina::State            meleeStamina;
+    void                          tickMeleeStamina();
+    float                         meleeAttackCost() const;
+    bool                          allowStaminaAction(std::string_view action, float cost, bool fullCost = false);
+    void                          spendStamina(std::string_view action, float cost);
+    void                          waitForMeleeStamina(uint64_t dt);
     bool                          meleeKnockdown = false;
     bool                          meleeDownStrike = false; // the chop from above at one lying is playing
     bool                          meleeGetupForced = false;

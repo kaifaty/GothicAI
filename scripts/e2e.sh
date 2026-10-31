@@ -196,6 +196,7 @@
 #       find the thief, his ask_witness/about and blame finish its goal, then reward and save/load.
 #       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt asks only the ordinary showrunner
 #       once on the same deed, records its line premise or none reason and canon, without building.
+#       GOTHIC_DIRECTOR_ASKS=N asks it N times and lists the hidden challenge kinds of its lines.
 #   frame: unseen hero chest theft, Lobart believes Malak guilty, native reclaim combat finds no goods
 #       and reveals the hero's lie; Hilda's honest testimony about Vino leads to true blame and return.
 #       Save/load restores both cases without duplicates. LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=900.
@@ -267,6 +268,7 @@
 #       a game day and the budget's wall clock by 15 min. Both events need a line/none outcome, at least
 #       one line, all quests completed; givers must be peaceful and outside their follows quest's cast.
 #       Logs include each event, proposal outcome, built quests and passage. SAVE=save_slot_1.sav; TIMEOUT=1200
+#       GOTHIC_FORCE_CHALLENGE=1 requires one hidden challenge per line and checks its hint, outcome and feat.
 #   vgive: a quest of the scripts given and ended in a conversation (Cavalorn's bandits; model scripted with
 #       LLM=fake): he gives it as his dialog HELFEN does, the bandits die, the hero says so and the scripts'
 #       ending plays (the letter to Vatras, +100 exp); a new game (protocol v31: story_effect knows)
