@@ -234,6 +234,14 @@ class MemoryStore:
         ).fetchall()
         return [(int(s), content) for s, content in rows]
 
+    def facts_with_time(self, branch: str) -> list[tuple[int, float, str]]:
+        """Facts with their original recording time, preserved when copied into a save branch."""
+        rows = self._db.execute(
+            "SELECT seq, created, content FROM events WHERE branch=? AND kind='fact' ORDER BY seq",
+            (branch,),
+        ).fetchall()
+        return [(int(seq), created, content) for seq, created, content in rows]
+
     def add_patch(self, branch: str, op: str) -> int:
         """A change to the story graph (JSON of one operation) made on this branch."""
         return self._insert(branch, PATCHES, "patch", None, op, None, None)

@@ -18,6 +18,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "game/gamescript.h"
@@ -77,7 +78,8 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 54;
+constexpr int         ProtocolVersion = 55;
+AiBridge*             activeBridge = nullptr;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
 constexpr float       IntroCm         = 3000;  // -nointro: those this near the hero at the start
@@ -301,6 +303,8 @@ struct AiBridge::Impl final {
   std::vector<Inbound> inbound;
 
   bool                 connected = false;
+  uint64_t             chronicleRequests = 0;
+  std::unordered_map<std::string,std::function<void(const ChronicleData&)>> chronicleCallbacks;
   bool                 replaceSvm = false;
   uint64_t             svmLines = 0;
   uint64_t             bodyGeneration = 0;
@@ -615,6 +619,8 @@ void AiBridge::Impl::processInbound(World* world, Inbound& in) {
         Log::i("[ai] connection failed: ",in.text);
         }
       connected = false;
+      for(auto& [req,callback]:std::exchange(chronicleCallbacks,{}))
+        callback({});
       if(in.kind==Inbound::Error)
         lastError = in.text;
       break;
@@ -892,6 +898,15 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
 
   if(type=="ping") {
     send(JsonWriter("pong").str("req",req).finish());
+    return;
+    }
+  if(type=="chronicle") {
+    const auto found = chronicleCallbacks.find(std::string(req));
+    if(found!=chronicleCallbacks.end()) {
+      auto callback = std::move(found->second);
+      chronicleCallbacks.erase(found);
+      callback(parseChronicle(text));
+      }
     return;
     }
   if(type=="player_pose") {
@@ -2210,6 +2225,7 @@ bool AiBridge::Impl::onConsoleCommand(std::string_view cmd, std::string& reply) 
   }
 
 AiBridge::AiBridge() {
+  activeBridge = this;
   stuck = StuckLogger::fromEnvironment();
   const char* env = std::getenv("GOTHIC_AI");
   if(env!=nullptr && std::string_view(env)=="0") {
@@ -2219,7 +2235,20 @@ AiBridge::AiBridge() {
   impl = std::make_unique<Impl>();
   }
 
-AiBridge::~AiBridge() = default;
+AiBridge::~AiBridge() {
+  activeBridge = nullptr;
+  }
+
+void AiBridge::requestChronicle(std::function<void(const ChronicleData&)> callback) {
+  if(activeBridge==nullptr || activeBridge->impl==nullptr || !activeBridge->impl->connected) {
+    callback({});
+    return;
+    }
+  auto& bridge = *activeBridge->impl;
+  const auto req = "chronicle:"+std::to_string(++bridge.chronicleRequests);
+  bridge.chronicleCallbacks.emplace(req,std::move(callback));
+  bridge.send(JsonWriter("chronicle_get").str("req",req).finish());
+  }
 
 void AiBridge::Impl::askVoice(const std::string& line, const std::string& npc, const std::string& text) {
   World* world = Gothic::inst().world();
