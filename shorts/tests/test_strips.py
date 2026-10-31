@@ -98,3 +98,20 @@ def test_a_hold_names_its_beats_and_their_push():
     assert strips.hold_beats(p, 5, 9) == ("card", "yes")
     assert strips.hold_beats(p, 3, 6) == ("foot, card", "part")
     assert strips.hold_beats(p, 11, 15) == ("quiet", "no")
+
+
+def test_a_verdict_before_its_counter_stops_is_noted():
+    tag = {"lines": [{"at": 0}, {"at": 0.5, "count": {"to": 46, "dur": 1.2}}, {"at": 1.0}]}
+    assert notes({"id": "a", "dur": 4, "tags": [tag]}) == ["tag0.line2"]
+    tag["lines"][2]["at"] = 1.7
+    assert notes({"id": "a", "dur": 4, "tags": [tag]}) == []
+
+
+def test_captions_are_blanked_under_the_seam_in_a_tall_split():
+    w, h = strips.SMALL
+    frame = bytes([200]) * (w * h)
+    p = {"format": "tall", "beats": [{"id": "a", "kind": "footage", "dur": 1}, {"id": "b", "kind": "split", "dur": 1}]}
+    a, b = strips.without_captions([frame] * 60, p, 30)[0], strips.without_captions([frame] * 60, p, 30)[45]
+    row = lambda f, y: f[int(y * h) * w]  # noqa: E731
+    assert row(a, 0.7) == 0 and row(a, 0.45) == 200
+    assert row(b, 0.55) == 0 and row(b, 0.72) == 200

@@ -24,12 +24,15 @@ from .base import (
     with_deadlines,
 )
 from .fake import FakeBackend, FakeStep
+from .off import ModelOff, OffBackend
 from .openai_compat import OpenAICompatBackend
 from .openai_responses import OpenAIResponsesBackend
 from .siwc import ChatGPTAuth
 
-BACKENDS = ("chatgpt", "openai", "local", "fake")
-DEFAULT_MODELS = {"chatgpt": "gpt-6.1-sol", "openai": "gpt-6.1-sol", "local": "qwen3:8b", "fake": "fake"}
+BACKENDS = ("chatgpt", "openai", "local", "fake", "off")
+DEFAULT_MODELS = {
+    "chatgpt": "gpt-6.1-sol", "openai": "gpt-6.1-sol", "local": "qwen3:8b", "fake": "fake", "off": "off"
+}
 # the quick model of a fight (dialogue.py): Gemma 4 12B on llama.cpp, as server/deploy/gemma names it. A line
 # is a sentence or two; the cap keeps a small model from looping until its context is full
 QUICK_MODEL = "gemma-4-12b"
@@ -49,6 +52,8 @@ __all__ = [
     "LLMError",
     "LLMEvent",
     "Message",
+    "ModelOff",
+    "OffBackend",
     "Reasoning",
     "Role",
     "TextDelta",
@@ -90,6 +95,8 @@ def make_backend(
     """`websocket`: an npc's requests go over a WebSocket of its own (openai_responses.py)."""
     model = model or DEFAULT_MODELS[kind]
     match kind:
+        case "off":
+            return OffBackend()
         case "chatgpt":
             return OpenAIResponsesBackend(
                 model, ChatGPTAuth(), reasoning_effort=reasoning_effort, name="chatgpt", websocket=websocket

@@ -44,7 +44,11 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
   setObjMatrix(initial);
 
   if(type!=T_Inventory) {
+    const auto* residency=world.chunkResidency();
+    Resources::TextureLoadScope textureLoadScope(residency &&
+        residency->textureDistance(ChunkId::fromPosition(pos.x,pos.z))>2);
     visual = world.addView(*hitem);
+    visual.setTextureOwner(position(),true);
     if(type==T_WorldDyn)
       setPhysicsEnable(visual);
     }
@@ -85,8 +89,12 @@ Item::Item(World &owner, Serialize &fin, Type type)
   setLocalTransform(mat);
 
   if(type!=T_Inventory) {
+    const auto* residency=world.chunkResidency();
+    Resources::TextureLoadScope textureLoadScope(residency &&
+        residency->textureDistance(ChunkId::fromPosition(pos.x,pos.z))>2);
     if(!FileExt::hasExt(hitem->visual,"ZEN"))
       visual = world.addView(*hitem);
+    visual.setTextureOwner(pos,true);
     if(type==T_WorldDyn)
       setPhysicsEnable(visual);
     }
@@ -193,6 +201,7 @@ void Item::setObjMatrix(const Tempest::Matrix4x4 &m) {
   pos.z = m.at(3,2);
   setLocalTransform(m);
   visual.setObjMatrix(m);
+  visual.setTextureOwner(pos,true);
   }
 
 void Item::setPhysicsMatrix(const Tempest::Matrix4x4& m) {
@@ -204,6 +213,7 @@ void Item::setPhysicsMatrix(const Tempest::Matrix4x4& m) {
   // on rounding differences, keeping the whole floating contact island awake.
   setGlobalTransform(m);
   visual.setObjMatrix(m);
+  visual.setTextureOwner(pos,true);
   }
 
 bool Item::isMission() const {
@@ -467,6 +477,7 @@ void Item::updateMatrix() {
 
 void Item::moveEvent() {
   visual.setObjMatrix(transform());
+  visual.setTextureOwner(pos,true);
   physic.setObjMatrix(transform());
   if(!isDynamic())
     world.invalidateVobIndex();

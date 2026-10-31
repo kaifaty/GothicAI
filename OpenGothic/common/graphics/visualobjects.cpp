@@ -8,6 +8,7 @@
 #include "graphics/mesh/submesh/animmesh.h"
 #include "gothic.h"
 #include "frameprofile.h"
+#include "loadprobe.h"
 #include "physics/worldwind.h"
 #include "world/chunkresidency.h"
 
@@ -62,7 +63,8 @@ void VisualObjects::Item::setObjMatrix(const Tempest::Matrix4x4& pos, const Vec3
     if(obj.pos!=pos)
       owner->updateRtAs(id);
     obj.pos = pos;
-    setTexturePosition(texturePosition);
+    if(obj.textureCategory==Resources::TextureCategory::Static)
+      setTexturePosition(texturePosition);
     owner->updateInstance(id);
     }
   }
@@ -71,12 +73,39 @@ void VisualObjects::Item::setTexturePosition(const Vec3& position) {
   if(owner==nullptr)
     return;
   auto& obj=owner->objects[id];
-  // Each animation worker owns its items; chunk callbacks only change demand
-  // after the workers join. Unchanged transforms need no shared registration.
-  if(obj.textureCategory!=Resources::TextureCategory::Static || obj.texturePosition==position)
+  if(obj.textureCategory!=Resources::TextureCategory::Static)
+    return;
+  const auto chunk=ChunkId::fromPosition(position.x,position.z);
+  if(obj.textureChunkRegistered && obj.textureChunk==std::pair{chunk.x,chunk.z})
     return;
   FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
+  obj.texturePosition=position;
+  owner->updateTextureDemand(id);
+  }
+
+void VisualObjects::Item::setTextureOwner(const Vec3& position, bool spatial) {
+  if(owner==nullptr)
+    return;
+  auto& obj=owner->objects[id];
+  const auto chunk=ChunkId::fromPosition(position.x,position.z);
+  if(obj.textureCategory==Resources::TextureCategory::Dynamic && obj.textureWorldOwner==spatial &&
+     (!spatial || (obj.textureChunkRegistered && obj.textureChunk==std::pair{chunk.x,chunk.z})))
+    return;
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+  std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
+  owner->setTextureDemand(obj,false);
+  if(obj.textureChunkRegistered) {
+    if(auto found=owner->textureChunks.find(obj.textureChunk);found!=owner->textureChunks.end()) {
+      found->second.erase(id);
+      if(found->second.empty())
+        owner->textureChunks.erase(found);
+      }
+    obj.textureChunkRegistered=false;
+    }
+  obj.textureCategory=Resources::TextureCategory::Dynamic;
+  obj.textureChunkedLandscape=false;
+  obj.textureWorldOwner=spatial;
   obj.texturePosition=position;
   owner->updateTextureDemand(id);
   }
@@ -85,7 +114,7 @@ void VisualObjects::Item::setTextureCategory(Resources::TextureCategory category
   if(owner==nullptr)
     return;
   auto& obj=owner->objects[id];
-  if(obj.textureCategory==category)
+  if(obj.textureCategory==category && !obj.textureWorldOwner)
     return;
   FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
@@ -99,6 +128,9 @@ void VisualObjects::Item::setTextureCategory(Resources::TextureCategory category
     obj.textureChunkRegistered=false;
     }
   obj.textureCategory=category;
+  obj.textureWorldOwner=false;
+  if(category!=Resources::TextureCategory::Landscape)
+    obj.textureChunkedLandscape=false;
   owner->updateTextureDemand(id);
   }
 
@@ -292,8 +324,10 @@ VisualObjects::VisualObjects(const SceneGlobals& scene, const std::pair<Vec3, Ve
 
 VisualObjects::~VisualObjects() {
   std::lock_guard<std::recursive_mutex> guard(textureSync);
-  if(textureResidency)
+  if(textureResidency) {
     textureResidency->unsubscribe(textureSubscription);
+    textureResidency->unsubscribe(textureFocusSubscription);
+    }
   for(auto& object:objects)
     if(!object.isEmpty())
       setTextureDemand(object,false);
@@ -302,19 +336,22 @@ VisualObjects::~VisualObjects() {
 void VisualObjects::setTextureResidency(ChunkResidency* residency) {
   FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   std::lock_guard<std::recursive_mutex> guard(textureSync);
-  if(textureResidency)
+  if(textureResidency) {
     textureResidency->unsubscribe(textureSubscription);
+    textureResidency->unsubscribe(textureFocusSubscription);
+    }
   textureResidency=residency;
   if(textureResidency) {
-    textureSubscription=textureResidency->subscribe([this](ChunkId chunk, ChunkResidency::State, ChunkResidency::State next) {
+    textureSubscription=textureResidency->subscribe([this](ChunkId chunk, ChunkResidency::State, ChunkResidency::State) {
       FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
       std::lock_guard<std::recursive_mutex> guard(textureSync);
       const auto found=textureChunks.find({chunk.x,chunk.z});
       if(found==textureChunks.end())
         return;
       for(auto id:found->second)
-        setTextureDemand(objects[id],next!=ChunkResidency::State::Outside);
+        updateTextureDemand(id);
       });
+    textureFocusSubscription=textureResidency->subscribeFocus([this] { updateTextureFocus(); });
     }
   for(size_t id=0;id<objects.size();++id)
     if(!objects[id].isEmpty())
@@ -342,7 +379,7 @@ void VisualObjects::setTextureDemand(Object& object, bool active) {
   std::lock_guard<std::recursive_mutex> guard(textureSync);
   if(object.textureDemand==active)
     return;
-  Resources::textureDemand(object.bucketId->mat,object.textureCategory,active);
+  Resources::textureDemand(object.bucketId->mat,object.textureCategory,active,object.textureDistance);
   object.textureDemand=active;
   }
 
@@ -351,7 +388,8 @@ void VisualObjects::updateTextureDemand(size_t id) {
   auto& object=objects[id];
   if(object.isEmpty())
     return;
-  if(object.textureCategory!=Resources::TextureCategory::Static) {
+  if(object.textureCategory!=Resources::TextureCategory::Static && !object.textureChunkedLandscape && !object.textureWorldOwner) {
+    object.textureDistance=Resources::TextureAlwaysFull;
     setTextureDemand(object,true);
     return;
     }
@@ -368,7 +406,26 @@ void VisualObjects::updateTextureDemand(size_t id) {
     textureChunks[key].insert(id);
     object.textureChunkRegistered=true;
     }
-  setTextureDemand(object,textureChunkActive(object.texturePosition));
+  const auto distance=textureResidency ? std::min(4u,textureResidency->textureDistance(chunk)) : 0;
+  if(object.textureDistance!=distance) {
+    setTextureDemand(object,false);
+    object.textureDistance=distance;
+    }
+  // A landscape owner exists only while its package is published.
+  setTextureDemand(object,object.textureWorldOwner || object.textureChunkedLandscape || textureChunkActive(object.texturePosition));
+  }
+
+void VisualObjects::updateTextureFocus() {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  for(const auto& entry:textureChunks) {
+    const ChunkId chunk{entry.first.first,entry.first.second};
+    const auto distance=std::min(4u,textureResidency->textureDistance(chunk));
+    if(entry.second.empty() || objects[*entry.second.begin()].textureDistance==distance)
+      continue;
+    for(auto id:entry.second)
+      updateTextureDemand(id);
+    }
   }
 
 void VisualObjects::invalidate(const StaticMesh& mesh) {
@@ -422,6 +479,7 @@ void VisualObjects::updateRtAs(size_t id) {
 VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen,
                                        bool staticDraw) {
+  LoadProbe::Vobs::Scope probe("draw_instance");
   std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets
@@ -473,6 +531,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
 VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen,
                                        const InstanceStorage::Id& anim) {
+  LoadProbe::Vobs::Scope probe("draw_instance");
   std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets
@@ -511,7 +570,8 @@ VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat
 
 VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster,
-                                       DrawCommands::Type type) {
+                                       DrawCommands::Type type, const Vec3* texturePosition) {
+  LoadProbe::Vobs::Scope probe("draw_instance");
   std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets
@@ -534,6 +594,9 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   if(obj.isEmpty())
     return Item(); // null command
   obj.textureCategory=Resources::TextureCategory::Landscape;
+  obj.textureChunkedLandscape=texturePosition!=nullptr;
+  if(texturePosition)
+    obj.texturePosition=*texturePosition;
   { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
   updateRtAs(id);
   return Item(*this, id);

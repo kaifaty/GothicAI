@@ -142,6 +142,12 @@ AbstractGraphicsApi::PTexture MetalApi::createTexture(AbstractGraphicsApi::Devic
   return PTexture(new MtTexture(dev,p,mips,frm));
   }
 
+AbstractGraphicsApi::PTexture MetalApi::createTextureAsync(AbstractGraphicsApi::Device* d,
+                                                          const Pixmap& p, TextureFormat frm, uint32_t mips) {
+  auto& dev=*reinterpret_cast<MtDevice*>(d);
+  return PTexture(new MtTexture(dev,p,mips,frm,false));
+  }
+
 AbstractGraphicsApi::PTexture MetalApi::createTexture(AbstractGraphicsApi::Device *d,
                                                       const uint32_t w, const uint32_t h, uint32_t mips, TextureFormat frm) {
   auto& dev = *reinterpret_cast<MtDevice*>(d);

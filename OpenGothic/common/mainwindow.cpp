@@ -351,6 +351,14 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
     std::snprintf(text,sizeof(text),"Texture session: evicted %llu  reloaded %llu",
                   static_cast<unsigned long long>(textures.evicted),static_cast<unsigned long long>(textures.reloaded));
     fnt.drawText(p,x,top+3*line,text);
+    std::snprintf(text,sizeof(text),"Full %.2f MiB  Tail %.2f MiB  promoted %llu  demoted %llu  queue %llu",
+                  double(textures.fullBytes)/1048576.0,double(textures.tailBytes)/1048576.0,
+                  static_cast<unsigned long long>(textures.promoted),static_cast<unsigned long long>(textures.demoted),
+                  static_cast<unsigned long long>(textures.promotionQueue));
+    fnt.drawText(p,x,top+4*line,text);
+    std::snprintf(text,sizeof(text),"Near (ring 1) on Tail: %llu textures  %.6f texture-seconds",
+                  static_cast<unsigned long long>(textures.nearTailCount),textures.nearTailSeconds);
+    fnt.drawText(p,x,top+5*line,text);
     };
   const auto chunks = world.chunkResidency();
   if(chunks==nullptr) {
@@ -368,10 +376,10 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   const int64_t radius = std::max<int64_t>({8,std::abs(int64_t(cameraId.x)-center.x)+1,
                                             std::abs(int64_t(cameraId.z)-center.z)+1});
   const int mapSize = std::min(240,std::min(w(),h())/2);
-  const int mapY = y+8*line;
+  const int mapY = y+10*line;
   const float cell = float(mapSize)/float(radius*2+1);
   p.setBrush(Color(0.f,0.f,0.f,0.8f));
-  p.drawRect(x-5,y-5,std::max(580,mapSize+10),mapSize+10*line+10);
+  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+12*line+10);
 
   const auto& stats = chunks->stats();
   char text[160];

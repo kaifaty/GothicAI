@@ -10,6 +10,7 @@ namespace Tempest {
 
 class Device;
 class DescriptorSet;
+class DescriptorArray;
 template<class T>
 class Encoder;
 class StorageImage;
@@ -30,6 +31,7 @@ class Texture2d final {
     bool          isEmpty()  const { return texW<=0 || texH<=0 || texD<=0; }
     TextureFormat format()   const { return frm; }
     uint32_t      mipCount() const;
+    bool          uploadReady() const;
 
     Texture2d     shared() const;
     void          markRetired();
@@ -53,6 +55,7 @@ class Texture2d final {
 
   friend class Tempest::Device;
   friend class Tempest::DescriptorSet;
+  friend class Tempest::DescriptorArray;
   friend class Encoder<Tempest::CommandBuffer>;
   friend class Tempest::StorageImage;
 

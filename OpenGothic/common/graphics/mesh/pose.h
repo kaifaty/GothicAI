@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Tempest/Matrix4x4>
+#include <optional>
 #include <vector>
 
 #include "game/constants.h"
@@ -167,6 +168,13 @@ class Pose final {
       BodyState state = BS_NONE;
       };
     auto               combatLayers(uint64_t tickCount) const -> std::vector<CombatLayer>;
+
+    struct MeleeContact final {
+      const Animation::Sequence* sequence = nullptr;
+      uint64_t origin = 0;
+      uint64_t contact = 0; // game time, after the current layer's speed and hit stop
+      };
+    auto               nextMeleeContact(uint64_t tickCount) const -> std::optional<MeleeContact>;
 
   private:
     friend class PoseOriginReplayContract;

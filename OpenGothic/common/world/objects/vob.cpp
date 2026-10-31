@@ -23,6 +23,7 @@
 #include "world/voblayer.h"
 #include "world/world.h"
 #include "game/serialize.h"
+#include "loadprobe.h"
 
 using namespace Tempest;
 
@@ -176,7 +177,59 @@ void Vob::recalculateTransform() {
   }
 
 
+static const char* probeVobType(const asset::VirtualObject& vob) {
+  using T=asset::VirtualObjectType;
+  switch(vob.type) {
+    case T::zCVob:
+    case T::zCVobStair:
+    case T::zCVobAnimate:
+      if(vob.visual!=nullptr) {
+        if(vob.visual->type==asset::VisualType::DECAL) return "decal";
+        if(vob.visual->type==asset::VisualType::PARTICLE_EFFECT) return "pfx";
+        if(vob.visual->type==asset::VisualType::MESH || vob.visual->type==asset::VisualType::MULTI_RESOLUTION_MESH ||
+           vob.visual->type==asset::VisualType::MODEL || vob.visual->type==asset::VisualType::MORPH_MESH)
+          return "static_mesh";
+        }
+      return "other";
+    case T::oCMobContainer: return "mob_container";
+    case T::oCMobDoor: return "mob_door";
+    case T::oCMobFire:
+    case T::oCMOB:
+    case T::oCMobInter:
+    case T::oCMobBed:
+    case T::oCMobSwitch:
+    case T::oCMobLadder:
+    case T::oCMobWheel: return "mob_other";
+    case T::zCMover: return "mover";
+    case T::oCItem: return "item";
+    case T::zCVobLight: return "light";
+    case T::zCVobSound:
+    case T::zCVobSoundDaytime: return "sound";
+    case T::oCZoneMusic:
+    case T::oCZoneMusicDefault:
+    case T::zCZoneZFog:
+    case T::zCZoneZFogDefault:
+    case T::zCZoneVobFarPlane:
+    case T::zCZoneVobFarPlaneDefault: return "zone";
+    case T::zCPFXController: return "pfx";
+    case T::zCCodeMaster:
+    case T::zCTriggerList:
+    case T::oCTriggerScript:
+    case T::zCTriggerWorldStart:
+    case T::oCTriggerChangeLevel:
+    case T::zCTrigger:
+    case T::zCMessageFilter:
+    case T::oCTouchDamage:
+    case T::zCTriggerUntouch:
+    case T::zCMoverController:
+    case T::zCEarthquake:
+    case T::oCCSTrigger: return "trigger";
+    default: return "other";
+    }
+  }
+
 std::unique_ptr<Vob> Vob::load(Vob* parent, World& world, const asset::VirtualObject& vob, Flags flags) {
+  LoadProbe::Vobs::TypeScope probe([&] { return probeVobType(vob); });
   switch(vob.type) {
     case asset::VirtualObjectType::UNKNOWN:
       return nullptr;

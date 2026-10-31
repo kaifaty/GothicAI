@@ -12,6 +12,7 @@
 #include "graphics/mesh/animmath.h"
 #include "graphics/mesh/ikmath.h"
 #include "frameprofile.h"
+#include "worldchunksruntime.h"
 
 #include <algorithm>
 #include <array>
@@ -262,6 +263,8 @@ bool MdlVisual::stickArrow(MeshObjects::Mesh&& arrow, size_t bone, const Matrix4
   if(!validRenderFrame(pin.local))
     return false;
   arrow.setObjMatrix(renderedBone(bone)*pin.local);
+  if(textureOwnerKnown)
+    arrow.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   pin.view=std::move(arrow);
   if(stuckArrows.size()>=MaxStuckArrows)
     stuckArrows.erase(stuckArrows.begin());
@@ -285,6 +288,9 @@ void MdlVisual::saveStuckArrows(Serialize& fout) const {
   }
 
 bool MdlVisual::loadStuckArrows(Serialize& fin, World& world) {
+  const auto* residency=world.chunkResidency();
+  Resources::TextureLoadScope textureLoadScope(textureOwnerKnown && textureOwnerSpatial && residency &&
+      residency->textureDistance(ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z))>2);
   clearStuckArrows();
   if(!Gothic::physicsFlags().arrowSticking)
     return true;
@@ -317,6 +323,8 @@ bool MdlVisual::loadStuckArrows(Serialize& fin, World& world) {
           if(std::abs(pin.local.at(c,r))>100000000.f)
             return false;
       pin.view=world.addView(pin.visual);
+      if(textureOwnerKnown)
+        pin.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
       if(pin.view.isEmpty())
         return false;
       pin.view.setObjMatrix(renderedBone(pin.bone)*pin.local);
@@ -400,6 +408,8 @@ void MdlVisual::setArmor(Npc& npc, MeshObjects::Mesh&& armor) {
   }
 
 void MdlVisual::implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, const int32_t version) {
+  if(npc)
+    setTextureOwner(npc->position(),!npc->isPlayer());
   clearPhysicalPose();
   attach.clear();
   if(auto p = body.protoMesh()) {
@@ -412,6 +422,8 @@ void MdlVisual::implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, co
     syncAttaches();
     }
   view = std::move(body);
+  if(textureOwnerKnown)
+    view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   view.setAsGhost(hnpcFlagGhost);
   view.setFatness(npc==nullptr ? 0 : npc->fatness());
   view.setSkeleton(skeleton);
@@ -436,6 +448,8 @@ void MdlVisual::fitHitZones() {
   }
 
 void MdlVisual::setSlotAttachment(MeshObjects::Mesh&& itm, std::string_view bone) {
+  if(textureOwnerKnown)
+    itm.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   if(bone.empty() || skeleton==nullptr)
     return;
 
@@ -495,6 +509,8 @@ void MdlVisual::setMagicWeaponKey(World& owner, SpellFxKey key, int32_t keyLvl) 
   }
 
 void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone) {
+  if(textureOwnerKnown)
+    itm.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   if(bone.empty() || skeleton==nullptr)
     return;
 
@@ -738,6 +754,27 @@ void MdlVisual::setObjMatrix(const Tempest::Matrix4x4 &m, bool syncAttach) {
     syncAttaches();
   }
 
+void MdlVisual::setTextureOwner(const Vec3& position, bool spatial) {
+  if(textureOwnerKnown && textureOwnerSpatial==spatial &&
+     (!spatial || ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z)==ChunkId::fromPosition(position.x,position.z)))
+    return;
+  textureOwnerKnown=true;
+  textureOwnerSpatial=spatial;
+  textureOwnerPosition=position;
+  view.setTextureOwner(position,spatial);
+  MeshAttach* slots[]={&head,&sword,&shield,&bow,&ammunition,&stateItm};
+  for(auto* slot:slots)
+    slot->view.setTextureOwner(position,spatial);
+  for(auto& slot:item)
+    slot.view.setTextureOwner(position,spatial);
+  for(auto& slot:attach)
+    slot.view.setTextureOwner(position,spatial);
+  for(auto& pin:stuckArrows)
+    pin.view.setTextureOwner(position,spatial);
+  if(torch.view)
+    torch.view->setTextureOwner(position,spatial);
+  }
+
 bool MdlVisual::minSkinnedVertex(float fatness,Vec3& point) const {
   const auto* mesh=view.protoMesh();
   if(mesh==nullptr)
@@ -790,8 +827,13 @@ void MdlVisual::setTorch(bool t, World& owner) {
 
   auto hitem = std::make_shared<zenkit::IItem>();
   owner.script().initializeInstanceItem(hitem, torchId);
+  const auto* residency=owner.chunkResidency();
+  Resources::TextureLoadScope textureLoadScope(textureOwnerKnown && textureOwnerSpatial && residency &&
+      residency->textureDistance(ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z))>2);
   torch.view.reset(new ObjVisual());
   torch.view->setVisual(*hitem,owner,false);
+  if(textureOwnerKnown)
+    torch.view->setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   torch.boneId = (skeleton==nullptr ? size_t(-1) : skeleton->findNode("ZS_LEFTHAND"));
 
   auto& pose = *skInst;
@@ -1788,6 +1830,8 @@ Bounds MdlVisual::bounds() const {
 void MdlVisual::bind(MeshAttach& slot, MeshObjects::Mesh&& itm, std::string_view bone) {
   slot.boneId = skeleton==nullptr ? size_t(-1) : skeleton->findNode(bone);
   slot.view   = std::move(itm);
+  if(textureOwnerKnown)
+    slot.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   slot.bone   = bone;
   // sync?
   }

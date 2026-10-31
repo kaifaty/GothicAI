@@ -97,6 +97,12 @@ VDescriptorAllocator::Allocation VDescriptorAllocator::alloc(uint32_t num) {
   return Allocation(ret.ptr);
   }
 
+void VDescriptorAllocator::set(uint32_t ptr, AbstractGraphicsApi::Texture* texture, uint32_t mipLevel) {
+  std::lock_guard<SpinLock> guard(providerRes.sync);
+  auto* address=providerRes.memory.handler->hptr+ptr*providerRes.elementSize;
+  VPushDescriptor::write(*providerRes.dev,address,ShaderReflection::Image,texture,mipLevel,ComponentMapping());
+  }
+
 void VDescriptorAllocator::flush() {
   if(providerRes.dev==nullptr)
     return;
