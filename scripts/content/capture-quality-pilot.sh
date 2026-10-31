@@ -12,6 +12,8 @@
 # QUALITY_PILOT_SCENARIO=FILE.bench overrides the scenario, e.g. the same cameras at another time of day.
 # QUALITY_PILOT_TIMEOUT=SECONDS gives the game longer than 240 s (a long scenario on a busy Ryzen).
 # QUALITY_PILOT_INI="SECTION.key=value ..." adds Gothic.ini settings, e.g. INTERNAL.halfResAoFog=0.
+# QUALITY_PILOT_TEXTURES=DIR (on Ryzen) gives the game OPENGOTHIC_TEXTURES, e.g. an own particle texture;
+#   empty by default, so HD textures never leak into a capture.
 # --compose-house CAPTURES OUTPUT writes original / pilot-3b / house-1 boards.
 # --compose-house-2 CAPTURES OUTPUT writes original / house-1 / house-2 boards.
 set -euo pipefail
@@ -104,7 +106,7 @@ PYINI
   export ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1 TEMPEST_WINDOW_SIZE=1280x720
   export TEMPEST_WINDOW_POS=100,100 GOTHIC_AI=0
   export OPENGOTHIC_CONTENT="$task/content/$variant"
-  export OPENGOTHIC_TEXTURES='' OPENGOTHIC_FRACTURE=''
+  export OPENGOTHIC_TEXTURES="${QUALITY_PILOT_TEXTURES:-}" OPENGOTHIC_FRACTURE=''
   export OPENGOTHIC_CENSUS="$out/census.json"
   export OPENGOTHIC_BENCH="$task/scripts/$SCENARIO" OPENGOTHIC_BENCH_OUT="$out"
   game="$GOTHIC_DIR"

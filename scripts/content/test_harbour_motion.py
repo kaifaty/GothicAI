@@ -47,6 +47,18 @@ def test_a_reshoot_scenario_takes_only_the_named_cameras(tmp_path, monkeypatch):
         raise AssertionError('an unknown camera must stop the scenario')
 
 
+def test_a_smoke_scenario_waits_out_a_particle_life_and_turns_to_night():
+    lines = harbour_motion.together_lines(CAMERAS, CAMERAS[:1], settle=12000)
+    shots = [line[5:] for line in lines if line.startswith('shot ')]
+    assert shots == ['ship', 'ship-b', 'quay', 'ship-night', 'ship-night-b']
+    assert lines.count('wait 12000') == 3 and 'wait 6000' not in lines
+    # midnight before the first night camera settles, and again right before its shot
+    turn = lines.index('set time 0 0')
+    night_goto = next(i for i in range(turn, len(lines)) if lines[i].startswith('goto pos'))
+    assert lines.index('shot quay') < turn < night_goto < lines.index('wait 12000', night_goto) < lines.index('shot ship-night')
+    assert lines[lines.index('shot ship-night') - 1] == 'set time 0 0'
+
+
 def test_a_tilted_emitter_leans_with_the_wind():
     smoke, = harbour_motion.layer_entries([
         {'key': 'smoke', 'kind': 'emitter', 'pfx': 'OWN_SMOKE', 'position': [1, 2, 3], 'tilt': 40}])
