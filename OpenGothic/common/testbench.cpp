@@ -663,6 +663,7 @@ struct Bench {
   double streamingWarmupQueueMaxMs = 0;
   uint64_t streamingNearBefore = 0, streamingFarBefore = 0;
   uint64_t streamingPublishedBefore = 0, streamingReleasedBefore = 0;
+  Resources::TextureStats streamingTexturesBefore;
   std::vector<Vec3> routePoints;
   size_t      routeNext = 0;
   Vec3        routePosition;
@@ -1838,7 +1839,7 @@ void finish() {
   stopRecording();
   if(!bench.streamingSamples.empty()) {
     if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
-      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n\n");
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds\n");
       for(const auto& row:bench.streamingSamples) {
         std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu,",row.segment.c_str(),
           (unsigned long long)row.frame,row.updateMs,row.workMs,row.near,row.far,row.outside,
@@ -1855,7 +1856,10 @@ void finish() {
         for(size_t i=0;i<textures.categoryBytes.size();++i)
           std::fprintf(file,",%llu,%llu",(unsigned long long)textures.categoryBytes[i],
             (unsigned long long)textures.categoryCount[i]);
-        std::fprintf(file,"\n");
+        std::fprintf(file,",%llu,%llu,%llu,%llu,%llu,%llu,%.9g\n",
+          (unsigned long long)textures.fullBytes,(unsigned long long)textures.tailBytes,
+          (unsigned long long)textures.promoted,(unsigned long long)textures.demoted,
+          (unsigned long long)textures.promotionQueue,(unsigned long long)textures.nearTailCount,textures.nearTailSeconds);
         }
       std::fclose(file);
       } else event("streaming_error","\"reason\":\"cannot write residency samples\"");
@@ -15616,6 +15620,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         bench.perfArmed=true;
         }
       bench.perfSegment=a[2];bench.perfFrame=0;
+      bench.streamingTexturesBefore=Resources::textureStats();
       if(auto* residency=w.chunkResidency()) {
         bench.streamingNearBefore=residency->stats().transitionsNear;
         bench.streamingFarBefore=residency->stats().transitionsFar;
@@ -15628,9 +15633,16 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         ",\"residency_manager\":"+(w.chunkResidency()!=nullptr ? "true" : "false"));
       }
     else if(a.size()==2 && a[1]=="stop") {
-      if(bench.perfSegment.starts_with("streaming-flythrough/"))
+      if(bench.perfSegment.starts_with("streaming-flythrough/")) {
+        const auto textures=Resources::textureStats();
+        char textureSeconds[48];
+        std::snprintf(textureSeconds,sizeof(textureSeconds),"%.9g",textures.nearTailSeconds-bench.streamingTexturesBefore.nearTailSeconds);
         event("streaming_end","\"segment\":"+jsonStr(bench.perfSegment)+
-          ",\"gpu_mb\":"+std::to_string(double(tempestProbeGpuBytes())/1048576.0));
+          ",\"gpu_mb\":"+std::to_string(double(tempestProbeGpuBytes())/1048576.0)+
+          ",\"tex_promoted\":"+std::to_string(textures.promoted-bench.streamingTexturesBefore.promoted)+
+          ",\"tex_demoted\":"+std::to_string(textures.demoted-bench.streamingTexturesBefore.demoted)+
+          ",\"tex_near_tail_seconds\":"+textureSeconds);
+        }
       bench.perfSegment.clear();
       }
     else arenaAbort("perf expects sample <segment under 64 bytes> or stop, after cadence normal");

@@ -46,7 +46,7 @@ MtTexture::MtTexture(MtDevice& d, const uint32_t w, const uint32_t h, const uint
   impl = alloc(frm,w,h,depth,mipCnt,MTL::StorageModePrivate,usage);
   }
 
-MtTexture::MtTexture(MtDevice& dev, const Pixmap& pm, uint32_t mipCnt, TextureFormat frm)
+MtTexture::MtTexture(MtDevice& dev, const Pixmap& pm, uint32_t mipCnt, TextureFormat frm, bool wait)
   :dev(dev), mipCnt(mipCnt) {
   const uint32_t         smip  = (isCompressedFormat(frm) ? mipCnt : 1);
   const MTL::StorageMode smode = hostVisibleStorageMode(*dev.impl);
@@ -59,7 +59,7 @@ MtTexture::MtTexture(MtDevice& dev, const Pixmap& pm, uint32_t mipCnt, TextureFo
     createRegularTexture(*stage,pm);
 
   auto pool = NsPtr<NS::AutoreleasePool>::init();
-  auto cmd  = dev.queue->commandBuffer();
+  auto cmd  = (wait ? dev.queue : dev.uploadQueue)->commandBuffer();
   auto enc  = cmd->blitCommandEncoder();
   if(isCompressedFormat(frm)) {
     enc->copyFromTexture(stage.get(),0,0, impl.get(),0,0, 1,mipCnt);
@@ -72,12 +72,34 @@ MtTexture::MtTexture(MtDevice& dev, const Pixmap& pm, uint32_t mipCnt, TextureFo
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   profileGpu(cmd);
 #endif
+  if(!wait) {
+    const auto fence=dev.aquireFence();
+    if(fence==nullptr)
+      throw DeviceLostException();
+    uploadFence=fence;
+    auto* device=&dev;
+    cmd->addCompletedHandler(^(MTL::CommandBuffer* completed) {
+      const auto status=completed->status();
+      device->signalFence(*fence,status,MTL::CommandBufferError(completed->error()->code()),completed->error());
+      device->onFinish();
+      });
+    device->onSubmit();
+    }
   cmd->commit();
-  // TODO: implement proper upload engine
-  cmd->waitUntilCompleted();
+  if(wait)
+    cmd->waitUntilCompleted();
   }
 
 MtTexture::~MtTexture() {
+  }
+
+bool MtTexture::uploadReady() {
+  if(uploadFence==nullptr)
+    return true;
+  if(!uploadFence->wait(0))
+    return false;
+  uploadFence.reset();
+  return true;
   }
 
 void MtTexture::createCompressedTexture(MTL::Texture& val, const Pixmap& p, TextureFormat frm, uint32_t mipCnt) {

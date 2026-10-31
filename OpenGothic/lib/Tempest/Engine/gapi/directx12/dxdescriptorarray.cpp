@@ -7,6 +7,7 @@
 #include "dxtexture.h"
 
 #include <cassert>
+#include <stdexcept>
 
 using namespace Tempest;
 using namespace Tempest::Detail;
@@ -16,7 +17,7 @@ DxDescriptorArray::DxDescriptorArray(DxDevice& dev, AbstractGraphicsApi::Texture
   }
 
 DxDescriptorArray::DxDescriptorArray(DxDevice& dev, AbstractGraphicsApi::Texture** tex, size_t cnt, uint32_t mipLevel, const Sampler* sampler)
-  : dev(dev), cnt(cnt) {
+  : dev(dev), cnt(cnt), mipLevel(mipLevel) {
   //NOTE: no bindless storage image
   try {
     dPtrR = dev.descAlloc.allocRes(uint32_t(cnt));
@@ -69,6 +70,25 @@ DxDescriptorArray::~DxDescriptorArray() {
 
 size_t DxDescriptorArray::size() const {
   return cnt;
+  }
+
+void DxDescriptorArray::setTexture(size_t index, AbstractGraphicsApi::Texture* texture) {
+  if(dPtrRW!=0xFFFFFFFF)
+    throw std::system_error(GraphicsErrc::UnsupportedExtension,"texture update of a buffer descriptor array");
+  if(index>=cnt)
+    throw std::out_of_range("descriptor array index");
+  const auto target=dev.descAlloc.handleCpu(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,dPtrR+uint32_t(index));
+  if(texture!=nullptr) {
+    DxPushDescriptor::write(dev,target,D3D12_CPU_DESCRIPTOR_HANDLE(),ShaderReflection::Image,texture,mipLevel,
+                            ComponentMapping(),Sampler::nearest());
+    } else {
+    D3D12_SHADER_RESOURCE_VIEW_DESC view{};
+    view.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
+    view.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
+    view.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    view.Texture2D.MipLevels=1;
+    dev.device->CreateShaderResourceView(nullptr,&view,target);
+    }
   }
 
 D3D12_GPU_DESCRIPTOR_HANDLE DxDescriptorArray::handleRW() const {

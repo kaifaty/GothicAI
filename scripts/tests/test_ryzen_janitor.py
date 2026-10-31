@@ -172,6 +172,38 @@ def test_nested_keep_protects_entire_owner(host, prefix):
         assert not sibling.exists()
 
 
+@pytest.mark.parametrize("prefix", ["", "e2e/", "codex-check/"])
+@pytest.mark.parametrize("keep_path", [
+    "source/server/.venv/lib/python3.12/site-packages/openai/lib/.keep",
+    "source/server/site-packages/openai/lib/.keep",
+    "source/server/dist-packages/openai/lib/.keep",
+    "node_modules/package/.keep",
+    "source/server/venv/package/.keep",
+])
+def test_package_keep_does_not_protect_idle_owner_in_emergency(host, prefix, keep_path):
+    task = host.task(prefix + "package-keep")
+    rebuildable = ["build", "source/server/.venv"]
+    for name in rebuildable:
+        directory = task / name
+        directory.mkdir(parents=True)
+        (directory / "junk").write_bytes(b"rebuild me")
+    marker = task / keep_path
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+    age_tree(task, 18 * HOUR)
+    host.free = 59 * GIB
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert cleaner.summary["emergency"]
+    assert not task.exists()
+    archives = list((host.nas / "archive").rglob("result.bin"))
+    assert len(archives) == 1
+    assert archives[0].read_bytes() == b"task data"
+    assert all(not (archives[0].parent / name).exists() for name in rebuildable)
+    assert cleaner.summary["moved"] == 1
+    assert cleaner.summary["deleted_bytes"] == 2 * len(b"rebuild me")
+
+
 @pytest.mark.parametrize("prefix,kind", [("", "cwd"), ("", "fd"), ("", "exe"), ("e2e/", "cwd"), ("e2e/", "fd"),
                                       ("codex-check/", "fd")])
 def test_task_with_process_is_skipped(host, prefix, kind):
@@ -438,6 +470,21 @@ def test_uv_cache_obeys_idle_cutoff(host, age, free, deleted):
     age_tree(host.uv_cache, age)
     assert host.cleaner().run() == 0
     assert (host.uv_cache / "wheel").exists() != deleted
+    assert host.calls == []
+
+
+@pytest.mark.parametrize("keep_path,deleted", [("archive-v0/x/openai/lib/.keep", True), (".keep", False)])
+def test_uv_cache_only_root_keep_protects(host, keep_path, deleted):
+    (host.uv_cache / "wheel").write_bytes(b"cached")
+    marker = host.uv_cache / keep_path
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+    age_tree(host.uv_cache, 3 * DAY)
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert (host.uv_cache / "wheel").exists() != deleted
+    assert marker.exists() != deleted
+    assert cleaner.summary["deleted_bytes"] == (len(b"cached") if deleted else 0)
     assert host.calls == []
 
 

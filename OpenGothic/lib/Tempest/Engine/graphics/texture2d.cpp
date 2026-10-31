@@ -71,6 +71,10 @@ uint32_t Texture2d::mipCount() const {
   return impl.handler ? impl.handler->mipCount() : 0;
   }
 
+bool Texture2d::uploadReady() const {
+  return impl.handler==nullptr || impl.handler->uploadReady();
+  }
+
 Texture2d Texture2d::shared() const {
   Texture2d texture;
   texture.impl=impl;
