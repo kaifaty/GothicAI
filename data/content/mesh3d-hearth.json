@@ -1,5 +1,5 @@
 {
- "base": "ea8c24940fb0ddcaf787e842f96babea96a5d639086fda0b69ceb4f765f77220",
+ "base": "3436f2bee419cf7655388e6e24cd82878747ca749abb01f6dcb27ede9ac99264",
  "targets": [
   {
    "id": "hearth-cauldron",
@@ -18,8 +18,8 @@
     },
     {
      "key": "OWN_HEARTH_LIQUID",
-     "group": "UNDEF",
-     "role": "the surface of what is cooking (not WATER: the engine keeps that group for the world mesh)"
+     "group": "WATER",
+     "role": "the water in a pot: clear engine water (glTF alphaMode BLEND), no collision"
     }
    ],
    "kind": "mob_model",
@@ -205,8 +205,8 @@
     },
     {
      "key": "OWN_HEARTH_LIQUID",
-     "group": "UNDEF",
-     "role": "the surface of what is cooking (not WATER: the engine keeps that group for the world mesh)"
+     "group": "WATER",
+     "role": "the water in a pot: clear engine water (glTF alphaMode BLEND), no collision"
     }
    ],
    "kind": "static_mrm",

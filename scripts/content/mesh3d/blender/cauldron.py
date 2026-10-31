@@ -10,7 +10,7 @@ Asset city-hearth (intent.md, wave 1; the user chose on 2026-10-31 to take the f
 mesh and the material from concept hearth-cauldron attempt 6). The pot is turned from the measured
 profile: a flat bottom, the belly widest at 0.4 of the height, the neck, and a collar flaring out almost
 to the belly. Its centre and floor are the original's (bbox of the target). Inside, the wall comes down
-from the rim to the liquid at "liquid" m, a flat surface in its own zone. Each band is a raised ring
+to a floor; the water at "liquid" m is a flat disc in its own zone, drawn as clear engine water. Each band is a raised ring
 "band_proud" proud of the wall with rivet heads every "rivet_step" m. The wall is hammered: small
 dents "dents" [depth, count around] and a slight oval, so the contour is round but not turned.
 """
@@ -96,7 +96,7 @@ def cap(ring, material, up):
         P.poly(tri, material, [(v.co.x, v.co.y) for v in tri])
 
 
-# --- the pot: outer wall, rim, inner wall down to the liquid, flat bottom -------------------------
+# --- the pot: outer wall, rim, inner wall down to the inner floor, flat bottom -------------------------
 heights = np.unique(np.concatenate([np.linspace(0, profile[-1, 0], cfg.get("rings", 16)), profile[:, 0]]))
 angles = [2 * math.pi * i / sides for i in range(sides)]
 pot = P.new_part()
@@ -104,12 +104,15 @@ outer = [(h, [radius(h, t) for t in angles]) for h in heights]
 wall, rim_w = cfg.get("wall", 0.012), cfg.get("rim", 0.015)
 top = heights[-1]
 liquid = cfg["liquid"]
-inner_h = sorted({liquid - 0.02, *[h for h in heights if h > liquid]}, reverse=True)  # the inner wall closes under the liquid
+# The water is clear (the engine's water surface): the inner wall runs down to a floor as thick as the wall,
+# and that floor is what one sees through it.
+# Under the water the wall is seen dimly: three rings there, the fine ones above.
+inner_h = sorted({*np.linspace(wall * 1.5, liquid - 0.02, 3), *[h for h in heights if h > liquid - 0.02]}, reverse=True)
 inner = [(top, [radius(top, t) - rim_w for t in angles])] + \
         [(h, [radius(h, t) - wall for t in angles]) for h in inner_h if h < top]
 rings = lathe(outer + inner, IRON, pot)  # outer wall up, across the rim, inner wall down
 cap(rings[0], IRON, up=False)
-cap(rings[-1], IRON, up=True)  # the inner wall closes under the liquid: the shell stays closed
+cap(rings[-1], IRON, up=True)  # the inner floor: the shell stays closed
 # the liquid: a flat disc just above where the inner wall meets it
 surface = P.new_part(wound=True)  # an open disc: wound up by hand, the recalculation could turn it down
 lr = [radius(liquid, t) - wall - 0.001 for t in angles]

@@ -118,8 +118,7 @@ asset::MaterialGroup materialGroup(const cgltf_material& material) {
       if(group=="STONE") return asset::MaterialGroup::STONE;
       if(group=="WOOD")  return asset::MaterialGroup::WOOD;
       if(group=="EARTH") return asset::MaterialGroup::EARTH;
-      if(group=="WATER")
-        reject("material extras.group WATER is unsupported for static visuals: water belongs to world mesh surfaces and overrides OPAQUE/MASK");
+      if(group=="WATER") return asset::MaterialGroup::WATER;
       if(group=="SNOW")  return asset::MaterialGroup::SNOW;
       reject("unknown material extras.group: " + group);
       }
@@ -132,9 +131,8 @@ asset::MaterialGroup materialGroup(const cgltf_material& material) {
 asset::Material convertMaterial(const cgltf_material* source) {
   if(source==nullptr || source->name==nullptr || source->name[0]=='\0')
     reject("each primitive needs a named material");
-  if(source->alpha_mode==cgltf_alpha_mode_blend)
-    reject("BLEND materials are not supported");
-  if(source->alpha_mode!=cgltf_alpha_mode_opaque && source->alpha_mode!=cgltf_alpha_mode_mask)
+  if(source->alpha_mode!=cgltf_alpha_mode_opaque && source->alpha_mode!=cgltf_alpha_mode_mask &&
+     source->alpha_mode!=cgltf_alpha_mode_blend)
     reject("unsupported material alphaMode");
   asset::Material material;
   material.name = decodedString(source->name);
@@ -144,9 +142,18 @@ asset::Material convertMaterial(const cgltf_material* source) {
   if(!std::filesystem::path(material.texture).has_extension())
     material.texture += ".TGA";
   material.group = materialGroup(*source);
+  // Water in a pot or a bucket: the engine's water surface (refraction, depth, reflection) on a static
+  // visual. It is the one translucent material, and the two flags say it together: WATER alone would
+  // override an OPAQUE/MASK policy, BLEND alone has no surface of its own here.
+  const bool water = material.group==asset::MaterialGroup::WATER;
+  if(water!=(source->alpha_mode==cgltf_alpha_mode_blend))
+    reject("water belongs to extras.group WATER with alphaMode BLEND, and BLEND only to water");
   material.color = {255,255,255,255};
-  material.alpha_func = source->alpha_mode==cgltf_alpha_mode_mask ?
-                       asset::AlphaFunction::DEFAULT : asset::AlphaFunction::NONE;
+  material.alpha_func = water ? asset::AlphaFunction::BLEND :
+                        source->alpha_mode==cgltf_alpha_mode_mask ? asset::AlphaFunction::DEFAULT :
+                                                                     asset::AlphaFunction::NONE;
+  // Things dropped in sink to the bottom of the pot instead of resting on the surface.
+  material.disable_collision = water;
   return material;
   }
 
