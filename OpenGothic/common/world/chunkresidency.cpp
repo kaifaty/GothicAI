@@ -22,6 +22,10 @@ float distanceSquared(const ChunkTable::Entry& chunk, const Tempest::Vec3& point
 }
 
 ChunkResidency::ChunkResidency(const ChunkTable& table):chunks(table),states(table.entries.size(),State::Outside) {
+  for(size_t i=0;i<table.entries.size();++i) {
+    const auto id=table.entries[i].id;
+    indices.emplace(std::pair{id.x,id.z},i);
+    }
   counters.outside=states.size();
   }
 
@@ -100,10 +104,15 @@ void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& came
   }
 
 ChunkResidency::State ChunkResidency::desired(ChunkId id) const {
-  for(size_t i=0;i<chunks.entries.size();++i)
-    if(chunks.entries[i].id==id)
-      return states[i];
+  const auto index=indexOf(id);
+  if(index!=size_t(-1))
+    return states[index];
   throw std::out_of_range("chunk is not in the world table");
+  }
+
+size_t ChunkResidency::indexOf(ChunkId id) const {
+  const auto found=indices.find({id.x,id.z});
+  return found==indices.end() ? size_t(-1) : found->second;
   }
 
 uint64_t ChunkResidency::subscribe(Listener listener) {

@@ -156,6 +156,7 @@ class Resources final {
     static Tempest::TextureFormat    textureFormat(const Tempest::Texture2d* texture);
     static void                      textureDemand(const Material& material, TextureCategory category, bool add);
     static void                      updateTextures(ChunkResidency* residency);
+    static void                      configureTextures(std::string_view budget = {});
 
     static const AttachBinder*       bindMesh       (const ProtoMesh& anim, const Skeleton& s);
     static const ProtoMesh*          loadMesh       (std::string_view name);
@@ -313,6 +314,9 @@ class Resources final {
     void                 trackTexture(Tempest::Texture2d* texture, const TextureData& data, TextureKind kind, bool pinned);
     void                 retireTexture(Tempest::Texture2d&& texture);
     void                 publishTexture();
+    struct TextureRecord;
+    void                 queueTexture(TextureRecord& record);
+    void                 unqueueTexture(TextureRecord& record);
     bool                 hasTexture(std::string_view name) const;
     ProtoMesh*            implLoadMesh(std::string_view name);
     std::unique_ptr<ProtoMesh> implLoadMeshMain(std::string name);
@@ -403,11 +407,14 @@ class Resources final {
       std::weak_ptr<int> queued;
       };
     std::unordered_map<const Tempest::Texture2d*,TextureRecord> textureRecords;
+    std::map<std::pair<uint64_t,uintptr_t>,TextureRecord*> textureIdle;
+    std::set<TextureRecord*> textureMissing;
     std::shared_ptr<TextureReload> textureReload;
     Tempest::Texture2d texturePlaceholders[3];
     uint64_t textureEpoch = 0, textureClock = 0;
     uint64_t texturesEvicted = 0, texturesReloaded = 0;
-    bool textureOverBudget = false;
+    uint64_t textureBudget = 256*1048576;
+    bool textureStreaming = true, textureOverBudget = false, texturePayloadChanged = false;
 
     TextureCache                                                      texCache;
     // OPENGOTHIC_TEXTURES: sharper textures of our own (scripts/hd-textures.sh) in place of the game's,

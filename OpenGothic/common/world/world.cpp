@@ -120,6 +120,7 @@ const char* materialTag(asset::MaterialGroup src) {
 World::World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress)
   :wname(std::move(file)), game(game), wsound(game,*this), wobj(*this) {
   const auto loadStarted = std::chrono::steady_clock::now();
+  Resources::configureTextures(Gothic::settingsGetS("GAME","texture_budget_mb"));
   if(LoadProbe::enabled())
     LoadProbe::mark("world_begin",-1,"world="+std::string(wname));
   try {

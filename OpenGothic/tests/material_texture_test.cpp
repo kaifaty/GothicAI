@@ -344,9 +344,13 @@ void emptyTable(Tempest::Device& device, const Fixture& fixture) {
   }
 
 void textureResidency(Tempest::Device& device, const Fixture& fixture) {
-  textFile(fixture.root/"materials/materials.json",R"({
-    "STREAM.TGA":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"}
-  })");
+  std::string materials=R"({"STREAM.TGA":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"})";
+  for(size_t i=0;i<17;++i) {
+    const auto name="lru-"+std::to_string(i)+".dds";
+    ddsFile(fixture.root/"materials"/name,false);
+    materials+=",\"LRU_"+std::to_string(i)+".TGA\":{\"albedo\":\""+name+"\"}";
+    }
+  textFile(fixture.root/"materials/materials.json",materials+"}");
   setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","0",1);
   setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
   Resources resources(device);
@@ -419,10 +423,17 @@ void textureResidency(Tempest::Device& device, const Fixture& fixture) {
   ChunkTable table;
   table.entries.push_back({{0,0},"",{0,0,0},{1,1,0},1});
   ChunkResidency residency(table);
+  require(residency.indexOf({0,0})==0 && residency.indexOf({1,0})==size_t(-1),
+          "chunk identity lookup must distinguish a table entry from an absent cell");
   const auto evict=[&](uint64_t expected) {
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
-    while(Resources::textureStats().evicted<expected && std::chrono::steady_clock::now()<deadline)
+    while(Resources::textureStats().evicted<expected && std::chrono::steady_clock::now()<deadline) {
+      const auto before=Resources::textureStats().evicted;
+      const auto generation=Resources::textureGeneration();
       Resources::updateTextures(&residency);
+      require(Resources::textureStats().evicted-before<=16 && Resources::textureGeneration()-generation<=1,
+              "a texture update must retire at most sixteen payloads and publish one generation");
+      }
     };
   Resources::textureDemand(material,Resources::TextureCategory::Landscape,true);
   Resources::textureDemand(material,Resources::TextureCategory::Dynamic,true);
@@ -476,13 +487,14 @@ void textureResidency(Tempest::Device& device, const Fixture& fixture) {
   require(Resources::textureStats().retiredBytes==0,"the completed frame slot must free retired texture payloads");
 
   Resources::textureDemand(material,Resources::TextureCategory::Landscape,true);
+  require(!Resources::texturesReady(),"new demand must immediately register missing resident payloads");
   const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
   while(Resources::textureStats().reloaded<4 && std::chrono::steady_clock::now()<deadline) {
-    Resources::updateTextures(&residency);
     residency.update({0,0,0},{0,0,0},1000);
+    Resources::updateTextures(&residency);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-  require(Resources::textureStats().reloaded==4 && isFull(),
+  require(Resources::textureStats().reloaded==4 && isFull() && Resources::texturesReady(),
           "new demand must reload every evicted texture through the frame queue");
   require(material==copy && bucket->mat==copy && commit(),
           "reload must keep identities while refreshing actual bindless descriptors");
@@ -490,12 +502,14 @@ void textureResidency(Tempest::Device& device, const Fixture& fixture) {
     require(rayScene.refreshTextures(),"reload must refresh retained RT texture identities");
   Resources::textureDemand(material,Resources::TextureCategory::Landscape,false);
   setenv("OPENGOTHIC_TEXTURE_STREAMING","0",1);
+  Resources::configureTextures();
   Resources::updateTextures(&residency);
   require(isFull() && Resources::textureStats().evicted==evicted.evicted,
           "the texture streaming opt-out must disable eviction above budget");
 
   // Use the actual render owners as well as the direct shared-owner contract.
   setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  Resources::configureTextures();
   SceneGlobals scene;
   VisualObjects visuals(scene,{{0,0,0},{1,1,0}});
   visuals.setTextureResidency(&residency);
@@ -508,6 +522,33 @@ void textureResidency(Tempest::Device& device, const Fixture& fixture) {
   evict(evicted.evicted+4);
   require(material.tex->w()==1 && Resources::textureStats().evicted==evicted.evicted+4,
           "an Outside static prototype must not retain textures after the moving visual disappears");
+
+  // One more identity than a frame may retire makes the LRU slice observable.
+  std::array<Material,17> lru;
+  for(size_t i=0;i<lru.size();++i) {
+    lru[i]=Material(source("LRU_"+std::to_string(i)+".TGA"),true);
+    Resources::textureDemand(lru[i],Resources::TextureCategory::Static,true);
+    Resources::textureDemand(lru[i],Resources::TextureCategory::Static,false);
+    }
+  // Environment mutations take effect only when configuration is refreshed.
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","1",1);
+  const auto beforeSlice=Resources::textureStats().evicted;
+  const auto beforeGeneration=Resources::textureGeneration();
+  Resources::updateTextures(&residency);
+  const auto retired=Resources::textureStats().evicted-beforeSlice;
+  require(retired>0 && retired<=16 && Resources::textureGeneration()==beforeGeneration+1,
+          "cached zero budget must retire a bounded LRU slice with one generation");
+  for(size_t i=0;i<lru.size();++i)
+    require(lru[i].tex!=nullptr && lru[i].tex->w()==(i<retired ? 1 : 4),
+            "incremental LRU retirement must follow the last owner release order");
+  Resources::textureDemand(lru.back(),Resources::TextureCategory::Dynamic,true);
+  evict(beforeSlice+16);
+  require(lru.back().tex->w()==4,"late demand must remove a resident texture from the eviction queue");
+  Resources::textureDemand(lru.back(),Resources::TextureCategory::Dynamic,false);
+  Resources::configureTextures();
+  Resources::updateTextures(&residency);
+  require(lru.back().tex->w()==4 && Resources::textureStats().evicted==beforeSlice+16,
+          "configuration refresh must apply the new budget without evicting an eligible texture below it");
   device.waitIdle();
   setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
   unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");

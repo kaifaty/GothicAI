@@ -57,6 +57,8 @@ class ChunkResidency {
     void update(const Tempest::Vec3& hero, const Tempest::Vec3& camera, float zFar);
     State desired(size_t index) const { return states.at(index); }
     State desired(ChunkId id) const;
+    // Returns size_t(-1) for cells without a landscape entry.
+    size_t indexOf(ChunkId id) const;
     bool actualLoaded(size_t index) const { return index<chunks.entries.size(); }
     const ChunkTable& table() const { return chunks; }
     const Stats& stats() const { return counters; }
@@ -77,6 +79,7 @@ class ChunkResidency {
 
   private:
     const ChunkTable& chunks;
+    std::map<std::pair<int32_t,int32_t>,size_t> indices;
     std::vector<State> states;
     Stats counters;
     uint64_t nextSubscription = 0;

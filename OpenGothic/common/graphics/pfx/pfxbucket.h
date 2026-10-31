@@ -3,6 +3,8 @@
 #include <Tempest/VertexBuffer>
 #include <vector>
 #include <random>
+#include <map>
+#include <unordered_set>
 
 #include "graphics/pfx/pfxobjects.h"
 #include "resources.h"
@@ -28,6 +30,7 @@ class PfxBucket {
       AllocState    st           = S_Free;
       size_t        block        = size_t(-1);
       bool          textureDemand = false;
+      std::pair<int32_t,int32_t> textureChunk;
 
       Tempest::Vec3 pos          = {};
       Tempest::Vec3 direction[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
@@ -127,7 +130,7 @@ class PfxBucket {
 
     void                        tickEmit(Block& p, ImplEmitter& emitter, uint64_t emited);
     bool                        shrink();
-    void                        updateTextureDemand(ImplEmitter& emitter);
+    void                        updateTextureDemand(size_t id);
     void                        setTextureDemand(ImplEmitter& emitter, bool active);
 
     size_t                      allocBlock();
@@ -154,6 +157,9 @@ class PfxBucket {
     uint32_t                    mkTrailColor(float clA) const;
 
     VisualObjects&              visual;
+    ChunkResidency*             textureResidency = nullptr;
+    uint64_t                    textureSubscription = 0;
+    std::map<std::pair<int32_t,int32_t>,std::unordered_set<size_t>> textureChunks;
 
     Draw                        item  [Resources::MaxFramesInFlight];
     std::vector<PfxState>       pfxCpu;

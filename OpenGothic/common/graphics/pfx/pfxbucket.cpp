@@ -8,6 +8,7 @@
 #include "pfxobjects.h"
 #include "particlefx.h"
 #include "world/objects/npc.h"
+#include "world/chunkresidency.h"
 
 using namespace Tempest;
 
@@ -69,9 +70,20 @@ PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlob
       item.pShadow = Shaders::inst().materialPipeline(mat, DrawCommands::Pfx, Shaders::T_Shadow, false);
       }
     }
+  if(decl.isDecal() && (textureResidency=visual.textureResidencyManager())!=nullptr) {
+    textureSubscription=textureResidency->subscribe([this](ChunkId chunk, ChunkResidency::State, ChunkResidency::State next) {
+      const auto found=textureChunks.find({chunk.x,chunk.z});
+      if(found==textureChunks.end())
+        return;
+      for(auto id:found->second)
+        setTextureDemand(impl[id],next!=ChunkResidency::State::Outside);
+      });
+    }
   }
 
 PfxBucket::~PfxBucket() {
+  if(textureResidency)
+    textureResidency->unsubscribe(textureSubscription);
   for(auto& emitter:impl)
     setTextureDemand(emitter,false);
   }
@@ -89,7 +101,22 @@ void PfxBucket::setTextureDemand(ImplEmitter& emitter, bool active) {
   emitter.textureDemand=active;
   }
 
-void PfxBucket::updateTextureDemand(ImplEmitter& emitter) {
+void PfxBucket::updateTextureDemand(size_t id) {
+  auto& emitter=impl[id];
+  if(decl.isDecal()) {
+    const auto chunk=ChunkId::fromPosition(emitter.pos.x,emitter.pos.z);
+    const std::pair key{chunk.x,chunk.z};
+    if(emitter.st==S_Free || key!=emitter.textureChunk) {
+      if(auto found=textureChunks.find(emitter.textureChunk);found!=textureChunks.end()) {
+        found->second.erase(id);
+        if(found->second.empty())
+          textureChunks.erase(found);
+        }
+      }
+    emitter.textureChunk=key;
+    if(emitter.st!=S_Free)
+      textureChunks[key].insert(id);
+    }
   const bool active=emitter.st!=S_Free && (!decl.isDecal() || visual.textureChunkActive(emitter.pos));
   setTextureDemand(emitter,active);
   }
@@ -168,7 +195,7 @@ size_t PfxBucket::allocEmitter() {
     auto& b = impl[i];
     if(b.st==S_Free) {
       b.st = S_Inactive;
-      updateTextureDemand(b);
+      updateTextureDemand(i);
       return i;
       }
     }
@@ -176,7 +203,7 @@ size_t PfxBucket::allocEmitter() {
   auto& e = impl.back();
   e.block = size_t(-1); // no backup memory
   e.st    = S_Inactive;
-  updateTextureDemand(e);
+  updateTextureDemand(impl.size()-1);
   for(size_t i=0; i<Resources::MaxFramesInFlight; ++i)
     forceUpdate[i] = true;
 
@@ -195,8 +222,8 @@ void PfxBucket::freeEmitter(size_t& id) {
     }
   for(size_t i=0; i<Resources::MaxFramesInFlight; ++i)
     forceUpdate[i] = true;
+  updateTextureDemand(id);
   v.next.reset();
-  updateTextureDemand(v);
   id = size_t(-1);
   shrink();
   }
@@ -472,8 +499,6 @@ void PfxBucket::tick(uint64_t dt, const Vec3& viewPos) {
     } else {
     implTickCommon(dt,viewPos);
     }
-  for(auto& emitter:impl)
-    updateTextureDemand(emitter);
   }
 
 void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
@@ -506,7 +531,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
           freeBlock(emitter.block);
           if(emitter.st==S_Fade) {
             emitter.st = S_Free;
-            updateTextureDemand(emitter);
+            updateTextureDemand(size_t(&emitter-impl.data()));
             }
           doShrink = true;
           continue;
@@ -546,6 +571,7 @@ void PfxBucket::implTickDecals(uint64_t, const Vec3&) {
       p.count = 0;
       freeBlock(emitter.block);
       emitter.st = S_Free;
+      updateTextureDemand(size_t(&emitter-impl.data()));
       }
     }
   }
@@ -712,8 +738,6 @@ uint32_t PfxBucket::mkTrailColor(float clA) const {
   }
 
 void PfxBucket::preFrameUpdate(const SceneGlobals& scene, uint8_t fId) {
-  for(auto& emitter:impl)
-    updateTextureDemand(emitter);
   auto& device = Resources::device();
 
   if(item[fId].pMain!=nullptr || item[fId].pShadow!=nullptr) {

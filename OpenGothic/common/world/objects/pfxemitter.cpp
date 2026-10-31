@@ -105,6 +105,8 @@ void PfxEmitter::setPosition(const Vec3& pos) {
   std::lock_guard<std::recursive_mutex> guard(bucket->parent.sync);
   auto& v = bucket->get(id);
   v.pos = pos;
+  if(bucket->decl.isDecal())
+    bucket->updateTextureDemand(id);
   zone.setPosition(pos);
 
   if(v.next!=nullptr)

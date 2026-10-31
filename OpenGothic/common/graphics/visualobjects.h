@@ -79,6 +79,7 @@ class VisualObjects final {
     void   invalidate(const StaticMesh& mesh);
     void   setTextureResidency(ChunkResidency* residency);
     bool   textureChunkActive(const Tempest::Vec3& position) const;
+    ChunkResidency* textureResidencyManager() const { return textureResidency; }
 
     InstanceStorage::Id alloc(size_t size);
     bool                realloc(InstanceStorage::Id& id, size_t size);
