@@ -14,11 +14,12 @@ from ..amends import Amends
 from ..brain.reflex import Reflexes
 from ..deals import GOLD, Deals
 from ..dialogue import DialogueManager
+from ..feats import Feats
 from ..game import GameError, GameLink
 from ..llm import Done, Item, LLMEvent, Message, Tool, ToolCall, ToolChoice
 from ..llm.fake import FakeBackend, FakeStep
-from ..protocol import SayCmd, Session
-from ..quests import SEE_CM, QuestBoard
+from ..protocol import FeatToastCmd, SayCmd, Session
+from ..quests import ATTACK_CM, SEE_CM, QuestBoard
 from ..sightings import Sightings
 from ..social import TICK_S, Rumors
 from ..talk import TalkDesk
@@ -56,6 +57,8 @@ async def lie_found_out(
     quests: QuestBoard,
     npc: str = "NONE_100_XARDAS",
     bystander: str = "VLK_408_JORA",
+    *,
+    chronicler: Feats | None = None,
 ) -> dict[str, str]:
     """Stage 4 of the story graph on the game: lied to, paid, found out, a fight and a rumor.
 
@@ -87,12 +90,30 @@ async def lie_found_out(
     gold = next((i for i in snap.npc.inventory if i.item == "ITMI_GOLD" and not i.equipped), None)
     if gold is None:
         return _logged({"reward": f"failed ({name} has no gold: {snap.npc.inventory})"})
+    # A 30 m spawn beside the tower's upper floor drops the sheep to their deaths.
+    arena = "NW_FARM1_FIELD_06"
+    await link.story_effect(npc, [{"do": "end"}])
+    await link.debug("player_goto", waypoint=arena)
+    await link.debug("npc_goto", npc=npc, waypoint=arena, face="PC_HERO")
+    await link.npc_act(
+        npc, "start_activity", state="ZS_STAND_WP", waypoint=arena, minutes=120, place=True,
+    )
+    await link.debug("player_goto", to=npc, distance=250)
+    if not await _until(lambda: npc in talk.people and talk.people[npc].distance < ATTACK_CM, 15):
+        return _logged({"arena": f"failed ({npc} is not near the hero on the field)"})
     q = await quests.give(
         npc, name, "овцы бродят у башни и мешают мне, перебей их", "SHEEP", 2, "ITMI_GOLD", gold.name, 5
     )
-    ok = await _until(lambda: quests.chronicle.tags.get(q.tag) is not None, 5)
+    ok = await _until(
+        lambda: (tag := quests.chronicle.tags.get(q.tag)) is not None and npc in tag.near
+        and tag.alive == 2 and not quests.chronicle.killed(q.tag)
+        and (npc not in tag.seen or tag.seen[npc] > SEE_CM), 10,
+    )
     tag = quests.chronicle.tags.get(q.tag)
-    check("quest", ok and q.count == 2 and tag is not None and tag.alive == 2, f"{q.id}, {q.reward()}, {tag}")
+    check("quest", ok and q.count == 2,
+          f"{q.id}, {q.reward()}, {tag}, killed={quests.chronicle.killed(q.tag)}")
+    if not ok or q.count != 2:
+        return _logged(results)
 
     # the lie: the hero says it is done, the giver believes him and pays
     hero_gold = ["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", "ITMI_GOLD"]]
@@ -105,6 +126,23 @@ async def lie_found_out(
     after = await link.evaluate(hero_gold)
     lies = quests.chronicle.facts("lie")
     check("paid_for_a_lie", ok and after > before, f"gold {before} -> {after}; {lies}")
+    award = None
+    if chronicler is not None:
+        lie_seq = next((seq for seq, fact in quests.chronicle.entries("lie")
+                        if fact.get("quest") == q.id), None)
+        if lie_seq is None:
+            check("epilogue", False, "no lie evidence")
+            return _logged(results)
+        state = await link.story_state(vars=["KAPITEL"])
+        # The fake chronicler does not award deeds; retain the actual paid lie as its evidence.
+        award = {
+            "fact": "feat", "id": "e2e_sheep_lie", "title": "Плата за слово",
+            "text": "Получил плату за живых овец.", "category": "deceit", "evidence": [lie_seq],
+            "emblem": "A coin beside a shepherd staff", "reason": "Получил плату обманом.",
+            "trigger": lie_seq, "chapter": int(state.get("vars", {}).get("KAPITEL") or 1),
+            **{key: state[key] for key in ("day", "hour", "minute")},
+        }
+        quests.chronicle.record(award)
 
     # someone standing by, held in place
     await link.debug("spawn", instance=bystander, near=npc, distance=400)
@@ -115,8 +153,37 @@ async def lie_found_out(
 
     # found out: a living sheep turns up next to the giver
     await _until(lambda: not dialogue.speaking(npc), 10)
-    await link.story_spawn("SHEEP", q.tag, 1, near=npc, distance=300)
-    ok = await _until(lambda: q.found_out and bool(quests.chronicle.facts("rumor")), 10)
+    send = link.send
+    toasts: list[FeatToastCmd] = []
+
+    async def sending(cmd: Any) -> None:
+        await send(cmd)
+        if isinstance(cmd, FeatToastCmd):
+            toasts.append(cmd)
+
+    if chronicler is not None:
+        link.send = sending  # type: ignore[method-assign]
+    try:
+        await link.story_spawn("SHEEP", q.tag, 1, near=npc, distance=300)
+        ok = await _until(lambda: q.found_out and bool(quests.chronicle.facts("rumor")), 10)
+        if award is not None:
+            facts = quests.chronicle.facts
+            await _until(lambda: any(f.get("feat") == award["id"] for f in facts("feat_epilogue_shown")), 15)
+            epilogue = next((f for f in facts("feat_epilogue") if f.get("feat") == award["id"]), None)
+            disclosure_seq = next((seq for seq, fact in quests.chronicle.entries("found_out")
+                                   if fact.get("quest") == q.id), None)
+            check("epilogue", epilogue is not None and epilogue.get("quest") == q.id
+                  and epilogue.get("trigger") == disclosure_seq and epilogue.get("npc") == npc
+                  and epilogue.get("text") == "Позже обман раскрылся.", epilogue)
+            distance = talk.people[npc].distance if npc in talk.people else None
+            check("epilogue_shown", epilogue is not None and distance is not None and distance < ATTACK_CM
+                  and any(f.get("feat") == award["id"] for f in facts("feat_epilogue_shown"))
+                  and any(toast.feat == award["id"] and toast.title == award["title"]
+                          and toast.text == epilogue["text"] for toast in toasts),
+                  f"feat={award['id']}, distance={distance}, toasts={len(toasts)}")
+    finally:
+        if chronicler is not None:
+            link.send = send  # type: ignore[method-assign]
     check("found_out", ok, notes(npc)[-1:])
     intent = dialogue.conversations[npc].intent if npc in dialogue.conversations else None
     check("hostile", intent is not None and intent.attitude == "hostile", intent)
