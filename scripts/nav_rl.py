@@ -1105,7 +1105,7 @@ def drive_validation(args):
                 continue
             worker = copy(args)
             worker.output = args.output / "validation-workers" / str(worker_index) / ("jump" if jumping else "ordinary")
-            worker.cache = args.cache / ("jump" if jumping else "ordinary")
+            worker.cache = args.cache / ("jump" if jumping else "ordinary") / str(worker_index)
             worker.cache.mkdir(parents=True, exist_ok=True)
             if jumping:
                 worker.links = args.jump_links

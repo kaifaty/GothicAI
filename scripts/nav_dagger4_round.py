@@ -461,9 +461,10 @@ def run(task, step, queue):
         raise ValueError("Round phases must run once, in order")
     log = ARCHIVE / f"logs/round1-{step:02d}-{phase['kind']}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
+    emit("dagger4_round1_phase_log", step=step, stdout=str(log), stderr="gq")
     with log.open("a", buffering=1) as stream:
         os.dup2(stream.fileno(), 1)
-        os.dup2(stream.fileno(), 2)
+    # Keep child diagnostics and Python tracebacks on the queue's stderr.
     queue.disk_check()
     if shutil.disk_usage(task).free < 20 * 1024**3:
         raise ValueError("Round-one phase requires at least 20 GiB free")

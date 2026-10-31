@@ -1098,7 +1098,8 @@ def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(
     path = tmp_path / "eval-screen.jsonl"
     rl.write_pairs(path, [dict(scenario=value, action_seeds=list(rl.ACTION_SEEDS)) for value in scenarios])
     arguments = ["nav_rl.py", "drive", "--output", str(tmp_path / "screen-run"),
-                 "--cache", str(tmp_path / "cache"), "--weights", "/hd.navbc", "--eval-screen", str(path)]
+                 "--cache", str(tmp_path / "cache"), "--weights", "/hd.navbc", "--eval-screen", str(path),
+                 "--parallel", "3"]
     captured = []
     monkeypatch.setattr(rl, "drive", lambda args: captured.append(args))
     monkeypatch.setattr(rl.sys, "argv", arguments)
@@ -1109,6 +1110,16 @@ def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(
     with pytest.raises(SystemExit):
         rl.main()
     stub_validation_runner(monkeypatch)
+    cache_writers = threading.Barrier(3)
+    caches = []
+    def new_runner(worker, name):
+        temporary = worker.cache / "fixture.navmesh.tmp"
+        temporary.write_text("fixture navmesh")
+        cache_writers.wait(timeout=5)
+        temporary.replace(worker.cache / "fixture.navmesh")
+        caches.append(worker.cache)
+        return SimpleNamespace(close=lambda: None)
+    monkeypatch.setattr(rl, "new_runner", new_runner)
     calls = []
     def scenario(worker, runner, name, commands, directory):
         family = directory.parent.parent.name
@@ -1126,7 +1137,9 @@ def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(
     monkeypatch.setattr(rl, "detour_episode_metrics", measured)
     monkeypatch.setattr(rl, "lean_validation_episode_metrics", measured)
     rl.drive_validation(args)
-    assert calls == [(value["family"], value["id"], seed) for value in scenarios for seed in rl.ACTION_SEEDS]
+    assert len(calls) == 9
+    assert set(calls) == {(value["family"], value["id"], seed) for value in scenarios for seed in rl.ACTION_SEEDS}
+    assert set(caches) == {args.cache / "ordinary" / str(index) for index in range(3)}
     assert len(list(args.output.rglob("drive-metrics.json"))) == 9
 
 
