@@ -293,7 +293,8 @@ bool livePlayerStart(Episode& ep,World& world,Npc& player,Vec3& position,NavMesh
       path=mesh.findPath(meters(floor.v),meters(leader));
       if(!path.complete || path.corners.size()<2 || !path.transitions.empty())reason="no_ground_path_to_leader";
     }
-    if(!first)out<<',';first=false;
+    if(!first)out<<',';
+    first=false;
     out<<"{\"navmesh_cm\":";vector(out,requested);out<<",\"ray_from_cm\":";vector(out,rayFrom);
     out<<",\"floor_found\":"<<floor.hasCol<<",\"floor_cm\":";
     if(floor.hasCol)vector(out,floor.v);else out<<"null";
