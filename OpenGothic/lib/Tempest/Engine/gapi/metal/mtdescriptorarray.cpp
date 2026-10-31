@@ -9,6 +9,9 @@
 #include "mtaccelerationstructure.h"
 #include "mtshader.h"
 
+#include <algorithm>
+#include <functional>
+
 using namespace Tempest;
 using namespace Tempest::Detail;
 
@@ -63,6 +66,8 @@ void MtDescriptorArray::fillBuffer(MtDevice& dev, AbstractGraphicsApi::Texture**
     ptr[i]     = view.gpuResourceID();
     args.push_back(reinterpret_cast<MtTexture*>(tex[i])->impl.get());
     }
+  std::sort(args.begin(),args.end(),std::less<MTL::Resource*>());
+  args.erase(std::unique(args.begin(),args.end()),args.end());
 
   if(combined) {
     auto& sampler = dev.samplers.get(*smp,true);
@@ -96,6 +101,8 @@ void MtDescriptorArray::fillBuffer(MtDevice& dev, AbstractGraphicsApi::Buffer** 
     addr[i].len = uint32_t(reinterpret_cast<MtBuffer*>(buf[i])->size);
     args.push_back(reinterpret_cast<MtBuffer*>(buf[i])->impl.get());
     }
+  std::sort(args.begin(),args.end(),std::less<MTL::Resource*>());
+  args.erase(std::unique(args.begin(),args.end()),args.end());
   argsBuf.update(addr.get(), 0, cnt*sizeof(spvBufferDescriptor));
   }
 

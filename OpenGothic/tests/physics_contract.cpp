@@ -3,6 +3,7 @@
 #include "physics/dynamicworld.h"
 #include "physics/physicvbo.h"
 #include "physics/ragdoll.h"
+#include "graphics/mesh/animblend.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/hitzones.h"
@@ -4642,6 +4643,49 @@ namespace {
       require(axeStroke && axeStroke->first==19 && axeStroke->second==30,"the axe's chop must be windowed on its stroke down");
       require(swordStroke && swordStroke->first==19 && swordStroke->second==30,"a higher wind-up must not start the chop's stroke");
       require(!Npc::meleeFinishStroke({50,50,50,50}),"a blade that never drops has no stroke");
+      }
+
+    {
+      // t_1hAttackR of the master is frames 21..40 of the ASC whose 1..19 are t_1hAttackL, with L's tags:
+      // its DEF_OPT_FRAME counts from its own start (read as a frame of the file, it clamped to 0)
+      Animation::AnimData left,right;
+      left.firstFrame = 1;  left.lastFrame = 19;  left.numFrames = 19;
+      right.firstFrame = 21; right.lastFrame = 40; right.numFrames = 20;
+      require(left.optimalFrame(3)==2 && right.optimalFrame(3)==2,"a side swing's optimal frame must count from its own start");
+      require(right.optimalFrame(25)==4,"a frame of the file must stay that frame");
+      require(right.optimalFrame(60)==19,"a frame past the end must clamp to the last");
+      }
+
+    {
+      // A weapon body's switch into a blow settles within blowTime, however far the arm turns; the usual
+      // 0.3 s for so large a turn pulled t_1hAttackR's arc to the stance and it crossed short of the body
+      constexpr size_t count = 2;
+      asset::AnimationSample stance[count],blow[count],shown[count];
+      for(size_t i=0;i<count;++i) {
+        stance[i].rotation = {1,0,0,0};
+        stance[i].position = {0,float(i*20),0};
+        blow[i].rotation   = {std::cos(1.f),std::sin(1.f),0,0};
+        blow[i].position   = stance[i].position;
+        }
+      Animation::Sequence idle,attack;
+      attack.data = std::make_shared<Animation::AnimData>();
+      asset::MdsEventTag optimal{};
+      optimal.type   = asset::MdsEventType::OPTIMAL_FRAME;
+      optimal.frames = {3};
+      attack.data->events.push_back(optimal);
+      for(const bool weapon:{true,false}) {
+        AnimBlend blend;
+        blend.reset(count);
+        blend.setWeaponBody(weapon);
+        for(size_t i=0;i<count;++i) blend.drive(i,idle,1000,stance[i],stance[i],25);
+        blend.apply(stance,shown,count,1000);
+        blend.apply(stance,shown,count,1033);
+        for(size_t i=0;i<count;++i) blend.drive(i,attack,1033,blow[i],blow[i],25);
+        blend.apply(blow,shown,count,1033);
+        const bool blending = blend.apply(blow,shown,count,1033+uint64_t(AnimBlend::params().blowTime*1000.f)+17);
+        require(blending!=weapon,weapon ? "a weapon body's blow must settle within its blow time" :
+                                          "a body without a weapon must keep the usual blend into a blow");
+        }
       }
 
     require(FightAlgo::resolveDownTactics(true,true,false,false,true)==FightAlgo::MV_MOVE,

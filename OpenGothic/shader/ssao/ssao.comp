@@ -214,8 +214,15 @@ void main() {
   screenSize = imageSize(result); // half of the depth buffer with halfResAoFog
   fragCoord  = ivec2(gl_GlobalInvocationID.xy);
 
+  // A half-res texel traces from the top-left depth pixel of its 2x2 block (ssao_blur.comp undoes the shift).
+  // Its own centre lies on a border between two depth pixels: rounding of 1/640 then picked the left or
+  // right one by x mod 5, and AO got a column pattern with a 5 px period.
+  const ivec2 depthSize  = textureSize(depthBuf,0);
+  const ivec2 depthRatio = (depthSize + screenSize - 1)/screenSize;
+  const ivec2 depthPix   = min(fragCoord*depthRatio, depthSize-1);
+
   const bool valid = all(lessThan(fragCoord, screenSize));
-  const vec2 inPos = vec2(2*fragCoord+ivec2(1,1))/vec2(screenSize)-vec2(1,1);
+  const vec2 inPos = vec2(2*depthPix+ivec2(1,1))/vec2(depthSize)-vec2(1,1);
   vec3 norm = vec3(0);
 
   const vec3 camPos = unproject(vec3(0,0,0));

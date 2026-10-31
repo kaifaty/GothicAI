@@ -338,6 +338,7 @@ struct ClothVisual::State {
   std::shared_ptr<Cloth::Instance> physics;
   std::unique_ptr<PhysicMesh> collider;
   bool surface = false;
+  Resources::TextureCategory textureCategory = Resources::TextureCategory::Static;
   bool nativeCollision = false, colliderInitialized = false, colliderClothEnabled = false;
   bool nativeMovable = false;
   Matrix4x4 matrix = Matrix4x4::mkIdentity();
@@ -422,9 +423,13 @@ struct ClothVisual::State {
 
   void setupViews() {
     clothView = world->addStaticView(geometry->clothProto.get(),false);
+    clothView.setTextureCategory(textureCategory);
+    clothView.setTexturePosition(Vec3(matrix[3][0],matrix[3][1],matrix[3][2]));
     clothView.setVisible(false);
     if(geometry->rigidProto) {
       rigidView = world->addStaticView(geometry->rigidProto.get(),false);
+      rigidView.setTextureCategory(textureCategory);
+      rigidView.setTexturePosition(Vec3(matrix[3][0],matrix[3][1],matrix[3][2]));
       rigidView.setWind(mode,strength);
       rigidView.setVisible(false);
       }
@@ -522,7 +527,8 @@ bool ClothVisual::supports(std::string_view visual) {
   }
 
 std::unique_ptr<ClothVisual> ClothVisual::create(MeshObjects::Mesh& view, World& world,
-                                               const asset::VirtualObject& vob, bool enableCollision) {
+                                               const asset::VirtualObject& vob, bool enableCollision,
+                                               Resources::TextureCategory textureCategory) {
   const auto* def = definition(vob.visual->name);
   if(def==nullptr || view.isEmpty())
     return nullptr;
@@ -536,6 +542,7 @@ std::unique_ptr<ClothVisual> ClothVisual::create(MeshObjects::Mesh& view, World&
     state.view = &view;
     state.world = &world;
     state.geometry = std::move(geometry);
+    state.textureCategory = textureCategory;
     state.nativeCollision = enableCollision;
     state.nativeMovable = vob.visual->type==asset::VisualType::MORPH_MESH;
     state.mode = vob.anim_mode;
@@ -646,8 +653,10 @@ std::unique_ptr<ClothVisual> ClothVisual::createSurface(World& world, const asse
     state.world = &world;
     state.geometry = std::move(geometry);
     state.surface = true;
+    state.textureCategory = Resources::TextureCategory::Landscape;
     state.matrix.translate(center);
     state.fallbackView = world.addStaticView(state.geometry->fullProto,false);
+    state.fallbackView.setTextureCategory(state.textureCategory);
     state.view = &state.fallbackView;
     state.view->setObjMatrix(state.matrix);
     state.view->setVisible(world.physic()->cloth().enabled());
@@ -671,6 +680,9 @@ void ClothVisual::setView(MeshObjects::Mesh& view) {
 
 void ClothVisual::setMatrix(const Matrix4x4& matrix) {
   state->matrix = matrix;
+  const Vec3 texturePosition(matrix[3][0],matrix[3][1],matrix[3][2]);
+  state->clothView.setTexturePosition(texturePosition);
+  state->rigidView.setTexturePosition(texturePosition);
   state->referenceTick = uint64_t(-1);
   state->physics->setMatrix(matrix);
   if(state->collider)

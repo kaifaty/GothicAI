@@ -3,6 +3,7 @@
 #include "navbench.h"
 #include "navdemos.h"
 #include "frameprofile.h"
+#include "loadprobe.h"
 
 #include <Tempest/Pixmap>
 #include <Tempest/SoundDevice>
@@ -608,6 +609,7 @@ struct Bench {
   uint64_t    step      = 0;    // fixed steps made
 
   uint64_t    waitUntil = 0;
+  std::chrono::steady_clock::time_point realWaitUntil;
   bool        waitArrive = false;
   uint64_t    arriveEnd = 0;
 
@@ -637,15 +639,25 @@ struct Bench {
   std::string perfSegment;
   uint64_t    perfFrame = 0;
   bool        perfArmed = false;
+  bool        waitStreaming = false;
+  std::chrono::steady_clock::time_point streamingDeadline;
   struct StreamingSample {
     std::string segment;
     uint64_t frame = 0;
     double updateMs = 0, workMs = 0;
     size_t near = 0, far = 0, outside = 0;
     uint64_t nearTransitions = 0, farTransitions = 0;
+    std::vector<double> publicationTimesMs;
+    uint64_t published = 0, released = 0;
+    size_t pageUsedBytes = 0, pageFreeBytes = 0, pageRetiredBytes = 0, pageCount = 0;
+    Resources::TextureStats textures;
     };
   std::vector<StreamingSample> streamingSamples;
+  std::vector<double> streamingWarmupFarMs;
+  size_t streamingWarmupFarMaxPerFrame = 0;
+  double streamingWarmupQueueMaxMs = 0;
   uint64_t streamingNearBefore = 0, streamingFarBefore = 0;
+  uint64_t streamingPublishedBefore = 0, streamingReleasedBefore = 0;
   std::vector<Vec3> routePoints;
   size_t      routeNext = 0;
   Vec3        routePosition;
@@ -1821,11 +1833,25 @@ void finish() {
   stopRecording();
   if(!bench.streamingSamples.empty()) {
     if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
-      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions\n");
-      for(const auto& row:bench.streamingSamples)
-        std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu\n",row.segment.c_str(),
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n\n");
+      for(const auto& row:bench.streamingSamples) {
+        std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu,",row.segment.c_str(),
           (unsigned long long)row.frame,row.updateMs,row.workMs,row.near,row.far,row.outside,
           (unsigned long long)row.nearTransitions,(unsigned long long)row.farTransitions);
+        for(size_t i=0;i<row.publicationTimesMs.size();++i)
+          std::fprintf(file,"%s%.9g",i==0 ? "" : ";",row.publicationTimesMs[i]);
+        std::fprintf(file,",%llu,%llu,%zu,%zu,%zu,%zu",(unsigned long long)row.published,(unsigned long long)row.released,
+          row.pageUsedBytes,row.pageFreeBytes,row.pageRetiredBytes,row.pageCount);
+        const auto& textures = row.textures;
+        std::fprintf(file,",%llu,%llu,%llu,%llu,%llu,%llu",
+          (unsigned long long)textures.liveBytes,(unsigned long long)textures.retiredBytes,
+          (unsigned long long)textures.peakBytes,(unsigned long long)textures.count,
+          (unsigned long long)textures.evicted,(unsigned long long)textures.reloaded);
+        for(size_t i=0;i<textures.categoryBytes.size();++i)
+          std::fprintf(file,",%llu,%llu",(unsigned long long)textures.categoryBytes[i],
+            (unsigned long long)textures.categoryCount[i]);
+        std::fprintf(file,"\n");
+        }
       std::fclose(file);
       } else event("streaming_error","\"reason\":\"cannot write residency samples\"");
     }
@@ -2381,6 +2407,7 @@ void writeHeader() {
     std::fprintf(bench.csv,",%s",f.column);
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",hp_player,hp_subject");
+  std::fprintf(bench.csv,",stamina_player,stamina_subject");
   std::fprintf(bench.csv,",ai_on,ai_want,ai_sigma,ai_errx,ai_erry,ai_lead,ai_pv,ai_ps");
   std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits");
   if(ragdollTrace)
@@ -7942,10 +7969,7 @@ void itemWakeSetup(World& world,Npc& player,std::string_view name) {
     bool optimalFound=false;
     for(const auto& event:data.events) {
       if(event.type!=asset::MdsEventType::OPTIMAL_FRAME || event.frames.empty())continue;
-      const auto frame=event.frames.front();
-      const auto clamped=frame<int32_t(data.firstFrame)?0u:
-                         int64_t(frame)>=int64_t(data.firstFrame)+data.numFrames?data.numFrames-1:
-                         frame>int32_t(data.lastFrame)?data.lastFrame-data.firstFrame:uint32_t(frame)-data.firstFrame;
+      const auto clamped=data.optimalFrame(event.frames.front());
       bench.itemWakeSwordOptimalFrame=sequence->reverse?data.numFrames-1-clamped:clamped;
       optimalFound=true;break;
       }
@@ -10026,6 +10050,7 @@ void writeRow(Npc& pl) {
                fl.hits,fl.strength,fl.height);
   // hit points: the hero's, the watched one's (a fight's course)
   std::fprintf(bench.csv,",%d,%d",pl.attribute(ATR_HITPOINTS),bench.subject!=nullptr ? bench.subject->attribute(ATR_HITPOINTS) : -1);
+  std::fprintf(bench.csv,",%.3f,%.3f",double(pl.stamina()),bench.subject!=nullptr ? double(bench.subject->stamina()) : -1.0);
   // the watched npc's archer by hand (game/archerai)
   const auto& ai = ArcherAi::subjectProbe;
   std::fprintf(bench.csv,",%d,%d,%.3f,%.3f,%.3f,%.0f,%.2f,%.2f",int(ai.valid && ai.active),int(ai.want),ai.sigma,ai.err.x,ai.err.y,
@@ -14757,7 +14782,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     event("living_seat_shift","\"distance_cm\":80");
     }
   else if(c=="melee-shadow") {
-    // The fixture prepares stock actors and geometry; all attacks use ordinary player input/AI.
+    // The fixture prepares stock actors and geometry for the ordinary melee entry points.
     const auto equip=[&](std::string_view weapon) {
       if(weapon!="1h" && weapon!="2h" && weapon!="fist") {arenaAbort("melee shadow expects 1h, 2h or fist");return false;}
       pl.clearAiQueue();pl.clearState(false);pl.clearGoTo();pl.stopWalking();pl.closeWeapon(true);
@@ -14816,6 +14841,42 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         ",\"wall_cm\":"+ragdollVector(wall.v)+",\"wall_normal\":"+ragdollVector(wall.n));
       }
     else if(a.size()==3 && a[1]=="weapon") equip(a[2]);
+    else if(a.size()==3 && a[1]=="bandit") {
+      // melee-shadow bandit 1h|2h: the fixture's bandit takes the stock one- or two-hander in hand
+      if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
+      if(a[2]!="1h" && a[2]!="2h") {arenaAbort("melee shadow bandit expects 1h or 2h");return;}
+      auto& npc=*bench.meleeShadowActors[2];
+      const auto symbol=w.script().findSymbolIndex(a[2]=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
+      if(symbol==size_t(-1)) {arenaAbort("melee shadow bandit weapon is absent");return;}
+      npc.closeWeapon(true);
+      npc.setToFightMode(symbol);
+      if(!npc.currentMeleeWeapon() || npc.currentMeleeWeapon()->clsId()!=symbol) {
+        arenaAbort("melee shadow bandit weapon did not equip");return;
+        }
+      }
+    else if(a.size()==2 && a[1]=="stamina-backstep") {
+      if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
+      auto& npc=*bench.meleeShadowActors[2];
+      if(!npc.hasStamina()) {arenaAbort("stamina backstep requires human melee stamina");return;}
+      npc.handle().attribute[ATR_STRENGTH]=10;
+      npc.closeWeapon(true);npc.setToFistMode();
+      for(unsigned i=0;i<16 && !npc.isStaminaExhausted();++i) {
+        npc.stopAnim("");
+        if(!npc.doAttack(Npc::Anim::Attack,BS_HIT)) {arenaAbort("stamina backstep could not drain the NPC");return;}
+        }
+      if(npc.stamina()!=0.f || !npc.isStaminaExhausted()) {arenaAbort("stamina backstep requires an exhausted NPC");return;}
+      npc.stopAnim("");
+      const bool meleeRefused=!npc.setAnim(Npc::Anim::MoveBack);
+      npc.closeWeapon(true);npc.stopAnim("");
+      const bool unarmedAccepted=npc.setAnim(Npc::Anim::MoveBack);
+      const bool pass=meleeRefused && unarmedAccepted && npc.weaponState()==WeaponState::NoWeapon &&
+                      npc.stamina()==0.f && npc.isStaminaExhausted();
+      event("melee_stamina_backstep","\"npc\":"+jsonStr(TestBench::who(&npc))+
+        ",\"melee_refused\":"+(meleeRefused?"true":"false")+
+        ",\"unarmed_accepted\":"+(unarmedAccepted?"true":"false")+
+        ",\"stamina\":"+ragdollNumber(npc.stamina())+",\"pass\":"+(pass?"true":"false"));
+      if(!pass) arenaAbort("exhausted unarmed NPC backstep failed");
+      }
     else if(a.size()==3 && a[1]=="target") {
       const int index=int(num(a,2,-1));
       if(index<0 || size_t(index)>=bench.meleeShadowActors.size()) {arenaAbort("melee shadow target is absent");return;}
@@ -15541,19 +15602,46 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       if(auto* residency=w.chunkResidency()) {
         bench.streamingNearBefore=residency->stats().transitionsNear;
         bench.streamingFarBefore=residency->stats().transitionsFar;
+        bench.streamingPublishedBefore=residency->stats().published;
+        bench.streamingReleasedBefore=residency->stats().released;
         }
       FrameProfile::setActors(bench.crew);
       event("perf_segment","\"segment\":"+jsonStr(bench.perfSegment)+
-        ",\"camera_cm\":"+ragdollVector(bench.camPos)+",\"actors\":"+std::to_string(bench.crew.size()));
+        ",\"camera_cm\":"+ragdollVector(bench.camPos)+",\"actors\":"+std::to_string(bench.crew.size())+
+        ",\"residency_manager\":"+(w.chunkResidency()!=nullptr ? "true" : "false"));
       }
-    else if(a.size()==2 && a[1]=="stop")bench.perfSegment.clear();
+    else if(a.size()==2 && a[1]=="stop") {
+      if(bench.perfSegment.starts_with("streaming-flythrough/"))
+        event("streaming_end","\"segment\":"+jsonStr(bench.perfSegment)+
+          ",\"gpu_mb\":"+std::to_string(double(tempestProbeGpuBytes())/1048576.0));
+      bench.perfSegment.clear();
+      }
     else arenaAbort("perf expects sample <segment under 64 bytes> or stop, after cadence normal");
 #else
     arenaAbort("perf requires OPENGOTHIC_ENABLE_FRAME_PROFILE=ON and OPENGOTHIC_ENABLE_APP_CADENCE=ON");
 #endif
     }
+  else if(c=="streaming") {
+    if(a.size()<2 || a.size()>3 || a[1]!="wait" || (a.size()==3 && !isNumber(a[2]))) {
+      arenaAbort("streaming expects wait [timeout_ms]");
+      return;
+      }
+    const float timeout=num(a,2,60000);
+    if(!std::isfinite(timeout) || timeout<=0 || timeout>300000) {
+      arenaAbort("streaming wait timeout must be in (0, 300000] ms");
+      return;
+      }
+    bench.waitStreaming=true;
+    bench.streamingDeadline=std::chrono::steady_clock::now()+
+      std::chrono::milliseconds(uint64_t(timeout));
+    // Camera and desired residency are updated after this bench tick.
+    bench.waitUntil=bench.time+1;
+    }
   else if(c=="wait") {
-    bench.waitUntil = bench.time + uint64_t(num(a,1,1000));
+    if(a.size()>1 && a[1]=="real")
+      bench.realWaitUntil=std::chrono::steady_clock::now()+std::chrono::milliseconds(uint64_t(num(a,2,1000)));
+    else
+      bench.waitUntil = bench.time + uint64_t(num(a,1,1000));
     }
   else if(c=="waitarrive") {
     bench.waitArrive = true;
@@ -16216,6 +16304,17 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     // hips)
     for(size_t i=1; i<a.size(); ++i)
       say("animinfo " + pl.animInfo(a[i]));
+    }
+  else if(c=="bladepath") {
+    // bladepath <name>|<overlay.MDS>...: the tip of the hero's weapon at each frame of those animations (model
+    // frame); an overlay (HUMANS_1HST2.MDS) is put on for the names after it
+    const auto* weapon = pl.currentMeleeWeapon();
+    const auto* mesh = weapon!=nullptr ? Resources::loadMesh(weapon->handle().visual) : nullptr;
+    const float length = mesh!=nullptr ? -mesh->bbox()[0].x : 0.f;
+    for(size_t i=1; i<a.size(); ++i)
+      if(a[i].size()>4 && a[i].substr(a[i].size()-4)==".MDS")
+        pl.addOverlay(a[i],0); else
+        say("bladepath " + pl.bladePath(a[i],length));
     }
   else if(c=="aimwalk") {
     // aimwalk on|off: the legs step under the aim (graphics/mesh/aimwalk)
@@ -17179,6 +17278,18 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       h.flags = zenkit::NpcFlag(uint32_t(h.flags) |  uint32_t(zenkit::NpcFlag::IMMORTAL));
     say("immortal " + symName(w,n) + " " + (n->isImmortal() ? "on" : "off"));
     }
+  else if(c=="stun") {
+    // stun <npc|nearest|player> [parried|guard_break]: the stun of melee_parry as after a parry, by the hero
+    // (or, for the hero, by the nearest npc): the look without timing a real parade
+    Npc* n = a.size()>1 && a[1]=="player" ? &pl : findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    Npc* by = n==&pl ? findNpc(w,pl,"nearest") : &pl;
+    if(n==nullptr || by==nullptr) {
+      say("stun: no npc " + line);
+      return;
+      }
+    n->startMeleeStun(*by,a.size()>2 ? a[2] : "parried");
+    say("stun " + symName(w,n) + (n->isMeleeStunned() ? " on" : " refused"));
+    }
   else if(c=="clear") {
     // clear [radius]: the npcs around the hero leave the world (rats, wolves that would join in), not the
     // watched one
@@ -17284,7 +17395,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       say("unknown lean command: " + line);
     }
   else if(c=="blend") {
-    // blend on|off, blend param <min|scale|max> <value>: transitions between animations (AnimBlend)
+    // blend on|off, blend param <min|scale|max|turn|move|out|side|blow> <value>: transitions between animations
+    // (AnimBlend)
     const std::string m = a.size()>1 ? a[1] : "";
     if(m=="on" || m=="off")
       AnimBlend::setEnabled(m=="on");
@@ -18123,7 +18235,18 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     event("caption","\"text\":" + jsonStr(rest(line)=="off" ? "" : rest(line)));
     }
   else if(c=="mark") {
-    event("mark","\"text\":" + jsonStr(rest(line)));
+    const auto text=rest(line);
+    event("mark","\"text\":" + jsonStr(text));
+    if(LoadProbe::enabled() && ((text=="stream_warm" && w.chunkResidency()!=nullptr) || text=="stream_warm_5s")) {
+      std::string pages;
+      if(auto* chunks=w.chunkResidency()) {
+        const auto& s=chunks->stats();
+        pages="landscape_used_bytes="+std::to_string(s.landscapePageUsedBytes)+
+              " landscape_free_bytes="+std::to_string(s.landscapePageFreeBytes)+
+              " landscape_retired_bytes="+std::to_string(s.landscapePageRetiredBytes);
+        }
+      LoadProbe::mark(text,-1,pages);
+      }
     }
   else if(c=="ai") {
     std::string reply;
@@ -18380,7 +18503,8 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       return;
     }
   while(bench.pc<bench.prog.size() || bench.speaking || bench.waitReply || !bench.waitAiKey.empty() || !bench.bodyLiveWait.empty() ||
-        bench.downNpc!=nullptr || bench.waitRagdollNpc!=nullptr || bench.duelWaiting) {
+        bench.downNpc!=nullptr || bench.waitRagdollNpc!=nullptr || bench.duelWaiting || bench.waitStreaming ||
+        std::chrono::steady_clock::now()<bench.realWaitUntil) {
     if(bench.speaking) {
       if(bench.time<bench.speakUntil)
         return;
@@ -18388,6 +18512,30 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     if(waitingForReply() || waitingForAi() || waitingForBodyLive())
       return;
+    if(bench.waitStreaming) {
+      if(bench.time<bench.waitUntil)
+        return;
+      if(!w.landscapeReady()) {
+        if(std::chrono::steady_clock::now()<bench.streamingDeadline)
+          return;
+        bench.waitStreaming=false;
+        arenaAbort("streaming wait timed out before all Near/Far chunks were published");
+        return;
+        }
+      bench.waitStreaming=false;
+      std::string publications="[";
+      for(size_t i=0;i<bench.streamingWarmupFarMs.size();++i) {
+        if(i!=0)publications+=',';
+        publications+=std::to_string(bench.streamingWarmupFarMs[i]);
+        }
+      publications+=']';
+      event("streaming_ready","\"world\":"+jsonStr(w.name())+",\"pass\":true,\"far_publication_ms\":"+publications+
+        ",\"far_max_per_frame\":"+std::to_string(bench.streamingWarmupFarMaxPerFrame)+
+        ",\"queue_max_ms\":"+std::to_string(bench.streamingWarmupQueueMaxMs));
+      bench.streamingWarmupFarMs.clear();
+      bench.streamingWarmupFarMaxPerFrame=0;
+      bench.streamingWarmupQueueMaxMs=0;
+      }
     if(bench.waitRagdollNpc!=nullptr) {
       const auto* npc=bench.waitRagdollNpc;
       const auto* body=npc->ragdollBody();
@@ -18442,7 +18590,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     if(bench.pc>=bench.prog.size())
       break;
-    if(bench.time<bench.waitUntil || bench.volleyLeft>0)
+    if(bench.time<bench.waitUntil || std::chrono::steady_clock::now()<bench.realWaitUntil || bench.volleyLeft>0)
       return;
     if(bench.waitArrive) {
       if(!pl.isAiQueueEmpty() && bench.time<bench.arriveEnd)
@@ -18457,14 +18605,14 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const std::string line = bench.prog[bench.pc++];
     exec(line,w,pl,ctrl);
-    if(bench.routeActive || bench.placedItems.probing || NavBench::running() || NavDemos::running()) return;
+    if(bench.routeActive || bench.placedItems.probing || bench.waitStreaming || NavBench::running() || NavDemos::running()) return;
     if(bench.spellWaitFrozen>=0 || bench.spellEquipPending) return;
     if(bench.questWait || bench.questStandingWait || bench.routinePhase) return;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
     if(bench.cadenceWait) return;
 #endif
     }
-  if(bench.time>=bench.waitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && bench.bodyLiveWait.empty())
+  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.waitStreaming && bench.bodyLiveWait.empty())
     finish();
   }
 
@@ -19474,6 +19622,7 @@ void TestBench::endWait(std::string_view reason) {
   if(scenarioPath==nullptr || bench.done)
     return;
   bench.waitUntil = bench.time;
+  bench.realWaitUntil={};
   say("wait ended: " + std::string(reason));
   }
 
@@ -20298,14 +20447,26 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   }
 
 void TestBench::sampleStreaming(const World& world) {
-  if(scenarioPath==nullptr || bench.done || !bench.perfSegment.starts_with("streaming-flythrough/"))return;
+  if(scenarioPath==nullptr || bench.done)return;
+  const bool measuring=bench.perfSegment.starts_with("streaming-flythrough/");
+  if(!measuring && std::filesystem::path(scenarioPath).filename()!="streaming-flythrough.bench")return;
   const auto* residency=world.chunkResidency();
-  if(residency==nullptr) {arenaAbort("streaming perf sample requires the residency manager");return;}
+  if(residency==nullptr)return;
   const auto& stats=residency->stats();
+  if(!measuring) {
+    bench.streamingWarmupFarMs.insert(bench.streamingWarmupFarMs.end(),stats.farPublicationTimesMs.begin(),stats.farPublicationTimesMs.end());
+    bench.streamingWarmupFarMaxPerFrame=std::max(bench.streamingWarmupFarMaxPerFrame,stats.farPublicationTimesMs.size());
+    bench.streamingWarmupQueueMaxMs=std::max(bench.streamingWarmupQueueMaxMs,stats.workMs);
+    return;
+    }
   bench.streamingSamples.push_back({bench.perfSegment,bench.perfFrame,stats.updateMs,stats.workMs,
     stats.near,stats.far,stats.outside,stats.transitionsNear-bench.streamingNearBefore,
-    stats.transitionsFar-bench.streamingFarBefore});
+    stats.transitionsFar-bench.streamingFarBefore,stats.publicationTimesMs,
+    stats.published-bench.streamingPublishedBefore,stats.released-bench.streamingReleasedBefore,
+    stats.landscapePageUsedBytes,stats.landscapePageFreeBytes,stats.landscapePageRetiredBytes,stats.landscapePageCount,
+    Resources::textureStats()});
   bench.streamingNearBefore=stats.transitionsNear;bench.streamingFarBefore=stats.transitionsFar;
+  bench.streamingPublishedBefore=stats.published;bench.streamingReleasedBefore=stats.released;
   }
 
 bool TestBench::withUi() {

@@ -458,6 +458,18 @@ if(NOT ANDROID AND NOT IOS)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
   target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-meleestamina-contract EXCLUDE_FROM_ALL
+    tests/meleestamina_contract.cpp common/game/meleestamina.cpp)
+  target_include_directories(gothic-meleestamina-contract PRIVATE common)
+  add_custom_target(check-meleestamina
+    COMMAND $<TARGET_FILE:gothic-meleestamina-contract>
+    DEPENDS gothic-meleestamina-contract USES_TERMINAL)
+  add_executable(gothic-meleeparry-contract EXCLUDE_FROM_ALL
+    tests/meleeparry_contract.cpp common/game/meleeparry.cpp)
+  target_include_directories(gothic-meleeparry-contract PRIVATE common)
+  add_custom_target(check-meleeparry
+    COMMAND $<TARGET_FILE:gothic-meleeparry-contract>
+    DEPENDS gothic-meleeparry-contract USES_TERMINAL)
   add_executable(gothic-furniture-parts-contract EXCLUDE_FROM_ALL tests/furniture_parts_contract.cpp)
   target_link_libraries(gothic-furniture-parts-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-physics

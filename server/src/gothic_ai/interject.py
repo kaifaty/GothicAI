@@ -114,7 +114,8 @@ class Interjections:
 
     def candidates(self, speaker: str) -> list[RosterEntry]:
         """Who is asked: the nearest near the hero, but not the one who answered, whoever is fighting,
-        speaking or waiting to, and who spoke up after his phrase before."""
+        speaking or waiting to, who spoke up after his phrase before, and a witness being asked (it speaks
+        from its testimony only)."""
         out = [
             e
             for npc, e in self.talk.people.items()
@@ -123,6 +124,7 @@ class Interjections:
             and not fights(e)
             and npc not in self._before
             and not self.dialogue.speaking(npc)
+            and not self.group.witness(npc)
         ]
         return sorted(out, key=lambda e: e.earshot)[:ASK_MAX]
 

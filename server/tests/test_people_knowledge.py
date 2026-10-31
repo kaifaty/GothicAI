@@ -229,3 +229,28 @@ async def test_turn_extension_has_only_situation():
     assert desk.situation(LOBART) == desk.context(LOBART)
     assert desk.tools(LOBART) == [] and desk.all_tools == ()
     assert await desk.handle(None, None, None, None) is None
+
+
+def test_fame_situation_knows_witnesses_and_hearers_without_duplicates_and_rewinds():
+    fame = {
+        "fact": "feat_fame", "feat": "F1", "title": "Вернул чужое",
+        "text": "Вернул кошель без награды.", "witnesses": [LOBART], "day": 1,
+    }
+    rumor = {
+        "fact": "rumor", "kind": "fame", "feat": "F1", "quest": "F1", "to": VINO,
+        "from": LOBART, "from_name": "Лобарт", "title": fame["title"], "text": fame["text"],
+    }
+    facts = [fame, rumor, fame.copy(), rumor.copy(), {**rumor, "to": LOBART}]
+    desk = _desk(facts)
+    prefix = "Что о герое говорят люди:\n- «Вернул чужое» — Вернул кошель без награды. "
+    suffix = "\nМожешь узнать героя по этой славе и назвать его так своими словами."
+    assert desk.situation(LOBART) == prefix + "(ты видел это сам)" + suffix
+    assert desk.situation(VINO) == prefix + "(со слов: Лобарт)" + suffix
+    assert desk.situation(HILDA) is None
+    facts.extend({**fame, "feat": f"F{i}", "title": f"Дело {i}"} for i in range(2, 6))
+    context = desk.situation(LOBART)
+    assert context is not None and context.count("\n- ") == 3
+    assert context.index("Дело 5") < context.index("Дело 4") < context.index("Дело 3")
+    assert "Дело 2" not in context and "Вернул чужое" not in context
+    facts.clear()
+    assert desk.situation(LOBART) is None and desk.situation(VINO) is None

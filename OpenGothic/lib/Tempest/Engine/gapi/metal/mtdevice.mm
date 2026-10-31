@@ -5,6 +5,7 @@
 
 #include <Tempest/Log>
 #include <Foundation/NSProcessInfo.h>
+#include <objc/runtime.h>
 // #include <Metal/MTLPixelFormat.h>
 
 using namespace Tempest;
@@ -40,6 +41,47 @@ static std::mutex probeDeviceSync;
 static MTL::Device* probeDevice = nullptr;
 
 bool tempestLoadProbeEnabled();
+
+static std::atomic_size_t probeStagingCount = 0;
+static std::atomic_size_t probeStagingBytes = 0;
+static char probeUploadKey;
+
+// Attach to the Metal object itself: completion of its copy alone does not
+// prove that all command-buffer and autorelease owners have released it.
+@interface TempestUploadProbe : NSObject {
+  size_t bytes;
+  }
+- (instancetype)initWithBytes:(size_t)bufferBytes;
+@end
+
+@implementation TempestUploadProbe
+- (instancetype)initWithBytes:(size_t)bufferBytes {
+  if((self=[super init])) {
+    bytes=bufferBytes;
+    ++probeStagingCount;
+    probeStagingBytes+=bytes;
+    }
+  return self;
+  }
+- (void)dealloc {
+  --probeStagingCount;
+  probeStagingBytes-=bytes;
+  [super dealloc];
+  }
+@end
+
+void Tempest::Detail::probeMetalUploadBuffer(MTL::Buffer* buffer) {
+  if(!tempestLoadProbeEnabled() || buffer==nullptr)
+    return;
+  auto* tracker=[[TempestUploadProbe alloc] initWithBytes:buffer->allocatedSize()];
+  objc_setAssociatedObject(reinterpret_cast<id>(buffer),&probeUploadKey,tracker,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  [tracker release];
+  }
+
+void tempestProbeMetalUploadBuffers(size_t& stagingCount, size_t& stagingBytes) {
+  stagingCount=probeStagingCount.load();
+  stagingBytes=probeStagingBytes.load();
+  }
 
 size_t tempestProbeMetalGpuBytes() {
   std::lock_guard<std::mutex> guard(probeDeviceSync);
@@ -79,6 +121,7 @@ MtDevice::MtDevice(std::string_view name, bool validation)
   }
 
 MtDevice::~MtDevice() {
+  waitIdle();
   if(!tempestLoadProbeEnabled())
     return;
   std::lock_guard<std::mutex> guard(probeDeviceSync);

@@ -1,9 +1,20 @@
 from types import SimpleNamespace
 
-from gothic_ai import questbook
+import pytest
+
+from gothic_ai import challenges, questbook
+from gothic_ai.journal import Journal
 from gothic_ai.llm import ToolCall
 from gothic_ai.scenarios import story as scenarios
-from gothic_ai.scenarios.vanilla_line import REQUIRES, RUEBEN, Turnips, VanillaLineScript, _giver_ok
+from gothic_ai.scenarios.vanilla_line import (
+    REQUIRES,
+    RUEBEN,
+    Turnips,
+    VanillaLineScript,
+    _giver_ok,
+    vanilla_line_live,
+)
+from gothic_ai.showrunner import ShowrunnerModel
 
 
 async def test_script_proposes_vanilla_followup() -> None:
@@ -90,3 +101,45 @@ async def test_live_line_must_follow_the_event_and_cannot_reuse_its_script_giver
     assert not await _giver_ok(None, director, {"giver": "LOBART", "follows": RUEBEN})
     assert not await _giver_ok(None, director, {"giver": "HILDA", "follows": ""})
     assert await _giver_ok(None, director, {"giver": "HILDA", "follows": RUEBEN})
+
+
+@pytest.mark.parametrize("force", [None, "0", "1"])
+async def test_live_challenge_instructions_are_scoped_and_restored(monkeypatch, force) -> None:
+    if force is None:
+        monkeypatch.delenv("GOTHIC_FORCE_CHALLENGE", raising=False)
+    else:
+        monkeypatch.setenv("GOTHIC_FORCE_CHALLENGE", force)
+    model = ShowrunnerModel(SimpleNamespace(name="chatgpt"))
+    other_model = ShowrunnerModel(SimpleNamespace(name="chatgpt"))
+    original = model.instructions
+
+    def clock():
+        return 10.0
+
+    director = SimpleNamespace(model=model, clock=clock)
+    entries = []
+    journal = Journal(entries.append)
+    sink = journal.sink
+
+    def chance(*args):
+        return 0.75
+
+    monkeypatch.setattr(challenges, "_chance", chance)
+
+    async def prepare(self):
+        extra = (
+            "\nПроверочный прогон: каждая линия, которую ты строишь, получает ровно одно скрытое условие "
+            "challenge — выбери из четырёх самое уместное для её людей и сюжета."
+        )
+        assert model.instructions == original + (extra if force == "1" else "")
+        assert other_model.instructions == original
+        assert challenges._chance("challenge_hint", "1") == (0.0 if force == "1" else 0.75)
+        raise RuntimeError("stop after setup")
+
+    monkeypatch.setattr(Turnips, "prepare", prepare)
+    with pytest.raises(RuntimeError, match="stop after setup"):
+        await vanilla_line_live(None, director, None, journal=journal)
+    assert model.instructions == other_model.instructions == original
+    assert challenges._chance is chance
+    assert director.clock is clock
+    assert journal.sink is sink

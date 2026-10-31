@@ -462,11 +462,16 @@ class Console:
                     print(json.dumps(fact, ensure_ascii=False) if fact else "(no occasion now)")
             case "feats":
                 if self.state.chronicle is not None:
+                    epilogues = {f["feat"]: f for f in self.state.chronicle.facts("feat_epilogue")}
+                    shown = {f["feat"] for f in self.state.chronicle.facts("feat_epilogue_shown")}
                     for feat in self.state.chronicle.facts("feat"):
                         print(
                             f"{feat['id']}: {feat['title']}; {feat['text']}; "
                             f"evidence={feat['evidence']}"
                         )
+                        if epilogue := epilogues.get(feat["id"]):
+                            pending = " (не показан)" if feat["id"] not in shown else ""
+                            print(f"  {epilogue['text']}{pending}")
             case "graph" if self.state.story is not None:
                 await self.graph(rest)
             case "quest" if len(rest) >= 5 and self.state.quests is not None:
@@ -984,9 +989,13 @@ async def serve(args: argparse.Namespace) -> int:
         # what really happened, the director's quests and the hero's lies about them (story graph, stage 4)
         state.chronicle = Chronicle(link, memory)
         feat_image_root = None
-        if not args.no_feats and args.scenario in {None, "feats"}:
+        if not args.no_feats and (
+            args.scenario in {None, "feats"}
+            or (args.scenario == "lie" and args.llm == "fake")
+            or (args.scenario == "vanilla_line_live" and os.environ.get("GOTHIC_FORCE_CHALLENGE") == "1")
+        ):
             artist = None
-            if not args.no_feat_images:
+            if not args.no_feat_images and args.scenario in {None, "feats"}:
                 if args.scenario == "feats":
                     feat_image_root = TemporaryDirectory(prefix="feat-images-")
                     artist = (
@@ -999,8 +1008,13 @@ async def serve(args: argparse.Namespace) -> int:
                 link, state.chronicle, llm, journal=journal, places=place_book,
                 gather_s=1 if args.scenario == "feats" and args.llm == "fake" else 20,
                 artist=artist,
+                fame=not args.no_feat_fame,
+                hero_distance=lambda npc: (
+                    state.talk.people[npc].distance if npc in state.talk.people else None
+                ),
                 image_wait_s=30 if args.scenario == "feats" and args.llm == "fake" else 150,
             )
+            state.talk.on_phrase.append(lambda to, text: state.feats.hero_talk(to.id) if to else None)
         if not args.no_crimes:
             state.crimes = Crimes(
                 link,
@@ -1206,6 +1220,7 @@ async def serve(args: argparse.Namespace) -> int:
             witnesses.gate_claim = state.gates.claim_heard
         state.dialogue.extensions.insert(state.dialogue.extensions.index(state.sightings) + 1, witnesses)
         group.asks = witnesses.asking
+        group.witness = witnesses.called
         state.concerns.extra.append(witnesses.concerns)
         witnesses.on_change.append(state.concerns.changed)  # a far answer's time on its mind is over
         asks = asyncio.create_task(witnesses.run())  # far witnesses are asked at their meeting
@@ -2135,7 +2150,9 @@ async def serve(args: argparse.Namespace) -> int:
             elif args.scenario == "lie":
                 dialogue, talk, quests = state.dialogue, state.talk, state.quests
                 assert dialogue is not None and talk is not None and quests is not None
-                results = await scenarios.lie_found_out(link, dialogue, talk, quests, args.npc)
+                results = await scenarios.lie_found_out(
+                    link, dialogue, talk, quests, args.npc, chronicler=state.feats,
+                )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario lie: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -2189,8 +2206,12 @@ async def serve(args: argparse.Namespace) -> int:
                 exit_code = 1 if bad else 0
             elif args.scenario in {"vanilla_line", "vanilla_line_live"}:
                 assert state.showrunner is not None and state.questlog is not None
-                scenario = getattr(scenario_vanilla_line, args.scenario)
-                results = await scenario(link, state.showrunner, state.questlog)
+                if args.scenario == "vanilla_line_live":
+                    results = await scenario_vanilla_line.vanilla_line_live(
+                        link, state.showrunner, state.questlog, journal
+                    )
+                else:
+                    results = await scenario_vanilla_line.vanilla_line(link, state.showrunner, state.questlog)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -3312,6 +3333,11 @@ def main() -> None:
         "--no-feat-challenges",
         action="store_true",
         help="disable the director's hidden line challenges (enabled by default)",
+    )
+    p.add_argument(
+        "--no-feat-fame",
+        action="store_true",
+        help="disable rumors about the hero's public feats",
     )
     p.add_argument(
         "--no-feat-images",

@@ -52,6 +52,8 @@ class World final {
     size_t               placedItemsCreatedThisFrame() const { return wobj.placedItemsCreatedThisFrame(); }
     const ChunkTable&    chunkTable() const { return chunks; }
     ChunkResidency*      chunkResidency() const { return residency.get(); }
+    void                 updateLandscape(const Camera& camera);
+    bool                 landscapeReady() const { return !wview || wview->landscapeReady(); }
 
     void                 load(Serialize& fin );
     void                 save(Serialize& fout);

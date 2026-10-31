@@ -1,0 +1,36 @@
+# Fixed performance viewpoints for Claude's comparison on Mac.
+# Run with OPENGOTHIC_STREAMING=0 and =1; capture only after full Far publication.
+seed 73013
+cheat god
+world-check NEWWORLD.ZEN
+set time 12 0
+overlay off
+ui off
+view full
+cam lift off
+watch player
+goto NW_CITY_MERCHANT_TRADE_04
+freeze PAL_203_LOTHAR
+cam look 120
+cam world 700 280 0
+wait 10000
+cam hold
+streaming wait
+shot perf-market
+wait 34
+goto pos 5391 320 -5822
+cam look 120
+cam world 850 300 0
+wait 10000
+cam hold
+streaming wait
+shot perf-harbour
+wait 34
+goto NW_FOREST_PATH_16
+cam look 150
+cam world 500 230 0
+wait 10000
+cam hold
+streaming wait
+shot perf-forest
+wait 34

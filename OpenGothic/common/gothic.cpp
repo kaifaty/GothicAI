@@ -133,6 +133,8 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_posture",         1);
   defaults->set("GAME", "melee_down_tactics",    1);
   defaults->set("GAME", "melee_hitstop",         1);
+  defaults->set("GAME", "melee_stamina",         1);
+  defaults->set("GAME", "melee_parry",           1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -904,12 +906,15 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_down_tactics")!=0,
     settingsGetI("GAME","item_hulls")!=0,
     settingsGetI("GAME","melee_hitstop")!=0,
+    settingsGetI("GAME","melee_stamina")!=0,
+    settingsGetI("GAME","melee_parry")!=0,
     settingsGetI("GAME","furniture_parts")!=0,
     settingsGetI("GAME","placed_items")!=0
     };
   }
 
 void Gothic::setupSettings() {
+  Resources::configureTextures(settingsGetS("GAME","texture_budget_mb"));
   Resources::censusProfile(gameDatDef,ouDef,settingsGetI("GAME","language"));
   // settingsSetI/S/F emit onSettingsChanged synchronously. Publish before any
   // same-dispatch actor creation, prepare or input query can consume the change.

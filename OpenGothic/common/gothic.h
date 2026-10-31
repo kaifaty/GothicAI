@@ -68,6 +68,8 @@ class Gothic final {
       bool meleeDownTactics = true;
       bool itemHulls = true;
       bool meleeHitStop = true;
+      bool meleeStamina = true;
+      bool meleeParry = true;
       bool furnitureParts = true;
       bool placedItems = true;
 

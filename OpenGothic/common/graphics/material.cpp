@@ -29,10 +29,10 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
       }
     }
   if(tex==nullptr)
-    tex = Resources::loadTexture(m.texture);
+    tex = Resources::loadTexture(m.texture,false,false);
   if(tex==nullptr) {
     if(!m.texture.empty()) {
-      tex = Resources::loadTexture("DEFAULT.TGA");
+      tex = Resources::loadTexture("DEFAULT.TGA",false,false);
       } else {
       tex = Resources::loadTexture(toColor(m.color));
       alphaTestEnabled &= (m.color.a!=255);
@@ -75,9 +75,9 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
 
 Material::Material(const asset::VisualDecal& decal)
   :alphaTestEnabled(true), sourceAlphaFunc(static_cast<asset::AlphaFunction>(decal.alpha_func)), sourceColorAlpha(decal.alpha_weight) {
-  tex = Resources::loadTexture(decal.name);
+  tex = Resources::loadTexture(decal.name,false,false);
   if(tex==nullptr && !decal.name.empty())
-    tex = Resources::loadTexture("DEFAULT.TGA");
+    tex = Resources::loadTexture("DEFAULT.TGA",false,false);
   loadFrames(decal.name, decal.texture_anim_fps);
 
   alpha        = loadAlphaFunc(sourceAlphaFunc, sourceMaterialGroup, sourceColorAlpha, tex, alphaTestEnabled);
@@ -86,7 +86,7 @@ Material::Material(const asset::VisualDecal& decal)
   }
 
 Material::Material(const Def::ParticleEffect& src) {
-  tex = Resources::loadTexture(src.vis_name_s);
+  tex = Resources::loadTexture(src.vis_name_s,false,false);
   loadFrames(src.vis_name_s, src.vis_tex_ani_fps);
 
   //TODO: visTexAniIsLooping
@@ -191,7 +191,7 @@ Material::AlphaFunc Material::loadAlphaFunc(asset::AlphaFunction zenAlpha,
     }
 
   if((alpha==Material::AlphaFunc::AlphaTest && !requireAlphaTest) || alpha==Material::AlphaFunc::Transparent) {
-    if(tex!=nullptr && tex->format()==Tempest::TextureFormat::DXT1 && clrAlpha==255) {
+    if(tex!=nullptr && Resources::textureFormat(tex)==Tempest::TextureFormat::DXT1 && clrAlpha==255) {
       alpha = Material::AlphaFunc::Solid;
       }
     }
@@ -214,7 +214,7 @@ void Material::loadFrames(const asset::Material& m) {
   }
 
 void Material::loadFrames(const std::string_view fr, float fps) {
-  frames = Resources::loadTextureAnim(fr);
+  frames = Resources::loadTextureAnim(fr,false);
   if(frames.empty())
     return;
   if(fps > 0)

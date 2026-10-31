@@ -125,11 +125,23 @@ void RtScene::buildTlas() {
 
   auto& device = Resources::device();
   tex    = device.descriptors(build.tex);
+  textureIdentities=build.tex;
+  textureGeneration=Resources::textureGeneration();
   vbo    = device.descriptors(build.vbo);
   ibo    = device.descriptors(build.ibo);
   rtDesc = device.ssbo(build.rtDesc);
   tlas   = device.tlas(build.inst);
 
   build = Build();
+  }
+
+bool RtScene::refreshTextures() {
+  const auto generation=Resources::textureGeneration();
+  if(textureGeneration==generation)
+    return false;
+  Resources::recycle(std::move(tex));
+  tex=Resources::device().descriptors(textureIdentities);
+  textureGeneration=generation;
+  return true;
   }
 

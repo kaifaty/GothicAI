@@ -22,6 +22,10 @@ float distanceSquared(const ChunkTable::Entry& chunk, const Tempest::Vec3& point
 }
 
 ChunkResidency::ChunkResidency(const ChunkTable& table):chunks(table),states(table.entries.size(),State::Outside) {
+  for(size_t i=0;i<table.entries.size();++i) {
+    const auto id=table.entries[i].id;
+    indices.emplace(std::pair{id.x,id.z},i);
+    }
   counters.outside=states.size();
   }
 
@@ -34,6 +38,8 @@ std::unique_ptr<ChunkResidency> ChunkResidency::create(const ChunkTable& table) 
 
 void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& camera, float zFar) {
   const auto started=Clock::now();
+  counters.publicationTimesMs.clear();
+  counters.farPublicationTimesMs.clear();
   const auto heroCell=ChunkId::fromPosition(hero.x,hero.z);
   const auto cameraCell=ChunkId::fromPosition(camera.x,camera.z);
   counters.near=0;
@@ -98,10 +104,15 @@ void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& came
   }
 
 ChunkResidency::State ChunkResidency::desired(ChunkId id) const {
-  for(size_t i=0;i<chunks.entries.size();++i)
-    if(chunks.entries[i].id==id)
-      return states[i];
+  const auto index=indexOf(id);
+  if(index!=size_t(-1))
+    return states[index];
   throw std::out_of_range("chunk is not in the world table");
+  }
+
+size_t ChunkResidency::indexOf(ChunkId id) const {
+  const auto found=indices.find({id.x,id.z});
+  return found==indices.end() ? size_t(-1) : found->second;
   }
 
 uint64_t ChunkResidency::subscribe(Listener listener) {
@@ -116,4 +127,11 @@ void ChunkResidency::unsubscribe(uint64_t subscription) {
 
 void ChunkResidency::enqueue(Work task) {
   work.push_back(std::move(task));
+  }
+
+void ChunkResidency::recordPublication(double ms, bool far) {
+  counters.publicationTimesMs.push_back(ms);
+  if(far)
+    counters.farPublicationTimesMs.push_back(ms);
+  ++counters.published;
   }
