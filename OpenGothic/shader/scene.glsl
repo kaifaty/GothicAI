@@ -98,6 +98,9 @@ struct Bucket {
   uint  flags;
   float uvScale;
   float antitileCell;
+  uint  diffuseFrames;
+  uint  frameCount;
+  uint  frameDuration;
   };
 
 #endif

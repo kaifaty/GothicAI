@@ -11,8 +11,7 @@
 
 #include "worldchunksruntime.h"
 
-// Desired presentation residency only. World logic and every presentation
-// consumer remain loaded in this step; nothing here changes the world mesh.
+// Desired presentation residency. World logic remains loaded independently.
 class ChunkResidency {
   public:
     enum class State : uint8_t { Outside, Far, Near };
@@ -28,6 +27,15 @@ class ChunkResidency {
       uint64_t peakNear = 0;
       double   updateMs = 0;
       double   workMs = 0;
+      std::vector<double> publicationTimesMs;
+      std::vector<double> farPublicationTimesMs;
+      uint64_t published = 0;
+      uint64_t released = 0;
+      size_t   pending = 0;
+      size_t   landscapePageUsedBytes = 0;
+      size_t   landscapePageFreeBytes = 0;
+      size_t   landscapePageRetiredBytes = 0;
+      size_t   landscapePageCount = 0;
       };
 
     using Clock = std::chrono::steady_clock;
@@ -49,16 +57,29 @@ class ChunkResidency {
     void update(const Tempest::Vec3& hero, const Tempest::Vec3& camera, float zFar);
     State desired(size_t index) const { return states.at(index); }
     State desired(ChunkId id) const;
+    // Returns size_t(-1) for cells without a landscape entry.
+    size_t indexOf(ChunkId id) const;
     bool actualLoaded(size_t index) const { return index<chunks.entries.size(); }
     const ChunkTable& table() const { return chunks; }
     const Stats& stats() const { return counters; }
+    bool idle() const { return work.empty(); }
 
     uint64_t subscribe(Listener listener);
     void unsubscribe(uint64_t subscription);
     void enqueue(Work work);
+    void recordPublication(double ms, bool far);
+    void recordRelease() { ++counters.released; }
+    void setPending(size_t count) { counters.pending=count; }
+    void setLandscapePages(size_t used, size_t free, size_t retired, size_t count) {
+      counters.landscapePageUsedBytes=used;
+      counters.landscapePageFreeBytes=free;
+      counters.landscapePageRetiredBytes=retired;
+      counters.landscapePageCount=count;
+      }
 
   private:
     const ChunkTable& chunks;
+    std::map<std::pair<int32_t,int32_t>,size_t> indices;
     std::vector<State> states;
     Stats counters;
     uint64_t nextSubscription = 0;

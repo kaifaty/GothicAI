@@ -14,6 +14,7 @@
 #include "game/gamescript.h"
 #include "game/ragdollsave.h"
 #include "game/meleeimpact.h"
+#include "game/meleestamina.h"
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
 #include "world/aiqueue.h"
@@ -319,6 +320,13 @@ class Npc final {
     bool      swingSwordL();
     bool      swingSwordR();
     bool      blockSword();
+    bool      hasStamina() const;
+    float     stamina() const;
+    float     staminaMax() const;
+    float     staminaFraction() const;
+    bool      isStaminaExhausted() const;
+    bool      isMeleeStunned() const;
+    void      startMeleeStun(Npc& by, std::string_view reason);
     auto      beginCastSpell() -> BeginCastResult;
     void      endCastSpell(bool playerCtrl = false);
     void      setActiveSpellInfo(int32_t info);
@@ -348,6 +356,10 @@ class Npc final {
     bool      isAimWalkStopped() const { return stanceWalkStopped; }
     bool      isEdgeMoveBlocked(const Tempest::Vec3& modelDirection) const {
       return mvAlgo.isEdgeMoveBlocked(modelDirection);
+      }
+    // Passive stand measurement; never advances the actor or changes its guard.
+    MoveAlgo::EdgeProbe navigationEdgeAhead(const Tempest::Vec3& direction,float range) const {
+      return mvAlgo.edgeAhead(direction,range);
       }
     // The manual stance looks from the hero's shoulder toward the crosshair, independently of the camera.
     auto      aimLookAt(const Tempest::Vec3& target) const -> Tempest::Vec3;
@@ -387,6 +399,7 @@ class Npc final {
     void        fitHitZones() { visual.fitHitZones(); }
     std::string bowDump() const { return visual.bowDump(); }
     std::string animInfo(std::string_view name) const { return visual.animInfo(name); }
+    std::string bladePath(std::string_view name, float length) const { return visual.bladePath(name,length); }
     // ms the animation of that name takes as this one plays it (its overlays: the trained archers' reload)
     float       animTime(std::string_view name) const { return visual.animTime(name); }
     // the test bench: hit, it neither stumbles nor flinches (a target that keeps its pose)
@@ -635,6 +648,7 @@ class Npc final {
 
     auto      currentWayPoint() const -> const WayPoint* { return currentFp; }
     auto      currentGoToPoint() const -> const WayPoint* { return go2.wp; }
+    auto      navigationPath() const -> const WayPath& { return wayPath; }
     auto      currentTaPoint() const -> const WayPoint*;
     void      attachToPoint(const WayPoint* p);
     GoToHint  moveHint() const { return go2.flag; }
@@ -655,6 +669,7 @@ class Npc final {
     float     navigationClearance() const {
       return physic.groundOffset()+physic.capsuleHeight()*0.5f;
       }
+    auto      navigationPhysicsPosition() const -> Tempest::Vec3 { return physic.position(); }
     // Direct, owned ground-position target for bench-controlled walks; no waypoint graph lookup.
     // Uses a 20 cm arrival radius even after a collision, to preserve navmesh corners.
     // Returns false while airborne or while leaving an interaction, so the caller can retry.
@@ -957,6 +972,22 @@ class Npc final {
     void                          applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, bool blocked, float before);
     bool                          tickMeleePosture(uint64_t dt);
     MeleeImpact::Posture           meleePosture;
+    MeleeStamina::State            meleeStamina;
+    void                          tickMeleeStamina();
+    float                         meleeAttackCost() const;
+    bool                          allowStaminaAction(std::string_view action, float cost, bool fullCost = false);
+    void                          spendStamina(std::string_view action, float cost);
+    void                          waitForMeleeStamina(uint64_t dt);
+    bool                          allowMeleeStunAction(std::string_view action);
+    void                          endMeleeStun(std::string_view reason);
+    void                          meleeStunLook(const Npc& by);
+    void                          tickMeleeParry();
+    void                          applyMeleeParry(Npc& attacker, const MeleeBladeContact* contact);
+    float                         meleePostureSkillScale(const Npc& attacker) const;
+    uint64_t                      meleeStunUntil = 0;
+    std::optional<uint64_t>        meleeParadeOrigin;
+    uint64_t                      meleeParadeEnd = 0;
+    bool                          meleeParadeContact = false;
     bool                          meleeKnockdown = false;
     bool                          meleeDownStrike = false; // the chop from above at one lying is playing
     bool                          meleeGetupForced = false;

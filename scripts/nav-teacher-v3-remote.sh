@@ -79,23 +79,23 @@ if [[ "$stage" == visible ]]; then
   test -x "$task/build/opengothic/gothic-navmemoryteacher-contract"
   "$task/.venv/bin/python" -m pytest -q scripts/tests/test_nav_teacher_v3_campaign.py \
     scripts/tests/test_nav_teacher_v3_point_analysis.py scripts/tests/test_nav_demos.py
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3_point_analysis.py \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3_point_analysis.py \
     --task "$task" --data "$HOME/gothic-ai/nav-demos-v3" --output "$task/point-retry-analysis"
 fi
 if [[ "$stage" == oracle || "$stage" == oracle-resume ]]; then
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3_oracle.py \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3_oracle.py \
     --task "$task" --data "$HOME/gothic-ai/nav-demos-v3" --parallel 3
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3_coverage.py \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3_coverage.py \
     --task "$task" --data "$HOME/gothic-ai/nav-demos-v3" --output "$task/oracle-experiment/coverage"
 elif [[ "$stage" == diagnose ]]; then
   analysis=(--task "$task" --data "$HOME/gothic-ai/nav-demos-v3" --output "$task/failures-v3-first")
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3_failures.py prepare "${analysis[@]}"
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3_failures.py detour "${analysis[@]}"
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3_failures.py analyze "${analysis[@]}" \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3_failures.py prepare "${analysis[@]}"
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3_failures.py detour "${analysis[@]}"
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3_failures.py analyze "${analysis[@]}" \
     --diagnostics "$task/build/opengothic/gothic-navmemoryteacher-diagnostics" \
     --detour-plans "$task/failures-v3-first/detour/detour-plans-v3.jsonl" --parallel 3
 elif [[ "$stage" == campaign || "$stage" == evaluate || "$stage" == retry || "$stage" == visible ]]; then
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3_campaign.py \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3_campaign.py \
     --task "$task" --data "$HOME/gothic-ai/nav-demos-v3" --parallel 3 \
     --min-points 30 --per-region 5 --min-objects 30 --min-object-places 30 \
     --stage "$stage"
@@ -113,13 +113,13 @@ elif [[ "$stage" != build ]]; then
   runner=(--runner "$task/build/opengothic/gothic-body-runner" --assets "$GOTHIC_DIR"
     --save "$task/input/save.sav" --cache "$task/cache" --links "$task/input/accepted-links.txt"
     --roads "$task/input/places.json" --output "$data")
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3.py candidates "${selection[@]}"
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3.py discovery "${runner[@]}" \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3.py candidates "${selection[@]}"
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3.py discovery "${runner[@]}" \
     --scenarios "$data/candidates.jsonl"
   df -h "$HOME"
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3.py run "${runner[@]}" \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3.py run "${runner[@]}" \
     --scenarios "$data/candidates.jsonl" --teacher-version 2 --goal-kind point --count 24 --resume
-  "$task/.venv/bin/python" -I scripts/nav_teacher_v3.py qualify "${selection[@]}" \
+  "$task/.venv/bin/python" -X faulthandler -I scripts/nav_teacher_v3.py qualify "${selection[@]}" \
     --teacher-root "$data/v2" --probes "$data/discovery/object-candidates.jsonl"
 fi
 PHASE
@@ -130,4 +130,4 @@ if [[ "$stage" == campaign || "$stage" == evaluate || "$stage" == diagnose || "$
   cpu_args=(--cpu-quota 1200%)
 fi
 "$ROOT/scripts/gq" submit --class batch --threads "$threads" --mem 8G --max 2h "${cpu_args[@]}" \
-  --name "nav teacher v3 $stage" -- env "${game_env[@]}" bash "$task/phase.sh" "$stage"
+  --name "nav teacher v3 $stage" -- python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- env "${game_env[@]}" bash "$task/phase.sh" "$stage"

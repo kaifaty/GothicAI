@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -27,6 +28,9 @@ from gothic_launcher.settings import Config
 from gothic_launcher.state import SessionFile
 from tests.test_checks import _ready_base
 
+# POSIX path literals, symlinks and the Linux credential path; Windows has test_windows.py
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX paths")
+
 PORTS = Ports(server=50001, asr=50002, tts=50003)
 LAYOUT = Layout(
     Path("/repo"), Path("/bin/uv"), Path("/repo/Gothic2Notr"), Path("/games/G2"), Path("/home/game")
@@ -42,6 +46,7 @@ def by_name(procs):
     return {p.name: p for p in procs}
 
 
+@posix_only
 def test_services_get_their_settings_and_find_each_other(config, tmp_path):
     config.set("voice.provider", "voxtral")
     config.set("voice.voxtral_url", "http://gpu:47830")
@@ -142,6 +147,7 @@ def test_body_policy_is_passed_without_requiring_a_service_url(config, tmp_path,
     assert "--body-url" not in args and "--no-neural-body" not in args
 
 
+@posix_only
 def test_the_game_runs_in_its_home_and_finds_the_server(config):
     config.set("game.chat_scale", "1.5")
     g = game(config, LAYOUT, PORTS)
@@ -162,18 +168,34 @@ def test_the_game_gets_the_sharper_textures_when_they_are_made(config, tmp_path)
     assert game(config, with_hd, PORTS).env["OPENGOTHIC_TEXTURES"] == str(tmp_path)
 
 
-def test_the_game_gets_the_fracture_cache_when_made(config, tmp_path, monkeypatch):
-    monkeypatch.delenv("OPENGOTHIC_FRACTURE", raising=False)
-    assert "OPENGOTHIC_FRACTURE" not in game(config, LAYOUT, PORTS).env
-    layout = replace(LAYOUT, fracture_cache=tmp_path)
-    assert game(config, layout, PORTS).env["OPENGOTHIC_FRACTURE"] == str(tmp_path)
+@pytest.mark.parametrize(
+    "field,variable",
+    [
+        ("fracture_cache", "OPENGOTHIC_FRACTURE"),
+        ("convex_parts_cache", "OPENGOTHIC_CONVEX_PARTS"),
+    ],
+)
+def test_the_game_gets_the_physics_cache_when_made(config, tmp_path, monkeypatch, field, variable):
+    monkeypatch.delenv(variable, raising=False)
+    assert variable not in game(config, LAYOUT, PORTS).env
+    layout = replace(LAYOUT, **{field: tmp_path})
+    assert game(config, layout, PORTS).env[variable] == str(tmp_path)
 
 
-@pytest.mark.parametrize("override", ["/another/fracture", ""])
-def test_the_game_preserves_an_explicit_fracture_override(config, tmp_path, monkeypatch, override):
-    monkeypatch.setenv("OPENGOTHIC_FRACTURE", override)
-    layout = replace(LAYOUT, fracture_cache=tmp_path)
-    assert game(config, layout, PORTS).env["OPENGOTHIC_FRACTURE"] == override
+@pytest.mark.parametrize(
+    "field,variable",
+    [
+        ("fracture_cache", "OPENGOTHIC_FRACTURE"),
+        ("convex_parts_cache", "OPENGOTHIC_CONVEX_PARTS"),
+    ],
+)
+@pytest.mark.parametrize("override", ["/another/cache", ""])
+def test_the_game_preserves_an_explicit_physics_cache_override(
+    config, tmp_path, monkeypatch, override, field, variable
+):
+    monkeypatch.setenv(variable, override)
+    layout = replace(LAYOUT, **{field: tmp_path})
+    assert game(config, layout, PORTS).env[variable] == override
 
 
 @pytest.mark.parametrize("override", ["/another/content", ""])
@@ -228,6 +250,7 @@ def test_the_inherited_environment_cannot_override_the_settings(monkeypatch):
     assert env["PYTHONUNBUFFERED"] == "1"
 
 
+@posix_only
 def test_find_layout_lists_everything_missing(config, tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     (repo / "server").mkdir(parents=True)
@@ -284,6 +307,7 @@ def test_platform_log_and_texture_paths(monkeypatch, platform):
         assert default_hd_textures() == home / ".local/share/gothic-ai/hd-textures/textures"
 
 
+@posix_only
 def test_ryzen_settings_load_shared_fingerprints_before_preparation(config, tmp_path, monkeypatch):
     home = tmp_path / "home"
     repo = home / "repo"
@@ -334,6 +358,7 @@ def test_ryzen_settings_load_shared_fingerprints_before_preparation(config, tmp_
     assert preparation(binary, settings, tmp_path, game(config, find_layout(config), PORTS).env) is None
 
 
+@posix_only
 def test_linux_missing_credentials_is_a_short_cli_error(config, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli.sys, "platform", "linux")
     monkeypatch.setattr(cli.sys, "argv", ["gothic-launcher", "up", "--continue"])
@@ -383,6 +408,7 @@ def test_free_ports_differ():
     assert len({ports.server, ports.asr, ports.tts}) == 3
 
 
+@posix_only
 def test_preparation_uses_the_converter_beside_the_selected_game(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENGOTHIC_BASE", raising=False)
     monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "")
@@ -412,6 +438,7 @@ def test_preparation_skips_explicit_game_bases(tmp_path, monkeypatch, key, inher
     assert preparation(tmp_path / "Gothic2Notr", tmp_path, tmp_path, env) is None
 
 
+@posix_only
 @pytest.mark.parametrize("exists", [False, True])
 def test_preparation_requires_an_executable_converter(tmp_path, monkeypatch, exists):
     monkeypatch.delenv("OPENGOTHIC_BASE", raising=False)

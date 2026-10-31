@@ -5,6 +5,7 @@
 #include <Tempest/Device>
 
 #include <vector>
+#include <memory>
 
 #include "graphics/material.h"
 #include "graphics/bounds.h"
@@ -12,15 +13,45 @@
 #include "resources.h"
 
 class PackedMesh;
+class LandscapeRange;
+
+// Pages keep their buffers and addresses while individual chunk ranges recycle.
+class LandscapePages final {
+  public:
+    struct Stats {
+      size_t occupiedBytes = 0;
+      size_t freeBytes     = 0;
+      size_t retiredBytes  = 0;
+      size_t pageCount     = 0;
+      };
+
+    LandscapePages();
+    ~LandscapePages();
+    LandscapePages(const LandscapePages&) = delete;
+    LandscapePages& operator=(const LandscapePages&) = delete;
+
+    // Occupied excludes retired ranges; all three byte counts sum to capacity.
+    Stats stats() const;
+
+  private:
+    struct State;
+    std::shared_ptr<State> state;
+    std::shared_ptr<LandscapeRange> allocate(const PackedMesh& mesh);
+
+    friend class StaticMesh;
+    friend class LandscapeRange;
+  };
 
 class StaticMesh {
   public:
     using Vertex=Resources::Vertex;
 
     StaticMesh(const PackedMesh& data);
+    StaticMesh(const PackedMesh& data, LandscapePages& pages);
     StaticMesh(const Material& mat, std::vector<Resources::Vertex> vbo, std::vector<uint32_t> ibo);
     StaticMesh(StaticMesh&&)=default;
-    StaticMesh& operator=(StaticMesh&&)=default;
+    StaticMesh& operator=(StaticMesh&&);
+    ~StaticMesh();
 
     struct SubMesh {
       Material                       material;
@@ -57,6 +88,10 @@ class StaticMesh {
 
     const Tempest::AccelerationStructure* blas(size_t iboOffset, size_t iboLen) const;
 
+    const Tempest::StorageBuffer& vboBuffer() const;
+    const Tempest::StorageBuffer& ibo8Buffer() const;
+    size_t firstMeshlet() const;
+
     Tempest::VertexBuffer<Vertex>   vbo;
     Tempest::IndexBuffer<uint32_t>  ibo;
     Tempest::StorageBuffer          ibo8;
@@ -64,4 +99,9 @@ class StaticMesh {
 
     std::vector<SubMesh>            sub;
     Bounds                          bbox;
+
+  private:
+    void initSubMeshes(const PackedMesh& mesh);
+    void retireRange();
+    std::shared_ptr<LandscapeRange> pageRange;
   };

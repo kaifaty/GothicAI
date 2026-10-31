@@ -15,7 +15,6 @@ class PhysicMeshShape final {
     PhysicMeshShape(PackedMesh&& packed);
 
     PhysicVbo                      mesh;
-    JPH::ShapeRefC                  shape;
     float                          frict = 0;
     asset::MaterialGroup           material = asset::MaterialGroup::UNDEFINED;
 

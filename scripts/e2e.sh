@@ -125,6 +125,8 @@
 #       load rolls back feat/image facts while retaining picture files; no SAVE.
 #       LLM=fake uses a scripted chronicler and picture; LLM=chatgpt uses the real chronicler and Artist,
 #       requires authenticated codex on the host for image_gen; TIMEOUT defaults to 1020 in live mode.
+#   feat_fame: new game, no SAVE; a witness and a hearer receive fame in the real conversation prompt,
+#       an uninformed control does not; LLM=chatgpt checks wolf/pelt recognition, LLM=fake logs replies.
 #   repair: Lobart gives the hero the turnip quest and dies; the director finds the quest without an ending,
 #       its model proposes a repair (scripted with LLM=fake: first the dead Lobart, rejected by the validator,
 #       then Hilda), and the hero ends the quest with Hilda for Lobart's reward (story graph, stage 5)
@@ -196,6 +198,7 @@
 #       find the thief, his ask_witness/about and blame finish its goal, then reward and save/load.
 #       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt asks only the ordinary showrunner
 #       once on the same deed, records its line premise or none reason and canon, without building.
+#       GOTHIC_DIRECTOR_ASKS=N asks it N times and lists the hidden challenge kinds of its lines.
 #   frame: unseen hero chest theft, Lobart believes Malak guilty, native reclaim combat finds no goods
 #       and reveals the hero's lie; Hilda's honest testimony about Vino leads to true blame and return.
 #       Save/load restores both cases without duplicates. LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=900.
@@ -255,6 +258,7 @@
 #       chapter occasions consumed by Showrunner.run; every line is finished by play_book_chain before
 #       the next occasion, with a game day and an injected 15 min between them. All three must have a
 #       line/none outcome, at least one completed line. SAVE=save_slot_1.sav; TIMEOUT=1200
+#       GOTHIC_NO_FEAT_CHALLENGES=1 runs the director without hidden challenges (--no-feat-challenges)
 #   greg: LLM=fake, new game: Greg gives his city errand, accepts farmer clothes and pays 50 gold, a map
 #       and two rum; reload the branch without the clothes and his acceptance records a lie with its truth
 #   vanilla_line: LLM=fake only, stage 5 layer 3: take and finish Lobart's turnips through the scripts'
@@ -266,6 +270,7 @@
 #       a game day and the budget's wall clock by 15 min. Both events need a line/none outcome, at least
 #       one line, all quests completed; givers must be peaceful and outside their follows quest's cast.
 #       Logs include each event, proposal outcome, built quests and passage. SAVE=save_slot_1.sav; TIMEOUT=1200
+#       GOTHIC_FORCE_CHALLENGE=1 requires one hidden challenge per line and checks its hint, outcome and feat.
 #   vgive: a quest of the scripts given and ended in a conversation (Cavalorn's bandits; model scripted with
 #       LLM=fake): he gives it as his dialog HELFEN does, the bandits die, the hero says so and the scripts'
 #       ending plays (the letter to Vatras, +100 exp); a new game (protocol v31: story_effect knows)
@@ -418,6 +423,7 @@ E2E_DEFAULT_TIMEOUT=240
 if [[ "$SCENARIO" == memprobe ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == feats && "$LLM" == chatgpt ]]; then E2E_DEFAULT_TIMEOUT=1020; fi
+if [[ "$SCENARIO" == feat_fame ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 TIMEOUT="${TIMEOUT:-$E2E_DEFAULT_TIMEOUT}"
 if [[ "${GOTHIC_TTS_RECORD:-0}" == 1 && "$SCENARIO" != tts ]]; then
   echo 'GOTHIC_TTS_RECORD requires SCENARIO=tts' >&2
@@ -443,6 +449,10 @@ if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty || "$SCENAR
 fi
 if [[ "$SCENARIO" == feats && ( ( "$LLM" != fake && "$LLM" != chatgpt ) || -n "${SAVE:-}" ) ]]; then
   echo 'scenario feats requires LLM=fake or LLM=chatgpt and a new game (unset SAVE)' >&2
+  exit 2
+fi
+if [[ "$SCENARIO" == feat_fame && ( ( "$LLM" != fake && "$LLM" != chatgpt ) || -n "${SAVE:-}" ) ]]; then
+  echo 'scenario feat_fame requires LLM=fake or LLM=chatgpt and a new game (unset SAVE)' >&2
   exit 2
 fi
 if [[ "$SCENARIO" == neural-soak && "$LLM" != fake ]]; then
@@ -521,6 +531,15 @@ SVM_ARGS=()
 if [[ "${GOTHIC_NO_SVM_LINES:-0}" == 1 ]]; then
   SVM_ARGS=(--no-svm-lines)
 fi
+FEAT_ARGS=()
+if [[ "${GOTHIC_NO_FEAT_CHALLENGES:-0}" == 1 ]]; then
+  FEAT_ARGS=(--no-feat-challenges)
+fi
+if [[ "$SCENARIO" == feat_fame ]]; then
+  FEAT_ARGS+=(--no-director --no-feats --no-feat-challenges --no-occasions --no-questlog --no-crimes)
+  BRAIN_ARGS=(--no-brain)
+  QUICK_ARGS=(--no-quick)
+fi
 
 ASR_PID=""
 TTS_PID=""
@@ -538,7 +557,7 @@ if [ "$SCENARIO" = "m3" ] || [ "$SCENARIO" = "m5e" ]; then
 fi
 
 (cd "$ROOT/server" && exec uv run gothic-ai serve --port "$PORT" --scenario "$SCENARIO" --llm "$LLM" --exit-after --no-console \
-  --memory-db "$LOG_DIR/memory.sqlite3" --trace-dir "$LOG_DIR/traces" "${VOICE_ARGS[@]}" "${TTS_ARGS[@]}" "${BRAIN_ARGS[@]}" "${QUICK_ARGS[@]}" ${SVM_ARGS[@]+"${SVM_ARGS[@]}"} "${BODY_ARGS[@]}") >"$LOG_DIR/server.log" 2>&1 &
+  --memory-db "$LOG_DIR/memory.sqlite3" --trace-dir "$LOG_DIR/traces" "${VOICE_ARGS[@]}" "${TTS_ARGS[@]}" "${BRAIN_ARGS[@]}" "${QUICK_ARGS[@]}" ${SVM_ARGS[@]+"${SVM_ARGS[@]}"} ${FEAT_ARGS[@]+"${FEAT_ARGS[@]}"} "${BODY_ARGS[@]}") >"$LOG_DIR/server.log" 2>&1 &
 SRV=$!
 GAME=""
 

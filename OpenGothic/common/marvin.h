@@ -92,6 +92,7 @@ class Marvin {
       C_ToggleSpellPhysics,
       C_ToggleMovableVobs,
       C_ToggleItemHulls,
+      C_ToggleFurnitureParts,
       C_TogglePhysicsNoise,
       C_ToggleDestruction,
       C_ToggleBuoyancy,
@@ -106,6 +107,8 @@ class Marvin {
       C_ToggleMeleePosture,
       C_ToggleMeleeDownTactics,
       C_ToggleMeleeHitStop,
+      C_ToggleMeleeStamina,
+      C_ToggleMeleeParry,
       };
 
     struct Cmd {

@@ -11,6 +11,7 @@
 #include "worldstatestorage.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
+#include "world/chunkresidency.h"
 #include "sound/soundfx.h"
 #include "serialize.h"
 #include "camera.h"
@@ -134,11 +135,22 @@ GameSession::GameSession(std::string file) {
   if(LoadProbe::enabled())
     LoadProbe::mark("trigger_start",LoadProbe::msSince(probeT));
   cam->reset(wrld->player());
+  wrld->updateLandscape(*cam);
   Gothic::inst().setLoadingProgress(96);
   ticks = 1;
   // wrld->setDayTime(8,0);
-  if(LoadProbe::enabled())
-    LoadProbe::mark("session_end");
+  if(LoadProbe::enabled()) {
+    std::string pages;
+    if(auto* chunks=wrld->chunkResidency()) {
+      const auto& s=chunks->stats();
+      pages="landscape_used_bytes="+std::to_string(s.landscapePageUsedBytes)+
+            " landscape_free_bytes="+std::to_string(s.landscapePageFreeBytes)+
+            " landscape_retired_bytes="+std::to_string(s.landscapePageRetiredBytes);
+      }
+    LoadProbe::mark("session_end",-1,pages);
+    if(wrld->chunkResidency()==nullptr)
+      LoadProbe::mark("stream_warm");
+    }
   if(auto& fn = Gothic::inst().sessionStartFn)
     fn(nullptr);
   }
@@ -199,6 +211,7 @@ GameSession::GameSession(Serialize &fin) {
 
   fin.setEntry("game/camera");
   cam->load(fin,wrld->player());
+  wrld->updateLandscape(*cam);
   Gothic::inst().setLoadingProgress(96);
   if(auto& fn = Gothic::inst().sessionStartFn)
     fn(&fin);
@@ -497,6 +510,7 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
       }
 
   cam->reset(wrld->player());
+  wrld->updateLandscape(*cam);
   if(LoadProbe::enabled())
     LoadProbe::mark("change_end");
   Log::i("Done loading world[",world,"]");

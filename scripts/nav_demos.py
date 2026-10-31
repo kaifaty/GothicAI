@@ -5,7 +5,7 @@
     python3 -I scripts/nav_demos.py summary /absolute/path/nav-demos
     python3 -I scripts/nav_demos.py render /path/episode /path/episode.svg
 
-The gzip payload has a 32-byte HEADER followed by packed records. Versions 1 and
+The gzip or XZ payload has a 32-byte HEADER followed by packed records. Versions 1 and
 2 share the same byte layout; version 2 road guidance describes a forward carrot
 on the familiar route instead of the next graph node. Version 3 retains version 2
 roads and adds an eighth memory channel, familiar. RECORD_DTYPE, CELL_DTYPE,
@@ -30,6 +30,7 @@ import argparse
 import gzip
 import html
 import json
+import lzma
 from pathlib import Path
 import struct
 import sys
@@ -104,7 +105,18 @@ assert all(dtype.itemsize == RECORD_BYTES_BY_VERSION[version]
 
 def _samples_path(path: str | Path) -> Path:
     path = Path(path)
-    return path / "samples.bin.gz" if path.is_dir() else path
+    if path.is_dir():
+        compact = path / "samples.bin.xz"
+        return compact if compact.is_file() else path / "samples.bin.gz"
+    return path
+
+
+samples_path = _samples_path
+
+
+def _open_samples(path: str | Path):
+    source = _samples_path(path)
+    return (lzma.open if source.suffix == ".xz" else gzip.open)(source, "rb")
 
 
 def episode_paths(path: str | Path) -> list[Path]:
@@ -112,11 +124,18 @@ def episode_paths(path: str | Path) -> list[Path]:
     path = Path(path)
     if path.is_file():
         return [path]
-    if (path / "samples.bin.gz").is_file():
-        return [path / "samples.bin.gz"]
+    samples = _samples_path(path)
+    if samples.is_file():
+        return [samples]
     if (path / "episodes").is_dir():
         path = path / "episodes"
-    return sorted(path.rglob("samples.bin.gz"))
+    files = {}
+    for samples in path.rglob("samples.bin.*"):
+        if samples.name not in ("samples.bin.gz", "samples.bin.xz"):
+            continue
+        if samples.parent not in files or samples.suffix == ".xz":
+            files[samples.parent] = samples
+    return sorted(files.values())
 
 
 def _read_header(stream) -> int:
@@ -134,7 +153,7 @@ def _read_header(stream) -> int:
 
 def episode_version(path: str | Path) -> int:
     """Read the validated format version without loading sensor records."""
-    with gzip.open(_samples_path(path), "rb") as stream:
+    with _open_samples(path) as stream:
         return _read_header(stream)
 
 
@@ -156,7 +175,7 @@ def iter_chunks(path: str | Path, chunk_records: int = 64) -> Iterator[np.ndarra
     """Stream read-only structured arrays; memory use is bounded by chunk_records."""
     if chunk_records < 1:
         raise ValueError("chunk_records must be positive")
-    with gzip.open(_samples_path(path), "rb") as stream:
+    with _open_samples(path) as stream:
         dtype = RECORD_DTYPES[_read_header(stream)]
         record_bytes = dtype.itemsize
         while True:
@@ -270,7 +289,7 @@ def key_masks(keys: np.ndarray) -> dict[str, np.ndarray]:
 def summarize(path: str | Path, validate: bool = False) -> dict:
     files = episode_paths(path)
     if not files:
-        raise ValueError(f"no samples.bin.gz episodes found in {path}")
+        raise ValueError(f"no samples.bin.gz or samples.bin.xz episodes found in {path}")
     counts: dict[str, int] = {}
     total_records = 0
     episodes = []

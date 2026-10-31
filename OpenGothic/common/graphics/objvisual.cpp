@@ -88,7 +88,11 @@ struct ObjVisual::FractureView {
       owner->setObjMatrix(owner->renderMatrix);
     for(size_t i=0;i<views.size();++i) {
       const size_t piece = geometry->batches[i].piece;
-      views[i].setObjMatrix(broken && piece<matrices.size() ? matrices[piece] : hiddenFractureMatrix());
+      const bool visible=broken && piece<matrices.size();
+      views[i].setObjMatrix(visible ? matrices[piece] : hiddenFractureMatrix());
+      views[i].setTextureCategory(visible ? Resources::TextureCategory::Dynamic : Resources::TextureCategory::Static);
+      if(!visible)
+        views[i].setTexturePosition(Tempest::Vec3(owner->renderMatrix[3][0],owner->renderMatrix[3][1],owner->renderMatrix[3][2]));
       }
     }
   };
@@ -254,7 +258,8 @@ void ObjVisual::setVisual(const asset::VirtualObject& vob, World& world, bool st
       if(vob.show_visual) {
         mesh.view = world.addStaticView(view,staticDraw);
         mesh.view.setWind(vob.anim_mode,vob.anim_strength);
-        cloth = ClothVisual::create(mesh.view,world,vob,enableCollision && !windy);
+        cloth = ClothVisual::create(mesh.view,world,vob,enableCollision && !windy,
+                                    staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic);
         }
 
       if(vob.show_visual && enableCollision && !windy && !cloth) {
@@ -279,7 +284,8 @@ void ObjVisual::setVisual(const asset::VirtualObject& vob, World& world, bool st
         if(vob.show_visual) {
           mesh.view = world.addStaticView(view,staticDraw);
           mesh.view.setWind(vob.anim_mode,vob.anim_strength);
-          cloth = ClothVisual::create(mesh.view,world,vob,enableCollision);
+          cloth = ClothVisual::create(mesh.view,world,vob,enableCollision,
+                                      staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic);
           // If a resource fails to bind, retain the native complete collider.
           if(!cloth && enableCollision)
             mesh.physic = PhysicMesh(*view,*world.physic(),true);
@@ -292,9 +298,12 @@ void ObjVisual::setVisual(const asset::VirtualObject& vob, World& world, bool st
       mdl.view.setVisual(view->skeleton.get());
 
       if(vob.show_visual) {
+        MeshObjects::Mesh visual;
         if((view->skeleton==nullptr || view->skeleton->animation()==nullptr) && enableCollision)
-          mdl.view.setVisualBody(world,world.addStaticView(view,true)); else
-          mdl.view.setVisualBody(world,world.addView(view));
+          visual=world.addStaticView(view,true); else
+          visual=world.addView(view);
+        visual.setTextureCategory(staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic);
+        mdl.view.setVisualBody(world,std::move(visual));
         }
 
       if(vob.show_visual && enableCollision) {
@@ -342,6 +351,10 @@ void ObjVisual::setObjMatrix(const Tempest::Matrix4x4& obj) {
       break;
     case M_Mesh:
       mesh.view.setObjMatrix(fracture && fracture->broken ? hiddenFractureMatrix() : obj);
+      mesh.view.setTexturePosition(Tempest::Vec3(obj[3][0],obj[3][1],obj[3][2]));
+      if(fracture && !fracture->broken)
+        for(auto& view:fracture->views)
+          view.setTexturePosition(Tempest::Vec3(obj[3][0],obj[3][1],obj[3][2]));
       mesh.physic.setObjMatrix(obj);
       if(cloth)
         cloth->setMatrix(obj);
@@ -365,6 +378,8 @@ void ObjVisual::setupFracture(World& world, DynamicWorld::Item& body) {
   for(const auto& batch:fracture->geometry->batches) {
     fracture->views.push_back(world.addView(batch.mesh.get()));
     fracture->views.back().setObjMatrix(hiddenFractureMatrix());
+    fracture->views.back().setTextureCategory(Resources::TextureCategory::Static);
+    fracture->views.back().setTexturePosition(Tempest::Vec3(renderMatrix[3][0],renderMatrix[3][1],renderMatrix[3][2]));
     }
   body.setFractureCallback([view=std::weak_ptr<FractureView>(fracture)](bool broken, const std::vector<Tempest::Matrix4x4>& matrices) {
     if(auto locked = view.lock())

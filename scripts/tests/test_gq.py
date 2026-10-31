@@ -126,6 +126,7 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setenv("GQ_PROFILE", "ryzen")
     monkeypatch.setenv("GQ_LEGACY_LOCK", str(legacy))
     monkeypatch.setenv("GQ_OWNER", "test-worktree")
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(tmp_path))
     return {"home": home, "legacy": legacy, "locks": locks,
             "systemd": tmp_path / "systemd", "env": dict(os.environ)}
 
@@ -135,6 +136,7 @@ def queue(gq, host, monkeypatch):
     q = gq.Queue(home=host["home"], legacy_lock=host["legacy"], proc_locks=host["locks"])
     monkeypatch.setattr(q, "now", lambda: 1000.0)
     monkeypatch.setattr(q, "disk_free", lambda: 100 * GIB)
+    monkeypatch.setattr(q, "disk_space", lambda: {q.local_root: 100 * GIB, Path("/"): 100 * GIB})
     # The scheduler is exercised independently from the systemd lifecycle.
     monkeypatch.setattr(q, "reconcile", lambda: None)
     monkeypatch.setattr(q, "launch", lambda job: q.started(job["id"]))
@@ -526,14 +528,32 @@ def test_quiet_jobs_are_exclusive_and_ordered(queue):
 
 
 @pytest.mark.parametrize("kind", ["quick", "batch", "quiet"])
-def test_disk_floor_blocks_new_jobs_and_allows_exact_threshold(queue, monkeypatch, kind):
-    monkeypatch.setattr(queue, "disk_free", lambda: 20 * GIB - 1)
+@pytest.mark.parametrize("low_disk", ["local", "root"])
+def test_disk_floor_blocks_new_jobs_and_allows_exact_threshold(queue, gq, monkeypatch, kind, low_disk):
+    disks = {queue.local_root: 100 * GIB, Path("/"): 100 * GIB}
+    path = queue.local_root if low_disk == "local" else Path("/")
+    disks[path] = 20 * GIB - 1
+    monkeypatch.setattr(queue, "disk_space", lambda: disks)
+    monkeypatch.setattr(queue, "disk_free", gq.Queue.disk_free.__get__(queue))
     ident = enqueue(queue, kind)
     queue.tick()
     assert queue.get(ident)["status"] == "queued"
-    monkeypatch.setattr(queue, "disk_free", lambda: 20 * GIB)
+    disks[path] = 20 * GIB
     queue.tick()
     assert queue.get(ident)["status"] == "running"
+
+
+def test_disk_space_follows_local_root_symlink(gq, host, monkeypatch, tmp_path):
+    data = tmp_path / "data" / "gothic-ai"
+    data.mkdir(parents=True)
+    root = tmp_path / "gothic-ai"
+    root.symlink_to(data, target_is_directory=True)
+    monkeypatch.setenv("GOTHIC_LOCAL_ROOT", str(root))
+    queue = gq.Queue(home=host["home"], legacy_lock=host["legacy"], proc_locks=host["locks"])
+    free = {data: 45 * GIB, Path("/"): 80 * GIB}
+    monkeypatch.setattr(gq.shutil, "disk_usage", lambda path: type("Usage", (), {"free": free[path]})())
+    assert queue.disk_space() == free
+    assert queue.disk_free() == 45 * GIB
 
 
 def test_batch_maximum_is_two_hours(queue, gq):
@@ -1807,6 +1827,8 @@ def test_status_exposes_owner_class_resources_limit_and_estimate(queue, gq, caps
     assert "12t 8G gpu=2G окно=1" in output
     assert "слот=0" in output
     assert "90s" in output and "ОЦЕНКА" in output
+    assert f"Disk {queue.local_root}: free 100.0G; minimum 20G" in output
+    assert "Disk /: free 100.0G; minimum 20G" in output
 
 
 @pytest.mark.parametrize("persisted", [False, True])

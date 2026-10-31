@@ -3,6 +3,7 @@
 #include "physics/dynamicworld.h"
 #include "physics/physicvbo.h"
 #include "physics/ragdoll.h"
+#include "graphics/mesh/animblend.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/hitzones.h"
@@ -2161,6 +2162,44 @@ namespace {
     requireNear(gameHit.point.y,0,.001f,"compatible game mesh ray must report the triangle plane");
     require(!world.rayCast({-.02f,100,50},{-.02f,-100,50},landscapeMask).hasHit,
             "game mesh edge tolerance must reject points beyond its barycentric allowance");
+    {
+      const std::vector<JPH::Vec3> vertices={{-12,0,-9},{-12,0,9},{12,0,9},{12,0,-9}};
+      PhysicVbo source(&vertices);
+      source.addIndex({0,2,1},0,3,asset::MaterialGroup::WOOD,"first-large-face");
+      source.addIndex({0,3,2},0,3,asset::MaterialGroup::STONE,"second-large-face");
+      const auto split=source.shape(true);
+      require(split!=nullptr && source.shape()->GetStats().mNumTriangles==2,
+              "static subdivision must leave the original query and furniture mesh unchanged");
+      require(source.triangleCount()==2 && source.vertexCount()==4,
+              "static subdivision must preserve exact source vertices and triangle metadata");
+      JPH::Shape::GetTrianglesContext context;
+      split->GetTrianglesStart(context,split->GetLocalBounds(),JPH::Vec3::sZero(),
+                               JPH::Quat::sIdentity(),JPH::Vec3::sOne());
+      JPH::Float3 points[96];
+      size_t count=0;
+      float longest=0;
+      for(int batch=split->GetTrianglesNext(context,32,points);batch>0;batch=split->GetTrianglesNext(context,32,points)) {
+        count+=size_t(batch);
+        for(int t=0;t<batch;++t) {
+          JPH::Vec3 triangle[3];
+          for(int v=0;v<3;++v)triangle[v]=JPH::Vec3(points[3*t+v].x,points[3*t+v].y,points[3*t+v].z);
+          require((triangle[1]-triangle[0]).Cross(triangle[2]-triangle[0]).GetY()>0.f,
+                  "static subdivision must preserve source face winding");
+          for(int edge=0;edge<3;++edge)longest=std::max(longest,(triangle[(edge+1)%3]-triangle[edge]).Length());
+          }
+        }
+      require(count>2 && longest<=4.0001f,"every native static collision edge must be at most four metres");
+      auto support=world.addCollisionBody(split,at(0,0,0),.7f,DynamicWorld::C_Object,false,false,&source);
+      const auto first=world.rayCast({-600,100,300},{-600,-100,300},objectMask);
+      const auto second=world.rayCast({600,100,-300},{600,-100,-300},objectMask);
+      require(first.hasHit && second.hasHit && first.body==support.get() && second.body==support.get() &&
+              first.material==asset::MaterialGroup::WOOD && second.material==asset::MaterialGroup::STONE &&
+              std::string(first.sector)=="first-large-face" && std::string(second.sector)=="second-large-face",
+              "split collision faces must retain their original material, sector and exact ray plane");
+      requireNear(first.point.y,0.f,.0001f,"split collision rays must retain the source plane");
+      requireNear(second.point.y,0.f,.0001f,"split collision rays must retain the source plane");
+      std::printf("Static subdivision: %zu triangles, longest edge %.6f m\n",count,double(longest));
+      }
     }
 
   void testCoincidentMaterials() {
@@ -2352,6 +2391,46 @@ namespace {
     // simplex approximation and excluded it; accepting the exact gap blocks early.
     require(!world.hasCollision(&capsule,{0,0,0},normal,vob),
             "NPC contact eligibility must preserve the bounded query's previous simplex");
+    }
+
+  void testNpcFrozenBodyReplacement() {
+    zenkit::ModelHierarchy hierarchy{};
+    hierarchy.collision_bbox={{-25,0,-25},{25,180,25}};
+    Skeleton shape(asset::fromZenKit(hierarchy),nullptr,"FROZEN_NPC_REPLACEMENT_CONTRACT");
+    DynamicWorld world(nullptr,movableFloor());
+    auto first=world.addGhostObj(&shape);
+    auto middle=world.addGhostObj(&shape);
+    auto last=world.addGhostObj(&shape);
+    first.setPosition({0,0,0});
+    middle.setPosition({200,0,0});
+    last.setPosition({400,0,0});
+    int identity=0;
+    auto* npc=reinterpret_cast<Npc*>(&identity);
+    last.setUserPointer(npc);
+    world.tick(0);
+    world.tick(0); // freeze all three bodies before replacing the first
+
+    // Npc::setVisual, including MdlVisual::load, replaces its existing ghost
+    // this way. Later NPC movement must use the shifted frozen-list index.
+    first=world.addGhostObj(&shape);
+    first.setPosition({-600,0,0});
+    last.setPosition({1000,0,0});
+    last.moveVirtual({},0,50.f,float(M_PI_4),80.f);
+    int hits=0;
+    world.rayArrow({900,90,0},{1100,90,0},[&](Npc& hit,const Tempest::Vec3&,const Tempest::Vec3&,float&) {
+      if(&hit==npc)
+        ++hits;
+      return false;
+      });
+    std::printf("Frozen NPC replacement: moved body records %d (expected 1)\n",hits);
+    require(hits==1,"replacing a frozen NPC body must not duplicate another moving NPC record");
+
+    // A duplicate would survive this deletion and become a dangling rider in
+    // DynamicWorld::tick when that body had a CharacterVirtual controller.
+    last=DynamicWorld::NpcItem();
+    const auto cleared=world.rayNpc({900,90,0},{1100,90,0},nullptr);
+    require(cleared.npcHit==nullptr,"removing a moved NPC must remove its only broad-phase record");
+    world.tick(0);
     }
 
   void testNpcScalarWitness() {
@@ -3925,6 +4004,157 @@ namespace {
       }
     }
 
+  void testItemWeaponWake() {
+    Resources resources;
+    ProtoMesh appleMesh(PackedMesh(movableBox({8,8,8}),PackedMesh::PK_Visual),"CONTRACT_WAKE_APPLE.MRM");
+    Bounds appleBounds;
+    appleBounds.assign(appleMesh.bbox());
+    for(const bool enabled:{false,true}) {
+      DynamicWorld world(nullptr,asset::WorldMesh{});
+      world.setItemWakeEnabled(enabled);
+      const auto rest=at(0,100,0);
+      auto apple=world.addDynamicObj(rest,appleBounds,asset::MaterialGroup::WOOD,
+                                     &appleMesh,"CONTRACT_WAKE_APPLE.MRM");
+      apple.restorePhysics(rest,true);
+      struct ArrowContact final : DynamicWorld::BulletCallback {
+        bool stopsAtWorldHit() const override { return true; }
+        void onWorldHit(const DynamicWorld::BulletWorldHit&) override { ++attachments; }
+        void onCollide(asset::MaterialGroup) override { ++collisions; }
+        void onStop() override { ++stops; }
+        int attachments=0,collisions=0,stops=0;
+        } contact;
+      auto* arrow=world.bulletObj(&contact);
+      arrow->setPosition({-40,100,0});
+      arrow->setDirection({3,0,0});
+      world.tick(17);
+      const float transferred=apple.velocity().x*.01f*apple.mass();
+      std::printf("Item arrow wake enabled %d: momentum %.6f Ns, displacement %.6f cm\n",
+                  int(enabled),double(transferred),double((apple.position()-Tempest::Vec3(0,100,0)).length()));
+      if(enabled) {
+        require(!apple.isSleeping() && apple.position().x>1.f,
+                "an arrow must wake and move a sleeping apple");
+        requireNear(transferred,3.6f,.04f,"an Item must receive the furniture arrow momentum at actual flight speed");
+        require(contact.collisions==1 && contact.stops==1 && contact.attachments==0,
+                "an arrow stopped by a moving Item must not leave an attachment pinned to the world");
+        }
+      else require(apple.isSleeping() && apple.position().x==0.f,
+                   "item_wake OFF must keep sleeping Items outside the arrow collision ray");
+      world.deleteObj(arrow);
+      }
+
+    for(const bool fist:{false,true})for(const bool enabled:{false,true}) {
+      CollisionWorld world;
+      world.setItemWakeEnabled(enabled);
+      std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> items(3);
+      const Tempest::Vec3 rest[]{ {-40,115,0},{0,115,0},{40,115,0} };
+      world.setItemWakeCallback([&](const Tempest::Vec3& min,const Tempest::Vec3& max,size_t budget) {
+        size_t created=0;
+        for(size_t i=0;i<items.size();++i) {
+          const auto& p=rest[i];
+          if(p.x<min.x || p.x>max.x || p.y<min.y || p.y>max.y || p.z<min.z || p.z>max.z)continue;
+          if(items[i]==nullptr && created<budget) {
+            items[i]=world.addDynamicBody(new JPH::BoxShape({.04f,.04f,.04f}),at(p.x,p.y,p.z),.7f,.2f,
+                                           DynamicWorld::C_Item,true);
+            ++created;
+            }
+          if(items[i])items[i]->retainForItemWake();
+          }
+        return created;
+        });
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      const MeleeBladeSegment before{{-100,115,0},{-100,fist?115.f:140.f,0},{0,0,1},fist?6.f:2.f};
+      const MeleeBladeSegment after{{100,115,0},{100,fist?115.f:140.f,0},{0,0,1},fist?6.f:2.f};
+      const auto weapon=fist?MeleeImpact::Weapon::Fist:MeleeImpact::Weapon::OneHand;
+      world.updateShadowBlade(actor,1,{before},0,0,100,.7f,{},weapon);
+      world.updateShadowBlade(actor,1,{after},100,0,100,.7f,{},weapon);
+      world.flushShadowBlades();
+      size_t awake=0;
+      for(const auto& item:items)awake+=item!=nullptr && !item->isSleeping() && item->velocity().x>50.f;
+      require(awake==(enabled?3u:0u),
+              "only item_wake ON must create and push all sleeping Items swept by a blade or fist");
+      require(world.takeShadowBladeContacts(actor).empty(),
+              "small Item hits must not alter the melee damage journal or stop the swing");
+      world.tick(17);
+      size_t moved=0;
+      for(size_t i=0;i<items.size();++i)moved+=items[i] && items[i]->position().x-rest[i].x>1.f;
+      std::printf("Item melee wake fist %d enabled %d: awake %zu/3, moved %zu/3\n",int(fist),int(enabled),awake,moved);
+      require(moved==(enabled?3u:0u),"a shadow contact must physically displace the sleeping Items");
+      }
+    {
+      CollisionWorld world;
+      JPH::VertexList vertices={{.15f,0,-1},{.15f,0,1},{.15f,2,1},{.15f,2,-1}};
+      JPH::IndexedTriangleList triangles={{0,1,2},{0,2,3}};
+      const auto face=JPH::MeshShapeSettings(vertices,triangles).Create();
+      require(!face.HasError(),"the newly woken Item requires a thin sensor face");
+      auto wall=world.addCollisionBody(face.Get(),at(0,0,0),.7f,DynamicWorld::C_Object,false,true);
+      auto item=world.addDynamicBody(new JPH::BoxShape({.04f,.04f,.04f}),at(0,100,0),.7f,.2f,DynamicWorld::C_Item,true);
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      world.updateShadowBlade(actor,1,{{{-10,100,0},{-10,125,0},{0,0,1},2}},0,0,100);
+      world.updateShadowBlade(actor,1,{{{10,100,0},{10,125,0},{0,0,1},2}},100,0,100);
+      world.tick(17);
+      require(world.rayCount()==1,"the sleeping Item must actually move during the blade's native step");
+      require(item->isSleeping(),"an Item woken by a blade during Update must recover a crossing in that same step");
+      requireNear(item->position().x,0.f,.001f,"a newly woken Item must return to its previous resting position");
+      }
+    {
+      CollisionWorld world;
+      std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> sources;
+      for(int i=0;i<40;++i)
+        sources.push_back(world.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(1000.f*i,1000,0),.7f,1));
+      size_t queries=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t) {++queries;return size_t(0);});
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      world.tick(17);
+      require(queries==32,"projectile and active-body wakes must share thirty-two queries before the native step");
+      world.tick(17);
+      require(queries==64,"the next native step must renew the shared wake budget exactly once");
+      size_t created=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t budget) {
+        created+=budget;return budget;
+        });
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      world.tick(17);
+      require(created==8,"projectile and active-body wakes must share eight new native bodies per step");
+      }
+    {
+      CollisionWorld world;
+      size_t queries=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t) {++queries;return size_t(0);});
+      for(size_t i=0;i<33;++i)
+        world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(queries==32,"an empty world must retain the shared limit before its tick");
+      world.tick(17);
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(queries==33,"a bodyless world must renew projectile wake queries after its tick");
+      size_t created=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t budget) {
+        created+=budget;return budget;
+        });
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(created==8,"an empty world must retain the shared creation limit before its tick");
+      world.tick(17);
+      world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
+      require(created==16,"a bodyless world must renew the shared creation budget after its tick");
+      }
+    {
+      CollisionWorld world;
+      auto source=world.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(10000,1000,0),.7f,1,
+                                       DynamicWorld::C_Item,true);
+      size_t queries=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t) {++queries;return size_t(0);});
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      world.updateShadowBlade(actor,1,{{{-10,100,0},{-10,125,0},{0,0,1},2}},0,0,100);
+      world.updateShadowBlade(actor,1,{{{10,100,0},{10,125,0},{0,0,1},2}},100,0,100);
+      world.tick(17);
+      require(world.simulationStep()==1,"the blade query fixture must run one native step");
+      require(queries==1,"one active blade must consume only one wake query in the frame");
+      }
+    }
+
   void testItemWake() {
     for(const bool legacy:{false,true}) {
       CollisionWorld world;
@@ -4030,8 +4260,10 @@ namespace {
         centers.push_back((min.x+max.x)*.5f);
         return size_t(0);
         });
+      const auto rays=world.rayCount();
       world.tick(17);
       require(queries==32,"a native step must issue no more than thirty-two item queries");
+      require(world.rayCount()-rays==32,"tunneling must cast at most thirty-two center rays per native step");
       world.tick(17);
       std::sort(centers.begin(),centers.end());
       centers.erase(std::unique(centers.begin(),centers.end()),centers.end());
@@ -4089,6 +4321,39 @@ namespace {
       broken->setPosition({std::numeric_limits<float>::quiet_NaN(),0,0});
       world.tick(17);
       require(broken->isSleeping(),"an item created from a nonfinite pose must sleep instead of recursing into recovery");
+      }
+    for(const bool enabled:{false,true}) {
+      for(const int category:{DynamicWorld::C_Landscape,DynamicWorld::C_Object}) {
+        CollisionWorld world;
+        world.setItemWakeEnabled(enabled);
+        JPH::VertexList vertices={{-2,0,-2},{-2,0,2},{2,0,2},{2,0,-2}};
+        JPH::IndexedTriangleList triangles={{0,1,2},{0,2,3}};
+        const auto mesh=JPH::MeshShapeSettings(vertices,triangles).Create();
+        require(!mesh.HasError(),"tunneling requires a thin upward-facing mesh");
+        // Disable the solver response to inject the missed contact that this
+        // safety net must catch, while retaining the real triangle ray query.
+        auto face=world.addCollisionBody(mesh.Get(),at(0,0,0),.7f,category,false,true);
+        auto movingFace=world.addCollisionBody(mesh.Get(),at(0,5,0),.7f,DynamicWorld::C_Object,true,true);
+        auto movingOverHole=world.addCollisionBody(mesh.Get(),at(300,5,0),.7f,DynamicWorld::C_Object,true,true);
+        auto item=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(0,10,0),.7f,1);
+        item->setVelocity({0,-2000,0},{});
+        world.tick(17);
+        if(enabled) {
+          require(item->isSleeping(),"a thin-face crossing must sleep in the same native step with item_wake ON");
+          requireNear(item->position().y,10.f,.001f,"a thin-face crossing must restore the last resting position");
+          }
+        else require(item->position().y<0.f,"item_wake OFF must not recover a thin-face crossing");
+        auto hole=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(300,10,0),.7f,1);
+        hole->setVelocity({0,-2000,0},{});
+        auto cliff=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(190,10,100),.7f,1);
+        cliff->setVelocity({3000,-2000,0},{});
+        auto back=world.addDynamicBody(new JPH::BoxShape({.02f,.02f,.02f}),at(0,-10,100),.7f,1);
+        back->setVelocity({0,2000,0},{});
+        world.tick(17);
+        require(hole->position().y<0.f && cliff->position().y<0.f && back->position().y>0.f &&
+                !hole->isSleeping() && !cliff->isSleeping() && !back->isSleeping(),
+                "a real hole, cliff edge or back-to-front crossing must not recover");
+        }
       }
     for(const bool hulls:{false,true}) {
       DynamicWorld world(nullptr,{});
@@ -4380,6 +4645,49 @@ namespace {
       require(!Npc::meleeFinishStroke({50,50,50,50}),"a blade that never drops has no stroke");
       }
 
+    {
+      // t_1hAttackR of the master is frames 21..40 of the ASC whose 1..19 are t_1hAttackL, with L's tags:
+      // its DEF_OPT_FRAME counts from its own start (read as a frame of the file, it clamped to 0)
+      Animation::AnimData left,right;
+      left.firstFrame = 1;  left.lastFrame = 19;  left.numFrames = 19;
+      right.firstFrame = 21; right.lastFrame = 40; right.numFrames = 20;
+      require(left.optimalFrame(3)==2 && right.optimalFrame(3)==2,"a side swing's optimal frame must count from its own start");
+      require(right.optimalFrame(25)==4,"a frame of the file must stay that frame");
+      require(right.optimalFrame(60)==19,"a frame past the end must clamp to the last");
+      }
+
+    {
+      // A weapon body's switch into a blow settles within blowTime, however far the arm turns; the usual
+      // 0.3 s for so large a turn pulled t_1hAttackR's arc to the stance and it crossed short of the body
+      constexpr size_t count = 2;
+      asset::AnimationSample stance[count],blow[count],shown[count];
+      for(size_t i=0;i<count;++i) {
+        stance[i].rotation = {1,0,0,0};
+        stance[i].position = {0,float(i*20),0};
+        blow[i].rotation   = {std::cos(1.f),std::sin(1.f),0,0};
+        blow[i].position   = stance[i].position;
+        }
+      Animation::Sequence idle,attack;
+      attack.data = std::make_shared<Animation::AnimData>();
+      asset::MdsEventTag optimal{};
+      optimal.type   = asset::MdsEventType::OPTIMAL_FRAME;
+      optimal.frames = {3};
+      attack.data->events.push_back(optimal);
+      for(const bool weapon:{true,false}) {
+        AnimBlend blend;
+        blend.reset(count);
+        blend.setWeaponBody(weapon);
+        for(size_t i=0;i<count;++i) blend.drive(i,idle,1000,stance[i],stance[i],25);
+        blend.apply(stance,shown,count,1000);
+        blend.apply(stance,shown,count,1033);
+        for(size_t i=0;i<count;++i) blend.drive(i,attack,1033,blow[i],blow[i],25);
+        blend.apply(blow,shown,count,1033);
+        const bool blending = blend.apply(blow,shown,count,1033+uint64_t(AnimBlend::params().blowTime*1000.f)+17);
+        require(blending!=weapon,weapon ? "a weapon body's blow must settle within its blow time" :
+                                          "a body without a weapon must keep the usual blend into a blow");
+        }
+      }
+
     require(FightAlgo::resolveDownTactics(true,true,false,false,true)==FightAlgo::MV_MOVE,
             "a distant lying target must be approached");
     require(FightAlgo::resolveDownTactics(true,true,false,true,true)==FightAlgo::MV_ATTACK,
@@ -4652,11 +4960,13 @@ int main() {
     testSphereQueryPrecision();
     testShallowOverlapProjection();
     testNpcContactDistance();
+    testNpcFrozenBodyReplacement();
     testNpcScalarWitness();
     testNpcSeparatedContactResponse();
     testFixedStepCarry();
     testFixedStepCadence();
     testItemWake();
+    testItemWeaponWake();
     testContracts();
     testCharacterVirtual();
     testVirtualFloorGuard();

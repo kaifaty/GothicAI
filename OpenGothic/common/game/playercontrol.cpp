@@ -692,6 +692,21 @@ bool PlayerControl::tickMove(uint64_t dt) {
   if(pl==nullptr)
     return true;
 
+  if(pl->isMeleeStunned()) {
+    if(actrl[ActForward] || actrl[ActMove] || actrl[ActKill] || actrl[ActLeft] || actrl[ActRight])
+      pl->doAttack(Npc::Anim::Attack,BS_HIT);
+    if(actrl[ActBack]) {
+      if(pl->weaponState()==WeaponState::Fist) pl->blockFist();
+      else pl->blockSword();
+      }
+    else if(wantsToMoveBackward())
+      pl->setAnim(Npc::Anim::MoveBack);
+    clearInput();
+    rotMouse = rotMouseY = 0;
+    runAngleDest = 0;
+    return true;
+    }
+
   if(pl->isMeleeKnockedDown()) {
     clearInput();
     rotMouse = rotMouseY = 0;

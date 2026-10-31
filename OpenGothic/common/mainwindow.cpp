@@ -252,6 +252,7 @@ void MainWindow::paintEvent(PaintEvent& event) {
 
           if(showHealthBar)
             drawBar(p,barHp, 10, h()-10, hp, AlignLeft | AlignBottom);
+          drawStamina(p,*pl,showHealthBar);
           if(showManaBar)
             drawBar(p,barMana, w()-10, h()-10, mp, AlignRight | AlignBottom);
           if(showSwimBar) {
@@ -325,9 +326,29 @@ void MainWindow::paintEvent(PaintEvent& event) {
 void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera) {
   auto& fnt = Resources::font(Gothic::interfaceScale(this));
   const int x = 10, y = 60, line = fnt.pixelSize()+3;
+  const auto textures = Resources::textureStats();
+  auto drawTextures = [&](int top) {
+    char text[192];
+    std::snprintf(text,sizeof(text),"Textures %llu: %.2f MiB live  %.2f retired  %.2f peak",
+                  static_cast<unsigned long long>(textures.count),double(textures.liveBytes)/1048576.0,
+                  double(textures.retiredBytes)/1048576.0,double(textures.peakBytes)/1048576.0);
+    fnt.drawText(p,x,top,text);
+    std::snprintf(text,sizeof(text),"Landscape %.2f MiB/%llu  Static %.2f MiB/%llu",
+                  double(textures.categoryBytes[0])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[0]),
+                  double(textures.categoryBytes[1])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[1]));
+    fnt.drawText(p,x,top+line,text);
+    std::snprintf(text,sizeof(text),"NPC/items %.2f MiB/%llu  Other %.2f MiB/%llu",
+                  double(textures.categoryBytes[2])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[2]),
+                  double(textures.categoryBytes[3])/1048576.0,static_cast<unsigned long long>(textures.categoryCount[3]));
+    fnt.drawText(p,x,top+2*line,text);
+    std::snprintf(text,sizeof(text),"Texture session: evicted %llu  reloaded %llu",
+                  static_cast<unsigned long long>(textures.evicted),static_cast<unsigned long long>(textures.reloaded));
+    fnt.drawText(p,x,top+3*line,text);
+    };
   const auto chunks = world.chunkResidency();
   if(chunks==nullptr) {
     fnt.drawText(p,x,y,"Chunks: streaming manager disabled");
+    drawTextures(y+line);
     return;
     }
   auto hero = world.player();
@@ -340,10 +361,10 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   const int64_t radius = std::max<int64_t>({8,std::abs(int64_t(cameraId.x)-center.x)+1,
                                             std::abs(int64_t(cameraId.z)-center.z)+1});
   const int mapSize = std::min(240,std::min(w(),h())/2);
-  const int mapY = y+3*line;
+  const int mapY = y+8*line;
   const float cell = float(mapSize)/float(radius*2+1);
   p.setBrush(Color(0.f,0.f,0.f,0.8f));
-  p.drawRect(x-5,y-5,std::max(400,mapSize+10),mapSize+5*line+10);
+  p.drawRect(x-5,y-5,std::max(580,mapSize+10),mapSize+10*line+10);
 
   const auto& stats = chunks->stats();
   char text[160];
@@ -352,7 +373,14 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   std::snprintf(text,sizeof(text),"Transitions/s %zu  update %.3f ms  work %.3f ms",
                 stats.transitionsLastSecond,stats.updateMs,stats.workMs);
   fnt.drawText(p,x,y+line,text);
-  fnt.drawText(p,x,y+2*line,"All chunks loaded; desired states only");
+  std::snprintf(text,sizeof(text),"Landscape: pending %zu  published %llu  released %llu",stats.pending,
+                static_cast<unsigned long long>(stats.published),static_cast<unsigned long long>(stats.released));
+  fnt.drawText(p,x,y+2*line,text);
+  std::snprintf(text,sizeof(text),"Pages %zu: %.2f MiB used  %.2f free  %.2f retired",stats.landscapePageCount,
+                double(stats.landscapePageUsedBytes)/1048576.0,double(stats.landscapePageFreeBytes)/1048576.0,
+                double(stats.landscapePageRetiredBytes)/1048576.0);
+  fnt.drawText(p,x,y+3*line,text);
+  drawTextures(y+4*line);
 
   const auto& entries = chunks->table().entries;
   for(size_t i=0;i<entries.size();++i) {
@@ -808,13 +836,41 @@ void MainWindow::paintFocus(Painter& p, Rect rect) {
   p.drawRect(rect.x+rect.w-w,rect.y+rect.h-h,w,h, w,h, w2,h2);
   }
 
-void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y, float v, AlignFlag flg) {
+int MainWindow::barHeight() const {
+  if(barBack==nullptr)
+    return 0;
+  const float scale = Gothic::interfaceScale(this);
+  const float destW = 200.f*scale*float(std::min(w(),800))/800.f;
+  return int(float(barBack->h())*destW/float(std::max(barBack->w(),1)));
+  }
+
+void MainWindow::drawStamina(Painter& p, const Npc& pl, bool aboveHealth) {
+  // The hidden meter of melee shows only in a fight: a weapon of melee drawn, or still filling up after it.
+  // Thin gold under the frame of the health bar, as the game's own bars; spent to nothing it dims and
+  // marks the quarter it must come back to before a blow or a jump back.
+  if(!pl.hasStamina())
+    return;
+  const auto ws    = pl.weaponState();
+  const bool melee = ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H;
+  const float v    = pl.staminaFraction();
+  if(!melee && v>=1.f)
+    return;
+  constexpr float height = .6f;
+  const int   gap  = std::max(1,int(2.f*Gothic::interfaceScale(this)));
+  const int   y    = h()-10-(aboveHealth ? barHeight()+gap : 0);
+  if(pl.isStaminaExhausted())
+    drawBar(p,barMisc,10,y,v,AlignLeft|AlignBottom,height,Color(.55f,.42f,.32f,1.f),.25f); else
+    drawBar(p,barMisc,10,y,v,AlignLeft|AlignBottom,height);
+  }
+
+void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y, float v, AlignFlag flg,
+                         float height, const Tempest::Color& tint, float mark) {
   if(barBack==nullptr || bar==nullptr)
     return;
   const float scale   = Gothic::interfaceScale(this);
   const float destW   = 200.f*scale*float(std::min(w(),800))/800.f;
   const float k       = float(destW)/float(std::max(barBack->w(),1));
-  const float destH   = float(barBack->h())*k;
+  const float destH   = float(barBack->h())*k*height;
   const float destHin = float(destH)*24.f/32.f;
   //const float destHin = 20;//float(destH)*24.f/32.f;
 
@@ -831,9 +887,14 @@ void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y
 
   int   dy = int(0.5f*(destH-destHin));
   float pd = 9.f*k;
-  p.setBrush(*bar);
+  p.setBrush(Brush(*bar,tint,Painter::Alpha));
   p.drawRect(x+int(pd),y+dy,int(float(destW-pd*2)*v),int(destHin),
              0,0,bar->w(),bar->h());
+  if(mark>0.f && mark<1.f) {
+    const int mx = x+int(pd)+int(float(destW-pd*2)*mark);
+    p.setBrush(Brush(Color(.9f,.8f,.55f,.9f),Painter::Alpha));
+    p.drawRect(mx,y+dy,std::max(1,int(scale)),int(destHin));
+    }
   }
 
 void MainWindow::drawMsg(Tempest::Painter& p) {
@@ -1425,10 +1486,16 @@ void MainWindow::render(){
     if(auto world = Gothic::inst().world()) {
       auto hero = Gothic::inst().player();
       auto camera = Gothic::inst().camera();
-      if(auto chunks = world->chunkResidency(); chunks!=nullptr && hero!=nullptr && camera!=nullptr) {
-        chunks->update(hero->position(),camera->originLwc(),camera->zFar());
+      if(hero!=nullptr && camera!=nullptr) {
+        world->updateLandscape(*camera);
         TestBench::sampleStreaming(*world);
         }
+      else if(Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
+        Resources::updateTextures(nullptr);
+        }
+      }
+    else if(Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
+      Resources::updateTextures(nullptr);
       }
     if(capture) {
       profile.flag(FrameProfile::Flag::CaptureRequested);

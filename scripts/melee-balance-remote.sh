@@ -4,7 +4,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST="${MELEE_BALANCE_HOST:-ryzen}"
-TASK="gothic-ai/melee-balance"
+# Each session that measures its own code needs its own folder: source and build there are shared by every run.
+TASK="${MELEE_BALANCE_TASK:-gothic-ai/melee-balance}"
 ACTION=all
 EPISODES=64
 SEED=100000
@@ -24,10 +25,20 @@ Usage: scripts/melee-balance-remote.sh [all|sync|build|run|report] [options]
 Default series: native-vanilla-1h,native-posture-on-1h,native-vanilla-2h,
 native-posture-on-2h,p30-vanilla-1h,p30-posture-on-1h.
 MELEE_BALANCE_HOST selects the SSH alias (default: ryzen).
+MELEE_BALANCE_TASK selects the Ryzen folder under ~ with source and build (default:
+gothic-ai/melee-balance), its runs land in /mnt/shared/<folder>/runs; give a branch its
+own when other sessions measure too. The runner never imports a base: with none of its
+fingerprint in <folder>/base-cache or the store /mnt/shared/gothic-ai/melee-balance/base it
+answers with an error (body_sim_bench: "runner response schema/ID mismatch"). After a sync that
+changes the importer, or in a new folder, run under gq once:
+  OPENGOTHIC_BASE_CACHE=<folder>/base-cache OPENGOTHIC_BASE_STORE=/mnt/shared/gothic-ai/melee-balance \
+    <folder>/build/opengothic/content-convert resolve-base ~/gothic-ai/body-baseline/assets
 MELEE_BALANCE_PYTHON selects a remote Python with torch (default: body/.venv).
 MELEE_POSTURE_SCALE multiplies the knockdown threshold in every series (sweeps).
 MELEE_DOWN_TACTICS sets GAME melee_down_tactics in every series (0 or 1).
 MELEE_HITSTOP sets GAME melee_hitstop in every series (0 or 1).
+MELEE_PARRY sets GAME melee_parry in every series (0 or 1).
+MELEE_STAMINA sets GAME melee_stamina in every series (0 or 1).
 USAGE
 }
 
@@ -68,7 +79,7 @@ done
 remote_script() {
   local remote_args='' remote_env='' arg key
   for arg in "$@"; do printf -v remote_args '%s %q' "$remote_args" "$arg"; done
-  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP; do
+  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA MELEE_PARRY; do
     if [[ -n "${!key:-}" ]]; then printf -v remote_env '%s %q' "$remote_env" "$key=${!key}"; fi
   done
   {
@@ -139,7 +150,8 @@ IFS=, read -r -a series <<<"$6"
 python="${MELEE_BALANCE_PYTHON:-$HOME/gothic-ai/body/.venv/bin/python}"
 runner="$task_root/build/opengothic/gothic-body-runner"
 reference="$HOME/gothic-ai/body-baseline/runs/melee-reference-stage1-v4"
-archive_root="/mnt/shared/gothic-ai/melee-balance/runs/$run_name"
+# gq --archive moves a folder under ~/gothic-ai to the same path under /mnt/shared/gothic-ai.
+archive_root="/mnt/shared/$1/runs/$run_name"
 [[ -x "$runner" && -x "$python" ]] || { echo 'Build the runner and select an installed Python first' >&2; exit 1; }
 gq_available || { echo 'gq is required on Ryzen' >&2; exit 127; }
 cd "$task_root"
@@ -164,6 +176,12 @@ for name in "${series[@]}"; do
   if [[ -n "${MELEE_HITSTOP:-}" ]]; then
     scale_env+=("MELEE_HITSTOP=$MELEE_HITSTOP")
     printf '%s\n' "$MELEE_HITSTOP" > "$out/hitstop.txt"
+  fi
+  if [[ -n "${MELEE_STAMINA:-}" ]]; then
+    scale_env+=("MELEE_STAMINA=$MELEE_STAMINA")
+  fi
+  if [[ -n "${MELEE_PARRY:-}" ]]; then
+    scale_env+=("MELEE_PARRY=$MELEE_PARRY")
   fi
   cp "$task_root/provenance/source-commit.txt" "$task_root/provenance/source.patch" \
      "$task_root/provenance/runner.sha256" "$out/"
@@ -199,8 +217,8 @@ run_name="$2"
 IFS=, read -r -a series <<<"$3"
 out="$task_root/runs/$run_name/report"
 inputs=()
-for name in "${series[@]}"; do inputs+=("/mnt/shared/gothic-ai/melee-balance/runs/$run_name/$name/bench"); done
-[[ ! -e "$out" && ! -e "/mnt/shared/gothic-ai/melee-balance/runs/$run_name/report" ]] || {
+for name in "${series[@]}"; do inputs+=("/mnt/shared/$1/runs/$run_name/$name/bench"); done
+[[ ! -e "$out" && ! -e "/mnt/shared/$1/runs/$run_name/report" ]] || {
   echo 'Report exists; choose a fresh run name or read the existing report' >&2; exit 1;
 }
 cd "$task_root"
@@ -210,7 +228,7 @@ gq_job --class quick --threads 2 --mem 2G --max 20m --archive "$out" --name 'mel
     cp "$provenance/"* "$out/provenance/"
     exec "$@"' bash "$out" "$task_root/provenance" \
     python3 "$task_root/source/scripts/melee_balance_report.py" "${inputs[@]}" --output "$out"
-echo "Report: /mnt/shared/gothic-ai/melee-balance/runs/$run_name/report"
+echo "Report: /mnt/shared/$1/runs/$run_name/report"
 REMOTE
 }
 

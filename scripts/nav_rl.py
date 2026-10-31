@@ -473,7 +473,8 @@ def qualify(args):
 
 
 def drive(args):
-    if getattr(args, "manifest", None) is not None or getattr(args, "detour_scenarios", None) is not None:
+    if (getattr(args, "manifest", None) is not None or getattr(args, "detour_scenarios", None) is not None
+            or getattr(args, "eval_screen", None) is not None):
         return drive_validation(args)
     pairs = load_pairs(args.pairs)
     if not all(pair.get("final_test") and pair.get("teacher_success") and pair.get("teacher_version") == 2 for pair in pairs):
@@ -596,6 +597,43 @@ def action_seeds(value):
     return seeds
 
 
+def eval_screen_jobs(path):
+    """Read the frozen validation screen without inspecting another split."""
+    jobs, seen = [], set()
+    for index, entry in enumerate(rows(path)):
+        if not isinstance(entry, dict) or set(entry) != {"scenario", "action_seeds"}:
+            raise ValueError("Invalid frozen evaluation screen entry")
+        value, seeds = entry["scenario"], entry["action_seeds"]
+        if (not isinstance(seeds, list) or seeds != list(ACTION_SEEDS)
+                or any(type(seed) is not int for seed in seeds)):
+            raise ValueError("Evaluation screen requires the three frozen action seeds")
+        if not isinstance(value, dict) or value.get("split") != "validation":
+            raise ValueError("Evaluation screen requires validation-only scenarios")
+        family = value.get("family")
+        kinds = {"point": ("point",), "object": ("object",), "approach": ("approach",),
+                 "follow_below_gate": ("follow",), "jump": ("point",), "safety": ("point",),
+                 "detour": ("point", "object")}
+        if not isinstance(family, str) or family not in kinds or value.get("goal_kind") not in kinds[family]:
+            raise ValueError("Invalid evaluation screen validation family or goal kind")
+        for key in ("id", "region", "start", "goal"):
+            token = value.get(key)
+            if not isinstance(token, str) or not token or any(c.isspace() for c in token):
+                raise ValueError(f"Invalid evaluation screen scenario token: {key}")
+        identifier = value["id"]
+        identity = family, identifier
+        if Path(identifier).name != identifier or identifier in (".", "..") or identity in seen:
+            raise ValueError(f"Unsafe or duplicate evaluation screen scenario ID: {identifier}")
+        if type(value.get("seed")) is not int or not 0 <= value["seed"] <= 0xffffffff:
+            raise ValueError(f"Invalid evaluation screen scenario seed: {identifier}")
+        if family in VALIDATION_FAMILIES and (value.get("recorded") is not False or value.get("episode") is not None):
+            raise ValueError(f"Evaluation screen requires unrecorded validation scenarios: {identifier}")
+        seen.add(identity)
+        jobs.extend((index, value, seed) for seed in seeds)
+    if not jobs:
+        raise ValueError("No frozen evaluation screen scenarios")
+    return jobs
+
+
 def validation_commands(args, value, action_seed):
     """Keep world/target randomness frozen while varying only policy sampling."""
     if value.get("split") != "validation":
@@ -670,22 +708,33 @@ def drive_validation(args):
         raise ValueError("Frozen manifest validation requires softmax sampling")
     checked_paths(args, policy=True)
     detours = getattr(args, "detour_scenarios", None)
-    lean = getattr(args, "lean", False) or detours is not None
-    if detours is not None:
+    screen = getattr(args, "eval_screen", None)
+    lean = getattr(args, "lean", False) or detours is not None or screen is not None
+    if screen is not None:
+        if (getattr(args, "manifest", None) is not None or detours is not None
+                or getattr(args, "pairs", None) is not None or getattr(args, "indices", None) is not None
+                or getattr(args, "families", None) is not None or getattr(args, "action_seeds", None) is not None
+                or getattr(args, "safety_fixtures", None) is not None or getattr(args, "fence_control", False)):
+            raise ValueError("--eval-screen measures only its frozen validation cohort")
+        args.lean = True
+        jobs = eval_screen_jobs(screen)
+        values = [value for _, value, _ in jobs[::len(ACTION_SEEDS)]]
+    elif detours is not None:
         if (getattr(args, "families", None) is not None or getattr(args, "safety_fixtures", None) is not None
                 or getattr(args, "fence_control", False)):
             raise ValueError("--detour-scenarios measures only its frozen validation cohort")
         values = detour_scenarios(detours)
     else:
         values = validation_scenarios(args.manifest, getattr(args, "families", None))
-    if args.indices is not None:
+    if screen is None and args.indices is not None:
         selected = [int(value) for value in args.indices.split(",")]
         if not selected or len(set(selected)) != len(selected) or any(not 0 <= index < len(values) for index in selected):
             raise ValueError("--indices must contain distinct valid validation indices")
         values = [values[index] for index in selected]
-    values += safety_scenarios(args)
-    seeds = action_seeds(getattr(args, "action_seeds", None))
-    jobs = [(index, value, seed) for index, value in enumerate(values) for seed in seeds]
+    if screen is None:
+        values += safety_scenarios(args)
+        seeds = action_seeds(getattr(args, "action_seeds", None))
+        jobs = [(index, value, seed) for index, value in enumerate(values) for seed in seeds]
     rejections = args.output.parent / "setup-rejections"
     if any(value["family"] == "jump" for value in values) and getattr(args, "jump_links", None) is None:
         raise ValueError("Jump validation requires --jump-links from the frozen corpus inputs")
@@ -1630,6 +1679,7 @@ def main():
     parser.add_argument("--pairs", type=Path)
     parser.add_argument("--manifest", type=Path, help="Frozen v4 corpus manifest; drive reads splits.validation only")
     parser.add_argument("--detour-scenarios", type=Path, help="Frozen detour-val JSONL; drive only, text recording without NAVDEMO")
+    parser.add_argument("--eval-screen", type=Path, help="Frozen validation screen JSONL; drive only, always lean")
     parser.add_argument("--lean", action="store_true", help="Manifest validation with text-only physical outcomes; no NAVDEMO")
     parser.add_argument("--families", help="Comma-separated validation families; default all five")
     parser.add_argument("--object-probes", type=Path, help="Frozen object Detour probes for validation summary")
@@ -1685,12 +1735,18 @@ def main():
         parser.error("--manifest is exclusive with --pairs and only supports validation drive")
     if args.detour_scenarios is not None and (args.command != "drive" or args.pairs is not None or args.manifest is not None):
         parser.error("--detour-scenarios is exclusive with --pairs/--manifest and only supports validation drive")
-    if args.lean and (args.command != "drive" or (args.manifest is None and args.detour_scenarios is None)):
-        parser.error("--lean requires manifest or detour validation drive")
-    if args.stranger and (args.command != "drive" or (args.manifest is None and args.detour_scenarios is None)):
-        parser.error("--stranger requires manifest or detour validation drive")
+    if args.eval_screen is not None:
+        if (args.command != "drive" or any(getattr(args, name) is not None for name in
+                ("pairs", "manifest", "detour_scenarios", "indices", "families", "action_seeds", "safety_fixtures"))
+                or args.fence_control):
+            parser.error("--eval-screen is exclusive with other cohort selection options and only supports validation drive")
+        args.lean = True
+    if args.lean and (args.command != "drive" or (args.manifest is None and args.detour_scenarios is None and args.eval_screen is None)):
+        parser.error("--lean requires manifest, detour or screen validation drive")
+    if args.stranger and (args.command != "drive" or (args.manifest is None and args.detour_scenarios is None and args.eval_screen is None)):
+        parser.error("--stranger requires manifest, detour or screen validation drive")
     if (args.command in ("qualify", "drive", "population", "equivalence", "death-smoke")
-            and args.pairs is None and args.manifest is None and args.detour_scenarios is None):
+            and args.pairs is None and args.manifest is None and args.detour_scenarios is None and args.eval_screen is None):
         parser.error("--pairs is required")
     if args.command in ("check", "summarize", "compare") and args.source is None:
         parser.error("--source is required")

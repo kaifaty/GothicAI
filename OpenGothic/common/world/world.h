@@ -49,6 +49,8 @@ class World final {
     double               loadMilliseconds() const { return worldLoadMs; }
     const ChunkTable&    chunkTable() const { return chunks; }
     ChunkResidency*      chunkResidency() const { return residency.get(); }
+    void                 updateLandscape(const Camera& camera);
+    bool                 landscapeReady() const { return !wview || wview->landscapeReady(); }
 
     void                 load(Serialize& fin );
     void                 save(Serialize& fout);

@@ -524,7 +524,7 @@ struct WorldDataContract {
 
 int main() {
   try {
-    require(std::string_view(GOTHIC_BASE_FORMAT_SHA256)=="ebeeae0437d4372d7f04fdf7b6915f56b80d00e24c5e8922486e0928e293e5f3",
+    require(std::string_view(GOTHIC_BASE_FORMAT_SHA256)=="a18b6aff77ad61a83d4ae6250d8111b271b21437de293ba513459682746b5e67",
             "vob layers must retain the existing base format SHA-256");
     Fixture fixture;
     setenv("OPENGOTHIC_CONTENT",fixture.content.c_str(),1);

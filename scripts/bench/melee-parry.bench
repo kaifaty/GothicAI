@@ -1,0 +1,145 @@
+# Parry stun (melee_parry): an attacking bandit with a one-hander, then a two-hander, is stunned as by a parry
+# (`stun`, without timing a real parade) and staggers back for the second it is open; then the hero's own guard is
+# broken; last, the hero parades against the attacking bandit at varied moments, as in a fight. Side shots of
+# both through the stun; the look is judged by Claude from the shots.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local
+seed 73013
+cheat god
+set time 12 0
+release all
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+wait 600
+melee-shadow target 2
+wait 600
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+# The fixture's signpost stands between them at the wall: turn into the open field.
+turn 180
+pin BDT_1013_BANDIT_L 160 0 0
+wait 300
+pin off
+immortal BDT_1013_BANDIT_L on
+watch player
+still player on
+cam two BDT_1013_BANDIT_L 320 10 1
+wait 800
+shot start
+
+rec stun-1h
+fight BDT_1013_BANDIT_L player
+wait 1000
+stun BDT_1013_BANDIT_L
+shot 1h-000
+wait 100
+shot 1h-100
+wait 100
+shot 1h-200
+wait 150
+shot 1h-350
+wait 150
+shot 1h-500
+wait 200
+shot 1h-700
+wait 300
+shot 1h-1000
+wait 1500
+stop
+
+rec stun-2h
+melee-shadow bandit 2h
+pin BDT_1013_BANDIT_L 160 0 0
+wait 300
+pin off
+fight BDT_1013_BANDIT_L player
+wait 1200
+stun BDT_1013_BANDIT_L
+shot 2h-000
+wait 100
+shot 2h-100
+wait 100
+shot 2h-200
+wait 150
+shot 2h-350
+wait 150
+shot 2h-500
+wait 200
+shot 2h-700
+wait 300
+shot 2h-1000
+wait 1500
+stop
+
+rec guard-break
+cam game
+melee-shadow bandit 1h
+wait 300
+press action
+wait 300
+release all
+stun player guard_break
+shot gb-000
+wait 200
+shot gb-200
+wait 300
+shot gb-500
+wait 500
+shot gb-1000
+wait 800
+stop
+
+rec parades
+cam two BDT_1013_BANDIT_L 320 10 1
+pin BDT_1013_BANDIT_L 160 0 0
+wait 300
+pin off
+fight BDT_1013_BANDIT_L player
+wait 400
+press action
+press back
+wait 500
+release all
+wait 34
+press action
+press back
+wait 630
+release all
+wait 67
+press action
+press back
+wait 740
+release all
+wait 101
+press action
+press back
+wait 350
+release all
+wait 134
+press action
+press back
+wait 880
+release all
+wait 167
+press action
+press back
+wait 500
+release all
+wait 200
+press action
+press back
+wait 630
+release all
+wait 233
+press action
+press back
+wait 740
+release all
+wait 1000
+stop

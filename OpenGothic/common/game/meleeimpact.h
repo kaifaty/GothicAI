@@ -11,6 +11,8 @@ namespace MeleeImpact {
   // Knockdown threshold multiplier from the attacker's weapon hit chance (percent) and strength
   // against the defender's best weapon hit chance: 1.248 for two 60% masters of strength 60.
   float skillThresholdScale(int32_t attackerHitChance, int32_t attackerStrength, int32_t defenderHitChance);
+  float postureThresholdScale();
+  float postureIncrease(float impulseNs, float bodyMassKg, float thresholdScale = 1.f, float balanceScale = 1.f);
 
   struct Posture final {
     float value = 0;

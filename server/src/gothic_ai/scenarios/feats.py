@@ -1,4 +1,4 @@
-"""A real hero kill becomes a feat, a toast and a journal entry, then rewinds with the save."""
+"""Feats, their save rollback and the hero's fame in conversation."""
 
 from __future__ import annotations
 
@@ -9,19 +9,160 @@ from pathlib import Path
 from typing import Any
 
 from .. import feat_art
+from ..brain.reflex import Reflexes
 from ..chronicle import Fact
+from ..dialogue import DialogueManager
 from ..feats import CATEGORIES, WRITE, Feats
 from ..game import GameError, GameLink
 from ..journal import Journal
 from ..llm import ToolCall
 from ..llm.fake import FakeBackend
 from ..protocol import FeatToastCmd, Session
-from .common import _logged, _save_or_fail, _until, wait_message
+from ..social import Rumors
+from ..talk import TalkDesk
+from .common import (
+    HILDA,
+    LOBART,
+    FixedDecider,
+    _logged,
+    _Recorded,
+    _save_or_fail,
+    _until,
+    prepare_npc_pose,
+    wait_message,
+)
 
 
 class ScenarioArtist(feat_art.Artist):
     async def _generate(self, tmp: Path, emblem: str) -> Path | None:
         return feat_art.KIT / "anchors/chest.jpg"
+
+
+async def feat_fame(
+    link: GameLink, dialogue: DialogueManager, talk: TalkDesk, rumors: Rumors,
+) -> dict[str, str]:
+    """Ask a witness, a hearer and an uninformed control about one public feat."""
+    results: dict[str, str] = {}
+    chronicle = rumors.chronicle
+    witness = "NONE_100_XARDAS"
+    roles = {"witness": witness, "heard": LOBART, "control": HILDA}
+    arena, park = "NW_FARM1_FIELD_06", "NW_XARDAS_TOWER_VALLEY_01"
+    phrase = "Слыхал обо мне что-нибудь?"
+    original_llm, original_reflexes = dialogue.llm, talk.reflexes
+    original_sink, original_gate = dialogue.journal.sink, rumors.gate
+    model = _Recorded(original_llm)
+    fake = original_llm.name == "fake"
+    entries: list[dict[str, Any]] = []
+
+    def check(name: str, ok: bool, detail: object = "") -> bool:
+        results[name] = f"{'done' if ok else 'failed'} ({detail})"
+        return ok
+
+    def keep(entry: dict[str, Any]) -> None:
+        entries.append(entry)
+        if original_sink is not None:
+            original_sink(entry)
+
+    async def place(npc: str, waypoint: str) -> bool:
+        ok, detail = await prepare_npc_pose(
+            link, npc, waypoint, require_perception_ready=False,
+        )
+        return ok or check("placement", False, detail)
+
+    dialogue.llm = model
+    dialogue.journal.sink = keep
+    talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
+    # Only the explicit fixture may teach fame: the control must not hear a background retelling.
+    rumors.gate = lambda *_: False
+    try:
+        await link.wait_world()
+        if link.session is None:
+            await wait_message(link, Session, timeout=10)
+        if not check("new_game", link.session is not None and link.session.parent is None
+                     and not chronicle.facts("feat"), "fresh branch without feats"):
+            return _logged(results)
+        await link.debug("player_goto", waypoint=arena)
+        for npc in roles.values():
+            if not await place(npc, park):
+                return _logged(results)
+
+        at = await link.story_state(vars=["KAPITEL"])
+        feat = {
+            "fact": "feat", "id": "e2e-feat-fame", "title": "Волчья шкура",
+            "text": "Перебил волков у фермы Лобарта и отдал шкуры даром.",
+            "category": "mercy", "emblem": "A wolf pelt", "evidence": [], "trigger": 0,
+            "reason": "Public deed fixture for the fame conversation scenario.",
+            "chapter": int(at.get("vars", {}).get("KAPITEL") or 1),
+            **{key: at[key] for key in ("day", "hour", "minute")},
+        }
+        chronicle.record(feat)
+        chronicle.record({
+            "fact": "feat_fame", "feat": feat["id"], "title": feat["title"],
+            "text": feat["text"], "witnesses": [witness], "day": feat["day"],
+        })
+        # Match Rumors._learn's persisted fame record without teaching a conversational memory too.
+        chronicle.record({
+            "fact": "rumor", "kind": "fame", "quest": feat["id"], "feat": feat["id"],
+            "about": "PLAYER", "about_name": "герой", "subject": "PLAYER", "subject_name": "герой",
+            "title": feat["title"], "text": feat["text"], "from": witness, "from_name": "Ксардас",
+            "to": LOBART, "hops": 1, "how": "told", "day": feat["day"],
+        })
+
+        for role, npc in roles.items():
+            if not await place(npc, arena):
+                return _logged(results)
+            await link.debug("teleport", near=npc, distance=250)
+            ready = await _until(
+                lambda npc=npc: npc in talk.people and talk.people[npc].distance <= 600
+                and all(other == npc or other not in talk.people or talk.people[other].distance > 3000
+                        for other in roles.values()), 20,
+            )
+            snap = await link.snapshot(npc, fresh=True)
+            attitude, hostile = await link.story_eval(npc, [
+                ["call", "NPC_GETATTITUDE", ["inst", npc], ["inst", "HERO"]], ["var", "ATT_HOSTILE"],
+            ])
+            distances = {who: talk.people[who].distance if who in talk.people else None
+                         for who in roles.values()}
+            if not check(f"ready_{role}", ready and snap.npc.hp > 0 and attitude != hostile,
+                         f"npc={npc}, cm={distances}, hp={snap.npc.hp}, attitude={attitude}"):
+                return _logged(results)
+
+            start = len(entries)
+            model.asked.clear()
+            talk.hear(phrase, npc, {"via": "scenario"})
+            answered = await _until(
+                lambda npc=npc, start=start: any(
+                    e.get("kind") == "npc" and e.get("npc") == npc for e in entries[start:]
+                ), 90,
+            )
+            said = " ".join(e.get("text", "") for e in entries[start:]
+                            if e.get("kind") == "npc" and e.get("npc") == npc)
+            # _Recorded observes the real model request, including extensions' situation blocks.
+            request = next((text for text in model.asked if phrase in text), "")
+            header = "Что о герое говорят люди:"
+            known = role != "control"
+            shown = request.count(header)
+            check(f"fame_prompt_{role}", bool(request) and shown == int(known)
+                  and (not known or feat["title"] in request and feat["text"] in request),
+                  f"npc={npc}, fame_blocks={shown}, requests={len(model.asked)}")
+            mentioned = any(root in said.lower() for root in ("волк", "шкур"))
+            status = "done (fake)" if fake else "done"
+            if not answered or not said or not fake and mentioned != known:
+                status = "failed"
+            results[f"fame_reply_{role}"] = f"{status} ({said or 'no answer within 90 s'})"
+            talk.end("scenario")
+            if not check(f"released_{role}", await _until(lambda npc=npc: npc not in talk.attached, 10), npc):
+                return _logged(results)
+            if not await place(npc, park):
+                return _logged(results)
+        return _logged(results)
+    except (GameError, TimeoutError, RuntimeError) as error:
+        check("error", False, str(error) or type(error).__name__)
+        return _logged(results)
+    finally:
+        talk.end("scenario")
+        dialogue.llm, talk.reflexes = original_llm, original_reflexes
+        dialogue.journal.sink, rumors.gate = original_sink, original_gate
 
 
 async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int = 8) -> dict[str, str]:
@@ -109,6 +250,13 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
         saved = await _save_or_fail(link, slot)
         check("save_before_deed", True, f"slot={slot}, branch={saved.branch}, seq={saved.seq}")
 
+        if not live:
+            # Keep the debug kill in the tower, away from wildlife, with Xardas outside.
+            await link.debug("npc_goto", npc="NONE_100_XARDAS", waypoint="NW_XARDAS_TOWER_VALLEY_01")
+            nearby = await link.story_nearby("PC_HERO", 3500)
+            if not check("unwitnessed_setup", not nearby, [person["npc"] for person in nearby]):
+                return _logged(results)
+
         await link.debug("kill", instance=victim, by="PLAYER")
         if not check("hero_deed", await _until(lambda: trigger is not None, 10), f"npc={victim}"):
             return _logged(results)
@@ -153,6 +301,16 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
                 and award.get("category") in CATEGORIES,
                 f"trigger={trigger}, evidence={award.get('evidence')}, category={award.get('category')}",
             )
+            if not live:
+                check("fame", not chronicle.facts("feat_fame"), "secret")
+            else:
+                award_seq = next(seq for seq, fact in chronicle.entries("feat") if fact["id"] == award["id"])
+                dead = {fact["npc"].upper() for seq, fact in chronicle.entries("died") if seq <= award_seq}
+                fame = [fact for fact in chronicle.facts("feat_fame") if fact.get("feat") == award["id"]]
+                witnesses = sorted({npc for fact in fame for npc in fact["witnesses"]})
+                check("fame", not fame or bool(witnesses) and all(
+                    npc and npc.upper() != "PLAYER" and npc.upper() not in dead for npc in witnesses
+                ), f"public: {', '.join(witnesses)}" if fame else "secret")
             await _until(lambda: any(toast.feat == award["id"] for toast in toasts)
                          and any(f.get("id") == award["id"] for f in chronicle.facts("feat_image")),
                          200 if live else 30)
@@ -200,6 +358,8 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
         )
         check("image_rollback", not chronicle.facts("feat_image"),
               f"images={chronicle.facts('feat_image')}")
+        check("fame_rollback", not chronicle.facts("feat_fame"),
+              f"fame={chronicle.facts('feat_fame')}")
         if image_dir is not None:
             check("image_retained", image_dir.is_dir() and icon.is_file(), str(image_dir))
         return _logged(results)

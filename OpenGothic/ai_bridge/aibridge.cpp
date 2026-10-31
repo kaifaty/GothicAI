@@ -4,9 +4,6 @@
 #include <Tempest/Log>
 #include <Tempest/Timer>
 
-#include <ixwebsocket/IXNetSystem.h>
-#include <ixwebsocket/IXWebSocket.h>
-
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -63,6 +60,18 @@
 #include "textcodec.h"
 #include "voicebuffer.h"
 #include "testbench.h"
+
+// last: on Windows these pull in <windows.h>, whose macros (ERROR, VOID, CONST, near, far)
+// would rewrite the ZenKit and game declarations above and the names below
+#include <ixwebsocket/IXNetSystem.h>
+#include <ixwebsocket/IXWebSocket.h>
+#ifdef _WIN32
+#undef ERROR
+#undef VOID
+#undef CONST
+#undef near
+#undef far
+#endif
 
 using namespace Tempest;
 

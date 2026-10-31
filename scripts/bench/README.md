@@ -21,22 +21,38 @@ or other Mac-only game paths require local execution (`auto` falls back, `ryzen`
 For performance comparisons (before/after or FPS), run both takes on the same machine:
 pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
 
-`streaming-flythrough` is the baseline for runtime chunks before unloading: a god-mode hero
+`streaming-flythrough` measures runtime GPU chunk streaming: a god-mode hero
 follows the existing WayMatrix path from `NW_CITY_MERCHANT_TRADE_04` through
 `NW_CITY_HABOUR_BENCH_01` to `NW_FOREST_PATH_16`. `route <speed_cm_s> <wp1> <wp2> ...`
 blocks command execution until the connected path is complete. Each frame places the hero at
 the interpolated path position, including waypoint height, using the normal simulation step.
 The two passes use 500 cm/s (run) and 2000 cm/s (fly), with ten seconds to settle before each.
-It records no video. The engine keeps the entire world loaded.
+It records no video. Each pass waits for all desired Near/Far chunks before measuring;
+Outside chunks can be released along the route.
 
 `scripts/bench.sh streaming-flythrough` starts a fresh `NEWWORLD`, selects `quiet` on Ryzen,
 and enables frame profiling only for this bench's build. Output `frameprofile.csv` contains
-submitted frame intervals; `streaming.csv` contains residency update/work times, counts and
+submitted frame intervals; `streaming.csv` contains residency update/work times, per-chunk
+publication times (semicolon-separated in a frame), counts and
 Near/Far transitions. `report.md` / `report.json` report each pass's frame p50/p99/max,
-Near/Far transitions (entering or leaving that state), peak Near count, and update/work p99.
+Near/Far transitions (entering or leaving that state), peak Near count, update/work p99,
+publication p99/max (one sample per chunk), published/released counts and GPU allocation
+at the end of each pass. An empty route publication sample is `n/a`, not zero. A separate
+warmup table measures Far publications before each pass: count, per-chunk p99/max,
+maximum publications in one frame and maximum queue time. These samples begin before
+the ten-second wait and end at `streaming_ready`; they do not enter route frame or
+publication/release counts. Local execution requires `OPENGOTHIC_ENABLE_FRAME_PROFILE=ON` as
+well as `OPENGOTHIC_ENABLE_APP_CADENCE=ON`; an unsupported build exits before opening a game.
 The run fails if either route does not finish or either pass lacks metrics. Use the same
 host, resolution and content overrides for later comparisons; `OPENGOTHIC_STREAMING=0`
-disables the manager and deliberately cannot produce this residency baseline.
+disables the manager and deliberately cannot produce this residency measurement.
+
+`BENCH_HOST=local OPENGOTHIC_STREAMING=0 scripts/bench.sh streaming-shots` and the same
+command with `OPENGOTHIC_STREAMING=1` capture `perf-market.png`, `perf-harbour.png` and
+`perf-forest.png` from the first viewpoints of those performance scenarios. `streaming wait`
+yields a frame for camera/residency updates, then waits until the publication queue is empty
+and all desired Near/Far chunks are published (default timeout 60000 real milliseconds).
+The disabled-streaming path is already ready. Claude compares the resulting frames on Mac.
 
 ## Frame profile
 
@@ -67,6 +83,7 @@ The complete column set is:
 | `<zone>_ns`, `<zone>_calls`, `<zone>_first_ns`, `<zone>_last_ns` | Elapsed sum in nanoseconds, call count, first start and last end as absolute `steady_clock` nanoseconds; all zero if unused |
 | `palette_calls`, `identical_calls`, `patch_calls`, `patch_blocks` | Counts |
 | `palette_bytes`, `identical_bytes`, `patch_bytes`, `grow_bytes`, `upload_execution_bytes` | Bytes |
+| `draw_calls`, `dispatch_calls` | Encoded draw and compute dispatch counts; dispatch counting currently covers Metal |
 | `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of Metal command buffer `GPUEndTime-GPUStartTime` in nanoseconds; 1 only when all submitted buffers have valid timing; submitted buffer count |
 
 The complete `<zone>` list (each produces all four columns above):
@@ -93,6 +110,13 @@ submitted during the attempt. Slot reuse cannot redirect a late completion to a 
 There are no added waits. Missing/failed/incomplete timing gives `gpu_done=0,gpu_ns=0`;
 `gpu_buffers` still counts captured Metal submissions. Vulkan and other backends currently write three zeros.
 Pending completions at CSV flush are left incomplete. This is diagnostic timing, not a performance stand.
+
+On Metal, `OPENGOTHIC_GPU_PASSES=1` additionally samples native encoder stage boundaries and writes
+`<frames.csv>.gpu.csv`: attempt, slot, segment, frame, encoder index/type, joined pass labels,
+GPU/vertex/fragment nanoseconds, draw/dispatch counts and validity. Passes sharing an encoder stay
+joined; intervals may overlap and must not be summed into total GPU time. Unsupported or invalid
+samples have `valid=0`. Detailed counters have measurable overhead: leave them off for the GPU
+acceptance runs, then enable them separately when a pass breakdown is needed.
 
 ### План и журнал
 
@@ -420,6 +444,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 |---|---|
 | `playvideo <name>` | Marvin command calling the game video player; case-insensitive name, optional `.bik`. Explicitly requests the player even with `-nointro`; the first request starts lazy preparation and is skipped while the part is not ready. Negative `scaleVideos` still disables playback. The scenario pauses during playback and resumes afterwards; `pos` records position, world tick and world time in `events.jsonl`. |
 | `wait <ms>` | game time |
+| `wait real <ms>` | wall time; the game keeps ticking while scenario commands wait |
 | `waitarrive [timeout ms]` | until the player has walked where it was sent |
 | `goto <waypoint>`, `goto pos <x> <y> <z>` | teleport (`pos`: where no waypoint is, a roof, a rock) |
 | `walkto <waypoint>` | walk there (AI path) |
@@ -428,6 +453,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `press\|release\|tap <key>`, `hold <key> <ms>`, `release all` | player input; keys: `forward back left right turnl turnr jump walk sneak weapon melee bow spell action parade breath` (`left`/`right` strafe; aiming a bow: hold `action`, a shot: `tap forward` while holding it; in the manual aim holding `action` draws, releasing shoots, `parade` lowers the bow, `breath` (= walk) holds the breath) |
 | `aimwalk on\|off` | the legs stepping under the aim (graphics/mesh/aimwalk); off: forward and back do nothing while aiming |
 | `animinfo <name>...` | the hero's animations of those names: layer, frames, the nodes they move (when not all), the root's way and speed, the hips' turn at a few frames |
+| `bladepath <name>\|<overlay.MDS>...` | the tip of the hero's weapon at each frame of those animations, with the grip, the root bone (the game keeps its x, z at the actor) and the speed, in the model's frame (+z ahead); the frames of the fight tags; an overlay (`HUMANS_1HST2.MDS`) is put on for the names after it |
 | `wheel <delta>` | the mouse wheel as the window gets it (-1 down, 1 up): aiming a bow by hand, down cants it for a quick shot, up straightens it |
 | `cam auto [dist] [height]` | follow the player from the side that sees the feet; switches sides if the feet stay hidden |
 | `cam follow <dist> <height> <angle>` | follow, `angle` from the facing: 0 in front, 90 on the left |
@@ -444,6 +470,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `overlay trail [off] [keep ms] [line]` | the arrows' ways in gold (with the zones of `showzones`), no legs, no text; turns the overlay on. A way stays `keep` ms (1500) after its arrow stops; `line`: also the straight line the arrow left along (where the bow pointed), dashed white, as far as the arrow has flown: the drop is the gap between them |
 | `rec <name> [novideo]`, `stop` | record a segment (video and metrics, or metrics only) |
 | `shot <name>` | one PNG |
+| `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
 | `ui on\|off` | the interface in the captured frames, as the player sees it: subtitles, the input line, the deal window (off by default: only the world) |
 | `label <text>` | text on the overlay |
 | `ik on\|off`, `ik param <name> <value>`, `ik params` | foot IK and its parameters, without rebuilding; `ik off` on a four-legged creature brings back the old whole-body tilt |
@@ -457,7 +484,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `place <dist> <angle>`, `orbit <deg> <ms>` | the hero stands around the watched npc (angle from its facing, 0 in front) or goes around it; not where no ground is found (inside a rock: it would fall through the world) |
 | `gazeinfo` | gaze state of the watched npc to `bench.log`: why it looks, at whom |
 | `lean on\|off` | the lean into turns and on slopes |
-| `blend on\|off`, `blend param <name> <value>` | transitions between animations (`AnimBlend`; off: the old cross-fade); params `min`, `max`, `scale` (blend time, s), `turn` (rad/s), `move` (cm/s), `out`, `side` |
+| `blend on\|off`, `blend param <name> <value>` | transitions between animations (`AnimBlend`; off: the old cross-fade); params `min`, `max`, `scale` (blend time, s), `turn` (rad/s), `move` (cm/s), `out`, `side`, `blow` (the longest switch into a blow of a weapon body, s) |
 | `flinch on\|off` | the upper body giving way to blows |
 | `hit <npc\|player> <angle> [strength] [height] [twist]` | a blow from that side of it (angle from its facing, 0 in front, as `place`) to the flinch only: no damage, no stumble; strength 0..1 (1), height 0 the hips .. 1 the head (0.6), twist -1..1 about up (0) |
 | `strike <victim\|player> [attacker\|player]` | the attacker's blow lands as the game deals it (the stumble, the damage, the flinch); the victim gets its hit points back below a third |
@@ -544,7 +571,7 @@ Talking, for shorts (`shorts/`; needs the AI server, see `shorts/README.md`):
 | `waitai <key> <stage> [timeout ms]` | until a thing of the AI bridge has got that far: `waitai necro fallen` (the necromancer's answer: cast, fallen, raise, risen, card; `ai necro <npc> [spell] [picture]` starts it without the server) |
 | `near <npc> [dist] [deg]`, `approach <npc>`, `face npc <npc>` | the hero in front of an npc (teleport), walks up to it, turns to it |
 | `cam shoulder\|face\|two <npc> [dist] [height] [side\|deg]`, `cam cut`, `cam smooth <k>` | shots of the hero and an npc; they glide from one to the next unless `cut`. `cam face` with an npc's name is this shot, with a number the close-up above. `cam two arena`: the two participants of a body arena, a yellow dot over the primary (`bodyreplay`, `scripts/body_replay_film.py`) |
-| `caption <text>`, `mark <text>` | events for the cut of a short |
+| `caption <text>`, `mark <text>` | events for the cut of a short; `mark stream_warm` and `mark stream_warm_5s` also record load-probe memory after landscape warmup and five real seconds later |
 | `ai <...>` | the AI bridge's console: `ai attach <npc>`, `ai skip <npc>` (its important dialogs count as told: it does not stop the hero), `ai ptt start [<wav>]\|stop\|cancel` |
 
 Every talking command writes `events.jsonl` (what was said when, in frames of the recording). A line of the
