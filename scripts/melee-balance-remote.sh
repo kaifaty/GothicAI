@@ -141,7 +141,8 @@ IFS=, read -r -a series <<<"$6"
 python="${MELEE_BALANCE_PYTHON:-$HOME/gothic-ai/body/.venv/bin/python}"
 runner="$task_root/build/opengothic/gothic-body-runner"
 reference="$HOME/gothic-ai/body-baseline/runs/melee-reference-stage1-v4"
-archive_root="/mnt/shared/gothic-ai/melee-balance/runs/$run_name"
+# gq --archive moves ~/X to /mnt/shared/X: the series land under the task folder's own name.
+archive_root="/mnt/shared/$1/runs/$run_name"
 [[ -x "$runner" && -x "$python" ]] || { echo 'Build the runner and select an installed Python first' >&2; exit 1; }
 gq_available || { echo 'gq is required on Ryzen' >&2; exit 127; }
 cd "$task_root"
@@ -204,8 +205,9 @@ run_name="$2"
 IFS=, read -r -a series <<<"$3"
 out="$task_root/runs/$run_name/report"
 inputs=()
-for name in "${series[@]}"; do inputs+=("/mnt/shared/gothic-ai/melee-balance/runs/$run_name/$name/bench"); done
-[[ ! -e "$out" && ! -e "/mnt/shared/gothic-ai/melee-balance/runs/$run_name/report" ]] || {
+archive="/mnt/shared/$1/runs/$run_name"
+for name in "${series[@]}"; do inputs+=("$archive/$name/bench"); done
+[[ ! -e "$out" && ! -e "$archive/report" ]] || {
   echo 'Report exists; choose a fresh run name or read the existing report' >&2; exit 1;
 }
 cd "$task_root"
@@ -215,7 +217,7 @@ gq_job --class quick --threads 2 --mem 2G --max 20m --archive "$out" --name 'mel
     cp "$provenance/"* "$out/provenance/"
     exec "$@"' bash "$out" "$task_root/provenance" \
     python3 "$task_root/source/scripts/melee_balance_report.py" "${inputs[@]}" --output "$out"
-echo "Report: /mnt/shared/gothic-ai/melee-balance/runs/$run_name/report"
+echo "Report: $archive/report"
 REMOTE
 }
 
