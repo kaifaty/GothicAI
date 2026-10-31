@@ -735,20 +735,23 @@ struct Bench {
   struct FurnitureDrop {
     Item* item=nullptr;
     std::string role;
-    std::vector<Vec3> vertices;
-    float supportY=0;
+    std::vector<Vec3> vertices,collisionVertices;
+    float supportY=0,supportLocalY=0;
     };
   struct FurnitureParts {
     uint32_t table=uint32_t(-1),cupboard=uint32_t(-1);
     std::string tableVisual;
     Matrix4x4 tableOrigin;
-    Vec3 tableCenter,walkStart;
+    Vec3 tableCenter,walkStart,walkGoal,walkDirection;
+    Npc* walker=nullptr;
+    WayPoint walkDestination;
     std::vector<FurnitureDrop> drops;
     Npc* corpse=nullptr;
     bool walking=false;
     float walkMaxStep=0;
     Vec3 walkPrevious;
-    uint64_t walkStartTick=0;
+    uint64_t walkStartTick=0,walkArrived=0;
+    float walkMaxCrossTrack=0;
     struct PhysicsSample {
       uint64_t time=0,dt=0,nativeSteps=0;
       float milliseconds=0;
@@ -758,7 +761,6 @@ struct Bench {
     std::vector<PhysicsSample> loadSamples;
     uint64_t loadWarmUntil=0,loadEnd=0,loadLastNative=0,loadZeroFrames=0;
     size_t loadMinimumActive=10,loadDecomposed=0;
-    uint32_t loadPulse=0;
     bool loadRunning=false;
     } furnitureParts;
   uint32_t ownMeshZen=uint32_t(-1);
@@ -4041,6 +4043,18 @@ bool furnitureDrop(World& world,Npc& player,std::string role,const char* instanc
   Bench::FurnitureDrop drop;drop.role=std::move(role);drop.supportY=supportY;
   mesh->appendItemVertices(drop.vertices);
   if(drop.vertices.empty()) {arenaAbort("furniture preparation: Item source vertices unavailable");return false;}
+  const auto& hull=world.physic()->itemHullShape(*mesh,definition.handle().visual);
+  if(Gothic::physicsFlags().itemHulls && hull.shape!=nullptr) {
+    const auto& shape=static_cast<const JPH::ConvexHullShape&>(*hull.shape);
+    for(JPH::uint i=0;i<shape.GetNumPoints();++i) {
+      const auto point=(shape.GetPoint(i)+shape.GetCenterOfMass())*100.f;
+      drop.collisionVertices.emplace_back(point.GetX(),point.GetY(),point.GetZ());
+      }
+    } else {
+    const auto center=(mesh->bboxMesh[0]+mesh->bboxMesh[1])*.5f,extent=(mesh->bboxMesh[1]-mesh->bboxMesh[0])*.5f;
+    const Vec3 half(std::max(15.f,extent.x),std::max(15.f,extent.y),std::max(15.f,extent.z));
+    for(unsigned i=0;i<8;++i)drop.collisionVertices.push_back(center+Vec3(i&1?half.x:-half.x,i&2?half.y:-half.y,i&4?half.z:-half.z));
+    }
   float low=std::numeric_limits<float>::infinity();
   for(const auto& point:drop.vertices)low=std::min(low,point.y);
   auto pose=Matrix4x4::mkIdentity();pose.translate(bottom-Vec3(0,low,0));
@@ -4051,7 +4065,8 @@ bool furnitureDrop(World& world,Npc& player,std::string role,const char* instanc
     }
   event("furniture_parts_drop","\"role\":"+jsonStr(drop.role)+",\"symbol\":"+jsonStr(instance)+
     ",\"bottom_cm\":"+ragdollVector(bottom)+",\"velocity_cm_s\":"+ragdollVector(speed)+
-    ",\"support_y_cm\":"+ragdollNumber(supportY));
+    ",\"support_y_cm\":"+ragdollNumber(supportY)+",\"item_hulls\":"+(Gothic::physicsFlags().itemHulls?"true":"false")+
+    ",\"extra_padding_cm\":"+ragdollNumber(hull.extraPaddingCm));
   bench.furnitureParts.drops.push_back(std::move(drop));return true;
   }
 
@@ -4103,24 +4118,25 @@ void furnitureTableItems(World& world,Npc& player) {
   const auto floor=world.physic()->landRay(below,500.f);
   if(!floor.hasCol || top.y-floor.v.y<50.f) {arenaAbort("furniture preparation: table has no usable native floor below it");return;}
   for(unsigned i=0;i<2;++i) {
-    auto under=Vec3(center.x-15.f,table->localBounds[0].y+(surfaces.back()-table->localBounds[0].y)*.35f,
-                    center.z+(i==0?-15.f:15.f));
+    // Release outside the single hull and throw through its front, rather than
+    // creating an overlapping body whose penetration solver can eject below it.
+    auto under=Vec3(center.x+(i==0?-20.f:20.f),table->localBounds[0].y+30.f,table->localBounds[0].z-35.f);
     table->transform.project(under);
-    Vec3 speed(15,0,0);table->transform.project(speed);speed-=movablePosition(table->transform);
+    Vec3 speed(0,0,200.f);table->transform.project(speed);speed-=movablePosition(table->transform);
     if(!furnitureDrop(world,player,i==0?"under_apple":"under_bottle",i==0?"ITFO_APPLE":"ITFO_BEER",under,floor.v.y,speed))return;
     }
-  furnitureDrop(world,player,"tabletop","ITFO_APPLE",top+Vec3(0,10,0),top.y);
+  if(furnitureDrop(world,player,"tabletop","ITFO_APPLE",top+Vec3(0,20,0),top.y))
+    bench.furnitureParts.drops.back().supportLocalY=surfaces.back();
   }
 
 void furnitureCupboardItem(World& world,Npc& player) {
   furnitureClearDrops(world);
-  // Fixed authored cupboard and its open front shelf: the source-only probe at
-  // [0,57.497288,-27.5] cm has 15.001 cm surface clearance. Derive the actual
-  // support height from the loaded mesh rather than a compound hull face.
-  const auto selected=furnitureBody(world,25787);
+  // The full scene census permits this authored cupboard. Candidate 25787
+  // has a floor intersection and correctly retains its original static mesh.
+  const auto selected=furnitureBody(world,24003);
   if(!selected || !selected->enabled || !selected->visual.starts_with("NW_CITY_CUPBOARD_POOR_01") ||
      (world.physic()->furniturePartsEnabled() && selected->collisionParts<=1)) {
-    arenaAbort("furniture preparation: authored open-shelf cupboard 25787 needs native collision and a valid compound cache in ON mode");return;
+    arenaAbort("furniture preparation: authored cupboard 24003 needs its permitted native body and required collision cache");return;
     }
   const auto mesh=Resources::loadVisualMesh(selected->visual);
   const auto surfaces=furnitureSurfaces(mesh,0.f,-27.5f);
@@ -4137,7 +4153,8 @@ void furnitureCupboardItem(World& world,Npc& player) {
   event("furniture_parts_shelf_setup","\"zen_id\":"+std::to_string(selected->zenId)+",\"visual\":"+jsonStr(selected->visual)+
     ",\"source_support_local_cm\":"+ragdollVector(local)+",\"source_support_world_cm\":"+ragdollVector(support)+
     ",\"native_collision_parts\":"+std::to_string(selected->collisionParts)+",\"transform\":"+ragdollMatrix(selected->transform));
-  furnitureDrop(world,player,"shelf","ITFO_BEER",support+Vec3(0,8,0),support.y);
+  if(furnitureDrop(world,player,"shelf","ITFO_BEER",support+Vec3(0,20,0),support.y))
+    bench.furnitureParts.drops.back().supportLocalY=shelf;
   }
 
 void furnitureItemReport(World& world) {
@@ -4156,15 +4173,30 @@ void furnitureItemReport(World& world) {
     const bool under=drop.role.starts_with("under_");
     const bool footprint=local.x>support->localBounds[0].x+5.f && local.x<support->localBounds[1].x-5.f &&
                          local.z>support->localBounds[0].z+5.f && local.z<support->localBounds[1].z-5.f;
-    const float gap=low-drop.supportY;
-    const bool supported=std::abs(gap)<=5.f;
-    const bool floorUnder=footprint && supported && high<bench.furnitureParts.tableCenter.y+15.f;
+    float collisionLow=std::numeric_limits<float>::infinity(),collisionHigh=-collisionLow;
+    for(auto point:drop.collisionVertices) {
+      drop.item->transform().project(point);collisionLow=std::min(collisionLow,point.y);collisionHigh=std::max(collisionHigh,point.y);
+      }
+    float supportY=drop.supportY;
+    if(under) {
+      auto middle=(support->localBounds[0]+support->localBounds[1])*.5f;support->transform.project(middle);
+      const auto floor=world.physic()->landRay(Vec3(center.x,middle.y,center.z),500.f);
+      if(floor.hasCol)supportY=floor.v.y;
+      } else {
+      auto point=Vec3(local.x,drop.supportLocalY,local.z);support->transform.project(point);supportY=point.y;
+      }
+    const float gap=low-supportY,collisionGap=collisionLow-supportY;
+    const bool supported=std::abs(collisionGap)<=3.f;
+    auto currentTop=Vec3(local.x,support->localBounds[1].y,local.z);support->transform.project(currentTop);
+    const bool floorUnder=footprint && supported && collisionHigh<currentTop.y-5.f;
     const bool pass=under?(enabled?floorUnder:!floorUnder):((drop.role=="shelf" && !enabled) || (supported && footprint));
     all&=pass;
     event("furniture_parts_item_result","\"enabled\":"+std::string(enabled?"true":"false")+",\"role\":"+jsonStr(drop.role)+
       ",\"position_cm\":"+ragdollVector(drop.item->position())+",\"center_local_cm\":"+ragdollVector(local)+
       ",\"bottom_cm\":"+ragdollNumber(low)+",\"top_cm\":"+ragdollNumber(high)+
-      ",\"support_y_cm\":"+ragdollNumber(drop.supportY)+",\"support_gap_cm\":"+ragdollNumber(gap)+
+      ",\"support_y_cm\":"+ragdollNumber(supportY)+",\"support_gap_cm\":"+ragdollNumber(gap)+
+      ",\"collision_bottom_cm\":"+ragdollNumber(collisionLow)+",\"collision_top_cm\":"+ragdollNumber(collisionHigh)+
+      ",\"collision_support_gap_cm\":"+ragdollNumber(collisionGap)+",\"support_transform\":"+ragdollMatrix(support->transform)+
       ",\"inside_support_footprint\":"+(footprint?"true":"false")+",\"on_floor_under_table\":"+(floorUnder?"true":"false")+
       ",\"native_dynamic\":"+(drop.item->isDynamic()?"true":"false")+",\"sleeping\":"+(drop.item->physicsSleeping()?"true":"false")+
       ",\"pass\":"+(pass?"true":"false"));
@@ -4220,45 +4252,76 @@ void furnitureRagdollReport(World& world) {
   if(!pass)arenaAbort("furniture ragdoll mechanic failed after native settling");
   }
 
-void furnitureWalk(World& world,Npc& player) {
+void furnitureWalk(World& world,Npc& player,bool npc=false) {
   auto& fixture=bench.furnitureParts;
   if(!world.physic()->setMovableVobTransform(fixture.table,fixture.tableOrigin)) {
-    arenaAbort("furniture preparation: cannot restore the authored table pose before hero approach");return;
+    arenaAbort("furniture preparation: cannot restore the authored table pose before passage");return;
     }
   const auto table=furnitureBody(world,fixture.table);
   if(!table) {arenaAbort("furniture preparation: table setup required");return;}
-  auto center=(table->localBounds[0]+table->localBounds[1])*.5f;table->transform.project(center);
-  bool found=false;Vec3 start;
-  for(unsigned i=0;i<16 && !found;++i) {
-    const float angle=float(i)*float(M_PI)/8.f;const Vec3 direction(std::cos(angle),0,std::sin(angle));
-    start=center+direction*300.f;
-    const auto floor=world.physic()->landRay(start+Vec3(0,100,0),500.f);
-    if(!floor.hasCol || floor.n.y<.8f)continue;
-    start.y=floor.v.y;
-    found=true;
-    for(float distance:{0.f,50.f,100.f}) {
-      const auto point=start-direction*distance;
-      const auto support=world.physic()->landRay(point+Vec3(0,100,0),200.f);
-      found&=support.hasCol && support.n.y>.8f && std::abs(support.v.y-start.y)<20.f;
+  bool found=false;Vec3 start,goal;
+  // Follow an ordinary supported lane alongside the complete authored table.
+  // The same source bounds select the route in compound and hull modes.
+  for(unsigned axis=0;axis<2 && !found;++axis)for(float side:{-1.f,1.f}) {
+    const auto low=table->localBounds[0],high=table->localBounds[1];
+    if(axis==0) {
+      const float z=side<0?low.z-70.f:high.z+70.f;
+      start=Vec3(low.x-100.f,low.y,z);goal=Vec3(high.x+100.f,low.y,z);
+      } else {
+      const float x=side<0?low.x-70.f:high.x+70.f;
+      start=Vec3(x,low.y,low.z-100.f);goal=Vec3(x,low.y,high.z+100.f);
       }
-    if(found)found=!world.physic()->ray(start+Vec3(0,100,0),start-direction*100.f+Vec3(0,100,0)).hasCol;
+    table->transform.project(start);table->transform.project(goal);
+    const auto direction=Vec3::normalize(Vec3(goal.x-start.x,0,goal.z-start.z));
+    const Vec3 across(-direction.z,0,direction.x);
+    found=true;float height=0;
+    for(unsigned i=0;i<=10 && found;++i)for(float lateral:{-30.f,0.f,30.f}) {
+      auto point=start+(goal-start)*(float(i)/10.f)+across*lateral;
+      const auto floor=world.physic()->landRay(point+Vec3(0,100,0),300.f);
+      if(!floor.hasCol || floor.n.y<.95f) {found=false;break;}
+      if(i==0 && lateral==0)height=floor.v.y;
+      if(i>0 && std::abs(floor.v.y-height)>10.f) {found=false;break;}
+      if(i==0 && lateral==0)start.y=floor.v.y;
+      if(i==10 && lateral==0)goal.y=floor.v.y;
+      }
+    for(float lateral:{-30.f,0.f,30.f})for(float y:{20.f,100.f,170.f})
+      if(found && world.physic()->ray(start+across*lateral+Vec3(0,y,0),goal+across*lateral+Vec3(0,y,0)).hasCol)found=false;
+    if(found)break;
     }
-  if(!found) {arenaAbort("furniture preparation: hero approach needs a supported native corridor");return;}
+  if(!found) {arenaAbort("furniture preparation: passage needs a supported native lane alongside the table");return;}
   player.clearAiQueue();player.stopWalking();player.clearSpeed();player.closeWeapon(true);
-  player.setPosition(start);player.setDirection(center-start);player.updateTransform();
-  fixture.walkStart=start;fixture.walkPrevious=start;fixture.walkMaxStep=0;
+  if(npc) {
+    player.setPosition(start+Vec3(0,0,450));player.updateTransform();
+    fixture.walker=world.addNpc(world.script().findSymbolIndex("BAU_904_BAUER"),start);
+    if(!fixture.walker) {arenaAbort("furniture preparation: passing NPC insertion failed");return;}
+    fixture.walker->clearAiQueue();fixture.walker->clearState(false);fixture.walker->setExternalControl(true);
+    fixture.walker->setDirection(goal-start);fixture.walker->updateTransform();fixture.walker->setWalkMode(WalkBit::WM_Walk);
+    fixture.walkDestination=WayPoint(goal,"FP_FURNITURE_PASSAGE");fixture.walkDestination.groundPos=goal;
+    fixture.walker->aiPush(AiQueue::aiGoToPoint(fixture.walkDestination));
+    } else {
+    player.setPosition(start);player.setDirection(goal-start);player.updateTransform();
+    }
+  fixture.walkStart=start;fixture.walkGoal=goal;fixture.walkDirection=Vec3::normalize(Vec3(goal.x-start.x,0,goal.z-start.z));
+  fixture.walkPrevious=start;fixture.walkMaxStep=0;fixture.walkMaxCrossTrack=0;fixture.walkArrived=0;
   fixture.walkStartTick=world.tickCount();fixture.walking=true;
-  event("furniture_parts_walk_setup","\"start_cm\":"+ragdollVector(start)+",\"table_center_cm\":"+ragdollVector(center));
+  event("furniture_parts_walk_setup","\"actor\":"+jsonStr(npc?"npc":"hero")+",\"start_cm\":"+ragdollVector(start)+
+    ",\"goal_cm\":"+ragdollVector(goal)+",\"route_length_cm\":"+ragdollNumber((goal-start).length()));
   }
 
 void furnitureWalkReport(World& world,Npc& player) {
   auto& fixture=bench.furnitureParts;fixture.walking=false;
-  const auto delta=player.position()-fixture.walkStart;
+  const auto end=fixture.walker?fixture.walker->position():player.position();
+  const auto delta=end-fixture.walkStart;
+  const bool pass=fixture.walkArrived>0 && fixture.walkMaxCrossTrack<35.f && fixture.walkMaxStep<20.f;
   event("furniture_parts_walk_result","\"enabled\":"+std::string(world.physic()->furniturePartsEnabled()?"true":"false")+
-    ",\"elapsed_ms\":"+std::to_string(world.tickCount()-fixture.walkStartTick)+",\"start_cm\":"+ragdollVector(fixture.walkStart)+
-    ",\"end_cm\":"+ragdollVector(player.position())+",\"travel_cm\":"+ragdollNumber(std::hypot(delta.x,delta.z))+
-    ",\"max_vertical_step_cm\":"+ragdollNumber(fixture.walkMaxStep)+
-    ",\"character_virtual\":"+(Gothic::physicsFlags().characterVirtual?"true":"false"));
+    ",\"actor\":"+jsonStr(fixture.walker?"npc":"hero")+",\"arrived\":"+(fixture.walkArrived?"true":"false")+
+    ",\"elapsed_ms\":"+std::to_string((fixture.walkArrived?fixture.walkArrived:world.tickCount())-fixture.walkStartTick)+
+    ",\"window_ms\":"+std::to_string(world.tickCount()-fixture.walkStartTick)+",\"start_cm\":"+ragdollVector(fixture.walkStart)+
+    ",\"goal_cm\":"+ragdollVector(fixture.walkGoal)+",\"end_cm\":"+ragdollVector(end)+",\"travel_cm\":"+ragdollNumber(std::hypot(delta.x,delta.z))+
+    ",\"max_cross_track_cm\":"+ragdollNumber(fixture.walkMaxCrossTrack)+",\"max_vertical_step_cm\":"+ragdollNumber(fixture.walkMaxStep)+
+    ",\"character_virtual\":"+(Gothic::physicsFlags().characterVirtual?"true":"false")+",\"pass\":"+(pass?"true":"false"));
+  if(fixture.walker) {world.removeNpc(*fixture.walker);fixture.walker=nullptr;}
+  if(!pass)arenaAbort("furniture passage failed to arrive without a stall or vertical jump");
   }
 
 bool destructionSupported(World& world,std::string_view visual,const Vec3& at,Vec3& support,Vec3& failed);
@@ -4315,7 +4378,7 @@ void furniturePerformance(World& world,Npc& player) {
     }
   fixture.loadSamples.clear();fixture.loadSamples.reserve(720);fixture.loadMinimumActive=10;
   fixture.loadWarmUntil=world.tickCount()+2000;fixture.loadEnd=fixture.loadWarmUntil+10000;
-  fixture.loadLastNative=world.physic()->simulationStep();fixture.loadZeroFrames=0;fixture.loadPulse=0;fixture.loadRunning=true;
+  fixture.loadLastNative=world.physic()->simulationStep();fixture.loadZeroFrames=0;fixture.loadRunning=true;
   for(auto& body:fixture.loadBodies)body.addImpulse(Vec3(body.mass()*.3f,0,0));
   event("furniture_parts_performance_setup","\"world\":"+jsonStr(world.name())+",\"waypoint\":"+jsonStr(waypoint)+
     ",\"furniture\":10,\"decomposed_furniture\":"+std::to_string(fixture.loadDecomposed)+
@@ -4339,9 +4402,11 @@ void furniturePerformanceSample(World& world,uint64_t dt) {
     else ++fixture.loadZeroFrames;
     }
   if(world.tickCount()>=fixture.loadEnd)return;
-  // Wake for the next ordinary world update; sample the completed step first.
-  const float speed=fixture.loadPulse++%2==0?.3f:-.3f;
-  for(auto& body:fixture.loadBodies)body.addImpulse(Vec3(body.mass()*speed,0,0));
+  // Maintain a bounded ten-centimetre back-and-forth motion. Reversing the
+  // impulse every frame can leave every body below Jolt's sleep threshold.
+  const float speed=(world.tickCount()/500)%2==0?.2f:-.2f;
+  for(auto& body:fixture.loadBodies)
+    body.addImpulse(Vec3(body.mass()*(speed-body.velocity().x*.01f),0,0));
   }
 
 void furniturePerformanceReport(World& world) {
@@ -12703,6 +12768,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="furniture-parts" && a.size()==2 && a[1]=="ragdoll") furnitureRagdoll(w,pl);
   else if(c=="furniture-parts" && a.size()==2 && a[1]=="ragdoll-report") furnitureRagdollReport(w);
   else if(c=="furniture-parts" && a.size()==2 && a[1]=="walk") furnitureWalk(w,pl);
+  else if(c=="furniture-parts" && a.size()==2 && a[1]=="npc-walk") furnitureWalk(w,pl,true);
   else if(c=="furniture-parts" && a.size()==2 && a[1]=="walk-report") furnitureWalkReport(w,pl);
   else if(c=="furniture-parts" && a.size()==2 && a[1]=="performance") furniturePerformance(w,pl);
   else if(c=="furniture-parts" && a.size()==2 && a[1]=="performance-report") furniturePerformanceReport(w);
@@ -18398,10 +18464,26 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
         (bench.destructionFarmNpc->position()-bench.destructionFarmNpcGoal->pos).length());
     }
   if(bench.furnitureParts.walking) {
-    bench.furnitureParts.walkMaxStep=std::max(bench.furnitureParts.walkMaxStep,
-      std::abs(player->position().y-bench.furnitureParts.walkPrevious.y));
-    bench.furnitureParts.walkPrevious=player->position();
+    auto& fixture=bench.furnitureParts;
+    auto& actor=fixture.walker?*fixture.walker:*player;
+    const auto position=actor.position(),delta=position-fixture.walkStart;
+    fixture.walkMaxStep=std::max(fixture.walkMaxStep,std::abs(position.y-fixture.walkPrevious.y));
+    fixture.walkPrevious=position;
+    fixture.walkMaxCrossTrack=std::max(fixture.walkMaxCrossTrack,
+      std::abs(delta.x*fixture.walkDirection.z-delta.z*fixture.walkDirection.x));
+    const float progress=Vec3::dotProduct(delta,fixture.walkDirection);
+    const float length=Vec3::dotProduct(fixture.walkGoal-fixture.walkStart,fixture.walkDirection);
+    if(!fixture.walkArrived && progress>=length-25.f) {
+      fixture.walkArrived=world->tickCount();
+      if(!fixture.walker) {
+        release(ctrl,KeyCodec::Forward);
+        bench.holds.erase(std::remove_if(bench.holds.begin(),bench.holds.end(),[](const Hold& hold){return hold.a==KeyCodec::Forward;}),bench.holds.end());
+        player->stopWalking();player->clearSpeed();
+        }
+      }
+    if(!fixture.walker && !fixture.walkArrived)player->setDirection(fixture.walkDirection);
     }
+
   movableFields(*world);
   ownMeshFields(*world,*player);
   ownMeshChestFields(*world,*player);

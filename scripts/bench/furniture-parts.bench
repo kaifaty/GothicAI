@@ -15,9 +15,12 @@ furniture-parts clear-items
 furniture-parts ragdoll
 wait 5000
 furniture-parts ragdoll-report
+furniture-parts npc-walk
+wait 6000
+furniture-parts walk-report
 furniture-parts walk
-hold forward 4000
-wait 4000
+hold forward 6000
+wait 6000
 release all
 furniture-parts walk-report
 furniture-parts shelf-item
