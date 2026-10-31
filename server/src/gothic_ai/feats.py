@@ -265,11 +265,11 @@ def fame_witnesses(feat: Fact, entries: list[tuple[int, Fact]]) -> list[str]:
             known.update(npc.upper() for npc in ([people] if isinstance(people, str) else people))
 
     occasions = (
-        [fact for seq, fact in entries if seq in trigger["evidence"]]
-        if trigger["fact"] == "challenge_met" else [trigger]
+        [fact for seq, fact in entries if seq in trigger.get("evidence", ())]
+        if trigger.get("fact") == "challenge_met" else [trigger] if trigger else []
     )
     for fact in occasions:
-        add(fact, FAME_FIELDS[fact["fact"]])
+        add(fact, FAME_FIELDS.get(fact["fact"], ()))  # an unlisted kind names no observers
         if fact["fact"] == "crime" and fact.get("kind") == "attack":
             add(fact, ("victim",))
     for fact in evidence:
