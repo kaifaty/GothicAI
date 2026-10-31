@@ -24,4 +24,4 @@ if __name__ == "__main__":
         cols = d.reshape(d.shape[0], -1, 8).mean(axis=(0, 1))
         name = f"{Path(a).parent.name}/{Path(a).stem} vs {Path(b).parent.name}"
         print(f"{name[-58:]:58s} {d.mean():6.3f}  " + " ".join(f"{r:5.3f}" for r in rows)
-              + f"   {cols.max() / max(cols.min(), 1e-9):4.2f}")
+              + (f"   {cols.max() / cols.min():4.2f}" if cols.min() > 0 else "      -"))
