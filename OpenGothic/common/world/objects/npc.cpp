@@ -54,6 +54,14 @@ namespace {
 
 constexpr float meleeMagnetTorsoGapCm = 18.f;
 
+std::string meleeStaminaIdentity(const Pose& pose, uint64_t now) {
+  auto result = std::to_string(pose.comboLength());
+  for(const auto& layer:pose.combatLayers(now))
+    result += "|" + layer.sequence->name + ":" + std::to_string(layer.origin) + ":" +
+              std::to_string(layer.combination);
+  return result;
+  }
+
 std::string meleeShadowPoint(const Vec3& p) {
   std::ostringstream out;
   out.imbue(std::locale::classic());
@@ -3156,7 +3164,7 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
   if(costsStamina && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,
                                         !isPlayer() && !BodyController::owns(*this)))
     return nullptr;
-  const auto staminaBefore = costsStamina ? combatPoseIdentity() : std::string();
+  const auto staminaBefore = costsStamina ? meleeStaminaIdentity(visual.pose(),owner.tickCount()) : std::string();
   if(isPlayer() && (st==WeaponState::Bow || st==WeaponState::CBow) && !hasManualAim()) {
     const auto bs = bodyStateMasked() & BS_MAX;
     if(bs!=BS_AIMNEAR && bs!=BS_AIMFAR) {
@@ -3175,7 +3183,7 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
       }
     }
   const auto result = visual.startAnimAndGet(*this,a,comb,st,wlk);
-  if(result!=nullptr && costsStamina && staminaBefore!=combatPoseIdentity())
+  if(result!=nullptr && costsStamina && staminaBefore!=meleeStaminaIdentity(visual.pose(),owner.tickCount()))
     spendStamina("jumpback",MeleeStamina::JumpBackCost);
   if(trace)
     traceCombatAttempt(a,result!=nullptr,before,"set_anim");
@@ -7349,11 +7357,11 @@ bool Npc::doAttack(Anim anim, BodyState bs) {
     return false;
   // Pose accepts a repeated request for an already playing layer too. Only a new
   // layer or combo segment pays, never a repeated input within the same swing.
-  const auto staminaBefore = costsStamina ? combatPoseIdentity() : std::string();
+  const auto staminaBefore = costsStamina ? meleeStaminaIdentity(visual.pose(),owner.tickCount()) : std::string();
   const bool trace = TestBench::bodyTracing() && currentTarget!=nullptr;
   const auto before = trace ? combatPoseIdentity() : std::string();
   const auto result = [&](bool accepted) {
-    if(accepted && costsStamina && staminaBefore!=combatPoseIdentity())
+    if(accepted && costsStamina && staminaBefore!=meleeStaminaIdentity(visual.pose(),owner.tickCount()))
       spendStamina("attack",meleeAttackCost());
     BodyObservations::noteEvent(*this,currentTarget,accepted ? "animation_accepted" : "animation_rejected",owner.tickCount());
     if(trace)
