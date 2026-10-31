@@ -144,13 +144,12 @@ def probe_groups(worker, cases, output, seed):
 
 
 def qualify(args):
-    from nav_live import check_space, models, phase_deadline, report, smoke
+    from nav_live import check_space, phase_deadline, report, teacher_outcome, teachers
     suite = read_json(args.suite)
     inputs = suite['inputs']
     for name in ('save', 'roads', 'familiar', 'links'):
         if not Path(inputs[name]).is_file():
             raise ValueError(f'Missing frozen input {name}: {inputs[name]}')
-    policies, bc4 = models(args.weights, suite)
     check_space(args.output)
     preparation = args.output / 'preparation'
     if not read_json(preparation / 'complete.json').get('complete'):
@@ -175,8 +174,17 @@ def qualify(args):
             case = nearest_routine(case, actors, points)
         if case['number'] == 6:
             choices = water_pool(case, points, water_excluded, forbidden_names)
-            if not choices:
-                raise ValueError('No isolated harbour coast candidates')
+        elif case['number'] == 4:
+            validation = rows(root / 'detour-val.jsonl')
+            if any(row['split'] != 'validation' for row in validation):
+                raise ValueError('Detour alternatives must contain validation places only')
+            ratio = lambda row: row['geometry']['length_cm'] / math.dist(
+                row['geometry']['start_cm'], row['geometry']['goal_cm'])
+            validation.sort(key=lambda row: (-ratio(row), row['id']))
+            choices = [dict(case, start=row['start'], goal=row['goal'], goal_kind=row['goal_kind'],
+                probe_label=case['id'] + '--' + row['id'],
+                source=dict(dataset='detour-val', id=row['id'], place_id=row.get('place_id'), detour_ratio=ratio(row),
+                            file=str(root / 'detour-val.jsonl'))) for row in validation]
         else:
             alternatives = case.get('qualification_candidates') or [{}]
             choices = [dict(case, **alternative, probe_label=case['id'] + '--' + alternative.get('label', 'primary'))
@@ -199,10 +207,14 @@ def qualify(args):
         worker.close()
     failures = []
     for case in cases:
-        acceptable = [choice for choice in candidates if choice['id'] == case['id']
-                      and qualify_probe(case['number'], measured[choice['probe_label']]['probe'])]
+        choices = [choice for choice in candidates if choice['id'] == case['id']]
+        acceptable = [choice for choice in choices
+                      if qualify_probe(case['number'], measured[choice['probe_label']]['probe'])]
         if not acceptable:
-            failures.append(dict(id=case['id'], reason='no qualifying native geometry', native_facts=str(output)))
+            probes = [measured[choice['probe_label']]['probe'] for choice in choices]
+            failures.append(dict(id=case['id'], reason='no qualifying native geometry', native_facts=str(output),
+                candidates_probed=len(probes), complete_detours=sum(probe['detour_complete'] for probe in probes),
+                supported_routes=sum(supported_route(probe) for probe in probes)))
             continue
         if case['number'] == 6:
             acceptable.sort(key=lambda choice: (measured[choice['probe_label']]['probe']['detour_length_cm'], choice['probe_label']))
@@ -234,7 +246,7 @@ def qualify(args):
             scenario['time'] = read_json(preparation / 'market-census.json')['peak']['time']
     semantic = [case['id'] for case in selected.values() if case['number'] == 4
                 and not case['qualification_evidence']['rock_semantics_confirmed']]
-    frozen['qualification_status'] = 'partial' if failures else 'geometry-qualified'
+    frozen['qualification_status'] = 'partial'
     frozen['qualification_source'] = str(output)
     frozen['unresolved_geometry'] = failures
     frozen['semantic_confirmation_required'] = semantic
@@ -247,16 +259,30 @@ def qualify(args):
         inputs=dict(inputs, cache=str(args.runtime / 'navmesh-cache')),
         input_sha256={name: sha256(inputs[name]) for name in ('save', 'roads', 'familiar', 'links')})
     frozen_cases = suite_cases(frozen)
+    expected_learner_runs = (sum(len(case['seeds']) for case in frozen_cases) * len(args.weights.split(','))
+                             + sum(2 * len(case['seeds']) for case in frozen_cases if case['number'] == 10))
+    live_args.expected_learner_runs = expected_learner_runs
     accepted = [case for case in frozen_cases if case['id'] in selected]
-    unresolved = [*failures, *(dict(id=identifier, reason='rock semantics require confirmation') for identifier in semantic)]
-    complete = smoke(live_args, accepted, policies, unresolved)
-    report(live_args, frozen_cases, policies, bc4)
-    status = read_json(args.output / 'smoke.json')
+    teacher_failures = teachers(live_args, accepted)
+    outcomes = [teacher_outcome(live_args, case) for case in accepted]
+    passed = [row['id'] for row in outcomes if row['passed']]
+    complete = not failures and not teacher_failures and not semantic and len(passed) == len(frozen_cases)
+    frozen['qualification_status'] = 'geometry-qualified' if complete else 'partial'
+    frozen['teacher_qualification'] = dict(complete=not failures and not teacher_failures,
+        binary_sha256=sha256(live_args.binary), required_placements=len(frozen_cases),
+        passed_placements=len(passed), placements=outcomes)
+    write_json(destination, frozen)
+    report(live_args, frozen_cases, [], None)
+    unresolved = [*failures, *teacher_failures,
+                  *(dict(id=identifier, reason='rock semantics require confirmation') for identifier in semantic)]
     write_json(output / 'result.json', dict(geometry_qualified=not failures,
-        accepted=len(selected), native_probe_count=len(measured), baseline_runs=0,
-        teacher_placements_passed=status.get('teacher_placements_passed', []), unresolved=status.get('unresolved', []),
+        accepted=len(selected), native_probe_count=len(measured), baseline_runs=0, expected_baseline_runs=expected_learner_runs,
+        teacher_placements_passed=passed, teacher_placements=outcomes, unresolved=unresolved,
         complete=complete))
-    return 0 if complete else 2
+    print(json.dumps(dict(event='teacher_qualification', required=len(frozen_cases), passed=len(passed),
+        geometry_rejected=len(failures), teacher_rejected=len(teacher_failures), complete=complete,
+        suite=str(destination))), flush=True)
+    return 0
 
 
 def main(argv=None):

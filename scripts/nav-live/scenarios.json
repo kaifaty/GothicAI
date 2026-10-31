@@ -35,10 +35,10 @@
       "goal_kind": "point",
       "time": [12, 0],
       "limit_ms": 90000,
-      "source": "PR574 entry-on-trace.jsonl routine_return_begin at 971d9cd7ad96f92d07e708b490e818f1e63e2855; only NPC and coordinates copied",
+      "source": "PR574 reports/physics/2026-10-30-routine-return/entry-on-trace.jsonl routine_return_begin at 971d9cd7ad96f92d07e708b490e818f1e63e2855; forest_tree, farm_edge, forest_pine: only NPC and coordinates copied; unsafe farm_field capsule rejected",
       "variants": [
         {"id": "forest-tree", "npc": "MIL_310_STADTWACHE", "start": "cm:6516.90967,511.533173,-9258.83594", "goal": "NW_CITY_ENTRANCE_GUARD_02", "off_waynet_distance_cm": 1165.32324, "seeds": [18102027]},
-        {"id": "farm-field", "npc": "BAU_952_VINO", "start": "cm:9044.66602,1095.50269,-12661.0635", "goal": "NW_FARM1_FIELD_04", "off_waynet_distance_cm": 1121.83862, "seeds": [18102028]},
+        {"id": "farm-edge", "npc": "BAU_950_LOBART", "start": "cm:13440.7822,1584.53284,-21502.2363", "goal": "NW_FARM1_LOBART", "off_waynet_distance_cm": 1201.09131, "seeds": [18102028]},
         {"id": "forest-pine", "npc": "VLK_4303_ADDON_EROL", "start": "cm:35946.6836,3958.80811,1981.57922", "goal": "NW_TAVERN_TO_FOREST_03", "off_waynet_distance_cm": 1613.30115, "seeds": [18102029]}
       ],
       "stranger": false
@@ -70,21 +70,7 @@
       "goal_kind": "object",
       "time": [12, 0],
       "limit_ms": 180000,
-      "source": "detour-val detour-9b91a149919a96a0, XARDAS_TOWER_SECRET; Detour/direct=9.703; v3b journey passed; terrain blocker still requires native qualification",
-      "qualification_candidates": [
-        {"label": "detour-9b91a149919a96a0", "start": "cm:24427.3535,2875.72144,-13815.457", "goal": "cm:23557,1049,-10265", "goal_kind": "object", "source": "detour-val detour-9b91a149919a96a0, XARDAS_TOWER_SECRET; historical v3b success; ratio=9.702861"},
-        {"label": "detour-1ccaca897e6d6685", "start": "cm:34256.6836,4187.22314,-30628.791", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-1ccaca897e6d6685, PASS; historical v3b success; ratio=9.343774"},
-        {"label": "detour-83e99961f472018e", "start": "cm:34014.0195,4275.28516,-33048.793", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-83e99961f472018e, PASS; historical v3b success; ratio=8.46397"},
-        {"label": "detour-b01bc3c831fdef04", "start": "cm:34184.0156,4233.03076,-30285.459", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-b01bc3c831fdef04, PASS; historical v3b success; ratio=7.513052"},
-        {"label": "detour-e8df940479f47db1", "start": "cm:32720.6875,4759.20166,-32415.457", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-e8df940479f47db1, PASS; historical v3b success; ratio=6.488767"},
-        {"label": "detour-72f31f464b4b545d", "start": "cm:35360.6836,4167.15625,-31604.791", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-72f31f464b4b545d, PASS; historical v3b success; ratio=6.459866"},
-        {"label": "detour-6b86265ed3346c13", "start": "cm:32814.0195,4813.17432,-32655.457", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-6b86265ed3346c13, PASS; historical v3b success; ratio=6.125241"},
-        {"label": "detour-3ebf9ab42af2d1e5", "start": "cm:35460.6836,4208.646,-31935.459", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-3ebf9ab42af2d1e5, PASS; historical v3b success; ratio=5.881632"},
-        {"label": "detour-3595fbfd82c5d092", "start": "cm:35474.0156,4155.55371,-31082.123", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-3595fbfd82c5d092, PASS; historical v3b success; ratio=5.826246"},
-        {"label": "detour-e8a042f30b5b1c87", "start": "cm:33514.0195,4628.0459,-33405.457", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-e8a042f30b5b1c87, PASS; historical v3b success; ratio=5.746319"},
-        {"label": "detour-b3510bdd2c03114e", "start": "cm:35407.3516,4171.38379,-30715.457", "goal": "NW_PASS_08", "goal_kind": "object", "source": "detour-val detour-b3510bdd2c03114e, PASS; historical v3b success; ratio=5.602077"},
-        {"label": "detour-50c7a28513a9b1f5", "start": "NW_CITY_UPTOWN_PATH_13", "goal": "FP_STAND_WEAPON_03", "goal_kind": "point", "source": "detour-val detour-50c7a28513a9b1f5, None; historical v3b success; ratio=5.519385"}
-      ],
+      "source": "All 121 detour-val metadata entries, ordered by decreasing Detour/direct; select highest native-qualified visible terrain blocker, then require v3b; no test episodes",
       "stranger": false
     },
     {
@@ -118,14 +104,14 @@
       "id": "07-cliff-trail", "number": 7, "name": "Trail above the cliff",
       "training_eligible": false, "split": "validation", "npc": "BAU_982_GRIMBALD",
       "start": "cm:50217.207,10650.5049,41427.4297",
-      "goal": "cm:50160.6875,10614.0605,40771.207",
+      "goal": "cm:50160.6875,10587.9795,40771.207",
       "goal_kind": "point",
       "time": [12, 0],
       "limit_ms": 60000,
-      "source": "Safety cliff-bridge-201-back200, link1230208767; new goal on the upper part of its measured Detour corridor, before the descending final leg; physical edge and teacher qualification pending",
+      "source": "Safety cliff-bridge-201-back200, link1230208767; new upper-corridor endpoint before descending final leg; goal Y is measured physical floor10587.9795cm from nav-live native probe, replacing Recast Y10614.0605cm; same XZ",
       "qualification_candidates": [
-        {"label": "upper-trail", "start": "cm:50217.207,10650.5049,41427.4297", "goal": "cm:50160.6875,10614.0605,40771.207"},
-        {"label": "upper-trail-back100", "start": "cm:50286.1953,10628.8691,41355.0391", "goal": "cm:50160.6875,10614.0605,40771.207"}
+        {"label": "upper-trail", "start": "cm:50217.207,10650.5049,41427.4297", "goal": "cm:50160.6875,10587.9795,40771.207"},
+        {"label": "upper-trail-back100", "start": "cm:50286.1953,10628.8691,41355.0391", "goal": "cm:50160.6875,10587.9795,40771.207"}
       ],
       "stranger": false
     },

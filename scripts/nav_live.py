@@ -147,9 +147,10 @@ def setup_rejection(directory):
         episode = read_json(path)
     except (OSError, ValueError):
         return None
-    if (episode.get('setup_rejected') is True and episode.get('success') is False
+    if ((episode.get('setup_rejected') is True or episode.get('failure') == 'dagger_start_not_supported')
+            and episode.get('success') is False
             and episode.get('elapsed_ms') == 0 and episode.get('decisions') == 0 and episode.get('failure')):
-        return episode
+        return dict(episode, setup_rejected=True)
     return None
 
 
@@ -182,13 +183,13 @@ def commands(case, model, seed, inputs, recorded=True):
               f"navdemos live {'on' if recorded else 'off'}",
               f"navdemos live-target {'player' if case.get('target') == 'PC_HERO' else 'npc'}",
               f"navdemos live-guide {'player' if case.get('live_guide') == 'player' else 'off'}"]
-    result.extend(case.get('prepare_commands', []))
     # Keep native routines alive. The observer starts beside the actor so normal AI
     # stays active through the market; the navigation stand owns only this actor.
     if case['start'].startswith('cm:'):
         result.append('goto pos ' + case['start'][3:].replace(',', ' '))
     else:
         result.append(f"goto {case['start']}")
+    result.extend(case.get('prepare_commands', []))
     result += [f"watch {case['npc']}", 'cam follow 650 260 90', 'overlay off']
     if recorded:
         result.append('rec source')
@@ -284,22 +285,30 @@ def run_episode(args, case, model, seed, directory, teacher=None, recorded=True)
     return read_json(directory / 'episode.json')
 
 
+def teacher_outcome(args, case):
+    directory = teacher_directory(args, case)
+    episode = setup_rejection(directory) or read_json(directory / 'episode.json')
+    summary = {} if episode.get('setup_rejected') else read_json(directory / 'summary.json')
+    deep_water = summary.get('deep_water_entries') not in (0, None)
+    unsafe_cliff = case['number'] == 7 and summary.get('falls') != 0
+    passed = bool(episode.get('success')) and not deep_water and not unsafe_cliff
+    failure = episode.get('failure') or ('teacher_entered_deep_water' if deep_water else
+        'unsafe_cliff_outcome' if unsafe_cliff else 'teacher_did_not_arrive' if not passed else None)
+    return dict(id=case['id'], passed=passed, elapsed_ms=episode.get('elapsed_ms'), failure=failure,
+        decisions=episode.get('decisions'), setup_rejected=bool(episode.get('setup_rejected')),
+        deep_water_entries=summary.get('deep_water_entries'), falls=summary.get('falls'), output=str(directory))
+
+
 def teachers(args, cases):
     failures = []
     # Qualify the newly selected coast before spending time on the fixed places.
     for case in sorted(cases, key=lambda row: (row['number'] != 6, row['number'], row['id'])):
         directory = teacher_directory(args, case)
-        episode = run_episode(args, case, None, case['seeds'][0], directory)
-        summary = {} if episode.get('setup_rejected') else read_json(directory / 'summary.json')
-        unsafe = summary.get('deep_water_entries') not in (0, None) or (case['number'] == 7 and summary.get('falls') != 0)
-        if not episode.get('success') or unsafe:
-            failure = dict(
-                id=case['id'], elapsed_ms=episode.get('elapsed_ms'), failure=episode.get('failure'),
-                decisions=episode.get('decisions'), setup_rejected=bool(episode.get('setup_rejected')),
-                deep_water_entries=summary.get('deep_water_entries'), falls=summary.get('falls'),
-                output=str(directory))
-            failures.append(failure)
-            print(json.dumps(dict(event='teacher_place_rejected', **failure)), flush=True)
+        run_episode(args, case, None, case['seeds'][0], directory)
+        outcome = teacher_outcome(args, case)
+        if not outcome['passed']:
+            failures.append(outcome)
+        print(json.dumps(dict(event='teacher_place_passed' if outcome['passed'] else 'teacher_place_rejected', **outcome)), flush=True)
     return failures
 
 
@@ -341,7 +350,7 @@ def runs(cases, policies, bc4):
         for model in policies:
             for seed in case['seeds']:
                 yield case, model, seed
-        if case['number'] == 10:
+        if case['number'] == 10 and bc4 is not None:
             for stranger in (False, True):
                 controlled = dict(case, stranger=stranger, id=case['id'] + ('-stranger' if stranger else '-local'))
                 for seed in case['seeds']:
@@ -363,12 +372,15 @@ def completed_run(args, case, model, seed):
 
 def report(args, cases, policies, bc4):
     all_runs = list(runs(cases, policies, bc4))
-    columns = [model['name'] for model in policies] + ['bc4 local', 'bc4 stranger']
+    columns = [model['name'] for model in policies] + (['bc4 local', 'bc4 stranger'] if bc4 is not None else [])
     lines = ['# Navigation live suite — ' + args.output.name, '',
              'Facts from the fixed evaluation-only suite. Seeds and places are never training inputs.', '',
-             '| Scenario | ' + ' | '.join(columns) + ' |',
-             '|---|' + '---|' * len(columns)]
-    complete = True
+             '| Scenario | v3b |' + (' ' + ' | '.join(columns) + ' |' if columns else ''),
+             '|---|---|' + '---|' * len(columns)]
+    suite = read_json(args.suite)
+    unresolved = {row['id']: row for row in suite.get('unresolved_geometry', [])}
+    teacher_passed = 0
+    complete = bool(policies)
     for number in range(1, 11):
         cells = []
         scenario = next(case for case in cases if case['number'] == number)
@@ -405,17 +417,39 @@ def report(args, cases, policies, bc4):
             cells.append(f'{sum(row[0] for row in rows)}/{len(selected)} arrived; ' + '; '.join(links))
         references = []
         for case in (item for item in cases if item['number'] == number):
+            failure = unresolved.get(case['id'])
+            if failure:
+                counts = (f"; {failure['candidates_probed']} candidates, {failure['supported_routes']} supported routes"
+                          if 'candidates_probed' in failure else '')
+                references.append(f"{case['id']}: unqualified; {failure['reason']}{counts}")
+                continue
             directory = teacher_directory(args, case)
-            if processed(directory):
+            rejected = setup_rejection(directory)
+            if rejected or (processed(directory) and raw_complete(directory)):
+                outcome = teacher_outcome(args, case)
+                teacher_passed += int(outcome['passed'])
                 relative = directory.relative_to(args.output).as_posix()
-                references.append(f"[teacher {case['id']}]({relative}/topdown.mp4), [actions]({relative}/actions.txt), "
-                                  f"[Detour]({relative}/live-format.json)")
+                facts = (f"{case['id']}: {'passed' if outcome['passed'] else 'unqualified'}; "
+                         f"{outcome['elapsed_ms'] / 1000:.3f}s, {outcome['decisions']} decisions; "
+                         f"deep water {outcome['deep_water_entries']}, falls {outcome['falls']}")
+                if outcome['failure']:
+                    facts += '; ' + outcome['failure']
+                if rejected:
+                    references.append(facts + f"; [episode]({relative}/episode.json), [diagnostics]({relative}/live-guide-start.json)")
+                else:
+                    references.append(facts + f"; [video]({relative}/source.mp4), [topdown]({relative}/topdown.mp4), "
+                        f"[timeline]({relative}/timeline.png), [summary]({relative}/summary.json), "
+                        f"[actions]({relative}/actions.txt), [Detour]({relative}/live-format.json)")
             else:
-                references.append(f"teacher {case['id']}: not recorded")
-        lines.append(f"| {number}. {scenario['name']}<br>" + '; '.join(references) + ' | ' + ' | '.join(cells) + ' |')
+                references.append(f"{case['id']}: not recorded")
+        lines.append(f"| {number}. {scenario['name']} | " + '<br>'.join(references) + ' |'
+                     + (' ' + ' | '.join(cells) + ' |' if cells else ''))
     lines += ['', 'Models appear in the requested comparison order; each previous model is in the adjacent column.', '']
+    lines += [f"Qualification status: {suite.get('qualification_status', 'pending')}.", '']
+    if suite.get('semantic_confirmation_required'):
+        lines += ['Scene type unconfirmed: ' + ', '.join(suite['semantic_confirmation_required']) + '.', '']
     gate = args.output / 'smoke.json'
-    if gate.is_file():
+    if gate.is_file() and read_json(gate).get('suite_sha256') == sha256(args.suite):
         comparison = read_json(gate)
         lines += [comparison['result'], '']
         for relative in comparison.get('recorded_runs', []):
@@ -423,7 +457,8 @@ def report(args, cases, policies, bc4):
                       f"[timeline]({relative}/timeline.png), [summary]({relative}/summary.json).", '']
         if comparison.get('unresolved'):
             lines += ['Unresolved placements: ' + ', '.join(value['id'] for value in comparison['unresolved']) + '.', '']
-    lines += [f'Completed runs: {sum(completed_run(args, c, m, s) for c, m, s in all_runs)}/{len(all_runs)}.',
+    lines += [f'Teacher placements passed: {teacher_passed}/{len(cases)}.',
+              f'Completed learner runs: {sum(completed_run(args, c, m, s) for c, m, s in all_runs)}/{len(all_runs) or getattr(args, "expected_learner_runs", 0)}.',
               f'Storage: {check_space(args.output)} bytes; limit {MAX_BYTES} bytes.', '']
     temporary = args.output / f'README.md.{os.getpid()}.tmp'
     temporary.write_text('\n'.join(lines))
@@ -452,7 +487,7 @@ def main(argv=None):
     suite = read_json(args.suite)
     cases = suite_cases(suite)
     if args.stage in ('smoke', 'baseline') and suite.get('qualification_status') != 'geometry-qualified':
-        raise ValueError('Freeze geometry-qualified places before smoke or baseline')
+        raise ValueError('Qualify all fixed places with geometry and v3b before smoke or baseline')
     if args.stage == 'baseline' and suite.get('semantic_confirmation_required'):
         raise ValueError('Confirm the scene type before baseline: ' + ', '.join(suite['semantic_confirmation_required']))
     args.inputs = dict(suite['inputs'], cache=str(args.runtime / 'navmesh-cache'))
@@ -461,6 +496,17 @@ def main(argv=None):
             raise ValueError(f'Missing frozen input {name}: {args.inputs[name]}')
     args.input_sha256 = {name: sha256(args.inputs[name]) for name in ('save', 'roads', 'familiar', 'links')}
     check_space(args.output)
+    if args.stage in ('smoke', 'baseline'):
+        qualification = suite.get('teacher_qualification', {})
+        passed = {row['id']: row for row in qualification.get('placements', []) if row.get('passed')}
+        if (not qualification.get('complete') or qualification.get('binary_sha256') != sha256(args.binary)
+                or set(passed) != {case['id'] for case in cases}):
+            raise ValueError('Complete v3b qualification on every fixed placement with this binary first')
+        for case in cases:
+            directory = teacher_directory(args, case)
+            if (passed[case['id']]['output'] != str(directory) or not raw_complete(directory) or not processed(directory)
+                    or not teacher_outcome(args, case)['passed']):
+                raise ValueError(f"Missing qualified v3b reference for current inputs: {case['id']}")
     if args.stage == 'teacher':
         case = next(row for row in cases if row['number'] == 1)
         rejected = {row['id'] for row in suite.get('unresolved_geometry', [])}

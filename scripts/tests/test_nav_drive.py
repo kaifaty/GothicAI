@@ -402,7 +402,9 @@ def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
         list(live.observation_frames(root, metadata))
 
 
-def test_live_setup_rejection_preserves_diagnostics_without_rendering(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure,explicit", [("live_setup_no_safe_observer_position", True),
+                                             ("dagger_start_not_supported", False)])
+def test_live_setup_rejection_preserves_diagnostics_without_rendering(tmp_path, monkeypatch, failure, explicit):
     import subprocess
     import time
 
@@ -418,8 +420,9 @@ def test_live_setup_rejection_preserves_diagnostics_without_rendering(tmp_path, 
                                                         links="links", cache="cache"),
                            deadline=time.monotonic() + 300)
     directory = live.teacher_directory(args, case)
-    rejected = dict(success=False, setup_rejected=True, failure="live_setup_no_safe_observer_position",
-                    elapsed_ms=0, decisions=0)
+    rejected = dict(success=False, failure=failure, elapsed_ms=0, decisions=0)
+    if explicit:
+        rejected['setup_rejected'] = True
     calls = []
 
     def run(command, **kwargs):
@@ -430,12 +433,100 @@ def test_live_setup_rejection_preserves_diagnostics_without_rendering(tmp_path, 
 
     monkeypatch.setattr(live, "check_space", lambda unused: 0)
     monkeypatch.setattr(live.subprocess, "run", run)
-    assert live.run_episode(args, case, None, case['seeds'][0], directory) == rejected
+    assert live.run_episode(args, case, None, case['seeds'][0], directory) == dict(rejected, setup_rejected=True)
     failures = live.teachers(args, [case])
     assert len(calls) == 1 and failures[0]['failure'] == rejected['failure']
     assert failures[0]['setup_rejected'] and failures[0]['decisions'] == 0
     assert (directory / "live-guide-start.json").read_text() == '{"candidates":[]}'
     assert not (directory / "summary.json").exists()
+
+
+def test_live_qualification_keeps_place_failures_and_never_runs_learners(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    import nav_live as live
+    import nav_live_prepare as prepare
+
+    inputs = {}
+    for name in ('save', 'roads', 'familiar', 'links'):
+        path = tmp_path / name
+        live.write_json(path, dict(points={}, places=[]))
+        inputs[name] = str(path)
+    live.write_json(tmp_path / 'v4-manifest.json', dict(split_policy=dict(object=dict(groups=dict(test=[])))))
+    (tmp_path / 'water-scenarios.jsonl').write_text('')
+    detour = dict(id='detour-val', split='validation', start='START', goal='GOAL', goal_kind='point',
+                  place_id='NEW', geometry=dict(length_cm=3000, start_cm=[0, 0, 0], goal_cm=[1000, 0, 0]))
+    point_detour = dict(detour, id='detour-point', geometry=dict(detour['geometry'], length_cm=4000))
+    point_detour.pop('place_id')
+    (tmp_path / 'detour-val.jsonl').write_text(json.dumps(detour) + '\n' + json.dumps(point_detour) + '\n')
+    scenarios = [dict(id=f'scene-{number}', number=number, name=f'Scene {number}', npc='NPC', start='START',
+        goal='GOAL', goal_kind='point', time=[10, 0], split='validation', source='fixture', training_eligible=False)
+        for number in range(1, 11)]
+    scenarios[1]['variants'] = [dict(id=str(index), seeds=[seed]) for index, seed in enumerate(live.ACTION_SEEDS)]
+    suite = tmp_path / 'suite.json'
+    live.write_json(suite, dict(schema_version=1, training_eligible=False, seeds=live.ACTION_SEEDS,
+                               inputs=inputs, scenarios=scenarios))
+    output, runtime = tmp_path / 'round', tmp_path / 'runtime'
+    live.write_json(output / 'preparation/complete.json', dict(complete=True))
+    geometry = output / 'preparation/geometry'
+    geometry.mkdir()
+    (geometry / 'points-v3.jsonl').write_text('\n'.join(json.dumps(dict(name=name, position_cm=point))
+        for name, point in (('START', [0, 0, 0]), ('GOAL', [1000, 0, 0]))))
+    (geometry / 'roads-events.jsonl').write_text(json.dumps(dict(kind='roads_actors',
+        actors=[dict(instance='NPC', routines=[dict(point='GOAL')])])) + '\n')
+    live.write_json(output / 'preparation/market-census.json', dict(peak=dict(time=[6, 59])))
+    for name in ('gothic-body-runner', 'Gothic2Notr'):
+        path = runtime / 'build/opengothic' / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(name)
+    support = dict(supported=True, dry=True, capsule_clear=True, ground_known=True, height_delta_cm=0, ground_snap_cm=0)
+    probe = dict(detour_complete=True, route_sample_count=2, route_deep_water_samples=0, route_no_floor_samples=0,
+        start_support=support, goal_support=support, detour_length_cm=3000, detour_ratio=3,
+        first_detour_goal_dot=-1, goal_visible=True, direct_deep_water_samples=1,
+        direct_obstruction=dict(hit=True, label='ROCK', material_name='stone', world_hit=True, normal_y=0),
+        direct_sensor=dict(kind='world'), route_min_edge_clearance_cm=300, route_edge_clearance_censored=True,
+        probe=dict(edge_drop_cm=100))
+    monkeypatch.setattr(prepare, 'test_pairs', lambda unused: set())
+    monkeypatch.setattr(prepare, 'water_pool', lambda base, *unused: [dict(base, probe_label='water')])
+    monkeypatch.setattr(prepare, 'Worker', lambda *unused: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(prepare, 'probe_groups', lambda worker, cases, *unused:
+        {case['probe_label']: dict(probe=probe, file='native.jsonl') for case in cases})
+    monkeypatch.setenv('GOTHIC_DIR', str(tmp_path))
+    monkeypatch.setattr(live, 'check_space', lambda unused: 0)
+    monkeypatch.setattr(live, 'raw_complete', lambda directory: (directory / 'episode.json').is_file())
+    monkeypatch.setattr(live, 'processed', lambda directory: (directory / 'summary.json').is_file())
+    calls = []
+
+    def episode(args, case, model, seed, directory):
+        assert model is None
+        calls.append(case['id'])
+        live.write_json(directory / 'episode.json', dict(success=case['number'] != 5, elapsed_ms=1000, decisions=10,
+                                                       failure='timeout' if case['number'] == 5 else None))
+        live.write_json(directory / 'summary.json', dict(schema=1, deep_water_entries=0, falls=0))
+
+    monkeypatch.setattr(live, 'run_episode', episode)
+    args = SimpleNamespace(suite=suite, output=output, runtime=runtime, weights='missing-HD,missing-it35')
+    assert prepare.qualify(args) == 0
+    frozen = live.read_json(output / 'qualified-suite.json')
+    result = live.read_json(next((output / 'qualification').glob('*/result.json')))
+    assert len(calls) == 11 and 'scene-7' not in calls and 'scene-10' in calls
+    assert frozen['qualification_status'] == 'partial' and not frozen['teacher_qualification']['complete']
+    assert frozen['teacher_qualification']['passed_placements'] == 10
+    assert frozen['scenarios'][3]['source']['id'] == 'detour-point'
+    assert len(result['unresolved']) == 2 and result['baseline_runs'] == 0
+    market = dict(scenarios[7], prepare_commands=['wait 4000'])
+    commands = live.commands(market, None, live.ACTION_SEEDS[0], dict(inputs, cache='cache'))
+    assert commands.index('goto START') < commands.index('wait 4000') < commands.index('rec source')
+    report = (output / 'README.md').read_text()
+    assert '| v3b |' in report and '0/66' in report and 'scene-5: unqualified' in report
+    assert all(f'| {number}. Scene {number} |' in report for number in range(1, 11))
+    argv = ['baseline', '--suite', str(output / 'qualified-suite.json'), '--output', str(output),
+            '--runtime', str(runtime), '--weights', args.weights]
+    with pytest.raises(ValueError, match='Qualify all fixed places'):
+        live.main(argv)
+    frozen['qualification_status'] = 'geometry-qualified'
+    live.write_json(output / 'qualified-suite.json', frozen)
+    with pytest.raises(ValueError, match='Complete v3b qualification'):
+        live.main(argv)
 
 
 def test_live_qualification_resumes_partial_probes_and_rejects_blocked_capsule(tmp_path, monkeypatch):
