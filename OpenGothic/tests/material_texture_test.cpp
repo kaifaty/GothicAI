@@ -46,29 +46,32 @@ void textFile(const std::filesystem::path& path, std::string_view text) {
     throw std::runtime_error("unable to write material fixture");
   }
 
-// One valid compressed 4x4 block. The originals deliberately have the opposite
-// format to their replacements, so consulting an original changes the result.
-void ddsFile(const std::filesystem::path& path, bool alpha) {
-  std::array<uint8_t,144> bytes{};
+// Valid compressed 4x4 blocks, optionally with the complete 2x2 and 1x1 mip
+// chain. Originals deliberately have the opposite format to their replacements.
+void ddsFile(const std::filesystem::path& path, bool alpha, bool mipmaps=false) {
+  std::array<uint8_t,176> bytes{};
+  const size_t mipCount=mipmaps ? 3 : 1;
+  const size_t blockSize=alpha ? 16 : 8;
   auto word = [&](size_t at, uint32_t value) {
     for(size_t i=0;i<4;++i)
       bytes[at*4+i] = uint8_t(value >> (i*8));
     };
   word(0,0x20534444); // DDS
   word(1,124);
-  word(2,0x81007);
+  word(2,mipmaps ? 0xa1007 : 0x81007);
   word(3,4);
   word(4,4);
   word(5,alpha ? 16 : 8);
-  word(7,1);
+  word(7,uint32_t(mipCount));
   word(19,32);
   word(20,4);
   word(21,alpha ? 0x35545844 : 0x31545844); // DXT5 / DXT1
-  word(27,0x1000);
+  word(27,mipmaps ? 0x401008 : 0x1000);
   if(alpha)
-    bytes[128] = 255;
+    for(size_t mip=0;mip<mipCount;++mip)
+      bytes[128+mip*blockSize] = 255;
   std::ofstream out(path, std::ios::binary);
-  out.write(reinterpret_cast<const char*>(bytes.data()),alpha ? 144 : 136);
+  out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(128+mipCount*blockSize));
   if(!out)
     throw std::runtime_error("unable to write DDS fixture");
   }
@@ -83,11 +86,11 @@ struct Fixture final {
     ddsFile(root/"materials/solid.dds",false);
     ddsFile(root/"materials/alpha.dds",true);
     for(const auto* name:{"NW_CITY_ROPE_01.TGA","HUM_BODY_V0_C0.TGA","HUM_BODY_V1_C0.TGA"})
-      ddsFile(root/"_work"/(std::filesystem::path(name).stem().string()+".dds"),true);
+      ddsFile(root/"_work"/(std::filesystem::path(name).stem().string()+".dds"),true,true);
     for(const auto* name:{"NW_CITY_WOOD_01.TGA","NW_HARBOUR_WOODCRATE_01.TGA",
                          "NW_HARBOUR_WOODCRATE_02.TGA","HUM_BODY_V2_C3.TGA",
                          "HUM_BODY_V4_C5.TGA","UNLISTED.TGA","PINNED.TGA"})
-      ddsFile(root/"_work"/(std::filesystem::path(name).stem().string()+".dds"),false);
+      ddsFile(root/"_work"/(std::filesystem::path(name).stem().string()+".dds"),false,true);
     textFile(root/"materials/materials.json",R"({
       "NW_CITY_ROPE_01.TGA":{"albedo":"solid.dds"},
       "NW_CITY_WOOD_01.TGA":{"albedo":"alpha.dds"},
@@ -375,7 +378,8 @@ void textureResidency(Tempest::Device& device, const Fixture& fixture) {
   const auto* pinned=Resources::loadTexture("PINNED.TGA");
   const auto initial=Resources::textureStats();
   const auto generation=Resources::textureGeneration();
-  const auto fullBytes=uint64_t(8+16+16+8);
+  // Albedo/normal/ORM each have one block; the original animation frame has three mips.
+  const auto fullBytes=uint64_t(8+16+16+3*8);
   const auto isFull=[&] {
     return material.tex->w()==4 && material.normal->w()==4 && material.orm->w()==4 &&
            material.frames.back()->w()==4;
