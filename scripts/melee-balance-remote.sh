@@ -26,8 +26,11 @@ Default series: native-vanilla-1h,native-posture-on-1h,native-vanilla-2h,
 native-posture-on-2h,p30-vanilla-1h,p30-posture-on-1h.
 MELEE_BALANCE_HOST selects the SSH alias (default: ryzen).
 MELEE_BALANCE_TASK selects the Ryzen folder of sources and build (default: gothic-ai/melee-balance).
-  A new folder starts with an empty base cache: copy the base from /mnt/shared/gothic-ai/melee-balance/base/<fingerprint>
-  into <folder>/base-cache/<fingerprint> first, or the runner copies it at start and misses its first reply.
+  The runner never imports a base: with none of its fingerprint in <folder>/base-cache or the store
+  /mnt/shared/gothic-ai/melee-balance/base it answers with an error (body_sim_bench: "runner response schema/ID
+  mismatch"). After a sync that changes the importer, or in a new folder, run under gq once:
+  OPENGOTHIC_BASE_CACHE=<folder>/base-cache OPENGOTHIC_BASE_STORE=/mnt/shared/gothic-ai/melee-balance \
+    <folder>/build/opengothic/content-convert resolve-base ~/gothic-ai/body-baseline/assets
 MELEE_BALANCE_PYTHON selects a remote Python with torch (default: body/.venv).
 MELEE_POSTURE_SCALE multiplies the knockdown threshold in every series (sweeps).
 MELEE_DOWN_TACTICS sets GAME melee_down_tactics in every series (0 or 1).
