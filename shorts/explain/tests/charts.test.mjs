@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {CombatData, Plan} from '../src/schema.ts';
 import {inCone, interpolatePath, quadraticParameterAtLength, quadraticPoint} from '../src/parts/diagramMath.ts';
-import {arcPoint, settledText, tagLineCentre} from '../src/parts/carryMath.ts';
+import {arcPoint, lineAt, settledText, tagLineCentre} from '../src/parts/carryMath.ts';
+import {shown} from '../src/parts/anim.ts';
 import {holdPush, travelDur} from '../src/parts/timing.ts';
 import {sampleHp, selectAction, smoothedTrack, sourceFrame, transformPoint, zoomScale} from '../src/parts/followMath.ts';
 
@@ -677,4 +678,20 @@ test('push: живое видео, короткое стояние, свой zoo
     beats: [{id: 'a', kind: 'still', src: 'a.png', dur: 4, push: 0.04, zoom: {at: 0, dur: 4, scale: 1.1, x: 0, y: 0}}]};
   assert.match(carryIssues(both).join(), /beats\.0\.push: push и zoom в одном бите/);
   assert.match(carryIssues({...both, beats: [{id: 'a', kind: 'card', dur: 4, push: 0.2}]}).join(), /beats\.0\.push/);
+});
+
+test('tags: a verdict line waits for the counter above it to stop', () => {
+  const tag = {lines: [{text: 'шанс 25%', at: 0}, {text: 'бросок {n}', at: 0.5, count: {to: 46, dur: 1.2}}, {text: 'мимо', at: 1.0}]};
+  assert.equal(lineAt(tag, 0), 0);
+  assert.equal(lineAt(tag, 1), 0.5);
+  assert.equal(lineAt(tag, 2), 1.7, 'поставлена на 1.0, счётчик крутится до 1.7');
+  assert.equal(lineAt({lines: [{text: 'a', at: 0, count: {to: 1, dur: 0.5}}, {text: 'b', at: 2}]}, 1), 2);
+});
+
+test('frame 0: a punch-in zoom and an instant base layer are there on the cut', () => {
+  assert.equal(zoomScale({at: 0, dur: 0.01, scale: 1.7, x: 0, y: 0, ease: 'inOut'}, 0), 1.7);
+  assert.equal(zoomScale({at: 0, dur: 0.6, scale: 1.7, x: 0, y: 0, ease: 'inOut'}, 0), 1);
+  assert.equal(shown(0, 0, undefined, 0), 1);
+  assert.equal(shown(0, 0), 0);
+  assert.equal(shown(0.5, 0, 1, 0), 1, 'fadeIn 0 со сроком не падает');
 });

@@ -3,9 +3,11 @@ import {AbsoluteFill, random, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {TagT} from '../schema';
 import {COLOR, FONT, OUTLINE} from '../theme';
 import {rise, shown} from './anim';
-import {withChances} from './carryMath';
-import {enterTransform, MOTION} from './motion';
+import {lineAt, TAG, withChances} from './carryMath';
+import {EASE, enterTransform, MOTION, progress} from './motion';
 
+// a line's height: Montserrat at TAG.font with its normal line spacing, fixed so a growing slot ends where it settles
+const LINE = Math.round(TAG.font * 1.22);
 const SHIFT = {center: 'translateX(-50%)', right: 'translateX(-36px)', left: 'translateX(calc(-100% + 36px))'};
 // the point of the box over the pin, where it grows from
 const ORIGIN = {center: '50% 100%', right: '36px 100%', left: 'calc(100% - 36px) 100%'};
@@ -13,7 +15,9 @@ const ORIGIN = {center: '50% 100%', right: '36px 100%', left: 'calc(100% - 36px)
 // a label over a thing in the picture: a pin at (x, y), the box above it (opening to the side near an edge), its
 // lines appear one by one; a line with `count` runs random numbers (seeded: the same every render) and stops on
 // the real one. The pin lands first and the box follows from it `MOTION.follow` later, so the label reads as
-// coming out of the thing it marks. A line the next beat carries off (`carried`) leaves its box at the cut
+// coming out of the thing it marks. A line the next beat carries off (`carried`) leaves its box at the cut. A line
+// after a counter waits for it to stop (lineAt); a line added to an open box makes room for itself over `fast`,
+// so the box grows instead of jumping a line taller in one frame
 export const Tags: React.FC<{tags: TagT[]; carried?: {tag: number; line: number; at: number}}> = ({tags, carried}) => {
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
@@ -62,14 +66,17 @@ export const Tags: React.FC<{tags: TagT[]; carried?: {tag: number; line: number;
               }}
             >
               {tag.lines.map((line, j) => {
+                const at = lineAt(tag, j);
                 const gone = carried && carried.tag === i && carried.line === j && t >= carried.at;
-                const lo = gone ? 0 : shown(t, line.at, undefined, 0.12);
-                if (lo <= 0 && !gone) {
+                const lo = gone ? 0 : shown(t, at, undefined, 0.12);
+                if (t < at && !gone) {
                   return null;
                 }
+                // lines that open with the box are there at once; a later one grows its slot
+                const room = at <= boxAt ? 1 : progress(t, at, MOTION.fast, EASE.out);
                 let text = withChances(line.text);
                 if (line.count) {
-                  const settled = t >= line.at + line.count.dur;
+                  const settled = t >= at + line.count.dur;
                   const n = settled ? line.count.to : Math.floor(random(`tag-${i}-${j}-${frame}`) * 100);
                   text = text.replace('{n}', String(n));
                 }
@@ -78,7 +85,10 @@ export const Tags: React.FC<{tags: TagT[]; carried?: {tag: number; line: number;
                     key={j}
                     style={{
                       opacity: lo,
-                      transform: `translateY(${rise(t, line.at, 10)}px)`,
+                      height: room < 1 ? LINE * room : undefined,
+                      overflow: room < 1 ? 'hidden' : undefined,
+                      lineHeight: `${LINE}px`,
+                      transform: `translateY(${rise(t, at, 10)}px)`,
                       fontFamily: FONT.body,
                       fontWeight: 800,
                       fontSize: 52,

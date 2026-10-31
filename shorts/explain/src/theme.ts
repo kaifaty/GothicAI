@@ -12,6 +12,12 @@ export const FRAME = {
   wide: {width: 1920, height: 1080},
 };
 
+// a tall card's content is drawn this much higher than its own coordinates, so its lowest labels clear the captions
+// (top 1170) by about 100 px
+export const CARD_LIFT = 80;
+// a tall card's source line, clear of three lines of captions (they end at about 1425) and above the bottom 380
+export const SOURCE_TOP = 1470;
+
 // Wide videos have ordinary 5% margins, clear of the frame rather than the Shorts UI.
 export const WIDE_SAFE = {top: 54, bottom: 54, left: 96, right: 96};
 
