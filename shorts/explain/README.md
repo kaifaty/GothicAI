@@ -99,7 +99,8 @@ the original plan gains and ducking for Studio and drafts; they do not run the p
 - `beats`: in order, each `footage` (an mp4, `freeze` and `zoom` optional), `still` (a png), `split` (two takes,
   top/bottom in `tall`, left/right in `wide`, with labels) or `card` (a chart); `texts` on top of a beat, `tags` (a label pinned to a point
   of the picture, to its left or right with `side`, lines appearing one by one, a roll counter that stops on the
-  real number), `strokes` (a line drawing itself between two points of the picture; with `cut` it stops at a wall:
+  real number; a line under a counter waits for it to stop, so a verdict never shows during its roll, and a line
+  added to an open box grows its slot over 0.2 s instead of the box jumping a line taller), `strokes` (a line drawing itself between two points of the picture; with `cut` it stops at a wall:
   solid up to it, dashed past it, a cross on it) and `fans` (a sector opening from a point): lines of sight and the
   bow's focus from the bench's `sight` export; `paths` (a line drawing itself through several points, smoothed
   unless `curve: false`, `arrow` puts a head on its tip, `dash` makes it dashed): an arrow's flight, a route;
@@ -131,15 +132,25 @@ the original plan gains and ducking for Studio and drafts; they do not run the p
   until `until` or the beat's end. Take `to` from a still of the card; whatever the carried thing causes (a
   point, a marker, a counter) appears on its landing, at `at` plus its duration (the strips report gives it);
 - `split` keeps the same field names in either format: `src`/`from` are the first half, `srcBottom`/`fromBottom`
-  the second; `labels` and `labelColors` follow that order. In `wide`, labels sit at the top of each half and
+  the second; `labels` and `labelColors` follow that order. In `tall` the captions sit just under the seam
+  (from 990 px, on the top of the bottom half) instead of on the bottom half's subject; the first label stays at
+  the top of its half and the second goes to the foot of its half. The seam itself (y about 880) is the place for
+  a comparison text; keep `texts` out of 990-1250. In `wide`, labels sit at the top of each half and
   a thin vertical line divides the pictures. Footage and stills cover their frame or half-frame;
+- a text without `until` gives way to the next text of its beat at the same `y`: its fade out ends as the next
+  one starts, so two texts never lie on each other;
 - coordinates (`texts.y`, tag pins, strokes, fans and zoom origins) are pixels of the selected frame.
   Texts without `y` start at 260 in `tall`, 140 in `wide`; an explicit `y` is kept as supplied;
 - the cards (`chart.type`): `dice` (the chance by distance, curves drawn as they are named), `formula` (the
   terms a line each as they are said, then a worked example computed the way `damagecalculator.cpp` does it:
-  rounded at each step, protection not below 0, at least 5), `bars` (groups growing one by one), `dots` (marks
-  filling up to a count), `stats` (the character's numbers greying out under a question), and the wide-only
-  `line`, `big`, `table`, `cells`, `rays`, `cone`, `ticks`, `grid`, `flow` described below;
+  rounded at each step, protection not below 0, at least 5; in tall, with five terms, each term's number of the
+  example stands at the right of its row and the zones' results close the card as tiles, the first big and
+  struck), `bars` (groups growing one by one; in tall the values over the bars are 48 px, the biggest 56),
+  `dots` (marks filling up to a count; the counter comes in once the grid has swept in), `stats` (the character's numbers greying out under a question), and the wide-only
+  `line`, `big`, `table`, `cells`, `rays`, `cone`, `ticks`, `grid`, `flow` described below. A tall card is drawn
+  `CARD_LIFT` (80 px) above its own coordinates, so its lowest labels clear the captions by about 100 px; its
+  source line sits at 1470, clear of three lines of captions. Its title and frame (axes, panel, first row) are there from the cut, so frame 0 is
+  a finished picture; the rest enters on its words;
   each but `stats` names its `source`;
 - `lines`: the voice's words with their times, a sentence per line (`gothic-shorts words`); the captions are
   pages of 2-4 words of them, the word being said in gold. A page never ends on a preposition or a conjunction
@@ -477,6 +488,15 @@ up to three people. The versions are pinned in `package.json`.
 
 ## План и журнал
 
+- 2026-10-31: the cards from the motion reviews: the tall formula card with the example's numbers beside its
+  terms and the results as tiles («400» at 96 px with a pop instead of a 46 px line); bar values 48/56 px in
+  tall (were 36); the dots' counter after its grid; a text gives way to the next one at its place.
+- 2026-10-31: fixes from the first motion review (the `motion-reviewer` agent of the explainer skill, on the bow
+  short): the hook and a card's frame on screen from frame 0; a zoom up to 0.04 s is a punch-in from its start
+  (frame 0 was left unzoomed); a tag line under a counter waits for it to stop; a line joining an open tag box
+  grows its slot; tall cards lifted 80 px clear of the captions; captions just under the seam of a tall split (on the seam first: the verification round found them over the comparison texts). `strips.py`
+  blanks the captions before looking for jumps (on the bow short 32 jumps were 27 caption pages) and notes a tag
+  line planned before its counter stops. `shown(…, fadeIn 0)` no longer throws (`carry.until` used it).
 - 2026-10-30: a held picture (a card, a still, a freeze) of 2 s or more pushes in by itself, 3-5 % across the
   hold (`holdPush`), the user's choice over the old rule that nothing drifts on its own; `push: 0` turns it off.
   The strips report marks which still holds it covers. On a 27 s card the title moves 1 px at a time (Chrome

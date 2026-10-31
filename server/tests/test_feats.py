@@ -15,6 +15,7 @@ from gothic_ai.feats import Feats, Proposal, canon, epilogue_canon, hero_view, n
 from gothic_ai.journal import Journal
 from gothic_ai.llm import LLMError, ToolCall
 from gothic_ai.llm.fake import FakeBackend, FakeStep
+from gothic_ai.llm.off import OffBackend
 from gothic_ai.memory import MemoryStore
 from gothic_ai.places import PlaceBook
 from gothic_ai.protocol import Loading, NpcRoster, Session
@@ -780,6 +781,12 @@ def test_epilogue_canon_uses_third_person():
             "Эпилог пишется в третьем лице",
         ]
     assert not epilogue_canon("Позже Маттео открыл ящик при герое.", evidence, evidence)
+
+
+async def test_epilogue_without_model_uses_fallback_without_attempts():
+    backend = OffBackend()
+    assert await feats_module.ChroniclerModel(backend).epilogue("The lie was revealed.") is None
+    assert backend.attempts == []
 
 
 async def test_epilogue_model_gets_full_disclosure_and_retries_before_fallback():

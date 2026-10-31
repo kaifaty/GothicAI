@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from gothic_ai import cli
+from gothic_ai.llm.off import ModelOff, OffBackend
 
 
 def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, monkeypatch, caplog):
@@ -20,8 +21,18 @@ def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, mo
     assert "run the game once with the installation or set OPENGOTHIC_BASE" in caplog.text
 
 
-@pytest.mark.parametrize("scenario", [None, "m0"])
-def test_scenario_start_marker_waits_for_world_and_precedes_scenario(monkeypatch, caplog, tmp_path, scenario):
+@pytest.mark.parametrize(("scenario", "backend_kind", "outcome", "code"), [
+    (None, "fake", "clean", 0),
+    ("m0", "fake", "clean", 0),
+    ("m0", "off", "clean", 0),
+    ("m0", "off", "caught", 1),
+    ("m0", "off", "uncaught", 1),
+    ("m0", "off", "unused", 1),
+    ("m0", "off", "used", 0),
+])
+def test_scenario_start_marker_waits_for_world_and_precedes_scenario(
+    monkeypatch, caplog, tmp_path, scenario, backend_kind, outcome, code,
+):
     real_serve = cli.serve
     captured = []
 
@@ -30,7 +41,7 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(monkeypatch
         return 0
 
     flags = [
-        "--llm", "fake", "--no-voice", "--no-tts", "--no-brain", "--no-quick", "--no-neural-body",
+        "--llm", backend_kind, "--no-voice", "--no-tts", "--no-brain", "--no-quick", "--no-neural-body",
         "--no-director", "--no-knowledge", "--no-questlog", "--no-crimes", "--no-gates",
         "--no-occasions", "--no-console", "--no-trace", "--memory-db", ":memory:",
         "--game-dir", str(tmp_path), "--exit-after",
@@ -43,6 +54,8 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(monkeypatch
     with pytest.raises(SystemExit) as exit:
         cli.main()
     assert exit.value.code == 0
+    backend = cli._backend(captured[0])
+    monkeypatch.setattr(cli, "_backend", lambda args: backend)
     monkeypatch.setattr(cli.places.PlaceBook, "load", Mock(return_value=None))
     caplog.set_level("INFO", logger="gothic_ai")
 
@@ -66,6 +79,18 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(monkeypatch
             assert link.world == "NEWWORLD.ZEN"
             assert markers() == ["scenario m0: checks started"]
             scenario_entered.set()
+            if isinstance(backend, OffBackend):
+                if outcome in {"unused", "used"}:
+                    backend.silent("Cavalorn stays quiet", who="CAVALORN")
+                if outcome in {"caught", "uncaught", "used"}:
+                    try:
+                        async for _ in backend.stream(
+                            instructions="", messages=[], cache_key="CAVALORN",
+                        ):
+                            pass
+                    except ModelOff:
+                        if outcome == "uncaught":
+                            raise
             return []
 
         run_scenario_mock = AsyncMock(side_effect=run_scenario)
@@ -95,9 +120,20 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(monkeypatch
                     await asyncio.gather(session, return_exceptions=True)
 
         monkeypatch.setattr(cli, "GameServer", FakeServer)
-        assert await asyncio.wait_for(real_serve(captured[0]), timeout=5) == 0
+        assert await asyncio.wait_for(real_serve(captured[0]), timeout=5) == code
         assert markers() == (["scenario m0: checks started"] if scenario is not None else [])
         assert run_scenario_mock.await_count == int(scenario is not None)
+        records = [record.getMessage() for record in caplog.records]
+        checks = {key: next((line for line in records if f": {key}: " in line), "")
+                  for key in ("model_off", "givens_used")}
+        if backend_kind == "off":
+            assert ("failed" in checks["model_off"]) == (outcome in {"caught", "uncaught"})
+            assert ("failed" in checks["givens_used"]) == (outcome == "unused")
+            assert all(checks.values())
+            if outcome == "used":
+                assert "scenario m0: given: Cavalorn stays quiet" in records
+        else:
+            assert not any(checks.values())
 
     asyncio.run(exercise())
 
