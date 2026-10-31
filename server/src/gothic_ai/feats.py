@@ -83,13 +83,12 @@ HERO_FIELDS: dict[str, frozenset[str]] = {
     "challenge_met": frozenset({"challenge"}),
 }
 
-# Actual participants and observers, by evidence kind. A crime's owner or victim is not
-# necessarily aware of it (for example, a successful pickpocketing). Line people and quest
-# targets likewise do not witness an outcome just because they occur in its definition.
+# Participants and observers of the occasion, not its setup or other context. A crime's
+# owner or victim is not necessarily aware of it (for example, a successful pickpocketing).
 FAME_FIELDS: dict[str, tuple[str, ...]] = {
     "died": ("npc", "killer"),
     "crime": ("witnesses",),
-    "contract": ("npc",),
+    "contract": (),
     "contract_kill": ("victim",),
     "contract_done": ("npc",),
     "contract_paid": ("npc",),
@@ -101,11 +100,11 @@ FAME_FIELDS: dict[str, tuple[str, ...]] = {
     "truce_broken": ("npc", "members"),
     "deal": ("npc",),
     "forgiven": ("npc",),
-    "debt": ("npc",),
+    "debt": (),
     "debt_paid": ("npc",),
     "npc_later_paid": ("npc",),
     "broken": ("npc",),
-    "meet": ("npc",),
+    "meet": (),
     "meet_kept": ("npc",),
     "led": ("npc",),
     "initiative": ("npc", "seen_by"),
@@ -113,21 +112,21 @@ FAME_FIELDS: dict[str, tuple[str, ...]] = {
     "bounty_betrayal": ("npc", "witnesses"),
     "gate_vouch": ("npc",),
     "gate_claim": ("npc",),
-    "quest_given": ("npc",),
-    "quest_terms": ("npc",),
+    "quest_given": (),
+    "quest_terms": (),
     "quest_outcome": ("npc",),
     "quest_reopened": ("npc",),
-    "vanilla_quest": ("npc", "giver"),
+    "vanilla_quest": (),
     "vanilla_reward": ("npc",),
     "paid": (),
-    "quest": ("giver",),
+    "quest": (),
     "story_quest_given": (),
     "story_quest_stage": (),
     "story_quest_done": (),
     "story_quest_failed": (),
     "story_quest_obsolete": (),
     "story_quest_closed": (),
-    "authored_given": ("npc",),
+    "authored_given": (),
     "authored_done": ("npc",),
     "claim": ("npc",),
     "lie": ("npc",),
@@ -225,7 +224,7 @@ def hero_view(seq: int, fact: Fact) -> Fact | None:
 
 
 def fame_witnesses(feat: Fact, entries: list[tuple[int, Fact]]) -> list[str]:
-    """Decide fame from full branch evidence, never from the chronicler's filtered view."""
+    """Use the occasion's observers and crime witnesses, never participants in its setup."""
     evidence = [fact for seq, fact in entries if seq in feat["evidence"]]
     trigger = next((f for seq, f in entries if seq == feat["trigger"]), {})
     if any(f["fact"] in {"lie", "claim"} for f in evidence) or (
@@ -239,10 +238,17 @@ def fame_witnesses(feat: Fact, entries: list[tuple[int, Fact]]) -> list[str]:
             people = fact.get(field, [])
             known.update(npc.upper() for npc in ([people] if isinstance(people, str) else people))
 
-    for fact in evidence:
+    occasions = (
+        [fact for seq, fact in entries if seq in trigger["evidence"]]
+        if trigger["fact"] == "challenge_met" else [trigger]
+    )
+    for fact in occasions:
         add(fact, FAME_FIELDS[fact["fact"]])
         if fact["fact"] == "crime" and fact.get("kind") == "attack":
             add(fact, ("victim",))
+    for fact in evidence:
+        if fact["fact"] == "crime":
+            add(fact, FAME_FIELDS["crime"])
     crimes = {f["id"] for f in evidence if f["fact"] == "crime"}
     crimes.update(f["crime"] for f in evidence if f.get("crime"))
     for _, fact in entries:

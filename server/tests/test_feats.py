@@ -129,7 +129,13 @@ def test_hidden_facts_have_no_hero_view(fact):
     ([], crime(witnesses=["PLAYER", "MALETH", "MALETH"]), [1], ["MALETH"], True),
     ([], {"fact": "quest_outcome", "npc": "LOBART", "how": "amended", "pay": "none"},
      [1], ["LOBART"], True),
+    ([{"fact": "quest_outcome", "npc": "LOBART", "how": "amended", "pay": "none"},
+      {"fact": "quest_given", "npc": "XARDAS"}],
+     {"fact": "challenge_met", "kind": "no_reward", "evidence": [1, 2]},
+     [3], ["LOBART"], True),
     ([], crime(), [1], [], True),
+    ([crime(witnesses=["MALETH"])],
+     {"fact": "died", "npc": "LOBART", "killer": "PLAYER"}, [1, 2], ["MALETH"], True),
     ([], crime(kind="attack"), [1], ["LOBART"], True),
     ([{"fact": "lie", "npc": "LOBART"}], crime(witnesses=["LOBART"]), [1, 2], [], True),
     ([{"fact": "claim", "npc": "LOBART", "truth": False}], crime(witnesses=["LOBART"]),
@@ -148,11 +154,12 @@ def test_hidden_facts_have_no_hero_view(fact):
       {"fact": "testimony", "witness": "OTHER", "npc": "ANDRE", "crime_told": ["C2"]}],
      crime(), [3], ["LOBART", "MALETH"], True),
     ([{"fact": "initiative", "npc": "LOBART", "seen_by": ["PLAYER", "MALETH"]}],
-     crime(), [1, 2], ["LOBART", "MALETH"], True),
-    ([{"fact": "vanilla_quest", "quest": "Q1", "giver": "LOBART"}],
-     crime(), [1, 2], ["LOBART"], True),
+     crime(), [1, 2], [], True),
+    ([{"fact": "vanilla_quest", "quest": "Q1", "giver": "XARDAS"},
+      {"fact": "quest_given", "quest": "Q1", "npc": "XARDAS"}],
+     {"fact": "died", "npc": "BANDIT", "killer": "PLAYER"}, [1, 2, 3], [], True),
 ])
-async def test_fame_uses_full_evidence_and_living_knowers(history, occasion, evidence, witnesses, fame):
+async def test_fame_uses_occasion_and_living_crime_witnesses(history, occasion, evidence, witnesses, fame):
     async with world(proposal(evidence=evidence), history=history, fame=fame) as (
         _, chronicle, chronicler, _, _,
     ):
