@@ -596,29 +596,6 @@ def check_direct_training(args, manifest, entries, scratch, progress):
     if args.corpus == "v5" and not familiar_decisions:
         raise ValueError("V5 parity did not exercise a nonzero familiar input")
 
-    torch.use_deterministic_algorithms(True)
-    if gpu:
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
-    histories, memory = {}, {}
-    for label, index in (("old", old_index), ("direct", new_index)):
-        progress.begin("parity.bc_epochs_" + label)
-        destination = args.output / f"epoch-{label}"
-        destination.mkdir()
-        options = SimpleNamespace(cache=str(cache) if label == "old" else None,
-            source=str(args.converted_source) if label == "direct" else None,
-            manifest=str(args.manifest), input_variant=variant, output=str(destination),
-            threads=6 if gpu else 1, device="cuda" if gpu else "cpu", epochs=2 if gpu else 1,
-            batch=8 if gpu else 4, segment=64 if gpu else 32, lr=.0003,
-            seed=17, resume=False, init=None)
-        with ProcessMemory() as usage:
-            train.train_bc3(options, index)
-        memory[label] = usage.result()
-        histories[label] = json.loads((destination / "history.json").read_text())
-        progress.emit("training_complete", path=label, memory=memory[label], history=histories[label])
-    old_state = torch.load(args.output / "epoch-old/last.pt", map_location="cpu", weights_only=False)
-    new_state = torch.load(args.output / "epoch-direct/last.pt", map_location="cpu", weights_only=False)
-
     def equal_state(left, right):
         if isinstance(left, torch.Tensor):
             return left.dtype == right.dtype and left.shape == right.shape and torch.equal(left, right)
@@ -628,29 +605,73 @@ def check_direct_training(args, manifest, entries, scratch, progress):
             return len(left) == len(right) and all(equal_state(a, b) for a, b in zip(left, right))
         return left == right
 
-    losses = {label: [row["loss"] for row in history] for label, history in histories.items()}
-    if (any(any(left[key] != right[key] for key in ("loss", "losses", "decisions"))
-            for left, right in zip(histories["old"], histories["direct"]))
-            or not all(equal_state(old_state[key], new_state[key]) for key in ("model", "optimizer"))):
-        raise ValueError(f"Same-seed BC epochs differ: {losses}")
-    seconds = {label: [row["seconds"] for row in history] for label, history in histories.items()}
-    mean = {label: sum(values) / len(values) for label, values in seconds.items()}
-    totals = dict(old=prepare_seconds + 20 * mean["old"], direct=index_seconds + 20 * mean["direct"])
-    if not memory["direct"]["loader_pss_bytes"] or len(memory["direct"]["loader_worker_pids"]) != 4:
-        raise ValueError("Loader memory sampling did not observe all four workers")
+    runs = {}
+    for device in (("cpu", "cuda") if gpu else ("cpu",)):
+        exact = device == "cpu"
+        phase = "cpu" if exact else "gpu"
+        # Exact parity uses CPU kernels. GPU timing uses the stock training mode:
+        # adaptive_avg_pool2d_backward_cuda has no deterministic implementation.
+        torch.use_deterministic_algorithms(exact)
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = False
+        histories, memory = {}, {}
+        for label, index in (("old", old_index), ("direct", new_index)):
+            progress.begin(f"{phase}.bc_epochs_{label}")
+            destination = args.output / f"{phase}-epoch-{label}"
+            destination.mkdir()
+            options = SimpleNamespace(cache=str(cache) if label == "old" else None,
+                source=str(args.converted_source) if label == "direct" else None,
+                manifest=str(args.manifest), input_variant=variant, output=str(destination),
+                threads=1 if exact else 6, device=device, epochs=1 if exact else 2,
+                batch=4 if exact else 8, segment=32 if exact else 64, lr=.0003,
+                seed=17, resume=False, init=None)
+            with ProcessMemory() as usage:
+                train.train_bc3(options, index)
+            memory[label] = usage.result()
+            histories[label] = json.loads((destination / "history.json").read_text())
+            progress.emit("training_complete", device=device, path=label,
+                          memory=memory[label], history=histories[label])
+        losses = {label: [row["loss"] for row in history] for label, history in histories.items()}
+        if exact:
+            old_state = torch.load(args.output / "cpu-epoch-old/last.pt", map_location="cpu", weights_only=False)
+            new_state = torch.load(args.output / "cpu-epoch-direct/last.pt", map_location="cpu", weights_only=False)
+            if (any(any(left[key] != right[key] for key in ("loss", "losses", "decisions"))
+                    for left, right in zip(histories["old"], histories["direct"]))
+                    or not all(equal_state(old_state[key], new_state[key]) for key in ("model", "optimizer"))):
+                raise ValueError(f"Same-seed CPU BC epoch differs: {losses}")
+            del old_state, new_state
+        seconds = {label: [row["seconds"] for row in history] for label, history in histories.items()}
+        mean = {label: sum(values) / len(values) for label, values in seconds.items()}
+        totals = dict(old=prepare_seconds + 20 * mean["old"], direct=index_seconds + 20 * mean["direct"])
+        if not memory["direct"]["loader_pss_bytes"] or len(memory["direct"]["loader_worker_pids"]) != 4:
+            raise ValueError(f"{phase} loader memory sampling did not observe all four workers")
+        runs[device] = dict(device=device, deterministic_algorithms=exact, threads=options.threads,
+            epochs=options.epochs, batch=options.batch, segment=options.segment, lr=options.lr,
+            losses=losses, model_and_optimizer_tensors_equal=True if exact else None,
+            epoch_seconds=seconds, mean_epoch_seconds=mean, projected_20_epoch_seconds=totals,
+            xz_epoch_slowdown_percent=100 * (mean["direct"] / mean["old"] - 1),
+            xz_epoch_within_20_percent=mean["direct"] <= 1.2 * mean["old"],
+            projected_20_epochs_not_slower=totals["direct"] <= totals["old"], memory=memory)
+        if not exact:
+            rtol, atol = 1e-3, 1e-6
+            comparison = dict(rtol=rtol, atol=atol,
+                absolute_differences=[abs(left - right) for left, right in zip(losses["old"], losses["direct"])],
+                per_epoch_close=[bool(np.isclose(left, right, rtol=rtol, atol=atol))
+                                 for left, right in zip(losses["old"], losses["direct"])])
+            comparison["all_close"] = all(comparison["per_epoch_close"])
+            runs[device]["loss_comparison"] = comparison
+            # GPU arithmetic is not required to be bitwise reproducible. Preserve
+            # timing evidence even if loss drift needs review after the run.
+            progress.emit("gpu_loss_comparison", **comparison)
+        progress.emit("bc_pair_complete", device=device, result=runs[device])
+
+    measured = runs["cuda" if gpu else "cpu"]
     return dict(mode=args.mode, corpus=args.corpus, episodes=len(selected), decisions=decisions,
                 episode_ids=[entry["id"] for entry in selected],
                 packed_arrays_bitwise_equal=checked_arrays, training_tensors_bitwise_equal=checked_tensors,
                 familiar_nonzero_decisions=familiar_decisions, reference_prepare_seconds=prepare_seconds,
                 direct_index_seconds=index_seconds, separate_prepare_required=False, seed=17,
-                threads=options.threads, device=options.device, epochs=options.epochs,
-                batch=options.batch, segment=options.segment, lr=options.lr,
-                losses=losses, model_and_optimizer_tensors_equal=True, epoch_seconds=seconds,
-                mean_epoch_seconds=mean, projected_20_epoch_seconds=totals,
-                xz_epoch_slowdown_percent=100 * (mean["direct"] / mean["old"] - 1),
-                xz_epoch_within_20_percent=mean["direct"] <= 1.2 * mean["old"],
-                projected_20_epochs_not_slower=totals["direct"] <= totals["old"],
-                memory=memory, cuda=torch.version.cuda,
+                **measured, cpu_parity=runs["cpu"], cuda=torch.version.cuda,
                 gpu=torch.cuda.get_device_name() if gpu else None,
                 npz_medium="local NVMe scratch", xz_medium="NAS",
                 torch=torch.__version__, reference_script_sha256=hashlib.sha256(args.reference_script.read_bytes()).hexdigest())

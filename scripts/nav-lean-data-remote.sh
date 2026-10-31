@@ -26,7 +26,6 @@ results="$task/$stage-results"
 export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 export UV_CACHE_DIR="$task/uv-cache"
-export CUBLAS_WORKSPACE_CONFIG=:4096:8
 df -h "$HOME" /mnt/shared
 "$HOME/.local/bin/uv" venv --python 3.12 --allow-existing "$task/.venv"
 "$HOME/.local/bin/uv" pip install --python "$task/.venv/bin/python" 'numpy==2.4.2' pytest
