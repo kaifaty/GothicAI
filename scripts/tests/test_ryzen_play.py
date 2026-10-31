@@ -6,8 +6,10 @@ import io
 import json
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import tomllib
 import unittest
 from pathlib import Path
@@ -303,12 +305,19 @@ class RyzenPlayTests(unittest.TestCase):
                 incoming.mkdir()
                 if result == 0:
                     (incoming / "enabled.json").write_text(action)
+                state_path = home / "gothic-ai/play-update.json"
+                if action == "update":
+                    state_path.write_text(json.dumps({
+                        "restore_commit": "old", "old_commit": "old", "new_commit": "failed",
+                        "failed_commit": "failed", "result": "error", "error": "Rollback build failed",
+                    }))
+                metadata = ["main\n", "origin\n", ""] + (["current\n"] if action == "update" else [])
                 with self.subTest(action=action, result=result), patch.dict(install.os.environ), \
                         patch.object(install.Path, "home", return_value=home), \
                         patch.object(install.Path, "rename", autospec=True, side_effect=rename_under_lock) as swap, \
                         patch.object(install.os, "chdir"), \
                         patch.object(install, "run") as run, \
-                        patch.object(install.subprocess, "check_output", side_effect=["main\n", "origin\n", ""]), \
+                        patch.object(install.subprocess, "check_output", side_effect=metadata), \
                         patch.object(install, "owned_process", return_value=result) as build:
                     self.assertEqual(install.remote_install(action, payload(), "source"), result)
                     run.assert_called_once_with(["git", "-C", repo, "pull", "--ff-only"])
@@ -316,6 +325,12 @@ class RyzenPlayTests(unittest.TestCase):
                     entry = (home / ".local/share/applications/gothic-ai.desktop").read_text()
                     self.assertEqual("Exec=ptyxis" in entry, result == 3)
                     self.assertEqual([call.args for call in swap.call_args_list], [(content, old), (incoming, content)])
+                    if action == "update":
+                        state = json.loads(state_path.read_text())
+                        self.assertFalse(state.get("restore_commit"))
+                        self.assertEqual(state["result"], "updated")
+                        self.assertEqual(state["new_commit"], "current")
+                        self.assertNotIn("error", state)
                 self.assertEqual(list(content.iterdir()), [content / "enabled.json"] if result == 0 else [])
                 if result == 0:
                     self.assertEqual((content / "enabled.json").read_text(), action)
@@ -523,6 +538,97 @@ class RyzenPlayTests(unittest.TestCase):
             self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in protected}, before)
             for path in protected:
                 self.assertEqual(list(path.parent.iterdir()), [path])
+
+    def test_auto_update_recovers_interrupted_build_and_failed_rollback(self):
+        for failure in ("terminated", "rollback_failed"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                repo, upstream = auto_checkout(home)
+                old = play_git(repo, "rev-parse", "HEAD")
+                target = advance_play(upstream, "new installer\n")
+                state_path = home / "gothic-ai/play-update.json"
+                builds = []
+                real_run = subprocess.run
+
+                def build(command, *args, **kwargs):
+                    if command[0] != "bash" or command[-1] != "__prepare":
+                        return real_run(command, *args, **kwargs)
+                    self.assertEqual(json.loads(state_path.read_text())["restore_commit"], old)
+                    builds.append((play_git(repo, "rev-parse", "HEAD"), command[-2]))
+                    code = 1 if failure == "rollback_failed" and len(builds) <= 2 else 3
+                    return subprocess.CompletedProcess(command, code)
+
+                def admitted(command, *, keep_stdin=False):
+                    self.assertTrue(keep_stdin)
+                    if queued.call_count > 1:
+                        state = json.loads(state_path.read_text())
+                        self.assertEqual(state["result"], "error")
+                        self.assertEqual(state["restore_commit"], old)
+                        self.assertTrue(state["error"])
+                    if failure != "terminated" or queued.call_count > 1:
+                        return install.main(command[-2:])
+                    ready = home / "prepare-ready"
+                    probe = (
+                        "import sys, time; from pathlib import Path; "
+                        "Path(sys.argv[1]).touch(); time.sleep(60)"
+                    )
+                    worker = """import sys
+from pathlib import Path
+from unittest.mock import patch
+namespace = {"__name__": "test_worker", "__file__": sys.argv[1]}
+exec(compile(Path(sys.argv[1]).read_text(), sys.argv[1], "exec"), namespace)
+namespace["prepare_command"] = lambda source: [sys.executable, "-c", sys.argv[4], sys.argv[5]]
+with patch.object(Path, "home", return_value=Path(sys.argv[2])):
+    sys.exit(namespace["auto_update"](sys.argv[3], admitted=True))
+"""
+                    child = subprocess.Popen(
+                        [install.sys.executable, "-c", worker, install.__file__, str(home), str(upstream),
+                         probe, str(ready)], start_new_session=True,
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                    )
+                    try:
+                        deadline = time.monotonic() + 10
+                        while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue(ready.exists(), "Worker did not reach prepare")
+                        self.assertEqual(play_git(repo, "rev-parse", "HEAD"), target)
+                        os.killpg(child.pid, signal.SIGTERM)
+                        child.communicate(timeout=5)
+                        self.assertEqual(child.returncode, -signal.SIGTERM)
+                        return 128 + signal.SIGTERM
+                    finally:
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        child.communicate(timeout=5)
+
+                with patch.object(install.Path, "home", return_value=home), \
+                        patch.object(install.os, "chdir"), patch.dict(install.os.environ), \
+                        patch.object(install, "owned_process", side_effect=admitted) as queued, \
+                        patch.object(install.subprocess, "run", side_effect=build), \
+                        patch.object(install.sys, "stdout", new_callable=io.StringIO):
+                    self.assertNotEqual(install.auto_update(str(upstream)), 0)
+                    state = json.loads(state_path.read_text())
+                    self.assertEqual(state["result"], "error")
+                    self.assertIn("restore_commit", state, state)
+                    self.assertEqual((state["old_commit"], state["new_commit"], state["restore_commit"]),
+                                     (old, target, old))
+                    if failure == "rollback_failed":
+                        self.assertEqual(state["rollback_exit"], 1)
+                    self.assertEqual(install.auto_update(str(upstream)), 0)
+                    self.assertEqual(queued.call_count, 2)
+                    self.assertEqual(play_git(repo, "rev-parse", "HEAD"), old)
+                    state = json.loads(state_path.read_text())
+                    self.assertEqual(state["result"], "build_failed_rolled_back")
+                    self.assertFalse(state.get("restore_commit"))
+                    self.assertEqual(state["failed_commit"], target)
+                    self.assertNotIn("error", state)
+                    expected = [(target, "new installer\n"), (old, "old installer\n")] \
+                        if failure == "rollback_failed" else []
+                    self.assertEqual(builds, [*expected, (old, "old installer\n")])
+                    self.assertEqual(install.auto_update(str(upstream)), 0)
+                    self.assertEqual(queued.call_count, 2)
 
     def test_autoupdate_units_use_installed_code_every_fifteen_minutes(self):
         with tempfile.TemporaryDirectory() as directory:

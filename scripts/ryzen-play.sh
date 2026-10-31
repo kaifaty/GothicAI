@@ -222,6 +222,9 @@ def auto_update(expected_origin, *, admitted=False):
     state = {"old_commit": "", "new_commit": "", "failed_commit": ""}
 
     def finish(result, code=0, **details):
+        if result in ("updated", "up_to_date", "build_failed_rolled_back"):
+            state.pop("error", None)
+            state.pop("detail", None)
         state.update(time=datetime.now(timezone.utc).isoformat(), result=result, **details)
         text = json.dumps(state, sort_keys=True) + "\n"
         print(text, end="", flush=True)
@@ -233,14 +236,16 @@ def auto_update(expected_origin, *, admitted=False):
 
     try:
         if state_path.exists():
-            state["failed_commit"] = json.loads(state_path.read_text())["failed_commit"]
+            state.update(json.loads(state_path.read_text()))
         if not admitted:
             run(["git", "-C", repo, "fetch", "origin"])
-        state.update(old_commit=commit("HEAD"), new_commit=commit("origin/main"))
+        head, target = commit("HEAD"), commit("origin/main")
+        if not state.get("restore_commit"):
+            state.update(old_commit=head, new_commit=target)
         if not admitted:
-            if state["old_commit"] == state["new_commit"]:
+            if not state.get("restore_commit") and head == target:
                 return finish("up_to_date")
-            if state["failed_commit"] == state["new_commit"]:
+            if not state.get("restore_commit") and state["failed_commit"] == target:
                 return finish("build_failed_rolled_back", detail="Skipping previously failed origin/main")
             previous = state_path.read_text() if state_path.exists() else None
             os.chdir(repo)
@@ -251,6 +256,11 @@ def auto_update(expected_origin, *, admitted=False):
             # Wait without locking or changing the checkout. systemd serializes runs.
             result = owned_process(command, keep_stdin=True)
             current = state_path.read_text() if state_path.exists() else None
+            if current is not None:
+                state = {"old_commit": "", "new_commit": "", "failed_commit": "",
+                         **json.loads(current)}
+            if state.get("restore_commit") and state.get("result") not in ("busy", "error"):
+                return finish("error", result or 2, error=f"gq exited {result} before recovery completed")
             if current == previous:
                 return finish("error", result or 2, error=f"gq exited {result} without an update result")
             return result
@@ -259,33 +269,48 @@ def auto_update(expected_origin, *, admitted=False):
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return finish("busy")
+            if state_path.exists():
+                state = {"old_commit": "", "new_commit": "", "failed_commit": "",
+                         **json.loads(state_path.read_text())}
             check_tools(home)
             check_checkout(repo, expected_origin)
             # A manual update may have finished while this job was queued.
-            state.update(old_commit=commit("HEAD"), new_commit=commit("origin/main"))
-            if state["old_commit"] == state["new_commit"]:
-                return finish("up_to_date")
-            if state["failed_commit"] == state["new_commit"]:
-                return finish("build_failed_rolled_back", detail="Skipping previously failed origin/main")
-            run(["git", "-C", repo, "pull", "--ff-only"])
-            state["new_commit"] = commit("HEAD")
             os.chdir(repo)
             script = repo / "scripts/ryzen-play.sh"
-            result = subprocess.run(prepare_command(script.read_text()), check=False).returncode
-            if result in (0, 3):
-                write_desktop_entry(repo, result)
-                state["failed_commit"] = ""
-                return finish("updated")
-            state["failed_commit"] = state["new_commit"]
-            state["build_exit"] = result
-            run(["git", "-C", repo, "reset", "--hard", state["old_commit"]])
+            result = 0
+            if not state.get("restore_commit"):
+                state.update(old_commit=commit("HEAD"), new_commit=commit("origin/main"))
+                if state["old_commit"] == state["new_commit"]:
+                    return finish("up_to_date")
+                if state["failed_commit"] == state["new_commit"]:
+                    return finish("build_failed_rolled_back", detail="Skipping previously failed origin/main")
+                # The whole gq cgroup may be killed; persist recovery before pull.
+                state["restore_commit"] = state["old_commit"]
+                finish("updating")
+                run(["git", "-C", repo, "pull", "--ff-only"])
+                state["new_commit"] = commit("HEAD")
+                state["failed_commit"] = state["new_commit"]
+                finish("updating")
+                result = subprocess.run(prepare_command(script.read_text()), check=False).returncode
+                if result in (0, 3):
+                    write_desktop_entry(repo, result)
+                    state.pop("restore_commit")
+                    state["failed_commit"] = ""
+                    return finish("updated")
+                state["build_exit"] = result
+                finish("recovering")
+            run(["git", "-C", repo, "reset", "--hard", state["restore_commit"]])
             rollback = subprocess.run(prepare_command(script.read_text()), check=False).returncode
             state["rollback_exit"] = rollback
             if rollback not in (0, 3):
                 raise ValueError(f"Rollback build failed with exit {rollback}")
             write_desktop_entry(repo, rollback)
+            state.pop("restore_commit")
             return finish("build_failed_rolled_back", result)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        if not admitted and state_path.exists():
+            state = {"old_commit": "", "new_commit": "", "failed_commit": "",
+                     **json.loads(state_path.read_text())}
         return finish("error", 2, error=str(error))
 
 
@@ -364,6 +389,16 @@ def remote_install(action, payload, source):
             shutil.rmtree(old)
         create_settings(home / ".config/gothic-ai/settings.toml", payload["settings"], repo, home)
         write_desktop_entry(repo, result)
+        state_path = repo.parent / "play-update.json"
+        if state_path.exists():
+            state = json.loads(state_path.read_text())
+            if state.get("restore_commit"):
+                state = {"time": datetime.now(timezone.utc).isoformat(), "result": "updated",
+                         "old_commit": state["restore_commit"], "failed_commit": "",
+                         "new_commit": subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()}
+                text = json.dumps(state, sort_keys=True) + "\n"
+                atomic_write(state_path, text)
+                print(text, end="", flush=True)
         print("Ready: open Gothic AI in GNOME Applications. Login on Ryzen: "
               "~/.local/bin/uv run --project ~/gothic-ai/play/launcher/core gothic-launcher login", flush=True)
     return result
