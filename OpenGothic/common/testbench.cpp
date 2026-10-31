@@ -7270,6 +7270,13 @@ void placedItemsFloor(World& world,Npc& player) {
         if(clear && world.physic()->ray(start+across*lateral+Vec3(0,height,0),goal+across*lateral+Vec3(0,height,0)).hasCol)clear=false;
       if(!clear)continue;
       state.target=i;state.walkStart=start;state.walkGoal=goal;state.walkDirection=direction;
+      // Match item-wake's local NPC removal without disturbing the tavern's
+      // actors needed later for the native pickup and theft checks.
+      std::vector<Npc*> nearby;
+      for(uint32_t id=0;id<world.npcCount();++id)
+        if(auto* npc=world.npcById(id);npc && npc!=&player && (npc->position()-center).length()<2000.f)
+          nearby.push_back(npc);
+      for(auto* npc:nearby)world.removeNpc(*npc);
       player.clearAiQueue();player.clearGoTo();player.stopWalking();player.clearSpeed();player.closeWeapon(true);
       player.setPosition(start);player.setDirection(direction);player.updateTransform();
       state.walkPrevious=start;state.walkMaximumStep=state.walkMaximumCrossTrack=0;state.walkArrived=0;
@@ -7277,7 +7284,8 @@ void placedItemsFloor(World& world,Npc& player) {
         ((item.handle().owner!=0 || item.handle().owner_guild!=0)?"true":"false")+
         ",\"owner\":"+std::to_string(item.handle().owner)+",\"owner_guild\":"+std::to_string(item.handle().owner_guild)+
         ",\"flags\":"+std::to_string(item.itemFlag())+",\"count\":"+std::to_string(item.count())+
-        ",\"start_cm\":"+ragdollVector(start)+",\"goal_cm\":"+ragdollVector(goal));
+        ",\"start_cm\":"+ragdollVector(start)+",\"goal_cm\":"+ragdollVector(goal)+
+        ",\"npcs_removed\":"+std::to_string(nearby.size())+",\"npc_clear_radius_cm\":2000");
       return;
     }
   }
