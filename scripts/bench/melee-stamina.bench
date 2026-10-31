@@ -1,0 +1,96 @@
+# Melee stamina (melee_stamina): the hero's blows at a standing bandit in Onar's open field until spent, clicks
+# while spent, the wait back to a quarter, jump backs, then the weapon put away while the meter fills. The game's
+# camera, so the bar over the health bar is in the frames. The look is judged by Claude from the shots.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local
+seed 73013
+cheat god
+set time 12 0
+release all
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+wait 600
+melee-shadow target 2
+wait 600
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+# The fixture's signpost stands between them at the wall: turn into the open field.
+turn 180
+pin BDT_1013_BANDIT_L 160 0 0
+wait 300
+still BDT_1013_BANDIT_L on
+immortal BDT_1013_BANDIT_L on
+watch player
+cam game
+wait 800
+shot full
+
+rec spend-1h
+press action
+tap forward
+wait 700
+tap forward
+wait 700
+tap left
+wait 700
+tap right
+wait 700
+tap forward
+wait 700
+tap forward
+wait 700
+tap forward
+wait 300
+shot spent
+wait 400
+tap forward
+wait 500
+tap forward
+wait 500
+release all
+shot recovering
+wait 1500
+shot quarter
+wait 2500
+shot refilled
+stop
+
+rec jumpback
+tap back
+wait 600
+tap back
+wait 600
+tap back
+wait 600
+tap back
+wait 600
+tap back
+wait 300
+shot jumpback
+wait 2000
+stop
+
+rec sheathe
+press action
+tap forward
+wait 700
+tap forward
+wait 700
+release all
+tap weapon
+wait 600
+shot sheathed
+wait 3000
+shot hidden
+stop
+
+# A spent NPC: a jump back with fists is refused, a step back without a weapon is not (melee_stamina_backstep;
+# the bench stops if not). Last: it changes the bandit's strength and weapon.
+melee-shadow stamina-backstep
+wait 300
