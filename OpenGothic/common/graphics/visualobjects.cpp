@@ -7,6 +7,7 @@
 
 #include "graphics/mesh/submesh/animmesh.h"
 #include "gothic.h"
+#include "frameprofile.h"
 #include "physics/worldwind.h"
 #include "world/chunkresidency.h"
 
@@ -67,6 +68,7 @@ void VisualObjects::Item::setObjMatrix(const Tempest::Matrix4x4& pos, const Vec3
   }
 
 void VisualObjects::Item::setTexturePosition(const Vec3& position) {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   if(owner==nullptr)
     return;
   std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
@@ -78,6 +80,7 @@ void VisualObjects::Item::setTexturePosition(const Vec3& position) {
   }
 
 void VisualObjects::Item::setTextureCategory(Resources::TextureCategory category) {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   if(owner==nullptr)
     return;
   std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
@@ -295,12 +298,14 @@ VisualObjects::~VisualObjects() {
   }
 
 void VisualObjects::setTextureResidency(ChunkResidency* residency) {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   std::lock_guard<std::recursive_mutex> guard(textureSync);
   if(textureResidency)
     textureResidency->unsubscribe(textureSubscription);
   textureResidency=residency;
   if(textureResidency) {
     textureSubscription=textureResidency->subscribe([this](ChunkId chunk, ChunkResidency::State, ChunkResidency::State next) {
+      FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
       std::lock_guard<std::recursive_mutex> guard(textureSync);
       const auto found=textureChunks.find({chunk.x,chunk.z});
       if(found==textureChunks.end())
@@ -447,7 +452,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
     return Item(); // null command
 
   obj.textureCategory=staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic;
-  updateTextureDemand(id);
+  { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
   obj.objInstance = instanceMem.alloc(sizeof(InstanceDesc));
   clustersMem[obj.clusterId].instanceId = obj.objInstance.offsetId<InstanceDesc>();
 
@@ -492,7 +497,7 @@ VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat
 
   if(obj.isEmpty())
     return Item(); // null command
-  updateTextureDemand(id);
+  { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
   obj.animPtr     = anim.offsetId<Matrix4x4>();
   obj.objInstance = instanceMem.alloc(sizeof(InstanceDesc));
   clustersMem[obj.clusterId].instanceId = obj.objInstance.offsetId<InstanceDesc>();
@@ -527,7 +532,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   if(obj.isEmpty())
     return Item(); // null command
   obj.textureCategory=Resources::TextureCategory::Landscape;
-  updateTextureDemand(id);
+  { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
   updateRtAs(id);
   return Item(*this, id);
   }
@@ -544,6 +549,7 @@ size_t VisualObjects::implAlloc() {
   }
 
 void VisualObjects::free(size_t id) {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   std::lock_guard<std::recursive_mutex> guard(textureSync);
   Object& obj = objects[id];
   setTextureDemand(obj,false);
@@ -554,6 +560,7 @@ void VisualObjects::free(size_t id) {
         textureChunks.erase(found);
       }
     }
+  timing.finish();
 
   const uint32_t meshletCount = (obj.iboLen/PackedMesh::MaxInd);
   const uint32_t numCluster = (obj.type==DrawCommands::Landscape ? meshletCount : 1);

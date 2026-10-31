@@ -2,6 +2,7 @@
 
 #include <cassert>
 
+#include "frameprofile.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/shaders.h"
 #include "graphics/visualobjects.h"
@@ -72,6 +73,7 @@ PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlob
     }
   if(decl.isDecal() && (textureResidency=visual.textureResidencyManager())!=nullptr) {
     textureSubscription=textureResidency->subscribe([this](ChunkId chunk, ChunkResidency::State, ChunkResidency::State next) {
+      FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
       std::lock_guard<std::recursive_mutex> guard(this->parent.sync);
       const auto found=textureChunks.find({chunk.x,chunk.z});
       if(found==textureChunks.end())
@@ -105,6 +107,7 @@ void PfxBucket::setTextureDemand(ImplEmitter& emitter, bool active) {
   }
 
 void PfxBucket::updateTextureDemand(size_t id) {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand);
   std::lock_guard<std::recursive_mutex> guard(parent.sync);
   auto& emitter=impl[id];
   if(decl.isDecal()) {

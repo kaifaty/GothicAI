@@ -4,6 +4,7 @@
 #include "commandline.h"
 #include "musicnative.h"
 #include "videodata.h"
+#include "frameprofile.h"
 
 #include <Tempest/MemReader>
 #include <Tempest/Pixmap>
@@ -1481,6 +1482,7 @@ void Resources::publishTexture() {
   }
 
 void Resources::updateTextures(ChunkResidency* residency) {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureUpdate);
   if(inst==nullptr || inst->dev==nullptr)
     return;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);

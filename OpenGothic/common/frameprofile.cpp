@@ -20,6 +20,7 @@ const char* names[Zones]={"tick","finish_step","camera","observations","bench","
   "parallel_animation","native_export","forced_sync_animation","actor_animation_elapsed_sum","pose_elapsed_sum","palette_elapsed_sum",
   "storage_join","storage_commit","storage_pack","storage_dispatch","storage_grow","storage_upload_execution_elapsed",
   "bodynet","cloth","water","destruction","ai_bridge","sound",
+  "texture_update","texture_demand_elapsed_sum",
   "encode_shadows","encode_main","encode_water","encode_post","encode_ui"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
   "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls"};
