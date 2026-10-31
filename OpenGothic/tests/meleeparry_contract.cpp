@@ -32,6 +32,10 @@ int main() {
   requireNear(timingSigmaMs(0),150.f,"novice timing sigma");
   requireNear(timingSigmaMs(60),84.f,"trained timing sigma");
   requireNear(timingSigmaMs(100),40.f,"master timing sigma");
+  require(awaitSwing(0,false)==SwingAction::Wait,"hold PARRY before a swing starts");
+  require(awaitSwing(599,false)==SwingAction::Wait,"keep waiting for a swing before 600 ms");
+  require(awaitSwing(600,false)==SwingAction::GiveUp,"give up after 600 ms without a swing");
+  require(awaitSwing(600,true)==SwingAction::TimeParade,"time the parade when a swing is present");
   for(const int talent : {0,60,100}) {
     const uint64_t start = paradeStartMs(1000,1500,talent,0.f,0.f);
     requireNear(float(1500-start),windowMs(talent)*.5f,"zero error centers contact in parry window");

@@ -3995,26 +3995,47 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
           TestBench::bodyEvent(*this,currentTarget,"parade_skipped",now,"\"reason\":"+TestBench::bodyJson(reason));
         consume();
         };
-      if(meleeParadeTiming && now-meleeParadeTiming->began>=1000) {
+      const auto hold = [&] {
+        visual.stopWalkAnim(*this);
+        if(!visual.pose().isStanding())
+          setAnim(Anim::Idle);
+        implTurnToFai(*currentTarget,dt);
+        mvAlgo.tick(dt,MoveAlgo::FaiMove);
+        };
+      if(!meleeParadeTiming)
+        meleeParadeTiming = MeleeParadeTiming{currentTarget,nullptr,0,now};
+      const auto held = now-meleeParadeTiming->began;
+      if(held>=1000) {
         skip("timeout");
         return true;
         }
       const auto swing = currentTarget->visual.pose().nextMeleeContact(now);
+      if(meleeParadeTiming->sequence==nullptr) {
+        switch(MeleeParry::awaitSwing(held,bool(swing))) {
+          case MeleeParry::SwingAction::Wait:
+            hold();
+            return true;
+          case MeleeParry::SwingAction::GiveUp:
+            skip("no_swing");
+            return true;
+          case MeleeParry::SwingAction::TimeParade:
+            break;
+          }
+        }
       if(!swing) {
         // A late timing error may put the start after the optimal frame. Keep that
         // deadline while the same swing still exists; an interrupted swing is gone.
         bool same = false;
-        if(meleeParadeTiming)
-          for(const auto& layer:currentTarget->visual.pose().combatLayers(now))
-            same |= layer.sequence==meleeParadeTiming->sequence && layer.origin==meleeParadeTiming->origin;
+        for(const auto& layer:currentTarget->visual.pose().combatLayers(now))
+          same |= layer.sequence==meleeParadeTiming->sequence && layer.origin==meleeParadeTiming->origin;
         if(!same) {
-          skip(meleeParadeTiming ? "swing_gone" : "no_swing");
+          skip("swing_gone");
           return true;
           }
         }
       const int talent = std::clamp(hitChance(ws==WeaponState::W2H ? TALENT_2H : TALENT_1H),0,100);
-      if(swing && (!meleeParadeTiming || meleeParadeTiming->sequence!=swing->sequence || meleeParadeTiming->origin!=swing->origin)) {
-        const auto began = meleeParadeTiming ? meleeParadeTiming->began : now;
+      if(swing && (meleeParadeTiming->sequence!=swing->sequence || meleeParadeTiming->origin!=swing->origin)) {
+        const auto began = meleeParadeTiming->began;
         const double u = (double(owner.script().rand(1u<<24,this))+.5)/double(1u<<24);
         const double v = (double(owner.script().rand(1u<<24,this))+.5)/double(1u<<24);
         const float error = MeleeParry::timingSigmaMs(talent)*float(std::sqrt(-2.*std::log(u))*std::cos(2.*M_PI*v));
@@ -4023,6 +4044,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
           const auto start = MeleeParry::paradeStartMs(now,swing->contact,talent,error,meleeParryLeadMs());
           TestBench::bodyEvent(*this,currentTarget,"parade_timed",now,
                               "\"predicted_contact_ms\":"+std::to_string(swing->contact-now)+
+                              ",\"held_ms\":"+std::to_string(held)+
                               ",\"wait_ms\":"+std::to_string(start-now)+",\"error_ms\":"+std::to_string(error)+
                               ",\"aim_ms\":"+std::to_string(MeleeParry::windowMs(talent)*.5f+meleeParryLeadMs())+
                               ",\"talent\":"+std::to_string(talent));
@@ -4032,11 +4054,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
         meleeParadeTiming->contact = swing->contact;
       const auto start = MeleeParry::paradeStartMs(now,meleeParadeTiming->contact,talent,meleeParadeTiming->errorMs,meleeParryLeadMs());
       if(now<start) {
-        visual.stopWalkAnim(*this);
-        if(!visual.pose().isStanding())
-          setAnim(Anim::Idle);
-        implTurnToFai(*currentTarget,dt);
-        mvAlgo.tick(dt,MoveAlgo::FaiMove);
+        hold();
         return true;
         }
       }

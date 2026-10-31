@@ -11,6 +11,12 @@ float MeleeParry::timingSigmaMs(int talent) {
   return 150.f-1.1f*float(std::clamp(talent,0,100));
   }
 
+MeleeParry::SwingAction MeleeParry::awaitSwing(uint64_t heldMs, bool hasSwing) {
+  if(hasSwing)
+    return SwingAction::TimeParade;
+  return heldMs<600 ? SwingAction::Wait : SwingAction::GiveUp;
+  }
+
 uint64_t MeleeParry::paradeStartMs(uint64_t now, uint64_t contact, int talent, float errorMs, float leadMs) {
   const double start = double(contact)-double(windowMs(talent))*.5-double(leadMs)+double(errorMs);
   return uint64_t(std::max(double(now),std::round(start)));
