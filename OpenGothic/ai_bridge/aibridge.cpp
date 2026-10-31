@@ -228,6 +228,7 @@ struct AiBridge::Impl final {
   void skipIntro(World& world);
   void startBranch(std::string parent, int64_t parentSeq, std::string_view reason);
   void sendSession();
+  void refreshChronicle();
   void updateSaveRecord();
   void onDebug(const rapidjson::Value& msg);
   void runDebug();
@@ -591,6 +592,7 @@ void AiBridge::Impl::processInbound(World* world, Inbound& in) {
              .finish());
       session.reason = "connect";
       sendSession();
+      refreshChronicle();
       if(world!=nullptr)
         sendWorld("world_loaded",world);
       break;
@@ -621,6 +623,7 @@ void AiBridge::Impl::processInbound(World* world, Inbound& in) {
       connected = false;
       for(auto& [req,callback]:std::exchange(chronicleCallbacks,{}))
         callback({});
+      Gothic::inst().setChronicle({});
       if(in.kind==Inbound::Error)
         lastError = in.text;
       break;
@@ -749,6 +752,7 @@ void AiBridge::Impl::startBranch(std::string parent, int64_t parentSeq, std::str
     Log::i("[ai] session ",session.branch," (",reason,")"); else
     Log::i("[ai] session ",session.branch," (",reason," from ",session.parent,"@",session.parentSeq,")");
   sendSession();
+  refreshChronicle();
   }
 
 void AiBridge::Impl::sendSession() {
@@ -1101,6 +1105,7 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
     chat->showFeat(TextCodec::fromUtf8(JsonRead::str(doc,"title")),
                    TextCodec::fromUtf8(JsonRead::str(doc,"text")),
                    std::string(JsonRead::str(doc,"icon")));
+    refreshChronicle();  // a new feat or a shown epilogue: the diary's copy follows
     }
   else if(type=="transcript") {
     onTranscript(doc);
@@ -2237,6 +2242,15 @@ AiBridge::AiBridge() {
 
 AiBridge::~AiBridge() {
   activeBridge = nullptr;
+  }
+
+void AiBridge::Impl::refreshChronicle() {
+  if(!connected)
+    return;
+  const auto req = "chronicle:"+std::to_string(++chronicleRequests);
+  // The diary reads Gothic's copy: the game is paused while it is open, and the bridge answers nothing then.
+  chronicleCallbacks.emplace(req,[](const ChronicleData& data) { Gothic::inst().setChronicle(data); });
+  send(JsonWriter("chronicle_get").str("req",req).finish());
   }
 
 void AiBridge::requestChronicle(std::function<void(const ChronicleData&)> callback) {

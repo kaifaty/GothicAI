@@ -70,7 +70,7 @@ def test_native_chronicle_parser_contract(tmp_path):
     bridge = engine / "ai_bridge"
     executable = tmp_path / "chronicle-contract"
     subprocess.run(
-        [compiler, "-std=c++20", "-Wall", "-Wconversion", "-Werror", "-I", str(bridge),
+        [compiler, "-std=c++20", "-Wall", "-Wconversion", "-Werror", "-I", str(bridge), "-I", str(engine / "common"),
          "-isystem", str(engine / "lib" / "rapidjson" / "include"),
          str(bridge / "tests" / "chronicle_contract.cpp"), str(bridge / "chronicledata.cpp"),
          str(bridge / "textcodec.cpp"), "-o", str(executable)],
