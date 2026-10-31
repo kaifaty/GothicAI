@@ -7330,7 +7330,6 @@ void Npc::startMeleeStun(Npc& by, std::string_view reason) {
     return;
   endMeleeStun("timeout");
   meleeStunUntil = owner.tickCount()+MeleeParry::StunDuration;
-  meleeParadeOrigin.reset();
   stopMeleeSwing();
   clearGoTo();
   mvAlgo.clearSpeed();

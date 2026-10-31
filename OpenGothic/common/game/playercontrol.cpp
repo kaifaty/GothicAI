@@ -699,7 +699,7 @@ bool PlayerControl::tickMove(uint64_t dt) {
       if(pl->weaponState()==WeaponState::Fist) pl->blockFist();
       else pl->blockSword();
       }
-    if(wantsToMoveBackward())
+    else if(wantsToMoveBackward())
       pl->setAnim(Npc::Anim::MoveBack);
     clearInput();
     rotMouse = rotMouseY = 0;
