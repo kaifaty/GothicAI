@@ -71,6 +71,8 @@ class PackedMesh {
     std::vector<VertexA>  verticesA;
     std::vector<uint32_t> indices;
     std::vector<uint8_t>  indices8;
+    // PK_Physic only: source polygon ID for each packed triangle.
+    std::vector<uint32_t> physicsTriangleSources;
 
     std::vector<SubMesh>  subMeshes;
     std::vector<Cluster>  meshletBounds;

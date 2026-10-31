@@ -232,6 +232,10 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   auto passive=std::move(sndPerc);
   sndPerc.clear();
 
+  for(auto& item:itemArr)
+    if(item->physicsPending && owner.physic()->landscapeReady(item->position()))
+      item->setPhysicsEnable(owner);
+
   bool needSort = false;
   for(size_t i=1; i<npcArr.size(); ++i) {
     auto& a = npcArr[i-1];

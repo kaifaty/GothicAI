@@ -148,7 +148,8 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     auto wdynamicFut = std::async(probeLaunch, [&]() {
       Workers::setThreadName("Loading: BVH thread");
       const auto t = LoadProbe::now();
-      auto ret = std::unique_ptr<DynamicWorld>(new DynamicWorld(this,worldMesh,&worldCloth.original));
+      auto ret = std::unique_ptr<DynamicWorld>(new DynamicWorld(this,worldMesh,&worldCloth.original,
+                                                               Gothic::inst().isBenchmarkMode() ? nullptr : residency.get()));
       probePhysicsMs = LoadProbe::msSince(t);
       return ret;
       });
@@ -283,6 +284,7 @@ void World::updateLandscape(const Camera& camera) {
     }
   if(wview)
     wview->prepareLandscapeWork();
+  wdynamic->startPhysicsStreaming(npcPlayer->position(),camera.originLwc());
   residency->update(npcPlayer->position(),camera.originLwc(),camera.zFar());
   if(wview)
     wview->finishLandscapeUpdate();

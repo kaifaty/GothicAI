@@ -10,6 +10,8 @@
 #include "gothic.h"
 #include "arrowtrace.h"
 #include "frameprofile.h"
+#include "loadprobe.h"
+#include "world/chunkresidency.h"
 #include <Tempest/Log>
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
@@ -36,6 +38,11 @@
 #include <chrono>
 #include <unordered_set>
 #include <stdexcept>
+#include <atomic>
+#include <cstring>
+#include <cstdlib>
+#include <mutex>
+#include <thread>
 
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "world/objects/item.h"
@@ -782,7 +789,306 @@ struct DynamicWorld::BBoxList final {
   DynamicWorld&          wrld;
   };
 
-DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, const asset::WorldMesh* originalCloth) {
+struct DynamicWorld::LandscapeChunks {
+  struct Entry {
+    std::vector<uint32_t> triangles;
+    Tempest::Vec3 min, max;
+    std::mutex mutex;
+    JPH::ShapeRefC shape;
+    std::unique_ptr<CollisionWorld::CollisionBody> body;
+    bool built = false, published = false;
+    };
+
+  LandscapeChunks(DynamicWorld& owner, ChunkResidency& residency):owner(owner),residency(residency) {
+    for(size_t i=0;i<residency.table().entries.size();++i)
+      entries.push_back(std::make_unique<Entry>());
+    const auto* value=std::getenv("OPENGOTHIC_PHYSICS_UNLOAD");
+    unload=value!=nullptr && std::strcmp(value,"1")==0;
+    }
+
+  ~LandscapeChunks() {
+    alive.reset();
+    stopping=true;
+    if(worker.joinable())worker.join();
+    if(subscription!=0)residency.unsubscribe(subscription);
+    owner.world->setLandscapeQueryCallback({});
+    owner.world->setLandscapeReadyCallback({});
+    owner.world->setLandscapeTrianglesCallback({},nullptr);
+    }
+
+  static bool intersects(const Entry& entry, const Tempest::Vec3& min, const Tempest::Vec3& max) {
+    return !entry.triangles.empty() && entry.min.x<=max.x && entry.max.x>=min.x &&
+           entry.min.y<=max.y && entry.max.y>=min.y && entry.min.z<=max.z && entry.max.z>=min.z;
+    }
+
+  void prepare() {
+    for(auto& ptr:entries) {
+      auto& entry=*ptr;
+      const float inf=std::numeric_limits<float>::infinity();
+      entry.min=Tempest::Vec3(inf,inf,inf);
+      entry.max=Tempest::Vec3(-inf,-inf,-inf);
+      for(const auto triangle:entry.triangles) {
+        JPH::Vec3 vertices[3];
+        if(!owner.landMesh->triangleVertices(triangle,vertices))
+          throw std::runtime_error("Invalid landscape physics triangle");
+        for(const auto& vertex:vertices) {
+          const auto point=CollisionWorld::toCentimeters(vertex);
+          entry.min.x=std::min(entry.min.x,point.x);entry.max.x=std::max(entry.max.x,point.x);
+          entry.min.y=std::min(entry.min.y,point.y);entry.max.y=std::max(entry.max.y,point.y);
+          entry.min.z=std::min(entry.min.z,point.z);entry.max.z=std::max(entry.max.z,point.z);
+          }
+        }
+      if(entry.triangles.empty())entry.built=entry.published=true;
+      }
+    owner.world->setLandscapeQueryCallback([this](const Tempest::Vec3& min,const Tempest::Vec3& max) {
+      ensure(min,max);
+      });
+    owner.world->setLandscapeReadyCallback([this](const Tempest::Vec3& feet) { return ready(feet); });
+    owner.world->setLandscapeTrianglesCallback([this](const auto& output) {
+      // Navigation retains the old native triangle subdivision, quantization
+      // and traversal order, independently of gameplay body residency.
+      CollisionWorld::staticShapeTriangles(owner.landMesh->shape(owner.splitStaticTriangles),
+                                            Tempest::Matrix4x4::mkIdentity(),output);
+      },owner.landMesh.get());
+    subscription=residency.subscribe([this](ChunkId id,ChunkResidency::State,ChunkResidency::State next) {
+      const auto index=residency.indexOf(id);
+      if(!started || index==size_t(-1))return;
+      if(next==ChunkResidency::State::Near && !entries[index]->published) {
+        ensure(entries[index]->min,entries[index]->max);
+        }
+      else if(unload && next==ChunkResidency::State::Outside)
+        remove(index);
+      if(next==ChunkResidency::State::Far)enqueuePublication();
+      });
+    }
+
+  void checkError() {
+    std::lock_guard guard(errorMutex);
+    if(error)std::rethrow_exception(error);
+    }
+
+  bool build(size_t index, bool synchronous) {
+    auto& entry=*entries[index];
+    std::lock_guard guard(entry.mutex);
+    if(entry.built)return false;
+    entry.shape=owner.landMesh->chunkShape(entry.triangles,owner.splitStaticTriangles);
+    entry.built=true;
+    if(synchronous)++synchronousBuilds;
+    return true;
+    }
+
+  void publish(const std::vector<size_t>& selected,
+               ChunkResidency::Clock::time_point deadline=ChunkResidency::Clock::time_point::max()) {
+    std::vector<CollisionWorld::CollisionBody*> batch;
+    for(const auto index:selected) {
+      if(ChunkResidency::Clock::now()>=deadline)break;
+      auto& entry=*entries[index];
+      if(entry.published)continue;
+      std::lock_guard guard(entry.mutex);
+      if(!entry.built)continue;
+      if(entry.body==nullptr && entry.shape!=nullptr) {
+        entry.body=owner.world->addCollisionBody(entry.shape,Tempest::Matrix4x4::mkIdentity(),
+                     DynamicWorld::materialFriction(asset::MaterialGroup::NONE),C_Landscape,
+                     false,false,owner.landMesh.get(),false);
+        const auto id=residency.table().entries[index].id;
+        entry.body->setLabel("landscape/"+std::to_string(id.x)+"/"+std::to_string(id.z));
+        }
+      if(entry.body!=nullptr)batch.push_back(entry.body.get());
+      entry.published=true;
+      }
+    if(!batch.empty())owner.world->setLandscapeBodiesPublished(batch,true);
+    if(!allPublished && pending()==0) {
+      allPublished=true;
+      owner.world->optimizeBroadPhase();
+      if(!unload) {
+        owner.world->setLandscapeQueryCallback({});
+        owner.world->setLandscapeReadyCallback({});
+        }
+      if(LoadProbe::enabled())
+        LoadProbe::mark("physics_all_published",LoadProbe::msSince(created),
+                        "chunks="+std::to_string(entries.size())+" sync_builds="+std::to_string(synchronousBuilds));
+      }
+    }
+
+  void ensure(const Tempest::Vec3& min, const Tempest::Vec3& max) {
+    if(allPublished && !unload)return;
+    checkError();
+    std::vector<size_t> selected;
+    // Native tolerant rays accept points just outside the source AABB. Include
+    // their millimetre allowance before entering a Jolt query or body lock.
+    const auto padding=Tempest::Vec3(.1f,.1f,.1f);
+    size_t built=0;
+    for(size_t i=0;i<entries.size();++i)
+      if(!entries[i]->published && intersects(*entries[i],min-padding,max+padding)) {
+        built+=build(i,true) ? 1 : 0;
+        selected.push_back(i);
+        }
+    publish(selected);
+    if(!selected.empty()) {
+      Tempest::Log::i("Physics chunks demanded: published=",selected.size()," built=",built,
+                     " synchronous_builds=",synchronousBuilds);
+      if(LoadProbe::enabled())
+        LoadProbe::mark("physics_sync_build",-1,"chunks="+std::to_string(selected.size())+
+                        " built="+std::to_string(built)+" sync_builds="+std::to_string(synchronousBuilds));
+      }
+    }
+
+  bool ready(const Tempest::Vec3& feet) const {
+    if(allPublished && !unload)return true;
+    const auto min=Tempest::Vec3(feet.x-.1f,-std::numeric_limits<float>::infinity(),feet.z-.1f);
+    const auto max=Tempest::Vec3(feet.x+.1f,feet.y+10.f,feet.z+.1f);
+    for(const auto& entry:entries)
+      if(!entry->published && intersects(*entry,min,max))return false;
+    return true;
+    }
+
+  size_t pending() const {
+    size_t count=0;
+    for(const auto& entry:entries)if(!entry->published)++count;
+    return count;
+    }
+
+  bool occupied(size_t index) const {
+    const auto& entry=*entries[index];
+    bool result=false;
+    auto support=[&](const Tempest::Vec3& min,const Tempest::Vec3& max) {
+      // Vertical supports can be far below a falling object. An island cell is
+      // pinned for every occupant above its geometry, even while it sleeps.
+      const auto below=Tempest::Vec3(min.x,-std::numeric_limits<float>::infinity(),min.z);
+      result=result || intersects(entry,below,max);
+      };
+    owner.world->landscapeSupportBounds(support);
+    for(const auto* records:{&owner.npcList->body,&owner.npcList->frozen})
+      for(const auto& record:*records)
+        if(record.body!=nullptr) {
+          const auto& body=*record.body;
+          support(body.pos-Tempest::Vec3(body.radius,0,body.radius),
+                  body.pos+Tempest::Vec3(body.radius,10.f,body.radius));
+          }
+    if(owner.ownerWorld!=nullptr) {
+      owner.ownerWorld->detectItem({},std::numeric_limits<float>::infinity(),[&](::Item& item) {
+        support(item.position(),item.position());
+        });
+      }
+    return result;
+    }
+
+  void remove(size_t index) {
+    auto& entry=*entries[index];
+    if(!entry.published || entry.body==nullptr || occupied(index))return;
+    CollisionWorld::CollisionBody* body=entry.body.get();
+    owner.world->setLandscapeBodiesPublished(std::span<CollisionWorld::CollisionBody* const>(&body,1),false);
+    entry.published=false;
+    }
+
+  void start(const Tempest::Vec3& hero, const Tempest::Vec3& camera) {
+    if(started)return;
+    started=true;
+    const auto heroCell=ChunkId::fromPosition(hero.x,hero.z);
+    const auto cameraCell=ChunkId::fromPosition(camera.x,camera.z);
+    std::vector<size_t> near;
+    for(size_t i=0;i<entries.size();++i) {
+      const auto id=residency.table().entries[i].id;
+      auto close=[&](ChunkId cell) {
+        return std::max(std::abs(int64_t(id.x)-cell.x),std::abs(int64_t(id.z)-cell.z))<=ChunkResidency::NearRadius;
+        };
+      if(close(heroCell) || close(cameraCell)) {
+        build(i,false);
+        near.push_back(i);
+        }
+      }
+    publish(near);
+    worker=std::thread([this] {
+      try {
+        for(size_t i=0;i<entries.size() && !stopping;++i)build(i,false);
+        }
+      catch(...) {
+        std::lock_guard guard(errorMutex);
+        error=std::current_exception();
+        }
+      });
+    enqueuePublication();
+    }
+
+  bool wanted(size_t index) const {
+    return !unload || residency.desired(index)!=ChunkResidency::State::Outside || occupied(index);
+    }
+
+  void maintainUnload() {
+    if(unload && started)
+      for(size_t i=0;i<entries.size();++i)
+        if(residency.desired(i)==ChunkResidency::State::Outside) {
+          if(entries[i]->published)remove(i);
+          else if(occupied(i))enqueuePublication();
+          }
+    }
+
+  void enqueuePublication() {
+    if(queued || !started)return;
+    queued=true;
+    const std::weak_ptr<char> token=alive;
+    residency.enqueue([this,token](ChunkResidency::Clock::time_point deadline) {
+      if(token.expired())return true;
+      checkError();
+      std::vector<size_t> batch;
+      for(size_t i=0;i<entries.size() && ChunkResidency::Clock::now()<deadline;++i) {
+        auto& entry=*entries[i];
+        if(entry.published || !wanted(i))continue;
+        std::unique_lock lock(entry.mutex,std::try_to_lock);
+        if(lock.owns_lock() && entry.built) {
+          batch.push_back(i);
+          if(batch.size()==16)break;
+          }
+        }
+      publish(batch,deadline);
+      bool done=allPublished && !unload;
+      if(unload) {
+        done=true;
+        for(size_t i=0;i<entries.size();++i) {
+          auto& entry=*entries[i];
+          std::unique_lock lock(entry.mutex,std::try_to_lock);
+          if(!lock.owns_lock() || !entry.built || (!entry.published && wanted(i))) {
+            done=false;
+            break;
+            }
+          }
+        }
+      queued=!done;
+      return done;
+      });
+    }
+
+  DynamicWorld& owner;
+  ChunkResidency& residency;
+  std::vector<std::unique_ptr<Entry>> entries;
+  std::shared_ptr<char> alive=std::make_shared<char>();
+  std::thread worker;
+  std::atomic<bool> stopping=false;
+  std::mutex errorMutex;
+  std::exception_ptr error;
+  uint64_t subscription=0, synchronousBuilds=0;
+  bool started=false, allPublished=false, unload=false, queued=false;
+  std::chrono::steady_clock::time_point created=LoadProbe::now();
+  };
+
+void DynamicWorld::startPhysicsStreaming(const Tempest::Vec3& hero, const Tempest::Vec3& camera) {
+  if(landscapeChunks)landscapeChunks->start(hero,camera);
+  }
+
+bool DynamicWorld::landscapeReady(const Tempest::Vec3& feet) const {
+  return !landscapeChunks || landscapeChunks->ready(feet);
+  }
+
+size_t DynamicWorld::pendingPhysicsChunks() const {
+  return landscapeChunks ? landscapeChunks->pending() : 0;
+  }
+
+uint64_t DynamicWorld::synchronousPhysicsChunks() const {
+  return landscapeChunks ? landscapeChunks->synchronousBuilds : 0;
+  }
+
+DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, const asset::WorldMesh* originalCloth,
+                           ChunkResidency* residency) {
   world.reset(new CollisionWorld());
   ownerWorld=owner;
   if(owner!=nullptr)
@@ -819,6 +1125,14 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
     bodies->vertices[i] = CollisionWorld::toMeters(Tempest::Vec3(v.pos[0],v.pos[1],v.pos[2]));
     }
 
+  const auto* chunkFlag=std::getenv("OPENGOTHIC_PHYSICS_CHUNKS");
+  const auto* streamingFlag=std::getenv("OPENGOTHIC_STREAMING");
+  const bool useChunks=residency!=nullptr && !residency->table().entries.empty() &&
+      !(chunkFlag!=nullptr && std::strcmp(chunkFlag,"0")==0) &&
+      !(streamingFlag!=nullptr && std::strcmp(streamingFlag,"0")==0);
+  if(useChunks)
+    landscapeChunks=std::make_unique<LandscapeChunks>(*this,*residency);
+
   landMesh .reset(new PhysicVbo(&bodies->vertices));
   waterMesh.reset(new PhysicVbo(&bodies->vertices));
 
@@ -828,7 +1142,14 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
       if(sm.material.group==asset::MaterialGroup::WATER) {
         waterMesh->addIndex(pkg.indices,sm.iboOffset,sm.iboLength,sm.material.group);
         } else {
+        const size_t first=landMesh->triangleCount();
         landMesh ->addIndex(pkg.indices,sm.iboOffset,sm.iboLength,sm.material.group,sectors[i].c_str());
+        if(landscapeChunks)
+          for(size_t triangle=0;triangle<sm.iboLength/3;++triangle) {
+            const auto source=pkg.physicsTriangleSources.at(sm.iboOffset/3+triangle);
+            const auto chunk=residency->table().triangleChunks.at(source);
+            landscapeChunks->entries.at(chunk)->triangles.push_back(uint32_t(first+triangle));
+            }
         }
       }
     }
@@ -848,7 +1169,15 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
   JPH::Vec3 bbox[2] = {JPH::Vec3::sZero(), JPH::Vec3::sZero()};
   Tempest::Matrix4x4 mt;
   mt.identity();
-  if(const auto shape=landMesh->shape(splitStaticTriangles); shape!=nullptr) {
+  if(landscapeChunks) {
+    landMesh->prepareTriangleData();
+    landscapeChunks->prepare();
+    for(const auto& vertex:bodies->vertices) {
+      bbox[0]=JPH::Vec3::sMin(bbox[0],vertex);
+      bbox[1]=JPH::Vec3::sMax(bbox[1],vertex);
+      }
+    }
+  else if(const auto shape=landMesh->shape(splitStaticTriangles); shape!=nullptr) {
     bodies->landscape = world->addCollisionBody(shape,mt,materialFriction(asset::MaterialGroup::NONE),
                                                C_Landscape,false,false,landMesh.get());
     bodies->landscape->setLabel("landscape");
@@ -896,6 +1225,7 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
   }
 
 DynamicWorld::~DynamicWorld(){
+  landscapeChunks.reset();
   for(auto* body:movableVobs->bodies)
     body->movableOwner = nullptr;
   }
@@ -1089,6 +1419,8 @@ DynamicWorld::Item DynamicWorld::addMovableObj(const PhysicMeshShape* shape, con
   }
 
 DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& b, asset::MaterialGroup mat) {
+  if(!landscapeReady(Tempest::Vec3(pos.at(3,0),pos.at(3,1),pos.at(3,2))))
+    return {};
   auto extent = CollisionWorld::toMeters(b.bbox[1]-b.bbox[0]);
   const auto* m=pos.data();
   const double volumeScale=std::abs(double(m[0])*(double(m[5])*m[10]-double(m[9])*m[6])-
@@ -1267,6 +1599,8 @@ const DynamicWorld::ItemHull& DynamicWorld::itemHullShape(const ProtoMesh& proto
 DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& bounds,
                                                asset::MaterialGroup mat, const ProtoMesh* proto,
                                                std::string_view visual, bool hulls) {
+  if(!landscapeReady(Tempest::Vec3(pos.at(3,0),pos.at(3,1),pos.at(3,2))))
+    return {};
   if(!hulls || proto==nullptr)
     return addDynamicObj(pos,bounds,mat);
   const auto& hull=itemHullShape(*proto,visual);
@@ -2592,6 +2926,7 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
   }
 
 void DynamicWorld::tick(uint64_t dt) {
+  if(landscapeChunks)landscapeChunks->maintainUnload();
   if(ownerWorld!=nullptr) {
     const float cycle=Gothic::settingsGetF("ENGINE","zWindCycleTime")+
                       Gothic::settingsGetF("ENGINE","zWindCycleTimeVar");

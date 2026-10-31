@@ -524,6 +524,49 @@ JPH::ShapeRefC PhysicVbo::shape(bool splitLargeTriangles) const {
   return cached;
   }
 
+JPH::ShapeRefC PhysicVbo::chunkShape(std::span<const uint32_t> source, bool splitLargeTriangles) const {
+  if(source.empty())
+    return nullptr;
+  Physics::initialize();
+
+  // Subdivision and Jolt's BVH builder own only this chunk's vertices. Copying
+  // the island's complete vertex array for every chunk defeats streaming.
+  std::vector<JPH::Vec3> vertices;
+  MeshTriangles triangles;
+  std::unordered_map<uint32_t,uint32_t> vertexMap;
+  triangles.reserve(source.size());
+  vertexMap.reserve(std::min(vert.size(),3*source.size()));
+  bool hasLongTriangles=false;
+  for(auto triangle:source) {
+    if(size_t(triangle)>=triangleCount())
+      throw std::out_of_range("Physics chunk triangle is outside the source mesh");
+    uint32_t indices[3];
+    for(size_t v=0;v<3;++v) {
+      const auto index=id[3*size_t(triangle)+v];
+      auto [entry,inserted]=vertexMap.emplace(index,uint32_t(vertices.size()));
+      if(inserted)
+        vertices.push_back(vert[index]);
+      indices[v]=entry->second;
+      }
+    triangles.push_back({JPH::IndexedTriangle(indices[0],indices[1],indices[2],0,triangle),triangle});
+    hasLongTriangles=hasLongTriangles || longestEdgeSquared(vertices,triangles.back().triangle)>maxTriangleEdge*maxTriangleEdge;
+    }
+  if(splitLargeTriangles && hasLongTriangles)
+    splitTriangles(vertices,triangles);
+
+  if(meshBounds(vertices,triangles,0,triangles.size()).GetSize().LengthSq()<=maxMeshDiagonal*maxMeshDiagonal)
+    return createMesh(vertices,triangles,0,triangles.size(),JPH::Vec3::sZero());
+
+  JPH::StaticCompoundShapeSettings compound;
+  addMeshChunks(vertices,triangles,0,triangles.size(),compound,0);
+  if(compound.mSubShapes.empty())
+    return nullptr;
+  const auto result=compound.Create();
+  if(result.HasError())
+    throw std::runtime_error("Unable to build compound physics chunk: " + std::string(result.GetError().c_str()));
+  return result.Get();
+  }
+
 std::string_view PhysicVbo::validateSectorName(std::string_view name) const {
   if(name.empty())
     return "";

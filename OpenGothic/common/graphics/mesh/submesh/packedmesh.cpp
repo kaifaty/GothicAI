@@ -527,6 +527,7 @@ void PackedMesh::packPhysics(const asset::WorldMesh& mesh, PkgType type) {
   icache.rehash(size_t(std::sqrt(ibo.size())));
 
   indices.reserve(ibo.size());
+  physicsTriangleSources.reserve(prim.size());
   for(size_t i=0; i<prim.size();) {
     const auto mId = prim[i].mat;
 
@@ -544,6 +545,7 @@ void PackedMesh::packPhysics(const asset::WorldMesh& mesh, PkgType type) {
 
     for(; i<prim.size() && prim[i].mat==mId; ++i) {
       auto pr = prim[i].primId;
+      physicsTriangleSources.push_back(pr/3);
       for(size_t r=0; r<3; ++r) {
         uint32_t index = ibo[pr+r];
         auto     rx    = icache.find(index);

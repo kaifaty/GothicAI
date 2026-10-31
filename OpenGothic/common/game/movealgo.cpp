@@ -225,6 +225,11 @@ void MoveAlgo::tickClimb(uint64_t dt) {
 void MoveAlgo::tick(uint64_t dt, MvFlags moveFlg) {
   ++movementTraceSerial;
   MovementTrace trace(*this,dt,moveFlg);
+  if(!npc.world().physic()->landscapeReady(npc.position())) {
+    clearSpeed();
+    resetCharacterVirtual();
+    return;
+    }
   if(npc.isDown() && (flags==Swim || flags==Dive)) {
     // 'falling' to bottom of the lake
     setState(InAir);
@@ -883,6 +888,11 @@ void MoveAlgo::resetCharacterVirtual(bool mobTransition) {
   }
 
 void MoveAlgo::carryCharacterVirtual(uint64_t dt) {
+  if(!npc.world().physic()->landscapeReady(npc.position())) {
+    clearSpeed();
+    resetCharacterVirtual();
+    return;
+    }
   if(!virtualMovementActive || (flags!=Run && flags!=InWater))
     return;
   const auto moved = npc.physic.carryVirtual(dt,&npc);

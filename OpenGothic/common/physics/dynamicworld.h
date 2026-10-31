@@ -33,6 +33,7 @@ class Serialize;
 
 class CollisionWorld;
 class Cloth;
+class ChunkResidency;
 
 // Query-only melee geometry. Positions and radii are world centimetres.
 struct MeleeBladeSegment final {
@@ -64,6 +65,7 @@ struct MeleeBladeContact final {
 
 class DynamicWorld final {
   private:
+    struct LandscapeChunks;
     struct BodyData;
     struct WorldBodies;
     struct BBoxShape;
@@ -82,9 +84,15 @@ class DynamicWorld final {
     static constexpr float spellSpeed  = 1; // centimeters per milliseconds
     static constexpr float characterItemRange = 300.f; // centimetres around the opt-in hero
 
-    DynamicWorld(World *world, const asset::WorldMesh& mesh, const asset::WorldMesh* originalCloth = nullptr);
+    DynamicWorld(World *world, const asset::WorldMesh& mesh, const asset::WorldMesh* originalCloth = nullptr,
+                 ChunkResidency* residency = nullptr);
     DynamicWorld(const DynamicWorld&)=delete;
     ~DynamicWorld();
+
+    void startPhysicsStreaming(const Tempest::Vec3& hero, const Tempest::Vec3& camera);
+    bool landscapeReady(const Tempest::Vec3& feet) const;
+    size_t pendingPhysicsChunks() const;
+    uint64_t synchronousPhysicsChunks() const;
 
     enum Category {
       C_Null      = 1,
@@ -665,6 +673,7 @@ class DynamicWorld final {
     std::unique_ptr<PhysicVbo>         waterMesh;
     std::unique_ptr<PhysicVbo>         originalClothMesh;
     std::unique_ptr<WorldBodies>       bodies;
+    std::unique_ptr<LandscapeChunks>   landscapeChunks;
 
     std::unique_ptr<NpcBodyList>       npcList;
     std::unique_ptr<BulletsList>       bulletList;

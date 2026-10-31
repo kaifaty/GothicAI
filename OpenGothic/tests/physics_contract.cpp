@@ -1,8 +1,10 @@
 #include "asset/fromzenkit.h"
+#include "commandline.h"
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
 #include "physics/physicvbo.h"
 #include "physics/ragdoll.h"
+#include "physics/worldcloth.h"
 #include "graphics/mesh/animblend.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
@@ -13,6 +15,8 @@
 #include "game/damagecalculator.h"
 #include "game/meleeimpact.h"
 #include "world/objects/npc.h"
+#include "world/chunkresidency.h"
+#include "worlddata.h"
 #include "gothic.h"
 
 #include <Tempest/MemReader>
@@ -965,6 +969,8 @@ namespace {
     zones.setSkeleton(&skeleton);
     require(zones.isValid(),"noise ragdoll fixture must contain canonical capsules");
     CollisionWorld world;
+    bool supportReady=false;
+    world.setLandscapeReadyCallback([&](const Tempest::Vec3&) { return supportReady; });
     auto floor=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,
                                       DynamicWorld::C_Landscape);
     auto object=at(0,100,0);
@@ -973,6 +979,12 @@ namespace {
     for(const auto& bone:skeleton.tr) pose.push_back(object*bone);
     auto body=world.createRagdoll(skeleton,zones,pose.data(),pose.size(),object,{0,-600,0});
     require(body!=nullptr && body->partCount()>1,"noise fixture must create several physical limbs");
+    const auto heldPose=body->pelvisTransform();
+    for(int frame=0;frame<30;++frame)world.tick(17);
+    requireMatrix(body->pelvisTransform(),heldPose,"pending support must hold every ragdoll limb without gravity");
+    for(const auto& part:body->state().parts)
+      requireNear(part.linearVelocity.length(),0,.001f,"pending support must clear ragdoll velocities");
+    supportReady=true;
     std::vector<uint64_t> steps;
     uint64_t identity=0;
     world.setPhysicsNoiseCallback([&](const PhysicsNoise& noise) {
@@ -2288,6 +2300,278 @@ namespace {
                                        CollisionWorld::toCentimeters(center-normal),landscapeMask);
     require(interior.hasHit && interior.material==asset::MaterialGroup::WOOD,
             "interior mesh rays must retain their closest native face");
+    }
+
+  void testChunkedLandscape() {
+    // Four independently published bodies meet at the grid origin. All of
+    // them resolve user data through the same original physics triangle IDs.
+    std::vector<JPH::Vec3> vertices;
+    for(int x=-1;x<=1;++x)
+      for(int z=-1;z<=1;++z)
+        vertices.emplace_back(float(x)*4.f,0,float(z)*4.f);
+    PhysicVbo mesh(&vertices);
+    const char* sectors[]={"south-west","north-west","south-east","north-east"};
+    for(uint32_t x=0;x<2;++x)
+      for(uint32_t z=0;z<2;++z) {
+        const uint32_t a=x*3+z,b=a+1,c=a+4,d=a+3;
+        const auto material=(x+z)%2==0 ? asset::MaterialGroup::STONE : asset::MaterialGroup::WOOD;
+        mesh.addIndex({a,c,b,a,d,c},0,6,material,sectors[x*2+z]);
+        }
+    mesh.prepareTriangleData();
+    CollisionWorld whole,chunked;
+    auto wholeBody=whole.addCollisionBody(mesh.shape(true),at(0,0,0),0,DynamicWorld::C_Landscape,false,false,&mesh);
+    std::array<std::unique_ptr<CollisionWorld::CollisionBody>,4> chunks;
+    std::array<CollisionWorld::CollisionBody*,4> batch;
+    std::array<bool,4> published{};
+    for(size_t i=0;i<chunks.size();++i) {
+      const std::array<uint32_t,2> triangles={uint32_t(i*2),uint32_t(i*2+1)};
+      chunks[i]=chunked.addCollisionBody(mesh.chunkShape(triangles,true),at(0,0,0),0,
+                                         DynamicWorld::C_Landscape,false,false,&mesh,false);
+      batch[i]=chunks[i].get();
+      }
+    size_t synchronous=0;
+    chunked.setLandscapeQueryCallback([&](const Tempest::Vec3& min,const Tempest::Vec3& max) {
+      for(size_t i=0;i<chunks.size();++i) {
+        if(published[i])continue;
+        JPH::Vec3 low,high;
+        chunks[i]->getAabb(low,high);
+        const auto a=CollisionWorld::toCentimeters(low),b=CollisionWorld::toCentimeters(high);
+        if(min.x>b.x || max.x<a.x || min.y>b.y || max.y<a.y || min.z>b.z || max.z<a.z)continue;
+        chunked.setLandscapeBodiesPublished(std::span<CollisionWorld::CollisionBody* const>(&batch[i],1),true);
+        published[i]=true;
+        ++synchronous;
+        }
+      });
+    const auto first=chunked.rayCast({-100,100,-100},{-100,-100,-100},landscapeMask);
+    require(first.hasHit && synchronous==1,"a ray must publish only its missing support before querying Jolt");
+    const auto swept=chunked.raySweep({100,100,-100},{100,-100,-100},10,landscapeMask);
+    require(swept.hasHit && synchronous==2,"a sweep must publish its missing support before querying Jolt");
+    JPH::CapsuleShape capsule(.1f,.1f);
+    Tempest::Vec3 normal;
+    Interactive* interactive=nullptr;
+    require(chunked.hasCollision(&capsule,{-100,5,100},normal,interactive) && synchronous==3,
+            "an overlap must publish its missing support before querying Jolt");
+    auto walker=chunked.createVirtualCharacter(25,180,{100,0,100});
+    walker->move({},17,50,.785398163f,80,nullptr);
+    require(synchronous==4,"CharacterVirtual must publish its missing support before querying Jolt");
+    chunked.setLandscapeQueryCallback({});
+
+    size_t rays=0;
+    for(int x=-160;x<=160;x+=4)
+      for(int z=-160;z<=160;z+=4)
+        for(const float tilt:{0.f,17.f}) {
+          const Tempest::Vec3 from(float(x)-tilt,100,float(z)+tilt),to(float(x)+tilt,-100,float(z)-tilt);
+          const auto a=whole.rayCast(from,to,landscapeMask),b=chunked.rayCast(from,to,landscapeMask);
+          require(a.hasHit && b.hasHit && a.material==b.material && std::string(a.sector)==std::string(b.sector),
+                  "chunked rays must retain the whole body's material and sector at edges and corners");
+          require((a.point-b.point).length()<=.1f && (a.normal-b.normal).length()<=.000001f,
+                  "chunked rays must retain whole-body points within one millimetre and source normals");
+          ++rays;
+          }
+
+    // Walk and slide over an edge, then the intersection of all four bodies.
+    for(const bool corner:{false,true}) {
+      auto cv=chunked.createVirtualCharacter(25,180,{-120,0,corner ? -120.f : -80.f});
+      auto reference=whole.createVirtualCharacter(25,180,{-120,0,corner ? -120.f : -80.f});
+      CollisionWorld::CharacterMoveResult state,expected;
+      for(int frame=0;frame<90;++frame) {
+        state=cv->move({3,0,corner ? 3.f : 0.f},17,50,.785398163f,80,nullptr);
+        expected=reference->move({3,0,corner ? 3.f : 0.f},17,50,.785398163f,80,nullptr);
+        requireNear(state.position.y,expected.position.y,.1f,"a CV must retain whole-body support across chunk seams");
+        }
+      require(state.position.x>140,"CVs must cross chunk edges and four-body corners without sticking");
+      cv.reset();reference.reset();
+      auto box=chunked.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(-120,10,corner ? -120.f : -80.f),0,1);
+      auto control=whole.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(-120,10,corner ? -120.f : -80.f),0,1);
+      box->setVelocity({100,0,corner ? 100.f : 0.f},{});
+      control->setVelocity({100,0,corner ? 100.f : 0.f},{});
+      for(int frame=0;frame<90;++frame) {
+        chunked.tick(17);whole.tick(17);
+        requireNear(box->position().y,control->position().y,.1f,"a dynamic body must retain whole-body support across chunk seams");
+        }
+      require(box->position().x>0,"dynamic bodies must cross chunk edges and four-body corners without sticking");
+      }
+
+    bool ready=false;
+    chunked.setLandscapeReadyCallback([&](const Tempest::Vec3&) { return ready; });
+    auto held=chunked.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(100,100,100),0,1);
+    held->setVelocity({100,-200,100},{});
+    require(!held->addImpulse({1,-2,1}),"an unpublished support must reject impulses and waking");
+    for(int frame=0;frame<30;++frame)chunked.tick(17);
+    requireNear(held->position().y,100,.001f,"pending support must hold a dynamic body without gravity");
+    requireNear(held->velocity().length(),0,.001f,"pending support must clear dynamic velocity");
+    require(chunked.rayCast({100,150,100},{100,50,100},1u<<DynamicWorld::C_Item).body==held.get(),
+            "held bodies must remain visible to queries while waiting for support");
+    ready=true;
+    for(int frame=0;frame<30;++frame)chunked.tick(17);
+    require(held->position().y<95 && held->position().y>9,"publishing support must resume ordinary gravity and floor contact");
+    held.reset();
+    chunked.setLandscapeReadyCallback({});
+    const auto identity=chunked.rayCast({-100,100,-100},{-100,-100,-100},landscapeMask).nativeBodyId;
+    for(int cycle=0;cycle<3;++cycle) {
+      chunked.setLandscapeBodiesPublished(batch,false);
+      require(!chunked.rayCast({-100,100,-100},{-100,-100,-100},landscapeMask).hasHit,
+              "RemoveBodies must remove every landscape chunk from queries");
+      chunked.setLandscapeBodiesPublished(batch,true);
+      const auto restored=chunked.rayCast({-100,100,-100},{-100,-100,-100},landscapeMask);
+      require(restored.hasHit && restored.nativeBodyId==identity,"AddBodies must restore the same valid chunk BodyID");
+      }
+    chunks[0].reset();
+    require(chunked.navigationBodyCategory(identity)==0,"destroyed chunk BodyIDs must never resolve through stale sequence numbers");
+    std::printf("Chunk collision: %zu rays, %zu synchronous publications, edge/corner CV and dynamics, support hold, 3 Remove/Add cycles passed\n",
+                rays,synchronous);
+    }
+
+  void testPhysicsResidency() {
+    asset::WorldMesh mesh;
+    mesh.bbox={{-400,0,-400},{400,0,400}};
+    for(int x=-1;x<=1;++x)
+      for(int z=-1;z<=1;++z)
+        mesh.vertices.push_back({float(x)*400,0,float(z)*400});
+    mesh.materials.resize(1);
+    mesh.materials[0].group=asset::MaterialGroup::STONE;
+    ChunkTable table;
+    for(uint32_t x=0;x<2;++x)
+      for(uint32_t z=0;z<2;++z) {
+        const uint32_t a=x*3+z,b=a+1,c=a+4,d=a+3,index=uint32_t(table.entries.size());
+        mesh.polygons.vertex_indices.insert(mesh.polygons.vertex_indices.end(),{a,c,b,a,d,c});
+        mesh.polygons.material_indices.insert(mesh.polygons.material_indices.end(),{0,0});
+        table.triangleChunks.insert(table.triangleChunks.end(),{index,index});
+        ChunkTable::Entry entry;
+        entry.id={int32_t(x)-1,int32_t(z)-1};
+        entry.min=mesh.vertices[a];entry.max=mesh.vertices[c];entry.triangleCount=2;
+        table.entries.push_back(entry);
+        }
+    const char* names[]={"OPENGOTHIC_PHYSICS_CHUNKS","OPENGOTHIC_STREAMING","OPENGOTHIC_PHYSICS_UNLOAD"};
+    std::array<std::string,3> saved;
+    std::array<bool,3> existed;
+    for(size_t i=0;i<3;++i) {
+      const auto* value=std::getenv(names[i]);
+      existed[i]=value!=nullptr;
+      if(value!=nullptr)saved[i]=value;
+      }
+    setenv(names[0],"1",1);setenv(names[1],"1",1);
+    zenkit::ModelHierarchy hierarchy{};
+    hierarchy.collision_bbox={{-25,0,-25},{25,180,25}};
+    Skeleton skeleton(asset::fromZenKit(hierarchy),nullptr,"PHYSICS_CHUNK_PIN_CONTRACT");
+    Bounds bounds;
+    bounds.assign(std::pair{Tempest::Vec3(-10,-10,-10),Tempest::Vec3(10,10,10)});
+    for(const bool unload:{false,true}) {
+      setenv(names[2],unload ? "1" : "0",1);
+      ChunkResidency residency(table);
+      DynamicWorld world(nullptr,mesh,nullptr,&residency);
+      require(!world.landscapeReady({100,100,-100}),"a deferred physics chunk must report missing support");
+      auto pending=world.addDynamicObj(at(100,100,-100),bounds,asset::MaterialGroup::STONE);
+      require(pending.isEmpty(),"an item must not create native physics before publishing its support");
+      world.startPhysicsStreaming({0,0,0},{0,0,0});
+      residency.update({0,0,0},{0,0,0},1);
+      require(world.landscapeReady({100,100,-100}),"initial Near physics chunks must publish synchronously");
+      auto item=world.addDynamicObj(at(100,100,-100),bounds,asset::MaterialGroup::STONE);
+      require(!item.isEmpty(),"an item must resume native physics after its support publishes");
+      for(int frame=0;frame<30;++frame)world.tick(17);
+      require(item.position().y<95 && item.position().y>9,"an item must fall onto its published chunk support");
+      auto npc=world.addGhostObj(&skeleton);
+      npc.setPosition({-100,0,-100});
+      residency.update({1000000,0,1000000},{1000000,0,1000000},1);
+      require(world.landscapeReady({-100,0,-100}) && world.landscapeReady(item.position()),
+              "Outside physics must retain NPC and item supports");
+      require(world.landscapeReady({100,100,100})!=unload,
+              "Outside physics removal must be enabled only by OPENGOTHIC_PHYSICS_UNLOAD=1");
+      const auto hit=world.landRay({100,100,100},200);
+      require(hit.hasCol && world.landscapeReady({100,100,100}),
+              "a query must synchronously Add an unloaded Outside support before accessing Jolt");
+      requireNear(hit.v.y,0,.001f,"Remove/Add must retain the original landscape plane");
+      }
+    for(size_t i=0;i<3;++i) {
+      if(existed[i])setenv(names[i],saved[i].c_str(),1);
+      else unsetenv(names[i]);
+      }
+    std::puts("Physics residency: pending item creation, Near publication, item continuation, Outside default/off and dev/unload, NPC/item pins and query re-add passed");
+    }
+
+  void testNewWorldChunkCollision() {
+    const auto* game=std::getenv("GOTHIC_DIR");
+    if(game==nullptr || *game=='\0') {
+      std::puts("NEWWORLD chunk collision skipped: GOTHIC_DIR is unset");
+      return;
+      }
+    const char* args[]={"gothic-physics-contract","-g",game};
+    CommandLine commandLine(3,args);
+    Resources resources;
+    Resources::loadBase();
+    WorldData::Data data;
+    asset::WorldMesh mesh;
+    ChunkTable table;
+    Resources::loadWorld(data,mesh,"NEWWORLD.ZEN",&table);
+    const auto cloth=WorldCloth::extract(mesh,&table);
+    require(!table.entries.empty() && table.triangleChunks.size()==mesh.polygons.material_indices.size(),
+            "NEWWORLD collision must retain source chunk ownership through cloth extraction");
+    const auto* oldChunks=std::getenv("OPENGOTHIC_PHYSICS_CHUNKS");
+    const auto* oldStreaming=std::getenv("OPENGOTHIC_STREAMING");
+    const std::string savedChunks=oldChunks==nullptr ? "" : oldChunks;
+    const std::string savedStreaming=oldStreaming==nullptr ? "" : oldStreaming;
+    setenv("OPENGOTHIC_PHYSICS_CHUNKS","0",1);
+    DynamicWorld whole(nullptr,mesh,&cloth.original);
+    setenv("OPENGOTHIC_PHYSICS_CHUNKS","1",1);
+    setenv("OPENGOTHIC_STREAMING","1",1);
+    ChunkResidency residency(table);
+    DynamicWorld chunked(nullptr,mesh,&cloth.original,&residency);
+    const Tempest::Vec3 observer(0,0,0);
+    chunked.startPhysicsStreaming(observer,observer);
+
+    // Native quantization and order define the existing navigation cache key.
+    // This must remain equal even when most native chunk bodies are absent.
+    const auto expected=whole.navigationGeometry(),actual=chunked.navigationGeometry();
+    const auto expectedKey=NavMesh::cacheKey(expected,NavMesh::Params{},"NEWWORLD.ZEN");
+    const auto actualKey=NavMesh::cacheKey(actual,NavMesh::Params{},"NEWWORLD.ZEN");
+    std::printf("NEWWORLD chunk navigation: whole %zu+%zu triangles, chunks %zu+%zu, keys %llu/%llu\n",
+                expected.triangles.size()/3,expected.waterTriangles.size()/3,
+                actual.triangles.size()/3,actual.waterTriangles.size()/3,
+                static_cast<unsigned long long>(expectedKey),static_cast<unsigned long long>(actualKey));
+    require(expected.vertices==actual.vertices && expected.triangles==actual.triangles &&
+            expected.waterVertices==actual.waterVertices && expected.waterTriangles==actual.waterTriangles &&
+            expectedKey==actualKey,"chunk residency must preserve the full native navigation geometry and cache key");
+
+    const float top=mesh.bbox.max.y+1000,bottom=mesh.bbox.min.y-1000;
+    size_t rays=0,hits=0;
+    float maxPointError=0,maxNormalError=0;
+    const auto compare=[&](float x,float z,float tilt) {
+      const Tempest::Vec3 from(x-tilt,top,z+tilt),to(x+tilt,bottom,z-tilt);
+      const auto a=whole.ray(from,to),b=chunked.ray(from,to);
+      ++rays;
+      const auto sector=[](const char* name) { return std::string_view(name==nullptr ? "" : name); };
+      const float pointError=a.hasCol && b.hasCol ? (a.v-b.v).length() : 0;
+      const float normalError=a.hasCol && b.hasCol ? (a.n-b.n).length() : 0;
+      if(a.hasCol!=b.hasCol || (a.hasCol && (pointError>.1f || normalError>.000001f ||
+                                          a.mat!=b.mat || sector(a.sector)!=sector(b.sector)))) {
+        std::fprintf(stderr,"NEWWORLD chunk ray %zu at (%.9g,%.9g), tilt %.9g: hit %d/%d point error %.9g cm normal error %.9g material %u/%u sector '%s'/'%s'\n",
+                     rays,double(x),double(z),double(tilt),int(a.hasCol),int(b.hasCol),double(pointError),double(normalError),
+                     unsigned(a.mat),unsigned(b.mat),a.sector==nullptr ? "" : a.sector,b.sector==nullptr ? "" : b.sector);
+        require(false,"NEWWORLD vertical and inclined rays must preserve whole-body point, normal, material and sector");
+        }
+      if(a.hasCol)++hits;
+      maxPointError=std::max(maxPointError,pointError);
+      maxNormalError=std::max(maxNormalError,normalError);
+      };
+    for(float x=mesh.bbox.min.x;x<=mesh.bbox.max.x;x+=1600)
+      for(float z=mesh.bbox.min.z;z<=mesh.bbox.max.z;z+=1600)
+        for(const float tilt:{0.f,3200.f})compare(x,z,tilt);
+    for(const auto& chunk:table.entries) {
+      if(chunk.triangleCount==0)continue;
+      const float x=float(chunk.id.x)*ChunkId::Size,z=float(chunk.id.z)*ChunkId::Size;
+      for(int along=0;along<=ChunkId::Size;along+=100)
+        for(const float offset:{-.1f,0.f,.1f})
+          for(const float tilt:{0.f,3200.f}) {
+            compare(x+offset,z+float(along),tilt);
+            compare(x+float(along),z+offset,tilt);
+            }
+      }
+    std::printf("NEWWORLD chunk rays: %zu rays, %zu hits, max point error %.9g cm, max normal error %.9g; 16 m grid, 1 m seam samples at -1/0/+1 mm\n",
+                rays,hits,double(maxPointError),double(maxNormalError));
+    if(oldChunks==nullptr)unsetenv("OPENGOTHIC_PHYSICS_CHUNKS");
+    else setenv("OPENGOTHIC_PHYSICS_CHUNKS",savedChunks.c_str(),1);
+    if(oldStreaming==nullptr)unsetenv("OPENGOTHIC_STREAMING");
+    else setenv("OPENGOTHIC_STREAMING",savedStreaming.c_str(),1);
     }
 
   void testOriginalFloorProjection() {
@@ -4954,6 +5238,8 @@ int main() {
     testMeshRayEdges();
     testCoincidentMaterials();
     testSharedRayEdge();
+    testChunkedLandscape();
+    testPhysicsResidency();
     testOriginalFloorProjection();
     testSourceTerrainNormals();
     testTerrainRayNormalScope();
@@ -4989,6 +5275,7 @@ int main() {
     testPhysicsNoise();
     testRagdollNoise();
     testOffCenterImpulse();
+    testNewWorldChunkCollision();
     std::puts("Physics contracts passed");
     return EXIT_SUCCESS;
     }

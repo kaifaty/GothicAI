@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <cstdint>
+#include <span>
 #include <unordered_map>
 #include <Tempest/Matrix4x4>
 
@@ -36,6 +37,11 @@ class PhysicVbo final {
                                               bool backfaces=false) const;
     bool                    isEmpty() const;
     JPH::ShapeRefC          shape(bool splitLargeTriangles = false) const;
+    // Independent construction on immutable source geometry; native triangle
+    // user data still addresses this full mesh's material and sector tables.
+    JPH::ShapeRefC          chunkShape(std::span<const uint32_t> triangles, bool splitLargeTriangles = false) const;
+    // Finish query metadata before immutable geometry is shared with workers.
+    void                    prepareTriangleData() const;
     // Exact source geometry, before Jolt's triangle BVH quantization.
     void                    appendVertices(std::vector<JPH::Vec3>& points, const Tempest::Matrix4x4& transform) const;
     size_t                  vertexCount() const { return vert.size(); }
@@ -49,7 +55,6 @@ class PhysicVbo final {
     PhysicVbo(const std::vector<Vertex>& v);
 
     void addSegment(size_t indexSize,size_t offset, asset::MaterialGroup material, const char* sector);
-    void prepareTriangleData() const;
 
     struct Segment {
       size_t                off;

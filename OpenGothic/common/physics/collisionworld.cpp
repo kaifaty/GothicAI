@@ -983,6 +983,22 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
   auto& state = *impl;
   auto& character = *state.character;
   auto& world = *state.world.impl;
+  const auto feet=toCentimeters(JPH::Vec3(character.GetPosition()));
+  const float radius=state.radius*100.f+1.f;
+  if(!state.world.supportReady(feet-Tempest::Vec3(radius,0,radius),feet+Tempest::Vec3(radius,0,radius))) {
+    character.SetLinearVelocity(JPH::Vec3::sZero());
+    state.contactsDirty=true;
+    state.needsInitialUpdate=true;
+    state.ground=JPH::BodyID();
+    CharacterMoveResult held;
+    held.position=feet;
+    return held;
+    }
+  state.world.ensureLandscape(
+      {std::min(feet.x,feet.x+displacement.x)-radius,std::min(feet.y,feet.y+displacement.y)-stepHeight-100.f,
+       std::min(feet.z,feet.z+displacement.z)-radius},
+      {std::max(feet.x,feet.x+displacement.x)+radius,std::max(feet.y,feet.y+displacement.y)+state.height*100.f+stepHeight,
+       std::max(feet.z,feet.z+displacement.z)+radius});
   const QueryBroadPhaseFilter broadFilter(characterMask);
   const QueryLayerFilter layerFilter(characterMask);
   const JPH::BodyFilter bodyFilter;
@@ -1333,6 +1349,11 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::carry(uint
   const auto velocity = character.GetLinearVelocity();
   state.pushSeconds = state.pushRemaining = 0.f;
   state.carrying = true;
+  const auto endFeet=result.position+toCentimeters(delta);
+  const float radius=state.radius*100.f+1.f;
+  state.world.ensureLandscape(
+      {std::min(result.position.x,endFeet.x)-radius,std::min(result.position.y,endFeet.y)-1.f,std::min(result.position.z,endFeet.z)-radius},
+      {std::max(result.position.x,endFeet.x)+radius,std::max(result.position.y,endFeet.y)+state.height*100.f,std::max(result.position.z,endFeet.z)+radius});
   // This is a collision sweep of the support's observed motion, never a pose
   // assignment. No second root input, gravity impulse, push budget or stairs.
   character.SetLinearVelocity(delta/seconds);
@@ -1467,10 +1488,9 @@ void CollisionWorld::CollisionBody::restoreTransform(const Tempest::Matrix4x4& m
   waterRestTime=0;
   auto& bodies = owner->impl->system.GetBodyInterface();
   bodies.SetLinearAndAngularVelocity(id,JPH::Vec3::sZero(),JPH::Vec3::sZero());
-  if(restoredSleep)
-    bodies.DeactivateBody(id);
-  else
-    bodies.ActivateBody(id);
+  if(published) {
+    if(restoredSleep) bodies.DeactivateBody(id); else bodies.ActivateBody(id);
+    }
   }
 
 void CollisionWorld::CollisionBody::setPosition(const Tempest::Vec3& position) {
@@ -1632,6 +1652,8 @@ bool CollisionWorld::CollisionBody::addImpulse(const Tempest::Vec3& impulseNs, N
     JPH::BodyLockRead lock(owner->impl->system.GetBodyLockInterface(),id);
     if(!lock.Succeeded() || !lock.GetBody().IsDynamic()) return false;
     }
+  if(supportHeld || (owner->landscapeReady && !owner->landscapeReady(position())))
+    return false;
   // BodyInterface adds the impulse in SI units and activates a sleeping body.
   auto& interface=owner->impl->system.GetBodyInterface();
   if(pointCm!=nullptr)
@@ -1650,11 +1672,15 @@ bool CollisionWorld::CollisionBody::addImpulseAtPoint(const Tempest::Vec3& impul
   }
 
 void CollisionWorld::CollisionBody::setVelocity(const Tempest::Vec3& linear, const Tempest::Vec3& angular) {
+  if(supportHeld || (owner->landscapeReady && !owner->landscapeReady(position()))) {
+    owner->impl->system.GetBodyInterface().SetLinearAndAngularVelocity(id,JPH::Vec3::sZero(),JPH::Vec3::sZero());
+    return;
+    }
   owner->impl->system.GetBodyInterface().SetLinearAndAngularVelocity(id,toMeters(linear),JPH::Vec3(angular.x,angular.y,angular.z));
   }
 
 void CollisionWorld::addBody(CollisionBody& body, const Tempest::Matrix4x4& matrix, float friction,
-                             bool movable, bool sensor, float mass, bool startSleeping) {
+                             bool movable, bool sensor, float mass, bool startSleeping, bool publish) {
   const auto transform = toTransform(matrix);
   body.scale = transform.scale;
   body.itemRestTransform = matrix;
@@ -1690,16 +1716,19 @@ void CollisionWorld::addBody(CollisionBody& body, const Tempest::Matrix4x4& matr
   if(native==nullptr)
     throw std::runtime_error("Jolt body capacity exhausted");
   body.id = native->GetID();
-  interface.AddBody(body.id,type==JPH::EMotionType::Dynamic && !startSleeping ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+  if(publish) {
+    interface.AddBody(body.id,type==JPH::EMotionType::Dynamic && !startSleeping ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+    body.published = true;
+    }
   bodies.push_back(&body);
   }
 
 std::unique_ptr<CollisionWorld::CollisionBody> CollisionWorld::addCollisionBody(JPH::ShapeRefC shape, const Tempest::Matrix4x4& matrix,
                                                                                float friction, int category, bool movable, bool sensor,
-                                                                               const PhysicVbo* mesh) {
+                                                                               const PhysicVbo* mesh, bool publish) {
   auto result = std::unique_ptr<CollisionBody>(new CollisionBody(*this,std::move(shape),category));
   result->mesh = mesh;
-  addBody(*result,matrix,friction,movable,sensor,0.f);
+  addBody(*result,matrix,friction,movable,sensor,0.f,false,publish);
   return result;
   }
 
@@ -1709,55 +1738,210 @@ std::unique_ptr<CollisionWorld::DynamicBody> CollisionWorld::addDynamicBody(JPH:
   auto result = std::unique_ptr<DynamicBody>(new DynamicBody(*this,std::move(shape),mass,category));
   addBody(*result,matrix,friction,false,false,mass,startSleeping);
   rigid.push_back(result.get());
+  holdUnsupportedBody(*result);
   return result;
+  }
+
+void CollisionWorld::setLandscapeBodiesPublished(std::span<CollisionBody* const> batch, bool published) {
+  std::vector<JPH::BodyID> ids;
+  ids.reserve(batch.size());
+  for(auto* body:batch) {
+    if(body==nullptr || body->owner!=this || body->categoryId!=DynamicWorld::C_Landscape)
+      throw std::invalid_argument("Landscape publication requires owned landscape bodies");
+    if(body->published!=published)
+      ids.push_back(body->id);
+    }
+  if(ids.empty()) return;
+  auto& interface=impl->system.GetBodyInterface();
+  if(published) {
+    const auto state=interface.AddBodiesPrepare(ids.data(),int(ids.size()));
+    interface.AddBodiesFinalize(ids.data(),int(ids.size()),state,JPH::EActivation::DontActivate);
+    } else {
+    interface.RemoveBodies(ids.data(),int(ids.size()));
+    }
+  for(auto* body:batch)
+    body->published=published;
+  for(auto* character:impl->virtualCharacters)
+    character->impl->contactsDirty=true;
+  }
+
+void CollisionWorld::optimizeBroadPhase() { impl->system.OptimizeBroadPhase(); }
+
+void CollisionWorld::setLandscapeQueryCallback(std::function<void(const Tempest::Vec3&,const Tempest::Vec3&)> callback) {
+  landscapeQuery=std::move(callback);
+  }
+
+void CollisionWorld::setLandscapeReadyCallback(std::function<bool(const Tempest::Vec3&)> callback) {
+  if(!callback) {
+    auto& interface=impl->system.GetBodyInterface();
+    for(auto* body:rigid)
+      if(body->supportHeld) {
+        interface.SetMotionType(body->id,JPH::EMotionType::Dynamic,JPH::EActivation::Activate);
+        body->supportHeld=false;
+        }
+    for(auto* rig:ragdolls)
+      rig->setSupportHeld(false);
+    }
+  landscapeReady=std::move(callback);
+  }
+
+void CollisionWorld::setLandscapeTrianglesCallback(std::function<void(const StaticTriangleOutput&)> callback, const PhysicVbo* mesh) {
+  landscapeTriangles=std::move(callback);
+  landscapeTriangleMesh=mesh;
+  }
+
+void CollisionWorld::ensureLandscape(const Tempest::Vec3& min, const Tempest::Vec3& max) const {
+  // Final publication can clear the callback while it is running.
+  const auto callback=landscapeQuery;
+  if(callback)
+    callback(min,max);
+  }
+
+bool CollisionWorld::supportReady(const Tempest::Vec3& min, const Tempest::Vec3& max) const {
+  return !landscapeReady || (landscapeReady(min) && landscapeReady({max.x,min.y,min.z}) &&
+                            landscapeReady({min.x,min.y,max.z}) && landscapeReady({max.x,min.y,max.z}) &&
+                            landscapeReady({(min.x+max.x)*.5f,min.y,(min.z+max.z)*.5f}));
+  }
+
+void CollisionWorld::landscapeSupportBounds(const std::function<void(const Tempest::Vec3&,const Tempest::Vec3&)>& output) const {
+  for(const auto* body:rigid) {
+    JPH::Vec3 min,max;
+    body->getAabb(min,max);
+    output(toCentimeters(min),toCentimeters(max));
+    }
+  for(const auto* rig:ragdolls)
+    for(const auto part:rig->diagnosticBodyIds()) {
+      JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),JPH::BodyID(part));
+      if(!lock.Succeeded()) continue;
+      const auto bounds=lock.GetBody().GetWorldSpaceBounds();
+      // The callback may publish bodies, so release the lock before dispatch.
+      lock.ReleaseLock();
+      output(toCentimeters(bounds.mMin),toCentimeters(bounds.mMax));
+      }
+  for(const auto* character:impl->virtualCharacters) {
+    const auto& state=*character->impl;
+    const auto feet=toCentimeters(JPH::Vec3(state.character->GetPosition()));
+    const float radius=state.radius*100.f;
+    output(feet-Tempest::Vec3(radius,0,radius),feet+Tempest::Vec3(radius,state.height*100.f,radius));
+    }
+  }
+
+void CollisionWorld::holdUnsupportedBody(CollisionBody& body) {
+  if(!landscapeReady) return;
+  JPH::Vec3 min,max;
+  body.getAabb(min,max);
+  const bool held=!supportReady(toCentimeters(min),toCentimeters(max));
+  auto& interface=impl->system.GetBodyInterface();
+  if(held) {
+    interface.SetLinearAndAngularVelocity(body.id,JPH::Vec3::sZero(),JPH::Vec3::sZero());
+    if(!body.supportHeld) {
+      interface.SetMotionType(body.id,JPH::EMotionType::Kinematic,JPH::EActivation::DontActivate);
+      body.supportHeld=true;
+      }
+    } else if(body.supportHeld) {
+    interface.SetMotionType(body.id,JPH::EMotionType::Dynamic,JPH::EActivation::Activate);
+    body.supportHeld=false;
+    }
+  }
+
+void CollisionWorld::holdUnsupportedBody(Ragdoll& rig) {
+  if(!landscapeReady) return;
+  JPH::AABox bounds;
+  for(const auto part:rig.diagnosticBodyIds()) {
+    JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),JPH::BodyID(part));
+    if(lock.Succeeded()) bounds.Encapsulate(lock.GetBody().GetWorldSpaceBounds());
+    }
+  if(bounds.IsValid())
+    rig.setSupportHeld(!supportReady(toCentimeters(bounds.mMin),toCentimeters(bounds.mMax)));
+  }
+
+void CollisionWorld::holdUnsupportedBodies() {
+  if(!landscapeReady) return;
+  for(auto* body:rigid)
+    holdUnsupportedBody(*body);
+  for(auto* rig:ragdolls)
+    holdUnsupportedBody(*rig);
+
+  // A frame advances at most two 1/60 s steps. Native CCD/contact queries
+  // must also see terrain reached after an impulse during either step. Bound
+  // translation by the native speed limit and rotation by the body's sphere.
+  auto prepare=[&](JPH::BodyID id) {
+    JPH::AABox bounds;
+    float reach=0;
+    {
+      JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),id);
+      if(!lock.Succeeded() || !lock.GetBody().IsDynamic()) return;
+      const auto& native=lock.GetBody();
+      bounds=native.GetWorldSpaceBounds();
+      reach=native.GetMotionProperties()->GetMaxLinearVelocity()/30.f+bounds.GetSize().Length()*.5f;
+      }
+    const auto padding=JPH::Vec3::sReplicate(reach);
+    auto min=toCentimeters(bounds.mMin-padding);
+    const auto max=toCentimeters(bounds.mMax+padding);
+    min.y=-std::numeric_limits<float>::infinity();
+    ensureLandscape(min,max);
+    };
+  for(const auto* body:rigid)
+    if(!body->supportHeld) prepare(body->id);
+  for(const auto* rig:ragdolls)
+    if(!rig->supportHeld)
+      for(const auto part:rig->diagnosticBodyIds())
+        prepare(JPH::BodyID(part));
   }
 
 void CollisionWorld::removeBody(CollisionBody& body) {
   if(body.id.IsInvalid())
     return;
   auto& interface = impl->system.GetBodyInterface();
-  interface.RemoveBody(body.id);
+  if(body.published)
+    interface.RemoveBody(body.id);
   interface.DestroyBody(body.id);
   body.id = JPH::BodyID();
+  body.published = false;
   bodies.erase(std::remove(bodies.begin(),bodies.end(),&body),bodies.end());
   rigid.erase(std::remove(rigid.begin(),rigid.end(),&body),rigid.end());
   }
 
-void CollisionWorld::staticTriangles(const std::function<void(const StaticTriangle&)>& output) const {
-  struct TriangleCollector final : JPH::TransformedShapeCollector {
-    TriangleCollector(const std::function<void(const StaticTriangle&)>& output, bool water)
-      :output(output),water(water) {
-      }
-
+namespace {
+void collectStaticTriangles(const JPH::TransformedShape& shape, bool water, const CollisionWorld::StaticTriangleOutput& output) {
+  struct Collector final : JPH::TransformedShapeCollector {
+    Collector(const CollisionWorld::StaticTriangleOutput& output, bool water):output(output),water(water) {}
     void AddHit(const JPH::TransformedShape& leaf) override {
-      // CollectTransformedShapes resolves compounds and every scale/transform
-      // wrapper before GetTrianglesStart, which only accepts leaf shapes.
       JPH::Shape::GetTrianglesContext context;
-      const auto bounds = leaf.GetWorldSpaceBounds();
-      leaf.GetTrianglesStart(context,bounds,JPH::RVec3::sZero());
-      constexpr int batchSize = 128;
-      JPH::Float3 vertices[batchSize*3];
-      for(;;) {
-        const int count = leaf.GetTrianglesNext(context,batchSize,vertices);
-        if(count==0)
-          break;
-        for(int triangle=0;triangle<count;++triangle) {
-          StaticTriangle result;
-          result.water = water;
-          for(int i=0;i<3;++i) {
-            const auto& v = vertices[triangle*3+i];
-            result.vertices[i] = Tempest::Vec3(v.x,v.y,v.z);
+      leaf.GetTrianglesStart(context,leaf.GetWorldSpaceBounds(),JPH::RVec3::sZero());
+      JPH::Float3 vertices[128*3];
+      for(int count=leaf.GetTrianglesNext(context,128,vertices);count>0;count=leaf.GetTrianglesNext(context,128,vertices))
+        for(int t=0;t<count;++t) {
+          CollisionWorld::StaticTriangle triangle;
+          triangle.water=water;
+          for(int v=0;v<3;++v) {
+            const auto& point=vertices[3*t+v];
+            triangle.vertices[v]={point.x,point.y,point.z};
             }
-          output(result);
+          output(triangle);
           }
-        }
       }
-
-    const std::function<void(const StaticTriangle&)>& output;
+    const CollisionWorld::StaticTriangleOutput& output;
     bool water;
-    };
+    } collector(output,water);
+  shape.CollectTransformedShapes(shape.GetWorldSpaceBounds(),collector);
+  }
+}
 
+void CollisionWorld::staticShapeTriangles(JPH::ShapeRefC source, const Tempest::Matrix4x4& matrix, const StaticTriangleOutput& output) {
+  if(source==nullptr) return;
+  const auto transform=toTransform(matrix);
+  const auto shape=::scaledShape(source.GetPtr(),transform.scale);
+  JPH::TransformedShape placed(transform.position+transform.rotation*shape->GetCenterOfMass(),transform.rotation,shape,JPH::BodyID());
+  collectStaticTriangles(placed,false,output);
+  }
+
+void CollisionWorld::staticTriangles(const StaticTriangleOutput& output) const {
+  if(landscapeTriangles)
+    landscapeTriangles(output);
   for(const auto* object:bodies) {
+    if(landscapeTriangles && object->mesh==landscapeTriangleMesh)
+      continue;
     if(object->categoryId!=DynamicWorld::C_Landscape &&
        object->categoryId!=DynamicWorld::C_Object &&
        object->categoryId!=DynamicWorld::C_Water)
@@ -1766,11 +1950,10 @@ void CollisionWorld::staticTriangles(const std::function<void(const StaticTriang
     {
       JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),object->id);
       if(!lock.Succeeded() || !lock.GetBody().IsStatic())
-        continue; // no living bodies, dynamic props or animated/kinematic vobs
-      shape = lock.GetBody().GetTransformedShape();
-    }
-    TriangleCollector collector(output,object->categoryId==DynamicWorld::C_Water);
-    shape.CollectTransformedShapes(shape.GetWorldSpaceBounds(),collector);
+        continue;
+      shape=lock.GetBody().GetTransformedShape();
+      }
+    collectStaticTriangles(shape,object->categoryId==DynamicWorld::C_Water,output);
     }
   }
 
@@ -1805,6 +1988,9 @@ CollisionWorld::QueryResult CollisionWorld::rayCast(const Tempest::Vec3& from, c
                                                     bool backfaces, std::vector<QueryResult>* all,
                                                     const std::vector<const CollisionBody*>* excluded,
                                                     const Ragdoll* excludedRig) const {
+  if((mask&(1u<<DynamicWorld::C_Landscape))!=0)
+    ensureLandscape(Tempest::Vec3(std::min(from.x,to.x),std::min(from.y,to.y),std::min(from.z,to.z)),
+                    Tempest::Vec3(std::max(from.x,to.x),std::max(from.y,to.y),std::max(from.z,to.z)));
   impl->rayCount.fetch_add(1,std::memory_order_relaxed);
   QueryResult result;
   if(all!=nullptr)
@@ -1834,10 +2020,12 @@ CollisionWorld::QueryResult CollisionWorld::rayCast(const Tempest::Vec3& from, c
         bodyFilter.IgnoreBody(body->id);
   struct RayEdge {
     const PhysicVbo* mesh = nullptr;
-    JPH::TransformedShape shape;
     JPH::Vec3 vertices[3];
     JPH::Vec3 from, to;
     uint32_t triangle = 0;
+    JPH::RVec3 position;
+    JPH::Quat rotation;
+    JPH::Vec3 scale;
     } edge;
   auto convert = [&](const JPH::RayCastResult& hit, bool inspectEdge=false) {
     QueryResult value;
@@ -1864,10 +2052,12 @@ CollisionWorld::QueryResult CollisionWorld::rayCast(const Tempest::Vec3& from, c
         if(inspectEdge && mesh->isRayEdge(triangle,localPoint,settings.mTriangleEdgeTolerance) &&
            mesh->triangleVertices(triangle,edge.vertices)) {
           edge.mesh = mesh;
-          edge.shape = body.GetTransformedShape();
           edge.from = localFrom;
           edge.to = localTo;
           edge.triangle = triangle;
+          edge.position = body.GetPosition();
+          edge.rotation = body.GetRotation();
+          edge.scale = value.body->scale;
           }
         if(duplicates) {
           // Coincident faces can carry different Gothic materials. Quantization
@@ -1921,18 +2111,24 @@ CollisionWorld::QueryResult CollisionWorld::rayCast(const Tempest::Vec3& from, c
       result = convert(collector.mHit,true);
       if(edge.mesh!=nullptr) {
         // Compressed mesh vertices can reverse the closest face at a shared edge.
-        // Requery this shape after releasing its body lock, and compare only
-        // adjacent native hits against the original mesh planes. All-hit queries
+        // Requery after releasing its body lock and compare only adjacent
+        // native hits across every body sharing this mesh and placement against the original mesh planes. All-hit queries
         // retain their native fraction ordering.
         JPH::AllHitCollisionCollector<JPH::CastRayCollector> candidates;
-        edge.shape.CastRay(ray,settings,candidates);
+        impl->system.GetNarrowPhaseQuery().CastRay(ray,settings,candidates,broadFilter,filter,bodyFilter);
         auto closest = collector.mHit;
         auto triangle = edge.triangle;
         float fraction = edge.mesh->rayTriangleFraction(triangle,edge.from,edge.to,backfaces);
         for(const auto& hit:candidates.mHits) {
-          if(hit.mBodyID!=closest.mBodyID)
+          JPH::BodyLockRead candidateLock(impl->system.GetBodyLockInterface(),hit.mBodyID);
+          if(!candidateLock.Succeeded())
             continue;
-          const auto candidate = Physics::triangleData(*edge.shape.mShape,hit.mSubShapeID2);
+          const auto& native=candidateLock.GetBody();
+          const auto* wrapper=reinterpret_cast<const CollisionBody*>(native.GetUserData());
+          if(wrapper==nullptr || wrapper->mesh!=edge.mesh || wrapper->scale!=edge.scale ||
+             native.GetPosition()!=edge.position || native.GetRotation()!=edge.rotation)
+            continue;
+          const auto candidate = Physics::triangleData(*native.GetShape(),hit.mSubShapeID2);
           JPH::Vec3 vertices[3];
           if(!edge.mesh->triangleVertices(candidate,vertices))
             continue;
@@ -1950,7 +2146,7 @@ CollisionWorld::QueryResult CollisionWorld::rayCast(const Tempest::Vec3& from, c
           triangle = candidate;
           fraction = candidateFraction;
           }
-        if(closest.mSubShapeID2!=collector.mHit.mSubShapeID2)
+        if(closest.mBodyID!=collector.mHit.mBodyID || closest.mSubShapeID2!=collector.mHit.mSubShapeID2)
           result = convert(closest);
         }
       }
@@ -1962,6 +2158,9 @@ CollisionWorld::QueryResult CollisionWorld::raySweep(const Tempest::Vec3& from, 
                                                      uint32_t mask, bool backfaces) const {
   if(radius<=0.f)
     return rayCast(from,to,mask,backfaces);
+  if((mask&(1u<<DynamicWorld::C_Landscape))!=0)
+    ensureLandscape(Tempest::Vec3(std::min(from.x,to.x)-radius,std::min(from.y,to.y)-radius,std::min(from.z,to.z)-radius),
+                    Tempest::Vec3(std::max(from.x,to.x)+radius,std::max(from.y,to.y)+radius,std::max(from.z,to.z)+radius));
   QueryResult result;
   const auto origin = toMeters(from);
   const auto end = toMeters(to);
@@ -2035,6 +2234,11 @@ std::vector<CollisionWorld::Overlap> CollisionWorld::overlaps(const CollisionBod
   QueryLayerFilter filter(mask);
   QueryBroadPhaseFilter broadFilter(mask);
   JPH::IgnoreSingleBodyFilter self(body.id);
+  if((mask&(1u<<DynamicWorld::C_Landscape))!=0) {
+    const auto bounds=shape->GetWorldSpaceBounds(com,JPH::Vec3::sOne());
+    const auto margin=JPH::Vec3::sReplicate(toMeters(marginCm));
+    ensureLandscape(toCentimeters(bounds.mMin-margin),toCentimeters(bounds.mMax+margin));
+    }
   const auto base = com.GetTranslation();
   impl->system.GetNarrowPhaseQuery().CollideShape(shape,JPH::Vec3::sOne(),com,settings,base,collector,
                                                broadFilter,filter,self);
@@ -2094,6 +2298,9 @@ std::vector<CollisionWorld::RagdollContact> CollisionWorld::ragdollContacts(cons
       shape=lock.GetBody().GetShape();
       sleeping=!lock.GetBody().IsActive();
       }
+    const auto bounds=shape->GetWorldSpaceBounds(com,JPH::Vec3::sOne());
+    const auto margin=JPH::Vec3::sReplicate(toMeters(marginCm));
+    ensureLandscape(toCentimeters(bounds.mMin-margin),toCentimeters(bounds.mMax+margin));
     const auto base=com.GetTranslation();
     JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
     impl->system.GetNarrowPhaseQuery().CollideShape(shape,JPH::Vec3::sOne(),com,settings,base,collector,
@@ -2156,6 +2363,8 @@ bool CollisionWorld::hasCollision(const JPH::Shape* shape, const Tempest::Vec3& 
   QueryLayerFilter filter(mask);
   QueryBroadPhaseFilter broadFilter(mask);
   const auto position = toMeters(center);
+  const auto margin=JPH::Vec3::sReplicate(settings.mMaxSeparationDistance);
+  ensureLandscape(toCentimeters(bounds.mMin+position-margin),toCentimeters(bounds.mMax+position+margin));
   impl->system.GetNarrowPhaseQuery().CollideShape(shape,JPH::Vec3::sOne(),JPH::RMat44::sTranslation(position),
                                                settings,position,collector,broadFilter,filter);
   auto sum = JPH::Vec3::sZero();
@@ -2649,6 +2858,9 @@ void CollisionWorld::stepMeleeBlades(float seconds, float fraction) {
       const auto q=blade.rotation.SLERP(rotation,(t0+t1)*.5f);
       JPH::RShapeCast cast(&sweep,JPH::Vec3::sOne(),JPH::RMat44::sRotationTranslation(q,from),JPH::Vec3(to-from));
       JPH::AllHitCollisionCollector<JPH::CastShapeCollector> hits;
+      const auto reach=JPH::Vec3::sReplicate(sweep.GetHalfHeightOfCylinder()+sweep.GetRadius());
+      ensureLandscape(toCentimeters(JPH::Vec3::sMin(JPH::Vec3(from),JPH::Vec3(to))-reach),
+                      toCentimeters(JPH::Vec3::sMax(JPH::Vec3(from),JPH::Vec3(to))+reach));
       impl->system.GetNarrowPhaseQuery().CastShape(cast,settings,JPH::RVec3::sZero(),hits,broad,layers,filter);
       ++sample.casts;
       for(const auto& hit:hits.mHits) {
@@ -2719,7 +2931,7 @@ void CollisionWorld::wakeItemsInBounds(const Tempest::Vec3& min, const Tempest::
   }
 
 void CollisionWorld::wakeShadowItems() {
-  if(!itemWake || !itemWakeCallback || !impl->hasShadowBlades.load(std::memory_order_acquire))
+  if(!impl->hasShadowBlades.load(std::memory_order_acquire))
     return;
   std::vector<std::pair<Tempest::Vec3,Tempest::Vec3>> bounds;
   {
@@ -2747,6 +2959,10 @@ void CollisionWorld::wakeShadowItems() {
       }
     }
   if(bounds.empty())return;
+  // Shadow sweeps can run inside Jolt's locked step listener. Make every
+  // touched landscape chunk available before entering the native update.
+  for(const auto& box:bounds)
+    ensureLandscape(box.first,box.second);
   itemShadowWakeCursor%=bounds.size();
   for(size_t visited=0;visited<bounds.size() && itemWakeQueries<32 && itemWakeCreated<8;++visited) {
     const auto& box=bounds[itemShadowWakeCursor];
@@ -2788,7 +3004,7 @@ void CollisionWorld::prepareItemSweeps() {
     return;
   // A contact or blade can activate a sleeper during this same step.
   for(auto* body:rigid) {
-    if(body->category()!=DynamicWorld::C_Item)
+    if(body->supportHeld || body->category()!=DynamicWorld::C_Item)
       continue;
     JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),body->id);
     if(lock.Succeeded() && lock.GetBody().IsDynamic())
@@ -2821,6 +3037,9 @@ void CollisionWorld::recoverTunneledItems() {
     const JPH::RRayCast ray(origin,end-origin);
     JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> hits;
     ++rays;
+    if((mask&(1u<<DynamicWorld::C_Landscape))!=0)
+      ensureLandscape(Tempest::Vec3(std::min(from.x,to.x),std::min(from.y,to.y),std::min(from.z,to.z)),
+                    Tempest::Vec3(std::max(from.x,to.x),std::max(from.y,to.y),std::max(from.z,to.z)));
     impl->rayCount.fetch_add(1,std::memory_order_relaxed);
     impl->system.GetNarrowPhaseQuery().CastRay(ray,settings,hits,QueryBroadPhaseFilter(mask),QueryLayerFilter(mask),staticBodies);
     if(!hits.HadHit())continue;
@@ -2848,7 +3067,7 @@ void CollisionWorld::recoverTunneledItems() {
 
 void CollisionWorld::recoverItems() {
   for(auto* body:rigid) {
-    if(body->category()!=DynamicWorld::C_Item)
+    if(body->supportHeld || body->category()!=DynamicWorld::C_Item)
       continue;
     bool recover=false;
     bool sleeping=false;
@@ -2906,6 +3125,7 @@ void CollisionWorld::tick(uint64_t dt) {
   const auto started=std::chrono::steady_clock::now();
   // Bad coordinates must never reach Jolt's integration or water queries.
   recoverItems();
+  holdUnsupportedBodies();
   if(impl->meleeSubsteps!=0) { impl->meleeSample={};impl->meleeDiagnosticMs=0; }
   if(cloth!=nullptr) cloth->prepareFrame(dt);
   constexpr float step = 1.f/60.f;
@@ -3205,7 +3425,7 @@ void CollisionWorld::tick(uint64_t dt) {
         continue;
       const auto& native = lock.GetBody();
       auto* body = reinterpret_cast<CollisionBody*>(native.GetUserData());
-      if(body==nullptr || body->pointerType!=DynamicWorld::P_Item || body->pointer==nullptr)
+      if(body==nullptr || body->supportHeld || body->pointerType!=DynamicWorld::P_Item || body->pointer==nullptr)
         continue;
       item = reinterpret_cast<Item*>(body->pointer);
       auto transform = native.GetWorldTransform();
@@ -3258,6 +3478,7 @@ std::unique_ptr<Ragdoll> CollisionWorld::createRagdoll(const Skeleton& skeleton,
   catch(const std::runtime_error&) {
     return nullptr;
     }
+  holdUnsupportedBody(*result);
   return result->valid() ? std::move(result) : nullptr;
   }
 
@@ -3271,6 +3492,7 @@ std::unique_ptr<Ragdoll> CollisionWorld::createKinematicBody(const Skeleton& ske
   catch(const std::runtime_error&) {
     return nullptr;
     }
+  holdUnsupportedBody(*result);
   return result->valid() ? std::move(result) : nullptr;
   }
 
@@ -3330,13 +3552,14 @@ struct CollisionWorld::BuoyancyBody {
 template<class F>
 void CollisionWorld::forEachBuoyancyBody(F&& callback) const {
   for(auto* body:rigid) {
-    if(!waterThing(body->category())) continue;
+    if(body->supportHeld || !waterThing(body->category())) continue;
     BuoyancyBody target {body->id,body->buoyancyShape.GetPtr(),body->buoyancyFraction,
       body->waterInitialized,body->inWater,body->waterSleepDisabled,body->waterPreserveSleep,
       body->waterRestTime,body->waterY,body->nextSplashStep,body,nullptr,0};
     callback(target);
     }
   for(auto* rig:ragdolls) {
+    if(rig->supportHeld) continue;
     const auto& bones=rig->boneIndices();
     auto& parts=rig->buoyancyParts();
     for(size_t i=0;i<parts.size();++i) {

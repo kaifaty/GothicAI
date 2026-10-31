@@ -101,6 +101,8 @@ Item::Item(Item &&it)
   hitem->user_ptr=this;
   setLocalTransform(it.localTransform());
   physic = std::move(it.physic);
+  physicsPending = it.physicsPending;
+  it.physicsPending = false;
   if(!physic.isEmpty())
     physic.setItem(this);
   }
@@ -164,6 +166,9 @@ void Item::savePhysics(Serialize& fout) const {
 
 void Item::restorePhysics(const Tempest::Matrix4x4& matrix, const Tempest::Vec3& velocity,
                           const Tempest::Vec3& angular, bool sleeping) {
+  // A restored body must retain its saved motion rather than defer its creation.
+  if(!world.physic()->landscapeReady(position()))
+    world.physic()->landRay(position());
   setPhysicsEnable(world);
   // Native restore preserves dry sleepers and wakes a saved float when
   // buoyancy is disabled, after body creation and transform callbacks.
@@ -226,11 +231,14 @@ void Item::setPhysicsEnable(World& world) {
   }
 
 void Item::setPhysicsDisable() {
+  physicsPending = false;
   physic = DynamicWorld::Item();
   world.invalidateVobIndex();
   }
 
 bool Item::wakePhysics() {
+  if(!world.physic()->landscapeReady(position()))
+    return false;
   const bool missing = !isDynamic();
   if(missing) {
     setPhysicsEnable(world);
@@ -246,6 +254,11 @@ void Item::setPhysicsEnable(const MeshObjects::Mesh& view) {
   if(view.nodesCount()==0)
     return;
   auto& p = *world.physic();
+  if(!p.landscapeReady(position())) {
+    physicsPending = true;
+    return;
+    }
+  physicsPending = false;
   physic = p.addDynamicObj(transform(),view.bounds(),physicsMaterial(hitem->material),
                            view.protoMesh(),hitem->visual,Gothic::physicsFlags().itemHulls);
   physic.setItem(this);
@@ -255,6 +268,11 @@ void Item::setPhysicsEnable(const ProtoMesh* mesh) {
   if(mesh==nullptr)
     return;
   auto& p = *world.physic();
+  if(!p.landscapeReady(position())) {
+    physicsPending = true;
+    return;
+    }
+  physicsPending = false;
   Bounds b;
   b.assign(mesh->bboxMesh);
   physic = p.addDynamicObj(transform(),b,physicsMaterial(hitem->material),

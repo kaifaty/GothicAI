@@ -10,6 +10,7 @@
 #include <memory>
 #include <vector>
 #include <string_view>
+#include <span>
 #include <utility>
 
 #include "physics/physics.h"
@@ -117,6 +118,8 @@ class CollisionWorld final {
         Tempest::Matrix4x4  itemRestTransform;
         uint64_t            itemWakeUntilStep = 0;
         bool                itemRecovered = false;
+        bool                published = false;
+        bool                supportHeld = false;
 
       friend class CollisionWorld;
       friend class DynamicBody;
@@ -261,7 +264,7 @@ class CollisionWorld final {
     std::vector<RagdollContact> ragdollContacts(const Ragdoll& rig, float marginCm) const;
 
     std::unique_ptr<CollisionBody> addCollisionBody(JPH::ShapeRefC shape, const Tempest::Matrix4x4& matrix, float friction,
-                                                   int category, bool movable = false, bool sensor = false, const PhysicVbo* mesh = nullptr);
+                                                   int category, bool movable = false, bool sensor = false, const PhysicVbo* mesh = nullptr, bool publish = true);
     std::unique_ptr<DynamicBody> addDynamicBody(JPH::ShapeRefC shape, const Tempest::Matrix4x4& matrix, float friction, float mass,
                                                int category = 6, bool startSleeping = false);
     std::unique_ptr<Ragdoll> createRagdoll(const Skeleton& skeleton, const HitZones& zones,
@@ -271,6 +274,13 @@ class CollisionWorld final {
     std::unique_ptr<Ragdoll> createKinematicBody(const Skeleton& skeleton, const HitZones& zones,
                                                const Tempest::Matrix4x4* worldPose, size_t numBones,
                                                const Tempest::Matrix4x4& objectMatrix);
+    // Publication changes the broad phase while retaining each native BodyID.
+    void setLandscapeBodiesPublished(std::span<CollisionBody* const> bodies, bool published);
+    void optimizeBroadPhase();
+    void setLandscapeQueryCallback(std::function<void(const Tempest::Vec3&,const Tempest::Vec3&)> callback);
+    void setLandscapeReadyCallback(std::function<bool(const Tempest::Vec3&)> callback);
+    // Occupied support footprints pin chunks even when the occupant is sleeping.
+    void landscapeSupportBounds(const std::function<void(const Tempest::Vec3&,const Tempest::Vec3&)>& output) const;
     size_t bodyCount() const;
     JPH::Shape::Stats staticCollisionStats() const;
     float stepMilliseconds() const;
@@ -284,6 +294,9 @@ class CollisionWorld final {
     // Bench-only snapshot of static collision geometry, never render meshes.
     // Water is exported separately from solid surfaces for depth filtering.
     void staticTriangles(const std::function<void(const StaticTriangle&)>& output) const;
+    using StaticTriangleOutput = std::function<void(const StaticTriangle&)>;
+    void setLandscapeTrianglesCallback(std::function<void(const StaticTriangleOutput&)> callback, const PhysicVbo* mesh);
+    static void staticShapeTriangles(JPH::ShapeRefC shape, const Tempest::Matrix4x4& matrix, const StaticTriangleOutput& output);
 
     // Masks use 1u << DynamicWorld::Category. Normals keep the mesh's winding.
     QueryResult rayCast(const Tempest::Vec3& from, const Tempest::Vec3& to, uint32_t mask,
@@ -298,8 +311,13 @@ class CollisionWorld final {
   private:
     struct Impl;
     void addBody(CollisionBody& body, const Tempest::Matrix4x4& matrix, float friction,
-                 bool movable, bool sensor, float mass, bool startSleeping = false);
+                 bool movable, bool sensor, float mass, bool startSleeping = false, bool publish = true);
     void removeBody(CollisionBody& body);
+    void ensureLandscape(const Tempest::Vec3& min, const Tempest::Vec3& max) const;
+    bool supportReady(const Tempest::Vec3& min, const Tempest::Vec3& max) const;
+    void holdUnsupportedBodies();
+    void holdUnsupportedBody(CollisionBody& body);
+    void holdUnsupportedBody(Ragdoll& rig);
     struct BuoyancyBody;
     template<class F> void forEachBuoyancyBody(F&& callback) const;
     void restoreRagdollBuoyancy(Ragdoll& rig);
@@ -326,6 +344,10 @@ class CollisionWorld final {
     std::vector<DynamicBody*> rigid;
     std::vector<Ragdoll*> ragdolls;
     uint32_t nextRagdollGroup = 1;
+    std::function<void(const Tempest::Vec3&,const Tempest::Vec3&)> landscapeQuery;
+    std::function<bool(const Tempest::Vec3&)> landscapeReady;
+    std::function<void(const StaticTriangleOutput&)> landscapeTriangles;
+    const PhysicVbo* landscapeTriangleMesh = nullptr;
     std::function<void(Item&, asset::MaterialGroup, float, float)> hitItem;
     std::function<void(const PhysicsNoise&)> physicsNoise;
     std::function<void(CollisionBody&,float,const Tempest::Vec3&,std::string_view)> bodyImpact;

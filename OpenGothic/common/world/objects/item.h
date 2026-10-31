@@ -120,4 +120,5 @@ class Item : public Vob {
 
     MeshObjects::Mesh              visual;
     DynamicWorld::Item             physic;
+    bool                           physicsPending = false;
   };

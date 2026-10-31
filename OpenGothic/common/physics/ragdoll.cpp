@@ -1183,7 +1183,7 @@ bool Ragdoll::isKinematic() const { return impl->kinematic && impl->reactionBone
 
 bool Ragdoll::queueHit(size_t bone, const Tempest::Vec3& pointCm,
                        const Tempest::Vec3& impulseNs, float strength, Npc* culprit, float stiffness) {
-  if(!valid() || !finite(pointCm) || !finite(impulseNs) || !std::isfinite(strength) || strength<=0.f || strength>1.f ||
+  if(supportHeld || !valid() || !finite(pointCm) || !finite(impulseNs) || !std::isfinite(strength) || strength<=0.f || strength>1.f ||
      std::abs(pointCm.x)>1.e8f || std::abs(pointCm.y)>1.e8f || std::abs(pointCm.z)>1.e8f ||
      impulseNs.quadLength()<=0.f || impulseNs.quadLength()>1.e8f) return false;
   const auto found=std::find(impl->rig->boneIndices.begin(),impl->rig->boneIndices.end(),bone);
@@ -1403,7 +1403,7 @@ Ragdoll::BenchStats Ragdoll::benchStats() const {
 
 bool Ragdoll::moveKinematic(const Tempest::Matrix4x4* worldPose, size_t numBones,
                             const Tempest::Matrix4x4& objectMatrix, float deltaSeconds) {
-  if(!valid() || !impl->kinematic || worldPose==nullptr || numBones!=boneCount() ||
+  if(supportHeld || !valid() || !impl->kinematic || worldPose==nullptr || numBones!=boneCount() ||
      !std::isfinite(deltaSeconds) || deltaSeconds<=0.f) return false;
   ObjectFrame object;
   if(!objectFrame(objectMatrix,object)) return false;
@@ -1442,8 +1442,27 @@ bool Ragdoll::moveKinematic(const Tempest::Matrix4x4* worldPose, size_t numBones
   return true;
   }
 
+void Ragdoll::setSupportHeld(bool held) {
+  if(!valid() || supportHeld==held) return;
+  impl->native->SetLinearAndAngularVelocity(JPH::Vec3::sZero(),JPH::Vec3::sZero());
+  impl->hits.clear();
+  auto& interface=impl->world->physicsSystem().GetBodyInterface();
+  if(held) {
+    for(const auto id:impl->native->GetBodyIDs())
+      if(interface.GetMotionType(id)==JPH::EMotionType::Dynamic) {
+        supportHeldDynamicParts.push_back(id.GetIndexAndSequenceNumber());
+        interface.SetMotionType(id,JPH::EMotionType::Kinematic,JPH::EActivation::DontActivate);
+        }
+    } else {
+    for(const auto id:supportHeldDynamicParts)
+      interface.SetMotionType(JPH::BodyID(id),JPH::EMotionType::Dynamic,JPH::EActivation::Activate);
+    supportHeldDynamicParts.clear();
+    }
+  supportHeld=held;
+  }
+
 void Ragdoll::prepareKinematicStep(float deltaSeconds, float targetFraction) {
-  if(!valid()) return;
+  if(supportHeld || !valid()) return;
   impl->stepSeconds=deltaSeconds;
   auto& system=impl->world->physicsSystem();
   auto& interface=system.GetBodyInterface();
@@ -1491,7 +1510,7 @@ void Ragdoll::prepareKinematicStep(float deltaSeconds, float targetFraction) {
   }
 
 void Ragdoll::finishKinematicStep() {
-  if(!valid() || !impl->kinematic) return;
+  if(supportHeld || !valid() || !impl->kinematic) return;
   auto& interface=impl->world->physicsSystem().GetBodyInterface();
   // MoveKinematic sets velocities rather than a persistent destination. Stop
   // once the fixed step reaches it, including when no new animation arrives.
@@ -1586,7 +1605,7 @@ bool Ragdoll::onBack() const {
   return (impl->world->physicsSystem().GetBodyInterface().GetRotation(impl->native->GetBodyID(0))*front).GetY()>0.f;
   }
 
-void Ragdoll::activate() { if(valid()) impl->native->Activate(); }
+void Ragdoll::activate() { if(valid() && !supportHeld) impl->native->Activate(); }
 
 void Ragdoll::setAllowSleeping(bool allow) {
   if(!valid()) return;
@@ -1597,11 +1616,11 @@ void Ragdoll::setAllowSleeping(bool allow) {
     }
   // SetAllowSleeping alone does not awaken a sleeping native body. Activate
   // after all write locks are released so the policy also applies immediately.
-  if(!allow) impl->native->Activate();
+  if(!allow && !supportHeld) impl->native->Activate();
   }
 
 void Ragdoll::addImpulse(const Tempest::Vec3& impulse, Npc* culprit) {
-  if(!valid() || impl->kinematic || !finite(impulse)) return;
+  if(supportHeld || !valid() || impl->kinematic || !finite(impulse)) return;
   setNoiseCulprit(culprit);
   auto& interface=impl->world->physicsSystem().GetBodyInterface();
   for(size_t i=0;i<partCount();++i) {
@@ -1612,7 +1631,7 @@ void Ragdoll::addImpulse(const Tempest::Vec3& impulse, Npc* culprit) {
   }
 
 void Ragdoll::knockOff(const Tempest::Vec3& direction, float impulseNs, Npc* culprit) {
-  if(!valid() || impl->kinematic || !finite(direction) || !std::isfinite(impulseNs)) return;
+  if(supportHeld || !valid() || impl->kinematic || !finite(direction) || !std::isfinite(impulseNs)) return;
   Tempest::Vec3 d(direction.x,0.f,direction.z);
   if(d.length()<1e-3f) return;
   d=Tempest::Vec3::normalize(d);
@@ -1763,6 +1782,8 @@ bool Ragdoll::restore(const State& state) {
       }
     }
   catch(const std::exception&) { return false; }
+  const bool held=supportHeld;
+  setSupportHeld(false);
   impl->native->RemoveFromPhysicsSystem();
   impl->native=replacement;
   impl->native->AddToPhysicsSystem(JPH::EActivation::DontActivate);
@@ -1789,6 +1810,7 @@ bool Ragdoll::restore(const State& state) {
   impl->legacyAncestors=legacyAncestors;
   resetBuoyancy();
   impl->world->restoreRagdollBuoyancy(*this);
+  setSupportHeld(held);
   return true;
   }
 

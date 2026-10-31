@@ -144,6 +144,7 @@ class Ragdoll final {
             const Tempest::Matrix4x4* worldPose, size_t numBones,
             const Tempest::Matrix4x4& objectMatrix, const Tempest::Vec3& initialVelocity,
             bool kinematic = false);
+    void setSupportHeld(bool held);
     void prepareKinematicStep(float deltaSeconds, float targetFraction = 1.f);
     void finishKinematicStep();
     size_t boneForBodyId(uint32_t id) const;
@@ -158,6 +159,8 @@ class Ragdoll final {
     void updateBuoyancyFractions();
     void detach();
     std::unique_ptr<Impl> impl;
+    bool supportHeld = false;
+    std::vector<uint32_t> supportHeldDynamicParts;
     friend class CollisionWorld;
     friend class DynamicWorld;
   };

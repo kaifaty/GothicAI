@@ -17471,6 +17471,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
               " landscape_free_bytes="+std::to_string(s.landscapePageFreeBytes)+
               " landscape_retired_bytes="+std::to_string(s.landscapePageRetiredBytes);
         }
+      pages+=" physics_pending="+std::to_string(w.physic()->pendingPhysicsChunks())+
+             " physics_sync_builds="+std::to_string(w.physic()->synchronousPhysicsChunks());
       LoadProbe::mark(text,-1,pages);
       }
     }
