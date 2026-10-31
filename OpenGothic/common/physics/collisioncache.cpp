@@ -5,6 +5,8 @@
 
 #include <Jolt/Core/StreamIn.h>
 #include <Jolt/Core/StreamOut.h>
+#include <Jolt/Core/UnorderedMap.h>
+#include <Jolt/Physics/Collision/PhysicsMaterial.h>
 #include <Tempest/Log>
 
 #include <bit>
