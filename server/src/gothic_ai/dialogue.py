@@ -742,6 +742,7 @@ class DialogueManager:
         # a companion's fight (npc, target): carried out by orders.py, which brings it back to the hero
         # after; False if it is not the companions' business
         self.companion_fight: Callable[[str, str | None], bool] | None = None
+        self.companion_fight_reason: Callable[[str, str | None], str | None] | None = None
         # the npc is in such a fight: a goal of going with the hero waits for it to end
         self.fighting: Callable[[str], bool] = lambda npc: False
         # the npc's guild (the roster's, talk.py), None if not known: whom it attacks to kill (`KILLERS`)
@@ -3028,6 +3029,9 @@ class DialogueManager:
         )
         if intent is None:
             return ToolOutcome(f"Отклонено: {reason}", "rejected")
+        if intent.goal == "fight" and self.companion_fight_reason is not None:
+            if reason := self.companion_fight_reason(conv.npc, intent.target):
+                return ToolOutcome(f"Отклонено: {reason}", "rejected")
         if executor.same(conv.intent, intent):
             if (
                 intent.goal not in executor.COMPANION_GOALS

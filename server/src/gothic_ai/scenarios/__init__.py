@@ -86,6 +86,7 @@ from .perception import remembers_scenario as remembers_scenario
 from .perception import see_perception as see_perception
 from .perception import seen_memory as seen_memory
 from .perception import trace_memory as trace_memory
+from .road_bandits import road_bandits as road_bandits
 from .story import author_chain as author_chain
 from .story import authored_quest as authored_quest
 from .story import book_requires as book_requires
