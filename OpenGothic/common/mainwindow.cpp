@@ -252,6 +252,7 @@ void MainWindow::paintEvent(PaintEvent& event) {
 
           if(showHealthBar)
             drawBar(p,barHp, 10, h()-10, hp, AlignLeft | AlignBottom);
+          drawStamina(p,*pl,showHealthBar);
           if(showManaBar)
             drawBar(p,barMana, w()-10, h()-10, mp, AlignRight | AlignBottom);
           if(showSwimBar) {
@@ -814,13 +815,41 @@ void MainWindow::paintFocus(Painter& p, Rect rect) {
   p.drawRect(rect.x+rect.w-w,rect.y+rect.h-h,w,h, w,h, w2,h2);
   }
 
-void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y, float v, AlignFlag flg) {
+int MainWindow::barHeight() const {
+  if(barBack==nullptr)
+    return 0;
+  const float scale = Gothic::interfaceScale(this);
+  const float destW = 200.f*scale*float(std::min(w(),800))/800.f;
+  return int(float(barBack->h())*destW/float(std::max(barBack->w(),1)));
+  }
+
+void MainWindow::drawStamina(Painter& p, const Npc& pl, bool aboveHealth) {
+  // The hidden meter of melee shows only in a fight: a weapon of melee drawn, or still filling up after it.
+  // Thin gold under the frame of the health bar, as the game's own bars; spent to nothing it dims and
+  // marks the quarter it must come back to before a blow or a jump back.
+  if(!pl.hasStamina())
+    return;
+  const auto ws    = pl.weaponState();
+  const bool melee = ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H;
+  const float v    = pl.staminaFraction();
+  if(!melee && v>=1.f)
+    return;
+  constexpr float height = .6f;
+  const int   gap  = std::max(1,int(2.f*Gothic::interfaceScale(this)));
+  const int   y    = h()-10-(aboveHealth ? barHeight()+gap : 0);
+  if(pl.isStaminaExhausted())
+    drawBar(p,barMisc,10,y,v,AlignLeft|AlignBottom,height,Color(.55f,.42f,.32f,1.f),.25f); else
+    drawBar(p,barMisc,10,y,v,AlignLeft|AlignBottom,height);
+  }
+
+void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y, float v, AlignFlag flg,
+                         float height, const Tempest::Color& tint, float mark) {
   if(barBack==nullptr || bar==nullptr)
     return;
   const float scale   = Gothic::interfaceScale(this);
   const float destW   = 200.f*scale*float(std::min(w(),800))/800.f;
   const float k       = float(destW)/float(std::max(barBack->w(),1));
-  const float destH   = float(barBack->h())*k;
+  const float destH   = float(barBack->h())*k*height;
   const float destHin = float(destH)*24.f/32.f;
   //const float destHin = 20;//float(destH)*24.f/32.f;
 
@@ -837,9 +866,14 @@ void MainWindow::drawBar(Painter &p, const Tempest::Texture2d* bar, int x, int y
 
   int   dy = int(0.5f*(destH-destHin));
   float pd = 9.f*k;
-  p.setBrush(*bar);
+  p.setBrush(Brush(*bar,tint,Painter::Alpha));
   p.drawRect(x+int(pd),y+dy,int(float(destW-pd*2)*v),int(destHin),
              0,0,bar->w(),bar->h());
+  if(mark>0.f && mark<1.f) {
+    const int mx = x+int(pd)+int(float(destW-pd*2)*mark);
+    p.setBrush(Brush(Color(.9f,.8f,.55f,.9f),Painter::Alpha));
+    p.drawRect(mx,y+dy,std::max(1,int(scale)),int(destHin));
+    }
   }
 
 void MainWindow::drawMsg(Tempest::Painter& p) {
