@@ -3,8 +3,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 stage="${1:-baseline}"
-[[ $# -le 1 && ( "$stage" == baseline || "$stage" == probe || "$stage" == convert ) ]] || {
-  echo 'Usage: bash scripts/nav-lean-data-remote.sh [baseline|probe|convert]' >&2
+[[ $# -le 1 && ( "$stage" == baseline || "$stage" == probe || "$stage" == convert || "$stage" == loader ) ]] || {
+  echo 'Usage: bash scripts/nav-lean-data-remote.sh [baseline|probe|convert|loader]' >&2
   exit 2
 }
 export GQ_OWNER=nav-lean-data
@@ -13,7 +13,7 @@ ssh ryzen "mkdir -p '$task/source/scripts' '$task/input' '$task/scratch' '$task/
 rsync -rt --no-links --exclude=__pycache__ "$ROOT/scripts/" "ryzen:$task/source/scripts/"
 rsync -rt --no-links "$ROOT/reports/navigation/2026-10-22-demos-v5/manifest.json" \
   "ryzen:$task/input/v5-compact.json"
-if [[ "$stage" == convert ]]; then
+if [[ "$stage" == convert || "$stage" == loader ]]; then
   git -C "$ROOT" show 0dd559f12:scripts/nav_bc_data.py | \
     ssh ryzen "cat > '$task/input/nav_bc_data_before_lean.py'"
 fi
@@ -26,9 +26,34 @@ results="$task/$stage-results"
 export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 export UV_CACHE_DIR="$task/uv-cache"
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
 df -h "$HOME" /mnt/shared
 "$HOME/.local/bin/uv" venv --python 3.12 --allow-existing "$task/.venv"
 "$HOME/.local/bin/uv" pip install --python "$task/.venv/bin/python" 'numpy==2.4.2' pytest
+if [[ "$stage" == loader ]]; then
+  "$HOME/.local/bin/uv" pip install --python "$task/.venv/bin/python" 'torch==2.9.1+cu128' \
+    --index-url https://download.pytorch.org/whl/cu128
+  cd "$task/source"
+  nvidia-smi
+  "$task/.venv/bin/python" -B -X faulthandler -m pytest -q -p no:cacheprovider \
+    --basetemp "$task/scratch/pytest-loader" scripts/tests/test_nav_bc_train.py
+  for corpus in v5 v4; do
+    if [[ "$corpus" == v4 ]]; then
+      source=/mnt/shared/gothic-ai/archive/nav-demos-v4-20261029
+      manifest="$source/manifest.json"
+      converted=/mnt/shared/gothic-ai/nav-lean-data/parity-v4
+    else
+      source=/mnt/shared/gothic-ai/nav-demos-v5/recordings
+      manifest="$task/input/v5-compact.json"
+      converted=/mnt/shared/gothic-ai/nav-lean-data/corpus-v5
+    fi
+    "$task/.venv/bin/python" -B -X faulthandler -I scripts/nav_data_bench.py loader \
+      --corpus "$corpus" --source "$source" --manifest "$manifest" --converted-source "$converted" \
+      --reference-script "$task/input/nav_bc_data_before_lean.py" \
+      --output "$results/loader-$corpus" --scratch "$task/scratch/loader-$corpus"
+  done
+  exit 0
+fi
 if [[ "$stage" == convert ]]; then
   "$HOME/.local/bin/uv" pip install --python "$task/.venv/bin/python" 'torch==2.9.1+cpu' \
     --index-url https://download.pytorch.org/whl/cpu
@@ -104,6 +129,8 @@ exec > >(tee -a "$task/$stage-results/job.log") 2>&1
 exec python3 -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- \
   bash "$task/measure-body.sh" "$stage"
 JOB
-"$ROOT/scripts/gq" submit --class quiet --threads 6 --cpu-quota 600% --mem 8G --max 2h \
+resources=(--mem 8G)
+if [[ "$stage" == loader ]]; then resources=(--mem 10G --gpu-mem 4G); fi
+"$ROOT/scripts/gq" submit --class quiet --threads 6 --cpu-quota 600% "${resources[@]}" --max 2h \
   --name "nav lean-data $stage v4 v5" --archive "$task/$stage-results" -- \
   bash "$task/measure-job.sh" "$stage"

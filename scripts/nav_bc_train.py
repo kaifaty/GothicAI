@@ -10,7 +10,10 @@ Torch is imported only by this training/validation driver, never by the numpy re
 from __future__ import annotations
 
 import argparse
+from collections import deque
+from concurrent.futures import ProcessPoolExecutor
 import json
+import multiprocessing
 from pathlib import Path
 import random
 import sys
@@ -61,6 +64,61 @@ def load(cache, ep, *, packed=False):
             raise ValueError(f"record count differs from training index: {samples}")
         return arrays if packed else unpack_cached(arrays)
     return load_cached(cache / ep["file"], packed=packed)
+
+
+def _loader_worker_init():
+    # Workers encode numpy arrays; they never run a model or consume training RNG.
+    torch.set_num_threads(1)
+
+
+def _load_packed(cache, entry):
+    return load(cache, entry, packed=True)
+
+
+class BatchLoader:
+    """Decode/encode direct episodes in four processes, preserving batch order.
+
+    Only packed arrays cross process boundaries. The current batch and at most
+    one following batch are retained; no episode survives across epochs.
+    Spawn remains safe after the training process has initialized CUDA.
+    """
+    def __init__(self, cache):
+        self.cache = Path(cache)
+        self.executor = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        if self.executor is not None:
+            self.executor.shutdown(wait=True, cancel_futures=True)
+
+    def loaded_batches(self, batches, *, packed=False):
+        if not any(entry.get("storage") == "navdemo" for batch in batches for entry in batch):
+            for entries in batches:
+                yield entries, [load(self.cache, entry, packed=packed) for entry in entries]
+            return
+        if self.executor is None:
+            self.executor = ProcessPoolExecutor(max_workers=4,
+                mp_context=multiprocessing.get_context("spawn"), initializer=_loader_worker_init)
+        remaining = iter(batches)
+        pending = deque()
+
+        def submit():
+            entries = next(remaining, None)
+            if entries is not None:
+                pending.append((entries, [self.executor.submit(_load_packed, self.cache, entry)
+                                           for entry in entries]))
+
+        # One current and one following packed batch bound the memory.
+        submit()
+        submit()
+        while pending:
+            entries, futures = pending.popleft()
+            group = [future.result() for future in futures]
+            yield entries, group if packed else [unpack_cached(episode) for episode in group]
+            del group, futures
+            submit()
 
 
 def metrics(truth, prediction):
@@ -223,52 +281,52 @@ def train(args):
     write_json(out / "training_config.json", {**vars(args), "architecture": model.architecture(),
                "class_counts": [c.tolist() for c in counts], "class_weights": [w.cpu().tolist() for w in weights],
                "loss_head_weights": [2, 1, 2, 1, 1, 1], "max_dagger_fraction": .5})
-    for epoch in range(len(history), args.epochs):
-        started = time.perf_counter()
-        model.train()
-        batches = training_batches(train_eps, args.batch, args.seed + epoch)
-        sample_rng = np.random.default_rng(args.seed + epoch)
-        total_loss = total_steps = 0
-        for entries in batches:
-            group = [load(cache, meta) for meta in entries]
-            dagger_rows = [meta.get("source_kind") == "dagger" for meta in entries]
-            hidden = None
-            for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
-                features, labels, mask = batch_tensors(group, start, args.segment, device,
-                                                       dagger_rows, sample_rng)
-                if not mask.any():
-                    break
-                optimizer.zero_grad(set_to_none=True)
-                logits, hidden = model(**features, hidden=hidden)
-                hidden = hidden.detach()
-                loss = sum(scale * nn.functional.cross_entropy(logits[h][mask], labels[:, :, j][mask], weight=weights[j])
-                           for j, (h, scale) in enumerate(zip(HEADS, (2, 1, 2, 1, 1, 1)))) / 8
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), 1.)
-                optimizer.step()
-                n = int(mask.sum())
-                total_loss += loss.item() * n
-                total_steps += n
-        validation = evaluate(model, cache, val_eps, device)
-        score = (validation["model"]["turn"]["macro_f1"] + validation["model"]["forward"]["balanced_accuracy"]) / 2
-        record = {"epoch": epoch + 1, "loss": total_loss / total_steps,
-                  "seconds": time.perf_counter()-started, "validation": validation, "score": score}
-        history.append(record)
-        is_best = score > best
-        best = max(best, score)
-        state = {"config": config, "model": model.state_dict(), "optimizer": optimizer.state_dict(),
-                 "history": history, "best": best}
-        torch.save(state, out / "last.pt")
-        if is_best:
-            torch.save(state, out / "best.pt")
-        write_json(out / "history.json", history)
-        print(json.dumps({k: v for k, v in record.items() if k != "validation"} |
-              {"turn_f1": validation["model"]["turn"]["macro_f1"],
-               "forward_accuracy": validation["model"]["forward"]["accuracy"],
-               "forward_balanced": validation["model"]["forward"]["balanced_accuracy"],
-               "action_change_steps": validation["action_change"]["steps"],
-               "action_change_all_heads": validation["action_change"]["all_heads_accuracy"],
-               "best": is_best}), flush=True)
+    with BatchLoader(cache) as loader:
+        for epoch in range(len(history), args.epochs):
+            started = time.perf_counter()
+            model.train()
+            batches = training_batches(train_eps, args.batch, args.seed + epoch)
+            sample_rng = np.random.default_rng(args.seed + epoch)
+            total_loss = total_steps = 0
+            for entries, group in loader.loaded_batches(batches):
+                dagger_rows = [meta.get("source_kind") == "dagger" for meta in entries]
+                hidden = None
+                for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
+                    features, labels, mask = batch_tensors(group, start, args.segment, device,
+                                                           dagger_rows, sample_rng)
+                    if not mask.any():
+                        break
+                    optimizer.zero_grad(set_to_none=True)
+                    logits, hidden = model(**features, hidden=hidden)
+                    hidden = hidden.detach()
+                    loss = sum(scale * nn.functional.cross_entropy(logits[h][mask], labels[:, :, j][mask], weight=weights[j])
+                               for j, (h, scale) in enumerate(zip(HEADS, (2, 1, 2, 1, 1, 1)))) / 8
+                    loss.backward()
+                    nn.utils.clip_grad_norm_(model.parameters(), 1.)
+                    optimizer.step()
+                    n = int(mask.sum())
+                    total_loss += loss.item() * n
+                    total_steps += n
+            validation = evaluate(model, cache, val_eps, device)
+            score = (validation["model"]["turn"]["macro_f1"] + validation["model"]["forward"]["balanced_accuracy"]) / 2
+            record = {"epoch": epoch + 1, "loss": total_loss / total_steps,
+                      "seconds": time.perf_counter()-started, "validation": validation, "score": score}
+            history.append(record)
+            is_best = score > best
+            best = max(best, score)
+            state = {"config": config, "model": model.state_dict(), "optimizer": optimizer.state_dict(),
+                     "history": history, "best": best}
+            torch.save(state, out / "last.pt")
+            if is_best:
+                torch.save(state, out / "best.pt")
+            write_json(out / "history.json", history)
+            print(json.dumps({k: v for k, v in record.items() if k != "validation"} |
+                  {"turn_f1": validation["model"]["turn"]["macro_f1"],
+                   "forward_accuracy": validation["model"]["forward"]["accuracy"],
+                   "forward_balanced": validation["model"]["forward"]["balanced_accuracy"],
+                   "action_change_steps": validation["action_change"]["steps"],
+                   "action_change_all_heads": validation["action_change"]["all_heads_accuracy"],
+                   "best": is_best}), flush=True)
 
 
 def initialize_bc3(model, path, index):
@@ -436,50 +494,51 @@ def train_bc3(args, index):
         auxiliary_weights=dict(stuck=.1, next_near=.1, detour=.5),
         auxiliary_targets=index["auxiliary"], initialization=initialization,
         selection="fixed final epoch; closed-loop validation pending"))
-    for epoch in range(len(history), args.epochs):
-        started = time.perf_counter()
-        model.train()
-        total, steps, losses = 0., 0, {}
-        for entries in training_batches(index["episodes"], args.batch, args.seed + epoch):
-            group = [load(cache, entry, packed=hd) for entry in entries]
-            hidden = None
-            for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
-                # Keep HD episodes packed and expand this truncated-BPTT segment
-                # plus one future decision for the unchanged next-near target.
-                segment_group = ([unpack_cached(ep, start, start + args.segment + 1) for ep in group]
-                                 if hd else group)
-                segment_start = 0 if hd else start
-                # Legacy batching uses six labels; BC3 explicitly supplies its five heads.
-                features, labels, mask = batch_tensors(segment_group, segment_start, args.segment, device,
-                                                      heads=BC3_HEADS)
-                targets = bc3_targets(segment_group, segment_start, args.segment, device)
-                optimizer.zero_grad(set_to_none=True)
-                logits, hidden, auxiliary = model(**features, hidden=hidden, return_auxiliary=True)
-                hidden = hidden.detach()
-                loss, terms = bc3_loss(logits, auxiliary, labels, mask, targets, weights, change_weight)
-                if not torch.isfinite(loss):
-                    raise ValueError("nonfinite BC3 loss")
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), 1.)
-                optimizer.step()
-                count = int(mask.sum())
-                total += loss.item() * count
-                steps += count
-                for name, value in terms.items():
-                    losses[name] = losses.get(name, 0.) + value.item() * count
-                del segment_group
-            del group
-        record = dict(epoch=epoch + 1, loss=total / steps, decisions=steps,
-                      seconds=time.perf_counter() - started,
-                      losses={name: value / steps for name, value in losses.items()})
-        history.append(record)
-        torch.save(dict(config=config, model=model.state_dict(), optimizer=optimizer.state_dict(),
-                        history=history, navigation_memory_version=index["navigation_memory_version"],
-                        preprocessing={**index["preprocessing"], "eye_layout": index["eye_layout"]}), out / "last.pt")
-        export_weights(model, out / "policy.navbc",
-                       preprocessing={**index["preprocessing"], "eye_layout": index["eye_layout"]})
-        write_json(out / "history.json", history)
-        print(json.dumps(record), flush=True)
+    with BatchLoader(cache) as loader:
+        for epoch in range(len(history), args.epochs):
+            started = time.perf_counter()
+            model.train()
+            total, steps, losses = 0., 0, {}
+            batches = training_batches(index["episodes"], args.batch, args.seed + epoch)
+            for entries, group in loader.loaded_batches(batches, packed=hd):
+                hidden = None
+                for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
+                    # Keep HD episodes packed and expand this truncated-BPTT segment
+                    # plus one future decision for the unchanged next-near target.
+                    segment_group = ([unpack_cached(ep, start, start + args.segment + 1) for ep in group]
+                                     if hd else group)
+                    segment_start = 0 if hd else start
+                    # Legacy batching uses six labels; BC3 explicitly supplies its five heads.
+                    features, labels, mask = batch_tensors(segment_group, segment_start, args.segment, device,
+                                                          heads=BC3_HEADS)
+                    targets = bc3_targets(segment_group, segment_start, args.segment, device)
+                    optimizer.zero_grad(set_to_none=True)
+                    logits, hidden, auxiliary = model(**features, hidden=hidden, return_auxiliary=True)
+                    hidden = hidden.detach()
+                    loss, terms = bc3_loss(logits, auxiliary, labels, mask, targets, weights, change_weight)
+                    if not torch.isfinite(loss):
+                        raise ValueError("nonfinite BC3 loss")
+                    loss.backward()
+                    nn.utils.clip_grad_norm_(model.parameters(), 1.)
+                    optimizer.step()
+                    count = int(mask.sum())
+                    total += loss.item() * count
+                    steps += count
+                    for name, value in terms.items():
+                        losses[name] = losses.get(name, 0.) + value.item() * count
+                    del segment_group
+                del group
+            record = dict(epoch=epoch + 1, loss=total / steps, decisions=steps,
+                          seconds=time.perf_counter() - started,
+                          losses={name: value / steps for name, value in losses.items()})
+            history.append(record)
+            torch.save(dict(config=config, model=model.state_dict(), optimizer=optimizer.state_dict(),
+                            history=history, navigation_memory_version=index["navigation_memory_version"],
+                            preprocessing={**index["preprocessing"], "eye_layout": index["eye_layout"]}), out / "last.pt")
+            export_weights(model, out / "policy.navbc",
+                           preprocessing={**index["preprocessing"], "eye_layout": index["eye_layout"]})
+            write_json(out / "history.json", history)
+            print(json.dumps(record), flush=True)
 
 
 def timed_step(step, iterations):

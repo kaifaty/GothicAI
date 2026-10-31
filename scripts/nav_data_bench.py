@@ -15,6 +15,7 @@ import hashlib
 import importlib.util
 import json
 import lzma
+import os
 from pathlib import Path
 import platform
 import shutil
@@ -68,6 +69,75 @@ class Progress:
         self.stopped.set()
         self.thread.join()
         self.stream.close()
+
+
+class ProcessMemory:
+    """Sample Linux process-tree RSS/PSS, separating loader children from parent."""
+    def __init__(self):
+        self.stopped = threading.Event()
+        self.peak = dict(loader_rss_bytes=0, loader_pss_bytes=0,
+                         process_tree_rss_bytes=0, process_tree_pss_bytes=0)
+        self.samples = 0
+        self.worker_pids = set()
+        self.error = None
+        self.thread = threading.Thread(target=self.run, daemon=True)
+
+    def run(self):
+        try:
+            self.sample()
+        except BaseException as error:
+            self.error = error
+
+    def sample(self):
+        while not self.stopped.is_set():
+            pending, children = [os.getpid()], set()
+            while pending:
+                pid = pending.pop()
+                # Pool processes can be spawned by the executor's manager thread.
+                for task in Path(f"/proc/{pid}/task").glob("*"):
+                    try:
+                        found = {int(value) for value in (task / "children").read_text().split()}
+                    except (FileNotFoundError, ProcessLookupError):
+                        continue
+                    pending.extend(found - children)
+                    children.update(found)
+            current = dict.fromkeys(self.peak, 0)
+            for pid in children | {os.getpid()}:
+                try:
+                    worker = b"multiprocessing.spawn" in Path(f"/proc/{pid}/cmdline").read_bytes()
+                    fields = dict(line.split(":", 1) for line in
+                                  Path(f"/proc/{pid}/smaps_rollup").read_text().splitlines()
+                                  if ":" in line)
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                for metric in ("rss", "pss"):
+                    value = int(fields[metric.capitalize()].split()[0]) * 1024
+                    current[f"process_tree_{metric}_bytes"] += value
+                    if worker:
+                        current[f"loader_{metric}_bytes"] += value
+                        self.worker_pids.add(pid)
+            for key, value in current.items():
+                self.peak[key] = max(self.peak[key], value)
+            self.samples += 1
+            self.stopped.wait(.5)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *_args):
+        self.stopped.set()
+        self.thread.join()
+
+    def result(self):
+        if self.error is not None:
+            raise RuntimeError("Process-tree memory sampling failed") from self.error
+        if not self.samples:
+            raise ValueError("No process-tree memory samples were collected")
+        return dict(self.peak, samples=self.samples, sample_interval_seconds=.5,
+                    loader_worker_pids=sorted(self.worker_pids),
+                    loader_excludes_spawn_resource_tracker=True,
+                    rss_sums_shared_pages_pss_apportions_them=True)
 
 
 def training_entries(manifest_path, source, corpus):
@@ -467,12 +537,15 @@ def measured_prepare(args, manifest, entries, cache, progress):
 
 
 def check_direct_training(args, manifest, entries, scratch, progress):
-    """Compare frozen prepare tensors and one real BC epoch with direct reads."""
+    """Compare frozen prepare with direct loading and identical BC updates."""
     import copy
     import torch
     import nav_bc_train as train
     import nav_lean_data as convert
 
+    gpu = args.mode == "loader"
+    if gpu and not torch.cuda.is_available():
+        raise RuntimeError("The loader benchmark requires the admitted Ryzen GPU")
     families = sorted({entry["family"] for entry in entries})
     selected_ids = set()
     for number, family in enumerate(families):
@@ -512,51 +585,37 @@ def check_direct_training(args, manifest, entries, scratch, progress):
     if [entry["id"] for entry in old_index["episodes"]] != [entry["id"] for entry in new_index["episodes"]]:
         raise ValueError("Direct index changed episode order")
 
-    checked_arrays, checked_tensors, decisions, familiar_decisions = 0, 0, 0, 0
-    for old, new in zip(old_index["episodes"], new_index["episodes"]):
-        progress.begin("parity.episode_tensors", old["id"])
-        expected = reference.load_cached(cache / old["file"], packed=True)
-        actual = train.load(args.converted_source, new, packed=True)
-        if set(expected) != set(actual):
-            raise ValueError(f"Direct packed array keys differ: {old['id']}")
-        for name, value in expected.items():
-            other = actual[name]
-            if value.dtype != other.dtype or value.shape != other.shape or value.tobytes() != other.tobytes():
-                raise ValueError(f"Direct packed array differs: {old['id']}: {name}")
-            checked_arrays += 1
-        steps = len(expected["labels"])
-        for start in range(0, steps, CHUNK_RECORDS):
-            left = reference.unpack_cached(expected, start, start + CHUNK_RECORDS)
-            right = data.unpack_cached(actual, start, start + CHUNK_RECORDS)
-            for name, value in left.items():
-                other = right[name]
-                if value.dtype != other.dtype or value.shape != other.shape or value.tobytes() != other.tobytes():
-                    raise ValueError(f"Direct training tensor differs: {old['id']}: {name}")
-                checked_tensors += 1
-        if args.corpus == "v5":
-            familiar_decisions += int((expected["near_familiar"].any(axis=(1, 2, 3)) |
-                                       expected["far_familiar"].any(axis=(1, 2, 3))).sum())
-        decisions += steps
-        del expected, actual
-        progress.emit("parity_episode_complete", decisions=steps)
+    old_by_id = {entry["id"]: entry for entry in old_index["episodes"]}
+    batches = train.training_batches(new_index["episodes"], 8 if gpu else 4, 17)
+    with train.BatchLoader(args.converted_source) as loader:
+        # Exercise the same multiprocessing/order/packing path used by training.
+        checked = check_loaded_tensors(loader.loaded_batches(batches, packed=True),
+                                       old_by_id, reference, cache, args.corpus,
+                                       progress, 64 if gpu else CHUNK_RECORDS)
+    checked_arrays, checked_tensors, decisions, familiar_decisions = checked
     if args.corpus == "v5" and not familiar_decisions:
         raise ValueError("V5 parity did not exercise a nonzero familiar input")
 
-    # CPU, fixed thread count and unchanged training loop avoid CUDA ordering
-    # differences. Compare tensors, not checkpoint file timestamps/containers.
     torch.use_deterministic_algorithms(True)
-    losses = {}
+    if gpu:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+    histories, memory = {}, {}
     for label, index in (("old", old_index), ("direct", new_index)):
-        progress.begin("parity.bc_epoch_" + label)
+        progress.begin("parity.bc_epochs_" + label)
         destination = args.output / f"epoch-{label}"
         destination.mkdir()
         options = SimpleNamespace(cache=str(cache) if label == "old" else None,
             source=str(args.converted_source) if label == "direct" else None,
             manifest=str(args.manifest), input_variant=variant, output=str(destination),
-            threads=1, device="cpu", epochs=1, batch=4, segment=32, lr=.0003,
+            threads=6 if gpu else 1, device="cuda" if gpu else "cpu", epochs=2 if gpu else 1,
+            batch=8 if gpu else 4, segment=64 if gpu else 32, lr=.0003,
             seed=17, resume=False, init=None)
-        train.train_bc3(options, index)
-        losses[label] = json.loads((destination / "history.json").read_text())[0]["loss"]
+        with ProcessMemory() as usage:
+            train.train_bc3(options, index)
+        memory[label] = usage.result()
+        histories[label] = json.loads((destination / "history.json").read_text())
+        progress.emit("training_complete", path=label, memory=memory[label], history=histories[label])
     old_state = torch.load(args.output / "epoch-old/last.pt", map_location="cpu", weights_only=False)
     new_state = torch.load(args.output / "epoch-direct/last.pt", map_location="cpu", weights_only=False)
 
@@ -569,20 +628,70 @@ def check_direct_training(args, manifest, entries, scratch, progress):
             return len(left) == len(right) and all(equal_state(a, b) for a, b in zip(left, right))
         return left == right
 
-    if losses["old"] != losses["direct"] or not all(equal_state(old_state[key], new_state[key])
-                                                   for key in ("model", "optimizer")):
-        raise ValueError(f"Same-seed BC epoch differs: {losses}")
-    return dict(mode="parity", corpus=args.corpus, episodes=len(selected), decisions=decisions,
+    losses = {label: [row["loss"] for row in history] for label, history in histories.items()}
+    if (any(any(left[key] != right[key] for key in ("loss", "losses", "decisions"))
+            for left, right in zip(histories["old"], histories["direct"]))
+            or not all(equal_state(old_state[key], new_state[key]) for key in ("model", "optimizer"))):
+        raise ValueError(f"Same-seed BC epochs differ: {losses}")
+    seconds = {label: [row["seconds"] for row in history] for label, history in histories.items()}
+    mean = {label: sum(values) / len(values) for label, values in seconds.items()}
+    totals = dict(old=prepare_seconds + 20 * mean["old"], direct=index_seconds + 20 * mean["direct"])
+    if not memory["direct"]["loader_pss_bytes"] or len(memory["direct"]["loader_worker_pids"]) != 4:
+        raise ValueError("Loader memory sampling did not observe all four workers")
+    return dict(mode=args.mode, corpus=args.corpus, episodes=len(selected), decisions=decisions,
+                episode_ids=[entry["id"] for entry in selected],
                 packed_arrays_bitwise_equal=checked_arrays, training_tensors_bitwise_equal=checked_tensors,
                 familiar_nonzero_decisions=familiar_decisions, reference_prepare_seconds=prepare_seconds,
                 direct_index_seconds=index_seconds, separate_prepare_required=False, seed=17,
-                threads=1, device="cpu", losses=losses, model_and_optimizer_tensors_equal=True,
+                threads=options.threads, device=options.device, epochs=options.epochs,
+                batch=options.batch, segment=options.segment, lr=options.lr,
+                losses=losses, model_and_optimizer_tensors_equal=True, epoch_seconds=seconds,
+                mean_epoch_seconds=mean, projected_20_epoch_seconds=totals,
+                xz_epoch_slowdown_percent=100 * (mean["direct"] / mean["old"] - 1),
+                xz_epoch_within_20_percent=mean["direct"] <= 1.2 * mean["old"],
+                projected_20_epochs_not_slower=totals["direct"] <= totals["old"],
+                memory=memory, cuda=torch.version.cuda,
+                gpu=torch.cuda.get_device_name() if gpu else None,
+                npz_medium="local NVMe scratch", xz_medium="NAS",
                 torch=torch.__version__, reference_script_sha256=hashlib.sha256(args.reference_script.read_bytes()).hexdigest())
+
+
+def check_loaded_tensors(groups, old_by_id, reference, cache, corpus, progress, segment):
+    """Check every ordered worker result before unpacking it for training."""
+    checked_arrays, checked_tensors, decisions, familiar_decisions = 0, 0, 0, 0
+    for entries, group in groups:
+        for new, actual in zip(entries, group):
+            old = old_by_id[new["id"]]
+            progress.begin("parity.episode_tensors", old["id"])
+            expected = reference.load_cached(cache / old["file"], packed=True)
+            if set(expected) != set(actual):
+                raise ValueError(f"Direct packed array keys differ: {old['id']}")
+            for name, value in expected.items():
+                other = actual[name]
+                if value.dtype != other.dtype or value.shape != other.shape or value.tobytes() != other.tobytes():
+                    raise ValueError(f"Direct packed array differs: {old['id']}: {name}")
+                checked_arrays += 1
+            steps = len(expected["labels"])
+            for start in range(0, steps, segment):
+                left = reference.unpack_cached(expected, start, start + segment + 1)
+                right = data.unpack_cached(actual, start, start + segment + 1)
+                for name, value in left.items():
+                    other = right[name]
+                    if value.dtype != other.dtype or value.shape != other.shape or value.tobytes() != other.tobytes():
+                        raise ValueError(f"Direct training tensor differs: {old['id']}: {name}")
+                    checked_tensors += 1
+            if corpus == "v5":
+                familiar_decisions += int((expected["near_familiar"].any(axis=(1, 2, 3)) |
+                                           expected["far_familiar"].any(axis=(1, 2, 3))).sum())
+            decisions += steps
+            del expected
+            progress.emit("parity_episode_complete", decisions=steps)
+    return checked_arrays, checked_tensors, decisions, familiar_decisions
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("profile", "probe", "replay", "parity"))
+    parser.add_argument("mode", choices=("profile", "probe", "replay", "parity", "loader"))
     parser.add_argument("--corpus", choices=("v4", "v5"), required=True)
     for name in ("source", "manifest", "output", "scratch"):
         parser.add_argument("--" + name, type=Path, required=True)
@@ -593,7 +702,7 @@ def main():
         parser.error("All paths must be absolute")
     if args.mode == "replay" and args.corpus != "v4":
         parser.error("Replay uses the historical v4 [200:300] training slice")
-    if args.mode == "parity" and any(path is None or not path.is_absolute()
+    if args.mode in ("parity", "loader") and any(path is None or not path.is_absolute()
                                      for path in (args.converted_source, args.reference_script)):
         parser.error("Parity requires absolute --converted-source and --reference-script")
     faulthandler.enable()
