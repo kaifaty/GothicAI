@@ -793,6 +793,96 @@ def test_validation_commands_preserve_world_seed_and_force_sampled_zero_teacher(
         rl.action_seeds("7,7")
 
 
+def test_dagger_train_selection_rejects_held_out_splits_before_any_recording(monkeypatch):
+    value = dict(id="v5-water-a", family="water", goal_kind="point", split="train",
+                 region="harbour", start="A", goal="B", seed=19, recorded=False)
+    monkeypatch.setattr(rl, "rows", lambda _: iter([value]))
+    assert rl.dagger_scenarios(Path("/unused.jsonl")) == [value]
+    for change in (dict(split="validation"), dict(split="test"), dict(family="detour"), dict(final_test=True)):
+        monkeypatch.setattr(rl, "rows", lambda _, change=change: iter([dict(value, **change)]))
+        with pytest.raises(ValueError, match="requires train"):
+            rl.dagger_scenarios(Path("/unused.jsonl"))
+
+
+def test_dagger_commands_select_v3b_or_v2_without_changing_learner_sampling():
+    args = SimpleNamespace(npc="NPC", limit_ms=10000, weights=Path("/hd.navbc"), roads=Path("/roads"))
+    value = dict(id="v5-water-a", family="water", goal_kind="point", split="train",
+                 region="harbour", start="A", goal="B", seed=19, local=False)
+    ordinary = rl.policy_commands(args, value, 43, teacher_beta=.1, dagger=True)
+    assert "navdemos drive-teacher 3" in ordinary
+    assert "navdemos dagger on" in ordinary
+    assert "navdemos record on" in ordinary
+    assert "navdemos perception-monitor on" in ordinary
+    assert "roads stranger NPC" in ordinary
+    assert ordinary[-2] == "navdemos drive NPC A B 10000 /hd.navbc 0.1 43 sample"
+    jump = rl.policy_commands(args, dict(value, family="jump", transition_id=7), 43, teacher_beta=.1, dagger=True)
+    assert "navdemos drive-teacher 2" in jump
+    assert jump[-2].endswith("0.1 43 sample 7")
+    with pytest.raises(ValueError, match="cannot run another split"):
+        rl.validation_commands(args, value, 43)
+
+
+def test_dagger_control_metrics_preserve_student_and_masked_decisions(monkeypatch):
+    root = Path("/virtual")
+    episodes = {}
+    samples = {}
+    for family, controls in (("water", ["memory_danger", "memory_danger", "beta", ""]),
+                             ("point", ["heading", "stall", "", ""])):
+        directory = root / "dagger" / family / "scenario" / "seed-7"
+        samples[directory / "samples.jsonl"] = [dict(teacher_control=bool(reason), takeover=reason,
+            dart=index == 0, maneuver_mask=index == 1) for index, reason in enumerate(controls)]
+        episodes[directory / "episode.json"] = dict(family=family, decisions=4,
+            teacher_control_decisions=sum(bool(reason) for reason in controls), dagger_interventions=2,
+            dart_decisions=1, maneuver_masked_decisions=1)
+    monkeypatch.setattr(Path, "glob", lambda path, pattern: iter(episodes))
+    monkeypatch.setattr(rl, "read_json", episodes.__getitem__)
+    monkeypatch.setattr(rl, "rows", lambda path: iter(samples[path]))
+    metrics = rl.dagger_control_metrics(root)
+    assert metrics["all"]["decisions"] == 8
+    assert metrics["all"]["teacher_control_decisions"] == 5
+    assert metrics["all"]["teacher_control_fraction"] == 5 / 8
+    assert metrics["all"]["dagger_interventions"] == 4
+    assert metrics["all"]["dart_decisions"] == 2
+    assert metrics["all"]["maneuver_masked_decisions"] == 2
+    assert metrics["by_family"]["water"]["teacher_control_fraction"] == 3 / 4
+    assert metrics["by_family"]["point"]["teacher_control_fraction"] == 1 / 2
+    reason = metrics["by_family"]["water"]["by_reason"]["memory_danger"]
+    assert reason == dict(decisions=2, fraction_all_decisions=1 / 2, fraction_teacher_decisions=2 / 3)
+    episodes[next(iter(episodes))]["teacher_control_decisions"] = 4
+    with pytest.raises(ValueError, match="teacher_control_decisions count differs"):
+        rl.dagger_control_metrics(root)
+
+    # Offline estimates use recovered learner proposals on the recorded path.
+    def replay_steps(progress=False, danger=False):
+        for index in range(41):
+            x = index * (10 if progress else -10)
+            yield dict(time_ms=index * 100, position=(x, 0), movement=(0, -1),
+                       teacher_direction=(0, 1), teacher_path=[(x, 0), (x + 500, 0)],
+                       danger=danger and index == 0, was_teacher_controlled=index % 2 == 0)
+    replay = rl.dagger_threshold_replay(replay_steps())
+    assert replay["recovered_teacher_step_proposals"] == 21
+    assert replay["interventions_heading"] == 2
+    assert replay["steps_heading"] == 20
+    assert replay["steps_beta"] == pytest.approx(2.1)
+    assert rl.dagger_threshold_replay(replay_steps(progress=True))["interventions_heading"] == 0
+    danger_replay = rl.dagger_threshold_replay(replay_steps(progress=True, danger=True))
+    assert danger_replay["interventions_memory_danger"] == 1
+    assert danger_replay["steps_memory_danger"] == 10  # Exactly one second.
+
+    # Standing within the follow band is valid even when movement is commanded.
+    def stationary_steps(distance, kind="follow"):
+        for index in range(21):
+            yield dict(time_ms=index * 100, position=(0, 0), movement=(0, 1),
+                       teacher_direction=(0, 1), teacher_path=[(0, 0), (500, 0)],
+                       danger=False, was_teacher_controlled=False,
+                       goal_kind=kind, target_distance_cm=distance)
+    for distance in (200, 350, 500):
+        assert rl.dagger_threshold_replay(stationary_steps(distance))["interventions_stall"] == 0
+    for distance in (199, 501):
+        assert rl.dagger_threshold_replay(stationary_steps(distance))["interventions_stall"] == 1
+    assert rl.dagger_threshold_replay(stationary_steps(350, kind="approach"))["interventions_stall"] == 1
+
+
 def test_lean_validation_commands_disable_recording_for_every_family(tmp_path, monkeypatch):
     manifest, groups = validation_manifest(tmp_path)
     args = validation_drive_args(tmp_path, manifest, family=None)
@@ -1008,7 +1098,8 @@ def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(
     path = tmp_path / "eval-screen.jsonl"
     rl.write_pairs(path, [dict(scenario=value, action_seeds=list(rl.ACTION_SEEDS)) for value in scenarios])
     arguments = ["nav_rl.py", "drive", "--output", str(tmp_path / "screen-run"),
-                 "--cache", str(tmp_path / "cache"), "--weights", "/hd.navbc", "--eval-screen", str(path)]
+                 "--cache", str(tmp_path / "cache"), "--weights", "/hd.navbc", "--eval-screen", str(path),
+                 "--parallel", "3"]
     captured = []
     monkeypatch.setattr(rl, "drive", lambda args: captured.append(args))
     monkeypatch.setattr(rl.sys, "argv", arguments)
@@ -1019,6 +1110,16 @@ def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(
     with pytest.raises(SystemExit):
         rl.main()
     stub_validation_runner(monkeypatch)
+    cache_writers = threading.Barrier(3)
+    caches = []
+    def new_runner(worker, name):
+        temporary = worker.cache / "fixture.navmesh.tmp"
+        temporary.write_text("fixture navmesh")
+        cache_writers.wait(timeout=5)
+        temporary.replace(worker.cache / "fixture.navmesh")
+        caches.append(worker.cache)
+        return SimpleNamespace(close=lambda: None)
+    monkeypatch.setattr(rl, "new_runner", new_runner)
     calls = []
     def scenario(worker, runner, name, commands, directory):
         family = directory.parent.parent.name
@@ -1036,7 +1137,9 @@ def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(
     monkeypatch.setattr(rl, "detour_episode_metrics", measured)
     monkeypatch.setattr(rl, "lean_validation_episode_metrics", measured)
     rl.drive_validation(args)
-    assert calls == [(value["family"], value["id"], seed) for value in scenarios for seed in rl.ACTION_SEEDS]
+    assert len(calls) == 9
+    assert set(calls) == {(value["family"], value["id"], seed) for value in scenarios for seed in rl.ACTION_SEEDS}
+    assert set(caches) == {args.cache / "ordinary" / str(index) for index in range(3)}
     assert len(list(args.output.rglob("drive-metrics.json"))) == 9
 
 
