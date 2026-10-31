@@ -121,8 +121,10 @@
 #        turns up, Xardas finds out, attacks him through the scripts, and Jora, standing by, hears it as a
 #        rumor and has it in mind when the hero speaks to her (story graph, stage 4)
 #   death_load: human deaths before/after older-save load, player credit, and no repeated saved deaths; LLM=fake, no SAVE.
-#   feats: save before a hero kill, chronicler feat with evidence, fake-generated picture, toast and journal;
-#       load rolls back feat/image facts while retaining picture files; LLM=fake, no SAVE, no codex call.
+#   feats: save before a hero kill, chronicler feat with evidence, picture, toast and journal;
+#       load rolls back feat/image facts while retaining picture files; no SAVE.
+#       LLM=fake uses a scripted chronicler and picture; LLM=chatgpt uses the real chronicler and Artist,
+#       requires authenticated codex on the host for image_gen; TIMEOUT defaults to 1020 in live mode.
 #   repair: Lobart gives the hero the turnip quest and dies; the director finds the quest without an ending,
 #       its model proposes a repair (scripted with LLM=fake: first the dead Lobart, rejected by the validator,
 #       then Hilda), and the hero ends the quest with Hilda for Lobart's reward (story graph, stage 5)
@@ -404,6 +406,7 @@ GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
 GAME_BIN="${GAME_BIN:-$ROOT/OpenGothic/build/opengothic/Gothic2Notr}"
 LOG_DIR="${LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/gothic-e2e.XXXXXX")}"
 SCENARIO="${SCENARIO:-m0}"
+LLM="${LLM:-fake}"
 BODY_POLICY="${GOTHIC_BODY_POLICY:-engine}"
 BODY_ARGS=(--neural-body --body-policy "$BODY_POLICY")
 if [[ "$SCENARIO" == memprobe ]]; then BODY_ARGS=(--no-neural-body); fi
@@ -414,6 +417,7 @@ fi
 E2E_DEFAULT_TIMEOUT=240
 if [[ "$SCENARIO" == memprobe ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
+if [[ "$SCENARIO" == feats && "$LLM" == chatgpt ]]; then E2E_DEFAULT_TIMEOUT=1020; fi
 TIMEOUT="${TIMEOUT:-$E2E_DEFAULT_TIMEOUT}"
 if [[ "${GOTHIC_TTS_RECORD:-0}" == 1 && "$SCENARIO" != tts ]]; then
   echo 'GOTHIC_TTS_RECORD requires SCENARIO=tts' >&2
@@ -429,13 +433,16 @@ if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion || "$SCENARIO" = ne
   fi
   [ -z "${SAVE:-}" ] || { echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2; exit 2; }
 fi
-LLM="${LLM:-fake}"
 if [[ "$SCENARIO" == surrender_live && ( "$LLM" == fake || -n "${SAVE:-}" ) ]]; then
   echo 'scenario surrender_live requires a non-fake LLM and a new game (unset SAVE)' >&2
   exit 2
 fi
-if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty || "$SCENARIO" == bandit_hold || "$SCENARIO" == death_load || "$SCENARIO" == feats ) && ( "$LLM" != fake || -n "${SAVE:-}" ) ]]; then
+if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty || "$SCENARIO" == bandit_hold || "$SCENARIO" == death_load ) && ( "$LLM" != fake || -n "${SAVE:-}" ) ]]; then
   echo "scenario $SCENARIO requires LLM=fake and a new game (unset SAVE)" >&2
+  exit 2
+fi
+if [[ "$SCENARIO" == feats && ( ( "$LLM" != fake && "$LLM" != chatgpt ) || -n "${SAVE:-}" ) ]]; then
+  echo 'scenario feats requires LLM=fake or LLM=chatgpt and a new game (unset SAVE)' >&2
   exit 2
 fi
 if [[ "$SCENARIO" == neural-soak && "$LLM" != fake ]]; then

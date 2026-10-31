@@ -349,6 +349,10 @@ class Npc final {
     bool      isEdgeMoveBlocked(const Tempest::Vec3& modelDirection) const {
       return mvAlgo.isEdgeMoveBlocked(modelDirection);
       }
+    // Passive stand measurement; never advances the actor or changes its guard.
+    MoveAlgo::EdgeProbe navigationEdgeAhead(const Tempest::Vec3& direction,float range) const {
+      return mvAlgo.edgeAhead(direction,range);
+      }
     // The manual stance looks from the hero's shoulder toward the crosshair, independently of the camera.
     auto      aimLookAt(const Tempest::Vec3& target) const -> Tempest::Vec3;
     void      setAimLook(const Tempest::Vec3& dir) { stanceLook = dir; }
@@ -635,6 +639,7 @@ class Npc final {
 
     auto      currentWayPoint() const -> const WayPoint* { return currentFp; }
     auto      currentGoToPoint() const -> const WayPoint* { return go2.wp; }
+    auto      navigationPath() const -> const WayPath& { return wayPath; }
     auto      currentTaPoint() const -> const WayPoint*;
     void      attachToPoint(const WayPoint* p);
     GoToHint  moveHint() const { return go2.flag; }
@@ -655,6 +660,7 @@ class Npc final {
     float     navigationClearance() const {
       return physic.groundOffset()+physic.capsuleHeight()*0.5f;
       }
+    auto      navigationPhysicsPosition() const -> Tempest::Vec3 { return physic.position(); }
     // Direct, owned ground-position target for bench-controlled walks; no waypoint graph lookup.
     // Uses a 20 cm arrival radius even after a collision, to preserve navmesh corners.
     // Returns false while airborne or while leaving an interaction, so the caller can retry.

@@ -1,0 +1,293 @@
+{
+ "format": 1,
+ "add": [
+  {
+   "key": "life-fish-basket-1",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "position": [
+    -8185.0,
+    -189.5,
+    -5665.0
+   ],
+   "yaw_deg": 20.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-fish-basket-2",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "position": [
+    -7955.0,
+    -141.1,
+    -5625.0
+   ],
+   "yaw_deg": -35.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-fish-bucket-1",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "position": [
+    -8075.0,
+    -198.1,
+    -5590.0
+   ],
+   "yaw_deg": 0.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-fish-bucket-2",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "position": [
+    -7790.0,
+    -149.7,
+    -5955.0
+   ],
+   "yaw_deg": 140.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-crane-basket-1",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "position": [
+    -1560.0,
+    -172.9,
+    -3480.0
+   ],
+   "yaw_deg": 70.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-crane-bucket-1",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "position": [
+    -1445.0,
+    -177.6,
+    -3565.0
+   ],
+   "yaw_deg": 210.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-crane-basket-2",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_FISHBASKET_01",
+   "position": [
+    -1250.0,
+    -179.7,
+    -3605.0
+   ],
+   "yaw_deg": -20.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-werft-broken-1",
+   "kind": "mesh",
+   "visual": "NW_HARBOUR_CRATEBROKEN_01",
+   "position": [
+    400.0,
+    -127.0,
+    1800.0
+   ],
+   "rotation": [
+    [
+     0.814665,
+     -0.104528,
+     0.570434
+    ],
+    [
+     0.085625,
+     0.994522,
+     0.059955
+    ],
+    [
+     -0.573576,
+     0.0,
+     0.819152
+    ]
+   ],
+   "collision": "mesh"
+  },
+  {
+   "key": "life-werft-bucket-1",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "position": [
+    530.0,
+    -182.9,
+    1730.0
+   ],
+   "yaw_deg": -40.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-poor-bucket-1",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "position": [
+    520.0,
+    -187.3,
+    -4610.0
+   ],
+   "yaw_deg": 80.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-poor-wood-1",
+   "kind": "mesh",
+   "visual": "OC_FIREWOOD_V2",
+   "position": [
+    1881.8,
+    -185.1,
+    -4690.7
+   ],
+   "yaw_deg": 122.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-poor-wood-2",
+   "kind": "mesh",
+   "visual": "OC_FIREWOOD_V2",
+   "position": [
+    2146.5,
+    -188.0,
+    -5398.8
+   ],
+   "yaw_deg": -164.5,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-alley-trash-1",
+   "kind": "mesh",
+   "visual": "NW_HARBOUR_CRATEBROKEN_01",
+   "position": [
+    993.3,
+    -99.0,
+    -6468.8
+   ],
+   "rotation": [
+    [
+     -0.780219,
+     -0.121869,
+     -0.61352
+    ],
+    [
+     -0.095799,
+     0.992546,
+     -0.075331
+    ],
+    [
+     0.618128,
+     0.0,
+     -0.786078
+    ]
+   ],
+   "collision": "mesh"
+  },
+  {
+   "key": "life-alley-trash-2",
+   "kind": "mesh",
+   "visual": "OC_BARREL_V1_DESTROYED",
+   "position": [
+    1121.1,
+    -92.3,
+    -6518.1
+   ],
+   "yaw_deg": -96.8,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-alley-wood-1",
+   "kind": "mesh",
+   "visual": "OC_FIREWOOD_V2",
+   "position": [
+    1685.0,
+    -182.6,
+    -5912.3
+   ],
+   "rotation": [
+    [
+     0.721473,
+     -0.087156,
+     -0.686935
+    ],
+    [
+     0.063121,
+     0.996195,
+     -0.060099
+    ],
+    [
+     0.689559,
+     0.0,
+     0.724229
+    ]
+   ],
+   "collision": "mesh"
+  },
+  {
+   "key": "life-alley-trash-4",
+   "kind": "mesh",
+   "visual": "NW_HARBOUR_CRATEBROKEN_01",
+   "position": [
+    2305.4,
+    -69.5,
+    -6358.8
+   ],
+   "yaw_deg": -294.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-alley-bucket-1",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "position": [
+    2620.0,
+    -117.1,
+    -6170.0
+   ],
+   "yaw_deg": 0.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-alley-laundry-1",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_LAUNDRY_01",
+   "position": [
+    1450.8,
+    -131.3,
+    -6433.0
+   ],
+   "yaw_deg": 179.5,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-east-wood-1",
+   "kind": "mesh",
+   "visual": "OC_FIREWOOD_V2",
+   "position": [
+    4300.0,
+    -68.0,
+    -5780.0
+   ],
+   "yaw_deg": 30.0,
+   "collision": "mesh"
+  },
+  {
+   "key": "life-east-bucket-1",
+   "kind": "mesh",
+   "visual": "OWN_HARBOUR_BUCKET_01",
+   "position": [
+    4010.0,
+    -112.7,
+    -6030.0
+   ],
+   "yaw_deg": 25.0,
+   "collision": "mesh"
+  }
+ ]
+}

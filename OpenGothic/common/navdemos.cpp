@@ -5,7 +5,10 @@
 #include "navmemorycosttrace.h"
 #include "navdemowriter.h"
 #include "navpolicy.h"
+#include "navlivetrace.h"
+#include "navliveprobes.h"
 #include "navtransitions.h"
+#include "physics/charactervirtualdiagnostics.h"
 #include "game/knownroadsbench.h"
 #include "game/navperceptionbench.h"
 #include "game/navperceptionsafety.h"
@@ -56,6 +59,19 @@ struct Episode {
   size_t targetLeg=0;
   uint64_t targetResume=0,scenarioSeed=0,firstContactMs=0,followMs=0,inBandMs=0;
   bool contacted=false,targetQueued=false;
+  bool liveTargetPlayer=false,liveTargetWasExternal=false;
+  bool liveTargetWalkOnly=false;
+  bool liveTargetWalking=false,liveTargetRunning=false;
+  Vec3 liveTargetPosition;
+  NavMesh::Path liveTargetPath;
+  size_t liveTargetCorner=0;
+  uint64_t liveTargetTurnAt=0,liveTargetLegAt=0;
+  Npc* liveGuidePlayer=nullptr;
+  bool liveGuideWasExternal=false,liveGuideWalking=false;
+  uint64_t liveGuideLastMotionAt=0;
+  double liveGuideTraveledCm=0,liveGuideLagCm=300;
+  Vec3 liveGuidePosition;
+  std::deque<std::pair<double,Vec3>> liveGuideTrail;
   Vec3 previousTargetPosition;
   uint64_t targetObservedAt=0,targetRunningUntil=0;
   bool targetObserved=false;
@@ -124,6 +140,11 @@ struct Episode {
   NavigationMemory::View view;
   std::unique_ptr<NavDemoWriter> writer;
   std::unique_ptr<NavMemoryCostTrace> memoryCostTrace;
+  std::unique_ptr<NavLiveTrace> live;
+  bool liveContact=false,liveSafety=false,liveRequestClipped=false,liveResolvedClipped=false;
+  float liveEdgeClearanceCm=500,liveWaterClearanceCm=500;
+  bool liveEdgeCensored=true,liveWaterCensored=true;
+  uint64_t liveClearanceNext=0;
   std::ofstream actions,trajectory,knownPaths,teacherPaths,transitionFrames,samples,targetTrajectory;
   std::ofstream perceptionSafetyFrames;
   std::ofstream perceptionWaterObservations;
@@ -162,6 +183,7 @@ struct Settings {
   bool cv=false,heroNear=true,killArmed=false,killFired=false;
   bool oracle=false,recordDemos=true;
   bool perceptionMonitor=false;
+  bool live=false,liveTargetPlayer=false,liveGuidePlayer=false,liveTargetWalkOnly=false;
   NavigationEye::FloorSampling floorSampling=NavigationEye::FloorSampling::WalkingGazeDown;
   size_t killSlot=0;
   uint64_t killAfterMs=0;
@@ -233,6 +255,59 @@ void action(Episode& ep,uint64_t elapsed,const NpcKeys::KeyState& k) {
   ep.actions<<elapsed<<' '<<k.forward<<' '<<k.strafe<<' '<<k.turn<<' '
             <<int(k.walk)<<' '<<int(k.jump)<<' '<<int(k.climb)<<' '<<k.headYaw<<' '<<k.headPitch<<'\n';
   if(!ep.actions)throw std::runtime_error("navdemos action write failed");
+}
+bool livePlayerStart(Episode& ep,World& world,Npc& player,Vec3& position,NavMesh::Path& approach) {
+  const auto leader=NpcKeys::physicalPosition(*ep.npc);
+  const auto& mesh=NavBench::navigationMesh(world);
+  const auto anchor=mesh.groundLocation(meters(leader));
+  const auto candidates=mesh.nearbyGroundLocations(meters(leader));
+  const auto capsule=player.navigationCapsule();
+  auto out=file(ep,"live-guide-start.json");
+  out<<"{\"method\":\"nearest_ground_annulus\",\"minimum_cm\":200,\"maximum_cm\":600,\"leader_cm\":";
+  vector(out,leader);out<<",\"role\":"<<std::quoted(ep.liveTargetPlayer?"target":settings.liveGuidePlayer?"guide":"observer")
+     <<",\"candidate_count\":"<<candidates.size()<<",\"attempts\":[";
+  bool accepted=false,first=true;
+  for(const auto& candidate:candidates) {
+    const auto requested=cm(candidate.snapped);
+    const auto rayFrom=requested+Vec3(0,200,0);
+    const auto floor=world.physic()->landRay(rayFrom,500.f);
+    auto normal=floor.n;
+    if(floor.hasCol && normal.length()<.5f) {
+      const auto surface=world.physic()->navigationRay(floor.v+Vec3(0,2,0),floor.v-Vec3(0,2,0),&player);
+      if(surface.hasCol && (surface.point-floor.v).length()<3.f)normal=surface.normal;
+    }
+    const float normalLength=normal.length();
+    if(normalLength>.5f)normal*=1.f/normalLength;
+    const bool supported=floor.hasCol && normalLength>.5f && normal.y>=.65f && std::abs(floor.v.y-requested.y)<=100.f;
+    bool clear=false,dry=false;
+    if(supported) {
+      clear=!world.physic()->sweep(floor.v+Vec3(0,capsule.x+2,0),
+          floor.v+Vec3(0,std::max(capsule.x+2,capsule.y-capsule.x),0),capsule.x).hasCol;
+      const auto water=NavLiveProbes::waterAbove(world,floor.v);
+      dry=!water.hasCol || water.wdepth-floor.v.y<=10.f;
+    }
+    const bool connected=!anchor.known || anchor.component==candidate.component;
+    const char* reason=!connected?"different_ground_component":!floor.hasCol?"no_floor":
+                       !supported?"unsupported_floor":!clear?"capsule_blocked":!dry?"water":"accepted";
+    auto path=NavMesh::Path{};
+    if(connected && supported && clear && dry && settings.liveGuidePlayer) {
+      path=mesh.findPath(meters(floor.v),meters(leader));
+      if(!path.complete || path.corners.size()<2 || !path.transitions.empty())reason="no_ground_path_to_leader";
+    }
+    if(!first)out<<',';
+    first=false;
+    out<<"{\"navmesh_cm\":";vector(out,requested);out<<",\"ray_from_cm\":";vector(out,rayFrom);
+    out<<",\"floor_found\":"<<floor.hasCol<<",\"floor_cm\":";
+    if(floor.hasCol)vector(out,floor.v);else out<<"null";
+    out<<",\"normal_y\":";jsonNumber(out,normal.y);
+    out<<",\"capsule_clear\":"<<clear<<",\"dry\":"<<dry<<",\"reason\":"<<std::quoted(reason)<<'}';
+    if(std::string_view(reason)!="accepted")continue;
+    position=floor.v;approach=std::move(path);accepted=true;break;
+  }
+  out<<"],\"accepted\":"<<accepted<<",\"selected_cm\":";
+  if(accepted)vector(out,position);else out<<"null";
+  out<<",\"reason\":"<<std::quoted(accepted?"accepted":"no_safe_ground_in_2_6m_annulus")<<"}\n";
+  return accepted;
 }
 double percentile(std::vector<double> values,double quantile) {
   if(values.empty())return 0;
@@ -329,6 +404,7 @@ void finish(Episode& ep,World& world) {
   }
   if(!ep.replay) {NpcKeys::KeyState end;end.walk=true;action(ep,elapsed,end);if(ep.writer)ep.writer->finish();}
   ep.trajectory.close();ep.actions.close();ep.knownPaths.close();ep.teacherPaths.close();ep.transitionFrames.close();ep.samples.close();ep.targetTrajectory.close();ep.perceptionSafetyFrames.close();ep.perceptionWaterObservations.close();
+  if(ep.live) {ep.live->finish();ep.npc->setCharacterVirtualDiagnosticsEnabled(false);}
   auto out=file(ep,"episode.json");
   const double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-ep.wallStart).count();
   out<<"{\"success\":"<<ep.success<<",\"replay\":"<<ep.replay<<",\"drive\":"<<ep.drive<<",\"start\":"<<std::quoted(ep.from)
@@ -345,6 +421,9 @@ void finish(Episode& ep,World& world) {
      <<",\"memory_updates\":"<<ep.memoryUpdates<<",\"memory_views\":"<<ep.memoryViews
      <<",\"perception_mode\":"<<std::quoted(perceptionMode(ep.eye.config().floorSampling))
      <<",\"perception_monitor\":"<<ep.perceptionMonitor
+     <<",\"live_trace\":"<<bool(ep.live)<<",\"live_target_player\":"<<ep.liveTargetPlayer
+     <<",\"live_target_walk_only\":"<<ep.liveTargetWalkOnly
+     <<",\"live_guide_player\":"<<bool(ep.liveGuidePlayer)
      <<",\"oracle\":"<<ep.oracle<<",\"record\":"<<bool(ep.writer)
      <<",\"demonstration_recorded\":"<<bool(ep.writer)<<",\"demo_recorded\":"<<bool(ep.writer)
      <<",\"solver\":"<<std::quoted(ep.teacherVersion==3?"memory_teacher_v3":ep.teacherVersion==2?"teacher_v2":"teacher_v1")
@@ -455,11 +534,17 @@ void finish(Episode& ep,World& world) {
      <<",\"kill_at_ms\":"<<ep.killAt;
   if(ep.population)out<<",\"directory\":"<<std::quoted(ep.output);
   out<<"}\n";
+  if(ep.liveTargetPlayer && ep.target) {ep.target->setExternalControl(ep.liveTargetWasExternal);ep.target->clearSpeed();}
+  if(ep.liveGuidePlayer) {
+    ep.liveGuidePlayer->stopWalking();ep.liveGuidePlayer->clearSpeed();
+    ep.liveGuidePlayer->setExternalControl(ep.liveGuideWasExternal);ep.liveGuidePlayer=nullptr;
+  }
   NpcKeys::enable(*ep.npc,false);ep.npc->stopWalking();ep.active=false;
   ep.memoryCostTrace.reset();
   if(ep.target) {
     ep.target->clearAiQueue();ep.target->clearGoTo();ep.target->stopWalking();
-    world.removeNpc(*ep.target);ep.target=nullptr;
+    if(!ep.liveTargetPlayer)world.removeNpc(*ep.target);
+    ep.target=nullptr;
   }
 }
 
@@ -1028,6 +1113,97 @@ NavDemoWriter::Snapshot snapshot(Episode& ep,World& w,const KnownRoads::Guidance
   tracePerceptionWater(ep,sample);
   return sample;
 }
+void livePhysicalFlags(Episode& ep) {
+  if(!ep.live)return;
+  CharacterVirtualDiagnostics diagnostics;
+  if(!ep.npc->characterVirtualDiagnostics(diagnostics))return;
+  ep.liveContact=ep.liveContact || diagnostics.npcMove.blocked || diagnostics.npcMove.steepContact;
+  ep.liveSafety=ep.liveSafety || diagnostics.stairBlockedByPolicy;
+  ep.liveRequestClipped=ep.liveRequestClipped || diagnostics.npcMove.requestClipped;
+  ep.liveResolvedClipped=ep.liveResolvedClipped || diagnostics.npcMove.resolvedClipped;
+}
+void liveClearance(Episode& ep,World& w,uint64_t elapsed) {
+  if(elapsed<ep.liveClearanceNext)return;
+  ep.liveClearanceNext=elapsed+400;
+  ep.liveEdgeClearanceCm=ep.liveWaterClearanceCm=500.f;
+  ep.liveEdgeCensored=ep.liveWaterCensored=true;
+  const auto position=NpcKeys::physicalPosition(*ep.npc);
+  const float chest=float(w.script().guildVal().water_depth_chest[ep.npc->guild()]);
+  const auto deep=[&](const Vec3& point) {
+    const auto ground=w.physic()->landRay(point+Vec3(0,200,0));
+    if(!ground.hasCol)return false;
+    const auto water=NavLiveProbes::waterAbove(w,ground.v);
+    return water.hasCol && std::isfinite(water.wdepth) && water.wdepth-ground.v.y>=chest;
+  };
+  if(deep(position)) {ep.liveWaterClearanceCm=0;ep.liveWaterCensored=false;}
+  for(unsigned i=0;i<16;++i) {
+    const float angle=float(i)*(2.f*Pi/16.f);
+    const Vec3 direction(std::cos(angle),0,std::sin(angle));
+    const auto edge=ep.npc->navigationEdgeAhead(direction,500.f);
+    if(edge.found && edge.drop>=100.f) {ep.liveEdgeClearanceCm=std::min(ep.liveEdgeClearanceCm,edge.distance);ep.liveEdgeCensored=false;}
+    for(float distance=25.f;distance<=ep.liveWaterClearanceCm;distance+=25.f) {
+      if(deep(position+direction*distance)) {
+        ep.liveWaterClearanceCm=distance;ep.liveWaterCensored=false;break;
+      }
+    }
+  }
+}
+void liveDecision(Episode& ep,World& w,const NavDemoWriter::Snapshot& sample,const NpcKeys::KeyState& executed) {
+  if(!ep.live)return;
+  const auto elapsed=sample.gameMs-ep.began;
+  livePhysicalFlags(ep);liveClearance(ep,w,elapsed);
+  if(!ep.drive)ep.live->observation(sample,nullptr,elapsed,ep.decisions);
+  auto& out=ep.live->decisions;
+  const auto keys=[&](const NpcKeys::KeyState& value) {
+    out<<"{\"forward\":"<<value.forward<<",\"strafe\":"<<value.strafe<<",\"turn\":"<<value.turn
+       <<",\"walk\":"<<value.walk<<",\"jump\":"<<value.jump<<",\"climb\":"<<value.climb<<'}';
+  };
+  out<<"{\"elapsed_ms\":"<<elapsed<<",\"decision_index\":"<<ep.decisions<<",\"position_cm\":";
+  vector(out,NpcKeys::physicalPosition(*ep.npc));out<<",\"yaw_deg\":"<<sample.bodyYawDeg<<",\"goal_cm\":";vector(out,ep.goal);
+  out<<",\"carrot_cm\":";vector(out,ep.guidance.carrot);
+  if(ep.liveGuidePlayer) {
+    out<<",\"player_position_cm\":";vector(out,NpcKeys::physicalPosition(*ep.liveGuidePlayer));
+    out<<",\"guide_distance_cm\":"<<(NpcKeys::physicalPosition(*ep.npc)-NpcKeys::physicalPosition(*ep.liveGuidePlayer)).length();
+  }
+  out<<",\"speed_cm_s\":"<<std::hypot(ep.velocity.x,ep.velocity.z)<<",\"keys\":";keys(executed);
+  out<<",\"teacher_keys\":";keys(sample.keys);
+  std::array<std::vector<double>,NavPolicy::headCount> probabilities;
+  std::array<size_t,NavPolicy::headCount> selected={};
+  std::array<double,NavPolicy::headCount> entropies={};
+  const size_t heads=ep.drive?ep.policy->actionHeadCount():0;
+  for(size_t i=0;i<heads;++i) {
+    const auto& logits=ep.selected.logits[i];
+    const double temperature=ep.policy->headTemperature(i);
+    const double maximum=double(*std::max_element(logits.begin(),logits.end()))/temperature;
+    double total=0;
+    for(float logit:logits) {probabilities[i].push_back(std::exp(double(logit)/temperature-maximum));total+=probabilities[i].back();}
+    for(double& value:probabilities[i]) {value/=total;if(value>0)entropies[i]-=value*std::log(value);}
+    selected[i]=ep.sampled?ep.selectedIndices[i]:size_t(std::max_element(logits.begin(),logits.end())-logits.begin());
+  }
+  out<<",\"probabilities\":{";
+  for(size_t i=0;i<heads;++i) {
+    if(i)out<<',';
+    out<<std::quoted(ep.policy->headName(i))<<":[";
+    for(size_t j=0;j<probabilities[i].size();++j) {if(j)out<<',';out<<probabilities[i][j];}
+    out<<']';
+  }
+  out<<"},\"selected\":{";
+  for(size_t i=0;i<heads;++i) {if(i)out<<',';out<<std::quoted(ep.policy->headName(i))<<':'<<selected[i];}
+  out<<"},\"chosen_probability\":{";
+  for(size_t i=0;i<heads;++i) {if(i)out<<',';out<<std::quoted(ep.policy->headName(i))<<':'<<probabilities[i][selected[i]];}
+  out<<"},\"entropy\":{";
+  for(size_t i=0;i<heads;++i) {if(i)out<<',';out<<std::quoted(ep.policy->headName(i))<<':'<<entropies[i];}
+  const auto& n=*ep.npc;
+  out<<"},\"stuck\":"<<ep.blocked<<",\"body_blocked\":"<<ep.blocked<<",\"contact\":"<<ep.liveContact
+     <<",\"safety_intervention\":"<<ep.liveSafety<<",\"peer_request_clipped\":"<<ep.liveRequestClipped
+     <<",\"peer_resolved_clipped\":"<<ep.liveResolvedClipped<<",\"in_air\":"<<n.isInAir()
+     <<",\"falling\":"<<n.isFalling()<<",\"swimming\":"<<n.isSwim()<<",\"climbing\":"<<n.navigationClimbing()
+     <<",\"edge_clearance_cm\":"<<ep.liveEdgeClearanceCm<<",\"edge_clearance_censored\":"<<ep.liveEdgeCensored
+     <<",\"water_clearance_cm\":"<<ep.liveWaterClearanceCm<<",\"water_clearance_censored\":"<<ep.liveWaterCensored
+     <<",\"teacher_escape_required\":"<<(ep.teacherVersion==3 && ep.memoryTeacher.lastPlanStatus().escapeRequired)<<"}\n";
+  if(!out)throw std::runtime_error("nav live: decision write failed");
+  ep.liveContact=ep.liveSafety=ep.liveRequestClipped=ep.liveResolvedClipped=false;
+}
 std::vector<NonfiniteObservation::Field> nonfiniteFields(const NavDemoWriter::Snapshot& sample,bool sensors) {
   std::vector<NonfiniteObservation::Field> result;
   const auto scalar=[&](const std::string& name,float value) {
@@ -1210,7 +1386,10 @@ NpcKeys::KeyState executePolicy(Episode& ep,const NavDemoWriter::Snapshot& sampl
     const auto policyCost=micros(began);
     if(measure)ep.policyUs.push_back(policyCost);
     if(ep.population)ep.phaseUs[4]+=policyCost;
-    if(i==0)executed=(ep.population || ep.sampled)?select(ep,std::move(result)):result.keys;
+    if(i==0) {
+      if(ep.population || ep.sampled)executed=select(ep,std::move(result));
+      else {executed=result.keys;if(ep.live)ep.selected=std::move(result);}
+    }
   }
   if(measure)ep.populationUs.push_back(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-populationStart).count());
   executed.headYaw=0;executed.headPitch=0;
@@ -1222,6 +1401,7 @@ NpcKeys::KeyState executePolicy(Episode& ep,const NavDemoWriter::Snapshot& sampl
   if(std::bernoulli_distribution(ep.teacherBeta)(ep.mixingRng)) {
     executed=sample.keys;++ep.teacherControlDecisions;
   }
+  if(ep.live)ep.live->observation(sample,&features,sample.gameMs-ep.began,ep.decisions);
   return executed;
 }
 void guidanceFor(Episode& ep,World& w,const Vec3& position) {
@@ -1308,6 +1488,7 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
     const double cost=ep.writer->append(sample);ep.writeUs+=cost;ep.maxWriteUs=std::max(ep.maxWriteUs,cost);
   }
   const auto executed=executePolicy(ep,sample);
+  liveDecision(ep,w,sample,executed);
   ep.backwardDecisions+=executed.forward<0;ep.strafeDecisions+=executed.strafe!=0;
   action(ep,elapsed,executed);NpcKeys::set(*ep.npc,executed,1000);ep.previous=executed;++ep.decisions;
   ep.failure=ep.blocked?"body_blocked":"";
@@ -1426,6 +1607,7 @@ void decide(Episode& ep,World& w) {
   }
   sample.teacherCorner=array(cm(hint.nextCorner));sample.teacherPathCm=hint.remainingLength*100;
   const auto executed=executePolicy(ep,sample);
+  liveDecision(ep,w,sample,executed);
   const auto recordStart=Clock::now();
   if(ep.writer) {const double cost=ep.writer->append(sample);ep.writeUs+=cost;ep.maxWriteUs=std::max(ep.maxWriteUs,cost);}
   action(ep,elapsed,executed);NpcKeys::set(n,executed,1000);ep.previous=executed;++ep.decisions;
@@ -1589,7 +1771,7 @@ void tracePerceptionSafety(Episode& ep,World& w,uint64_t elapsed) {
   if(!ep.perceptionMonitor)return;
   auto& n=*ep.npc;
   const auto p=NpcKeys::physicalPosition(n);
-  const auto water=w.physic()->waterRay(p+Vec3(0,2,0),50.f);
+  const auto water=ep.live?NavLiveProbes::waterAbove(w,p):w.physic()->waterRay(p+Vec3(0,2,0),50.f);
   const float depth=water.hasCol && std::isfinite(water.wdepth)?std::max(0.f,water.wdepth-p.y):0.f;
   auto& out=ep.perceptionSafetyFrames;
   out<<"{\"elapsed_ms\":"<<elapsed<<",\"position_cm\":";vector(out,p);
@@ -1602,6 +1784,70 @@ void tracePerceptionSafety(Episode& ep,World& w,uint64_t elapsed) {
      <<",\"hitpoints\":"<<n.attribute(ATR_HITPOINTS)
      <<",\"hitpoints_max\":"<<n.attribute(ATR_HITPOINTSMAX)<<"}\n";
   if(!out)throw std::runtime_error("navdemos perception safety frame write failed");
+}
+void tickLiveTarget(Episode& ep,World& w,uint64_t elapsed,uint64_t dt) {
+  auto& target=*ep.target;
+  if(ep.liveTargetPath.corners.empty() && elapsed>=ep.targetResume) {
+    ep.liveTargetPath=NavBench::navigationMesh(w).findPath(meters(ep.liveTargetPosition),meters(ep.targetRoute[ep.targetLeg]->groundPos));
+    if(!ep.liveTargetPath.complete || ep.liveTargetPath.corners.size()<2)
+      throw std::runtime_error("nav live: player route leg has no complete Detour path");
+    ep.liveTargetCorner=1;ep.liveTargetLegAt=elapsed;
+    target.setDirection(cm(ep.liveTargetPath.corners[1])-target.position());
+  }
+  if(ep.liveTargetPath.corners.empty()) {
+    if(elapsed>=ep.liveTargetTurnAt) {
+      target.setDirection(ep.targetRoute[ep.targetLeg]->groundPos-target.position());
+      ep.liveTargetTurnAt=UINT64_MAX;
+    }
+    target.setPosition(ep.liveTargetPosition);target.updateTransform();
+    return;
+  }
+  const bool running=!ep.liveTargetWalkOnly && ep.targetLeg==2 && elapsed-ep.liveTargetLegAt<2000;
+  if(!ep.liveTargetWalking || running!=ep.liveTargetRunning) {
+    target.setWalkMode(running?WalkBit::WM_Run:WalkBit::WM_Walk);target.setAnim(Npc::Anim::Move);
+    ep.liveTargetWalking=true;ep.liveTargetRunning=running;
+  }
+  float distance=float(dt)*(ep.liveTargetWalkOnly?.10f:running?.45f:.20f);
+  auto position=ep.liveTargetPosition;
+  while(distance>0 && ep.liveTargetCorner<ep.liveTargetPath.corners.size()) {
+    const auto corner=cm(ep.liveTargetPath.corners[ep.liveTargetCorner]);
+    const auto delta=corner-position;const float length=delta.length();
+    if(length>0)target.setDirection(delta);
+    if(length>distance) {position+=delta*(distance/length);distance=0;}
+    else {position=corner;distance-=length;++ep.liveTargetCorner;}
+  }
+  ep.liveTargetPosition=position;target.setPosition(position);target.updateTransform();
+  if(ep.liveTargetCorner==ep.liveTargetPath.corners.size()) {
+    ep.liveTargetPath={};ep.targetLeg=(ep.targetLeg+1)%ep.targetRoute.size();
+    ep.targetResume=elapsed+2000;ep.liveTargetTurnAt=elapsed+1000;
+    target.setAnim(Npc::Anim::Idle);target.clearSpeed();ep.liveTargetWalking=false;
+    target.setDirection(target.rotation()+180.f);
+  }
+}
+void tickLiveGuide(Episode& ep,uint64_t elapsed) {
+  if(ep.liveGuidePlayer==nullptr)return;
+  auto& player=*ep.liveGuidePlayer;
+  const auto leader=NpcKeys::physicalPosition(*ep.npc);
+  const float movement=(leader-ep.liveGuideTrail.back().second).length();
+  if(movement>.001f) {
+    ep.liveGuideTraveledCm+=movement;ep.liveGuideTrail.emplace_back(ep.liveGuideTraveledCm,leader);
+  }
+  const double desired=ep.liveGuideTraveledCm-ep.liveGuideLagCm;
+  while(ep.liveGuideTrail.size()>2 && ep.liveGuideTrail[1].first<=desired)ep.liveGuideTrail.pop_front();
+  const auto& from=ep.liveGuideTrail[0];const auto& to=ep.liveGuideTrail[1];
+  const float fraction=float(std::clamp((desired-from.first)/(to.first-from.first),0.,1.));
+  const auto position=from.second+(to.second-from.second)*fraction;
+  const auto delta=position-ep.liveGuidePosition;
+  const bool moved=std::hypot(delta.x,delta.z)>.01f;
+  if(moved)ep.liveGuideLastMotionAt=elapsed;
+  const bool walking=moved || (ep.liveGuideWalking && elapsed-ep.liveGuideLastMotionAt<200);
+  if(walking!=ep.liveGuideWalking) {
+    player.setWalkMode(WalkBit::WM_Walk);player.setAnim(walking?Npc::Anim::Move:Npc::Anim::Idle);
+    if(!walking)player.clearSpeed();
+    ep.liveGuideWalking=walking;
+  }
+  if(moved)player.setDirection(delta);
+  ep.liveGuidePosition=position;player.setPosition(position);player.updateTransform();
 }
 void tickEpisode(Episode& ep,World& w,uint64_t dt,bool truncate=false) {
   if(!ep.active)return;
@@ -1619,20 +1865,25 @@ void tickEpisode(Episode& ep,World& w,uint64_t dt,bool truncate=false) {
     ep.minHeroDistanceCm=std::min(ep.minHeroDistanceCm,distance);ep.maxHeroDistanceCm=std::max(ep.maxHeroDistanceCm,distance);
   }
   const auto elapsed=w.tickCount()-ep.began;
+  tickLiveGuide(ep,elapsed);
+  livePhysicalFlags(ep);
   tracePerceptionSafety(ep,w,elapsed);
   if(ep.target) {
     auto& target=*ep.target;
     if(target.isDown()) {ep.failure="target_down";finish(ep,w);return;}
-    const auto* destination=ep.targetRoute[ep.targetLeg];
-    if(ep.targetQueued && target.isAiQueueEmpty() && (target.position()-destination->groundPos).length()<120.f) {
-      ep.targetQueued=false;
-      if(ep.goalKind=="follow")ep.targetLeg=(ep.targetLeg+1)%ep.targetRoute.size();
-      else ep.targetLeg=(ep.targetLeg+1+size_t(ep.targetRng()%(ep.targetRoute.size()-1)))%ep.targetRoute.size();
-      ep.targetResume=elapsed+(ep.goalKind=="approach"?2000+ep.targetRng()%2001:0);
-    }
-    if(!ep.targetQueued && elapsed>=ep.targetResume) {
-      target.setWalkMode(ep.goalKind=="follow" && (ep.targetLeg%2)==0?WalkBit::WM_Run:WalkBit::WM_Walk);
-      target.aiPush(AiQueue::aiGoToPoint(*ep.targetRoute[ep.targetLeg]));ep.targetQueued=true;
+    if(ep.liveTargetPlayer)tickLiveTarget(ep,w,elapsed,dt);
+    else {
+      const auto* destination=ep.targetRoute[ep.targetLeg];
+      if(ep.targetQueued && target.isAiQueueEmpty() && (target.position()-destination->groundPos).length()<120.f) {
+        ep.targetQueued=false;
+        if(ep.goalKind=="follow")ep.targetLeg=(ep.targetLeg+1)%ep.targetRoute.size();
+        else ep.targetLeg=(ep.targetLeg+1+size_t(ep.targetRng()%(ep.targetRoute.size()-1)))%ep.targetRoute.size();
+        ep.targetResume=elapsed+(ep.goalKind=="approach"?2000+ep.targetRng()%2001:0);
+      }
+      if(!ep.targetQueued && elapsed>=ep.targetResume) {
+        target.setWalkMode(ep.goalKind=="follow" && (ep.targetLeg%2)==0?WalkBit::WM_Run:WalkBit::WM_Walk);
+        target.aiPush(AiQueue::aiGoToPoint(*ep.targetRoute[ep.targetLeg]));ep.targetQueued=true;
+      }
     }
     ep.goal=NpcKeys::physicalPosition(target);
     const float distance=(p-ep.goal).length();
@@ -1733,6 +1984,25 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
   }
   auto a=args;
   auto& ep=legacy;
+  if(a.size()>=2 && a[1]=="live-probes") {
+    if(running() || NavBench::running())throw std::runtime_error("nav live probes require an idle stand");
+    NavLiveProbes::command(a,w,output);return;
+  }
+  if(a.size()>=2 && (a[1]=="live" || a[1]=="live-target" || a[1]=="live-guide")) {
+    if(running() || NavBench::running() || a.size()!=3)
+      throw std::runtime_error("navdemos live settings require an idle stand and one value");
+    if(a[1]=="live") {
+      if(a[2]!="on" && a[2]!="off")throw std::runtime_error("navdemos live on|off");
+      settings.live=a[2]=="on";
+    } else if(a[1]=="live-target") {
+      if(a[2]!="player" && a[2]!="player-walk" && a[2]!="npc")throw std::runtime_error("navdemos live-target player|player-walk|npc");
+      settings.liveTargetPlayer=a[2]!="npc";settings.liveTargetWalkOnly=a[2]=="player-walk";
+    } else {
+      if(a[2]!="player" && a[2]!="off")throw std::runtime_error("navdemos live-guide player|off");
+      settings.liveGuidePlayer=a[2]=="player";
+    }
+    return;
+  }
   if(a.size()>=2 && (a[1]=="perception-mode" || a[1]=="perception-monitor")) {
     if(running() || NavBench::running() || a.size()!=3)
       throw std::runtime_error("navdemos perception settings require an idle stand and one value");
@@ -1937,7 +2207,10 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     } else throw std::runtime_error("navdemos physics cv|native | hero near|keep | kill-slot SLOT AFTER_MS");
     return;
   }
+  if(settings.live && settings.recordDemos)
+    throw std::runtime_error("nav live: evaluation requires record off");
   if(a.size()>=2 && a[1]=="population") {
+    if(settings.liveGuidePlayer)throw std::runtime_error("nav live: player guide requires a single episode");
     if(settings.oracle) {
       throw std::runtime_error("navdemos oracle evaluation requires a single v3 episode");
     }
@@ -1990,9 +2263,11 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
   if(!replay && !learner && !((a.size()==6 || a.size()==8 || a.size()==9) && (a[1]=="start" || carrot)))
     throw std::runtime_error("navdemos start|start-v2 NPC FROM TO LIMIT [lateral_cm yaw_deg fraction] | replay NPC FROM TO ACTIONS | drive NPC FROM TO LIMIT WEIGHTS [BETA SEED ACTION_MODE [WATCH_TRANSITION_ID]] | drive-current NPC GOAL LIMIT WEIGHTS [BETA SEED ACTION_MODE] | speed NPC FROM TO LIMIT WEIGHTS POPULATION");
   if(ep.active || population.active)throw std::runtime_error("navdemos already active");
+  if(settings.liveGuidePlayer && moving)throw std::runtime_error("nav live: player guide requires a point or object goal");
   const auto* from=current?nullptr:w.findPoint(a[3],false);const auto* to=w.findPoint(a[current?3:4],false);
   auto* npc=w.findNpcByInstance(w.script().findSymbolIndex(a[2]));
   if(!npc || (!carrot && ((!from && !current) || !to)))throw std::runtime_error("navdemos missing NPC/waypoint");
+  if(settings.liveGuidePlayer && npc==&player)throw std::runtime_error("nav live: player guide must differ from leader");
   const auto fromPosition=current?npc->position():(carrot?demoPoint(w,a[3]):from->groundPos);
   const auto goalPosition=carrot?demoPoint(w,a[current?3:4]):to->groundPos;
   ep=Episode{};ep.npc=npc;ep.from=current?"intentional":a[3];ep.to=a[current?3:4];ep.output=output;
@@ -2016,6 +2291,8 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     throw std::runtime_error("navdemos evaluation output already contains demonstration samples");
   }
   ep.goalKind=goalKind;ep.scenarioSeed=scenarioSeed;
+  ep.liveTargetPlayer=moving && settings.liveTargetPlayer;
+  ep.liveTargetWalkOnly=ep.liveTargetPlayer && settings.liveTargetWalkOnly;
   ep.goal=goalPosition;ep.replay=replay;ep.drive=learner;
   // Optional start arguments begin at 6.
   ep.limit=replay?0:std::stoull(a[current?4:5]);
@@ -2052,6 +2329,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
       if(!ep.hasObservedTransition)throw std::runtime_error("navdemos watched transition is absent from the initial label path");
     }
   }
+  const bool npcWasExternal=npc->isExternalControl();
   const PrepareLegacy preparing(npc);
   if(settings.cv)npc->setProcessPolicy(NpcProcessPolicy::AiNormal);
   npc->setInteraction(nullptr,true);npc->clearAiQueue();npc->clearState(false);npc->clearSpeed();
@@ -2063,9 +2341,11 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
   npc->setWalkMode(WalkBit::WM_Walk);
   if(moving) {
     ep.targetRoute=std::move(targetRoute);ep.targetRng.seed(scenarioSeed);ep.targetLeg=1;
-    ep.target=w.addNpc(w.script().findSymbolIndex(targetSymbol),ep.targetRoute.front()->groundPos);
+    ep.target=ep.liveTargetPlayer?&player:w.addNpc(w.script().findSymbolIndex(targetSymbol),ep.targetRoute.front()->groundPos);
     if(!ep.target)throw std::runtime_error("navdemos cannot spawn moving target "+targetSymbol);
+    if(ep.target==ep.npc)throw std::runtime_error("nav live: player target must differ from follower");
     auto& target=*ep.target;
+    ep.liveTargetWasExternal=target.isExternalControl();
     target.setProcessPolicy(NpcProcessPolicy::AiNormal);target.setInteraction(nullptr,true);
     target.clearAiQueue();target.clearState(false);target.clearSpeed();target.setExternalControl(true);
     if(goalKind=="approach") {
@@ -2075,8 +2355,14 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
       handle.flags=zenkit::NpcFlag(uint32_t(handle.flags)|uint32_t(zenkit::NpcFlag::IMMORTAL));
       target.setAttitude(ATT_FRIENDLY);target.setTempAttitude(ATT_FRIENDLY);
     }
-    target.clearGoTo();target.attachToPoint(nullptr);target.setDirection(ep.targetRoute[1]->groundPos-target.position());
-    target.setWalkMode(WalkBit::WM_Walk);target.aiPush(AiQueue::aiGoToPoint(*ep.targetRoute[1]));ep.targetQueued=true;
+    target.clearGoTo();target.attachToPoint(nullptr);
+    if(ep.liveTargetPlayer) {
+      ep.liveTargetPosition=ep.targetRoute.front()->groundPos;
+      target.setAnim(Npc::Anim::Idle);target.setPosition(ep.liveTargetPosition);target.updateTransform();
+    }
+    target.setDirection(ep.targetRoute[1]->groundPos-target.position());
+    target.setWalkMode(WalkBit::WM_Walk);
+    if(!ep.liveTargetPlayer) {target.aiPush(AiQueue::aiGoToPoint(*ep.targetRoute[1]));ep.targetQueued=true;}
     ep.goal=NpcKeys::physicalPosition(target);
   }
   if(!replay && !learner && a.size()>6) {
@@ -2104,7 +2390,46 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     point=floor.v;
     npc->setPosition(point);npc->updateTransform();npc->setDirection(std::stof(a[7]));
   }
-  if(!current && settings.heroNear) {player.setPosition(npc->position()+Vec3(0,0,500));player.updateTransform();}
+  const auto* liveStand=std::getenv("OPENGOTHIC_NAV_LIVE");
+  if(settings.live || settings.liveGuidePlayer || ep.liveTargetPlayer || (liveStand!=nullptr && std::string_view(liveStand)=="1")) {
+    Vec3 start;NavMesh::Path approach;
+    if(!livePlayerStart(ep,w,player,start,approach)) {
+      auto out=file(ep,"episode.json");
+      out<<"{\"success\":false,\"setup_rejected\":true,\"failure\":\"live_setup_no_safe_observer_position\","
+            "\"elapsed_ms\":0,\"decisions\":0,\"diagnostics\":\"live-guide-start.json\"}\n";
+      npc->setExternalControl(npcWasExternal);npc->clearSpeed();
+      if(ep.target) {
+        if(ep.liveTargetPlayer) {ep.target->setExternalControl(ep.liveTargetWasExternal);ep.target->clearSpeed();}
+        else w.removeNpc(*ep.target);
+        ep.target=nullptr;
+      }
+      return;
+    }
+    const auto leader=NpcKeys::physicalPosition(*npc);
+    if(settings.liveGuidePlayer) {
+      ep.liveGuidePlayer=&player;ep.liveGuideWasExternal=player.isExternalControl();
+      // Start the trail at the selected physical floor, using the ground-only
+      // Detour prefix instead of a straight segment through nearby geometry.
+      auto points=approach.corners;points.front()=meters(start);points.back()=meters(leader);
+      double length=0;
+      for(size_t i=1;i<points.size();++i)length+=(cm(points[i])-cm(points[i-1])).length();
+      double traveled=-length;ep.liveGuideTrail.emplace_back(traveled,start);
+      for(size_t i=1;i<points.size();++i) {
+        const auto previous=cm(points[i-1]),next=cm(points[i]);const float delta=(next-previous).length();
+        if(delta<=.001f)continue;
+        traveled+=delta;ep.liveGuideTrail.emplace_back(traveled,next);
+      }
+      ep.liveGuideTrail.back().first=0;
+      ep.liveGuideLagCm=std::max(300.,length);ep.liveGuidePosition=start;
+      player.setExternalControl(true);
+    }
+    if(ep.liveTargetPlayer) {ep.liveTargetPosition=start;ep.goal=start;}
+    player.setInteraction(nullptr,true);player.clearAiQueue();player.clearState(false);player.clearGoTo();player.clearSpeed();
+    player.setWalkMode(WalkBit::WM_Walk);player.setAnim(Npc::Anim::Idle);
+    player.setPosition(start);
+    player.setDirection(ep.liveTargetPlayer?ep.targetRoute[ep.targetLeg]->groundPos-start:leader-start);player.updateTransform();
+  }
+  else if(!current && settings.heroNear) {player.setPosition(npc->position()+Vec3(0,0,500));player.updateTransform();}
   NpcKeys::enable(*npc,true);ep.previousPosition=NpcKeys::physicalPosition(*npc);
   ep.began=ep.next=ep.progressAt=w.tickCount();ep.active=true;ep.wallStart=std::chrono::steady_clock::now();
   ep.expectedStart=NpcKeys::physicalPosition(*npc);
@@ -2141,6 +2466,14 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
   if(ep.target)ep.targetTrajectory=file(ep,"target-trajectory.txt");
   if(NavMemoryCostTrace::enabled(ep.output))
     ep.memoryCostTrace=std::make_unique<NavMemoryCostTrace>(std::filesystem::path(ep.output)/"memory-cost.bin",ep.memory);
+  if(settings.live) {
+    if(ep.replay)throw std::runtime_error("nav live: replay is not supported");
+    const auto reference=NavBench::navigationMesh(w).findPath(meters(ep.expectedStart),meters(ep.goal));
+    std::vector<NavMesh::Point> route;
+    for(const auto* point:ep.targetRoute)route.push_back(meters(point->groundPos));
+    ep.live=std::make_unique<NavLiveTrace>(ep.output,ep.drive?ep.policy.get():nullptr,reference,ep.eye.rayCount(),ep.liveTargetPlayer,route,bool(ep.liveGuidePlayer),ep.liveTargetWalkOnly);
+    ep.npc->setCharacterVirtualDiagnosticsEnabled(true);
+  }
   ep.initialState=initialState(ep);
   tracePerceptionSafety(ep,w,0);
   observe(ep,w);decide(ep,w);ep.next=ep.began+100;

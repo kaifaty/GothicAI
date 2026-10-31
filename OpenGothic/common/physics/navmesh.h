@@ -178,6 +178,10 @@ class NavMesh final {
     // Diagnostic projection onto the 3D-closest ground polygon in the existing
     // nearest-poly query extents. Snap distances are metrics, never side gates.
     GroundLocation groundLocation(const Point& position) const;
+    // Stand placement candidates in a 2-6m horizontal annulus. Native ground Y
+    // is retained; the source ground component is preferred, then 3D distance.
+    // At most 80 deterministic samples; no random state or off-mesh links.
+    std::vector<GroundLocation> nearbyGroundLocations(const Point& position) const;
     // Distinct ground components identify the two banks. Within one component,
     // only the exact endpoint polygon identifies a side; coincident endpoint
     // polygons are explicitly ambiguous. Proven off-mesh links never merge banks.

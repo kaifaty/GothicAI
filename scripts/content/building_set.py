@@ -349,8 +349,9 @@ def compose(name: str, parts: list[str]) -> dict:
 
     A part's meshes (`meshes/meshes.json` and its GLB files, a prop like the barrel) come along with its
     materials. Entries of one part may share files: the barrel's wood and iron use one atlas. A part's
-    world chunk edits (`worlds/<WORLD>/chunks/*.glb`, like the harbour stairs) come along too; such a part
-    may have no materials at all."""
+    world chunk edits (`worlds/<WORLD>/chunks/*.glb`, like the harbour stairs) and vob layer files
+    (`worlds/<WORLD>/vobs.d/*.json`, like the harbour's traces of life) come along too; such a part may have no
+    materials at all."""
     if len(parts) < 2 or len(set(parts)) != len(parts):
         raise ValueError('compose needs two or more distinct parts')
     staging = remaster.data_root() / 'content-staging'
@@ -359,7 +360,8 @@ def compose(name: str, parts: list[str]) -> dict:
         material_index = staging / part / 'materials/materials.json'
         indexes[part] = json.loads(material_index.read_text()) if material_index.is_file() else {}
         worlds = staging / part / 'worlds'
-        chunks[part] = sorted(f.relative_to(worlds) for f in worlds.rglob('*.glb')) if worlds.is_dir() else []
+        chunks[part] = sorted(f.relative_to(worlds) for f in worlds.rglob('*') if f.is_file() and (
+            f.suffix == '.glb' or f.suffix == '.json' and f.parent.name == 'vobs.d')) if worlds.is_dir() else []
         mesh_index = staging / part / 'meshes/meshes.json'
         meshes[part] = json.loads(mesh_index.read_text()) if mesh_index.is_file() else {}
         if not material_index.is_file() and not meshes[part] and not chunks[part]:

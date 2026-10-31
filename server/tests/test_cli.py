@@ -157,6 +157,20 @@ def test_showrunner_opt_in_flag_is_removed(monkeypatch, capsys):
     assert "unrecognized arguments: --showrunner" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("flags", [[], ["--no-feat-challenges"], ["--no-feats"]])
+def test_feat_challenge_flags(monkeypatch, flags):
+    async def serve(args):
+        assert args.no_feat_challenges == ("--no-feat-challenges" in flags)
+        assert args.no_feats == ("--no-feats" in flags)
+        return 0
+
+    monkeypatch.setattr(cli, "serve", serve)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", *flags])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+
+
 @pytest.mark.parametrize("flags", [[], ["--scenario", "questlog"], ["--no-questlog"]])
 def test_questlog_is_enabled_by_default_including_scenarios(monkeypatch, flags):
     async def serve(args):
@@ -310,9 +324,12 @@ async def test_encounter_worker_starts_without_a_behavioral_planner(monkeypatch)
         (None, "1", False, None, "fake", False, "service"),
         ("neural", "0", True, None, "fake", True, "engine"),
         ("neural", "0", True, None, "fake", False, "service"),
+        ("feats", "0", True, None, "fake", True, "engine"),
+        ("feats", "0", True, None, "chatgpt", True, "engine"),
+        ("feats", "0", True, None, "local", False, "engine"),
     ],
 )
-async def test_soak_control_requires_explicit_pilot_disable_and_only_skips_body_url(
+async def test_serve_validates_scenario_backend_and_soak_control(
     monkeypatch, scenario, control, enabled, url, llm, valid, policy
 ):
     monkeypatch.setenv("GOTHIC_SOAK_CONTROL", control)

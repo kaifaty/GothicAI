@@ -299,8 +299,13 @@ class Loop:
         if gpu:
             resources += ["--gpu-mem", "4G"]
         shell = 'source "$1"; shift; gq_job "$@"'
+        command = list(map(str, command))
+        # All PPO phase commands use the selected Python environment. -X also
+        # survives -I, which ignores the inherited faulthandler environment.
+        command[1:1] = ["-X", "faulthandler"]
         queued_command = ["bash", "-c", shell, "nav-ppo-gq", str(self.script / "gq-job.sh"),
-                          *resources, "--", *map(str, command)]
+                          *resources, "--", str(args.python), "-I", str(self.script / "nav_job.py"),
+                          "--max-seconds", "7200", "--", *command]
         log.parent.mkdir(parents=True, exist_ok=True)
         self.event("queued", name=name, log=str(log))
         with log.open("a", encoding="utf-8") as stream:

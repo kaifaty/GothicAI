@@ -210,6 +210,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
 
     probeT = LoadProbe::now();
     wdynamic = wdynamicFut.get();
+    wdynamic->setFurniturePartsEnabled(Gothic::physicsFlags().furnitureParts);
     if(LoadProbe::enabled())
       LoadProbe::mark("physics_static",probePhysicsMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
     probeT = LoadProbe::now();
@@ -772,6 +773,7 @@ void World::scaleTime(uint64_t& dt) {
 
 void World::tick(uint64_t dt) {
   wdynamic->setTraceTime(traceTime(*this));
+  wdynamic->setFurniturePartsEnabled(Gothic::physicsFlags().furnitureParts);
   wdynamic->setMovableVobsEnabled(Gothic::physicsFlags().movableVobs);
   wdynamic->setPhysicsNoiseEnabled(Gothic::physicsFlags().physicsNoise);
   wdynamic->setDestructionEnabled(Gothic::physicsFlags().destruction);
