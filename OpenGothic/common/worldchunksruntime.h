@@ -54,7 +54,9 @@ class ChunkMeshSource {
   public:
     // Reads only this chunk's selected file. Polygon order follows sources,
     // including cloth filtering. Calls on the same source are independent.
-    WorldChunkMesh read(size_t chunk, std::span<const uint32_t> sources) const;
+    // currentFile retries a changed file against the existing IDs/materials;
+    // the file must remain unchanged during this read.
+    WorldChunkMesh read(size_t chunk, std::span<const uint32_t> sources, bool currentFile=false) const;
     // Estimated retained container storage, including strings; excludes allocator metadata.
     size_t memoryBytes() const;
 

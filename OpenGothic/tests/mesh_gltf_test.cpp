@@ -1383,6 +1383,7 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
     Resources::resetRecycled(frame);
   Resources::resetRecycled(0);
   const auto baseline=tempestProbeGpuBufferCount();
+  const auto chunkFile=directory/table.entries[0].file;
   {
   ChunkResidency residency(table);
   WorldView view(packed.bbox(),"CONTRACT.ZEN");
@@ -1454,7 +1455,6 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
               "publish/release cycles must not accumulate live buffers while the view remains alive");
     }
 
-  const auto chunkFile=directory/table.entries[0].file;
   std::filesystem::last_write_time(chunkFile,std::filesystem::last_write_time(chunkFile)+std::chrono::seconds(1));
   const Tempest::Vec3 farPosition={25600,100,100};
   update(farPosition,100000);
@@ -1467,29 +1467,50 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   require(residency.desired(size_t(0))==ChunkResidency::State::Far && view.landscapeReady() &&
           residency.stats().pending==0 && residency.stats().published==2,
           "a failed Far chunk must settle readiness without being published or queued again");
-  bool nearFailed=false;
-  try {
-    update({100,100,100});
-    }
-  catch(const std::runtime_error& e) {
-    nearFailed=std::string_view(e.what()).find("reload the world")!=std::string_view::npos;
-    }
-  require(nearFailed,"a failed chunk required Near must fail explicitly instead of leaving a silent hole");
+  update({100,100,100});
+  require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==3,
+          "a failed Far chunk required Near must retry the current file and publish normally");
   }
   {
-  // A first synchronous Near read must propagate the same source mutation.
+  // A first synchronous Near read must also recover from a changed source.
   auto reloadWorld=readWorldChunks(directory);
   ChunkResidency residency(table);
   WorldView view(packed.bbox(),"CONTRACT.ZEN");
   view.startLandscapeStreaming(std::move(reloadWorld),residency,0);
-  bool nearFailed=false;
+  const auto update=[&](const Tempest::Vec3& position) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,1000);
+    view.finishLandscapeUpdate();
+    };
+  update({100,100,100});
+  require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+          "a synchronous Near packing error must retry the current file without throwing");
+  update({1000000,0,1000000});
+  const auto bytes=gothicglb::readFile(chunkFile);
+  textFile(chunkFile,"permanently broken landscape chunk");
+  size_t errors=0;
+  Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+    if(mode==Tempest::Log::Error && std::string_view(text).find("Landscape chunk ")!=std::string_view::npos)
+      ++errors;
+    });
   try {
-    residency.update({100,100,100},{100,100,100},1000);
+    update({100,100,100});
+    require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+            "a corrupt Near chunk must fail without throwing or blocking readiness");
+    update({100,100,100});
+    update({1000000,0,1000000});
+    update({100,100,100});
+    gothicglb::writeFile(chunkFile,bytes.data(),bytes.size());
+    update({1000000,0,1000000});
+    update({100,100,100});
     }
-  catch(const std::runtime_error& e) {
-    nearFailed=std::string_view(e.what()).find("chunk changed after world load")!=std::string_view::npos;
+  catch(...) {
+    Tempest::Log::setOutputCallback({});
+    throw;
     }
-  require(nearFailed,"a synchronous Near packing error must propagate to the caller");
+  Tempest::Log::setOutputCallback({});
+  require(errors==1 && view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+          "an exhausted Near retry must log once and never retry on later frames or residency changes");
   }
   device.waitIdle();
   for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)

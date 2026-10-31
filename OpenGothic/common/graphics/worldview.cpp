@@ -24,6 +24,8 @@ struct WorldView::LandscapeStreaming {
     std::unique_ptr<PackedMesh> ready;
     std::exception_ptr error;
     bool failed=false;
+    bool nearFailed=false;
+    bool failureReported=false;
     uint64_t generation=0;
     };
   WorldView& view;
@@ -85,30 +87,48 @@ struct WorldView::LandscapeStreaming {
           }
         }
       else if(next==ChunkResidency::State::Near && !chunk.gpu) {
-        // Near is a hard requirement, including teleports. Invalidate any
+        // Build Near synchronously, including teleports. Invalidate any
         // queued/in-flight Far result rather than waiting on the worker.
         std::unique_ptr<PackedMesh> packed;
+        bool retry=false;
         {
         std::lock_guard guard(mutex);
-        if(chunk.failed)
-          throw std::runtime_error("Landscape Near chunk is unavailable after a packing failure: "+
-                                   entries[i].file+"; reload the world");
+        if(chunk.nearFailed)
+          return;
+        retry=chunk.failed;
         ++chunk.generation;
         packed=takeReady(chunk);
+        chunk.error=nullptr;
         }
         const auto t=ChunkResidency::Clock::now();
         try {
-          if(!packed)
-            packed=pack(i);
+          if(!packed) {
+            if(retry) {
+              packed=pack(i,true);
+              }
+            else {
+              try {
+                packed=pack(i);
+                }
+              catch(...) {
+                packed=pack(i,true);
+                }
+              }
+            }
           }
         catch(...) {
           {
           std::lock_guard guard(mutex);
           chunk.failed=true;
+          chunk.nearFailed=true;
           }
           reportFailure(i,std::current_exception());
-          throw;
+          return;
           }
+        {
+        std::lock_guard guard(mutex);
+        chunk.failed=false;
+        }
         if(firstUpdate)
           initialPackMs+=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
         publish(i,*packed);
@@ -195,6 +215,9 @@ struct WorldView::LandscapeStreaming {
     }
 
   void reportFailure(size_t i, std::exception_ptr error) {
+    if(chunks[i].failureReported)
+      return;
+    chunks[i].failureReported=true;
     const auto& chunk=residency.table().entries[i];
     try {
       std::rethrow_exception(error);
@@ -207,8 +230,8 @@ struct WorldView::LandscapeStreaming {
       }
     }
 
-  std::unique_ptr<PackedMesh> pack(size_t i) const {
-    auto chunk=source->read(i,triangles[i]);
+  std::unique_ptr<PackedMesh> pack(size_t i, bool currentFile=false) const {
+    auto chunk=source->read(i,triangles[i],currentFile);
     std::vector<uint32_t> selected(chunk.mesh.polygons.material_indices.size());
     std::iota(selected.begin(),selected.end(),uint32_t(0));
     return std::make_unique<PackedMesh>(chunk.mesh,selected,materials,chunk.vertexIds,chunk.featureIds);

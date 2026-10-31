@@ -416,8 +416,12 @@ size_t ChunkMeshSource::memoryBytes() const {
   return bytes;
   }
 
-WorldChunkMesh ChunkMeshSource::read(size_t chunk, std::span<const uint32_t> sources) const {
-  const auto& file=impl->files.at(chunk);
+WorldChunkMesh ChunkMeshSource::read(size_t chunk, std::span<const uint32_t> sources, bool currentFile) const {
+  auto file=impl->files.at(chunk);
+  if(currentFile) {
+    file.size=std::filesystem::file_size(file.path);
+    file.modified=std::filesystem::last_write_time(file.path);
+    }
   file.verify();
   ChunkReader reader;
   reader.read(file.path);
