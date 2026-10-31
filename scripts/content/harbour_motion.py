@@ -99,7 +99,13 @@ def bench_lines(cameras: list[dict], night: bool) -> list[str]:
 
 def cmd_bench(args) -> int:
     cameras = json.loads(CAMERAS.read_text())['cameras']
-    for night, name in ((False, f'{ASSET}.bench'), (True, f'{ASSET}-night.bench')):
+    if args.only:
+        only = args.only.split(',')
+        unknown = set(only) - {c['name'] for c in cameras}
+        if unknown:
+            raise SystemExit(f'unknown cameras: {sorted(unknown)}')
+        cameras = [c for c in cameras if c['name'] in only]
+    for night, name in ((False, f'{args.name}.bench'), (True, f'{args.name}-night.bench')):
         chosen = [c for c in cameras if ('night' if night else 'day') in c.get('times', ('day', 'night'))]
         target = ROOT / 'scripts/content' / name
         target.write_text('\n'.join(bench_lines(chosen, night)))
@@ -214,10 +220,13 @@ def cmd_motion(args) -> int:
     return 0
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
-    sub.add_parser('bench').set_defaults(func=cmd_bench)
+    b = sub.add_parser('bench')
+    b.add_argument('--only', help='comma-separated cameras, e.g. the views of a reshoot')
+    b.add_argument('--name', default=ASSET, help='scenario name: NAME.bench and NAME-night.bench')
+    b.set_defaults(func=cmd_bench)
     a = sub.add_parser('layer')
     a.add_argument('--set', required=True, help='staging set that gets the layer')
     a.add_argument('--ground-set', help='staging set whose chunks and models are the ground (default: --set)')
@@ -228,7 +237,11 @@ def main() -> int:
     m.add_argument('captures', type=Path)
     m.add_argument('--out', type=Path)
     m.set_defaults(func=cmd_motion)
-    args = ap.parse_args()
+    return ap.parse_args(argv)
+
+
+def main() -> int:
+    args = parse_args()
     return args.func(args)
 
 

@@ -27,6 +27,25 @@ def test_the_night_scenario_names_its_shots():
     assert 'midnight' in night[0] and 'harbour_motion.py' in night[1]
 
 
+def test_a_reshoot_scenario_takes_only_the_named_cameras(tmp_path, monkeypatch):
+    cameras = tmp_path / 'cameras.json'
+    cameras.write_text(json.dumps({'cameras': CAMERAS}))
+    (tmp_path / 'scripts/content').mkdir(parents=True)
+    monkeypatch.setattr(harbour_motion, 'CAMERAS', cameras)
+    monkeypatch.setattr(harbour_motion, 'ROOT', tmp_path)
+    args = harbour_motion.parse_args(['bench', '--only', 'quay', '--name', 'reshoot'])
+    assert args.func(args) == 0
+    shots = [line for line in (tmp_path / 'scripts/content/reshoot-night.bench').read_text().splitlines() if line.startswith('shot ')]
+    assert shots == ['shot quay-night']
+    args = harbour_motion.parse_args(['bench', '--only', 'quay,mole'])
+    try:
+        args.func(args)
+    except SystemExit as e:
+        assert 'mole' in str(e)
+    else:
+        raise AssertionError('an unknown camera must stop the scenario')
+
+
 def test_emitters_and_lights_keep_their_positions():
     entries = harbour_motion.layer_entries([
         {'key': 'smoke', 'kind': 'emitter', 'pfx': 'LIGHTSMOKE', 'position': [1, 2.04, 3]},
