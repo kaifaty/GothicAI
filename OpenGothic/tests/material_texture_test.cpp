@@ -470,9 +470,13 @@ void emptyTable(Tempest::Device& device, const Fixture& fixture) {
   }
 }
 
-int main() {
+int main(int argc, char** argv) {
   try {
     ddsMipTails();
+    if(argc==2 && std::string_view(argv[1])=="--dds-mip-tail") {
+      std::cout << "{\"test\":\"dds_mip_tail\",\"passed\":true,\"assertions\":" << assertions << "}\n";
+      return 0;
+      }
     variants();
     Fixture fixture;
     CommandLine commandLine(0,nullptr);
