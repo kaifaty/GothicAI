@@ -3,6 +3,7 @@
 
 import argparse
 import collections
+import csv
 import json
 import math
 import re
@@ -15,6 +16,17 @@ IDENTITY = ("instance", "visual", "zen_id", "placed", "owner", "owner_guild", "f
 
 def read_rows(path):
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def read_exceptions(path):
+    exceptions = {}
+    with path.open(newline="") as file:
+        for row in csv.DictReader(file):
+            identity = (row["world"], int(row["zen_id"]))
+            if identity in exceptions or not row["reason"].strip():
+                raise ValueError(f"{path}: duplicate identity or empty exception reason: {identity}")
+            exceptions[identity] = row["reason"]
+    return exceptions
 
 
 def verify_saves(runs):
@@ -72,16 +84,18 @@ def slope_distribution(rows):
             "static_ray_miss": missing - non_static}
 
 
-def summarize(runs, previous_runs=()):
+def summarize(runs, previous_runs=(), known_exceptions=None):
+    known_exceptions = known_exceptions or {}
     worlds = []
     outliers = []
+    exceptions = []
     previous_outliers = {}
     for run in previous_runs:
         for row in read_rows(run / "placed-items-probe.jsonl"):
             if row["max_shift_cm"] > 10:
                 previous_outliers[(row["world"], row["zen_id"])] = row
-    total = under_five = recovered = 0
-    maximum = 0.0
+    total = under_five = recovered = gate_recovered = 0
+    maximum = gate_maximum = 0.0
     for run in runs:
         census = read_rows(run / "placed-items-census.jsonl")
         probes = read_rows(run / "placed-items-probe.jsonl")
@@ -117,6 +131,7 @@ def summarize(runs, previous_runs=()):
                                      "origin_cm": source.get("origin_cm"), "failed_position_cm": failed,
                                      "shift_before_recovery_cm": distance, "message": line})
         shifts = []
+        gate_shifts = []
         for zen_id, probe in measured.items():
             shift = probe["max_shift_cm"]
             if not isinstance(shift, (int, float)) or not math.isfinite(shift) or shift < 0:
@@ -127,6 +142,13 @@ def summarize(runs, previous_runs=()):
             # regular post-tick sample. Its logged pre-reset pose is also evidence.
             shift = max(shift, recovery_shifts.get(zen_id, 0))
             shifts.append(shift)
+            exception = known_exceptions.get((world, zen_id))
+            if exception is None:
+                gate_shifts.append(shift)
+            else:
+                exceptions.append({"world": world, "zen_id": zen_id, "reason": exception,
+                                   "visual": admitted[zen_id]["visual"], "max_shift_cm": shift,
+                                   "recovered": sum(row["zen_id"] == zen_id for row in recovery_records)})
             if shift > 10:
                 source = admitted[zen_id]
                 support_index = source.get("support_item_index")
@@ -137,15 +159,21 @@ def summarize(runs, previous_runs=()):
                                  if isinstance(support_index, int) and 0 <= support_index < len(census) else None})
         log_recovered = len(recovery_lines)
         recovered += log_recovered
+        gated_recoveries = sum((world, row["zen_id"]) not in known_exceptions
+                               for row in recovery_records)
+        gate_recovered += gated_recoveries
         within = sum(shift < 5 for shift in shifts)
         high = max(shifts, default=0)
         total += len(shifts)
         under_five += within
         maximum = max(maximum, high)
+        gate_high = max(gate_shifts, default=0)
+        gate_maximum = max(gate_maximum, gate_high)
         worlds.append({"world": world, "total": len(census), "reasons": dict(counts),
                        "eligible": len(admitted), "classification_ms": summary["classification_ms"],
                        "gaps_cm": [summary["gaps_0_1"], summary["gaps_1_2"], summary["gaps_2_4"]],
                        "under_5cm": within, "max_shift_cm": high, "recovered": log_recovered,
+                       "gate_max_shift_cm": gate_high, "gate_recovered": gated_recoveries,
                        "sampled_under_5cm": sum(row["max_shift_cm"] < 5 for row in probes),
                        "recoveries": recovery_records,
                        "admitted_slopes": slope_distribution(admitted.values()),
@@ -160,7 +188,9 @@ def summarize(runs, previous_runs=()):
     return {"worlds": worlds, "total": total, "under_5cm": under_five,
             "under_5cm_percent": 100 * under_five / total if total else 0,
             "max_shift_cm": maximum, "recovered": recovered, "outliers": outliers,
-            "pass": total > 0 and under_five >= .95 * total and maximum <= 100 and recovered == 0}
+            "gate_max_shift_cm": gate_maximum, "gate_recovered": gate_recovered,
+            "known_exceptions": exceptions,
+            "pass": total > 0 and under_five >= .95 * total and gate_maximum <= 100 and gate_recovered == 0}
 
 
 def main():
@@ -168,10 +198,13 @@ def main():
     parser.add_argument("runs", nargs="+", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--save-chain", action="store_true", help="verify two successive cold reloads")
+    parser.add_argument("--known-exceptions", type=Path,
+                        help="CSV with world,zen_id,reason; exempt only from maximum travel and recovery gates")
     parser.add_argument("--previous-runs", nargs="*", type=Path, default=[],
                         help="previous probe runs; report new facet slopes of their >10 cm outliers")
     args = parser.parse_args()
-    result = verify_saves(args.runs) if args.save_chain else summarize(args.runs, args.previous_runs)
+    exceptions = read_exceptions(args.known_exceptions) if args.known_exceptions else {}
+    result = verify_saves(args.runs) if args.save_chain else summarize(args.runs, args.previous_runs, exceptions)
     text = json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
     if args.output:
         args.output.write_text(text)
