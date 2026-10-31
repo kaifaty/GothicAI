@@ -32,7 +32,7 @@ def zone(key: str, group: str, role: str) -> dict:
 
 IRON = zone('OWN_HEARTH_IRON', 'METAL', 'forged and riveted iron: cauldrons, pan, chain, fire bowl')
 RIVET = zone('OWN_HEARTH_RIVET', 'METAL', 'bands and rivet heads on the iron')
-LIQUID = zone('OWN_HEARTH_LIQUID', 'WATER', 'the surface of what is cooking')
+LIQUID = zone('OWN_HEARTH_LIQUID', 'UNDEF', 'the surface of what is cooking (not WATER: the engine keeps that group for the world mesh)')
 STONE = zone('OWN_HEARTH_STONE', 'STONE', 'fire-ring fieldstones, sooted inside')
 EMBER = zone('OWN_HEARTH_EMBER', 'UNDEF', 'glowing embers')
 ASH = zone('OWN_HEARTH_ASH', 'UNDEF', 'grey ash and burnt ground')

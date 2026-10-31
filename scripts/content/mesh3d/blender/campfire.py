@@ -7,7 +7,7 @@ config: {"id": "hearth-campfire", "target": "data/content/mesh3d-hearth.json", "
          "bed": [radius, height], "lumps": [embers, coals], "ash": [r0, r1]}
 Asset city-hearth (intent.md, wave 1; form from the original's mesh). The original: fifteen big grey
 stones round a ring 2 m across, up to 0.4 m high, a tent of six or seven barked logs to 0.8 m and a
-disc of red embers under them. Ground at "ground" (glTF y). The logs lean in from their feet on the
+mound of red embers under them, 0.4 m high in the middle (its edge is the ground, "ground" glTF y). The logs lean in from their feet on the
 embers to the top, crossing there; their lower ends are charred. The tripod (OC_FIREPLACE_V5) stands
 over it in some camps.
 """
@@ -51,7 +51,8 @@ r0, r1 = cfg["log"]
 lean = rng.uniform(0, 2 * math.pi)
 for k in range(m):
     a = lean + 2 * math.pi * (k + rng.uniform(-0.25, 0.25)) / m
-    foot = c + Vector((math.cos(a) * rng.uniform(*cfg["foot"]), math.sin(a) * rng.uniform(*cfg["foot"]), 0.05))
+    fr = rng.uniform(*cfg["foot"])
+    foot = c + Vector((math.cos(a) * fr, math.sin(a) * fr, bed_h * max(1 - (fr / bed_r) ** 2, 0) + 0.03))  # on the ember mound
     b = a + math.pi + rng.uniform(-0.6, 0.6)
     top = c + Vector((math.cos(b) * top_r * rng.uniform(0.3, 1.0), math.sin(b) * top_r * rng.uniform(0.3, 1.0),
                       top_h * rng.uniform(0.8, 1.0)))

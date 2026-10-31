@@ -34,7 +34,7 @@
   ],
   "OWN_HEARTH_LIQUID": [
    "OWN_HEARTH_CAULDRON_LIQUID",
-   "WATER"
+   "UNDEF"
   ]
  },
  "metal": [

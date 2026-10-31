@@ -18,8 +18,8 @@
     },
     {
      "key": "OWN_HEARTH_LIQUID",
-     "group": "WATER",
-     "role": "the surface of what is cooking"
+     "group": "UNDEF",
+     "role": "the surface of what is cooking (not WATER: the engine keeps that group for the world mesh)"
     }
    ],
    "kind": "mob_model",
@@ -205,8 +205,8 @@
     },
     {
      "key": "OWN_HEARTH_LIQUID",
-     "group": "WATER",
-     "role": "the surface of what is cooking"
+     "group": "UNDEF",
+     "role": "the surface of what is cooking (not WATER: the engine keeps that group for the world mesh)"
     }
    ],
    "kind": "static_mrm",
