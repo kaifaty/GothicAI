@@ -11,6 +11,9 @@
 #include <Tempest/Painter>
 
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/shaders.h"
+#include "commandline.h"
+#include "camera.h"
 #include "graphics/visualfx.h"
 #include "graphics/clothvisual.h"
 #include "world/objects/globalfx.h"
@@ -128,7 +131,15 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     residency = ChunkResidency::create(chunks);
     loadProgress(20);
     windRooms.reset(world.bsp.mode,std::move(world.rooms));
-    auto worldCloth=WorldCloth::extract(worldMesh);
+    auto worldCloth=WorldCloth::extract(worldMesh,&chunks);
+    const bool streamLandscape=residency && !Resources::isHeadless() && !Gothic::inst().isBenchmarkMode() &&
+        !CommandLine::inst().isRayQuery() && !Shaders::options().doRtScene && !Shaders::options().doSoftwareRT;
+    if(residency && !Resources::isHeadless() && !streamLandscape) {
+      if(Gothic::inst().isBenchmarkMode())
+        Tempest::Log::i("Landscape streaming disabled: built-in benchmark requires the complete landscape");
+      else
+        Tempest::Log::i("Landscape streaming disabled: RT, GI or SWRT requires a whole-world BVH");
+      }
 
     const bool probeSerial = LoadProbe::serial();
     const auto probeLaunch = probeSerial ? std::launch::deferred : std::launch::async;
@@ -145,12 +156,30 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
       wviewFut = std::async(probeLaunch, [&]() {
         Workers::setThreadName("Loading: PackedMesh thread");
         const auto t = LoadProbe::now();
-        PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);
-        if(LoadProbe::enabled())
-          LoadProbe::mark("landscape_pack",LoadProbe::msSince(t),
-                          "vertices="+std::to_string(vmesh.vertices.size())+" indices="+std::to_string(vmesh.indices.size())+
-                          " meshlet_bytes="+std::to_string(vmesh.vertices.size()*sizeof(vmesh.vertices[0])+vmesh.indices.size()*sizeof(vmesh.indices[0])));
-        auto view=std::make_unique<WorldView>(vmesh,wname);
+        std::unique_ptr<WorldView> view;
+        if(streamLandscape) {
+          const auto map=PackedMesh::landscapeMaterialMap(worldMesh);
+          std::vector<bool> loaded(worldMesh.materials.size());
+          // Textures keep their existing eager lifetime. Only geometry streams.
+          for(auto id:worldMesh.polygons.material_indices) {
+            id=map[id];
+            if(!loaded[id]) {
+              Resources::loadMaterial(worldMesh.materials[id],true);
+              loaded[id]=true;
+              }
+            }
+          const auto& bounds=worldMesh.bbox;
+          view=std::make_unique<WorldView>(std::pair{Tempest::Vec3(bounds.min.x,bounds.min.y,bounds.min.z),
+                                                    Tempest::Vec3(bounds.max.x,bounds.max.y,bounds.max.z)},wname);
+          }
+        else {
+          PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);
+          if(LoadProbe::enabled())
+            LoadProbe::mark("landscape_pack",LoadProbe::msSince(t),
+                            "vertices="+std::to_string(vmesh.vertices.size())+" indices="+std::to_string(vmesh.indices.size())+
+                            " meshlet_bytes="+std::to_string(vmesh.vertices.size()*sizeof(vmesh.vertices[0])+vmesh.indices.size()*sizeof(vmesh.indices[0])));
+          view=std::make_unique<WorldView>(vmesh,wname);
+          }
         if(!worldCloth.original.polygons.material_indices.empty()) {
           PackedMesh originalCloth(worldCloth.original,PackedMesh::PK_VisualLnd);
           view->setOriginalClothMesh(originalCloth);
@@ -175,7 +204,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     auto probeT = LoadProbe::now();
     if(wviewFut.valid())
       wview = wviewFut.get();
-    if(LoadProbe::enabled())
+    if(LoadProbe::enabled() && !streamLandscape)
       LoadProbe::mark("landscape_view",probeViewMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
     loadProgress(60);
 
@@ -198,7 +227,17 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     if(LoadProbe::enabled())
       LoadProbe::mark("cloth_surfaces",LoadProbe::msSince(probeT),"surfaces="+std::to_string(clothSurfaces.size()));
     probeT = LoadProbe::now();
-    worldMesh = {};
+    if(streamLandscape) {
+      wview->startLandscapeStreaming(std::move(worldMesh),*residency,probeViewMs);
+      // The visual consumer owns its selected file IDs; the stitched mesh is gone.
+      std::vector<uint32_t>().swap(chunks.triangleChunks);
+      std::vector<uint32_t>().swap(chunks.triangleSources);
+      }
+    else {
+      worldMesh = {};
+      chunks.source.reset();
+      std::vector<uint32_t>().swap(chunks.triangleSources);
+      }
     loadProgress(70);
 
     globFx.reset(new GlobalEffects(*this));
@@ -232,6 +271,16 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
   }
 
 World::~World() {
+  }
+
+void World::updateLandscape(const Camera& camera) {
+  if(!residency || !npcPlayer)
+    return;
+  if(wview)
+    wview->prepareLandscapeWork();
+  residency->update(npcPlayer->position(),camera.originLwc(),camera.zFar());
+  if(wview)
+    wview->finishLandscapeUpdate();
   }
 
 void World::createPlayer(std::string_view cls) {

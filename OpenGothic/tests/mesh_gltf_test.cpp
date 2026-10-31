@@ -8,6 +8,9 @@
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/worldview.h"
+#include "world/chunkresidency.h"
+#include "loadprobe.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "physics/fracture.h"
 #include "resources.h"
@@ -50,6 +53,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <thread>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1354,6 +1358,181 @@ void alphaDdsFile(const std::filesystem::path& path, bool transparentBc1, bool d
     throw std::runtime_error("unable to write mesh alpha DDS fixture");
   }
 
+void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
+  const auto source=loadGltfMesh(fixture.root/"meshes/test/opaque.glb");
+  asset::WorldMesh world;
+  world.materials={source.sub_meshes[0].mat};
+  world.vertices={{100,100,100},{100,200,100},{200,100,100}};
+  world.features={{{0,0},0xffffffffu,{0,0,1}},{{0,1},0xffffffffu,{0,0,1}},{{1,0},0xffffffffu,{0,0,1}}};
+  world.polygons.vertex_indices={0,1,2};
+  world.polygons.feature_indices={0,1,2};
+  world.polygons.material_indices={0};
+  world.polygons.lightmap_indices={-1};
+  world.polygons.flags.resize(1);
+  PackedMesh packed(world,PackedMesh::PK_VisualLnd);
+  require(!packed.indices.empty(),"landscape lifetime fixture must contain meshlets");
+  for(const auto& sub:packed.subMeshes)
+    Resources::loadMaterial(sub.material,true);
+  Gothic gothic;
+  const auto directory=fixture.root/"landscape-lifetime";
+  writeWorldChunks(world,{"CONTRACT.ZEN",0,0},directory);
+  ChunkTable table;
+  world=readWorldChunks(directory,{},&table);
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  Resources::resetRecycled(0);
+  const auto baseline=tempestProbeGpuBufferCount();
+  const auto chunkFile=directory/table.entries[0].file;
+  {
+  ChunkResidency residency(table);
+  WorldView view(packed.bbox(),"CONTRACT.ZEN");
+  view.startLandscapeStreaming(std::move(world),residency,0);
+  const auto update=[&](const Tempest::Vec3& position, float range=1000) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,range);
+    view.finishLandscapeUpdate();
+    };
+  const auto emptyBuffers=tempestProbeGpuBufferCount();
+  size_t bucketCount=0;
+  size_t firstMeshlet=0,pageBytes=0,releasedBuffers=0;
+  const Tempest::StorageBuffer* vertices=nullptr;
+  const Tempest::StorageBuffer* indices=nullptr;
+  const auto usedBytes=packed.vertices.size()*sizeof(packed.vertices[0])+packed.indices8.size();
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update({100,100,100});
+    device.waitIdle();
+    require(residency.desired(size_t(0))==ChunkResidency::State::Near && residency.stats().published==cycle+1,
+            "Near must publish the streaming landscape synchronously");
+    require(tempestProbeGpuBufferCount()>emptyBuffers,"published landscape pages must own live GPU buffers");
+    require(residency.stats().landscapePageCount==1 && residency.stats().landscapePageUsedBytes==usedBytes &&
+            residency.stats().landscapePageRetiredBytes==0,"published landscape must occupy exactly its page range");
+    const auto& buckets=view.drawBuckets().buckets();
+    const auto bucket=std::find_if(buckets.begin(),buckets.end(),[](const auto& bucket) {
+      return bucket.staticMesh!=nullptr;
+      });
+    require(bucket!=buckets.end(),"published landscape must register its stable mesh in draw buckets");
+    const auto bucketIndex=size_t(bucket-buckets.begin());
+    const auto* mesh=bucket->staticMesh;
+    if(cycle==0) {
+      bucketCount=buckets.size();
+      vertices=&mesh->vboBuffer();
+      indices=&mesh->ibo8Buffer();
+      firstMeshlet=mesh->firstMeshlet();
+      pageBytes=residency.stats().landscapePageUsedBytes+residency.stats().landscapePageFreeBytes;
+      }
+    else {
+      require(buckets.size()==bucketCount,"republishing a landscape must reuse invalidated buckets");
+      require(&mesh->vboBuffer()==vertices && &mesh->ibo8Buffer()==indices && mesh->firstMeshlet()==firstMeshlet,
+              "republishing must reuse the completed page range and its GPU buffers");
+      }
+    update({100,100,100});
+    require(view.drawBuckets().buckets().at(bucketIndex).staticMesh==mesh,
+            "a published landscape's StaticMesh must remain stable between residency updates");
+    update({1000000,0,1000000});
+    require(residency.desired(size_t(0))==ChunkResidency::State::Outside && residency.stats().released==cycle+1,
+            "Outside must release the streaming landscape");
+    for(const auto& bucket:view.drawBuckets().buckets())
+      require(bucket.staticMesh==nullptr && bucket.animMesh==nullptr,
+              "Outside must not leave mesh pointers in draw buckets");
+    require(residency.stats().landscapePageUsedBytes==0 && residency.stats().landscapePageRetiredBytes==usedBytes &&
+            residency.stats().landscapePageFreeBytes+usedBytes==pageBytes,
+            "Outside must retire its occupied range until the consuming frame completes");
+    Resources::resetRecycled(1);
+    view.finishLandscapeUpdate();
+    require(residency.stats().landscapePageRetiredBytes==usedBytes,
+            "another frame slot must not release retired landscape ranges");
+    device.waitIdle();
+    Resources::resetRecycled(0);
+    view.finishLandscapeUpdate();
+    require(residency.stats().landscapePageUsedBytes==0 && residency.stats().landscapePageRetiredBytes==0 &&
+            residency.stats().landscapePageFreeBytes==pageBytes && residency.stats().landscapePageCount==1,
+            "the completed recycle slot must return the full page range for reuse");
+    if(cycle==0)
+      releasedBuffers=tempestProbeGpuBufferCount();
+    else
+      require(tempestProbeGpuBufferCount()==releasedBuffers,
+              "publish/release cycles must not accumulate live buffers while the view remains alive");
+    }
+
+  std::filesystem::last_write_time(chunkFile,std::filesystem::last_write_time(chunkFile)+std::chrono::seconds(1));
+  const Tempest::Vec3 farPosition={25600,100,100};
+  update(farPosition,100000);
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  while(!view.landscapeReady() && std::chrono::steady_clock::now()<deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    update(farPosition,100000);
+    }
+  update(farPosition,100000); // Consume the worker's error even if readiness settled first.
+  require(residency.desired(size_t(0))==ChunkResidency::State::Far && view.landscapeReady() &&
+          residency.stats().pending==0 && residency.stats().published==2,
+          "a failed Far chunk must settle readiness without being published or queued again");
+  update({100,100,100});
+  require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==3,
+          "a failed Far chunk required Near must retry the current file and publish normally");
+  }
+  {
+  // A first synchronous Near read must also recover from a changed source.
+  auto reloadWorld=readWorldChunks(directory);
+  ChunkResidency residency(table);
+  WorldView view(packed.bbox(),"CONTRACT.ZEN");
+  view.startLandscapeStreaming(std::move(reloadWorld),residency,0);
+  const auto update=[&](const Tempest::Vec3& position) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,1000);
+    view.finishLandscapeUpdate();
+    };
+  update({100,100,100});
+  require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+          "a synchronous Near packing error must retry the current file without throwing");
+  update({1000000,0,1000000});
+  const auto bytes=gothicglb::readFile(chunkFile);
+  textFile(chunkFile,"permanently broken landscape chunk");
+  size_t errors=0;
+  Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode, const char* text) {
+    if(mode==Tempest::Log::Error && std::string_view(text).find("Landscape chunk ")!=std::string_view::npos)
+      ++errors;
+    });
+  try {
+    update({100,100,100});
+    require(view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+            "a corrupt Near chunk must fail without throwing or blocking readiness");
+    update({100,100,100});
+    update({1000000,0,1000000});
+    update({100,100,100});
+    gothicglb::writeFile(chunkFile,bytes.data(),bytes.size());
+    update({1000000,0,1000000});
+    update({100,100,100});
+    }
+  catch(...) {
+    Tempest::Log::setOutputCallback({});
+    throw;
+    }
+  Tempest::Log::setOutputCallback({});
+  require(errors==1 && view.landscapeReady() && residency.stats().pending==0 && residency.stats().published==1,
+          "an exhausted Near retry must log once and never retry on later frames or residency changes");
+  }
+  device.waitIdle();
+  for(uint8_t frame=0;frame<Resources::MaxFramesInFlight;++frame)
+    Resources::resetRecycled(frame);
+  require(tempestProbeGpuBufferCount()==baseline,"destroying the streaming view must return live page buffers to baseline");
+  if(Shaders::options().doBindless) {
+    SceneGlobals scene;
+    StaticMesh firstMesh(packed),secondMesh(packed);
+    VisualObjects grouped(scene,packed.bbox());
+    auto animated=Resources::loadMaterial(packed.subMeshes[0].material,true);
+    animated.frames={animated.tex,&Resources::fallbackTexture()};
+    animated.texAniFPSInv=100;
+    const auto& sub=packed.subMeshes[0];
+    auto first=grouped.get(firstMesh,animated,sub.iboOffset,sub.iboLength,packed.meshletBounds.data(),DrawCommands::Landscape);
+    auto second=grouped.get(secondMesh,animated,sub.iboOffset,sub.iboLength,packed.meshletBounds.data(),DrawCommands::Landscape);
+    require(grouped.drawCommands()[0].isBindless() && grouped.drawCommands()[0].maxPayload==2*packed.meshletBounds.size(),
+            "animated landscape chunks must share one bindless draw command across mesh buckets");
+    device.waitIdle();
+    }
+  std::cout << "landscape streaming lifetime: 2 Near/Outside cycles, live_buffers=" << baseline << '\n';
+}
+
 void maskBc1Policy(const Fixture& fixture) {
   std::filesystem::create_directories(fixture.root/"materials");
   alphaDdsFile(fixture.root/"materials/transparent-bc1.dds",true);
@@ -1508,6 +1687,7 @@ void maskBc1Policy(const Fixture& fixture) {
     require(legacyPolicy.alpha==Material::AlphaTest && forcedPolicy.alpha==Material::AlphaTest,
             "material equality fixture must have the same visible alpha classification");
     require(!(legacyPolicy==forcedPolicy),"material equality must distinguish native and forced MASK policies");
+    landscapeLifetime(fixture,device);
     }
   multiModelGpuCases(fixture,device);
   device.waitIdle();

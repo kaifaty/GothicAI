@@ -251,6 +251,13 @@ VisualObjects::VisualObjects(const SceneGlobals& scene, const std::pair<Vec3, Ve
 VisualObjects::~VisualObjects() {
   }
 
+void VisualObjects::invalidate(const StaticMesh& mesh) {
+  assert(std::none_of(objects.begin(),objects.end(),[&](const auto& object) {
+    return !object.isEmpty() && object.bucketId->staticMesh==&mesh;
+    }));
+  bucketsMem.invalidate(mesh);
+  }
+
 void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   auto& obj = objects[id];
   if(obj.type==DrawCommands::Landscape)
@@ -394,7 +401,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   obj.iboLen    = uint32_t(iboLen);
   obj.bucketId  = bucketsMem.alloc(mat, mesh);
   obj.cmdId     = drawCmd.commandId(mat, type, obj.bucketId.toInt());
-  obj.clusterId = clusterId(cluster, iboOff/PackedMesh::MaxInd, iboLen/PackedMesh::MaxInd, obj.bucketId.toInt(), obj.cmdId);
+  obj.clusterId = clusterId(cluster, mesh.firstMeshlet()+iboOff/PackedMesh::MaxInd, iboLen/PackedMesh::MaxInd, obj.bucketId.toInt(), obj.cmdId);
   obj.alpha     = mat.alpha;
   obj.timeShift = -scene.tickCount;
 

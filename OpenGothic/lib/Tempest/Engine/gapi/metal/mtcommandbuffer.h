@@ -106,6 +106,14 @@ class MtCommandBuffer : public AbstractGraphicsApi::CommandBuffer {
     bool useResource(const MtTopAccelerationStructure& tlas, ShaderReflection::Stage stage);
     void clearUseResource();
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    struct GpuProfile;
+    void profileCommand(bool dispatch);
+    void submitGpuProfile();
+    std::shared_ptr<GpuProfile> gpuProfile;
+    size_t profilePass=size_t(-1);
+#endif
+
     MtDevice&                         device;
     NsPtr<MTL::CommandBuffer>         impl;
 

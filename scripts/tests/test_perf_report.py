@@ -164,17 +164,42 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     streaming = profile(tmp_path / "streaming", [
         {"segment": f"streaming-flythrough/{name}", "begin_ns": (offset + frame * step) * 1_000_000}
         for name, offset, step in (("run", 0, 10), ("fly", 100, 20)) for frame in range(3)])
+    completed = [{"kind": "route_end", "speed_cm_s": speed, "pass": True} for speed in (500, 2000)]
+    (streaming / "events.jsonl").write_text("\n".join(json.dumps(event) for event in completed))
+    frames_only = report.build_report(streaming)["places"]["streaming-flythrough"]
+    assert frames_only["views"]["run"]["frame_ms"]["p50"] == 10
+    assert frames_only["views"]["fly"]["frame_ms"]["p99"] == 20
+    assert "streaming" not in frames_only["summary"]
+    assert report.main(["run", str(streaming)]) == 0
+    (streaming / "events.jsonl").write_text("\n".join(json.dumps(event) for event in [
+        {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True}, *completed]))
+    with pytest.raises(ValueError, match="residency manager was enabled but samples are missing"):
+        report.build_report(streaming)
     with (streaming / "streaming.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, ["segment", "frame", "update_ms", "work_ms", "near", "far", "outside",
-                                         "near_transitions", "far_transitions"])
+                                         "near_transitions", "far_transitions", "publication_ms", "published", "released",
+                                         "page_used_bytes", "page_free_bytes", "page_retired_bytes", "page_count"])
         writer.writeheader()
         writer.writerows({"segment": f"streaming-flythrough/{name}", "frame": frame,
                           "update_ms": .001 * (frame + 1), "work_ms": .0001,
                           "near": 20 + frame, "far": 300, "outside": 3,
-                          "near_transitions": frame, "far_transitions": frame + 1}
+                          "near_transitions": frame, "far_transitions": frame + 1,
+                          "publication_ms": ("", ".25;.5", ".75")[frame] if name == "run" else "",
+                          "published": (0, 2, 1)[frame] if name == "run" else 0, "released": int(frame == 2),
+                          "page_used_bytes": (8-frame)*1048576, "page_free_bytes": (2+frame)*1048576,
+                          "page_retired_bytes": frame*1048576, "page_count": 2}
                          for name in ("run", "fly") for frame in range(3))
     (streaming / "events.jsonl").write_text("\n".join(
-        json.dumps({"kind": "route_end", "speed_cm_s": speed, "pass": True}) for speed in (500, 2000)))
+        json.dumps(event) for event in [
+            {"kind": "streaming_ready", "far_publication_ms": [9], "far_max_per_frame": 1, "queue_max_ms": 10},
+            {"kind": "streaming_ready", "far_publication_ms": [.3, .6], "far_max_per_frame": 1, "queue_max_ms": .8},
+            {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True},
+            {"kind": "route_end", "speed_cm_s": 500, "pass": True},
+            {"kind": "streaming_end", "segment": "streaming-flythrough/run", "gpu_mb": 320.5},
+            {"kind": "streaming_ready", "far_publication_ms": [], "far_max_per_frame": 0, "queue_max_ms": .001},
+            {"kind": "perf_segment", "segment": "streaming-flythrough/fly", "residency_manager": True},
+            {"kind": "route_end", "speed_cm_s": 2000, "pass": True},
+            {"kind": "streaming_end", "segment": "streaming-flythrough/fly", "gpu_mb": 330.5}]))
     data = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]
     assert data["run"]["frame_ms"]["p50"] == 10
     assert data["fly"]["frame_ms"]["p99"] == data["fly"]["frame_ms"]["max"] == 20
@@ -183,6 +208,37 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert data["run"]["streaming"]["peak_near"] == 22
     assert data["run"]["streaming"]["update_ms"]["p99"] == pytest.approx(.00298)
     assert data["run"]["streaming"]["work_ms"]["max"] == .0001
+    assert data["run"]["streaming"]["publication_ms"]["p99"] == pytest.approx(.745)
+    assert data["run"]["streaming"]["publication_ms"]["max"] == .75
+    assert data["run"]["streaming"]["published"] == 3
+    assert data["run"]["streaming"]["released"] == 1
+    assert data["fly"]["streaming"]["gpu_end_mb"] == 330.5
+    assert data["fly"]["streaming"]["publication_ms"] is None
+    assert data["fly"]["streaming"]["published"] == 0
+    assert data["run"]["streaming"]["page_used_end_bytes"] == 6*1048576
+    assert data["run"]["streaming"]["page_free_end_bytes"] == 4*1048576
+    assert data["run"]["streaming"]["page_retired_end_bytes"] == 2*1048576
+    assert data["run"]["streaming"]["page_count_end"] == 2
+    assert data["run"]["streaming"]["page_capacity_peak_bytes"] == 12*1048576
+    warmup = data["run"]["streaming"]
+    assert warmup["warmup_far_count"] == 2
+    assert warmup["warmup_far_publication_ms"]["p99"] == pytest.approx(.597)
+    assert warmup["warmup_far_publication_ms"]["max"] == .6
+    assert warmup["warmup_far_max_per_frame"] == 1
+    assert warmup["warmup_queue_max_ms"] == .8
+    assert data["fly"]["streaming"]["warmup_far_count"] == 0
+    assert data["fly"]["streaming"]["warmup_far_publication_ms"] is None
+    assert report.main(["run", str(streaming)]) == 0
+    assert "| 2 | 6.00 / 4.00 / 2.00 | 12.00 |" in (streaming / "report.md").read_text()
+    with (streaming / "streaming.csv").open(newline="") as stream:
+        legacy_rows = [{key: value for key, value in row.items() if not key.startswith("page_")}
+                       for row in csv.DictReader(stream)]
+    with (streaming / "streaming.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, legacy_rows[0])
+        writer.writeheader()
+        writer.writerows(legacy_rows)
+    legacy = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]["run"]["streaming"]
+    assert legacy["page_used_end_bytes"] is None and legacy["page_capacity_peak_bytes"] is None
     assert report.main(["run", str(streaming)]) == 0
 
 

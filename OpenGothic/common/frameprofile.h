@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
+#include <string>
 #include <vector>
 
 class Npc;
@@ -24,7 +25,7 @@ enum class Zone : size_t {
   EncodeShadows, EncodeMain, EncodeWater, EncodePost, EncodeUi, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
-  PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, Count };
+  PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, DispatchCalls, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };
@@ -42,6 +43,17 @@ void* gpuSubmitted();
 void gpuCompleted(void* record, double startSeconds, double endSeconds);
 void* geometrySubmitted();
 void geometryCompleted(void* record, uint64_t triangles, bool valid);
+
+// Native encoder intervals may overlap on the GPU. Labels sharing an encoder
+// stay joined; the sampler never splits a render pass for attribution.
+struct GpuPass {
+  std::string type, labels;
+  uint64_t gpuNs=0, vertexNs=0, fragmentNs=0;
+  uint64_t drawCalls=0, dispatchCalls=0;
+  bool valid=false;
+  };
+void* gpuPassesSubmitted();
+void gpuPassesCompleted(void* record, std::vector<GpuPass>&& passes);
 
 class Scope final {
   public:

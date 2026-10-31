@@ -48,6 +48,11 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh) 
   bx.mat        = mat;
 
   bucketsDurtyBit = true;
+  for(size_t i=0;i<bucketsCpu.size();++i)
+    if(bucketsCpu[i].staticMesh==nullptr && bucketsCpu[i].animMesh==nullptr) {
+      bucketsCpu[i] = std::move(bx);
+      return Id(this,i);
+      }
   bucketsCpu.emplace_back(std::move(bx));
   return Id(this, bucketsCpu.size()-1);
   }
@@ -68,7 +73,15 @@ DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const AnimMesh& mesh) {
   return Id(this, bucketsCpu.size()-1);
   }
 
-const std::vector<DrawBuckets::Bucket>& DrawBuckets::buckets() {
+void DrawBuckets::invalidate(const StaticMesh& mesh) {
+  for(auto& bucket:bucketsCpu)
+    if(bucket.staticMesh==&mesh) {
+      bucket = Bucket();
+      bucketsDurtyBit = true;
+      }
+  }
+
+const std::vector<DrawBuckets::Bucket>& DrawBuckets::buckets() const {
   return bucketsCpu;
   }
 
@@ -87,17 +100,29 @@ void DrawBuckets::updateBindlessArrays() {
       orm.push_back(i.mat.orm!=nullptr ? i.mat.orm : &Resources::fallbackTexture());
       }
     if(i.staticMesh!=nullptr) {
-      ibo    .push_back(&i.staticMesh->ibo8);
-      vbo    .push_back(&i.staticMesh->vbo);
+      ibo    .push_back(&i.staticMesh->ibo8Buffer());
+      vbo    .push_back(&i.staticMesh->vboBuffer());
       morphId.push_back(i.staticMesh->morph.index);
       morph  .push_back(i.staticMesh->morph.samples);
-      } else {
+      } else if(i.animMesh!=nullptr) {
       ibo    .push_back(&i.animMesh->ibo8);
       vbo    .push_back(&i.animMesh->vbo);
       morphId.push_back(nullptr);
       morph  .push_back(nullptr);
+      } else {
+      ibo    .push_back(nullptr);
+      vbo    .push_back(nullptr);
+      morphId.push_back(nullptr);
+      morph  .push_back(nullptr);
       }
     }
+
+  // The first slots retain bucket IDs for RT and nonanimated materials.
+  // Landscape animations select their frame in the fragment shader so chunks
+  // with the same pipeline share one indirect command.
+  for(const auto& bucket:bucketsCpu)
+    if(bucket.mat.hasFrameAnimation())
+      tex.insert(tex.end(),bucket.mat.frames.begin(),bucket.mat.frames.end());
 
   // avoid shader linking stutter in vulkan
   tex    .resize(roundup(tex.size()));
@@ -134,8 +159,15 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   bucketsDurtyBit = false;
 
   std::vector<BucketGpu> bucket;
+  uint32_t diffuseFrames=uint32_t(bucketsCpu.size());
   for(auto& i:bucketsCpu) {
     BucketGpu bx;
+    if(i.mat.hasFrameAnimation()) {
+      bx.diffuseFrames=diffuseFrames;
+      bx.frameCount=uint32_t(i.mat.frames.size());
+      bx.frameDuration=uint32_t(i.mat.texAniFPSInv);
+      diffuseFrames+=bx.frameCount;
+      }
     bx.texAniMapDirPeriod = i.mat.texAniMapDirPeriod;
     bx.waveMaxAmplitude   = i.mat.waveMaxAmplitude;
     bx.alphaWeight        = i.mat.alphaWeight;
@@ -179,7 +211,8 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
 
   auto& device = Resources::device();
   Resources::recycle(std::move(bucketsGpu));
-  bucketsGpu = device.ssbo(bucket);
+  bucketsGpu = device.ssbo(Uninitialized,bucket.size()*sizeof(bucket[0]));
+  bucketsGpu.updateAsync(bucket.data(),0,bucket.size()*sizeof(bucket[0]));
 
   updateBindlessArrays();
   return true;

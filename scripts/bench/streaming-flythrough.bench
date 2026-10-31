@@ -1,4 +1,4 @@
-# Baseline before streaming: all world representation stays loaded.
+# GPU chunk streaming along the baseline route.
 # The same WayMatrix path at 5 m/s and 20 m/s, without video capture.
 seed 73030
 cheat god
@@ -14,11 +14,13 @@ cam look 120
 cam world 700 280 180
 goto NW_CITY_MERCHANT_TRADE_04
 wait 10000
+streaming wait
 perf sample streaming-flythrough/run
 route 500 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
 perf stop
 goto NW_CITY_MERCHANT_TRADE_04
 wait 10000
+streaming wait
 perf sample streaming-flythrough/fly
 route 2000 NW_CITY_MERCHANT_TRADE_04 NW_CITY_HABOUR_BENCH_01 NW_FOREST_PATH_16
 perf stop

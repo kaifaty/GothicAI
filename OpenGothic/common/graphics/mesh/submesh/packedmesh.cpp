@@ -5,6 +5,7 @@
 #include <cassert>
 #include <fstream>
 #include <algorithm>
+#include <numeric>
 
 #include "game/compatibility/phoenix.h"
 #include "graphics/shaders.h"
@@ -424,6 +425,14 @@ PackedMesh::PackedMesh(const asset::WorldMesh& mesh, PkgType type) {
     packPhysics(mesh,type);
     return;
     }
+  }
+
+PackedMesh::PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
+                       std::span<const uint32_t> materialMap,
+                       std::span<const uint32_t> vertexIds, std::span<const uint32_t> featureIds) {
+  const auto materials=materialMap.empty() ? landscapeMaterialMap(mesh) : std::vector<uint32_t>();
+  packMeshletsLnd(mesh,triangles,materialMap.empty() ? std::span<const uint32_t>(materials) : materialMap,vertexIds,featureIds);
+  computeBbox();
   }
 
 PackedMesh::PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest) {
@@ -1236,11 +1245,7 @@ PackedMesh::CWBVH8 PackedMesh::nodeFromBlocks(Block* block) {
   return node;
   }
 
-void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
-  auto& ibo  = mesh.polygons.vertex_indices;
-  auto& feat = mesh.polygons.feature_indices;
-  auto& mid  = mesh.polygons.material_indices;
-
+std::vector<uint32_t> PackedMesh::landscapeMaterialMap(const asset::WorldMesh& mesh) {
   std::vector<uint32_t> mat(mesh.materials.size());
   for(size_t i=0; i<mesh.materials.size(); ++i)
     mat[i] = uint32_t(i);
@@ -1256,9 +1261,28 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
       }
     }
 
+  return mat;
+  }
+
+void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
+  std::vector<uint32_t> triangles(mesh.polygons.material_indices.size());
+  std::iota(triangles.begin(),triangles.end(),uint32_t(0));
+  packMeshletsLnd(mesh,triangles,landscapeMaterialMap(mesh));
+  }
+
+void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
+                                std::span<const uint32_t> mat,
+                                std::span<const uint32_t> vertexIds, std::span<const uint32_t> featureIds) {
+  auto& ibo  = mesh.polygons.vertex_indices;
+  auto& feat = mesh.polygons.feature_indices;
+  auto& mid  = mesh.polygons.material_indices;
+  const auto key=[&](uint32_t vertex, uint32_t feature) {
+    return mkUInt64(vertexIds.empty() ? vertex : vertexIds[vertex],featureIds.empty() ? feature : featureIds[feature]);
+    };
+
   std::vector<Prim> prim;
-  prim.reserve(mid.size());
-  for(size_t i=0; i<mid.size(); ++i) {
+  prim.reserve(triangles.size());
+  for(const auto i:triangles) {
     Prim p;
     p.primId = uint32_t(i*3);
     p.mat    = mat[mid[i]];
@@ -1269,12 +1293,12 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
     });
 
   PrimitiveHeap heap;
-  heap.reserve(mid.size());
+  heap.reserve(triangles.size());
   std::vector<bool> used(mid.size(),false);
 
-  vertices.reserve(mesh.vertices.size());
-  indices .reserve(ibo.size());
-  indices8.reserve(ibo.size());
+  vertices.reserve(std::min(mesh.vertices.size(),triangles.size()*3));
+  indices .reserve(triangles.size()*3);
+  indices8.reserve(triangles.size()*4);
   meshletBounds.reserve(prim.size()/MaxPrim);
   for(size_t i=0; i<prim.size();) {
     const auto mId = prim[i].mat;
@@ -1283,9 +1307,9 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
     for(; i<prim.size() && prim[i].mat==mId; ++i) {
       const uint32_t id = prim[i].primId;
 
-      auto a = mkUInt64(ibo[id+0],feat[id+0]);
-      auto b = mkUInt64(ibo[id+1],feat[id+1]);
-      auto c = mkUInt64(ibo[id+2],feat[id+2]);
+      auto a = key(ibo[id+0],feat[id+0]);
+      auto b = key(ibo[id+1],feat[id+1]);
+      auto c = key(ibo[id+2],feat[id+2]);
 
       heap.push_back(std::make_pair(a, id));
       heap.push_back(std::make_pair(b, id));
@@ -1295,7 +1319,7 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh) {
     if(heap.size()==0)
       continue;
 
-    std::vector<Meshlet> meshlets = buildMeshlets(&mesh,nullptr,heap,used);
+    std::vector<Meshlet> meshlets = buildMeshlets(&mesh,nullptr,heap,used,vertexIds,featureIds);
     for(size_t i=0; i<meshlets.size(); ++i)
       meshlets[i].updateBounds(mesh);
 
@@ -1353,7 +1377,9 @@ void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
 
 std::vector<PackedMesh::Meshlet> PackedMesh::buildMeshlets(const asset::WorldMesh* mesh,
                                                            const asset::SubMesh* proto_mesh,
-                                                           PrimitiveHeap& heap, std::vector<bool>& used) {
+                                                           PrimitiveHeap& heap, std::vector<bool>& used,
+                                                           std::span<const uint32_t> vertexIds,
+                                                           std::span<const uint32_t> featureIds) {
   heap.sort();
   std::fill(used.begin(), used.end(), false);
 
@@ -1369,7 +1395,8 @@ std::vector<PackedMesh::Meshlet> PackedMesh::buildMeshlets(const asset::WorldMes
 
     for(size_t r=firstVert; r<active.vertSz; ++r) {
       auto i = active.vert[r];
-      auto e = heap.equal_range(mkUInt64(i.first,i.second));
+      auto e = heap.equal_range(mkUInt64(vertexIds.empty() ? i.first : vertexIds[i.first],
+                                        featureIds.empty() ? i.second : featureIds[i.second]));
       for(auto it = e.first; it!=e.second; ++it) {
         auto id = it->second/3;
         if(used[id])
