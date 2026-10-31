@@ -215,16 +215,20 @@ def atomic_write(path, text):
             temporary.unlink(missing_ok=True)
 
 
+def read_built(repo, head):
+    path = repo.parent / "play.built"
+    return json.loads(path.read_text()) if path.exists() else {"good": head, "built": head}
+
+
 def auto_update(expected_origin, *, admitted=False):
     home = Path.home()
     repo = home / "gothic-ai/play"
     state_path = repo.parent / "play-update.json"
+    built_path = repo.parent / "play.built"
+    failed_path = repo.parent / "play.failed"
     state = {"old_commit": "", "new_commit": "", "failed_commit": ""}
 
     def finish(result, code=0, **details):
-        if result in ("updated", "up_to_date", "build_failed_rolled_back"):
-            state.pop("error", None)
-            state.pop("detail", None)
         state.update(time=datetime.now(timezone.utc).isoformat(), result=result, **details)
         text = json.dumps(state, sort_keys=True) + "\n"
         print(text, end="", flush=True)
@@ -234,20 +238,25 @@ def auto_update(expected_origin, *, admitted=False):
     def commit(ref):
         return subprocess.check_output(["git", "-C", repo, "rev-parse", ref], text=True).strip()
 
+    def snapshot():
+        head = commit("HEAD")
+        built = read_built(repo, head)
+        failed = failed_path.read_text().strip() if failed_path.exists() else ""
+        target = commit("origin/main")
+        if target == failed:
+            target = built["good"]
+        state.update(old_commit=head, new_commit=target, failed_commit=failed)
+        return head, target, built
+
     try:
-        if state_path.exists():
-            state.update(json.loads(state_path.read_text()))
         if not admitted:
             run(["git", "-C", repo, "fetch", "origin"])
-        head, target = commit("HEAD"), commit("origin/main")
-        if not state.get("restore_commit"):
-            state.update(old_commit=head, new_commit=target)
+        head, target, built = snapshot()
         if not admitted:
-            if not state.get("restore_commit") and head == target:
+            if built["built"] == head == target:
                 return finish("up_to_date")
-            if not state.get("restore_commit") and state["failed_commit"] == target:
-                return finish("build_failed_rolled_back", detail="Skipping previously failed origin/main")
-            previous = state_path.read_text() if state_path.exists() else None
+            # Observe report completion only; reports never select a build target.
+            previous = state_path.stat().st_mtime_ns if state_path.exists() else None
             os.chdir(repo)
             os.environ["GQ_OWNER"] = "ryzen-play-autoupdate"
             command = build_command("")
@@ -255,12 +264,7 @@ def auto_update(expected_origin, *, admitted=False):
                 sys.executable, str(repo / "scripts/ryzen-play.sh"), "__auto_build", expected_origin]
             # Wait without locking or changing the checkout. systemd serializes runs.
             result = owned_process(command, keep_stdin=True)
-            current = state_path.read_text() if state_path.exists() else None
-            if current is not None:
-                state = {"old_commit": "", "new_commit": "", "failed_commit": "",
-                         **json.loads(current)}
-            if state.get("restore_commit") and state.get("result") not in ("busy", "error"):
-                return finish("error", result or 2, error=f"gq exited {result} before recovery completed")
+            current = state_path.stat().st_mtime_ns if state_path.exists() else None
             if current == previous:
                 return finish("error", result or 2, error=f"gq exited {result} without an update result")
             return result
@@ -269,48 +273,43 @@ def auto_update(expected_origin, *, admitted=False):
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return finish("busy")
-            if state_path.exists():
-                state = {"old_commit": "", "new_commit": "", "failed_commit": "",
-                         **json.loads(state_path.read_text())}
             check_tools(home)
             check_checkout(repo, expected_origin)
             # A manual update may have finished while this job was queued.
+            head, target, built = snapshot()
+            if built["built"] == head == target:
+                return finish("up_to_date")
+            good = built["good"]
             os.chdir(repo)
             script = repo / "scripts/ryzen-play.sh"
-            result = 0
-            if not state.get("restore_commit"):
-                state.update(old_commit=commit("HEAD"), new_commit=commit("origin/main"))
-                if state["old_commit"] == state["new_commit"]:
-                    return finish("up_to_date")
-                if state["failed_commit"] == state["new_commit"]:
-                    return finish("build_failed_rolled_back", detail="Skipping previously failed origin/main")
-                # The whole gq cgroup may be killed; persist recovery before pull.
-                state["restore_commit"] = state["old_commit"]
-                finish("updating")
-                run(["git", "-C", repo, "pull", "--ff-only"])
-                state["new_commit"] = commit("HEAD")
-                state["failed_commit"] = state["new_commit"]
-                finish("updating")
+
+            def build(revision):
+                atomic_write(built_path, json.dumps({"good": good, "built": None}) + "\n")
+                run(["git", "-C", repo, "reset", "--hard", revision])
                 result = subprocess.run(prepare_command(script.read_text()), check=False).returncode
                 if result in (0, 3):
-                    write_desktop_entry(repo, result)
-                    state.pop("restore_commit")
+                    atomic_write(built_path, json.dumps({"good": revision, "built": revision}) + "\n")
+                return result
+
+            result = build(target)
+            if result in (0, 3):
+                if target != good:
+                    failed_path.unlink(missing_ok=True)
                     state["failed_commit"] = ""
-                    return finish("updated")
-                state["build_exit"] = result
-                finish("recovering")
-            run(["git", "-C", repo, "reset", "--hard", state["restore_commit"]])
-            rollback = subprocess.run(prepare_command(script.read_text()), check=False).returncode
+                write_desktop_entry(repo, result)
+                return finish("updated")
+            state["build_exit"] = result
+            if target == good:
+                raise ValueError(f"Build of last successful commit {good} failed with exit {result}")
+            atomic_write(failed_path, target + "\n")
+            state["failed_commit"] = target
+            rollback = build(good)
             state["rollback_exit"] = rollback
             if rollback not in (0, 3):
                 raise ValueError(f"Rollback build failed with exit {rollback}")
             write_desktop_entry(repo, rollback)
-            state.pop("restore_commit")
             return finish("build_failed_rolled_back", result)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
-        if not admitted and state_path.exists():
-            state = {"old_commit": "", "new_commit": "", "failed_commit": "",
-                     **json.loads(state_path.read_text())}
         return finish("error", 2, error=str(error))
 
 
@@ -371,12 +370,19 @@ def remote_install(action, payload, source):
                 raise ValueError("No ~/gothic-ai/play: run scripts/ryzen-play.sh install first")
             run(["git", "clone", "--branch", "main", payload["origin"], repo])
         check_checkout(repo, payload["origin"])
+        head = subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()
+        built = read_built(repo, head)
+        built_path = repo.parent / "play.built"
+        atomic_write(built_path, json.dumps({"good": built["good"], "built": None}) + "\n")
         run(["git", "-C", repo, "pull", "--ff-only"])
+        head = subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()
         os.chdir(repo)
         os.environ["GQ_OWNER"] = "ryzen-play-install"
         result = owned_process(build_command(source))
         if result not in (0, 3):
             return result
+        atomic_write(built_path, json.dumps({"good": head, "built": head}) + "\n")
+        (repo.parent / "play.failed").unlink(missing_ok=True)
         content = home / ".local/share/gothic-ai/play-content"
         incoming = content.with_name("play-content.incoming")
         old = content.with_name("play-content.old")
@@ -389,16 +395,6 @@ def remote_install(action, payload, source):
             shutil.rmtree(old)
         create_settings(home / ".config/gothic-ai/settings.toml", payload["settings"], repo, home)
         write_desktop_entry(repo, result)
-        state_path = repo.parent / "play-update.json"
-        if state_path.exists():
-            state = json.loads(state_path.read_text())
-            if state.get("restore_commit"):
-                state = {"time": datetime.now(timezone.utc).isoformat(), "result": "updated",
-                         "old_commit": state["restore_commit"], "failed_commit": "",
-                         "new_commit": subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()}
-                text = json.dumps(state, sort_keys=True) + "\n"
-                atomic_write(state_path, text)
-                print(text, end="", flush=True)
         print("Ready: open Gothic AI in GNOME Applications. Login on Ryzen: "
               "~/.local/bin/uv run --project ~/gothic-ai/play/launcher/core gothic-launcher login", flush=True)
     return result
