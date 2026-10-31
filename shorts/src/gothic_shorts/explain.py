@@ -11,7 +11,7 @@ import wave
 from array import array
 from pathlib import Path
 
-from . import levels
+from . import delivery, levels
 
 PROJECT = Path(__file__).resolve().parents[2] / "explain"
 # Match explain/src/theme.ts and Brand.tsx (also used by Root.tsx metadata).
@@ -133,7 +133,10 @@ def render(ws: Path, plan: dict, directory: Path, *,
 
 
 def publish(ws: Path, plan_file: str = "plan.json", out: Path | None = None) -> Path:
-    """Publish a workspace plan, keeping only a checked video and levels' report."""
+    """Publish a workspace plan, keeping only a checked video, levels' report and the delivery report beside it.
+
+    Our drawing is checked against the Shorts interface before the long render, the file against YouTube's
+    specification after it (gothic_shorts.delivery); a failure of either leaves no MP4."""
     ws = ws.resolve()
     try:
         plan = json.loads((ws / plan_file).read_text())
@@ -150,6 +153,10 @@ def publish(ws: Path, plan_file: str = "plan.json", out: Path | None = None) -> 
         )
         out = Path(out).expanduser().resolve() if out is not None else ws / f"render/short-{lang}.mp4"
         out.parent.mkdir(parents=True, exist_ok=True)
+        check = delivery.check_zones(ws, plan)
+        if not check.ok:
+            delivery.write(check, out.with_suffix(".delivery.md"), f"Delivery: {out.name}")
+            raise ExplainError("Our drawing under the Shorts interface, fix the plan:\n" + "\n".join(check.failures))
         with tempfile.TemporaryDirectory(prefix=".explain-", dir=out.parent) as tmp:
             directory = Path(tmp)
             render(ws, plan, directory)
@@ -160,6 +167,13 @@ def publish(ws: Path, plan_file: str = "plan.json", out: Path | None = None) -> 
             levels.publish(joined, directory / "music.wav" if music is not None else None,
                            [(directory / "voice.wav", 0)], speech, total, length, out,
                            music_fades=False, music_fade_durations=music_fade_durations)
+        delivery.check_file(out, check)
+        delivery.write(check, out.with_suffix(".delivery.md"), f"Delivery: {out.name}")
+        if not check.ok:
+            out.unlink()
+            raise ExplainError("The file is not what YouTube asks for:\n" + "\n".join(check.failures))
+    except delivery.DeliveryError as err:
+        raise ExplainError(str(err)) from err
     except (OSError, ValueError, KeyError, TypeError) as err:
         raise ExplainError(str(err)) from err
     return out
