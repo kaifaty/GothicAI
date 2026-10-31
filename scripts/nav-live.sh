@@ -61,6 +61,23 @@ PREFLIGHT
 rsync -a --no-links --exclude=build --exclude='build-*' --exclude=__pycache__ --exclude=.pytest_cache --exclude=.git \
   "$ROOT/OpenGothic" "$ROOT/scripts" "ryzen:$source/"
 rsync -rt --no-links "$suite" "ryzen:$source/suite.json"
+if [[ "$stage" == auto || "$stage" == baseline ]]; then
+  if ssh ryzen "python3 - '$source/scripts' '$task' '$output' '$weights'" <<'READY'
+from pathlib import Path
+import sys
+sys.path.insert(0,sys.argv[1])
+from nav_live import completed_round
+if not completed_round(Path(sys.argv[2]),Path(sys.argv[3]),sys.argv[4]):
+    raise SystemExit(3)
+print(f'Round already complete: {sys.argv[3]}/README.md')
+READY
+  then
+    exit 0
+  else
+    result=$?
+    [[ "$result" == 3 ]] || exit "$result"
+  fi
+fi
 if [[ "$stage" == auto ]]; then
   stage="$(ssh ryzen "bash -s -- '$task' '$output' '$snapshot'" <<'CHOOSE'
 set -euo pipefail
@@ -112,7 +129,9 @@ import json
 import os
 from pathlib import Path
 import sys
-suite=json.loads(Path(sys.argv[1]).read_text())
+suite_bytes=Path(sys.argv[1]).read_bytes()
+suite=json.loads(suite_bytes)
+suite['qualified_suite_sha256']=hashlib.sha256(suite_bytes).hexdigest()
 pin=suite.get('evaluation_binary')
 binary_source=Path(pin['path']) if pin else Path(sys.argv[3])/'build/opengothic/Gothic2Notr'
 binary_data=binary_source.read_bytes()
@@ -149,19 +168,13 @@ FREEZE
 )"
 fi
 if [[ "$stage" == clean ]]; then
-  ssh ryzen "bash -s -- '$task' '$output'" <<'CLEAN'
-set -euo pipefail
-python3 - "$2" <<'PY'
-import json
+  ssh ryzen "python3 - '$source/scripts' '$task' '$output'" <<'CLEAN'
 from pathlib import Path
 import sys
-output=Path(sys.argv[1])
-gate=json.loads((output/'complete.json').read_text())
-if gate.get('complete') is not True:
-    raise SystemExit('Clean is permitted after the complete round report only')
-PY
-rm -rf -- "$1/build" "$1/binaries" "$1/base-cache" "$1/.venv" "$1/uv-cache" "$1/navmesh-cache"
-rm -f -- "$1"/build-passed-* "$1/build-snapshot"
+sys.path.insert(0,sys.argv[1])
+from nav_live import cleanup
+if not cleanup(Path(sys.argv[2]),Path(sys.argv[3])):
+    raise SystemExit('Clean requires a complete accepted subset and its exact smoke gate')
 CLEAN
   exit 0
 fi
@@ -319,9 +332,18 @@ elif [[ "$phase" != prepare ]]; then
   "$task/.venv/bin/python" -B "$source/scripts/nav_live.py" "$phase" \
     --suite "$run_suite" --runtime "$task" --output "$output" --weights "$weights" --shard "$shard"
 fi
+if [[ "$phase" == baseline ]]; then
+  python3 - "$source/scripts" "$task" "$output" "$run_suite" <<'CLEAN'
+from pathlib import Path
+import sys
+sys.path.insert(0,sys.argv[1])
+from nav_live import cleanup
+cleanup(Path(sys.argv[2]),Path(sys.argv[3]),Path(sys.argv[4]))
+CLEAN
+fi
 printf 'phase_wall_seconds=%s\n' "$((SECONDS-started))"
 PHASE
-if [[ "$stage" == baseline ]]; then shards=(0 1 2); else shards=(0); fi
+if [[ "$stage" == baseline ]]; then shards=(-1); else shards=(0); fi
 for shard in "${shards[@]}"; do
   log_dir="$log_prefix-$shard"
   ssh ryzen "mkdir -p '$log_dir'"

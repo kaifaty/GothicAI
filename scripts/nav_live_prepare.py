@@ -154,25 +154,35 @@ def qualify(args):
     preparation = args.output / 'preparation'
     if not read_json(preparation / 'complete.json').get('complete'):
         raise ValueError('Complete the initial geometry and census preparation first')
-    geometry = preparation / 'geometry'
-    points = {row['name']: row['position_cm'] for row in rows(geometry / 'points-v3.jsonl')}
-    actors = next(row['actors'] for row in rows(geometry / 'roads-events.jsonl') if row['kind'] == 'roads_actors')
+    frozen_places = suite.get('places_frozen') is True
     excluded = test_pairs(inputs)
     root = Path(inputs['roads']).parent
-    manifest = read_json(root / 'v4-manifest.json')
-    places = read_json(inputs['roads'])
-    test_places = set(manifest['split_policy']['object']['groups']['test'])
-    forbidden_names = {name for name, index in places['points'].items()
-                       if places['places'][index]['id'] in test_places}
-    train_water = rows(root / 'water-scenarios.jsonl')
-    water_excluded = excluded | {(row['start'], row['goal']) for row in train_water}
+    if not frozen_places:
+        geometry = preparation / 'geometry'
+        points = {row['name']: row['position_cm'] for row in rows(geometry / 'points-v3.jsonl')}
+        actors = next(row['actors'] for row in rows(geometry / 'roads-events.jsonl') if row['kind'] == 'roads_actors')
+        manifest = read_json(root / 'v4-manifest.json')
+        places = read_json(inputs['roads'])
+        test_places = set(manifest['split_policy']['object']['groups']['test'])
+        forbidden_names = {name for name, index in places['points'].items()
+                           if places['places'][index]['id'] in test_places}
+        train_water = rows(root / 'water-scenarios.jsonl')
+        water_excluded = excluded | {(row['start'], row['goal']) for row in train_water}
     cases = suite_cases(suite)
     selected = {}
     candidates = []
+    failures = []
     for case in cases:
-        if case['number'] == 2:
+        if frozen_places and case.get('qualification_rejection'):
+            failure = dict(case['qualification_rejection'], id=case['id'])
+            failure.setdefault('source', case['source'])
+            failures.append(failure)
+            continue
+        if not frozen_places and case['number'] == 2:
             case = nearest_routine(case, actors, points)
-        if case['number'] == 6:
+        if frozen_places:
+            choices = [dict(case, probe_label=case['id'] + '--fixed')]
+        elif case['number'] == 6:
             choices = water_pool(case, points, water_excluded, forbidden_names)
         elif case['number'] == 4:
             validation = rows(root / 'detour-val.jsonl')
@@ -205,8 +215,9 @@ def qualify(args):
         measured = probe_groups(worker, candidates, output, suite['seeds'][0])
     finally:
         worker.close()
-    failures = []
     for case in cases:
+        if frozen_places and case.get('qualification_rejection'):
+            continue
         choices = [choice for choice in candidates if choice['id'] == case['id']]
         acceptable = [choice for choice in choices
                       if qualify_probe(case['number'], measured[choice['probe_label']]['probe'])]
@@ -233,8 +244,9 @@ def qualify(args):
             for variant in scenario['variants']:
                 chosen = selected.get(scenario['id'] + '-' + variant['id'])
                 if chosen:
-                    variant = dict(variant, goal=chosen['goal'], routine_point_selection=chosen['routine_point_selection'],
-                                   qualification_evidence=chosen['qualification_evidence'])
+                    variant = dict(variant, goal=chosen['goal'], qualification_evidence=chosen['qualification_evidence'])
+                    if 'routine_point_selection' in chosen:
+                        variant['routine_point_selection'] = chosen['routine_point_selection']
                 variants.append(variant)
             scenario['variants'] = variants
             scenario['goal'] = variants[0]['goal']
@@ -242,7 +254,7 @@ def qualify(args):
             scenario.update(selected[scenario['id']])
         if scenario['id'] in selected:
             scenario.pop('qualification_candidates', None)
-        if scenario['number'] == 8:
+        if scenario['number'] == 8 and not frozen_places:
             scenario['time'] = read_json(preparation / 'market-census.json')['peak']['time']
     semantic = [case['id'] for case in selected.values() if case['number'] == 4
                 and not case['qualification_evidence']['rock_semantics_confirmed']]

@@ -558,7 +558,7 @@ def test_live_qualification_keeps_place_failures_and_never_runs_learners(tmp_pat
         subset.setattr(live, 'report', lambda *unused: False)
         subset.setattr(live, 'run_episode', lambda args, case, model, seed, *unused:
                        baseline_calls.append((case['id'], model['name'], seed)))
-        assert live.main(argv) == 0
+        assert live.main([*argv, '--shard', '0']) == 0
         assert live.main([*argv, '--shard', '1']) == 0
         assert smoke_calls == [True] and len(baseline_calls) == 24
         assert len(set(baseline_calls)) == 24 and not any(row[0] == identifiers[9] for row in baseline_calls)
@@ -669,6 +669,126 @@ def test_live_qualification_keeps_place_failures_and_never_runs_learners(tmp_pat
     old_binary.write_text('corrupt preserved binary')
     with pytest.raises(ValueError, match='differs from its qualified reference'):
         prepare.requalify(args)
+    old_binary.write_bytes(b'Gothic2Notr')
+
+    # A fresh round uses the frozen authored placements, including the door
+    # variant, without selecting a different routine, coast, terrain or time.
+    fixed = json.loads(json.dumps(checked))
+    fixed['places_frozen'] = True
+    fixed.pop('evaluation_binary', None)
+    fixed['scenarios'][7]['time'] = [17, 30]
+    for scenario in fixed['scenarios']:
+        scenario.pop('evaluation_binary', None)
+        scenario.pop('teacher_reference', None)
+        for variant in scenario.get('variants', []):
+            variant.pop('evaluation_binary', None)
+            variant.pop('teacher_reference', None)
+    for number in (3, 4):
+        fixed['scenarios'][number-1]['qualification_rejection'] = dict(reason='Frozen unqualified placement')
+    stairs = fixed['scenarios'][8]['variants'][1]['qualification_rejection']
+    stairs.update(start_cm=[0, 0, 0], goal_cm=[0, 400, 0], topdown_frame=str(output / 'stairs-frame.png'))
+    fixed_suite, fixed_output = tmp_path / 'fixed-suite.json', tmp_path / 'next-round'
+    live.write_json(fixed_suite, fixed)
+    live.write_json(fixed_output / 'preparation/complete.json', dict(complete=True))
+    fixed_probes = []
+
+    def frozen_probe(worker, candidates, *unused):
+        fixed_probes.extend(candidates)
+        return {case['probe_label']: dict(probe=dict(probe, route_min_edge_clearance_cm=100,
+            route_edge_clearance_censored=False), file='native.jsonl') for case in candidates}
+
+    with monkeypatch.context() as frozen_round:
+        frozen_round.setattr(prepare, 'probe_groups', frozen_probe)
+        frozen_round.setattr(prepare, 'nearest_routine', lambda *unused: pytest.fail('Frozen routine was reselected'))
+        frozen_round.setattr(prepare, 'water_pool', lambda *unused: pytest.fail('Frozen coast was reselected'))
+        frozen_round.setattr(live, 'run_episode', episode)
+        assert prepare.qualify(SimpleNamespace(suite=fixed_suite, output=fixed_output,
+                                               runtime=runtime, weights=args.weights)) == 0
+    original_fixed = {case['id']: case for case in live.suite_cases(fixed)}
+    assert len(fixed_probes) == 10 and all(case['probe_label'] == case['id'] + '--fixed' for case in fixed_probes)
+    assert all((case['start'], case['goal']) == (original_fixed[case['id']]['start'], original_fixed[case['id']]['goal'])
+               for case in fixed_probes)
+    frozen_result = live.read_json(fixed_output / 'qualified-suite.json')
+    assert frozen_result['scenarios'][7]['time'] == [17, 30]
+    assert frozen_result['scenarios'][8]['variants'][0]['goal'] == 'GROUND'
+    assert '../round/stairs-frame.png' in (fixed_output / 'README.md').read_text()
+
+    # Resume the accepted subset in one job: 36 existing records and 18 new
+    # records, including both BC4 controls. Rejected places stay explicit.
+    final = json.loads(json.dumps(checked))
+    for outcome in final['teacher_qualification']['placements']:
+        if outcome['id'] in (identifiers[2], identifiers[3]):
+            outcome['passed'] = False
+    final_suite = tmp_path / 'final-baseline-suite.json'
+    live.write_json(final_suite, final)
+    live.write_json(output / 'qualified-suite.json', final)
+    final_cases = live.eligible_cases(final, live.suite_cases(final))
+    bc4 = dict(name='bc4', sha256='bc4', weights='bc4')
+    planned = list(live.runs(final_cases, policies, bc4))
+    assert len(final_cases) == 10 and len(planned) == 54
+    final_args = SimpleNamespace(output=output, binary=Path(final['evaluation_binary']['path']),
+                                 input_sha256=live_args.input_sha256)
+    added = []
+
+    def learner(args, case, model, seed, directory, teacher=None):
+        added.append((case['id'], model['name'], seed))
+        live.write_json(directory / 'episode.json', dict(success=True, elapsed_ms=1000, decisions=10))
+        live.write_json(directory / 'summary.json', dict(schema=1))
+        live.write_json(directory / 'identity.json', dict(actual=live.actual_inputs(args, case, model, seed)))
+        for name in ('source.mp4', 'topdown.mp4', 'timeline.png', 'actions.txt', 'trajectory.txt',
+                     'live-format.json', 'live-decisions.jsonl', 'live-observations.bin.gz'):
+            (directory / name).write_bytes(b'fixture')
+        if model['name'] == 'bc4':
+            assert teacher == live.teacher_directory(args, next(case for case in final_cases if case['number'] == 10))
+
+    for case, model, seed in planned[:36]:
+        learner(final_args, case, model, seed, live.run_directory(output, case, model, seed))
+    added.clear()
+    ready = {path: path.read_bytes() for path in output.rglob('identity.json')}
+    gate = dict(complete=True, suite_sha256=live.sha256(final_suite), binary_sha256=live.sha256(final_args.binary),
+                model_sha256=policies[0]['sha256'], result='Same-seed and recording checks passed.')
+    live.write_json(output / 'smoke.json', gate)
+    with monkeypatch.context() as final_round:
+        final_round.setattr(live, 'models', lambda *unused: (policies, bc4))
+        final_round.setattr(live, 'run_episode', learner)
+        assert live.main(['baseline', '--suite', str(final_suite), '--output', str(output),
+                          '--runtime', str(runtime), '--weights', args.weights]) == 0
+    marker = live.read_json(output / 'complete.json')
+    assert marker['qualified_subset_complete'] and not marker['full_suite_qualified']
+    assert marker['completed'] == marker['expected'] == 54
+    assert marker['reused_runs'] == 36 and marker['newly_completed_runs'] == len(added) == 18
+    assert len(marker['excluded_placements']) == 3 and all(path.read_bytes() == data for path, data in ready.items())
+    for name in ('base-cache', '.venv', 'uv-cache', 'navmesh-cache', 'requalification-worker'):
+        (runtime / name).mkdir(exist_ok=True)
+    source = runtime / 'source/snapshot/phase.sh'
+    source.parent.mkdir(parents=True)
+    source.write_text('retained')
+    live.write_json(output / 'smoke.json', dict(gate, complete=False))
+    assert not live.cleanup(runtime, output, final_suite) and (runtime / 'build').is_dir()
+    live.write_json(output / 'smoke.json', gate)
+    remove = live.shutil.rmtree
+
+    def recorded_cleanup(path):
+        assert live.read_json(output / 'complete.json')['local_cleanup']['status'] == 'started'
+        remove(path)
+        if path.name == 'binaries':
+            raise RuntimeError('Fixture cleanup interruption')
+
+    with monkeypatch.context() as cleaned:
+        cleaned.setattr(live.shutil, 'rmtree', recorded_cleanup)
+        with pytest.raises(RuntimeError, match='Fixture cleanup interruption'):
+            live.cleanup(runtime, output, final_suite)
+    with monkeypatch.context() as resumed:
+        resumed.setattr(live, 'models', lambda *unused: (policies, bc4))
+        assert live.completed_round(runtime, output, args.weights)
+        assert live.completed_round(runtime, output, args.weights)
+        resumed.setattr(live, 'models', lambda *unused: ([dict(policies[0], sha256='changed')], bc4))
+        with pytest.raises(ValueError, match='use a new round label'):
+            live.completed_round(runtime, output, args.weights)
+    assert live.cleanup(runtime, output, final_suite)
+    assert source.read_text() == 'retained' and (output / 'README.md').is_file()
+    assert not (runtime / 'build').exists() and not (runtime / 'binaries').exists()
+    assert live.read_json(output / 'complete.json')['local_cleanup']['status'] == 'complete'
 
 
 def test_live_qualification_resumes_partial_probes_and_rejects_blocked_capsule(tmp_path, monkeypatch):

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "training_eligible": false,
-  "qualification_status": "pending",
+  "qualification_status": "fixed-partial",
   "seeds": [
     18102027,
     18102028,
@@ -32,7 +32,12 @@
       ],
       "limit_ms": 90000,
       "source": "reports/navigation/2026-10-16-stuck/intentional.bench; reported start (14926,1739,-15914), 28867ms stall at NW_FARM1_PATH_01",
-      "stranger": false
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
     },
     {
       "id": "02-routine-return",
@@ -70,7 +75,8 @@
           "seeds": [
             18102028
           ],
-          "limit_ms": 180000
+          "limit_ms": 180000,
+          "source": "PR574 reports/physics/2026-10-30-routine-return/entry-on-trace.jsonl routine_return_begin at 971d9cd7ad96f92d07e708b490e818f1e63e2855; forest_tree, farm_edge, forest_pine: only NPC and coordinates copied; unsafe farm_field capsule rejected"
         },
         {
           "id": "forest-pine",
@@ -113,7 +119,16 @@
       "prepare_commands": [
         "immortal player on"
       ],
-      "stranger": false
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ],
+      "qualification_rejection": {
+        "reason": "Teacher follow fraction0.282457339 is below the unchanged0.8 threshold over180s; user decision pending",
+        "diagnostic_reference": "/mnt/shared/gothic-ai/nav-live/baseline/teacher/03-follow-hero-recheck-1c9a1fde8d40-a2964efaf4f4"
+      }
     },
     {
       "id": "04-visible-detour",
@@ -136,7 +151,22 @@
         "selection": "Positive native ROCK/FELS/CLIFF sector witness, visible target, complete supported Detour; highest Detour/direct first; teacher success,0falls,minimum edge>=100cm; at most3 teacher candidates; no test routes"
       },
       "stranger": false,
-      "qualification_selection": "confirmed-rock-safe-teacher"
+      "qualification_rejection": {
+        "reason": "no confirmed rock candidate passed the bounded safe teacher check",
+        "native_facts": "/mnt/shared/gothic-ai/nav-live/baseline/qualification/recheck-1c9a1fde8d40-a2964efaf4f4",
+        "candidates_probed": 121,
+        "typed_rock_metadata": 0,
+        "confirmed_rock_sectors": 0,
+        "supported_routes": 93,
+        "visible_goals": 79,
+        "supported_visible_rock_candidates": 0,
+        "rejection_counts": {
+          "unconfirmed_rock_semantics": 121,
+          "unsupported_routes": 28,
+          "invisible_goals": 42
+        },
+        "teacher_attempts": []
+      }
     },
     {
       "id": "05-wall-pocket",
@@ -154,7 +184,12 @@
       ],
       "limit_ms": 90000,
       "source": "New harbour shipyard pocket; preparation pocket-1500-1200: complete Detour52.834m, ratio2.1667, start snap0.171cm, first leg points away from goal; physical wall witness pending",
-      "stranger": false
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
     },
     {
       "id": "06-harbour-water",
@@ -172,7 +207,12 @@
       ],
       "limit_ms": 90000,
       "source": "New harbour candidate from v5 water-probe waypoints; v5 water-scenarios.jsonl contains only train rows, so this pair must be excluded from those rows and physically qualified",
-      "stranger": false
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
     },
     {
       "id": "07-cliff-trail",
@@ -190,7 +230,12 @@
       ],
       "limit_ms": 60000,
       "source": "Safety cliff-bridge-201-back200, link1230208767; new upper-corridor endpoint before descending final leg; goal Y is measured physical floor10587.9795cm from nav-live native probe, replacing Recast Y10614.0605cm; same XZ",
-      "stranger": false
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
     },
     {
       "id": "08-market-crowd",
@@ -211,7 +256,12 @@
         "wait 4000"
       ],
       "source": "New market crossing; preparation census of24hourly windows: maximum6 walkingNPCs at06:59 within30m, displacement>=50cm over10s after4s settle; native routines enabled",
-      "stranger": false
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
     },
     {
       "id": "09-door-stairs",
@@ -234,7 +284,21 @@
         {
           "id": "door",
           "goal": "NW_CITY_REICH02_01",
-          "source": "CITY_REICH02 same house and door; NW_CITY_UPTOWN_PATH_08 outside900.005cm to NW_CITY_REICH02_01 ground floor900.029cm; no staircase"
+          "source": "CITY_REICH02 same house and door; NW_CITY_UPTOWN_PATH_08 outside900.005cm to NW_CITY_REICH02_01 ground floor900.029cm; no staircase",
+          "npc": "VLK_405_FERNANDO",
+          "start": "NW_CITY_UPTOWN_PATH_08",
+          "goal_kind": "point",
+          "time": [
+            12,
+            0
+          ],
+          "limit_ms": 90000,
+          "stranger": false,
+          "seeds": [
+            18102027,
+            18102028,
+            18102029
+          ]
         },
         {
           "id": "stairs",
@@ -292,7 +356,13 @@
         "street_graph_height_range_cm": 15.71,
         "selection": "Same Fernando local/stranger; outdoors,>=40m direct, no stairs; HD and it35 unchanged inputs; BC4 familiar for local and stranger"
       },
-      "stranger": false
+      "stranger": false,
+      "seeds": [
+        18102027,
+        18102028,
+        18102029
+      ]
     }
-  ]
+  ],
+  "places_frozen": true
 }

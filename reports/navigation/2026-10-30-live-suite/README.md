@@ -1,48 +1,51 @@
 # Живой набор навигации
 
-Набор от 30 октября 2026. Состояние на 31 октября: квалифицированы **8/12**
-постановок. Заявка перепроверки `1f348d3ce53e`: **exit 0, 426 с**.
-Лобарт прошёл за **98,033 с**, **981 решение**. №3 не достиг порога следования,
-№4 имеет одно падение, №9 и №10 не поднялись по лестнице REICH02.
+Набор от 30 октября 2026. Проверены **36/36** записей первой части baseline:
+все имеют видео, трассу, `topdown.mp4`, `timeline.png` и `summary.json`.
+HD — **14/18** приездов, it35 — **13/18**. Записи завершены и повторно не снимаются.
+После перепроверки `c7eed385b279` квалифицированы **10/13** постановок:
+дверь REICH02 — **5,233 с / 53 решения**, улица верхнего квартала —
+**42,700 с / 427 решений**. Следование, скала и лестница исключены с причинами.
 
-Baseline квалифицированной части подан: **36 прогонов**, по 18 для HD и it35,
-в заявках `ee9c7f35a9fa`, `368f42fc1773`, `1b7445ad4b57`.
-Перед ними запускаются smoke, повтор seed и сравнение записи вкл/выкл.
-Результаты этих заявок пока не проверены; очередь не опрашивается.
-Остальные места проверяются отдельно, по решениям пользователя ниже.
+Дополнение baseline — **18** записей: дверь HD/it35 ×3 seed; улица HD/it35 ×3,
+BC4 местный/чужак ×3. После них таблица раунда на NAS содержит **54** записи.
+Одна заявка продолжает только недостающие прогоны и после полного дополнения
+удаляет собственные Ryzen-сборки и кэши. До её завершения таблица ниже содержит
+проверенные 36 записей и явно отмечает недостающие 18.
 
 ## Набор и источники
 
 Состав десяти сценариев фиксирован. Старт, цель, NPC, время и seed заданы в
-[`scenarios.json`](../../../scripts/nav-live/scenarios.json). Пока готовится
-геометрия, координаты новых мест являются кандидатами. После подготовки и до
-первого сравнения фиксируются места с полным Detour и проходом v3b.
+[`scenarios.json`](../../../scripts/nav-live/scenarios.json). Места заморожены (`places_frozen: true`): новые раунды сохраняют координаты,
+цели, NPC и время суток; вода, личные точки распорядка и час рынка больше
+не выбираются заново. Три исключённые постановки сохраняют причины отказа;
+их возобновление требует изменения набора по решению пользователя.
 Изменение входов запрещает продолжение старого завершённого раунда.
 
 | № | Сценарий | Место и источник | Что ещё проверить |
 |---|---|---|---|
 | 1 | Малет у забора | `(14926,1739,-15914)` → `FP_ROAM_FARM1_SHEEP_09`; [контроль 28,867 с](../2026-10-16-stuck/README.md); Detour 20,85 м | v3b прошёл за 26,433 с, 265 решений; запись проверена |
 | 2 | Возврат с дороги | Три позиции из [PR #574](https://github.com/kaifaty/GothicAI/pull/574), `reports/physics/2026-10-30-routine-return/entry-on-trace.jsonl` коммита `971d9cd7a`: городской страж у дерева, Лобарт у края поля, Эрол у сосны; отклонения от waynet 11,65 / 12,01 / 16,13 м | Проход v3b к ближайшей точке личного распорядка; Вино заменён из-за заблокированной капсулы, координаты Лобарта скопированы без сдвига |
-| 3 | Спутник за героем | Новый маршрут: рынок → узкие улицы → таверна → рынок | Непрерывность маршрута и проход v3b |
-| 4 | Видимая цель за скалой | Замена только из тех же 121 `detour-val`: положительное имя материала ROCK/FELS/CLIFF из native physics dump | Оба старта PASS имеют падение; новая постановка требует success v3b, 0 падений и кромку ≥1 м |
+| 3 | Спутник за героем | Новый маршрут: рынок → узкие улицы → таверна → рынок | Учитель: 28,246% в полосе при пороге 80%, не квалифицирован |
+| 4 | Видимая цель за скалой | Замена только из тех же 121 `detour-val`: положительное имя материала ROCK/FELS/CLIFF из native physics dump | 121 проба, 0 подтверждённых скал; 0 новых поездок учителя, не квалифицирован |
 | 5 | Тупик у стены | Новая координата `(1500,-186,1200)` у верфи: Detour 52,83 м, отношение 2,1667, snap 0,171 см; первый участок уходит от цели | Сухая опора, физическое подтверждение стены, v3b |
 | 6 | Берег гавани | Новая пара на геометрии водных проб v5: `NW_CITY_WAY_TO_SHIP_08` → `NW_CITY_WAY_TO_SHIP_FISCHER_06` | v3b прошёл за 28,433 с, 0 глубоких заходов и падений |
 | 7 | Тропа над обрывом | Safety-fixture `cliff-bridge-201-back200`, мост, link `1230208767`; [источник](../2026-10-22-teacher-v3b/README.md); верхний участок коридора до спуска, Y цели уточнён по физическому полу с 10614,061 до 10587,980 см, XZ сохранены | Кромка рядом с тропой, безопасный проход v3b |
 | 8 | Рынок с распорядками | Новый переход через `NW_CITY_MERCHANT_PATH_20`, 06:59; максимум 6 движущихся NPC из 24 измеренных часов | Проход v3b; обычные NPC не удаляются и не замораживаются |
-| 9 | Дверь и лестница раздельно | Дверь: тот же REICH02, `NW_CITY_UPTOWN_PATH_08 → NW_CITY_REICH02_01`, первый этаж, Y≈900 см. Лестница: прежние координаты и кадр ниже | Дверь проверяется отдельно. В 45 validation-переходах нет подтверждённого внутреннего подъёма ≥2 м; лестница не квалифицирована |
-| 10 | Местный и чужак | Новый путь Фернандо по улице верхнего квартала: `NW_CITY_UPTOWN_PATH_08 → NW_CITY_UPTOWN_PATH_12`, прямая 40,670 м, граф 51,15 м, диапазон высот 15,71 см | Проверить физический проход без лестниц; затем BC4 местный/чужак |
+| 9 | Дверь и лестница раздельно | Дверь: тот же REICH02, `NW_CITY_UPTOWN_PATH_08 → NW_CITY_REICH02_01`, первый этаж, Y≈900 см. Лестница: прежние координаты и кадр ниже | Дверь прошла за 5,233 с. В 45 validation-переходах нет подтверждённого внутреннего подъёма ≥2 м; лестница не квалифицирована |
+| 10 | Местный и чужак | Новый путь Фернандо по улице верхнего квартала: `NW_CITY_UPTOWN_PATH_08 → NW_CITY_UPTOWN_PATH_12`, прямая 40,670 м, граф 51,15 м, диапазон высот 15,71 см | Учитель прошёл за 42,700 с; новые записи HD/it35 и BC4 местный/чужак |
 
 В `water-scenarios.jsonl` v5 все 98 кандидатов имеют split `train`: отдельного
-водного validation в этом файле нет. Для №6 готовится **новая** пара в гавани;
+водного validation в этом файле нет. Для №6 выбрана **новая** пара в гавани;
 обе ориентации прежних train-пар исключены. Замороженные test-пары читаются
 только как метаданные запрета; test-поездок и записей нет. Ветку routine-return
 и её данные этот набор не изменяет.
 
 Seed: **18102027, 18102028, 18102029**. В №2 каждому seed соответствует одна из
 трёх позиций; остальные сценарии повторяют одно место на всех трёх seed.
-Таким образом, HD и it35 имеют по 30 поездок. В №10 BC4 дополнительно имеет
-3 поездки местным и 3 чужаком. Учитель проходит каждую постановку: 12 ориентиров
-на 10 сценариев с учётом трёх стартов №2.
+В текущей квалифицированной части HD и it35 имеют по **24** поездки,
+BC4 — **3** местным и **3** чужаком. Всего **54**. Дверь и лестница —
+два отдельных варианта №9; исходные 12 постановок стали 13, прошли десять.
 
 ## Команда и хранение
 
@@ -61,8 +64,9 @@ v3b — один эпизод на постановку, всего 12 на 10 �
 Результаты и выбранные места сохраняются на NAS в `qualified-suite.json`,
 а таблица учителя с числами и ссылками — в README раунда. По решению пользователя
 baseline сразу выполняется на **8** квалифицированных постановках, без ожидания
-остальных четырёх. Каждая из трёх заявок содержит неизменяемый снимок набора
-и копию бинарника по SHA-256; поздняя перепроверка их не меняет. Перед первой
+остальных четырёх. Первый baseline был разделён на три заявки; дополнение подаётся одной.
+Каждая содержит неизменяемый снимок набора и копию бинарника по SHA-256;
+поздняя перепроверка их не меняет. Перед первой
 частью выполняется smoke; остальные используют тот же прошедший результат.
 Отказ smoke останавливает baseline, без автоматических повторов той же ошибки.
 Новые прошедшие места добавляются отдельным продолжением, готовые записи
@@ -103,8 +107,11 @@ scripts/nav-live.sh \
 Завершённые данные не перезаписываются. Неполный собственный прогон можно
 повторить; завершённую запись можно дообработать без поездки. Весам, сценарию
 и бинарнику сопоставляются SHA-256. Предел раунда — 5 000 000 000 байт,
-локальный резерв — 20 ГиБ. После полного раунда `--stage clean` удаляет
-собственные build/venv/кэши; исходные веса и соседние задачи не затрагиваются.
+локальный резерв — 20 ГиБ. После полной записи квалифицированной части
+baseline сам удаляет собственные build/venv/кэши. Маркер завершения перечисляет
+исключения и отдельно показывает, что полный набор не квалифицирован.
+Явный `--stage clean` использует те же проверки. NAS, исходные веса и соседние
+задачи не затрагиваются.
 
 Все сценарии имеют `training_eligible:false`; `nav_demos_v4_collect.directory_for`
 запрещает их ID, составные ID вариантов и обе ориентации пар/звеньев маршрута.
@@ -131,28 +138,37 @@ NPC, с высотой самого полигона. Связная назем�
 
 ## Baseline
 
+Числитель — приезды, знаменатель — требуемые seed. Для неполной записи число
+готовых файлов указано отдельно. Медианный и худший seed ранжируются по приезду,
+затем по времени и номеру seed; №2 сохраняет название каждого старта.
+
 | № | Ориентир v3b | HD | it35 (прошлая модель) | BC4 местный | BC4 чужак |
 |---|---|---|---|---|---|
-| 1 | 1/1, 26,433 с | 0/3 | 0/3 | — | — |
-| 2 | 3/3; Лобарт 98,033 с / 981 решение | 0/3 | 0/3 | — | — |
-| 3 | 5,075% в полосе при пороге 80%; не квалифицирован | исключён | исключён | — | — |
-| 4 | после сдвига 10,867 с; падение 1, не квалифицирован | исключён | исключён | — | — |
-| 5 | 1/1, 51,967 с | 0/3 | 0/3 | — | — |
-| 6 | 1/1, 28,433 с | 0/3 | 0/3 | — | — |
-| 7 | 1/1, 8,133 с | 0/3 | 0/3 | — | — |
-| 8 | 1/1, 84,200 с | 0/3 | 0/3 | — | — |
-| 9 | лестница: повторный timeout 90 с; дверь проверяется отдельно | исключён | исключён | — | — |
-| 10 | прежний дом: повторный timeout 90 с; новая уличная пара проверяется | исключён | исключён | исключён | исключён |
+| 1 | 1/1, 26,433 с | 3/3; [медиана 18102029 / 01-maleth-fence: 24.633 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/01-maleth-fence/seed-18102029/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/01-maleth-fence/seed-18102029/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/01-maleth-fence/seed-18102029/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/01-maleth-fence/seed-18102029/summary.json); [худший 18102028 / 01-maleth-fence: 31.700 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/01-maleth-fence/seed-18102028/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/01-maleth-fence/seed-18102028/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/01-maleth-fence/seed-18102028/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/01-maleth-fence/seed-18102028/summary.json) | 3/3; [медиана 18102027 / 01-maleth-fence: 27.100 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/01-maleth-fence/seed-18102027/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/01-maleth-fence/seed-18102027/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/01-maleth-fence/seed-18102027/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/01-maleth-fence/seed-18102027/summary.json); [худший 18102028 / 01-maleth-fence: 27.100 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/01-maleth-fence/seed-18102028/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/01-maleth-fence/seed-18102028/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/01-maleth-fence/seed-18102028/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/01-maleth-fence/seed-18102028/summary.json) | — | — |
+| 2 | 3/3: 17,633 / 98,033 / 19,067 с | 3/3; [медиана 18102029 / 02-routine-return-forest-pine: 14.200 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/02-routine-return-forest-pine/seed-18102029/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/02-routine-return-forest-pine/seed-18102029/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/02-routine-return-forest-pine/seed-18102029/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/02-routine-return-forest-pine/seed-18102029/summary.json); [худший 18102028 / 02-routine-return-farm-edge: 39.733 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/02-routine-return-farm-edge/seed-18102028/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/02-routine-return-farm-edge/seed-18102028/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/02-routine-return-farm-edge/seed-18102028/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/02-routine-return-farm-edge/seed-18102028/summary.json) | 3/3; [медиана 18102027 / 02-routine-return-forest-tree: 24.367 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/02-routine-return-forest-tree/seed-18102027/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/02-routine-return-forest-tree/seed-18102027/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/02-routine-return-forest-tree/seed-18102027/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/02-routine-return-forest-tree/seed-18102027/summary.json); [худший 18102028 / 02-routine-return-farm-edge: 88.833 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/02-routine-return-farm-edge/seed-18102028/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/02-routine-return-farm-edge/seed-18102028/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/02-routine-return-farm-edge/seed-18102028/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/02-routine-return-farm-edge/seed-18102028/summary.json) | — | — |
+| 3 | не квалифицирован: 28,246% <80% | не квалифицирован | не квалифицирован | — | — |
+| 4 | не квалифицирован: 0/121 подтверждений скалы | не квалифицирован | не квалифицирован | — | — |
+| 5 | 1/1, 51,967 с | 2/3; [медиана 18102029 / 05-wall-pocket: 29.367 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/05-wall-pocket/seed-18102029/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/05-wall-pocket/seed-18102029/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/05-wall-pocket/seed-18102029/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/05-wall-pocket/seed-18102029/summary.json); [худший 18102028 / 05-wall-pocket: 90.000 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/05-wall-pocket/seed-18102028/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/05-wall-pocket/seed-18102028/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/05-wall-pocket/seed-18102028/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/05-wall-pocket/seed-18102028/summary.json) | 0/3; [медиана 18102028 / 05-wall-pocket: 90.000 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/05-wall-pocket/seed-18102028/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/05-wall-pocket/seed-18102028/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/05-wall-pocket/seed-18102028/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/05-wall-pocket/seed-18102028/summary.json); [худший 18102029 / 05-wall-pocket: 90.000 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/05-wall-pocket/seed-18102029/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/05-wall-pocket/seed-18102029/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/05-wall-pocket/seed-18102029/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/05-wall-pocket/seed-18102029/summary.json) | — | — |
+| 6 | 1/1, 28,433 с | 3/3; [медиана 18102028 / 06-harbour-water: 46.533 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/06-harbour-water/seed-18102028/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/06-harbour-water/seed-18102028/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/06-harbour-water/seed-18102028/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/06-harbour-water/seed-18102028/summary.json); [худший 18102027 / 06-harbour-water: 46.667 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/06-harbour-water/seed-18102027/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/06-harbour-water/seed-18102027/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/06-harbour-water/seed-18102027/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/06-harbour-water/seed-18102027/summary.json) | 3/3; [медиана 18102028 / 06-harbour-water: 29.467 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/06-harbour-water/seed-18102028/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/06-harbour-water/seed-18102028/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/06-harbour-water/seed-18102028/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/06-harbour-water/seed-18102028/summary.json); [худший 18102029 / 06-harbour-water: 29.800 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/06-harbour-water/seed-18102029/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/06-harbour-water/seed-18102029/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/06-harbour-water/seed-18102029/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/06-harbour-water/seed-18102029/summary.json) | — | — |
+| 7 | 1/1, 8,133 с | 1/3; [медиана 18102027 / 07-cliff-trail: 60.000 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/07-cliff-trail/seed-18102027/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/07-cliff-trail/seed-18102027/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/07-cliff-trail/seed-18102027/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/07-cliff-trail/seed-18102027/summary.json); [худший 18102029 / 07-cliff-trail: 60.000 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/07-cliff-trail/seed-18102029/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/07-cliff-trail/seed-18102029/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/07-cliff-trail/seed-18102029/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/07-cliff-trail/seed-18102029/summary.json) | 1/3; [медиана 18102027 / 07-cliff-trail: 60.000 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/07-cliff-trail/seed-18102027/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/07-cliff-trail/seed-18102027/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/07-cliff-trail/seed-18102027/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/07-cliff-trail/seed-18102027/summary.json); [худший 18102029 / 07-cliff-trail: 60.000 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/07-cliff-trail/seed-18102029/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/07-cliff-trail/seed-18102029/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/07-cliff-trail/seed-18102029/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/07-cliff-trail/seed-18102029/summary.json) | — | — |
+| 8 | 1/1, 84,200 с | 2/3; [медиана 18102029 / 08-market-crowd: 87.733 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/08-market-crowd/seed-18102029/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/08-market-crowd/seed-18102029/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/08-market-crowd/seed-18102029/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/08-market-crowd/seed-18102029/summary.json); [худший 18102028 / 08-market-crowd: 90.000 с](/mnt/shared/gothic-ai/nav-live/baseline/HD/08-market-crowd/seed-18102028/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/HD/08-market-crowd/seed-18102028/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/HD/08-market-crowd/seed-18102028/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/HD/08-market-crowd/seed-18102028/summary.json) | 3/3; [медиана 18102027 / 08-market-crowd: 85.067 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/08-market-crowd/seed-18102027/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/08-market-crowd/seed-18102027/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/08-market-crowd/seed-18102027/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/08-market-crowd/seed-18102027/summary.json); [худший 18102029 / 08-market-crowd: 85.333 с](/mnt/shared/gothic-ai/nav-live/baseline/it35/08-market-crowd/seed-18102029/topdown.mp4), [видео](/mnt/shared/gothic-ai/nav-live/baseline/it35/08-market-crowd/seed-18102029/source.mp4), [timeline](/mnt/shared/gothic-ai/nav-live/baseline/it35/08-market-crowd/seed-18102029/timeline.png), [JSON](/mnt/shared/gothic-ai/nav-live/baseline/it35/08-market-crowd/seed-18102029/summary.json) | — | — |
+| 9 | дверь 1/1, 5,233 с; лестница не квалифицирована | 0/3 записано; дополнение | 0/3 записано; дополнение | — | — |
+| 10 | улица 1/1, 42,700 с | 0/3 записано; дополнение | 0/3 записано; дополнение | 0/3 записано; дополнение | 0/3 записано; дополнение |
 
-В столбцах моделей указано число записанных прогонов; в столбце v3b — результат
-учителя. Таблица медианного и худшего seed со ссылками создаётся обработчиком
-раунда на NAS после записи.
-Первый baseline содержит **36** поездок для №1, трёх стартов №2 и №5–8.
-У №2 три seed распределены по трём позициям; это три поездки на модель,
-а не девять. Новые дверь и лестница — два варианта №9; общее число будущих
-поездок определяется квалификацией, BC4 добавляется только для прошедшего №10.
+Готово **36/54** записей. В этих 36: глубокие заходы — **0**; падения HD — **2**,
+it35 — **0**. Полная таблица с ориентиром, всеми ссылками и новыми записями
+обновляется на NAS: `/mnt/shared/gothic-ai/nav-live/baseline/README.md`.
 
-Повторяемость seed и влияние записи: **не проверены, живой smoke ещё не запускался**.
+Повторяемость: **одинаковый seed дал одинаковые действия; запись вкл/выкл — одинаковые действия**.
+Малет, HD, seed 18102027: три прогона по **9,133 с / 92 решения**; SHA-256
+`actions.txt` во всех трёх — `458694a0ad190875aeb016516db0f2bd27bda2380083b3160174987e33d37b60`.
+
+Заявки первой части: `ee9c7f35a9fa` — exit 0 / 876 с, `368f42fc1773` —
+exit 0 / 1597 с, `1b7445ad4b57` — exit 0 / 1474 с; перепроверка
+`c7eed385b279` — exit 0 / 1224 с. Время gq включает ожидание блокировки
+своей предыдущей фазы. Непосредственные фазы — **875 / 721 / 753 / 471 с**;
+по `runtime.json` учтено **5361/10 800 с**, остаток **5439 с**. Размер раунда
+перед дополнением — **1 066 986 863 байта** из 5 000 000 000.
 
 ## Перепроверка после квалификации
 
@@ -191,25 +207,34 @@ scripts/nav-live.sh \
 Восемь прошедших постановок используют прежний закреплённый бинарник и прежние
 ориентиры; новый бинарник нужен только для шага героя и новых мест.
 
-Для №3 прежний неизменённый порог — **80%** кадров после первого сближения
-в полосе **2–5 м**. Получено **4566/89967 мс = 5,075194%**; по частоте решений
-`summary.json` — **5,222222%**. Герой: средняя скорость **187,818 см/с**, медиана
-**200,000**, максимум **450,002**, при движении ≥20 см/с — **205,141**; выше
-220 см/с он двигался **2,1 с**. Ведомая: средняя **3,968 см/с**, медиана **0**,
-максимум **254,806**, при движении — **112,598**. Стояла **86,9/90 с**;
-`start_not_found` — **862/900** решений. Эти числа не сводят причину отказа
-только к разнице скоростей. Постановка `live-target player-walk` задаёт герою
-**100 см/с**, без бега, с прежними остановками, разворотами и маршрутом.
-Горизонт — **180 с** вместо 90 с, поскольку скорость шага снижена вдвое.
-Политика, учитель и порог следования не меняются.
+Для №3 неизменённый порог — **80%** времени после первого сближения в полосе
+**2–5 м**. Новый учитель: **50 833/179 967 мс = 28,245734%**; `summary.json`
+по частоте решений — **28,277778%**. Средняя дистанция до героя с весами
+по времени — **14,954769 м**, медиана отсчётов — **9,706487 м**.
 
-Для №4 в исходных 121 строке `detour-val`: 58 `cliff_or_ledge`, 51 `unknown`,
-12 `wall_or_fence`, явно подтверждённых камней — 0. Материал `STONE` сам по себе
-не подтверждает скалу. Отдельная заявка получает имена исходных материалов через
-`physics dump`, затем проверяет только положительные ROCK/FELS/CLIFF-свидетельства.
-Максимум три поездки учителя; прошедшим считается только success, 0 падений,
-0 глубоких заходов и измеренная кромка ≥100 см. При отсутствии такого места
-№4 остаётся не квалифицированным с числами, без подмены типом стены или уступа.
+| Метрика скорости | Герой | Ведомая |
+|---|---:|---:|
+| Средняя за весь прогон, м/с | 0,955311 | 0,932754 |
+| Медиана, м/с | 0,999999 | 0,195633 |
+| Максимум, м/с | 1,000111 | 3,683058 |
+| Средняя при движении ≥0,2 м/с, м/с | 0,998000 | 1,862589 |
+
+Герой шёл **100 см/с**, без бега, с прежними остановками и разворотами;
+горизонт **180 с**. Ведомая стояла **90 с**, кружилась **10,7 с**;
+`start_not_found` — **755/1800** решений. Падения и глубокие заходы — **0**.
+Средняя дистанция получена из `target-trajectory.txt` (левый отсчёт, вес —
+длительность интервала); скорость героя — из смещения цели, ведомой —
+из `live-decisions.jsonl`. Дальнейшее решение по этому сценарию — пользователю.
+
+Для №4 новая поездка учителя **не запускалась**: из **121** validation-пары
+**93** имеют поддерживаемый Detour, у **79** цель видна; положительных
+ROCK/FELS/CLIFF-свидетельств — **0**, кандидатов на безопасный проход — **0**.
+Из 121 физического луча 66 дали попадания, в 56 из этих попаданий имя сектора
+пустое; оставшиеся 10 содержат имена стен. Это отсутствие подтверждения типа,
+а не доказательство отсутствия камней. Неоднозначный STONE не принимался.
+Числа и пустой список `teacher_attempts` сохранены в
+`baseline/qualification/recheck-1c9a1fde8d40-a2964efaf4f4/rock-attempts.json`
+на NAS. №4 не добавляется в baseline.
 
 Для лестницы проверочные 45 переходов относятся к TROLLAREA_PORTAL/PORTALTEMPEL,
 а не лестницам внутри дома. Подтверждённого подъёма внутри здания ≥200 см нет.
@@ -219,6 +244,17 @@ scripts/nav-live.sh \
 
 ## Проверки
 
+- Дополнение: целевые `test_nav_drive.py` / `test_nav_demos_v4_collect.py`
+  с фильтром `live_` — **6 passed**, 140 deselected, **0,84 с**. Существующий
+  fixture проверяет сохранение 36 готовых и добавление 18, включая шесть BC4,
+  правильный ориентир местного/чужака, завершение квалифицированной части,
+  уборку и её продолжение после обрыва, повтор команды после уборки,
+  неизменность мест/часа рынка и отдельную дверь без метаданных распорядка.
+- Первая часть baseline: **36/36** записей прошли проверку файлов, завершённости
+  видео/трассы и идентичности входов. Дополнение содержит только **18** недостающих
+  записей. Mac-сборка этого worktree удалена: **434 229 248 байт**, также удалены
+  собственные Python/pytest-кэши. Ryzen-уборка выполняется внутри завершающей заявки
+  только при готовности **54/54** и совпадении набора, весов и smoke.
 - Текущие изменения: целевые `test_nav_drive.py` / `test_nav_demos_v4_collect.py`
   с фильтром `live_` — **6 passed**, 140 deselected, 0,61 с. Проверяются запись
   и отрисовка fixture, запрет train, закрепление старого бинарника для восьми

@@ -435,7 +435,7 @@ def report(args, cases, policies, bc4):
              '|---|---|' + '---|' * len(columns)]
     unresolved = {row['id']: row for row in suite.get('unresolved_geometry', [])}
     teacher_passed = 0
-    complete = bool(policies) and len(eligible) == len(cases)
+    complete = bool(policies) and bool(eligible)
     for number in range(1, 11):
         cells = []
         scenario = next(case for case in cases if case['number'] == number)
@@ -478,7 +478,7 @@ def report(args, cases, policies, bc4):
                           if 'candidates_probed' in failure else '')
                 facts = f"{case['id']}: unqualified; {failure['reason']}{counts}"
                 if failure.get('topdown_frame'):
-                    frame = Path(failure['topdown_frame']).relative_to(args.output).as_posix()
+                    frame = os.path.relpath(failure['topdown_frame'], args.output)
                     facts += f'; [reference frame]({frame})'
                 if failure.get('start_cm') and failure.get('goal_cm'):
                     facts += f"; start {failure['start_cm']}; goal {failure['goal_cm']}"
@@ -488,6 +488,9 @@ def report(args, cases, policies, bc4):
             rejected = setup_rejection(directory)
             if rejected or (processed(directory) and raw_complete(directory)):
                 outcome = teacher_outcome(args, case)
+                if case['id'] in eligible_ids and (not outcome['passed'] or
+                        read_json(directory / 'identity.json').get('actual') != actual_inputs(args, case, None, case['seeds'][0])):
+                    complete = False
                 teacher_passed += int(outcome['passed'])
                 relative = directory.relative_to(args.output).as_posix()
                 facts = (f"{case['id']}: {'passed' if outcome['passed'] else 'unqualified'}; "
@@ -507,6 +510,8 @@ def report(args, cases, policies, bc4):
                         f"[timeline]({relative}/timeline.png), [summary]({relative}/summary.json), "
                         f"[actions]({relative}/actions.txt), [Detour]({relative}/live-format.json)")
             else:
+                if case['id'] in eligible_ids:
+                    complete = False
                 references.append(f"{case['id']}: not recorded")
         lines.append(f"| {number}. {scenario['name']} | " + '<br>'.join(references) + ' |'
                      + (' ' + ' | '.join(cells) + ' |' if cells else ''))
@@ -526,8 +531,10 @@ def report(args, cases, policies, bc4):
                       f"[timeline]({relative}/timeline.png), [summary]({relative}/summary.json).", '']
         if comparison.get('unresolved'):
             lines += ['Unresolved placements: ' + ', '.join(value['id'] for value in comparison['unresolved']) + '.', '']
+    complete = complete and smoke_gate(args, policies[0]) is True
     lines += [f'Teacher placements passed: {teacher_passed}/{len(cases)}.',
               f'Eligible placements: {len(eligible)}/{len(cases)}; excluded placements are omitted from learner runs.',
+              f'Qualified subset complete: {str(complete).lower()}; full suite qualified: {str(len(eligible) == len(cases)).lower()}.',
               f'Completed learner runs: {sum(completed_run(args, c, m, s) for c, m, s in all_runs)}/{len(all_runs) or getattr(args, "expected_learner_runs", 0)}.',
               f'Storage: {check_space(args.output)} bytes; limit {MAX_BYTES} bytes.', '']
     temporary = args.output / f'README.md.{os.getpid()}.tmp'
@@ -538,6 +545,76 @@ def report(args, cases, policies, bc4):
     return complete
 
 
+def cleanup(runtime, output, suite_path=None):
+    runtime, output = Path(runtime), Path(output)
+    marker_path = output / 'complete.json'
+    if not marker_path.is_file():
+        print('Local cleanup skipped: accepted runs are incomplete.', flush=True)
+        return False
+    marker = read_json(marker_path)
+    suite_path = Path(suite_path or marker['suite_path'])
+    gate = read_json(output / 'smoke.json')
+    suite = read_json(suite_path)
+    digest = sha256(suite_path)
+    if (not marker.get('complete') or not marker.get('qualified_subset_complete')
+            or marker.get('completed') != marker.get('expected') or not marker.get('expected')
+            or marker.get('suite_sha256') != digest or gate.get('suite_sha256') != digest
+            or not gate.get('complete') or gate.get('model_sha256') != marker['weights'][0]
+            or gate.get('binary_sha256') != marker.get('evaluation_binary_sha256')
+            or suite['evaluation_binary']['sha256'] != marker.get('evaluation_binary_sha256')):
+        print('Local cleanup skipped: completion and smoke identities differ.', flush=True)
+        return False
+    if marker.get('local_cleanup', {}).get('status') == 'complete':
+        return True
+    pins = [suite['evaluation_binary']]
+    pins += [case['evaluation_binary'] for case in eligible_cases(suite, suite_cases(suite)) if case.get('evaluation_binary')]
+    started = marker.get('local_cleanup', {}).get('status') == 'started'
+    if any(sha256(pin['path']) != pin['sha256'] for pin in pins if Path(pin['path']).exists() or not started):
+        raise ValueError('Local cleanup refused: an evaluation binary differs from its snapshot')
+    names = ('build', 'binaries', 'base-cache', '.venv', 'uv-cache', 'navmesh-cache',
+             'requalification-worker', 'qualification-worker', 'preparation-worker')
+    marker['local_cleanup'] = dict(status='started', paths=[str(runtime / name) for name in names])
+    write_json(marker_path, marker)
+    for name in names:
+        path = runtime / name
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            shutil.rmtree(path)
+    for path in [*runtime.glob('build-passed-*'), runtime / 'build-snapshot']:
+        path.unlink(missing_ok=True)
+    marker['local_cleanup']['status'] = 'complete'
+    write_json(marker_path, marker)
+    print('Local build, binaries and task caches removed; source snapshots and NAS outputs retained.', flush=True)
+    return True
+
+
+def completed_round(runtime, output, weights):
+    output = Path(output)
+    path = output / 'complete.json'
+    if not path.is_file():
+        return False
+    marker = read_json(path)
+    if not marker.get('qualified_subset_complete') or marker.get('local_cleanup', {}).get('status') not in ('started', 'complete'):
+        return False
+    if sha256(output / 'qualified-suite.json') != marker.get('qualified_suite_sha256'):
+        return False
+    suite = read_json(marker['suite_path'])
+    policies, bc4 = models(weights, suite)
+    if [model['sha256'] for model in policies] != marker['weights'] or bc4['sha256'] != marker['bc4_sha256']:
+        raise ValueError('Policy weights changed after cleanup; use a new round label')
+    if any(sha256(suite['inputs'][name]) != digest for name, digest in marker['input_sha256'].items()):
+        raise ValueError('Frozen inputs changed after cleanup; use a new round label')
+    planned = list(runs(eligible_cases(suite, suite_cases(suite)), policies, bc4))
+    names = ('source.mp4', 'episode.json', 'actions.txt', 'trajectory.txt',
+             'live-format.json', 'live-decisions.jsonl', 'live-observations.bin.gz')
+    if len(planned) != marker['expected'] or any(not processed(directory) or
+            not all((directory / name).is_file() and (directory / name).stat().st_size for name in names)
+            for case, model, seed in planned for directory in [run_directory(output, case, model, seed)]):
+        return False
+    return cleanup(Path(runtime), output, Path(marker['suite_path']))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage', choices=('teacher', 'smoke', 'baseline', 'report'))
@@ -545,7 +622,7 @@ def main(argv=None):
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--weights', required=True)
-    parser.add_argument('--shard', type=int, choices=range(3), default=0)
+    parser.add_argument('--shard', type=int, choices=(-1, 0, 1, 2), default=-1)
     args = parser.parse_args(argv)
     if any(not path.is_absolute() for path in (args.suite, args.runtime, args.output)):
         parser.error('Suite, runtime and output paths must be absolute')
@@ -604,6 +681,7 @@ def main(argv=None):
         return 0 if validated and episode['success'] and summary.get('deep_water_entries') in (0, None) else 2
     policies, bc4 = models(args.weights, suite)
     smoke_complete = True
+    reused_runs = newly_completed_runs = 0
     if args.stage == 'smoke':
         smoke_complete = smoke(args, eligible, policies)
     elif args.stage == 'baseline':
@@ -614,17 +692,27 @@ def main(argv=None):
             report(args, cases, policies, bc4)
             return 2
         for index, (case, model, seed) in enumerate(runs(eligible, policies, bc4)):
-            if index % 3 != args.shard:
+            if args.shard >= 0 and index % 3 != args.shard:
+                continue
+            if completed_run(args, case, model, seed):
+                reused_runs += 1
                 continue
             # Scenario variants have an independent teacher path.
-            base_id = case['id'].removesuffix('-local').removesuffix('-stranger') if model['name'] == 'bc4' else case['id']
+            base_id = case['id'].rsplit('-', 1)[0] if model['name'] == 'bc4' else case['id']
             reference_case = next(row for row in cases if row['id'] == base_id)
             reference = teacher_directory(args, reference_case)
             run_episode(args, case, model, seed, run_directory(args.output, case, model, seed), reference)
+            newly_completed_runs += 1
     complete = report(args, cases, policies, bc4)
-    if complete and not suite.get('semantic_confirmation_required') and read_json(args.output / 'smoke.json').get('complete'):
-        write_json(args.output / 'complete.json', dict(schema_version=1, complete=True,
-            suite_sha256=sha256(args.suite), weights=[model['sha256'] for model in policies],
+    if complete:
+        expected = len(list(runs(eligible, policies, bc4)))
+        write_json(args.output / 'complete.json', dict(schema_version=1, complete=True, qualified_subset_complete=True,
+            full_suite_qualified=len(eligible) == len(cases),
+            excluded_placements=[case['id'] for case in cases if case not in eligible], completed=expected, expected=expected,
+            reused_runs=reused_runs, newly_completed_runs=newly_completed_runs,
+            suite_path=str(args.suite), suite_sha256=sha256(args.suite), evaluation_binary_sha256=sha256(args.binary),
+            qualified_suite_sha256=suite.get('qualified_suite_sha256', sha256(args.suite)), input_sha256=args.input_sha256,
+            weights=[model['sha256'] for model in policies],
             bc4_sha256=bc4['sha256']))
     return 0 if smoke_complete else 2
 
