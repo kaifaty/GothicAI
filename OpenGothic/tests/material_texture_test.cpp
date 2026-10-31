@@ -700,10 +700,75 @@ void textureResidency(Tempest::Device& device, const Fixture& fixture) {
   unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
   }
 
+Tempest::ComputePipeline descriptorColorProbe(Tempest::Device& device) {
+  // glslangValidator -V -Os; embedded to keep this contract self-contained.
+  // #version 450
+  // #extension GL_EXT_nonuniform_qualifier : require
+  // #extension GL_EXT_samplerless_texture_functions : require
+  // layout(local_size_x=2) in;
+  // layout(binding=0) uniform texture2D images[];
+  // layout(binding=1, std430) buffer Result { uint rgba[2]; } result;
+  // void main() {
+  //   uint i=gl_GlobalInvocationID.x;
+  //   result.rgba[i]=packUnorm4x8(texelFetch(images[nonuniformEXT(i)],ivec2(0),0));
+  // }
+  static const uint32_t code[]={
+    0x07230203u,0x00010000u,0x0008000bu,0x0000002bu,0x00000000u,0x00020011u,0x00000001u,0x00020011u,
+    0x000014b5u,0x00020011u,0x000014b6u,0x00020011u,0x000014bbu,0x0008000au,0x5f565053u,0x5f545845u,
+    0x63736564u,0x74706972u,0x695f726fu,0x7865646eu,0x00676e69u,0x0006000bu,0x00000001u,0x4c534c47u,
+    0x6474732eu,0x3035342eu,0x00000000u,0x0003000eu,0x00000000u,0x00000001u,0x0006000fu,0x00000005u,
+    0x00000004u,0x6e69616du,0x00000000u,0x0000000bu,0x00060010u,0x00000004u,0x00000011u,0x00000002u,
+    0x00000001u,0x00000001u,0x00030003u,0x00000002u,0x000001c2u,0x00080004u,0x455f4c47u,0x6e5f5458u,
+    0x6e756e6fu,0x726f6669u,0x75715f6du,0x66696c61u,0x00726569u,0x000b0004u,0x455f4c47u,0x735f5458u,
+    0x6c706d61u,0x656c7265u,0x745f7373u,0x75747865u,0x665f6572u,0x74636e75u,0x736e6f69u,0x00000000u,
+    0x00040005u,0x00000004u,0x6e69616du,0x00000000u,0x00080005u,0x0000000bu,0x475f6c67u,0x61626f6cu,
+    0x766e496cu,0x7461636fu,0x496e6f69u,0x00000044u,0x00040005u,0x00000012u,0x75736552u,0x0000746cu,
+    0x00050006u,0x00000012u,0x00000000u,0x61626772u,0x00000000u,0x00040005u,0x00000014u,0x75736572u,
+    0x0000746cu,0x00040005u,0x0000001cu,0x67616d69u,0x00007365u,0x00040047u,0x0000000bu,0x0000000bu,
+    0x0000001cu,0x00040047u,0x00000011u,0x00000006u,0x00000004u,0x00030047u,0x00000012u,0x00000003u,
+    0x00050048u,0x00000012u,0x00000000u,0x00000023u,0x00000000u,0x00040047u,0x00000014u,0x00000021u,
+    0x00000001u,0x00040047u,0x00000014u,0x00000022u,0x00000000u,0x00040047u,0x0000001cu,0x00000021u,
+    0x00000000u,0x00040047u,0x0000001cu,0x00000022u,0x00000000u,0x00030047u,0x0000001eu,0x000014b4u,
+    0x00030047u,0x00000020u,0x000014b4u,0x00030047u,0x00000021u,0x000014b4u,0x00040047u,0x0000002au,
+    0x0000000bu,0x00000019u,0x00020013u,0x00000002u,0x00030021u,0x00000003u,0x00000002u,0x00040015u,
+    0x00000006u,0x00000020u,0x00000000u,0x00040017u,0x00000009u,0x00000006u,0x00000003u,0x00040020u,
+    0x0000000au,0x00000001u,0x00000009u,0x0004003bu,0x0000000au,0x0000000bu,0x00000001u,0x0004002bu,
+    0x00000006u,0x0000000cu,0x00000000u,0x00040020u,0x0000000du,0x00000001u,0x00000006u,0x0004002bu,
+    0x00000006u,0x00000010u,0x00000002u,0x0004001cu,0x00000011u,0x00000006u,0x00000010u,0x0003001eu,
+    0x00000012u,0x00000011u,0x00040020u,0x00000013u,0x00000002u,0x00000012u,0x0004003bu,0x00000013u,
+    0x00000014u,0x00000002u,0x00040015u,0x00000015u,0x00000020u,0x00000001u,0x0004002bu,0x00000015u,
+    0x00000016u,0x00000000u,0x00030016u,0x00000018u,0x00000020u,0x00090019u,0x00000019u,0x00000018u,
+    0x00000001u,0x00000000u,0x00000000u,0x00000000u,0x00000001u,0x00000000u,0x0003001du,0x0000001au,
+    0x00000019u,0x00040020u,0x0000001bu,0x00000000u,0x0000001au,0x0004003bu,0x0000001bu,0x0000001cu,
+    0x00000000u,0x00040020u,0x0000001fu,0x00000000u,0x00000019u,0x00040017u,0x00000022u,0x00000015u,
+    0x00000002u,0x0005002cu,0x00000022u,0x00000023u,0x00000016u,0x00000016u,0x00040017u,0x00000024u,
+    0x00000018u,0x00000004u,0x00040020u,0x00000027u,0x00000002u,0x00000006u,0x0004002bu,0x00000006u,
+    0x00000029u,0x00000001u,0x0006002cu,0x00000009u,0x0000002au,0x00000010u,0x00000029u,0x00000029u,
+    0x00050036u,0x00000002u,0x00000004u,0x00000000u,0x00000003u,0x000200f8u,0x00000005u,0x00050041u,
+    0x0000000du,0x0000000eu,0x0000000bu,0x0000000cu,0x0004003du,0x00000006u,0x0000000fu,0x0000000eu,
+    0x00040053u,0x00000006u,0x0000001eu,0x0000000fu,0x00050041u,0x0000001fu,0x00000020u,0x0000001cu,
+    0x0000001eu,0x0004003du,0x00000019u,0x00000021u,0x00000020u,0x0007005fu,0x00000024u,0x00000025u,
+    0x00000021u,0x00000023u,0x00000002u,0x00000016u,0x0006000cu,0x00000006u,0x00000026u,0x00000001u,
+    0x00000037u,0x00000025u,0x00060041u,0x00000027u,0x00000028u,0x00000014u,0x00000016u,0x0000000fu,
+    0x0003003eu,0x00000028u,0x00000026u,0x000100fdu,0x00010038u,
+    };
+  return device.pipeline(device.shader(code,sizeof(code)));
+  }
+
 void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
-  const auto color=mipDds(0x31545844,256,256,9);
+  auto color=mipDds(0x31545844,256,256,9);
   const auto maps=mipDds(0x35545844,256,256,9);
-  const auto single=mipDds(0x31545844,256,256,1);
+  auto single=mipDds(0x31545844,256,256,1);
+  const auto paint=[](std::vector<uint8_t>& bytes, uint16_t full, uint16_t tail) {
+    for(size_t at=128;at<bytes.size();at+=8) {
+      const auto rgb=at<128+mipBytes(256,256,8) ? full : tail;
+      std::fill_n(bytes.begin()+std::ptrdiff_t(at),8,uint8_t(0));
+      bytes[at]=bytes[at+2]=uint8_t(rgb);
+      bytes[at+1]=bytes[at+3]=uint8_t(rgb>>8);
+      }
+    };
+  paint(color,0xf800,0x07e0); // Red Full, green Tail.
+  paint(single,0x001f,0x001f); // Unchanged blue neighbour.
   const auto write=[&](const char* name, const std::vector<uint8_t>& bytes) {
     textFile(fixture.root/"materials"/name,
              {reinterpret_cast<const char*>(bytes.data()),bytes.size()});
@@ -750,22 +815,51 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
   StaticMesh mesh(material,std::move(vertices),{0,1,2});
   DrawBuckets buckets;
   auto bucket=buckets.alloc(material,mesh);
+  auto unchangedBucket=buckets.alloc(noTail,mesh);
+  const Tempest::Detail::ResourcePtr<Tempest::Texture2d> unchangedPayload(*noTail.tex);
   const auto* bucketIdentity=&*bucket;
   const auto bucketId=bucket.toInt();
-  const auto commit=[&] {
+  const auto commit=[&](uint8_t frame=0) {
     auto command=device.commandBuffer();
     bool changed=false;
     {
     auto encoder=command.startEncoding(device);
-    changed=buckets.commit(encoder,0);
+    changed=buckets.commit(encoder,frame);
     }
     device.submit(command).wait();
     return changed;
     };
   require(commit() && !commit(),"mip fixture must start with stable bucket descriptors");
-  if(Shaders::options().doBindless)
-    require(!buckets.textures().isEmpty() && !buckets.normals().isEmpty() && !buckets.orm().isEmpty(),
-            "mip fixture must retain real bindless arrays for its albedo, normal and ORM");
+  require(Shaders::options().doBindless && !buckets.textures().isEmpty() &&
+          !buckets.normals().isEmpty() && !buckets.orm().isEmpty(),
+          "mip fixture must exercise real bindless arrays for its albedo, normal and ORM");
+  for(uint8_t frame=1;frame<Resources::MaxFramesInFlight;++frame)
+    require(commit(frame),"each frame bank must initialize its texture descriptors");
+  const auto probe=descriptorColorProbe(device);
+  const auto encodeProbe=[&](Tempest::CommandBuffer& command, const Tempest::StorageBuffer& output) {
+    auto encoder=command.startEncoding(device);
+    encoder.setPipeline(probe);
+    encoder.setBinding(0,buckets.textures());
+    encoder.setBinding(1,output);
+    encoder.dispatch(1);
+    };
+  const auto checkColors=[&](uint32_t first) {
+    auto output=device.ssbo(Tempest::Uninitialized,2*sizeof(uint32_t));
+    auto command=device.commandBuffer();
+    encodeProbe(command,output);
+    device.submit(command).wait();
+    std::array<uint32_t,2> colors{};
+    device.readBytes(output,colors.data(),sizeof(colors));
+    require(colors==std::array<uint32_t,2>{first,0xffff0000u} && unchangedBucket->mat==noTail &&
+            unchangedPayload==Tempest::Detail::ResourcePtr<Tempest::Texture2d>(*noTail.tex),
+            "a partial descriptor update must sample the changed GPU image and preserve its neighbour");
+    };
+  require(!commit(0),"returning to an unchanged frame bank must not rewrite descriptors");
+  checkColors(0xff00ff00u);
+  auto oldOutput=device.ssbo(Tempest::Uninitialized,2*sizeof(uint32_t));
+  auto oldCommand=device.commandBuffer();
+  encodeProbe(oldCommand,oldOutput);
+  uint8_t descriptorFrame=1;
   ChunkTable table;
   table.entries.push_back({{0,0},"",{0,0,0},{1,1,0},1});
   ChunkResidency residency(table);
@@ -789,9 +883,11 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
       }
     require(wantFull ? full() : tail(),"requested mip replacements must finish through the frame queue");
     require(material==copy && bucket->mat==copy && mesh.sub[0].material==copy &&
-            &*bucket==bucketIdentity && bucket.toInt()==bucketId && buckets.buckets().size()==1,
+            &*bucket==bucketIdentity && bucket.toInt()==bucketId && buckets.buckets().size()==2,
             "mip replacement must preserve material pointers and the original mesh and bucket");
-    require(commit() && !commit(),"mip replacement must refresh descriptors once without rebuilding buckets");
+    require(commit(descriptorFrame) && !commit(descriptorFrame),
+            "mip replacement must refresh descriptors once without rebuilding buckets");
+    checkColors(wantFull ? 0xff0000ffu : 0xff00ff00u);
     };
 
   Resources::textureDemand(material,Resources::TextureCategory::Static,true,2);
@@ -805,9 +901,20 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
   waitFor(true);
   require(Resources::textureStats().promoted==3 && Resources::textureStats().nearTailCount==0,
           "promotion must complete every map and clear Near textures on Tail");
-  device.waitIdle();
+  const auto retiredTail=Resources::textureStats().retiredBytes;
+  require(retiredTail>0,"the old frame bank must retain retired Tail images before its fence");
+  Resources::resetRecycled(1);
+  require(Resources::textureStats().retiredBytes==retiredTail,
+          "another frame fence must not release images referenced by the old bank");
+  auto oldFence=device.submit(oldCommand);
+  oldFence.wait();
+  std::array<uint32_t,2> oldColors{};
+  device.readBytes(oldOutput,oldColors.data(),sizeof(oldColors));
+  require(oldColors==std::array<uint32_t,2>{0xff00ff00u,0xffff0000u},
+          "a command encoded with the old bank must still sample Tail after a new bank publishes Full");
   Resources::resetRecycled(0);
   require(Resources::textureStats().retiredBytes==0,"completed initial mip replacements must be recyclable");
+  descriptorFrame=0;
 
   Resources::textureDemand(material,Resources::TextureCategory::Static,true,3);
   Resources::textureDemand(material,Resources::TextureCategory::Static,false,1);
@@ -860,6 +967,7 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
   body.setTextureOwner(farOwner,false);
   require(Resources::textureStats().promotionQueue==3,
           "the hero's always-Full ownership must request Full even in the same Far cell");
+  descriptorFrame=1;
   waitFor(true);
   body.setTextureOwner({float(8*ChunkId::Size+1),0,0},false);
   require(full() && Resources::texturesReady(),

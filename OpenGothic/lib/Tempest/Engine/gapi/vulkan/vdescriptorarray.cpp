@@ -6,11 +6,13 @@
 #include "vtexture.h"
 #include "vaccelerationstructure.h"
 
+#include <stdexcept>
+
 using namespace Tempest;
 using namespace Tempest::Detail;
 
 VDescriptorArray::VDescriptorArray(VDevice &dev, AbstractGraphicsApi::Texture **tex, size_t cnt, uint32_t mipLevel, const Sampler &smp)
-  : dev(dev), cnt(cnt) {
+  : dev(dev), cnt(cnt), sampler(dev.samplers.get(smp)), mipLevel(mipLevel), textureArray(true) {
   // Roundup a little, to avoid spamming of layouts
   const uint32_t cntRound = dev.roundUpDescriptorCount(ShaderReflection::Texture, cnt);
 
@@ -20,7 +22,7 @@ VDescriptorArray::VDescriptorArray(VDevice &dev, AbstractGraphicsApi::Texture **
   }
 
 VDescriptorArray::VDescriptorArray(VDevice &dev, AbstractGraphicsApi::Texture **tex, size_t cnt, uint32_t mipLevel)
-  : dev(dev), cnt(cnt) {
+  : dev(dev), cnt(cnt), mipLevel(mipLevel), textureArray(true) {
   // Roundup a little, to avoid spamming of layouts
   const uint32_t cntRound = dev.roundUpDescriptorCount(ShaderReflection::Image, cnt);
 
@@ -47,6 +49,28 @@ VDescriptorArray::~VDescriptorArray() {
 
 size_t VDescriptorArray::size() const {
   return cnt;
+  }
+
+void VDescriptorArray::setTexture(size_t index, AbstractGraphicsApi::Texture* texture) {
+  if(!textureArray)
+    throw std::system_error(GraphicsErrc::UnsupportedExtension,"texture update of a buffer descriptor array");
+  if(index>=cnt)
+    throw std::out_of_range("descriptor array index");
+  auto* native=reinterpret_cast<VTexture*>(texture);
+  VkDescriptorImageInfo image{};
+  image.imageLayout=native!=nullptr ? native->defaultLayout() : VK_IMAGE_LAYOUT_UNDEFINED;
+  image.imageView=native!=nullptr ? native->view(ComponentMapping(),mipLevel,false,false) : VK_NULL_HANDLE;
+  image.sampler=sampler;
+  assert(native==nullptr || native->nonUniqId==0);
+  VkWriteDescriptorSet write{};
+  write.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.dstSet=dset;
+  write.dstBinding=0;
+  write.dstArrayElement=uint32_t(index);
+  write.descriptorType=sampler!=VK_NULL_HANDLE ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  write.descriptorCount=1;
+  write.pImageInfo=&image;
+  vkUpdateDescriptorSets(dev.device.impl,1,&write,0,nullptr);
   }
 
 void VDescriptorArray::alloc(VkDescriptorSetLayout lay, VDevice &dev, ShaderReflection::Class cls, size_t cnt) {
@@ -138,7 +162,7 @@ VDescriptorHeapArray::VDescriptorHeapArray(VDevice& dev, AbstractGraphicsApi::Te
   }
 
 VDescriptorHeapArray::VDescriptorHeapArray(VDevice& dev, AbstractGraphicsApi::Texture** tex, size_t cnt, uint32_t mipLevel, const Sampler* sampler)
-  : dev(dev), cnt(uint32_t(cnt)) {
+  : dev(dev), cnt(uint32_t(cnt)), mipLevel(mipLevel), textureArray(true) {
   //NOTE: no bindless storage image
   try {
     auto alloc = dev.descAlloc.alloc(tex, cnt, mipLevel);
@@ -182,6 +206,14 @@ VDescriptorHeapArray::VDescriptorHeapArray(VDevice& dev, AbstractGraphicsApi::Bu
 
 VDescriptorHeapArray::~VDescriptorHeapArray() {
   clear();
+  }
+
+void VDescriptorHeapArray::setTexture(size_t index, AbstractGraphicsApi::Texture* texture) {
+  if(!textureArray)
+    throw std::system_error(GraphicsErrc::UnsupportedExtension,"texture update of a buffer descriptor array");
+  if(index>=cnt)
+    throw std::out_of_range("descriptor array index");
+  dev.descAlloc.set(dPtrR+uint32_t(index),texture,mipLevel);
   }
 
 void VDescriptorHeapArray::clear() {

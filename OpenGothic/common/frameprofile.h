@@ -25,10 +25,12 @@ enum class Zone : size_t {
   TextureUpdate,
   // Demand elapsed sums include animation workers and can overlap.
   TextureDemand,
+  BindlessRebuild, BindlessPatch,
   EncodeShadows, EncodeMain, EncodeWater, EncodePost, EncodeUi, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
-  PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, DispatchCalls, Count };
+  PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, DispatchCalls,
+  BindlessTextureSlots, BindlessBufferSlots, BindlessPatchedSlots, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };

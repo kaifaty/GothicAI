@@ -158,6 +158,7 @@ class Resources final {
       };
     static TextureStats              textureStats();
     static uint64_t                  textureGeneration();
+    static std::vector<const Tempest::Texture2d*> textureChanges(uint64_t since);
     static bool                      texturesReady();
     static Tempest::TextureFormat    textureFormat(const Tempest::Texture2d* texture);
     class TextureLoadScope {
@@ -333,6 +334,7 @@ class Resources final {
     void                 retireTexture(Tempest::Texture2d&& texture);
     void                 publishTexture();
     struct TextureRecord;
+    void                 notifyTextureChanged(TextureRecord& record);
     void                 queueTexture(TextureRecord& record);
     void                 unqueueTexture(TextureRecord& record);
     void                 updateNearTailTime();
@@ -421,7 +423,7 @@ class Resources final {
       std::chrono::steady_clock::time_point demoteAt{};
       TextureCategory category = TextureCategory::Other;
       TextureSource sourceKind = TextureSource::Other;
-      uint64_t lastDemand = 0, bytes = 0;
+      uint64_t lastDemand = 0, bytes = 0, changedGeneration = 0;
       bool wanted() const;
       };
     struct TextureReload {
@@ -436,6 +438,7 @@ class Resources final {
       std::weak_ptr<int> queued;
       };
     std::unordered_map<const Tempest::Texture2d*,TextureRecord> textureRecords;
+    std::map<std::pair<uint64_t,uintptr_t>,const Tempest::Texture2d*> changedTextures;
     std::map<std::pair<uint64_t,uintptr_t>,TextureRecord*> textureIdle;
     std::set<TextureRecord*> textureMissing;
     std::set<TextureRecord*> texturePromotions;

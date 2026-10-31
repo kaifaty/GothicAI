@@ -772,7 +772,7 @@ Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forc
         record.resident=true;
         record.tail=false;
         record.bytes=LoadProbe::textureBytes(*record.texture);
-        texturePayloadChanged=true;
+        notifyTextureChanged(record);
         ++texturesPromoted;
         }
       queueTexture(record);
@@ -1466,7 +1466,7 @@ void Resources::finishTextureLoading() {
       ++inst->texturesPromoted;
     record.tail=false;
     record.bytes=LoadProbe::textureBytes(*record.texture);
-    inst->texturePayloadChanged=true;
+    inst->notifyTextureChanged(record);
     inst->queueTexture(record);
     };
   size_t slot=0;
@@ -1545,6 +1545,17 @@ uint64_t Resources::textureGeneration() {
   return inst->textureEpoch;
   }
 
+std::vector<const Texture2d*> Resources::textureChanges(uint64_t since) {
+  if(inst==nullptr)
+    return {};
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  std::vector<const Texture2d*> changed;
+  const auto first=inst->changedTextures.upper_bound({since,std::numeric_limits<uintptr_t>::max()});
+  for(auto it=first;it!=inst->changedTextures.end();++it)
+    changed.push_back(it->second);
+  return changed;
+  }
+
 bool Resources::texturesReady() {
   if(inst==nullptr || inst->dev==nullptr)
     return true;
@@ -1617,6 +1628,14 @@ void Resources::retireTexture(Texture2d&& texture) {
   queue.textures.emplace_back(std::move(texture));
   }
 
+void Resources::notifyTextureChanged(TextureRecord& record) {
+  const auto identity=reinterpret_cast<uintptr_t>(record.texture);
+  changedTextures.erase({record.changedGeneration,identity});
+  record.changedGeneration=textureEpoch+1;
+  changedTextures.emplace(std::make_pair(record.changedGeneration,identity),record.texture);
+  texturePayloadChanged=true;
+  }
+
 void Resources::publishTexture() {
   const auto reload=textureReload;
   if(!reload || reload->ready.isEmpty())
@@ -1636,7 +1655,7 @@ void Resources::publishTexture() {
     record.bytes=LoadProbe::textureBytes(*record.texture);
     record.resident=true;
     record.tail=reload->tail;
-    texturePayloadChanged=true;
+    notifyTextureChanged(record);
     if(!wasResident)
       ++texturesReloaded;
     else if(wasTail && !record.tail)
@@ -1771,7 +1790,7 @@ void Resources::updateTextures(ChunkResidency* residency) {
     resources.retireTexture(std::move(*record->texture));
     *record->texture=std::move(replacement);
     record->resident=false;
-    resources.texturePayloadChanged=true;
+    resources.notifyTextureChanged(*record);
     ++resources.texturesEvicted;
     ++evictions;
     liveBytes=Texture2d::liveBytes();

@@ -562,7 +562,9 @@ namespace Tempest {
         };
       struct BlasBuildCtx {};
       struct AccelerationStructure:Shared {};
-      struct DescArray:NoCopy {};
+      struct DescArray:NoCopy {
+        virtual void setTexture(size_t index, Texture* texture);
+        };
       struct BarrierDesc {
         const Texture*   texture   = nullptr;
         const Swapchain* swapchain = nullptr;
