@@ -1,8 +1,4 @@
-"""A road gang hails the hero, sells peace, and attacks only after a provocation.
-
-дано: ultimatum for 100 gold, 60 s on the hail; propose_deal for 100 gold
-and a 4 h truce on the payment reply.
-"""
+"""A road gang hails the hero, sells peace, and attacks only after a provocation."""
 
 from __future__ import annotations
 
@@ -56,7 +52,11 @@ async def road_bandits(
     deals: Deals,
     parley: Parley,
 ) -> dict[str, str]:
-    """New game, LLM=fake: the native road encounter uses production parley decisions."""
+    """New game, LLM=fake: the road gang hails the hero, sells peace, then reacts to a provocation.
+
+    дано: ultimatum for 100 gold, 60 s on the hail; propose_deal for 100 gold
+    and a 4 h truce on the payment reply.
+    """
     if dialogue.llm.name != "fake":
         raise GameError("scenario road_bandits requires LLM=fake and a new game without SAVE")
     await link.wait_world()
