@@ -77,9 +77,15 @@ def procedural_tile(spec: dict, out: Path) -> None:
     from scipy.ndimage import gaussian_filter
     rng = np.random.default_rng(spec.get("seed", 1))
     field = np.zeros((1024, 1024), dtype=np.float32)
+    stretch = spec.get("stretch", 1.0)  # >1: blobs drawn out along U into wave bands (liquid in a pot)
     for sigma, weight in ((48, 0.6), (12, 0.3), (3, 0.1)):
-        layer = gaussian_filter(rng.standard_normal((1024, 1024)).astype(np.float32), sigma, mode="wrap")
+        layer = gaussian_filter(rng.standard_normal((1024, 1024)).astype(np.float32), (sigma, sigma * stretch), mode="wrap")
         field += weight * layer / max(float(np.abs(layer).max()), 1e-6)
+    if spec.get("waves"):  # light, narrow crests over dark troughs, bent by the noise: painted water reads so
+        field = field / max(float(np.abs(field).max()), 1e-6)
+        v = np.arange(1024, dtype=np.float32)[:, None] / 1024
+        crest = (0.5 + 0.5 * np.sin(2 * np.pi * (v * spec["waves"] + 0.8 * field))) ** 3
+        field = 2 * crest - 1 + 0.3 * field
     shade = np.clip(1 + spec.get("noise", 0.08) * field, 0, None)[..., None]
     rgb = np.clip(np.array(spec["base"], dtype=np.float32) * shade, 0, 1)
     image = Image.fromarray(np.rint(rgb * 255).astype("uint8"))

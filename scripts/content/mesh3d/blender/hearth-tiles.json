@@ -19,15 +19,17 @@
   "own_hearth_liquid": {
    "procedural": {
     "base": [
-     0.02,
-     0.025,
-     0.03
+     0.2,
+     0.24,
+     0.27
     ],
-    "noise": 0.14,
+    "noise": 0.45,
     "seed": 3,
-    "relief": 0.35
+    "relief": 0.3,
+    "stretch": 3.0,
+    "waves": 9
    },
-   "roughness": 0.55,
+   "roughness": 0.1,
    "metallic": 0.0
   },
   "own_hearth_stone": {
