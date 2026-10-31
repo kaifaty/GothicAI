@@ -1,6 +1,7 @@
 """The scripted cave scene exercises rejected calls and the real deal tool."""
 
 from gothic_ai.llm import Message, Tool, ToolCall, ToolResult
+from gothic_ai.parley import EXPIRY_CUE
 from gothic_ai.scenarios.bandit_parley import GREETING, PAYMENT, _bandit_script
 
 
@@ -21,8 +22,10 @@ async def test_parley_script_repairs_first_attack_in_same_turn():
         "first", "Отклонено: Без повода сразу не нападаешь: сначала потребуй — ultimatum.",
     ))
     assert [call.name for call in repaired] == ["ultimatum"]
-    assert repaired[0].arguments["seconds"] == 10
-    assert not await calls(model, Message("user", "[Срок вышел: герой не подчинился]"))
+    assert repaired[0].arguments["seconds"] == 30
+    expired = await calls(model, Message("user", EXPIRY_CUE))
+    assert [call.name for call in expired] == ["set_intent"]
+    assert expired[0].arguments["target"] == "PLAYER"
 
 
 async def test_parley_script_offers_truce_for_gold_and_respects_its_rejection():
