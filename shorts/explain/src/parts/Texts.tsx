@@ -68,7 +68,7 @@ export const Hook: React.FC<{text: string; until: number}> = ({text, until}) => 
   const wide = width > height;
   const safe = wide ? WIDE_SAFE : SAFE;
   const t = useCurrentFrame() / fps;
-  const o = shown(t, 0, until, 0.01, 0.3);
+  const o = shown(t, 0, until, 0, 0.3); // on screen from frame 0
   if (o <= 0) {
     return null;
   }

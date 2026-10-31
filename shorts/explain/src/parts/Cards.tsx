@@ -1,7 +1,7 @@
 import React from 'react';
 import {AbsoluteFill, Easing, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {BarsCard as Bars, DotsCard as Dots, FormulaCard as Formula, StatsCard as Stats} from '../schema';
-import {COLOR, FONT, OUTLINE, SAFE, W} from '../theme';
+import {CARD_LIFT, COLOR, FONT, OUTLINE, SAFE, W} from '../theme';
 import {rise, shown} from './anim';
 
 // cards: what has no picture in the world. Numbers are computed here from the plan's inputs, not typed in.
@@ -21,7 +21,7 @@ const text = (size: number, color: string = COLOR.text, weight = 800): React.CSS
 const Source: React.FC<{text: string}> = ({text: s}) => {
   const {width, height} = useVideoConfig();
   const wide = width > height;
-  return <div style={{position: 'absolute', left: wide ? 96 : LEFT, top: wide ? 850 : 1440, width: wide ? 1728 : WIDTH, ...text(28, COLOR.before, 600)}}>{s}</div>;
+  return <div style={{position: 'absolute', left: wide ? 96 : LEFT, top: wide ? 850 : 1440 + CARD_LIFT, width: wide ? 1728 : WIDTH, ...text(28, COLOR.before, 600)}}>{s}</div>;
 };
 
 const useT = () => useCurrentFrame() / useVideoConfig().fps;
@@ -48,7 +48,7 @@ export const FormulaView: React.FC<{spec: Formula}> = ({spec}) => {
   if (wide) {
     return (
       <AbsoluteFill style={{background: COLOR.card}}>
-        <div style={{position: 'absolute', left: 96, top: 145, width: 1728, opacity: shown(t, 0), ...text(76), fontFamily: FONT.title}}>{spec.title}</div>
+        <div style={{position: 'absolute', left: 96, top: 145, width: 1728, opacity: shown(t, 0, undefined, 0), ...text(76), fontFamily: FONT.title}}>{spec.title}</div>
         <div style={{position: 'absolute', left: 96, top: 260, width: 1728, height: 550, display: 'grid', gridTemplateColumns: ex ? '1fr 1fr' : '1fr', gap: 72}}>
           <div style={{minWidth: 0}}>
             {spec.terms.map((term, i) => (
@@ -72,7 +72,7 @@ export const FormulaView: React.FC<{spec: Formula}> = ({spec}) => {
   return (
     <AbsoluteFill style={{background: COLOR.card}}>
       <div style={{position: 'absolute', left: LEFT, top: 280, width: WIDTH, display: 'flex', flexDirection: 'column'}}>
-        <div style={{opacity: shown(t, 0), ...text(84), fontFamily: FONT.title, marginBottom: 6}}>{spec.title}</div>
+        <div style={{opacity: shown(t, 0, undefined, 0), ...text(84), fontFamily: FONT.title, marginBottom: 6}}>{spec.title}</div>
         {spec.terms.map((term, i) => (
           <div
             key={i}
@@ -237,7 +237,7 @@ export const DotsView: React.FC<{spec: Dots}> = ({spec}) => {
               borderRadius: size / 2,
               border: `5px solid ${on ? COLOR.now : COLOR.faint}`,
               background: on ? COLOR.now : 'transparent',
-              opacity: shown(t, 0.1 + i * 0.01),
+              opacity: shown(t, i * 0.01, undefined, 0.1), // a sweep from the cut, no empty card
             }}
           />
         );
@@ -282,7 +282,7 @@ export const StatsView: React.FC<{spec: Stats}> = ({spec}) => {
               display: 'flex',
               justifyContent: 'space-between',
               padding: '14px 0',
-              opacity: shown(t, 0.2 + i * 0.25),
+              opacity: i === 0 ? 1 : shown(t, i * 0.25), // no empty panel on the cut
               ...text(wide ? Math.min(60, Math.max(36, (430 / Math.max(1, spec.rows.length) - 28) / 1.2)) : 64, row.color ?? COLOR.text),
               ...(wide ? {gap: 40, lineHeight: 1.2} : {}),
             }}

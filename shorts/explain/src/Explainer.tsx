@@ -27,7 +27,7 @@ import {Sight} from './parts/Sight';
 import {Tags} from './parts/Tags';
 import {Hook, Texts} from './parts/Texts';
 import type {Beat, Plan} from './schema';
-import {COLOR, FONT, OUTLINE, SAFE, WIDE_SAFE} from './theme';
+import {CARD_LIFT, COLOR, FONT, OUTLINE, SAFE, WIDE_SAFE} from './theme';
 
 // the voice speaks in these spans (seconds of the short): the game ducks under them
 type Spans = [number, number][];
@@ -135,6 +135,8 @@ const BeatView: React.FC<{
     else if (card.type === 'ticks') body = <TicksView spec={card} />;
     else if (card.type === 'grid') body = <GridView spec={card} />;
     else if (card.type === 'flow') body = <FlowView spec={card} />;
+    // a tall card is lifted clear of the captions (its source line compensates and stays at 1440)
+    if (!wide) body = <AbsoluteFill style={{transform: `translateY(${-CARD_LIFT}px)`}}>{body}</AbsoluteFill>;
   } else if (beat.kind === 'split' && beat.src && beat.srcBottom) {
     const half = height / 2;
     body = wide ? (
@@ -163,7 +165,8 @@ const BeatView: React.FC<{
         {beat.labels && (
           <>
             <HalfLabel text={beat.labels[0]} top={170} color={beat.labelColors?.[0] ?? COLOR.before} />
-            <HalfLabel text={beat.labels[1]} top={half + 40} color={beat.labelColors?.[1] ?? COLOR.now} />
+            {/* the captions sit under the seam in a tall split: the bottom label goes to its panel's foot */}
+            <HalfLabel text={beat.labels[1]} top={height - SAFE.bottom - 70} color={beat.labelColors?.[1] ?? COLOR.now} />
           </>
         )}
       </>
@@ -172,7 +175,7 @@ const BeatView: React.FC<{
     body = <Picture src={beat.src} from={beat.from} beat={beat} width={width} height={height} volume={volume} />;
   }
   return (
-    <AbsoluteFill style={{background: '#000', overflow: 'hidden'}}>
+    <AbsoluteFill style={{background: beat.kind === 'card' ? COLOR.card : '#000', overflow: 'hidden'}}>
       {body}
       {beat.kind !== 'card' && (beat.follow || beat.hp) && (
         <CombatOverlay follow={beat.follow} hp={beat.hp} from={beat.from} beat={beat} viewport={viewport}
@@ -180,7 +183,7 @@ const BeatView: React.FC<{
       )}
       {split && (beat.followBottom || beat.hpBottom) && (
         <CombatOverlay follow={beat.followBottom} hp={beat.hpBottom} from={beat.fromBottom} beat={beat} viewport={bottomViewport}
-          insetTop={beat.labels ? (wide ? 122 : 106) : 32} />
+          insetTop={beat.labels && wide ? 122 : 32} />
       )}
       <Sight strokes={beat.strokes} fans={beat.fans} paths={beat.paths} scope={beat.id.replace(/[^\w-]/g, '_')} />
       <Tags tags={beat.tags} carried={next?.carry && !Array.isArray(next.carry.from)
@@ -254,6 +257,12 @@ export const Explainer: React.FC<Plan> = (plan) => {
   const {fps} = useVideoConfig();
   const contentFrames = Math.round(plan.beats.reduce((s, b) => s + b.dur, 0) * fps);
   const spans: Spans = plan.lines.filter((l) => l.length > 0).map((l) => [l[0].start, l[l.length - 1].end]);
+  // the times of tall splits: there the captions sit just under the seam, off the bottom half's subject
+  const seams: [number, number][] = [];
+  plan.beats.reduce((at, b) => {
+    if (b.kind === 'split') seams.push([at, at + b.dur]);
+    return at + b.dur;
+  }, 0);
   let t = 0;
   return (
     <AbsoluteFill style={{background: '#000'}}>
@@ -290,7 +299,7 @@ export const Explainer: React.FC<Plan> = (plan) => {
               <Audio src={staticFile(v.file)} />
             </Sequence>
           ))}
-        <Captions lines={plan.lines} brand={plan.brand} />
+        <Captions lines={plan.lines} brand={plan.brand} seams={seams} />
         <Hook text={plan.hook.text} until={plan.hook.until} />
       </Sequence>
       {plan.brand && (

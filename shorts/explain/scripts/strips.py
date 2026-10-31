@@ -95,6 +95,14 @@ def language(plan: dict) -> list[str]:
                     row("zoom", f"{zoom['dur']:g} s of {beat['dur']:g}", "a linear zoom is a slow push across the beat; ease it otherwise")
             elif zoom["dur"] > 0.04 and not _fits(zoom["dur"]):  # up to a frame: a punch-in, as good as a cut
                 row("zoom", f"{zoom['dur']:g} s", "an eased zoom takes slow 0.6, or is a linear push across the beat")
+        for ti, tag in enumerate(beat.get("tags", [])):
+            stop = None
+            for li, line in enumerate(tag.get("lines", [])):
+                if stop is not None and line.get("at", 0) < stop - 1e-6:
+                    row(f"tag{ti}.line{li}", f"at {line.get('at', 0):g} s, counter stops at {stop:g} s",
+                        "a result before its cause: it is shown when the counter stops; plan it there")
+                if "count" in line:
+                    stop = max(stop or 0, line.get("at", 0) + line["count"]["dur"])
         push = beat.get("push")
         if push and push < PUSH_MIN - 1e-6:
             row("push", f"{push:g}", "below 0.03 the push does not read: 0.03-0.05, or 0 for none")
@@ -123,8 +131,27 @@ STILL = 3.0  # seconds of a picture that does not change at all, past which the 
 # mean grey change per pixel (of 255) below which two frames count as the same picture: a card or a frozen frame
 # changes by 0.000-0.001, a hero standing idle in footage by 0.05-0.1 (measured on the bow short)
 STILL_CHANGE = 0.03
-# the voice's caption band, left out of the stillness: a word turning gold is not the picture moving
+# the voice's caption band, left out of the stillness and the jumps: a word turning gold or a new page of words is
+# not the picture moving. In a tall split they sit just under the seam instead (src/parts/Captions.tsx)
 CAPTION_BAND = {"tall": (0.59, 0.77), "wide": (0.79, 0.96)}
+SEAM_BAND = (0.5, 0.67)
+
+
+def without_captions(frames: list[bytes], plan: dict, fps: float) -> list[bytes]:
+    """The frames with the rows the captions can cover blanked, beat by beat, so only the picture is compared."""
+    w, h = SMALL
+    fmt = plan.get("format", "tall")
+    spans, t = [], 0.0
+    for beat in plan["beats"]:
+        split = fmt == "tall" and beat.get("kind") == "split"
+        spans.append((round(t * fps), SEAM_BAND if split else CAPTION_BAND[fmt]))
+        t += beat["dur"]
+    out = []
+    for i, f in enumerate(frames):
+        band = next((b for start, b in reversed(spans) if i >= start), CAPTION_BAND[fmt])
+        a, b = int(band[0] * h), int(band[1] * h)
+        out.append(f[:a * w] + bytes((b - a) * w) + f[b * w:])
+    return out
 
 
 def stills(frames: list[bytes], fps: float, band: tuple[float, float], least: float = STILL) -> list[tuple[int, int]]:
@@ -273,10 +300,10 @@ def main() -> None:
     # the end of the content: the brand sting starts with a cut
     end = round(sum(b["dur"] for b in plan["beats"]) * fps)
     planned.append((end, end))
-    frames = thumbnails(video)[:end + 1]  # the brand sting after `end` is not the plan's
+    frames = without_captions(thumbnails(video)[:end + 1], plan, fps)  # the brand sting after `end` is not the plan's
     found = jumps(frames, planned, fps)
     lang = language(plan)
-    held = stills(frames, fps, CAPTION_BAND[plan.get("format", "tall")], least)
+    held = stills(frames, fps, (0.0, 0.0), least)  # the captions are blanked already
     report = ["# Motion strips", "", f"{video.name}, {fps:g} fps. Strips run left to right.", "",
               "| strip | at, s | dur, s | frames |", "|---|---|---|---|", *rows, "",
               "## Jumps nobody planned", ""]

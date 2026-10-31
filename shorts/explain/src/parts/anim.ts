@@ -1,8 +1,10 @@
 import {Easing, interpolate} from 'remotion';
 
-// how much of a thing shown from `at` to `until` (seconds) is visible at `t`: a short fade in, a shorter one out
+// how much of a thing shown from `at` to `until` (seconds) is visible at `t`: a short fade in, a shorter one out;
+// fadeIn 0 is there from its first frame (a base layer on a cut: frame 0 is a finished picture)
 export const shown = (t: number, at: number, until?: number, fadeIn = 0.18, fadeOut = 0.12) => {
-  const a = interpolate(t, [at, at + fadeIn], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const a = fadeIn <= 0 ? Number(t >= at)
+    : interpolate(t, [at, at + fadeIn], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   if (until === undefined) {
     return a;
   }
