@@ -32,36 +32,42 @@ LOCKED_PROJECTS = (
     "server", "asr-service", "tts-service", "launcher/core",
     "libs/chatgpt-auth", "shorts", "site", "decider-service",
 )
-PYTEST = ("pytest", "-q", "-rs", "-o", "faulthandler_timeout=300")
+PYTEST = ("pytest", "-q", "-rs", "--timeout=120", "--timeout-method=signal")
 # The pip interface scopes the CPU index to torch; uv run's --index affects all packages.
-GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", *PYTEST),
+GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout", *PYTEST),
                      platform="macos-15" if p == "shorts" else "ubuntu-24.04")
                for p in LOCKED_PROJECTS) + (
     Group("body-service", "body-service", (
         "bash", "-c", 'uv venv --allow-existing .venv && '
         'uv pip install --python .venv/bin/python --torch-backend cpu '
         '--default-index https://pypi.org/simple "torch>=2.5,<3" pytest --editable . && '
-        'exec .venv/bin/pytest -q -rs -o faulthandler_timeout=300 "$@"', "pytest",
+        'exec uv run --no-project --python .venv/bin/python --with pytest-timeout '
+        'pytest -q -rs --timeout=120 --timeout-method=signal "$@"', "pytest",
     )),
     Group("scripts", "scripts", (
         "bash", "-c", 'uv venv --allow-existing .venv && '
         'uv pip install --python .venv/bin/python --torch-backend cpu '
         '--default-index https://pypi.org/simple "torch>=2.5,<3" pytest numpy pillow '
         'matplotlib websockets --editable ../body-service ../launcher/core && '
-        'exec .venv/bin/pytest -q -rs -o faulthandler_timeout=300 '
+        'exec uv run --no-project --python .venv/bin/python --with pytest-timeout '
+        'pytest -q -rs --timeout=120 --timeout-method=signal '
         '--ignore=content --ignore=meshes --ignore=fracture "$@"', "pytest",
     ), dependencies=("launcher/core", "server", "body-service")),
     Group("content", "scripts/content", (
-        "uv", "run", "--no-project", "--with", "pytest", "--with", "numpy",
+        "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest", "--with", "numpy",
         "--with", "pillow", "--with", "scipy", "--with", "shapely",
         "--with", "ijson", "--with", "httpx", *PYTEST,
     )),
-    Group("meshes", "scripts/meshes", ("uv", "run", "--no-project", "--with", "pytest", *PYTEST)),
+    Group("meshes", "scripts/meshes", (
+        "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest", *PYTEST,
+    )),
     Group("fracture", "scripts/fracture", (
-        "uv", "run", "--no-project", "--with", "pytest", "--with", "numpy", "--with", "scipy", *PYTEST,
+        "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest",
+        "--with", "numpy", "--with", "scipy", *PYTEST,
     )),
     *(Group(name, directory, ("env", "PYTHONPATH=" + os.path.relpath("scripts", directory),
-                             "uv", "run", "--no-project", "--with", "pytest", *PYTEST),
+                             "uv", "run", "--no-project", "--with", "pytest-timeout",
+                             "--with", "pytest", *PYTEST),
             dependencies=("scripts",))
       for name, directory in (
           ("npc-body-guard", "reports/npc-body/2026-10-14-combat/guard-reader-v1/code"),
