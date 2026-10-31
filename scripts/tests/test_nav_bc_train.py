@@ -14,8 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import nav_bc_train as train
 
 
-@pytest.mark.parametrize("version,input_variant", [(2, "hd"), (3, "hd-familiar")])
-def test_parallel_loader_preserves_packed_bytes_batch_order_and_training_rng(tmp_path, version, input_variant):
+@pytest.mark.parametrize("version,input_variant,workers,prefetch", [
+    (2, "hd", 4, 1), (3, "hd-familiar", 8, 2)])
+def test_parallel_loader_preserves_packed_bytes_batch_order_and_training_rng(
+        tmp_path, version, input_variant, workers, prefetch):
     demos = train.nav_demos
     entries = []
     layout = np.tile(np.array([0, 0, 1000], dtype=np.float32), (demos.RAY_COUNT, 1))
@@ -45,7 +47,7 @@ def test_parallel_loader_preserves_packed_bytes_batch_order_and_training_rng(tmp
     train.torch.manual_seed(317)
     python_rng, numpy_rng = random.getstate(), np.random.get_state()
     torch_rng = train.torch.random.get_rng_state().clone()
-    with train.BatchLoader(tmp_path) as loader:
+    with train.BatchLoader(tmp_path, workers=workers, prefetch=prefetch) as loader:
         for seed in (17, 18):
             batches = train.training_batches(entries, 1, seed)
             actual_order = []
@@ -59,6 +61,14 @@ def test_parallel_loader_preserves_packed_bytes_batch_order_and_training_rng(tmp
                         assert values.shape == reference[name].shape
                         assert values.tobytes() == reference[name].tobytes()
             assert actual_order == [[entry["id"] for entry in batch] for batch in batches]
+            waits = loader.wait_stats()
+            per_batch = waits["load_wait_per_batch_seconds"]
+            assert len(per_batch) == len(batches)
+            assert all(value >= 0 for value in per_batch)
+            assert waits["load_wait_seconds"] == sum(per_batch)
+            assert waits["load_wait_first_batch_seconds"] == per_batch[0]
+            assert waits["load_wait_after_first_seconds"] == sum(per_batch[1:])
+            assert waits["load_wait_max_batch_seconds"] == max(per_batch)
     assert random.getstate() == python_rng
     numpy_after = np.random.get_state()
     assert numpy_after[0] == numpy_rng[0] and numpy_after[2:] == numpy_rng[2:]

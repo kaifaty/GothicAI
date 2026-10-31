@@ -587,7 +587,8 @@ def check_direct_training(args, manifest, entries, scratch, progress):
 
     old_by_id = {entry["id"]: entry for entry in old_index["episodes"]}
     batches = train.training_batches(new_index["episodes"], 8 if gpu else 4, 17)
-    with train.BatchLoader(args.converted_source) as loader:
+    with train.BatchLoader(args.converted_source, workers=args.loader_workers,
+                           prefetch=args.loader_prefetch) as loader:
         # Exercise the same multiprocessing/order/packing path used by training.
         checked = check_loaded_tensors(loader.loaded_batches(batches, packed=True),
                                        old_by_id, reference, cache, args.corpus,
@@ -624,7 +625,8 @@ def check_direct_training(args, manifest, entries, scratch, progress):
                 manifest=str(args.manifest), input_variant=variant, output=str(destination),
                 threads=1 if exact else 6, device=device, epochs=1 if exact else 2,
                 batch=4 if exact else 8, segment=32 if exact else 64, lr=.0003,
-                seed=17, resume=False, init=None)
+                seed=17, resume=False, init=None, loader_workers=args.loader_workers,
+                loader_prefetch=args.loader_prefetch)
             with ProcessMemory() as usage:
                 train.train_bc3(options, index)
             memory[label] = usage.result()
@@ -643,10 +645,15 @@ def check_direct_training(args, manifest, entries, scratch, progress):
         seconds = {label: [row["seconds"] for row in history] for label, history in histories.items()}
         mean = {label: sum(values) / len(values) for label, values in seconds.items()}
         totals = dict(old=prepare_seconds + 20 * mean["old"], direct=index_seconds + 20 * mean["direct"])
-        if not memory["direct"]["loader_pss_bytes"] or len(memory["direct"]["loader_worker_pids"]) != 4:
-            raise ValueError(f"{phase} loader memory sampling did not observe all four workers")
+        if (not memory["direct"]["loader_pss_bytes"]
+                or len(memory["direct"]["loader_worker_pids"]) != args.loader_workers):
+            raise ValueError(f"{phase} loader memory sampling did not observe all {args.loader_workers} workers")
+        wait = {label: [dict({key: value for key, value in row.items() if key.startswith("load_wait_")},
+                            epoch=row["epoch"], epoch_fraction=row["load_wait_seconds"] / row["seconds"])
+                        for row in history] for label, history in histories.items()}
         runs[device] = dict(device=device, deterministic_algorithms=exact, threads=options.threads,
             epochs=options.epochs, batch=options.batch, segment=options.segment, lr=options.lr,
+            loader_workers=args.loader_workers, loader_prefetch=args.loader_prefetch, loader_wait=wait,
             losses=losses, model_and_optimizer_tensors_equal=True if exact else None,
             epoch_seconds=seconds, mean_epoch_seconds=mean, projected_20_epoch_seconds=totals,
             xz_epoch_slowdown_percent=100 * (mean["direct"] / mean["old"] - 1),
@@ -718,6 +725,8 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--converted-source", type=Path)
     parser.add_argument("--reference-script", type=Path)
+    parser.add_argument("--loader-workers", type=int, choices=range(1, 9), default=4)
+    parser.add_argument("--loader-prefetch", type=int, choices=range(1, 4), default=1)
     args = parser.parse_args()
     if any(not getattr(args, name).is_absolute() for name in ("source", "manifest", "output", "scratch")):
         parser.error("All paths must be absolute")

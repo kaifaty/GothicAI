@@ -76,15 +76,19 @@ def _load_packed(cache, entry):
 
 
 class BatchLoader:
-    """Decode/encode direct episodes in four processes, preserving batch order.
+    """Decode/encode direct episodes in worker processes, preserving batch order.
 
     Only packed arrays cross process boundaries. The current batch and at most
-    one following batch are retained; no episode survives across epochs.
+    ``prefetch`` following batches are retained; no episode survives across epochs.
     Spawn remains safe after the training process has initialized CUDA.
     """
-    def __init__(self, cache):
+    def __init__(self, cache, workers=4, prefetch=1):
+        if not 0 <= workers <= 8 or not 1 <= prefetch <= 3:
+            raise ValueError("loader requires 0-8 workers and 1-3 prefetched batches")
         self.cache = Path(cache)
+        self.workers, self.prefetch = workers, prefetch
         self.executor = None
+        self.batch_wait_seconds = []
 
     def __enter__(self):
         return self
@@ -93,13 +97,27 @@ class BatchLoader:
         if self.executor is not None:
             self.executor.shutdown(wait=True, cancel_futures=True)
 
+    def wait_stats(self):
+        """Parent batch loading/waiting time, excluding model work."""
+        waits = self.batch_wait_seconds
+        return dict(load_wait_seconds=sum(waits),
+                    load_wait_first_batch_seconds=waits[0] if waits else 0.,
+                    load_wait_after_first_seconds=sum(waits[1:]),
+                    load_wait_max_batch_seconds=max(waits, default=0.),
+                    load_wait_per_batch_seconds=waits.copy())
+
     def loaded_batches(self, batches, *, packed=False):
-        if not any(entry.get("storage") == "navdemo" for batch in batches for entry in batch):
+        self.batch_wait_seconds = []
+        if not self.workers or not any(entry.get("storage") == "navdemo" for batch in batches for entry in batch):
             for entries in batches:
-                yield entries, [load(self.cache, entry, packed=packed) for entry in entries]
+                started = time.perf_counter()
+                group = [load(self.cache, entry, packed=packed) for entry in entries]
+                self.batch_wait_seconds.append(time.perf_counter() - started)
+                yield entries, group
+                del group
             return
         if self.executor is None:
-            self.executor = ProcessPoolExecutor(max_workers=4,
+            self.executor = ProcessPoolExecutor(max_workers=self.workers,
                 mp_context=multiprocessing.get_context("spawn"), initializer=_loader_worker_init)
         remaining = iter(batches)
         pending = deque()
@@ -110,12 +128,14 @@ class BatchLoader:
                 pending.append((entries, [self.executor.submit(_load_packed, self.cache, entry)
                                            for entry in entries]))
 
-        # One current and one following packed batch bound the memory.
-        submit()
-        submit()
+        # The current and configured following packed batches bound the memory.
+        for _ in range(1 + self.prefetch):
+            submit()
         while pending:
             entries, futures = pending.popleft()
+            started = time.perf_counter()
             group = [future.result() for future in futures]
+            self.batch_wait_seconds.append(time.perf_counter() - started)
             yield entries, group if packed else [unpack_cached(episode) for episode in group]
             del group, futures
             submit()
@@ -281,7 +301,7 @@ def train(args):
     write_json(out / "training_config.json", {**vars(args), "architecture": model.architecture(),
                "class_counts": [c.tolist() for c in counts], "class_weights": [w.cpu().tolist() for w in weights],
                "loss_head_weights": [2, 1, 2, 1, 1, 1], "max_dagger_fraction": .5})
-    with BatchLoader(cache) as loader:
+    with BatchLoader(cache, getattr(args, "loader_workers", 4), getattr(args, "loader_prefetch", 1)) as loader:
         for epoch in range(len(history), args.epochs):
             started = time.perf_counter()
             model.train()
@@ -310,7 +330,8 @@ def train(args):
             validation = evaluate(model, cache, val_eps, device)
             score = (validation["model"]["turn"]["macro_f1"] + validation["model"]["forward"]["balanced_accuracy"]) / 2
             record = {"epoch": epoch + 1, "loss": total_loss / total_steps,
-                      "seconds": time.perf_counter()-started, "validation": validation, "score": score}
+                      "seconds": time.perf_counter()-started, "validation": validation, "score": score,
+                      **loader.wait_stats()}
             history.append(record)
             is_best = score > best
             best = max(best, score)
@@ -494,7 +515,7 @@ def train_bc3(args, index):
         auxiliary_weights=dict(stuck=.1, next_near=.1, detour=.5),
         auxiliary_targets=index["auxiliary"], initialization=initialization,
         selection="fixed final epoch; closed-loop validation pending"))
-    with BatchLoader(cache) as loader:
+    with BatchLoader(cache, getattr(args, "loader_workers", 4), getattr(args, "loader_prefetch", 1)) as loader:
         for epoch in range(len(history), args.epochs):
             started = time.perf_counter()
             model.train()
@@ -530,7 +551,8 @@ def train_bc3(args, index):
                 del group
             record = dict(epoch=epoch + 1, loss=total / steps, decisions=steps,
                           seconds=time.perf_counter() - started,
-                          losses={name: value / steps for name, value in losses.items()})
+                          losses={name: value / steps for name, value in losses.items()},
+                          **loader.wait_stats())
             history.append(record)
             torch.save(dict(config=config, model=model.state_dict(), optimizer=optimizer.state_dict(),
                             history=history, navigation_memory_version=index["navigation_memory_version"],
@@ -679,6 +701,10 @@ def main():
             p.add_argument("--epochs", type=int, default=20)
             p.add_argument("--batch", type=int, default=8)
             p.add_argument("--segment", type=int, default=64)
+            p.add_argument("--loader-workers", type=int, choices=range(9), default=4,
+                           help="direct-recording loader processes; 0 loads synchronously")
+            p.add_argument("--loader-prefetch", type=int, choices=(1, 2, 3), default=1,
+                           help="following packed batches to prefetch")
             p.add_argument("--lr", type=float, default=3e-4)
             p.add_argument("--seed", type=int, default=17)
             p.add_argument("--resume", action="store_true")
