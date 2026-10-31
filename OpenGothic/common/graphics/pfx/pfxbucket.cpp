@@ -72,6 +72,7 @@ PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlob
     }
   if(decl.isDecal() && (textureResidency=visual.textureResidencyManager())!=nullptr) {
     textureSubscription=textureResidency->subscribe([this](ChunkId chunk, ChunkResidency::State, ChunkResidency::State next) {
+      std::lock_guard<std::recursive_mutex> guard(this->parent.sync);
       const auto found=textureChunks.find({chunk.x,chunk.z});
       if(found==textureChunks.end())
         return;
@@ -82,6 +83,7 @@ PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlob
   }
 
 PfxBucket::~PfxBucket() {
+  std::lock_guard<std::recursive_mutex> guard(parent.sync);
   if(textureResidency)
     textureResidency->unsubscribe(textureSubscription);
   for(auto& emitter:impl)
@@ -89,6 +91,7 @@ PfxBucket::~PfxBucket() {
   }
 
 void PfxBucket::setTextureDemand(ImplEmitter& emitter, bool active) {
+  std::lock_guard<std::recursive_mutex> guard(parent.sync);
   if(emitter.textureDemand==active)
     return;
   const auto category=decl.isDecal() ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic;
@@ -102,6 +105,7 @@ void PfxBucket::setTextureDemand(ImplEmitter& emitter, bool active) {
   }
 
 void PfxBucket::updateTextureDemand(size_t id) {
+  std::lock_guard<std::recursive_mutex> guard(parent.sync);
   auto& emitter=impl[id];
   if(decl.isDecal()) {
     const auto chunk=ChunkId::fromPosition(emitter.pos.x,emitter.pos.z);

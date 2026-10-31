@@ -300,14 +300,14 @@ void MeshObjects::Mesh::implSetObjMatrix(const Tempest::Matrix4x4& mt, const Tem
       }
     return;
     }
+  // Static attachments belong to the vob's cell, including animated nodes.
+  const Tempest::Vec3 texturePosition(mt[3][0],mt[3][1],mt[3][2]);
   for(size_t i=0; i<binds; ++i) {
     auto id = binder->bind[i];
-    sub[i].setObjMatrix(tr[id]);
+    sub[i].setObjMatrix(tr[id],texturePosition);
     }
   for(size_t i=binds; i<subCount; ++i)
-    sub[i].setObjMatrix(mt);
-  // Static attachments belong to the vob's cell, including animated nodes.
-  setTexturePosition(Tempest::Vec3(mt[3][0],mt[3][1],mt[3][2]));
+    sub[i].setObjMatrix(mt,texturePosition);
   }
 
 const Bounds& MeshObjects::Node::bounds() const {

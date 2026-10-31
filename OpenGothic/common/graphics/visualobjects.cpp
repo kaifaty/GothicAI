@@ -52,12 +52,16 @@ struct VisualObjects::MorphData {
 
 
 void VisualObjects::Item::setObjMatrix(const Tempest::Matrix4x4& pos) {
+  setObjMatrix(pos,Vec3(pos[3][0],pos[3][1],pos[3][2]));
+  }
+
+void VisualObjects::Item::setObjMatrix(const Tempest::Matrix4x4& pos, const Vec3& texturePosition) {
   if(owner!=nullptr) {
     auto& obj = owner->objects[id];
     if(obj.pos!=pos)
       owner->updateRtAs(id);
     obj.pos = pos;
-    setTexturePosition(Vec3(pos[3][0],pos[3][1],pos[3][2]));
+    setTexturePosition(texturePosition);
     owner->updateInstance(id);
     }
   }
@@ -65,7 +69,10 @@ void VisualObjects::Item::setObjMatrix(const Tempest::Matrix4x4& pos) {
 void VisualObjects::Item::setTexturePosition(const Vec3& position) {
   if(owner==nullptr)
     return;
+  std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
   auto& obj=owner->objects[id];
+  if(obj.textureCategory!=Resources::TextureCategory::Static || obj.texturePosition==position)
+    return;
   obj.texturePosition=position;
   owner->updateTextureDemand(id);
   }
@@ -73,16 +80,18 @@ void VisualObjects::Item::setTexturePosition(const Vec3& position) {
 void VisualObjects::Item::setTextureCategory(Resources::TextureCategory category) {
   if(owner==nullptr)
     return;
+  std::lock_guard<std::recursive_mutex> guard(owner->textureSync);
   auto& obj=owner->objects[id];
   if(obj.textureCategory==category)
     return;
   owner->setTextureDemand(obj,false);
-  if(obj.textureCategory==Resources::TextureCategory::Static) {
+  if(obj.textureChunkRegistered) {
     if(auto found=owner->textureChunks.find(obj.textureChunk);found!=owner->textureChunks.end()) {
       found->second.erase(id);
       if(found->second.empty())
         owner->textureChunks.erase(found);
       }
+    obj.textureChunkRegistered=false;
     }
   obj.textureCategory=category;
   owner->updateTextureDemand(id);
@@ -277,6 +286,7 @@ VisualObjects::VisualObjects(const SceneGlobals& scene, const std::pair<Vec3, Ve
   }
 
 VisualObjects::~VisualObjects() {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   if(textureResidency)
     textureResidency->unsubscribe(textureSubscription);
   for(auto& object:objects)
@@ -285,11 +295,13 @@ VisualObjects::~VisualObjects() {
   }
 
 void VisualObjects::setTextureResidency(ChunkResidency* residency) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   if(textureResidency)
     textureResidency->unsubscribe(textureSubscription);
   textureResidency=residency;
   if(textureResidency) {
     textureSubscription=textureResidency->subscribe([this](ChunkId chunk, ChunkResidency::State, ChunkResidency::State next) {
+      std::lock_guard<std::recursive_mutex> guard(textureSync);
       const auto found=textureChunks.find({chunk.x,chunk.z});
       if(found==textureChunks.end())
         return;
@@ -303,6 +315,7 @@ void VisualObjects::setTextureResidency(ChunkResidency* residency) {
   }
 
 bool VisualObjects::textureChunkActive(const Vec3& position) const {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   if(!textureResidency)
     return true;
   const auto chunk=ChunkId::fromPosition(position.x,position.z);
@@ -313,7 +326,13 @@ bool VisualObjects::textureChunkActive(const Vec3& position) const {
   return true;
   }
 
+ChunkResidency* VisualObjects::textureResidencyManager() const {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
+  return textureResidency;
+  }
+
 void VisualObjects::setTextureDemand(Object& object, bool active) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   if(object.textureDemand==active)
     return;
   Resources::textureDemand(object.bucketId->mat,object.textureCategory,active);
@@ -321,6 +340,7 @@ void VisualObjects::setTextureDemand(Object& object, bool active) {
   }
 
 void VisualObjects::updateTextureDemand(size_t id) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   auto& object=objects[id];
   if(object.isEmpty())
     return;
@@ -330,15 +350,17 @@ void VisualObjects::updateTextureDemand(size_t id) {
     }
   const auto chunk=ChunkId::fromPosition(object.texturePosition.x,object.texturePosition.z);
   const std::pair key{chunk.x,chunk.z};
-  if(key!=object.textureChunk) {
-    if(auto found=textureChunks.find(object.textureChunk);found!=textureChunks.end()) {
-      found->second.erase(id);
-      if(found->second.empty())
-        textureChunks.erase(found);
-      }
+  if(!object.textureChunkRegistered || key!=object.textureChunk) {
+    if(object.textureChunkRegistered)
+      if(auto found=textureChunks.find(object.textureChunk);found!=textureChunks.end()) {
+        found->second.erase(id);
+        if(found->second.empty())
+          textureChunks.erase(found);
+        }
     object.textureChunk=key;
+    textureChunks[key].insert(id);
+    object.textureChunkRegistered=true;
     }
-  textureChunks[key].insert(id);
   setTextureDemand(object,textureChunkActive(object.texturePosition));
   }
 
@@ -393,6 +415,7 @@ void VisualObjects::updateRtAs(size_t id) {
 VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen,
                                        bool staticDraw) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets
   assert(iboOff%PackedMesh::MaxInd==0);
@@ -443,6 +466,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
 VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen,
                                        const InstanceStorage::Id& anim) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets
   assert(iboOff%PackedMesh::MaxInd==0);
@@ -481,6 +505,7 @@ VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat
 VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& mat,
                                        size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster,
                                        DrawCommands::Type type) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   // return Item();
   // 64x64 meshlets
   assert(iboOff%PackedMesh::MaxInd==0);
@@ -519,9 +544,10 @@ size_t VisualObjects::implAlloc() {
   }
 
 void VisualObjects::free(size_t id) {
+  std::lock_guard<std::recursive_mutex> guard(textureSync);
   Object& obj = objects[id];
   setTextureDemand(obj,false);
-  if(obj.textureCategory==Resources::TextureCategory::Static) {
+  if(obj.textureChunkRegistered) {
     if(auto found=textureChunks.find(obj.textureChunk);found!=textureChunks.end()) {
       found->second.erase(id);
       if(found->second.empty())

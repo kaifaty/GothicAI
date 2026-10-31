@@ -7,6 +7,7 @@
 
 #include <unordered_set>
 #include <map>
+#include <mutex>
 
 class SceneGlobals;
 class Camera;
@@ -45,6 +46,7 @@ class VisualObjects final {
       bool     isEmpty() const { return owner==nullptr; }
 
       void     setObjMatrix(const Tempest::Matrix4x4& mt);
+      void     setObjMatrix(const Tempest::Matrix4x4& mt, const Tempest::Vec3& texturePosition);
       void     setTexturePosition(const Tempest::Vec3& position);
       void     setTextureCategory(Resources::TextureCategory category);
       void     setAsGhost  (bool g);
@@ -79,7 +81,7 @@ class VisualObjects final {
     void   invalidate(const StaticMesh& mesh);
     void   setTextureResidency(ChunkResidency* residency);
     bool   textureChunkActive(const Tempest::Vec3& position) const;
-    ChunkResidency* textureResidencyManager() const { return textureResidency; }
+    ChunkResidency* textureResidencyManager() const;
 
     InstanceStorage::Id alloc(size_t size);
     bool                realloc(InstanceStorage::Id& id, size_t size);
@@ -153,6 +155,7 @@ class VisualObjects final {
       bool                visible       = true;
       Resources::TextureCategory textureCategory = Resources::TextureCategory::Dynamic;
       bool                textureDemand = false;
+      bool                textureChunkRegistered = false;
       Tempest::Vec3       texturePosition;
       std::pair<int32_t,int32_t> textureChunk;
       };
@@ -193,6 +196,7 @@ class VisualObjects final {
     std::unordered_set<size_t> objectsWind;
     std::unordered_set<size_t> objectsMorph;
     std::unordered_set<size_t> objectsFree;
+    mutable std::recursive_mutex textureSync;
     ChunkResidency*            textureResidency = nullptr;
     uint64_t                   textureSubscription = 0;
     std::map<std::pair<int32_t,int32_t>,std::unordered_set<size_t>> textureChunks;
