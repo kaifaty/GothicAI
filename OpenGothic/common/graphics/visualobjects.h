@@ -76,7 +76,8 @@ class VisualObjects final {
 
     Item   get(const StaticMesh& mesh, const Material& mat, size_t iboOffset, size_t iboLength, bool staticDraw);
     Item   get(const AnimMesh& mesh,   const Material& mat, size_t iboOff, size_t iboLen, const InstanceStorage::Id& anim);
-    Item   get(const StaticMesh& mesh, const Material& mat, size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster, DrawCommands::Type type);
+    Item   get(const StaticMesh& mesh, const Material& mat, size_t iboOff, size_t iboLen, const PackedMesh::Cluster* cluster, DrawCommands::Type type,
+               const Tempest::Vec3* texturePosition = nullptr);
     // All Items referencing the mesh must have been released first.
     void   invalidate(const StaticMesh& mesh);
     void   setTextureResidency(ChunkResidency* residency);
@@ -156,6 +157,8 @@ class VisualObjects final {
       Resources::TextureCategory textureCategory = Resources::TextureCategory::Dynamic;
       bool                textureDemand = false;
       bool                textureChunkRegistered = false;
+      bool                textureChunkedLandscape = false;
+      uint32_t            textureDistance = 0;
       Tempest::Vec3       texturePosition;
       std::pair<int32_t,int32_t> textureChunk;
       };
@@ -167,6 +170,7 @@ class VisualObjects final {
     void     free(size_t id);
     void     updateTextureDemand(size_t id);
     void     setTextureDemand(Object& object, bool active);
+    void     updateTextureFocus();
 
     uint32_t clusterId(const PackedMesh::Cluster* cx, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
     uint32_t clusterId(const DrawBuckets::Bucket& bucket, size_t firstMeshlet, size_t meshletCount, uint16_t bucketId, uint16_t commandId);
@@ -199,6 +203,7 @@ class VisualObjects final {
     mutable std::recursive_mutex textureSync;
     ChunkResidency*            textureResidency = nullptr;
     uint64_t                   textureSubscription = 0;
+    uint64_t                   textureFocusSubscription = 0;
     std::map<std::pair<int32_t,int32_t>,std::unordered_set<size_t>> textureChunks;
 
     friend class Item;

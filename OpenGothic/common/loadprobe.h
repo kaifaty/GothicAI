@@ -172,6 +172,25 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
                 (unsigned long long)textures.evicted,(unsigned long long)textures.reloaded);
   Tempest::Log::i(textureBuf);
   std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_full_bytes=%llu tex_tail_bytes=%llu "
+                "tex_promoted=%llu tex_demoted=%llu tex_promotion_queue=%llu tex_near_tail_n=%llu tex_near_tail_seconds=%.9g",
+                int(stage.size()),stage.data(),elapsed,
+                (unsigned long long)textures.fullBytes,(unsigned long long)textures.tailBytes,
+                (unsigned long long)textures.promoted,(unsigned long long)textures.demoted,
+                (unsigned long long)textures.promotionQueue,(unsigned long long)textures.nearTailCount,textures.nearTailSeconds);
+  Tempest::Log::i(textureBuf);
+  const char* textureSources[]={"base","hd","material","other"};
+  for(size_t i=0;i<textures.sourceBytes.size();++i) {
+    std::snprintf(textureBuf,sizeof(textureBuf),
+                  "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_source_%s_bytes=%llu tex_source_%s_full_bytes=%llu",
+                  int(stage.size()),stage.data(),elapsed,textureSources[i],(unsigned long long)textures.sourceBytes[i],
+                  textureSources[i],(unsigned long long)textures.sourceFullBytes[i]);
+    Tempest::Log::i(textureBuf);
+    }
+  std::snprintf(textureBuf,sizeof(textureBuf),"[loadprobe-textures] stage=%.*s t_ms=%.1f tex_full_ring3_bytes=%llu",
+                int(stage.size()),stage.data(),elapsed,(unsigned long long)textures.fullRing3Bytes);
+  Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
                 "[loadprobe-textures] stage=%.*s t_ms=%.1f "
                 "tex_landscape_bytes=%llu tex_landscape_n=%llu tex_static_bytes=%llu tex_static_n=%llu",
                 int(stage.size()),stage.data(),elapsed,

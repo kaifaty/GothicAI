@@ -699,6 +699,158 @@ void textureResidency(Tempest::Device& device, const Fixture& fixture) {
   setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
   unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
   }
+
+void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
+  const auto color=mipDds(0x31545844,256,256,9);
+  const auto maps=mipDds(0x35545844,256,256,9);
+  const auto single=mipDds(0x31545844,256,256,1);
+  const auto write=[&](const char* name, const std::vector<uint8_t>& bytes) {
+    textFile(fixture.root/"materials"/name,
+             {reinterpret_cast<const char*>(bytes.data()),bytes.size()});
+    };
+  write("mip-color.dds",color);
+  write("mip-maps.dds",maps);
+  write("mip-single.dds",single);
+  textFile(fixture.root/"materials/materials.json",R"({
+    "MIP_STREAM.TGA":{"albedo":"mip-color.dds","normal":"mip-maps.dds","orm":"mip-maps.dds"},
+    "MIP_SINGLE.TGA":{"albedo":"mip-single.dds"}
+  })");
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_MIPS","1",1);
+  setenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS","2",1);
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","256",1);
+  {
+  Resources resources(device);
+  Shaders shaders;
+  shaders.waitCompiler();
+  Material material, noTail;
+  {
+  Resources::TextureLoadScope far(true);
+  material=Material(source("MIP_STREAM.TGA"),true);
+  noTail=Material(source("MIP_SINGLE.TGA"),true);
+  }
+  const Material copy=material;
+  const auto tail=[&] {
+    return material.tex->w()==64 && material.normal->w()==64 && material.orm->w()==64;
+    };
+  const auto full=[&] {
+    return material.tex->w()==256 && material.normal->w()==256 && material.orm->w()==256;
+    };
+  require(material.tex!=nullptr && material.normal!=nullptr && material.orm!=nullptr && tail(),
+          "Far initial loads must upload the DDS tail for every material map");
+  require(noTail.tex!=nullptr && noTail.tex->w()==256,
+          "a single-level DDS must remain Full in a Far loading scope");
+  Resources::textureDemand(material,Resources::TextureCategory::Static,true,6);
+  Resources::textureDemand(noTail,Resources::TextureCategory::Static,true,6);
+
+  std::vector<Resources::Vertex> vertices={
+    {{0,0,0},{0,0,1},{0,0},0xffffffffu},
+    {{1,0,0},{0,0,1},{1,0},0xffffffffu},
+    {{0,1,0},{0,0,1},{0,1},0xffffffffu}};
+  StaticMesh mesh(material,std::move(vertices),{0,1,2});
+  DrawBuckets buckets;
+  auto bucket=buckets.alloc(material,mesh);
+  const auto* bucketIdentity=&*bucket;
+  const auto bucketId=bucket.toInt();
+  const auto commit=[&] {
+    auto command=device.commandBuffer();
+    bool changed=false;
+    {
+    auto encoder=command.startEncoding(device);
+    changed=buckets.commit(encoder,0);
+    }
+    device.submit(command).wait();
+    return changed;
+    };
+  require(commit() && !commit(),"mip fixture must start with stable bucket descriptors");
+  if(Shaders::options().doBindless)
+    require(!buckets.textures().isEmpty() && !buckets.normals().isEmpty() && !buckets.orm().isEmpty(),
+            "mip fixture must retain real bindless arrays for its albedo, normal and ORM");
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{1,1,0},1});
+  ChunkResidency residency(table);
+  const auto tick=[&] {
+    const auto before=Resources::textureStats();
+    const auto generation=Resources::textureGeneration();
+    residency.update({0,0,0},{0,0,0},1000);
+    Resources::updateTextures(&residency);
+    const auto after=Resources::textureStats();
+    require(after.promoted-before.promoted+after.demoted-before.demoted<=1 &&
+            Resources::textureGeneration()-generation<=1,
+            "a frame must publish at most one mip replacement and one texture generation");
+    require(material.tex->w()>=64 && material.normal->w()>=64 && material.orm->w()>=64,
+            "a pending mip replacement must preserve its resident payload without a placeholder");
+    };
+  const auto waitFor=[&](bool wantFull) {
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!(wantFull ? full() : tail()) && std::chrono::steady_clock::now()<deadline) {
+      tick();
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    require(wantFull ? full() : tail(),"requested mip replacements must finish through the frame queue");
+    require(material==copy && bucket->mat==copy && mesh.sub[0].material==copy &&
+            &*bucket==bucketIdentity && bucket.toInt()==bucketId && buckets.buckets().size()==1,
+            "mip replacement must preserve material pointers and the original mesh and bucket");
+    require(commit() && !commit(),"mip replacement must refresh descriptors once without rebuilding buckets");
+    };
+
+  Resources::textureDemand(material,Resources::TextureCategory::Static,true,3);
+  Resources::updateTextures(&residency);
+  require(tail() && !Resources::texturesReady() && Resources::textureStats().promotionQueue>0,
+          "requesting Full must keep Tail visible while its background read or publication is pending");
+  waitFor(true);
+  Resources::textureDemand(material,Resources::TextureCategory::Static,true,2);
+  require(Resources::textureStats().promoted==3 && Resources::textureStats().nearTailCount==0,
+          "promotion must complete every map and clear Near textures on Tail");
+  device.waitIdle();
+  Resources::resetRecycled(0);
+  require(Resources::textureStats().retiredBytes==0,"completed initial mip replacements must be recyclable");
+
+  Resources::textureDemand(material,Resources::TextureCategory::Static,true,4);
+  Resources::textureDemand(material,Resources::TextureCategory::Static,false,2);
+  Resources::textureDemand(material,Resources::TextureCategory::Static,false,3);
+  std::this_thread::sleep_for(std::chrono::milliseconds(5100));
+  tick();
+  require(full() && Resources::textureStats().demoted==0,
+          "a ring-four owner must retain Full after the five-second hysteresis interval");
+  Resources::textureDemand(material,Resources::TextureCategory::Static,false,4);
+  tick();
+  require(full() && Resources::textureStats().demoted==0,
+          "leaving ring four must start a fresh five-second delay before demotion");
+  std::this_thread::sleep_for(std::chrono::milliseconds(4900));
+  tick();
+  require(full() && Resources::textureStats().demoted==0,
+          "Far owners must retain Full until the entire five-second hysteresis has elapsed");
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  waitFor(false);
+  const auto fullBytes=uint64_t(color.size()-128+2*(maps.size()-128));
+  require(Resources::textureStats().demoted==3 && Resources::textureStats().retiredBytes==fullBytes,
+          "demotion must retire each Full payload while retaining its replacement Tail");
+  require(noTail.tex->w()==256,"a texture without a DDS tail must never be demoted");
+  Resources::resetRecycled(1);
+  require(Resources::textureStats().retiredBytes==fullBytes,
+          "a different frame slot must retain the Full payloads retired by demotion");
+  device.waitIdle();
+  Resources::resetRecycled(0);
+  require(Resources::textureStats().retiredBytes==0,
+          "the completed frame slot must release demoted Full payloads after its fence");
+  Resources::textureDemand(material,Resources::TextureCategory::Static,false,6);
+  Resources::textureDemand(noTail,Resources::TextureCategory::Static,false,6);
+  }
+  setenv("OPENGOTHIC_TEXTURE_MIPS","0",1);
+  {
+  Resources resources(device);
+  Resources::TextureLoadScope far(true);
+  const Material material(source("MIP_STREAM.TGA"),true);
+  require(material.tex!=nullptr && material.normal!=nullptr && material.orm!=nullptr &&
+          material.tex->w()==256 && material.normal->w()==256 && material.orm->w()==256 &&
+          Resources::textureStats().tailBytes==0,
+          "OPENGOTHIC_TEXTURE_MIPS=0 must load only Full payloads even in a Far loading scope");
+  }
+  unsetenv("OPENGOTHIC_TEXTURE_MIPS");
+  unsetenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS");
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  }
 }
 
 int main(int argc, char** argv) {
@@ -717,6 +869,7 @@ int main(int argc, char** argv) {
     census(fixture);
     emptyTable(device,fixture);
     textureResidency(device,fixture);
+    textureMipResidency(device,fixture);
     device.waitIdle();
     std::cout << "{\"test\":\"material_texture\",\"passed\":true,\"assertions\":" << assertions << "}\n";
     return 0;

@@ -11,6 +11,10 @@ HEADER.extend(("warm_after_end_s", "fp_warm", "gpu_warm", "warm_5s_after_warm_s"
 HEADER.extend(f"malloc_{metric}_{stage}" for stage in ("end", "warm", "warm_5s")
               for metric in ("in_use", "allocated"))
 TEXTURE_FIELDS = ["tex_live_bytes", "tex_retired_bytes", "tex_peak_bytes", "tex_live_n", "tex_evicted", "tex_reloaded"]
+TEXTURE_FIELDS.extend(("tex_full_bytes", "tex_tail_bytes", "tex_promoted", "tex_demoted",
+                       "tex_promotion_queue", "tex_near_tail_n", "tex_near_tail_seconds", "tex_full_ring3_bytes"))
+TEXTURE_FIELDS.extend(f"tex_source_{source}_{metric}" for source in ("base", "hd", "material", "other")
+                      for metric in ("bytes", "full_bytes"))
 TEXTURE_FIELDS.extend(f"tex_{category}_{metric}" for category in ("landscape", "static", "dynamic", "other")
                       for metric in ("bytes", "n"))
 HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in TEXTURE_FIELDS)
@@ -112,7 +116,8 @@ def summary_rows(out):
             for stage in (end["stage"], "stream_warm", "stream_warm_5s"):
                 marks = [row for row in segment if row["stage"] == stage]
                 mark = marks[-1] if marks else {}
-                values.extend(int(mark[key]) if key in mark else "" for key in TEXTURE_FIELDS)
+                values.extend((round(mark[key], 9) if key == "tex_near_tail_seconds" else int(mark[key]))
+                              if key in mark else "" for key in TEXTURE_FIELDS)
             yield values
 
 

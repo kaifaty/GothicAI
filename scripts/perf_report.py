@@ -165,6 +165,7 @@ def summarize(samples):
             "completed_frames": len(completed),
             "completion_fraction": len(completed) / frames,
             "mean_ms": statistics.fmean(row["gpu_ms"] for row in completed) if completed else None,
+            "p50_ms": percentile([row["gpu_ms"] for row in completed], 0.5),
             "p95_ms": percentile([row["gpu_ms"] for row in completed], 0.95),
             "longer_than_cpu_fraction": (sum(row["gpu_ms"] > row["submitted_cpu_ms"] for row in completed)
                                          / len(completed)) if completed else None,
@@ -224,6 +225,12 @@ def read_streaming(directory):
             if not math.isfinite(gpu_mb) or gpu_mb < 0:
                 raise ValueError(f"{directory}: invalid GPU allocation metric")
             grouped[parts[1]][-1]["gpu_mb"] = gpu_mb
+            for field in ("tex_promoted", "tex_demoted", "tex_near_tail_seconds"):
+                if field in event:
+                    value = event[field]
+                    if not math.isfinite(value) or value < 0:
+                        raise ValueError(f"{directory}: invalid route texture metric")
+                    grouped[parts[1]][-1][field + "_route"] = value
     return grouped
 
 
@@ -263,6 +270,18 @@ def streaming_stats(rows):
             "count_end": int(textures[-1]["tex_live_n"]),
             "evicted": int(max(row["tex_evicted"] for row in textures)),
             "reloaded": int(max(row["tex_reloaded"] for row in textures)),
+            "full_end_bytes": int(textures[-1]["tex_full_bytes"]) if "tex_full_bytes" in textures[-1] else None,
+            "tail_end_bytes": int(textures[-1]["tex_tail_bytes"]) if "tex_tail_bytes" in textures[-1] else None,
+            "promoted": int(sum(row["tex_promoted_route"] for row in textures
+                                if "tex_promoted_route" in row)) if any("tex_promoted_route" in row for row in textures) else None,
+            "demoted": int(sum(row["tex_demoted_route"] for row in textures
+                               if "tex_demoted_route" in row)) if any("tex_demoted_route" in row for row in textures) else None,
+            "promotion_queue_peak": int(max(row["tex_promotion_queue"] for row in textures
+                                            if "tex_promotion_queue" in row)) if any("tex_promotion_queue" in row for row in textures) else None,
+            "near_tail_peak": int(max(row["tex_near_tail_n"] for row in textures
+                                      if "tex_near_tail_n" in row)) if any("tex_near_tail_n" in row for row in textures) else None,
+            "near_tail_seconds": sum(row["tex_near_tail_seconds_route"] for row in textures
+                                     if "tex_near_tail_seconds_route" in row) if any("tex_near_tail_seconds_route" in row for row in textures) else None,
             "categories": {category: {
                 "bytes": int(textures[-1][f"tex_{category}_bytes"]),
                 "count": int(textures[-1][f"tex_{category}_n"]),
@@ -385,6 +404,18 @@ def summary_table(report):
             cells = [f"{categories[category]['bytes']/1048576:.2f} / {categories[category]['count']}"
                      if category in categories else "n/a" for category in ("landscape", "static", "dynamic", "other")]
             lines.append(f"| {view} | " + " | ".join(cells) + " |")
+        lines.extend(["", "| Pass | Full / Tail end MiB | Promoted / demoted on route | Promotion queue peak | Near on Tail peak | Near on Tail texture-seconds |",
+                      "|---|---:|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            if textures is None:
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a |")
+                continue
+            residency = " / ".join(number(None if textures[key] is None else textures[key]/1048576, 2)
+                                   for key in ("full_end_bytes", "tail_end_bytes"))
+            lines.append(f"| {view} | {residency} | {number(textures['promoted'], 0)} / {number(textures['demoted'], 0)} | "
+                         f"{number(textures['promotion_queue_peak'], 0)} | {number(textures['near_tail_peak'], 0)} | "
+                         f"{number(textures['near_tail_seconds'], 9)} |")
     return "\n".join(lines)
 
 
@@ -411,7 +442,7 @@ def report_markdown(report):
             if gpu is None:
                 lines.extend(["GPU timestamps unavailable.", ""])
             else:
-                lines.extend([f"GPU mean/p95 {number(gpu['mean_ms'])}/{number(gpu['p95_ms'])} ms; "
+                lines.extend([f"GPU mean/p50/p95 {number(gpu['mean_ms'])}/{number(gpu['p50_ms'])}/{number(gpu['p95_ms'])} ms; "
                               f"completed {gpu['completed_frames']}/{stats['frames']} frames "
                               f"({100 * gpu['completion_fraction']:.1f}%); GPU longer than CPU "
                               f"{number(None if gpu['longer_than_cpu_fraction'] is None else 100 * gpu['longer_than_cpu_fraction'], 1)}%; "
