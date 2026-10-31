@@ -2758,7 +2758,6 @@ void CollisionWorld::wakeShadowItems() {
 void CollisionWorld::wakeItems() {
   if(!itemWake || !itemWakeCallback)
     return;
-  wakeShadowItems();
   JPH::BodyIDVector active;
   impl->system.GetActiveBodies(JPH::EBodyType::RigidBody,active);
   if(active.empty())

@@ -4098,6 +4098,20 @@ namespace {
       world.wakeItemsInBounds({-1,-1,-1},{1,1,1});
       require(created==16,"a bodyless world must renew the shared creation budget after its tick");
       }
+    {
+      CollisionWorld world;
+      auto source=world.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(10000,1000,0),.7f,1,
+                                       DynamicWorld::C_Item,true);
+      size_t queries=0;
+      world.setItemWakeCallback([&](const Tempest::Vec3&,const Tempest::Vec3&,size_t) {++queries;return size_t(0);});
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      world.updateShadowBlade(actor,1,{{{-10,100,0},{-10,125,0},{0,0,1},2}},0,0,100);
+      world.updateShadowBlade(actor,1,{{{10,100,0},{10,125,0},{0,0,1},2}},100,0,100);
+      world.tick(17);
+      require(world.simulationStep()==1,"the blade query fixture must run one native step");
+      require(queries==1,"one active blade must consume only one wake query in the frame");
+      }
     }
 
   void testItemWake() {
