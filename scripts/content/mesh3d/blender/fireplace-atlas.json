@@ -5,13 +5,14 @@
   "OWN_HEARTH_MASONRY": 1.5,
   "OWN_HEARTH_SOOT": 1.0,
   "OWN_HEARTH_LOG": 3.0,
-  "OWN_HEARTH_EMBER": 2.0
+  "OWN_HEARTH_EMBER": 2.0,
+  "OWN_HEARTH_CARVING": 1.5
  },
  "targets": {
   "OWN_HEARTH_MASONRY": [
-   0.027,
-   0.025,
-   0.013
+   0.045,
+   0.04,
+   0.025
   ],
   "OWN_HEARTH_SOOT": [
    0.012,
@@ -27,6 +28,11 @@
    0.14,
    0.045,
    0.015
+  ],
+  "OWN_HEARTH_CARVING": [
+   0.08,
+   0.07,
+   0.045
   ]
  },
  "slots": {
@@ -45,6 +51,10 @@
   "OWN_HEARTH_EMBER": [
    "OWN_HEARTH_FIREPLACE_FIRE",
    "UNDEF"
+  ],
+  "OWN_HEARTH_CARVING": [
+   "OWN_HEARTH_FIREPLACE",
+   "STONE"
   ]
  },
  "metal": [],
@@ -52,7 +62,8 @@
   "OWN_HEARTH_MASONRY": 0.3,
   "OWN_HEARTH_SOOT": 0.0,
   "OWN_HEARTH_LOG": 0.2,
-  "OWN_HEARTH_EMBER": 0.0
+  "OWN_HEARTH_EMBER": 0.0,
+  "OWN_HEARTH_CARVING": 0.3
  },
  "measure_ao": {
   "OWN_HEARTH_MASONRY": 0.5

@@ -115,7 +115,7 @@ bx, bzf, btop = cfg["block"]
 sx, szf, sth = cfg["shelf"]
 ox, otop, och, odepth = cfg["opening"]
 # mortar core: the hearth slab, the block, the shelf, the hood
-box(-hx, hx, floor, htop, hzf, wall, SOOT)
+box(-hx, hx, floor, htop, hzf, wall, CARVE)  # the hearth slab: dressed stone, lighter than the masonry
 # the block round a real firebox: two piers and a lintel; the firebox has sooted sides, back and roof
 cz = bzf + 0.02
 box(-bx + 0.02, -ox - 0.02, htop, btop, cz, wall, STONE)
@@ -126,7 +126,7 @@ box(-ox, ox, htop, otop, back, back + 0.04, SOOT)
 for s_ in (-1, 1):
     box(min(s_ * ox, s_ * (ox + 0.04)), max(s_ * ox, s_ * (ox + 0.04)), htop, otop, bzf, back, SOOT)
 box(-ox, ox, otop - 0.04, otop, bzf, back, SOOT)
-box(-sx, sx, btop, btop + sth, szf, wall, STONE)
+box(-sx, sx, btop, btop + sth, szf, wall, CARVE)  # the mantle shelf: one dressed slab
 hood = cfg["hood"]
 shell([(y, x - 0.02, z + 0.02) for y, x, z in hood], STONE)
 # stones of the block's front, left and right of the opening and over it
@@ -155,6 +155,21 @@ for (y0, x0, z0), (y1, x1, z1) in zip(rows, rows[1:]):
     if normal.y < 0:
         normal = -normal
     course_face(p00, p10, p01, p11, normal, STONE, not st["regular"])
+# quoins along every sloping edge of the hood: straight stones over the stepped ends of the courses
+for (y0, x0, z0), (y1, x1, z1) in zip(rows, rows[1:]):
+    if abs(x1 - x0) < 0.02:
+        continue
+    for s_ in (-1, 1):
+        a_, c_ = b(s_ * x0, y0, z0 - 0.005), b(s_ * x1, y1, z1 - 0.005)
+        p00, p10, p01 = b(-x0, y0, z0 - 0.005), b(x0, y0, z0 - 0.005), b(-x1, y1, z1 - 0.005)
+        n_ = (p10 - p00).cross(p01 - p00).normalized()
+        if n_.y < 0:
+            n_ = -n_
+        edge = (c_ - a_).normalized()
+        inward = n_.cross(edge).normalized()
+        if inward.x * s_ > 0:
+            inward = -inward
+        P.board((a_ + c_) / 2 + inward * 0.07 + n_ * (st["proud"] + 0.01), edge, inward, n_, (c_ - a_).length, 0.16, st["proud"] * 2 + 0.03, STONE)
 if cfg.get("carving"):
     y0, y1 = cfg["carving"]
     (ya, xa, za) = rows[0]

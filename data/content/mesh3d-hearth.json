@@ -401,6 +401,11 @@
      "role": "rubble and block masonry of a fireplace"
     },
     {
+     "key": "OWN_HEARTH_CARVING",
+     "group": "STONE",
+     "role": "dressed stone: the mantle shelf, the hearth slab, mouldings and the hood relief"
+    },
+    {
      "key": "OWN_HEARTH_SOOT",
      "group": "STONE",
      "role": "the sooted firebox: back wall, hearth floor"
@@ -446,6 +451,11 @@
      "key": "OWN_HEARTH_MASONRY",
      "group": "STONE",
      "role": "rubble and block masonry of a fireplace"
+    },
+    {
+     "key": "OWN_HEARTH_CARVING",
+     "group": "STONE",
+     "role": "dressed stone: the mantle shelf, the hearth slab, mouldings and the hood relief"
     },
     {
      "key": "OWN_HEARTH_SOOT",
@@ -497,7 +507,7 @@
     {
      "key": "OWN_HEARTH_CARVING",
      "group": "STONE",
-     "role": "carved mouldings and the hood relief"
+     "role": "dressed stone: the mantle shelf, the hearth slab, mouldings and the hood relief"
     },
     {
      "key": "OWN_HEARTH_SOOT",
@@ -549,7 +559,7 @@
     {
      "key": "OWN_HEARTH_CARVING",
      "group": "STONE",
-     "role": "carved mouldings and the hood relief"
+     "role": "dressed stone: the mantle shelf, the hearth slab, mouldings and the hood relief"
     },
     {
      "key": "OWN_HEARTH_SOOT",

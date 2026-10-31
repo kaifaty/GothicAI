@@ -42,7 +42,7 @@ CAST = zone('OWN_HEARTH_CAST', 'METAL', 'cast-iron stove plates, rusty brown')
 COPPER = zone('OWN_HEARTH_COPPER', 'METAL', 'the hammered copper hood over the stove')
 MASONRY = zone('OWN_HEARTH_MASONRY', 'STONE', 'rubble and block masonry of a fireplace')
 ASHLAR = zone('OWN_HEARTH_ASHLAR', 'STONE', 'pale dressed stone of a rich fireplace')
-CARVING = zone('OWN_HEARTH_CARVING', 'STONE', 'carved mouldings and the hood relief')
+CARVING = zone('OWN_HEARTH_CARVING', 'STONE', 'dressed stone: the mantle shelf, the hearth slab, mouldings and the hood relief')
 SOOT = zone('OWN_HEARTH_SOOT', 'STONE', 'the sooted firebox: back wall, hearth floor')
 
 TARGETS = [
@@ -54,8 +54,8 @@ TARGETS = [
     {'id': 'hearth-brazier', 'visual': 'DT_FIREPLACE_V1', 'budget_tris': 3000, 'zones': [IRON, RIVET, EMBER, ASH]},
     # wave 2: hearths in the houses
     {'id': 'hearth-stove', 'visual': 'STOVE_NW_CITY_01', 'budget_tris': 3000, 'zones': [CAST, RIVET, COPPER, EMBER, WOOD]},
-    {'id': 'hearth-fireplace', 'visual': 'NW_CITY_FIREPLACE_NORMAL_01', 'budget_tris': 3000, 'zones': [MASONRY, SOOT, LOG, EMBER]},
-    {'id': 'hearth-fireplace-large', 'visual': 'NW_CITY_FIREPLACE_LARGE_01', 'budget_tris': 4000, 'zones': [MASONRY, SOOT, LOG, EMBER]},
+    {'id': 'hearth-fireplace', 'visual': 'NW_CITY_FIREPLACE_NORMAL_01', 'budget_tris': 3000, 'zones': [MASONRY, CARVING, SOOT, LOG, EMBER]},
+    {'id': 'hearth-fireplace-large', 'visual': 'NW_CITY_FIREPLACE_LARGE_01', 'budget_tris': 4000, 'zones': [MASONRY, CARVING, SOOT, LOG, EMBER]},
     {'id': 'hearth-fireplace-wide', 'visual': 'NW_CITY_FIREPLACE_LARGE_02', 'budget_tris': 4000, 'zones': [ASHLAR, CARVING, SOOT, LOG, EMBER]},
     {'id': 'hearth-fireplace-wide-low', 'visual': 'NW_CITY_FIREPLACE_LARGE_021', 'budget_tris': 4000, 'zones': [ASHLAR, CARVING, SOOT, LOG, EMBER]},
 ]
