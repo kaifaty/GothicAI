@@ -1421,7 +1421,7 @@ void Resources::configureTextures(std::string_view budget, std::string_view skip
   const auto* budgetEnv=std::getenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
   const auto* mipsEnv=std::getenv("OPENGOTHIC_TEXTURE_MIPS");
   const auto* skipEnv=std::getenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS");
-  const auto integer=[](std::string_view value, int64_t fallback, const char* field, int64_t maximum) {
+  const auto integer=[](std::string_view value, int64_t fallback, const char* field, int64_t maximum) -> int64_t {
     if(value.empty())
       return fallback;
     std::string text(value);
@@ -1449,12 +1449,13 @@ void Resources::finishTextureLoading() {
   if(inst==nullptr || inst->dev==nullptr)
     return;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  for(auto& entry:inst->textureRecords) {
-    auto& record=entry.second;
-    if(!record.wanted() || !inst->wantsFull(record) || (record.resident && !record.tail))
-      continue;
-    auto data=decodeBaseTexture(record.source,record.mipmaps);
-    auto texture=inst->dev->texture(data.pixmap,data.useMipmap);
+  std::array<TextureRecord*,2> records{};
+  std::array<std::future<Texture2d>,2> uploads;
+  const auto publish=[&](size_t slot) {
+    if(!uploads[slot].valid())
+      return;
+    auto texture=uploads[slot].get();
+    auto& record=*records[slot];
     inst->unqueueTexture(record);
     if(record.resident)
       inst->retireTexture(std::move(*record.texture));
@@ -1466,7 +1467,22 @@ void Resources::finishTextureLoading() {
     record.bytes=LoadProbe::textureBytes(*record.texture);
     inst->texturePayloadChanged=true;
     inst->queueTexture(record);
+    };
+  size_t slot=0;
+  for(auto& entry:inst->textureRecords) {
+    auto& record=entry.second;
+    if(!record.wanted() || !inst->wantsFull(record) || (record.resident && !record.tail))
+      continue;
+    publish(slot);
+    records[slot]=&record;
+    uploads[slot]=std::async(std::launch::async,[path=record.source,mipmaps=record.mipmaps,device=inst->dev] {
+      auto data=decodeBaseTexture(path,mipmaps);
+      return device->texture(data.pixmap,data.useMipmap);
+      });
+    slot=(slot+1)%uploads.size();
     }
+  publish(slot);
+  publish((slot+1)%uploads.size());
   }
 
 Resources::TextureStats Resources::textureStats() {
