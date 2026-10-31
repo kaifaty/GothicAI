@@ -90,12 +90,30 @@ async def lie_found_out(
     gold = next((i for i in snap.npc.inventory if i.item == "ITMI_GOLD" and not i.equipped), None)
     if gold is None:
         return _logged({"reward": f"failed ({name} has no gold: {snap.npc.inventory})"})
+    # A 30 m spawn beside the tower's upper floor drops the sheep to their deaths.
+    arena = "NW_FARM1_FIELD_06"
+    await link.story_effect(npc, [{"do": "end"}])
+    await link.debug("player_goto", waypoint=arena)
+    await link.debug("npc_goto", npc=npc, waypoint=arena, face="PC_HERO")
+    await link.npc_act(
+        npc, "start_activity", state="ZS_STAND_WP", waypoint=arena, minutes=120, place=True,
+    )
+    await link.debug("player_goto", to=npc, distance=250)
+    if not await _until(lambda: npc in talk.people and talk.people[npc].distance < ATTACK_CM, 15):
+        return _logged({"arena": f"failed ({npc} is not near the hero on the field)"})
     q = await quests.give(
         npc, name, "овцы бродят у башни и мешают мне, перебей их", "SHEEP", 2, "ITMI_GOLD", gold.name, 5
     )
-    ok = await _until(lambda: quests.chronicle.tags.get(q.tag) is not None, 5)
+    ok = await _until(
+        lambda: (tag := quests.chronicle.tags.get(q.tag)) is not None and npc in tag.near
+        and tag.alive == 2 and not quests.chronicle.killed(q.tag)
+        and (npc not in tag.seen or tag.seen[npc] > SEE_CM), 10,
+    )
     tag = quests.chronicle.tags.get(q.tag)
-    check("quest", ok and q.count == 2 and tag is not None and tag.alive == 2, f"{q.id}, {q.reward()}, {tag}")
+    check("quest", ok and q.count == 2,
+          f"{q.id}, {q.reward()}, {tag}, killed={quests.chronicle.killed(q.tag)}")
+    if not ok or q.count != 2:
+        return _logged(results)
 
     # the lie: the hero says it is done, the giver believes him and pays
     hero_gold = ["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", "ITMI_GOLD"]]
