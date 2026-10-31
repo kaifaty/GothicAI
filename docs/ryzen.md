@@ -26,7 +26,7 @@ scripts/ryzen.sh clean-cache
 
 **Личная игра пользователя** устанавливается отдельно: с Mac `scripts/ryzen-play.sh install`, после слияний в `main` — `scripts/ryzen-play.sh update`. Клон `~/gothic-ai/play/` и значок **Gothic AI** в GNOME запускают ядро лаунчера в Ptyxis: fullscreen, звук PipeWire, последнее сохранение. Сеанс держит `gq quick --interactive --display-exclusive` до 6 часов (8 потоков, 8 ГБ RAM, 3 ГБ VRAM, `CPUWeight=1000`); ждёт текущие игры, печатая их имена, фоновые заявки старт не задерживают. Установка/сборка и `uv sync` идут отдельной обычной `quick`-заявкой. [Установка, вход ChatGPT, ключи, PortAudio и смоук без моделей](launcher.md#ryzen-linux); [правила интерактивного допуска](compute.md#очередь-gq). Поведение e2e и bench ниже сохраняется.
 
-Для измерения памяти Linux есть `SCENARIO=memprobe LLM=fake MEMPROBE_PHASES=save MEMPROBE_CYCLES=8 scripts/ryzen.sh e2e`. Каждую фазу запускают отдельной игрой. `LOG_DIR/game.pid` содержит PID игры, `memprobe.jsonl` — RSS по шагам и группы `smaps` в конце цикла. `GAME_EXTRA_ENV` добавляет переменные только игре: одна строка `NAME=value` на переменную, без shell-подстановок. Например, `GAME_EXTRA_ENV=$'LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2\nMALLOC_CONF=prof:true'`. Без переменной окружение игры прежнее; `MEMPROBE_*` и `GAME_EXTRA_ENV` проходят через SSH-обёртку.
+Для измерения памяти Linux есть `SCENARIO=memprobe MEMPROBE_PHASES=save MEMPROBE_CYCLES=8 scripts/ryzen.sh e2e`. Каждую фазу запускают отдельной игрой. `LOG_DIR/game.pid` содержит PID игры, `memprobe.jsonl` — RSS по шагам и группы `smaps` в конце цикла. `GAME_EXTRA_ENV` добавляет переменные только игре: одна строка `NAME=value` на переменную, без shell-подстановок. Например, `GAME_EXTRA_ENV=$'LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2\nMALLOC_CONF=prof:true'`. Без переменной окружение игры прежнее; `MEMPROBE_*` и `GAME_EXTRA_ENV` проходят через SSH-обёртку.
 
 Для `memprobe` таймаут e2e по умолчанию 1200 с; явный `TIMEOUT` имеет приоритет. `MEMPROBE_CYCLE_PAUSE` добавляет паузу после каждого `cycle_end` для внешнего профилировщика (по умолчанию 0). [Измерения RSS на Ryzen](../reports/engine/2026-10-19-rss-growth/README.md) показывают удержание свободных анонимных страниц аренами glibc при повторной загрузке мира.
 
@@ -150,6 +150,8 @@ scripts/gq submit --class batch --threads 4 --mem 4G --max 30m --name phase \
 Проверки изолированы временными корнями и поддельным файлом маунтов: `scripts/tests/test_nas_archive.py`, `test_gq.py`, `test_gq_job.py`. Живой смоук использует отдельную случайную папку и временную копию модуля на Ryzen, после проверки удаляет свои данные с NAS.
 
 ## План и журнал
+
+1 ноября 2026: `neural-soak` измеряет RSS игры и сервера на macOS через существующий `proc_pid_rusage` из `memprobe`; Linux читает `/proc`, пороги памяти сохранены.
 
 1 ноября 2026: shell-проверки `bandit_parley`, `bandit_bounty`, `death_load`, `feats` и `feat_fame` пропускают `auto` как прежний `fake`; CLI выбирает backend по группе, явные режимы и ограничения сохранений проверяются как раньше.
 
