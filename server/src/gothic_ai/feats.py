@@ -83,6 +83,63 @@ HERO_FIELDS: dict[str, frozenset[str]] = {
     "challenge_met": frozenset({"challenge"}),
 }
 
+# Actual participants and observers, by evidence kind. A crime's owner or victim is not
+# necessarily aware of it (for example, a successful pickpocketing). Line people and quest
+# targets likewise do not witness an outcome just because they occur in its definition.
+FAME_FIELDS: dict[str, tuple[str, ...]] = {
+    "died": ("npc", "killer"),
+    "crime": ("witnesses",),
+    "contract": ("npc",),
+    "contract_kill": ("victim",),
+    "contract_done": ("npc",),
+    "contract_paid": ("npc",),
+    "hero_yield": ("npc",),
+    "yield_broken": ("npc",),
+    "humiliated": ("npc", "witnesses"),
+    "surrender": ("npc",),
+    "truce": ("npc", "members"),
+    "truce_broken": ("npc", "members"),
+    "deal": ("npc",),
+    "forgiven": ("npc",),
+    "debt": ("npc",),
+    "debt_paid": ("npc",),
+    "npc_later_paid": ("npc",),
+    "broken": ("npc",),
+    "meet": ("npc",),
+    "meet_kept": ("npc",),
+    "led": ("npc",),
+    "initiative": ("npc", "seen_by"),
+    "bounty_secret": ("npc",),
+    "bounty_betrayal": ("npc", "witnesses"),
+    "gate_vouch": ("npc",),
+    "gate_claim": ("npc",),
+    "quest_given": ("npc",),
+    "quest_terms": ("npc",),
+    "quest_outcome": ("npc",),
+    "quest_reopened": ("npc",),
+    "vanilla_quest": ("npc", "giver"),
+    "vanilla_reward": ("npc",),
+    "paid": (),
+    "quest": ("giver",),
+    "story_quest_given": (),
+    "story_quest_stage": (),
+    "story_quest_done": (),
+    "story_quest_failed": (),
+    "story_quest_obsolete": (),
+    "story_quest_closed": (),
+    "authored_given": ("npc",),
+    "authored_done": ("npc",),
+    "claim": ("npc",),
+    "lie": ("npc",),
+    "lie_made_good": ("npc",),
+    "amends": ("npc", "to"),
+    "chapter": (),
+    "visited": (),
+    "challenge_met": (),
+    "crime_seen": ("npc",),
+    "testimony": ("witness", "npc"),  # Matched to crime_saw / crime_told below.
+}
+
 TRIGGERS = {
     "died", "crime", "claim", "lie", "quest_outcome", "story_quest_done", "authored_done",
     "hero_yield", "yield_broken", "surrender", "truce", "truce_broken", "deal", "forgiven",
@@ -165,6 +222,39 @@ def hero_view(seq: int, fact: Fact) -> Fact | None:
     if kind == "surrender" and fact.get("status") not in {"spared", "attacked"}:
         return None
     return {k: v for k, v in fact.items() if k not in HERO_FIELDS[kind]}
+
+
+def fame_witnesses(feat: Fact, entries: list[tuple[int, Fact]]) -> list[str]:
+    """Decide fame from full branch evidence, never from the chronicler's filtered view."""
+    evidence = [fact for seq, fact in entries if seq in feat["evidence"]]
+    trigger = next((f for seq, f in entries if seq == feat["trigger"]), {})
+    if any(f["fact"] in {"lie", "claim"} for f in evidence) or (
+        trigger.get("fact") == "challenge_met" and trigger.get("kind") == "secret_kept"
+    ):
+        return []
+    known: set[str] = set()
+
+    def add(fact: Fact, fields: tuple[str, ...]) -> None:
+        for field in fields:
+            people = fact.get(field, [])
+            known.update(npc.upper() for npc in ([people] if isinstance(people, str) else people))
+
+    for fact in evidence:
+        add(fact, FAME_FIELDS[fact["fact"]])
+        if fact["fact"] == "crime" and fact.get("kind") == "attack":
+            add(fact, ("victim",))
+    crimes = {f["id"] for f in evidence if f["fact"] == "crime"}
+    crimes.update(f["crime"] for f in evidence if f.get("crime"))
+    for _, fact in entries:
+        if fact["fact"] == "crime_seen" and fact.get("crime") in crimes:
+            add(fact, FAME_FIELDS["crime_seen"])
+        elif fact["fact"] == "testimony" and fact.get("about", "PLAYER") == "PLAYER":
+            if crimes.intersection(fact.get("crime_saw", [])):
+                add(fact, ("witness",))
+            if crimes.intersection(fact.get("crime_told", [])):
+                add(fact, FAME_FIELDS["testimony"])
+    dead = {f["npc"].upper() for _, f in entries if f["fact"] == "died"}
+    return sorted(known - dead - {"", "PLAYER"})
 
 
 def _pattern(fact: Fact) -> tuple[str, Any]:
@@ -333,7 +423,7 @@ class Feats:
         self, link: GameLink, chronicle: Chronicle, llm: LLMBackend, *,
         journal: Journal | None = None, gather_s: float = 20,
         artist: Artist | None = None, image_wait_s: float = 150,
-        places: PlaceBook | None = None,
+        places: PlaceBook | None = None, fame: bool = True,
     ) -> None:
         self.link, self.chronicle = link, chronicle
         self.model = ChroniclerModel(llm)
@@ -341,6 +431,7 @@ class Feats:
         self.gather_s = gather_s
         self.artist, self.image_wait_s = artist, image_wait_s
         self.places = places
+        self.fame = fame
         self._work: asyncio.Task[None] | None = None
         self._drawings: set[asyncio.Task[Picture | None]] = set()
         self._toasts: set[asyncio.Task[None]] = set()
@@ -532,6 +623,11 @@ class Feats:
                 **{key: state[key] for key in ("day", "hour", "minute")},
             }
             self.chronicle.record(feat)
+            if self.fame and (witnesses := fame_witnesses(feat, self.chronicle.entries())):
+                self.chronicle.record({
+                    "fact": "feat_fame", "feat": feat["id"], "title": feat["title"],
+                    "text": feat["text"], "witnesses": witnesses, "day": feat["day"],
+                })
             self.journal.add("feat", **{key: feat[key] for key in ("id", "title", "text", "category")})
             drawing = None
             if self.artist is not None:

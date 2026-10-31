@@ -79,6 +79,7 @@ class FakeArtist(Artist):
 @asynccontextmanager
 async def world(
     *answers, gather_s=0, history=(), backend=None, artist=None, image_wait_s=150, places=None,
+    fame=True,
 ):
     fake = FakeGame(branch="A")
     fake.day = 10
@@ -94,7 +95,7 @@ async def world(
         chronicle = Chronicle(link, store)
         chronicler = Feats(
             link, chronicle, llm, journal=Journal(journal.append), gather_s=gather_s,
-            artist=artist, image_wait_s=image_wait_s, places=places,
+            artist=artist, image_wait_s=image_wait_s, places=places, fame=fame,
         )
         try:
             yield fake, chronicle, chronicler, llm, journal
@@ -113,6 +114,8 @@ async def settled(chronicler):
     {"fact": "died", "killer": "OTHER", "name": "SECRET"},
     {"fact": "surrender", "status": "offered"},
     {"fact": "feat", "title": "SECRET"},
+    {"fact": "feat_fame", "feat": "F1", "title": "SECRET"},
+    {"fact": "rumor", "kind": "fame", "title": "SECRET"},
     {"fact": "challenge", "kind": "no_blood", "people": ["SECRET"]},
     {"fact": "challenge_hint", "kind": "no_blood", "npc": "SECRET", "witnesses": ["SECRET"]},
     {"fact": "challenge_dropped", "kind": "no_blood", "line": 1, "why": "no_fight", "people": ["SECRET"]},
@@ -120,6 +123,47 @@ async def settled(chronicler):
 ])
 def test_hidden_facts_have_no_hero_view(fact):
     assert hero_view(1, fact) is None
+
+
+@pytest.mark.parametrize(("history", "occasion", "evidence", "witnesses", "fame"), [
+    ([], crime(witnesses=["PLAYER", "MALETH", "MALETH"]), [1], ["MALETH"], True),
+    ([], {"fact": "quest_outcome", "npc": "LOBART", "how": "amended", "pay": "none"},
+     [1], ["LOBART"], True),
+    ([], crime(), [1], [], True),
+    ([], crime(kind="attack"), [1], ["LOBART"], True),
+    ([{"fact": "lie", "npc": "LOBART"}], crime(witnesses=["LOBART"]), [1, 2], [], True),
+    ([{"fact": "claim", "npc": "LOBART", "truth": False}], crime(witnesses=["LOBART"]),
+     [1, 2], [], True),
+    ([crime(witnesses=["LOBART"])],
+     {"fact": "challenge_met", "kind": "secret_kept", "evidence": [1], "challenge": 8},
+     [1, 2], [], True),
+    ([{"fact": "died", "npc": "LOBART", "killer": "OTHER"}],
+     crime(witnesses=["LOBART"]), [2], [], True),
+    ([], crime(witnesses=["LOBART"]), [1], [], False),
+    ([{"fact": "crime_seen", "crime": "C1", "npc": "MALETH"},
+      {"fact": "crime_seen", "crime": "OTHER", "npc": "LOBART"}],
+     crime(), [3], ["MALETH"], True),
+    ([{"fact": "testimony", "witness": "MALETH", "npc": "LOBART",
+       "crime_saw": ["C1"], "crime_told": ["C1"]},
+      {"fact": "testimony", "witness": "OTHER", "npc": "ANDRE", "crime_told": ["C2"]}],
+     crime(), [3], ["LOBART", "MALETH"], True),
+    ([{"fact": "initiative", "npc": "LOBART", "seen_by": ["PLAYER", "MALETH"]}],
+     crime(), [1, 2], ["LOBART", "MALETH"], True),
+    ([{"fact": "vanilla_quest", "quest": "Q1", "giver": "LOBART"}],
+     crime(), [1, 2], ["LOBART"], True),
+])
+async def test_fame_uses_full_evidence_and_living_knowers(history, occasion, evidence, witnesses, fame):
+    async with world(proposal(evidence=evidence), history=history, fame=fame) as (
+        _, chronicle, chronicler, _, _,
+    ):
+        chronicle.record(occasion)
+        await settled(chronicler)
+        [award] = chronicle.facts("feat")
+        expected = [{
+            "fact": "feat_fame", "feat": award["id"], "title": award["title"],
+            "text": award["text"], "witnesses": witnesses, "day": award["day"],
+        }] if witnesses else []
+        assert chronicle.facts("feat_fame") == expected
 
 
 @pytest.mark.parametrize(("fact", "removed"), [

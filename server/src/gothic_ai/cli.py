@@ -1002,6 +1002,7 @@ async def serve(args: argparse.Namespace) -> int:
                 link, state.chronicle, llm, journal=journal, places=place_book,
                 gather_s=1 if args.scenario == "feats" and args.llm == "fake" else 20,
                 artist=artist,
+                fame=not args.no_feat_fame,
                 image_wait_s=30 if args.scenario == "feats" and args.llm == "fake" else 150,
             )
         if not args.no_crimes:
@@ -3320,6 +3321,11 @@ def main() -> None:
         "--no-feat-challenges",
         action="store_true",
         help="disable the director's hidden line challenges (enabled by default)",
+    )
+    p.add_argument(
+        "--no-feat-fame",
+        action="store_true",
+        help="disable rumors about the hero's public feats",
     )
     p.add_argument(
         "--no-feat-images",

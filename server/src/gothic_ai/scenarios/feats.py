@@ -10,7 +10,7 @@ from typing import Any
 
 from .. import feat_art
 from ..chronicle import Fact
-from ..feats import CATEGORIES, WRITE, Feats
+from ..feats import CATEGORIES, WRITE, Feats, fame_witnesses
 from ..game import GameError, GameLink
 from ..journal import Journal
 from ..llm import ToolCall
@@ -153,6 +153,17 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
                 and award.get("category") in CATEGORIES,
                 f"trigger={trigger}, evidence={award.get('evidence')}, category={award.get('category')}",
             )
+            award_seq = next(seq for seq, fact in chronicle.entries("feat") if fact["id"] == award["id"])
+            witnesses = fame_witnesses(
+                award, [(seq, fact) for seq, fact in chronicle.entries() if seq <= award_seq],
+            )
+            fame = [fact for fact in chronicle.facts("feat_fame") if fact.get("feat") == award["id"]]
+            expected_fame = [{
+                "fact": "feat_fame", "feat": award["id"], "title": award["title"],
+                "text": award["text"], "witnesses": witnesses, "day": award["day"],
+            }] if witnesses else []
+            check("fame", fame == expected_fame,
+                  f"public: {', '.join(witnesses)}" if witnesses else "secret")
             await _until(lambda: any(toast.feat == award["id"] for toast in toasts)
                          and any(f.get("id") == award["id"] for f in chronicle.facts("feat_image")),
                          200 if live else 30)
@@ -200,6 +211,8 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
         )
         check("image_rollback", not chronicle.facts("feat_image"),
               f"images={chronicle.facts('feat_image')}")
+        check("fame_rollback", not chronicle.facts("feat_fame"),
+              f"fame={chronicle.facts('feat_fame')}")
         if image_dir is not None:
             check("image_retained", image_dir.is_dir() and icon.is_file(), str(image_dir))
         return _logged(results)

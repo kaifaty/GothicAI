@@ -355,7 +355,35 @@ class PeopleKnowledge:
                 if description.startswith(prefix):
                     description = "ты считаешь, что " + description.removeprefix(prefix)
             lines.append(f"- {description} ({how})")
-        return "Что ты знаешь о людях вокруг:\n" + "\n".join(lines) if lines else None
+        blocks = ["Что ты знаешь о людях вокруг:\n" + "\n".join(lines)] if lines else []
+        if fame := self._fame_context(npc):
+            blocks.append(fame)
+        return "\n".join(blocks) if blocks else None
+
+    def _fame_context(self, npc: str) -> str | None:
+        npc = npc.upper()
+        known: dict[str, tuple[str, bool]] = {}
+        for fact in self.chronicle.facts():
+            direct = fact.get("fact") == "feat_fame" and npc in fact["witnesses"]
+            heard = (
+                fact.get("fact") == "rumor" and fact.get("kind") == "fame"
+                and fact.get("to") == npc and rumor_subject(fact) == PLAYER
+            )
+            if not direct and not heard:
+                continue
+            key = fact["feat"]
+            old = known.get(key)
+            if old is not None and (old[1] or not direct):
+                continue
+            how = "ты видел это сам" if direct else f"со слов: {fact['from_name']}"
+            known[key] = (f"- «{fact['title']}» — {fact['text']} ({how})", direct)
+        if not known:
+            return None
+        lines = [line for line, _ in reversed(list(known.values()))][:SHOWN]
+        return (
+            "Что о герое говорят люди:\n" + "\n".join(lines)
+            + "\nМожешь узнать героя по этой славе и назвать его так своими словами."
+        )
 
     def warning(self, npc: str, subject: str) -> str | None:
         entry = next((e for e in self.of(npc) if e.subject == subject.upper()), None)
