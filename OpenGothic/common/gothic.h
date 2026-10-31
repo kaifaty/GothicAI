@@ -68,6 +68,7 @@ class Gothic final {
       bool meleeDownTactics = true;
       bool itemHulls = true;
       bool meleeHitStop = true;
+      bool meleeStamina = true;
       bool furnitureParts = true;
 
       bool allowsMonsterCharacterVirtual(bool down, bool flying) const {

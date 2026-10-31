@@ -2349,6 +2349,7 @@ void writeHeader() {
     std::fprintf(bench.csv,",%s",f.column);
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",hp_player,hp_subject");
+  std::fprintf(bench.csv,",stamina_player,stamina_subject");
   std::fprintf(bench.csv,",ai_on,ai_want,ai_sigma,ai_errx,ai_erry,ai_lead,ai_pv,ai_ps");
   std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits");
   if(ragdollTrace)
@@ -9316,6 +9317,7 @@ void writeRow(Npc& pl) {
                fl.hits,fl.strength,fl.height);
   // hit points: the hero's, the watched one's (a fight's course)
   std::fprintf(bench.csv,",%d,%d",pl.attribute(ATR_HITPOINTS),bench.subject!=nullptr ? bench.subject->attribute(ATR_HITPOINTS) : -1);
+  std::fprintf(bench.csv,",%.3f,%.3f",double(pl.stamina()),bench.subject!=nullptr ? double(bench.subject->stamina()) : -1.0);
   // the watched npc's archer by hand (game/archerai)
   const auto& ai = ArcherAi::subjectProbe;
   std::fprintf(bench.csv,",%d,%d,%.3f,%.3f,%.3f,%.0f,%.2f,%.2f",int(ai.valid && ai.active),int(ai.want),ai.sigma,ai.err.x,ai.err.y,

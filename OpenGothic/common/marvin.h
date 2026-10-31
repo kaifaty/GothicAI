@@ -107,6 +107,7 @@ class Marvin {
       C_ToggleMeleePosture,
       C_ToggleMeleeDownTactics,
       C_ToggleMeleeHitStop,
+      C_ToggleMeleeStamina,
       };
 
     struct Cmd {
