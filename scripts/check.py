@@ -25,27 +25,31 @@ class Group:
     timeout: int = 10
     scopes: tuple[str, ...] = ()
     dependencies: tuple[str, ...] = ()
+    platform: str = "ubuntu-24.04"
 
 
 LOCKED_PROJECTS = (
     "server", "asr-service", "tts-service", "launcher/core",
     "libs/chatgpt-auth", "shorts", "site", "decider-service",
 )
-PYTEST = ("pytest", "-q", "-rs")
+PYTEST = ("pytest", "-q", "-rs", "-o", "faulthandler_timeout=300")
 # The pip interface scopes the CPU index to torch; uv run's --index affects all packages.
-GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", *PYTEST)) for p in LOCKED_PROJECTS) + (
+GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", *PYTEST),
+                     platform="macos-15" if p == "shorts" else "ubuntu-24.04")
+               for p in LOCKED_PROJECTS) + (
     Group("body-service", "body-service", (
         "bash", "-c", 'uv venv --allow-existing .venv && '
         'uv pip install --python .venv/bin/python --torch-backend cpu '
-        '--default-index https://pypi.org/simple "torch>=2.5,<3" pytest . && '
-        'exec .venv/bin/pytest -q -rs "$@"', "pytest",
+        '--default-index https://pypi.org/simple "torch>=2.5,<3" pytest --editable . && '
+        'exec .venv/bin/pytest -q -rs -o faulthandler_timeout=300 "$@"', "pytest",
     )),
     Group("scripts", "scripts", (
         "bash", "-c", 'uv venv --allow-existing .venv && '
         'uv pip install --python .venv/bin/python --torch-backend cpu '
         '--default-index https://pypi.org/simple "torch>=2.5,<3" pytest numpy pillow '
-        'matplotlib websockets ../body-service ../launcher/core && '
-        'exec .venv/bin/pytest -q -rs --ignore=content --ignore=meshes --ignore=fracture "$@"', "pytest",
+        'matplotlib websockets --editable ../body-service ../launcher/core && '
+        'exec .venv/bin/pytest -q -rs -o faulthandler_timeout=300 '
+        '--ignore=content --ignore=meshes --ignore=fracture "$@"', "pytest",
     ), dependencies=("launcher/core", "server", "body-service")),
     Group("content", "scripts/content", (
         "uv", "run", "--no-project", "--with", "pytest", "--with", "numpy",
@@ -309,6 +313,7 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
         arguments = [] if whole_group else [str((root / p).relative_to(directory)) for p in selected]
         result.append({"name": group.name, "dir": group.directory,
                        "command": shlex.join([*group.command, *arguments]), "timeout": group.timeout,
+                       "platform": group.platform,
                        "files": selected, "whole_group": whole_group,
                        "reasons": {} if whole_group else {p: sorted(reasons[p]) for p in selected}})
     return result

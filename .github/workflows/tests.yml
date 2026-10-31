@@ -45,7 +45,7 @@ jobs:
   test:
     needs: select
     if: ${{ needs.select.outputs.groups != '[]' }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.platform }}
     name: test (${{ matrix.name }})
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
@@ -68,10 +68,8 @@ jobs:
           cache-dependency-glob: "**/uv.lock"
           cache-suffix: ${{ matrix.name }}
       - name: Install FFmpeg for synthetic media tests
-        if: ${{ matrix.name == 'shorts' }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg
+        if: ${{ runner.os == 'macOS' }}
+        run: brew install ffmpeg
       - name: Run selected tests
         working-directory: ${{ matrix.dir }}
         env:

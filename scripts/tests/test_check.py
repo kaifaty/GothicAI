@@ -72,7 +72,7 @@ def repository(tmp_path):
     git(tmp_path, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
         "commit", "-qm", "Initial fixture")
     git(tmp_path, "update-ref", "refs/remotes/origin/main", "HEAD")
-    command = ("uv", "run", "--locked", "pytest", "-q", "-rs")
+    command = ("uv", "run", "--locked", *check.PYTEST)
     groups = (check.Group("lib", "lib", command), check.Group("app", "app", command))
     return tmp_path, groups
 
@@ -159,7 +159,7 @@ def test_project_config_selects_whole_group(repository, filename, monkeypatch, c
     matrix = selection(repository, f"app/{filename}")
     assert selected_files(matrix) == expected
     assert matrix[0]["whole_group"]
-    assert matrix[0]["command"] == "uv run --locked pytest -q -rs"
+    assert matrix[0]["command"] == "uv run --locked pytest -q -rs -o faulthandler_timeout=300"
     assert matrix[0]["reasons"] == {}
 
     root, groups = repository
@@ -180,7 +180,7 @@ def test_path_dependency_config_selects_all_dependent_groups(repository, filenam
     matrix = selection(repository, f"lib/{filename}")
     assert selected_files(matrix) == all_files(repository)
     assert all(group["whole_group"] for group in matrix)
-    assert all(group["command"] == "uv run --locked pytest -q -rs" for group in matrix)
+    assert all(group["command"] == "uv run --locked pytest -q -rs -o faulthandler_timeout=300" for group in matrix)
 
 
 def test_non_python_resource_matches_filename(repository):
@@ -226,7 +226,7 @@ def test_selector_or_workflow_change_selects_everything(repository, path):
     matrix = selection(repository, path)
     assert selected_files(matrix) == all_files(repository)
     assert all(group["whole_group"] for group in matrix)
-    assert all(group["command"] == "uv run --locked pytest -q -rs" for group in matrix)
+    assert all(group["command"] == "uv run --locked pytest -q -rs -o faulthandler_timeout=300" for group in matrix)
     assert all(group["reasons"] == {} for group in matrix)
 
 
@@ -234,7 +234,7 @@ def test_workflow_dispatch_selects_everything(repository):
     matrix = selection(repository, event="workflow_dispatch")
     assert selected_files(matrix) == all_files(repository)
     assert all(group["whole_group"] for group in matrix)
-    assert all(group["command"] == "uv run --locked pytest -q -rs" for group in matrix)
+    assert all(group["command"] == "uv run --locked pytest -q -rs -o faulthandler_timeout=300" for group in matrix)
 
 
 def test_more_than_sixty_percent_expands_to_whole_group(repository):
@@ -246,7 +246,7 @@ def test_more_than_sixty_percent_expands_to_whole_group(repository):
     whole = selection(repository, *paths[:4])
     assert selected_files(whole) == set(paths)
     assert whole[0]["whole_group"]
-    assert whole[0]["command"] == "uv run --locked pytest -q -rs"
+    assert whole[0]["command"] == "uv run --locked pytest -q -rs -o faulthandler_timeout=300"
     assert whole[0]["reasons"] == {}
 
 
@@ -301,7 +301,13 @@ def test_real_selector_change_selects_every_group():
     expected = {
         path for tests in check.discover_tests(ROOT).values() for path in tests
     }
-    assert selected_files(check.select_groups(ROOT, ["scripts/check.py"])) == expected
+    matrix = check.select_groups(ROOT, ["scripts/check.py"])
+    assert selected_files(matrix) == expected
+    assert {group["name"] for group in matrix if group["platform"] == "macos-15"} == {"shorts"}
+    assert all(group["platform"] == "ubuntu-24.04" for group in matrix if group["name"] != "shorts")
+    assert all("-o faulthandler_timeout=300" in group["command"] for group in matrix)
+    assert "--editable ." in next(group["command"] for group in matrix if group["name"] == "body-service")
+    assert "--editable ../body-service" in next(group["command"] for group in matrix if group["name"] == "scripts")
 
 
 def test_every_tracked_test_is_grouped_once_or_explicitly_excluded():
