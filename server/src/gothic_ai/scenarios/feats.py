@@ -111,7 +111,7 @@ async def feat_fame(
         for role, npc in roles.items():
             if not await place(npc, arena):
                 return _logged(results)
-            await link.debug("player_goto", to=npc, distance=250)
+            await link.debug("teleport", near=npc, distance=250)
             ready = await _until(
                 lambda npc=npc: npc in talk.people and talk.people[npc].distance <= 600
                 and all(other == npc or other not in talk.people or talk.people[other].distance > 3000
@@ -121,8 +121,10 @@ async def feat_fame(
             attitude, hostile = await link.story_eval(npc, [
                 ["call", "NPC_GETATTITUDE", ["inst", npc], ["inst", "HERO"]], ["var", "ATT_HOSTILE"],
             ])
+            distances = {who: talk.people[who].distance if who in talk.people else None
+                         for who in roles.values()}
             if not check(f"ready_{role}", ready and snap.npc.hp > 0 and attitude != hostile,
-                         f"npc={npc}, isolated={ready}, hp={snap.npc.hp}, attitude={attitude}"):
+                         f"npc={npc}, cm={distances}, hp={snap.npc.hp}, attitude={attitude}"):
                 return _logged(results)
 
             start = len(entries)
@@ -149,7 +151,8 @@ async def feat_fame(
                 status = "failed"
             results[f"fame_reply_{role}"] = f"{status} ({said or 'no answer within 90 s'})"
             talk.end("scenario")
-            await _until(lambda npc=npc: npc not in talk.attached, 10)
+            if not check(f"released_{role}", await _until(lambda npc=npc: npc not in talk.attached, 10), npc):
+                return _logged(results)
             if not await place(npc, park):
                 return _logged(results)
         return _logged(results)
