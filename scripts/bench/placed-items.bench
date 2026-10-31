@@ -24,6 +24,12 @@ wait 1000
 placed-items table-push
 wait 5000
 placed-items table-report
+placed-items save
+placed-items owned-table
+wait 1000
+placed-items table-push
+wait 5000
+placed-items table-report
 placed-items pickup-ready
 wait 2000
 placed-items pickup

@@ -1101,12 +1101,13 @@ struct Bench {
     bool pickupAccepted=false,watchingTheft=false;
     std::vector<std::string> theftWitnesses;
     std::vector<size_t> theftRecipients;
-    std::string theftOwner,theftItem;
-    int32_t theftOwnerGuild=0;
+    std::string theftOwner,theftItem,theftRoom,theftRoomOwner;
+    int32_t theftOwnerGuild=0,theftRoomGuild=-1;
     size_t theftDeeds=0;
     void deed(const HeroDeed& value) {
       if(value.kind!="take_item")return;
       ++theftDeeds;theftOwner=value.owner.npc;theftOwnerGuild=value.ownerGuild;theftItem=value.item;
+      theftRoom=value.room;theftRoomOwner=value.roomOwner.npc;theftRoomGuild=value.roomGuild;
       for(const auto& witness:value.witnesses)theftWitnesses.push_back(witness.npc);
     }
     void perception(Npc& self,Npc&,Npc*,PercType value) {
@@ -7204,7 +7205,7 @@ void placedItemsPerformance(World& world,Npc& player) {
   state.frameWall=std::chrono::steady_clock::now();state.hasFrame=true;state.performance=true;
   event("placed_items_performance_begin","\"world\":"+jsonStr(world.name())+
     ",\"enabled\":"+(Gothic::physicsFlags().placedItems?"true":"false")+
-    ",\"center_cm\":"+ragdollVector(center)+",\"total_within_20m\":"+std::to_string(total)+
+    ",\"center_cm\":"+ragdollVector(center)+",\"observer_cm\":"+ragdollVector(floor.v)+",\"total_within_20m\":"+std::to_string(total)+
     ",\"eligible_within_20m\":"+std::to_string(count));
 }
 
@@ -7240,12 +7241,11 @@ void placedItemsObserve(World& world,const std::vector<size_t>& indices) {
 
 void placedItemsFloor(World& world,Npc& player) {
   auto& state=bench.placedItems;const auto& all=world.placedItemCensus();
-  // Prefer an owned floor Item so the same real authored object can be pushed,
-  // hit by an arrow and picked up without changing any ownership fields.
-  for(bool ownedOnly:{true,false})for(size_t i=0;i<all.size();++i) {
+  // Prefer ordinary food, as in item-wake, without changing its authored pose.
+  for(bool foodOnly:{true,false})for(size_t i=0;i<all.size();++i) {
     const auto& row=all[i];if(!row.validation.enabled || !row.item)continue;
     auto& item=*row.item;
-    if(ownedOnly && item.handle().owner==0 && item.handle().owner_guild==0)continue;
+    if(foodOnly && !(uint32_t(item.mainFlag())&ITM_CAT_FOOD))continue;
     const auto* mesh=Resources::loadMesh(row.visual);if(!mesh)continue;
     auto low=Vec3(std::numeric_limits<float>::infinity()),high=-low;
     const auto* bounds=mesh->bbox();
@@ -7261,12 +7261,12 @@ void placedItemsFloor(World& world,Npc& player) {
     for(const auto direction:{Vec3(1,0,0),Vec3(-1,0,0),Vec3(0,0,1),Vec3(0,0,-1)}) {
       auto start=center-direction*180.f,goal=center+direction*180.f;start.y=goal.y=floor.v.y;
       const Vec3 across(-direction.z,0,direction.x);bool clear=true;
-      for(unsigned step=0;step<=12 && clear;++step)for(float lateral:{-25.f,0.f,25.f}) {
+      for(unsigned step=0;step<=12 && clear;++step)for(float lateral:{-30.f,0.f,30.f}) {
         const auto point=start+(goal-start)*(float(step)/12.f)+across*lateral;
         const auto ground=world.physic()->landRay(point+Vec3(0,90,0),180.f);
         if(!ground.hasCol || ground.n.y<.98f || std::abs(ground.v.y-floor.v.y)>5.f) {clear=false;break;}
       }
-      for(float lateral:{-25.f,0.f,25.f})for(float height:{65.f,120.f,170.f})
+      for(float lateral:{-30.f,0.f,30.f})for(float height:{20.f,100.f,170.f})
         if(clear && world.physic()->ray(start+across*lateral+Vec3(0,height,0),goal+across*lateral+Vec3(0,height,0)).hasCol)clear=false;
       if(!clear)continue;
       state.target=i;state.walkStart=start;state.walkGoal=goal;state.walkDirection=direction;
@@ -7292,13 +7292,21 @@ void placedItemsFloor(World& world,Npc& player) {
   arenaAbort("placed Item floor preparation found no admitted source Item with a clear supported hero lane");
 }
 
-void placedItemsWalk(World& world) {
+void placedItemsWalk(World& world,Npc& player) {
   auto& state=bench.placedItems;
   if(state.target==size_t(-1)) {arenaAbort("placed Item walking needs a prepared floor object");return;}
   const auto* item=world.placedItemCensus()[state.target].item;
   if(!item) {arenaAbort("placed Item walking source disappeared");return;}
+  const auto settled=player.position();
+  // Match character begin: held input starts at the prepared coordinate after
+  // the idle settling interval in both modes.
+  player.clearAiQueue();player.clearGoTo();player.stopWalking();player.clearSpeed();
+  player.setPosition(state.walkStart);player.setDirection(state.walkDirection);player.updateTransform();
+  state.walkPrevious=state.walkStart;state.walkMaximumStep=state.walkMaximumCrossTrack=0;state.walkArrived=0;
   state.walkBodyBefore=item->isDynamic();state.walkSince=world.tickCount();state.walking=true;
   placedItemsObserve(world,{state.target});
+  event("placed_items_walk_begin","\"settled_before_cm\":"+ragdollVector(settled)+
+    ",\"start_cm\":"+ragdollVector(player.position()));
 }
 
 void placedItemsWalkReport(World& world,Npc& player) {
@@ -7318,7 +7326,6 @@ void placedItemsWalkReport(World& world,Npc& player) {
     ",\"max_shift_cm\":"+ragdollNumber(shift)+",\"hero_travel_cm\":"+ragdollNumber((player.position()-state.walkStart).length())+
     ",\"max_cross_track_cm\":"+ragdollNumber(state.walkMaximumCrossTrack)+",\"max_vertical_step_cm\":"+
     ragdollNumber(state.walkMaximumStep)+",\"pass\":"+(pass?"true":"false"));
-  if(!pass)arenaAbort("placed Item hero passage stalled, deviated or failed to move the object in ON mode");
 }
 
 void placedItemsArrowReady(World& world,Npc& player) {
@@ -7326,8 +7333,8 @@ void placedItemsArrowReady(World& world,Npc& player) {
   if(state.target==size_t(-1)) {arenaAbort("placed Item arrow needs the prepared authored floor object");return;}
   const auto& row=world.placedItemCensus()[state.target];
   if(!row.item) {arenaAbort("placed Item arrow target was removed");return;}
-  row.item->setPhysicsDisable();row.item->setObjMatrix(row.origin);
-  auto observer=movablePosition(row.origin)+Vec3(500,0,500);
+  row.item->setObjMatrix(row.origin);
+  auto observer=state.walkStart;
   const auto floor=world.physic()->landRay(observer+Vec3(0,200,0),600.f);
   if(!floor.hasCol) {arenaAbort("placed Item arrow observer has no real floor");return;}
   observer.y=floor.v.y;player.clearAiQueue();player.stopWalking();player.clearSpeed();
@@ -7340,12 +7347,17 @@ void placedItemsArrow(World& world,Npc& player) {
   const auto& row=world.placedItemCensus()[state.target];
   const auto symbol=world.script().findSymbolIndex("ITRW_ARROW");
   if(symbol==size_t(-1)) {arenaAbort("placed Item arrow native instance unavailable");return;}
-  const auto target=row.item->midPosition(),from=target-state.walkDirection*150.f;
+  const auto bodies=world.physic()->waterBodySnapshot();
+  const auto native=std::find_if(bodies.begin(),bodies.end(),[&](const auto& body){return body.item==row.item;});
+  if(native==bodies.end()) {arenaAbort("placed Item arrow requires the prepared native collision body");return;}
+  const auto target=(native->collisionBounds[0]+native->collisionBounds[1])*.5f,from=target-state.walkDirection*150.f;
   Item arrow(world,symbol,Item::T_Inventory);
   auto& bullet=world.shootArrow(arrow,from,Vec3::normalize(Archery::launch(from,target,DynamicWorld::bulletSpeed)-from),DynamicWorld::bulletSpeed);
   bullet.setOrigin(&player);bullet.setPrecise(1.f);
   placedItemsObserve(world,{state.target});
-  event("placed_items_arrow_launch",placedItemRow(world,row)+",\"from_cm\":"+ragdollVector(from)+",\"target_cm\":"+ragdollVector(target));
+  event("placed_items_arrow_launch",placedItemRow(world,row)+",\"from_cm\":"+ragdollVector(from)+",\"target_cm\":"+ragdollVector(target)+
+    ",\"collision_bounds_min_cm\":"+ragdollVector(native->collisionBounds[0])+",\"collision_bounds_max_cm\":"+ragdollVector(native->collisionBounds[1])+
+    ",\"dynamic_before_shot\":"+(row.item->isDynamic()?"true":"false")+",\"sleeping_before_shot\":"+(row.item->physicsSleeping()?"true":"false"));
 }
 
 void placedItemsArrowReport(World& world) {
@@ -7354,35 +7366,49 @@ void placedItemsArrowReport(World& world) {
   const bool pass=shift>.1f;
   event("placed_items_arrow",placedItemRow(world,row)+",\"placed_items\":"+(Gothic::physicsFlags().placedItems?"true":"false")+
     ",\"max_shift_cm\":"+ragdollNumber(shift)+",\"pass\":"+(pass?"true":"false"));
-  if(!pass)arenaAbort("native arrow did not move the authored placed Item");
 }
 
-void placedItemsTable(World& world,Npc& player) {
+bool placedItemOwned(Npc& player,const Item& item) {
+  const auto point=item.position();
+  const auto ownership=HeroDeed::snapshot(player,"take_item",nullptr,&item,nullptr,0,&point);
+  return !ownership->owner.npc.empty() || ownership->ownerGuild>GIL_NONE || !ownership->roomOwner.npc.empty() ||
+         (ownership->roomGuild>GIL_NONE && ownership->roomGuild!=GIL_PUBLIC);
+}
+
+void placedItemsTable(World& world,Npc& player,bool owned=false) {
   auto& state=bench.placedItems;
-  const auto* anchor=world.findWayPoint("NW_CITY_HABOUR_TAVERN01_IN");
-  if(!anchor) {arenaAbort("placed Item table preparation requires the harbour tavern");return;}
+  const auto* anchor=owned?nullptr:world.findWayPoint("NW_TAVERNE_IN_05");
+  if(!owned && !anchor) {arenaAbort("placed Item table preparation requires the Dead Harpy tavern");return;}
   const auto& all=world.placedItemCensus();size_t best=0;std::optional<DynamicWorld::MovableVobSnapshot> chosen;
   for(const auto& table:world.physic()->movableVobSnapshot()) {
-    if(!table.enabled || table.className!="table" || (movablePosition(table.origin)-anchor->position()).length()>1800.f)continue;
-    auto inverse=table.origin;inverse.inverse();std::vector<size_t> indices;size_t admitted=0;
+    if(!table.enabled || table.className!="table" ||
+       (!owned && (movablePosition(table.origin)-anchor->position()).length()>1800.f))continue;
+    auto inverse=table.origin;inverse.inverse();std::vector<size_t> indices;size_t admitted=0,excluded=0,ownedAdmitted=0;
     for(size_t i=0;i<all.size();++i) {
       const auto& row=all[i];if(!row.item)continue;
       auto position=row.item->midPosition();inverse.project(position);
       if(position.x<table.localBounds[0].x-10.f || position.x>table.localBounds[1].x+10.f ||
          position.z<table.localBounds[0].z-10.f || position.z>table.localBounds[1].z+10.f ||
          position.y<table.localBounds[1].y-15.f || position.y>table.localBounds[1].y+50.f)continue;
-      indices.push_back(i);admitted+=row.validation.enabled;
+      indices.push_back(i);admitted+=row.validation.enabled;excluded+=!row.validation.enabled;
+      ownedAdmitted+=owned && row.validation.enabled && placedItemOwned(player,*row.item);
     }
-    if(admitted && indices.size()>best) {best=indices.size();chosen=table;state.observed=std::move(indices);}
+    if(admitted && (!owned || (excluded && ownedAdmitted)) && indices.size()>best) {
+      best=indices.size();chosen=table;state.observed=std::move(indices);
+    }
   }
-  if(!chosen) {arenaAbort("placed Item table preparation found no native tavern table with admitted authored Items");return;}
+  if(!chosen) {
+    arenaAbort(owned?"placed Item owned table preparation requires admitted owned and excluded authored Items on one native table":
+                     "placed Item table preparation found no native tavern table with admitted authored Items");return;
+  }
   state.tableZen=chosen->zenId;state.tableOrigin=chosen->origin;
   const auto center=movablePosition(chosen->origin);auto observer=center+Vec3(500,0,500);
   const auto floor=world.physic()->landRay(observer+Vec3(0,200,0),600.f);
   if(!floor.hasCol) {arenaAbort("placed Item tavern observer has no supported floor");return;}
   observer.y=floor.v.y;player.clearAiQueue();player.stopWalking();player.clearSpeed();player.setPosition(observer);player.updateTransform();
   event("placed_items_table_setup","\"table_zen_id\":"+std::to_string(state.tableZen)+",\"table_visual\":"+jsonStr(chosen->visual)+
-    ",\"items\":"+std::to_string(state.observed.size())+",\"tavern_waypoint\":"+jsonStr(anchor->name));
+    ",\"items\":"+std::to_string(state.observed.size())+",\"purpose\":"+jsonStr(owned?"owned":"tavern")+
+    ",\"tavern_waypoint\":"+jsonStr(anchor?std::string_view(anchor->name):std::string_view()));
 }
 
 void placedItemsTablePush(World& world,Npc& player) {
@@ -7419,7 +7445,6 @@ void placedItemsTableReport(World& world) {
     std::to_string(state.tableZen)+",\"table_shift_cm\":"+ragdollNumber(tableShift)+",\"admitted_moved\":"+
     std::to_string(admittedMoved)+",\"excluded_moved\":"+std::to_string(excludedMoved)+",\"items\":"+items+
     "],\"pass\":"+(pass?"true":"false"));
-  if(!pass)arenaAbort("placed Item table mechanic failed after a native impulse");
 }
 
 void placedItemsSnapshot(World& world,std::string_view label,uint64_t initialDt=0) {
@@ -7466,7 +7491,7 @@ void placedItemsPickupReady(World& world,Npc& player) {
   auto& state=bench.placedItems;const auto& all=world.placedItemCensus();
   const auto ownedMoved=[&](size_t index) {
     const auto& row=all[index];
-    return row.item && row.validation.enabled && (row.item->handle().owner!=0 || row.item->handle().owner_guild!=0) &&
+    return row.item && row.validation.enabled && placedItemOwned(player,*row.item) &&
       (row.item->position()-movablePosition(row.origin)).length()>.1f;
   };
   if(state.target==size_t(-1) || !ownedMoved(state.target)) {
@@ -7489,6 +7514,7 @@ void placedItemsPickup(World& world,Npc& player,PlayerControl& ctrl) {
   if(!row.item) {arenaAbort("placed Item pickup source disappeared");return;}
   state.pickupSymbol=row.item->clsId();state.pickupCount=row.item->count();state.pickupBefore=player.itemCount(state.pickupSymbol);
   state.theftDeeds=0;state.theftWitnesses.clear();state.theftRecipients.clear();state.theftOwner.clear();state.theftItem.clear();
+  state.theftRoom.clear();state.theftRoomOwner.clear();state.theftRoomGuild=-1;
   Gothic::inst().onHeroDeed.bind(&state,&Bench::PlacedItems::deed);
   Gothic::inst().onObservedPerception.bind(&state,&Bench::PlacedItems::perception);state.watchingTheft=true;
   const auto fields=placedItemRow(world,row)+",\"owner\":"+std::to_string(row.item->handle().owner)+
@@ -7510,14 +7536,16 @@ void placedItemsPickupReport(World& world,Npc& player) {
   for(const auto& name:state.theftWitnesses) {if(witnesses.size()>1)witnesses+=',';witnesses+=jsonStr(name);}
   for(const auto id:state.theftRecipients) {if(recipients.size()>1)recipients+=',';recipients+=std::to_string(id);}
   const auto after=player.itemCount(state.pickupSymbol);
-  const bool pass=state.pickupAccepted && after==state.pickupBefore+state.pickupCount && state.theftDeeds==1;
+  const bool owned=!state.theftOwner.empty() || state.theftOwnerGuild>GIL_NONE || !state.theftRoomOwner.empty() ||
+                   (state.theftRoomGuild>GIL_NONE && state.theftRoomGuild!=GIL_PUBLIC);
+  const bool pass=state.pickupAccepted && after==state.pickupBefore+state.pickupCount && state.theftDeeds==1 && owned;
   event("placed_items_pickup","\"placed_items\":"+std::string(Gothic::physicsFlags().placedItems?"true":"false")+
     ",\"inventory_before\":"+std::to_string(state.pickupBefore)+",\"inventory_after\":"+std::to_string(after)+
     ",\"count\":"+std::to_string(state.pickupCount)+",\"deeds\":"+std::to_string(state.theftDeeds)+
     ",\"item\":"+jsonStr(state.theftItem)+",\"owner\":"+jsonStr(state.theftOwner)+",\"owner_guild\":"+
-    std::to_string(state.theftOwnerGuild)+",\"witnesses\":"+witnesses+"],\"perception_recipients\":"+recipients+
+    std::to_string(state.theftOwnerGuild)+",\"room\":"+jsonStr(state.theftRoom)+",\"room_owner\":"+jsonStr(state.theftRoomOwner)+
+    ",\"room_guild\":"+std::to_string(state.theftRoomGuild)+",\"witnesses\":"+witnesses+"],\"perception_recipients\":"+recipients+
     "],\"pass\":"+(pass?"true":"false"));
-  if(!pass)arenaAbort("owned placed Item pickup did not preserve native inventory and taking deed");
 }
 
 void saveMovableSession(World& world,const std::string& label) {
@@ -13724,12 +13752,13 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="item-wake" && a.size()==2 && a[1]=="checkpoint")itemWakeCheckpoint(w);
   else if(c=="item-wake" && a.size()==2 && a[1]=="event-debris")itemWakeEventDebris(w,pl);
   else if(c=="placed-items" && a.size()==2 && a[1]=="floor")placedItemsFloor(w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="walk")placedItemsWalk(w);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="walk")placedItemsWalk(w,pl);
   else if(c=="placed-items" && a.size()==2 && a[1]=="walk-report")placedItemsWalkReport(w,pl);
   else if(c=="placed-items" && a.size()==2 && a[1]=="arrow-ready")placedItemsArrowReady(w,pl);
   else if(c=="placed-items" && a.size()==2 && a[1]=="arrow")placedItemsArrow(w,pl);
   else if(c=="placed-items" && a.size()==2 && a[1]=="arrow-report")placedItemsArrowReport(w);
   else if(c=="placed-items" && a.size()==2 && a[1]=="table")placedItemsTable(w,pl);
+  else if(c=="placed-items" && a.size()==2 && a[1]=="owned-table")placedItemsTable(w,pl,true);
   else if(c=="placed-items" && a.size()==2 && a[1]=="table-push")placedItemsTablePush(w,pl);
   else if(c=="placed-items" && a.size()==2 && a[1]=="table-report")placedItemsTableReport(w);
   else if(c=="placed-items" && a.size()==2 && a[1]=="save")placedItemsSave(w);
