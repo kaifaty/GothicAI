@@ -396,6 +396,8 @@ void GameMenu::paintEvent(PaintEvent &e) {
                0,0,back->w(),back->h());
     }
 
+  if(diary)
+    drawChronicleFrame(p);
   for(auto& hItem:hItems)
     drawItem(p,hItem);
 

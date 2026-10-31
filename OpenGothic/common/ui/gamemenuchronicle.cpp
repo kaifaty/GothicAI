@@ -20,6 +20,7 @@ using namespace Tempest;
 // of the diary's own «Общее» items, added when the diary opens. Texts are in the game codepage (cp1251).
 
 namespace {
+constexpr float       scriptDiv     = 8192.0f;  // the scripts' menu units, as in gamemenu.cpp
 constexpr const char* SelChronicle  = "MENU_ITEM_SEL_CHRONICLE";
 constexpr const char* ListChronicle = "MENU_ITEM_LIST_CHRONICLE";
 constexpr const char* Chronicle     = "CHRONICLE";
@@ -138,10 +139,17 @@ void GameMenu::addChronicleItems() {
     return;
     }
 
+  // the date and time under the tabs move down by one tab to make room
+  const int32_t step = selLog->handle->pos_y - selPrev->handle->pos_y;
+  for(auto& i:hItems)
+    if(i.handle!=nullptr && (i.name=="MENU_ITEM_DAY_TITLE" || i.name=="MENU_ITEM_DAY" ||
+                             i.name=="MENU_ITEM_TIME_TITLE" || i.name=="MENU_ITEM_TIME"))
+      i.handle->pos_y += step;
+
   auto sel = std::make_shared<zenkit::IMenuItem>(*selLog->handle);
   sel->text[0] = TabTitle;
   sel->text[1] = TabInfo;
-  sel->pos_y  += selLog->handle->pos_y - selPrev->handle->pos_y;
+  sel->pos_y  += step;
   for(auto& action:sel->on_sel_action_s)
     if(action.rfind("EFFECTS ",0)==0)
       action = std::string("EFFECTS ")+ListChronicle;
@@ -241,11 +249,14 @@ void GameMenu::drawChronicle(Painter& p, Item& it, int x, int y, int w, int h) {
       }
     const int tx = x+side+line, tw = w-side-line;
     int ty = y;
-    fntH.drawText(p,tx,ty+line,tw,line,f.title,AlignLeft);
-    ty += line*2;
+    const auto titleH = fntH.textSize(tw,f.title).h;
+    fntH.drawText(p,tx,ty+line,tw,titleH,f.title,AlignLeft);
+    ty += titleH+line;
     if(selected->fork!=nullptr) {
-      fntD.drawText(p,tx,ty+line,tw,line,when(OtherFate,selected->fork->chapter,selected->fork->day),AlignLeft);
-      ty += line*2;
+      const auto fate  = when(OtherFate,selected->fork->chapter,selected->fork->day);
+      const auto fateH = fntD.textSize(tw,fate).h;
+      fntD.drawText(p,tx,ty+line,tw,fateH,fate,AlignLeft);
+      ty += fateH+line;
       }
     const auto textH = fntN.textSize(tw,f.text).h;
     fntN.drawText(p,tx,ty+line,tw,textH,f.text,AlignLeft);
@@ -324,4 +335,36 @@ void GameMenu::applyBenchDiary() {
       curItem         = i;
       chronicleOpen   = preset.open;
       }
+  }
+
+void GameMenu::drawChronicleFrame(Painter& p) {
+  // The tabs' frames are drawn in the diary's background picture, four of them. The fifth gets the line
+  // under «Общая информация» copied one tab lower: the same band of the picture, so it looks the same.
+  if(back==nullptr)
+    return;
+  const Item* sel  = nullptr;
+  const Item* prev = nullptr;
+  const Item* list = nullptr;
+  for(auto& i:hItems) {
+    if(i.name==SelChronicle)
+      sel = &i;
+    if(i.name=="MENU_ITEM_SEL_LOG")
+      prev = &i;
+    if(i.name==ListChronicle)
+      list = &i;
+    }
+  if(sel==nullptr || prev==nullptr || list==nullptr || sel->handle==nullptr || prev->handle==nullptr || list->handle==nullptr)
+    return;
+  // only the tabs' column: the content panel to the right has no line there
+  const int right = int(float(w()*list->handle->pos_x)/scriptDiv);
+  const int top  = int(float(h()*sel->handle->pos_y)/scriptDiv);
+  const int step = top - int(float(h()*prev->handle->pos_y)/scriptDiv);
+  // the line sits a little above the tab's top in the picture: take a band around it, the rest of the
+  // band is the same plain background
+  const int above = step/4, below = step/10;
+  const int v0    = int(float(back->h())*float(top-above)/float(h()));
+  const int v1    = int(float(back->h())*float(top+below)/float(h()));
+  p.setBrush(*back);
+  const int u1 = int(float(back->w())*float(right)/float(w()));
+  p.drawRect(0,top+step-above,right,above+below, 0,v0,u1,v1);
   }

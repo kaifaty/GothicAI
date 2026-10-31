@@ -109,6 +109,7 @@ class GameMenu : public Tempest::Widget {
     void                                  drawChronicle(Tempest::Painter& p, Item& it, int x, int y, int w, int h);
     void                                  execChronicle(Item& list);
     void                                  applyBenchDiary();
+    void                                  drawChronicleFrame(Tempest::Painter& p);
     void                                  drawSlider(Tempest::Painter& p, Item& it, int x, int y, int w, int h);
     void                                  drawQuestList(Tempest::Painter& p, Item& it, int x, int y, int w, int h,
                                                         const QuestLog& log, QuestStat st);
