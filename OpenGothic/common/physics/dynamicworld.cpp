@@ -1352,9 +1352,10 @@ DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, co
 
 std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
     const std::vector<PlacedItemCandidate>& candidates) const {
-  constexpr float limitCm = 4.f;
+  constexpr float supportLimitCm = 4.f, penetrationLimitCm = 2.f;
   constexpr uint32_t mask = (1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_MovableVob)|(1u<<C_Item);
   std::vector<PlacedItemCensusEntry> result(candidates.size());
+  std::vector<bool> groundBelow(candidates.size(),true);
   std::unordered_map<const CollisionWorld::CollisionBody*,size_t> identities;
   for(size_t i=0;i<candidates.size();++i) {
     const auto* handle = candidates[i].body;
@@ -1372,7 +1373,8 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
     const auto hullMax = CollisionWorld::toCentimeters(max);
     const float height = std::max(hullMax.y-hullMin.y,1.f);
     auto& entry = result[i];
-    for(const auto& hit:world->overlaps(body,limitCm,mask)) {
+    const CollisionWorld::CollisionBody* support = nullptr;
+    for(const auto& hit:world->overlaps(body,supportLimitCm,mask)) {
       const auto other = identities.find(hit.body);
       if(hit.category==C_Item && other==identities.end())
         continue;
@@ -1388,6 +1390,7 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
           entry.supportZenId = hit.body!=nullptr && hit.body->ptrType()==P_MovableVob ?
               static_cast<const BodyData*>(hit.body->payload())->pose->zenId : uint32_t(-1);
           entry.supportItemIndex = other!=identities.end() ? other->second : size_t(-1);
+          support = hit.body;
           }
         }
       if(hit.category==C_Landscape || hit.category==C_Object)
@@ -1404,20 +1407,26 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
       }
     entry.hullLowPointCm = body.lowestPoint();
     if(entry.supportCategory==C_Landscape || entry.supportCategory==C_Object) {
-      const auto from = entry.hullLowPointCm+Tempest::Vec3(0,limitCm,0);
-      const auto to = entry.hullLowPointCm-Tempest::Vec3(0,limitCm,0);
+      const auto from = entry.hullLowPointCm+Tempest::Vec3(0,supportLimitCm,0);
+      const auto to = entry.hullLowPointCm-Tempest::Vec3(0,supportLimitCm,0);
       const auto face = world->rayCast(from,to,(1u<<C_Landscape)|(1u<<C_Object));
       if(face.hasHit) {
         entry.supportFaceNormal = face.normal;
         entry.supportSlopeDeg = std::acos(std::clamp(face.normal.y,-1.f,1.f))*180.f/float(M_PI);
         }
       }
+    if(entry.supportCategory==C_Object || entry.supportCategory==C_MovableVob) {
+      const auto from = body.centerOfMass();
+      const auto to = Tempest::Vec3(from.x,entry.hullLowPointCm.y-500.f,from.z);
+      const std::vector<const CollisionWorld::CollisionBody*> excluded = {support};
+      groundBelow[i] = world->rayCast(from,to,(1u<<C_Landscape)|(1u<<C_Object),false,nullptr,&excluded).hasHit;
+      }
     }
   for(size_t i=0;i<candidates.size();++i) {
     auto& entry = result[i];
-    entry.disposition = candidates[i].mission ? "quest" : entry.supportGapCm>limitCm ? "hangs" :
-                        entry.staticDepthCm>limitCm ? "static" : entry.furnitureDepthCm>limitCm ? "furniture" :
-                        entry.itemDepthCm>limitCm ? "neighbour" : "ok";
+    entry.disposition = candidates[i].mission ? "quest" : entry.supportGapCm>supportLimitCm ? "hangs" :
+                        entry.staticDepthCm>penetrationLimitCm ? "static" : entry.furnitureDepthCm>penetrationLimitCm ? "furniture" :
+                        entry.itemDepthCm>penetrationLimitCm ? "neighbour" : "ok";
     if(entry.disposition=="ok" && (entry.supportCategory==C_Landscape || entry.supportCategory==C_Object)) {
       constexpr std::string_view rootedPrefix = "ITPL_";
       const auto visual = candidates[i].visual;
@@ -1432,6 +1441,8 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
       else if(!std::isfinite(entry.supportSlopeDeg))
         entry.disposition = "irregular";
       }
+    if(entry.disposition=="ok" && !groundBelow[i])
+      entry.disposition = "no_ground";
     entry.enabled = entry.disposition=="ok";
     }
   // A rejected supporting Item has no collision body after the census. Follow

@@ -6989,8 +6989,16 @@ void placedItemsDiagnose(World& world,Npc& player,uint32_t zenId,bool control) {
   auto& state=bench.placedItems;
   const auto& all=world.placedItemCensus();
   const auto target=std::find_if(all.begin(),all.end(),[&](const auto& row){return row.zenId==zenId;});
-  if(target==all.end() || !target->item || !target->validation.enabled) {
-    arenaAbort("placed Item diagnosis requires an admitted ZEN-ID");return;
+  if(target==all.end() || !target->item) {
+    arenaAbort("placed Item diagnosis requires an authored ZEN-ID");return;
+  }
+  if(!target->validation.enabled) {
+    const bool woke=target->item->wakePhysics(),activated=target->item->activatePhysics();
+    const bool pass=!woke && !activated && !target->item->isDynamic();
+    event("placed_items_diagnose_excluded",placedItemRow(world,*target)+
+      ",\"dynamic\":"+(target->item->isDynamic()?"true":"false")+",\"pass\":"+(pass?"true":"false"));
+    if(!pass)arenaAbort("excluded placed Item acquired a native body");
+    return;
   }
   const size_t targetIndex=size_t(target-all.begin());
   const auto cell=[](const Vec3& at) {

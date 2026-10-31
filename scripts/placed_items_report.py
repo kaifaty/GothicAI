@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 
-REASONS = ("quest", "hangs", "static", "furniture", "neighbour", "rooted", "slope", "irregular", "on_excluded", "ok")
+REASONS = ("quest", "hangs", "static", "furniture", "neighbour", "rooted", "slope", "irregular", "no_ground", "on_excluded", "ok")
 IDENTITY = ("instance", "visual", "zen_id", "placed", "owner", "owner_guild", "flags", "count")
 
 

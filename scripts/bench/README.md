@@ -840,7 +840,11 @@ After the original geometric reasons, `rooted` excludes `ItPl_*` on landscape or
 `C_Object`; `slope` excludes static supports steeper than 15°. Its normal comes
 from a downward ray at the collision shape's lowest point, rather than the
 nearest overlap contact. `irregular` rejects static support when this ray misses
-a face; it follows `slope` and precedes `on_excluded`. `on_excluded` propagates rejected Item supports through
+a face; it follows `slope`. `no_ground` then rejects Items on static objects or
+movable furniture when a downward COM ray, excluding that support, finds no
+landscape or other static object within 5 m below the hull bottom. Penetration
+into static geometry, furniture or another Item is limited to 2 cm; the support
+gap remains 4 cm. `on_excluded` propagates rejected Item supports through
 whole stacks. Plants on furniture or admitted Items use the ordinary rules.
 `placed-items-probe.jsonl` records maximum and final travel
 for every admitted Item. The reader requires at least 95% of the combined sample
@@ -860,7 +864,9 @@ records center, velocity, nearby native contacts, triangle indices, normals and
 edge lengths, plus the recovery ray result. `solver_contacts` records the real
 `OnContactAdded`/`Persisted` manifold separately from geometric snapshots. `control` removes other Items and
 movable furniture while retaining landscape and static objects. The command
-requires an admitted Item and uses `tick(16)` to prevent batched native steps.
+requires an authored Item and uses `tick(16)` to prevent batched native steps.
+For an excluded Item it records the verdict and verifies that neither wake nor
+activation can create a body, without attempting to simulate that Item.
 
 `PLACED_ITEMS=0` selects the existing body-creation paths. `[GAME] placed_items`
 defaults to 1; Marvin `toggle placed_items` changes it during play. The census is

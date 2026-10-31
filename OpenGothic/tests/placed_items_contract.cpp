@@ -152,10 +152,9 @@ void slopes() {
   constexpr float radians = 3.14159265358979323846f/180.f;
   for(bool landscape:{true,false})
     for(float degrees:{10.f,20.f}) {
-      auto mesh = landscape ? floor() : asset::WorldMesh{};
-      if(landscape)
-        for(auto& vertex:mesh.vertices)
-          vertex.y = vertex.x*std::tan(degrees*radians);
+      auto mesh = floor();
+      for(auto& vertex:mesh.vertices)
+        vertex.y = landscape ? vertex.x*std::tan(degrees*radians) : -100.f;
       DynamicWorld world(nullptr,mesh);
       DynamicWorld::Item structure;
       if(!landscape) {
@@ -174,6 +173,99 @@ void slopes() {
       require(result[0].supportFaceNormal.y>0,"the support face must retain the native upward ray normal");
       }
   }
+
+void penetrationLimit() {
+  Resources resources;
+  constexpr const char* visual = "CONTRACT_PLACED_THIN.MRM";
+  ProtoMesh proto(PackedMesh(box({40,2,80}),PackedMesh::PK_Visual),visual);
+  ProtoMesh supportProto(PackedMesh(box({200,20,200}),PackedMesh::PK_Visual),"CONTRACT_PLACED_SUPPORT.MRM");
+  Bounds bounds, supportBounds;
+  bounds.assign(proto.bboxMesh);
+  supportBounds.assign(supportProto.bboxMesh);
+  for(int supportKind=0;supportKind<3;++supportKind) {
+    DynamicWorld world(nullptr,floor());
+    auto origin = at(0,100);
+    origin.rotateOZ(20);
+    auto item = world.addDynamicObj(origin,bounds,asset::MaterialGroup::WOOD,&proto,visual,true);
+    require(!item.isEmpty() && world.itemHullShape(proto,visual).fallbackReason.empty(),
+            "thin tilted fixture must use the actual item_hulls collision shape");
+    const auto initial = world.waterBodySnapshot();
+    require(initial.size()==1,"thin hull fixture must expose its native collision bounds");
+    // Rotating the bounds can overestimate the envelope: use the recorded
+    // actual hull low point rather than guessing its inflation from the mesh.
+    const float low = world.placedItemCensus({{&item,false,visual}})[0].hullLowPointCm.y;
+    require(low>=initial[0].collisionBounds[0].y-.001f,"actual hull bottom must remain within its native bounds");
+    DynamicWorld::Item support;
+    float top = 0;
+    if(supportKind==1) {
+      support = world.addMovableVob(supportProto,"CONTRACT_PLACED_SUPPORT.MRM",at(0,10),.25f,false,"utensil",true,903);
+      world.finalizeMovableVobs();
+      require(support.mass()>0,"penetration fixture must retain movable furniture");
+      for(const auto& native:world.waterBodySnapshot())if(native.category==DynamicWorld::C_MovableVob)
+        top = native.collisionBounds[1].y;
+      require(top>0,"penetration fixture must find the furniture's native top");
+    }
+    else if(supportKind==2) {
+      support = world.addDynamicObj(at(0,11),supportBounds,asset::MaterialGroup::WOOD,&supportProto,"CONTRACT_PLACED_SUPPORT.MRM",true);
+      support.restorePhysics(at(0,11),true);
+      for(const auto& native:world.waterBodySnapshot())if(std::abs(native.transform.at(3,1)-11.f)<.001f)
+        top = native.collisionBounds[1].y;
+      require(top>0,"penetration fixture must find the neighbouring Item's native top");
+    }
+    for(float depth:{1.5f,3.f}) {
+      auto transform = at(0,100.f+top-depth-low);
+      transform.rotateOZ(20);
+      item.restorePhysics(transform,true);
+      std::vector<DynamicWorld::PlacedItemCandidate> candidates = {{&item,false,visual}};
+      if(supportKind==2)candidates.push_back({&support,false,"CONTRACT_PLACED_SUPPORT.MRM"});
+      const auto result = world.placedItemCensus(candidates);
+      const char* reason = supportKind==0 ? "static" : supportKind==1 ? "furniture" : "neighbour";
+      const auto measured = supportKind==0 ? result[0].staticDepthCm :
+                            supportKind==1 ? result[0].furnitureDepthCm : result[0].itemDepthCm;
+      std::printf("thin penetration: support=%s requested_cm=%.6f measured_cm=%.6f disposition=%s\n",
+                  reason,double(depth),double(measured),result[0].disposition.c_str());
+      require(std::abs(measured-depth)<.05f,"penetration must be measured from the actual rotated padded hull");
+      require(result[0].disposition==(depth>2.f ? reason : "ok"),
+              "penetration above two centimetres must exclude static, furniture and neighbouring Item contacts");
+      if(supportKind==2)
+        require(result[1].disposition==(depth>2.f ? "neighbour" : "ok"),
+                "the two-centimetre neighbour exclusion must reject both Items together");
+    }
+  }
+}
+
+void groundBelowSupport() {
+  Resources resources;
+  constexpr const char* visual = "CONTRACT_PLACED_GROUND.MRM";
+  ProtoMesh proto(PackedMesh(box({20,20,20}),PackedMesh::PK_Visual),visual);
+  ProtoMesh platform(PackedMesh(box({200,20,200},true),PackedMesh::PK_Visual),"CONTRACT_PLACED_GROUND_PLATFORM.MRM");
+  Bounds bounds;
+  bounds.assign(proto.bboxMesh);
+  for(bool movable:{false,true})for(int groundKind=0;groundKind<3;++groundKind) {
+    auto mesh = movable || groundKind==1 ? floor() : asset::WorldMesh{};
+    if(groundKind==1)for(auto& vertex:mesh.vertices)vertex.y = 600.f;
+    DynamicWorld world(nullptr,mesh);
+    DynamicWorld::Item support, lower;
+    if(movable) {
+      support = world.addMovableVob(platform,"CONTRACT_PLACED_GROUND_PLATFORM.MRM",at(0,groundKind==1 ? 610.f : 10.f),
+                                    .25f,false,"utensil",true,904);
+      world.finalizeMovableVobs();
+      require(support.mass()>0 && world.setMovableVobTransform(904,at(0,1000)),
+              "ground fixture must retain a movable support above its lower ground");
+    }
+    else support = world.addStaticObj(platform.attach[0].shape.get(),at(0,1000),"CONTRACT_PLACED_GROUND_PLATFORM.MRM");
+    if(groundKind==2)
+      lower = world.addStaticObj(platform.attach[0].shape.get(),at(0,700),"CONTRACT_PLACED_LOWER_GROUND.MRM");
+    auto item = world.addDynamicObj(at(0,1022),bounds,asset::MaterialGroup::WOOD,&proto,visual,true);
+    const auto result = world.placedItemCensus({{&item,false,visual}});
+    std::printf("ground below support: movable=%d lower_kind=%d support=%d disposition=%s\n",
+                int(movable),groundKind,result[0].supportCategory,result[0].disposition.c_str());
+    require(result[0].supportCategory==(movable ? DynamicWorld::C_MovableVob : DynamicWorld::C_Object),
+            "ground check must retain the actual immediate supporting body");
+    require(result[0].disposition==(groundKind==0 ? "no_ground" : "ok"),
+            "support over a void must be excluded; lower landscape or another C_Object within five metres must admit it");
+  }
+}
 
 void asymmetricLowestPoint() {
   Resources resources;
@@ -242,6 +334,8 @@ int main() {
     census();
     rootedAndStack();
     slopes();
+    penetrationLimit();
+    groundBelowSupport();
     asymmetricLowestPoint();
     irregularSupport();
     std::puts("Placed item census contracts passed");
