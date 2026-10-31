@@ -857,7 +857,8 @@ the ZEN-ID whenever the recovered Item has an authored link.
 `placed-items diagnose <ZEN-ID> [control]` advances that Item's original 12 m
 section for 300 native steps and writes `placed-items-diagnose.jsonl`. Each step
 records center, velocity, nearby native contacts, triangle indices, normals and
-edge lengths, plus the recovery ray result. `control` removes other Items and
+edge lengths, plus the recovery ray result. `solver_contacts` records the real
+`OnContactAdded`/`Persisted` manifold separately from geometric snapshots. `control` removes other Items and
 movable furniture while retaining landscape and static objects. The command
 requires an admitted Item and uses `tick(16)` to prevent batched native steps.
 

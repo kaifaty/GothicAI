@@ -250,6 +250,34 @@ struct DynamicWorld::ItemTrace {
           }
         result.contacts.push_back(std::move(entry));
         }
+      for(const auto& solver:world.takeItemSolverContacts()) {
+        if(solver.itemBodyId!=native.nativeId || solver.nativeStep<firstStep)
+          continue;
+        const auto& contact=solver.contact;
+        ItemTraceContact entry;
+        entry.nativeStep=solver.nativeStep;
+        entry.persisted=solver.persisted;
+        entry.bodyId=solver.bodyId;
+        entry.category=contact.category;
+        entry.depth=contact.depth;
+        entry.normal=-contact.axis;
+        entry.point=contact.point1;
+        entry.otherPoint=contact.point2;
+        entry.triangle=contact.triangle.valid;
+        entry.nativeSubShapeId=contact.triangle.nativeSubShapeId;
+        entry.sourceTriangle=contact.triangle.sourceTriangle;
+        entry.triangleNormal=contact.triangle.normal;
+        for(size_t i=0;i<3;++i) {
+          entry.triangleVertices[i]=contact.triangle.vertices[i];
+          entry.triangleEdgesCm[i]=contact.triangle.edgesCm[i];
+        }
+        if(contact.body!=nullptr) {
+          entry.visual=contact.body->label();
+          if(contact.body->ptrType()==P_MovableVob && contact.body->payload()!=nullptr)
+            entry.zenId=static_cast<const BodyData*>(contact.body->payload())->pose->zenId;
+        }
+        result.solverContacts.push_back(std::move(entry));
+      }
       for(const auto& sweep:world.takeItemSweepTrace()) {
         if(sweep.itemBodyId!=native.nativeId || sweep.nativeStep<firstStep)
           continue;

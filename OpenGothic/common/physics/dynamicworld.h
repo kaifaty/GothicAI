@@ -523,6 +523,8 @@ class DynamicWorld final {
       };
     std::vector<WaterBodySnapshot> waterBodySnapshot() const;
     struct ItemTraceContact {
+      uint64_t nativeStep = 0;
+      bool persisted = false;
       uint32_t bodyId = uint32_t(-1), zenId = uint32_t(-1);
       int category = C_Null;
       std::string visual;
@@ -549,7 +551,7 @@ class DynamicWorld final {
       float seconds = 0, stepSeconds = 0;
       bool beforeStep = true, active = false, sleeping = true;
       Tempest::Vec3 position, centerOfMass, velocity, bounds[2]; // cm and cm/s
-      std::vector<ItemTraceContact> contacts;
+      std::vector<ItemTraceContact> contacts, solverContacts;
       std::vector<ItemTraceSweep> recoverySweeps;
       };
     // Opt-in benchmark diagnostics at the ordinary native tick boundaries.

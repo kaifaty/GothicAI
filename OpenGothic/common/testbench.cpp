@@ -7047,17 +7047,26 @@ void placedItemsDiagnose(World& world,Npc& player,uint32_t zenId,bool control) {
       ",\"triangle_edges_cm\":["+ragdollNumber(hit.triangleEdgesCm[0])+','+
         ragdollNumber(hit.triangleEdgesCm[1])+','+ragdollNumber(hit.triangleEdgesCm[2])+']';
   };
+  const auto traceContact=[&](const auto& contact,bool solver) {
+    return "{\"body_id\":"+std::to_string(contact.bodyId)+",\"zen_id\":"+std::to_string(contact.zenId)+
+      ",\"category\":"+std::to_string(contact.category)+",\"visual\":"+jsonStr(contact.visual)+
+      ",\"depth_cm\":"+ragdollNumber(contact.depth)+",\"normal\":"+ragdollVector(contact.normal)+
+      ",\"point_cm\":"+ragdollVector(contact.point)+",\"other_point_cm\":"+ragdollVector(contact.otherPoint)+','+triangle(contact)+
+      (solver?",\"native_step\":"+std::to_string(contact.nativeStep)+",\"persisted\":"+(contact.persisted?"true":"false"):std::string())+'}';
+  };
   uint64_t previous=firstStep,maximumGap=0;
-  size_t triggers=0,tested=0;
+  size_t triggers=0,tested=0,solverCount=0;
   for(const auto& sample:samples) {
     maximumGap=std::max(maximumGap,sample.nativeStep-previous);previous=sample.nativeStep;
-    std::string contacts="[",sweeps="[";
+    std::string contacts="[",solverContacts="[",sweeps="[";
     for(const auto& contact:sample.contacts) {
       if(contacts.size()>1)contacts+=',';
-      contacts+="{\"body_id\":"+std::to_string(contact.bodyId)+",\"zen_id\":"+std::to_string(contact.zenId)+
-        ",\"category\":"+std::to_string(contact.category)+",\"visual\":"+jsonStr(contact.visual)+
-        ",\"depth_cm\":"+ragdollNumber(contact.depth)+",\"normal\":"+ragdollVector(contact.normal)+
-        ",\"point_cm\":"+ragdollVector(contact.point)+",\"other_point_cm\":"+ragdollVector(contact.otherPoint)+','+triangle(contact)+'}';
+      contacts+=traceContact(contact,false);
+    }
+    for(const auto& contact:sample.solverContacts) {
+      if(solverContacts.size()>1)solverContacts+=',';
+      solverContacts+=traceContact(contact,true);
+      ++solverCount;
     }
     for(const auto& sweep:sample.recoverySweeps) {
       if(sweeps.size()>1)sweeps+=',';
@@ -7079,7 +7088,7 @@ void placedItemsDiagnose(World& world,Npc& player,uint32_t zenId,bool control) {
       ",\"com_cm\":"+ragdollVector(sample.centerOfMass)+",\"velocity_cm_s\":"+ragdollVector(sample.velocity)+
       ",\"bounds_min_cm\":"+ragdollVector(sample.bounds[0])+",\"bounds_max_cm\":"+ragdollVector(sample.bounds[1])+
       ",\"active\":"+(sample.active?"true":"false")+",\"sleeping\":"+(sample.sleeping?"true":"false")+
-      ",\"contacts\":"+contacts+"],\"recovery_sweeps\":"+sweeps+"]}\n";
+      ",\"contacts\":"+contacts+"],\"solver_contacts\":"+solverContacts+"],\"recovery_sweeps\":"+sweeps+"]}\n";
   }
   const auto steps=world.physic()->simulationStep()-firstStep;
   event("placed_items_diagnose",placedItemRow(world,*target)+",\"control\":"+(control?"true":"false")+
@@ -7088,6 +7097,7 @@ void placedItemsDiagnose(World& world,Npc& player,uint32_t zenId,bool control) {
     ",\"samples\":"+std::to_string(samples.size())+",\"maximum_native_step_gap\":"+std::to_string(maximumGap)+
     ",\"max_shift_cm\":"+ragdollNumber(maximum)+",\"final_shift_cm\":"+
     ragdollNumber((target->item->position()-movablePosition(target->origin)).length())+
+    ",\"solver_contacts\":"+std::to_string(solverCount)+
     ",\"recovery_rays_tested\":"+std::to_string(tested)+",\"recovery_triggers\":"+std::to_string(triggers)+
     ",\"trace_complete\":"+(!samples.empty() && maximumGap<=1 && steps>=300?"true":"false"));
 }

@@ -261,8 +261,15 @@ class CollisionWorld final {
       float fraction = 1.f, beforeCm = 0, afterCm = 0;
       NativeTriangle triangle;
       };
+    struct ItemSolverContact {
+      uint64_t nativeStep = 0;
+      uint32_t itemBodyId = uint32_t(-1), bodyId = uint32_t(-1);
+      bool persisted = false;
+      Overlap contact;
+      };
     void setItemTraceTarget(const Item* item);
     std::vector<ItemSweepTrace> takeItemSweepTrace();
+    std::vector<ItemSolverContact> takeItemSolverContacts();
 
     // Bench-only narrow-phase snapshot at the native parts' current poses.
     // Unlike contact callbacks, this also includes sleeping rigs and supports.

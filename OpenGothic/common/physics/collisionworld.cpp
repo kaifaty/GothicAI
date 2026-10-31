@@ -415,7 +415,42 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     }
 
   void onContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
-                 const JPH::ContactSettings& settings) {
+                 const JPH::ContactSettings& settings, bool persisted) {
+    if(const auto* target=solverTraceTarget.load(std::memory_order_relaxed)) {
+      const auto traced=[&](const JPH::Body& body) {
+        if(body.GetObjectLayer()!=DynamicWorld::C_Item)return false;
+        const auto* wrapper=reinterpret_cast<const CollisionBody*>(body.GetUserData());
+        return wrapper!=nullptr && wrapper->ptrType()==DynamicWorld::P_Item && wrapper->payload()==target;
+      };
+      const bool first=traced(a),second=traced(b);
+      if(first || second) {
+        const auto& item=first?a:b;
+        const auto& other=first?b:a;
+        const auto subshape=first?manifold.mSubShapeID2:manifold.mSubShapeID1;
+        for(uint i=0;i<manifold.mRelativeContactPointsOn1.size();++i) {
+          ItemSolverContact entry;
+          entry.nativeStep=simulationStep;
+          entry.itemBodyId=item.GetID().GetIndexAndSequenceNumber();
+          entry.bodyId=other.GetID().GetIndexAndSequenceNumber();
+          entry.persisted=persisted;
+          auto& contact=entry.contact;
+          const auto layer=other.GetObjectLayer();
+          if(layer!=DynamicWorld::C_Ragdoll && layer!=DynamicWorld::C_ActiveBody && layer!=DynamicWorld::C_LivingBody)
+            contact.body=reinterpret_cast<CollisionBody*>(other.GetUserData());
+          contact.category=int(layer);
+          contact.depth=manifold.mPenetrationDepth*100.f;
+          const auto outward=first?manifold.mWorldSpaceNormal:-manifold.mWorldSpaceNormal;
+          contact.axis={outward.GetX(),outward.GetY(),outward.GetZ()};
+          const auto point=first?manifold.GetWorldSpaceContactPointOn1(i):manifold.GetWorldSpaceContactPointOn2(i);
+          const auto otherPoint=first?manifold.GetWorldSpaceContactPointOn2(i):manifold.GetWorldSpaceContactPointOn1(i);
+          contact.point1=toCentimeters(point);
+          contact.point2=toCentimeters(otherPoint);
+          contact.triangle=traceTriangle(other,subshape,other.GetWorldSpaceSurfaceNormal(subshape,otherPoint));
+          std::lock_guard<std::mutex> guard(impactMutex);
+          solverContacts.push_back(std::move(entry));
+        }
+      }
+    }
     auto markNpcContact = [](const JPH::Body& movable, const JPH::Body& other) {
       if(movable.GetObjectLayer()!=DynamicWorld::C_MovableVob ||
          (other.GetObjectLayer()!=DynamicWorld::C_LivingBody && other.GetObjectLayer()!=DynamicWorld::C_ActiveBody))
@@ -537,11 +572,11 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
 
   void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
                       JPH::ContactSettings& settings) override {
-    onContact(a,b,manifold,settings);
+    onContact(a,b,manifold,settings,false);
     }
   void OnContactPersisted(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
                           JPH::ContactSettings& settings) override {
-    onContact(a,b,manifold,settings);
+    onContact(a,b,manifold,settings,true);
     }
 
   LayerInterface layers;
@@ -551,6 +586,8 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
   JPH::TempAllocatorImpl allocator;
   JPH::JobSystemThreadPool jobs;
   std::mutex impactMutex;
+  std::atomic<const Item*> solverTraceTarget {nullptr};
+  std::vector<ItemSolverContact> solverContacts;
   std::vector<Impact> impacts;
   std::vector<NoiseImpact> noises;
   uint64_t simulationStep = 0;
@@ -2954,6 +2991,11 @@ void CollisionWorld::recoverTunneledItems() {
   }
 
 void CollisionWorld::setItemTraceTarget(const Item* item) {
+  impl->solverTraceTarget.store(item,std::memory_order_relaxed);
+  {
+    std::lock_guard<std::mutex> guard(impl->impactMutex);
+    impl->solverContacts.clear();
+  }
   itemTraceTarget=item;
   itemSweepTraceBody=nullptr;
   itemSweepTraceIndex=size_t(-1);
@@ -2965,6 +3007,13 @@ std::vector<CollisionWorld::ItemSweepTrace> CollisionWorld::takeItemSweepTrace()
   result.swap(itemSweepTrace);
   itemSweepTraceBody=nullptr;
   itemSweepTraceIndex=size_t(-1);
+  return result;
+  }
+
+std::vector<CollisionWorld::ItemSolverContact> CollisionWorld::takeItemSolverContacts() {
+  std::vector<ItemSolverContact> result;
+  std::lock_guard<std::mutex> guard(impl->impactMutex);
+  result.swap(impl->solverContacts);
   return result;
   }
 
