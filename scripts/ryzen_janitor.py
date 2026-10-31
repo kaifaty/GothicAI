@@ -203,7 +203,7 @@ class Janitor:
     def activity(self, path, kind):
         return latest_mtime(path, None, self.touched)
 
-    def kept(self, path):
+    def kept(self, path, kind):
         # Keeping a nested directory also prevents archiving/deleting its owner.
         for parent in (path, *path.parents):
             marker = parent / ".keep"
@@ -211,10 +211,15 @@ class Janitor:
                 return True
             if parent == self.root or parent == Path.home():
                 break
+        if kind == "uv":
+            return False
         for directory, children, files in os.walk(path, followlinks=False):
             if ".keep" in children or ".keep" in files:
                 return True
-            children[:] = [name for name in children if not (Path(directory) / name).is_symlink()]
+            # Dependency packages may ship their own .keep files.
+            children[:] = [name for name in children
+                           if name not in {"site-packages", "dist-packages", "node_modules", ".venv", "venv"}
+                           and not (Path(directory) / name).is_symlink()]
         return False
 
     def save_attempts(self):
@@ -251,7 +256,7 @@ class Janitor:
     def reason(self, path, kind):
         if path.is_symlink() or not path.is_dir():
             return "symlink or missing directory"
-        if self.kept(path):
+        if self.kept(path, kind):
             return ".keep"
         age = 2 * DAY if kind == "base" else self.idle
         if self.activity(path, kind) > self.now - age:
