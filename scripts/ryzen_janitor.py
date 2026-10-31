@@ -310,7 +310,7 @@ class Janitor:
             changed, original = self.touched.get(parent, (None, None))
             if changed == before:
                 before = original
-            shutil.rmtree(path)
+            nas_archive.remove_tree(path)
             if parent.is_relative_to(self.root):
                 self.touched[parent] = (parent.stat().st_mtime_ns, before)
                 self.save_attempts()

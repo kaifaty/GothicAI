@@ -373,6 +373,69 @@ def test_rebuildable_names_deleted_after_two_days_and_data_verified(host, janito
     assert json.loads((host.root / ".janitor" / "last.json").read_text())["moved"] == 1
 
 
+def test_readonly_nested_build_is_deleted_in_emergency(host):
+    task = host.task("texture-intent", age=18 * HOUR)
+    build = task / "inputs" / "run" / "runtime" / "build"
+    nested = build / "nested"
+    nested.mkdir(parents=True)
+    (build / "engine.bin").write_bytes(b"frozen engine")
+    (nested / "object.o").write_bytes(b"rebuild me")
+    outside = host.root.parent / "outside.txt"
+    outside.write_bytes(b"preserve outside target")
+    outside.chmod(0o444)
+    (build / "outside-link").symlink_to(outside)
+    age_tree(task, 18 * HOUR)
+    for path in (build / "engine.bin", nested / "object.o"):
+        path.chmod(0o444)
+    for path in (nested, build):
+        path.chmod(0o555)
+    host.free = 59 * GIB
+
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert cleaner.summary["emergency"]
+    assert cleaner.summary["errors"] == []
+    assert cleaner.summary["deleted"] == cleaner.summary["moved"] == 1
+    assert not task.exists()
+    assert outside.read_bytes() == b"preserve outside target"
+    assert outside.stat().st_mode & 0o777 == 0o444
+
+
+def test_readonly_build_with_different_owner_reports_error_without_chmod(host, janitor, monkeypatch):
+    task = host.task("foreign-owner", age=18 * HOUR)
+    build = task / "build"
+    build.mkdir()
+    data = build / "engine.bin"
+    data.write_bytes(b"preserve foreign build")
+    age_tree(task, 18 * HOUR)
+    data.chmod(0o444)
+    build.chmod(0o555)
+    host.free = 59 * GIB
+    chmod_calls = []
+    original_chmod = os.chmod
+    foreign_uid = build.lstat().st_uid + 1
+
+    def chmod(*args, **kwargs):
+        chmod_calls.append(args)
+        return original_chmod(*args, **kwargs)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(janitor.os, "getuid", lambda: foreign_uid)
+            patch.setattr(janitor.os, "chmod", chmod)
+            cleaner = host.cleaner()
+            assert cleaner.run() == 1
+            assert chmod_calls == []
+        assert len(cleaner.summary["errors"]) == 1
+        assert "Permission denied" in cleaner.summary["errors"][0]
+        assert cleaner.summary["deleted"] == cleaner.summary["moved"] == 0
+        assert data.read_bytes() == b"preserve foreign build"
+        assert build.stat().st_mode & 0o777 == 0o555
+    finally:
+        if build.exists():
+            build.chmod(0o755)
+
+
 def test_archive_never_overwrites_existing_destination_and_continues(host):
     task = host.task("conflict")
     (task / "__pycache__").mkdir()
