@@ -8,10 +8,13 @@
 #include "resources.h"
 
 #include <Tempest/Device>
+#include <Tempest/MemReader>
 #include <Tempest/VulkanApi>
 #include <rapidjson/document.h>
 
+#include <algorithm>
 #include <array>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -20,7 +23,9 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 size_t assertions = 0;
@@ -63,6 +68,148 @@ void ddsFile(const std::filesystem::path& path, bool alpha) {
   out.write(reinterpret_cast<const char*>(bytes.data()),alpha ? 144 : 136);
   if(!out)
     throw std::runtime_error("unable to write DDS fixture");
+  }
+
+struct CountingReader final : Tempest::MemReader {
+  using MemReader::MemReader;
+  size_t bytesRead = 0;
+  size_t bytesSkipped = 0;
+
+  size_t read(void* to, size_t size) override {
+    const auto count = MemReader::read(to,size);
+    bytesRead += count;
+    return count;
+    }
+
+  size_t seek(size_t size) override {
+    const auto count = MemReader::seek(size);
+    bytesSkipped += count;
+    return count;
+    }
+  };
+
+size_t mipBytes(uint32_t width, uint32_t height, size_t blockSize) {
+  return size_t((width+3)/4)*((height+3)/4)*blockSize;
+  }
+
+std::vector<uint8_t> mipDds(uint32_t fourCC, uint32_t width, uint32_t height, uint32_t mipCount) {
+  std::vector<uint8_t> bytes(128);
+  auto word = [&](size_t at, uint32_t value) {
+    for(size_t i=0;i<4;++i)
+      bytes[at*4+i] = uint8_t(value >> (i*8));
+    };
+  const size_t blockSize = fourCC==0x31545844 ? 8 : 16;
+  word(0,0x20534444);
+  word(1,124);
+  word(2,0xA1007);
+  word(3,height);
+  word(4,width);
+  word(5,uint32_t(mipBytes(width,height,blockSize)));
+  word(7,mipCount);
+  word(19,32);
+  word(20,4);
+  word(21,fourCC);
+  word(27,0x401008);
+  for(uint32_t mip=0;mip<mipCount;++mip) {
+    const auto offset = bytes.size();
+    const auto size = mipBytes(width,height,blockSize);
+    bytes.resize(offset+size);
+    for(size_t i=0;i<size;++i)
+      bytes[offset+i] = uint8_t(mip*37+i*13);
+    width = std::max(1u,width/2);
+    height = std::max(1u,height/2);
+    }
+  return bytes;
+  }
+
+void ddsMipTails() {
+  const std::array<uint32_t,3> fourCCs = {0x31545844,0x33545844,0x35545844};
+  const std::array<Tempest::TextureFormat,3> formats = {
+      Tempest::TextureFormat::DXT1,Tempest::TextureFormat::DXT3,Tempest::TextureFormat::DXT5};
+  for(size_t format=0;format<formats.size();++format) {
+    const auto bytes = mipDds(fourCCs[format],256,128,9);
+    Tempest::MemReader fullReader(bytes);
+    const Tempest::Pixmap full(fullReader);
+    require(full.w()==256 && full.h()==128 && full.mipCount()==9 && full.format()==formats[format],
+            "full DDS load must retain its dimensions, chain and format");
+    CountingReader zeroReader(bytes);
+    const auto zero = Tempest::Pixmap::loadDdsMipTail(zeroReader,0);
+    require(zero.w()==full.w() && zero.h()==full.h() && zero.mipCount()==full.mipCount() &&
+                zero.dataSize()==full.dataSize() && std::memcmp(zero.data(),full.data(),full.dataSize())==0,
+            "first mip zero must load the original DDS chain without modification");
+    size_t skipped = 0;
+    for(uint32_t mip=1;mip<=5;++mip) {
+      skipped += mipBytes(256u>>(mip-1),128u>>(mip-1),format==0 ? 8 : 16);
+      CountingReader reader(bytes);
+      const auto tail = Tempest::Pixmap::loadDdsMipTail(reader,mip,4);
+      require(tail.w()==(256u>>mip) && tail.h()==(128u>>mip) && tail.mipCount()==9-mip,
+              "DDS tail must begin at the requested mip and retain the remaining chain");
+      require(tail.format()==full.format() && tail.dataSize()==full.dataSize()-skipped,
+              "DDS tail must retain its format and exact remaining byte count");
+      require(std::memcmp(tail.data(),static_cast<const uint8_t*>(full.data())+skipped,tail.dataSize())==0,
+              "each DDS mip tail must match the corresponding full-load bytes");
+      require(reader.bytesRead<=128+tail.dataSize() && reader.bytesSkipped==skipped,
+              "DDS tail must seek past discarded mips without reading their bytes");
+      }
+    CountingReader clampedReader(bytes);
+    const auto clamped = Tempest::Pixmap::loadDdsMipTail(clampedReader,99,0);
+    require(clamped.w()==8 && clamped.h()==4 && clamped.mipCount()==4,
+            "BC tail selection must stop before either side drops below one 4x4 block");
+    CountingReader floorReader(bytes);
+    const auto floor = Tempest::Pixmap::loadDdsMipTail(floorReader,3);
+    require(floor.w()==128 && floor.h()==64 && floor.mipCount()==8,
+            "the default minimum side must clamp the requested DDS mip to 64");
+    CountingReader customFloorReader(bytes);
+    require(Tempest::Pixmap::loadDdsMipTail(customFloorReader,1,128).isEmpty(),
+            "DDS with no tail above the requested minimum side must report no tail");
+    const auto single = mipDds(fourCCs[format],256,128,1);
+    CountingReader singleReader(single);
+    require(Tempest::Pixmap::loadDdsMipTail(singleReader,1).isEmpty() && singleReader.bytesRead<=128,
+            "single-level DDS must report no tail without reading or rescaling its pixels");
+    Tempest::MemReader singleFullReader(single);
+    const auto singleFull = Tempest::Pixmap::loadDdsMipTail(singleFullReader,0);
+    require(singleFull.w()==256 && singleFull.h()==128 && singleFull.mipCount()==1,
+            "first mip zero must still load a single-level DDS");
+
+    const auto partial = mipDds(fourCCs[format],19,11,3);
+    Tempest::MemReader partialFullReader(partial);
+    const Tempest::Pixmap partialFull(partialFullReader);
+    CountingReader partialReader(partial);
+    const auto partialTail = Tempest::Pixmap::loadDdsMipTail(partialReader,1,4);
+    const auto partialSkipped = mipBytes(19,11,format==0 ? 8 : 16);
+    require(partialTail.w()==9 && partialTail.h()==5 && partialTail.mipCount()==2 &&
+                partialTail.dataSize()==partialFull.dataSize()-partialSkipped &&
+                std::memcmp(partialTail.data(),static_cast<const uint8_t*>(partialFull.data())+partialSkipped,
+                            partialTail.dataSize())==0,
+            "odd-sized DDS tails must round BC blocks up and preserve an incomplete chain");
+    require(partialReader.bytesRead==128+partialTail.dataSize() && partialReader.bytesSkipped==partialSkipped,
+            "odd-sized DDS tails must read only the header and retained BC blocks");
+    }
+
+  const auto valid = mipDds(fourCCs[0],256,128,9);
+  auto fails = [](const std::vector<uint8_t>& bytes) {
+    CountingReader reader(bytes);
+    bool failed = false;
+    try {
+      Tempest::Pixmap::loadDdsMipTail(reader,2);
+      }
+    catch(const std::system_error&) {
+      failed = true;
+      }
+    require(failed,"damaged or truncated DDS must fail with an asset-loading error");
+    };
+  auto damaged = valid;
+  damaged[0] = 0;
+  fails(damaged);
+  damaged = valid;
+  damaged.resize(127);
+  fails(damaged);
+  damaged = valid;
+  damaged.pop_back();
+  fails(damaged);
+  damaged = valid;
+  damaged[28] = 255;
+  fails(damaged);
   }
 
 struct Fixture final {
@@ -325,6 +472,7 @@ void emptyTable(Tempest::Device& device, const Fixture& fixture) {
 
 int main() {
   try {
+    ddsMipTails();
     variants();
     Fixture fixture;
     CommandLine commandLine(0,nullptr);
