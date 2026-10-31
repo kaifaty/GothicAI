@@ -2813,6 +2813,7 @@ void CollisionWorld::recoverTunneledItems() {
     itemSweepCursor=(itemSweepCursor+1)%itemSweeps.size();
     const auto to=body->centerOfMass();
     if(!std::isfinite(to.x) || !std::isfinite(to.y) || !std::isfinite(to.z)) {
+      Tempest::Log::i("[physics] item recovery trigger: body=",body->nativeId()," path=nonfinite");
       recoverItem(*body,body->position());
       continue;
       }
@@ -2831,8 +2832,18 @@ void CollisionWorld::recoverTunneledItems() {
       point=ray.GetPointOnRay(hits.mHit.mFraction);
       normal=lock.GetBody().GetWorldSpaceSurfaceNormal(hits.mHit.mSubShapeID2,point);
       }
-    if((origin-point).Dot(normal)>0.f && (end-point).Dot(normal)<0.f)
+    const float before=(origin-point).Dot(normal),after=(end-point).Dot(normal);
+    if(before>0.f && after<0.f) {
+      const auto face=toCentimeters(point);
+      Tempest::Log::i("[physics] item recovery crossing: body=",body->nativeId(),
+                     " path=ray from_center_cm=",from.x,",",from.y,",",from.z,
+                     " to_center_cm=",to.x,",",to.y,",",to.z);
+      Tempest::Log::i("[physics] item recovery face: body=",body->nativeId(),
+                     " point_cm=",face.x,",",face.y,",",face.z,
+                     " normal=",normal.GetX(),",",normal.GetY(),",",normal.GetZ(),
+                     " signed_before_cm=",before*100.f," signed_after_cm=",after*100.f);
       recoverItem(*body,body->position());
+      }
     }
   }
 
@@ -2859,6 +2870,10 @@ void CollisionWorld::recoverItems() {
         body->itemRestTransform=body->matrix();
       continue;
       }
+    const bool finite=std::isfinite(failedPosition.x) && std::isfinite(failedPosition.y) && std::isfinite(failedPosition.z);
+    Tempest::Log::i("[physics] item recovery trigger: body=",body->nativeId(),
+                   " path=",finite?"underworld":"nonfinite"," position_cm=",failedPosition.x,",",
+                   failedPosition.y,",",failedPosition.z," lower_limit_cm=",(bboxMin.GetY()-100.f)*100.f);
     recoverItem(*body,failedPosition);
     }
   }

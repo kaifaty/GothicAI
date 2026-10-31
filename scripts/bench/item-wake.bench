@@ -31,11 +31,14 @@ wait 8000
 item-wake begin
 wait 3000
 item-wake checkpoint
+# Isolate weapon wake from CharacterVirtual's independent nearby-Item body creation.
+npccharacter off
 item-wake setup sword
 wait 8000
 item-wake begin
 wait 3000
 item-wake checkpoint
+npccharacter on
 # Same six corpses/pulses, fifty bodyless Items outside every wake query.
 item-wake setup pile-far
 wait 8000
