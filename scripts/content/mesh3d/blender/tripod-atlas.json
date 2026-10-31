@@ -53,8 +53,8 @@
  ],
  "edge_wear": {
   "OWN_HEARTH_WOOD": 0.2,
-  "OWN_HEARTH_IRON": 0.3,
-  "OWN_HEARTH_RIVET": 0.4,
+  "OWN_HEARTH_IRON": 0.08,
+  "OWN_HEARTH_RIVET": 0.1,
   "OWN_HEARTH_LIQUID": 0.0
  },
  "size": 1024,

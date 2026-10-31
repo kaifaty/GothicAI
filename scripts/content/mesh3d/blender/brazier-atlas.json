@@ -19,9 +19,9 @@
    0.038
   ],
   "OWN_HEARTH_EMBER": [
-   0.14,
-   0.045,
-   0.015
+   0.08,
+   0.022,
+   0.007
   ],
   "OWN_HEARTH_ASH": [
    0.048,
@@ -52,8 +52,8 @@
   "OWN_HEARTH_RIVET"
  ],
  "edge_wear": {
-  "OWN_HEARTH_IRON": 0.3,
-  "OWN_HEARTH_RIVET": 0.4,
+  "OWN_HEARTH_IRON": 0.08,
+  "OWN_HEARTH_RIVET": 0.1,
   "OWN_HEARTH_EMBER": 0.0,
   "OWN_HEARTH_ASH": 0.0
  },

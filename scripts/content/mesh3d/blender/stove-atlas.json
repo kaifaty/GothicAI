@@ -10,14 +10,14 @@
  },
  "targets": {
   "OWN_HEARTH_CAST": [
-   0.035,
-   0.026,
-   0.017
+   0.022,
+   0.014,
+   0.008
   ],
   "OWN_HEARTH_RIVET": [
-   0.03,
-   0.02,
-   0.011
+   0.07,
+   0.05,
+   0.03
   ],
   "OWN_HEARTH_COPPER": [
    0.06,
@@ -64,7 +64,7 @@
  ],
  "edge_wear": {
   "OWN_HEARTH_CAST": 0.35,
-  "OWN_HEARTH_RIVET": 0.5,
+  "OWN_HEARTH_RIVET": 0.7,
   "OWN_HEARTH_COPPER": 0.4,
   "OWN_HEARTH_EMBER": 0.0,
   "OWN_HEARTH_WOOD": 0.2

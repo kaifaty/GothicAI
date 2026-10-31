@@ -10,7 +10,7 @@ config: {"id": "hearth-pan", "target": "data/content/mesh3d-hearth.json", "seed"
 Asset city-hearth (intent.md, wave 1; form from the original's mesh). The original's attachments keep
 their names: "BIP01 PAN" is the pan with its short iron tail and long wooden grip, "BIP01 COOK" the
 fire under it: three dark wooden sticks leaning together to a point under the pan, a low glowing bed,
-a ring of a dozen small sooted stones and ash. Positions in Blender axes (x, -glTF z).
+a ring of a dozen small sooted stones and ash. Positions in Blender axes (x, -glTF z) round the bbox centre.
 """
 import math
 import sys
@@ -75,6 +75,11 @@ for k in range(st["n"]):
 a0, a1 = cfg["ash"]
 ash(cook, rng, c, a0, a1, ASH, sides=22)
 
+# the model's origin: the original's geometry sits round the bbox centre (its root translation moves it 0.8 m)
+shift = Vector(((lo.x + hi.x) / 2, (lo.y + hi.y) / 2, 0))
+for parts in (pan, cook):
+    for v in parts.bm.verts:
+        v.co += shift
 # part numbers must not repeat across the two nodes
 offset = pan.parts
 for v in cook.bm.verts:

@@ -42,7 +42,7 @@ def vessel(spec, bend=None, inner_to=None):
 bowl = cfg["bowl"]
 vessel(bowl, inner_to=bowl["bed"] - 0.02)
 pot = cfg["pot"]
-vessel(pot, bend=lambda h, t, r: octagon(r, t), inner_to=pot["floor"])
+vessel(pot, bend=lambda h, t, r: octagon(r, t, 0.08), inner_to=pot["floor"])  # flat faces, only the edges softened
 (fr0, fy0), (fr1, fy1), fw, ft = cfg["foot"]
 (br0, by0), (br1, by1), bw, bt = cfg["bracket"]
 for deg in cfg["angles"]:

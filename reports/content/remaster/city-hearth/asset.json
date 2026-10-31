@@ -967,6 +967,62 @@
       "verdict": "REJECT",
       "date": "2026-10-31",
       "path": "reviews/r1c-brazier/merged.json"
+    },
+    {
+      "id": "r3-cauldron-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-cauldron-close/merged.json"
+    },
+    {
+      "id": "r3-pan-fishers",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-pan-fishers/merged.json"
+    },
+    {
+      "id": "r3-tripod-quay",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-tripod-quay/merged.json"
+    },
+    {
+      "id": "r3-brazier-poor",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-brazier-poor/merged.json"
+    },
+    {
+      "id": "r3-hearth-harbour",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-hearth-harbour/merged.json"
+    },
+    {
+      "id": "r3-hearth-large-town",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-hearth-large-town/merged.json"
+    },
+    {
+      "id": "r3-hearth-wide-upper",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-hearth-wide-upper/merged.json"
     }
   ],
   "gates": [

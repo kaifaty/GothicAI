@@ -99,15 +99,21 @@ def course_face(p00, p10, p01, p11, normal, mat, rough=True):
 
 
 def carved_band(p0, p1, y0, y1, normal, depth):
-    """A band of simple carved leaves: a row of rounded lozenges proud of the face."""
+    """A carved frieze: a moulded band with a run of leaves set alternately on the slant, like a vine."""
     width = (p1 - p0).length
     along = (p1 - p0).normalized()
-    n = max(4, int(width / 0.22))
+    up = Vector((0, 0, 1))
+    mid = (p0 + p1) / 2 + Vector((0, 0, (y0 + y1) / 2 - p0.z))
+    h = y1 - y0
+    for dy in (-h / 2 + 0.02, h / 2 - 0.02):  # the two mouldings framing it
+        P.board(mid + up * dy + normal * (depth / 2), along, up, normal, width, 0.04, depth * 1.2, CARVE)
+    n = max(6, int(width / 0.16))
     for k in range(n):
-        c = p0 + along * (width * (k + 0.5) / n)
-        for s, (dy, sc) in enumerate(((0.0, 1.0), (0.0, 0.55))):
-            P.board(c + normal * (depth * (s + 1) / 2) + Vector((0, 0, (y0 + y1) / 2 - c.z)), along, Vector((0, 0, 1)), normal,
-                    width / n * 0.8 * sc, (y1 - y0) * 0.8 * sc, depth, CARVE)
+        c = p0 + along * (width * (k + 0.5) / n) + Vector((0, 0, (y0 + y1) / 2 - p0.z))
+        tilt = 0.7 if k % 2 == 0 else -0.7
+        ax = (along * math.cos(tilt) + up * math.sin(tilt)).normalized()
+        P.board(c + normal * (depth * 0.6), ax, ax.cross(normal).normalized(), normal, width / n * 1.1, h * 0.32, depth, CARVE)
+        P.board(c + up * (h * 0.18 * (1 if k % 2 else -1)) + normal * (depth * 0.5), along, up, normal, 0.035, 0.035, depth * 1.4, CARVE)
 
 
 hx, hzf, htop = cfg["hearth"]
@@ -126,6 +132,7 @@ box(-ox, ox, htop, otop, back, back + 0.04, SOOT)
 for s_ in (-1, 1):
     box(min(s_ * ox, s_ * (ox + 0.04)), max(s_ * ox, s_ * (ox + 0.04)), htop, otop, bzf, back, SOOT)
 box(-ox, ox, otop - 0.04, otop, bzf, back, SOOT)
+box(-ox, ox, htop, htop + 0.006, bzf + 0.01, back, SOOT)  # the sooted floor inside the firebox, over the light slab
 box(-sx, sx, btop, btop + sth, szf, wall, CARVE)  # the mantle shelf: one dressed slab
 hood = cfg["hood"]
 shell([(y, x - 0.02, z + 0.02) for y, x, z in hood], STONE)

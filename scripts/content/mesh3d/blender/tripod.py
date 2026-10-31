@@ -52,7 +52,7 @@ outer = [(y - y0, r) for y, r in profile]
 wall = pot["wall"]
 top_h = outer[-1][0]
 inner = [(top_h, outer[-1][1] - wall * 1.4)] + [(y - y0, r - wall) for y, r in reversed(profile[:-1]) if y >= pot["liquid"] - 0.02]
-turned(P, Vector((pc.x, pc.y, y0)), outer, inner, pot["sides"], IRON, radius_at=lambda h, t, r: octagon(r, t))
+turned(P, Vector((pc.x, pc.y, y0)), outer, inner, pot["sides"], IRON, radius_at=lambda h, t, r: octagon(r, t, 0.08))
 # water: an open disc wound up by hand, the recalculation could turn it down
 part = P.new_part(wound=True)
 lr = [octagon(float(np.interp(pot["liquid"], [p[0] for p in profile], [p[1] for p in profile])) - wall - 0.002, 2 * math.pi * i / pot["sides"])

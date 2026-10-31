@@ -92,8 +92,12 @@ def model_parts(models: Path, visual: str):
     blob = (models / record['buffer']).read_bytes()
     hierarchy = record['data'].get('hierarchy') or json.loads((models / f'{visual}.MDH.json').read_text())['data']
     world = []
+    root = np.array(hierarchy.get('root_translation') or [0, 0, 0], dtype=float)
     for node in hierarchy['nodes']:
         local = np.array(node['transform'], dtype=float).reshape(4, 4).T
+        if node['parent_index'] < 0:  # the engine's global matrices include the root translation (PAN_OC: 0.8 m)
+            local = local.copy()
+            local[:3, 3] += root
         world.append(local if node['parent_index'] < 0 else world[node['parent_index']] @ local)
     names = [node['name'] for node in hierarchy['nodes']]
     mesh = record['data'].get('mesh') or record['data']

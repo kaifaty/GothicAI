@@ -2,11 +2,11 @@
  "glb": "city-hearth/build/fireplace/model.glb",
  "maps_dir": "city-hearth/tiles",
  "scales": {
-  "OWN_HEARTH_MASONRY": 1.5,
+  "OWN_HEARTH_MASONRY": 0.6,
   "OWN_HEARTH_SOOT": 1.0,
   "OWN_HEARTH_LOG": 3.0,
   "OWN_HEARTH_EMBER": 2.0,
-  "OWN_HEARTH_CARVING": 1.5
+  "OWN_HEARTH_CARVING": 0.6
  },
  "targets": {
   "OWN_HEARTH_MASONRY": [
@@ -15,19 +15,19 @@
    0.025
   ],
   "OWN_HEARTH_SOOT": [
-   0.012,
-   0.011,
-   0.009
+   0.006,
+   0.0055,
+   0.005
   ],
   "OWN_HEARTH_LOG": [
-   0.1,
-   0.075,
-   0.045
+   0.04,
+   0.028,
+   0.016
   ],
   "OWN_HEARTH_EMBER": [
-   0.14,
-   0.045,
-   0.015
+   0.08,
+   0.022,
+   0.007
   ],
   "OWN_HEARTH_CARVING": [
    0.08,
@@ -59,11 +59,11 @@
  },
  "metal": [],
  "edge_wear": {
-  "OWN_HEARTH_MASONRY": 0.3,
+  "OWN_HEARTH_MASONRY": 0.08,
   "OWN_HEARTH_SOOT": 0.0,
-  "OWN_HEARTH_LOG": 0.2,
+  "OWN_HEARTH_LOG": 0.08,
   "OWN_HEARTH_EMBER": 0.0,
-  "OWN_HEARTH_CARVING": 0.3
+  "OWN_HEARTH_CARVING": 0.08
  },
  "measure_ao": {
   "OWN_HEARTH_MASONRY": 0.5
@@ -96,5 +96,12 @@
    0.004,
    0.003
   ]
+ },
+ "contrast": {
+  "OWN_HEARTH_MASONRY": 0.7
+ },
+ "tile_normal": {
+  "OWN_HEARTH_MASONRY": 0.15,
+  "OWN_HEARTH_CARVING": 0.15
  }
 }
