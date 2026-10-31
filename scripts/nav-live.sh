@@ -12,14 +12,14 @@ while [[ $# -gt 0 ]]; do
     --round) round="${2:?round required}"; shift 2 ;;
     --stage) stage="${2:?stage required}"; shift 2 ;;
     -h|--help)
-      echo 'Usage: scripts/nav-live.sh --weights PATH[,PATH] --round LABEL [--stage prepare|qualify|smoke|baseline|report|clean]'
+      echo 'Usage: scripts/nav-live.sh --weights PATH[,PATH] --round LABEL [--stage prepare|qualify|teacher|smoke|baseline|report|clean]'
       echo 'Each invocation submits its phase and exits. Default: prepare, qualify, then baseline after its gate is complete.'
       exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 [[ -n "$weights" && "$round" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo 'Weights and a safe round label are required' >&2; exit 2; }
-case "$stage" in auto|prepare|qualify|smoke|baseline|report|clean) ;; *) echo "Unknown stage: $stage" >&2; exit 2 ;; esac
+case "$stage" in auto|prepare|qualify|teacher|smoke|baseline|report|clean) ;; *) echo "Unknown stage: $stage" >&2; exit 2 ;; esac
 [[ -f "$suite" ]] || { echo "Missing suite: $suite" >&2; exit 2; }
 suite="$(cd "$(dirname "$suite")" && pwd)/$(basename "$suite")"
 # Inventory the exact submitted code; later invocations never edit queued sources.
@@ -124,7 +124,7 @@ source="$1"; task="$2"; output="$3"; weights="$4"; phase="$5"; snapshot="$6"; lo
 if [[ "${NAVLIVE_BUDGET_CHILD:-0}" != 1 ]]; then
   exec 9>"$task/$(basename "$output")-budget.lock"
   flock 9
-  allowance="$(python3 - "$output/runtime.json" <<'BUDGET'
+  allowance="$(python3 - "$output/runtime.json" "$phase" <<'BUDGET'
 import json
 from pathlib import Path
 import sys
@@ -133,7 +133,7 @@ used=json.loads(path.read_text()).get('wall_seconds', 0) if path.is_file() else 
 remaining=10800-used-30  # Reserve termination and final bookkeeping time.
 if remaining <= 0:
     raise SystemExit('Round exhausted its 10800-second machine-time budget')
-print(min(3300, remaining))
+print(min(570 if sys.argv[2] == 'teacher' else 3300, remaining))
 BUDGET
 )"
   started_at=$(date +%s)
@@ -184,7 +184,7 @@ PY
 )"
   export OPENGOTHIC_BASE
 fi
-if [[ "$phase" == qualify || "$phase" == smoke || "$phase" == baseline ]]; then
+if [[ "$phase" == qualify || "$phase" == teacher || "$phase" == smoke || "$phase" == baseline ]]; then
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
   desktop_found=0
@@ -274,8 +274,13 @@ for shard in "${shards[@]}"; do
   log_dir="$log_prefix-$shard"
   ssh ryzen "mkdir -p '$log_dir'"
   display=()
-  [[ "$stage" == qualify || "$stage" == smoke || "$stage" == baseline ]] && display=(--display --display-shared)
-  identifier=$("$ROOT/scripts/gq" submit --class quick --threads 16 --cpu-quota 1200% --mem 10G --max 59m \
+  [[ "$stage" == qualify || "$stage" == teacher || "$stage" == smoke || "$stage" == baseline ]] && display=(--display --display-shared)
+  max_time=59m
+  threads=16; cpu_quota=1200%; memory=10G
+  if [[ "$stage" == teacher ]]; then
+    max_time=10m; threads=8; cpu_quota=800%; memory=8G
+  fi
+  identifier=$("$ROOT/scripts/gq" submit --class quick --threads "$threads" --cpu-quota "$cpu_quota" --mem "$memory" --max "$max_time" \
     ${display[@]+"${display[@]}"} --archive "$log_dir" --name "nav live $round $stage $shard" -- \
     bash "$source/phase.sh" "$source" "$task" "$output" "$weights" "$stage" "$snapshot" "$log_dir" "$shard")
   printf '%s shard %s: %s\n' "$stage" "$shard" "$identifier"

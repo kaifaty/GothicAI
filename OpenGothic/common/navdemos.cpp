@@ -2338,10 +2338,27 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     const auto leader=NpcKeys::physicalPosition(*npc);
     const auto behind=leader-Vec3(std::cos(npc->rotationRad()),0,std::sin(npc->rotationRad()))*300.f;
     const auto floor=w.physic()->landRay(behind+Vec3(0,200,0),500.f);
-    if(!floor.hasCol || floor.n.y<.65f)throw std::runtime_error("nav live: player guide start is not supported");
+    auto normal=floor.n;
+    // landRay deliberately leaves object normals zero for native sliding.
+    // Inspect the same surface without changing that movement contract.
+    if(floor.hasCol && normal.length()<.5f) {
+      const auto surface=w.physic()->navigationRay(floor.v+Vec3(0,2,0),floor.v-Vec3(0,2,0),&player);
+      if(surface.hasCol && (surface.point-floor.v).length()<3.f)normal=surface.normal;
+    }
+    const float normalLength=normal.length();
+    if(normalLength>.5f)normal*=1.f/normalLength;
+    {
+      auto out=file(ep,"live-guide-start.json");out<<std::boolalpha;
+      out<<"{\"leader_cm\":";vector(out,leader);out<<",\"requested_cm\":";vector(out,behind);
+      out<<",\"land_ray_normal\":";vector(out,floor.n);
+      out<<",\"support\":";NavLiveProbes::Detail::support(out,w,player,behind,NavBench::navigationMesh(w));
+      out<<"}\n";
+    }
+    if(!floor.hasCol || normalLength<=.5f || normal.y<.65f)
+      throw std::runtime_error("nav live: player guide start is not supported; see live-guide-start.json");
     const auto capsule=player.navigationCapsule();
-    if(w.physic()->sweep(floor.v+Vec3(0,capsule.x+1,0),floor.v+Vec3(0,capsule.y-capsule.x,0),capsule.x).hasCol)
-      throw std::runtime_error("nav live: player guide start is obstructed");
+    if(w.physic()->sweep(floor.v+Vec3(0,capsule.x+2,0),floor.v+Vec3(0,std::max(capsule.x+2,capsule.y-capsule.x),0),capsule.x).hasCol)
+      throw std::runtime_error("nav live: player guide start is obstructed; see live-guide-start.json");
     ep.liveGuidePosition=floor.v;ep.liveGuideTrail={{-300.,floor.v},{0.,leader}};
     player.setInteraction(nullptr,true);player.clearAiQueue();player.clearState(false);player.clearGoTo();player.clearSpeed();
     player.setExternalControl(true);player.setWalkMode(WalkBit::WM_Walk);player.setAnim(Npc::Anim::Idle);

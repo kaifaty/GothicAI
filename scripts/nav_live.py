@@ -413,7 +413,7 @@ def report(args, cases, policies, bc4):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('stage', choices=('smoke', 'baseline', 'report'))
+    parser.add_argument('stage', choices=('teacher', 'smoke', 'baseline', 'report'))
     parser.add_argument('--suite', type=Path, required=True)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
@@ -423,6 +423,8 @@ def main(argv=None):
     if any(not path.is_absolute() for path in (args.suite, args.runtime, args.output)):
         parser.error('Suite, runtime and output paths must be absolute')
     args.output.mkdir(parents=True, exist_ok=True)
+    if args.stage == 'teacher':
+        args.suite = args.output / 'qualified-suite.json'
     args.binary = args.runtime / 'build/opengothic/Gothic2Notr'
     args.deadline = phase_deadline()
     suite = read_json(args.suite)
@@ -431,13 +433,27 @@ def main(argv=None):
         raise ValueError('Freeze geometry-qualified places before smoke or baseline')
     if args.stage == 'baseline' and suite.get('semantic_confirmation_required'):
         raise ValueError('Confirm the scene type before baseline: ' + ', '.join(suite['semantic_confirmation_required']))
-    policies, bc4 = models(args.weights, suite)
     args.inputs = dict(suite['inputs'], cache=str(args.runtime / 'navmesh-cache'))
     for name in ('save', 'roads', 'familiar', 'links'):
         if not Path(args.inputs[name]).is_file():
             raise ValueError(f'Missing frozen input {name}: {args.inputs[name]}')
     args.input_sha256 = {name: sha256(args.inputs[name]) for name in ('save', 'roads', 'familiar', 'links')}
     check_space(args.output)
+    if args.stage == 'teacher':
+        case = next(row for row in cases if row['number'] == 1)
+        rejected = {row['id'] for row in suite.get('unresolved_geometry', [])}
+        if case['id'] in rejected or not case.get('qualification_evidence'):
+            raise ValueError('The saved suite has no accepted Maleth fence placement')
+        directory = teacher_directory(args, case)
+        episode = run_episode(args, case, None, case['seeds'][0], directory)
+        summary = read_json(directory / 'summary.json')
+        validated = raw_complete(directory) and processed(directory)
+        print(json.dumps(dict(stage='teacher', id=case['id'], output=str(directory), requested_seed=case['seeds'][0],
+            success=bool(episode['success']), elapsed_ms=episode['elapsed_ms'],
+            decisions=episode['decisions'], deep_water_entries=summary.get('deep_water_entries'),
+            falls=summary.get('falls'), validated=validated)), flush=True)
+        return 0 if validated and episode['success'] and summary.get('deep_water_entries') in (0, None) else 2
+    policies, bc4 = models(args.weights, suite)
     smoke_complete = True
     if args.stage == 'smoke':
         unresolved = [dict(id=identifier, reason='scene type requires confirmation')
