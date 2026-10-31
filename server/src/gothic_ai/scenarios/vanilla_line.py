@@ -439,9 +439,17 @@ async def vanilla_line_live(
                             if seq is not None and entry.get("challenge") == seq
                         ), None)
 
-                    if challenge is not None:
-                        await _until(hint, 30)
-                    check(f"challenge_hint_{lines}", hint() is not None, hint())
+                    # the giver cannot be the source of a rumor about himself: no other person, no hint
+                    sources = sorted(
+                        set(challenge[1].get("people", []) if challenge is not None else [])
+                        - {fact.get("giver"), "PLAYER"}
+                    )
+                    if challenge is not None and not sources:
+                        check(f"challenge_hint_{lines}", hint() is None, "no source: only the giver")
+                    else:
+                        if challenge is not None:
+                            await _until(hint, 30)
+                        check(f"challenge_hint_{lines}", hint() is not None, hint())
             safe = await _giver_ok(link, director, fact)
             check(f"{state}_giver", safe, {"giver": fact.get("giver"), "follows": fact.get("follows")})
             if not safe:
