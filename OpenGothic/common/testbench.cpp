@@ -13826,6 +13826,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       {"spell_physics",&Gothic::PhysicsFlags::spellPhysics},
       {"movable_vobs",&Gothic::PhysicsFlags::movableVobs},
       {"item_hulls",&Gothic::PhysicsFlags::itemHulls},
+      {"item_deepest_contact",&Gothic::PhysicsFlags::itemDeepestContact},
       {"furniture_parts",&Gothic::PhysicsFlags::furnitureParts},
       {"placed_items",&Gothic::PhysicsFlags::placedItems},
       {"cloth",&Gothic::PhysicsFlags::cloth}

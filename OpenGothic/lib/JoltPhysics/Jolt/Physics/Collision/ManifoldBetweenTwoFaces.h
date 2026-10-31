@@ -39,6 +39,7 @@ JPH_EXPORT void ManifoldBetweenTwoFaces(Vec3Arg inContactPoint1, Vec3Arg inConta
 #ifdef JPH_DEBUG_RENDERER
 	, RVec3Arg inCenterOfMass
 #endif
+	, bool inKeepDeepestPoint = false // GothicAI: Preserve the EPA pair when face clipping misses it.
 	);
 
 JPH_NAMESPACE_END
