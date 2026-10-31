@@ -6,12 +6,13 @@ from pathlib import Path
 
 import pytest
 
+CONFIGS = Path(__file__).resolve().parents[7] / "evals/npc-body"
 spec=importlib.util.spec_from_file_location("body_combat_report",Path(__file__).parents[1]/"body_combat_report.py")
 report=importlib.util.module_from_spec(spec);spec.loader.exec_module(report)
 
 
 def config():
-    return json.loads((Path(__file__).parents[2]/"evals/npc-body/body-stage8-v1.json").read_text())
+    return json.loads((CONFIGS / "body-stage8-v1.json").read_text())
 
 
 def test_declared_matrix_separates_exposed_data_from_twenty_fresh_screen_groups():
@@ -321,7 +322,7 @@ def test_service_summary_cannot_replace_missing_or_changed_actual_results(failur
 
 
 def combat_collection_config():
-    return json.loads((Path(__file__).parents[2]/"evals/npc-body/body-combat-demonstrations-v1.json").read_text())
+    return json.loads((CONFIGS / "body-combat-demonstrations-v1.json").read_text())
 
 
 def test_production_matrix_keeps_calibration_out_and_varies_real_train_clearance():

@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+CONFIGS = Path(__file__).resolve().parents[7] / "evals/npc-body"
 SCRIPTS=Path(__file__).parents[1];sys.path.insert(0,str(SCRIPTS))
 spec=importlib.util.spec_from_file_location("final_declaration",SCRIPTS/"body_final_evaluation.py")
 final=importlib.util.module_from_spec(spec);spec.loader.exec_module(final)
@@ -18,8 +19,8 @@ def write(path,value):
 
 def protocol(tmp_path):
     root,reference,child=(tmp_path/name for name in ("gate","v6","child"))
-    original=json.loads((SCRIPTS.parent/"evals/npc-body/body-stage8-v1.json").read_text())
-    config=json.loads((SCRIPTS.parent/"evals/npc-body/body-stage8-evaluation-v2.json").read_text())
+    original=json.loads((CONFIGS / "body-stage8-v1.json").read_text())
+    config=json.loads((CONFIGS / "body-stage8-evaluation-v2.json").read_text())
     original["runtime"]["native_serial_workers"]=False;config["runtime"]["native_serial_workers"]=False
     candidate={"run":str(child),"checkpoint_sha256":{"gru":"gru","mlp":"mlp"},"normalizer_sha256":"norm"}
     config["reference"]={"run_name":child.name,"policy_code_run_name":reference.name,
