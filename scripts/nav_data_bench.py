@@ -536,26 +536,33 @@ def measured_prepare(args, manifest, entries, cache, progress):
                 splits=index["splits"], timings_are_nested=True)
 
 
+def balanced_entries(entries, count):
+    """Retain manifest order while taking the same family-balanced prefix."""
+    families = sorted({entry["family"] for entry in entries})
+    selected_ids = set()
+    for number, family in enumerate(families):
+        take = count // len(families) + (number < count % len(families))
+        selected_ids.update(entry["id"] for entry in
+                            [value for value in entries if value["family"] == family][:take])
+    selected = [entry for entry in entries if entry["id"] in selected_ids]
+    if len(selected) != count:
+        raise ValueError(f"Expected {count} balanced episodes, found {len(selected)}")
+    return selected
+
+
 def check_direct_training(args, manifest, entries, scratch, progress):
     """Compare frozen prepare with XZ preparation or direct BC updates."""
     import copy
     import nav_lean_data as convert
 
-    gpu = args.mode == "loader"
+    scale200 = args.mode == "loader-200"
+    gpu = args.mode in ("loader", "loader-200")
     if args.mode != "prepare-xz":
         import torch
         import nav_bc_train as train
         if gpu and not torch.cuda.is_available():
             raise RuntimeError("The loader benchmark requires the admitted Ryzen GPU")
-    families = sorted({entry["family"] for entry in entries})
-    selected_ids = set()
-    for number, family in enumerate(families):
-        count = 50 // len(families) + (number < 50 % len(families))
-        selected_ids.update(entry["id"] for entry in
-                            [value for value in entries if value["family"] == family][:count])
-    selected = [entry for entry in entries if entry["id"] in selected_ids]
-    if len(selected) != 50:
-        raise ValueError(f"Expected 50 parity episodes, found {len(selected)}")
+    selected = balanced_entries(entries, 200 if scale200 else 50)
     variant = "hd-familiar" if args.corpus == "v5" else "hd"
     new_entries = copy.deepcopy(selected)
     for old, new in zip(selected, new_entries):
@@ -591,6 +598,39 @@ def check_direct_training(args, manifest, entries, scratch, progress):
         raise ValueError("Direct index changed episode order")
 
     old_by_id = {entry["id"]: entry for entry in old_index["episodes"]}
+    cpu_old_index, cpu_new_index = old_index, new_index
+    if scale200:
+        # The already-prepared 200-episode cache contains this original 50-episode
+        # parity subset. Recompute its label statistics without writing a second
+        # cache, so exact CPU training retains the original 50-episode recipe.
+        cpu_entries = balanced_entries(new_entries, 50)
+        progress.begin("parity.cpu_subset_index")
+        with patch.object(data, "load_training_manifest", return_value=(manifest, cpu_entries)):
+            cpu_new_index = data.training_index(args.converted_source, args.manifest, variant)
+        cpu_old_index = copy.deepcopy(old_index)
+        cpu_old_index["episodes"] = [old_by_id[entry["id"]] for entry in cpu_new_index["episodes"]]
+        counts = {head: np.zeros(classes, np.int64)
+                  for head, classes in zip(data.BC3_HEADS, data.BC3_CLASSES)}
+        steps, changes, detour_steps = 0, 0, 0
+        for entry in cpu_old_index["episodes"]:
+            with np.load(cache / entry["file"], allow_pickle=False) as arrays:
+                labels = arrays["labels"]
+                steps += len(labels)
+                changes += int(arrays["action_change"].sum())
+                detour_steps += int(arrays["detour_valid"].sum())
+                for number, (head, classes) in enumerate(zip(data.BC3_HEADS, data.BC3_CLASSES)):
+                    counts[head] += np.bincount(labels[:, number], minlength=classes)
+        if (cpu_new_index["class_counts"]["train"] != {head: values.tolist() for head, values in counts.items()}
+                or cpu_new_index["action_change"]["N"] != steps
+                or cpu_new_index["action_change"]["n_I"] != changes
+                or cpu_new_index["action_change_weight"] != reference.action_change_weight(steps, changes)
+                or cpu_new_index["auxiliary"]["detour"]["available_steps"] != detour_steps
+                or cpu_new_index["splits"] != {"train": dict(
+                    pairs=len({tuple(entry["pair"]) for entry in cpu_old_index["episodes"]}),
+                    episodes=50, steps=steps)}):
+            raise ValueError("CPU parity subset statistics differ from frozen NPZ labels")
+        for key in ("class_counts", "action_change", "action_change_weight", "auxiliary", "splits"):
+            cpu_old_index[key] = copy.deepcopy(cpu_new_index[key])
     batches = train.training_batches(new_index["episodes"], 8 if gpu else 4, 17)
     with train.BatchLoader(args.converted_source, workers=args.loader_workers,
                            prefetch=args.loader_prefetch) as loader:
@@ -621,14 +661,16 @@ def check_direct_training(args, manifest, entries, scratch, progress):
         torch.backends.cudnn.deterministic = False
         torch.backends.cudnn.benchmark = False
         histories, memory = {}, {}
-        for label, index in (("old", old_index), ("direct", new_index)):
+        phase_indices = (("old", cpu_old_index), ("direct", cpu_new_index)) if exact else (
+            ("old", old_index), ("direct", new_index))
+        for label, index in phase_indices:
             progress.begin(f"{phase}.bc_epochs_{label}")
             destination = args.output / f"{phase}-epoch-{label}"
             destination.mkdir()
             options = SimpleNamespace(cache=str(cache) if label == "old" else None,
                 source=str(args.converted_source) if label == "direct" else None,
                 manifest=str(args.manifest), input_variant=variant, output=str(destination),
-                threads=1 if exact else 6, device=device, epochs=1 if exact else 2,
+                threads=1 if exact else 6, device=device, epochs=2 if scale200 or not exact else 1,
                 batch=4 if exact else 8, segment=32 if exact else 64, lr=.0003,
                 seed=17, resume=False, init=None, loader_workers=args.loader_workers,
                 loader_prefetch=args.loader_prefetch)
@@ -658,12 +700,19 @@ def check_direct_training(args, manifest, entries, scratch, progress):
                         for row in history] for label, history in histories.items()}
         runs[device] = dict(device=device, deterministic_algorithms=exact, threads=options.threads,
             epochs=options.epochs, batch=options.batch, segment=options.segment, lr=options.lr,
+            episodes=len(index["episodes"]), decisions=sum(entry["steps"] for entry in index["episodes"]),
+            episode_ids=[entry["id"] for entry in index["episodes"]],
             loader_workers=args.loader_workers, loader_prefetch=args.loader_prefetch, loader_wait=wait,
             losses=losses, model_and_optimizer_tensors_equal=True if exact else None,
             epoch_seconds=seconds, mean_epoch_seconds=mean, projected_20_epoch_seconds=totals,
             xz_epoch_slowdown_percent=100 * (mean["direct"] / mean["old"] - 1),
             xz_epoch_within_20_percent=mean["direct"] <= 1.2 * mean["old"],
             projected_20_epochs_not_slower=totals["direct"] <= totals["old"], memory=memory)
+        if scale200 and exact:
+            # Full 200-episode prepare is timed separately from this CPU-only
+            # parity subset; do not combine their costs into a misleading round.
+            runs[device]["projected_20_epoch_seconds"] = None
+            runs[device]["projected_20_epochs_not_slower"] = None
         if not exact:
             rtol, atol = 1e-3, 1e-6
             comparison = dict(rtol=rtol, atol=atol,
@@ -678,15 +727,17 @@ def check_direct_training(args, manifest, entries, scratch, progress):
         progress.emit("bc_pair_complete", device=device, result=runs[device])
 
     measured = runs["cuda" if gpu else "cpu"]
-    return dict(mode=args.mode, corpus=args.corpus, episodes=len(selected), decisions=decisions,
+    result = dict(mode=args.mode, corpus=args.corpus, episodes=len(selected), decisions=decisions,
                 episode_ids=[entry["id"] for entry in selected],
                 packed_arrays_bitwise_equal=checked_arrays, training_tensors_bitwise_equal=checked_tensors,
                 familiar_nonzero_decisions=familiar_decisions, reference_prepare_seconds=prepare_seconds,
                 direct_index_seconds=index_seconds, separate_prepare_required=False, seed=17,
-                **measured, cpu_parity=runs["cpu"], cuda=torch.version.cuda,
+                cpu_parity=runs["cpu"], cuda=torch.version.cuda,
                 gpu=torch.cuda.get_device_name() if gpu else None,
                 npz_medium="local NVMe scratch", xz_medium="NAS",
                 torch=torch.__version__, reference_script_sha256=hashlib.sha256(args.reference_script.read_bytes()).hexdigest())
+    result.update(measured)
+    return result
 
 
 def check_xz_prepare(args, manifest, selected, converted, reference, old_index,
@@ -793,8 +844,9 @@ def check_loaded_tensors(groups, old_by_id, reference, cache, corpus, progress, 
 
 
 def main():
+    global TIMEOUT_SECONDS
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("profile", "probe", "replay", "parity", "loader", "prepare-xz"))
+    parser.add_argument("mode", choices=("profile", "probe", "replay", "parity", "loader", "loader-200", "prepare-xz"))
     parser.add_argument("--corpus", choices=("v4", "v5"), required=True)
     for name in ("source", "manifest", "output", "scratch"):
         parser.add_argument("--" + name, type=Path, required=True)
@@ -807,7 +859,11 @@ def main():
         parser.error("All paths must be absolute")
     if args.mode == "replay" and args.corpus != "v4":
         parser.error("Replay uses the historical v4 [200:300] training slice")
-    if args.mode in ("parity", "loader", "prepare-xz") and any(path is None or not path.is_absolute()
+    if args.mode == "loader-200":
+        if args.corpus != "v5":
+            parser.error("The 200-episode loader benchmark requires v5")
+        TIMEOUT_SECONDS = 50 * 60
+    if args.mode in ("parity", "loader", "loader-200", "prepare-xz") and any(path is None or not path.is_absolute()
                                      for path in (args.converted_source, args.reference_script)):
         parser.error("Parity requires absolute --converted-source and --reference-script")
     faulthandler.enable()

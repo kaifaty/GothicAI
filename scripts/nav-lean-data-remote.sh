@@ -3,17 +3,18 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 stage="${1:-baseline}"
-[[ $# -le 1 && ( "$stage" == baseline || "$stage" == probe || "$stage" == convert || "$stage" == loader || "$stage" == loader-final || "$stage" == prepare ) ]] || {
-  echo 'Usage: bash scripts/nav-lean-data-remote.sh [baseline|probe|convert|loader|loader-final|prepare]' >&2
+[[ $# -le 1 && ( "$stage" == baseline || "$stage" == probe || "$stage" == convert || "$stage" == loader || "$stage" == loader-final || "$stage" == prepare || "$stage" == loader-200 ) ]] || {
+  echo 'Usage: bash scripts/nav-lean-data-remote.sh [baseline|probe|convert|loader|loader-final|prepare|loader-200]' >&2
   exit 2
 }
 export GQ_OWNER=nav-lean-data
 task="$(ssh -T -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-lean-data" "$HOME"')"
+if [[ "$stage" == loader-200 ]]; then task="$task/scale200"; fi
 ssh ryzen "mkdir -p '$task/source/scripts' '$task/input' '$task/scratch' '$task/$stage-results'"
 rsync -rt --no-links --exclude=__pycache__ "$ROOT/scripts/" "ryzen:$task/source/scripts/"
 rsync -rt --no-links "$ROOT/reports/navigation/2026-10-22-demos-v5/manifest.json" \
   "ryzen:$task/input/v5-compact.json"
-if [[ "$stage" == convert || "$stage" == loader || "$stage" == loader-final || "$stage" == prepare ]]; then
+if [[ "$stage" == convert || "$stage" == loader || "$stage" == loader-final || "$stage" == prepare || "$stage" == loader-200 ]]; then
   git -C "$ROOT" show 0dd559f12:scripts/nav_bc_data.py | \
     ssh ryzen "cat > '$task/input/nav_bc_data_before_lean.py'"
 fi
@@ -26,7 +27,7 @@ results="$task/$stage-results"
 export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 export OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 export UV_CACHE_DIR="$task/uv-cache"
-if [[ "$stage" == prepare ]]; then
+if [[ "$stage" == prepare || "$stage" == loader-200 ]]; then
   cleanup() {
     python3 - "$task" "$results/cleanup.json" <<'CLEANUP'
 from pathlib import Path
@@ -42,7 +43,7 @@ for name in ('scratch', 'uv-cache', '.venv'):
         shutil.rmtree(path)
     removed.append(dict(directory=str(path), file_entries=count, absent=not path.exists()))
 result.write_text(json.dumps(removed, indent=2) + '\n')
-print(json.dumps(dict(event='lean_prepare_cleanup', removed=removed)), flush=True)
+print(json.dumps(dict(event='lean_data_cleanup', removed=removed)), flush=True)
 CLEANUP
   }
   trap cleanup EXIT
@@ -50,6 +51,22 @@ fi
 df -h "$HOME" /mnt/shared
 "$HOME/.local/bin/uv" venv --python 3.12 --allow-existing "$task/.venv"
 "$HOME/.local/bin/uv" pip install --python "$task/.venv/bin/python" 'numpy==2.4.2' pytest
+if [[ "$stage" == loader-200 ]]; then
+  "$HOME/.local/bin/uv" pip install --python "$task/.venv/bin/python" 'torch==2.9.1+cu128' \
+    --index-url https://download.pytorch.org/whl/cu128
+  cd "$task/source"
+  nvidia-smi
+  "$task/.venv/bin/python" -B -X faulthandler -m pytest -q -p no:cacheprovider \
+    --basetemp "$task/scratch/pytest-loader-200" scripts/tests/test_nav_bc_train.py
+  "$task/.venv/bin/python" -B -X faulthandler -I scripts/nav_data_bench.py loader-200 \
+    --corpus v5 --source /mnt/shared/gothic-ai/nav-demos-v5/recordings \
+    --manifest "$task/input/v5-compact.json" \
+    --converted-source /mnt/shared/gothic-ai/nav-lean-data/corpus-v5 \
+    --reference-script "$task/input/nav_bc_data_before_lean.py" \
+    --output "$results/loader-v5" --scratch "$task/scratch/loader-200-v5" \
+    --loader-workers 8 --loader-prefetch 3
+  exit 0
+fi
 if [[ "$stage" == prepare ]]; then
   "$HOME/.local/bin/uv" pip install --python "$task/.venv/bin/python" 'torch==2.9.1+cpu' \
     --index-url https://download.pytorch.org/whl/cpu
@@ -183,13 +200,18 @@ set -euo pipefail
 task="$(cd "$(dirname "$0")" && pwd)"
 stage="${1:?stage}"
 exec > >(tee -a "$task/$stage-results/job.log") 2>&1
-exec python3 -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- \
+seconds=7200
+if [[ "$stage" == loader-200 ]]; then seconds=3600; fi
+exec python3 -I "$task/source/scripts/nav_job.py" --max-seconds "$seconds" -- \
   bash "$task/measure-body.sh" "$stage"
 JOB
 resources=(--mem 8G)
 threads=6
+limit=2h
+name="nav lean-data $stage v4 v5"
 if [[ "$stage" == loader ]]; then resources=(--mem 10G --gpu-mem 4G); fi
 if [[ "$stage" == loader-final ]]; then resources=(--mem 20G --gpu-mem 4G); threads=28; fi
-"$ROOT/scripts/gq" submit --class quiet --threads "$threads" --cpu-quota "$((threads * 100))%" "${resources[@]}" --max 2h \
-  --name "nav lean-data $stage v4 v5" --archive "$task/$stage-results" -- \
+if [[ "$stage" == loader-200 ]]; then resources=(--mem 20G --gpu-mem 4G); threads=28; limit=1h; name='nav lean-data loader-200 v5'; fi
+"$ROOT/scripts/gq" submit --class quiet --threads "$threads" --cpu-quota "$((threads * 100))%" "${resources[@]}" --max "$limit" \
+  --name "$name" --archive "$task/$stage-results" -- \
   bash "$task/measure-job.sh" "$stage"

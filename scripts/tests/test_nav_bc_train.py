@@ -15,7 +15,7 @@ import nav_bc_train as train
 
 
 @pytest.mark.parametrize("version,input_variant,workers,prefetch", [
-    (2, "hd", 4, 1), (3, "hd-familiar", 8, 2)])
+    (2, "hd", 4, 1), (3, "hd-familiar", 8, 3)])
 def test_parallel_loader_preserves_packed_bytes_batch_order_and_training_rng(
         tmp_path, version, input_variant, workers, prefetch):
     demos = train.nav_demos
@@ -47,11 +47,16 @@ def test_parallel_loader_preserves_packed_bytes_batch_order_and_training_rng(
     train.torch.manual_seed(317)
     python_rng, numpy_rng = random.getstate(), np.random.get_state()
     torch_rng = train.torch.random.get_rng_state().clone()
+    epoch_batches = [train.training_batches(entries, 1, seed) for seed in (17, 18)]
     with train.BatchLoader(tmp_path, workers=workers, prefetch=prefetch) as loader:
-        for seed in (17, 18):
-            batches = train.training_batches(entries, 1, seed)
+        executor = None
+        for epoch, batches in enumerate(epoch_batches):
+            next_batches = epoch_batches[epoch + 1] if epoch + 1 < len(epoch_batches) else None
             actual_order = []
-            for batch, group in loader.loaded_batches(batches, packed=True):
+            for batch, group in loader.loaded_batches(batches, packed=True, next_batches=next_batches):
+                executor = executor or loader.executor
+                assert loader.executor is executor
+                assert len(loader.pending) <= prefetch
                 actual_order.append([entry["id"] for entry in batch])
                 for entry, episode in zip(batch, group):
                     reference = expected[entry["id"]]
@@ -69,6 +74,16 @@ def test_parallel_loader_preserves_packed_bytes_batch_order_and_training_rng(
             assert waits["load_wait_first_batch_seconds"] == per_batch[0]
             assert waits["load_wait_after_first_seconds"] == sum(per_batch[1:])
             assert waits["load_wait_max_batch_seconds"] == max(per_batch)
+            if next_batches is not None:
+                assert [batch for batch, _ in loader.pending] == next_batches[:prefetch]
+                # Wait until the queued prefix is decoded, then remove only its
+                # source files: the next epoch must consume the retained bytes.
+                for batch, futures in loader.pending:
+                    for entry, future in zip(batch, futures):
+                        future.result()
+                        (tmp_path / entry["file"]).unlink()
+            else:
+                assert not loader.pending
     assert random.getstate() == python_rng
     numpy_after = np.random.get_state()
     assert numpy_after[0] == numpy_rng[0] and numpy_after[2:] == numpy_rng[2:]

@@ -80,7 +80,7 @@ class BatchLoader:
     """Decode/encode direct episodes in worker processes, preserving batch order.
 
     Only packed arrays cross process boundaries. The current batch and at most
-    ``prefetch`` following batches are retained; no episode survives across epochs.
+    ``prefetch`` following batches are retained, including across epoch boundaries.
     Spawn remains safe after the training process has initialized CUDA.
     """
     def __init__(self, cache, workers=0, prefetch=1):
@@ -90,6 +90,8 @@ class BatchLoader:
         self.workers, self.prefetch = workers, prefetch
         self.executor = None
         self.batch_wait_seconds = []
+        self.pending = deque()
+        self.iterating = False
 
     def __enter__(self):
         return self
@@ -97,6 +99,7 @@ class BatchLoader:
     def __exit__(self, *_exc):
         if self.executor is not None:
             self.executor.shutdown(wait=True, cancel_futures=True)
+        self.pending.clear()
 
     def wait_stats(self):
         """Parent batch loading/waiting time, excluding model work."""
@@ -107,39 +110,54 @@ class BatchLoader:
                     load_wait_max_batch_seconds=max(waits, default=0.),
                     load_wait_per_batch_seconds=waits.copy())
 
-    def loaded_batches(self, batches, *, packed=False):
+    def loaded_batches(self, batches, *, packed=False, next_batches=None):
+        if self.iterating:
+            raise ValueError("finish the current batch iterator before starting another epoch")
+        if (len(self.pending) > len(batches)
+                or any(entries != batch for (entries, _), batch in zip(self.pending, batches))):
+            raise ValueError("prefetched batches differ from the next training epoch")
+        self.iterating = True
         self.batch_wait_seconds = []
-        if not self.workers or not any(entry.get("storage") == "navdemo" for batch in batches for entry in batch):
-            for entries in batches:
+        try:
+            if not self.workers or not any(entry.get("storage") == "navdemo" for batch in batches for entry in batch):
+                for entries in batches:
+                    started = time.perf_counter()
+                    group = [load(self.cache, entry, packed=packed) for entry in entries]
+                    self.batch_wait_seconds.append(time.perf_counter() - started)
+                    yield entries, group
+                    del group
+                return
+            if self.executor is None:
+                self.executor = ProcessPoolExecutor(max_workers=self.workers,
+                    mp_context=multiprocessing.get_context("spawn"), initializer=_loader_worker_init)
+            remaining = iter(batches[len(self.pending):])
+            following = iter(next_batches or [])
+
+            def submit():
+                entries = next(remaining, None)
+                if entries is None:
+                    entries = next(following, None)
+                if entries is None:
+                    return False
+                self.pending.append((entries, [self.executor.submit(_load_packed, self.cache, entry)
+                                               for entry in entries]))
+                return True
+
+            while len(self.pending) < 1 + self.prefetch and submit():
+                pass
+            for _ in batches:
+                entries, futures = self.pending.popleft()
                 started = time.perf_counter()
-                group = [load(self.cache, entry, packed=packed) for entry in entries]
+                group = [future.result() for future in futures]
                 self.batch_wait_seconds.append(time.perf_counter() - started)
-                yield entries, group
-                del group
-            return
-        if self.executor is None:
-            self.executor = ProcessPoolExecutor(max_workers=self.workers,
-                mp_context=multiprocessing.get_context("spawn"), initializer=_loader_worker_init)
-        remaining = iter(batches)
-        pending = deque()
-
-        def submit():
-            entries = next(remaining, None)
-            if entries is not None:
-                pending.append((entries, [self.executor.submit(_load_packed, self.cache, entry)
-                                           for entry in entries]))
-
-        # The current and configured following packed batches bound the memory.
-        for _ in range(1 + self.prefetch):
-            submit()
-        while pending:
-            entries, futures = pending.popleft()
-            started = time.perf_counter()
-            group = [future.result() for future in futures]
-            self.batch_wait_seconds.append(time.perf_counter() - started)
-            yield entries, group if packed else [unpack_cached(episode) for episode in group]
-            del group, futures
-            submit()
+                # Fill before yielding so the current tail overlaps the next
+                # epoch's first batches within the same bounded queue.
+                while len(self.pending) < self.prefetch and submit():
+                    pass
+                yield entries, group if packed else [unpack_cached(episode) for episode in group]
+                del group, futures
+        finally:
+            self.iterating = False
 
 
 def metrics(truth, prediction):
@@ -307,9 +325,11 @@ def train(args):
             started = time.perf_counter()
             model.train()
             batches = training_batches(train_eps, args.batch, args.seed + epoch)
+            next_batches = (training_batches(train_eps, args.batch, args.seed + epoch + 1)
+                            if epoch + 1 < args.epochs else None)
             sample_rng = np.random.default_rng(args.seed + epoch)
             total_loss = total_steps = 0
-            for entries, group in loader.loaded_batches(batches):
+            for entries, group in loader.loaded_batches(batches, next_batches=next_batches):
                 dagger_rows = [meta.get("source_kind") == "dagger" for meta in entries]
                 hidden = None
                 for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
@@ -522,7 +542,9 @@ def train_bc3(args, index):
             model.train()
             total, steps, losses = 0., 0, {}
             batches = training_batches(index["episodes"], args.batch, args.seed + epoch)
-            for entries, group in loader.loaded_batches(batches, packed=hd):
+            next_batches = (training_batches(index["episodes"], args.batch, args.seed + epoch + 1)
+                            if epoch + 1 < args.epochs else None)
+            for entries, group in loader.loaded_batches(batches, packed=hd, next_batches=next_batches):
                 hidden = None
                 for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
                     # Keep HD episodes packed and expand this truncated-BPTT segment
