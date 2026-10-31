@@ -102,4 +102,5 @@ class DrawBuckets {
     std::vector<Bucket>      bucketsCpu;
     Tempest::StorageBuffer   bucketsGpu;
     bool                     bucketsDurtyBit = false;
+    uint64_t                 textureGeneration = 0;
   };

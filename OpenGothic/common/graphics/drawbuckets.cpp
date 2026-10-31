@@ -154,9 +154,16 @@ void DrawBuckets::updateBindlessArrays() {
   }
 
 bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
-  if(!bucketsDurtyBit)
-    return false;
+  const auto generation=Resources::textureGeneration();
+  if(!bucketsDurtyBit) {
+    if(textureGeneration==generation)
+      return false;
+    updateBindlessArrays();
+    textureGeneration=generation;
+    return true;
+    }
   bucketsDurtyBit = false;
+  textureGeneration=generation;
 
   std::vector<BucketGpu> bucket;
   uint32_t diffuseFrames=uint32_t(bucketsCpu.size());

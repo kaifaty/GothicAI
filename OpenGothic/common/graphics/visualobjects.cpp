@@ -8,6 +8,7 @@
 #include "graphics/mesh/submesh/animmesh.h"
 #include "gothic.h"
 #include "physics/worldwind.h"
+#include "world/chunkresidency.h"
 
 using namespace Tempest;
 
@@ -56,8 +57,35 @@ void VisualObjects::Item::setObjMatrix(const Tempest::Matrix4x4& pos) {
     if(obj.pos!=pos)
       owner->updateRtAs(id);
     obj.pos = pos;
+    setTexturePosition(Vec3(pos[3][0],pos[3][1],pos[3][2]));
     owner->updateInstance(id);
     }
+  }
+
+void VisualObjects::Item::setTexturePosition(const Vec3& position) {
+  if(owner==nullptr)
+    return;
+  auto& obj=owner->objects[id];
+  obj.texturePosition=position;
+  owner->updateTextureDemand(id);
+  }
+
+void VisualObjects::Item::setTextureCategory(Resources::TextureCategory category) {
+  if(owner==nullptr)
+    return;
+  auto& obj=owner->objects[id];
+  if(obj.textureCategory==category)
+    return;
+  owner->setTextureDemand(obj,false);
+  if(obj.textureCategory==Resources::TextureCategory::Static) {
+    if(auto found=owner->textureChunks.find(obj.textureChunk);found!=owner->textureChunks.end()) {
+      found->second.erase(id);
+      if(found->second.empty())
+        owner->textureChunks.erase(found);
+      }
+    }
+  obj.textureCategory=category;
+  owner->updateTextureDemand(id);
   }
 
 void VisualObjects::Item::setAsGhost(bool g) {
@@ -249,6 +277,70 @@ VisualObjects::VisualObjects(const SceneGlobals& scene, const std::pair<Vec3, Ve
   }
 
 VisualObjects::~VisualObjects() {
+  if(textureResidency)
+    textureResidency->unsubscribe(textureSubscription);
+  for(auto& object:objects)
+    if(!object.isEmpty())
+      setTextureDemand(object,false);
+  }
+
+void VisualObjects::setTextureResidency(ChunkResidency* residency) {
+  if(textureResidency)
+    textureResidency->unsubscribe(textureSubscription);
+  textureResidency=residency;
+  if(textureResidency) {
+    textureSubscription=textureResidency->subscribe([this](ChunkId chunk, ChunkResidency::State, ChunkResidency::State next) {
+      const auto found=textureChunks.find({chunk.x,chunk.z});
+      if(found==textureChunks.end())
+        return;
+      for(auto id:found->second)
+        setTextureDemand(objects[id],next!=ChunkResidency::State::Outside);
+      });
+    }
+  for(size_t id=0;id<objects.size();++id)
+    if(!objects[id].isEmpty())
+      updateTextureDemand(id);
+  }
+
+bool VisualObjects::textureChunkActive(const Vec3& position) const {
+  if(!textureResidency)
+    return true;
+  const auto chunk=ChunkId::fromPosition(position.x,position.z);
+  const auto& entries=textureResidency->table().entries;
+  for(size_t i=0;i<entries.size();++i)
+    if(entries[i].id==chunk)
+      return textureResidency->desired(i)!=ChunkResidency::State::Outside;
+  // Some visuals occupy cells without landscape triangles.
+  return true;
+  }
+
+void VisualObjects::setTextureDemand(Object& object, bool active) {
+  if(object.textureDemand==active)
+    return;
+  Resources::textureDemand(object.bucketId->mat,object.textureCategory,active);
+  object.textureDemand=active;
+  }
+
+void VisualObjects::updateTextureDemand(size_t id) {
+  auto& object=objects[id];
+  if(object.isEmpty())
+    return;
+  if(object.textureCategory!=Resources::TextureCategory::Static) {
+    setTextureDemand(object,true);
+    return;
+    }
+  const auto chunk=ChunkId::fromPosition(object.texturePosition.x,object.texturePosition.z);
+  const std::pair key{chunk.x,chunk.z};
+  if(key!=object.textureChunk) {
+    if(auto found=textureChunks.find(object.textureChunk);found!=textureChunks.end()) {
+      found->second.erase(id);
+      if(found->second.empty())
+        textureChunks.erase(found);
+      }
+    object.textureChunk=key;
+    }
+  textureChunks[key].insert(id);
+  setTextureDemand(object,textureChunkActive(object.texturePosition));
   }
 
 void VisualObjects::invalidate(const StaticMesh& mesh) {
@@ -332,6 +424,8 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   if(obj.isEmpty())
     return Item(); // null command
 
+  obj.textureCategory=staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic;
+  updateTextureDemand(id);
   obj.objInstance = instanceMem.alloc(sizeof(InstanceDesc));
   clustersMem[obj.clusterId].instanceId = obj.objInstance.offsetId<InstanceDesc>();
 
@@ -375,6 +469,7 @@ VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat
 
   if(obj.isEmpty())
     return Item(); // null command
+  updateTextureDemand(id);
   obj.animPtr     = anim.offsetId<Matrix4x4>();
   obj.objInstance = instanceMem.alloc(sizeof(InstanceDesc));
   clustersMem[obj.clusterId].instanceId = obj.objInstance.offsetId<InstanceDesc>();
@@ -407,6 +502,8 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
 
   if(obj.isEmpty())
     return Item(); // null command
+  obj.textureCategory=Resources::TextureCategory::Landscape;
+  updateTextureDemand(id);
   updateRtAs(id);
   return Item(*this, id);
   }
@@ -424,6 +521,14 @@ size_t VisualObjects::implAlloc() {
 
 void VisualObjects::free(size_t id) {
   Object& obj = objects[id];
+  setTextureDemand(obj,false);
+  if(obj.textureCategory==Resources::TextureCategory::Static) {
+    if(auto found=textureChunks.find(obj.textureChunk);found!=textureChunks.end()) {
+      found->second.erase(id);
+      if(found->second.empty())
+        textureChunks.erase(found);
+      }
+    }
 
   const uint32_t meshletCount = (obj.iboLen/PackedMesh::MaxInd);
   const uint32_t numCluster = (obj.type==DrawCommands::Landscape ? meshletCount : 1);

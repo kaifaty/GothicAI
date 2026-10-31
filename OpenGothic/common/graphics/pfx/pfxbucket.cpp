@@ -4,6 +4,7 @@
 
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/shaders.h"
+#include "graphics/visualobjects.h"
 #include "pfxobjects.h"
 #include "particlefx.h"
 #include "world/objects/npc.h"
@@ -71,6 +72,26 @@ PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlob
   }
 
 PfxBucket::~PfxBucket() {
+  for(auto& emitter:impl)
+    setTextureDemand(emitter,false);
+  }
+
+void PfxBucket::setTextureDemand(ImplEmitter& emitter, bool active) {
+  if(emitter.textureDemand==active)
+    return;
+  const auto category=decl.isDecal() ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic;
+  Resources::textureDemand(decl.visMaterial,category,active);
+  if(decl.hasTrails()) {
+    Material trail;
+    trail.tex=decl.trlTexture;
+    Resources::textureDemand(trail,category,active);
+    }
+  emitter.textureDemand=active;
+  }
+
+void PfxBucket::updateTextureDemand(ImplEmitter& emitter) {
+  const bool active=emitter.st!=S_Free && (!decl.isDecal() || visual.textureChunkActive(emitter.pos));
+  setTextureDemand(emitter,active);
   }
 
 bool PfxBucket::isEmpty() const {
@@ -147,6 +168,7 @@ size_t PfxBucket::allocEmitter() {
     auto& b = impl[i];
     if(b.st==S_Free) {
       b.st = S_Inactive;
+      updateTextureDemand(b);
       return i;
       }
     }
@@ -154,6 +176,7 @@ size_t PfxBucket::allocEmitter() {
   auto& e = impl.back();
   e.block = size_t(-1); // no backup memory
   e.st    = S_Inactive;
+  updateTextureDemand(e);
   for(size_t i=0; i<Resources::MaxFramesInFlight; ++i)
     forceUpdate[i] = true;
 
@@ -173,6 +196,7 @@ void PfxBucket::freeEmitter(size_t& id) {
   for(size_t i=0; i<Resources::MaxFramesInFlight; ++i)
     forceUpdate[i] = true;
   v.next.reset();
+  updateTextureDemand(v);
   id = size_t(-1);
   shrink();
   }
@@ -445,9 +469,11 @@ void PfxBucket::tickTrail(ParState& ps, ImplEmitter& emitter, uint64_t dt) {
 void PfxBucket::tick(uint64_t dt, const Vec3& viewPos) {
   if(decl.isDecal()) {
     implTickDecals(dt,viewPos);
-    return;
+    } else {
+    implTickCommon(dt,viewPos);
     }
-  implTickCommon(dt,viewPos);
+  for(auto& emitter:impl)
+    updateTextureDemand(emitter);
   }
 
 void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
@@ -478,8 +504,10 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
         if(p.count==0 && (emitter.st==S_Fade || !nearby)) {
           // free mem
           freeBlock(emitter.block);
-          if(emitter.st==S_Fade)
+          if(emitter.st==S_Fade) {
             emitter.st = S_Free;
+            updateTextureDemand(emitter);
+            }
           doShrink = true;
           continue;
           }
@@ -684,6 +712,8 @@ uint32_t PfxBucket::mkTrailColor(float clA) const {
   }
 
 void PfxBucket::preFrameUpdate(const SceneGlobals& scene, uint8_t fId) {
+  for(auto& emitter:impl)
+    updateTextureDemand(emitter);
   auto& device = Resources::device();
 
   if(item[fId].pMain!=nullptr || item[fId].pShadow!=nullptr) {

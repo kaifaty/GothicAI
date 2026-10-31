@@ -27,6 +27,7 @@ class PfxBucket {
     struct ImplEmitter final {
       AllocState    st           = S_Free;
       size_t        block        = size_t(-1);
+      bool          textureDemand = false;
 
       Tempest::Vec3 pos          = {};
       Tempest::Vec3 direction[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
@@ -126,6 +127,8 @@ class PfxBucket {
 
     void                        tickEmit(Block& p, ImplEmitter& emitter, uint64_t emited);
     bool                        shrink();
+    void                        updateTextureDemand(ImplEmitter& emitter);
+    void                        setTextureDemand(ImplEmitter& emitter, bool active);
 
     size_t                      allocBlock();
     void                        freeBlock(size_t& s);

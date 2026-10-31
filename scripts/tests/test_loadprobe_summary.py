@@ -34,11 +34,17 @@ def test_session_and_world_change_csv(tmp_path):
         if stage in ("session_end", "stream_warm", "stream_warm_5s"):
             log += (f"[loadprobe-malloc] stage={stage} t_ms={elapsed} "
                     f"malloc_in_use_mb={footprint - 30.123} malloc_allocated_mb={footprint + 10.234}\n")
+            log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} tex_live_bytes={elapsed + 1000} "
+                    f"tex_retired_bytes=32 tex_peak_bytes=32000 tex_live_n=4 tex_evicted=3 tex_reloaded=1\n")
+            log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} "
+                    f"tex_landscape_bytes={elapsed + 400} tex_landscape_n=1 tex_static_bytes=300 tex_static_n=1\n")
+            log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} "
+                    f"tex_dynamic_bytes=200 tex_dynamic_n=1 tex_other_bytes=100 tex_other_n=1\n")
     (run / "game.log").write_text(log)
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
     reader = csv.DictReader(io.StringIO(output))
     rows = list(reader)
-    assert len(reader.fieldnames) == 49
+    assert len(reader.fieldnames) == 91
     assert len(rows) == 2
     assert [(row["seg"], row["world"], row["total_s"]) for row in rows] == [
         ("0", "NEWWORLD", "5.0"), ("1", "OLDWORLD", "2.0")]
@@ -59,6 +65,13 @@ def test_session_and_world_change_csv(tmp_path):
                      for metric in ("in_use", "allocated")]
     assert [rows[0][key] for key in malloc_fields] == ["179.877", "220.234", "204.877", "245.234", "199.877", "240.234"]
     assert all(rows[1][key] == "" for key in malloc_fields)
+    assert [rows[0][f"tex_live_bytes_{stage}"] for stage in ("end", "warm", "warm_5s")] == ["6100", "6500", "11500"]
+    assert [rows[0][f"tex_{field}_warm_5s"] for field in (
+        "retired_bytes", "peak_bytes", "live_n", "evicted", "reloaded", "landscape_bytes", "landscape_n",
+        "static_bytes", "static_n", "dynamic_bytes", "dynamic_n", "other_bytes", "other_n")] == [
+        "32", "32000", "4", "3", "1", "10900", "1", "300", "1", "200", "1", "100", "1"]
+    texture_fields = [key for key in reader.fieldnames if key.startswith("tex_") and key.endswith(("_end", "_warm", "_warm_5s"))]
+    assert all(rows[1][key] == "" for key in texture_fields)
 
     (run / "game.log").write_text(log.split("[loadprobe] stage=change_begin")[0])
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)

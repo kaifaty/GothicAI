@@ -160,7 +160,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
         if(streamLandscape) {
           const auto map=PackedMesh::landscapeMaterialMap(worldMesh);
           std::vector<bool> loaded(worldMesh.materials.size());
-          // Textures keep their existing eager lifetime. Only geometry streams.
+          // Decode initially used materials before publishing landscape chunks.
           for(auto id:worldMesh.polygons.material_indices) {
             id=map[id];
             if(!loaded[id]) {
@@ -204,6 +204,8 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     auto probeT = LoadProbe::now();
     if(wviewFut.valid())
       wview = wviewFut.get();
+    if(wview)
+      wview->setTextureResidency(residency.get());
     if(LoadProbe::enabled() && !streamLandscape)
       LoadProbe::mark("landscape_view",probeViewMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
     loadProgress(60);
@@ -274,13 +276,16 @@ World::~World() {
   }
 
 void World::updateLandscape(const Camera& camera) {
-  if(!residency || !npcPlayer)
+  if(!residency || !npcPlayer) {
+    Resources::updateTextures(nullptr);
     return;
+    }
   if(wview)
     wview->prepareLandscapeWork();
   residency->update(npcPlayer->position(),camera.originLwc(),camera.zFar());
   if(wview)
     wview->finishLandscapeUpdate();
+  Resources::updateTextures(residency.get());
   }
 
 void World::createPlayer(std::string_view cls) {

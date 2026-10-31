@@ -14,6 +14,8 @@
 #include <Tempest/Pixmap>
 #include <Tempest/Texture2d>
 
+#include "resources.h"
+
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <malloc/malloc.h>
@@ -159,6 +161,30 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
                 (unsigned long long)texCount.load(),double(texBytes.load())/1048576.0,double(texNs.load())/1e6,
                 int(extra.size()),extra.empty() ? "" : extra.data());
   Tempest::Log::i(buf);
+  const auto textures = Resources::textureStats();
+  char textureBuf[512];
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f tex_live_bytes=%llu tex_retired_bytes=%llu "
+                "tex_peak_bytes=%llu tex_live_n=%llu tex_evicted=%llu tex_reloaded=%llu",
+                int(stage.size()),stage.data(),elapsed,
+                (unsigned long long)textures.liveBytes,(unsigned long long)textures.retiredBytes,
+                (unsigned long long)textures.peakBytes,(unsigned long long)textures.count,
+                (unsigned long long)textures.evicted,(unsigned long long)textures.reloaded);
+  Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f "
+                "tex_landscape_bytes=%llu tex_landscape_n=%llu tex_static_bytes=%llu tex_static_n=%llu",
+                int(stage.size()),stage.data(),elapsed,
+                (unsigned long long)textures.categoryBytes[0],(unsigned long long)textures.categoryCount[0],
+                (unsigned long long)textures.categoryBytes[1],(unsigned long long)textures.categoryCount[1]);
+  Tempest::Log::i(textureBuf);
+  std::snprintf(textureBuf,sizeof(textureBuf),
+                "[loadprobe-textures] stage=%.*s t_ms=%.1f "
+                "tex_dynamic_bytes=%llu tex_dynamic_n=%llu tex_other_bytes=%llu tex_other_n=%llu",
+                int(stage.size()),stage.data(),elapsed,
+                (unsigned long long)textures.categoryBytes[2],(unsigned long long)textures.categoryCount[2],
+                (unsigned long long)textures.categoryBytes[3],(unsigned long long)textures.categoryCount[3]);
+  Tempest::Log::i(textureBuf);
   std::snprintf(buf,sizeof(buf),
                 "[loadprobe-metal] stage=%.*s t_ms=%.1f staging_n=%zu staging_bytes=%zu",
                 int(stage.size()),stage.data(),elapsed,stagingCount,stagingBytes);

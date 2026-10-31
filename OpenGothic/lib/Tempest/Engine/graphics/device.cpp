@@ -208,7 +208,7 @@ Attachment Device::attachment(TextureFormat frm, const uint32_t w, const uint32_
   if(w>devProps.tex2d.maxSize || h>devProps.tex2d.maxSize)
     throw std::system_error(Tempest::GraphicsErrc::TooLargeTexture, std::to_string(std::max(w,h)));
   uint32_t mipCnt = mips ? mipCount(w,h) : 1;
-  Texture2d t(*this,api.createTexture(dev,w,h,mipCnt,frm),w,h,1,frm);
+  Texture2d t(*this,api.createTexture(dev,w,h,mipCnt,frm),w,h,1,frm,false);
   return Attachment(std::move(t));
   }
 
@@ -217,7 +217,7 @@ ZBuffer Device::zbuffer(TextureFormat frm, const uint32_t w, const uint32_t h) {
     throw std::system_error(Tempest::GraphicsErrc::UnsupportedTextureFormat, formatName(frm));
   if(w>devProps.tex2d.maxSize || h>devProps.tex2d.maxSize)
     throw std::system_error(Tempest::GraphicsErrc::TooLargeTexture, std::to_string(std::max(w,h)));
-  Texture2d t(*this,api.createTexture(dev,w,h,1,frm),w,h,1,frm);
+  Texture2d t(*this,api.createTexture(dev,w,h,1,frm),w,h,1,frm,false);
   return ZBuffer(std::move(t),!devProps.hasSamplerFormat(frm));
   }
 
@@ -271,7 +271,7 @@ StorageImage Device::image2d(TextureFormat frm, const uint32_t w, const uint32_t
   if(w>devProps.tex2d.maxSize || h>devProps.tex2d.maxSize)
     throw std::system_error(Tempest::GraphicsErrc::TooLargeTexture, std::to_string(std::max(w,h)));
   uint32_t mipCnt = mips ? mipCount(w,h) : 1;
-  Texture2d t(*this,api.createStorage(dev,w,h,mipCnt,frm),w,h,1,frm);
+  Texture2d t(*this,api.createStorage(dev,w,h,mipCnt,frm),w,h,1,frm,false);
   return StorageImage(std::move(t));
   }
 
@@ -281,7 +281,7 @@ StorageImage Device::image3d(TextureFormat frm, const uint32_t w, const uint32_t
   if(w>devProps.tex3d.maxSize || h>devProps.tex3d.maxSize || d>devProps.tex3d.maxSize)
     throw std::system_error(Tempest::GraphicsErrc::TooLargeTexture, std::to_string(std::max(w,std::max(h,d))));
   uint32_t mipCnt = mips ? mipCount(w,h,d) : 1;
-  Texture2d t(*this,api.createStorage(dev,w,h,d,mipCnt,frm),w,h,d,frm);
+  Texture2d t(*this,api.createStorage(dev,w,h,d,mipCnt,frm),w,h,d,frm,false);
   return StorageImage(std::move(t));
   }
 

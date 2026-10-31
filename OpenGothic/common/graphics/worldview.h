@@ -30,6 +30,7 @@ class WorldView {
     ~WorldView();
 
     void startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs);
+    void setTextureResidency(ChunkResidency* residency) { visuals.setTextureResidency(residency); }
     void prepareLandscapeWork();
     void finishLandscapeUpdate();
     bool landscapeReady() const;

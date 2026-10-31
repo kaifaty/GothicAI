@@ -648,6 +648,7 @@ struct Bench {
     std::vector<double> publicationTimesMs;
     uint64_t published = 0, released = 0;
     size_t pageUsedBytes = 0, pageFreeBytes = 0, pageRetiredBytes = 0, pageCount = 0;
+    Resources::TextureStats textures;
     };
   std::vector<StreamingSample> streamingSamples;
   std::vector<double> streamingWarmupFarMs;
@@ -1789,15 +1790,24 @@ void finish() {
   stopRecording();
   if(!bench.streamingSamples.empty()) {
     if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
-      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count\n");
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n\n");
       for(const auto& row:bench.streamingSamples) {
         std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu,",row.segment.c_str(),
           (unsigned long long)row.frame,row.updateMs,row.workMs,row.near,row.far,row.outside,
           (unsigned long long)row.nearTransitions,(unsigned long long)row.farTransitions);
         for(size_t i=0;i<row.publicationTimesMs.size();++i)
           std::fprintf(file,"%s%.9g",i==0 ? "" : ";",row.publicationTimesMs[i]);
-        std::fprintf(file,",%llu,%llu,%zu,%zu,%zu,%zu\n",(unsigned long long)row.published,(unsigned long long)row.released,
+        std::fprintf(file,",%llu,%llu,%zu,%zu,%zu,%zu",(unsigned long long)row.published,(unsigned long long)row.released,
           row.pageUsedBytes,row.pageFreeBytes,row.pageRetiredBytes,row.pageCount);
+        const auto& textures = row.textures;
+        std::fprintf(file,",%llu,%llu,%llu,%llu,%llu,%llu",
+          (unsigned long long)textures.liveBytes,(unsigned long long)textures.retiredBytes,
+          (unsigned long long)textures.peakBytes,(unsigned long long)textures.count,
+          (unsigned long long)textures.evicted,(unsigned long long)textures.reloaded);
+        for(size_t i=0;i<textures.categoryBytes.size();++i)
+          std::fprintf(file,",%llu,%llu",(unsigned long long)textures.categoryBytes[i],
+            (unsigned long long)textures.categoryCount[i]);
+        std::fprintf(file,"\n");
         }
       std::fclose(file);
       } else event("streaming_error","\"reason\":\"cannot write residency samples\"");
@@ -19636,7 +19646,8 @@ void TestBench::sampleStreaming(const World& world) {
     stats.near,stats.far,stats.outside,stats.transitionsNear-bench.streamingNearBefore,
     stats.transitionsFar-bench.streamingFarBefore,stats.publicationTimesMs,
     stats.published-bench.streamingPublishedBefore,stats.released-bench.streamingReleasedBefore,
-    stats.landscapePageUsedBytes,stats.landscapePageFreeBytes,stats.landscapePageRetiredBytes,stats.landscapePageCount});
+    stats.landscapePageUsedBytes,stats.landscapePageFreeBytes,stats.landscapePageRetiredBytes,stats.landscapePageCount,
+    Resources::textureStats()});
   bench.streamingNearBefore=stats.transitionsNear;bench.streamingFarBefore=stats.transitionsFar;
   bench.streamingPublishedBefore=stats.published;bench.streamingReleasedBefore=stats.released;
   }
