@@ -1,5 +1,5 @@
 # Native melee parry timing and retaliation after a real parry.
-# WORLD=NEWWORLD.ZEN BENCH_HOST=local OPENGOTHIC_BODY_TRACE=1 MELEE_PARRY=1 MELEE_PARRY_AI=1 (then 0)
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local OPENGOTHIC_BODY_TRACE=1 MELEE_POSTURE=0 MELEE_PARRY=1 MELEE_PARRY_AI=1 (then 0)
 seed 73013
 cheat god
 set time 12 0
@@ -28,206 +28,256 @@ still player on
 seed 73013
 fight BDT_1013_BANDIT_L player
 wait 800
-# Re-press action for every swing: a real parry clears the hero's held input during stun.
+# Re-press action after stun, face the moving opponent, and leave gaps below the swing-wait limit.
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
+face npc BDT_1013_BANDIT_L
 press action
 tap forward
-wait 1400
+wait 800
 release all
 wait 1500
