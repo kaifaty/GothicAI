@@ -21,6 +21,7 @@ OFF = {
     "see",
     "knows",
     "m6",
+    "fight_reactions_sight",
 
     "memprobe",
     "load_rewind",
@@ -46,7 +47,6 @@ OFF = {
 GIVEN = {
     "orders",
     "fight_reactions_wolf",
-    "fight_reactions_sight",
     "fight_reactions_bandits",
     "fight_reactions_flee",
 }

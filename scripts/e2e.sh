@@ -362,8 +362,8 @@
 #   fight_reactions_wolf/sight/bandits/flee: Cavalorn intercepts a hunting wolf before its first bite;
 #       sees a bloodfly at 30 m; charges two bandits (one held listening), which shout and draw before
 #       contact and strike within 3 s; a coward flees Cavalorn while the hero stays passive. Actual
-#       strike/damage timestamps come from body_watch. Fixed decisions and combat silence are givens;
-#       DECIDER_URL optional;
+#       strike/damage timestamps come from body_watch. Fixed decisions and incidental combat silence
+#       are givens; sight uses only the native party flag and opens no conversation. DECIDER_URL optional;
 #       starts TTS (TTS=fake), TIMEOUT=300 for bandits, 180 for the other cases
 #   cave: the map of places (docs/npc-tools.md, step M3): Cavalorn goes with the hero to the steps below
 #       Xardas's tower; the bandits' cave is among the places around him, a cave entered from the steps, and

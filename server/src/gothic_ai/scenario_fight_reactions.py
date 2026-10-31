@@ -392,7 +392,8 @@ async def fight_reactions(
                 )
         return turn
 
-    dialogue.event_turn = silent_combat  # type: ignore[method-assign]
+    if case != "sight":
+        dialogue.event_turn = silent_combat  # type: ignore[method-assign]
 
     def check(name: str, ok: bool, detail: object) -> None:
         results[name] = f"{'done' if ok else 'failed'} ({detail})"
@@ -634,7 +635,8 @@ async def fight_reactions(
         await link.debug("player_goto", pos=point(-900))
         if not await _until(lambda: CAVALORN in talk.people, 10):
             raise GameError("fight_reactions setup: Cavalorn absent from roster")
-        dialogue.open(CAVALORN, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
+        if case != "sight":
+            dialogue.open(CAVALORN, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
 
         if case in {"wolf", "sight"}:
             monster = f"DIR_NPC_FIGHT_{case.upper()}"
