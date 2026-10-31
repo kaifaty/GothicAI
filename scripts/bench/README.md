@@ -883,7 +883,13 @@ In OFF, the existing CharacterVirtual path creates bodies within its nearby Item
 radius and can push them; the walk check records this observed behavior.
 
 `placed-items` runs the native hero passage, arrow, tavern-table and owned pickup
-checks in NEWWORLD with `PLACED_ITEMS=1` and `=0`. It snapshots ownership before
+checks in NEWWORLD with `PLACED_ITEMS=1` and `=0`. Both modes choose the same
+authored floor food and supported lane; nearby NPCs are removed using the
+`item-wake` fixture pattern. The arrow aims at native collision bounds. The
+Dead Harpy table tests admitted Items; `owned-table` also selects a real mixed
+table with excluded Items and native private-room ownership for the theft check.
+Ownership fields are never rewritten. Failed result events preserve the final
+FAIL while allowing later independent checks to run. It snapshots ownership before
 the checks and saves after pickup (including removal/reordering of world Items):
 `session-placed-items.sav` and `placed-items-saved.jsonl` describe the same Items.
 Start `placed-items-reload` in two successive new processes, using the preceding
@@ -907,9 +913,9 @@ warmup. Run three fresh processes per mode on the M1 Pro with `BENCH_HOST=local`
 `WORLD=NEWWORLD.ZEN`, `RYZEN_CLEAN_IDLE_HOURS=0` and `PLACED_ITEMS=0`/`1`.
 Before each pair, record `uptime` and `pgrep -fl '[G]othic2Notr' || echo absent`.
 Wait up to 30 minutes for load average to fall to 12 or below, and always wait
-for any existing game. If load remains higher, measure the three pairs plus the
-same scene on a clean `origin/main` in the same window; ON–OFF is then the main
-comparison. `placed-items-performance.csv` contains native physics
+for any existing game. If physics p95 exceeds 2 ms in both modes, repeat the
+pair in the same scene on a clean `origin/main`. ON–OFF is the main comparison
+under high background load. `placed-items-performance.csv` contains native physics
 time, frame time, total/placed body counts and `proximity_created`. The latter
 counts only the new proximity budget; the existing `item_wake` budget is separate.
 Acceptance is physics p95 ≤2 ms and ON–OFF ≤0.2 ms. The report also records the
@@ -923,11 +929,12 @@ The three agreed exceptions preserve that fraction and raw evidence; with the
 CSV the reader passes, with a gated maximum of 74.7259445 cm and zero other
 recoveries. The two swords remain admitted; their thin-body support crossing
 will be investigated separately.
-The first functional ON run reached the walking goal in 2633 ms (limit 2500)
-with 65.71875 cm lateral deviation (limit 25). The Item moved 0.444478 cm and
-registered character contact, but SHADOWBEAST attacked the hero twice during
-the passage. Validation stopped at this failure; OFF, saves and current Mac
-performance remain unverified.
+The corrected functional ON/OFF passes all five result checks per mode. Mac
+ON p95 is 1.394707/1.581916/1.402624 ms; each pair is below OFF and within budget.
+Cold reload is blocked by authored Item 2839 under mover 2838: the load-time
+catalogue omits it, so its valid saved identity cannot resolve. The old main
+save loads without pose loss or duplicates but loses that one link (2330 of
+2331). Both cold cycles remain required after the catalogue fix.
 
 `OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
