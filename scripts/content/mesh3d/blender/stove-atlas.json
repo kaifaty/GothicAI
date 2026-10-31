@@ -2,7 +2,7 @@
  "glb": "city-hearth/build/stove/model.glb",
  "maps_dir": "city-hearth/tiles",
  "scales": {
-  "OWN_HEARTH_CAST": 1.2,
+  "OWN_HEARTH_CAST": 2.0,
   "OWN_HEARTH_RIVET": 4.0,
   "OWN_HEARTH_COPPER": 1.5,
   "OWN_HEARTH_EMBER": 3.0,
@@ -70,7 +70,7 @@
   "OWN_HEARTH_WOOD": 0.2
  },
  "tile_normal": {
-  "OWN_HEARTH_CAST": 0.4
+  "OWN_HEARTH_CAST": 0.3
  },
  "streaks": {
   "length": 0.3,

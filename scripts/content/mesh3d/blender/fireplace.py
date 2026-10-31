@@ -75,17 +75,19 @@ def course_face(p00, p10, p01, p11, normal, mat, rough=True):
     while y < height - 0.04:
         h = min(rng.uniform(h0, h1) if rough else h1, height - y)
         t0, t1 = y / height, (y + h) / height
+        # the course keeps within the narrower end of its band, so no stone hangs over a sloping edge
         left = p00.lerp(p01, (t0 + t1) / 2)
         right = p10.lerp(p11, (t0 + t1) / 2)
-        width = (right - left).length
         along = (right - left).normalized()
+        w0, w1 = (p10.lerp(p11, t0) - p00.lerp(p01, t0)).length, (p10.lerp(p11, t1) - p00.lerp(p01, t1)).length
+        width = min(w0, w1)
+        left = left + along * (((right - left).length - width) / 2)
         up = (p01 - p00).normalized()
         x = -rng.uniform(0, l1 * 0.6) if rough else -(l1 / 2) * (row % 2)
         while x < width - 0.02:
             ln = rng.uniform(l0, l1) if rough else l1
             xa, xb = max(x, 0.0), min(x + ln, width)
             if xb - xa > 0.06:
-                c = left + along * ((xa + xb) / 2) + up * 0.0 + (p00.lerp(p01, t0 + (t1 - t0) / 2) - p00.lerp(p01, (t0 + t1) / 2))
                 c = left + along * ((xa + xb) / 2)
                 proud = st["proud"] * (rng.uniform(0.4, 1.3) if rough else 1.0)
                 tilt = rng.uniform(-0.04, 0.04) if rough else 0.0

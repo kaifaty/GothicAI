@@ -10,9 +10,9 @@
  },
  "targets": {
   "OWN_HEARTH_ASHLAR": [
-   0.11,
-   0.08,
-   0.045
+   0.3,
+   0.25,
+   0.17
   ],
   "OWN_HEARTH_SOOT": [
    0.012,
@@ -30,9 +30,9 @@
    0.015
   ],
   "OWN_HEARTH_CARVING": [
-   0.12,
-   0.09,
-   0.05
+   0.24,
+   0.2,
+   0.13
   ]
  },
  "slots": {
@@ -96,5 +96,9 @@
    0.004,
    0.003
   ]
+ },
+ "contrast": {
+  "OWN_HEARTH_ASHLAR": 0.6,
+  "OWN_HEARTH_CARVING": 0.8
  }
 }

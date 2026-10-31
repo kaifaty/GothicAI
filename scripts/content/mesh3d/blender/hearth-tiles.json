@@ -49,10 +49,7 @@
    "metallic": 0.0
   },
   "own_hearth_cast": {
-   "png": "~/.local/share/gothic-ai/content-sources/city-hearth/tile-iron-attempt-2.png",
-   "axes": "uv",
-   "roughness": 0.85,
-   "metallic": 0.0
+   "copy": "~/.local/share/gothic-ai/content-staging/rigging-tiles/own_prop_iron_cast"
   },
   "own_hearth_copper": {
    "copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_brass"

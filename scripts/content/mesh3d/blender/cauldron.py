@@ -104,7 +104,7 @@ outer = [(h, [radius(h, t) for t in angles]) for h in heights]
 wall, rim_w = cfg.get("wall", 0.012), cfg.get("rim", 0.015)
 top = heights[-1]
 liquid = cfg["liquid"]
-inner_h = [h for h in heights if h >= liquid - 0.02][::-1]
+inner_h = sorted({liquid - 0.02, *[h for h in heights if h > liquid]}, reverse=True)  # the inner wall closes under the liquid
 inner = [(top, [radius(top, t) - rim_w for t in angles])] + \
         [(h, [radius(h, t) - wall for t in angles]) for h in inner_h if h < top]
 rings = lathe(outer + inner, IRON, pot)  # outer wall up, across the rim, inner wall down
