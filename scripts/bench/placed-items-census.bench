@@ -1,5 +1,6 @@
-# Fresh WORLD=<world>.ZEN, PLACED_ITEMS=1. Numeric census and five seconds
-# of native wake simulation per 12 m section; no captures or render review.
+# Fresh WORLD=<world>.ZEN, PLACED_ITEMS=1. Numeric census and >=300 native
+# fixed steps (>=5 s) per 12 m section, with sleeping neighbouring supports.
+# One section advances synchronously per outer frame; no captures or render review.
 seed 73013
 cheat god
 set time 12 0

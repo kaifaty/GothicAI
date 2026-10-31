@@ -1086,6 +1086,7 @@ struct Bench {
     std::vector<std::vector<size_t>> batches;
     std::vector<float> maximumTravel;
     std::vector<bool> npcTouched;
+    std::vector<size_t> probeNeighbours;
     size_t target=size_t(-1);
     uint32_t tableZen=uint32_t(-1);
     std::vector<size_t> observed;
@@ -6868,18 +6869,18 @@ void clothArrowNpc(World& world,Npc& player,std::string_view order) {
   if(!pass)arenaAbort("cloth single-step arrow/NPC ordering check failed");
   }
 
-std::pair<Vec3,size_t> placedItemsDensest(World& world) {
-  Vec3 center;size_t maximum=0;
+std::tuple<Vec3,size_t,size_t> placedItemsDensest(World& world) {
+  Vec3 center;size_t maximum=0,eligible=0;
   const auto& all=world.placedItemCensus();
   for(const auto& candidate:all) {
-    if(!candidate.validation.enabled)continue;
     const auto at=movablePosition(candidate.origin);
-    size_t count=0;
-    for(const auto& other:all)
-      count+=other.validation.enabled && (movablePosition(other.origin)-at).quadLength()<=2000.f*2000.f;
-    if(count>maximum) {maximum=count;center=at;}
+    size_t count=0,admitted=0;
+    for(const auto& other:all)if((movablePosition(other.origin)-at).quadLength()<=2000.f*2000.f) {
+      ++count;admitted+=other.validation.enabled;
+    }
+    if(count>maximum || (count==maximum && admitted>eligible)) {maximum=count;eligible=admitted;center=at;}
   }
-  return {center,maximum};
+  return {center,maximum,eligible};
 }
 
 std::string placedItemRow(World& world,const WorldObjects::PlacedItem& row) {
@@ -6912,13 +6913,14 @@ void placedItemsCensus(World& world) {
   }
   std::string counts="{";
   for(const auto& [reason,count]:reasons) {if(counts.size()>1)counts+=',';counts+=jsonStr(reason)+':'+std::to_string(count);}
-  const auto [center,count]=placedItemsDensest(world);
+  const auto [center,total,count]=placedItemsDensest(world);
   event("placed_items_census","\"world\":"+jsonStr(world.name())+",\"total\":"+
     std::to_string(world.placedItemCensus().size())+",\"eligible\":"+std::to_string(eligible)+
     ",\"classification_ms\":"+ragdollNumber(float(world.placedItemValidationMilliseconds()))+
     ",\"reason_counts\":"+counts+"},\"gaps_0_1\":"+std::to_string(gaps[0])+
     ",\"gaps_1_2\":"+std::to_string(gaps[1])+",\"gaps_2_4\":"+std::to_string(gaps[2])+
-    ",\"densest_center_cm\":"+ragdollVector(center)+",\"densest_eligible_within_20m\":"+std::to_string(count));
+    ",\"densest_center_cm\":"+ragdollVector(center)+",\"densest_total_within_20m\":"+std::to_string(total)+
+    ",\"densest_eligible_within_20m\":"+std::to_string(count));
 }
 
 void placedItemsNextBatch(World& world,Npc& player) {
@@ -6931,15 +6933,32 @@ void placedItemsNextBatch(World& world,Npc& player) {
     (std::floor(first.y/1200.f)+.5f)*1200.f+900.f,(std::floor(first.z/1200.f)+.5f)*1200.f);
   player.clearAiQueue();player.stopWalking();player.clearSpeed();
   player.setPosition(state.observer);player.updateTransform();
-  state.started=world.tickCount();state.startedStep=world.physic()->simulationStep();
+  state.probeNeighbours.clear();
+  for(size_t i=0;i<all.size();++i) {
+    const auto& row=all[i];
+    if(!row.validation.enabled || !row.item)continue;
+    if((movablePosition(row.origin)-state.observer).quadLength()<=2200.f*2200.f) {
+      // Install every admitted neighbouring support before waking this cell.
+      // The product's four-body frame budget is measured by the separate
+      // performance bench and must not remove a support from this probe.
+      row.item->setPhysicsDisable();row.item->setObjMatrix(row.origin);
+      row.item->wakePhysics();
+      if(!row.item->isDynamic() || !row.item->physicsSleeping()) {
+        arenaAbort("placed Item probe cannot install a sleeping neighbouring hull");state.probing=false;return;
+      }
+      state.probeNeighbours.push_back(i);
+    }
+    else if(row.item->isDynamic() && row.item->physicsSleeping())row.item->setPhysicsDisable();
+  }
   for(const auto index:state.batches[state.batch]) {
-    auto& row=all[index];
+    const auto& row=all[index];
     if(!row.item) {arenaAbort("placed Item probe lost an authored Item");state.probing=false;return;}
-    row.item->setPhysicsDisable();row.item->setObjMatrix(row.origin);
     if(!row.item->activatePhysics()) {arenaAbort("placed Item probe cannot activate an admitted hull");state.probing=false;return;}
   }
+  state.started=world.tickCount();state.startedStep=world.physic()->simulationStep();
   event("placed_items_probe_batch","\"batch\":"+std::to_string(state.batch)+",\"items\":"+
-    std::to_string(state.batches[state.batch].size())+",\"observer_cm\":"+ragdollVector(state.observer));
+    std::to_string(state.batches[state.batch].size())+",\"neighbour_bodies\":"+std::to_string(state.probeNeighbours.size())+
+    ",\"observer_cm\":"+ragdollVector(state.observer));
 }
 
 void placedItemsProbe(World& world,Npc& player) {
@@ -6968,41 +6987,56 @@ void placedItemsFields(World& world,Npc& player,PlayerControl& ctrl) {
     const auto& all=world.placedItemCensus();
     player.stopWalking();player.clearSpeed();player.setPosition(state.observer);player.updateTransform();
     for(uint32_t i=0;i<world.npcCount();++i)if(auto* npc=world.npcById(i);npc && npc!=&player &&
-      (npc->position()-state.observer).quadLength()<2000.f*2000.f) {npc->stopWalking();npc->clearSpeed();}
-    for(const auto index:state.batches[state.batch]) {
-      const auto& row=all[index];
-      if(!row.item) {arenaAbort("placed Item vanished during its wake probe");state.probing=false;return;}
-      const auto shift=(row.item->position()-movablePosition(row.origin)).length();
-      if(!std::isfinite(shift)) {arenaAbort("placed Item probe produced a nonfinite displacement");state.probing=false;return;}
-      state.maximumTravel[index]=std::max(state.maximumTravel[index],shift);
-      state.npcTouched[index]=state.npcTouched[index] || row.item->physicsTouchedByNpc();
-    }
-    if(world.tickCount()-state.started>=5000 && world.physic()->simulationStep()-state.startedStep>=300) {
-      std::ofstream file(outDir+"/placed-items-probe.jsonl",std::ios::app);
-      if(!file) {arenaAbort("cannot append placed Item wake probe");state.probing=false;return;}
+      (npc->position()-state.observer).quadLength()<2200.f*2200.f) {npc->stopWalking();npc->clearSpeed();}
+    const auto sample=[&] {
       for(const auto index:state.batches[state.batch]) {
-        const auto& row=all[index];const float maximum=state.maximumTravel[index];
-        ++state.probed;state.under5+=maximum<5.f;state.maximumShift=std::max(state.maximumShift,maximum);
-        file<<'{'+placedItemRow(world,row)+",\"batch\":"+std::to_string(state.batch)+
-          ",\"max_shift_cm\":"+ragdollNumber(maximum)+",\"final_shift_cm\":"+
-          ragdollNumber((row.item->position()-movablePosition(row.origin)).length())+
-          ",\"elapsed_ms\":"+std::to_string(world.tickCount()-state.started)+
-          ",\"npc_contact\":"+(state.npcTouched[index]?"true":"false")+
-          ",\"native_steps\":"+std::to_string(world.physic()->simulationStep()-state.startedStep)+
-          ",\"sleeping\":"+(row.item->physicsSleeping()?"true":"false")+"}\n";
-        // Restore each section after measuring it; later sections start from
-        // authored neighbours instead of inheriting a previous probe's drift.
-        row.item->setPhysicsDisable();row.item->setObjMatrix(row.origin);
+        const auto& row=all[index];
+        if(!row.item) {arenaAbort("placed Item vanished during its wake probe");return false;}
+        const auto shift=(row.item->position()-movablePosition(row.origin)).length();
+        if(!std::isfinite(shift)) {arenaAbort("placed Item probe produced a nonfinite displacement");return false;}
+        state.maximumTravel[index]=std::max(state.maximumTravel[index],shift);
+        state.npcTouched[index]=state.npcTouched[index] || row.item->physicsTouchedByNpc();
       }
-      if(++state.batch<state.batches.size())placedItemsNextBatch(world,player);
-      else {
-        state.probing=false;
-        event("placed_items_probe_summary","\"world\":"+jsonStr(world.name())+",\"total\":"+
-          std::to_string(state.probed)+",\"under_5cm\":"+std::to_string(state.under5)+",\"max_shift_cm\":"+
-          ragdollNumber(state.maximumShift)+",\"batches\":"+std::to_string(state.batches.size()));
-      }
+      return true;
+    };
+    if(!sample()) {state.probing=false;return;}
+    // One complete section per outer frame. Advance the real fixed-step Jolt
+    // world and observe after every native tick; rendering need not pace five
+    // seconds of physics, and routine NPCs remain frozen for this pure probe.
+    while(world.physic()->simulationStep()-state.startedStep<300) {
+      world.physic()->tick(17);
+      if(!sample()) {state.probing=false;return;}
+    }
+    const auto nativeSteps=world.physic()->simulationStep()-state.startedStep;
+    std::ofstream file(outDir+"/placed-items-probe.jsonl",std::ios::app);
+    if(!file) {arenaAbort("cannot append placed Item wake probe");state.probing=false;return;}
+    for(const auto index:state.batches[state.batch]) {
+      const auto& row=all[index];const float maximum=state.maximumTravel[index];
+      ++state.probed;state.under5+=maximum<5.f;state.maximumShift=std::max(state.maximumShift,maximum);
+      file<<'{'+placedItemRow(world,row)+",\"batch\":"+std::to_string(state.batch)+
+        ",\"max_shift_cm\":"+ragdollNumber(maximum)+",\"final_shift_cm\":"+
+        ragdollNumber((row.item->position()-movablePosition(row.origin)).length())+
+        ",\"elapsed_ms\":"+std::to_string(nativeSteps*1000/60)+
+        ",\"game_elapsed_ms\":"+std::to_string(world.tickCount()-state.started)+
+        ",\"npc_contact\":"+(state.npcTouched[index]?"true":"false")+
+        ",\"native_steps\":"+std::to_string(nativeSteps)+
+        ",\"sleeping\":"+(row.item->physicsSleeping()?"true":"false")+"}\n";
+    }
+    // Restore all nearby placements, including sleeping supports in adjacent
+    // cells, so no later section inherits another section's Item motion.
+    for(const auto index:state.probeNeighbours) {
+      const auto& row=all[index];
+      row.item->setPhysicsDisable();row.item->setObjMatrix(row.origin);
+    }
+    if(++state.batch<state.batches.size())placedItemsNextBatch(world,player);
+    else {
+      state.probing=false;
+      event("placed_items_probe_summary","\"world\":"+jsonStr(world.name())+",\"total\":"+
+        std::to_string(state.probed)+",\"under_5cm\":"+std::to_string(state.under5)+",\"max_shift_cm\":"+
+        ragdollNumber(state.maximumShift)+",\"batches\":"+std::to_string(state.batches.size()));
     }
   }
+
   if(state.tracing)for(const auto index:state.observed) {
     const auto& row=world.placedItemCensus()[index];
     if(row.item)state.travel[index]=std::max(state.travel[index],(row.item->position()-state.reference[index]).length());
@@ -7032,7 +7066,7 @@ void placedItemsFields(World& world,Npc& player,PlayerControl& ctrl) {
 
 void placedItemsPerformance(World& world,Npc& player) {
   auto& state=bench.placedItems;
-  const auto [center,count]=placedItemsDensest(world);
+  const auto [center,total,count]=placedItemsDensest(world);
   const auto floor=world.physic()->landRay(center+Vec3(0,300,0),600.f);
   if(!count || !floor.hasCol) {arenaAbort("placed Item densest region has no supported observer point");return;}
   player.clearAiQueue();player.stopWalking();player.clearSpeed();
@@ -7041,7 +7075,8 @@ void placedItemsPerformance(World& world,Npc& player) {
   state.frameWall=std::chrono::steady_clock::now();state.hasFrame=true;state.performance=true;
   event("placed_items_performance_begin","\"world\":"+jsonStr(world.name())+
     ",\"enabled\":"+(Gothic::physicsFlags().placedItems?"true":"false")+
-    ",\"center_cm\":"+ragdollVector(center)+",\"eligible_within_20m\":"+std::to_string(count));
+    ",\"center_cm\":"+ragdollVector(center)+",\"total_within_20m\":"+std::to_string(total)+
+    ",\"eligible_within_20m\":"+std::to_string(count));
 }
 
 void placedItemsPerformanceReport(World& world) {

@@ -814,6 +814,71 @@ forest), `NW_XARDAS_TOWER_IN1_*` (ramp inside the tower), `NW_XARDAS_STAIRS_01`.
 
 ## Engine side
 
+### Placed world Items (physics stage 8, step 5)
+
+`placed-items-census` checks the immutable authored-geometry census and wakes
+every admitted Item for five seconds, in 12 m sections. Each section advances
+at least 300 real fixed native steps synchronously, sampling after every tick;
+rendering and game-clock time do not pace the physical interval. All admitted
+neighbouring supports within 22 m are installed asleep before the section wakes.
+It never captures images.
+Run all four fresh worlds through Ryzen's queue:
+
+```bash
+WORLD=NEWWORLD.ZEN PLACED_ITEMS=1 RYZEN_CLEAN_IDLE_HOURS=0 \
+  RYZEN_LOCK_WAIT=1200 TIMEOUT=3600 RYZEN_MAX=75m \
+  scripts/bench.sh placed-items-census "$PWD/.bench/placed-items-NEWWORLD"
+# Repeat with OLDWORLD.ZEN, ADDONWORLD.ZEN and DRAGONISLAND.ZEN.
+python3 scripts/placed_items_report.py .bench/placed-items-{NEWWORLD,OLDWORLD,ADDONWORLD,DRAGONISLAND}
+```
+
+`placed-items-census.jsonl` records each ZEN-ID, original pose, instance, visual,
+exclusive exclusion reason, support gap and penetration depths. The census event
+adds classification time, admitted gap buckets (0–1, 1–2, 2–4 cm) and the densest
+20 m neighbourhood among all source Items (ties prefer more admitted Items).
+`placed-items-probe.jsonl` records maximum and final travel
+for every admitted Item. The reader requires at least 95% of the combined sample
+to move less than 5 cm, maximum travel at most 100 cm, and zero `item recovered`
+messages. Every displacement over 10 cm remains in the output with its original
+contact measurements. These limits are fixed; a failed 95% gate requires a decision.
+
+`PLACED_ITEMS=0` selects the existing body-creation paths. `[GAME] placed_items`
+defaults to 1; Marvin `toggle placed_items` changes it during play. The census is
+computed even when the feature starts disabled, so enabling it later uses the
+same original geometry. Dropped Items retain their existing physics path.
+
+`placed-items` runs the native hero passage, arrow, tavern-table and owned pickup
+checks in NEWWORLD with `PLACED_ITEMS=1` and `=0`. Its save precedes pickup:
+`session-placed-items.sav` and `placed-items-saved.jsonl` describe the same Items.
+Start `placed-items-reload` in two successive new processes, using the preceding
+process's archive as `SAVE` each time (leave `WORLD` unset). Its first command
+captures every Item before the first native step, then saves again. Verify both
+cycles with:
+
+```bash
+python3 scripts/placed_items_report.py --save-chain \
+  .bench/placed-items-on .bench/placed-items-reload-1 .bench/placed-items-reload-2
+```
+
+The reader checks saved poses within 0.01 cm, ZEN linkage, instance, owner,
+flags and count; linked native bodies must enter asleep and excluded Items must
+have no body. Also load an actual main save with no `placed-items` entry through
+`placed-items-reload`: only unchanged instance/pose matches acquire a link.
+
+`placed-items-performance` selects the densest source-Item 20 m neighbourhood from
+the census, measures entry frames and ten steady seconds after two seconds of
+warmup. Run three fresh processes per mode on the M1 Pro with `BENCH_HOST=local`,
+`WORLD=NEWWORLD.ZEN`, `RYZEN_CLEAN_IDLE_HOURS=0` and `PLACED_ITEMS=0`/`1`.
+Before each local game, check `pgrep -fl '[G]othic2Notr' || echo absent` and wait
+for any existing game. `placed-items-performance.csv` contains native physics
+time, frame time, total/placed body counts and `proximity_created`. The latter
+counts only the new proximity budget; the existing `item_wake` budget is separate.
+Acceptance is physics p95 ≤2 ms and ON–OFF ≤0.2 ms. The report also records the
+worst entry frame, body counts and complete world loading time including census.
+
+[Recorded results](../../reports/physics/2026-10-31-placed-items/README.md): the
+first four-world probe reached 88.81% below 5 cm; validation stopped for a decision.
+
 `OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
