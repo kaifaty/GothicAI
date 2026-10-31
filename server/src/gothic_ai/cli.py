@@ -1206,6 +1206,7 @@ async def serve(args: argparse.Namespace) -> int:
             witnesses.gate_claim = state.gates.claim_heard
         state.dialogue.extensions.insert(state.dialogue.extensions.index(state.sightings) + 1, witnesses)
         group.asks = witnesses.asking
+        group.witness = witnesses.called
         state.concerns.extra.append(witnesses.concerns)
         witnesses.on_change.append(state.concerns.changed)  # a far answer's time on its mind is over
         asks = asyncio.create_task(witnesses.run())  # far witnesses are asked at their meeting

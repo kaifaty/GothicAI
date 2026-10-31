@@ -17,6 +17,7 @@ from gothic_ai.deals import Deals, LieRef
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.fear import knows_violence
 from gothic_ai.game import GameError
+from gothic_ai.group import ANSWER_CUE, GroupTalk
 from gothic_ai.llm import Message, ToolCall
 from gothic_ai.llm.fake import FakeStep
 from gothic_ai.memory import MemoryStore
@@ -28,6 +29,7 @@ from gothic_ai.scenarios.common import ClaimScript
 from gothic_ai.sightings import Sightings
 from gothic_ai.social import Tie
 from gothic_ai.storyguard import StoryGuard
+from gothic_ai.talk import TalkDesk
 from gothic_ai.trust import Trust
 from gothic_ai.witnesses import ASK_TOOL, Candidate, Inquiry, Witnesses, _named
 from gothic_ai.witnesses import Testimony as WitnessTestimony
@@ -36,6 +38,7 @@ from tests.test_crimes import deed
 from tests.test_dialogue import _until
 from tests.test_perception import HILDA, LOBART, MALETH, look
 from tests.test_sightings import BOOK, record_theft
+from tests.test_talk import person
 
 ANDRE, STRANGER = "MIL_311_ANDRE", "VLK_999_STRANGER"
 DAY = 1440
@@ -355,6 +358,44 @@ async def test_a_witness_called_over_tells_what_it_saw_and_the_lie_is_caught_by_
         "тот говорит «всё утро был в городе»" in e.content
         for e in w.dialogue.conversations[HILDA].memory.entries
     )
+
+
+@pytest.mark.parametrize("wired", [True, False])
+async def test_the_witness_called_aloud_speaks_only_from_its_testimony(wired, monkeypatch):
+    # 2026-10-31 live: Lobart's «Хильда, ты видела его утром?» with ask_witness gave Hilda an answer turn of
+    # the floor's before her testimony came: «Утром его здесь не было…», then «я прежде ошиблась»
+    monkeypatch.setattr(gothic_ai.dialogue, "line_duration", lambda text: 0.2)
+    fake = FakeGame(branch="A")
+    llm = lobart(
+        ("Ответ:", CATCH),
+        ("город", ASK_HILDA),
+        hilda=[("спрашивает тебя", FakeStep("Видела его утром на пастбище."))],
+    )
+    async with connected(fake) as link:
+        w = World(link, fake, llm)
+        talk = TalkDesk(link, w.dialogue, end_silence_s=30)
+        group = GroupTalk(link, w.dialogue, talk)
+        w.dialogue.extensions.append(group)
+        group.asks = w.witnesses.asking
+        if wired:
+            group.witness = w.witnesses.called
+        await fake.roster(person(LOBART, "Лобарт", 3, True), person(HILDA, "Хильда", 4, True))
+        await _until(lambda: HILDA in talk.people and LOBART in talk.people, 5)
+        for t in range(AT_8, AT_8 + 21, 5):
+            w.seen.saw(hero_seen_by(HILDA, "Хильда", t))
+        w.dialogue.open(LOBART, "Лобарт")
+        await w.dialogue.say_as_player(LOBART, LIE)
+        await _until(lambda: w.chronicle.facts("caught") != [], 10)
+        await asyncio.sleep(0.2)
+
+    assert any(m["npc"] == LOBART and m.get("to") == HILDA for m, _ in fake.says)  # he called her aloud
+    cues = [str(c[1][-1].content) for c in llm.others.calls]  # type: ignore[union-attr]
+    answered = [c for c in cues if c == ANSWER_CUE.format(name="Лобарт")]
+    if not wired:  # the floor alone gives her a turn to his question: what went wrong live
+        assert answered
+        return
+    assert not answered and len(cues) == 1 and "Лобарт спрашивает тебя о герое" in cues[0]
+    assert not w.witnesses.called(HILDA)  # the answer is in: she may answer him again
 
 
 async def test_a_witness_that_did_not_see_him_can_not_catch_him():
