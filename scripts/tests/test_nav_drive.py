@@ -419,6 +419,7 @@ def test_live_setup_rejection_preserves_diagnostics_without_rendering(tmp_path, 
                            input_sha256={}, inputs=dict(save="save", roads="roads", familiar="familiar",
                                                         links="links", cache="cache"),
                            deadline=time.monotonic() + 300)
+    args.binary.write_text("fixture binary")
     directory = live.teacher_directory(args, case)
     rejected = dict(success=False, failure=failure, elapsed_ms=0, decisions=0)
     if explicit:
@@ -486,7 +487,8 @@ def test_live_qualification_keeps_place_failures_and_never_runs_learners(tmp_pat
     probe = dict(detour_complete=True, route_sample_count=2, route_deep_water_samples=0, route_no_floor_samples=0,
         start_support=support, goal_support=support, detour_length_cm=3000, detour_ratio=3,
         first_detour_goal_dot=-1, goal_visible=True, direct_deep_water_samples=1,
-        direct_obstruction=dict(hit=True, label='ROCK', material_name='stone', world_hit=True, normal_y=0),
+        direct_obstruction=dict(hit=True, label='ROCK', material_name='stone', world_hit=True, normal_y=0,
+                                point_cm=[500, 90, 0]),
         direct_sensor=dict(kind='world'), route_min_edge_clearance_cm=300, route_edge_clearance_censored=True,
         probe=dict(edge_drop_cm=100))
     monkeypatch.setattr(prepare, 'test_pairs', lambda unused: set())
@@ -501,12 +503,15 @@ def test_live_qualification_keeps_place_failures_and_never_runs_learners(tmp_pat
     calls = []
     original_run_episode = live.run_episode
 
+    failed_cases = {identifiers[4]}
+
     def episode(args, case, model, seed, directory):
         assert model is None
         calls.append(case['id'])
-        live.write_json(directory / 'episode.json', dict(success=case['number'] != 5, elapsed_ms=1000, decisions=10,
-                                                       failure='timeout' if case['number'] == 5 else None))
-        live.write_json(directory / 'summary.json', dict(schema=1, deep_water_entries=0, falls=0))
+        live.write_json(directory / 'episode.json', dict(success=case['id'] not in failed_cases, elapsed_ms=1000, decisions=10,
+                                                       failure='timeout' if case['id'] in failed_cases else None))
+        live.write_json(directory / 'summary.json', dict(schema=1, deep_water_entries=0, falls=0,
+                                                       minimum_edge_distance_cm=200))
         live.write_json(directory / 'identity.json', dict(actual=live.actual_inputs(args, case, model, seed)))
         live.write_json(directory / 'live-guide-start.json', dict(selected_cm=[0, 0, 0]))
 
@@ -530,56 +535,139 @@ def test_live_qualification_keeps_place_failures_and_never_runs_learners(tmp_pat
     report = (output / 'README.md').read_text()
     assert '| v3b |' in report and '0/54' in report and identifiers[4] + ': unqualified' in report
     assert all(f'| {number}. Scene {number} |' in report for number in range(1, 11))
-    argv = ['baseline', '--suite', str(output / 'qualified-suite.json'), '--output', str(output),
-            '--runtime', str(runtime), '--weights', args.weights]
     frozen['semantic_confirmation_required'] = [identifiers[3]]
-    live.write_json(output / 'qualified-suite.json', frozen)
-    assert live.main(argv) == 2
+    next(row for row in frozen['teacher_qualification']['placements'] if row['id'] == identifiers[9])['passed'] = False
+    snapshot = tmp_path / 'baseline-suite.json'
+    live.write_json(snapshot, frozen)
+    live.write_json(output / 'qualified-suite.json', dict(frozen, teacher_qualification={}))
+    argv = ['baseline', '--suite', str(snapshot), '--output', str(output),
+            '--runtime', str(runtime), '--weights', args.weights]
+    baseline_calls, smoke_calls = [], []
+    policies = [dict(name=name, sha256=name, weights=name) for name in ('HD', 'it35')]
 
-    # Prepare the already-recorded seventh reference, then recheck exactly the
-    # requested five placements without replacing either house goal.
+    def smoke_gate(args, cases, models, passed=True):
+        assert args.suite == snapshot and len(cases) == 8
+        smoke_calls.append(passed)
+        live.write_json(output / 'smoke.json', dict(complete=passed, suite_sha256=live.sha256(snapshot),
+            binary_sha256=live.sha256(args.binary), model_sha256=models[0]['sha256']))
+        return passed
+
+    with monkeypatch.context() as subset:
+        subset.setattr(live, 'models', lambda *unused: (policies, dict(name='bc4', sha256='bc4', weights='bc4')))
+        subset.setattr(live, 'smoke', smoke_gate)
+        subset.setattr(live, 'report', lambda *unused: False)
+        subset.setattr(live, 'run_episode', lambda args, case, model, seed, *unused:
+                       baseline_calls.append((case['id'], model['name'], seed)))
+        assert live.main(argv) == 0
+        assert live.main([*argv, '--shard', '1']) == 0
+        assert smoke_calls == [True] and len(baseline_calls) == 24
+        assert len(set(baseline_calls)) == 24 and not any(row[0] == identifiers[9] for row in baseline_calls)
+        gate = live.read_json(output / 'smoke.json')
+        live.write_json(output / 'smoke.json', dict(gate, suite_sha256='stale'))
+        subset.setattr(live, 'smoke', lambda *values: smoke_gate(*values, passed=False))
+        assert live.main([*argv, '--shard', '2']) == 2
+        assert live.main([*argv, '--shard', '2']) == 2
+        assert smoke_calls == [True, False] and len(baseline_calls) == 24
+    (output / 'smoke.json').unlink()
+    live.write_json(output / 'qualified-suite.json', frozen)
+
+    # Eight accepted references remain on their original binary while four
+    # numbered scenarios are replaced, splitting the door from rejected stairs.
     live_args = SimpleNamespace(suite=output / 'qualified-suite.json', output=output,
         binary=runtime / 'build/opengothic/Gothic2Notr', input_sha256={name: live.sha256(path) for name, path in inputs.items()})
+    failed_cases.clear()
+    frozen['scenarios'][6]['qualification_evidence'] = dict(probe=probe)
     cliff = next(case for case in live.suite_cases(frozen) if case['number'] == 7)
-    cliff['qualification_evidence'] = dict(probe=probe)
-    frozen['scenarios'][6]['qualification_evidence'] = cliff['qualification_evidence']
     frozen['unresolved_geometry'] = []
     episode(live_args, cliff, None, cliff['seeds'][0], live.teacher_directory(live_args, cliff))
+    pocket = next(case for case in live.suite_cases(frozen) if case['number'] == 5)
+    episode(live_args, pocket, None, pocket['seeds'][0], live.teacher_directory(live_args, pocket))
+    frozen['teacher_qualification']['placements'] = [live.teacher_outcome(live_args, case)
+                                                   for case in live.suite_cases(frozen)]
     live.write_json(output / 'qualified-suite.json', frozen)
+    old_digest = live.sha256(live_args.binary)
+    old_binary = runtime / 'binaries' / old_digest / 'Gothic2Notr'
+    old_binary.parent.mkdir(parents=True)
+    old_binary.write_bytes(live_args.binary.read_bytes())
+    live_args.binary.write_text('new fixture binary')
+    new_digest = live.sha256(live_args.binary)
+    assert new_digest != old_digest
+
     current = live.read_json(suite)
-    current['scenarios'][1]['variants'][1]['limit_ms'] = 180000
-    current['scenarios'][2]['prepare_commands'] = ['immortal player on']
-    current['scenarios'][2]['source'] = 'Fixed hero observer in the 2–6m annulus'
-    current['scenarios'][3]['requalification_overrides'] = dict(start='cm:100,20,0')
+    follow = current['scenarios'][2]
+    follow.update(start='FOLLOW_START', goal_kind='follow', target='PC_HERO', live_target='player-walk',
+                  prepare_commands=['immortal player on'])
+    assert 'navdemos live-target player-walk' in live.commands(follow, None, live.ACTION_SEEDS[0], dict(inputs, cache='cache'))
+    assert live.behavioral_case(follow) != live.behavioral_case(dict(follow, live_target='player'))
+    current['scenarios'][8]['variants'] = [dict(id='door', goal='GROUND'),
+        dict(id='stairs', goal='UPSTAIRS', qualification_rejection=dict(reason='No qualified indoor ascent'))]
+    street = current['scenarios'][9]
+    street.update(start='NW_CITY_UPTOWN_PATH_08', goal='NW_CITY_UPTOWN_PATH_12')
+    graph = tmp_path / 'street-graph.json'
+    live.write_json(graph, dict(node_columns=['name', 'x_cm', 'y_cm', 'z_cm'],
+        edge_columns=['a', 'b', 'length_cm', 'major'],
+        nodes=[[street['start'], 0, 900, 0], [street['goal'], 5000, 900, 0]], edges=[[0, 1, 5000, False]]))
+    street['source'] = dict(graph=str(graph), street_nodes=[street['start'], street['goal']])
+    validation = [dict(detour, id=f'detour-{index:03d}', geometry=dict(detour['geometry'],
+        length_cm=200000 if index == 0 else 3000 + index)) for index in range(121)]
+    (tmp_path / 'detour-val.jsonl').write_text(''.join(json.dumps(row) + '\n' for row in validation))
     live.write_json(suite, current)
-    probe_calls = []
+    probe_calls, physics_calls = [], []
+
+    def physics(name, commands, directory, seed):
+        physics_calls.append(name)
+        order = live.read_json(directory / 'candidate-order.json')
+        assert len(order) == 121 and any('physics dump' in command for command in commands)
+        (directory / 'physics-results.jsonl').write_text(''.join(json.dumps(dict(kind='ray', id=index, hit=True, point=[500, 90, 0],
+            sector='ROCK_PASS' if identifier == 'detour-120' else 'STONE')) + '\n'
+            for index, identifier in enumerate(order)))
 
     def native(worker, candidates, *unused):
         probe_calls.append(candidates)
         return {case['probe_label']: dict(probe=dict(probe,
-            start_support=dict(support, floor_cm=[100, 0, 0])), file='native.jsonl') for case in candidates}
+            direct_cm=5000, direct_sensor=dict(hit=True, kind='world'),
+            detour_corners_cm=[[0, 0, 0], [5000, 0, 0]]), file='native.jsonl') for case in candidates}
 
+    monkeypatch.setattr(prepare, 'Worker', lambda *unused: SimpleNamespace(close=lambda: None, scenario=physics))
     monkeypatch.setattr(prepare, 'probe_groups', native)
     before = {path: path.read_bytes() for path in (output / 'teacher').rglob('episode.json')}
     calls.clear()
     assert prepare.requalify(args) == 0
-    expected = {identifiers[1] + '-farm-edge', identifiers[2], identifiers[3], identifiers[8], identifiers[9]}
-    assert set(calls) == expected and len(calls) == 5
-    assert [len(group) for group in probe_calls] == [4, 1, 1]
-    assert all(case['npc'] == 'PC_HERO' for case in probe_calls[0])
-    assert all(case['goal_kind'] == 'point' for case in probe_calls[0])
+    expected = {identifiers[2], identifiers[3], identifiers[8] + '-door', identifiers[9]}
+    assert set(calls) == expected and len(calls) == 4
+    assert len(probe_calls) == 1 and len(physics_calls) == 1
+    hero_legs = [case for case in probe_calls[0] if case['npc'] == 'PC_HERO']
+    assert len(hero_legs) == 4 and all(case['goal_kind'] == 'point' for case in hero_legs)
+    assert not any(case['id'] == identifiers[8] + '-stairs' for case in probe_calls[0])
     checked = live.read_json(output / 'qualified-suite.json')
-    assert checked['scenarios'][3]['start'] == 'cm:100,0,0'
-    assert checked['scenarios'][2]['source'] == current['scenarios'][2]['source']
-    assert checked['scenarios'][8]['goal'] == frozen['scenarios'][8]['goal']
-    assert checked['scenarios'][9]['goal'] == frozen['scenarios'][9]['goal']
+    checked_cases = live.suite_cases(checked)
+    assert len(checked_cases) == 13 and len(live.eligible_cases(checked, checked_cases)) == 12
+    assert checked['scenarios'][3]['source']['id'] == 'detour-120'
+    assert checked['scenarios'][3]['teacher_minimum_edge_cm'] == 100
+    assert checked['scenarios'][9]['qualification_evidence']['street_route']['qualified']
+    assert not (output / 'complete.json').exists()
     assert all(path.read_bytes() == contents for path, contents in before.items())
-    assert len(live.eligible_cases(checked, live.suite_cases(checked))) == 11
+    mixed_args = SimpleNamespace(output=output, binary=Path(checked['evaluation_binary']['path']),
+                                 input_sha256=live_args.input_sha256)
+    preserved = [case for case in checked_cases if case['number'] not in (3, 4, 9, 10)]
+    assert len(preserved) == 8
+    for case in preserved:
+        assert live.case_binary(mixed_args, case) == (old_binary, old_digest)
+        directory = live.teacher_directory(mixed_args, case)
+        assert live.actual_inputs(mixed_args, case, None, case['seeds'][0]) == live.read_json(directory / 'identity.json')['actual']
+    rock = next(case for case in checked_cases if case['number'] == 4)
+    assert live.case_binary(mixed_args, rock)[1] == new_digest
+    rock_summary = live.teacher_directory(mixed_args, rock) / 'summary.json'
+    summary = live.read_json(rock_summary)
+    live.write_json(rock_summary, dict(summary, minimum_edge_distance_cm=99.9))
+    assert not live.teacher_outcome(mixed_args, rock)['passed']
+    live.write_json(rock_summary, dict(summary, minimum_edge_distance_cm=100))
+    assert live.teacher_outcome(mixed_args, rock)['passed']
     monkeypatch.setattr(live, 'run_episode', original_run_episode)
     assert prepare.requalify(args) == 0
-    assert len(calls) == 5
-    (runtime / 'build/opengothic/Gothic2Notr').write_text('different binary')
-    with pytest.raises(ValueError, match='requires the same binary'):
+    assert len(calls) == 4 and len(physics_calls) == 1
+    old_binary.write_text('corrupt preserved binary')
+    with pytest.raises(ValueError, match='differs from its qualified reference'):
         prepare.requalify(args)
 
 

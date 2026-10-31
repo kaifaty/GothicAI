@@ -60,6 +60,7 @@ struct Episode {
   uint64_t targetResume=0,scenarioSeed=0,firstContactMs=0,followMs=0,inBandMs=0;
   bool contacted=false,targetQueued=false;
   bool liveTargetPlayer=false,liveTargetWasExternal=false;
+  bool liveTargetWalkOnly=false;
   bool liveTargetWalking=false,liveTargetRunning=false;
   Vec3 liveTargetPosition;
   NavMesh::Path liveTargetPath;
@@ -182,7 +183,7 @@ struct Settings {
   bool cv=false,heroNear=true,killArmed=false,killFired=false;
   bool oracle=false,recordDemos=true;
   bool perceptionMonitor=false;
-  bool live=false,liveTargetPlayer=false,liveGuidePlayer=false;
+  bool live=false,liveTargetPlayer=false,liveGuidePlayer=false,liveTargetWalkOnly=false;
   NavigationEye::FloorSampling floorSampling=NavigationEye::FloorSampling::WalkingGazeDown;
   size_t killSlot=0;
   uint64_t killAfterMs=0;
@@ -421,6 +422,7 @@ void finish(Episode& ep,World& world) {
      <<",\"perception_mode\":"<<std::quoted(perceptionMode(ep.eye.config().floorSampling))
      <<",\"perception_monitor\":"<<ep.perceptionMonitor
      <<",\"live_trace\":"<<bool(ep.live)<<",\"live_target_player\":"<<ep.liveTargetPlayer
+     <<",\"live_target_walk_only\":"<<ep.liveTargetWalkOnly
      <<",\"live_guide_player\":"<<bool(ep.liveGuidePlayer)
      <<",\"oracle\":"<<ep.oracle<<",\"record\":"<<bool(ep.writer)
      <<",\"demonstration_recorded\":"<<bool(ep.writer)<<",\"demo_recorded\":"<<bool(ep.writer)
@@ -1800,12 +1802,12 @@ void tickLiveTarget(Episode& ep,World& w,uint64_t elapsed,uint64_t dt) {
     target.setPosition(ep.liveTargetPosition);target.updateTransform();
     return;
   }
-  const bool running=ep.targetLeg==2 && elapsed-ep.liveTargetLegAt<2000;
+  const bool running=!ep.liveTargetWalkOnly && ep.targetLeg==2 && elapsed-ep.liveTargetLegAt<2000;
   if(!ep.liveTargetWalking || running!=ep.liveTargetRunning) {
     target.setWalkMode(running?WalkBit::WM_Run:WalkBit::WM_Walk);target.setAnim(Npc::Anim::Move);
     ep.liveTargetWalking=true;ep.liveTargetRunning=running;
   }
-  float distance=float(dt)*(running?.45f:.20f);
+  float distance=float(dt)*(ep.liveTargetWalkOnly?.10f:running?.45f:.20f);
   auto position=ep.liveTargetPosition;
   while(distance>0 && ep.liveTargetCorner<ep.liveTargetPath.corners.size()) {
     const auto corner=cm(ep.liveTargetPath.corners[ep.liveTargetCorner]);
@@ -1993,8 +1995,8 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
       if(a[2]!="on" && a[2]!="off")throw std::runtime_error("navdemos live on|off");
       settings.live=a[2]=="on";
     } else if(a[1]=="live-target") {
-      if(a[2]!="player" && a[2]!="npc")throw std::runtime_error("navdemos live-target player|npc");
-      settings.liveTargetPlayer=a[2]=="player";
+      if(a[2]!="player" && a[2]!="player-walk" && a[2]!="npc")throw std::runtime_error("navdemos live-target player|player-walk|npc");
+      settings.liveTargetPlayer=a[2]!="npc";settings.liveTargetWalkOnly=a[2]=="player-walk";
     } else {
       if(a[2]!="player" && a[2]!="off")throw std::runtime_error("navdemos live-guide player|off");
       settings.liveGuidePlayer=a[2]=="player";
@@ -2290,6 +2292,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
   }
   ep.goalKind=goalKind;ep.scenarioSeed=scenarioSeed;
   ep.liveTargetPlayer=moving && settings.liveTargetPlayer;
+  ep.liveTargetWalkOnly=ep.liveTargetPlayer && settings.liveTargetWalkOnly;
   ep.goal=goalPosition;ep.replay=replay;ep.drive=learner;
   // Optional start arguments begin at 6.
   ep.limit=replay?0:std::stoull(a[current?4:5]);
@@ -2468,7 +2471,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     const auto reference=NavBench::navigationMesh(w).findPath(meters(ep.expectedStart),meters(ep.goal));
     std::vector<NavMesh::Point> route;
     for(const auto* point:ep.targetRoute)route.push_back(meters(point->groundPos));
-    ep.live=std::make_unique<NavLiveTrace>(ep.output,ep.drive?ep.policy.get():nullptr,reference,ep.eye.rayCount(),ep.liveTargetPlayer,route,bool(ep.liveGuidePlayer));
+    ep.live=std::make_unique<NavLiveTrace>(ep.output,ep.drive?ep.policy.get():nullptr,reference,ep.eye.rayCount(),ep.liveTargetPlayer,route,bool(ep.liveGuidePlayer),ep.liveTargetWalkOnly);
     ep.npc->setCharacterVirtualDiagnosticsEnabled(true);
   }
   ep.initialState=initialState(ep);

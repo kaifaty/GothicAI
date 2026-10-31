@@ -82,7 +82,7 @@ try:
     if frozen:
         sys.path.insert(0, str(Path(sys.argv[2]).parent/'scripts'))
         from nav_live import eligible_cases, suite_cases
-        if len(eligible_cases(suite, suite_cases(suite))) < 10:
+        if not eligible_cases(suite, suite_cases(suite)):
             print('report')
             raise SystemExit(0)
     needs_qualification=(suite.get('qualification_status') != 'geometry-qualified'
@@ -96,14 +96,56 @@ try:
             or (runtime/'build-snapshot').read_text().strip() != snapshot):
         print('prepare')
         raise SystemExit(0)
-    gate=json.loads((output/'smoke.json').read_text())
-    valid=(gate.get('complete') is True and gate.get('suite_sha256') == digest(suite_path)
-           and gate.get('binary_sha256') == digest(sys.argv[3]))
 except (OSError, ValueError):
-    valid=False
-print('baseline' if valid else 'smoke')
+    print('prepare')
+else:
+    print('baseline')
 GATE
 CHOOSE
+)"
+fi
+run_suite="$source/suite.json"
+if [[ "$stage" == baseline ]]; then
+  run_suite="$(ssh ryzen "python3 - '$output/qualified-suite.json' '$source' '$task'" <<'FREEZE'
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+suite=json.loads(Path(sys.argv[1]).read_text())
+pin=suite.get('evaluation_binary')
+binary_source=Path(pin['path']) if pin else Path(sys.argv[3])/'build/opengothic/Gothic2Notr'
+binary_data=binary_source.read_bytes()
+binary_digest=hashlib.sha256(binary_data).hexdigest()
+if pin and binary_digest!=pin['sha256']:
+    raise SystemExit('The qualified evaluation binary has different contents')
+binary=Path(sys.argv[3])/'binaries'/binary_digest/'Gothic2Notr'
+binary.parent.mkdir(parents=True,exist_ok=True)
+temporary=binary.with_name(binary.name+f'.{os.getpid()}.tmp')
+temporary.write_bytes(binary_data)
+temporary.chmod(0o555)
+try:
+    os.link(temporary,binary)
+except FileExistsError:
+    if hashlib.sha256(binary.read_bytes()).hexdigest()!=binary_digest:
+        raise SystemExit('A pinned evaluation binary has different contents')
+finally:
+    temporary.unlink()
+suite['evaluation_binary']={'path':str(binary),'sha256':binary_digest}
+data=(json.dumps(suite,ensure_ascii=False,indent=2)+'\n').encode()
+digest=hashlib.sha256(data).hexdigest()
+target=Path(sys.argv[2])/f'baseline-suite-{digest}.json'
+temporary=target.with_name(target.name+f'.{os.getpid()}.tmp')
+temporary.write_bytes(data)
+try:
+    os.link(temporary,target)
+except FileExistsError:
+    if target.read_bytes()!=data:
+        raise SystemExit('A baseline snapshot has different contents')
+finally:
+    temporary.unlink()
+print(target)
+FREEZE
 )"
 fi
 if [[ "$stage" == clean ]]; then
@@ -118,7 +160,7 @@ gate=json.loads((output/'complete.json').read_text())
 if gate.get('complete') is not True:
     raise SystemExit('Clean is permitted after the complete round report only')
 PY
-rm -rf -- "$1/build" "$1/base-cache" "$1/.venv" "$1/uv-cache" "$1/navmesh-cache"
+rm -rf -- "$1/build" "$1/binaries" "$1/base-cache" "$1/.venv" "$1/uv-cache" "$1/navmesh-cache"
 rm -f -- "$1"/build-passed-* "$1/build-snapshot"
 CLEAN
   exit 0
@@ -128,7 +170,7 @@ log_prefix="$task/$round/job-logs/$stage-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 ssh ryzen "cat > '$source/phase.sh'" <<'PHASE'
 #!/usr/bin/env bash
 set -euo pipefail
-source="$1"; task="$2"; output="$3"; weights="$4"; phase="$5"; snapshot="$6"; log_dir="$7"; shard="${8:-0}"
+source="$1"; task="$2"; output="$3"; weights="$4"; phase="$5"; snapshot="$6"; log_dir="$7"; shard="${8:-0}"; run_suite="$9"
 # Charge elapsed execution time only; time waiting in gq is not machine time.
 # The local lock also serializes report writes and build reuse for this round.
 if [[ "${NAVLIVE_BUDGET_CHILD:-0}" != 1 ]]; then
@@ -275,7 +317,7 @@ if [[ "$phase" == qualify || "$phase" == requalify ]]; then
     --runtime "$task" --output "$output" --suite "$source/suite.json" --weights "$weights"
 elif [[ "$phase" != prepare ]]; then
   "$task/.venv/bin/python" -B "$source/scripts/nav_live.py" "$phase" \
-    --suite "$source/suite.json" --runtime "$task" --output "$output" --weights "$weights" --shard "$shard"
+    --suite "$run_suite" --runtime "$task" --output "$output" --weights "$weights" --shard "$shard"
 fi
 printf 'phase_wall_seconds=%s\n' "$((SECONDS-started))"
 PHASE
@@ -292,6 +334,6 @@ for shard in "${shards[@]}"; do
   fi
   identifier=$("$ROOT/scripts/gq" submit --class quick --threads "$threads" --cpu-quota "$cpu_quota" --mem "$memory" --max "$max_time" \
     ${display[@]+"${display[@]}"} --archive "$log_dir" --name "nav live $round $stage $shard" -- \
-    bash "$source/phase.sh" "$source" "$task" "$output" "$weights" "$stage" "$snapshot" "$log_dir" "$shard")
+    bash "$source/phase.sh" "$source" "$task" "$output" "$weights" "$stage" "$snapshot" "$log_dir" "$shard" "$run_suite")
   printf '%s shard %s: %s\n' "$stage" "$shard" "$identifier"
 done

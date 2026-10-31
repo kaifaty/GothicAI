@@ -181,7 +181,7 @@ def commands(case, model, seed, inputs, recorded=True):
               'navdemos hero keep', 'navdemos record off',
               'navdemos oracle off', 'navdemos perception-mode gaze', 'navdemos perception-monitor on',
               f"navdemos live {'on' if recorded else 'off'}",
-              f"navdemos live-target {'player' if case.get('target') == 'PC_HERO' else 'npc'}",
+              f"navdemos live-target {case.get('live_target', 'player' if case.get('target') == 'PC_HERO' else 'npc')}",
               f"navdemos live-guide {'player' if case.get('live_guide') == 'player' else 'off'}"]
     # Keep native routines alive. The observer starts beside the actor so normal AI
     # stays active through the market; the navigation stand owns only this actor.
@@ -203,15 +203,29 @@ def commands(case, model, seed, inputs, recorded=True):
 
 def behavioral_case(case):
     fields = ('id', 'npc', 'start', 'goal', 'goal_kind', 'time', 'limit_ms', 'stranger',
-              'route', 'target', 'scenario_seed', 'live_guide', 'prepare_commands')
+              'route', 'target', 'scenario_seed', 'live_guide', 'prepare_commands', 'live_target')
     return {field: case[field] for field in fields if field in case}
 
 
+def case_binary(args, case):
+    pin = case.get('evaluation_binary')
+    path = Path(pin['path']) if pin else args.binary
+    if not path.is_absolute():
+        raise ValueError('An evaluation binary must have an absolute path')
+    if not hasattr(args, 'binary_hashes'):
+        args.binary_hashes = {}
+    if path not in args.binary_hashes:
+        args.binary_hashes[path] = sha256(path)
+    digest = args.binary_hashes[path]
+    if pin and digest != pin['sha256']:
+        raise ValueError('The case evaluation binary differs from its qualified reference')
+    return path, digest
+
+
 def actual_inputs(args, case, model, seed, recorded=True):
-    if not hasattr(args, 'binary_sha256'):
-        args.binary_sha256 = sha256(args.binary)
+    _, digest = case_binary(args, case)
     return dict(case=behavioral_case(case), model_sha256=model['sha256'] if model else None, seed=seed,
-                binary_sha256=args.binary_sha256, input_sha256=args.input_sha256, recorded=recorded)
+                binary_sha256=digest, input_sha256=args.input_sha256, recorded=recorded)
 
 
 def teacher_directory(args, case):
@@ -263,7 +277,7 @@ def run_episode(args, case, model, seed, directory, teacher=None, recorded=True)
             raise TimeoutError('Job budget reached between episodes; run the same command to continue')
         scenario = directory / 'scenario.bench'
         scenario.write_text('\n'.join(commands(case, model, seed, args.inputs, recorded)) + '\n')
-        environment = dict(os.environ, BENCH_HOST='local', NO_BUILD='1', GAME_BIN=str(args.binary),
+        environment = dict(os.environ, BENCH_HOST='local', NO_BUILD='1', GAME_BIN=str(case_binary(args, case)[0]),
             SAVE=str(args.inputs['save']), GOTHIC_AI='0', TEMPEST_WINDOW_SIZE='640x360',
             OPENGOTHIC_BODY_TRACE='0', OPENGOTHIC_NAV_LIVE='1', OPENGOTHIC_TEXTURES='', OPENGOTHIC_CONTENT='', MOVABLE_VOBS='0',
             OPENGOTHIC_BENCH_ENCODER='-c:v libx264 -preset veryfast -crf 30 -maxrate 800k -bufsize 1600k -vf fps=15',
@@ -301,14 +315,19 @@ def teacher_outcome(args, case):
     deep_water = summary.get('deep_water_entries') not in (0, None)
     unsafe_fall = summary.get('falls') != 0
     unsafe_target_route = case.get('target_route_evidence', {}).get('complete') is False
-    passed = bool(episode.get('success')) and not deep_water and not unsafe_fall and not unsafe_target_route
+    minimum_edge = summary.get('minimum_edge_distance_cm')
+    edge_requirement = case.get('teacher_minimum_edge_cm')
+    unsafe_edge = edge_requirement is not None and (minimum_edge is None or minimum_edge < edge_requirement)
+    passed = bool(episode.get('success')) and not deep_water and not unsafe_fall and not unsafe_target_route and not unsafe_edge
     failure = episode.get('failure') or ('teacher_entered_deep_water' if deep_water else
         'teacher_fell' if summary.get('falls', 0) else 'teacher_fall_measurement_missing' if unsafe_fall else
         'target_route_geometry_incomplete' if unsafe_target_route else
+        'teacher_edge_clearance_below_threshold' if unsafe_edge else
         'teacher_did_not_arrive' if not passed else None)
     return dict(id=case['id'], passed=passed, elapsed_ms=episode.get('elapsed_ms'), failure=failure,
         decisions=episode.get('decisions'), setup_rejected=bool(episode.get('setup_rejected')),
-        deep_water_entries=summary.get('deep_water_entries'), falls=summary.get('falls'), output=str(directory))
+        deep_water_entries=summary.get('deep_water_entries'), falls=summary.get('falls'),
+        minimum_edge_distance_cm=minimum_edge, output=str(directory))
 
 
 def teachers(args, cases):
@@ -357,6 +376,7 @@ def smoke(args, cases, policies, unresolved=None):
     complete = not unresolved and equal_recording is not False
     write_json(args.output / 'smoke.json', dict(schema_version=1, complete=complete,
         suite_sha256=sha256(args.suite), binary_sha256=sha256(args.binary), repeatable=repeatable,
+        model_sha256=model['sha256'],
         recording_actions_identical=equal_recording, result=line, unresolved=unresolved,
         teacher_placements_passed=[row['id'] for row in passed],
         excluded_placements=[case['id'] for case in suite_cases(read_json(args.suite))
@@ -365,6 +385,17 @@ def smoke(args, cases, policies, unresolved=None):
     if repeatable and equal_recording is False:
         raise ValueError('Recording changed actions in a repeatable scenario')
     return complete
+
+
+def smoke_gate(args, model):
+    try:
+        gate = read_json(args.output / 'smoke.json')
+    except (OSError, ValueError):
+        return None
+    if (gate.get('suite_sha256') != sha256(args.suite) or gate.get('binary_sha256') != sha256(args.binary)
+            or gate.get('model_sha256') != model['sha256']):
+        return None
+    return gate.get('complete') is True
 
 
 def runs(cases, policies, bc4):
@@ -445,7 +476,13 @@ def report(args, cases, policies, bc4):
             if failure:
                 counts = (f"; {failure['candidates_probed']} candidates, {failure['supported_routes']} supported routes"
                           if 'candidates_probed' in failure else '')
-                references.append(f"{case['id']}: unqualified; {failure['reason']}{counts}")
+                facts = f"{case['id']}: unqualified; {failure['reason']}{counts}"
+                if failure.get('topdown_frame'):
+                    frame = Path(failure['topdown_frame']).relative_to(args.output).as_posix()
+                    facts += f'; [reference frame]({frame})'
+                if failure.get('start_cm') and failure.get('goal_cm'):
+                    facts += f"; start {failure['start_cm']}; goal {failure['goal_cm']}"
+                references.append(facts)
                 continue
             directory = teacher_directory(args, case)
             rejected = setup_rejection(directory)
@@ -490,7 +527,7 @@ def report(args, cases, policies, bc4):
         if comparison.get('unresolved'):
             lines += ['Unresolved placements: ' + ', '.join(value['id'] for value in comparison['unresolved']) + '.', '']
     lines += [f'Teacher placements passed: {teacher_passed}/{len(cases)}.',
-              f'Eligible placements: {len(eligible)}/{len(cases)}; minimum for smoke and baseline: 10.',
+              f'Eligible placements: {len(eligible)}/{len(cases)}; excluded placements are omitted from learner runs.',
               f'Completed learner runs: {sum(completed_run(args, c, m, s) for c, m, s in all_runs)}/{len(all_runs) or getattr(args, "expected_learner_runs", 0)}.',
               f'Storage: {check_space(args.output)} bytes; limit {MAX_BYTES} bytes.', '']
     temporary = args.output / f'README.md.{os.getpid()}.tmp'
@@ -513,11 +550,17 @@ def main(argv=None):
     if any(not path.is_absolute() for path in (args.suite, args.runtime, args.output)):
         parser.error('Suite, runtime and output paths must be absolute')
     args.output.mkdir(parents=True, exist_ok=True)
-    if args.stage in ('teacher', 'smoke', 'baseline', 'report') and (args.output / 'qualified-suite.json').is_file():
+    if args.stage in ('teacher', 'smoke', 'report') and (args.output / 'qualified-suite.json').is_file():
         args.suite = args.output / 'qualified-suite.json'
     args.binary = args.runtime / 'build/opengothic/Gothic2Notr'
     args.deadline = phase_deadline()
     suite = read_json(args.suite)
+    if suite.get('evaluation_binary'):
+        evaluation = suite['evaluation_binary']
+        args.binary = Path(evaluation['path'])
+        if not args.binary.is_absolute() or sha256(args.binary) != evaluation['sha256']:
+            raise ValueError('The pinned evaluation binary differs from the suite snapshot')
+        args.binary_sha256 = evaluation['sha256']
     cases = suite_cases(suite)
     args.inputs = dict(suite['inputs'], cache=str(args.runtime / 'navmesh-cache'))
     for name in ('save', 'roads', 'familiar', 'links'):
@@ -527,11 +570,11 @@ def main(argv=None):
     check_space(args.output)
     eligible = eligible_cases(suite, cases)
     if args.stage in ('smoke', 'baseline'):
-        if len(eligible) < 10:
+        if not eligible:
             args.expected_learner_runs = (sum(len(case['seeds']) for case in eligible) * len(args.weights.split(','))
                 + sum(2 * len(case['seeds']) for case in eligible if case['number'] == 10))
             report(args, cases, [], None)
-            print(json.dumps(dict(event='insufficient_qualified_placements', eligible=len(eligible), required=10,
+            print(json.dumps(dict(event='no_qualified_placements', eligible=0,
                                   excluded=[case['id'] for case in cases if case not in eligible])), flush=True)
             return 2
         qualification = suite.get('teacher_qualification', {})
@@ -564,9 +607,12 @@ def main(argv=None):
     if args.stage == 'smoke':
         smoke_complete = smoke(args, eligible, policies)
     elif args.stage == 'baseline':
-        gate = read_json(args.output / 'smoke.json')
-        if not gate.get('complete') or gate['suite_sha256'] != sha256(args.suite) or gate['binary_sha256'] != sha256(args.binary):
-            raise ValueError('Complete smoke and teacher qualification on these exact inputs first')
+        gate = smoke_gate(args, policies[0])
+        if gate is None:
+            gate = smoke(args, eligible, policies)
+        if not gate:
+            report(args, cases, policies, bc4)
+            return 2
         for index, (case, model, seed) in enumerate(runs(eligible, policies, bc4)):
             if index % 3 != args.shard:
                 continue

@@ -19,7 +19,7 @@ class NavLiveTrace final {
   public:
     NavLiveTrace(const std::filesystem::path& output,const NavPolicy* policy,
                  const NavMesh::Path& detour,size_t rayCount,bool playerTarget,
-                 const std::vector<NavMesh::Point>& targetRoute,bool playerGuide):policy(policy) {
+                 const std::vector<NavMesh::Point>& targetRoute,bool playerGuide,bool playerWalkOnly):policy(policy) {
       decisions.open(output/"live-decisions.jsonl");
       observations=gzopen((output/"live-observations.bin.gz").string().c_str(),"wb1");
       if(!decisions || observations==nullptr)throw std::runtime_error("nav live: cannot open trace");
@@ -60,7 +60,10 @@ class NavLiveTrace final {
         const auto& p=detour.corners[i];format<<'['<<p[0]*100.f<<','<<p[1]*100.f<<','<<p[2]*100.f<<']';
       }
       format<<"],\"target_script\":{\"source\":\""<<(playerTarget?"player_detour_interpolation":"native")
-            <<"\",\"pause_ms\":2000,\"turn_back_deg\":180,\"turn_next_after_ms\":1000,\"walk_cm_s\":200,\"run_cm_s\":450,\"run_leg_index\":2,\"run_leg_prefix_ms\":2000,\"route_cm\":[";
+            <<"\",\"mode\":\""<<(playerWalkOnly?"player-walk":playerTarget?"player":"npc")
+            <<"\",\"pause_ms\":2000,\"turn_back_deg\":180,\"turn_next_after_ms\":1000,\"walk_cm_s\":"<<(playerWalkOnly?100:200)
+            <<",\"run_cm_s\":"<<(playerWalkOnly?0:450)<<",\"run_leg_index\":"<<(playerWalkOnly?"null":"2")
+            <<",\"run_leg_prefix_ms\":"<<(playerWalkOnly?0:2000)<<",\"route_cm\":[";
       for(size_t i=0;i<targetRoute.size();++i) {
         if(i)format<<',';
         const auto& p=targetRoute[i];format<<'['<<p[0]*100.f<<','<<p[1]*100.f<<','<<p[2]*100.f<<']';
