@@ -13,6 +13,11 @@ export const withChances = (text: string) =>
     String(Math.round(chance(rule, Number(talent), Number(d)))),
   );
 
+// when a tag's line appears: its `at`, but never before a counter above it has stopped, so a verdict ("мимо") never
+// shows while the roll that causes it is still running
+export const lineAt = (tag: TagT, index: number) =>
+  tag.lines.slice(0, index).reduce((at, l) => (l.count ? Math.max(at, l.at + l.count.dur) : at), tag.lines[index].at);
+
 // a tag line as it reads once settled: its chances computed, its counter stopped on the real number
 export const settledText = (line: TagT['lines'][number]) => {
   const text = withChances(line.text);
@@ -22,7 +27,7 @@ export const settledText = (line: TagT['lines'][number]) => {
 // the centre of line `index` of a tag at time `t` of its beat, in frame pixels: where Tags.tsx draws it once every
 // line shown by then has settled. `measure` gives a line's box (measureText in the render, a stub in the tests)
 export const tagLineCentre = (tag: TagT, index: number, t: number, measure: (text: string) => Size): Point => {
-  const lines = tag.lines.map((line, i) => ({i, size: measure(settledText(line)), at: line.at})).filter((l) => l.at < t);
+  const lines = tag.lines.map((line, i) => ({i, size: measure(settledText(line)), at: lineAt(tag, i)})).filter((l) => l.at < t);
   const width = Math.max(...lines.map((l) => l.size.width)) + 2 * TAG.padX;
   const height = lines.reduce((s, l) => s + l.size.height, 0) + TAG.gap * (lines.length - 1) + 2 * TAG.padY;
   let y = tag.y - TAG.lift - height + TAG.padY;

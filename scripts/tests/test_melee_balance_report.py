@@ -259,7 +259,7 @@ def test_parry_unavailable_without_events_keeps_block_timings(tmp_path, stunned_
             assert f"fighters.{role}.{key}" in old["unavailable"]
         for key in ("parade_ms", "hit_fraction", "swings_started", *STAMINA_COUNTS, "mean_stamina_fraction"):
             assert old["fighters"][role][key] == rich["fighters"][role][key]
-    for episodes in ([old], [rich, old]):
+    for episodes in ([old], [old, old]):
         result = report.aggregate("vanilla", "native", "1h", episodes)
         for prefix, own in [("combat", result["combat"]),
                             *((f"fighters.{role}", result["fighters"][role]) for role in report.ROLES)]:
@@ -275,3 +275,19 @@ def test_parry_unavailable_without_events_keeps_block_timings(tmp_path, stunned_
         text = report.markdown([result])
         assert "| parries | null | null | null | null |" in text
         assert "| parry_fraction | — | null | null | null |" in text
+
+    empty = episode(tmp_path/"empty", [])
+    mixed = report.aggregate("vanilla", "native", "1h", [rich, empty])
+    for role in report.ROLES:
+        own = mixed["fighters"][role]
+        for key in PARRY_COUNTS:
+            assert own[key] == rich["fighters"][role][key]
+            assert own["per_duel"][key] == pytest.approx(own[key]/2)
+            assert mixed["episodes"][1]["fighters"][role][key] == 0
+            assert f"fighters.{role}.{key}" not in mixed["episodes"][1]["unavailable"]
+            assert empty["fighters"][role][key] is None
+    for key in PARRY_COUNTS:
+        expected = sum(rich["fighters"][role][key] for role in report.ROLES)
+        assert mixed["combat"][key] == expected
+        assert mixed["combat"]["per_duel"][key] == pytest.approx(expected/2)
+        assert f"combat.{key}" not in mixed["unavailable"]

@@ -7,6 +7,7 @@ import httpx
 import numpy as np
 import pytest
 from websockets.asyncio.client import connect
+from websockets.exceptions import InvalidStatus
 
 from gothic_asr import cli
 from gothic_asr.audio import RATE, float_to_pcm16, resample
@@ -75,12 +76,32 @@ async def service():
     await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_health(service) -> None:
+@pytest.mark.parametrize("origin", [None, "https://evil.example"])
+async def test_health(service, origin) -> None:
     svc, _ = service
     async with httpx.AsyncClient() as http:
-        r = await http.get(f"http://127.0.0.1:{svc.port}/health")
+        r = await http.get(
+            f"http://127.0.0.1:{svc.port}/health", headers={"Origin": origin} if origin else {}
+        )
+    assert r.status_code == 200
     assert r.headers["content-type"] == "application/json"
     assert r.json() == {"ok": True, "service": "gothic-asr", "providers": [{"name": "fake"}]}
+
+
+@pytest.mark.parametrize("bridge", [True, False])
+async def test_local_origin_connects(service, bridge) -> None:
+    svc, _ = service
+    url = f"ws://127.0.0.1:{svc.port}"
+    async with connect(url, origin=url if bridge else None) as ws:
+        assert json.loads(await ws.recv())["type"] == "hello"
+
+
+async def test_browser_origin_is_forbidden(service) -> None:
+    svc, _ = service
+    with pytest.raises(InvalidStatus) as exc:
+        async with connect(f"ws://127.0.0.1:{svc.port}", origin="https://evil.example"):
+            pytest.fail("browser origin connected")
+    assert exc.value.response.status_code == 403
 
 
 async def test_websocket_roundtrip(service) -> None:

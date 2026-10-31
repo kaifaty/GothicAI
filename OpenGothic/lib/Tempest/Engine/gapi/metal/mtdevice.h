@@ -300,6 +300,7 @@ class MtDevice : public AbstractGraphicsApi::Device {
 
     NsPtr<MTL::Device>         impl;
     NsPtr<MTL::CommandQueue>   queue;
+    NsPtr<MTL::CommandQueue>   uploadQueue;
 
     std::condition_variable    devIdleCv;
     std::mutex                 devIdleSync;

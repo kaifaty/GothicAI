@@ -233,7 +233,7 @@ pub fn run() {
             // AppIndicator delivers its menu on Linux; tray click events are macOS-only.
             #[cfg(target_os = "linux")]
             let tray = tray
-                .icon(Image::from_bytes(include_bytes!("../icons/128x128.png"))?)
+                .icon(Image::from_bytes(include_bytes!("../icons/tray-linux.png"))?)
                 .show_menu_on_left_click(true);
             tray.build(app)?;
             Ok(())

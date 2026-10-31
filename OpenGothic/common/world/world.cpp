@@ -120,7 +120,8 @@ const char* materialTag(asset::MaterialGroup src) {
 World::World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress)
   :wname(std::move(file)), game(game), wsound(game,*this), wobj(*this) {
   const auto loadStarted = std::chrono::steady_clock::now();
-  Resources::configureTextures(Gothic::settingsGetS("GAME","texture_budget_mb"));
+  Resources::configureTextures(Gothic::settingsGetS("GAME","texture_budget_mb"),Gothic::settingsGetS("GAME","texture_far_skip_mips"),
+                               Gothic::settingsGetS("GAME","texture_target_mb"));
   if(LoadProbe::enabled())
     LoadProbe::mark("world_begin",-1,"world="+std::string(wname));
   try {
@@ -160,6 +161,8 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
         std::unique_ptr<WorldView> view;
         if(streamLandscape) {
           const auto map=PackedMesh::landscapeMaterialMap(worldMesh);
+          {
+          Resources::TextureLoadScope textureLoadScope(true);
           std::vector<bool> loaded(worldMesh.materials.size());
           // Decode initially used materials before publishing landscape chunks.
           for(auto id:worldMesh.polygons.material_indices) {
@@ -169,6 +172,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
               loaded[id]=true;
               }
             }
+          }
           const auto& bounds=worldMesh.bbox;
           view=std::make_unique<WorldView>(std::pair{Tempest::Vec3(bounds.min.x,bounds.min.y,bounds.min.z),
                                                     Tempest::Vec3(bounds.max.x,bounds.max.y,bounds.max.z)},wname);
@@ -253,11 +257,18 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     wmatrix.reset(new WayMatrix(*this, *world.waynet));
     if(LoadProbe::enabled())
       LoadProbe::mark("waynet",LoadProbe::msSince(probeT));
-    probeT = LoadProbe::now();
+    double probeVobsMs=0;
+    {
+    LoadProbe::Vobs::Stage probe;
+    {
+    Resources::TextureLoadScope textureLoadScope{bool(residency)};
     for(auto& vob:world.vobs)
       wobj.addRoot(vob,startup);
+    }
+    probeVobsMs=probe.stop();
+    }
     if(LoadProbe::enabled())
-      LoadProbe::mark("vobs",LoadProbe::msSince(probeT),
+      LoadProbe::mark("vobs",probeVobsMs,
                       "items="+std::to_string(wobj.itmCount())+" mobsi="+std::to_string(wobj.mobsiCount()));
     probeT = LoadProbe::now();
     wdynamic->finalizeMovableVobs();
@@ -289,12 +300,20 @@ World::~World() {
 
 void World::updateLandscape(const Camera& camera) {
   if(!residency || !npcPlayer) {
+    if(textureLoadingPending && npcPlayer) {
+      Resources::finishTextureLoading();
+      textureLoadingPending=false;
+      }
     Resources::updateTextures(nullptr);
     return;
     }
   if(wview)
     wview->prepareLandscapeWork();
   residency->update(npcPlayer->position(),camera.originLwc(),camera.zFar());
+  if(textureLoadingPending) {
+    Resources::finishTextureLoading();
+    textureLoadingPending=false;
+    }
   if(wview)
     wview->finishLandscapeUpdate();
   Resources::updateTextures(residency.get());

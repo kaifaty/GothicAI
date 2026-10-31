@@ -205,6 +205,7 @@ Marvin::Marvin() {
     {"toggle melee_hitstop",      C_ToggleMeleeHitStop},
     {"toggle melee_stamina",      C_ToggleMeleeStamina},
     {"toggle melee_parry",        C_ToggleMeleeParry},
+    {"toggle melee_parry_ai",     C_ToggleMeleeParryAi},
     };
   }
 
@@ -707,6 +708,12 @@ bool Marvin::exec(std::string_view v) {
       const bool enabled = !Gothic::physicsFlags().meleeParry;
       Gothic::settingsSetI("GAME","melee_parry",enabled ? 1 : 0);
       print(enabled ? "Melee parry: ON" : "Melee parry: OFF");
+      return true;
+      }
+    case C_ToggleMeleeParryAi: {
+      const bool enabled = !Gothic::physicsFlags().meleeParryAi;
+      Gothic::settingsSetI("GAME","melee_parry_ai",enabled ? 1 : 0);
+      print(enabled ? "Melee parry AI: ON" : "Melee parry AI: OFF");
       return true;
       }
     }

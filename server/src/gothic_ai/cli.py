@@ -90,6 +90,7 @@ from .llm import (
     make_quick,
     quick_url,
 )
+from .llm.off import OffBackend
 from .llm.siwc import AuthError, TokenStore, login
 from .meetings import Meetings
 from .memory import DEFAULT_PATH as DEFAULT_MEMORY_DB
@@ -1349,11 +1350,14 @@ async def serve(args: argparse.Namespace) -> int:
                 dialogue=state.dialogue,
                 journal=journal,
             )
-            directing += [
-                asyncio.create_task(state.director.run()),
-                asyncio.create_task(state.vanilla.run()),
-                asyncio.create_task(state.amends.run()),
-            ]
+            # Off scenarios own model calls, except those exercising these queues themselves.
+            if args.llm != "off" or args.scenario is None or args.scenario in {"repair", "own_repair"}:
+                directing.append(asyncio.create_task(state.director.run()))
+            directing.append(asyncio.create_task(state.vanilla.run()))
+            if args.llm != "off" or args.scenario is None or args.scenario in {
+                "amends", "amends_deal", "crime_director",
+            }:
+                directing.append(asyncio.create_task(state.amends.run()))
         elif graph is not None and state.crimes is not None:
             # A victim's rule-driven demand remains available without background story authoring.
             # Neither repair nor optional Amends queues run in this mode; CrimeMeet calls demand.
@@ -2470,6 +2474,19 @@ async def serve(args: argparse.Namespace) -> int:
         except Exception:
             log.exception("scenario %s failed", args.scenario)
             exit_code = 1
+        finally:
+            if isinstance(llm, OffBackend):
+                for reason in llm.used:
+                    log.info("scenario %s: given: %s", args.scenario, reason)
+                unused = llm.unused()
+                checks = {
+                    "model_off": "failed " + repr(llm.attempts[:5]) if llm.attempts else "done",
+                    "givens_used": "failed " + repr(unused) if unused else "done",
+                }
+                for name, result in checks.items():
+                    log.info("scenario %s: %s: %s", args.scenario, name, result)
+                if llm.attempts or unused:
+                    exit_code = 1
         if args.exit_after:
             done.set()
 
@@ -3533,7 +3550,7 @@ def main() -> None:
         format="%(asctime)s %(levelname).1s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    for noisy in ("httpx", "httpx2", "httpcore", "openai"):
+    for noisy in ("httpx", "httpx2", "httpcore", "openai", "websockets"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     try:

@@ -208,7 +208,7 @@ def test_compose_and_enable_carry_world_chunks(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match='chunk NEWWORLD/CHUNKS/1_-1.GLB: in both stairs-1 and stairs-2'):
         building_set.compose('two-stairs', ['stairs-1', 'roofs-1', 'stairs-2'])
     (tmp_path / 'content-staging/empty').mkdir()
-    with pytest.raises(ValueError, match='empty: no materials, meshes or world chunks'):
+    with pytest.raises(ValueError, match='empty: no materials, meshes, world chunks or particle descriptions'):
         building_set.compose('none', ['roofs-1', 'empty'])
 
 
@@ -225,6 +225,33 @@ def test_compose_and_enable_carry_a_vob_layer(tmp_path, monkeypatch):
     assert sorted(p.name for p in out.iterdir()) == ['harbour-life.json']
     building_set.enable('city-1')
     assert (tmp_path / 'content/worlds/NEWWORLD/vobs.d/harbour-life.json').read_text() == layer.read_text()
+
+    particles = tmp_path / 'content-staging/smoke-1/particles.d/smoke.json'
+    particles.parent.mkdir(parents=True)
+    particles.write_text(json.dumps({'format': 1, 'effects': [
+        {'name': 'OWN_SMOKE', 'base': 'FIRE_SMOKE', 'set': {'visTexColorStart_S': '80 80 80'}},
+    ]}) + '\n')
+    (particles.parent / 'notes.txt').write_text('not a description')
+    result = building_set.compose('city-smoke', ['life-1', 'smoke-1'])
+    assert result['particles'] == 1 and result['parts'] == {'life-1': 1, 'smoke-1': 1}
+    composed = tmp_path / 'content-staging/city-smoke'
+    assert (composed / 'particles.d/smoke.json').read_text() == particles.read_text()
+    assert sorted(p.name for p in (composed / 'particles.d').iterdir()) == ['smoke.json']
+    composition = json.loads((composed / 'composition.json').read_text())
+    assert composition['parts']['smoke-1'] == ['particles.d/smoke.json']
+    assert list(composition['particles_sha256']) == ['smoke.json']
+    building_set.enable('city-smoke')
+    assert (tmp_path / 'content/particles.d/smoke.json').read_text() == particles.read_text()
+    building_set.enable('city-1')
+    assert not (tmp_path / 'content/particles.d').exists()
+    duplicate = tmp_path / 'content-staging/smoke-2/particles.d/smoke.json'
+    duplicate.parent.mkdir(parents=True)
+    duplicate.write_text(particles.read_text())
+    with pytest.raises(ValueError, match='particle file smoke.json: in both smoke-1 and smoke-2'):
+        building_set.compose('duplicate-file', ['smoke-1', 'smoke-2'])
+    duplicate.rename(duplicate.with_name('other.json'))
+    with pytest.raises(ValueError, match='particle effect OWN_SMOKE: in both smoke-1 and smoke-2'):
+        building_set.compose('duplicate-effect', ['smoke-1', 'smoke-2'])
 
 
 def test_crop_band_drops_grey_margins():

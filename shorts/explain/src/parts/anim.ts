@@ -1,8 +1,10 @@
 import {Easing, interpolate} from 'remotion';
 
-// how much of a thing shown from `at` to `until` (seconds) is visible at `t`: a short fade in, a shorter one out
+// how much of a thing shown from `at` to `until` (seconds) is visible at `t`: a short fade in, a shorter one out;
+// fadeIn 0 is there from its first frame (a base layer on a cut: frame 0 is a finished picture)
 export const shown = (t: number, at: number, until?: number, fadeIn = 0.18, fadeOut = 0.12) => {
-  const a = interpolate(t, [at, at + fadeIn], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const a = fadeIn <= 0 ? Number(t >= at)
+    : interpolate(t, [at, at + fadeIn], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
   if (until === undefined) {
     return a;
   }
@@ -29,4 +31,13 @@ export const keyframes = (t: number, keys: [number, number][]) => {
     keys.map((k) => k[1]),
     {extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.inOut(Easing.quad)},
   );
+};
+
+// when a short text without its own `until` goes: when the next text of its beat comes in at the same place, so the
+// two never lie on each other; the old one's fade out ends as the new one starts
+export const textUntil = (texts: {at: number; until?: number; y?: number}[], i: number) => {
+  const x = texts[i];
+  if (x.until !== undefined) return x.until;
+  const next = texts.filter((n) => n.at > x.at && n.y === x.y).sort((a, b) => a.at - b.at)[0];
+  return next?.at;
 };
