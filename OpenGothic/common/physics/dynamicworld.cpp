@@ -1,6 +1,7 @@
 #include "dynamicworld.h"
 
 #include "collisionworld.h"
+#include "collisioncache.h"
 #include "physicmeshshape.h"
 #include "physicvbo.h"
 #include "ragdoll.h"
@@ -10,6 +11,7 @@
 #include "gothic.h"
 #include "arrowtrace.h"
 #include "frameprofile.h"
+#include "basestore.h"
 #include <Tempest/Log>
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
@@ -845,11 +847,54 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
         originalClothMesh->addIndex(pkg.indices,sub.iboOffset,sub.iboLength,sub.material.group);
     }
 
+  auto started=std::chrono::steady_clock::now();
+  const auto elapsed=[&]() {
+    const auto now=std::chrono::steady_clock::now();
+    const auto milliseconds=std::chrono::duration<double,std::milli>(now-started).count();
+    started=now;
+    return milliseconds;
+    };
+  std::filesystem::path cacheRoot;
+  CollisionCache::Key key;
+  const auto* cacheEnabled=std::getenv("OPENGOTHIC_COLLISION_CACHE");
+  if(owner!=nullptr && (cacheEnabled==nullptr || std::string_view(cacheEnabled)!="0")) {
+    try {
+      cacheRoot=BaseStore::cacheRoot();
+      }
+    catch(const std::exception&) {
+      // An unavailable derived cache must not prevent building the collision.
+      }
+    const auto inputs=Resources::wayHeightInputs(owner->name());
+    const auto& flags=Gothic::physicsFlags();
+    key={inputs.baseFingerprint,std::filesystem::path(owner->name()).stem().string(),inputs.contentFingerprint,
+         uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)|(uint32_t(splitStaticTriangles)<<2)};
+    }
+  CollisionCache cache(cacheRoot,key);
+  collisionLoadStats.keyMs=elapsed();
+  JPH::ShapeRefC landscapeShape,waterShape;
+  if(!cache.path().empty()) {
+    collisionLoadStats.cacheHit=cache.read(landscapeShape,waterShape);
+    collisionLoadStats.readMs=elapsed();
+    }
+  if(!collisionLoadStats.cacheHit) {
+    landscapeShape=landMesh->shape(splitStaticTriangles);
+    waterShape=waterMesh->shape();
+    collisionLoadStats.buildMs=elapsed();
+    if(!cache.path().empty()) {
+      cache.save(landscapeShape.GetPtr(),waterShape.GetPtr());
+      collisionLoadStats.writeMs=elapsed();
+      }
+    }
+
+  // Cached shapes skip shape(), which normally prepares immutable source data.
+  // Contact listeners may query it concurrently once the bodies are published.
+  landMesh->prepareTriangleData();
+  waterMesh->prepareTriangleData();
   JPH::Vec3 bbox[2] = {JPH::Vec3::sZero(), JPH::Vec3::sZero()};
   Tempest::Matrix4x4 mt;
   mt.identity();
-  if(const auto shape=landMesh->shape(splitStaticTriangles); shape!=nullptr) {
-    bodies->landscape = world->addCollisionBody(shape,mt,materialFriction(asset::MaterialGroup::NONE),
+  if(landscapeShape!=nullptr) {
+    bodies->landscape = world->addCollisionBody(landscapeShape,mt,materialFriction(asset::MaterialGroup::NONE),
                                                C_Landscape,false,false,landMesh.get());
     bodies->landscape->setLabel("landscape");
     JPH::Vec3 min, max;
@@ -858,8 +903,8 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
     bbox[1] = JPH::Vec3::sMax(bbox[1],max);
     }
 
-  if(!waterMesh->isEmpty() && waterMesh->shape()!=nullptr) {
-    bodies->water = world->addCollisionBody(waterMesh->shape(),mt,0,C_Water,false,true,waterMesh.get());
+  if(waterShape!=nullptr) {
+    bodies->water = world->addCollisionBody(waterShape,mt,0,C_Water,false,true,waterMesh.get());
     JPH::Vec3 min, max;
     bodies->water->getAabb(min,max);
     bbox[0] = JPH::Vec3::sMin(bbox[0],min);

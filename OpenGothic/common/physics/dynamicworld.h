@@ -616,6 +616,11 @@ class DynamicWorld final {
       size_t shapeBytes = 0, triangles = 0;
       };
     StaticCollisionStats staticCollisionStats() const;
+    struct StaticCollisionLoadStats {
+      bool cacheHit = false;
+      double keyMs = 0, readMs = 0, buildMs = 0, writeMs = 0;
+      };
+    const StaticCollisionLoadStats& staticCollisionLoadStats() const { return collisionLoadStats; }
     uint64_t simulationStep() const;
 
     // Called explicitly by the runner; ordinary worlds never build a navmesh.
@@ -636,6 +641,7 @@ class DynamicWorld final {
     std::string_view validateSectorName(std::string_view name) const;
 
   private:
+    friend struct WayHeightsContract;
     friend class ClothBulletBenchDriver;
     void           moveBullet(BulletBody& b, const Tempest::Vec3& dir, uint64_t dt);
     RayWaterResult implWaterRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float stepHeight,
@@ -658,6 +664,7 @@ class DynamicWorld final {
     std::unique_ptr<Cloth>             clothWorld;
     World*                            ownerWorld = nullptr;
     bool                              splitStaticTriangles = true;
+    StaticCollisionLoadStats          collisionLoadStats;
 
     std::vector<std::string>           sectors;
 

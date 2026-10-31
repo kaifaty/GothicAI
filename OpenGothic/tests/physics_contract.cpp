@@ -4947,8 +4947,156 @@ namespace {
     }
   }
 
+namespace {
+
+  void testCompoundChunkSeams() {
+    // The routes and acceptance limits are the #616 edge/corner matrix. Only
+    // ownership changes: four 64 m MeshShapes are children of one static body.
+    constexpr uint32_t cells=16, side=2*cells+1;
+    std::vector<JPH::Vec3> vertices;
+    for(int x=-int(cells);x<=int(cells);++x)
+      for(int z=-int(cells);z<=int(cells);++z)
+        vertices.emplace_back(float(x)*4.f,0,float(z)*4.f);
+    PhysicVbo mesh(&vertices);
+    std::array<std::vector<uint32_t>,4> indices;
+    const char* sectors[]={"south-west","north-west","south-east","north-east"};
+    for(uint32_t x=0;x<2;++x)
+      for(uint32_t z=0;z<2;++z) {
+        auto& part=indices[x*2+z];
+        for(uint32_t localX=0;localX<cells;++localX)
+          for(uint32_t localZ=0;localZ<cells;++localZ) {
+            const uint32_t a=(x*cells+localX)*side+z*cells+localZ,b=a+1,c=a+side+1,d=a+side;
+            part.insert(part.end(),{a,c,b,a,d,c});
+            }
+        const auto material=(x+z)%2==0 ? asset::MaterialGroup::STONE : asset::MaterialGroup::WOOD;
+        mesh.addIndex(part,0,part.size(),material,sectors[x*2+z]);
+        }
+    CollisionWorld whole,compoundWorld;
+    auto wholeBody=whole.addCollisionBody(mesh.shape(true),at(0,0,0),0,DynamicWorld::C_Landscape,false,false,&mesh);
+    JPH::StaticCompoundShapeSettings settings;
+    for(uint32_t x=0;x<2;++x)
+      for(uint32_t z=0;z<2;++z) {
+        const auto part=x*2+z;
+        const JPH::Vec3 origin(float(int(x)-1)*64.f,0,float(int(z)-1)*64.f);
+        JPH::VertexList childVertices;
+        JPH::IndexedTriangleList triangles;
+        const auto& source=indices[part];
+        for(uint32_t localX=0;localX<=cells;++localX)
+          for(uint32_t localZ=0;localZ<=cells;++localZ)
+            childVertices.emplace_back(float(localX)*4.f,0,float(localZ)*4.f);
+        const auto localIndex=[&](uint32_t index) {
+          return (index/side-x*cells)*(cells+1)+(index%side-z*cells);
+          };
+        // Match PhysicVbo::shape(true): split each 4 m square's long diagonal,
+        // keep its original triangle userdata, and translate to a local origin.
+        for(size_t i=0;i<source.size();i+=6) {
+          const auto midpoint=(vertices[source[i]]+vertices[source[i+1]])*.5f-origin;
+          const auto mid=uint32_t(childVertices.size());
+          childVertices.emplace_back(midpoint.GetX(),midpoint.GetY(),midpoint.GetZ());
+          const auto a=localIndex(source[i]),c=localIndex(source[i+1]),b=localIndex(source[i+2]),d=localIndex(source[i+4]);
+          const auto triangle=part*2*cells*cells+uint32_t(i/3);
+          triangles.emplace_back(c,mid,b,0,triangle);
+          triangles.emplace_back(mid,a,b,0,triangle);
+          triangles.emplace_back(a,mid,d,0,triangle+1);
+          triangles.emplace_back(mid,c,d,0,triangle+1);
+          }
+        JPH::MeshShapeSettings child(std::move(childVertices),std::move(triangles));
+        child.mPerTriangleUserData=true;
+        const auto shape=child.Create();
+        require(!shape.HasError(),"compound seam fixture must create each 64 m MeshShape");
+        settings.AddShape(origin,JPH::Quat::sIdentity(),shape.Get().GetPtr());
+        }
+    const auto shape=settings.Create();
+    require(!shape.HasError(),"compound seam fixture must create one static compound");
+    auto compoundBody=compoundWorld.addCollisionBody(shape.Get(),at(0,0,0),0,DynamicWorld::C_Landscape,false,false,&mesh);
+    require(compoundWorld.bodyCount()==1,"compound seam fixture must publish exactly one landscape body");
+    // Speeds are representative walking/running inputs, not animation metadata.
+    // Every route passes through its edge/corner; shallow approaches have enough
+    // travel to clear the capsule on both sides without reaching an outer edge.
+    constexpr uint64_t seamDt=17;
+    constexpr float seamSeconds=float(seamDt)*.001f, halfRoute=600.f;
+    size_t passedCount=0;
+    std::puts("Compound seam matrix: kind speed_cm_s angle_deg height_mm vertical_m_s airborne stairs_attempted stairs_succeeded speed_loss_pct box_bounce_mm cv_travel_cm box_travel_cm result");
+    for(const bool corner:{false,true})
+      for(const float speed:{180.f,400.f})
+        for(const float angle:{90.f,45.f,10.f}) {
+          const float radians=angle*.01745329252f;
+          const Tempest::Vec3 direction=angle==90.f ? Tempest::Vec3(1,0,0) :
+                                                   Tempest::Vec3(std::sin(radians),0,std::cos(radians));
+          const auto center=Tempest::Vec3(0,0,corner ? 0.f : -1600.f);
+          const auto initial=center-direction*halfRoute;
+          const auto displacement=direction*(speed*seamSeconds);
+          const int frames=int(std::ceil(2.f*halfRoute/(speed*seamSeconds)));
+          auto cv=compoundWorld.createVirtualCharacter(25,180,initial);
+          auto reference=whole.createVirtualCharacter(25,180,initial);
+          cv->setDiagnosticsEnabled(true);
+          CollisionWorld::CharacterMoveResult state,expected;
+          for(int frame=0;frame<30;++frame) {
+            state=cv->move({},seamDt,50,.785398163f,80,nullptr);
+            expected=reference->move({},seamDt,50,.785398163f,80,nullptr);
+            }
+          require(state.grounded && expected.grounded,"seam fixtures must settle on their flat support before measuring");
+          const auto settled=state.position;
+          float height=0,verticalSpeed=0,speedLoss=0;
+          size_t airborne=0,stairsAttempted=0,stairsSucceeded=0;
+          for(int frame=0;frame<frames;++frame) {
+            const auto previous=state.position,previousExpected=expected.position;
+            state=cv->move(displacement,seamDt,50,.785398163f,80,nullptr);
+            expected=reference->move(displacement,seamDt,50,.785398163f,80,nullptr);
+            CharacterVirtualDiagnostics diagnostic;
+            require(cv->diagnostics(diagnostic),"seam measurements must retain native ground and stair diagnostics");
+            height=std::max(height,std::abs(state.position.y-expected.position.y));
+            // Include penetration recovery/stair snaps as actual vertical motion,
+            // as well as the controller's solved velocity.
+            verticalSpeed=std::max({verticalSpeed,std::abs(state.position.y-previous.y)/seamSeconds,
+                                   std::abs(state.velocity.y)});
+            const auto actualDelta=state.position-previous,expectedDelta=expected.position-previousExpected;
+            const float actualAdvance=actualDelta.x*direction.x+actualDelta.z*direction.z;
+            const float expectedAdvance=expectedDelta.x*direction.x+expectedDelta.z*direction.z;
+            require(expected.grounded && expectedAdvance>0,"whole-body seam control must stay grounded and advance each frame");
+            speedLoss=std::max(speedLoss,std::max(0.f,1.f-actualAdvance/expectedAdvance));
+            airborne+=!state.grounded || diagnostic.afterStairs.groundState!=0 ? 1 : 0;
+            stairsAttempted+=diagnostic.stairAttempted ? 1 : 0;
+            stairsSucceeded+=diagnostic.stairSucceeded ? 1 : 0;
+            }
+          const auto cvDelta=state.position-settled;
+          const float cvTravel=cvDelta.x*direction.x+cvDelta.z*direction.z;
+          cv.reset();reference.reset();
+
+          auto box=compoundWorld.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(initial.x,10,initial.z),0,1);
+          auto control=whole.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(initial.x,10,initial.z),0,1);
+          for(int frame=0;frame<120;++frame) {
+            compoundWorld.tick(seamDt);whole.tick(seamDt);
+            }
+          const auto boxStart=box->position();
+          box->setVelocity(direction*speed,{});
+          control->setVelocity(direction*speed,{});
+          float boxBounce=0;
+          for(int frame=0;frame<frames;++frame) {
+            compoundWorld.tick(seamDt);whole.tick(seamDt);
+            boxBounce=std::max({boxBounce,box->position().y-boxStart.y,
+                               std::abs(box->position().y-control->position().y)});
+            }
+          const auto boxDelta=box->position()-boxStart;
+          const float boxTravel=boxDelta.x*direction.x+boxDelta.z*direction.z;
+          const bool passed=height<=.5f && verticalSpeed<=10.f && airborne==0 && stairsSucceeded==0 &&
+                            speedLoss<=.05f && cvTravel>halfRoute+25.f && boxBounce<=.5f && boxTravel>halfRoute+10.f;
+          passedCount+=passed ? 1 : 0;
+          std::printf("Compound seam %s %.0f %.0f %.6f %.6f %zu %zu %zu %.6f %.6f %.6f %.6f %s\n",
+                      corner ? "corner" : "edge",double(speed),double(angle),double(height*10.f),double(verticalSpeed*.01f),
+                      airborne,stairsAttempted,stairsSucceeded,double(speedLoss*100.f),double(boxBounce*10.f),
+                      double(cvTravel),double(boxTravel),passed ? "PASS" : "FAIL");
+          }
+
+    std::printf("Compound seam experiment: %zu/12 passed (measurement only; not a production collision mode)\n",passedCount);
+    }
+  }
+
 int main() {
   try {
+    testCompoundChunkSeams();
+    if(const auto* only=std::getenv("OPENGOTHIC_COMPOUND_SEAMS_ONLY"); only && std::string_view(only)=="1")
+      return EXIT_SUCCESS;
     testMovableVobImpulseInertia();
     testMovableTableImpulseCouple();
     testMeshRayEdges();

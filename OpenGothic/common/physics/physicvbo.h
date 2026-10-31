@@ -44,6 +44,7 @@ class PhysicVbo final {
     std::string_view        validateSectorName(std::string_view name) const;
 
   private:
+    friend class DynamicWorld;
     friend struct BaseContentContract;
     friend struct AssetDigest;
     PhysicVbo(const std::vector<Vertex>& v);
