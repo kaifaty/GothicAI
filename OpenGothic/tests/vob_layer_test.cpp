@@ -8,6 +8,8 @@
 #include "gamemusic.h"
 #include "game/gamesession.h"
 #include "game/serialize.h"
+#include "game/definitions/particlecontent.h"
+#include "graphics/pfx/particlefx.h"
 #include "world/world.h"
 #include "world/movablevobs.h"
 #include "utils/workers.h"
@@ -314,6 +316,124 @@ void saveBoundPolicy(const Fixture& f) {
   require(cases==180,"all 44 class tags, unknown and both operations/subtree guards are checked");
   }
 
+void particleFields(zenkit::DaedalusVm& vm, const Def::ParticleEffect& actual,
+                    const Def::ParticleEffect& expected) {
+  const auto* cls=vm.find_symbol_by_name("C_PARTICLEFX");
+  require(cls!=nullptr,"particle class exists in base program");
+  const auto fields=vm.find_class_members(*cls);
+  require(fields.size()==57,"every original C_PARTICLEFX field is compared");
+  for(const auto* field:fields) {
+    bool same=false;
+    switch(field->type()) {
+      case zenkit::DaedalusDataType::INT: same=field->get_int(0,&actual)==field->get_int(0,&expected); break;
+      case zenkit::DaedalusDataType::FLOAT: same=field->get_float(0,&actual)==field->get_float(0,&expected); break;
+      case zenkit::DaedalusDataType::STRING: same=field->get_string(0,&actual)==field->get_string(0,&expected); break;
+      default: throw std::runtime_error("unexpected particle field type");
+      }
+    require(same,"inherited/set source particle field "+field->name());
+    }
+  }
+
+void particleSettings(const ParticleFx& actual, const ParticleFx& expected) {
+#define SAME_PARTICLE_FIELD(field) require(actual.field==expected.field,"derived particle setting " #field)
+  SAME_PARTICLE_FIELD(ppsValue); SAME_PARTICLE_FIELD(ppsScaleKeys);
+  SAME_PARTICLE_FIELD(ppsIsLooping); SAME_PARTICLE_FIELD(ppsIsSmooth); SAME_PARTICLE_FIELD(ppsFPS);
+  SAME_PARTICLE_FIELD(ppsCreateEm); SAME_PARTICLE_FIELD(ppsCreateEmDelay);
+  SAME_PARTICLE_FIELD(shpType); SAME_PARTICLE_FIELD(shpFOR); SAME_PARTICLE_FIELD(shpOffsetVec);
+  SAME_PARTICLE_FIELD(shpDistribType); SAME_PARTICLE_FIELD(shpDistribWalkSpeed); SAME_PARTICLE_FIELD(shpIsVolume);
+  SAME_PARTICLE_FIELD(shpDim); SAME_PARTICLE_FIELD(shpMesh); SAME_PARTICLE_FIELD(shpMesh_S); SAME_PARTICLE_FIELD(shpMeshRender);
+  SAME_PARTICLE_FIELD(shpScaleKeys); SAME_PARTICLE_FIELD(shpScaleIsLooping); SAME_PARTICLE_FIELD(shpScaleIsSmooth);
+  SAME_PARTICLE_FIELD(shpScaleFPS); SAME_PARTICLE_FIELD(dirMode); SAME_PARTICLE_FIELD(dirFOR);
+  SAME_PARTICLE_FIELD(dirModeTargetFOR); SAME_PARTICLE_FIELD(dirModeTargetPos);
+  SAME_PARTICLE_FIELD(dirAngleHead); SAME_PARTICLE_FIELD(dirAngleHeadVar); SAME_PARTICLE_FIELD(dirAngleElev);
+  SAME_PARTICLE_FIELD(dirAngleElevVar); SAME_PARTICLE_FIELD(velAvg); SAME_PARTICLE_FIELD(velVar);
+  SAME_PARTICLE_FIELD(lspPartAvg); SAME_PARTICLE_FIELD(lspPartVar); SAME_PARTICLE_FIELD(flyGravity); SAME_PARTICLE_FIELD(flyCollDet);
+  SAME_PARTICLE_FIELD(visMaterial); SAME_PARTICLE_FIELD(visOrientation); SAME_PARTICLE_FIELD(visTexIsQuadPoly);
+  SAME_PARTICLE_FIELD(visTexAniFPS); SAME_PARTICLE_FIELD(visTexAniIsLooping); SAME_PARTICLE_FIELD(visTexColorStart);
+  SAME_PARTICLE_FIELD(visTexColorEnd); SAME_PARTICLE_FIELD(visSizeStart); SAME_PARTICLE_FIELD(visSizeEndScale);
+  SAME_PARTICLE_FIELD(visAlphaStart); SAME_PARTICLE_FIELD(visAlphaEnd); SAME_PARTICLE_FIELD(visYawAlign); SAME_PARTICLE_FIELD(visZBias);
+  SAME_PARTICLE_FIELD(trlTexture); SAME_PARTICLE_FIELD(trlFadeSpeed); SAME_PARTICLE_FIELD(trlWidth);
+  SAME_PARTICLE_FIELD(mrkTexture); SAME_PARTICLE_FIELD(mrkFadeSpeed); SAME_PARTICLE_FIELD(mrkSize);
+  SAME_PARTICLE_FIELD(flockMode); SAME_PARTICLE_FIELD(flockStrength); SAME_PARTICLE_FIELD(useEmittersFOR);
+  SAME_PARTICLE_FIELD(timeStartEnd_S); SAME_PARTICLE_FIELD(m_bIsAmbientPFX); SAME_PARTICLE_FIELD(prefferedTime);
+#undef SAME_PARTICLE_FIELD
+  require(actual.maxLifetime()==expected.maxLifetime() && actual.maxPps()==expected.maxPps() &&
+          actual.effectPrefferedTime()==expected.effectPrefferedTime(),"derived lifetime and emission limits");
+  }
+
+void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
+  const auto directory=f.content/"particles.d";
+  textFile(directory/"10-smoke.json",R"({"format":1,"effects":[
+    {"name":"OWN_TEST_COPY","base":"fire_smoke.pfx","set":{}},
+    {"name":"OWN_TEST_SMOKE","base":"FIRE_SMOKE","set":{"visTexColorStart_S":"80 80 80","visAlphaStart":200,"lspPartAvg":12000,"ppsIsSmooth":1}},
+    {"name":"OWN_TEST_CHAIN","base":"own_test_smoke.pfx","set":{"velAvg":0.23}}]})");
+  textFile(directory/"20-chain.json",R"({"format":1,"effects":[{"name":"OWN_TEST_NEXT","base":"own_test_chain.PfX","set":{}}]})");
+  auto vm=ParticleContent::openProgram(baseRoot);
+  const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
+  require(original!=nullptr,"base FIRE_SMOKE definition");
+  const auto loaded=ParticleContent::load(*vm,f.content);
+  require(loaded.errors.empty() && loaded.effects.size()==4,"own definitions load in filename and declaration order");
+  particleFields(*vm,*loaded.effects.at("OWN_TEST_COPY"),*original);
+  auto expected=*original;
+  expected.vis_tex_color_start_s="80 80 80"; expected.vis_alpha_start=200;
+  expected.lsp_part_avg=12000; expected.pps_is_smooth=1;
+  particleFields(*vm,*loaded.effects.at("OWN_TEST_SMOKE"),expected);
+  expected.vel_avg=0.23f;
+  particleFields(*vm,*loaded.effects.at("OWN_TEST_CHAIN"),expected);
+  particleFields(*vm,*loaded.effects.at("OWN_TEST_NEXT"),expected);
+  require(subprocess({GOTHIC_CONTENT_CONVERT,"check-particles",baseRoot.string(),f.content.string()})==0,
+          "converter CLI accepts own definitions and chains");
+
+  const std::vector<std::pair<std::string,std::string>> invalid={
+    {"unknown-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"unknownField":1}})"},
+    {"float-type",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visAlphaStart":"opaque"}})"},
+    {"int-type",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"ppsIsSmooth":0.5}})"},
+    {"string-type",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{"visTexColorStart_S":80}})"},
+    {"unknown-base",R"({"name":"OWN_BAD","base":"NO_SUCH_BASE","set":{}})"},
+    {"base-conflict",R"({"name":"FIRE_SMOKE","base":"LIGHTSMOKE","set":{}})"},
+    {"duplicate",R"({"name":"OWN_PREVIOUS","base":"FIRE_SMOKE","set":{}})"},
+    {"format",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{}})"},
+    {"name",R"({"name":"own-smoke","base":"FIRE_SMOKE","set":{}})"}
+    };
+  const auto errorsRoot=f.root/"particle-errors";
+  for(const auto& [kind,entry]:invalid) {
+    fs::remove_all(errorsRoot);
+    textFile(errorsRoot/"particles.d/00-valid.json",R"({"format":1,"effects":[{"name":"OWN_PREVIOUS","base":"FIRE_SMOKE","set":{}}]})");
+    const auto file=errorsRoot/"particles.d"/("10-"+kind+".json");
+    textFile(file,"{\"format\":"+std::string(kind=="format" ? "2" : "1")+
+             R"(,"effects":[{"name":"OWN_ROLLED_BACK","base":"OWN_PREVIOUS","set":{}},)"+entry+"]}");
+    textFile(errorsRoot/"particles.d/20-valid.json",R"({"format":1,"effects":[{"name":"OWN_AFTER_ERROR","base":"OWN_PREVIOUS","set":{}}]})");
+    const auto checked=ParticleContent::check(baseRoot,errorsRoot);
+    require(checked.errors.size()==1 && checked.errors.front().find(file.string())!=std::string::npos,
+            kind+": error identifies the rejected particle file");
+    require(checked.effects.size()==2 && checked.effects.count("OWN_PREVIOUS")==1 &&
+            checked.effects.count("OWN_AFTER_ERROR")==1 && checked.effects.count("OWN_ROLLED_BACK")==0,
+            kind+": rejected file is atomic and subsequent files still load");
+    if(kind=="unknown-field")
+      require(checked.errors.front().find("unknownField")!=std::string::npos &&
+              subprocess({GOTHIC_CONTENT_CONVERT,"check-particles",baseRoot.string(),errorsRoot.string()})!=0,
+              "converter CLI names and rejects an unknown particle field");
+    }
+  }
+
+void runtimeParticles(Gothic& gothic, const Fixture& f) {
+  const auto* original=gothic.loadParticleFx("FIRE_SMOKE");
+  const auto* copy=gothic.loadParticleFx("own_test_copy.pfx");
+  const auto* custom=gothic.loadParticleFx("own_test_smoke.PfX");
+  require(original && copy && custom,"Gothic resolves base and custom names case-insensitively with suffix");
+  require(custom==gothic.loadParticleFx("OWN_TEST_SMOKE"),"custom aliases reuse one cached ParticleFx");
+  particleSettings(*copy,*original);
+  auto vm=ParticleContent::openProgram(Resources::baseDir());
+  const auto definitions=ParticleContent::load(*vm,f.content);
+  ParticleFx expected(*definitions.effects.at("OWN_TEST_SMOKE"),"expected");
+  particleSettings(*custom,expected);
+  require(custom->visTexColorStart==Tempest::Vec3(80,80,80) && custom->visAlphaStart==200.f/255.f &&
+          custom->lspPartAvg==12000 && custom->ppsIsSmooth,"custom settings reach the derived native effect");
+  const auto* chain=gothic.loadParticleFx("OWN_TEST_NEXT");
+  require(chain && chain->velAvg==0.23f && chain->lspPartAvg==12000 &&
+          chain->visTexColorStart==custom->visTexColorStart,"runtime resolves chains across particle files");
+  }
+
 void runtimeMesh(const Fixture& f) {
   setenv("OPENGOTHIC_CONTENT",f.content.c_str(),1);
   setenv("OPENGOTHIC_CENSUS","",1);
@@ -372,6 +492,21 @@ struct WorldDataContract {
       Resources::loadWorld(data,worldMesh,"TEST.ZEN");
       require(data.vobs.size()==4 && data.vobs.back()->vob_name=="late-mesh" && VobLayer::isAdded(*data.vobs.back()),
               "fresh Resources accepts the mesh entry and applies the layer");
+      resources.baseFingerprint="particle-height-contract";
+      const auto originalFingerprint=Resources::wayHeightInputs("TEST.ZEN").contentFingerprint;
+      require(!originalFingerprint.empty(),"height fingerprint is available for the fixture content");
+      const auto particles=fixture.content/"particles.d/height-input.json";
+      textFile(particles,R"({"format":1,"effects":[]})");
+      const auto addedFingerprint=Resources::wayHeightInputs("TEST.ZEN").contentFingerprint;
+      require(!addedFingerprint.empty() && addedFingerprint!=originalFingerprint,
+              "adding a particle file invalidates the height fingerprint of an atomic mixed layer");
+      textFile(particles,R"({"format":1,"effects":[]} )");
+      const auto changedFingerprint=Resources::wayHeightInputs("TEST.ZEN").contentFingerprint;
+      require(!changedFingerprint.empty() && changedFingerprint!=addedFingerprint,
+              "editing a particle file invalidates the height fingerprint");
+      fs::remove(particles);
+      require(Resources::wayHeightInputs("TEST.ZEN").contentFingerprint==originalFingerprint,
+              "removing the particle file restores the original height fingerprint");
       }
     }
   static const Vob* runtimeVob(const Vob& root,uint32_t id) {
@@ -426,10 +561,17 @@ struct WorldDataContract {
         fs::remove(layer);
         unsetenv("OPENGOTHIC_VOB_LAYERS");
         }
+      if(phase==3) setenv("OPENGOTHIC_CONTENT","",1);
       Resources resources;
+      if(phase==0) particleDefinitions(fixture,Resources::baseDir());
       Gothic gothic;
       gothic.isNpcInDialogFn=[](const Npc*) { return false; };
       gothic.setupGlobalScripts();
+      if(phase==0) runtimeParticles(gothic,fixture);
+      if(phase==2)
+        require(gothic.loadParticleFx("OWN_TEST_SMOKE")!=nullptr,"disabling vob layers retains custom particle definitions");
+      if(phase==3)
+        require(gothic.loadParticleFx("OWN_TEST_SMOKE",true)==nullptr,"empty content exposes no custom particle names");
       GameMusic music;
       if(phase==0) {
         const auto data=WorldData::read(Resources::baseDir()/"worlds/NEWWORLD");
@@ -453,15 +595,15 @@ struct WorldDataContract {
         textFile(layer,"{\"format\":1,\"remove\":["+std::to_string(removed)+"],\"move\":[{\"id\":"+
                  std::to_string(moved)+",\"position\":[111,222,333],\"yaw_deg\":0}],\"add\":["+
                  mesh("save-cube","VOB_LAYER_TEST_CUBE","mesh")+","+
-                 emitter("save-smoke","FIRE_SMOKE.pfx")+","+
+                 emitter("save-smoke","own_test_smoke.pfx")+","+
                  emitter("save-fire","fire_medium")+","+
                  emitter("save-sparks","Fire_Sparks.PfX")+
                  R"(,{"key":"save-flies","kind":"emitter","pfx":"FLIES","position":[10,20,30],"rotation":[[0,0,1],[0,1,0],[-1,0,0]]},{"key":"save-light","kind":"light","position":[10,20,30],"yaw_deg":0,"range":400,"color":[255,100,20]}]})");
         const auto baseWorld=Resources::baseDir()/"worlds/NEWWORLD";
         const auto checked=VobLayer::check(baseWorld,layer,fixture.content);
-        require(checked.errors.empty() && checked.added==6,"offline checker accepts base PFX names in different cases with optional suffix");
+        require(checked.errors.empty() && checked.added==6,"offline checker accepts base and custom PFX names in different cases with optional suffix");
         require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-layer",baseWorld.string(),layer.string(),fixture.content.string()})==0,
-                "converter CLI resolves emitters from base particle programs");
+                "converter CLI resolves emitters from base programs and particles.d");
         const auto invalid=layer.parent_path()/"zz-unknown.json";
         textFile(invalid,"{\"format\":1,\"move\":[{\"id\":"+std::to_string(moved)+
                  ",\"position\":[999,0,0],\"yaw_deg\":0}],\"add\":["+
@@ -479,11 +621,11 @@ struct WorldDataContract {
           ++emitters;
           require(vob->type==asset::VirtualObjectType::zCVob && vob->show_visual && !vob->cd_static && !vob->cd_dynamic &&
                   vob->visual && vob->visual->type==asset::VisualType::PARTICLE_EFFECT &&
-                  (vob->visual_name=="FIRE_SMOKE.PFX" || vob->visual_name=="FIRE_MEDIUM.PFX" ||
+                  (vob->visual_name=="OWN_TEST_SMOKE.PFX" || vob->visual_name=="FIRE_MEDIUM.PFX" ||
                    vob->visual_name=="FIRE_SPARKS.PFX" || vob->visual_name=="FLIES.PFX") && vob->visual->name==vob->visual_name,
                   "layer emitter is a visible, noncolliding native PFX zCVob with a canonical name");
           }
-        require(emitters==4,"all four base particle effects use the native emitter visual path");
+        require(emitters==4,"all four base and custom particle effects use the native emitter visual path");
         fs::remove(invalid);
         }
       else if(phase==1) {
@@ -506,9 +648,13 @@ struct WorldDataContract {
         gothic.clearGame().reset();
         gothic.setGame(std::make_unique<GameSession>("OLDWORLD.ZEN"));
         require(layerCount(*gothic.world())==0,"loading a different world leaves no emitters from the previous world");
+        require(gothic.loadParticleFx("OWN_TEST_SMOKE")==gothic.loadParticleFx("own_test_smoke.pfx"),
+                "custom definitions are shared once across worlds");
         gothic.clearGame().reset();
         gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
         require(layerCount(*gothic.world())==6,"returning to the layered world creates its additions exactly once");
+        require(gothic.loadParticleFx("OWN_TEST_SMOKE")->lspPartAvg==12000,
+                "returning to the original world retains its custom definition");
         }
       else {
         load(world,layered);
@@ -519,6 +665,7 @@ struct WorldDataContract {
         }
       gothic.clearGame().reset();
       }
+    setenv("OPENGOTHIC_CONTENT",fixture.content.c_str(),1);
     }
   };
 

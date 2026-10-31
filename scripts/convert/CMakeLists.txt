@@ -18,7 +18,9 @@ include(../../OpenGothic/cmake/BaseImport.cmake)
 include(../../OpenGothic/cmake/VideoImport.cmake)
 endif()
 add_executable(content-convert convert.cpp ../../OpenGothic/common/basestore.cpp
-  ../../OpenGothic/common/world/voblayer.cpp ../../OpenGothic/common/world/movablevobs.cpp)
+  ../../OpenGothic/common/world/voblayer.cpp ../../OpenGothic/common/world/movablevobs.cpp
+  ../../OpenGothic/common/game/definitions/particlecontent.cpp
+  ../../OpenGothic/common/game/definitions/definitiontypes.cpp)
 get_filename_component(VOB_LAYER_MOVABLE_CSV "${CMAKE_CURRENT_SOURCE_DIR}/../../OpenGothic/data/movable-vobs.csv" ABSOLUTE)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VOB_LAYER_MOVABLE_CSV}")
