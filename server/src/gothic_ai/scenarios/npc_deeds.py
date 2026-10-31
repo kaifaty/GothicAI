@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 from .. import triggers
 from ..game import GameError, GameLink
-from ..llm.fake import FakeBackend
 from ..protocol import GameMessage, NpcActResult, NpcDeed, NpcIdle, Session
 from .common import (
     HILDA,
@@ -57,7 +56,7 @@ async def npc_deeds(
     """
     results: dict[str, str] = {}
     facts = service.chronicle.facts
-    original_cards, original_llm = service.cards, dialogue.llm
+    original_cards = service.cards
     original_gate, original_stage = rumors.gate, rumors.stage
     received: list[NpcDeed | NpcActResult | NpcIdle] = []
     transfer_sight: dict[str, asyncio.Task[dict[str, Any]]] = {}
@@ -322,11 +321,10 @@ async def npc_deeds(
         if link.session is None:
             await wait_message(link, Session, timeout=10)
         if not check(
-            "enabled", service.enabled and isinstance(original_llm, FakeBackend),
-            "npc crimes enabled, LLM=fake; logs: " + log_dir,
+            "enabled", service.enabled,
+            "npc crimes enabled; logs: " + log_dir,
         ):
             return _logged(results)
-        dialogue.llm = FakeBackend("Ну, как знаешь.", delay=0)
         rumors.gate, rumors.stage = lambda *_: False, None
         await link.debug("player_hp", hp=5000)
         await link.debug("time", hour=8, minute=0)
@@ -774,7 +772,7 @@ async def npc_deeds(
                 pending.cancel()
         if transfer_sight:
             await asyncio.gather(*transfer_sight.values(), return_exceptions=True)
-        service.cards, dialogue.llm = original_cards, original_llm
+        service.cards = original_cards
         rumors.gate, rumors.stage = original_gate, original_stage
         try:
             if not link.closed.is_set():
