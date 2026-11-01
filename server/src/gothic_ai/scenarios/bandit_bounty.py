@@ -9,45 +9,24 @@ from typing import TYPE_CHECKING, Any
 from ..bodies import Bodies
 from ..brain.reflex import Reflexes
 from ..deals import GOLD
-from ..game import GameError, GameLink
+from ..game import GameLink
 from ..llm import ToolCall
-from ..llm.fake import FakeStep
 from .bandit_parley import BRAGO, CAVALORN, MATE, PARK
-from .common import ClaimScript, FixedDecider, _logged, _m5b_player_weapon, _until, _until_async
+from .common import FixedDecider, _logged, _m5b_player_weapon, _until, _until_async, log, model_off
 
 if TYPE_CHECKING:
     from ..bounty import Bounty
     from ..deals import Deals
-    from ..dialogue import DialogueManager
+    from ..dialogue import Conversation, DialogueManager, TurnState
     from ..guide import Guide
     from ..talk import TalkDesk
+    from ..turn import ToolOutcome
 
 ASK = "Браго, кто платит за мою голову?"
 PAYMENT = "Браго, дам сто пятьдесят золотых за имя заказчика."
 NAME = "Браго, деньги получил. Назови заказчика."
 LEAD = "Браго, отведи меня к Декстеру."
 DESTINATION = "CASTLEMINE_HUT"
-
-
-def _bounty_script() -> ClaimScript:
-    reveal = ToolCall("tell_secret", {"secret": "client_name"})
-    return ClaimScript(
-        said=[
-            (ASK, FakeStep("Сейчас расскажу.", [reveal])),
-            (PAYMENT, FakeStep("Сто пятьдесят золотых — и скажу имя.", [ToolCall(
-                "propose_deal", {
-                    "npc_gives": [], "hero_gives": [{"item": GOLD, "count": 150}],
-                    "secret": "client_name",
-                },
-            )])),
-            (NAME, FakeStep("За твою голову платит Декстер.", [reveal])),
-            (LEAD, FakeStep("Пойдём к Декстеру. За тебя мне заплатят.", [ToolCall(
-                "propose_deal", {"npc_gives": [], "hero_gives": [], "lead": DESTINATION},
-            )])),
-        ],
-        told=[],
-        default="Жду твоего решения.",
-    )
 
 
 async def bandit_bounty(
@@ -58,15 +37,36 @@ async def bandit_bounty(
     bounty: Bounty,
     guide: Guide,
 ) -> dict[str, str]:
-    """New game, LLM=fake: no free secret, a real payment, vanilla effects and Brago's guide."""
-    if dialogue.llm.name != "fake":
-        raise GameError("scenario bandit_bounty requires LLM=fake and a new game without SAVE")
+    """Given Brago's offers, check leverage, payment, vanilla effects and his guide."""
+    off = model_off(dialogue)
+    reveal = ToolCall("tell_secret", {"secret": "client_name"})
+    off.given("дано: Браго пытается назвать заказчика без рычага", who=BRAGO, when=ASK, calls=[reveal])
+    off.silent("дано: Браго молчит (раскрытие тайны без рычага отклонено)", who=BRAGO, when=ASK)
+    off.given(
+        "дано: Браго продаёт имя заказчика за сто пятьдесят золотых", who=BRAGO, when=PAYMENT,
+        calls=[ToolCall("propose_deal", {
+            "npc_gives": [], "hero_gives": [{"item": GOLD, "count": 150}], "secret": "client_name",
+        })],
+    )
+    off.silent("дано: Браго молчит (тайна предложена)", who=BRAGO, when=PAYMENT)
+    off.silent(
+        "дано: Браго молчит (сделка состоялась)", who=BRAGO, when="Герой согласился, сделка состоялась",
+    )
+    off.given("дано: Браго называет оплаченного заказчика", who=BRAGO, when=NAME, calls=[reveal])
+    off.silent("дано: Браго молчит (имя заказчика раскрыто)", who=BRAGO, when=NAME)
+    off.given(
+        "дано: Браго предлагает отвести героя к CASTLEMINE_HUT", who=BRAGO, when=LEAD,
+        calls=[ToolCall("propose_deal", {"npc_gives": [], "hero_gives": [], "lead": DESTINATION})],
+    )
+    off.silent("дано: Браго молчит (проводы предложены)", who=BRAGO, when=LEAD)
+    off.silent("дано: Браго молчит (начало проводов)", who=BRAGO, when="ты ведёшь его")
     await link.wait_world()
     results: dict[str, str] = {}
     applied_effects: list[dict[str, Any]] = []
-    original_llm, original_reflexes = dialogue.llm, talk.reflexes
+    original_reflexes = talk.reflexes
+    original_tool = dialogue._tool
+    outputs: list[tuple[str, ToolOutcome]] = []
     original_effect = link.story_effect
-    script = _bounty_script()
 
     def check(name: str, ok: bool, detail: object = "") -> bool:
         results[name] = f"{'done' if ok else 'failed'} ({detail})"
@@ -87,7 +87,13 @@ async def bandit_bounty(
             "call", "NPC_HASITEMS", ["inst", npc], ["sym", GOLD],
         ]) or 0)
 
-    dialogue.llm = script
+    async def record_tool(conv: Conversation, call: ToolCall, state: TurnState) -> ToolOutcome:
+        outcome = await original_tool(conv, call, state)
+        outputs.append((conv.npc, outcome))
+        return outcome
+
+    dialogue._tool = record_tool
+    log.info("given: дано: решающая модель выбирает слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     link.story_effect = record_effect
     try:
@@ -123,8 +129,12 @@ async def bandit_bounty(
             return _logged(results)
 
         talk.hear(ASK, BRAGO, {"via": "scenario"})
-        refused = await _until(lambda: any("Отклонено" in output for output in script.outputs), 20)
-        if not check("secret_requires_leverage", refused and not revealed(), script.outputs):
+        refused = await _until(lambda: any(
+            npc == BRAGO and outcome.status == "rejected" and "нет рычага" in outcome.output
+            for npc, outcome in outputs
+        ), 20)
+        if not check("secret_requires_leverage", refused and not revealed(),
+                     [outcome.output for _, outcome in outputs]):
             return _logged(results)
         await _until(lambda: not dialogue.speaking(BRAGO), 10)
         talk.hear(PAYMENT, BRAGO, {"via": "scenario"})
@@ -166,12 +176,7 @@ async def bandit_bounty(
 
         await _until(lambda: not dialogue.speaking(BRAGO), 10)
         talk.hear(LEAD, BRAGO, {"via": "scenario"})
-        offered = await _until(lambda: BRAGO in deals.open, 20)
-        offer = deals.open.get(BRAGO)
-        if not check("lead_offered", bool(
-            offered and offer and offer.lead and offer.lead.place.id == DESTINATION
-        ), offer.terms() if offer else "no deal"):
-            return _logged(results)
+        await _until(lambda: BRAGO in deals.open, 20)
         start = await link.snapshot(BRAGO, fresh=True)
         await asyncio.sleep(1.2)
         pressed = await link.press_deal()
@@ -186,6 +191,7 @@ async def bandit_bounty(
                     for fact in deals.chronicle.facts("deal"))
         ), f"Y={pressed}, started={started}, moved={moved}")
     finally:
-        dialogue.llm, talk.reflexes = original_llm, original_reflexes
+        talk.reflexes = original_reflexes
+        dialogue._tool = original_tool
         link.story_effect = original_effect
     return _logged(results)

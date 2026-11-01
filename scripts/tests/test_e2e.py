@@ -186,7 +186,9 @@ class SoakControlTests(unittest.TestCase):
             ("bandit_parley", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
             ("feats", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
             ("feat_fame", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
-            ("bandit_parley", "0", "", "", "chatgpt", 2, None, None),
+            ("bandit_parley", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
+            ("bandit_bounty", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
+            ("bandit_parley", "0", "", "/tmp/save.sav", "off", 2, None, None),
         ]
         for scenario, control, url, save, llm, status, body_flag, policy in cases:
             with self.subTest(scenario=scenario, control=control, url=url, save=save, llm=llm, policy=policy):

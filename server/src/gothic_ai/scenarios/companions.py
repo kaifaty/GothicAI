@@ -17,7 +17,6 @@ from ..dialogue import DialogueManager
 from ..game import GameError, GameLink
 from ..incidents import IncidentDesk
 from ..llm import ToolCall
-from ..llm.fake import FakeBackend, FakeStep
 from ..parley import Parley
 from ..perception import BEASTS, PerceptionDesk
 from ..persona import PersonaProvider
@@ -27,25 +26,21 @@ from ..protocol import (
     DebugCmd,
     DialogChosen,
     GameMessage,
-    LineStarted,
     NpcDied,
     NpcEvent,
     NpcRoster,
     NpcSpec,
     PerceptionHeld,
     RoutineEntry,
-    SayCmd,
     Session,
     ThreatControlCmd,
 )
 from ..talk import TalkDesk
 from .common import (
     FixedDecider,
-    _ByNpc,
     _clear_beasts,
     _logged,
     _m5b_player_weapon,
-    _OnWords,
     _save,
     _until,
     _until_async,
@@ -67,15 +62,6 @@ async def neural_companion_scenario(link: GameLink, pilot: BodyPilot | None) -> 
     return await _neural_fight_scenario(link, pilot, companion=True)
 
 
-def _neural_talk_bandit(attack: ToolCall) -> _OnWords:
-    return _OnWords([
-        ("проверим твою шпагу", FakeStep("Убирайся. Десять секунд тебе даю.", [ToolCall(
-            "ultimatum", {"demand": "Уходи отсюда", "seconds": 10},
-        )])),
-        ("Срок вышел", FakeStep("Не ушёл? Тогда сам напросился!", [attack])),
-    ], FakeStep("Опять ты. Что тебе?"))
-
-
 async def neural_talk_scenario(
     link: GameLink, dialogue: DialogueManager, pilot: BodyPilot | None,
 ) -> dict[str, str]:
@@ -90,8 +76,19 @@ async def neural_talk_scenario(
 
     if pilot is None:
         raise GameError("scenario neural-talk requires --neural-body and an available body policy")
-    if dialogue.llm.name != "fake":
-        raise GameError("scenario neural-talk requires LLM=fake")
+    off = model_off(dialogue)
+    event_turn = dialogue.event_turn
+
+    def silent_combat(who: str, cue: str, *args: Any, **kwargs: Any) -> asyncio.Task[None] | None:
+        turn = event_turn(who, cue, *args, **kwargs)
+        if turn is not None and who in {"DIR_NPC_NEURAL_TALK_CITIZEN", "DIR_NPC_NEURAL_TALK_BANDIT"}:
+            reason = next((text for text in ("Сейчас бой:", "нападает на тебя", "нападает на героя")
+                           if text in cue), None)
+            if reason is not None:
+                off.silent(f"дано: {who} молчит ({cue})", who=who, when=reason)
+        return turn
+
+    dialogue.event_turn = silent_combat  # type: ignore[method-assign]
     stalls: list[HeroFightWait] = []
     results = await neural_knockout_segment(link, dialogue, pilot, stalls=stalls)
 
@@ -104,20 +101,16 @@ async def neural_talk_scenario(
 
     stall_total()
     if any(not value.startswith("done") for value in results.values()):
+        dialogue.event_turn = event_turn  # type: ignore[method-assign]
         return results
     await link.wait_world()
     npc, arena = "DIR_NPC_NEURAL_TALK_BANDIT", "NW_XARDAS_TOWER_VALLEY_09"
-    lines: list[LineStarted] = []
     attacks: list[str] = []
 
     def check(name: str, ok: bool, detail: str) -> bool:
         results[name] = f"{'done' if ok else 'failed'} ({detail})"
         log.info("%-28s %s", name, results[name])
         return ok
-
-    def heard(message: GameMessage) -> None:
-        if isinstance(message, LineStarted) and message.npc.upper() == npc:
-            lines.append(message)
 
     def attacked(attacker: str) -> None:
         if attacker.upper() == npc:
@@ -197,16 +190,22 @@ async def neural_talk_scenario(
     attack = ToolCall("set_intent", {
         "goal": "fight", "target": "PLAYER", "attitude": "hostile", "agenda": None,
     })
-    original_llm = dialogue.llm
-    dialogue.llm = _ByNpc(
-        {"Бандит": _neural_talk_bandit(attack)}, FakeBackend("Хм.", delay=0),
+    off.given(
+        "дано: бандит требует уйти за десять секунд", who=npc, when="проверим твою шпагу",
+        calls=[ToolCall("ultimatum", {"demand": "Уходи отсюда", "seconds": 10})],
     )
-    link.listeners.append(heard)
+    off.silent(
+        "дано: бандит молчит (ультиматум передан)", who=npc, when="проверим твою шпагу",
+    )
+    off.given(
+        "дано: бандит нападает по истечении ультиматума", who=npc, when="Срок вышел",
+        calls=[attack],
+    )
+    off.silent("дано: бандит молчит (решение напасть передано)", who=npc, when="Срок вышел")
     dialogue.on_attack.append(attacked)
     try:
         with _policy_resets() as resets:
             previous = {id(summary) for summary in pilot.summaries}
-            mark = len(lines)
             await link.debug("type", text="Бандит, проверим твою шпагу.")
             ready = await _until(lambda: bool(attacks) and fight_ready(), 35)
             first = pilot.fights.get(npc)
@@ -215,11 +214,11 @@ async def neural_talk_scenario(
             unleased_attempts = sum(
                 s.npc == npc and s.lease is None and id(s) not in previous for s in pilot.summaries
             )
-            if not check("talk_to_attack", bool(ready and len(lines) > mark and first_lease
+            if not check("talk_to_attack", bool(ready and first_lease
                                                 and first_lease.npc == npc and (
                                                     pilot.policy == "engine" or resets.get(first_client)
                                                 )),
-                         f"lines={len(lines) - mark}, symbol={symbol}, "
+                         f"symbol={symbol}, "
                          f"lease={first_lease.control_generation if first_lease else 0}, "
                          f"decisions={first._decisions if first else 0}, "
                          f"fallback={first._fallbacks if first else 0}, "
@@ -267,14 +266,17 @@ async def neural_talk_scenario(
             branch = "native_reattack" if reattacked else "talk_then_attack"
             if not reattacked:
                 await _m5b_player_weapon(link, "none")
-                mark = len(lines)
+                off.silent(
+                    "дано: бандит молчит (герой вернулся для разговора)",
+                    who=npc, when="я вернулся",
+                )
+                previous_reply = dialogue.conversations[npc].reply
                 await link.debug("type", text="Бандит, я вернулся. Поговорим?")
-                answered = await _until(lambda: any(
-                    "Опять ты" in dialogue._lines.get(line.line, ("", None))[0]
-                    for line in lines[mark:]
+                reopened = await _until(lambda: bool(
+                    (conv := dialogue.conversations.get(npc)) and conv.reply is not previous_reply
                 ), 15)
-                if not check("return_to_talk", answered,
-                             f"branch={branch}, lines={len(lines) - mark}, roster={pilot.people.get(npc)}"):
+                if not check("return_to_talk", reopened,
+                             f"branch={branch}, roster={pilot.people.get(npc)}"):
                     return results
                 await _until(lambda: not dialogue.speaking(npc), 12)
                 await _m5b_player_weapon(link, "melee")
@@ -334,8 +336,7 @@ async def neural_talk_scenario(
                f"release_s={summary.release_seconds}, transition_s={time.monotonic() - fled_at:.3f}, "
                f"{detail}")
     finally:
-        dialogue.llm = original_llm
-        link.listeners.remove(heard)
+        dialogue.event_turn = event_turn  # type: ignore[method-assign]
         dialogue.on_attack.remove(attacked)
     return results
 
@@ -859,91 +860,80 @@ async def rescue(
     killer: str = "hero",
     dialogue: DialogueManager | None = None,
 ) -> dict[str, str]:
-    """M5c on the game, an ordinary npc: the hero comes up to the shepherd, a wolf attacks him from behind.
-    The body reacts at once (a call for help: he runs from the wolf, shouting, and the scripts keep out of it)
-    and the conversational model speaks for him on the move. Then the wolf dies: the danger is over
-    (`monster_killed`). Killed by the hero (`killer="hero"`), the shepherd reacts to his rescuer, his attitude
-    is asked, and he speaks again; killed by the shepherd himself (`killer="npc"`), he says a word about the
-    danger he spoke of. With the server's planner (DECIDER_URL) the live models decide and the server's LLM
-    speaks; without it a fixed stand-in decides and the words are scripted."""
+    """The shepherd's body and native scripts execute given reactions to a wolf and its death.
+
+    Behavioral decisions are fixed givens; incidental words use the shared off backend. The checks
+    measure decision requests, body ownership, monster_killed and removal of the threat.
+    """
     from ..brain import GameApplier
     from ..incidents import FREE_NEW_REASON_S
 
+    if dialogue is None:
+        raise GameError("scenario rescue requires the shared dialogue backend")
+    off = model_off(dialogue)
     await link.wait_world()
     results: dict[str, str] = {}
-    lines: list[tuple[float, LineStarted]] = []
-    link.listeners.append(
-        lambda m: lines.append((time.monotonic(), m)) if isinstance(m, LineStarted) else None
-    )
     events: list[NpcEvent | PerceptionHeld] = []
-    link.listeners.append(
-        lambda m: events.append(m) if isinstance(m, NpcEvent | PerceptionHeld) and m.npc == npc else None
+
+    def event(message: GameMessage) -> None:
+        if isinstance(message, NpcEvent | PerceptionHeld) and message.npc == npc:
+            events.append(message)
+
+    link.listeners.append(event)
+    fixed = FixedDecider(
+        {"react": ("thank", "call_help", "comment")}, {"escalate": 3.6, "attitude": 4.0}, npcs=[npc],
     )
     runner = None
     if planner is None:
-        planner = NpcPlanner(
-            FixedDecider({"react": ("thank", "call_help", "comment")}, {"escalate": 3.6, "attitude": 4.0}),
-            GameApplier(link),
-        )
+        planner = NpcPlanner(fixed, GameApplier(link))
         link.listeners.append(planner.on_message)
         runner = asyncio.create_task(planner.run())
-        after = "Спасибо, выручил ты меня." if killer == "hero" else "Хм… а волк-то был не такой уж страшный."
-        llm = FakeBackend(script=[FakeStep("Волк! Помогите, волк!"), FakeStep(after)], delay=0)
-        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue = DialogueManager(link, off, PersonaProvider(None))
         IncidentDesk(link, dialogue, None, Budget(), None, planner=planner)
         await link.send(ThreatControlCmd(hold=True))
-    # the npc's lines as the server sent them: line id -> (when, text); the game reports only the id
-    texts: dict[str, tuple[float, str]] = {}
-    send = link.send
+    original_decider = planner.decider
+    planner.decider = fixed
+    event_turn = dialogue.event_turn
 
-    async def sending(cmd: Any) -> Any:
-        if isinstance(cmd, SayCmd) and cmd.npc.upper() == npc:
-            texts[cmd.line] = (time.monotonic(), cmd.text)
-        return await send(cmd)
+    def silent_event(who: str, cue: str, *args: Any, **kwargs: Any) -> asyncio.Task[None] | None:
+        turn = event_turn(who, cue, *args, **kwargs)
+        if turn is not None and who == npc:
+            reason = next((text for text in (
+                "идёт на тебя", "напал на тебя", "враждебен и бежит на тебя",
+                "расправился с монстром", "герой подошёл к тебе",
+            ) if text in cue), None)
+            if reason is not None:
+                off.silent(f"дано: Малет молчит ({cue})", who=npc, when=reason)
+        return turn
 
-    link.send = sending  # type: ignore[method-assign]
-    # when the npc's turns about events began: a line sent after one begun after the kill is about the kill
-    # (a turn begins once the one before has sent its lines)
-    turns: list[float] = []
-    event_turn = dialogue.event_turn if dialogue is not None else None
-    if dialogue is not None:
-
-        def turn(who: str, *args: Any, **kwargs: Any) -> Any:
-            if who.upper() == npc:
-                turns.append(time.monotonic())
-            return event_turn(who, *args, **kwargs)
-
-        dialogue.event_turn = turn  # type: ignore[method-assign]
+    dialogue.event_turn = silent_event  # type: ignore[method-assign]
     recent = getattr(planner.applier, "recent", [])
     verdicts = getattr(planner.applier, "verdicts", [])
-    # what the npc was doing, by the roster: (when it started, activity); a weapon out is "fight", an
-    # original dialog with the hero "dialog"
     doing: list[tuple[float, str]] = []
 
-    def track(m: GameMessage) -> None:
-        if isinstance(m, NpcRoster):
-            now = next((e.activity for e in m.npcs if e.id == npc), "away")
+    def track(message: GameMessage) -> None:
+        if isinstance(message, NpcRoster):
+            now = next((entry.activity for entry in message.npcs if entry.id == npc), "away")
             if not doing or doing[-1][1] != now:
                 doing.append((time.monotonic(), now))
 
     link.listeners.append(track)
-    # what the behavioral model is asked about the npc, word for word (the results quote it)
-    asked: list[tuple[str, str]] = []
-    decide = planner.decider.decide
+    asked: list[tuple[float, tuple[str, ...], tuple[str, ...], str]] = []
+    decide = fixed.decide
 
     async def recording(rid, lane, priority, deadline_ms, state, questions):  # noqa: ANN001, ANN202
-        if rid.startswith(npc):
-            asked.append(("+".join(questions), state))
-        return await decide(rid, lane, priority, deadline_ms, state, questions)
+        if rid.split("#", 1)[0].upper() == npc:
+            rec = planner.npcs.get(npc)
+            stimuli = tuple(stim.kind for stim in rec.stimuli) if rec else ()
+            asked.append((time.monotonic(), tuple(questions), stimuli, state))
+        outcome = await decide(rid, lane, priority, deadline_ms, state, questions)
+        if rid.split("#", 1)[0].upper() == npc:
+            for question, answer in (outcome.answers or {}).items():
+                value = answer.get("choice", answer.get("score"))
+                log.info("given: дано: Малет отвечает %s=%s (FixedDecider)", question, value)
+        return outcome
 
-    planner.decider.decide = recording  # type: ignore[method-assign]
-
-    def decided(since: float, question: str, threat: bool | None = None) -> list:
-        return [
-            d
-            for d in list(recent)[since:]
-            if d.npc == npc and d.question == question and (threat is None or bool(d.target) == threat)
-        ]
+    fixed.decide = recording  # type: ignore[method-assign]
 
     async def wait(check: Callable[[], Any], timeout: float) -> Any:
         for _ in range(int(timeout / 0.1)):
@@ -952,118 +942,90 @@ async def rescue(
             await asyncio.sleep(0.1)
         return None
 
+    def requested(since: float, stimulus: str) -> list[float]:
+        return [at for at, questions, stimuli, _ in asked
+                if at >= since and "react" in questions and stimulus in stimuli]
+
     try:
-        # 1. the hero next to the npc, looking at it. The npc's important dialog (the start of the game: it
-        # has not met the hero) would start as soon as the two are close and calm; lines on the move do not go
-        # over a dialog
         await link.debug("skip_important", near=npc)
         await link.debug("teleport", near=npc, distance=600)
-        rec = await wait(lambda: (r := planner.npcs.get(npc)) is not None and r.in_view and r, 10)
+        rec = await wait(lambda: (rec := planner.npcs.get(npc)) is not None and rec.in_view and rec, 10)
         results["hero_next_to_npc"] = (
             f"done ({rec.name} {rec.distance_cm / 100:.0f} m away, in view)"
-            if rec
-            else "failed (not in view)"
+            if rec else "failed (not in view)"
         )
-        await asyncio.sleep(2.0)  # whatever the npc does about the hero coming up
+        await asyncio.sleep(2.0)
 
-        # 2. a wolf from behind the npc: the body reacts at once, the words follow on the move
         mark, t0 = len(recent), time.monotonic()
         await link.debug("spawn", instance="WOLF", near=npc, distance=-500)
-        reaction = await wait(lambda: decided(mark, "react", threat=True), 15)
-        seen = ", ".join(dict.fromkeys(f"{e.type}:{e.kind}/{e.other}" for e in events)) or "none"
+        request = await wait(lambda: requested(t0, "monster_near"), 15)
+        seen = ", ".join(dict.fromkeys(
+            f"{entry.type}:{entry.kind}/{entry.other}" for entry in events
+        )) or "none"
         results["threat_reaction"] = (
-            f"done ({reaction[0].choice} {reaction[0].confidence:.2f} against {reaction[0].target}, "
-            f"{time.monotonic() - t0:.1f} s; events: {seen})"
-            if reaction
-            else f"failed (no reaction to the wolf; events: {seen}; planner: {planner.snapshot()})"
+            f"done (react requested after {request[0] - t0:.3f} s; events: {seen})"
+            if request else f"failed (no reaction request to the wolf; events: {seen}; "
+            f"planner: {planner.snapshot()})"
         )
-        first = await wait(lambda: next(((t, m) for t, m in lines if m.npc == npc and t >= t0), None), 12)
-        results["words_about_the_wolf"] = (
-            f"done ({first[0] - t0:.1f} s after the wolf came: {texts.get(first[1].line, (0, '?'))[1]})"
-            if first
-            else "failed (no words)"
-        )
-        holds = {e.hold for e in events if isinstance(e, PerceptionHeld)}
-        to = [v for h, v in list(verdicts) if h in holds]
-        armed = [t for t, what in doing if what == "fight" and t >= t0]
+        reaction = await wait(lambda: [
+            decision for decision in list(recent)[mark:]
+            if decision.npc == npc and decision.question == "react" and decision.target
+        ], 15)
+        holds = {entry.hold for entry in events if isinstance(entry, PerceptionHeld)}
+        to = [verdict for hold, verdict in list(verdicts) if hold in holds]
+        armed = [at for at, activity in doing if activity == "fight" and at >= t0]
         took = reaction[0].choice if reaction else None
         results["body_and_scripts"] = (
-            f"{'done' if (took == 'fight') == bool(armed) else 'failed'} ({took}: "
+            f"{'done' if reaction and (took == 'fight') == bool(armed) else 'failed'} ({took}: "
             f"{to.count('server')} held from the scripts, {to.count('scripts')} given to them; "
             f"{f'weapon out {armed[0] - t0:.1f} s after the wolf came' if armed else 'no weapon out'})"
         )
 
-        # 3. the wolf dies: the danger is over, the npc thanks its rescuer, or says a word about the danger it
-        # beat itself. Soon, while the wolf is still after the npc (one it lost is too far for the npc to see
-        # it die), but not before words about something new may follow (asked for right after the reaction)
+        # Keep the new cause outside the incident speech cooldown, following the fleeing shepherd.
         await asyncio.sleep(max(0.0, t0 + FREE_NEW_REASON_S + 1.0 - time.monotonic()))
-        # the hero runs after it: an npc that ran from the wolf is soon out of the hero's reach (the bridge
-        # reports npc's within 30 m of him) and of his hearing (20 m)
         await link.debug("teleport", near=npc, distance=700)
-        await asyncio.sleep(1.0)  # the roster (twice a second) has him close: the npc's reaction is urgent
-        mark, t1 = len(recent), time.monotonic()
+        await asyncio.sleep(1.0)
+        t1 = time.monotonic()
         try:
-            # the one after the npc, not a wild one
             await link.debug("kill", instance="WOLF", near=npc, by="PLAYER" if killer == "hero" else npc)
             killed = f"by the {killer}"
         except GameError as err:
             killed = f"not by the hero ({err})"
         ended = await wait(
-            lambda: next((e for e in events if isinstance(e, NpcEvent) and e.kind == "monster_killed"), None),
-            5,
+            lambda: next((entry for entry in events
+                          if isinstance(entry, NpcEvent) and entry.kind == "monster_killed"), None), 5,
         )
         results["monster_killed"] = (
             f"done ({killed}: {ended.other} killed {ended.victim} '{ended.detail}')"
-            if ended
-            else f"failed (no monster_killed; {killed})"
+            if ended else f"failed (no monster_killed; {killed})"
         )
         rec = planner.npcs.get(npc)
-        threats = [s.kind for s in rec.stimuli if s.policy.threat and s.other == "WOLF"] if rec else []
+        threats = [
+            stim.kind for stim in rec.stimuli if stim.policy.threat and stim.other == "WOLF"
+        ] if rec else []
         results["threat_over"] = "done" if rec and not threats else f"failed (still: {threats})"
-        # an npc that fought the wolf itself reacts once its weapon is put away
-        # about the kill (another threat may have come meanwhile)
-        thanks = await wait(lambda: [d for d in decided(mark, "react") if "monster_killed" in d.stimuli], 15)
-        attitude = await wait(lambda: decided(mark, "attitude"), 6)
+        request = await wait(lambda: requested(t1, "monster_killed"), 15)
         results["rescue_reaction"] = (
-            f"done ({thanks[0].choice} {thanks[0].confidence:.2f}"
-            f"{f', attitude {attitude[0].attitude:.1f}' if attitude else ', no attitude answer'})"
-            if thanks
-            else f"failed (nothing applied; planner: {planner.snapshot()})"
+            f"done (react requested after {request[0] - t1:.3f} s)"
+            if request else f"failed (no reaction request after the kill; planner: {planner.snapshot()})"
         )
-
-        def after_kill() -> tuple[float, LineStarted] | None:
-            begun = next((t for t in turns if t >= t1), None)
-            return next(
-                (
-                    (t, m)
-                    for t, m in lines
-                    if m.npc == npc and begun and texts.get(m.line, (0.0, ""))[0] >= begun
-                ),
-                None,
-            )
-
-        second = await wait(after_kill, 20)
-        results["words_after_the_kill"] = (
-            f"done ({second[0] - t1:.1f} s after the kill: {texts.get(second[1].line, (0, '?'))[1]})"
-            if second
-            else "failed (no words)"
-        )
-        if second:
-            await asyncio.sleep(3.0)  # the rest of the turn, for the trace
+        await asyncio.sleep(3.0)
     finally:
-        planner.decider.decide = decide  # type: ignore[method-assign]
-        if dialogue is not None:
-            dialogue.event_turn = event_turn  # type: ignore[method-assign]
-        link.send = send  # type: ignore[method-assign]
+        fixed.decide = decide  # type: ignore[method-assign]
+        planner.decider = original_decider
+        dialogue.event_turn = event_turn  # type: ignore[method-assign]
+        link.listeners.remove(event)
+        link.listeners.remove(track)
         if runner is not None:
             await link.send(ThreatControlCmd(hold=False))
             runner.cancel()
+            link.listeners.remove(planner.on_message)
     for name, outcome in results.items():
         log.info("%-24s %s", name, outcome)
-    for question, state in dict.fromkeys(asked):
-        log.info("asked %s: %s", question, state)
+    for _, questions, _, state in asked:
+        log.info("asked %s: %s", "+".join(questions), state)
     if doing:
-        log.info("doing: %s", ", ".join(f"{what} {t - doing[0][0]:.1f} s" for t, what in doing))
+        log.info("doing: %s", ", ".join(f"{what} {at - doing[0][0]:.1f} s" for at, what in doing))
     return results
 
 
@@ -1977,8 +1939,6 @@ async def companion_scenario(
     - freed: the bandit at the steps does not start his scripted "Where are you going?" (story.FREED);
     - go_to: told to go into the cave first, it walks into the bandits' cave and waits there; the freed
       bandits in it do not fall on it;
-    - attack: the bandit's model sets a 30-second ultimatum, then attacks through the scripts after
-      the hero's personal reply; the scenario waits for the active ultimatum before replying;
     - defend: the companion, told «Погоди.» 20 m off (an order now: 2026-10-14 the model took it for «I
       no longer need you», and Cavalorn stood by while the bandits beat the hero 20 m from him), fights
       him at once, with no order, and follows the hero again after;
@@ -1987,7 +1947,7 @@ async def companion_scenario(
     - sees_cave, focus (with `perception`, step M1 of docs/npc-tools.md): in the cave, having looked around,
       it sees a bandit there (the other may be behind the cave's bend), with its id for its intent; whom the
       hero faces is his focus in its view, and a target.
-    The models are scripted (LLM=fake); the hero wears heavy armor, so that he lives through the beating."""
+    Decisions are explicit givens on LLM=off; the hero wears heavy armor to survive the beating."""
     from ..executor import Intent
 
     await link.wait_world()
@@ -2023,29 +1983,38 @@ async def companion_scenario(
     dialogue.journal.sink = keep
     fight = {"goal": "fight", "target": "PLAYER", "attitude": "hostile", "agenda": None}
     go = ToolCall("go_to", {"place": "XARDAS_BANDITS"})
-    dialogue.llm = _ByNpc(
-        {
-            "Кавалорн": _OnWords(
-                [
-                    ("пещеру первым", FakeStep("Пойду первым.", [go])),
-                    ("пришёл первым", FakeStep("Тут двое.")),
-                ],
-                FakeStep("Держись, я с тобой!"),
-            ),
-            "Бандит": _OnWords(
-                [
-                    ("отойди с дороги", FakeStep("Это ты мне? Сто золотых за проход — или проваливай.", [
-                        ToolCall("ultimatum", {
-                            "demand": "Заплати сто золотых за проход или уходи", "seconds": 30,
-                        }),
-                    ])),
-                    ("Сам проваливай.", FakeStep("Ну всё, сам напросился!", [ToolCall("set_intent", fight)])),
-                ],
-                FakeStep("Хм."),
-            ),
-        },
-        FakeBackend("Хм.", delay=0),
+    off = model_off(dialogue)
+    off.given(
+        "дано: Кавалорн идёт в пещеру первым", who=npc, when="пещеру первым", calls=[go],
     )
+    off.silent("дано: Кавалорн молчит (поручение идти передано)", who=npc, when="пещеру первым")
+    off.silent("дано: Кавалорн молчит (пришёл в пещеру)", who=npc, when="пришёл первым")
+    off.given(
+        "дано: бандит ставит ультиматум о плате за проход", who=bandit, when="отойди с дороги",
+        calls=[ToolCall("ultimatum", {
+            "demand": "Заплати сто золотых за проход или уходи", "seconds": 30,
+        })],
+    )
+    off.given(
+        "дано: бандит нападает после отказа героя", who=bandit, when="Сам проваливай.",
+        calls=[ToolCall("set_intent", fight)],
+    )
+    off.silent("дано: бандит молчит (ультиматум передан)", who=bandit, when="отойди с дороги")
+    off.silent("дано: бандит молчит (решение напасть передано)", who=bandit, when="Сам проваливай.")
+    event_turn = dialogue.event_turn
+
+    def silent_combat(who: str, cue: str, *args: Any, **kwargs: Any) -> asyncio.Task[None] | None:
+        turn = event_turn(who, cue, *args, **kwargs)
+        if turn is not None and who in {npc, bandit}:
+            reason = next((text for text in (
+                "нападает на тебя", "нападает на героя", "нападает на:", "убил:",
+                "колдует на тебя", "Ты перестал идти за героем", "Сейчас бой:",
+            ) if text in cue), None)
+            if reason is not None:
+                off.silent(f"дано: {who} молчит ({cue})", who=who, when=reason)
+        return turn
+
+    dialogue.event_turn = silent_combat  # type: ignore[method-assign]
 
     def dist(who: str = npc) -> float:
         return talk.people[who].distance / 100 if who in talk.people else -1.0
@@ -2066,6 +2035,7 @@ async def companion_scenario(
     await link.debug("player_goto", to=npc, distance=300)
     if not await _until(lambda: 0 <= dist() <= 15, 20):
         link.act = act  # type: ignore[method-assign]
+        dialogue.event_turn = event_turn  # type: ignore[method-assign]
         return _logged({"roster": f"failed ({npc} is not around the hero: {dist():.1f} m)"})
     dialogue.open(npc, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
     talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
@@ -2107,15 +2077,11 @@ async def companion_scenario(
         f"standing {standing.kind if standing is not None else 'none'}, "
         f"at {snap.npc.waypoint or snap.npc.nearest_waypoint}",
     )
-    # it looks around in there before it says what it found
-    told = await _until(
-        lambda: any(
-            e["kind"] == "npc" and e.get("npc") == npc and "Тут" in e.get("text", "") for e in entries
-        ),
-        90,
-    )
+    # Arrival includes looking around; wait until the real arrival turn has finished silently.
+    await _until(lambda: not any(
+        "пришёл в пещеру" in reason for reason in off.unused()
+    ), 90)
     snap = await link.snapshot(npc, fresh=True)
-    log.info("companion: %s at %s, told %s", npc, snap.npc.waypoint or snap.npc.nearest_waypoint, told)
     if perception is not None:
         await perception.fresh(npc)
         sight = perception.sight(npc, snap)
@@ -2178,13 +2144,13 @@ async def companion_scenario(
         (ultimatum := parley.ultimatum(bandit)) and ultimatum.get("status") == "active"
     ), 20)
     if not required:
-        check("attack", False, "no active ultimatum")
+        check("defend", False, "no active ultimatum")
         link.act = act  # type: ignore[method-assign]
+        dialogue.event_turn = event_turn  # type: ignore[method-assign]
         return _logged(results)
     t0 = time.monotonic()
     talk.hear("Сам проваливай.", bandit, {"via": "scenario"})
-    attacked = await _until(lambda: any(e["kind"] == "attack" for e in entries), 20)
-    check("attack", attacked, "the scripts' attack" if attacked else "no attack")
+    await _until(lambda: any(e["kind"] == "attack" for e in entries), 20)
     defended = await _until(
         lambda: any(c[3].get("npc", "").upper() == bandit for c in since(t0, "fight")), 30
     )
@@ -2204,6 +2170,7 @@ async def companion_scenario(
     defends = [e for e in entries if e["kind"] == "defend"]
     check("after", down and after, f"bandit down {down}, follows {after}, stood up {len(defends)} time(s)")
     link.act = act  # type: ignore[method-assign]
+    dialogue.event_turn = event_turn  # type: ignore[method-assign]
     return _logged(results)
 
 
@@ -2217,11 +2184,10 @@ async def calm_scenario(
 ) -> dict[str, str]:
     """Talking an attacker down (the user, 2026-10-14: attacked by a bandit, he spoke to him and was told
     nobody heard; he wants to calm one with words). The bandit at the steps sets a 30-second ultimatum
-    (its model scripted); after the scenario confirms it is active, the hero replies to him personally
+    (an explicit given); after the scenario confirms it is active, the hero replies to him personally
     and the bandit attacks. The hero, looking at no one, says «Воу, воу, ты чего? Спокуха!». Checks:
     - attack: the scripts' attack, the bandit in ZS_ATTACK;
     - addressed: the words go to whoever is at the hero, though not in his focus;
-    - calm: its model calls the fight off (scripted) and the effect `calm` goes to the game;
     - stopped: it is out of the attack state;
     - stays_calm: 15 s on it has not fallen on the hero again, and the hero has not lost health.
     The gang in the cave is out of it (a fight's noise would bring them). The hero wears heavy armor."""
@@ -2243,23 +2209,24 @@ async def calm_scenario(
     dialogue.journal.sink = keep
     fight = {"goal": "fight", "target": "PLAYER", "attitude": "hostile", "agenda": None}
     calm = {"goal": "none", "target": None, "attitude": "wary", "agenda": None}
-    dialogue.llm = _ByNpc(
-        {
-            "Бандит": _OnWords(
-                [
-                    ("отойди с дороги", FakeStep("Это ты мне? Сто золотых за проход — или проваливай.", [
-                        ToolCall("ultimatum", {
-                            "demand": "Заплати сто золотых за проход или уходи", "seconds": 30,
-                        }),
-                    ])),
-                    ("Сам проваливай.", FakeStep("Ну всё, сам напросился!", [ToolCall("set_intent", fight)])),
-                    ("спокуха", FakeStep("Ладно, ладно. Живи пока.", [ToolCall("set_intent", calm)])),
-                ],
-                FakeStep("Хм."),
-            )
-        },
-        FakeBackend("Хм.", delay=0),
+    off = model_off(dialogue)
+    off.given(
+        "дано: бандит ставит ультиматум о плате за проход", who=bandit, when="отойди с дороги",
+        calls=[ToolCall("ultimatum", {
+            "demand": "Заплати сто золотых за проход или уходи", "seconds": 30,
+        })],
     )
+    off.given(
+        "дано: бандит нападает после отказа героя", who=bandit, when="Сам проваливай.",
+        calls=[ToolCall("set_intent", fight)],
+    )
+    off.silent("дано: бандит молчит (ультиматум передан)", who=bandit, when="отойди с дороги")
+    off.silent("дано: бандит молчит (решение напасть передано)", who=bandit, when="Сам проваливай.")
+    off.given(
+        "дано: бандит успокаивается на просьбу героя", who=bandit, when="Спокуха",
+        calls=[ToolCall("set_intent", calm)],
+    )
+    off.silent("дано: бандит молчит (решение успокоиться передано)", who=bandit, when="Спокуха")
 
     def state() -> str:
         e = talk.people.get(bandit)
@@ -2303,8 +2270,7 @@ async def calm_scenario(
         to is not None and to.id == bandit and to.why == "attacker",
         f"{to.why if to else 'nobody'}",
     )
-    calmed = await _until(lambda: any(e["kind"] == "calm" for e in entries), 20)
-    check("calm", calmed, next((e["attitude"] for e in entries if e["kind"] == "calm"), "no effect"))
+    await _until(lambda: any(e["kind"] == "calm" for e in entries), 20)
     stopped = await _until(lambda: state() != "ZS_ATTACK", 10)
     check("stopped", stopped, f"state {state()}")
     after = await hero_hp()

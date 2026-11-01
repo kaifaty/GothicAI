@@ -1007,7 +1007,7 @@ async def serve(args: argparse.Namespace) -> int:
         feat_image_root = None
         if not args.no_feats and (
             args.scenario in {None, "feats"}
-            or (args.scenario == "lie" and args.llm == "fake")
+            or (args.scenario == "lie" and args.llm == "off")
             or (args.scenario == "vanilla_line_live" and os.environ.get("GOTHIC_FORCE_CHALLENGE") == "1")
         ):
             artist = None
@@ -1697,7 +1697,7 @@ async def serve(args: argparse.Namespace) -> int:
             elif args.scenario in ("rescue", "rescue_self"):
                 killer = "hero" if args.scenario == "rescue" else "npc"
                 results = await scenarios.rescue(
-                    link, planner=state.brain, killer=killer, dialogue=state.dialogue if state.brain else None
+                    link, planner=state.brain, killer=killer, dialogue=state.dialogue
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
@@ -2177,12 +2177,10 @@ async def serve(args: argparse.Namespace) -> int:
             elif args.scenario == "wrath":
                 dialogue, talk, wrath = state.dialogue, state.talk, state.wrath
                 assert dialogue is not None and talk is not None and wrath is not None
-                live = dialogue.llm.name != "fake"
-                results = await scenarios.xardas_wrath(link, dialogue, talk, wrath, args.npc, live=live)
+                results = await scenarios.xardas_wrath(link, dialogue, talk, wrath, args.npc)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info(
-                    "scenario wrath (%s): %d checks, %d failed",
-                    "live" if live else "fake",
+                    "scenario wrath: %d checks, %d failed",
                     len(results),
                     len(bad),
                 )

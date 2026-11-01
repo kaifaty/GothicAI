@@ -202,6 +202,7 @@ class CollisionWorld final {
     void setBuoyancyEnabled(bool enabled);
     bool buoyancyEnabled() const;
     void setItemWakeEnabled(bool enabled);
+    void setItemDeepestContactEnabled(bool enabled);
     bool itemWakeEnabled() const { return itemWake; }
     void setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback);
     void wakeItemsInBounds(const Tempest::Vec3& min, const Tempest::Vec3& max);

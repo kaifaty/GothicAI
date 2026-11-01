@@ -447,6 +447,7 @@ class DynamicWorld final {
     void           setDestructionEnabled(bool enabled);
     void           setBuoyancyEnabled(bool enabled);
     void           setItemWakeEnabled(bool enabled);
+    void           setItemDeepestContactEnabled(bool enabled);
     bool           buoyancyEnabled() const;
     bool           destructionEnabled() const;
     Cloth&         cloth();

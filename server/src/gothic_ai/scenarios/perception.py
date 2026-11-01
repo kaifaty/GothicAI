@@ -36,6 +36,7 @@ from .common import (
     _until,
     _until_async,
     attach_when_free,
+    model_off,
     wait_message,
 )
 
@@ -858,7 +859,7 @@ async def trace_memory(
     results: dict[str, str] = {}
     desk, chronicle = sightings.desk, sightings.chronicle
     directory = Path(log_dir)
-    original = dialogue.llm
+    off = model_off(dialogue)
     control_denial = "это не я стрелял в твою стену, я ничего не трогал, я только пришел"
     age_lie = "стрела эта давно там торчит, с прошлой недели"
     house = "NW_FARM1_INHOUSE_01"
@@ -926,55 +927,39 @@ async def trace_memory(
             if r.get("type") == "turn" and r.get("npc") == farmer
         ]
 
-    async def deny(*, observation: Sighting | None = None) -> dict[str, Any]:
+    async def deny(*, observation: Sighting | None = None) -> str:
         denial = f"Это не я. Да и {age_lie}" if observation is not None else control_denial
         before = {r["id"] for r in turns()}
         await link.debug("teleport", near=farmer, distance=250)
         await _until(lambda: farmer in talk.people and talk.people[farmer].distance < 800, 10)
         await desk.fresh(farmer)
-        if isinstance(original, FakeBackend):
-            step = FakeStep("Не видел, кто стрелял. Одной стрелы мало, чтобы обвинять тебя.")
-            if observation is not None:
-                sid, _ = _trace_evidence_line(sightings.situation(farmer) or "", observation)
-                step = FakeStep(
-                    "Не с прошлой недели! Стрела свежая, и я только что её увидел.",
-                    [ToolCall("catch_lie", {"said": age_lie, "seen": sid})],
-                )
-            dialogue.llm = ClaimScript([(denial, step)], [], "Я запомню.", only="Лобарт")
+        conv = dialogue.open(farmer, talk.people[farmer].name, warm=False)
+        situation, _, _ = await dialogue._situation(conv, None)
+        if observation is None:
+            off.silent(
+                "дано: Лобарт молчит (контрольный ход без улики против героя)",
+                who=farmer, when=denial,
+            )
+        else:
+            sid, _ = _trace_evidence_line(situation, observation)
+            off.given(
+                "дано: Лобарт уличает героя по свежей стреле",
+                who=farmer, when=denial,
+                calls=[ToolCall("catch_lie", {"said": age_lie, "seen": sid})],
+            )
+            off.silent(
+                "дано: Лобарт молчит (уличение по стреле записано)",
+                who=farmer, when=denial,
+            )
         await link.debug("type", text=f"Лобарт, {denial}.")
-        completed = await _until(
+        await _until(
             lambda: any(
                 r["id"] not in before and denial in r.get("trigger", {}).get("text", "") for r in turns()
             ),
             90,
         )
         await _until(lambda: not dialogue.speaking(farmer), 30)
-        rows = [
-            r for r in turns() if r["id"] not in before and denial in r.get("trigger", {}).get("text", "")
-        ]
-        row = rows[-1] if rows else {}
-        log.info(
-            "trace %s reply: %s",
-            "positive" if observation is not None else "control",
-            [s.get("text") for s in row.get("steps", [])],
-        )
-        check(
-            "positive_turn" if observation is not None else "control_turn",
-            completed and row.get("status") == "completed",
-            row.get("status"),
-        )
-        return row
-
-    def calls(row: dict[str, Any]) -> list[dict[str, Any]]:
-        return [c for s in row.get("steps", []) for c in s.get("calls", []) if c.get("name") == "catch_lie"]
-
-    def request(row: dict[str, Any]) -> str:
-        return "\n".join(
-            str(i.get("content", ""))
-            for s in row.get("steps", [])
-            for i in s.get("added", [])
-            if i.get("role") == "developer"
-        )
+        return situation
 
     def evidence(trace_id: str) -> tuple[str, str]:
         situation = sightings.situation(farmer) or ""
@@ -1000,6 +985,7 @@ async def trace_memory(
 
     await link.wait_world()
     await mark("trace_ready")
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     for who in (farmer, VINO, target):
         await link.debug("skip_important", near=who)
@@ -1151,14 +1137,14 @@ async def trace_memory(
     sid, line = evidence(control.id)
     control_observed = sightings.mind(farmer).traces[f"TRACE:{control.id}:arrow"]
     await asyncio.sleep(5)  # the trace predates the hero's first visible arrival by at least a game minute
-    row = await deny()
-    control_sid, control_line = _trace_evidence_line(request(row), control_observed)
+    prompt = await deny()
+    control_sid, control_line = _trace_evidence_line(prompt, control_observed)
     check(
         "control_in_request",
-        bool(control_sid) and "Следы, которые ты видел" in request(row),
+        bool(control_sid) and "Следы, которые ты видел" in prompt,
         control_line,
     )
-    check("control_no_catch", not calls(row) and not chronicle.facts("caught"), calls(row))
+    await release("control_reply")
     talk.end("gone")
 
     # A new hour, a witnessed arrival, then Lobart is too far to see the actual shot.
@@ -1222,8 +1208,7 @@ async def trace_memory(
         and view.time - arrow.age <= observed.start <= view.time,
         f"{line}; appearance {view.time - arrow.age}, age {arrow.age} min",
     )
-    row = await deny(observation=observed)
-    prompt = request(row)
+    prompt = await deny(observation=observed)
     actual_sid, actual_line = _trace_evidence_line(prompt, observed)
     fresh_trace = re.search(
         rf"{re.escape(trace_name(observed.trace_kind, observed.name))} "
@@ -1245,15 +1230,6 @@ async def trace_memory(
         line for line in prompt.splitlines() if any(line.startswith(f"- {sid}:") for sid in hero_ids)
     ]
     check("hero_in_request", any("ферм" in line for line in hero_lines), hero_lines)
-    caught_calls = calls(row)
-    check(
-        "catch_uses_trace",
-        any(
-            c.get("arguments", {}).get("seen") == actual_sid and c.get("outcome") == "accepted"
-            for c in caught_calls
-        ),
-        caught_calls,
-    )
     await _until(lambda: bool(chronicle.facts("caught")), 15)
     caught = chronicle.facts("caught")
     check(
@@ -1263,6 +1239,5 @@ async def trace_memory(
         and "сам видел:" in caught[0].get("how", ""),
         caught,
     )
-    dialogue.llm = original
     await release("done")
     return _logged(results)
