@@ -404,6 +404,91 @@ class RyzenPlayTests(unittest.TestCase):
             self.assertEqual((incoming / "new-file").read_text(), "waiting")
             self.assertFalse(content.with_name("play-content.old").exists())
 
+    def test_status_reads_commits_build_and_report_without_fetch_writes_or_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            repo, upstream = auto_checkout(home)
+            head = play_git(repo, "rev-parse", "HEAD")
+            built = repo.parent / "play.built"
+            failed = repo.parent / "play.failed"
+            report = repo.parent / "play-update.json"
+            lock_path = repo.parent / "play.install.lock"
+
+            def status():
+                before = {path: (path.read_bytes(), path.stat().st_mtime_ns) if path.exists() else None
+                          for path in (built, failed, report)}
+                result = subprocess.run(
+                    [install.sys.executable, install.__file__, "__status"],
+                    env={**os.environ, "HOME": str(home)}, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(result.stdout.splitlines()), 1)
+                self.assertEqual(before, {
+                    path: (path.read_bytes(), path.stat().st_mtime_ns) if path.exists() else None
+                    for path in (built, failed, report)})
+                return json.loads(result.stdout)
+
+            with lock_path.open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                current = status()  # status also works while the launcher owns the lock
+            with lock_path.open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertEqual(current, {
+                "head": head, "latest": head, "target": head, "good": head, "built": head,
+                "failed": "", "current": True, "latest_failed": False,
+                "behind": 0, "changes": [], "report": None,
+            })
+            for number, title in ((101, "First PR title"), (102, "Second PR title")):
+                play_git(upstream, "checkout", "-b", f"feature-{number}")
+                play_git(upstream, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                         "commit", "--allow-empty", "-m", f"Change {number}")
+                play_git(upstream, "checkout", "main")
+                play_git(upstream, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                         "merge", "--no-ff", f"feature-{number}",
+                         "-m", f"Merge pull request #{number} from test/feature-{number}",
+                         "-m", f"\n{title}\n\nFurther details")
+            self.assertTrue(status()["current"])  # it must not fetch the upstream changes
+            play_git(repo, "fetch", "origin")
+            latest = play_git(repo, "rev-parse", "origin/main")
+            built.write_text(json.dumps({"good": head, "built": head}))
+            failed.write_text("another-failed-commit\n")
+            report_value = {"result": "busy", "time": "2026-11-01T12:00:00+00:00"}
+            report.write_text(json.dumps(report_value))
+            ahead = status()
+            self.assertFalse(ahead["current"])
+            self.assertEqual(ahead["behind"], 2)
+            self.assertEqual(ahead["latest"], latest)
+            self.assertEqual(ahead["changes"], [
+                {"pr": 102, "title": "Second PR title"}, {"pr": 101, "title": "First PR title"}])
+            self.assertEqual(ahead["report"], report_value)
+            failed.write_text(latest + "\n")
+            rejected = status()
+            self.assertEqual(rejected["target"], head)
+            self.assertTrue(rejected["latest_failed"])
+            self.assertTrue(rejected["current"])
+            built.write_text(json.dumps({"good": head, "built": None}))
+            unfinished = status()
+            self.assertIsNone(unfinished["built"])
+            self.assertFalse(unfinished["current"])
+            report.write_text("unreadable JSON")
+            self.assertIsNone(status()["report"])
+            with lock_path.open("a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_status_reports_missing_clone_and_git_errors_on_stderr(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            for cloned in (False, True):
+                with self.subTest(cloned=cloned):
+                    if cloned:
+                        repo, _ = auto_checkout(home)
+                        play_git(repo, "update-ref", "-d", "refs/remotes/origin/main")
+                    result = subprocess.run(
+                        [install.sys.executable, install.__file__, "__status"],
+                        env={**os.environ, "HOME": str(home)}, capture_output=True, text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("ryzen-play:", result.stderr)
+
     def test_auto_update_skips_current_head_and_busy_installation(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
