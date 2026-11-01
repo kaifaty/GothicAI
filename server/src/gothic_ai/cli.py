@@ -851,9 +851,6 @@ async def serve(args: argparse.Namespace) -> int:
         log.error("scenario %s requires --neural-body and, for service policy, GOTHIC_BODY_URL "
                   "(or --body-url)", args.scenario)
         return 2
-    if args.scenario == "feats" and args.llm not in {"fake", "chatgpt"}:
-        log.error("scenario feats requires --llm fake or chatgpt")
-        return 2
     done = asyncio.Event()
     exit_code = 0
     state = ServerState()
@@ -1014,21 +1011,18 @@ async def serve(args: argparse.Namespace) -> int:
             if not args.no_feat_images and args.scenario in {None, "feats"}:
                 if args.scenario == "feats":
                     feat_image_root = TemporaryDirectory(prefix="feat-images-")
-                    artist = (
-                        ScenarioArtist(Path(feat_image_root.name), codex="scenario")
-                        if args.llm == "fake" else Artist(Path(feat_image_root.name))
-                    )
+                    artist = ScenarioArtist(Path(feat_image_root.name), codex="scenario")
                 else:
                     artist = Artist()
             state.feats = Feats(
                 link, state.chronicle, llm, journal=journal, places=place_book,
-                gather_s=1 if args.scenario == "feats" and args.llm == "fake" else 20,
+                gather_s=1 if args.scenario == "feats" else 20,
                 artist=artist,
                 fame=not args.no_feat_fame,
                 hero_distance=lambda npc: (
                     state.talk.people[npc].distance if npc in state.talk.people else None
                 ),
-                image_wait_s=30 if args.scenario == "feats" and args.llm == "fake" else 150,
+                image_wait_s=30 if args.scenario == "feats" else 150,
             )
             state.talk.on_phrase.append(lambda to, text: state.feats.hero_talk(to.id) if to else None)
         state.fates = Fates(
@@ -1652,17 +1646,14 @@ async def serve(args: argparse.Namespace) -> int:
                 log.info("scenario m0: %d steps, %d failed", len(steps), len(failed))
                 exit_code = 1 if failed else 0
             elif args.scenario == "m2":
-                results = await scenarios.m2_actions(link, args.npc)
-                bad = {
-                    k: v
-                    for k, v in results.items()
-                    if not k.startswith("gesture") and k != "give_item_missing" and not v.startswith("done")
-                }
+                assert state.dialogue is not None
+                results = await scenarios.m2_actions(link, state.dialogue, args.npc)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario m2: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "m1":
                 lines = await scenarios.m1_chat(link, state.dialogue, args.npc)
-                log.info("scenario m1: npc spoke %d line(s)", len(lines))
+                log.info("scenario m1: line_delivery: done (%d lines)", len(lines))
             elif args.scenario == "websocket":
                 assert state.dialogue
                 results = await scenarios.websocket(link, state.dialogue)
@@ -1680,7 +1671,8 @@ async def serve(args: argparse.Namespace) -> int:
                 log.info("scenario m4: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "m5":
-                results = await scenarios.m5_turn_loop(link, args.npc, decider, trace, quick)
+                assert state.dialogue is not None
+                results = await scenarios.m5_turn_loop(link, state.dialogue, args.npc)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario m5: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -1690,7 +1682,8 @@ async def serve(args: argparse.Namespace) -> int:
                 log.info("scenario m5b: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "m5c":
-                results = await scenarios.m5c_free_npc(link, args.npc)
+                assert state.dialogue is not None
+                results = await scenarios.m5c_free_npc(link, state.dialogue, args.npc)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario m5c: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -2202,7 +2195,7 @@ async def serve(args: argparse.Namespace) -> int:
                 exit_code = 1 if bad else 0
             elif args.scenario == "feats":
                 assert state.feats is not None
-                results = await scenarios.feats(link, state.feats, journal)
+                results = await scenarios.feats(link, state.feats, journal, state.dialogue)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario feats: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -2238,7 +2231,7 @@ async def serve(args: argparse.Namespace) -> int:
                 exit_code = 1 if bad else 0
             elif args.scenario == "showrunner":
                 assert state.showrunner is not None
-                results = await scenario_showrunner.showrunner(link, state.showrunner)
+                results = await scenario_showrunner.showrunner(link, state.showrunner, state.dialogue)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario showrunner: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -2255,7 +2248,9 @@ async def serve(args: argparse.Namespace) -> int:
                         link, state.showrunner, state.questlog, journal, trace
                     )
                 else:
-                    results = await scenario_vanilla_line.vanilla_line(link, state.showrunner, state.questlog)
+                    results = await scenario_vanilla_line.vanilla_line(
+                        link, state.showrunner, state.questlog, state.dialogue
+                    )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
                 exit_code = 1 if bad else 0

@@ -8,30 +8,16 @@ import pytest
 
 from gothic_ai import challenges, questbook
 from gothic_ai.journal import Journal
-from gothic_ai.llm import ToolCall
 from gothic_ai.scenarios import story as scenarios
 from gothic_ai.scenarios import vanilla_line as live_scenario
 from gothic_ai.scenarios.vanilla_line import (
-    REQUIRES,
     RUEBEN,
     Turnips,
-    VanillaLineScript,
     _giver_ok,
     vanilla_line_live,
 )
 from gothic_ai.showrunner import ShowrunnerModel
 from gothic_ai.trace import TraceWriter
-
-
-async def test_script_proposes_vanilla_followup() -> None:
-    script = VanillaLineScript("BAU_952_VINO")
-    calls = [
-        event async for event in script.stream(instructions="", messages=[]) if isinstance(event, ToolCall)
-    ]
-    assert len(calls) == 1
-    assert calls[0].arguments["follows"] == RUEBEN
-    assert calls[0].arguments["requires"] == REQUIRES
-    assert calls[0].arguments["giver"] == "BAU_952_VINO"
 
 
 def test_event_matches_quest_state_and_current_occasion_window() -> None:

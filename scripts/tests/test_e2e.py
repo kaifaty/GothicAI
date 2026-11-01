@@ -186,6 +186,8 @@ class SoakControlTests(unittest.TestCase):
             ("bandit_parley", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
             ("feats", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
             ("feat_fame", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
+            ("feats", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
+            ("feat_fame", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
             ("bandit_parley", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
             ("bandit_bounty", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
             ("bandit_parley", "0", "", "/tmp/save.sav", "off", 2, None, None),

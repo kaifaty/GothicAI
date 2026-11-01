@@ -12,7 +12,6 @@ from ..contracts import GOLD
 from ..dialogue import Conversation, DialogueManager, TurnState
 from ..game import GameError, GameLink
 from ..llm import ToolCall
-from ..llm.fake import FakeBackend, FakeStep
 from ..mercy import PARDON, PEE_DISTANCE_CM, Mercy
 from ..protocol import CombatHit, GameMessage, LineStarted, PttStart, Session, Snapshot
 from ..talk import TalkDesk, fights
@@ -21,13 +20,13 @@ from ..turn import ToolOutcome
 from .bandit_parley import BRAGO, CAVALORN, PARK
 from .common import (
     LOBART,
-    ClaimScript,
     _logged,
     _m5b_player_weapon,
     _save_or_fail,
     _until,
     _until_async,
     attach_when_free,
+    model_off,
     wait_message,
 )
 from .live import LiveSuite
@@ -392,8 +391,15 @@ async def mercy(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, mercy: Mercy,
 ) -> dict[str, str]:
     """A farmer yields after a real low-health hit and can be spoken to after being spared."""
-    if dialogue.llm.name != "fake":
-        raise GameError("scenario mercy requires LLM=fake")
+    off = model_off(dialogue)
+    off.given(
+        "дано: Лобарт сдаётся при низком здоровье", who=LOBART, when="Сейчас бой:",
+        calls=[ToolCall("surrender", {"words": "Хватит! Сдаюсь!"})],
+    )
+    off.silent("дано: Лобарт молчит (после решения сдаться)", who=LOBART, when="Сейчас бой:")
+    off.silent("дано: Лобарт молчит (герой пощадил его)", who=LOBART, when="Лобарт, живи.")
+    original_quick = dialogue.quick
+    dialogue.quick = None
     await asyncio.to_thread(dialogue.personas.warm)
     await link.wait_world()
     await link.debug("skip_important", near=LOBART)
@@ -403,11 +409,6 @@ async def mercy(
     await link.debug("player_hp", hp=2000)
     await link.debug("player_equip", item="ITMW_1H_BAU_MACE")
     await _m5b_player_weapon(link, "melee")
-    original = dialogue.llm
-    dialogue.llm = ClaimScript(
-        said=[("Сейчас бой:", FakeStep(tool_calls=[ToolCall("surrender", {"words": "Хватит! Сдаюсь!"})])),
-              ("Лобарт, живи.", FakeStep("Спасибо. Я запомню."))], told=[], default="",
-    )
     results: dict[str, str] = {}
     hits: list[CombatHit] = []
     voices: list[LineStarted] = []
@@ -463,7 +464,8 @@ async def mercy(
         await link.debug("player_hit", npc=LOBART)
         surrendered = await _until(lambda: mercy._latest(LOBART) is not None, 8)
         low = bool(hits and 0 < hits[-1].hp < hits[-1].hp_max * 0.3)
-        results["low_hp_surrender"] = f"{'done' if surrendered and low else 'failed'} (hits={len(hits)})"
+        offered = any(f["npc"] == LOBART for f in mercy.chronicle.facts("mercy_offer"))
+        results["low_hp_offer"] = f"{'done' if offered and low else 'failed'} (hits={len(hits)})"
         if not surrendered:
             return _logged(results)
         at = time.monotonic()
@@ -490,15 +492,21 @@ async def mercy(
         spared = await _until(lambda: mercy._latest(LOBART)["status"] == "spared", 4)
         remembered = any(PARDON in m.content for m in dialogue.conversations[LOBART].history)
         results["spared"] = f"{'done' if spared and remembered else 'failed'}"
-        before = len(dialogue.llm.calls)
+        conv = dialogue.conversations[LOBART]
+        before = conv.reply_id
         await link.debug("type", text="Лобарт, живи.")
-        answered = await _until(lambda: len(dialogue.llm.calls) > before, 8)
-        normal = answered and talk.partner and talk.partner.npc == LOBART
+        opened = await _until(
+            lambda: conv.reply_id != before and conv.trigger is not None
+            and conv.trigger.role == "user" and conv.trigger.content == "Лобарт, живи.", 8,
+        )
+        if opened and conv.reply is not None:
+            await conv.reply
+        normal = opened and talk.partner and talk.partner.npc == LOBART
         results["normal_talk"] = f"{'done' if normal else 'failed'}"
         return _logged(results)
     finally:
         link.listeners.remove(record)
-        dialogue.llm = original
+        dialogue.quick = original_quick
 
 
 async def humiliate(
@@ -511,8 +519,16 @@ async def hero_yield(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, mercy: Mercy, *, humiliating: bool = False,
 ) -> dict[str, str]:
     """The hero's typed surrender stops a native fight and pays real gold to its winner."""
-    if dialogue.llm.name != "fake":
-        raise GameError("scenario hero_yield requires LLM=fake")
+    off = model_off(dialogue)
+    phrase = "Сдаюсь, забирай золото, только не бей"
+    off.given(
+        "дано: Лобарт принимает сдачу героя" + (" с унижением" if humiliating else " без унижения"),
+        who=LOBART, when=phrase,
+        calls=[ToolCall("accept_surrender", {
+            "take": ["gold"], "words": "Ладно, живи. Золото моё.", "humiliate": humiliating,
+        })],
+    )
+    off.silent("дано: Лобарт молчит (сдача героя принята)", who=LOBART, when=phrase)
     await asyncio.to_thread(dialogue.personas.warm)
     await link.wait_world()
     await link.debug("skip_important", near=LOBART)
@@ -535,12 +551,26 @@ async def hero_yield(
         await link.story_effect(LOBART, [{"do": "create", "item": GOLD, "count": 100 - hero_gold},
                                        {"do": "give", "item": GOLD, "count": 100 - hero_gold}])
     before = await link.story_eval(LOBART, gold)
-    original, original_quick = dialogue.llm, dialogue.quick
+    original_quick = dialogue.quick
+    dialogue.quick = None
     original_hits = mercy.barks.hits if mercy.barks is not None else False
+    original_humiliate = mercy.barks.humiliate if mercy.barks is not None else None
     if humiliating and mercy.barks is not None:
-        mercy.barks.hits = False  # the setup hit must not consume the scene's fake phrase
-    if humiliating and dialogue.quick is None:
-        dialogue.quick = FakeBackend("[hostile] Вот тебе и пощада!", delay=0)
+        mercy.barks.hits = False
+        off.given(
+            "дано: реплика Лобарта — крик при унижении героя", who=LOBART,
+            when="сдался тебе и стоит перед тобой на коленях", line="[hostile] Вот тебе и пощада!",
+        )
+
+        async def given_bark(conv: Conversation, target: str) -> None:
+            assert original_humiliate is not None
+            dialogue.quick = off
+            try:
+                await original_humiliate(conv, target)
+            finally:
+                dialogue.quick = None
+
+        mercy.barks.humiliate = given_bark  # type: ignore[method-assign]
     samples = []
     typed_at = time.monotonic()
 
@@ -555,12 +585,6 @@ async def hero_yield(
             })
 
     link.listeners.append(record)
-    phrase = "Сдаюсь, забирай золото, только не бей"
-    script = ClaimScript(said=[(phrase, FakeStep(tool_calls=[ToolCall(
-        "accept_surrender", {"take": ["gold"], "words": "Ладно, живи. Золото моё.",
-                             "humiliate": humiliating},
-    )]))], told=[], default="")
-    dialogue.llm = script
     results: dict[str, str] = {}
     try:
         await link.detach(LOBART)
@@ -582,10 +606,7 @@ async def hero_yield(
             return _logged(results)
         typed_at = time.monotonic()
         await link.debug("type", text=phrase)
-        accepted = await _until(lambda: bool(mercy.chronicle.facts("hero_yield")), 8)
-        results["accepted"] = f"{'done' if accepted else 'failed'} (outcomes={script.outputs})"
-        if not accepted:
-            return _logged(results)
+        await _until(lambda: bool(mercy.chronicle.facts("hero_yield")), 8)
         at = time.monotonic()
         stopped = await _until_async(
             lambda: link.npc_view([LOBART]),
@@ -648,18 +669,29 @@ async def hero_yield(
                 else "failed"
             )
             results["scene_samples"] = "done " + json.dumps(samples, ensure_ascii=False)
+        conv = dialogue.conversations.get(LOBART)
+        if conv is not None and conv.reply is not None:
+            await conv.reply
         return _logged(results)
     finally:
         link.listeners.remove(record)
-        dialogue.llm, dialogue.quick = original, original_quick
+        dialogue.quick = original_quick
         if mercy.barks is not None:
             mercy.barks.hits = original_hits
+            if original_humiliate is not None:
+                mercy.barks.humiliate = original_humiliate  # type: ignore[method-assign]
 
 
 async def combat_barks(
     link: GameLink, dialogue: DialogueManager, barks: CombatBarks,
 ) -> dict[str, str]:
-    """Start a fight, then measure a real hero hit with the participant's model slot ready."""
+    """A real hero hit produces a given cry through the ordinary overlay and voice path."""
+    off = model_off(dialogue)
+    for line in ("[pain] Не лезь!", "[pain] Ай, больно!"):
+        off.given(
+            "дано: реплика Лобарта — крик от удара героя", who=LOBART,
+            when="тебе больно досталось", line=line,
+        )
     await link.wait_world()
     await link.debug("skip_important", near=LOBART)
     await attach_when_free(link, LOBART)
@@ -668,11 +700,8 @@ async def combat_barks(
     await link.act(LOBART, "stop")
     await link.act(LOBART, "wait", ms=100)
     quick, rng = dialogue.quick, barks.rng
-    if quick is None:
-        dialogue.quick = FakeBackend(script=[
-            FakeStep("[pain] Не лезь!"), FakeStep("[pain] Ай, больно!"),
-        ], delay=0)
-    barks.rng = lambda: 0  # measure latency, with the probability gate covered by unit tests
+    dialogue.quick = off
+    barks.rng = lambda: 0  # the probability gate is covered by unit tests
     hits: list[CombatHit] = []
     voices: dict[str, bool] = {}
 
