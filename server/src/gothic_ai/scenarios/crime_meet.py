@@ -536,10 +536,11 @@ async def crime_meet(
         await _until(lambda: any(s.npc == LOBART and s.lie == key for s in amends.storylets.values()), 120)
         storylet = next((s for s in amends.storylets.values() if s.npc == LOBART and s.lie == key), None)
         price = (await link.story_eval(LOBART, [["field", ["inst", CUP], "VALUE"]]))[0]
+        limit = min(100, price) if price > 0 else 50  # the meeting rule when no VM price is available
         if not check(
             "victim_amends",
-            storylet is not None and storylet.stage != "done" and 0 < storylet.gold <= min(100, price),
-            {"storylet": storylet, "item_price": price},
+            storylet is not None and storylet.stage != "done" and 0 < storylet.gold <= limit,
+            {"storylet": storylet, "item_price": price, "gold_limit": limit},
         ):
             return _logged(results)
         assert storylet is not None
