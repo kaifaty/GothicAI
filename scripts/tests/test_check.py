@@ -78,9 +78,9 @@ def repository(tmp_path):
     return tmp_path, groups
 
 
-def selection(repository, *paths, event="pull_request"):
+def selection(repository, *paths, event="pull_request", level="full"):
     root, groups = repository
-    return check.select_groups(root, paths, event=event, groups=groups)
+    return check.select_groups(root, paths, event=event, groups=groups, level=level)
 
 
 def selected_files(matrix):
@@ -111,6 +111,17 @@ def test_imports_cross_relative_modules_and_project_boundary(repository):
         "lib/tests/test_transitive.py",
         "app/tests/test_cross.py",
     }
+    root, _ = repository
+    (root / "lib/tests/helper.py").write_text("from libpkg.value import VALUE\n")
+    (root / "lib/tests/test_helper_chain.py").write_text("from helper import VALUE\n")
+    full = selected_files(selection(repository, "lib/src/libpkg/value.py"))
+    direct = selected_files(selection(repository, "lib/src/libpkg/value.py", level="direct"))
+    assert {"lib/tests/test_transitive.py", "app/tests/test_cross.py"} <= full
+    assert not {"lib/tests/test_transitive.py", "app/tests/test_cross.py"} & direct
+    assert direct == {
+        "lib/tests/test_direct.py", "lib/tests/test_from_package.py", "lib/tests/test_helper_chain.py"
+    }
+    assert direct <= full
 
 
 def test_relative_named_import_follows_intermediate_source(repository, monkeypatch):
@@ -135,13 +146,14 @@ def test_relative_named_import_follows_intermediate_source(repository, monkeypat
     }
 
 
-def test_conftest_selects_only_tests_below_its_directory(repository):
-    assert selected_files(selection(repository, "app/tests/nested/conftest.py")) == {
+@pytest.mark.parametrize("level", ["full", "direct"])
+def test_conftest_selects_only_tests_below_its_directory(repository, level):
+    assert selected_files(selection(repository, "app/tests/nested/conftest.py", level=level)) == {
         "app/tests/nested/test_nested.py", "app/tests/nested/test_untouched.py"
     }
     root, _ = repository
     (root / "app/tests/nested/conftest.py").write_text("from apppkg.helpers import flag\n")
-    assert selected_files(selection(repository, "app/src/apppkg/helpers.py")) == {
+    assert selected_files(selection(repository, "app/src/apppkg/helpers.py", level=level)) == {
         "app/tests/nested/test_nested.py", "app/tests/nested/test_untouched.py"
     }
 
@@ -227,10 +239,13 @@ def test_project_config_selects_whole_group(repository, filename, monkeypatch, c
     monkeypatch.setattr(sys, "argv", ["check.py", "plan"])
     assert check.main() == 0
     lines = capsys.readouterr().out.splitlines()
-    assert len(lines) == 1
+    assert len(lines) == 2
     assert lines[0].startswith("app: whole group: ")
     assert filename in lines[0]
     assert "tests/" not in lines[0]
+    assert lines[1].startswith("In CI: app:")
+    assert filename in lines[1]
+    assert "tests/" not in lines[1]
 
 
 @pytest.mark.parametrize("filename", ["pyproject.toml", "uv.lock"])
@@ -364,6 +379,60 @@ def test_more_than_sixty_percent_expands_to_whole_group(repository):
     assert whole[0]["whole_group"]
     assert whole[0]["command"] == "uv run --locked --with pytest-timeout pytest -q -rs --timeout=120 --timeout-method=signal"
     assert whole[0]["reasons"] == {}
+    direct = selection(repository, *paths[:4], level="direct")
+    assert selected_files(direct) == set(paths[:4])
+    assert direct[0]["whole_group"] is None
+    assert set(direct[0]["reasons"]) == set(paths[:4])
+
+
+@pytest.mark.parametrize("mode, arguments, expected_level", [
+    ("run", [], "direct"),
+    ("run", ["--all"], "full"),
+    ("ci-matrix", ["--event", "pull_request"], "full"),
+    ("plan", [], None),
+])
+def test_cli_routes_levels_and_summarizes_ci(repository, monkeypatch, capsys,
+                                             mode, arguments, expected_level):
+    root, groups = repository
+    matrices = {
+        level: [{"name": "fixture", "dir": ".", "command": f"pytest {level}.py",
+                 "timeout": 1, "platform": "ubuntu-24.04", "files": [f"{level}.py"],
+                 "whole_group": "more than 60% selected (rule 10)" if level == "full" else None,
+                 "reasons": {} if level == "full" else {"direct.py": ["selected direct"]}}]
+        for level in ("direct", "full")
+    }
+    levels, commands = [], []
+
+    def select(*args, level="full", **kwargs):
+        levels.append(level)
+        return matrices[level]
+
+    monkeypatch.setattr(check, "__file__", str(root / "scripts/check.py"))
+    monkeypatch.setattr(check, "GROUPS", groups)
+    monkeypatch.setattr(check, "changed_paths", lambda *args, **kwargs: ["changed.py"])
+    monkeypatch.setattr(check, "select_groups", select)
+    monkeypatch.setattr(check.subprocess, "run", lambda command, **kwargs: commands.append(command))
+    monkeypatch.setattr(sys, "argv", ["check.py", mode, *arguments])
+    assert check.main() == 0
+    output = capsys.readouterr().out
+    if mode == "plan":
+        assert levels == ["direct", "full"]
+        lines = output.splitlines()
+        ci_lines = [line for line in lines if line.startswith("In CI:")]
+        assert len(ci_lines) == 1 and "rule 10" in ci_lines[0]
+        assert output.index("selected direct") < output.index("In CI:")
+        assert "full.py" not in output
+        assert commands == []
+    elif mode == "ci-matrix":
+        assert levels == ["full"]
+        assert json.loads(output) == [
+            {key: value for key, value in group.items() if key != "reasons"}
+            for group in matrices["full"]
+        ]
+        assert commands == []
+    else:
+        assert levels == [expected_level]
+        assert commands == [["pytest", f"{expected_level}.py"]]
 
 
 def test_local_changes_include_commits_index_worktree_and_untracked(repository):
@@ -409,7 +478,8 @@ def test_real_full_path_references_cross_group_boundaries(parts, expected):
 
 @pytest.mark.parametrize("filename", ["game.py", "voice.py"])
 def test_real_game_change_selects_server_importers(filename):
-    matrix = check.select_groups(ROOT, ["/".join(("server", "src", "gothic_ai", filename))])
+    changed = "/".join(("server", "src", "gothic_ai", filename))
+    matrix = check.select_groups(ROOT, [changed])
     files = selected_files(matrix)
     assert {group["name"] for group in matrix} == {"server", "scripts-torch"}
     assert "scripts/tests/test_body_live_capture.py" in files
@@ -418,6 +488,13 @@ def test_real_game_change_selects_server_importers(filename):
     assert "server/tests/test_body_control.py" in files
     total = check.discover_tests(ROOT)["server"]
     assert files == set(total) | {"scripts/tests/test_body_live_capture.py"}
+    direct = check.select_groups(ROOT, [changed], level="direct")
+    direct_files = selected_files(direct)
+    assert direct_files <= files
+    assert all(group["whole_group"] is None for group in direct)
+    if filename == "voice.py":
+        assert len(direct_files) < 20
+        assert "server/tests/test_voice.py" in direct_files
 
 
 def test_real_bridge_change_selects_only_text_references():

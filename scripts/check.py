@@ -319,12 +319,13 @@ def import_graph(root: Path, groups: tuple[Group, ...], files: list[str], deps: 
     return reverse
 
 
-def import_dependents(graph: dict[str, set[str]], paths: Iterable[str]) -> set[str]:
+def import_dependents(graph: dict[str, set[str]], paths: Iterable[str], *,
+                      through: set[str] | None = None) -> set[str]:
     visited = set(paths)
     pending = deque(visited)
     while pending:
         for importer in graph.get(pending.popleft(), ()):
-            if importer not in visited:
+            if importer not in visited and (through is None or importer in through):
                 visited.add(importer)
                 pending.append(importer)
     return visited
@@ -349,9 +350,11 @@ def documentation(root: Path, path: str) -> bool:
 
 
 def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pull_request",
-                  groups: tuple[Group, ...] | None = None) -> list[dict]:
+                  groups: tuple[Group, ...] | None = None, level: str = "full") -> list[dict]:
     """Return runnable Python selections. Future E2E selection stays outside this function."""
     groups = GROUPS if groups is None else groups
+    if level not in {"direct", "full"}:
+        raise ValueError(f"Unsupported selection level: {level}")
     changed = sorted(set(changed_files))
     files = git_files(root, untracked=True)
     deps = dependencies(root, groups)
@@ -377,6 +380,10 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
     reverse = (import_graph(root, groups, sorted(set(files) | set(changed)), deps, parse_groups=parse_groups)
                if parse_groups else {})
     tests = discover_tests(root, groups, graph=reverse)
+    test_modules = all_tests | {
+        path for path in files if path.endswith(".py")
+        and ("tests" in PurePosixPath(path).parts or PurePosixPath(path).name == "conftest.py")
+    }
     reasons: dict[str, set[str]] = defaultdict(set)
     whole_groups: dict[str, set[str]] = defaultdict(set)
 
@@ -411,7 +418,10 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
                 parent = str(PurePosixPath(path).parent) + "/"
                 select((p for p in all_tests if p.startswith(parent)), reason + ": fixture scope (rule 3)")
             elif group and path.endswith(".py"):
-                select(all_tests & import_dependents(reverse, [path]), reason + ": import dependency (rules 2/3/5)")
+                through = test_modules if level == "direct" else None
+                dependency = "direct import dependency" if level == "direct" else "import dependency"
+                select(all_tests & import_dependents(reverse, [path], through=through),
+                       reason + f": {dependency} (rules 2/3/5)")
             elif not path.endswith(".py"):
                 candidates = [p for p in all_tests if owner(p, groups) == group] if group else all_tests
                 matches = [p for p in candidates if PurePosixPath(path).name in texts.get(p, "")]
@@ -424,7 +434,7 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
         selected = [p for p in tests[group.name] if p in reasons]
         if not selected:
             continue
-        if not whole_groups[group.name] and len(selected) * 5 > len(tests[group.name]) * 3:
+        if level == "full" and not whole_groups[group.name] and len(selected) * 5 > len(tests[group.name]) * 3:
             reason = "more than 60% selected (rule 10)"
             select(tests[group.name], reason)
             whole_groups[group.name].add(reason)
@@ -462,12 +472,16 @@ def main() -> int:
     ci.add_argument("--event", choices=("pull_request", "workflow_dispatch"), required=True)
     ci.add_argument("--base", default="origin/main")
     for name in ("plan", "run"):
-        subparsers.add_parser(name).add_argument("--base", default="origin/main")
+        local = subparsers.add_parser(name)
+        local.add_argument("--base", default="origin/main")
+        if name == "run":
+            local.add_argument("--all", action="store_true", help="Run the full CI selection")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     event = args.event if args.mode == "ci-matrix" else "pull_request"
     paths = [] if event == "workflow_dispatch" else changed_paths(root, args.base, working_tree=args.mode != "ci-matrix")
-    selections = select_groups(root, paths, event=event)
+    level = "full" if args.mode == "ci-matrix" or (args.mode == "run" and args.all) else "direct"
+    selections = select_groups(root, paths, event=event, level=level)
     if args.mode == "ci-matrix":
         print(json.dumps([{k: v for k, v in group.items() if k != "reasons"} for group in selections], separators=(",", ":")))
         return 0
@@ -480,6 +494,14 @@ def main() -> int:
             print(f"  {path}: {'; '.join(reasons)}", flush=True)
     if not selections:
         print("No Python tests selected.")
+    if args.mode == "plan":
+        full = select_groups(root, paths, event=event, level="full")
+        for group in full:
+            detail = ("whole group: " + group["whole_group"] if group["whole_group"] else
+                      f"test files: {len(group['files'])}")
+            print(f"In CI: {group['name']}: {detail}", flush=True)
+        if not full:
+            print("In CI: no Python tests selected.")
     if args.mode == "run":
         for group in selections:
             try:
