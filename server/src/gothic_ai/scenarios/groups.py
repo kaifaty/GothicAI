@@ -9,6 +9,7 @@ from . import __path__
 OFF, GIVEN, LIVE = set(), set(), set()
 RUN = {}
 _groups = {"OFF": OFF, "GIVEN": GIVEN, "LIVE": LIVE}
+_declared_in = {}
 _modules = [places, scenario_fight_reactions]
 _modules.extend(
     import_module(info.name)
@@ -17,6 +18,11 @@ _modules.extend(
 )
 for _module in _modules:
     for _name, (_group, _run) in getattr(_module, "SCENARIOS", {}).items():
+        if _name in _declared_in:
+            raise ValueError(
+                f"scenario {_name} declared in both {_declared_in[_name]} and {_module.__name__}"
+            )
+        _declared_in[_name] = _module.__name__
         _groups[_group].add(_name)
         if _run is not None:
             RUN[_name] = _run

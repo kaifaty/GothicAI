@@ -1,8 +1,10 @@
 """CLI defaults start the director only for ordinary play."""
 
 import asyncio
+import importlib.util
 import json
-from types import SimpleNamespace
+import pkgutil
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -63,7 +65,9 @@ def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
 def test_scenario_groups_match_main_census():
     from gothic_ai.scenarios.groups import GIVEN, LIVE, OFF, RUN
 
-    # Snapshot of origin/main at 1591a1472ad5; independent of the scenario declarations.
+    # Preserve groups and RUN settings from origin/main at 1591a1472ad5.
+    # Omit new scenarios to avoid shared edits when adding them.
+    # Update existing entries only for intentional changes to their group or RUN settings.
     expected = {
         "amends": ("GIVEN", {"save": True, "timeout": 240}),
         "amends_deal": ("GIVEN", {"save": True, "timeout": 240}),
@@ -212,8 +216,32 @@ def test_scenario_groups_match_main_census():
         "xardas_money": ("GIVEN", {"save": False, "timeout": 240}),
     }
     for group, actual in (("OFF", OFF), ("GIVEN", GIVEN), ("LIVE", LIVE)):
-        assert actual == {name for name, (declared, _) in expected.items() if declared == group}
-    assert RUN == {name: run for name, (_, run) in expected.items() if run is not None}
+        assert actual & expected.keys() == {
+            name for name, (declared, _) in expected.items() if declared == group
+        }
+    assert {name: run for name, run in RUN.items() if name in expected} == {
+        name: run for name, (_, run) in expected.items() if run is not None
+    }
+
+
+def test_scenario_groups_reject_duplicate_names(monkeypatch):
+    from gothic_ai.scenarios import groups
+
+    first = ModuleType("gothic_ai.scenarios.first")
+    second = ModuleType("gothic_ai.scenarios.second")
+    first.SCENARIOS = {"duplicate": ("OFF", {"save": False, "timeout": 240})}
+    second.SCENARIOS = first.SCENARIOS
+    modules = {module.__name__: module for module in (first, second)}
+    monkeypatch.setattr(pkgutil, "iter_modules", Mock(return_value=[
+        SimpleNamespace(name=name) for name in modules
+    ]))
+    monkeypatch.setattr(importlib, "import_module", modules.__getitem__)
+    spec = importlib.util.spec_from_file_location(groups.__name__, groups.__file__)
+    fresh = importlib.util.module_from_spec(spec)
+    with pytest.raises(ValueError, match=(
+        "scenario duplicate declared in both gothic_ai.scenarios.first and gothic_ai.scenarios.second"
+    )):
+        spec.loader.exec_module(fresh)
 
 
 def test_every_cli_scenario_has_exactly_one_model_group(monkeypatch, capsys):
