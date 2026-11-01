@@ -64,6 +64,12 @@ MainWindow::MainWindow(Device& device)
 
   //renderer.resetSwapchain();
   setupUi();
+  TestBench::openMenu = [this](std::string_view menu) {
+    rootMenu.setMenu(menu,KeyCodec::Log);
+    if(auto pl = Gothic::inst().player())
+      rootMenu.setPlayer(*pl);
+    clearInput();
+    };
 
   barBack    = Resources::loadTexture("BAR_BACK.TGA");
   barHp      = Resources::loadTexture("BAR_HEALTH.TGA");
@@ -133,6 +139,7 @@ MainWindow::MainWindow(Device& device)
   }
 
 MainWindow::~MainWindow() {
+  TestBench::openMenu = nullptr;
   GameMusic::inst().stopMusic();
   Gothic::inst().cancelLoading();
   device.waitIdle();

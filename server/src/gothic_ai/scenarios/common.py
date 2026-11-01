@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from collections.abc import AsyncIterator, Callable, Collection, Sequence
@@ -20,7 +21,16 @@ from ..llm import Item, LLMBackend, LLMEvent, Message, Tool, ToolCall, ToolChoic
 from ..llm.fake import FakeBackend, FakeStep
 from ..llm.off import OffBackend
 from ..perception import BEASTS, trace_name
-from ..protocol import ActionResult, GameMessage, NpcActResult, NpcIdle, PerceptionHeld, Saved
+from ..protocol import (
+    ActionResult,
+    GameMessage,
+    NpcActResult,
+    NpcIdle,
+    NpcRoster,
+    PerceptionHeld,
+    RosterEntry,
+    Saved,
+)
 from ..sightings import Sighting
 from ..talk import TalkDesk
 
@@ -277,6 +287,82 @@ async def wait_npc_visibility(
         )
 
     return await _until_async(ready, bool, timeout), detail
+
+
+async def prepare_npc_parking(
+    link: GameLink, npc: str, waypoint: str, position: tuple[float, float, float],
+) -> tuple[bool, dict[str, Any]]:
+    """Keep a distant extra outside the scene, without requiring an initialized still pose."""
+    receipts: dict[str, NpcActResult] = {}
+
+    def record(message: GameMessage) -> None:
+        if isinstance(message, NpcActResult) and message.npc == npc:
+            receipts[message.id] = message
+
+    link.listeners.append(record)
+    try:
+        # Crowded parking points can keep distant extras stepping around one another.
+        await link.debug("skip_important", near=npc)
+        await link.debug("npc_goto", npc=npc, waypoint=waypoint)
+        action = await link.npc_act(
+            npc, "start_activity", state="ZS_STAND_WP", waypoint=waypoint, minutes=120, place=False,
+        )
+        await _until(lambda: action in receipts, 5)
+        receipt = receipts.get(action)
+        snapshot = await link.snapshot(npc, fresh=True)
+        horizontal = math.hypot(snapshot.npc.pos[0] - position[0], snapshot.npc.pos[2] - position[2])
+        distance = snapshot.player.distance if snapshot.player is not None else 0
+        ready = receipt is not None and receipt.status == "queued" and horizontal <= 600 and distance >= 8000
+        return ready, {
+            "npc": npc, "point": waypoint, "receipt": receipt.model_dump() if receipt else None,
+            "pos": snapshot.npc.pos, "horizontal": horizontal, "hero_distance": distance,
+        }
+    finally:
+        link.listeners.remove(record)
+
+
+async def prepare_street_theft_witness(
+    link: GameLink, npc: str, waypoint: str, item: str,
+) -> tuple[bool, dict[str, Any]]:
+    """Prove the initialized street witness sees both the hero and the native dropped item."""
+    roster_serial = 0
+    people: dict[str, RosterEntry] = {}
+
+    def record(message: GameMessage) -> None:
+        nonlocal roster_serial, people
+        if isinstance(message, NpcRoster):
+            roster_serial += 1
+            entries = {entry.id.upper(): entry for entry in message.npcs}
+            people = entries if message.full else {**people, **entries}
+
+    link.listeners.append(record)
+    try:
+        await link.debug("teleport", near=npc, distance=450)
+        # Keep the initialized activity while the native drop animation finishes.
+        await link.debug("npc_goto", npc=npc, waypoint=waypoint, face="PC_HERO")
+        after = roster_serial
+        visible, detail = await wait_npc_visibility(link, npc, "HERO", timeout=5)
+        free = await _until(
+            lambda: roster_serial > after
+            and npc in people and people[npc].activity == "routine"
+            and people[npc].state == "ZS_STAND_WP"
+            and not link.body_owned(npc),
+            5,
+        )
+        entry = people.get(npc)
+        cup = next((
+            ground for ground in detail.get("view", {}).get("items", []) if ground.get("item") == item
+        ), None)
+        detail.update(
+            fresh_roster=free, roster=entry.model_dump() if entry is not None else None, cup=cup,
+        )
+        return (
+            visible and free and 250 <= detail.get("distance", 0) <= 700
+            and cup is not None and cup.get("hero_cm") is not None and cup["hero_cm"] <= 800,
+            detail,
+        )
+    finally:
+        link.listeners.remove(record)
 
 
 async def wait_message[M: GameMessage](

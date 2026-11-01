@@ -1,4 +1,5 @@
 #include "interactive.h"
+#include "loadprobe.h"
 
 #include <Tempest/Painter>
 #include <Tempest/Log>
@@ -65,6 +66,7 @@ Interactive::Interactive(Vob* parent, World &world, const asset::VMovableObject&
     startContents = reinterpret_cast<const asset::VContainer&>(vob).contents;
 
   if(isContainer() && (flags&Flags::Startup)==Flags::Startup) {
+    LoadProbe::Vobs::Scope probe("script_contents");
     auto& container = reinterpret_cast<const asset::VContainer&>(vob);
     locked        = container.locked;
     keyInstance   = container.key;

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Summarize <OUT>/runs/*/game.log as the load probe's measurement CSV."""
+import argparse
 import csv
 from pathlib import Path
 import re
+from statistics import median
 import sys
 
 
@@ -18,27 +20,44 @@ TEXTURE_FIELDS.extend(f"tex_source_{source}_{metric}" for source in ("base", "hd
 TEXTURE_FIELDS.extend(f"tex_{category}_{metric}" for category in ("landscape", "static", "dynamic", "other")
                       for metric in ("bytes", "n"))
 HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in TEXTURE_FIELDS)
+VOBS_HEADER = "run,seg,world,kind,name,count,ms,inclusive_ms,stage_ms,share_pct,unique,hits,misses,cold_miss_pct,repeat_n".split(",")
+
+
+def fields(text):
+    row = {}
+    for key, value in re.findall(r"(\w+)=(\S+)", text):
+        try:
+            row[key] = float(value)
+        except ValueError:
+            row[key] = value
+    return row
 
 
 def parse(path):
     rows = []
     marks = {}
+    pending_vobs = []
     with open(path, errors="replace") as source:
         for line in source:
+            vobs = re.search(r"\[loadprobe-vobs\] (.*)", line)
+            if vobs:
+                pending_vobs.append(fields(vobs.group(1)))
+                continue
             match = re.search(r"\[loadprobe(-(?:malloc|textures))?\] stage=(\S+) (.*)", line)
             if not match:
                 continue
             row = {"stage": match.group(2)}
-            for key, value in re.findall(r"(\w+)=(\S+)", match.group(3)):
-                try:
-                    row[key] = float(value)
-                except ValueError:
-                    row[key] = value
+            row.update(fields(match.group(3)))
             key = (row["stage"], row["t_ms"])
             if match.group(1):
                 if key in marks:
                     marks[key].update(row)
             else:
+                if row["stage"] == "vobs":
+                    row["vobs_breakdown"] = pending_vobs
+                    pending_vobs = []
+                elif row["stage"] in ("session_begin", "change_begin", "world_begin"):
+                    pending_vobs = []
                 rows.append(row)
                 marks[key] = row
     return rows
@@ -121,10 +140,60 @@ def summary_rows(out):
             yield values
 
 
+def vobs_rows(out):
+    for run in sorted(Path(out).glob("**/runs/*/game.log")):
+        for index, segment in enumerate(segments(parse(run))):
+            world = next((row["world"] for row in segment if row["stage"] == "world_begin"), "?")
+            for stage in segment:
+                if stage["stage"] != "vobs":
+                    continue
+                for detail in stage.get("vobs_breakdown", []):
+                    row = {key: detail[key] for key in VOBS_HEADER if key in detail}
+                    row.update(run=run.parent.name, seg=index, world=world.replace(".ZEN", ""),
+                               name=detail.get("name", "meshes"), stage_ms=stage["stage_ms"], repeat_n=1)
+                    if "ms" in row:
+                        row["share_pct"] = row["ms"] / row["stage_ms"] * 100 if row["stage_ms"] else 0
+                    if row["kind"] == "meshes":
+                        requests = row["hits"] + row["misses"]
+                        row["cold_miss_pct"] = row["misses"] / requests * 100 if requests else 0
+                    yield row
+
+
+def median_vobs_rows(rows):
+    groups = {}
+    keys = ("run", "seg", "world", "kind", "name")
+    for row in rows:
+        groups.setdefault(tuple(row[key] for key in keys), []).append(row)
+    for key, repeats in groups.items():
+        result = dict(zip(keys, key))
+        for field in VOBS_HEADER:
+            values = [row[field] for row in repeats if field in row and field not in keys]
+            if values:
+                result[field] = median(values)
+        result["repeat_n"] = len(repeats)
+        yield result
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("out", nargs="?", default=".")
+    parser.add_argument("--vobs", action="store_true", help="emit the vobs type/substage CSV, including nested repeat directories")
+    parser.add_argument("--median", action="store_true", help="with --vobs, aggregate repeats by run, segment, world and counter")
+    args = parser.parse_args()
+    if args.median and not args.vobs:
+        parser.error("--median requires --vobs")
+    if args.vobs:
+        rows = vobs_rows(args.out)
+        if args.median:
+            rows = median_vobs_rows(rows)
+        writer = csv.DictWriter(sys.stdout, fieldnames=VOBS_HEADER, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows({key: round(value, 6) if isinstance(value, float) else value
+                          for key, value in row.items()} for row in rows)
+        return
     writer = csv.writer(sys.stdout, lineterminator="\n")
     writer.writerow(HEADER)
-    writer.writerows(summary_rows(sys.argv[1] if len(sys.argv) > 1 else "."))
+    writer.writerows(summary_rows(args.out))
 
 
 if __name__ == "__main__":

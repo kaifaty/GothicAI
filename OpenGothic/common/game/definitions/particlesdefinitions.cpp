@@ -1,4 +1,5 @@
 #include "particlesdefinitions.h"
+#include "loadprobe.h"
 
 #include <Tempest/Log>
 
@@ -69,7 +70,9 @@ std::shared_ptr<Def::ParticleEffect> ParticlesDefinitions::implGetDirect(std::st
   if(name=="PFX_GAI_PEE")
     return peeStream();
 
+  LoadProbe::Vobs::Scope probe("script_vm");
   auto ret=ParticleContent::base(*vm,name);
+  probe.stop();
   if(ret==nullptr) {
     if(!relaxed)
       Log::e("invalid particle system: \"",name,"\"");
@@ -87,7 +90,10 @@ std::shared_ptr<Def::ParticleEffect> ParticlesDefinitions::peeStream() {
     return nullptr;
   auto ret = std::make_shared<Def::ParticleEffect>();
   ret->vis_tex_is_quadpoly = 1;
-  vm->init_instance(ret, id);
+  {
+    LoadProbe::Vobs::Scope probe("script_vm");
+    vm->init_instance(ret, id);
+  }
   // one key a hundred seconds long: the model keeps an effect only for its preferred time (MdlVisual::tick);
   // Npc::tickPeeStream stops it when the pose ends
   ret->pps_value          = PeeStream::pps;

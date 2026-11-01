@@ -1,4 +1,5 @@
 #include "gothic.h"
+#include "loadprobe.h"
 
 #include <Tempest/Log>
 #include <Tempest/TextCodec>
@@ -345,6 +346,7 @@ const Tempest::Texture2d* Gothic::loadingBanner() const {
   }
 
 SoundFx *Gothic::loadSoundFx(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("sound_load");
   if(name.empty())
     return nullptr;
 
@@ -366,6 +368,7 @@ SoundFx *Gothic::loadSoundFx(std::string_view name) {
   }
 
 SoundFx *Gothic::loadSoundWavFx(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("sound_load");
   auto cname = std::string(name);
 
   std::lock_guard<std::mutex> guard(syncSnd);
@@ -389,10 +392,12 @@ const VisualFx* Gothic::loadVisualFx(std::string_view name) {
   }
 
 const ParticleFx* Gothic::loadParticleFx(std::string_view name, bool relaxed) {
+  LoadProbe::Vobs::Scope probe("pfx_load");
   return particleDef->get(name,relaxed);
   }
 
 const ParticleFx* Gothic::loadParticleFx(const ParticleFx* base, const VisualFx::Key* key) {
+  LoadProbe::Vobs::Scope probe("pfx_load");
   return particleDef->get(base,key);
   }
 
