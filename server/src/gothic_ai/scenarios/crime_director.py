@@ -368,6 +368,8 @@ async def crime_director(
                 lambda: any(f.get("npc") == HILDA and f.get("crime") == cid for f in facts("silenced")), 20
             )
             cleared = await _until(lambda: not witness_concerns(cid), 10)
+            # Finish the queued deal confirmation before the next scene loads its save branch.
+            await _until(lambda: not dialogue.speaking(HILDA), 45)
             return check(
                 "silence_clears",
                 pressed == "sent" and paid and cleared and await has(GOLD) == before - price,
