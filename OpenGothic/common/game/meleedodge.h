@@ -65,14 +65,20 @@ namespace MeleeDodge {
   constexpr float RollCost      = 20.f;
   constexpr float HeavyRollCost = 30.f;
 
-  // forwardAxis > 0: forward held, < 0: back; strafeAxis > 0: right, < 0: left. Both axes: forward/back wins;
-  // neither: back.
-  Direction   direction(float forwardAxis, float strafeAxis);
+  // forwardAxis > 0: forward held, < 0: back; strafeAxis > 0: right, < 0: left; turnAxis the same for the keys that
+  // turn the hero in the key preset (the arrows), taken when no strafe key is held. Forward/back wins over a side;
+  // nothing held: back.
+  Direction   direction(float forwardAxis, float strafeAxis, float turnAxis = 0.f);
   // No armour: light.
   Kind        kind(std::optional<MeleeImpact::ArmorClass> armor);
   std::string animationName(Kind kind, Stance stance, Direction direction);
   Plan        plan(Kind kind, Stance stance, Direction direction);
   std::optional<Move> parseAnimation(std::string_view name);
+  // Gothic's jump backs (T_JUMPB, T_1HJUMPB, T_1HPARADEJUMPB, ...): some carry a defence window, yet are no parade
+  bool        isJumpBackAnimation(std::string_view name);
+  // A dodge may cut this BS_PARADE layer at once: a block parade proper (it has a defence window), not a jump
+  // back and not a dodge. Anything else that cannot be cut now refuses the dodge.
+  bool        cutsParade(std::string_view name, bool defenceWindow);
 
   Window      invulnerability(Kind kind);
   bool        invulnerable(Kind kind, uint64_t elapsedMs);

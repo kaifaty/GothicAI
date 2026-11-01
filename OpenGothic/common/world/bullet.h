@@ -96,6 +96,9 @@ class Bullet final : public DynamicWorld::BulletCallback {
     Tempest::Vec3             impactAt;
     bool                      impactKnown = false;
     bool                      spellPhysicsApplied = false;
+    // an arrow that went past a dodger inside the dodge's window (melee_dodge): it flies on as a miss and does
+    // not meet that npc again (compared, never dereferenced)
+    const Npc*                passedDodger = nullptr;
 
     MeshObjects::Mesh         view;
     std::string               visualName;

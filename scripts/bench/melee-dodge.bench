@@ -1,9 +1,14 @@
 # Melee dodge (melee_dodge, step 6.2 of the NRFTW port): the hero with a one-hander, in front of the fixture's
 # bandit in Onar's open field, dodges by its own key (`tap dodge`; the way from the movement keys held at the press)
-# back, left, right and forward, and forward-left (forward wins); then back under the bandit's blow (`dodge ...
+# back, left, right and forward, and forward-left (forward wins); then by the jump key itself, the default binding
+# (`tap jump`: back, with the strafe key left, with the turn key left); then back under the bandit's blow (`dodge ...
 # before`: as the blow is 100 ms from its contact, so the contact comes inside the dash's window, 40-360 ms, before
 # the hero is out of reach); last, in medium and heavy armour (the roll and the slow roll fall back to the dash while
-# their animations are not made).
+# their animations are not made). After each jump-key take `anims` logs what the hero plays: `bs=27` and the dash,
+# or nothing new where there is no dodge that way.
+# The flag off is the same file with MELEE_DODGE=0: the `tap jump` takes jump (`anims ... bs=8 ...: S_JUMP`, or a
+# climb), `tap dodge` does nothing (no `melee dodge` line), `dodge ... before` logs `refused, disabled`, and the
+# blow under it hits.
 # Every dodge writes `melee dodge PC_HERO: <way>, armour <class>, <move> <animation> [(no <missing names>)], cost <n>,
 # window <a>-<b> ms` in bench.log, or why there is none: `no dodge this way (no ...)`, `the original jump back`,
 # `refused, <reason>`. The blow inside the window writes `melee hit by BDT_1013_BANDIT_L at <ms> ms of dash 40-360 ms:
@@ -77,6 +82,35 @@ tap dodge
 wait 34
 release all
 wait 1200
+stop
+
+# The jump key is the dodge's default key while a melee weapon is drawn
+rec jump-key-back
+tap jump
+wait 100
+anims
+wait 1100
+stop
+
+rec jump-key-left
+press left
+tap jump
+wait 34
+release left
+wait 66
+anims
+wait 1100
+stop
+
+# No strafe key held: the keys that turn the hero give the side (the arrows of the preset)
+rec turn-key-left
+press turnl
+tap jump
+wait 34
+release turnl
+wait 66
+anims
+wait 1100
 stop
 
 rec under-blow

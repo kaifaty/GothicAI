@@ -39,14 +39,15 @@ namespace {
     }
   }
 
-MeleeDodge::Direction MeleeDodge::direction(float forwardAxis, float strafeAxis) {
+MeleeDodge::Direction MeleeDodge::direction(float forwardAxis, float strafeAxis, float turnAxis) {
   if(forwardAxis>0.f)
     return Direction::Forward;
   if(forwardAxis<0.f)
     return Direction::Back;
-  if(strafeAxis>0.f)
+  const float side = strafeAxis!=0.f ? strafeAxis : turnAxis;
+  if(side>0.f)
     return Direction::Right;
-  if(strafeAxis<0.f)
+  if(side<0.f)
     return Direction::Left;
   return Direction::Back;
   }
@@ -115,6 +116,20 @@ std::optional<MeleeDodge::Move> MeleeDodge::parseAnimation(std::string_view name
     default:  return std::nullopt;
     }
   return m;
+  }
+
+bool MeleeDodge::isJumpBackAnimation(std::string_view name) {
+  constexpr std::string_view tail = "JUMPB";
+  if(name.size()<tail.size()+2)
+    return false;
+  for(size_t i=0; i<tail.size(); ++i)
+    if(std::toupper(static_cast<unsigned char>(name[name.size()-tail.size()+i]))!=tail[i])
+      return false;
+  return std::toupper(static_cast<unsigned char>(name[0]))=='T' && name[1]=='_';
+  }
+
+bool MeleeDodge::cutsParade(std::string_view name, bool defenceWindow) {
+  return defenceWindow && !isJumpBackAnimation(name) && !parseAnimation(name).has_value();
   }
 
 MeleeDodge::Window MeleeDodge::invulnerability(Kind kind) {

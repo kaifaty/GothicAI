@@ -156,9 +156,11 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
     }
 
   // The melee dodge: its own key, or the jump key (by default) with a melee weapon or the fists drawn. The way is
-  // read from the movement keys now, relative to the hero's facing; none: back. Out of melee the jump key jumps.
+  // read from the movement keys now, relative to the hero's facing: forward/back, else the strafe keys, else the
+  // keys that turn the hero (the arrows); none: back. Out of melee the jump key jumps.
   if(pl!=nullptr && (a==Action::Dodge || (a==Action::Jump && KeyCodec::dodgeOnJump(mapping))) && dodgeKeyDodges(*pl)) {
-    dodgeRequest = MeleeDodge::direction(movement.forwardBackward.value(),movement.strafeRightLeft.value());
+    dodgeRequest = MeleeDodge::direction(movement.forwardBackward.value(),movement.strafeRightLeft.value(),
+                                         movement.turnRightLeft.value());
     return;
     }
   if(a==Action::Dodge)

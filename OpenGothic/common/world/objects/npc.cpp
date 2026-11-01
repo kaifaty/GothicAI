@@ -2107,7 +2107,8 @@ void Npc::updateMeleeShadow() {
           }
         diagnostic.initialGapCm = distance-window.reachCm;
         }
-      diagnostic.jumpback |= target->visual.pose().isJumpBack(owner.tickCount());
+      // a melee dodge is no jump back: a blow on it outside its window is not an evasion
+      diagnostic.jumpback |= !target->isMeleeDodging() && target->visual.pose().isJumpBack(owner.tickCount());
       diagnostic.retreatCm = std::max(diagnostic.retreatCm,Vec3::dotProduct(target->position()-diagnostic.targetStart,diagnostic.forward));
       // Closest points on the two capsule axes. This tracing-only summary uses
       // actual published poses; it never changes the collision query or damage.
@@ -4939,9 +4940,12 @@ void Npc::commitDamage() {
     // Observe the same pre-call defence predicates; damage and its RNG still run once below.
     const auto& targetPose = currentTarget->visual.pose();
     const bool down = currentTarget->isDown();
-    shadow->legacyDodge = !down && targetPose.isJumpBack(owner.tickCount()) &&
-                         currentTarget->fghAlgo.isInJumpBackAngle(*currentTarget,*this);
-    shadow->legacyBlock = !down && (!isMonster() || inventory().activeWeapon()!=nullptr) &&
+    // As takeDamage: a melee dodge evades inside its window only, and is neither a jump back nor a parade
+    const bool dodging = currentTarget->isMeleeDodging();
+    shadow->legacyDodge = !down && (dodging ? currentTarget->isMeleeDodgeInvulnerable() :
+                                    targetPose.isJumpBack(owner.tickCount()) &&
+                                    currentTarget->fghAlgo.isInJumpBackAngle(*currentTarget,*this));
+    shadow->legacyBlock = !down && !dodging && (!isMonster() || inventory().activeWeapon()!=nullptr) &&
                          currentTarget->fghAlgo.isInFocusAngle(*currentTarget,*this) &&
                          targetPose.isDefence(owner.tickCount());
     shadow->legacyHit = !down && !shadow->legacyDodge && !shadow->legacyBlock;
@@ -8145,9 +8149,13 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
 
   const auto now     = owner.tickCount();
   const auto before  = meleeStaminaIdentity(visual.pose(),now);
-  // Out of a parade (a BS_PARADE layer with a defence window, as the parry takes it) the dodge cuts it: a parade
-  // cannot be cut for its whole length otherwise. A blow's swing, a stumble or the jump back still hold.
-  const bool fromParade = meleeParadeLayer(visual.pose(),now).has_value();
+  // Out of a block parade the dodge cuts it: a parade cannot be cut for its whole length otherwise. Gothic's jump
+  // backs carry a defence window too (T_1HPARADEJUMPB, frames 1-12), but they are not cut (MeleeDodge::cutsParade):
+  // a dodge pressed in a jump back, a blow's swing or a stumble is refused as by any transition that holds.
+  bool fromParade = false;
+  for(const auto& layer:visual.pose().combatLayers(now))
+    if(layer.state==BS_PARADE && MeleeDodge::cutsParade(layer.sequence->name,!layer.sequence->data->defWindow.empty()))
+      fromParade = true;
   const auto* sq     = visual.startAnimAndGet(*this,chosen->name,0,BS_PARADE,fromParade);
   if(sq==nullptr || before==meleeStaminaIdentity(visual.pose(),now)) {
     meleeDodgeNote(dir+", armour "+armour+", "+moveText+": not taken, playing "+visual.pose().animNames(),

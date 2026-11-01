@@ -42,6 +42,14 @@ int main() {
   require(direction( 1.f, 1.f)==Direction::Forward,"forward-right takes forward");
   require(direction(-1.f,-1.f)==Direction::Back,   "back-left takes back");
   require(direction(-1.f, 1.f)==Direction::Back,   "back-right takes back");
+  // The keys that turn the hero (the arrows of the preset) give the side when no strafe key is held
+  require(direction( 0.f, 0.f,-1.f)==Direction::Left, "turn left alone dodges left");
+  require(direction( 0.f, 0.f, 1.f)==Direction::Right,"turn right alone dodges right");
+  require(direction( 0.f, 1.f,-1.f)==Direction::Right,"a strafe key wins over a turn key");
+  require(direction( 0.f,-1.f, 1.f)==Direction::Left, "strafe left wins over turn right");
+  require(direction( 1.f, 0.f,-1.f)==Direction::Forward,"forward wins over a turn key");
+  require(direction(-1.f, 0.f, 1.f)==Direction::Back, "back wins over a turn key");
+  require(direction( 0.f, 0.f, 0.f)==Direction::Back, "no key at all dodges back");
 
   // Kind: by the armour's class, none is light.
   require(kind(std::nullopt)==Kind::Dash,          "no armour dashes");
@@ -100,6 +108,18 @@ int main() {
   for(const char* other:{"T_1HJUMPB","T_JUMPB","T_1HPARADEJUMPB","T_FISTPARADEJUMPB","T_1HDASHBX","T_1HDASH",
                          "S_1HDASHB","T_BOWDASHB","T_1HROLLHEAVY","T_DASHB","T_1HSFINISH",""})
     require(!parseAnimation(other).has_value(),"other animations are not dodges");
+
+  // Out of a parade: a block parade is cut at once; a jump back (some carry a defence window) and a dodge are not.
+  for(const char* block:{"T_1HPARADE_0","T_1HPARADE_0_A2","T_1HPARADE_0_A3","T_2HPARADE_0","T_FISTPARADE_0","T_1HPARADE_O"})
+    require(cutsParade(block,true),"a block parade with its defence window is cut");
+  require(!cutsParade("T_1HPARADE_0",false),"a layer without a defence window is no parade");
+  for(const char* jump:{"T_1HPARADEJUMPB","T_2HPARADEJUMPB","T_FISTPARADEJUMPB","T_1HJUMPB","T_JUMPB","t_1hParadeJumpB"}) {
+    require(isJumpBackAnimation(jump),"Gothic's jump backs are told by name");
+    require(!cutsParade(jump,true),"a jump back is not cut, even with a defence window");
+    }
+  require(!isJumpBackAnimation("T_1HPARADE_0") && !isJumpBackAnimation("S_JUMP") && !isJumpBackAnimation("JUMPB"),
+          "a parade or a jump is no jump back");
+  require(!cutsParade("T_1HDASHB",true) && !cutsParade("T_2HROLLL",true),"a dodge is not cut by a dodge");
 
   // Invulnerability, from the start of the move, both ends included.
   require(!invulnerable(Kind::Dash,39), "dash: 39 ms is open");
