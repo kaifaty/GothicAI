@@ -4,12 +4,14 @@
 #include <memory>
 #include <thread>
 #include <exception>
+#include <utility>
 
 #include <Tempest/Signal>
 #include <Tempest/Dir>
 
 #include <zenkit/DaedalusVm.hh>
 
+#include "game/chronicle.h"
 #include "game/gamesession.h"
 #include "world/world.h"
 #include "ui/documentmenu.h"
@@ -122,6 +124,9 @@ class Gothic final {
     Npc*         player();
     Camera*      camera();
     auto         questLog() const -> const QuestLog*;
+    // the hero's chronicle for the diary (ai_bridge keeps it fresh; empty without the server)
+    auto         chronicle() const -> const ChronicleData& { return chronicleBook; }
+    void         setChronicle(ChronicleData data) { chronicleBook = std::move(data); }
 
     void         setupGlobalScripts();
 
@@ -335,6 +340,7 @@ class Gothic final {
 #endif
 
     std::unique_ptr<GameSession>            game, pendingGame;
+    ChronicleData                           chronicleBook;
     std::unique_ptr<FightAi>                fight;
     std::unique_ptr<CameraDefinitions>      camDef;
     std::unique_ptr<SoundDefinitions>       soundDef;
