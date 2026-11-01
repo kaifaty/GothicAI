@@ -463,6 +463,18 @@ vec4 fogOwnDepth() {
   }
 #endif
 
+#if defined(SOFT_PARTICLE)
+// A sprite fades over the last cm before the opaque scene behind it (a flame against a pot, a log, the ground)
+// and next to the camera, so no straight seam shows where its quad cuts through geometry.
+float softParticle() {
+  const float behind = linearDepth(texelFetch(gbufferDepth, ivec2(gl_FragCoord.xy), 0).r, scene.clipInfo);
+  const float own    = linearDepth(gl_FragCoord.z, scene.clipInfo);
+  const float touch  = clamp((behind-own)/SoftParticleDepth, 0.0, 1.0);
+  const float near   = clamp((own-SoftParticleNear.x)/(SoftParticleNear.y-SoftParticleNear.x), 0.0, 1.0);
+  return touch*touch*(3.0-2.0*touch) * near;
+  }
+#endif
+
 #if defined(FORWARD)
 void mainForward(vec4 t) {
   vec3  color = t.rgb;
@@ -479,6 +491,9 @@ void mainForward(vec4 t) {
   const vec4 fog = fogOwnDepth();
   color = color*fog.a + fog.rgb;
 
+#if defined(SOFT_PARTICLE)
+  alpha *= softParticle();
+#endif
   outColor = vec4(color,alpha);
   }
 #endif
@@ -486,10 +501,21 @@ void mainForward(vec4 t) {
 #if defined(EMISSIVE)
 void mainEmissive(vec4 t) {
   vec3 color = textureEmmisive(t.rgb);
+#if (MESH_TYPE==T_PFX) && !defined(MULTIPLY)
+  // A flame keeps its own luminance, so it reads brighter than the scene as the exposure rises at dusk and at
+  // night; the factor leaves it as it was under the noon sun (EmissiveSunRatio, common.glsl). The exposure does
+  // not see the fire itself, and the night's is hundreds of times the noon's: the gain stops at EmissiveMaxGain,
+  // as an eye that adapts to the fire it looks at.
+  color *= min(EmissiveSunRatio * scene.GSunIntensity * scene.exposure, EmissiveMaxGain);
+#endif
 #if defined(MAT_FOG)
   color *= fogOwnDepth().a;
 #endif
-  outColor = vec4(color,t.a);
+  float alpha = t.a;
+#if defined(SOFT_PARTICLE)
+  alpha *= softParticle();  // additive with SrcAlpha: the alpha weighs the added light
+#endif
+  outColor = vec4(color,alpha);
   }
 #endif
 

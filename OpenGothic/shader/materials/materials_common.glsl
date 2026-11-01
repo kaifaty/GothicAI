@@ -153,8 +153,15 @@ layout(binding = L_FogLut)           uniform sampler3D fogLut;
 layout(binding = L_FogLutMs)         uniform sampler3D fogLutMs;
 #endif
 
+#if defined(GL_FRAGMENT_SHADER) && (MESH_TYPE==T_PFX) && (defined(FORWARD) || (defined(EMISSIVE) && !defined(MULTIPLY))) && !defined(DEPTH_ONLY)
+// Soft particles: a sprite reads the opaque depth to fade where it meets the scene (pfxbucket.cpp binds it).
+#define SOFT_PARTICLE 1
+#endif
+
 #if defined(GL_FRAGMENT_SHADER) && (defined(WATER) || defined(GHOST))
 layout(binding = L_SceneClr)         uniform sampler2D sceneColor;
+layout(binding = L_GDepth  )         uniform sampler2D gbufferDepth;
+#elif defined(SOFT_PARTICLE)
 layout(binding = L_GDepth  )         uniform sampler2D gbufferDepth;
 #endif
 
