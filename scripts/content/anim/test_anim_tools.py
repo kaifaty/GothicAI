@@ -118,3 +118,48 @@ def test_stance_survives_soma_and_back(tmp_path):
     for n in ("BIP01 R HAND", "BIP01 L HAND", "BIP01 R FOOT", "BIP01 L FOOT", "BIP01 HEAD"):
         i = skel.index(n)
         assert np.linalg.norm(w0[i][:3, 3] - w1[i][:3, 3]) < 1.0, n  # cm
+
+
+def test_retime_keeps_ends_and_squeezes_phases():
+    import finish
+    rng = np.random.default_rng(5)
+    frames = 30
+    pos = np.zeros((frames, 2, 3))
+    pos[:, 0, 2] = -np.linspace(0, 200, frames)  # the root walks 2 m back at a constant pace
+    anim = ga.Animation(name="T", next="", layer=1, fps=25.0, frame_count=frames, node_indices=[0, 1],
+                        positions=pos, rotations=random_quats(rng, (frames, 2)))
+    out = finish.retime(anim, [(0, 0), (0.24, 0.06), (0.88, 0.36), (1.16, 0.56)])
+    assert out.frame_count == 15
+    assert np.allclose(out.positions[0], anim.positions[0]) and np.allclose(out.positions[-1], anim.positions[-1])
+    dots = np.abs((out.rotations[-1] * anim.rotations[-1]).sum(-1))
+    assert np.allclose(dots, 1.0, atol=1e-6)
+    z = out.positions[:, 0, 2]
+    assert np.all(np.diff(z) <= 1e-9)  # time never runs backwards
+    # Keys land exactly: the source's 0.88 s is now frame 9 (0.36 s), 76% of the way.
+    assert abs(z[9] + 200 * 0.88 / 1.16) < 0.5
+
+
+def test_content_pack_writes_index_overlay_and_records(tmp_path):
+    import json
+    import content_pack
+    rng = np.random.default_rng(2)
+    anim = ga.Animation(name="T_TESTDASHB", next="", layer=1, fps=25.0, frame_count=4, node_indices=[0],
+                        positions=rng.normal(size=(4, 1, 3)), rotations=random_quats(rng, (4, 1)))
+    src = tmp_path / "src" / "any-name.MAN.json"
+    src.parent.mkdir()
+    ga.write_animation(src, anim, source="test")
+    pack = tmp_path / "pack.json"
+    pack.write_text(json.dumps({"model": "HUMANS", "script": "HUMANS.MSB",
+                                "animations": [{"file": str(src), "blend_out": 0.2}]}))
+    content = tmp_path / "content"
+    sys.argv = ["content_pack.py", str(content), str(pack)]
+    content_pack.main()
+    models = content / "models"
+    index = json.loads((models / "models.json").read_text())
+    assert index["files"] == {"HUMANS-T_TESTDASHB.MAN": "HUMANS-T_TESTDASHB.MAN.json", "HUMANS.MSB": "HUMANS.MSB.json"}
+    overlay = json.loads((models / "HUMANS.MSB.json").read_text())
+    assert overlay["kind"] == "script-overlay" and (models / "HUMANS.MSB.bin").read_bytes() == b""
+    entry, = overlay["data"]["animations"]
+    assert (entry["name"], entry["first_frame"], entry["last_frame"], entry["blend_out"]) == ("T_TESTDASHB", 0, 3, 0.2)
+    back = ga.read_animation(models / "HUMANS-T_TESTDASHB.MAN.json")
+    assert back.frame_count == 4 and np.allclose(back.positions, anim.positions, atol=1e-4)
