@@ -108,7 +108,8 @@ def regression_runner(tmp_path):
     docs = tmp_path / "docs"
     docs.mkdir()
     (docs / "e2e.md").write_text(
-        "## Известные дефекты\n\n| Сценарий | Дефект main |\n|---|---|\n| `lie` | Known defect |\n"
+        "### Известные дефекты\n\n| сценарий | проверка | где видно | заметка |\n"
+        "|---|---|---|---|\n| `lie` | `check` | Mac | Known defect |\n\n### Группа 3 — живые наборы\n"
     )
     save = tmp_path / "slot1.sav"
     save.write_text("save")
@@ -187,7 +188,7 @@ def test_regression_ryzen_runs_three_slots_and_keeps_known_defects_failed(tmp_pa
     assert done.returncode == 1, done.stderr + done.stdout
     report = json.loads((tmp_path / "out/regression.json").read_text())
     assert [row["result"] for row in report["scenarios"]] == ["done", "failed", "done"]
-    assert report["scenarios"][1]["known_defect"] == "Known defect"
+    assert report["scenarios"][1]["known_defect"] == "`check`; Mac; Known defect"
     assert report["scenarios"][1]["exit_code"] == 0  # Failed checks still fail the row.
     assert report["scenarios"][0]["log"] == str(tmp_path / "out/graph/run-2/server.log")
     assert json.loads((tmp_path / "out/active.json").read_text())["peak"] == 3

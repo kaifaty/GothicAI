@@ -44,12 +44,12 @@ if any(RUN[name]["save"] for name in names):
         raise SystemExit(f"Missing SAVE: {save} (set SAVE to slot 1)")
 known = {}
 document = (root / "docs/e2e.md").read_text()
-section = re.search(r"^## Известные дефекты\s*\n(.*?)(?=^## |\Z)", document, re.M | re.S)
+section = re.search(r"^### Известные дефекты[ \t]*\n(.*?)(?=^#{2,3} |\Z)", document, re.M | re.S)
 if section:
     for line in section.group(1).splitlines():
-        cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")]
-        if line.startswith("|") and len(cells) >= 2 and cells[0] in RUN:
-            known[cells[0]] = cells[1]
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if line.startswith("|") and len(cells) == 4 and cells[0].strip("`") in RUN:
+            known[cells[0].strip("`")] = "; ".join(cells[1:])
 out.mkdir(parents=True, exist_ok=True)
 worktree = os.environ.get("RYZEN_WORKTREE") or (root.parent.name if "worktrees" in root.parts else root.name)
 slots = queue.Queue()
