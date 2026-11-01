@@ -50,7 +50,7 @@ GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout",
     Group("scripts", "scripts", (
         "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest",
         "--with", "numpy", "--with", "pillow", "--with", "matplotlib", "--with", "websockets",
-        "--with", "../launcher/core", *PYTEST,
+        "--with", "../launcher/core", "--with-editable", "../server", *PYTEST,
     ), dependencies=("launcher/core", "server", "body-service")),
     Group("scripts-torch", "scripts", (
         "bash", "-c", 'uv venv --allow-existing .venv && '
