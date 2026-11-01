@@ -14,8 +14,11 @@ goto NW_XARDAS_TOWER_IN1_26
 wait 800
 watch player
 melee-shadow weapon 1h
+# the talent set by the fixture does not put its stance overlay on; bladepath puts it on (no names after it)
+bladepath HUMANS_1HST2.MDS
 wait 1500
 anims
+animinfo T_1HDASHB_1 T_1HDASHB_2 T_1HPARADEJUMPB S_1HRUN
 
 cam follow 420 100 90
 wait 800
