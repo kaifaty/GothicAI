@@ -602,6 +602,9 @@ class Floor(Protocol):
         """Before a turn: wait for those before it to have their text ready; False: no voice for it."""
         ...
 
+    def reserve_after(self, npc: str, after: str) -> None:
+        """Reserve a hero turn immediately after the current speaker, in the same round."""
+
     def done(self, npc: str) -> None:
         """Its turn is over: its text is ready (or it said nothing)."""
 
@@ -756,7 +759,7 @@ class DialogueManager:
         # the npc fights the hero right now (the scripts' attack, talk.py; companions are not asked): talked
         # to, it may call it off (`_calm`)
         self.fights_hero: Callable[[str], bool] = lambda npc: False
-        self.surrender_hold: Callable[[Conversation, list[Item]], Awaitable[None]] | None = None
+        self.surrender_hold: Callable[[Conversation, list[Item]], Awaitable[bool | None]] | None = None
         self.surrender_context: Callable[[str], str | None] = lambda npc: None
         self.hero_fight_held: Callable[[str], bool] = lambda npc: False
         # an npc called off its fight with the hero (npc): a companion fighting it lets it be (orders.py)
@@ -2483,17 +2486,26 @@ class DialogueManager:
         trace.record["tools"] = [t.name for t in state.tools]
         speaker = self.llm
         try:
-            if parallel:
-                ready = asyncio.Event()
+            handed_off = False
+            if quick and full is not None:
+                ready = asyncio.get_running_loop().create_future()
                 quick_line = asyncio.create_task(self._quick_line(conv, state, request, trace, ready=ready))
-                await ready.wait()  # the situation must include the surrender probe's outcome
-                assert full is not None
+                handed_off = await ready  # the situation must include the surrender probe's outcome
+            if handed_off:
+                assert quick_line is not None
+                if await quick_line:
+                    assert self.quick is not None
+                    speaker = self.quick
+                status = "completed"
+            elif parallel:
+                assert full is not None and quick_line is not None
                 status = await self._act_on_line(conv, state, trigger, full, sound, trace,
                                                  quick_line=quick_line)
                 if await quick_line:
                     assert self.quick is not None
                     speaker = self.quick
-            elif quick and full is not None and await self._quick_line(conv, state, request, trace):
+            elif quick_line is not None and await quick_line:
+                assert full is not None
                 assert self.quick is not None
                 speaker = self.quick
                 status = await self._act_on_line(conv, state, trigger, full, sound, trace)
@@ -2676,7 +2688,7 @@ class DialogueManager:
 
     async def _quick_line(
         self, conv: Conversation, state: TurnState, request: list[Item], trace: TurnTrace,
-        *, ready: asyncio.Event | None = None,
+        *, ready: asyncio.Future[bool] | None = None,
     ) -> bool:
         """The npc's line in a fight, from the quick model. False if it said nothing (it failed or went
         quiet first): the conversational model speaks then, as in any other turn."""
@@ -2685,13 +2697,14 @@ class DialogueManager:
         slot = self._quick_slot(conv.npc) if player and self.surrender_hold is not None else None
         if slot is not None:
             self._quick_busy[slot] += 1  # keep the speaker's prefix while the other slot classifies
+        handed_off = False
         try:
             try:
                 if slot is not None and self.surrender_hold is not None:
-                    await self.surrender_hold(conv, request)
+                    handed_off = bool(await self.surrender_hold(conv, request))
             finally:
-                if ready is not None:
-                    ready.set()
+                if ready is not None and not ready.done():
+                    ready.set_result(handed_off)
             st = trace.step(request, None, llm=getattr(self.quick, "model", None) or self.quick.name)
             try:
                 await self._step(conv, state, request, None, st, quick=True)
