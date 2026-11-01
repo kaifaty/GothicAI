@@ -46,6 +46,8 @@ def fails(mid: str, m: dict) -> list[str]:
         f.append("low_apex")
     if mid == "charge_release" and (m["hand_drop_cm"] < 100 or m["hand_vmax"] < 4):
         f.append("weak_swing")
+    if m.get("rearm_cm", -99) > -5:  # the sword climbs back to the head on the way to the stance
+        f.append("rearm")
     if mid in ("riposte_hand", "riposte_body") and (m["lean_15"] > 35 or m["hand_ahead_cm"] < 45):
         f.append("no_thrust")  # the attacker doubling over, as in the first probe, leans ~60°
     if mid == "riposte_victim" and m["pelvis_min"] > 40:
@@ -135,6 +137,10 @@ class Probe:
             hs = np.linalg.norm(np.diff(hand[:19], axis=0), axis=1) * FPS / 100
             m["hand_drop_cm"] = round(float(hand[:3, 1].max() - hand[:19, 1].min()), 1)
             m["hand_vmax"] = round(float(hs.max()), 1)
+            # After the last hand key (the follow-through) the hand only goes down and back to the stance.
+            follow = max(int(k["frame"]) for k in move["keys"] if k["type"] == "right-hand" and k["frame"] != "end")
+            head = P[:, gi["BIP01 HEAD"], 1]
+            m["rearm_cm"] = round(float((hand[:, 1] - head)[follow + 3:T - 4].max()), 1)
         if mid in ("riposte_hand", "riposte_body"):
             m["lean_15"] = round(float(lean[15]), 1)
             m["hand_ahead_cm"] = round(float(hand[15, 2] - P[15, gi["BIP01 SPINE2"], 2]), 1)

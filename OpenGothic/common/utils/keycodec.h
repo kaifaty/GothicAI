@@ -41,6 +41,9 @@ class KeyCodec final {
       RotateL,
       RotateR,
       Jump,
+      // The melee dodge on its own key (`keyDodge` in [KEYS]). Empty, the default: the dodge rides the jump key,
+      // which then comes as Jump and dodges with a melee weapon or the fists drawn (PlayerControl).
+      Dodge,
 
       ActionGeneric,
       ActionLeft,
@@ -92,6 +95,9 @@ class KeyCodec final {
     void          set(std::string_view section, std::string_view key, int32_t code);
     void          clear(std::string_view section, std::string_view key);
     void          setDefaultKeys(std::string_view preset);
+
+    /// @brief The melee dodge rides the jump key of that mapping: `keyDodge` is empty or has that key.
+    static bool        dodgeOnJump(Mapping mapping);
 
     static int32_t     keyToCode(Tempest::Event::KeyType     t);
     static int32_t     keyToCode(Tempest::Event::MouseButton t);
@@ -155,6 +161,7 @@ class KeyCodec final {
     KeyPair     keyAction;
     KeyPair     keySlow;
     KeyPair     keySMove;
+    KeyPair     keyDodge;
     KeyPair     keyWeapon;
     KeyPair     keySneak;
     KeyPair     keyLook;
