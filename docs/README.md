@@ -258,6 +258,7 @@
 
 | Что | Как |
 |---|---|
+| Тесты изменённых файлов | `python3 scripts/check.py plan` — выбор по диффу от `origin/main` и правило для каждого файла; `run` — прямой уровень на этой машине, `run --all` — полный. CI `.github/workflows/tests.yml` гоняет полный уровень на каждом PR, итог — проверка `tests` |
 | pytest одного модуля | `cd server && uv run pytest tests/test_<модуль>.py -q`; на Ryzen — `scripts/ryzen.sh pytest tests/test_<модуль>.py` |
 | Строгие схемы всех инструментов сервера | `cd server && uv run pytest tests/test_tool_schemas.py -q`; обход модулей `gothic_ai`, проверка всех вложенных объектов |
 | Один сценарий e2e | `SCENARIO=<имя> scripts/ryzen.sh e2e`; на Mac — `SCENARIO=<имя> LLM=fake scripts/e2e.sh` |
