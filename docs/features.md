@@ -11,9 +11,12 @@ PR, который добавляет фичу или выключатель, д
 
 ## Сервер: разговор и голос
 
+Ручные живые проверки модели идут отдельно от автоматической регрессии: [команды, случаи и квота](e2e.md#живая-группа).
+
 | Фича | Как выключить | Модуль | Проверка | Документ |
 |---|---|---|---|---|
-| Режим без модели: только явно объявленные сценарием «дано», неожиданные вызовы и неиспользованные объявления проваливают итог | `--llm off` / `LLM=off`; e2e по умолчанию `auto` по группе: 40 сценариев без модели, 4 с объявленной тишиной, 7 только с живой моделью | `llm/off.py`, `llm/__init__.py`, `scenarios/common.py`, `scenarios/groups.py`, `cli.py`, `feats.py`, `scripts/e2e.sh` | `test_llm_off.py`, `test_cli.py`, `test_feats.py`, `scripts/tests/test_e2e.py`, `test_dialogue.py`; e2e `graph`, `hearing`, сюжет, дела NPC, восприятие и боевые реакции | [ryzen.md](ryzen.md#как-работает-сейчас) |
+| Ручные живые наборы e2e: повторения, доли, факты игры, расшифровки и запросы | не запускать `scripts/e2e-live.sh` | `scenarios/live.py`, `scripts/e2e-live.sh` | `test_live.py`, `scripts/tests/test_e2e_live.py`; живые `haggle`, `surrender_live` | [e2e.md](e2e.md#живая-группа) |
+| Режим без модели: только явно объявленные сценарием «дано», неожиданные вызовы и неиспользованные объявления проваливают итог | `--llm off` / `LLM=off`; e2e по умолчанию `auto` по группе: 40 сценариев без модели, 4 с объявленной тишиной, 6 только с живой моделью | `llm/off.py`, `llm/__init__.py`, `scenarios/common.py`, `scenarios/groups.py`, `cli.py`, `feats.py`, `scripts/e2e.sh` | `test_llm_off.py`, `test_cli.py`, `test_feats.py`, `scripts/tests/test_e2e.py`, `test_dialogue.py`; e2e `graph`, `hearing`, сюжет, дела NPC, восприятие и боевые реакции | [ryzen.md](ryzen.md#как-работает-сейчас) |
 | Тайник пирата Грега и добавочные награды ванильных квестов один раз на ветку; награда известна до выдачи, одежда проверяется по `when` выбора | тайник — удалить запись из таблицы; ванильные поручения — `--no-director` | `contracts.py`, `vanilla.py`, `questlog.py`, `gamedata/stash.json`, `gamedata/quest_rewards.json` | `test_contracts.py`, `test_vanilla.py`; e2e `greg` | [contracts.md](contracts.md), [story-graph.md](story-graph.md) |
 | Голос героя: push-to-talk, текст на лету, Inworld STT и подсказки имён | `--no-voice` | `voice.py`, `asr-service/` | тесты `asr-service/`; e2e `m3`, `m5e` | [protocol.md](protocol.md#голос-push-to-talk) |
 | Голос NPC: TTS, потоковая озвучка | `--no-tts` (остаются субтитры) | `tts.py`, `tts-service/` | e2e `tts`; бенч `tts-record` | [protocol.md](protocol.md#голоса-npc-tts) |
@@ -41,7 +44,7 @@ PR, который добавляет фичу или выключатель, д
 | Успокоить нападающего словами (`calm`) | нет | `dialogue.py`, `orders.py` | e2e `calm` | [npc-agent.md](npc-agent.md#успокоить-словами) |
 | Общая беседа: по слову за раз | нет | `group.py` | e2e `group` | [npc-tools.md](npc-tools.md#сделано-б2-одно-слово-за-раз) |
 | Кто вклинится в беседу по характеру | `--no-interject`; без планировщика его нет | `interject.py` | e2e `interject` (живой) | [npc-tools.md](npc-tools.md#сделано-б3-кто-вклинится-по-характеру) |
-| Карточки характера | нет | `characters.py`, `gamedata/characters.json` | e2e `haggle` (живой); `cards` их пишет | [npc-tools.md](npc-tools.md#карточки-характера) |
+| Карточки характера | нет | `characters.py`, `gamedata/characters.json` | живой набор `haggle`; команда `gothic-ai cards [--only SYM,...]` их пишет | [npc-tools.md](npc-tools.md#карточки-характера) |
 
 ## Сервер: быстрый контур и тело
 

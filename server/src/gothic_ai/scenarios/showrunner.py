@@ -7,18 +7,21 @@ import copy
 import json
 import logging
 import math
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 from ..game import GameLink
-from ..llm import Done, Item, LLMEvent, Message, Tool, ToolCall, ToolChoice
+from ..llm import Done, Item, LLMBackend, LLMEvent, Message, Tool, ToolCall, ToolChoice, open_ahead
 from ..llm.fake import FakeBackend
 from ..people_knowledge import PeopleKnowledge
 from ..protocol import Session
 from ..showrunner import MIN_REAL_SECONDS, OUTCOMES, occasion_members
+from ..trace import CallTrace, TraceWriter, TurnTrace
 from .common import _logged, _save_or_fail, _until, wait_message
+from .live import LiveSuite
 from .story import play_book_chain
 
 if TYPE_CHECKING:
@@ -574,201 +577,253 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
     return _logged(results)
 
 
-async def showrunner_live(link: GameLink, director: Showrunner) -> dict[str, str]:
-    """Three real occasions, live decisions/builders and the common book player, in one loaded game.
+class _LiveBuilderTrace:
+    """Keep the live director's otherwise untraced requests in the same transcript as NPC turns."""
 
-    Each occasion needs a line or a reasoned refusal; at least one built line must finish.
-    The production consumer runs during each occasion. Between them it is stopped while the debug
-    player finishes the line and moves time: its incidental arrivals, completions and quiet days must
-    not spend the live model's quota. The watcher itself keeps sampling the real game throughout.
-    """
+    def __init__(self, backend: LLMBackend, trace: TraceWriter, branch: str | None) -> None:
+        self.backend, self.trace, self.branch = backend, trace, branch
+        self.name = backend.name
+
+    def open_ahead(self, key: str, *, keep: bool = False) -> None:
+        open_ahead(self.backend, key, keep=keep)
+
+    async def aclose(self) -> None:
+        await self.backend.aclose()
+
+    async def stream(
+        self, *, instructions: str, messages: Sequence[Item], tools: list[Tool] | None = None,
+        tool_choice: ToolChoice | None = None, allowed: Collection[str] | None = None,
+        cache_key: str | None = None, **kwargs: Any,
+    ) -> AsyncIterator[LLMEvent]:
+        turn = TurnTrace(
+            self.trace, npc=cache_key or "showrunner", branch=self.branch,
+            trigger={"kind": "live_builder", "cache_key": cache_key}, instructions=instructions,
+            tools=[tool.name for tool in tools or []], snapshot=None, llm=self.name,
+            model=getattr(self.backend, "model", None),
+        )
+        step = turn.step(messages, tool_choice)
+        started = time.monotonic()
+        first = None
+        done = None
+        status = "error"
+        try:
+            async for event in self.backend.stream(
+                instructions=instructions, messages=messages, tools=tools, tool_choice=tool_choice,
+                allowed=allowed, cache_key=cache_key, **kwargs,
+            ):
+                if first is None:
+                    first = time.monotonic() - started
+                if isinstance(event, ToolCall):
+                    step.calls.append(CallTrace(event.name, event.arguments, event.call_id, ""))
+                elif isinstance(event, Done):
+                    done, status = event, "done"
+                yield event
+        finally:
+            turn.finish_step(step, done, first, time.monotonic() - started)
+            turn.close(status)
+
+
+@contextmanager
+def trace_live_builders(director: Showrunner, trace: TraceWriter):
+    models = [director.model, director.author.model, director.chains.model, director.casting.model]
+    original = [model.llm for model in models]
+    try:
+        for model, backend in zip(models, original, strict=True):
+            model.llm = _LiveBuilderTrace(backend, trace, director.chronicle.branch)
+        yield
+    finally:
+        for model, backend in zip(models, original, strict=True):
+            model.llm = backend
+
+
+async def showrunner_live(
+    link: GameLink, director: Showrunner, trace: TraceWriter | None = None,
+) -> dict[str, str]:
+    """Play every selected live line through the game and record its actual outcome."""
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
-    def valid_outcome(fact: dict[str, Any]) -> bool:
-        reason = fact.get("reason")
-        return fact["fact"] == "line" or (
-            fact["fact"] == "line_none" and isinstance(reason, str) and bool(reason.strip())
-        )
-
-    await link.wait_world()
-    if link.session is None:
-        await wait_message(link, Session, timeout=10)
-    if director.model.llm.name != "chatgpt":
-        return _logged({"live_model": "failed (showrunner_live requires LLM=chatgpt)"})
-    service = director.occasions
-    people = await link.story_people()
-    context = people[0]["npc"] if people else "PC_HERO"
-    [nearest] = await link.story_eval(context, [["call", "NPC_GETNEARESTWP", ["inst", "HERO"]]])
-    start = service.places.of(nearest)
-    if start is None:
-        return _logged({"start": f"failed (no place for {nearest})"})
-    points = {p["name"].upper() for p in await link.waypoints() if not p.get("fp")}
-    homes: dict[str, tuple[str, list[str]]] = {}
-    for person in people:
-        npc = person["npc"]
-        if director.rules.plot_npc(npc) or not npc.startswith(("BAU_", "VLK_", "MIL_")):
-            continue
-        for entry in person.get("routine", []):
-            waypoint = str(entry.get("waypoint", "")).upper()
-            place = service.places.of(waypoint)
-            if place is None or waypoint not in points:
-                continue
-            if place.id not in homes:
-                homes[place.id] = (waypoint, [])
-            homes[place.id][1].append(npc)
-    targets = [
-        p
-        for p in service.places.places
-        if p.id in homes and p.id != start.id and p.id not in service.visited and p.center is not None
-    ]
-    if not targets:
-        return _logged({"target": "failed (no new inhabited place with non-plot residents)"})
-    target = min(targets, key=lambda p: math.dist(start.center or (0, 0, 0), p.center))
-    waypoint, residents = homes[target.id]
-    for npc in dict.fromkeys(residents):
-        await link.debug("skip_important", near=npc)
-    await link.debug("player_hp", hp=1_000_000)
-
-    async def resolve(kind: str, trigger: Callable[[], Awaitable[Any]]) -> dict[str, Any] | None:
-        # Sample and discard only setup events, before the real loop and the requested stimulus.
-        await service.poll()
-        if service._raw_place is not None and not await _until(
-            lambda: service.current is not None and service.current.id == service._raw_place, 25
-        ):
-            check(f"{kind}_setup", False, "hero's place did not settle after the debug player")
-            return None
-        await service.poll()
-        async with service._lock:
-            service.pending.clear()
-            service._events.clear()
-        before = len(director.chronicle.facts("occasion"))
-        loop = asyncio.create_task(director.run())
-
-        def stop_on_outcome(fact: dict[str, Any]) -> None:
-            if fact.get("fact") in OUTCOMES - {"line_rejected"} and any(
-                event.get("kind") == kind for event in occasion_members(fact.get("occasion", {}))
-            ):
-                # Stop at the receipt, before run() can take a second incidental occasion.
-                loop.cancel()
-
-        director.chronicle.on_fact.append(stop_on_outcome)
-        try:
-            await trigger()
-
-            def occasion() -> dict[str, Any] | None:
-                return next(
-                    (f for f in director.chronicle.facts("occasion")[before:] if f.get("kind") == kind),
-                    None,
-                )
-
-            if not await _until(occasion, 45):
-                check(f"{kind}_occasion", False, "watcher did not record the occasion")
-                return None
-            event = occasion()
-            check(f"{kind}_occasion", True, event)
-
-            def outcome() -> dict[str, Any] | None:
-                return next(
-                    (
-                        f
-                        for f in reversed(director.chronicle.facts())
-                        if f.get("fact") in OUTCOMES
-                        and event in occasion_members(f.get("occasion", {}))
-                        and (f["fact"] != "line_rejected" or director._work is None)
-                    ),
-                    None,
-                )
-
-            if not await _until(outcome, 300):
-                check(f"{kind}_outcome", False, "no outcome in the chronicle within 300 s")
-                return None
-            fact = outcome()
-            assert fact is not None
-            log.info("showrunner live %s outcome: %s", kind, json.dumps(fact, ensure_ascii=False))
-            check(
-                f"{kind}_outcome",
-                valid_outcome(fact),
-                fact,
-            )
-            return fact
-        finally:
-            director.chronicle.on_fact.remove(stop_on_outcome)
-            loop.cancel()
-            with suppress(asyncio.CancelledError):
-                await loop
-
-    async def arrive() -> None:
-        await link.debug("player_goto", waypoint=waypoint)
-
-    async def kill() -> None:
-        bandits = [p["npc"] for p in await link.story_people() if p["npc"].startswith("BDT_")]
-        state = await link.story_state(npcs=bandits)
-        living = {n for n, s in state.get("npcs", {}).items() if s.get("state") == "alive"}
-        victim = next(
-            (n for n in ("BDT_1015_BANDIT_L", "BDT_1014_BANDIT_L", "BDT_1013_BANDIT_L") if n in living),
-            next((n for n in sorted(living) if n.startswith("BDT_")), None),
-        )
-        if victim is None:
-            raise RuntimeError("no living human bandit for the deed")
-        await link.debug("kill", instance=victim, near=victim, by="PLAYER")
-
-    async def chapter() -> None:
-        state = await link.story_state(vars=["KAPITEL"])
-        value = int(state["vars"]["KAPITEL"]) + 1
-        await link.story_effect(context, [{"do": "set", "var": "KAPITEL", "value": value}])
-
-    real_clock = director.clock
-    wall = [real_clock()]
-    director.clock = lambda: wall[0]
-    lines = 0
-    completed_lines = 0
-    outcomes = 0
+    if trace is None:
+        raise RuntimeError("showrunner_live requires a trace directory")
+    suite = LiveSuite("showrunner_live", trace)
     try:
-        for index, (kind, trigger) in enumerate((("arrived", arrive), ("deed", kill), ("chapter", chapter))):
-            if index:
-                before = await link.story_state()
-                hour, minute = int(before["hour"]), int(before["minute"])
-                await link.debug("time", hour=(hour + 12) % 24, minute=minute)
-                await link.debug("time", hour=hour, minute=minute)
-                after = await link.story_state()
-                elapsed = (
-                    (int(after["day"]) - int(before["day"])) * 1440
-                    + int(after["hour"]) * 60
-                    + int(after["minute"])
-                    - hour * 60
-                    - minute
-                )
-                check(f"{kind}_day", elapsed >= 1440, elapsed)
-                wall[0] += MIN_REAL_SECONDS + 1
-            fact = await resolve(kind, trigger)
-            if fact is None or not valid_outcome(fact):
-                break
-            outcomes += 1
-            if fact["fact"] == "line_none":
+        await link.wait_world()
+        if link.session is None:
+            await wait_message(link, Session, timeout=10)
+        if director.model.llm.name != "chatgpt":
+            raise RuntimeError("showrunner_live requires LLM=chatgpt")
+        service = director.occasions
+        people = await link.story_people()
+        context = people[0]["npc"] if people else "PC_HERO"
+        [nearest] = await link.story_eval(context, [["call", "NPC_GETNEARESTWP", ["inst", "HERO"]]])
+        start = service.places.of(nearest)
+        if start is None:
+            raise RuntimeError(f"no place for {nearest}")
+        points = {p["name"].upper() for p in await link.waypoints() if not p.get("fp")}
+        homes: dict[str, tuple[str, list[str]]] = {}
+        for person in people:
+            npc = person["npc"]
+            if director.rules.plot_npc(npc) or not npc.startswith(("BAU_", "VLK_", "MIL_")):
                 continue
-            lines += 1
-            quests = [director.book.all()[q] for q in fact["quests"]]
-            for q in quests:
-                log.info("showrunner live %s quest: %s", kind, json.dumps(q.to_dict(), ensure_ascii=False))
-            characters = [
-                s.model_dump() for s in director.casting.cast.characters() if s.npc in fact["characters"]
-            ]
-            log.info("showrunner live %s characters: %s", kind, json.dumps(characters, ensure_ascii=False))
-            played = await play_book_chain(link, director.book, quests)
-            results.update({f"{kind}_{k}": v for k, v in played.items()})
-            await director.book.settle(fact["giver"])
-            closed = bool(quests) and all(director.book.progress(q.id).state == "done" for q in quests)
-            check(f"{kind}_completed", closed and all(v.startswith("done") for v in played.values()))
-            if not closed or any(not v.startswith("done") for v in played.values()):
-                break
-            completed_lines += 1
-        check("all_outcomes", outcomes == 3, f"{outcomes}/3")
-        check(
-            "at_least_one_line_completed", completed_lines >= 1, f"{completed_lines} completed, {lines} built"
-        )
-    finally:
-        director.clock = real_clock
-    return _logged(results)
+            for entry in person.get("routine", []):
+                waypoint = str(entry.get("waypoint", "")).upper()
+                place = service.places.of(waypoint)
+                if place is None or waypoint not in points:
+                    continue
+                if place.id not in homes:
+                    homes[place.id] = (waypoint, [])
+                homes[place.id][1].append(npc)
+        targets = [
+            p
+            for p in service.places.places
+            if p.id in homes and p.id != start.id and p.id not in service.visited and p.center is not None
+        ]
+        if not targets:
+            raise RuntimeError("no new inhabited place with non-plot residents")
+        target = min(targets, key=lambda p: math.dist(start.center or (0, 0, 0), p.center))
+        waypoint, residents = homes[target.id]
+        for npc in dict.fromkeys(residents):
+            await link.debug("skip_important", near=npc)
+        await link.debug("player_hp", hp=1_000_000)
+
+        async def resolve(kind: str, trigger: Callable[[], Awaitable[Any]]) -> dict[str, Any] | None:
+            # Sample and discard only setup events, before the real loop and the requested stimulus.
+            await service.poll()
+            if service._raw_place is not None and not await _until(
+                lambda: service.current is not None and service.current.id == service._raw_place, 25
+            ):
+                raise RuntimeError("hero's place did not settle after the debug player")
+            await service.poll()
+            async with service._lock:
+                service.pending.clear()
+                service._events.clear()
+            before = len(director.chronicle.facts("occasion"))
+            loop = asyncio.create_task(director.run())
+
+            def stop_on_outcome(fact: dict[str, Any]) -> None:
+                if fact.get("fact") in OUTCOMES - {"line_rejected"} and any(
+                    event.get("kind") == kind for event in occasion_members(fact.get("occasion", {}))
+                ):
+                    # Stop at the receipt, before run() can take a second incidental occasion.
+                    loop.cancel()
+
+            director.chronicle.on_fact.append(stop_on_outcome)
+            try:
+                await trigger()
+
+                def occasion() -> dict[str, Any] | None:
+                    return next(
+                        (f for f in director.chronicle.facts("occasion")[before:] if f.get("kind") == kind),
+                        None,
+                    )
+
+                if not await _until(occasion, 45):
+                    raise RuntimeError("watcher did not record the occasion")
+                event = occasion()
+                check(f"{kind}_occasion", True, event)
+
+                def outcome() -> dict[str, Any] | None:
+                    return next(
+                        (
+                            f
+                            for f in reversed(director.chronicle.facts())
+                            if f.get("fact") in OUTCOMES
+                            and event in occasion_members(f.get("occasion", {}))
+                            and (f["fact"] != "line_rejected" or director._work is None)
+                        ),
+                        None,
+                    )
+
+                if not await _until(outcome, 300):
+                    return None
+                fact = outcome()
+                assert fact is not None
+                log.info("showrunner live %s outcome: %s", kind, json.dumps(fact, ensure_ascii=False))
+                return fact
+            finally:
+                director.chronicle.on_fact.remove(stop_on_outcome)
+                loop.cancel()
+                with suppress(asyncio.CancelledError):
+                    await loop
+
+        async def arrive() -> None:
+            await link.debug("player_goto", waypoint=waypoint)
+
+        async def kill() -> None:
+            bandits = [p["npc"] for p in await link.story_people() if p["npc"].startswith("BDT_")]
+            state = await link.story_state(npcs=bandits)
+            living = {n for n, s in state.get("npcs", {}).items() if s.get("state") == "alive"}
+            victim = next(
+                (n for n in ("BDT_1015_BANDIT_L", "BDT_1014_BANDIT_L", "BDT_1013_BANDIT_L") if n in living),
+                next((n for n in sorted(living) if n.startswith("BDT_")), None),
+            )
+            if victim is None:
+                raise RuntimeError("no living human bandit for the deed")
+            await link.debug("kill", instance=victim, near=victim, by="PLAYER")
+
+        async def chapter() -> None:
+            state = await link.story_state(vars=["KAPITEL"])
+            value = int(state["vars"]["KAPITEL"]) + 1
+            await link.story_effect(context, [{"do": "set", "var": "KAPITEL", "value": value}])
+
+        real_clock = director.clock
+        wall = [real_clock()]
+        director.clock = lambda: wall[0]
+        try:
+            with trace_live_builders(director, trace):
+                for index, (kind, trigger) in enumerate(
+                    (("arrived", arrive), ("deed", kill), ("chapter", chapter))
+                ):
+                    if kind not in suite.selected:
+                        continue
+                    with suite.case(kind) as case:
+                        results = {}
+                        if index:
+                            before = await link.story_state()
+                            hour, minute = int(before["hour"]), int(before["minute"])
+                            await link.debug("time", hour=(hour + 12) % 24, minute=minute)
+                            await link.debug("time", hour=hour, minute=minute)
+                            after = await link.story_state()
+                            elapsed = (
+                                (int(after["day"]) - int(before["day"])) * 1440
+                                + int(after["hour"]) * 60 + int(after["minute"]) - hour * 60 - minute
+                            )
+                            if elapsed < 1440:
+                                raise RuntimeError(f"the next game day did not start: {elapsed} minutes")
+                            wall[0] += MIN_REAL_SECONDS + 1
+                        fact = await resolve(kind, trigger)
+                        evidence: dict[str, Any] = {"outcome": fact, "checks": results}
+                        if fact is None:
+                            case.finish(
+                                "no_decision", evidence={**evidence, "reason": "no outcome within 300 s"}
+                            )
+                            continue
+                        if fact["fact"] == "line_none":
+                            case.finish("no_decision", evidence=evidence)
+                            continue
+                        if fact["fact"] != "line":
+                            case.finish("failure", evidence=evidence)
+                            continue
+                        quests = [director.book.all()[q] for q in fact["quests"]]
+                        evidence["quests"] = [q.to_dict() for q in quests]
+                        evidence["characters"] = [
+                            s.model_dump() for s in director.casting.cast.characters()
+                            if s.npc in fact["characters"]
+                        ]
+                        played = await play_book_chain(link, director.book, quests)
+                        await director.book.settle(fact["giver"])
+                        closed = bool(quests) and all(
+                            director.book.progress(q.id).state == "done" for q in quests
+                        )
+                        evidence["passage"] = played
+                        evidence["progress"] = {q.id: director.book.progress(q.id).state for q in quests}
+                        passed = closed and all(v.startswith("done") for v in played.values())
+                        case.finish("success" if passed else "failure", evidence=evidence)
+        finally:
+            director.clock = real_clock
+        return _logged(suite.results())
+    except Exception as error:
+        suite.setup_error(error)
+        return _logged(suite.results())

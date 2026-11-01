@@ -9,7 +9,6 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
-from .. import characters
 from ..bodies import Bodies
 from ..chronicle import Fact
 from ..dialogue import DialogueManager, SceneLine, line_duration
@@ -17,13 +16,13 @@ from ..game import GameError, GameLink
 from ..gossip import WORDS_CM, GossipDesk
 from ..group import ANSWER_CUE, ROUND_GAP_S
 from ..interject import Interjections
-from ..llm import LLMBackend, Message
+from ..llm import Message
 from ..llm.fake import FakeBackend, FakeStep
 from ..perception import PerceptionDesk
 from ..protocol import GameMessage, LineStarted, Look, NpcView, SayCmd, Session
 from ..quests import RUMOR_CM
 from ..social import TICK_S, Rumor, Rumors
-from ..talk import TalkDesk, fights
+from ..talk import TalkDesk
 from ..trace import read as read_trace
 from ..trust import Trust
 from .common import (
@@ -44,6 +43,7 @@ from .common import (
     _until_async,
     wait_message,
 )
+from .live import LiveSuite
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -279,30 +279,16 @@ async def interject_scenario(
     bandit: str = "BDT_1015_BANDIT_L",
     steps: str = "BDT_1013_BANDIT_L",
 ) -> dict[str, str]:
-    """Who speaks up, by character (step B3 of docs/npc-tools.md), live: the conversational model
-    (LLM=chatgpt) and the behavioral one (DECIDER_URL) are the real ones. At the steps below Xardas's tower,
-    as in `group`, the hero says three phrases, each once the last voice has been heard: one to them all,
-    one to the bandit from the cave (he looks at him) and one to Brago. Checks:
-    - three: no more than three voices to any of them;
-    - one_at_a_time: no voice over another;
-    - asked: after each answer outside a fight the others were asked whether they speak up.
-    Who spoke up and what each said go to the log, to be read: not a bazaar, each by its character. Whether
-    anyone speaks up is the models' call, so it is no check (the bandits may well go for Cavalorn)."""
-    await link.wait_world()
-    results: dict[str, str] = {}
-    if interject is None:
-        return _logged({"decider": "failed (no behavioral model: run with DECIDER_URL)"})
-
-    def check(name: str, ok: bool, detail: object = "") -> None:
-        results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
-
+    """Observe each live phrase's interveners and score its real voice limit and overlap."""
+    suite = LiveSuite("interject", dialogue.trace)
     names = {npc: "Кавалорн", brago: "Браго", bandit: "Бандит из пещеры", steps: "Бандит у лестницы"}
     started: list[tuple[float, str, str]] = []
-    link.listeners.append(
-        lambda m: (
-            started.append((time.monotonic(), m.npc.upper(), m.line)) if isinstance(m, LineStarted) else None
-        )
-    )
+
+    def heard(message: GameMessage) -> None:
+        if isinstance(message, LineStarted):
+            started.append((time.monotonic(), message.npc.upper(), message.line))
+
+    link.listeners.append(heard)
     entries: list[dict[str, Any]] = []
     sink = dialogue.journal.sink
 
@@ -312,47 +298,67 @@ async def interject_scenario(
             sink(entry)
 
     dialogue.journal.sink = keep
-    if (failed := await _at_the_steps(link, dialogue, talk, npc, brago, bandit, steps)) is not None:
-        return _logged({"roster": f"failed ({failed})"})
-    phrases = [
-        ("Пацаны, здорово! Как жизнь?", None),
-        ("А ты кто такой? Что-то я тебя тут раньше не видел.", bandit),
-        ("Браго, а торговцы тут часто ходят?", None),
-    ]
-    rounds: list[list[str]] = []
-    overlaps: list[str] = []
-    unasked: list[str] = []
-    for text, focus in phrases:
-        mark, seen, asked = time.monotonic(), len(entries), len(interject.asked)
-        talk.hear(text, focus, {"via": "scenario"})
-        await asyncio.sleep(2)
-        await _until(lambda: not any(dialogue.speaking(n) for n in names), 60)
-        await asyncio.sleep(3)  # one who speaks up asks for words after the answer
-        await _until(lambda: not any(dialogue.speaking(n) for n in names), 60)
-        mine = [st for st in started if st[0] >= mark]
-        order, over = _overlaps(dialogue, mine, names)
-        overlaps += over
-        rounds.append(order)
-        for e in entries[seen:]:
-            if e.get("kind") == "npc":
-                log.info("interject: %s: %s", names.get(e["npc"], e["npc"]), e["text"])
-        ups = [names.get(e["npc"], e["npc"]) for e in entries[seen:] if e.get("kind") == "interject"]
-        log.info(
-            "interject: «%s» -> %s; spoke up: %s", text, [names.get(n, n) for n in order], ups or "nobody"
-        )
-        for speaker, ranked, _ in interject.asked[asked:]:
-            log.info(
-                "interject: after %s: %s",
-                names.get(speaker, speaker),
-                ", ".join(f"{names.get(n, n)} {p:.2f}" for n, p in ranked),
-            )
-        if len(interject.asked) == asked and not any(fights(talk.people.get(n)) for n in names):
-            unasked.append(text)
-    voices = [len(r) for r in rounds]
-    check("three", all(v <= 3 for v in voices), voices)
-    check("one_at_a_time", not overlaps, overlaps or "no voice over another")
-    check("asked", not unasked, unasked or f"{len(interject.asked)} time(s)")
-    return _logged(results)
+    phrases = {
+        "greeting": ("Пацаны, здорово! Как жизнь?", None),
+        "stranger": ("А ты кто такой? Что-то я тебя тут раньше не видел.", bandit),
+        "brago": ("Браго, а торговцы тут часто ходят?", None),
+    }
+    prepared = False
+    try:
+        for case_name in suite.selected:
+            with suite.case(case_name) as case:
+                if interject is None:
+                    raise GameError("interject requires a live behavioral model: set DECIDER_URL")
+                if not prepared:
+                    await link.wait_world()
+                    failed = await _at_the_steps(link, dialogue, talk, npc, brago, bandit, steps)
+                    if failed is not None:
+                        raise GameError(f"interject roster: {failed}")
+                    prepared = True
+                    await _until(lambda: not any(dialogue.speaking(n) for n in names), 60)
+                text, focus = phrases[case_name]
+                mark, seen, asked = time.monotonic(), len(entries), len(interject.asked)
+                talk.hear(text, focus, {"via": "scenario"})
+                await asyncio.sleep(2)
+                await _until(lambda: not any(dialogue.speaking(n) for n in names), 60)
+                await asyncio.sleep(3)  # the answer starts the behavioral model's question
+                settled = await _until(
+                    lambda: not interject._tasks
+                    and interject.group._quiet()
+                    and not any(dialogue.speaking(n) for n in names),
+                    90,
+                )
+                mine = sorted(st for st in started if st[0] >= mark)
+                participants, overlaps = _overlaps(dialogue, mine, names)
+                turns = [who for i, (_, who, _) in enumerate(mine) if i == 0 or mine[i - 1][1] != who]
+                journal = entries[seen:]
+                chosen = {e["npc"] for e in journal if e.get("kind") == "interject"}
+                interveners = [n for n in participants if n in chosen]
+                outcome = (
+                    "failure" if len(turns) > 3 or overlaps else "success" if settled else "no_decision"
+                )
+                case.finish(
+                    outcome,
+                    evidence={
+                        "phrase": text,
+                        "voices": turns,
+                        "participants": participants,
+                        "overlaps": overlaps,
+                        "settled": settled,
+                        "interveners": interveners,
+                        "decision": ",".join(interveners) or "none",
+                        "asked": interject.asked[asked:],
+                        "journal": journal,
+                        "line_started": [
+                            {"at_s": round(t - mark, 3), "npc": who, "line": line}
+                            for t, who, line in mine
+                        ],
+                    },
+                )
+    finally:
+        dialogue.journal.sink = sink
+        link.listeners.remove(heard)
+    return _logged(suite.results())
 
 
 GOSSIP_SLOT = 8  # the save before the scene: played whole, then again from there and cut
@@ -836,54 +842,6 @@ def _scene_rows(log_dir: str | None) -> list[dict[str, Any]]:
         return []
     paths = sorted(Path(log_dir, "traces").glob("*.jsonl"))
     return [row for p in paths for row in read_trace(p) if row.get("type") == "scene"]
-
-
-async def write_cards(
-    link: GameLink, graph: Any, llm: LLMBackend, only: set[str] | None = None, path: Path | None = None
-) -> dict[str, str]:
-    """Character cards (docs/npc-tools.md, wave 1 step 3): the model writes them, a few npc's a call, for
-    those of `only` (GOTHIC_CARDS: symbols, comma separated) or for everyone of this world with lines of its
-    own, into gamedata/characters.json (cards there for others stay). Saved after every batch; who got no
-    card is asked about once more. Without `only`, those that have a card already are left as they are: a
-    run cut short goes on where it stopped."""
-    results: dict[str, str] = {}
-
-    def check(name: str, ok: bool, detail: object = "") -> None:
-        results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
-
-    await link.wait_world()
-    people = await link.story_people(timeout=30)
-    target = path or characters.CARDS_FILE
-    cards = characters.load(target)
-    subjects = [x for x in characters.subjects(graph, people, only) if only or x.npc not in cards]
-    check(
-        "subjects", bool(subjects) or not only, f"{len(subjects)} of {len(people)} people, {len(cards)} cards"
-    )
-    left = list(subjects)
-    for attempt in (1, 2):
-        missed = []
-        for i in range(0, len(left), characters.BATCH):
-            batch = left[i : i + characters.BATCH]
-            got, errors = await characters.write(llm, batch)
-            cards.update(got)
-            characters.save(cards, target)
-            missed += [x for x in batch if x.npc not in got]
-            log.info(
-                "cards: %d/%d written (attempt %d)%s",
-                len(got),
-                len(batch),
-                attempt,
-                f": {errors}" if errors else "",
-            )
-        left = missed
-        if not left:
-            break
-    check(
-        "written",
-        not left,
-        f"{len(subjects) - len(left)} of {len(subjects)}; none for {[x.npc for x in left]}",
-    )
-    return _logged(results)
 
 
 async def gossip_demo(
