@@ -56,7 +56,7 @@ R1: `/mnt/shared/gothic-ai/nav-dagger4/round1/screen/metrics.json`. Набор: 
 
 У обеих доступных баз совпадают привязки `base-files.json`: `88e53515e2181ba6d9e73be951ea97636fdb3c57455cffa4618cc7427d32d0dc` и `sources/sources.json`: `a4de83a0a1f8c9143801b6068feaf5ea6831537b342597c185a5987d13e3053e`. Манифест перечисляет 37348 файлов / 3031184161 байт.
 Глобальный указатель сменился на `7d2c94ec…3e4`. Готовая новая база обнаружена в общем локальном кэше, а `/mnt/shared/gothic-ai/base/7d2c94ec…3e4/base.json` отсутствует. Шаг 48 (`adc5054f22c5`) завершился до запуска runner: exit 1, 0,114 с, `Prepared read-only base is missing`. На новой базе в r1 выполнено 0 эпизодов. Сохранённые screen и шаги 44–47 не переписываются.
-База прошлых прогонов HD screen/validation/detour не записана. По решению пользователя HD не повторяется; используются готовые результаты.
+База прошлых прогонов HD screen/validation/detour не записана. HD не повторяли; используются готовые результаты.
 
 ## Полный validation
 
