@@ -451,15 +451,15 @@ if [[ ( "$SCENARIO" == bandit_hold || "$SCENARIO" == death_load ) && -n "${SAVE:
   echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2
   exit 2
 fi
-if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty ) && ( "$LLM" != fake || -n "${SAVE:-}" ) ]]; then
+if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty ) && ( ( "$LLM" != fake && "$LLM" != auto ) || -n "${SAVE:-}" ) ]]; then
   echo "scenario $SCENARIO requires LLM=fake and a new game (unset SAVE)" >&2
   exit 2
 fi
-if [[ "$SCENARIO" == feats && ( ( "$LLM" != fake && "$LLM" != chatgpt ) || -n "${SAVE:-}" ) ]]; then
+if [[ "$SCENARIO" == feats && ( ( "$LLM" != fake && "$LLM" != chatgpt && "$LLM" != auto ) || -n "${SAVE:-}" ) ]]; then
   echo 'scenario feats requires LLM=fake or LLM=chatgpt and a new game (unset SAVE)' >&2
   exit 2
 fi
-if [[ "$SCENARIO" == feat_fame && ( ( "$LLM" != fake && "$LLM" != chatgpt ) || -n "${SAVE:-}" ) ]]; then
+if [[ "$SCENARIO" == feat_fame && ( ( "$LLM" != fake && "$LLM" != chatgpt && "$LLM" != auto ) || -n "${SAVE:-}" ) ]]; then
   echo 'scenario feat_fame requires LLM=fake or LLM=chatgpt and a new game (unset SAVE)' >&2
   exit 2
 fi
