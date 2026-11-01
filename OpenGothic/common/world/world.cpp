@@ -211,7 +211,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
       wview = wviewFut.get();
     if(wview) {
       wview->setTextureResidency(residency.get());
-      if(residency)
+      if(residency && !Gothic::inst().isBenchmarkMode())
         wview->startVobStreaming(*residency);
       }
     if(LoadProbe::enabled() && !streamLandscape)
