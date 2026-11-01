@@ -109,7 +109,9 @@
 | +4320 мин, герой рядом | на месте | на месте |
 | герой в 37,4 / 36,6 м, лучи закрыты | оба ушли (минута 5044 ≥ 721 + 4320) | на месте |
 
-Данные лежат в `.bench/body-traces/{on1,off2,reload1,legacy-make,legacy-on,legacy-off}/`: `events.jsonl`, `game.log` и оба сейва.
+После перебазирования на `origin/main` 3c2dc95c2 стенды повторены на Ryzen: `on3` (50 с), `off3` (38 с), `reload3` и сравнение (**pass**). Числа совпали с таблицами выше до сантиметра и минуты.
+
+Данные лежат в `.bench/body-traces/{on1,off2,reload1,legacy-make,legacy-on,legacy-off,on3,off3,reload3}/`: `events.jsonl`, `game.log` и оба сейва.
 
 ## Контракт и проверки
 
@@ -119,8 +121,8 @@
   - видит, `ITM_MISSION`, дракон, `IMMORTAL`, сюжетный тип, OFF, живой, герой, неизвестное начало срока — тело остаётся;
   - видимость проверяется последней;
   - `isTrace` для людей, монстров, дракона, OFF, живых и героя; `NPCTYPE` 1/4/7 — сюжетные, 0/2/3/5/6 — нет.
-- **`~/.codex/checks/gothic/engine-targets.sh . gothic-physics-contract gothic-ragdoll-contract gothic-ragdoll-save-contract gothic-placed-items-contract`** — все четыре пройдены на Ryzen, Mac-сборка `Gothic2Notr` чистая, без предупреждений в изменённых файлах.
-- **`python3 scripts/check.py run`** — 104 + 38 + 179 (128 подтестов) + 2 пройдены.
+- **`~/.codex/checks/gothic/engine-targets.sh . gothic-physics-contract gothic-ragdoll-contract gothic-ragdoll-save-contract gothic-placed-items-contract`** — все четыре пройдены на Ryzen дважды: на исходной базе ветки 029fd3bd2 и после перебазирования на `origin/main` 3c2dc95c2 (там добавились `melee_dodge` и v57). Mac-сборка `Gothic2Notr` чистая, без предупреждений в изменённых файлах.
+- **`python3 scripts/check.py run`** — до перебазирования 104 + 38 + 179 (128 подтестов) + 2 пройдены. После него в `scripts/tests/test_e2e_live.py` 2–3 теста падают по своему 10-секундному таймауту под нагрузкой Mac. На чистом `origin/main` в тот же момент упали 2 теста того же файла, так что дело не в этой ветке.
 
 ## Ограничения
 
