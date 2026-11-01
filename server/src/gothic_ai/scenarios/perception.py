@@ -1169,6 +1169,7 @@ async def trace_memory(
         bool(control_sid) and "Следы, которые ты видел" in prompt,
         control_line,
     )
+    await release("control_reply")
     talk.end("gone")
 
     # A new hour, a witnessed arrival, then Lobart is too far to see the actual shot.

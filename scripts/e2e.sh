@@ -112,11 +112,10 @@
 #       denied authorship are the control. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   broken: given: Lobart catches a lie about fresh fence debris; another NPC's sword break is the control.
 #       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
-#   witness: asking a witness (wave 2 step 3): at 8:00 someone Lobart knows sees the hero in the open, Lobart
-#       does not; later the hero comes up to Lobart with an alibi («это не я топтал твою репу — я всё утро был
-#       в городе»), Lobart calls that one over, it comes and tells what it saw, Lobart catches the lie «со слов»
-#       given: Lobart asks the witness, catches the lie from testimony, and asks a distant acquaintance.
-#       Code records the testimony; the witness stays silent. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
+#   witness: given: Lobart asks a farm witness, catches the lie from its testimony, and asks a far acquaintance.
+#       At 8:00 the witness sees the hero while Lobart does not. Later the hero claims he was in the city;
+#       the witness comes over, code records its testimony, and its code-started answer stays silent.
+#       The far answer is recorded at the routine meeting. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   places: no model; not a check: dumps the world's waypoints and its people's routines into $LOG_DIR/world_points.json
 #       for the book of places (gothic-ai places <dump>, server/src/gothic_ai/places.py)
 #   tts: npc lines reach the game with audio from the TTS service (TTS=fake|voxcpm|inworld) and play aloud;
