@@ -295,10 +295,10 @@ line is being said), `ge_id` (the gesture playing, 1 is `T_DIALOGGESTURE_01`), `
 Listening: `listen` (Xardas' face close up: quiet, the hero speaks to him 6 s, he thinks 2.5 s, he answers;
 with `gestures off` on top of a copy he stands still, as before).
 Deals: `deal` (the deal window of an AI server, the interface in the frames: start `gothic-ai serve
---scenario deal_demo --llm fake --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL`;
+--scenario deal_demo --llm off --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL`;
 Xardas offers a thing he has for 50 gold the hero lacks, then for 30, and the hero accepts).
 Two people talking: `gossip` (Lobart and Hilda talk about the hero's lie at Lobart's farm, each line said to
-the other: start `gothic-ai serve --scenario gossip_demo --llm fake --no-tts` on a port of your own and run
+the other: start `gothic-ai serve --scenario gossip_demo --llm off --no-tts` on a port of your own and run
 the bench with `GOTHIC_AI_URL`; the server puts Hilda 5 m from Lobart and the hero 7 m from them; `nearby`,
 `pair` and `where` every second: during each line both look at each other, `look=talk at=<the other>`).
 
@@ -591,12 +591,12 @@ segment's sound goes into `<segment>.wav`).
 
 `scripts/body_live_capture.py` starts a local game with the production `GameServer` and
 `BodyPilot`, using `[llm].body_url` from the usual launcher settings. It uses the existing
-remote P30 service without starting or changing it. `LLM`, `ASR` and `TTS` must be `fake`;
+remote P30 service without starting or changing it. `LLM` must be `off`; `ASR` and `TTS` must be `fake`;
 no clients for these models are created. Build the engine first. Each capture checks
 `pgrep -fl Gothic2Notr` immediately before launch and refuses to share the Mac with another game.
 
 ```bash
-LLM=fake ASR=fake TTS=fake uv run --project server python scripts/body_live_capture.py \
+LLM=off ASR=fake TTS=fake uv run --project server python scripts/body_live_capture.py \
   live-takeover --output "$HOME/.local/share/gothic-ai/explain/combat-ai/footage/live-takeover"
 ```
 

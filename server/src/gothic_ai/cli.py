@@ -3634,10 +3634,13 @@ def main() -> None:
     if getattr(args, "llm", None) == "auto":
         if scenario is None:
             parser.error("--llm auto requires --scenario")
-        args.llm = "off" if scenario in OFF | GIVEN else "fake"
-    if scenario in LIVE and args.llm in {"fake", "off"}:
+        if scenario in OFF | GIVEN:
+            args.llm = "off"
+        elif scenario not in LIVE:
+            parser.error(f"scenario {scenario} has no model group (docs/e2e.md)")
+    if scenario in LIVE and args.llm in {"auto", "off"}:
         parser.error(f"scenario {scenario} is live: set LLM=chatgpt|openai|local")
-    if args.command == "cards" and args.llm in {"fake", "off"}:
+    if args.command == "cards" and args.llm == "off":
         parser.error("cards requires --llm chatgpt|openai|local")
     if scenario in OFF | GIVEN and args.llm != "off":
         parser.error(f"scenario {scenario} requires --llm off")

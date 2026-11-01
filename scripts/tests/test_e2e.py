@@ -144,7 +144,7 @@ sleep() { printf 'sleep %s\n' "$1" >> "$CALLS"; }
 
 
 class SoakControlTests(unittest.TestCase):
-    def test_off_and_default_auto_are_forwarded_to_server(self):
+    def test_off_and_default_auto_are_forwarded_and_removed_backend_is_rejected(self):
         source = SCRIPT.read_text()
         selection = source[source.index('SCENARIO="${SCENARIO:-m0}"'):source.index('ASR="${ASR:-fake}"')]
         launch = source[source.index('(cd "$ROOT/server" && exec uv run gothic-ai serve'):
@@ -169,6 +169,13 @@ class SoakControlTests(unittest.TestCase):
                 self.assertEqual(done.returncode, 0, done.stderr)
                 args = (root / "server.log").read_text().splitlines()
                 self.assertEqual(args[args.index("--llm") + 1], llm or "auto")
+        rejected = subprocess.run(
+            ["bash", "-euc", selection], check=False,
+            env={"PATH": os.environ["PATH"], "SCENARIO": "graph", "LLM": "fake"},
+            capture_output=True, text=True, timeout=5,
+        )
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("LLM=fake is gone: scenarios pick their group (docs/e2e.md)", rejected.stderr)
 
     def test_control_selects_native_body_without_relaxing_other_launch_requirements(self):
         source = SCRIPT.read_text()

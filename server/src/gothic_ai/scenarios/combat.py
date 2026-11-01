@@ -36,9 +36,9 @@ async def surrender_live(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, mercy: Mercy,
 ) -> dict[str, str]:
     """Observe seven independent live decisions without scripting either model or its tools."""
-    if (dialogue.llm.name in {"off", "fake"} or dialogue.quick is None
-            or dialogue.quick.name in {"off", "fake"}):
-        raise GameError("scenario surrender_live requires a non-fake LLM and a live quick model")
+    if (dialogue.llm.name == "off" or dialogue.quick is None
+            or dialogue.quick.name == "off"):
+        raise GameError("scenario surrender_live requires a live LLM and a live quick model")
     if dialogue.trace is None:
         raise GameError("scenario surrender_live requires a trace directory")
     trace = dialogue.trace

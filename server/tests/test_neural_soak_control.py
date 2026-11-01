@@ -8,6 +8,7 @@ import pytest
 
 from gothic_ai.bodypilot import BodyFight, PolicyClient
 from gothic_ai.game import GameError
+from gothic_ai.llm import Done, Message, OffBackend
 from gothic_ai.protocol import LineStarted, Result, Saved, Session
 from gothic_ai.scenarios import neural_soak as soak
 from gothic_ai.scenarios.neural_soak_metrics import SoakMetrics
@@ -18,6 +19,7 @@ class NativeWorld:
 
     def __init__(self):
         self.now = 0.0
+        self.llm = OffBackend()
         self.hello = SimpleNamespace(protocol=45)
         self.raw_body_listeners = []
         self.listeners = []
@@ -148,9 +150,13 @@ class NativeWorld:
             self.emit(Session(type="session", branch=self.branch, parent=saved.branch,
                               parent_seq=saved.seq, reason="load"))
         elif command == "type":
-            self.conversations += 1
-            self.emit(LineStarted(type="line_started", npc=soak.TALKER,
-                                  line=f"answer-{self.conversations}"))
+            async for event in self.llm.stream(
+                instructions="", messages=[Message("user", kwargs["text"])], cache_key=soak.TALKER,
+            ):
+                if isinstance(event, Done) and event.text:
+                    self.conversations += 1
+                    self.emit(LineStarted(type="line_started", npc=soak.TALKER,
+                                          line=f"answer-{self.conversations}"))
         self.reply()
 
     async def attach(self, npc):
@@ -180,7 +186,7 @@ class ReadyBodies:
 @pytest.fixture
 def control_world(tmp_path, monkeypatch):
     world = NativeWorld()
-    dialogue = SimpleNamespace(llm=SimpleNamespace(name="fake"), speaking=lambda npc: False)
+    dialogue = SimpleNamespace(llm=world.llm, speaking=lambda npc: False)
     def forbidden(*args, **kwargs):
         pytest.fail("the native-AI control entered the policy/capture path")
 
@@ -244,6 +250,7 @@ async def test_control_runs_native_waves_death_and_scheduled_loads(
     assert result["extra"]["waves"][-1]["end"] == "escape_duration"
     assert len({entry["place"] for entry in result["extra"]["waves"]}) == 2
     assert world.conversations == len(world.wave_sizes)
+    assert not dialogue.llm.attempts and not dialogue.llm.unused()
     assert world.heals >= len(world.wave_sizes) * 2
     assert world.weapons.count("melee") == len(world.wave_sizes)
     assert world.weapons.count("none") == world.conversations
@@ -275,6 +282,7 @@ async def test_companion_death_loads_without_commands_on_dead_npc_and_runs_next_
     assert len(world.wave_sizes) == 4
     assert len(world.loads) == 3
     assert world.conversations == len(world.wave_sizes)
+    assert not dialogue.llm.attempts and not dialogue.llm.unused()
     assert "companion_death=1" in checks["soak_loads"]
 
 
