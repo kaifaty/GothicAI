@@ -29,13 +29,16 @@ def test_session_and_world_change_csv(tmp_path):
         ("change_end", 15000, -1, 225, 75, 15, 25, 1600, ""),
         ("world_begin", 16000, -1, 225, 75, 15, 25, 1600, "world=ADDONWORLD.ZEN"),
     ):
-        if stage in ("session_end", "stream_warm", "stream_warm_5s"):
-            extra += (" vob_near=120 vob_far=800 vob_outside=900 vob_created=950 vob_released=30 vob_draw_instances=1840 "
-                      "vob_pending=2 vob_publication_ms=0.125 vob_create_ms=12.5 vob_near_missing=0 vob_near_missing_seconds=0 "
-                      "vob_ready_ms=420.123456789")
         log += (f"[loadprobe] stage={stage} stage_ms={duration} t_ms={elapsed} rss_mb={footprint} "
                 f"footprint_mb={footprint} gpu_mb={gpu} tex_n={count} tex_mb={mb} tex_ms={texture_ms} {extra}\n")
         if stage in ("session_end", "stream_warm", "stream_warm_5s"):
+            for values in (
+                "vob_near=120 vob_far=800 vob_outside=900",
+                "vob_created=950 vob_released=30 vob_draw_instances=1840",
+                "vob_pending=2 vob_publication_ms=0.125 vob_create_ms=12.5",
+                "vob_near_missing=0 vob_near_missing_seconds=0 vob_ready_ms=420.123456789",
+            ):
+                log += f"[loadprobe-vob-streaming] stage={stage} t_ms={elapsed} {values}\n"
             log += (f"[loadprobe-malloc] stage={stage} t_ms={elapsed} "
                     f"malloc_in_use_mb={footprint - 30.123} malloc_allocated_mb={footprint + 10.234}\n")
             log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} tex_live_bytes={elapsed + 1000} "

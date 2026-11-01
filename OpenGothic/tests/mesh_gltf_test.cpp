@@ -391,7 +391,7 @@ struct Fixture {
     if(std::filesystem::is_regular_file(root/"_work/ORIGINAL.FNT")) {
       std::filesystem::copy_file(root/"materials/transparent-bc1.dds",base/"textures/FONT_ATLAS.dds",
                                  std::filesystem::copy_options::overwrite_existing);
-      textures=R"({"ORIGINAL":"FONT_ATLAS.dds","ORIGINAL_HI":"FONT_ATLAS.dds"})";
+      textures=R"({"ORIGINAL":"FONT_ATLAS.dds","ORIGINAL_HI":"FONT_ATLAS.dds","VOB_DECAL":"FONT_ATLAS.dds"})";
       }
     textFile(base/"textures/textures.json","{\"format\":\"gothic-textures\",\"version\":1,\"archives\":"+archives+",\"textures\":"+textures+"}");
     textFile(base/"zen/zen.json","{\"format\":1,\"archives\":"+archives+",\"loose_files\":[],\"files\":{}}");
@@ -1564,30 +1564,34 @@ void staticVobLifetime(Tempest::Device& device) {
   view.startVobStreaming(residency);
   const auto* proto=Resources::loadMesh("OWN_OPAQUE.3DS");
   asset::VisualDecal decal;
-  decal.name="OWN_TEST_BARREL_WOOD.TGA";
+  decal.name="VOB_DECAL.TGA";
   decal.dimension={50,50};
   const auto* decalProto=Resources::decalMesh(decal);
   require(proto!=nullptr && decalProto!=nullptr,"static vob lifetime requires mesh and decal prototypes");
-  const auto* texture=proto->attach[0].sub[0].material.tex;
-  require(texture!=nullptr && texture->w()==4,"static vob lifetime must use a resident fixture texture");
+  const std::array textures={proto->attach[0].sub[0].material.tex,decalProto->attach[0].sub[0].material.tex};
+  require(std::all_of(textures.begin(),textures.end(),[](auto* texture) { return texture!=nullptr && texture->w()==4; }),
+          "static vob lifetime must use resident mesh and decal textures");
   ObjVisual meshVisual,decalVisual;
   MeshGltfTest::attach(meshVisual,view,proto,{100,100,100});
   MeshGltfTest::attach(decalVisual,view,decalProto,{200,100,100});
   require(!MeshGltfTest::drawable(meshVisual) && !MeshGltfTest::drawable(decalVisual),
           "Outside registration must retain prototypes without creating draw instances");
-  const auto update=[&](const Tempest::Vec3& position) {
+  const auto update=[&](const Tempest::Vec3& position, float range=1000) {
     view.prepareLandscapeWork();
-    residency.update(position,position,1000);
+    residency.update(position,position,range);
     view.finishLandscapeUpdate();
     Resources::updateTextures(&residency);
     };
-  const auto textureWidth=[&](const Tempest::Vec3& position, uint32_t width) {
+  const auto textureWidth=[&](const Tempest::Vec3& position, int width, float range=1000) {
+    const auto matches=[&] {
+      return std::all_of(textures.begin(),textures.end(),[&](auto* texture) { return texture->w()==width; });
+      };
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
-    while(texture->w()!=width && std::chrono::steady_clock::now()<deadline) {
-      update(position);
+    while(!matches() && std::chrono::steady_clock::now()<deadline) {
+      update(position,range);
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
-    require(texture->w()==width,width==1 ? "Outside must release all mesh/decal texture demand" :
+    require(matches(),width==1 ? "Outside must release all mesh/decal texture demand" :
                                          "Near must restore texture demand after republishing");
     };
   const Tempest::Vec3 near={100,100,100},outside={1000000,0,1000000};
@@ -1620,6 +1624,19 @@ void staticVobLifetime(Tempest::Device& device) {
   require(close(matrix[3][0],301) && close(matrix[3][1],200) && close(matrix[3][2],100) &&
           view.clusters().size()==clusters && residency.stats().vobNearMissing==0,
           "returning Near must restore the latest deferred transform without accumulating instances");
+  // A vob-only cell has no Far landscape, but its published draw instances
+  // must keep texture demand until the vob cell itself leaves Far.
+  table.entries[0].triangleCount=0;
+  const Tempest::Vec3 far={25600,100,100};
+  update(far,100000);
+  textureWidth(far,4,100000);
+  for(size_t frame=0;frame<32;++frame)
+    update(far,100000);
+  require(residency.stats().vobFar==2 && MeshGltfTest::drawable(meshVisual) &&
+          MeshGltfTest::drawable(decalVisual) && textures[0]->w()==4 && textures[1]->w()==4,
+          "published Far vobs in a cell without landscape must retain their texture demand");
+  update(outside);
+  textureWidth(outside,1);
   device.waitIdle();
   unsetenv("OPENGOTHIC_VOB_STREAMING");
   unsetenv("OPENGOTHIC_TEXTURE_STREAMING");

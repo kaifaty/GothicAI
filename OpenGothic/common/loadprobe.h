@@ -305,15 +305,31 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
   processMb(rss,fp);
   size_t stagingCount=0, stagingBytes=0;
   tempestProbeUploadBuffers(stagingCount,stagingBytes);
-  char buf[1536];
+  const auto vobStart=extra.find("vob_near=");
+  const auto landscapeExtra=extra.substr(0,vobStart);
+  char buf[512];
   std::snprintf(buf,sizeof(buf),
                 "[loadprobe] stage=%.*s stage_ms=%.1f t_ms=%.1f rss_mb=%.1f footprint_mb=%.1f gpu_mb=%.1f "
                 "tex_n=%llu tex_mb=%.1f tex_ms=%.1f %.*s",
                 int(stage.size()),stage.data(),stageMs,elapsed,rss,fp,
                 double(tempestProbeGpuBytes())/1048576.0,
                 (unsigned long long)texCount.load(),double(texBytes.load())/1048576.0,double(texNs.load())/1e6,
-                int(extra.size()),extra.empty() ? "" : extra.data());
+                int(landscapeExtra.size()),landscapeExtra.empty() ? "" : landscapeExtra.data());
   Tempest::Log::i(buf);
+  if(vobStart!=std::string_view::npos) {
+    // Tempest's log line is limited to 255 bytes. Keep the vob measurements
+    // in short records with the same timestamp as the loading checkpoint.
+    auto fields=extra.substr(vobStart);
+    while(!fields.empty()) {
+      const size_t count=fields.size()>150 ? fields.rfind(' ',150) : fields.size();
+      std::snprintf(buf,sizeof(buf),"[loadprobe-vob-streaming] stage=%.*s t_ms=%.1f %.*s",
+                    int(stage.size()),stage.data(),elapsed,int(count),fields.data());
+      Tempest::Log::i(buf);
+      fields.remove_prefix(count);
+      if(!fields.empty())
+        fields.remove_prefix(1);
+      }
+    }
   const auto textures = Resources::textureStats();
   char textureBuf[512];
   std::snprintf(textureBuf,sizeof(textureBuf),

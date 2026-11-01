@@ -364,7 +364,7 @@ bool VisualObjects::textureChunkActive(const Vec3& position) const {
     return true;
   const auto chunk=ChunkId::fromPosition(position.x,position.z);
   const auto index=textureResidency->indexOf(chunk);
-  if(index!=size_t(-1))
+  if(index!=size_t(-1) && textureResidency->table().entries[index].triangleCount!=0)
     return textureResidency->desired(index)!=ChunkResidency::State::Outside;
   // Some visuals occupy cells without landscape triangles.
   return true;

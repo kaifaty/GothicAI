@@ -46,7 +46,7 @@ def parse(path):
             if vobs:
                 pending_vobs.append(fields(vobs.group(1)))
                 continue
-            match = re.search(r"\[loadprobe(-(?:malloc|textures))?\] stage=(\S+) (.*)", line)
+            match = re.search(r"\[loadprobe(-(?:malloc|textures|vob-streaming))?\] stage=(\S+) (.*)", line)
             if not match:
                 continue
             row = {"stage": match.group(2)}
