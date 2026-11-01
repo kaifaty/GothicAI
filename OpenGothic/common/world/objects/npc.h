@@ -634,7 +634,7 @@ class Npc final {
     bool      whirlTo(float dx, float dz, float step, uint64_t dt);
     bool      isRotationAllowed() const;
     auto      playAnimByName(std::string_view name, BodyState bs) -> const Animation::Sequence*;
-    bool      setPlayerPose(bool kneel);
+    bool      setPlayerPose(bool kneel, std::string_view reason);
     void      tickPeeStream();
     bool      tickPlayerPose();
     bool      isPlayerKneeling() const { return playerKneeling; }

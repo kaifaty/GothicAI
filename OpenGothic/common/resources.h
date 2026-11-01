@@ -280,6 +280,7 @@ class Resources final {
       void validate(const std::vector<std::pair<std::string,uintmax_t>>& mounted);
       };
     BaseIndex baseTextures, baseMeshes, baseZen, baseModels, baseFonts;
+    std::map<std::string,std::filesystem::path> contentModels;
     ProgramData::Index basePrograms;
     OutputUnits::Index baseOutputUnits;
     AudioData::Index baseAudio;
@@ -294,7 +295,10 @@ class Resources final {
     std::thread videoWorker;
     static std::filesystem::path baseDir();
     void indexBaseContent();
+    void indexContentModels();
     static std::filesystem::path baseModelFile(std::string_view name);
+    template<class T>
+    static bool loadModelRecord(std::string_view name, T& out, T (*read)(const std::filesystem::path&));
     static bool loadHierarchyData(std::string_view name, asset::ModelHierarchy& out);
     static bool loadModelMeshData(std::string_view name, asset::ModelMesh& out);
     static bool loadModelData(std::string_view name, asset::Model& out);

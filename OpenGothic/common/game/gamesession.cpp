@@ -146,6 +146,7 @@ GameSession::GameSession(std::string file) {
       pages="landscape_used_bytes="+std::to_string(s.landscapePageUsedBytes)+
             " landscape_free_bytes="+std::to_string(s.landscapePageFreeBytes)+
             " landscape_retired_bytes="+std::to_string(s.landscapePageRetiredBytes);
+      pages+=" "+s.vobProbeFields();
       }
     LoadProbe::mark("session_end",-1,pages);
     if(wrld->chunkResidency()==nullptr)

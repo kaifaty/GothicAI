@@ -72,6 +72,8 @@ def run(name):
     command = [str(root / "scripts/e2e.sh")]
     if host == "ryzen":
         env["RYZEN_WORKTREE"] = f"{worktree}-regression-{slot}"
+        if RUN[name].get("exclusive", False):
+            env["RYZEN_DISPLAY_EXCLUSIVE"] = "1"
         command = [str(root / "scripts/ryzen.sh"), "e2e"]
     started = time.monotonic()
     print(f"Regression {name} ({'OFF' if name in OFF else 'GIVEN'}): {directory}", flush=True)
@@ -108,7 +110,10 @@ def run(name):
 
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=1 if host == "mac" else 3) as pool:
-    rows = list(pool.map(run, names))
+    rows = list(pool.map(run, [name for name in names if not RUN[name].get("exclusive", False)]))
+for name in names:
+    if RUN[name].get("exclusive", False):
+        rows.append(run(name))
 (out / "regression.json").write_text(json.dumps({"host": host, "scenarios": rows}, ensure_ascii=False, indent=2) + "\n")
 lines = ["# E2E regression", "", f"Host: {host}", "",
          "| Scenario | Group | Result | Seconds | model_off | givens_used | Log | Known defect in main |",

@@ -65,7 +65,11 @@ command with `OPENGOTHIC_STREAMING=1` capture `perf-market.png`, `perf-harbour.p
 `perf-forest.png` from the first viewpoints of those performance scenarios. `streaming wait`
 yields a frame for camera/residency updates, then waits until the publication queue is empty
 and all desired Near/Far chunks are published (default timeout 60000 real milliseconds).
-The disabled-streaming path is already ready. Claude compares the resulting frames on Mac.
+The wait also includes static vob views. The disabled-streaming path is already ready.
+`streaming-shots` ends with `perf-market-teleport.png`: after one update beyond the city's Far
+range, it captures the first frame back in the market without waiting for Far publication.
+Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claude compares
+the resulting frames on Mac.
 
 ## Frame profile
 
@@ -493,7 +497,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `talk <npc\|nearest> <ms>` | the npc and the hero talk to each other that long (no words): they look at each other |
 | `freeze <npc\|nearest> [off]` | the npc leaves what it does and stands still, like a body the AI server attaches |
 | `ani <npc\|nearest\|player> <name>` | it plays that animation, as `play_ani` does (`T_STAND_2_PEE` goes on to its loop `S_PEE`) |
-| `heropose kneel\|none` | the hero kneels as after a surrender (`player_pose`), or gets up |
+| `heropose kneel\|none\|check` | the hero kneels as after a surrender (`player_pose`), or gets up. After `heropose kneel` and `wait 2500`, `check` exercises actual mouse rotation through a movement tick (keeps kneeling and turns 15 degrees), then `ptt_start` (keeps kneeling), then `Forward` (ends kneeling). Success writes `heropose check passed` and the engine writes `[ai] hero pose kneel ends: key Forward` to `game.log`; the bridge must be enabled, no server connection is needed |
 | `place <dist> <angle>`, `orbit <deg> <ms>` | the hero stands around the watched npc (angle from its facing, 0 in front) or goes around it; not where no ground is found (inside a rock: it would fall through the world) |
 | `gazeinfo` | gaze state of the watched npc to `bench.log`: why it looks, at whom |
 | `lean on\|off` | the lean into turns and on slopes |

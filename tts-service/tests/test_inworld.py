@@ -160,11 +160,19 @@ async def test_voice_designed_once_then_reused(api, tmp_path) -> None:
     pcm, seconds = await _speak(p)
     assert pcm == b"\1\0" * 100 and seconds == pytest.approx(100 / 24000)
     await _speak(p)
+    requests = len(api.requests)
+    assert await p._designed(XARDAS) == "ws__design-voice-1"
+    p.cache.unlink()
+    assert await p._designed(XARDAS) == "ws__design-voice-1"
+    assert len(api.requests) == requests  # both local cache and the process library avoid the network
     await p.aclose()
 
     assert api.designed == 1
     design = next(body for _, path, body in api.requests if path == "/voices/v1/voices:design")
     assert design["designPrompt"] == XARDAS.description and design["languageCode"] == "ru-RU"
+    published = next(body for _, path, body in api.requests if path.endswith(":publish"))
+    digest = hashlib.sha1(f"ru-RU\n{XARDAS.description}".encode()).hexdigest()[:16]
+    assert published["tags"] == ["gothic-ai", f"design-{digest}"]
     first, second = api.streams()
     assert first["voiceId"] == second["voiceId"] == "ws__design-voice-1"
     assert first["audioConfig"] == {"audioEncoding": "PCM", "sampleRateHertz": 24000}
@@ -177,6 +185,50 @@ async def test_voice_designed_once_then_reused(api, tmp_path) -> None:
     await _speak(again, Voice(XARDAS.id, "A young woman"))
     assert api.designed == 2
     await again.aclose()
+
+
+async def test_workspace_design_matches_name_description_and_language(api, tmp_path) -> None:
+    digest = hashlib.sha1(f"ru-RU\n{XARDAS.description}".encode()).hexdigest()[:16]
+    tag = f"design-{digest}"
+    changed_description = hashlib.sha1(b"ru-RU\nA different voice").hexdigest()[:16]
+    changed_language = hashlib.sha1(f"en-US\n{XARDAS.description}".encode()).hexdigest()[:16]
+    api.library = [
+        {"voiceId": "wrong-name", "displayName": "gothic-ai OTHER", "tags": ["gothic-ai", tag]},
+        {"voiceId": "wrong-description", "displayName": f"gothic-ai {XARDAS.id}",
+         "tags": ["gothic-ai", f"design-{changed_description}"]},
+        {"voiceId": "wrong-language", "displayName": f"gothic-ai {XARDAS.id}",
+         "tags": ["gothic-ai", f"design-{changed_language}"]},
+        *({"voiceId": ident, "displayName": f"gothic-ai {XARDAS.id}", "tags": ["gothic-ai", tag]}
+          for ident in ("oldest-design", "duplicate-design")),
+    ]
+    p = _provider(api, tmp_path, keep_warm=0)
+    try:
+        assert not p.cache.exists()
+        assert await p._designed(XARDAS) == "oldest-design"
+        assert json.loads(p.cache.read_text())[XARDAS.id] == {
+            "voice_id": "oldest-design", "description": XARDAS.description, "language": "ru-RU",
+        }
+        assert api.requests == [("GET", "/voices/v1/voices", {})]
+        assert await p._designed(XARDAS) == "oldest-design"
+        assert api.requests == [("GET", "/voices/v1/voices", {})]
+        assert api.designed == 0
+    finally:
+        await p.aclose()
+
+
+async def test_workspace_list_failure_designs_voice(api, tmp_path, caplog) -> None:
+    def transport(request):
+        if request.url.path == "/voices/v1/voices":
+            return httpx.Response(503, text="test list failure")
+        return api(request)
+
+    p = _provider(transport, tmp_path, keep_warm=0)
+    try:
+        assert await p._designed(XARDAS) == "ws__design-voice-1"
+        assert api.designed == 1
+        assert "workspace voice list unavailable" in caplog.text
+    finally:
+        await p.aclose()
 
 
 async def test_voice_designed_in_its_language(api, tmp_path) -> None:
@@ -307,11 +359,15 @@ async def test_workspace_list_failure_clones_and_can_retry(api, tmp_path, caplog
         await p.aclose()
 
 
-async def test_tag_cached_clones_preserves_tags_and_skips_missing_voices(api, tmp_path, caplog):
+async def test_tag_cached_voices_preserves_tags_and_skips_missing_voices(api, tmp_path, caplog):
     digest = "1234567890abcdef"
+    design_digest = hashlib.sha1(f"ru-RU\n{XARDAS.description}".encode()).hexdigest()[:16]
+    design_tag = f"design-{design_digest}"
     api.library = [
         {"voiceId": "needs-tag", "tags": ["gothic-ai", "keep-this"]},
         {"voiceId": "already-tagged", "tags": ["gothic-ai", f"sample-{digest}"]},
+        {"voiceId": "design-needs-tag", "tags": ["gothic-ai", "keep-design"]},
+        {"voiceId": "design-already-tagged", "tags": ["gothic-ai", design_tag]},
     ]
     patches = []
 
@@ -323,18 +379,33 @@ async def test_tag_cached_clones_preserves_tags_and_skips_missing_voices(api, tm
 
     p = _provider(transport, tmp_path, keep_warm=0)
     p.cache.write_text(json.dumps({
-        "FIRST@original": {"voice_id": "needs-tag", "sample": digest},
+        "FIRST@original": {
+            "voice_id": "needs-tag", "sample": digest,
+            "description": XARDAS.description, "language": "ru-RU",
+        },
         "SECOND@original": {"voice_id": "already-tagged", "sample": digest},
         "MISSING@original": {"voice_id": "gone", "sample": digest},
-        "DESIGNED": {"voice_id": "designed"},
+        "DESIGNED": {
+            "voice_id": "design-needs-tag", "description": XARDAS.description, "language": "ru-RU",
+        },
+        "DESIGNED_AGAIN": {
+            "voice_id": "design-already-tagged", "description": XARDAS.description, "language": "ru-RU",
+        },
+        "MISSING_DESIGN": {
+            "voice_id": "gone-design", "description": XARDAS.description, "language": "ru-RU",
+        },
+        "NO_DESCRIPTION": {"voice_id": "ignored", "description": "", "language": "ru-RU"},
+        "NO_LANGUAGE": {"voice_id": "ignored", "description": XARDAS.description},
     }))
     try:
-        await p.tag_cached_clones()
-        await p.tag_cached_clones()
-        assert patches == [("/voices/v1/voices/needs-tag", {
-            "tags": ["gothic-ai", "keep-this", f"sample-{digest}"],
-        })]
-        assert "cached clone MISSING@original is missing from the workspace" in caplog.text
+        assert await p.tag_cached_voices() == (2, 2, 2)
+        assert await p.tag_cached_voices() == (0, 4, 2)
+        assert patches == [
+            ("/voices/v1/voices/needs-tag", {"tags": ["gothic-ai", "keep-this", f"sample-{digest}"]}),
+            ("/voices/v1/voices/design-needs-tag", {"tags": ["gothic-ai", "keep-design", design_tag]}),
+        ]
+        assert "cached voice MISSING@original is missing from the workspace" in caplog.text
+        assert "cached voice MISSING_DESIGN is missing from the workspace" in caplog.text
         assert sum(path == "/voices/v1/voices" for _, path, _ in api.requests) == 1
     finally:
         await p.aclose()
@@ -928,9 +999,34 @@ def test_clone_originals_command_reuses_sample_hash(api, tmp_path, monkeypatch, 
     assert capsys.readouterr().out == "XARDAS → ws__clone-voice-3 (cloned)\n"
 
 
+def test_tag_voices_reports_counts_without_preparing_or_speaking(api, tmp_path, monkeypatch, capsys):
+    digest = "1234567890abcdef"
+    api.library = [
+        {"voiceId": "needs-tag", "tags": ["gothic-ai", "keep-this"]},
+        {"voiceId": "already-tagged", "tags": ["gothic-ai", f"sample-{digest}"]},
+    ]
+    (tmp_path / "voices.json").write_text(json.dumps({
+        "DESIGNED": {"voice_id": "needs-tag", "description": XARDAS.description, "language": "ru-RU"},
+        "CLONED": {"voice_id": "already-tagged", "sample": digest},
+        "MISSING": {"voice_id": "gone", "sample": digest},
+    }))
+    monkeypatch.setattr(cli, "InworldTTS", lambda: _provider(api, tmp_path, keep_warm=0))
+    monkeypatch.setattr(cli, "load_env_file", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["gothic-tts", "tag-voices"])
+    with pytest.raises(SystemExit) as finished:
+        cli.main()
+    assert finished.value.code == 0
+    assert capsys.readouterr().out == "Voice tags: 1 tagged, 1 already tagged, 1 not found\n"
+    assert [(method, path) for method, path, _ in api.requests] == [
+        ("GET", "/voices/v1/voices"), ("PATCH", "/voices/v1/voices/needs-tag"),
+    ]
+    assert api.designed == api.cloned == 0 and api.streams() == []
+
+
 @pytest.mark.parametrize("failed_method", ["GET", "PATCH"])
-def test_clone_originals_fails_when_sample_tag_migration_fails(
-    api, tmp_path, monkeypatch, capsys, failed_method,
+@pytest.mark.parametrize("command", ["clone-originals", "tag-voices"])
+def test_commands_fail_when_voice_tag_migration_fails(
+    api, tmp_path, monkeypatch, capsys, failed_method, command,
 ):
     sample = b"RIFF legacy"
     (tmp_path / "LEGACY.wav").write_bytes(sample)
@@ -951,11 +1047,14 @@ def test_clone_originals_fails_when_sample_tag_migration_fails(
 
     monkeypatch.setattr(cli, "InworldTTS", lambda: _provider(transport, tmp_path, keep_warm=0))
     monkeypatch.setattr(cli, "load_env_file", lambda: None)
-    monkeypatch.setattr(sys, "argv", ["gothic-tts", "clone-originals", "--dir", str(tmp_path)])
+    args = ["gothic-tts", command]
+    if command == "clone-originals":
+        args.extend(["--dir", str(tmp_path)])
+    monkeypatch.setattr(sys, "argv", args)
     with pytest.raises(SystemExit) as failed:
         cli.main()
     assert failed.value.code == 1
-    assert "error: clone sample tags:" in capsys.readouterr().err
+    assert "error: voice tags:" in capsys.readouterr().err
     assert methods == (["GET"] if failed_method == "GET" else ["GET", "PATCH"])
     assert api.library[0]["tags"] == ["gothic-ai"]
     assert api.cloned == api.designed == 0
@@ -1080,10 +1179,13 @@ async def test_the_line_style_steers_any_voice(api, tmp_path) -> None:
 async def test_vanished_voice_is_designed_again(api, tmp_path) -> None:
     p = _provider(api, tmp_path)
     await _speak(p)
+    assert any(v["voiceId"] == "ws__design-voice-1" for v in p._workspace_voices)
     api.voices.discard("ws__design-voice-1")  # deleted in the portal, or another workspace's key
     pcm, _ = await _speak(p)
     await p.aclose()
     assert pcm and api.designed == 2
+    assert all(v["voiceId"] != "ws__design-voice-1" for v in p._workspace_voices)
+    assert sum(path == "/voices/v1/voices" for _, path, _ in api.requests) == 1
     assert json.loads((tmp_path / "voices.json").read_text())[XARDAS.id]["voice_id"] == "ws__design-voice-2"
 
 

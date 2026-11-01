@@ -2,6 +2,8 @@
 
 #include <Tempest/Application>
 #include <condition_variable>
+#include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <numeric>
@@ -9,6 +11,7 @@
 #include <thread>
 
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/objvisual.h"
 #include "game/gametime.h"
 #include "camera.h"
 #include "shaders.h"
@@ -17,6 +20,157 @@
 #include "utils/workers.h"
 
 using namespace Tempest;
+
+struct WorldView::VobStreaming : std::enable_shared_from_this<VobStreaming> {
+  struct Chunk {
+    std::vector<ObjVisual*> visuals;
+    ChunkResidency::State state = ChunkResidency::State::Outside;
+    size_t cursor = 0;
+    size_t unpublished = 0, missing = 0;
+    bool queued = false;
+    };
+  using Key = std::pair<int32_t,int32_t>;
+  ChunkResidency& residency;
+  std::map<Key,Chunk> chunks;
+  std::deque<Key> pending;
+  uint64_t subscription = 0;
+  bool enabled = true, workQueued = false, started = false;
+  ChunkResidency::Clock::time_point firstUpdate, previousUpdate;
+
+  explicit VobStreaming(ChunkResidency& residency):residency(residency) {
+    const auto* flag=std::getenv("OPENGOTHIC_VOB_STREAMING");
+    enabled=flag==nullptr || std::strcmp(flag,"0")!=0;
+    subscription=residency.subscribe([this](ChunkId id, ChunkResidency::State, ChunkResidency::State) {
+      auto found=chunks.find({id.x,id.z});
+      if(found!=chunks.end())
+        transition(found->first,found->second,this->residency.desired(id,found->second.state));
+      });
+    }
+
+  ~VobStreaming() {
+    residency.unsubscribe(subscription);
+    for(auto& [id,chunk]:chunks)
+      for(auto* visual:chunk.visuals)
+        visual->streamView=nullptr;
+    }
+
+  void publish(Chunk& chunk, ObjVisual& visual) {
+    if(visual.mesh.published)
+      return;
+    const bool wasMissing=!visual.mesh.proto->submeshId.empty() && visual.mesh.view.isEmpty();
+    const auto before=ChunkResidency::Clock::now();
+    visual.createView();
+    visual.mesh.published=!visual.mesh.view.isEmpty() || visual.mesh.proto->submeshId.empty();
+    chunk.unpublished-=visual.mesh.published;
+    chunk.missing-=wasMissing && !visual.mesh.view.isEmpty();
+    auto& stats=residency.vobStats();
+    const double ms=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-before).count();
+    ++stats.vobCreated;
+    stats.vobDrawInstances+=visual.mesh.view.nodesCount();
+    stats.vobPublicationMs+=ms;
+    stats.vobCreateMs+=ms;
+    }
+
+  void release(Chunk& chunk, ObjVisual& visual) {
+    if(!visual.mesh.published)
+      return;
+    chunk.missing+=!visual.mesh.proto->submeshId.empty() && !visual.mesh.view.isEmpty();
+    visual.mesh.view={};
+    visual.mesh.published=false;
+    ++chunk.unpublished;
+    ++residency.vobStats().vobReleased;
+    }
+
+  void queue(Key id, Chunk& chunk) {
+    if(chunk.queued)
+      return;
+    chunk.queued=true;
+    chunk.cursor=0;
+    pending.push_back(id);
+    }
+
+  void transition(Key id, Chunk& chunk, ChunkResidency::State next) {
+    chunk.state=next;
+    if(!enabled)
+      return;
+    if(next==ChunkResidency::State::Near)
+      for(auto* visual:chunk.visuals)
+        publish(chunk,*visual);
+    else if(next==ChunkResidency::State::Outside)
+      for(auto* visual:chunk.visuals)
+        release(chunk,*visual);
+    else
+      queue(id,chunk);
+    }
+
+  void prepare() {
+    if(!started) {
+      firstUpdate=previousUpdate=ChunkResidency::Clock::now();
+      started=true;
+      }
+    residency.vobStats().vobPublicationMs=0;
+    if(workQueued || pending.empty())
+      return;
+    workQueued=true;
+    // A frame owns one cooperative slice. Retain only the small cell cursor
+    // between slices so a dense city cell never becomes one long callback.
+    residency.enqueue([weak=weak_from_this()](ChunkResidency::Clock::time_point deadline) {
+      auto self=weak.lock();
+      if(!self)
+        return true;
+      while(!self->pending.empty() && ChunkResidency::Clock::now()<deadline) {
+        const auto key=self->pending.front();
+        auto found=self->chunks.find(key);
+        if(found==self->chunks.end()) {
+          self->pending.pop_front();
+          continue;
+          }
+        auto& chunk=found->second;
+        if(chunk.state==ChunkResidency::State::Far) {
+          while(chunk.cursor<chunk.visuals.size() && ChunkResidency::Clock::now()<deadline)
+            self->publish(chunk,*chunk.visuals[chunk.cursor++]);
+          if(chunk.cursor<chunk.visuals.size())
+            break;
+          }
+        chunk.queued=false;
+        self->pending.pop_front();
+        }
+      self->workQueued=false;
+      return true;
+      });
+    }
+
+  void finish() {
+    const auto now=ChunkResidency::Clock::now();
+    if(!started) {
+      firstUpdate=previousUpdate=now;
+      started=true;
+      }
+    auto& stats=residency.vobStats();
+    stats.vobNear=stats.vobFar=stats.vobOutside=stats.vobPending=stats.vobNearMissing=0;
+    for(auto& [key,chunk]:chunks) {
+      const auto next=residency.desired({key.first,key.second},chunk.state);
+      if(next!=chunk.state)
+        transition(key,chunk,next);
+      switch(chunk.state) {
+        case ChunkResidency::State::Near: stats.vobNear+=chunk.visuals.size(); break;
+        case ChunkResidency::State::Far: stats.vobFar+=chunk.visuals.size(); break;
+        case ChunkResidency::State::Outside: stats.vobOutside+=chunk.visuals.size(); break;
+        }
+      if(chunk.state==ChunkResidency::State::Outside)
+        continue;
+      stats.vobPending+=chunk.unpublished;
+      if(chunk.state==ChunkResidency::State::Near)
+        stats.vobNearMissing+=chunk.missing;
+      }
+    stats.vobNearMissingSeconds+=double(stats.vobNearMissing)*std::chrono::duration<double>(now-previousUpdate).count();
+    previousUpdate=now;
+    if(stats.vobPending==0 && stats.vobReadyMs<0)
+      stats.vobReadyMs=std::chrono::duration<double,std::milli>(now-firstUpdate).count();
+    }
+
+  bool ready() const { return residency.stats().vobPending==0 && !workQueued; }
+  };
 
 struct WorldView::LandscapeStreaming {
   struct Chunk {
@@ -338,24 +492,80 @@ WorldView::~WorldView() {
   // cmd buffers must not be in use
   Resources::device().waitIdle();
   streaming.reset();
+  vobStreaming.reset();
   }
 
 void WorldView::startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs) {
   streaming=std::make_unique<LandscapeStreaming>(*this,std::move(mesh),residency,preloadMs);
   }
 
+void WorldView::startVobStreaming(ChunkResidency& residency) {
+  vobStreaming=std::make_shared<VobStreaming>(residency);
+  }
+
+void WorldView::addVob(ObjVisual& visual, ChunkId id) {
+  if(!vobStreaming)
+    return;
+  visual.streamView=this;
+  visual.streamCell=id;
+  auto& streaming=*vobStreaming;
+  auto& chunk=streaming.chunks[{id.x,id.z}];
+  chunk.visuals.push_back(&visual);
+  chunk.unpublished+=!visual.mesh.published;
+  chunk.missing+=!visual.mesh.proto->submeshId.empty() && visual.mesh.view.isEmpty();
+  chunk.cursor=0;
+  chunk.state=streaming.residency.desired(id,chunk.state);
+  if(!streaming.enabled || chunk.state==ChunkResidency::State::Near)
+    streaming.publish(chunk,visual);
+  else if(chunk.state==ChunkResidency::State::Far)
+    streaming.queue({id.x,id.z},chunk);
+  }
+
+void WorldView::removeVob(ObjVisual& visual, bool release) {
+  auto& streaming=*vobStreaming;
+  auto& chunk=streaming.chunks.at({visual.streamCell.x,visual.streamCell.z});
+  if(release)
+    streaming.release(chunk,visual);
+  chunk.unpublished-=!visual.mesh.published;
+  chunk.missing-=!visual.mesh.proto->submeshId.empty() && visual.mesh.view.isEmpty();
+  const auto found=std::find(chunk.visuals.begin(),chunk.visuals.end(),&visual);
+  *found=chunk.visuals.back();
+  chunk.visuals.pop_back();
+  chunk.cursor=0;
+  visual.streamView=nullptr;
+  }
+
+void WorldView::moveVob(ObjVisual& visual, ChunkId id) {
+  removeVob(visual,false);
+  addVob(visual,id);
+  if(vobStreaming->enabled && vobStreaming->chunks.at({id.x,id.z}).state==ChunkResidency::State::Outside)
+    vobStreaming->release(vobStreaming->chunks.at({id.x,id.z}),visual);
+  }
+
+void WorldView::replaceVob(ObjVisual& previous, ObjVisual& next) {
+  auto& chunk=vobStreaming->chunks.at({previous.streamCell.x,previous.streamCell.z});
+  *std::find(chunk.visuals.begin(),chunk.visuals.end(),&previous)=&next;
+  next.streamView=this;
+  next.streamCell=previous.streamCell;
+  previous.streamView=nullptr;
+  }
+
 void WorldView::prepareLandscapeWork() {
   if(streaming)
     streaming->prepare();
+  if(vobStreaming)
+    vobStreaming->prepare();
   }
 
 void WorldView::finishLandscapeUpdate() {
   if(streaming)
     streaming->finish();
+  if(vobStreaming)
+    vobStreaming->finish();
   }
 
 bool WorldView::landscapeReady() const {
-  return (!streaming || streaming->ready()) && Resources::texturesReady();
+  return (!streaming || streaming->ready()) && (!vobStreaming || vobStreaming->ready()) && Resources::texturesReady();
   }
 
 const LightSource& WorldView::mainLight() const {

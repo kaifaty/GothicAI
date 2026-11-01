@@ -657,6 +657,9 @@ struct Bench {
     uint64_t published = 0, released = 0;
     size_t pageUsedBytes = 0, pageFreeBytes = 0, pageRetiredBytes = 0, pageCount = 0;
     Resources::TextureStats textures;
+    size_t vobNear = 0, vobFar = 0, vobOutside = 0, vobPending = 0, vobNearMissing = 0;
+    uint64_t vobCreated = 0, vobReleased = 0;
+    double vobPublicationMs = 0, vobNearMissingSeconds = 0;
     };
   std::vector<StreamingSample> streamingSamples;
   std::vector<double> streamingWarmupFarMs;
@@ -665,6 +668,8 @@ struct Bench {
   uint64_t streamingNearBefore = 0, streamingFarBefore = 0;
   uint64_t streamingPublishedBefore = 0, streamingReleasedBefore = 0;
   Resources::TextureStats streamingTexturesBefore;
+  uint64_t streamingVobCreatedBefore = 0, streamingVobReleasedBefore = 0;
+  double streamingVobMissingBefore = 0;
   std::vector<Vec3> routePoints;
   size_t      routeNext = 0;
   Vec3        routePosition;
@@ -1840,7 +1845,7 @@ void finish() {
   stopRecording();
   if(!bench.streamingSamples.empty()) {
     if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
-      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds\n");
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds,vob_near,vob_far,vob_outside,vob_created,vob_released,vob_pending,vob_publication_ms,vob_near_missing,vob_near_missing_seconds\n");
       for(const auto& row:bench.streamingSamples) {
         std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu,",row.segment.c_str(),
           (unsigned long long)row.frame,row.updateMs,row.workMs,row.near,row.far,row.outside,
@@ -1857,10 +1862,14 @@ void finish() {
         for(size_t i=0;i<textures.categoryBytes.size();++i)
           std::fprintf(file,",%llu,%llu",(unsigned long long)textures.categoryBytes[i],
             (unsigned long long)textures.categoryCount[i]);
-        std::fprintf(file,",%llu,%llu,%llu,%llu,%llu,%llu,%.9g\n",
+        std::fprintf(file,",%llu,%llu,%llu,%llu,%llu,%llu,%.9g",
           (unsigned long long)textures.fullBytes,(unsigned long long)textures.tailBytes,
           (unsigned long long)textures.promoted,(unsigned long long)textures.demoted,
           (unsigned long long)textures.promotionQueue,(unsigned long long)textures.nearTailCount,textures.nearTailSeconds);
+        std::fprintf(file,",%zu,%zu,%zu,%llu,%llu,%zu,%.9g,%zu,%.9g\n",
+          row.vobNear,row.vobFar,row.vobOutside,(unsigned long long)row.vobCreated,
+          (unsigned long long)row.vobReleased,row.vobPending,row.vobPublicationMs,
+          row.vobNearMissing,row.vobNearMissingSeconds);
         }
       std::fclose(file);
       } else event("streaming_error","\"reason\":\"cannot write residency samples\"");
@@ -15628,6 +15637,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         bench.streamingFarBefore=residency->stats().transitionsFar;
         bench.streamingPublishedBefore=residency->stats().published;
         bench.streamingReleasedBefore=residency->stats().released;
+        bench.streamingVobCreatedBefore=residency->stats().vobCreated;
+        bench.streamingVobReleasedBefore=residency->stats().vobReleased;
+        bench.streamingVobMissingBefore=residency->stats().vobNearMissingSeconds;
         }
       FrameProfile::setActors(bench.crew);
       event("perf_segment","\"segment\":"+jsonStr(bench.perfSegment)+
@@ -18190,9 +18202,33 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("ani " + symName(w,n) + " " + a[2]);
     }
   else if(c=="heropose") {
-    // heropose kneel|none: the hero kneels as after a surrender (player_pose), or gets up
+    // heropose kneel|none|check: set the surrender pose, or exercise its real input paths.
+    if(a.size()>1 && a[1]=="check") {
+      if(!pl.isPlayerKneeling())
+        throw std::runtime_error("heropose check requires a kneeling hero");
+      const float rotation = pl.rotation();
+      ctrl.onRotateMouse(15.f,5.f);
+      ctrl.tickMove(16);
+      if(!pl.isPlayerKneeling())
+        throw std::runtime_error("heropose: mouse rotation ended kneel");
+      if(std::abs(std::remainder(pl.rotation()-rotation-15.f,360.f))>0.01f)
+        throw std::runtime_error("heropose: mouse rotation did not turn the hero");
+      std::string reply;
+      if(!aiCommand("ai ptt start",reply))
+        throw std::runtime_error("heropose: no AI bridge for ptt_start");
+      const bool speakingKneeling = pl.isPlayerKneeling();
+      aiCommand("ai ptt cancel",reply);
+      if(!speakingKneeling)
+        throw std::runtime_error("heropose: ptt_start ended kneel");
+      press(ctrl,KeyCodec::Forward);
+      release(ctrl,KeyCodec::Forward);
+      if(pl.isPlayerKneeling())
+        throw std::runtime_error("heropose: Forward did not end kneel");
+      say("heropose check passed: mouse and ptt_start preserve kneel; Forward ends kneel");
+      return;
+      }
     const bool kneel = a.size()>1 && a[1]=="kneel";
-    say(std::string("heropose ") + (pl.setPlayerPose(kneel) ? (kneel ? "kneel" : "none") : "refused"));
+    say(std::string("heropose ") + (pl.setPlayerPose(kneel,"testbench none") ? (kneel ? "kneel" : "none") : "refused"));
     }
   else if(c=="place") {
     // place <dist> <angle>: the hero stands that far from the watched npc, at that angle from its facing
@@ -18291,6 +18327,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         pages="landscape_used_bytes="+std::to_string(s.landscapePageUsedBytes)+
               " landscape_free_bytes="+std::to_string(s.landscapePageFreeBytes)+
               " landscape_retired_bytes="+std::to_string(s.landscapePageRetiredBytes);
+        pages+=" "+s.vobProbeFields();
         }
       LoadProbe::mark(text,-1,pages);
       }
@@ -18566,7 +18603,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
         if(std::chrono::steady_clock::now()<bench.streamingDeadline)
           return;
         bench.waitStreaming=false;
-        arenaAbort("streaming wait timed out before all Near/Far chunks were published");
+        arenaAbort("streaming wait timed out before all Near/Far landscape and vob visuals were published");
         return;
         }
       bench.waitStreaming=false;
@@ -18578,7 +18615,9 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       publications+=']';
       event("streaming_ready","\"world\":"+jsonStr(w.name())+",\"pass\":true,\"far_publication_ms\":"+publications+
         ",\"far_max_per_frame\":"+std::to_string(bench.streamingWarmupFarMaxPerFrame)+
-        ",\"queue_max_ms\":"+std::to_string(bench.streamingWarmupQueueMaxMs));
+        ",\"queue_max_ms\":"+std::to_string(bench.streamingWarmupQueueMaxMs)+
+        ",\"vob_pending\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobPending : 0)+
+        ",\"vob_near_missing\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobNearMissing : 0));
       bench.streamingWarmupFarMs.clear();
       bench.streamingWarmupFarMaxPerFrame=0;
       bench.streamingWarmupQueueMaxMs=0;
@@ -20497,11 +20536,17 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
 void TestBench::sampleStreaming(const World& world) {
   if(scenarioPath==nullptr || bench.done)return;
   const bool measuring=bench.perfSegment.starts_with("streaming-flythrough/");
-  if(!measuring && std::filesystem::path(scenarioPath).filename()!="streaming-flythrough.bench")return;
+  const bool shots=std::filesystem::path(scenarioPath).filename()=="streaming-shots.bench";
+  if(!measuring && !shots && std::filesystem::path(scenarioPath).filename()!="streaming-flythrough.bench")return;
   const auto* residency=world.chunkResidency();
   if(residency==nullptr)return;
   const auto& stats=residency->stats();
-  if(!measuring) {
+  if(shots && !bench.shot.empty())
+    event("streaming_shot","\"shot\":"+jsonStr(bench.shot)+
+      ",\"vob_near\":"+std::to_string(stats.vobNear)+
+      ",\"vob_near_missing\":"+std::to_string(stats.vobNearMissing)+
+      ",\"vob_pending\":"+std::to_string(stats.vobPending));
+  if(!measuring && !shots) {
     bench.streamingWarmupFarMs.insert(bench.streamingWarmupFarMs.end(),stats.farPublicationTimesMs.begin(),stats.farPublicationTimesMs.end());
     bench.streamingWarmupFarMaxPerFrame=std::max(bench.streamingWarmupFarMaxPerFrame,stats.farPublicationTimesMs.size());
     bench.streamingWarmupQueueMaxMs=std::max(bench.streamingWarmupQueueMaxMs,stats.workMs);
@@ -20512,9 +20557,12 @@ void TestBench::sampleStreaming(const World& world) {
     stats.transitionsFar-bench.streamingFarBefore,stats.publicationTimesMs,
     stats.published-bench.streamingPublishedBefore,stats.released-bench.streamingReleasedBefore,
     stats.landscapePageUsedBytes,stats.landscapePageFreeBytes,stats.landscapePageRetiredBytes,stats.landscapePageCount,
-    Resources::textureStats()});
+    Resources::textureStats(),stats.vobNear,stats.vobFar,stats.vobOutside,stats.vobPending,stats.vobNearMissing,
+    stats.vobCreated-bench.streamingVobCreatedBefore,stats.vobReleased-bench.streamingVobReleasedBefore,
+    stats.vobPublicationMs,stats.vobNearMissingSeconds-bench.streamingVobMissingBefore});
   bench.streamingNearBefore=stats.transitionsNear;bench.streamingFarBefore=stats.transitionsFar;
   bench.streamingPublishedBefore=stats.published;bench.streamingReleasedBefore=stats.released;
+  bench.streamingVobCreatedBefore=stats.vobCreated;bench.streamingVobReleasedBefore=stats.vobReleased;
   }
 
 bool TestBench::withUi() {

@@ -19,7 +19,7 @@ from .bandit_parley import CAVALORN, PARK
 from .common import _logged, _m5b_player_weapon, _save_or_fail, _until, _until_async, wait_message
 
 SCENARIOS = {
-    "neural-still": ("OFF", {"save": False, "timeout": 1200}),
+    "neural-still": ("OFF", {"save": False, "timeout": 1200, "exclusive": True}),
 }
 
 log = logging.getLogger("gothic_ai.scenarios")
