@@ -307,6 +307,8 @@ class Mercy:
         self.dialogue.remember(addressee, self.orders.talk.people[addressee].name,
                                f"Сдачу героя принимает {person.name}: решать ему.")
         conv = self.dialogue.conversations[npc]
+        if self.dialogue.floor is not None:
+            self.dialogue.floor.reserve_after(npc, addressee)
         turn = self.dialogue.say_as_player(npc, words, overlay=True)
         talked_at = conv.talked_at
         turn.add_done_callback(finished_turn)

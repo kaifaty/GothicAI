@@ -12,6 +12,7 @@ from gothic_ai.crime_law import CrimeLaw
 from gothic_ai.crimes import Crimes
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.game import GameError
+from gothic_ai.group import GroupTalk
 from gothic_ai.llm import FakeBackend, FakeStep, Message, ToolCall, ToolResult
 from gothic_ai.memory import MemoryStore
 from gothic_ai.mercy import (
@@ -29,7 +30,7 @@ from gothic_ai.orders import Fight, Orders, Standing
 from gothic_ai.parley import Parley
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import CombatHit, LineStarted, NpcRoster, NpcViews, Session
-from gothic_ai.talk import TalkDesk, fights
+from gothic_ai.talk import Addressee, TalkDesk, fights
 from tests.fake_game import FakeGame, connected
 
 NPC, FRIEND = "BAU_950_LOBART", "PC_THIEF"
@@ -564,6 +565,54 @@ async def test_band_leader_accepts_the_plea_addressed_to_its_follower(rig, monke
             if conv.reply is not None and not conv.reply.done():
                 conv.reply.cancel()
                 await asyncio.gather(conv.reply, return_exceptions=True)
+
+
+async def test_band_leader_keeps_the_floor_and_speaks_after_the_addressee(rig, monkeypatch):
+    surrender_band(rig)
+    group = GroupTalk(rig.link, rig.dialogue, rig.talk)
+    rig.dialogue.extensions.append(group)
+    monkeypatch.setattr("gothic_ai.dialogue.line_duration", lambda text: 0.3)
+    monkeypatch.setattr(rig.dialogue, "_surrendering", AsyncMock(return_value=True))
+    rig.dialogue.fights_hero = lambda npc: npc in {NPC, FRIEND}
+    rig.dialogue.quick = FakeBackend(script=[
+        FakeStep("Стой, сперва выслушаем героя. Пусть договорит, мы подождём."), FakeStep("Решаю я."),
+    ], delay=0)
+    rig.llm.script = [FakeStep()]
+    entered, release, requests = delay_surrender_decision(rig, monkeypatch)
+    phrase = "Пацаны, обоссыте, но не бейте"
+    group.on_phrase(Addressee(NPC, "Подручный", "focus"), phrase)
+    seats, addressee_seat = group.seats, group.seats[0]
+    rig.dialogue.open(NPC, "Подручный", warm=False)
+    turn = rig.dialogue.say_as_player(NPC, phrase, overlay=True)
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        leader = rig.dialogue.conversations[FRIEND]
+        assert group.seats is seats and seats[0] is addressee_seat
+        assert [seat.npc for seat in seats] == [NPC, FRIEND]
+        assert addressee_seat.ready and not addressee_seat.dropped
+        assert rig.dialogue.audible(NPC, addressee_seat.id)
+        assert not any(message["npc"] == FRIEND for message, _ in rig.fake.says)
+        assert requests[0]["instructions"] == leader.persona.instructions
+        assert any("Подручный говорит герою: «Стой, сперва выслушаем героя. "
+                   "Пусть договорит, мы подождём.»" in message.content
+                   for message in requests[0]["messages"] if isinstance(message, Message))
+        release.set()
+        await asyncio.wait_for(asyncio.gather(turn, leader.reply), 2)
+        await rig.link.story_eval(NPC, [["int", 1]])
+        first = [(message, at) for message, at in rig.fake.says if message["npc"] == NPC]
+        following = [(message, at) for message, at in rig.fake.says if message["npc"] == FRIEND]
+        assert [message["text"] for message, _ in first] == [
+            "Стой, сперва выслушаем героя.", "Пусть договорит, мы подождём.",
+        ]
+        assert following[0][1] >= first[-1][1] + 0.25
+    finally:
+        release.set()
+        for conv in rig.dialogue.conversations.values():
+            if conv.reply is not None and not conv.reply.done():
+                conv.reply.cancel()
+                await asyncio.gather(conv.reply, return_exceptions=True)
+        if group._tasks:
+            await asyncio.gather(*group._tasks)
 
 
 @pytest.mark.parametrize("outcome", ["refused", "expired", "hit"])

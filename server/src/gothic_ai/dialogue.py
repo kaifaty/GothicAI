@@ -601,6 +601,9 @@ class Floor(Protocol):
         """Before a turn: wait for those before it to have their text ready; False: no voice for it."""
         ...
 
+    def reserve_after(self, npc: str, after: str) -> None:
+        """Reserve a hero turn immediately after the current speaker, in the same round."""
+
     def done(self, npc: str) -> None:
         """Its turn is over: its text is ready (or it said nothing)."""
 
