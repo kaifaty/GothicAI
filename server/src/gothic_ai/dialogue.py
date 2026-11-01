@@ -1553,6 +1553,11 @@ class DialogueManager:
             self.prewarm(npc)
         return conv
 
+    async def situation(self, npc: str, name: str) -> str:
+        """Prepare the same situation as a full turn, without asking a model to respond."""
+        text, _, _ = await self._situation(self.open(npc, name, warm=False), None)
+        return text
+
     def say_as_player(
         self, npc: str, text: str, *, overlay: bool = False, body: str | None = None
     ) -> asyncio.Task[None]:

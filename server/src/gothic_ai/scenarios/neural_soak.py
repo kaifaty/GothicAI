@@ -726,10 +726,10 @@ async def neural_soak_scenario(
                              for index, npc in enumerate(BANDITS[:count])])
                 loaded = False
                 combat_deadline = started + duration + (30 if probe_only else 0)
+                # A final load probe still gives every attacker time to acquire:
+                # the first fresh lease must not cut off the rest of the wave.
                 while time.monotonic() - wave_start < 75 and time.monotonic() < combat_deadline:
                     await poll(break_stalls=True)
-                    if probe_only and not pending_probe():
-                        break
                     if cause := death_cause():
                         await load_wave(saved, cause=cause)
                         loaded = True

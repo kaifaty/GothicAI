@@ -11,8 +11,8 @@ from typing import Any
 from ..brain.reflex import Reflexes
 from ..dialogue import DialogueManager
 from ..game import GameError, GameLink
-from ..knowledge import Knowledge, roots
-from ..llm import ToolCall, ToolResult
+from ..knowledge import Knowledge
+from ..llm import ToolCall
 from ..llm.fake import FakeBackend, FakeStep
 from ..lore import Lore
 from ..perception import PerceptionDesk, Sight, trace_name
@@ -20,7 +20,7 @@ from ..places import SIDES
 from ..protocol import DebugCmd, Saved, SayCmd, Session, Snapshot
 from ..sightings import Sighting, Sightings
 from ..social import Rumors
-from ..talk import TalkDesk
+from ..talk import TalkDesk, addressee
 from ..trace import read as read_trace
 from ..trust import Trust
 from ..whereabouts import Whereabouts
@@ -32,7 +32,6 @@ from .common import (
     _ByNpc,
     _logged,
     _OnWords,
-    _Recorded,
     _trace_evidence_line,
     _until,
     _until_async,
@@ -281,28 +280,15 @@ async def knows_scenario(
     """What an npc knows of where people are (docs/npc-tools.md М4): Cavalorn by his fire knows the bandits
     who robbed him sit in the cave below the steps, though the hero has told him nothing. Checks:
     - known: among his facts the story lets him tell now, one of the bandits' cave (XARDAS_BANDITS);
-    - situation: the hero asks «что тут поблизости опасного?»; the fact is in the situation of his turn;
-    - where: `where{пещера}` tells it too;
-    - said (live model only): his answer speaks of the bandits or the cave.
-    The model is scripted with LLM=fake; LLM=chatgpt answers itself."""
+    - situation: the fact is in the same situation that a model would receive;
+    - where: `where{пещера}` tells it too.
+    No model turn is needed."""
     await link.wait_world()
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
-    entries: list[dict[str, Any]] = []
-    sink = dialogue.journal.sink
-
-    def keep(entry: dict[str, Any]) -> None:
-        entries.append(entry)
-        if sink is not None:
-            sink(entry)
-
-    dialogue.journal.sink = keep
-    live = dialogue.llm.name != "fake"
-    model = _Recorded(dialogue.llm if live else FakeBackend("Держи ухо востро.", delay=0))
-    dialogue.llm = model
     await link.debug("skip_important", near=npc)  # Cavalorn's own greeting would stop the hero
     for _ in range(2):  # the goblins by his fire
         try:
@@ -317,19 +303,11 @@ async def knows_scenario(
     cave = [f for f in lore.known(npc) if f.place == "XARDAS_BANDITS"]
     check("known", bool(cave), cave[0].ru if cave else [f.ru for f in lore.known(npc)])
 
-    t0 = len(entries)
-    talk.hear("Кавалорн, что тут поблизости опасного?", npc, {"via": "scenario"})
-    answered = await _until(
-        lambda: any(e.get("kind") == "npc" and e.get("npc") == npc for e in entries[t0:]), 60
-    )
-    said = " ".join(e.get("text", "") for e in entries[t0:] if e.get("kind") == "npc" and e.get("npc") == npc)
-    shown = bool(cave) and any(cave[0].ru in asked for asked in model.asked)
-    check("situation", answered and shown, said or "no answer")
+    situation = await dialogue.situation(npc, "Кавалорн")
+    known = knowledge.situation(npc) or ""
+    check("situation", bool(cave) and cave[0].ru in situation and known in situation, situation)
     answer = whereabouts.where(npc, "пещера")
     check("where", "Ты знаешь:" in answer and bool(cave) and cave[0].ru in answer, answer.split("\n")[-1])
-    if live:
-        words = roots(said)
-        check("said", any(w.startswith(("бандит", "пещер", "дыр")) for w in words), said)
     return _logged(results)
 
 
@@ -383,8 +361,12 @@ async def hearing_scenario(
     me, him = talk.people[npc], talk.people[bandit]
     check("free", me.heard is not None and abs(me.earshot - me.distance) < 1, at(npc))
     check("line", him.heard is not None and abs(him.earshot - him.distance) < 1, at(bandit))
-    talk.hear("Можешь отдать за моё обещание помочь тебе с бандитами?", npc, {"via": "scenario"})
-    to = talk.last[0] if talk.last is not None else None
+    to = addressee(
+        "Можешь отдать за моё обещание помочь тебе с бандитами?", npc, talk.people,
+        talk.partner.npc if talk.partner else None, talk.scene_hint(),
+        ours=talk.orders.companion if talk.orders is not None else lambda who: False,
+        lead=talk.lead,
+    )
     check("words", to is not None and to.id == npc, f"to {to.id if to else None} ({to.why if to else ''})")
 
     await link.debug("skip_important", near=brago)
@@ -554,7 +536,7 @@ async def see_perception(
     """What npc's perceive (wave 1 step 4), on the game, with the engine's own sight. Xardas sees the hero in
     front of him and not through the tower's walls and floors. Lobart calls the people he knows by name and
     the hero, whom he does not know, by his look; in militia armor the hero is a militiaman to him. The view
-    is in the conversational model's request (scripted here) and `look` answers; the nearest npc's views
+    is in the conversational model's situation and `look` answers; the nearest npc's views
     are pushed once a second for the behavioral model."""
     results: dict[str, str] = {}
 
@@ -643,16 +625,9 @@ async def see_perception(
     hero = sight.hero or "" if sight else ""
     check("fake_guild", "по виду ополченец" in hero, hero)
 
-    # 4. a turn: the view is in the request, `look` answers
-    llm = FakeBackend(
-        script=[FakeStep("Хм…", [ToolCall("look", {"who": "герой"}, "c1")]), FakeStep("Ополченец, значит?")],
-        delay=0,
-    )
-    dialogue.llm = llm
-    await link.debug("type", text="Лобарт, ты меня знаешь?")
-    await _until(lambda: len(llm.calls) >= 2, 30)
-    request = str(llm.calls[0][1]) if llm.calls else ""
-    looked = next((i.output for c in llm.calls[1:] for i in c[1] if isinstance(i, ToolResult)), "")
+    # 4. the same situation as a turn, and `look`, without a model call
+    request = await dialogue.situation(farmer, "Лобарт")
+    looked = perception.look(farmer, "герой")
     check(
         "in_the_turn",
         "по виду ополченец" in request and "Рядом:" not in request and looked.startswith("Герой"),

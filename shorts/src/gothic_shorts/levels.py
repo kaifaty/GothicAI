@@ -781,7 +781,7 @@ def _master_voiced(audio: AudioGraph | None, report: dict | None, out: Path, len
             )
             command = ["ffmpeg", "-y", *inputs, "-filter_complex", graph,
                        "-map", "0:v", "-map", "[a]", "-c:v", "copy", *aac_encoder(),
-                       "-ar", "48000", str(candidate)]
+                       "-movflags", "+faststart", "-ar", "48000", str(candidate)]
             for track, path in stems.items():
                 command += ["-map", f"[{track}_mastered]", "-vn", *aac_encoder(),
                             "-ar", "48000", str(path)]

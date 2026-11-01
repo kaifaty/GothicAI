@@ -1,4 +1,5 @@
 #include "gothic.h"
+#include "loadprobe.h"
 
 #include <Tempest/Log>
 #include <Tempest/TextCodec>
@@ -135,6 +136,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_hitstop",         1);
   defaults->set("GAME", "melee_stamina",         1);
   defaults->set("GAME", "melee_parry",           1);
+  defaults->set("GAME", "melee_parry_ai",        1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -344,6 +346,7 @@ const Tempest::Texture2d* Gothic::loadingBanner() const {
   }
 
 SoundFx *Gothic::loadSoundFx(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("sound_load");
   if(name.empty())
     return nullptr;
 
@@ -365,6 +368,7 @@ SoundFx *Gothic::loadSoundFx(std::string_view name) {
   }
 
 SoundFx *Gothic::loadSoundWavFx(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("sound_load");
   auto cname = std::string(name);
 
   std::lock_guard<std::mutex> guard(syncSnd);
@@ -388,10 +392,12 @@ const VisualFx* Gothic::loadVisualFx(std::string_view name) {
   }
 
 const ParticleFx* Gothic::loadParticleFx(std::string_view name, bool relaxed) {
+  LoadProbe::Vobs::Scope probe("pfx_load");
   return particleDef->get(name,relaxed);
   }
 
 const ParticleFx* Gothic::loadParticleFx(const ParticleFx* base, const VisualFx::Key* key) {
+  LoadProbe::Vobs::Scope probe("pfx_load");
   return particleDef->get(base,key);
   }
 
@@ -908,13 +914,15 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_hitstop")!=0,
     settingsGetI("GAME","melee_stamina")!=0,
     settingsGetI("GAME","melee_parry")!=0,
+    settingsGetI("GAME","melee_parry_ai")!=0,
     settingsGetI("GAME","furniture_parts")!=0,
     settingsGetI("GAME","placed_items")!=0
     };
   }
 
 void Gothic::setupSettings() {
-  Resources::configureTextures(settingsGetS("GAME","texture_budget_mb"));
+  Resources::configureTextures(settingsGetS("GAME","texture_budget_mb"),settingsGetS("GAME","texture_far_skip_mips"),
+                               settingsGetS("GAME","texture_target_mb"));
   Resources::censusProfile(gameDatDef,ouDef,settingsGetI("GAME","language"));
   // settingsSetI/S/F emit onSettingsChanged synchronously. Publish before any
   // same-dispatch actor creation, prepare or input query can consume the change.

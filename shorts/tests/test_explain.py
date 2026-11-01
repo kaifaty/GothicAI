@@ -10,7 +10,7 @@ from array import array
 
 import pytest
 
-from gothic_shorts import cli, clicks, explain, levels, studio
+from gothic_shorts import cli, clicks, delivery, explain, levels, studio
 
 
 def _rows(report):
@@ -402,3 +402,48 @@ def test_cli_rejects_loud_music_removes_stale_video_and_writes_failed_report(
     assert rows["music_pause"]["ok"] is False
     assert rows["music_speech"]["ok"] is False
     assert "error:" in capsys.readouterr().err
+
+
+def _workspace(tmp_path):
+    ws = tmp_path / "synthetic"
+    ws.mkdir()
+    (ws / "plan.json").write_text(json.dumps(_plan(lang="ru")))
+    return ws
+
+
+def test_publish_checks_zones_first_and_the_file_last(tmp_path, monkeypatch, synthetic_stems, delivery_passes):
+    ws = _workspace(tmp_path)
+    _prepared_render(monkeypatch, synthetic_stems)
+    out = explain.publish(ws)
+    assert delivery_passes == [("zones", "ru"), ("file", out.name)]
+    assert out.is_file() and out.with_suffix(".delivery.md").is_file()
+
+
+def test_publish_stops_before_rendering_on_drawing_under_the_interface(tmp_path, monkeypatch, synthetic_stems):
+    ws = _workspace(tmp_path)
+    calls = _prepared_render(monkeypatch, synthetic_stems)
+
+    def zones(ws, plan, report=None):
+        report = delivery.Report()
+        report.check(False, "under the Shorts interface: right")
+        return report
+
+    monkeypatch.setattr(delivery, "check_zones", zones)
+    with pytest.raises(explain.ExplainError, match="Shorts interface"):
+        explain.publish(ws)
+    assert calls == []
+
+
+def test_publish_leaves_no_video_that_youtube_would_not_take(tmp_path, monkeypatch, synthetic_stems):
+    ws = _workspace(tmp_path)
+    _prepared_render(monkeypatch, synthetic_stems)
+
+    def file(video, report=None):
+        report.check(False, "range pc (tv)")
+        return report
+
+    monkeypatch.setattr(delivery, "check_file", file)
+    with pytest.raises(explain.ExplainError, match="range pc"):
+        explain.publish(ws)
+    assert not (ws / "render/short-ru.mp4").exists()
+    assert "FAIL range pc" in (ws / "render/short-ru.delivery.md").read_text()

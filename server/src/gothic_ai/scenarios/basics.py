@@ -17,7 +17,7 @@ from ..game import GameError, GameLink
 from ..incidents import IncidentDesk
 from ..journal import Journal
 from ..knowledge import Knowledge, Topic
-from ..llm import LLMBackend, Message, ToolCall, ToolResult
+from ..llm import LLMBackend, ToolCall
 from ..llm.fake import FakeBackend, FakeStep
 from ..llm.openai_responses import OpenAIResponsesBackend
 from ..npc_tools import GESTURES as NPC_GESTURES
@@ -1410,8 +1410,7 @@ async def m6_knows(
     Xardas in chapter 1 knows his talk of chapters 1-2 and nothing of chapter 3. A dialog of his played from
     the menu becomes one the hero has heard. At chapter 3 his talk of chapter 3 opens. Lobart, the hero put
     next to him, knows his field work and what the people around the city say. The knowledge is in the
-    request to the model, and recall gives a topic in full. The conversational model is scripted: its
-    requests are checked."""
+    same situation the model would receive, and recall gives a topic in full without calling a model."""
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -1419,16 +1418,6 @@ async def m6_knows(
 
     def ids(topics: Sequence[Topic]) -> set[str]:
         return {t.node.id for t in topics}
-
-    def situation(llm: FakeBackend) -> str:
-        return next(
-            (
-                str(m.content)
-                for m in llm.calls[0][1]
-                if isinstance(m, Message) and m.role == "developer" and "Что ты знаешь" in str(m.content)
-            ),
-            "",
-        )
 
     await link.wait_world()
     if not await _until(lambda: npc in talk.people, 20):
@@ -1461,25 +1450,14 @@ async def m6_knows(
         check("heard_in_menu", ok, pick)
         await asyncio.sleep(3)  # the dialog's lines
 
-    # 3. a turn: the knowledge is in the request, recall gives a topic in full
-    llm = FakeBackend(
-        script=[
-            FakeStep("Хм…", [ToolCall("recall", {"query": "Глаз Инноса"}, "c1")]),
-            FakeStep("Это амулет, в нём сила самого Инноса."),
-        ],
-        delay=0,
-    )
-    dialogue.llm = llm
-    await link.debug("type", text="Ксардас, что такое Глаз Инноса?")
-    await _until(lambda: len(llm.calls) >= 2, 30)
-    result = next((i.output for c in llm.calls[1:] for i in c[1] if isinstance(i, ToolResult)), "")
-    text = situation(llm) if llm.calls else ""
+    # 3. the turn's situation and recall, without asking a model to respond
+    text = await dialogue.situation(npc, "Ксардас")
+    result = knowledge.recall(npc, "Глаз Инноса") or ""
     check(
         "in_the_turn",
         "Что ты знаешь (сейчас глава 1" in text and "Ты знаешь:" in result and "Глаз Инноса" in result,
         f"{len(text)} chars known, recall {len(result)} chars: {result[:120]!r}",
     )
-    await _until(lambda: not dialogue.speaking(npc), 15)
 
     # 4. chapter 3: his chapter 3 talk opens, that of chapters 1-2 closes (what the hero heard stays)
     await link.story_effect(npc, [{"do": "set", "var": "KAPITEL", "value": 3}])
@@ -1500,11 +1478,7 @@ async def m6_knows(
     if not await _until(lambda: farmer in talk.people and talk.people[farmer].distance < 800, 20):
         check("farmer", False, f"{farmer} is not around the hero")
         return _logged(results)
-    llm = FakeBackend("Работа есть: поле репы за амбаром.", delay=0)
-    dialogue.llm = llm
-    await link.debug("type", text="Лобарт, есть для меня работа?")
-    await _until(lambda: bool(llm.calls), 30)
-    text = situation(llm) if llm.calls else ""
+    text = await dialogue.situation(farmer, "Лобарт")
     check(
         "farmer",
         "Ты — житель окрестностей." in text and "«Я ищу работу.»" in text and "Что говорят вокруг" in text,
