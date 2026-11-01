@@ -8,18 +8,68 @@ field-of-view gate: those cannot be reconstructed outside the ordinary simulatio
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .chronicle import Fact
-from .game import GameError
+from .game import GameDisconnected, GameError
+from .npc_far_fight import Coefficients, Combatant, Result, resolve
 from .social import DAY, Social, Spot
 from .storyguard import asleep
 
 SIMULATION_CM = 3000
 HUMAN_GUILD_LIMIT = 16
 _HEROES = frozenset({"PLAYER", "HERO", "PC_HERO"})
+_TWO_HANDED = (1 << 16) | (1 << 17)  # Item::is2H: ITM_2HD_SWD | ITM_2HD_AXE
+
+
+def _fight_inputs(npc: str) -> list[Any]:
+    actor = ["inst", npc]
+    melee = ["call", "NPC_GETEQUIPPEDMELEEWEAPON", actor]
+    readied = ["call", "NPC_GETREADIEDWEAPON", actor]
+    return [
+        ["field", actor, "LEVEL"],
+        *[["field", actor, "ATTRIBUTE", i] for i in (0, 1, 4)],
+        *[["field", actor, "HITCHANCE", i] for i in range(3)],
+        *[["field", actor, field, i] for field in ("PROTECTION", "DAMAGE") for i in range(8)],
+        ["field", actor, "DAMAGETYPE"],
+        *[["call", "NPC_GETTALENTSKILL", actor, talent] for talent in (1, 2)],
+        ["call", "HLP_ISVALIDITEM", melee],
+        *[["field", melee, field] for field in ("FLAGS", "DAMAGETYPE", "DAMAGETOTAL")],
+        *[["field", melee, "DAMAGE", i] for i in range(8)],
+        *[["field", readied, field] for field in ("DAMAGETYPE", "DAMAGETOTAL")],
+        *[["field", readied, "DAMAGE", i] for i in range(8)],
+    ]
+
+
+def _combatant(npc: str, values: list[int]) -> Combatant:
+    _, hp, _, strength = values[:4]
+    hitchance, protection, damage = values[4:7], values[7:15], values[15:23]
+    damage_type, one_handed, two_handed, equipped, flags, melee_type, melee_total = values[23:30]
+    melee_damage = values[30:38]
+    readied_type, readied_total = values[38:40]
+    readied_damage = values[40:48]
+    # Inventory applies only the readied item's stats. Replace that contribution with the
+    # equipped melee weapon, exactly as drawing it would before swordDamage reads NPC.DAMAGE.
+    damage = tuple(damage[i] - readied_damage[i] - (readied_total if readied_type & (1 << i) else 0)
+                   + melee_damage[i] + (melee_total if melee_type & (1 << i) else 0)
+                   for i in range(8))
+    talent = (2 if flags & _TWO_HANDED else 1) if equipped else 0
+    tier = (two_handed if talent == 2 else one_handed) if equipped else 0
+    if hp <= 0 or not 0 <= tier <= 2:
+        raise GameError("Invalid distant combatant HP or melee talent tier")
+    return Combatant(npc, hp, strength, damage, melee_type if equipped else damage_type,
+                     tuple(protection), hitchance[talent], tier)
+
+
+@dataclass
+class _Knockout:
+    result: Result
+    goods: int
+    applied: bool | None = None
 
 
 def _position(value: Any) -> tuple[float, float, float] | None:
@@ -45,6 +95,11 @@ class FarWorld:
         self._positions: dict[str, FarPosition | None] = {}
         self._hero: tuple[float, float, float] | None = None
         self._fight_lock = asyncio.Lock()
+        self._knockouts: dict[str, _Knockout] = {}
+        self._knockout_generation = will._generation
+        self._fight_coefficients = Coefficients.from_mapping(json.loads(
+            (Path(__file__).parent / "gamedata" / "far_fight.json").read_text(encoding="utf-8"),
+        ))
 
     @property
     def social(self) -> Social | None:
@@ -242,7 +297,7 @@ class FarWorld:
     async def fight(
         self, crime: Fact, fighter: str, generation: int, *, role: str = "reclaim",
     ) -> Fact | None:
-        """Compare level, strength and HP in that order; the defender loses an exact tie."""
+        """Apply one seeded hits-to-down result before recording the distant defense."""
         async with self._fight_lock:
             return await self._fight(crime, fighter, generation, role=role)
 
@@ -258,39 +313,75 @@ class FarWorld:
                          if f.get("act") == action and f.get("crime") == cid), None)
         if previous is not None:
             return previous
-        if not self.free(fighter) or not self.free(culprit):
-            raise GameError("дальние участники заняты или защищены сюжетом")
-        actor, target = self.routine(fighter), self.routine(culprit)
-        if reason := self.will.guard.harm(
-            fighter, target=culprit, state=actor.state if actor else "",
-            target_state=target.state if target else "", item=crime.get("item", ""),
-        ):
-            raise GameError(reason)
-        exprs = [expression for npc in (fighter, culprit) for expression in (
-            ["field", ["inst", npc], "LEVEL"],
-            ["field", ["inst", npc], "ATTRIBUTE", 4],
-            ["field", ["inst", npc], "ATTRIBUTE", 0],
-        )]
+        if self._knockout_generation != generation:
+            self._knockouts.clear()
+            self._knockout_generation = generation
         theft = crime["kind"] == "theft"
-        if theft:
-            exprs.append(["call", "NPC_HASITEMS", ["inst", culprit], ["sym", crime["item"]]])
-        values = await self.will.link.story_eval(fighter, exprs)
-        if not self._current(generation) or self.will.npc_crimes.settled(cid):
+        pending = self._knockouts.get(action)
+        if pending is None:
+            if not self.free(fighter) or not self.free(culprit):
+                raise GameError("Distant combatants are busy or story-protected")
+            actor, target = self.routine(fighter), self.routine(culprit)
+            if reason := self.will.guard.harm(
+                fighter, target=culprit, state=actor.state if actor else "",
+                target_state=target.state if target else "", item=crime.get("item", ""),
+            ):
+                raise GameError(reason)
+            first, second = _fight_inputs(fighter), _fight_inputs(culprit)
+            exprs = first + second
+            if theft:
+                exprs.append(["call", "NPC_HASITEMS", ["inst", culprit], ["sym", crime["item"]]])
+            values = await self.will.link.story_eval(fighter, exprs)
+            if not self._current(generation) or self.will.npc_crimes.settled(cid):
+                return None
+            if len(values) != len(exprs) or any(type(v) is not int for v in values):
+                raise GameError("Could not read distant combatants' melee stats")
+            result = resolve(action, _combatant(fighter, values[:len(first)]),
+                             _combatant(culprit, values[len(first):len(first) + len(second)]),
+                             self._fight_coefficients)
+            pending = _Knockout(result, values[-1] if theft else 0)
+            # Reserve before sending. A timeout never authorizes sending a second knockout,
+            # even if readback is unavailable or has not observed the effect yet.
+            self._knockouts[action] = pending
+            loser = culprit if result.winner == fighter else fighter
+            try:
+                await self.will.link.story_effect(loser, [{
+                    "do": "knockout", "by": result.winner, "loss": result.loss,
+                }], check=True)
+            except (TimeoutError, ConnectionError, GameDisconnected):
+                if not self._current(generation):
+                    return None
+                pending.applied = await self._knockout_applied(loser, generation)
+                if not self._current(generation):
+                    return None
+                if not pending.applied:
+                    raise
+            except GameError:
+                self._knockouts.pop(action, None)
+                raise
+            else:
+                pending.applied = True
+            if not self._current(generation):
+                return None
+        result = pending.result
+        if pending.applied is not True:
+            loser = culprit if result.winner == fighter else fighter
+            pending.applied = await self._knockout_applied(loser, generation)
+            if not self._current(generation):
+                return None
+        if not pending.applied:
+            raise GameError("Distant knockout is not confirmed; this act cannot be replayed")
+        if self.will.npc_crimes.settled(cid):
             return None
-        if len(values) != len(exprs) or any(type(v) is not int for v in values):
-            raise GameError("не удалось проверить уровень, силу и HP дальних участников")
-        if values[2] <= 0 or values[5] <= 0:
-            raise GameError("дальний участник уже повержен")
-        wins = tuple(values[:3]) > tuple(values[3:6])
+        wins = result.winner == fighter
         returned = 0
         outcome = "defeated" if wins else "defender_down"
-        reason = "level_strength_hp" if values[:3] != values[3:6] else "equal_stats_defender_loses"
         already_returned = any(f.get("crime") == cid
                                for f in chronicle.facts("npc_crime_restitution"))
         deeds = self.will.npc_crimes
         restitution = (deeds._generation, cid)
         if wins and theft:
-            returned = min(max(0, int(crime.get("count", 0))), max(0, values[6]))
+            returned = min(max(0, int(crime.get("count", 0))), max(0, pending.goods))
             if already_returned or restitution in deeds._restitution_started:
                 outcome, returned = "resolved_elsewhere", 0
             elif not returned:
@@ -326,10 +417,22 @@ class FarWorld:
         })
         result = {
             "fact": "npc_crime_defense", "crime": cid, "culprit": culprit,
-            "fighter": fighter, "act": action, "outcome": outcome, "reason": reason,
+            "fighter": fighter, "act": action, "outcome": outcome, "reason": "hits_to_down",
             "item": crime.get("item", ""), "count": crime.get("count", 0), "returned": returned,
-            "far": True,
+            "far": True, "model": "hits_v1", "winner": result.winner, "loss": result.loss,
+            "duration_s": result.duration_s, "hits": result.hits, "p_win": round(result.p_win, 3),
             **({"blamed": crime["blamed"]} if crime.get("blamed") else {}),
         }
         chronicle.record(result)
         return result
+
+    async def _knockout_applied(self, loser: str, generation: int) -> bool:
+        values = await self.will.link.story_eval(loser, [
+            ["field", ["inst", loser], "ATTRIBUTE", 0],
+            ["call", "NPC_ISINSTATE", ["inst", loser], ["sym", "ZS_UNCONSCIOUS"]],
+        ])
+        if not self._current(generation):
+            return False
+        if len(values) != 2 or any(type(v) is not int for v in values):
+            raise GameError("Could not verify distant knockout state")
+        return values[0] == 1 and values[1] != 0

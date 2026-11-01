@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "rate_base": 0.4,
+  "rate_per_tier": 0.5,
+  "damage_scale": 1.0,
+  "source": "uncalibrated"
+}
