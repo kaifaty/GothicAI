@@ -441,6 +441,7 @@ channel but the project's (GothicAI, `UCbeAoPh3V7yFVpiuWNI-wkw`; `--channel` or 
   right on Linux; two tests assumed one encoder's output. The rounded-summary peak test masters through
   lossless ALAC (its 192k AAC peak was −0.99 dBTP on the Mac, −0.92 on Ryzen), and the channel test makes
   the right channel weaker instead of silent and runs on the fallback too: forced M/S decoded a silent
-  channel as dual mono. FFmpeg 6.1 (Ubuntu 24.04) still differs: its encoder clicks and its mixing
-  truncates WAV, so CI keeps shorts on macOS.
+  channel as dual mono. The whole shorts suite passes there too (10 tests skip without macOS fonts).
+  FFmpeg 6.1 (Ubuntu 24.04) still differs: its encoder clicks, which the gate rejects, and its mixing
+  truncates WAV.
 
