@@ -115,7 +115,11 @@ class LiveCase:
 
     @property
     def requests(self) -> int:
-        return sum(len(record.get("steps", [])) for record in self.records)
+        return sum(
+            len(record.get("steps", []))
+            + sum(event.get("kind") == "retry" for event in record.get("events", []))
+            for record in self.records
+        )
 
     def json(self) -> dict[str, Any]:
         turns = self._turns()
@@ -129,7 +133,7 @@ class LiveCase:
             "setup_error": self.setup_error,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
-            "requests": sum(len(record.get("steps", [])) for _, record in turns),
+            "requests": self.requests,
             "transcripts": [{"path": path, "turns": ids} for path, ids in transcripts.items()],
             "trace_directory": str(self.trace.directory.resolve()),
         }

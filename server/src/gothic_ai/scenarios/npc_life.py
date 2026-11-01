@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 import time
 from collections import Counter
 from collections.abc import AsyncIterator, Callable
@@ -433,7 +434,9 @@ async def _chests_lobart(
                     "не продам", "не продаю", "не продается", "не продаётся", "не продаются",
                     "не буду продавать", "не собираюсь продавать", "не могу продать", "не для продажи",
                 )
-                return replies[-1:] if replies and any(p in replies[-1].lower() for p in refusals) else []
+                answer = replies[-1].lower().strip(" —–-") if replies else ""
+                refused = re.match(r"нет\b(?!\s+проблем\b)", answer) or any(p in answer for p in refusals)
+                return replies[-1:] if refused else []
 
             def position(msg: GameMessage, samples: list[tuple[float, float, float]] = positions) -> None:
                 if isinstance(msg, Snapshot) and msg.npc.id.upper() == npc:

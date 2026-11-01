@@ -542,6 +542,7 @@ async def vanilla_line_live(
                                 decision.get("title", decision.get("reason", "")) if decision is not None
                                 else "no feat or refusal within 240 s",
                             )
+                    passed = passed and all(value.startswith("done") for value in results.values())
                     case.finish("success" if passed else "failure", evidence=evidence)
     except Exception as error:
         if suite is None:
