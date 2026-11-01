@@ -165,7 +165,8 @@ def histories(lines: list[dict], spec: dict, mixed: bool) -> dict[str, list[dict
 def evaluate(args: argparse.Namespace) -> None:
     lines, spec = load(args)
     vectors = load_vectors(args.vectors) if args.vectors else []
-    styles = sorted({s for t in spec["topics"] for s in t["queries"]}, key=["same", "form", "para"].index)
+    order = ["same", "form", "para", "para2"]
+    styles = sorted({s for t in spec["topics"] for s in t["queries"]}, key=order.index)
     report: dict = {}
     for mixed in (False, True):
         setting = "mixed" if mixed else "own"
@@ -174,7 +175,7 @@ def evaluate(args: argparse.Namespace) -> None:
                        Bm25(history)]
             for v in vectors:
                 dense = Dense(history, v)
-                methods += [dense, Hybrid(methods[3], dense)]
+                methods += [dense, Hybrid(methods[3], dense)] if args.hybrid else [dense]
             for topic, style, text in queries(spec):
                 if topic["history"] != name:
                     continue
@@ -222,7 +223,15 @@ def cell(rows: list[dict]) -> str:
 
 # --- embeddings ---------------------------------------------------------------------------------------
 
-PREFIXES = {"intfloat/multilingual-e5": ("query: ", "passage: ")}
+# Query and document prefixes from the model cards; the first matching name wins. A model that is not
+# here and names its own "query" prompt (Qwen3-Embedding, EmbeddingGemma) gets encode_query/encode_document.
+PREFIXES = {
+    "intfloat/multilingual-e5-large-instruct": (
+        "Instruct: Given a question, retrieve conversation lines that answer it\nQuery: ", ""),
+    "intfloat/multilingual-e5": ("query: ", "passage: "),
+    "ai-forever/FRIDA": ("search_query: ", "search_document: "),
+    "deepvk/USER2": ("search_query: ", "search_document: "),
+}
 
 
 def embed(args: argparse.Namespace) -> None:
@@ -231,11 +240,16 @@ def embed(args: argparse.Namespace) -> None:
 
     lines, spec = load(args)
     model = SentenceTransformer(args.model, device=args.device)
-    q_prefix, d_prefix = next((p for k, p in PREFIXES.items() if args.model.startswith(k)), ("", ""))
     texts = sorted({m["content"] for m in lines})
     texts_q = sorted({text for _, _, text in queries(spec)})
-    docs = model.encode([d_prefix + t for t in texts], normalize_embeddings=True, batch_size=64)
-    qs = model.encode([q_prefix + t for t in texts_q], normalize_embeddings=True)
+    prefixes = next((p for k, p in PREFIXES.items() if args.model.startswith(k)), None)
+    if prefixes is None and "query" in (model.prompts or {}):
+        docs = model.encode_document(texts, normalize_embeddings=True, batch_size=64)
+        qs = model.encode_query(texts_q, normalize_embeddings=True)
+    else:
+        q_prefix, d_prefix = prefixes or ("", "")
+        docs = model.encode([d_prefix + t for t in texts], normalize_embeddings=True, batch_size=64)
+        qs = model.encode([q_prefix + t for t in texts_q], normalize_embeddings=True)
     np.savez(args.out, model=args.model, lines=docs, line_texts=np.array(texts, dtype=object),
              queries=qs, query_texts=np.array(texts_q, dtype=object))
     print(f"{args.model}: {len(texts)} lines, {len(texts_q)} queries -> {args.out}")
@@ -264,6 +278,7 @@ def main() -> None:
     parser.add_argument("--queries", required=True)
     parser.add_argument("--limit", type=int, default=6, help="lines a recall returns (MemoryStore.search)")
     parser.add_argument("--vectors", nargs="*", default=[], help="eval: .npz files from embed")
+    parser.add_argument("--hybrid", action="store_true", help="eval: also fuse BM25 with each embedding")
     parser.add_argument("--json", help="eval: write the per-query results here")
     parser.add_argument("--model", help="embed: a sentence-transformers model")
     parser.add_argument("--device", default="cuda")
