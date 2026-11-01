@@ -341,7 +341,7 @@ class FarWorld:
                              self._fight_coefficients)
             pending = _Knockout(result, values[-1] if theft else 0)
             # Reserve before sending. A timeout never authorizes sending a second knockout,
-            # even if readback is unavailable or proves that the effect did not happen.
+            # even if readback is unavailable or has not observed the effect yet.
             self._knockouts[action] = pending
             loser = culprit if result.winner == fighter else fighter
             try:
@@ -364,13 +364,13 @@ class FarWorld:
             if not self._current(generation):
                 return None
         result = pending.result
-        if pending.applied is None:
+        if pending.applied is not True:
             loser = culprit if result.winner == fighter else fighter
             pending.applied = await self._knockout_applied(loser, generation)
             if not self._current(generation):
                 return None
         if not pending.applied:
-            raise GameError("Distant knockout was not applied; this act cannot be replayed")
+            raise GameError("Distant knockout is not confirmed; this act cannot be replayed")
         if self.will.npc_crimes.settled(cid):
             return None
         wins = result.winner == fighter

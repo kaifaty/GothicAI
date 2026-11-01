@@ -61,7 +61,7 @@ def hit_damage(
         if not attacker.damage_type & (1 << index) or defender.protection[index] < 0:
             continue
         part = max(attacker.strength + damage - defender.protection[index], 0)
-        value += part if critical else (part - 1) // 10
+        value += part if critical else max(part - 1, 0) // 10
     return round(max(value, 5) * coefficients.damage_scale)
 
 

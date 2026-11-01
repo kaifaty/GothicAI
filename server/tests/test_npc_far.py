@@ -384,18 +384,21 @@ async def test_knockout_rejection_records_no_facts_and_next_tick_sees_near_body(
 async def test_unknown_knockout_is_read_back_and_never_sent_again(world, applied, error):
     world.link.knockout_error = error("lost response")
     world.link.knockout_applies = applied
-    if applied:
-        result = await world.far.fight(crime(), OWNER, 0)
-        assert result["outcome"] == "reclaimed"
-        assert await world.far.fight(crime(), OWNER, 0) == result
-    else:
+    if not applied:
         with pytest.raises(error, match="lost response"):
             await world.far.fight(crime(), OWNER, 0)
         assert world.chronicle.facts() == []
         with pytest.raises(GameError, match="cannot be replayed"):
             await world.far.fight(crime(), OWNER, 0)
         assert world.chronicle.facts() == []
+        assert world.link.evaluations[1] == world.link.evaluations[2]
+        world.link.down.add(THIEF)  # The bridge applied the original request after readback.
+    result = await world.far.fight(crime(), OWNER, 0)
+    assert result["outcome"] == "reclaimed"
+    assert await world.far.fight(crime(), OWNER, 0) == result
     assert len(world.link.knockout_attempts) == 1
+    assert len(world.chronicle.facts("npc_crime_defense")) == 1
+    assert len(world.chronicle.facts("npc_crime_restitution")) == 1
     assert world.link.evaluations[1] == (THIEF, [
         ["field", ["inst", THIEF], "ATTRIBUTE", 0],
         ["call", "NPC_ISINSTATE", ["inst", THIEF], ["sym", "ZS_UNCONSCIOUS"]],
@@ -476,6 +479,7 @@ def test_far_world_load_requires_valid_calibration(world, tmp_path, monkeypatch,
     (3, (30, 20), (30, 10), False, 11),  # 5 + 6, division precedes the sum
     (1, (30, 0), (90, 0), True, 5),  # protection absorbs all damage, minimum remains
     (1, (30, 0), (100, 0), False, 5),
+    (3, (30, 20), (100, 10), False, 6),  # absorbed type adds 0, C++ truncates -1 / 10 to 0
     (3, (30, 20), (-1, 10), True, 70),  # immune first type contributes nothing
     (3, (30, 20), (-1, 10), False, 6),
     (1, (30, 0), (-1, 0), True, 5),  # explicit model minimum after immunity filtering
