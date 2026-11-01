@@ -4,6 +4,7 @@
 #include <memory>
 #include <thread>
 #include <exception>
+#include <functional>
 #include <utility>
 
 #include <Tempest/Signal>
@@ -168,6 +169,9 @@ class Gothic final {
     // a scene of its own (the AI bridge's endings): no bars, no focus, no messages over it
     bool         isHudHidden() const { return hudHidden; }
     void         setHudHidden(bool h) { hudHidden = h; }
+    // the game's script ends the game (the finale's exitsession): a taker (ai_bridge's final card,
+    // docs/achievements.md) shows something first and ends the session itself; false: it ends at once
+    std::function<bool(std::string_view kind)> takeGameEnd;
 
     void         toggleDesktop() { desktop = !desktop; }
     bool         isDesktop() { return desktop; }
