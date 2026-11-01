@@ -645,15 +645,26 @@ ANDRE = "MIL_311_ANDRE"
 async def _caught_by(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, giver: str, facts: Callable[..., list[Fact]]
 ) -> tuple[bool, ClaimScript | None]:
-    """The hero tells `giver` the turnips are in the barn and is caught (the giver scripted; with LLM=chatgpt
-    the others are the live model)."""
+    """Seed a caught turnip lie; keep the legacy script for scenarios not yet migrated to off."""
     await link.story_effect(giver, [{"do": "set", "var": RUEBEN, "value": 1}])
     await link.debug("player_goto", to=giver, distance=250)
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
+    log.info("given: дано: Лобарт слушает героя (posture=listen)")
     # by the roster after the move: one from before it may still have him farther than a name is heard
     if not await _until(lambda: giver in talk.people and talk.people[giver].distance <= 600, 20):
         return False, None
     name = talk.people[giver].name
+    if isinstance(dialogue.llm, OffBackend):
+        off = model_off(dialogue)
+        off.given(
+            "дано: Лобарт уличил героя во лжи",
+            who=giver,
+            when="репа",
+            calls=[ToolCall("expose_lie", {"quest": RUEBEN})],
+        )
+        off.silent("дано: Лобарт молчит (ложь раскрыта)", who=giver, when="репа")
+        await link.debug("type", text=f"{name}, репа уже в амбаре, все двадцать штук. Давай плату.")
+        return await _until(lambda: any(f.get("quest") == RUEBEN for f in facts("caught")), 60), None
     live = None if isinstance(dialogue.llm, FakeBackend) else dialogue.llm
     expose = FakeStep("Врёшь! Нет у тебя никакой репы.", [ToolCall("expose_lie", {"quest": RUEBEN})])
     script = ClaimScript(
