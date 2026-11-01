@@ -988,6 +988,10 @@ class Npc final {
     bool                          hasMeleeBeastPoise() const;
     bool                          hasMeleeSuperArmor() const;
     float                         meleeStunBonus(const Npc& attacker) const;
+    MeleeImpact::BackstabKind      meleeBackstabKind(const Npc& attacker) const;
+    float                         meleeBackstabMultiplier(MeleeImpact::BackstabKind kind) const;
+    // Transient per-attacker awareness, sampled before damage perception changes combat state.
+    std::vector<std::pair<const Npc*,uint64_t>> meleeRecentHits;
     std::string                   meleeStunReason;
     bool                          meleeStunBeat = true; // the second beat of a lost balance is played
     uint64_t                      meleeStunUntil = 0;

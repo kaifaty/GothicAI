@@ -4,6 +4,28 @@
 #include <cmath>
 #include <cstdlib>
 
+float MeleeImpact::backstabAngle(float targetFacingDeg, float attackerBearingDeg) {
+  return std::abs(std::remainder(attackerBearingDeg-targetFacingDeg,360.f));
+  }
+
+bool MeleeImpact::backstabRecentHit(uint64_t nowMs, uint64_t lastHitMs) {
+  return nowMs>=lastHitMs && nowMs-lastHitMs<10000;
+  }
+
+MeleeImpact::BackstabKind MeleeImpact::backstabKind(float angleDeg, int32_t sneakTalent, bool sleeping, bool stunned, bool aware) {
+  if(angleDeg>=120.f && stunned)
+    return BackstabKind::Stunned;
+  if(sneakTalent<=0 || aware)
+    return BackstabKind::None;
+  if(sleeping)
+    return BackstabKind::Sleeping;
+  return angleDeg>=120.f ? BackstabKind::Unaware : BackstabKind::None;
+  }
+
+float MeleeImpact::backstabMultiplier(BackstabKind kind, bool hugeBeast, float stunBonus) {
+  return kind==BackstabKind::None ? stunBonus : hugeBeast ? 1.5f : 3.f;
+  }
+
 MeleeImpact::HeavyHit MeleeImpact::heavyHit(Weapon weapon, const Tempest::Vec3& velocityCmS, float postureIncrease) {
   if(weapon==Weapon::TwoHand)
     return HeavyHit::TwoHanded;
