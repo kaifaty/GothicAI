@@ -1,6 +1,6 @@
 # DAgger4 r1 — 2026-10-31
 
-Состояние: 20 эпох и parity завершены; screen 168/168, гейт пройден. Полный validation 1491/1491 и detour-val 363/363 завершены. Живой r1: 0/27. Test и раунд 2 не запускались.
+Состояние: 20 эпох и parity завершены; screen 168/168, гейт пройден. Полный validation 1491/1491 и detour-val 363/363 завершены. Живой r1: 27/27. Test и раунд 2 не запускались.
 
 Первая живая заявка `834c644769c3`: exit 1 за 437 с, r1 0/27 и smoke 0/3. Учителя проверены по готовым записям; оба восстановленных бинарника совпали с исходными SHA-256. Первый smoke не запустил игру: `game.log` содержит `Permission denied` для бинарника на NAS. NAS CIFS смонтирован с `file_mode=0644,nounix`, файл не имел права исполнения. `Host: mac` и `ran on mac` получены из-за отсутствия `RYZEN_BENCH=1` в launcher; заявка выполнялась на Ryzen. Перед повтором обе локальные копии сверены по SHA-256, получили режим `0755`; обе проверки прямого запуска ELF-загрузчика завершились с кодом 0, отсутствующих зависимостей нет. В launcher добавлена штатная метка Ryzen.
 
@@ -150,21 +150,84 @@ SE долей, сумм и отношений: delta method по парным м
 
 | Место | r1 | HD |
 |---|---|---|
-| 01-maleth-fence | не записано | 3/3; 24.633 с; путь ×1.180894; контактов 4; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/baseline/HD/01-maleth-fence/seed-18102029/source.mp4); [худший 18102028](/mnt/shared/gothic-ai/nav-live/baseline/HD/01-maleth-fence/seed-18102028/source.mp4) |
-| 02-routine-return-forest-tree | не записано | 1/1; 13.100 с; путь ×1.016441; контактов 1; падений 0; [медианный seed 18102027](/mnt/shared/gothic-ai/nav-live/baseline/HD/02-routine-return-forest-tree/seed-18102027/source.mp4) |
-| 02-routine-return-farm-edge | не записано | 1/1; 39.733 с; путь ×1.034377; контактов 6; падений 0; [медианный seed 18102028](/mnt/shared/gothic-ai/nav-live/baseline/HD/02-routine-return-farm-edge/seed-18102028/source.mp4) |
-| 02-routine-return-forest-pine | не записано | 1/1; 14.200 с; путь ×1.475891; контактов 0; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/baseline/HD/02-routine-return-forest-pine/seed-18102029/source.mp4) |
-| 03-follow-hero | не записано | 1/3; 180.000 с; путь ×0.992247; контактов 111; падений 0; полоса 47.703704%; [медианный seed 18102028](/mnt/shared/gothic-ai/nav-live/baseline/HD/03-follow-hero/seed-18102028/source.mp4); [худший 18102027](/mnt/shared/gothic-ai/nav-live/baseline/HD/03-follow-hero/seed-18102027/source.mp4) |
-| 05-wall-pocket | не записано | 2/3; 29.367 с; путь ×1.055607; контактов 33; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/baseline/HD/05-wall-pocket/seed-18102029/source.mp4); [худший 18102028](/mnt/shared/gothic-ai/nav-live/baseline/HD/05-wall-pocket/seed-18102028/source.mp4) |
-| 06-harbour-water | не записано | 3/3; 46.533 с; путь ×1.638031; контактов 19; падений 0; [медианный seed 18102028](/mnt/shared/gothic-ai/nav-live/baseline/HD/06-harbour-water/seed-18102028/source.mp4); [худший 18102027](/mnt/shared/gothic-ai/nav-live/baseline/HD/06-harbour-water/seed-18102027/source.mp4) |
-| 07-cliff-trail | не записано | 1/3; 60.000 с; путь ×7.096081; контактов 26; падений 2; [медианный seed 18102027](/mnt/shared/gothic-ai/nav-live/baseline/HD/07-cliff-trail/seed-18102027/source.mp4); [худший 18102029](/mnt/shared/gothic-ai/nav-live/baseline/HD/07-cliff-trail/seed-18102029/source.mp4) |
-| 08-market-crowd | не записано | 2/3; 87.733 с; путь ×1.022951; контактов 9; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/baseline/HD/08-market-crowd/seed-18102029/source.mp4); [худший 18102028](/mnt/shared/gothic-ai/nav-live/baseline/HD/08-market-crowd/seed-18102028/source.mp4) |
-| 09-door-stairs-door | не записано | 3/3; 2.567 с; путь ×1.113636; контактов 0; падений 0; [медианный seed 18102028](/mnt/shared/gothic-ai/nav-live/baseline/HD/09-door-stairs-door/seed-18102028/source.mp4); [худший 18102029](/mnt/shared/gothic-ai/nav-live/baseline/HD/09-door-stairs-door/seed-18102029/source.mp4) |
-| 10-local-stranger | не записано | 3/3; 16.567 с; путь ×1.058010; контактов 1; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/baseline/HD/10-local-stranger/seed-18102029/source.mp4); [худший 18102028](/mnt/shared/gothic-ai/nav-live/baseline/HD/10-local-stranger/seed-18102028/source.mp4) |
+| 01-maleth-fence | 3/3; 32.333 с; путь ×1.145737; контактов 4; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/01-maleth-fence/seed-18102029/source.mp4); [худший 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/01-maleth-fence/seed-18102028/source.mp4) | 3/3; 24.633 с; путь ×1.180894; контактов 4; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/01-maleth-fence/seed-18102029/source.mp4); [худший 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/01-maleth-fence/seed-18102028/source.mp4) |
+| 02-routine-return-forest-tree | 1/1; 21.633 с; путь ×1.133481; контактов 0; падений 0; [медианный seed 18102027](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/02-routine-return-forest-tree/seed-18102027/source.mp4) | 1/1; 13.100 с; путь ×1.016441; контактов 1; падений 0; [медианный seed 18102027](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/02-routine-return-forest-tree/seed-18102027/source.mp4) |
+| 02-routine-return-farm-edge | 1/1; 118.100 с; путь ×1.416819; контактов 7; падений 0; [медианный seed 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/02-routine-return-farm-edge/seed-18102028/source.mp4) | 1/1; 39.733 с; путь ×1.034377; контактов 6; падений 0; [медианный seed 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/02-routine-return-farm-edge/seed-18102028/source.mp4) |
+| 02-routine-return-forest-pine | 1/1; 42.833 с; путь ×1.678497; контактов 2; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/02-routine-return-forest-pine/seed-18102029/source.mp4) | 1/1; 14.200 с; путь ×1.475891; контактов 0; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/02-routine-return-forest-pine/seed-18102029/source.mp4) |
+| 03-follow-hero | 0/3; 180.000 с; путь ×1.122136; контактов 108; падений 0; полоса 12.425926%; [медианный seed 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/03-follow-hero/seed-18102028/source.mp4); [худший 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/03-follow-hero/seed-18102029/source.mp4) | 1/3; 180.000 с; путь ×0.992247; контактов 111; падений 0; полоса 47.703704%; [медианный seed 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/03-follow-hero/seed-18102028/source.mp4); [худший 18102027](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/03-follow-hero/seed-18102027/source.mp4) |
+| 05-wall-pocket | 1/3; 90.000 с; путь ×1.379453; контактов 32; падений 0; [медианный seed 18102027](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/05-wall-pocket/seed-18102027/source.mp4); [худший 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/05-wall-pocket/seed-18102028/source.mp4) | 2/3; 29.367 с; путь ×1.055607; контактов 33; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/05-wall-pocket/seed-18102029/source.mp4); [худший 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/05-wall-pocket/seed-18102028/source.mp4) |
+| 06-harbour-water | 1/3; 90.000 с; путь ×3.077794; контактов 27; падений 0; [медианный seed 18102027](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/06-harbour-water/seed-18102027/source.mp4); [худший 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/06-harbour-water/seed-18102029/source.mp4) | 3/3; 46.533 с; путь ×1.638031; контактов 19; падений 0; [медианный seed 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/06-harbour-water/seed-18102028/source.mp4); [худший 18102027](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/06-harbour-water/seed-18102027/source.mp4) |
+| 07-cliff-trail | 2/3; 14.833 с; путь ×2.941646; контактов 15; падений 1; [медианный seed 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/07-cliff-trail/seed-18102028/source.mp4); [худший 18102027](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/07-cliff-trail/seed-18102027/source.mp4) | 1/3; 60.000 с; путь ×7.096081; контактов 26; падений 2; [медианный seed 18102027](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/07-cliff-trail/seed-18102027/source.mp4); [худший 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/07-cliff-trail/seed-18102029/source.mp4) |
+| 08-market-crowd | 2/3; 85.633 с; путь ×1.090883; контактов 7; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/08-market-crowd/seed-18102029/source.mp4); [худший 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/08-market-crowd/seed-18102028/source.mp4) | 2/3; 87.733 с; путь ×1.022951; контактов 9; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/08-market-crowd/seed-18102029/source.mp4); [худший 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/08-market-crowd/seed-18102028/source.mp4) |
+| 09-door-stairs-door | 3/3; 8.933 с; путь ×1.180748; контактов 11; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/09-door-stairs-door/seed-18102029/source.mp4); [худший 18102027](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/09-door-stairs-door/seed-18102027/source.mp4) | 3/3; 2.567 с; путь ×1.113636; контактов 0; падений 0; [медианный seed 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/09-door-stairs-door/seed-18102028/source.mp4); [худший 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/09-door-stairs-door/seed-18102029/source.mp4) |
+| 10-local-stranger | 2/3; 64.400 с; путь ×1.504417; контактов 25; падений 0; [медианный seed 18102027](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/10-local-stranger/seed-18102027/source.mp4); [худший 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/dagger4-r1/10-local-stranger/seed-18102029/source.mp4) | 3/3; 16.567 с; путь ×1.058010; контактов 1; падений 0; [медианный seed 18102029](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/10-local-stranger/seed-18102029/source.mp4); [худший 18102028](/mnt/shared/gothic-ai/nav-live/dagger4-r1/HD/10-local-stranger/seed-18102028/source.mp4) |
 
-R1: записано 0/27 замороженных поездок (целевое 33; шесть дополнительных seed не входят в заморозку). Исторические HD/it35/BC4 и учитель переиспользуются; их база не записана.
+R1: записано 27/27 замороженных поездок (целевое 33; шесть дополнительных seed не входят в заморозку). Исторические HD/it35/BC4 и учитель переиспользуются; их база не записана.
 
-Отдельные проверки r1 smoke: 0/3 прогона; план — две записи и один контроль без записи. В число 27 поездок набора они не входят.
+Отдельные проверки r1 smoke: 3/3 прогона; план — две записи и один контроль без записи. В число 27 поездок набора они не входят.
+
+### Парные различия живого набора r1 − HD
+
+SE условны на фиксированное место: парные action seed, а не независимые места. Для трёх routine-return с одним seed SE не определён. Медианы: 5000 парных bootstrap-выборок seed; остальные метрики — парная SE среднего/отношения, для сумм масштабированная на n.
+
+| Метрика | r1 − HD | Парный SE | Число SE | Пар seed |
+|---|---:|---:|---:|---:|
+| 01-maleth-fence: приезд, п.п. | 0.000000 | 0.000000 | 0 | 3 |
+| 01-maleth-fence: медиана времени, с | 7.700000 | 4.607806 | 1.671 | 3 |
+| 01-maleth-fence: медиана пути × | -0.035156 | 0.036250 | -0.970 | 3 |
+| 01-maleth-fence: контакты, сумма | 0.000000 | 1.732051 | 0.000 | 3 |
+| 01-maleth-fence: падения, сумма | 0.000000 | 0.000000 | 0 | 3 |
+| 02-routine-return-forest-tree: приезд, п.п. | 0.000000 | — | — | 1 |
+| 02-routine-return-forest-tree: медиана времени, с | 8.533000 | — | — | 1 |
+| 02-routine-return-forest-tree: медиана пути × | 0.117040 | — | — | 1 |
+| 02-routine-return-forest-tree: контакты, сумма | -1.000000 | — | — | 1 |
+| 02-routine-return-forest-tree: падения, сумма | 0.000000 | — | — | 1 |
+| 02-routine-return-farm-edge: приезд, п.п. | 0.000000 | — | — | 1 |
+| 02-routine-return-farm-edge: медиана времени, с | 78.367000 | — | — | 1 |
+| 02-routine-return-farm-edge: медиана пути × | 0.382442 | — | — | 1 |
+| 02-routine-return-farm-edge: контакты, сумма | 1.000000 | — | — | 1 |
+| 02-routine-return-farm-edge: падения, сумма | 0.000000 | — | — | 1 |
+| 02-routine-return-forest-pine: приезд, п.п. | 0.000000 | — | — | 1 |
+| 02-routine-return-forest-pine: медиана времени, с | 28.633000 | — | — | 1 |
+| 02-routine-return-forest-pine: медиана пути × | 0.202605 | — | — | 1 |
+| 02-routine-return-forest-pine: контакты, сумма | 2.000000 | — | — | 1 |
+| 02-routine-return-forest-pine: падения, сумма | 0.000000 | — | — | 1 |
+| 03-follow-hero: приезд, п.п. | -33.333333 | 33.333333 | -1.000 | 3 |
+| 03-follow-hero: медиана времени, с | 0.000000 | 0.000000 | 0 | 3 |
+| 03-follow-hero: медиана пути × | 0.129889 | 0.269975 | 0.481 | 3 |
+| 03-follow-hero: контакты, сумма | -3.000000 | 41.677332 | -0.072 | 3 |
+| 03-follow-hero: падения, сумма | 0.000000 | 0.000000 | 0 | 3 |
+| 03-follow-hero: полоса, п.п. | -35.277778 | 22.442588 | -1.572 | 3 |
+| 05-wall-pocket: приезд, п.п. | -33.333333 | 33.333333 | -1.000 | 3 |
+| 05-wall-pocket: медиана времени, с | 60.633000 | 25.508672 | 2.377 | 3 |
+| 05-wall-pocket: медиана пути × | 0.323846 | 0.544706 | 0.595 | 3 |
+| 05-wall-pocket: контакты, сумма | -1.000000 | 38.431758 | -0.026 | 3 |
+| 05-wall-pocket: падения, сумма | 0.000000 | 0.000000 | 0 | 3 |
+| 06-harbour-water: приезд, п.п. | -66.666667 | 33.333333 | -2.000 | 3 |
+| 06-harbour-water: медиана времени, с | 43.467000 | 7.660527 | 5.674 | 3 |
+| 06-harbour-water: медиана пути × | 1.439764 | 0.167783 | 8.581 | 3 |
+| 06-harbour-water: контакты, сумма | 8.000000 | 16.093477 | 0.497 | 3 |
+| 06-harbour-water: падения, сумма | 0.000000 | 0.000000 | 0 | 3 |
+| 07-cliff-trail: приезд, п.п. | 33.333333 | 33.333333 | 1.000 | 3 |
+| 07-cliff-trail: медиана времени, с | -45.167000 | 25.790224 | -1.751 | 3 |
+| 07-cliff-trail: медиана пути × | -4.154435 | 3.678513 | -1.129 | 3 |
+| 07-cliff-trail: контакты, сумма | -11.000000 | 17.349352 | -0.634 | 3 |
+| 07-cliff-trail: падения, сумма | -1.000000 | 1.000000 | -1.000 | 3 |
+| 08-market-crowd: приезд, п.п. | 0.000000 | 0.000000 | 0 | 3 |
+| 08-market-crowd: медиана времени, с | -2.100000 | 4.063189 | -0.517 | 3 |
+| 08-market-crowd: медиана пути × | 0.067933 | 0.033795 | 2.010 | 3 |
+| 08-market-crowd: контакты, сумма | -2.000000 | 2.645751 | -0.756 | 3 |
+| 08-market-crowd: падения, сумма | 0.000000 | 0.000000 | 0 | 3 |
+| 09-door-stairs-door: приезд, п.п. | 0.000000 | 0.000000 | 0 | 3 |
+| 09-door-stairs-door: медиана времени, с | 6.366000 | 16.905756 | 0.377 | 3 |
+| 09-door-stairs-door: медиана пути × | 0.067112 | 3.134672 | 0.021 | 3 |
+| 09-door-stairs-door: контакты, сумма | 11.000000 | 11.000000 | 1.000 | 3 |
+| 09-door-stairs-door: падения, сумма | 0.000000 | 0.000000 | 0 | 3 |
+| 10-local-stranger: приезд, п.п. | -33.333333 | 33.333333 | -1.000 | 3 |
+| 10-local-stranger: медиана времени, с | 47.833000 | 55.209086 | 0.866 | 3 |
+| 10-local-stranger: медиана пути × | 0.446407 | 0.905141 | 0.493 | 3 |
+| 10-local-stranger: контакты, сумма | 24.000000 | 14.798649 | 1.622 | 3 |
+| 10-local-stranger: падения, сумма | 0.000000 | 0.000000 | 0 | 3 |
 
 ## Сбор r1 и управление учителем
 
