@@ -13,6 +13,7 @@ OFF = {
     "trigger",
     "person",
     "crimes",
+    "quest_law",
     "crime_react",
     "npc_deeds",
     "npc_far",
