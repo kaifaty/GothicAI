@@ -76,7 +76,7 @@ def test_retarget_keeps_bone_directions(tmp_path):
     pos, rot = synthetic_soma(np.random.default_rng(7), 6)
     npz = tmp_path / "soma.npz"
     np.savez(npz, posed_joints=pos, global_rot_mats=rot)
-    anim = rs.retarget(npz, skel, "T_TEST", "", 30.0, 30.0, None, ref)
+    anim = rs.retarget(npz, skel, "T_TEST", "", 30.0, 30.0, None, ref, foot_ik=False)
     gskel = rs.with_offsets(skel, ref)
     child = {"BIP01 L UPPERARM": "BIP01 L FOREARM", "BIP01 R FOREARM": "BIP01 R HAND",
              "BIP01 L THIGH": "BIP01 L CALF", "BIP01 R CALF": "BIP01 R FOOT", "BIP01 SPINE1": "BIP01 SPINE2"}
@@ -91,7 +91,27 @@ def test_retarget_keeps_bone_directions(tmp_path):
 
 
 @pytest.mark.skipif(base_models() is None, reason="needs a converted base with the human model")
-def test_stance_survives_soma_and_back(tmp_path):
+def test_foot_ik_puts_ankles_on_soma_ankles(tmp_path):
+    """With foot IK each Gothic ankle sits on SOMA's ankle carried over by the root's scale."""
+    models = base_models()
+    skel = ga.read_skeleton(models / "HUMANS.MDH.json")
+    ref = ga.read_animation(models / "HUMANS_1HST1-S_1H.MAN.json")
+    pos, rot = synthetic_soma(np.random.default_rng(11), 6)
+    npz = tmp_path / "soma.npz"
+    np.savez(npz, posed_joints=pos, global_rot_mats=rot)
+    anim = rs.retarget(npz, skel, "T_TEST", "", 30.0, 30.0, 0.0, ref)
+    gskel = rs.with_offsets(skel, ref)
+    scale = rs.soma_rig(gskel, pos[0], rot[0], rs.SOMA30, ref)["scale"]
+    for f in range(anim.frame_count):
+        world = ga.world_pose(gskel, anim, f)
+        for g, s in (("BIP01 L FOOT", "LeftFoot"), ("BIP01 R FOOT", "RightFoot")):
+            target = rs.F @ pos[f, rs.SOMA30.index(s)] * scale
+            assert np.linalg.norm(world[gskel.index(g)][:3, 3] - target) < 0.5, (f, g)  # cm
+
+
+@pytest.mark.skipif(base_models() is None, reason="needs a converted base with the human model")
+@pytest.mark.parametrize("foot_ik", [False, True])
+def test_stance_survives_soma_and_back(tmp_path, foot_ik):
     """The 1H stance → SOMA keyframe → retarget lands within millimetres of the original."""
     models = base_models()
     skel0 = ga.read_skeleton(models / "HUMANS.MDH.json")
@@ -113,7 +133,9 @@ def test_stance_survives_soma_and_back(tmp_path):
     npz = tmp_path / "stance.npz"
     np.savez(npz, posed_joints=np.array([[p[n] for n in rs.SOMA30]] * 2),
              global_rot_mats=np.array([[g[n] for n in rs.SOMA30]] * 2))
-    back = rs.retarget(npz, skel0, "T", "", 30.0, 30.0, None, ref)
+    # SOMA's ankle stands at the measured 0.081 m only in Kimodo output; give the matching floor here.
+    lift = rig["bind_foot_y"] - rig["soma_foot_y"] * rig["scale"] if foot_ik else None
+    back = rs.retarget(npz, skel0, "T", "", 30.0, 30.0, lift, ref, foot_ik=foot_ik)
     w0, w1 = ga.world_pose(skel, ref, 0), ga.world_pose(skel, back, 0)
     for n in ("BIP01 R HAND", "BIP01 L HAND", "BIP01 R FOOT", "BIP01 L FOOT", "BIP01 HEAD"):
         i = skel.index(n)
