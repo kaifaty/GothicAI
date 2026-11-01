@@ -13,7 +13,6 @@ from ..dialogue import DialogueManager
 from ..game import GameError, GameLink
 from ..knowledge import Knowledge
 from ..llm import ToolCall
-from ..llm.fake import FakeBackend, FakeStep
 from ..lore import Lore
 from ..perception import PerceptionDesk, Sight, trace_name
 from ..places import SIDES
@@ -27,11 +26,8 @@ from ..whereabouts import Whereabouts
 from .common import (
     LOBART,
     VINO,
-    ClaimScript,
     FixedDecider,
-    _ByNpc,
     _logged,
-    _OnWords,
     _trace_evidence_line,
     _until,
     _until_async,
@@ -56,7 +52,7 @@ async def ground_scenario(
     down. Checks:
     - sees: it is in Cavalorn's view, with its id;
     - situation: its situation tells it, «На земле: …»;
-    - take: told «бери», its model (scripted) calls take_item: it walks up and picks it up;
+    - take: given take_item on «бери», it walks up and picks it up;
     - has: the letter is in its inventory and no longer on the ground;
     - follows: it goes with the hero again, and catches up when he is 11 m off."""
     from ..executor import Intent
@@ -78,11 +74,12 @@ async def ground_scenario(
         return res
 
     link.act = recorded  # type: ignore[method-assign]
-    take = ToolCall("take_item", {"item": item})
-    dialogue.llm = _ByNpc(
-        {"Кавалорн": _OnWords([("бери", FakeStep("Давай сюда.", [take]))], FakeStep("Идём."))},
-        FakeBackend("Хм.", delay=0),
+    off = model_off(dialogue)
+    off.given(
+        "дано: Кавалорн поднимает письмо", who=npc, when="бери",
+        calls=[ToolCall("take_item", {"item": item})],
     )
+    off.silent("дано: Кавалорн молчит (письмо принято)", who=npc, when="бери")
 
     def dist() -> float:
         return talk.people[npc].distance / 100 if npc in talk.people else -1.0
@@ -104,6 +101,7 @@ async def ground_scenario(
         await link.debug("player_goto", to=npc, distance=300)
         if not await _until(lambda: 0 <= dist() <= 15, 20):
             return _logged({"roster": f"failed ({npc} is not around the hero: {dist():.1f} m)"})
+        log.info("given: дано: Кавалорн — спутник героя")
         dialogue.open(npc, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
         talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
         if not await _until(lambda: since(0, "follow") and 0 <= dist() <= 5, 20):
@@ -150,8 +148,7 @@ async def cave_scenario(
       its way in on the steps;
     - where: `where{пещера}` finds the same cave, its way in and what is next to it;
     - go_to: «Кавалорн, зайди в пещеру.» — he goes into the bandits' cave and waits there.
-    The model is scripted with LLM=fake (it is sent to XARDAS_BANDITS on «зайди в пещеру»); a live one
-    (LLM=chatgpt) chooses the cave itself from the places around."""
+    The decision to go to XARDAS_BANDITS is given; the movement uses the real order path."""
     from ..executor import Intent
 
     await link.wait_world()
@@ -163,27 +160,13 @@ async def cave_scenario(
     def dist() -> float:
         return talk.people[npc].distance / 100 if npc in talk.people else -1.0
 
-    entries: list[dict[str, Any]] = []
-    sink = dialogue.journal.sink
-
-    def keep(entry: dict[str, Any]) -> None:
-        entries.append(entry)
-        if sink is not None:
-            sink(entry)
-
-    dialogue.journal.sink = keep
-    live = dialogue.llm.name != "fake"
-    if not live:
-        go = ToolCall("go_to", {"place": "XARDAS_BANDITS"})
-        dialogue.llm = _ByNpc(
-            {
-                "Кавалорн": _OnWords(
-                    [("зайди в пещеру", FakeStep("Иду.", [go])), ("пришёл первым", FakeStep("Тут пусто."))],
-                    FakeStep("Да."),
-                )
-            },
-            FakeBackend("Хм.", delay=0),
-        )
+    off = model_off(dialogue)
+    off.given(
+        "дано: Кавалорн идёт в пещеру", who=npc, when="зайди в пещеру",
+        calls=[ToolCall("go_to", {"place": "XARDAS_BANDITS"})],
+    )
+    off.silent("дано: Кавалорн молчит (поручение идти передано)", who=npc, when="зайди в пещеру")
+    off.silent("дано: Кавалорн молчит (пришёл в пещеру)", who=npc, when="пришёл первым")
     try:
         await link.debug("player_equip", item="ITAR_PAL_H")  # the bandits by the steps may fall on him
     except GameError as err:
@@ -197,6 +180,7 @@ async def cave_scenario(
     await link.debug("player_goto", to=npc, distance=300)
     if not await _until(lambda: 0 <= dist() <= 15, 20):
         return _logged({"roster": f"failed ({npc} is not around the hero: {dist():.1f} m)"})
+    log.info("given: дано: Кавалорн — спутник героя")
     dialogue.open(npc, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
     talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
     following = await _until(
@@ -239,15 +223,7 @@ async def cave_scenario(
     )
 
     # «зайди в пещеру», no place named
-    t0 = len(entries)
     talk.hear("Кавалорн, зайди в пещеру.", None, {"via": "scenario"})
-
-    def sent() -> list[dict[str, Any]]:
-        return [e for e in entries[t0:] if e.get("kind") == "action" and e.get("action") == "go_to"]
-
-    went = await _until(sent, 60)
-    where = sent()[0].get("arguments", {}).get("place") if went else None
-    standing = talk.orders.standing.get(npc) if talk.orders is not None else None
 
     def place_of(snap: Snapshot) -> str | None:
         # where it stands: its nearest point (`waypoint` is where it walks to)
@@ -257,14 +233,14 @@ async def cave_scenario(
     inside = await _until_async(
         lambda: link.snapshot(npc, fresh=True), lambda snap: place_of(snap) == "XARDAS_BANDITS", 120
     )
+    await _until(lambda: "дано: Кавалорн молчит (пришёл в пещеру)" in off.used, 60)
     snap = await link.snapshot(npc, fresh=True)
+    standing = talk.orders.standing.get(npc) if talk.orders is not None else None
     check(
         "go_to",
-        where == "XARDAS_BANDITS" and standing is not None and standing.kind == "go" and inside,
-        f"go_to {where or 'not called'}, at {snap.npc.nearest_waypoint} ({place_of(snap)})",
+        standing is not None and standing.kind == "go" and inside,
+        f"at {snap.npc.nearest_waypoint} ({place_of(snap)}), standing {standing}",
     )
-    said = [e.get("text", "") for e in entries[t0:] if e.get("kind") == "npc" and e.get("npc") == npc]
-    log.info("cave: %s said %s", npc, said)
     return _logged(results)
 
 
@@ -409,7 +385,7 @@ async def remembers_scenario(
 ) -> dict[str, str]:
     """Seen lately (step M2 of docs/npc-tools.md): Cavalorn goes into the bandits' cave first and sees them
     there, then comes back out to the hero by the steps. Out of the cave the hero says «Кавалорн, там в
-    пещере бандиты, разберись с ними.»; its model (scripted, LLM=fake) sets it on Brago. Checks:
+    пещере бандиты, разберись с ними.»; its given decision is to fight Brago. Checks:
     - sees_cave: in the cave it sees one of them;
     - remembers: back out, it sees neither, but its situation has them «Недавно видел» with their ids,
       and Brago is a target of its intent;
@@ -440,21 +416,20 @@ async def remembers_scenario(
     def dist(who: str = npc) -> float:
         return talk.people[who].distance / 100 if who in talk.people else -1.0
 
-    go = ToolCall("go_to", {"place": "XARDAS_BANDITS"})
-    fight = {"goal": "fight", "target": brago, "attitude": "friendly", "agenda": None}
-    dialogue.llm = _ByNpc(
-        {
-            "Кавалорн": _OnWords(
-                [
-                    ("пещеру первым", FakeStep("Пойду первым.", [go])),
-                    ("пришёл первым", FakeStep("Тут двое.")),
-                    ("разберись", FakeStep("Сейчас я им покажу!", [ToolCall("set_intent", fight)])),
-                ],
-                FakeStep("Идём."),
-            )
-        },
-        FakeBackend("Хм.", delay=0),
+    off = model_off(dialogue)
+    off.given(
+        "дано: Кавалорн идёт в пещеру первым", who=npc, when="пещеру первым",
+        calls=[ToolCall("go_to", {"place": "XARDAS_BANDITS"})],
     )
+    off.silent("дано: Кавалорн молчит (поручение идти передано)", who=npc, when="пещеру первым")
+    off.silent("дано: Кавалорн молчит (пришёл в пещеру)", who=npc, when="пришёл первым")
+    off.given(
+        "дано: Кавалорн дерётся с Браго", who=npc, when="разберись",
+        calls=[ToolCall("set_intent", {
+            "goal": "fight", "target": brago, "attitude": "friendly", "agenda": None,
+        })],
+    )
+    off.silent("дано: Кавалорн молчит (решение драться передано)", who=npc, when="разберись")
     link.act = recorded  # type: ignore[method-assign]
     try:
         try:
@@ -470,6 +445,7 @@ async def remembers_scenario(
         await link.debug("player_goto", to=npc, distance=300)
         if not await _until(lambda: 0 <= dist() <= 15, 20):
             return _logged({"roster": f"failed ({npc} is not around the hero: {dist():.1f} m)"})
+        log.info("given: дано: Кавалорн — спутник героя")
         dialogue.open(npc, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
         talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
         await _until(lambda: 0 <= dist() <= 5, 20)
@@ -480,7 +456,7 @@ async def remembers_scenario(
         t0 = time.monotonic()
         talk.hear("Кавалорн, иди в пещеру первым.", None, {"via": "scenario"})
         await _until(lambda: any(c[2] == "done" for c in since(t0, "go_to_waypoint")), 100)
-        await _until(lambda: "Тут двое." in [m.content for m in dialogue.conversations[npc].history], 90)
+        await _until(lambda: "дано: Кавалорн молчит (пришёл в пещеру)" in off.used, 90)
         view = await perception.fresh(npc)
         seen = [o.id for o in view.sees if o.id.upper() in cave] if view is not None else []
         check("sees_cave", bool(seen), seen or "nobody")
@@ -687,9 +663,9 @@ async def seen_memory(
     """What npc's saw (wave 1 step 6), on the game. At eight in the morning the hero stands before Lobart on
     his farm: Lobart keeps the sighting — when, where by name, how the hero looked. The hero goes to the city
     (Harad sees him there), an hour passes, he comes back and tells Lobart he was in the city all morning:
-    Lobart saw him on the farm an hour ago and catches the lie (`catch_lie`; the model scripted unless
-    LLM=chatgpt) — his trust, wariness, a rumor. The memory follows the save. The sight of check_claim is the
-    engine's: what story_state says the townsman sees is what his view sees."""
+    Lobart is given the decision to catch the lie (`catch_lie`); trust and wariness follow. The memory
+    follows the save. The sight of check_claim is the engine's: what story_state says the townsman sees
+    is what his view sees."""
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -697,6 +673,7 @@ async def seen_memory(
 
     desk = sightings.desk
     chronicle = sightings.chronicle
+    off = model_off(dialogue)
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
@@ -787,29 +764,29 @@ async def seen_memory(
     # 4. the lie: «I was in the city all morning»
     name = talk.people[farmer].name if farmer in talk.people else "Лобарт"
     await desk.fresh(farmer)
-    situation = sightings.situation(farmer) or ""
+    conv = dialogue.open(farmer, name, warm=False)
+    situation, _, _ = await dialogue._situation(conv, None)
     sid = next((m.group(1) for m in re.finditer(r"- (В\d): [^\n]*около часа назад", situation)), "В2")
+    check(
+        "in_the_turn",
+        "Что ты видел сам" in situation
+        and f"{sid}: сегодня" in situation
+        and "около часа назад" in situation,
+        next((line for line in situation.splitlines() if line.startswith(f"- {sid}")), situation[:200]),
+    )
+    log.info("given: дано: решающая модель оставляет Лобарта слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
-    script = None
-    if isinstance(dialogue.llm, FakeBackend):
-        catch = FakeStep(
-            "Врёшь! Я тебя час назад здесь, на ферме, видел.",
-            [ToolCall("catch_lie", {"said": "всё утро был в городе", "seen": sid})],
-        )
-        dialogue.llm = script = ClaimScript(said=[("город", catch)], told=[], default="Ну?", only=name)
+    off.given(
+        "дано: Лобарт уличает героя по увиденному", who=farmer, when="утро был в городе",
+        calls=[ToolCall("catch_lie", {"said": "всё утро был в городе", "seen": sid})],
+    )
+    off.silent(
+        "дано: Лобарт молчит (уличение по увиденному записано)",
+        who=farmer, when="утро был в городе",
+    )
     await link.debug("type", text=f"{name}, я всё утро был в городе, только что оттуда.")
-    caught = await _until(lambda: any(f.get("said") for f in chronicle.facts("caught")), 60)
-    if script is not None:
-        request = str(script.calls[0][1]) if script.calls else ""
-        check(
-            "in_the_turn",
-            "Что ты видел сам" in request and f"{sid}: сегодня" in request and "около часа назад" in request,
-            next((line for line in situation.splitlines() if line.startswith(f"- {sid}")), situation[:200]),
-        )
-    fact = next((f for f in chronicle.facts("caught") if f.get("said")), None)
-    conv = dialogue.conversations.get(farmer)
-    replies = [e.content for e in conv.memory.entries if e.role == "assistant"][-2:] if conv else []
-    check("caught", caught, f"{fact.get('title')!r}: {fact.get('how')}; said {replies}" if fact else replies)
+    await _until(lambda: any(f.get("said") for f in chronicle.facts("caught")), 60)
+    await _until(lambda: not dialogue.speaking(farmer), 30)
     check(
         "wary", conv is not None and conv.intent.attitude in ("wary", "hostile"), conv.intent if conv else ""
     )
