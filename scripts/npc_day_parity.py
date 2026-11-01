@@ -11,6 +11,10 @@ position error (p50/p95/max, metres), the offset of matched ZS starts (game minu
 alive/dead, HP and inventory differences, a per-hour divergence curve, the NPCs that
 diverge most, and the same metrics split by run B's simulation tier. With tolerances
 the exit code is 1 when a check fails; without them the report is informational.
+
+The completeness gates fail a pair whose runs did not both finish (`end_reason`), stop
+early or at different times, have samples present in only one run, or end with an NPC
+that the other run does not have: metrics over the shared samples alone cannot see that.
 """
 from __future__ import annotations
 
@@ -23,8 +27,13 @@ import math
 from pathlib import Path
 import sys
 
-# name -> (kind, report label); "min" checks value >= limit, "max" checks value <= limit.
+# name -> (kind, report label); "min" checks value >= limit, "max" checks value <= limit,
+# "flag" checks that the value is true when the tolerance is true (false skips it).
 CHECKS = {
+    "require_done": ("flag", "both runs finished the journal (end_reason done)"),
+    "require_full_length": ("flag", "both runs reach their requested minutes and end at the same time"),
+    "max_only_samples": ("max", "NPC-samples present in only one run"),
+    "max_missing_end": ("max", "NPCs present at the end of one run and missing in the other"),
     "min_same_zs": ("min", "same ZS state, share of NPC-samples"),
     "min_same_ta": ("min", "same routine (TA) entry, share of NPC-samples"),
     "max_pos_p50": ("max", "position error p50, m"),
@@ -32,7 +41,8 @@ CHECKS = {
     "max_pos_max": ("max", "position error max, m"),
     "min_zs_matched": ("min", "ZS starts matched within the window, share"),
     "max_zs_offset_p95": ("max", "matched ZS start offset p95, game min"),
-    "max_alive_diff": ("max", "NPCs alive in one run and dead in the other at the end"),
+    "max_alive_diff": ("max", "NPCs alive in one run and dead (or missing) in the other at the end"),
+    "max_inventory_diff_end": ("max", "NPCs whose inventory differs (or who are missing) at the end"),
     "min_same_inventory": ("min", "same inventory, share of NPC-samples"),
     "min_same_hp": ("min", "same HP, share of NPC-samples"),
 }
@@ -59,11 +69,15 @@ def load(run):
     rows = {}
     keys = {}
     hero = {}
+    hero_keys = set()
+    times = set()
     with opener(samples) as stream:
         for row in csv.DictReader(stream):
             t = int(float(row["t_min"]))
+            times.add(t)
             if row.get("hero") == "hero":
                 hero[t] = (float(row["x"]), float(row["y"]), float(row["z"]))
+                hero_keys.add(row["key"])
                 continue
             rows[(t, row["key"])] = (
                 row["alive"] == "1", int(row["hp"]), row["ta"], row["zs"],
@@ -74,6 +88,8 @@ def load(run):
     if path is not None:
         with opener(path) as stream:
             for row in csv.DictReader(stream):
+                if row["key"] in hero_keys:
+                    continue  # the hero is left out of events too
                 events.setdefault(row["kind"], {}).setdefault(row["key"], []).append((float(row["t_min"]), row["value"]))
     header = {}
     path = find(run, "npc-day.json")
@@ -82,7 +98,9 @@ def load(run):
             header = json.loads(path.read_text())
         except (OSError, ValueError):
             header = {}
-    return {"rows": rows, "keys": keys, "hero": hero, "events": events, "header": header, "path": str(samples.parent)}
+    last = max(times) if times else None
+    return {"rows": rows, "keys": keys, "hero": hero, "events": events, "header": header, "path": str(samples.parent),
+            "last": last, "end_keys": {key for t, key in rows if t == last}}
 
 
 def percentile(values, q):
@@ -153,8 +171,10 @@ def match_events(a, b, window):
             if best is not None and abs(times[best] - t) <= window:
                 offsets.append(abs(times.pop(best) - t))
                 matched += 1
-    return {"events": total, "matched_pairs": matched,
-            "matched": share(2 * matched, total) if total else None,
+    if not total:
+        # No events in either run agree completely; None stays for events that never matched.
+        return {"events": 0, "matched_pairs": 0, "matched": 1.0, "offset_p50": 0.0, "offset_p95": 0.0, "offset_max": 0.0}
+    return {"events": total, "matched_pairs": matched, "matched": share(2 * matched, total),
             "offset_p50": percentile(offsets, 0.5), "offset_p95": percentile(offsets, 0.95),
             "offset_max": max(offsets) if offsets else None}
 
@@ -162,6 +182,35 @@ def match_events(a, b, window):
 def near_hero(run, t, position, metres):
     hero = run["hero"].get(t)
     return hero is not None and math.dist(hero, position) < metres * 100
+
+
+def completeness(run):
+    """Whether one run finished its journal: its end reason, last sample and requested minutes."""
+    header = run["header"]
+    minutes, period = header.get("minutes"), header.get("period_min")
+    expected = None
+    if isinstance(minutes, (int, float)) and isinstance(period, (int, float)) and period > 0:
+        expected = int(minutes // period * period)
+    return {"end_reason": header.get("end_reason", "unfinished"), "last_t_min": run["last"],
+            "requested_min": minutes, "expected_last_t_min": expected,
+            "full_length": expected is not None and run["last"] is not None and run["last"] >= expected}
+
+
+def end_differences(a, b):
+    """The end of each run against the other's end: NPCs missing in one, alive and inventory."""
+    missing, alive, inventory = [], [], []
+    for key in sorted(a["end_keys"] | b["end_keys"]):
+        ra, rb = a["rows"].get((a["last"], key)), b["rows"].get((b["last"], key))
+        if ra is None or rb is None:
+            missing.append(key)
+            alive.append(key)
+            inventory.append(key)
+            continue
+        if ra[0] != rb[0]:
+            alive.append(key)
+        if ra[7] != rb[7]:
+            inventory.append(key)
+    return missing, alive, inventory
 
 
 def compare(a, b, window=60.0, min_hero_distance=0.0):
@@ -190,9 +239,7 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
         if ra[0] and rb[0]:
             npc["pos_max"] = max(npc["pos_max"], math.dist(ra[4:7], rb[4:7]) / 100)
     last = max(t for t, _ in common)
-    keys = sorted({key for t, key in common if t == last})
-    alive_diff = [key for key in keys if a["rows"][(last, key)][0] != b["rows"][(last, key)][0]]
-    inventory_diff = [key for key in keys if a["rows"][(last, key)][7] != b["rows"][(last, key)][7]]
+    missing_end, alive_diff, inventory_diff = end_differences(a, b)
     # Events count only up to the last common sample: a longer run must not add unmatched ones.
     def kind(run, name, value=None):
         return {key: [(t, value or v) for t, v in events if t <= last]
@@ -209,6 +256,9 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
         "excluded_near_hero": excluded,
         "only_a": len(set(a["rows"]) - set(b["rows"])),
         "only_b": len(set(b["rows"]) - set(a["rows"])),
+        "complete_a": completeness(a),
+        "complete_b": completeness(b),
+        "missing_end": missing_end,
         "npcs": len({key for _, key in common}),
         "last_t_min": last,
         "total": total.summary(),
@@ -230,11 +280,17 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
 
 def check_values(result):
     total = result["total"]
+    ca, cb = result["complete_a"], result["complete_b"]
     return {
+        "require_done": ca["end_reason"] == "done" and cb["end_reason"] == "done",
+        "require_full_length": ca["full_length"] and cb["full_length"] and ca["last_t_min"] == cb["last_t_min"],
+        "max_only_samples": result["only_a"] + result["only_b"],
+        "max_missing_end": len(result["missing_end"]),
         "min_same_zs": total["same_zs"], "min_same_ta": total["same_ta"],
         "max_pos_p50": total["pos_p50"], "max_pos_p95": total["pos_p95"], "max_pos_max": total["pos_max"],
         "min_zs_matched": result["zs_starts"]["matched"], "max_zs_offset_p95": result["zs_starts"]["offset_p95"],
         "max_alive_diff": len(result["alive_diff_end"]), "min_same_inventory": total["same_inventory"],
+        "max_inventory_diff_end": len(result["inventory_diff_end"]),
         "min_same_hp": total["same_hp"],
     }
 
@@ -247,7 +303,12 @@ def evaluate(result, tolerances):
             continue
         kind, label = CHECKS[name]
         value = values[name]
-        passed = value is not None and (value >= limit if kind == "min" else value <= limit)
+        if kind == "flag":
+            if not limit:
+                continue
+            passed = bool(value)
+        else:
+            passed = value is not None and (value >= limit if kind == "min" else value <= limit)
         checks.append({"name": name, "label": label, "value": value, "limit": limit, "kind": kind, "pass": passed})
     return checks
 
@@ -275,6 +336,10 @@ def markdown(result, checks, label_a, label_b):
                      f"wall {fmt(header.get('wall_s'), 0)} s, end `{header.get('end_reason', 'unfinished')}`")
     lines += [f"- NPC-samples compared: {result['common_samples']} ({result['npcs']} NPCs, up to t={result['last_t_min']} min); "
               f"only in {label_a}: {result['only_a']}, only in {label_b}: {result['only_b']}"]
+    for side, label in (("complete_a", label_a), ("complete_b", label_b)):
+        item = result[side]
+        lines.append(f"- {label} ends at t={fmt(item['last_t_min'])} of {fmt(item['requested_min'])} requested minutes, "
+                     f"`{item['end_reason']}`")
     if result["min_hero_distance_m"]:
         lines.append(f"- left out: {result['excluded_near_hero']} NPC-samples within {fmt(result['min_hero_distance_m'], 0)} m "
                      "of the hero in either run (ZS-start and death events are not filtered)")
@@ -288,16 +353,20 @@ def markdown(result, checks, label_a, label_b):
               f"| ZS starts matched (±{fmt(result['zs_window_min'], 0)} min) | {pct(result['zs_starts']['matched'])} of {result['zs_starts']['events']} |",
               f"| matched ZS start offset p50 / p95 / max, game min | {fmt(result['zs_starts']['offset_p50'], 2)} / {fmt(result['zs_starts']['offset_p95'], 2)} / {fmt(result['zs_starts']['offset_max'], 1)} |",
               f"| deaths {label_a} / {label_b}; matched pairs | {result['deaths_a']} / {result['deaths_b']}; {result['deaths']['matched_pairs']} |",
-              f"| alive differs at the end | {len(result['alive_diff_end'])} |",
-              f"| inventory differs at the end | {len(result['inventory_diff_end'])} |",
+              f"| NPCs missing in one run at the end | {len(result['missing_end'])} |",
+              f"| alive differs at the end (missing counts) | {len(result['alive_diff_end'])} |",
+              f"| inventory differs at the end (missing counts) | {len(result['inventory_diff_end'])} |",
               f"| NPCs with any ZS difference or >5 m apart | {result['diverged_npcs']} of {result['npcs']} |",
               f"| first ZS difference, game min | {fmt(result['first_zs_divergence_min'])} |", ""]
     if checks:
         lines += ["## Tolerances", "", "| Check | Value | Limit | |", "|---|---|---|---|"]
         for check in checks:
-            sign = "≥" if check["kind"] == "min" else "≤"
-            lines.append(f"| {check['label']} | {fmt(check['value'], 4)} | {sign} {fmt(check['limit'], 4)} | "
-                         f"{'pass' if check['pass'] else '**FAIL**'} |")
+            if check["kind"] == "flag":
+                value, limit = ("yes" if check["value"] else "no"), "required"
+            else:
+                sign = "≥" if check["kind"] == "min" else "≤"
+                value, limit = fmt(check["value"], 4), f"{sign} {fmt(check['limit'], 4)}"
+            lines.append(f"| {check['label']} | {value} | {limit} | {'pass' if check['pass'] else '**FAIL**'} |")
         lines.append("")
     lines += [f"## By tier in {label_b}", "", "| Tier | Samples | Same ZS | Same TA | Position p50 / p95 / max, m |",
               "|---|---|---|---|---|"]
@@ -316,7 +385,8 @@ def markdown(result, checks, label_a, label_b):
                      f"{fmt(npc['first_zs_diff'])} |")
     if not result["worst_npcs"]:
         lines.append("| none | 0 | 0 | — |")
-    for name, keys in (("Alive differs at the end", result["alive_diff_end"]),
+    for name, keys in (("Missing in one run at the end", result["missing_end"]),
+                       ("Alive differs at the end", result["alive_diff_end"]),
                        ("Inventory differs at the end", result["inventory_diff_end"])):
         if keys:
             shown = ", ".join(f"`{key}`" for key in keys[:20])
@@ -353,7 +423,11 @@ def main(argv=None):
                         help="leave out NPC-samples closer to the hero than this many metres in either run")
     parser.add_argument("--tolerances", help="JSON file of tolerances (keys as the options below, without --)")
     for name, (kind, label) in CHECKS.items():
-        parser.add_argument("--" + name.replace("_", "-"), dest=name, type=float, help=f"{kind} {label}")
+        if kind == "flag":
+            parser.add_argument("--" + name.replace("_", "-"), dest=name, type=lambda v: v.lower() in ("1", "true", "yes"),
+                                help=f"true or false: {label}")
+        else:
+            parser.add_argument("--" + name.replace("_", "-"), dest=name, type=float, help=f"{kind} {label}")
     args = parser.parse_args(argv)
     tolerances = tolerances_from(args)
     result = compare(load(args.run_a), load(args.run_b), args.window, args.min_hero_distance)

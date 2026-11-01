@@ -39,6 +39,8 @@ struct Journal {
   std::FILE*                               cost    = nullptr;
   std::unordered_map<const Npc*,Entry>     entries;
   std::map<std::string,uint32_t>           nextOrdinal;
+  // Every private random stream this journal registered, kept after an NPC leaves the world.
+  std::vector<const Npc*>                  isolated;
   int64_t                                  startMs = 0, endMs = 0, nextSampleMs = 0;
   uint64_t                                 tick = 0, sampleCount = 0, rowCount = 0, eventCount = 0;
   uint64_t                                 inserted = 0, removed = 0, deaths = 0;
@@ -224,8 +226,10 @@ Entry& track(World& w, Journal& j, Npc& npc, bool initial) {
   e.ta    = npc.currentRoutineIndex();
   e.dead  = npc.isDead();
   auto& ret = j.entries.emplace(&npc,std::move(e)).first->second;
-  if(j.opt.isolate)
+  if(j.opt.isolate) {
     w.script().isolateRandom(npc,j.opt.seed,hash32(ret.key));
+    j.isolated.push_back(&npc);
+    }
   if(!initial) {
     ++j.inserted;
     event(w,j,npc,ret,"insert",symbolName(w,ret.state));
@@ -261,6 +265,12 @@ void finish(World& w, Journal& j, const char* reason) {
                 (unsigned long long)(s.toFull-j.tiersAtStart.toFull),
                 (unsigned long long)(s.toSimplified-j.tiersAtStart.toSimplified),s.full,s.simplified);
   writeHeader(w,j,buf);
+  // Play after the journal goes back to the shared stream. Only the streams registered here are
+  // dropped: BodyArena's own isolation is a separate user (it clears all streams on reset), and the
+  // two must not run in one scenario.
+  for(const auto* npc:j.isolated)
+    w.script().releaseIsolatedRandom(npc);
+  j.isolated.clear();
   for(auto** f:{&j.samples,&j.events,&j.cost})
     if(*f!=nullptr) {
       std::fclose(*f);

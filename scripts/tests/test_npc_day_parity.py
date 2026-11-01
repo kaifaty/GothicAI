@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 import npc_day_parity  # noqa: E402
 
 SCRIPT = Path(__file__).parents[1] / "npc_day_parity.py"
+STRICT = Path(__file__).parents[1] / "bench" / "npc-day-parity.tolerances.json"
+DONE = {"seed": 7, "isolate": True, "minutes": 90, "period_min": 30, "end_reason": "done"}
 HEADER = ("t_min,at_min,key,symbol,alive,hp,hp_max,ta,zs,zs_ms,x,y,z,wp,wp_dist,queue,head,body,"
           "inv_hash,inv_items,mob,tier,policy,hero").split(",")
 
@@ -53,14 +55,30 @@ def runs(tmp_path):
         a_rows.append(row(t, "WOLF#1", zs="ZS_MM_ROAM"))
         b_rows.append(row(t, "WOLF#1", zs="ZS_MM_ROAM" if t < 60 else "ZS_DEAD", alive=1 if t < 60 else 0,
                           hp=100 if t < 60 else 0, inv="00ff" if t < 60 else "0000"))
-    a_events = [(0.5, "BAU_2#0", "zs_start", "ZS_STAND", 0, 0, 0), (70.0, "BAU_2#0", "zs_start", "ZS_GOTO", 0, 0, 0)]
+    # The hero's own events are left out like his samples.
+    a_events = [(0.5, "BAU_2#0", "zs_start", "ZS_STAND", 0, 0, 0), (70.0, "BAU_2#0", "zs_start", "ZS_GOTO", 0, 0, 0),
+                (10.0, "PC_HERO#0", "zs_start", "ZS_ATTACK", 0, 0, 0), (20.0, "PC_HERO#0", "death", "0", 0, 0, 0)]
     b_events = [(0.5, "BAU_2#0", "zs_start", "ZS_STAND", 0, 0, 0), (82.0, "BAU_2#0", "zs_start", "ZS_GOTO", 0, 0, 0),
                 (55.0, "WOLF#1", "death", "0", 0, 0, 0), (55.0, "WOLF#1", "zs_start", "ZS_DEAD", 0, 0, 0)]
     a, b = tmp_path / "a", tmp_path / "b"
-    journal(a, a_rows, a_events, {"tier_mode": "full", "seed": 7, "isolate": True, "minutes": 90, "period_min": 30})
-    journal(b, b_rows, b_events, {"tier_mode": "simplified", "seed": 7, "isolate": True, "minutes": 90,
-                                  "period_min": 30}, compress=True)
+    journal(a, a_rows, a_events, {"tier_mode": "full", **DONE})
+    journal(b, b_rows, b_events, {"tier_mode": "simplified", **DONE}, compress=True)
     return a, b
+
+
+def identical(tmp_path, b_rows=None, b_header=None):
+    """Run A: two NPCs, four samples to t=90, finished. Run B: the same unless given."""
+    rows = [row(t, key) for t in (0, 30, 60, 90) for key in ("MIL_1#0", "BAU_2#0")]
+    a, b = tmp_path / "a", tmp_path / "b"
+    journal(a, rows, [], {"tier_mode": "full", **DONE})
+    journal(b, rows if b_rows is None else b_rows, [], {"tier_mode": "full", **DONE, **(b_header or {})})
+    return a, b
+
+
+def gates(a, b):
+    result = npc_day_parity.compare(npc_day_parity.load(a), npc_day_parity.load(b))
+    checks = npc_day_parity.evaluate(result, json.loads(STRICT.read_text())["tolerances"])
+    return result, {check["name"] for check in checks if not check["pass"]}
 
 
 def test_compare_metrics(tmp_path):
@@ -121,6 +139,64 @@ def test_cli_report_and_tolerances(tmp_path):
                            "--min-same-zs", "0.9", "--out", str(out)], capture_output=True, text=True)
     assert done.returncode == 1 and "min_same_zs" in done.stderr
     assert "**FAIL**" in out.read_text()
+
+
+def test_strict_tolerances_pass_identical_finished_runs(tmp_path):
+    result, failed = gates(*identical(tmp_path))
+    assert failed == set() and result["missing_end"] == []
+
+
+def test_truncated_run_with_a_missing_npc_fails(tmp_path):
+    # The reproduction of the review: B has one NPC and stops at t=30, the shared samples are equal.
+    a, b = identical(tmp_path, [row(t, "MIL_1#0") for t in (0, 30)], {"end_reason": "bench_end"})
+    result, failed = gates(a, b)
+    assert result["total"]["same_zs"] == 1.0 and result["only_a"] == 6
+    assert failed == {"require_done", "require_full_length", "max_only_samples", "max_missing_end", "max_alive_diff",
+                      "max_inventory_diff_end"}
+    done = subprocess.run([sys.executable, str(SCRIPT), str(a), str(b), "--tolerances", str(STRICT)],
+                          capture_output=True, text=True)
+    assert done.returncode == 1 and "require_done" in done.stderr
+
+
+def test_unfinished_run_fails(tmp_path):
+    a, b = identical(tmp_path, b_header={"end_reason": "unfinished"})
+    assert gates(a, b)[1] == {"require_done"}
+    (b / "npc-day.json").write_text(json.dumps({"tier_mode": "full", "minutes": 90, "period_min": 30}))
+    assert gates(a, b)[1] == {"require_done"}
+
+
+def test_short_or_unequal_length_fails(tmp_path):
+    rows = [row(t, key) for t in (0, 30, 60) for key in ("MIL_1#0", "BAU_2#0")]
+    # B says done but stops before its requested 90 minutes.
+    a, b = identical(tmp_path, rows)
+    result, failed = gates(a, b)
+    assert result["complete_b"]["full_length"] is False and "require_full_length" in failed
+    # B asked for 60 minutes and reached them: complete, but the runs end at different times.
+    (b / "npc-day.json").write_text(json.dumps({"tier_mode": "full", **DONE, "minutes": 60}))
+    result, failed = gates(a, b)
+    assert result["complete_b"]["full_length"] is True and "require_full_length" in failed
+
+
+def test_samples_in_only_one_run_fail(tmp_path):
+    rows = [row(t, key) for t in (0, 30, 60, 90) for key in ("MIL_1#0", "BAU_2#0") if (t, key) != (30, "BAU_2#0")]
+    result, failed = gates(*identical(tmp_path, rows))
+    assert result["only_a"] == 1 and result["only_b"] == 0 and failed == {"max_only_samples"}
+
+
+def test_npc_missing_at_the_end_fails(tmp_path):
+    rows = [row(t, key) for t in (0, 30, 60, 90) for key in ("MIL_1#0", "BAU_2#0") if (t, key) != (90, "BAU_2#0")]
+    result, failed = gates(*identical(tmp_path, rows))
+    assert result["missing_end"] == ["BAU_2#0"]
+    assert result["alive_diff_end"] == ["BAU_2#0"] and result["inventory_diff_end"] == ["BAU_2#0"]
+    assert failed == {"max_missing_end", "max_alive_diff", "max_inventory_diff_end", "max_only_samples"}
+
+
+def test_hero_events_are_left_out(tmp_path):
+    a, b = runs(tmp_path)
+    loaded = npc_day_parity.load(a)
+    assert all("PC_HERO#0" not in events for events in loaded["events"].values())
+    result = npc_day_parity.compare(loaded, npc_day_parity.load(b))
+    assert result["deaths_a"] == 0 and result["zs_starts"]["events"] == 5
 
 
 def test_unknown_tolerance_is_rejected(tmp_path):

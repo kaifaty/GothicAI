@@ -913,16 +913,22 @@ allowance with command-line limits. `npcday` files:
 
 Every NPC gets a private script random stream (`GameScript::isolateRandom`, seed from `seed`, stream from
 the key), so one NPC's extra `Hlp_Random` or dice roll does not shift every later NPC's numbers; `shared`
-keeps the game's single stream. `std::rand` (sound variants, gestures, parry variant) is not reseeded.
+keeps the game's single stream. The journal drops exactly the streams it registered when it finishes or
+stops, so commands after `npcday` use the shared stream again. Do not combine `npcday` with the body arena
+in one scenario: the arena isolates its actors and clears all streams on reset. `std::rand` (sound variants, gestures, parry variant) is not reseeded.
 States that start and end within one world tick are not seen by the event poll.
 
-`scripts/npc_day_parity.py` matches samples by time and key and leaves the hero out
-(`--min-hero-distance <m>` also leaves out NPCs near him). It reports the share of NPC-samples in the same
+`scripts/npc_day_parity.py` matches samples by time and key and leaves the hero out, with his events
+(`--min-hero-distance <m>` also leaves out NPCs near him). Completeness gates come first, because the metrics
+only see the samples both runs share: `require_done` (both `end_reason` are `done`), `require_full_length`
+(both reach their requested minutes and end at the same time), `max_only_samples` (samples present in one run
+only) and `max_missing_end` (an NPC at the end of one run and not the other; such an NPC also counts for the
+end-of-run alive and inventory checks). It reports the share of NPC-samples in the same
 ZS state and routine entry, HP and inventory, the position error (p50/p95/max, straight line, metres),
 matched ZS starts and their offset (greedy, same state, `--window` game minutes), deaths, alive and
 inventory differences at the end, the same split by run B's tier and by game hour, and the NPCs that
-diverge most. Tolerances come from `--tolerances` (JSON) or `--min-same-zs` and similar options; a failed
-check exits with 1. Twin monsters that spawn at the same point keep their order of the start array.
+diverge most. Tolerances come from `--tolerances` (JSON) or `--min-same-zs` and similar options
+(`--require-done false` turns a gate off); a failed check exits with 1. Twin monsters that spawn at the same point keep their order of the start array.
 
 ## Engine side
 

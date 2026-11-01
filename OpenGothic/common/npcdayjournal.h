@@ -25,6 +25,8 @@ struct Options {
   // Give every NPC a private script random stream (GameScript::isolateRandom)
   // keyed by its journal key, so one NPC's extra draw does not shift every
   // later NPC's dice. Only the bench uses it; the game keeps one shared stream.
+  // The streams are dropped when the journal finishes or stops. Do not combine
+  // with BodyArena in one scenario: it isolates and clears streams itself.
   bool        isolate = true;
   };
 

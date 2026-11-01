@@ -675,6 +675,7 @@ struct Bench {
   Resources::TextureStats streamingTexturesBefore;
   uint64_t streamingVobCreatedBefore = 0, streamingVobReleasedBefore = 0;
   double streamingVobMissingBefore = 0;
+  uint64_t streamingNpcTransitionsBefore = 0;
   std::vector<Vec3> routePoints;
   size_t      routeNext = 0;
   Vec3        routePosition;
@@ -15959,6 +15960,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         bench.streamingVobCreatedBefore=residency->stats().vobCreated;
         bench.streamingVobReleasedBefore=residency->stats().vobReleased;
         bench.streamingVobMissingBefore=residency->stats().vobNearMissingSeconds;
+        bench.streamingNpcTransitionsBefore=w.npcSimTierStats().toFull+w.npcSimTierStats().toSimplified;
         }
       FrameProfile::setActors(bench.crew);
       event("perf_segment","\"segment\":"+jsonStr(bench.perfSegment)+
@@ -20933,7 +20935,9 @@ void TestBench::sampleStreaming(const World& world) {
   auto& sample=bench.streamingSamples.back();
   sample.npcFull=tiers.full;
   sample.npcSimplified=tiers.simplified;
-  sample.npcTierTransitions=tiers.transitionsLastTick;
+  // Transitions since the previous sample, like near_transitions and far_transitions.
+  sample.npcTierTransitions=tiers.toFull+tiers.toSimplified-bench.streamingNpcTransitionsBefore;
+  bench.streamingNpcTransitionsBefore=tiers.toFull+tiers.toSimplified;
   sample.npcFullTickMs=tiers.fullTickMs;
   sample.npcSimplifiedTickMs=tiers.simplifiedTickMs;
   bench.streamingNearBefore=stats.transitionsNear;bench.streamingFarBefore=stats.transitionsFar;
