@@ -9,7 +9,7 @@ waiting for the browser does not hold up the others. When stdin closes (the wind
 core stops the session, so nothing outlives the launcher.
 
 Methods (params in brackets):
-    state                              settings, keys set or not, last save, the session and its journal
+    state                              settings, keys set or not, last save, session, journal and update
     schema                             JSON Schema of the settings and keys, for the forms
     settings.set [key, value]          value null: back to the default; returns the state
     settings.import_env [path?]        the repository's .env by default
@@ -24,11 +24,15 @@ Methods (params in brackets):
     test.speech                        one line in Xardas' voice through a temporary TTS service, aloud
     session.start [mode, smoke?]       "menu" (default), "continue" or "new"; smoke: quota-free run
     session.stop
+    update.start                       release the install lock, update via systemd; restart when finished
     report.create                      a zip of the latest session's logs, keys removed
 
 Events: service (supervisor events: starting, ready, status, exited, restarting, stopped, failed),
 journal (lines and actions, see the server's journal.py), session ({"state": "running"|"stopped"}),
-voice_test (the microphone test: levels and partial text while it records).
+voice_test (the microphone test: levels and partial text while it records),
+update (personal Ryzen installation status, with updating running/finished until the app restarts).
+state.update is null outside the personal Linux install; otherwise it includes the target, build,
+pending changes, auto-update report and availability, and the current update's progress.
 """
 
 from __future__ import annotations
@@ -37,15 +41,18 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import re
+import signal
 import sys
 import time
 import zipfile
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from . import checks
 from .commands import (
@@ -77,6 +84,10 @@ log = logging.getLogger(__name__)
 
 JOURNAL_KEEP = 300  # entries kept for a window opened in the middle of a session
 TEST_LINE = "Привет, Ксардас."
+UPDATE_CHECK_S = 60
+UPDATE_POLL_S = 2
+UPDATE_STATUS_TIMEOUT_S = 10
+UPDATE_UNIT = "gothic-play-update.service"
 
 Write = Callable[[dict[str, Any]], None]
 
@@ -96,6 +107,8 @@ class Control:
         admitted: bool = False,
         session_log_dir: Path | None = None,
         no_voice: bool = False,
+        install_dir: Path | None = None,
+        install_lock: BinaryIO | None = None,
     ) -> None:
         self.write = write
         self.config_dir = config_dir
@@ -109,6 +122,23 @@ class Control:
         self.session: dict[str, Any] | None = None  # the running (or last) session, as the window sees it
         self.journal: deque[dict[str, Any]] = deque(maxlen=JOURNAL_KEEP)
         self._testing = asyncio.Lock()  # one microphone or voice test at a time
+        # Tests can supply a play tree; production detection uses the core's own resolved location.
+        play = install_dir or Path.home() / "gothic-ai/play"
+        self.install_dir = (
+            play.resolve() if sys.platform == "linux" and not admitted
+            and (install_dir is not None or Path(__file__).resolve().is_relative_to(play.resolve())) else None
+        )
+        self.install_lock = install_lock
+        self._update_service = (
+            (play.parent.parent if install_dir is not None else Path.home())
+            / ".config/systemd/user" / UPDATE_UNIT
+        )
+        self.update: dict[str, Any] | None = None
+        self.updating: dict[str, Any] | None = None
+        self.update_task: asyncio.Task[None] | None = None
+        self._update_checked = False
+        self._status_lock = asyncio.Lock()  # no status subprocess may outlive release of the install lock
+        self._state_layout: tuple[list[str], Path] | None = None
         self.methods: dict[str, Callable[..., Awaitable[Any]]] = {
             "state": self.state,
             "schema": self.schema,
@@ -124,6 +154,7 @@ class Control:
             "test.llm": self.test_llm,
             "session.start": self.session_start,
             "session.stop": self.session_stop,
+            "update.start": self.update_start,
             "report.create": self.report_create,
         }
 
@@ -154,14 +185,21 @@ class Control:
         return load_config(self.config_dir)[0]
 
     async def state(self) -> dict[str, Any]:
+        if not self._update_checked:
+            await self.refresh_update()
         config = self._config()
-        try:
-            layout = find_layout(config)
-            problems: list[str] = []
-            game_home = layout.game_home
-        except LaunchError as err:
-            problems = str(err).splitlines()
-            game_home = config.settings.paths.game_home or GAME_HOME
+        if self.updating is not None:
+            assert self._state_layout is not None
+            problems, game_home = self._state_layout
+        else:
+            try:
+                layout = find_layout(config)
+                problems: list[str] = []
+                game_home = layout.game_home
+            except LaunchError as err:
+                problems = str(err).splitlines()
+                game_home = config.settings.paths.game_home or GAME_HOME
+            self._state_layout = problems, game_home
         save = latest_save(game_home)
         save_file = game_home / f"save_slot_{save}.sav" if save is not None else None
         return {
@@ -173,6 +211,7 @@ class Control:
             "last_save": {"slot": save, "time": save_file.stat().st_mtime} if save_file else None,
             "session": self.session,
             "journal": list(self.journal),
+            "update": self.update,
             "paths": {
                 "config": str(config.dir),
                 "logs": str(self.log_root),
@@ -218,14 +257,20 @@ class Control:
         return sorted(out, key=lambda f: not f["ok"])
 
     async def mics(self) -> list[dict[str, Any]]:
+        self._not_updating()
         out: list[str] = []
-        await _run("mics", self._server_argv(self._tool_layout(self._config()), "mics"), stdout=out.append)
+        async with self._testing:
+            self._not_updating()
+            await _run(
+                "mics", self._server_argv(self._tool_layout(self._config()), "mics"), stdout=out.append,
+            )
         result = json.loads(out[-1]) if out else {"error": "нет ответа"}
         if isinstance(result, dict):
             raise RequestError(result.get("error", "микрофоны не найдены"))
         return result
 
     async def test_voice(self, seconds: float = 4.0) -> dict[str, Any]:
+        self._not_updating()
         config = self._config()
         if not config.settings.voice.enabled:
             raise RequestError("Голосовой ввод выключен в настройках")
@@ -251,6 +296,7 @@ class Control:
         return result
 
     async def test_speech(self) -> dict[str, Any]:
+        self._not_updating()
         config = self._config()
         if not config.settings.tts.enabled:
             raise RequestError("Озвучка выключена в настройках")
@@ -282,6 +328,7 @@ class Control:
     @contextlib.asynccontextmanager
     async def _service_for_test(self, config: Config, layout: Layout, ports: Ports, name: str):  # noqa: ANN202
         """The service `name` as the session would run it, on its own, while a check needs it."""
+        self._not_updating()
         if self.task is not None and not self.task.done():
             raise RequestError("Сначала остановите игру: проверки запускают свои сервисы")
         if self._testing.locked():
@@ -301,12 +348,16 @@ class Control:
                 lock.release()
 
     async def login_chatgpt(self) -> dict[str, Any]:
+        self._not_updating()
         repo, uv = tools(self._config())
         argv = [str(uv), "run", "--project", str(repo / "server"), "gothic-ai", "login", "chatgpt"]
-        code = await _run("login", argv)
+        async with self._testing:
+            self._not_updating()
+            code = await _run("login", argv)
         return {"ok": code == 0, "signed_in": checks.CHATGPT_TOKENS.is_file()}
 
     async def test_llm(self, text: str = TEST_LINE) -> dict[str, Any]:
+        self._not_updating()
         config = self._config()
         repo, uv = tools(config)
         llm = config.settings.llm
@@ -320,7 +371,9 @@ class Control:
             argv += ["--game-dir", str(config.settings.game.dir)]
         env = {"OPENAI_API_KEY": config.secrets.openai_api_key} if config.secrets.openai_api_key else {}
         out: list[str] = []
-        await _run("llm-test", argv, env=env, stdout=out.append)
+        async with self._testing:
+            self._not_updating()
+            await _run("llm-test", argv, env=env, stdout=out.append)
         try:
             result = json.loads(out[-1])
         except (IndexError, ValueError):
@@ -332,6 +385,7 @@ class Control:
     # --- the session ---------------------------------------------------------------------------
 
     async def session_start(self, mode: str = "menu", smoke: bool = False) -> dict[str, Any]:
+        self._not_updating()
         if self.task is not None and not self.task.done():
             raise RequestError("Игра уже запущена")
         if mode not in ("menu", "continue", "new"):
@@ -458,6 +512,137 @@ class Control:
                 self.session["failed"] = {"proc": e.proc, "detail": e.detail}
         self.write({"event": "service", "data": asdict(e)})
 
+    # --- personal Linux installation -----------------------------------------------------------
+
+    def _not_updating(self) -> None:
+        if self.updating is not None:
+            raise RequestError("Идёт обновление установки")
+
+    def _auto_installed(self) -> bool:
+        return self._update_service.is_file()
+
+    async def refresh_update(self) -> None:
+        async with self._status_lock:
+            self._update_checked = True
+            if self.install_dir is None or self.updating is not None:
+                return
+            status = None
+            try:
+                raw = json.loads(await _output(
+                    sys.executable, str(self.install_dir / "scripts/ryzen-play.sh"), "__status",
+                    limit_s=UPDATE_STATUS_TIMEOUT_S,
+                ))
+                status = {
+                    "current": raw["current"], "behind": raw["behind"],
+                    "built": raw["built"] == raw["head"], "latest_failed": raw["latest_failed"],
+                    "head": raw["head"], "target": raw["target"], "changes": raw["changes"],
+                    "report": raw["report"], "auto": self._auto_installed(), "updating": None,
+                }
+            except (OSError, ValueError, KeyError, TypeError, TimeoutError, RuntimeError) as err:
+                log.warning("Cannot read installation update status: %s: %s", type(err).__name__, err)
+            if status != self.update:
+                self.update = status
+                self.write({"event": "update", "data": status})
+
+    async def poll_updates(self) -> None:
+        while True:
+            await self.refresh_update()
+            await asyncio.sleep(UPDATE_CHECK_S)
+
+    def _update_progress(self, **values: Any) -> None:
+        assert self.updating is not None and self.update is not None
+        self.updating = {**self.updating, **values}
+        self.update = {**self.update, "updating": self.updating}
+        self.write({"event": "update", "data": self.update})
+
+    async def update_start(self) -> dict[str, Any]:
+        if self.install_dir is None:
+            raise RequestError("Обновление из окна есть только у личной установки Ryzen")
+        if not self._auto_installed():
+            raise RequestError(
+                "Автообновление не установлено: выполните scripts/ryzen-play.sh autoupdate install на Mac"
+            )
+        if not self._update_checked:
+            await self.refresh_update()
+        async with self._status_lock:
+            self._not_updating()
+            if self.session is not None and self.session["state"] in ("waiting", "running"):
+                raise RequestError("Сначала остановите игру")
+            if self._testing.locked():
+                raise RequestError("Сначала завершите проверку")
+            if self.update is None:
+                raise RequestError("Не удалось проверить обновление установки")
+            await self.state()  # find_layout may run ryzen_game.py; cache it before releasing the lock
+            self.updating = {
+                "state": "running", "detail": "Запускаю обновление", "started": time.time(),
+                "result": None, "error": None,
+            }
+            self._update_progress()
+            if self.install_lock is not None:
+                self.install_lock.close()
+            released = time.time()
+            self.update_task = asyncio.create_task(self._run_update(released))
+            return self.updating
+
+    def _update_report(self) -> tuple[dict[str, Any] | None, float]:
+        assert self.install_dir is not None
+        path = self.install_dir.parent / "play-update.json"
+        try:
+            with path.open() as stream:
+                report = json.load(stream)
+                modified = os.fstat(stream.fileno()).st_mtime
+            return report, modified
+        except (OSError, ValueError):
+            return None, 0
+
+    async def _run_update(self, released: float) -> None:
+        assert self.updating is not None
+        started = self.updating["started"]
+        show = ("systemctl", "--user", "show", "-p", "ActiveState", "--value", UPDATE_UNIT)
+        try:
+            for attempt in range(2):
+                report_after = started if attempt == 0 else time.time()
+                # A timer's busy run may finish between start --no-block and the first poll.
+                active = (await _output(*show)).strip()
+                seen_active = bool(active) and active not in ("inactive", "failed")
+                await _output("systemctl", "--user", "start", "--no-block", UPDATE_UNIT)
+                while True:
+                    await asyncio.sleep(UPDATE_POLL_S)
+                    active = (await _output(*show)).strip()
+                    journal = await _output(
+                        "journalctl", "--user", "-u", UPDATE_UNIT, "--since", f"@{started}",
+                        "-n", "1", "-o", "cat", "--no-pager",
+                    )
+                    detail = next(
+                        (line.strip() for line in reversed(journal.splitlines()) if line.strip()), "",
+                    )
+                    if detail and detail != self.updating["detail"]:
+                        self._update_progress(detail=detail)
+                    report, modified = self._update_report()
+                    if active in ("inactive", "failed"):
+                        if seen_active or modified >= report_after:
+                            break
+                    elif active:
+                        seen_active = True
+                    else:
+                        raise RuntimeError("systemctl returned no ActiveState")
+                report_time = (report or {}).get("time", "")
+                if (
+                    attempt == 0 and report is not None and report.get("result") == "busy"
+                    and datetime.fromisoformat(report_time).timestamp() < released
+                ):
+                    continue
+                break
+            assert self.update is not None
+            self.update = {**self.update, "report": report}
+            self._update_progress(
+                state="finished", result=report.get("result") if report else None,
+                error=report.get("error") if report else "Обновление завершилось без отчёта",
+            )
+        except (OSError, ValueError, TypeError, TimeoutError, RuntimeError) as err:
+            log.warning("Installation update failed: %s", err)
+            self._update_progress(state="finished", error=str(err) or type(err).__name__)
+
     # --- reports -------------------------------------------------------------------------------
 
     async def report_create(self) -> dict[str, Any]:
@@ -520,7 +705,26 @@ async def _run(
     return await proc.wait()
 
 
-async def serve() -> int:
+async def _output(*argv: str, limit_s: float = 10) -> str:
+    """Read a short command result; never leave a timed-out status process using the clone."""
+    proc = await asyncio.create_subprocess_exec(
+        *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE, close_fds=True, start_new_session=True,
+    )
+    try:
+        async with asyncio.timeout(limit_s):
+            stdout, stderr = await proc.communicate()
+    except (TimeoutError, asyncio.CancelledError):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        await proc.communicate()
+        raise
+    if proc.returncode:
+        raise RuntimeError(stderr.decode(errors="replace").strip() or f"{argv[0]} exited {proc.returncode}")
+    return stdout.decode(errors="replace")
+
+
+async def serve(install_lock: BinaryIO | None = None) -> int:
     """Reads requests from stdin until it closes."""
     loop = asyncio.get_running_loop()
     reader = asyncio.StreamReader(limit=1 << 20)
@@ -532,7 +736,7 @@ async def serve() -> int:
 
     from .cli import on_stop_signals
 
-    control = Control(write)
+    control = Control(write, install_lock=install_lock)
     closing = asyncio.Event()
     on_stop_signals(loop, lambda _sig: closing.set())
     requests: set[asyncio.Task[None]] = set()
@@ -552,13 +756,20 @@ async def serve() -> int:
         closing.set()  # stdin closed: the window is gone
 
     reading = asyncio.create_task(read())
+    updates = asyncio.create_task(control.poll_updates())
     write({"event": "ready", "data": {}})
     await closing.wait()
     reading.cancel()
+    updates.cancel()
+    if control.update_task is not None:
+        control.update_task.cancel()
     for task in requests:
         task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.gather(reading, *requests, return_exceptions=True)
+        await asyncio.gather(
+            reading, updates, *requests, *([control.update_task] if control.update_task else []),
+            return_exceptions=True,
+        )
     await control.shutdown()
     return 0
 
@@ -570,5 +781,5 @@ def main() -> int:
         format="%(asctime)s %(levelname).1s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    with installation_lock() if sys.platform == "linux" else contextlib.nullcontext():
-        return asyncio.run(serve())
+    with installation_lock() if sys.platform == "linux" else contextlib.nullcontext() as lock:
+        return asyncio.run(serve(lock))

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import sys
 import zipfile
 from argparse import Namespace
@@ -303,7 +304,8 @@ def test_idle_linux_core_holds_install_lock_until_serve_returns(tmp_path, monkey
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(sys, "platform", "linux")
 
-    async def serve():
+    async def serve(install_lock=None):
+        assert install_lock is not None and not install_lock.closed
         with (tmp_path / "gothic-ai/play.install.lock").open("ab") as updating:
             with pytest.raises(BlockingIOError):
                 fcntl.flock(updating, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -330,7 +332,7 @@ def test_linux_core_refuses_to_start_while_installing(tmp_path, monkeypatch):
     path = tmp_path / "gothic-ai/play.install.lock"
     path.parent.mkdir()
 
-    async def serve():
+    async def serve(install_lock=None):
         pytest.fail("control must not start while install/update holds the lock")
 
     monkeypatch.setattr(control_module, "serve", serve)
@@ -344,11 +346,247 @@ def test_macos_core_does_not_take_linux_install_lock(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(control_module, "installation_lock", lambda: pytest.fail("Linux-only lock"))
 
-    async def serve():
+    async def serve(install_lock=None):
+        assert install_lock is None
         return 0
 
     monkeypatch.setattr(control_module, "serve", serve)
     assert control_module.main() == 0
+
+
+@pytest.fixture
+async def update_setup(setup, monkeypatch):
+    original, window, root = setup
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(control_module, "UPDATE_POLL_S", 0.01)
+    monkeypatch.setattr(control_module, "UPDATE_CHECK_S", 0.01)
+    play = root / "gothic-ai/play"
+    scripts = play / "scripts"
+    scripts.mkdir(parents=True)
+    unit = root / ".config/systemd/user/gothic-play-update.service"
+    unit.parent.mkdir(parents=True)
+    unit.touch()
+    lock_path = play.parent / "play.install.lock"
+    held = lock_path.open("ab")
+    fcntl.flock(held, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    os.set_inheritable(held.fileno(), True)  # helpers must close it even if the caller did not
+    status = {
+        "head": "old", "latest": "new", "target": "new", "good": "old", "built": "old",
+        "failed": "", "current": False, "latest_failed": False, "behind": 2,
+        "changes": [{"pr": 101, "title": "New game behavior"}, {"pr": None, "title": "A fix"}],
+        "report": {"result": "busy", "time": "2026-11-01T00:00:00+00:00"},
+    }
+    (root / "status.json").write_text(json.dumps(status))
+    (scripts / "ryzen-play.sh").write_text(
+        "import json, os, pathlib, sys\n"
+        f"root = pathlib.Path({str(root)!r})\n"
+        "(root / 'status-args.json').write_text(json.dumps(sys.argv[1:]))\n"
+        "try:\n"
+        f"    stat = os.fstat({held.fileno()})\n"
+        "except OSError:\n"
+        "    pass\n"
+        "else:\n"
+        f"    lock = pathlib.Path({str(lock_path)!r}).stat()\n"
+        "    assert (stat.st_dev, stat.st_ino) != (lock.st_dev, lock.st_ino), 'inherited install lock'\n"
+        "print((root / 'status.json').read_text())\n"
+    )
+    binary_dir = root / "bin"
+    binary_dir.mkdir()
+    fake_systemd = (
+        f"#!{sys.executable}\n"
+        "import datetime, json, pathlib, sys\n"
+        f"root = pathlib.Path({str(root)!r})\n"
+        "command, args = pathlib.Path(sys.argv[0]).name, sys.argv[1:]\n"
+        "with (root / 'systemd.jsonl').open('a') as trace:\n"
+        "    trace.write(json.dumps({'command': command, 'args': args}) + '\\n')\n"
+        "if command == 'journalctl':\n"
+        "    print('Building launcher')\n"
+        "elif args[1] == 'start':\n"
+        "    count = root / 'starts'\n"
+        "    count.write_text(str(int(count.read_text()) + 1 if count.exists() else 1))\n"
+        "elif args[1] == 'show':\n"
+        "    count = root / 'starts'\n"
+        "    if not count.exists():\n"
+        "        print('active' if (root / 'stale-busy').exists() else 'inactive')\n"
+        "        sys.exit(0)\n"
+        "    starts = int(count.read_text())\n"
+        "    busy = (root / 'stale-busy').exists() and starts == 1\n"
+        "    if busy:\n"
+        "        print('inactive')\n"
+        "        sys.exit(0)\n"
+        "    if (root / 'release').exists():\n"
+        "        when = datetime.datetime.now(datetime.timezone.utc).isoformat()\n"
+        "        report = {'result': 'updated', 'time': when}\n"
+        "        (root / 'gothic-ai/play-update.json').write_text(json.dumps(report))\n"
+        "        print('inactive')\n"
+        "    else:\n"
+        "        print('active')\n"
+    )
+    for name in ("systemctl", "journalctl"):
+        binary = binary_dir / name
+        binary.write_text(fake_systemd)
+        binary.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{binary_dir}{os.pathsep}{os.environ['PATH']}")
+    c = Control(
+        window, config_dir=original.config_dir, state_file=original.state_file,
+        log_root=original.log_root, install_dir=play, install_lock=held,
+    )
+    try:
+        yield c, window, root
+    finally:
+        (root / "release").touch()
+        if c.update_task is not None:
+            await asyncio.wait_for(c.update_task, 5)
+        held.close()
+
+
+@pytest.mark.parametrize("kind", ["development", "macos", "admitted"])
+async def test_update_is_only_for_the_personal_linux_core(setup, monkeypatch, kind):
+    original, window, root = setup
+    monkeypatch.setattr(sys, "platform", "darwin" if kind == "macos" else "linux")
+    c = Control(
+        window, config_dir=original.config_dir, state_file=original.state_file,
+        log_root=original.log_root, admitted=kind == "admitted",
+        **({"install_dir": root / "gothic-ai/play"} if kind != "development" else {}),
+    )
+    assert (await call(c, "state"))["update"] is None
+    with pytest.raises(RuntimeError, match="Обновление из окна есть только у личной установки Ryzen"):
+        await call(c, "update.start")
+
+
+async def test_update_state_comes_from_the_read_only_status_command(update_setup):
+    c, window, root = update_setup
+    raw = json.loads((root / "status.json").read_text())
+    update = (await call(c, "state"))["update"]
+    assert update == {
+        "current": False, "behind": 2, "built": True, "latest_failed": False,
+        "head": "old", "target": "new", "changes": raw["changes"], "report": raw["report"],
+        "auto": True, "updating": None,
+    }
+    assert json.loads((root / "status-args.json").read_text()) == ["__status"]
+    raw.update(built=None, latest_failed=True, target="old", behind=0, changes=[])
+    (root / "status.json").write_text(json.dumps(raw))
+    await c.refresh_update()
+    assert c.update["built"] is False and c.update["latest_failed"] is True
+    assert c.update["target"] == "old" and c.update["behind"] == 0 and c.update["changes"] == []
+
+
+async def test_update_polling_only_emits_changed_status_and_handles_failures(
+    update_setup, monkeypatch, caplog,
+):
+    c, window, root = update_setup
+    polling = asyncio.create_task(c.poll_updates())
+    try:
+        await window.wait(lambda: bool(window.events("update")))
+        initial = len(window.events("update"))
+        await asyncio.sleep(0.1)
+        assert len(window.events("update")) == initial
+        raw = json.loads((root / "status.json").read_text())
+        raw["behind"] = 3
+        (root / "status.json").write_text(json.dumps(raw))
+        await window.wait(lambda: any(u and u["behind"] == 3 for u in window.events("update")))
+        script = root / "gothic-ai/play/scripts/ryzen-play.sh"
+        script.write_text("import sys\nprint('status failed', file=sys.stderr)\nsys.exit(4)\n")
+        await window.wait(lambda: window.events("update")[-1] is None)
+        assert (await call(c, "state"))["update"] is None
+        assert "status failed" in caplog.text
+        script.write_text("import time\ntime.sleep(60)\n")
+        monkeypatch.setattr(control_module, "UPDATE_STATUS_TIMEOUT_S", 0.02)
+        await c.refresh_update()
+        assert c.update is None and "timeout" in caplog.text.lower()
+    finally:
+        polling.cancel()
+        await asyncio.gather(polling, return_exceptions=True)
+
+
+async def test_update_releases_the_install_lock_and_streams_the_service_result(update_setup, monkeypatch):
+    c, window, root = update_setup
+    await c.refresh_update()
+    lock_path = root / "gothic-ai/play.install.lock"
+    with lock_path.open("ab") as other:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        started = await call(c, "update.start")
+        assert started["state"] == "running" and started["detail"] == "Запускаю обновление"
+        assert isinstance(started["started"], float)
+        assert started["result"] is None and started["error"] is None
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(other, fcntl.LOCK_UN)
+    monkeypatch.setattr(
+        control_module, "find_layout", lambda _config: pytest.fail("state must not launch clone programs")
+    )
+    assert (await call(c, "state"))["update"]["updating"]["state"] == "running"
+    changed = await call(c, "settings.set", key="tts.enabled", value=True)
+    assert changed["settings"]["tts"]["enabled"] is True
+    await window.wait(lambda: any(
+        u and u["updating"] and u["updating"]["detail"] == "Building launcher"
+        for u in window.events("update")
+    ))
+    for method in ("session.start", "test.voice", "test.speech", "test.llm", "login.chatgpt", "mics"):
+        with pytest.raises(RuntimeError, match="Идёт обновление установки"):
+            await call(c, method)
+    with pytest.raises(RuntimeError, match="[Оо]бновлен"):
+        await call(c, "update.start")
+    (root / "status-args.json").unlink()
+    await c.refresh_update()
+    assert not (root / "status-args.json").exists()
+    (root / "release").touch()
+    await asyncio.wait_for(c.update_task, 5)
+    events = [u["updating"] for u in window.events("update") if u and u["updating"]]
+    assert events[0]["state"] == "running" and events[-1]["state"] == "finished"
+    assert events[-1]["result"] == "updated" and events[-1]["error"] is None
+    assert c.update["report"]["result"] == "updated"
+    with pytest.raises(RuntimeError, match="Идёт обновление установки"):
+        await call(c, "session.start")
+    assert (await call(c, "state"))["update"]["updating"]["state"] == "finished"
+    changed = await call(c, "settings.set", key="tts.enabled", value=False)
+    assert changed["settings"]["tts"]["enabled"] is False
+    assert await call(c, "schema")
+    trace = [json.loads(line) for line in (root / "systemd.jsonl").read_text().splitlines()]
+    assert [t["args"] for t in trace if t["command"] == "systemctl" and t["args"][1] == "start"] == [
+        ["--user", "start", "--no-block", "gothic-play-update.service"]
+    ]
+    journal = next(t["args"] for t in trace if t["command"] == "journalctl")
+    assert journal == [
+        "--user", "-u", "gothic-play-update.service", "--since", f"@{started['started']}",
+        "-n", "1", "-o", "cat", "--no-pager",
+    ]
+
+
+async def test_update_retries_a_stale_busy_run_only_once(update_setup):
+    c, window, root = update_setup
+    (root / "stale-busy").touch()
+    report = root / "gothic-ai/play-update.json"
+    busy = {"result": "busy", "time": "2000-01-01T00:00:00+00:00"}
+    report.write_text(json.dumps(busy))
+    os.utime(report, (946684800, 946684800))
+    await call(c, "update.start")
+    async with asyncio.timeout(5):
+        while not (root / "starts").exists() or (root / "starts").read_text() != "2":
+            await asyncio.sleep(0.01)
+    assert json.loads(report.read_text()) == busy and report.stat().st_mtime == 946684800
+    (root / "release").touch()
+    await asyncio.wait_for(c.update_task, 5)
+    assert (root / "starts").read_text() == "2"
+    assert c.update["updating"]["state"] == "finished"
+    assert c.update["updating"]["result"] == "updated"
+
+
+async def test_update_refuses_games_checks_and_missing_auto_service(update_setup):
+    c, window, root = update_setup
+    for state in ("waiting", "running"):
+        c.session = {"state": state}
+        with pytest.raises(RuntimeError, match="Сначала остановите игру"):
+            await call(c, "update.start")
+    c.session = None
+    async with c._testing:
+        with pytest.raises(RuntimeError, match="проверк"):
+            await call(c, "update.start")
+    (root / ".config/systemd/user/gothic-play-update.service").unlink()
+    await c.refresh_update()
+    with pytest.raises(RuntimeError, match="Автообновление не установлено: выполните"):
+        await call(c, "update.start")
+    assert not (root / "starts").exists()
 
 
 async def test_macos_preparation_progress_and_order_reach_the_window(setup, monkeypatch):
