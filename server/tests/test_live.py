@@ -115,6 +115,54 @@ async def test_live_money_records_normalized_actions_without_givens(
         assert talk.reflexes is reflexes
 
 
+@pytest.mark.parametrize(("text", "speaker", "outcome"), [
+    ("", None, "no_decision"),
+    ("I will not pay.", None, "no_decision"),
+    ("", "BAU_952_VINO", "no_decision"),
+    ("I will not pay.", "BAU_950_LOBART", "success"),
+])
+async def test_live_cheat_requires_actual_speech(tmp_path, monkeypatch, text, speaker, outcome):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from gothic_ai.scenarios import cheat as scenario
+
+    monkeypatch.setenv("CASES", "cheat_keeps")
+    trace = TraceWriter(tmp_path / "traces")
+    suite = LiveSuite("live_deals", trace)
+    dialogue = SimpleNamespace(on_said=[], conversations={}, speaking=lambda _: False)
+
+    async def debug(command, **kwargs):
+        assert command == "type"
+        trace.write({
+            "type": "turn", "id": "reply", "npc": scenario.LOBART, "status": "completed",
+            "trigger": {"text": kwargs["text"].replace("ё", "е")},
+            "steps": [{"text": text, "calls": []}],
+        })
+        if speaker is not None:
+            for listener in dialogue.on_said:
+                listener(speaker, "Lobart" if speaker == scenario.LOBART else "Vino",
+                         "I will not pay.", "player", None)
+
+    async def until(check, timeout):
+        return bool(check())
+
+    monkeypatch.setattr(scenario, "_until", until)
+    link = SimpleNamespace(debug=AsyncMock(side_effect=debug), evaluate=AsyncMock(return_value=65))
+    chronicle = SimpleNamespace(facts=lambda _: [])
+    with suite.case("cheat_keeps") as case:
+        await scenario._record_live_cheat(link, dialogue, chronicle, case, "debt", 65)
+
+    assert suite.results() == {"cheat_keeps": f"done ({outcome})"}
+    [record] = json.loads((tmp_path / "live.json").read_text())["cases"]
+    assert record["evidence"]["turn_completed"]
+    assert record["evidence"]["effects_finished"]
+    assert record["evidence"]["gold"] == [65, 65]
+    assert bool(record["evidence"]["speech"]) == (speaker == scenario.LOBART)
+    assert record["evidence"]["decision"] == ("withheld" if outcome == "success" else "no_answer")
+    assert dialogue.on_said == []
+
+
 @pytest.mark.parametrize("suite_case", ["witness_alibi", "crime_testimony"])
 @pytest.mark.parametrize(("tool_outcome", "reply_status", "delivery", "outcome"), [
     ("accepted", "completed", "delayed", "success"),

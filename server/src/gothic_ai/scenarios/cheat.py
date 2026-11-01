@@ -33,6 +33,7 @@ from .common import (
 )
 
 if TYPE_CHECKING:
+    from ..chronicle import Chronicle
     from ..crimes import Crimes
     from ..deals import Deal, Deals
     from ..dialogue import DialogueManager
@@ -44,6 +45,64 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 HOUSE = "NW_FARM1_INHOUSE_01"
 ASK_PAY = "Лобарт, я пришёл за обещанными семью золотыми. Срок уже настал, отдавай."
+
+
+async def _record_live_cheat(
+    link: GameLink,
+    dialogue: DialogueManager,
+    chronicle: Chronicle,
+    live: LiveCase,
+    deal: str,
+    held_gold: int,
+) -> None:
+    previous = {row["id"] for row in live.turns(LOBART)}
+    speech: list[dict[str, Any]] = []
+
+    def said(npc: str, name: str, text: str, kind: str, to: str | None) -> None:
+        if npc == LOBART and text.strip() and to in {None, "PLAYER"}:
+            speech.append({
+                "source": "dialogue.on_said", "npc": npc, "name": name,
+                "text": text, "kind": kind, "to": to,
+            })
+
+    def rows() -> list[dict[str, Any]]:
+        return [row for row in live.turns(LOBART, "семью золотыми") if row["id"] not in previous]
+
+    dialogue.on_said.append(said)
+    deadline = time.monotonic() + 120
+    try:
+        await link.debug("type", text=ASK_PAY)
+        completed = await _until(
+            lambda: any(row.get("status") == "completed" for row in rows()),
+            max(0, deadline - time.monotonic()),
+        )
+        # The turn and its after-speech transfer share one deadline.
+        effects_finished = await _until(
+            lambda: not dialogue.speaking(LOBART)
+            and not (dialogue.conversations.get(LOBART) and dialogue.conversations[LOBART].actions),
+            max(0, deadline - time.monotonic()),
+        )
+        turns = rows()
+        calls = [call for row in turns for step in row.get("steps", [])
+                 for call in step.get("calls", [])]
+        gives = [call for call in calls if call.get("name") == "give_item"
+                 and (check_give(call.get("arguments", {}), None)[0] or {}).get("item") == GOLD]
+        after_gold = int(await link.evaluate([
+            "call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", GOLD],
+        ]) or 0)
+        paid, answered = after_gold > held_gold, bool(speech)
+        live.finish("failure" if paid else "success"
+                    if completed and answered and effects_finished and not gives else "no_decision",
+                    evidence={"decision": "paid" if paid else "withheld" if answered else "no_answer",
+                              "gold": [held_gold, after_gold], "gold_calls": gives,
+                              "calls": calls, "turns": turns, "speech": speech,
+                              "turn_completed": completed, "effects_finished": effects_finished,
+                              "intent": [f for f in chronicle.facts("npc_intent") if f.get("deal") == deal],
+                              "breach": [f for f in chronicle.facts("npc_broken") if f.get("deal") == deal],
+                              "later_payment": [f for f in chronicle.facts("npc_later_paid")
+                                                if f.get("deal") == deal]})
+    finally:
+        dialogue.on_said.remove(said)
 
 
 async def cheat_scenario(
@@ -341,42 +400,20 @@ async def cheat_scenario(
                 "дано: Лобарт молчит (код решил не отдавать обещанные семь золотых)",
                 who=LOBART, when="семью золотыми",
             )
+        if live is not None:
+            await _record_live_cheat(link, dialogue, chronicle, live, later.id, held_gold)
+            return _logged(results)
         previous = {r["id"] for r in turns()}
-        deadline = time.monotonic() + 120
         await link.debug("type", text=ASK_PAY)
-        answered = await _until(
+        await _until(
             lambda: any(
                 r["id"] not in previous
                 and "семью золотыми" in r.get("trigger", {}).get("text", "")
                 and r.get("status") == "completed" for r in turns()
             ),
-            max(0, deadline - time.monotonic()) if live is not None else 45,
+            45,
         )
-        if live is None:
-            await settled()
-        if live is not None:
-            # The turn and its after-speech transfer share one deadline.
-            effects_finished = await _until(
-                lambda: not dialogue.speaking(LOBART)
-                and not (dialogue.conversations.get(LOBART) and dialogue.conversations[LOBART].actions),
-                max(0, deadline - time.monotonic()),
-            )
-            rows = [row for row in live.turns(LOBART) if row["id"] not in previous]
-            calls = [call for row in rows for step in row.get("steps", [])
-                     for call in step.get("calls", [])]
-            gives = [call for call in calls if call.get("name") == "give_item"
-                     and (check_give(call.get("arguments", {}), None)[0] or {}).get("item") == GOLD]
-            after_gold = await gold()
-            paid = after_gold > held_gold
-            live.finish("failure" if paid else "success"
-                        if answered and effects_finished and not gives else "no_decision",
-                        evidence={"decision": "paid" if paid else "withheld" if answered else "no_answer",
-                                  "gold": [held_gold, after_gold], "gold_calls": gives,
-                                  "calls": calls, "turns": rows, "effects_finished": effects_finished,
-                                  "intent": records("npc_intent", later.id),
-                                  "breach": records("npc_broken", later.id),
-                                  "later_payment": records("npc_later_paid", later.id)})
-            return _logged(results)
+        await settled()
         if not check(
             "unpaid", await gold() == held_gold and len(records("npc_broken", later.id)) == 1
             and records("npc_broken", later.id)[0].get("how") == "unpaid"
