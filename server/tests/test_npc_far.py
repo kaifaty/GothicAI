@@ -282,13 +282,22 @@ async def test_far_fight_knocks_out_loser_before_returning_goods_and_repeats_onc
                                ["field", ["inst", OWNER], "ATTRIBUTE", 0],
                                ["field", ["inst", OWNER], "ATTRIBUTE", 1],
                                ["field", ["inst", OWNER], "ATTRIBUTE", 4]]
-    assert ["call", "NPC_GETTALENTSKILL", ["inst", OWNER], 2] in expressions
+    assert ["call", "NPC_GETTALENTSKILL", ["inst", OWNER], ["int", 2]] in expressions
+    calls = [node for expr in expressions for node in _nodes(expr) if node[0] == "call"]
+    assert calls and all(isinstance(arg, list) for call in calls for arg in call[2:])
     assert ["field", ["call", "NPC_GETEQUIPPEDMELEEWEAPON", ["inst", OWNER]], "FLAGS"] in expressions
     saved = world.memory.head("A")
     world.link.receive(Session(type="session", branch="loaded", parent="A", parent_seq=saved, reason="load"))
     world.will._generation += 1
     assert await FarWorld(world.will).fight(crime(), OWNER, 1) == result
     assert world.link.effects == effects
+
+
+def _nodes(expr: Any) -> list[list[Any]]:
+    """Every AST node of a story_eval expression: the bridge reads call arguments only as nodes."""
+    if not isinstance(expr, list) or not expr or not isinstance(expr[0], str):
+        return []
+    return [expr, *[node for part in expr[1:] for node in _nodes(part)]]
 
 
 @pytest.mark.parametrize("kind,goods,outcome,returned", [

@@ -36,7 +36,7 @@ def _fight_inputs(npc: str) -> list[Any]:
         *[["field", actor, "HITCHANCE", i] for i in range(3)],
         *[["field", actor, field, i] for field in ("PROTECTION", "DAMAGE") for i in range(8)],
         ["field", actor, "DAMAGETYPE"],
-        *[["call", "NPC_GETTALENTSKILL", actor, talent] for talent in (1, 2)],
+        *[["call", "NPC_GETTALENTSKILL", actor, ["int", talent]] for talent in (1, 2)],
         ["call", "HLP_ISVALIDITEM", melee],
         *[["field", melee, field] for field in ("FLAGS", "DAMAGETYPE", "DAMAGETOTAL")],
         *[["field", melee, "DAMAGE", i] for i in range(8)],
