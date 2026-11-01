@@ -1572,6 +1572,13 @@ async def errand_scenario(
     if not await _until(lambda: rumors.social is not None, 30):
         return _logged({"social": "failed (no people)"})
     rumors.gate = lambda r, a, b: False  # the schedule passes nothing meanwhile: only the errand does
+    starts: dict[str, tuple[float, bool]] = {}
+
+    def heard(message: GameMessage) -> None:
+        if isinstance(message, LineStarted):
+            starts[message.line] = (time.monotonic(), message.voiced)
+
+    link.listeners.append(heard)
     try:
         await link.debug("time", hour=9, minute=0)
         ok, _ = await _caught_by(link, dialogue, talk, npc, facts)
@@ -1694,12 +1701,29 @@ async def errand_scenario(
         else:
             ok = done and got is not None and hearer == to
         check("told", ok and fact is not None and fact.get("how") == "told", f"{g.state}, {got}, {fact}")
-        played = await _until(lambda: gossip is None or gossip.scenes > scenes, 60)
-        check("scene", played, f"{gossip.scenes if gossip else 0} scene(s)")
+        played = await _until(
+            lambda: gossip is not None and gossip.scenes > scenes
+            and gossip.scene is None and gossip.last is not None,
+            60,
+        )
+        scene = gossip.last if gossip is not None and gossip.scenes > scenes else None
+        lines = _scene_lines(scene)
+        said = sorted((line for line in lines if line.line in starts), key=lambda line: starts[line.line][0])
+        check(
+            "scene",
+            played and scene is not None and scene.state == "done" and not scene.why
+            and bool(lines) and len(said) == len(lines)
+            and all(starts[line.line][1] for line in said)
+            and all(line.npc == (npc, hearer)[i % 2] for i, line in enumerate(said))
+            and all(line.to == (hearer if line.npc == npc else npc) for line in said),
+            f"{scene.state + ' ' + scene.why if scene else 'no scene'}, "
+            f"{len(said)} of {len(lines)} lines started, voiced {sum(starts[line.line][1] for line in said)}",
+        )
         if variant == "fork":
             await link.detach(to)
         return _logged(results)
     finally:
+        link.listeners.remove(heard)
         rumors.gate = None
 
 
@@ -1769,7 +1793,7 @@ async def errand_give_scenario(
     await asyncio.sleep(3)
     await link.debug("player_goto", to=npc, distance=250)
     await _until(lambda: npc in talk.people and talk.people[npc].distance <= 600, 20)
-    text = f"{name}, а ещё отнеси Лобарту письмо."
+    text = f"{name}, а еще отнеси Лобарту письмо."
     await link.debug("type", text=text)
 
     def rejected() -> list[dict[str, Any]]:
