@@ -30,6 +30,9 @@ SCENARIO="${QUALITY_PILOT_SCENARIO:-$SCENARIO}"
 # Remaster assets share one engine build; each keeps its own scripts, content and runs.
 BUILD_TASK="$TASK"
 [[ "$TASK" != gothic-ai/remaster-* ]] || BUILD_TASK=gothic-ai/remaster-engine
+# QUALITY_PILOT_BUILD_TASK=gothic-ai/TASK/DIR: an engine of its own (e.g. a renderer change against its base)
+BUILD_TASK="${QUALITY_PILOT_BUILD_TASK:-$BUILD_TASK}"
+[[ "$BUILD_TASK" =~ ^gothic-ai/[a-z0-9/-]+$ ]] || { echo "bad build task: $BUILD_TASK" >&2; exit 2; }
 
 if [[ "${1:-}" == --remote-prepare ]]; then
   game_environment="$(python3 "$(dirname "$0")/ryzen_game.py")"
