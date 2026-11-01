@@ -266,8 +266,27 @@ async def neural_knockout_segment(
                 )
 
             log.info("neural-talk knockout before speech: beasts_cleared=%d", await _clear_beasts(link, npc))
-            await link.debug("type", text="Мечник, проверим твою шпагу.")
-            ready = await _until(fight_ready, 25)
+
+            async def keep_clear() -> None:
+                # Bloodflies fly in from beyond the snapshot's 20 m after the cleanup: the
+                # citizen's native attack takes one as its target, and P30 leads no beast fight.
+                while True:
+                    await asyncio.sleep(0.5)
+                    try:
+                        cleared = await _clear_beasts(link, npc)
+                    except (GameError, TimeoutError) as error:
+                        log.info("neural-talk knockout until lease: cleanup skipped (%s)", error)
+                        continue
+                    if cleared:
+                        log.info("neural-talk knockout until lease: beasts_cleared=%d", cleared)
+
+            clearing = asyncio.create_task(keep_clear())
+            try:
+                await link.debug("type", text="Мечник, проверим твою шпагу.")
+                ready = await _until(fight_ready, 25)
+            finally:
+                clearing.cancel()
+                await asyncio.gather(clearing, return_exceptions=True)
             fight = pilot.fights.get(npc)
             lease = fight.lease if fight else None
             client = fight.client if fight else None
