@@ -276,7 +276,7 @@ PY
     --setenv="VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json" \
     --setenv="LP_NUM_THREADS=$renderer_threads" --setenv=ALSOFT_DRIVERS=null --setenv=GOTHIC_AI=1 \
     --setenv="OPENGOTHIC_TEXTURES=" --setenv="DECIDER_URL=" \
-    --setenv=LLM=fake --setenv=ASR=fake --setenv=TTS=fake \
+    --setenv=LLM=off --setenv=ASR=fake --setenv=TTS=fake \
     --setenv=UV_NO_DEV=1 --setenv=UV_FROZEN=1 \
     --setenv="PHYSICS_E2E_BINARY=$binary" --setenv="GAME_BIN=$out/game-wrapper.sh" \
     --setenv="GOTHIC_DIR=$HOME/gothic-ai/body-baseline/assets" \
@@ -346,7 +346,7 @@ for scenario, names in expected_names.items():
                            "known_human_pairs": [{"native_tick": v["t"], **pair}
                                                  for v in views for pair in v["known_human_pairs"]]}
 report = {"schema_version": 1, "kind": "physics_stage1_e2e", "engine": (out / "engine.txt").read_text().strip(),
-          "renderer": "lavapipe", "screen": "320x240", "llm": "fake", "brain": False,
+          "renderer": "lavapipe", "screen": "320x240", "llm": "off", "brain": False,
           "started_at_utc": (out / "started-at.txt").read_text().strip(),
           "completed_at_utc": (out / "completed-at.txt").read_text().strip(), "scenarios": scenarios,
           "status": "passed" if all(s["status"] == "passed" for s in scenarios.values()) else "failed"}

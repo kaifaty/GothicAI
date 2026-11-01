@@ -18,7 +18,6 @@ from ..game import GameError, GameLink
 from ..incidents import IncidentDesk
 from ..knowledge import Knowledge, Topic
 from ..llm import ToolCall
-from ..llm.fake import DEFAULT_REPLY
 from ..llm.openai_responses import OpenAIResponsesBackend
 from ..npc_tools import GESTURES as NPC_GESTURES
 from ..perception import BEASTS
@@ -64,6 +63,11 @@ from .common import (
 from .responses_server import ResponsesServer, reply
 
 log = logging.getLogger("gothic_ai.scenarios")
+
+MOOD_REPLY = (
+    "[friendly] Ты вернулся. Хорошо. "
+    "[angry] Времени у нас мало, так что слушай внимательно. Драконы уже здесь."
+)
 
 GESTURES = ("T_COMEOVERHERE", "T_GREETNOV", "T_YES")
 
@@ -113,7 +117,7 @@ async def m1_chat(
     dialogue.quick = None
     off.given(
         "дано: реплика Ксардаса с настроениями для очереди строк", who=npc, when=text,
-        line=DEFAULT_REPLY,
+        line=MOOD_REPLY,
     )
     await link.wait_world()
     await attach_when_free(link, npc)
@@ -415,7 +419,7 @@ async def tts_lines(
     dialogue.quick = None
     off.given(
         "дано: реплика Ксардаса для пути озвучки", who=npc,
-        when="Расскажи о драконах.", line=DEFAULT_REPLY,
+        when="Расскажи о драконах.", line=MOOD_REPLY,
     )
     if os.environ.get("GOTHIC_TTS_RECORD") == "1":
         off.silent(
