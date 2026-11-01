@@ -151,7 +151,7 @@ hp TROLL
 stop
 
 # Beast hits fill human posture by mass; the shadowbeast's capped 60 Ns is a heavy hit.
-# Start beyond the snapper stun and recovery cap. The stock hero has light armour and 10/10 melee hit chance.
+# Start beyond the snapper stun and recovery cap. The stock hero keeps light armour and its existing melee hit chance.
 freeze TROLL
 watch player
 clear 3000
