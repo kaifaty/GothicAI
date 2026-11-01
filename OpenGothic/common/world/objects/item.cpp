@@ -47,10 +47,12 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
     const auto* residency=world.chunkResidency();
     Resources::TextureLoadScope textureLoadScope(residency &&
         residency->textureDistance(ChunkId::fromPosition(pos.x,pos.z))>2);
-    visual = world.addView(*hitem);
-    visual.setTextureOwner(position(),true);
+    if(!FileExt::hasExt(hitem->visual,"ZEN")) {
+      visual.setWorldItem(*hitem,world,transform());
+      proto=visual.protoMesh();
+      }
     if(type==T_WorldDyn)
-      setPhysicsEnable(visual);
+      setPhysicsEnable(proto);
     }
   }
 
@@ -92,11 +94,12 @@ Item::Item(World &owner, Serialize &fin, Type type)
     const auto* residency=world.chunkResidency();
     Resources::TextureLoadScope textureLoadScope(residency &&
         residency->textureDistance(ChunkId::fromPosition(pos.x,pos.z))>2);
-    if(!FileExt::hasExt(hitem->visual,"ZEN"))
-      visual = world.addView(*hitem);
-    visual.setTextureOwner(pos,true);
+    if(!FileExt::hasExt(hitem->visual,"ZEN")) {
+      visual.setWorldItem(*hitem,world,transform());
+      proto=visual.protoMesh();
+      }
     if(type==T_WorldDyn)
-      setPhysicsEnable(visual);
+      setPhysicsEnable(proto);
     }
 
   visual.setObjMatrix(mat);
@@ -106,7 +109,7 @@ Item::Item(World &owner, Serialize &fin, Type type)
 Item::Item(Item &&it)
   : Vob(it.world), hitem(std::move(it.hitem)),
     pos(it.pos),amount(it.amount),equipped(it.equipped),itSlot(it.itSlot),
-    placedZenId(it.placedZenId),placedAllowed(it.placedAllowed),visual(std::move(it.visual)) {
+    placedZenId(it.placedZenId),placedAllowed(it.placedAllowed),proto(it.proto),visual(std::move(it.visual)) {
   hitem->user_ptr=this;
   setLocalTransform(it.localTransform());
   physic = std::move(it.physic);
@@ -119,8 +122,8 @@ Item::~Item() {
 
 void Item::drawVobBox(DbgPainter& p) const {
   p.setPen(Tempest::Color(1,0,0));
-  if(auto mesh = visual.protoMesh()) {
-    p.drawObb(transform(), mesh->bbox());
+  if(proto!=nullptr) {
+    p.drawObb(transform(), proto->bbox());
 
     auto v = midPosition();
     p.setPen(Tempest::Color(0,1,0));
@@ -180,7 +183,7 @@ void Item::restorePhysics(const Tempest::Matrix4x4& matrix, const Tempest::Vec3&
   }
 
 void Item::clearView() {
-  visual = MeshObjects::Mesh();
+  visual = ObjVisual();
   }
 
 bool Item::isTorchBurn() const {
@@ -232,7 +235,9 @@ void Item::setAsEquipped(bool e) {
   }
 
 void Item::setPhysicsEnable(World& world) {
-  setPhysicsEnable(visual);
+  if(proto==nullptr && !FileExt::hasExt(hitem->visual,"ZEN"))
+    proto=Resources::loadMesh(hitem->visual);
+  setPhysicsEnable(proto);
   world.invalidateVobIndex();
   }
 
@@ -263,17 +268,6 @@ bool Item::activatePhysics() {
     return false;
   physic.restorePhysics(transform(),false);
   return true;
-  }
-
-void Item::setPhysicsEnable(const MeshObjects::Mesh& view) {
-  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
-    return;
-  if(view.nodesCount()==0)
-    return;
-  auto& p = *world.physic();
-  physic = p.addDynamicObj(transform(),view.bounds(),physicsMaterial(hitem->material),
-                           view.protoMesh(),hitem->visual,Gothic::physicsFlags().itemHulls);
-  physic.setItem(this);
   }
 
 void Item::setPhysicsEnable(const ProtoMesh* mesh) {
@@ -327,14 +321,14 @@ Tempest::Vec3 Item::position() const {
   }
 
 const Vec3* Item::bBox() const {
-  if(visual.protoMesh()==nullptr)
+  if(proto==nullptr)
     return nullptr;
-  return visual.protoMesh()->bbox();
+  return proto->bbox();
   }
 
 Vec3 Item::midPosition() const {
-  if(auto mesh = visual.protoMesh())  {
-    auto bbox = mesh->bbox();
+  if(proto!=nullptr) {
+    auto bbox = proto->bbox();
     auto v    = (bbox[0] + bbox[1])*0.5;
     transform().project(v); // doesn't use to work for Karibik mod
     return v;

@@ -1,0 +1,93 @@
+# Numerical native body impacts. BODY_IMPACT_DAMAGE=0 keeps ordinary animated falls and spell damage.
+# Falls check torso contact speed against sqrt(2gh) within 10%; animated HP is a reference.
+# Ragdoll damping remains unchanged; damage is checked against damageFall at the measured speed.
+seed 73013
+cheat god
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+body-impact setup fall 2
+wait 800
+body-impact launch
+rec fall-2 novideo
+wait 4000
+body-impact report
+stop
+body-impact setup fall 5
+wait 800
+body-impact launch
+rec fall-5 novideo
+wait 4000
+body-impact report
+stop
+body-impact setup fall 10
+wait 800
+body-impact launch
+rec fall-10 novideo
+wait 4000
+body-impact report
+stop
+body-impact setup wall 6
+wait 800
+body-impact launch
+rec wall-6 novideo
+wait 1000
+body-impact report
+stop
+body-impact setup wall 10
+wait 800
+body-impact launch
+rec wall-10 novideo
+wait 1000
+body-impact report
+stop
+body-impact setup wall 14
+wait 800
+body-impact launch
+rec wall-14 novideo
+wait 1000
+body-impact report
+stop
+body-impact setup fatal 14
+wait 800
+body-impact launch
+rec wall-fatal novideo
+wait 1200
+body-impact report
+stop
+body-impact setup unconscious 10
+wait 800
+body-impact launch
+rec unconscious-10 novideo
+wait 2300
+body-impact report
+stop
+body-impact setup dead 10
+wait 800
+body-impact launch
+rec dead-10 novideo
+wait 2300
+body-impact report
+stop
+body-impact setup immortal 10
+wait 800
+body-impact launch
+rec immortal-10 novideo
+wait 2300
+body-impact report
+stop
+# An unscaled goblin has its original 18 kg mass: a real WindFist can exceed its 5 m fall threshold.
+body-impact wind
+wait 600
+spell equip 26
+wait 1200
+spell case body-impact-wind
+rec real-wind-goblin novideo
+spell cast 600
+wait 4500
+body-impact report
+stop
+body-impact clear
