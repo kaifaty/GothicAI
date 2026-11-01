@@ -51,3 +51,19 @@ ChronicleData parseChronicle(std::string_view json) {
     }
   return result;
   }
+
+FateCard parseFateCard(std::string_view json) {
+  rapidjson::Document doc;
+  doc.Parse(json.data(),json.size());
+  if(doc.HasParseError() || !doc.IsObject())
+    return {};
+  FateCard result;
+  result.off     = JsonRead::boolean(doc,"off",false);
+  result.title   = TextCodec::fromUtf8(JsonRead::str(doc,"title"));
+  result.text    = TextCodec::fromUtf8(JsonRead::str(doc,"text"));
+  result.feats   = feats(doc,"feats");
+  result.chapter = JsonRead::integer(doc,"chapter",1);
+  result.day     = JsonRead::integer(doc,"day",0);
+  result.count   = JsonRead::integer(doc,"count",0);
+  return result;
+  }

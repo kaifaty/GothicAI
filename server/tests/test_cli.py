@@ -511,11 +511,12 @@ def test_showrunner_opt_in_flag_is_removed(monkeypatch, capsys):
     assert "unrecognized arguments: --showrunner" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("flags", [[], ["--no-feat-challenges"], ["--no-feats"]])
+@pytest.mark.parametrize("flags", [[], ["--no-feat-challenges"], ["--no-feats"], ["--no-fate-card"]])
 def test_feat_challenge_flags(monkeypatch, flags):
     async def serve(args):
         assert args.no_feat_challenges == ("--no-feat-challenges" in flags)
         assert args.no_feats == ("--no-feats" in flags)
+        assert args.no_fate_card == ("--no-fate-card" in flags)
         return 0
 
     monkeypatch.setattr(cli, "serve", serve)
