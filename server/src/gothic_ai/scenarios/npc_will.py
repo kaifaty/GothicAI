@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 from .. import triggers
 from ..game import GameLink
-from ..llm.fake import FakeBackend
 from ..npc_will import OWNER_NEAR_CM, ROUTINE_CM, SIMULATION_CM
 from ..protocol import GameMessage, NpcActCmd, NpcActResult, NpcDeed, NpcIdle, Session
 from .common import (
@@ -61,7 +60,7 @@ async def npc_will(
     facts = will.chronicle.facts
     original_cards, original_crime_cards = will.cards, crimes.cards
     original_gate, original_stage = rumors.gate, rumors.stage
-    original_llm, send = dialogue.llm, link.send
+    send = link.send
     original_busy = will.busy
     preparing: set[str] = set()
     neutral = {npc: replace(card, honesty=5, greed=1) for npc, card in original_cards.items()}
@@ -494,10 +493,9 @@ async def npc_will(
         if link.session is None:
             await wait_message(link, Session, timeout=10)
         if not check(
-            "enabled", will.enabled and crimes.enabled and isinstance(original_llm, FakeBackend), log_dir,
+            "enabled", will.enabled and crimes.enabled, log_dir,
         ):
             return _logged(results)
-        dialogue.llm = FakeBackend("Ну.", delay=0)
         await link.debug("player_hp", hp=5000)
         await link.debug("time", hour=8, minute=0)
         population = {str(p["npc"]): p for p in await link.story_people()}
@@ -660,7 +658,6 @@ async def npc_will(
     finally:
         will.cards, crimes.cards = original_cards, original_crime_cards
         rumors.gate, rumors.stage = original_gate, original_stage
-        dialogue.llm = original_llm
         will.busy = original_busy
         link.send = send  # type: ignore[method-assign]
         try:

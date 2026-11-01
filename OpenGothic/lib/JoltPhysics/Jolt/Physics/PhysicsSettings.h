@@ -61,6 +61,9 @@ struct PhysicsSettings
 	/// Max distance to use to determine if two points are on the same plane for determining the contact manifold between two shape faces (unit: meter)
 	float		mManifoldTolerance = 1.0e-3f;
 
+	// GothicAI: Object layer mask for retaining the deepest EPA contact point; zero preserves upstream behavior.
+	uint32		mDeepestContactLayers = 0;
+
 	/// Maximum distance to correct in a single iteration when solving position constraints (unit: meters)
 	float		mMaxPenetrationDistance = 0.2f;
 

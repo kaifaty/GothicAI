@@ -11,6 +11,44 @@ from gothic_ai import cli
 from gothic_ai.llm.off import ModelOff, OffBackend
 
 
+@pytest.mark.parametrize(("scenario", "llm", "expected"), [
+    ("m0", "auto", "off"),
+    *[(scenario, "auto", "off") for scenario in (
+        "deal", "contract", "debt", "xardas_money", "deal_demo",
+        "bandit_parley", "bandit_bounty", "calm", "companion", "neural-talk", "rescue", "rescue_self",
+    )],
+    ("m1", "auto", "fake"),
+    ("haggle", "auto", "scenario haggle is live: set LLM=chatgpt|openai|local"),
+    ("m0", "fake", "scenario m0 requires --llm off"),
+    ("m0", "chatgpt", "scenario m0 requires --llm off"),
+    ("deal", "chatgpt", "scenario deal requires --llm off"),
+    ("haggle", "off", "scenario haggle is live: set LLM=chatgpt|openai|local"),
+    ("haggle", "fake", "scenario haggle is live: set LLM=chatgpt|openai|local"),
+    (None, "auto", "--llm auto requires --scenario"),
+    *[
+        (scenario, llm, "off" if llm == "auto" else f"scenario {scenario} requires --llm off")
+        for scenario in (
+            "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
+        )
+        for llm in ("auto", "fake", "chatgpt")
+    ],
+])
+def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
+    serve = AsyncMock(return_value=0)
+    monkeypatch.setattr(cli, "serve", serve)
+    flags = ["--scenario", scenario] if scenario else []
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--llm", llm, *flags])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    if expected in {"off", "fake"}:
+        assert exit.value.code == 0
+        assert serve.await_args.args[0].llm == expected
+    else:
+        assert exit.value.code == 2
+        assert expected in capsys.readouterr().err
+        serve.assert_not_awaited()
+
+
 def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, monkeypatch, caplog):
     game = tmp_path / "game"
     game.mkdir()
@@ -23,7 +61,6 @@ def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, mo
 
 @pytest.mark.parametrize(("scenario", "backend_kind", "outcome", "code"), [
     (None, "fake", "clean", 0),
-    ("m0", "fake", "clean", 0),
     ("m0", "off", "clean", 0),
     ("m0", "off", "caught", 1),
     ("m0", "off", "uncaught", 1),
@@ -162,7 +199,7 @@ def test_serve_arguments_select_responses_transport(monkeypatch, flags, websocke
     [
         ([], True),
         (["--no-showrunner"], False),
-        (["--scenario", "m0"], False),
+        (["--scenario", "m0", "--llm", "off"], False),
         (["--scenario", "showrunner"], False),
         (["--scenario", "showrunner_live"], False),
     ],
@@ -207,7 +244,7 @@ def test_feat_challenge_flags(monkeypatch, flags):
     assert exit.value.code == 0
 
 
-@pytest.mark.parametrize("flags", [[], ["--scenario", "questlog"], ["--no-questlog"]])
+@pytest.mark.parametrize("flags", [[], ["--scenario", "questlog", "--llm", "auto"], ["--no-questlog"]])
 def test_questlog_is_enabled_by_default_including_scenarios(monkeypatch, flags):
     async def serve(args):
         assert args.no_questlog == ("--no-questlog" in flags)
@@ -247,7 +284,7 @@ def test_svm_lines_are_enabled_by_default(monkeypatch, flags):
 
 
 @pytest.mark.parametrize(
-    "flags", [[], ["--scenario", "crimes"], ["--scenario", "crime_meet"], ["--no-crimes"]]
+    "flags", [[], ["--scenario", "crimes", "--llm", "auto"], ["--scenario", "crime_meet"], ["--no-crimes"]]
 )
 def test_crimes_is_enabled_by_default_including_scenarios(monkeypatch, flags):
     async def serve(args):
@@ -311,7 +348,9 @@ async def test_no_crimes_starts_no_encounter_worker_or_approach(monkeypatch):
     approach.assert_not_called()
 
 
-@pytest.mark.parametrize("flags", [[], ["--no-npc-crimes"], ["--no-crimes"], ["--scenario", "npc_deeds"]])
+@pytest.mark.parametrize("flags", [
+    [], ["--no-npc-crimes"], ["--no-crimes"], ["--scenario", "npc_deeds", "--llm", "auto"],
+])
 def test_npc_crimes_switch_and_scenario(monkeypatch, flags):
     async def serve(args):
         assert args.no_npc_crimes == ("--no-npc-crimes" in flags)
@@ -347,19 +386,18 @@ async def test_encounter_worker_starts_without_a_behavioral_planner(monkeypatch)
 @pytest.mark.parametrize(
     ("scenario", "control", "enabled", "url", "llm", "valid", "policy"),
     [
-        ("neural-soak", "1", False, None, "fake", True, "service"),
-        ("neural-soak", "1", False, "tcp://policy:47835", "fake", True, "service"),
-        ("neural-soak", "1", True, "tcp://policy:47835", "fake", False, "service"),
-        ("neural-soak", "0", False, None, "fake", False, "service"),
-        ("neural-soak", "0", True, None, "fake", True, "engine"),
-        ("neural-soak", "0", True, None, "fake", False, "service"),
-        ("neural-soak", "0", True, "tcp://policy:47835", "fake", True, "service"),
-        ("neural-soak", "0", True, "tcp://policy:47835", "fake", True, "engine"),
-        ("neural-soak", "1", False, None, "chatgpt", False, "service"),
-        ("neural-load", "1", False, None, "fake", False, "service"),
+        ("neural-soak", "1", False, None, "off", True, "service"),
+        ("neural-soak", "1", False, "tcp://policy:47835", "off", True, "service"),
+        ("neural-soak", "1", True, "tcp://policy:47835", "off", False, "service"),
+        ("neural-soak", "0", False, None, "off", False, "service"),
+        ("neural-soak", "0", True, None, "off", True, "engine"),
+        ("neural-soak", "0", True, None, "off", False, "service"),
+        ("neural-soak", "0", True, "tcp://policy:47835", "off", True, "service"),
+        ("neural-soak", "0", True, "tcp://policy:47835", "off", True, "engine"),
+        ("neural-load", "1", False, None, "off", False, "service"),
         (None, "1", False, None, "fake", False, "service"),
-        ("neural", "0", True, None, "fake", True, "engine"),
-        ("neural", "0", True, None, "fake", False, "service"),
+        ("neural", "0", True, None, "off", True, "engine"),
+        ("neural", "0", True, None, "off", False, "service"),
         ("feats", "0", True, None, "fake", True, "engine"),
         ("feats", "0", True, None, "chatgpt", True, "engine"),
         ("feats", "0", True, None, "local", False, "engine"),
