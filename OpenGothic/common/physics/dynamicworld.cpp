@@ -1758,6 +1758,10 @@ void DynamicWorld::setItemWakeEnabled(bool enabled) {
   world->setItemWakeEnabled(enabled);
   }
 
+void DynamicWorld::setItemDeepestContactEnabled(bool enabled) {
+  world->setItemDeepestContactEnabled(enabled);
+  }
+
 bool DynamicWorld::buoyancyEnabled() const {
   return world->buoyancyEnabled();
   }
