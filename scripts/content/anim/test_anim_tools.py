@@ -250,3 +250,24 @@ def test_lock_feet_pins_a_standing_foot():
     assert np.ptp(before[:, 2]) > 15
     assert np.ptp(after[:, 2]) < 0.5 and np.ptp(after[:, 0]) < 0.5  # pinned where it touched down
     assert np.allclose(after[:, 1], before[:, 1], atol=0.5)
+
+
+def test_own_poses_put_feet_blade_and_joints_where_asked(tmp_path):
+    models = base_models()
+    if models is None:
+        pytest.skip("no converted base")
+    import json
+    import own_poses as op
+    spec = json.loads((Path(__file__).resolve().parent / "poses-strikes.json").read_text())
+    b = op.Builder(models, spec["stance"])
+    for name, ps in spec["poses"].items():
+        pose = b.build(ps)
+        r, world = pose["report"], pose["world"]
+        assert r["miss"]["foot L"] == r["miss"]["foot R"] == 0, name
+        assert all(r[f"{j} {s}"] <= 178 for j in ("knee", "elbow") for s in "LR"), name
+        assert r["wrist R"] <= 65 and r["wrist L"] < 1, name  # Gothic's own clips bend up to ~68°
+        blade = world[b.gi["ZS_RIGHTHAND"]][:, 0]
+        assert blade @ op.unit(ps["arms"]["R"]["blade"]) > 0.999, name
+        b.save(tmp_path / f"{name}.MAN.json", name, pose, "test")
+        back = ga.world_pose(b.skel, ga.read_animation(tmp_path / f"{name}.MAN.json"), 0)
+        assert np.allclose(np.array([m[:3, :3] for m in back]), world, atol=1e-3), name
