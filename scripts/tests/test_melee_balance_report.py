@@ -307,3 +307,64 @@ def test_parry_unavailable_without_events_keeps_block_timings(tmp_path, stunned_
         assert mixed["combat"][key] == expected
         assert mixed["combat"]["per_duel"][key] == pytest.approx(expected/2)
         assert f"combat.{key}" not in mixed["unavailable"]
+
+
+# The native calibration bench shares the same HP-loss semantics as the arena report.
+far_spec = importlib.util.spec_from_file_location('far_fight_duels', Path(__file__).parents[1]/'far_fight_duels.py')
+far = importlib.util.module_from_spec(far_spec)
+far_spec.loader.exec_module(far)
+
+
+def test_far_fight_plan_covers_pairs_roles_seeds_within_batch_limit(tmp_path):
+    pairs = far.load_pairs()
+    assert len(pairs) == 12 and sum(p['holdout'] for p in pairs) == 3
+    paths = far.plan(tmp_path, pairs)
+    commands = [line for path in paths for line in path.read_text().splitlines() if line.startswith('npcduel ')]
+    assert len(commands) == len(set(commands)) == 480
+    expected = {(a, b, str(seed)) for p in pairs for a, b in (p['npcs'], p['npcs'][::-1]) for seed in range(17, 37)}
+    assert {tuple(line.split()[1:4]) for line in commands} == expected
+    for path in paths:
+        count = sum(line.startswith('npcduel ') for line in path.read_text().splitlines())
+        assert 60 + count * 181 <= 7200
+    assert all(path.is_absolute() for path in paths)
+
+
+def test_far_fight_report_eight_records_and_nonlethal_validation(tmp_path, capsys):
+    pairs = [p for p in far.load_pairs() if p['smoke']]
+    rows = []
+    for pair in pairs:
+        for a, b in (pair['npcs'], pair['npcs'][::-1]):
+            for seed in (17, 18):
+                side = dict(level=10, hp_before=100, hp_max=100, str=30, dex=30,
+                            hitchance={'1h': 30, '2h': 10}, talent_skills=[0, 1]+[0]*20,
+                            talent_values=[0]*22, protection=[0]*8, damage=[0]*8, damagetype=2,
+                            weapon='ITMW_1H_MIL_SWORD', two_handed=False, weapon_damage=[0, 20]+[0]*6,
+                            weapon_damagetype=2, immortal_before=False, hits=4, damage_dealt=40,
+                            hp_one=False, unconscious=False, weapon_dropped=False, guild=2, fight_tactic=1)
+                rows.append(dict(kind='npc_duel', seed=seed, duration_ms=10000, winner=a, loser=b,
+                                 attacker=dict(side, instance=a, hp_after=80),
+                                 defender=dict(side, instance=b, hp_after=1, hp_one=True, unconscious=True,
+                                               weapon_dropped=True)))
+    # One timeout must contribute exposure/hits, but not a fictitious winner HP loss.
+    rows[-1].pop('winner')
+    rows[-1].pop('loser')
+    rows[-1]['timeout'] = True
+    folder = tmp_path/'run'
+    folder.mkdir()
+    (folder/'events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+    result = far.report([folder], tmp_path, pairs)
+    assert result['records'] == 8 and len(result['pairs']) == 4
+    assert sum(r['timeouts'] for r in result['pairs']) == 1
+    assert sorted(r['win_rate'] for r in result['pairs']) == [.5, 1, 1, 1]
+    assert all(r['median_winner_hp_loss'] == 20 and r['median_duration_ms'] == 10000 for r in result['pairs'])
+    assert result['hits_by_talent'][0]['hits_per_second'] == pytest.approx(.4)
+    assert json.loads((tmp_path/'far-fight.json').read_text()) == result
+    assert '8 records' in capsys.readouterr().out
+    assert '| Talent tier |' in (tmp_path/'far-fight.md').read_text()
+    rows[0]['defender']['hp_after'] = 0
+    with pytest.raises(ValueError, match='1 HP'):
+        far.validate(rows[0])
+    rows[0]['defender']['hp_after'] = 1
+    rows[0]['attacker'].pop('damage')
+    with pytest.raises(ValueError, match='missing'):
+        far.validate(rows[0])

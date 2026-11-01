@@ -9,7 +9,8 @@
 #      RYZEN_HOST    SSH host for Ryzen (default: ryzen)
 #      RYZEN_LOCK_WAIT seconds to wait for the worktree lock and gq (default: auto 120, ryzen 900)
 #      RYZEN_MAX     gq job time limit, including the build (default: 30m)
-#      RYZEN_BENCH_CLASS quick (default) or quiet for timing without other jobs
+#      RYZEN_BENCH_CLASS quick (default), batch for calibration, or quiet for timing
+#      RYZEN_BENCH_ARCHIVE absolute local Ryzen task path to archive a result copy through gq
 #      GAME_BIN      game executable (default: OpenGothic/build/opengothic/Gothic2Notr)
 #      TEMPEST_WINDOW_SIZE client frame size (default: 800x600)
 #      SAVE          save to start from (default: save_slot_1.sav in the main checkout)

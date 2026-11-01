@@ -607,6 +607,74 @@ textures; by default those of `scripts/hd-textures.sh` when they have been made,
 empty: the game's own), `SOUND` and `MUSIC` (volumes 0..1, default 0; with `TEMPEST_AUDIO_LOOPBACK=48000` a
 segment's sound goes into `<segment>.wav`).
 
+## Native NPC calibration duels
+
+### Как работает сейчас
+
+`npcduel <attacker instance> <defender instance> <seed> [timeout_ms]` creates two fresh
+script NPCs, 3 m apart and 12 m in front of the stationary immortal observer, as in
+`bodyduel`. Both use `AiNormal`. Constructors keep their attributes, talents, tactics,
+weapons and armour; only immortality is removed and its original value is recorded.
+The attacker starts the same `ZS_ATTACK` / `AR_NONE` / `setNonlethalFight` path as
+`npc_act fight{deed:true}`. The defender responds through native perceptions.
+The command waits for the first `isDown()` or the timeout (default 180000 game ms),
+writes one `kind: npc_duel` row in `events.jsonl`, then removes the copies and their
+dropped items. `bodyduel` retains its separate mortal, normalized reference setup.
+
+Each row contains `seed`, `duration_ms`, `winner`/`loser` instance names or `timeout:true`,
+and `attacker`/`defender` objects. Those retain raw script `DAMAGE[8]`, `PROTECTION[8]`,
+`DAMAGETYPE`, `HITCHANCE` (1H/2H), all 22 talent skills/values, level, STR/DEX,
+HP before/after/max, guild/tactic, melee weapon instance/two-handedness and original
+immortality. `weapon_damage[8]` and `weapon_damagetype` are the separate equipped-item
+script fields: consumers can use the same inputs as `story_eval`, without a precombined
+NPC/weapon damage array. `hits` counts this side's positive HP-loss combat callbacks;
+`damage_dealt` sums actual lost HP (including the final clamp to 1), with no frame sampling.
+`hp_one`, `unconscious` (`ZS_UNCONSCIOUS`) and `weapon_dropped` retain the terminal
+body state. Drop detection requires a dynamic world item with the NPC's owner and
+original weapon instance. An unarmed loser has `weapon_dropped:false`.
+
+The [12 pairs](../../data/npc/far-fight-pairs.json) cover Lobart's equal peasants,
+peasant/militia, militia/Onar mercenary, unarmed/armed, level disparity and 1H/2H.
+All are ambient humans from save 1's world; three pairs are held out. Names, ambient
+NPC type and equipment were checked in the base's `GOTHIC.DAT` constructors. Equal
+peasants retain their different native mace/axe. No talents or equipment are normalized.
+
+```bash
+# Only the smoke suite runs here: 2 pairs × both roles × seeds 17,18 = 8 duels.
+python3 scripts/far_fight_duels.py smoke
+# Prepare the full party without running it: 12 × 2 × 20 = 480 duels.
+python3 scripts/far_fight_duels.py plan --out .bench/far-fight-plan --seeds 20
+# The lead runs this after merging:
+python3 scripts/far_fight_duels.py run .bench/far-fight-plan --out .bench/far-fight-run
+python3 scripts/far_fight_duels.py report .bench/far-fight-run/duels-* --out .bench/far-fight-summary
+```
+
+`plan` budgets each duel's full timeout plus one second, and 60 seconds per chunk;
+by default at most 39 duels fit a two-hour batch request. `run` calls
+`BENCH_HOST=ryzen scripts/bench.sh` per chunk, which builds there through `gq quick`
+and launches through `gq batch` (`smoke`: `quick`). It reads the prepared base directly
+from the cache or NAS via `OPENGOTHIC_BASE`. It uses absolute paths, including
+base cache/store below `~/gothic-ai/far-fight/`. Bench's existing output is collected
+back to the supplied output directory. `RYZEN_BENCH_ARCHIVE` gives the game request
+an `--archive` source at `~/gothic-ai/far-fight/<output-name>/<chunk>`; before finishing,
+it copies its result there. `gq` verifies and moves it to
+`/mnt/shared/gothic-ai/far-fight/<output-name>/<chunk>`. Use a fresh output name per run.
+The queue's `--archive` argument is the **local source**, not the NAS destination.
+Full batches are never started by `plan`, `smoke` or the test suite.
+
+`smoke` rejects missing/extra/duplicate duels, incomplete fields, and resolved losers
+without 1 HP and `ZS_UNCONSCIOUS`. A timeout remains a timeout. `report` writes
+`far-fight.json` and `far-fight.md` and prints the table: n, attacker wins divided by
+all duels (timeouts stay in the denominator), timeout count, median resolved winner
+HP loss, median duration across all duels, and HP-loss hits per full duel second
+pooled by weapon type and talent tier. These are empirical observations for fitting
+`rate_base`, `rate_per_tier`, `damage_scale`; no coefficient fitting happens here.
+
+### План и журнал
+
+- 2026-11-01: added the native nonlethal calibration bench and plan/run/smoke/report
+  tools for user decision Б3 in [Дальний бой NPC](../../reports/Дальний%20бой%20NPC.md).
+
 ## Live P30 capture on Mac
 
 `scripts/body_live_capture.py` starts a local game with the production `GameServer` and
