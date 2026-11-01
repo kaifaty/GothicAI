@@ -2,19 +2,32 @@
  "format": 1,
  "effects": [
   {
+   "name": "OWN_POT_FIRE",
+   "base": "FIRE_HOT",
+   "set": {
+    "shpType_S": "CIRCLE",
+    "shpIsVolume": 0,
+    "shpDim_S": "46 0 46",
+    "shpOffsetVec_S": "0 2 0",
+    "lspPartAvg": 380.0,
+    "lspPartVar": 100.0,
+    "visSizeStart_S": "34 40"
+   }
+  },
+  {
    "name": "OWN_POT_STEAM",
    "base": "LIGHTSMOKE",
    "set": {
-    "visTexColorStart_S": "225 225 222",
-    "visTexColorEnd_S": "240 240 238",
+    "visTexColorStart_S": "235 230 222",
+    "visTexColorEnd_S": "240 238 232",
     "visAlphaFunc_S": "BLEND",
-    "visAlphaStart": 55.0,
+    "visAlphaStart": 90.0,
     "visAlphaEnd": 0.0,
-    "visSizeStart_S": "12 12",
-    "visSizeEndScale": 6.0,
-    "lspPartAvg": 2200.0,
+    "visSizeStart_S": "16 16",
+    "visSizeEndScale": 5.0,
+    "lspPartAvg": 2600.0,
     "lspPartVar": 600.0,
-    "ppsValue": 10.0,
+    "ppsValue": 16.0,
     "ppsIsLooping": 1,
     "ppsIsSmooth": 1,
     "ppsFPS": 0.5,
@@ -28,18 +41,21 @@
     "dirAngleElevVar": 12.0,
     "dirAngleHead": 0.0,
     "dirAngleHeadVar": 179.0,
-    "velAvg": 0.06,
-    "velVar": 0.02,
-    "flyGravity_S": "0 0 0.00001"
+    "velAvg": 0.04,
+    "velVar": 0.015,
+    "flyGravity_S": "0 0 0.00001",
+    "visName_S": "OWN_POT_STEAM.TGA",
+    "visTexAniFPS": 0.0,
+    "visTexAniIsLooping": 0
    }
   },
   {
    "name": "OWN_KETTLE_STEAM",
    "base": "OWN_POT_STEAM",
    "set": {
-    "visSizeStart_S": "9 9",
+    "visSizeStart_S": "12 12",
     "shpDim_S": "18 0 18",
-    "ppsValue": 7.0
+    "ppsValue": 10.0
    }
   }
  ]

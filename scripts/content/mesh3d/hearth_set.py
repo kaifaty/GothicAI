@@ -31,6 +31,7 @@ BLENDER_DIR = rig.BLENDER_DIR
 STAGING = rig.STAGING
 LAYER = ROOT / 'data/content/world/NEWWORLD/vobs.d/city-hearth.json'
 PARTICLES = ROOT / 'data/content/particles.d/city-hearth-steam.json'
+STEAM_TEXTURE, STEAM_DDS = 'OWN_POT_STEAM.TGA', 'own-pot-steam/albedo.dds'
 BUILD = STAGING / 'city-hearth/build'
 TILES = STAGING / 'city-hearth/tiles'
 BLENDER = rig.BLENDER
@@ -165,12 +166,37 @@ def cmd_pack(args) -> int:
                            (PARTICLES, output / 'particles.d' / PARTICLES.name)):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
+    write_steam_sprite(output)
     ids = {r['id'] for r in records}
     old = [json.loads(line) for line in REGISTRY.read_text().splitlines()] if REGISTRY.is_file() else []
     REGISTRY.write_text(''.join(json.dumps(r, ensure_ascii=False, sort_keys=True) + '\n'
                                 for r in [r for r in old if r['id'] not in ids] + records))
     print(f'{args.set}: {len(meshes)} meshes, {len(materials)} materials -> {output}')
     return 0
+
+
+def write_steam_sprite(output: Path) -> None:
+    """OWN_POT_STEAM.TGA, the sprite of the pot steam (visName_S of OWN_POT_STEAM): white, its alpha a soft round
+    window times smooth noise, so a puff is torn at the edge (no image_gen, no original pixels). Without it
+    LIGHTSMOKE's dark smoke sprite turned the steam into a brown haze."""
+    import importlib.util
+    import numpy as np
+    from scipy.ndimage import gaussian_filter
+    spec = importlib.util.spec_from_file_location('harbour_motion', ROOT / 'scripts/content/harbour_motion.py')
+    hm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hm)
+    size, rng = 128, np.random.default_rng(11)
+    noise = sum(w * gaussian_filter(rng.standard_normal((size, size)), s, mode='wrap') for s, w in ((12, 0.6), (4, 0.4)))
+    noise = (noise - noise.min()) / (noise.max() - noise.min())
+    yy, xx = np.mgrid[0:size, 0:size]
+    r = np.hypot((xx + .5) / size * 2 - 1, (yy + .5) / size * 2 - 1)
+    window = np.clip((1.0 - r) / 0.7, 0, 1)
+    alpha = window * window * (3 - 2 * window) * (0.35 + 0.65 * noise)
+    hm.write_soft_dds(output / 'materials' / STEAM_DDS, np.dstack([np.ones((size, size, 3)), alpha]))
+    index_path = output / 'materials' / 'materials.json'
+    index = json.loads(index_path.read_text())
+    index[STEAM_TEXTURE] = {'albedo': STEAM_DDS}
+    index_path.write_text(json.dumps(index, indent=2) + '\n')
 
 
 def record(item: str, set_name: str, output: Path, name: str, used: list[str], materials: dict) -> dict:
