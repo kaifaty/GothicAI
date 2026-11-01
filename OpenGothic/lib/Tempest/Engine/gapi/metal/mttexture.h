@@ -4,6 +4,7 @@
 #include <Metal/Metal.hpp>
 #include "nsptr.h"
 #include "utility/spinlock.h"
+#include <mutex>
 
 namespace Tempest {
 namespace Detail {
@@ -39,7 +40,8 @@ class MtTexture : public Tempest::AbstractGraphicsApi::Texture {
 
     NsPtr<MTL::Texture>  alloc(TextureFormat frm, const uint32_t w, const uint32_t h, const uint32_t d,
                                const uint32_t mips,
-                               MTL::StorageMode smode, MTL::TextureUsage umode);
+                               MTL::StorageMode smode, MTL::TextureUsage umode,
+                               std::unique_lock<std::mutex>* uploadGuard = nullptr);
 
     struct View {
       ComponentMapping    m;
