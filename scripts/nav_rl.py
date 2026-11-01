@@ -1199,6 +1199,7 @@ def drive_validation(args):
                                    weights=str(args.weights))
                     if started is not None:
                         episode["collector_wall_s"] = time.monotonic() - started
+                        episode["base_fingerprint"] = os.environ.get("OPENGOTHIC_BASE_FINGERPRINT") or None
                     write_json(directory / "episode.json", episode)
                     measured = (detour_episode_metrics(directory) if value["family"] == "detour" else
                                 lean_validation_episode_metrics(directory) if lean else validation_episode_metrics(directory))
@@ -1440,7 +1441,7 @@ def text_episode_metrics(directory):
     result.update(episode=str(directory), elapsed_s=elapsed / 1000, action_counts=counts,
         action_fraction={key: count / steps for key, count in counts.items()}, action_presses=presses,
         travelled_xz_cm=float(np.linalg.norm(np.diff(trajectory[:, [1, 3]], axis=0), axis=1).sum()),
-        recording="text_only")
+        recording="text_only", base_fingerprint=episode.get("base_fingerprint"))
     for key in ("familiar_input_decisions", "familiar_input_nonzero_decisions",
                 "familiar_near_input_nonzero_decisions", "familiar_far_input_nonzero_decisions"):
         if key in episode:
@@ -1472,7 +1473,9 @@ def text_group_metrics(episodes):
 
 def detour_summary(episodes):
     """Pool lean detour outcomes without inventing unavailable teacher agreement."""
-    return dict(all=text_group_metrics(episodes),
+    fingerprints = {episode.get("base_fingerprint") for episode in episodes}
+    return dict(base_fingerprint=fingerprints.pop() if len(fingerprints) == 1 else None,
+        all=text_group_metrics(episodes),
         by_seed={str(seed): text_group_metrics([ep for ep in episodes if ep["action_seed"] == seed])
                  for seed in sorted({ep["action_seed"] for ep in episodes})},
         by_goal_kind={kind: text_group_metrics([ep for ep in episodes if ep["goal_kind"] == kind])
@@ -1507,6 +1510,7 @@ def lean_validation_episode_metrics(directory):
 
 def validation_outcome_metrics(directory, metadata, actions, result):
     """Reuse passive physical witnesses for recorded and lean validation."""
+    result["base_fingerprint"] = metadata.get("base_fingerprint")
     if metadata["goal_kind"] in ("follow", "approach"):
         moving = module("nav_demos_v4").text_metrics(directory)
         for key in ("first_contact_ms", "follow_observed_ms", "follow_in_band_ms", "follow_fraction",
@@ -1598,7 +1602,9 @@ def validation_summary(episodes, lean=False):
     def families(values):
         return {family: group([ep for ep in values if ep["family"] == family])
                 for family in sorted({ep["family"] for ep in values})}
-    result = dict(all=group(episodes), by_family=families(episodes),
+    fingerprints = {episode.get("base_fingerprint") for episode in episodes}
+    result = dict(base_fingerprint=fingerprints.pop() if len(fingerprints) == 1 else None,
+        all=group(episodes), by_family=families(episodes),
         by_seed={str(seed): dict(all=group([ep for ep in episodes if ep["action_seed"] == seed]),
                                 by_family=families([ep for ep in episodes if ep["action_seed"] == seed]))
                  for seed in sorted({ep["action_seed"] for ep in episodes})},

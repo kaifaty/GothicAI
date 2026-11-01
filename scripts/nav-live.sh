@@ -19,6 +19,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$weights" && "$round" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]] || { echo 'Weights and a safe round label are required' >&2; exit 2; }
+if [[ "$round" == dagger4-r1 ]]; then
+  [[ "$stage" == auto || "$stage" == baseline ]] || { echo 'DAgger4 R1 supports only its frozen baseline continuation' >&2; exit 2; }
+  exec bash "$ROOT/scripts/nav-dagger4-remote.sh" live-r1 "$weights"
+fi
 case "$stage" in auto|prepare|qualify|requalify|extend|teacher|smoke|baseline|report|clean) ;; *) echo "Unknown stage: $stage" >&2; exit 2 ;; esac
 [[ -f "$suite" ]] || { echo "Missing suite: $suite" >&2; exit 2; }
 suite="$(cd "$(dirname "$suite")" && pwd)/$(basename "$suite")"

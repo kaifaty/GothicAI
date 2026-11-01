@@ -1090,6 +1090,7 @@ def test_eval_screen_reader_rejects_test_or_changed_selection(tmp_path, corrupti
 
 def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(tmp_path, monkeypatch,
                                                                             validation_disk_space):
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "a" * 64)
     _, groups = validation_manifest(tmp_path)
     _, detour = frozen_detour(tmp_path)
     safety = dict(id="water-case", family="safety", goal_kind="point", split="validation",
@@ -1141,6 +1142,7 @@ def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(
     assert set(calls) == {(value["family"], value["id"], seed) for value in scenarios for seed in rl.ACTION_SEEDS}
     assert set(caches) == {args.cache / "ordinary" / str(index) for index in range(3)}
     assert len(list(args.output.rglob("drive-metrics.json"))) == 9
+    assert all(rl.read_json(path)["base_fingerprint"] == "a" * 64 for path in args.output.rglob("episode.json"))
 
 
 def test_detour_text_metrics_count_executed_rising_edges_without_teacher_labels(tmp_path):
@@ -1310,11 +1312,15 @@ def test_lean_metrics_match_recorded_physical_outcomes_without_navdemo(tmp_path,
 
 
 def test_lean_summary_pools_families_seeds_and_physical_evidence_without_samples(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "b" * 64)
     episodes = []
     for seed in (7, 19, 43):
         for family in ("point", "object", "follow_below_gate", "jump", "safety"):
             directory = tmp_path / "validation" / family / f"seed-{seed}"
             lean_text_episode(directory, family, seed)
+            metadata = rl.read_json(directory / "episode.json")
+            metadata["base_fingerprint"] = "a" * 64
+            rl.write_json(directory / "episode.json", metadata)
             measured = rl.lean_validation_episode_metrics(directory)
             episodes.append(measured)
             rl.write_json(directory / "drive-metrics.json", measured)
@@ -1334,8 +1340,15 @@ def test_lean_summary_pools_families_seeds_and_physical_evidence_without_samples
     output = tmp_path / "summary"
     rl.summarize(SimpleNamespace(source=tmp_path / "validation", output=output))
     saved = rl.read_json(output / "metrics.json")
+    assert saved["base_fingerprint"] == "a" * 64
     assert saved["all"] == summary["all"]
     assert saved["object_failures_last_10s"] == []
+    unknown = sorted((tmp_path / "validation").rglob("drive-metrics.json"))[0]
+    metadata = rl.read_json(unknown)
+    del metadata["base_fingerprint"]
+    rl.write_json(unknown, metadata)
+    rl.summarize(SimpleNamespace(source=tmp_path / "validation", output=output))
+    assert rl.read_json(output / "metrics.json")["base_fingerprint"] is None
 
 
 @pytest.mark.parametrize("bad_moving_seed", [False, True])
@@ -1577,6 +1590,7 @@ def test_validation_summary_removes_shared_setup_refusals_from_both_policies(tmp
 
 
 def test_validation_resume_recovers_completed_episode_without_collector_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "b" * 64)
     manifest, groups = validation_manifest(tmp_path)
     args = validation_drive_args(tmp_path, manifest, family="point", resume=True)
     args.action_seeds = "7"
@@ -1594,6 +1608,7 @@ def test_validation_resume_recovers_completed_episode_without_collector_metadata
         assert metadata["validation_scenario"] == value
         assert metadata["action_seed"] == 7
         assert metadata["weights"] == str(args.weights)
+        assert metadata.get("base_fingerprint") is None
         return dict(success=False)
 
     monkeypatch.setattr(rl, "validation_episode_metrics", metrics)
@@ -1736,6 +1751,71 @@ def test_eval_screen_agreement_uses_paired_routes_and_pooled_follow(monkeypatch)
     assert pair["significant"] and not pair["agrees"]
     noise = next(row for row in result if (row["metric"], row["left"], row["right"]) == ("point", "it35", "hd"))
     assert not noise["significant"] and noise["agrees"] is None  # Exactly two SE is not above two SE.
+
+
+def test_dagger_report_pairs_episode_keys_clusters_seeds_and_bootstraps_identical_medians(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    round_one, screen = rl.module("nav_dagger4_round"), rl.module("nav_eval_screen")
+    left = [dict(id=f"p{number}", family="point", action_seed=seed, success=win,
+                 elapsed_s=2 * number + 1, falls=win, safety=dict(unattributed_damage=10 * win))
+            for number, win in enumerate((1, 1, 0)) for seed in rl.ACTION_SEEDS]
+    right = [dict(ep, success=False, falls=0, safety=dict(unattributed_damage=0)) for ep in reversed(left)]
+    actual = round_one.paired_report_difference(left, right, "arrival")
+    expected = screen.paired_difference(left, right, "point")
+    for key in ("left", "right", "delta", "se", "routes"):
+        assert actual[key] == pytest.approx(expected[key])
+    assert actual["se"] == pytest.approx(1 / 3) and actual["episodes"] == 9
+    for metric, total, se in (("falls", 6, 3), ("unattributed_damage", 60, 30)):
+        result = round_one.paired_report_difference(left, right, metric)
+        assert result["left"] == total and result["right"] == 0
+        assert result["delta"] == total and result["se"] == pytest.approx(se)
+    following = [dict(id=f"f{number}", family="follow_below_gate", action_seed=seed,
+                     follow_in_band_ms=band, follow_observed_ms=observed)
+                 for number, (band, observed) in enumerate(((10, 10), (0, 90))) for seed in rl.ACTION_SEEDS]
+    other = [dict(ep, follow_in_band_ms=0) for ep in reversed(following)]
+    actual = round_one.paired_report_difference(following, other, "follow")
+    expected = screen.paired_difference(following, other, "follow_below_gate")
+    assert actual["left"] == .1 and actual["se"] == pytest.approx(.18)
+    for key in ("left", "right", "delta", "se", "routes"):
+        assert actual[key] == pytest.approx(expected[key])
+    identical = round_one.paired_report_difference(left, list(reversed(left)), "elapsed_s")
+    assert identical["left"] == identical["right"] == 3
+    assert identical["delta"] == identical["se"] == 0
+    with pytest.raises(ValueError, match="cohorts differ"):
+        round_one.paired_report_difference(left, right[:-1], "arrival")
+
+
+def test_dagger_round_compare_serializes_known_and_unknown_base_without_environment_fallback(tmp_path, monkeypatch):
+    round_one = rl.module("nav_dagger4_round")
+    monkeypatch.setattr(round_one, "ARCHIVE", tmp_path / "r1")
+    monkeypatch.setattr(round_one, "BASELINE", tmp_path / "baseline")
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "b" * 64)
+    normal_episodes = [dict(family="point", id=f"p{index}", action_seed=7,
+        teacher_control_decisions=0, recording="text_only") for index in range(1491)]
+    detour_episodes = [dict(family="detour", id=f"d{index}", action_seed=7,
+        teacher_control_decisions=0, recording="text_only") for index in range(363)]
+    normal = dict(episodes=normal_episodes, setup_rejections=[{}, {}],
+        by_family=dict(point=dict(arrived=137), object=dict(arrived=498)))
+    detour = dict(episodes=detour_episodes, all=dict(arrived=293))
+    for model in ("bc3", "hd", "r1"):
+        normal_path = (round_one.ARCHIVE / "round1/validation/r1/metrics.json" if model == "r1" else
+                       round_one.BASELINE / f"hd-validation/{model}/metrics.json")
+        detour_path = (round_one.ARCHIVE / "round1/detour-validation/r1/metrics.json" if model == "r1" else
+                       round_one.BASELINE / ("hd-detour/metrics.json" if model == "hd" else "detour-baseline/bc3/metrics.json"))
+        fingerprint = dict(base_fingerprint="a" * 64) if model == "r1" else {}
+        rl.write_json(normal_path, dict(normal, **fingerprint))
+        rl.write_json(detour_path, dict(detour, **fingerprint))
+    monkeypatch.setattr(round_one, "check_episodes", lambda *args: None)
+    monkeypatch.setattr(round_one, "screen_comparison", lambda *args: dict(passed=True))
+    monkeypatch.setattr(round_one, "cleanup_runtime", lambda *args: None)
+    round_one.compare(tmp_path)
+    saved = rl.read_json(round_one.ARCHIVE / "round1/compare.json")
+    assert saved["event"] == "dagger4_round1_validation_complete"
+    assert saved["base_fingerprint"] == saved["models"]["r1"]["base_fingerprint"] == "a" * 64
+    assert saved["models"]["hd"]["base_fingerprint"] is None
+    assert saved["models"]["bc3"]["base_fingerprint"] is None
+    assert saved["decline_vs_hd"] == dict(point=0, detour=0)
+    assert saved["report_pending_live"] and saved["automatically_start_round2"] is False
 
 
 def test_dagger_round_base_pin_survives_changed_or_missing_global_settings(tmp_path, monkeypatch):

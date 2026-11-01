@@ -3,18 +3,274 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [[ $# == 1 && ( "$1" == --help || "$1" == -h ) ]]; then
-  echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke | calibrate | train-r1 | collect-r1 PHASE (1..6)'
+  echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke | calibrate | train-r1 | live-r1 WEIGHTS | collect-r1 PHASE (1..6)'
   exit 0
 fi
 stage="${1:-}"
 phase="${2:-}"
-if ! { [[ $# == 1 && ( "$stage" == smoke || "$stage" == calibrate || "$stage" == train-r1 ) ]] || [[ $# == 2 && "$stage" == collect-r1 && "$phase" =~ ^[1-6]$ ]]; }; then
-  echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke | calibrate | train-r1 | collect-r1 PHASE (1..6)' >&2
+if ! { [[ $# == 1 && ( "$stage" == smoke || "$stage" == calibrate || "$stage" == train-r1 ) ]] || [[ $# == 2 && "$stage" == live-r1 ]] || [[ $# == 2 && "$stage" == collect-r1 && "$phase" =~ ^[1-6]$ ]]; }; then
+  echo 'Usage: bash scripts/nav-dagger4-remote.sh smoke | calibrate | train-r1 | live-r1 WEIGHTS | collect-r1 PHASE (1..6)' >&2
   exit 2
 fi
 export GQ_OWNER=nav-dagger4
 task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-dagger4" "$HOME"')"
 archive=/mnt/shared/gothic-ai/nav-dagger4
+if [[ "$stage" == live-r1 ]]; then
+  [[ "$phase" == "$archive/round1/run/policy.navbc" ]] || { echo 'Live R1 requires the selected round-one policy alone' >&2; exit 2; }
+  live="${task%/nav-dagger4}/nav-live"
+  source="$live/source/dagger4-r1"
+  log_dir="$live/dagger4-r1/job-logs"
+  ssh ryzen "bash -s -- '$live' '$source' '$log_dir' '$archive'" <<'LIVE_R1_OWNER'
+set -euo pipefail
+live="$1"; source="$2"; log_dir="$3"; archive="$4"
+if [[ ! -d "$live" ]]; then
+  mkdir "$live"
+  touch "$live/.dagger4-r1-owner"
+fi
+test -f "$live/.dagger4-r1-owner" || { echo 'Refusing an existing nav-live runtime owned by another task' >&2; exit 1; }
+mkdir -p "$source/scripts" "$log_dir" "$archive/logs"
+LIVE_R1_OWNER
+  rsync -rt --no-links --exclude=__pycache__ --exclude=.pytest_cache "$ROOT/scripts/" "ryzen:$source/scripts/"
+  ssh ryzen "cat > '$source/live-r1.sh'" <<'LIVE_R1_PHASE'
+#!/usr/bin/env bash
+set -euo pipefail
+source="$(cd "$(dirname "$0")" && pwd)"
+live="$(cd "$source/../.." && pwd)"
+task="$HOME/gothic-ai/nav-dagger4"
+archive=/mnt/shared/gothic-ai/nav-dagger4
+saved=/mnt/shared/gothic-ai/archive/nav-live-20261031
+output=/mnt/shared/gothic-ai/nav-live/dagger4-r1
+candidate="${1:?selected round-one policy}"
+test -f "$live/.dagger4-r1-owner"
+exec 9>"$live/dagger4-r1.lock"
+flock -n 9
+test "$candidate" = "$archive/round1/run/policy.navbc"
+test -f "$archive/round1/phases/55.passed"
+test -f "$candidate"
+mkdir -p "$output" "$live/tmp"
+exec > >(tee -a "$archive/logs/live-r1.log") 2>&1
+trap 'printf "live_r1_exit=%s\n" "$?"' EXIT
+df -h "$HOME" /mnt/shared
+export TMPDIR="$live/tmp" UV_CACHE_DIR="$HOME/.cache/uv"
+export NAVLIVE_DEADLINE="$(($(date +%s) + 7000))"
+export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
+export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 OPENGOTHIC_BODY_TRACE=0
+unset OPENGOTHIC_NAV_JOURNEY_MEMORY OPENGOTHIC_NAV_FAMILIAR_MAP
+round_exports="$(python3 - "$source/scripts" "$task" "$live" <<'LIVE_R1_ENV'
+from pathlib import Path
+import shlex
+import shutil
+import sys
+scripts, task, live = map(Path, sys.argv[1:])
+sys.path.insert(0, str(scripts))
+from nav_dagger4_round import round_environment
+if shutil.disk_usage(live).free < 26 * 1024**3:
+    raise ValueError('Live R1 needs 26 GiB free including its build reserve')
+values = round_environment(task)
+values.update(OPENGOTHIC_BASE_CACHE=str(live / 'base-cache'), OPENGOTHIC_BASE_STORE=str(live / 'base-store'))
+for key, value in values.items():
+    print(f'export {key}={shlex.quote(value)}')
+LIVE_R1_ENV
+)"
+eval "$round_exports"
+if [[ ! -x "$live/.venv/bin/python" ]]; then uv venv --python 3.12 "$live/.venv"; fi
+python="$live/.venv/bin/python"
+uv pip install --python "$python" numpy pillow pytest
+test "$(cc -dumpfullversion)" = 15.2.0
+test "$(c++ -dumpfullversion)" = 15.2.0
+for entry in \
+  e1ba7f77f4381d0b385b:37df2244849831b7ad03308a08a58f902bd3c2a00b645b831c7fc71c032e3f8a \
+  4f9926f1627c4e270d0b:a2964efaf4f4c2a3d2f072cebdba032022b826f05417dbc63c3666da8c89abd2; do
+  snapshot="${entry%%:*}"; expected="${entry#*:}"
+  mkdir -p "$live/source/$snapshot"
+  rsync -a --no-links "$saved/source/$snapshot/" "$live/source/$snapshot/"
+  rm -rf -- "$live/build"
+  "$python" -X faulthandler -B -I -c 'import shutil,sys; assert shutil.disk_usage(sys.argv[1]).free >= 26*1024**3, "Live build needs 26 GiB free including its reserve"' "$live"
+  cmake -S "$live/source/$snapshot/OpenGothic" -B "$live/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DCMAKE_CXX_FLAGS_RELEASE='-O2 -g0 -DNDEBUG' -DCMAKE_C_FLAGS_RELEASE='-O2 -g0 -DNDEBUG' \
+    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF -DINTERPROCEDURAL_OPTIMIZATION=OFF -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
+    -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
+  cmake --build "$live/build" --target Gothic2Notr --parallel 8
+  "$python" -X faulthandler -B -I - "$live/build/opengothic/Gothic2Notr" "$archive/round1/live-binaries" "$expected" <<'LIVE_R1_PIN'
+import hashlib
+from pathlib import Path
+import shutil
+import sys
+binary, root = map(Path, sys.argv[1:3])
+expected = sys.argv[3]
+actual = hashlib.sha256(binary.read_bytes()).hexdigest()
+print(f'Rebuilt live binary: expected={expected} actual={actual}', flush=True)
+if actual != expected:
+    raise ValueError('Exact baseline binary reconstruction failed; no game may start')
+destination = root / expected / 'Gothic2Notr'
+destination.parent.mkdir(parents=True, exist_ok=True)
+if destination.exists():
+    if hashlib.sha256(destination.read_bytes()).hexdigest() != expected:
+        raise ValueError('Saved evaluation binary differs from its pinned checksum')
+else:
+    shutil.copy2(binary, destination)
+    destination.chmod(0o555)
+if hashlib.sha256(destination.read_bytes()).hexdigest() != expected:
+    raise ValueError('Archived evaluation binary checksum differs')
+LIVE_R1_PIN
+done
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+desktop_found=0
+for auth in "$XDG_RUNTIME_DIR"/.mutter-Xwaylandauth.* "$HOME/.Xauthority"; do
+  [[ -r "$auth" ]] || continue
+  for socket in /tmp/.X11-unix/X*; do
+    [[ -S "$socket" ]] || continue
+    if info="$(DISPLAY=":${socket##*/X}" XAUTHORITY="$auth" xdpyinfo 2>/dev/null)"; then
+      export DISPLAY=":${socket##*/X}" XAUTHORITY="$auth"
+      screen="$(printf '%s\n' "$info" | awk '/dimensions:/ {print $2; exit}')"
+      desktop_found=1
+      break 2
+    fi
+  done
+done
+[[ "$desktop_found" == 1 ]] || { echo 'No accessible Xwayland desktop' >&2; exit 1; }
+export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+test -r "$VK_DRIVER_FILES"
+export ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1 TEMPEST_WINDOW_SIZE=640x360
+slot="${GQ_DISPLAY_SLOT:-0}"
+[[ "$slot" =~ ^[0-9]+$ && "$screen" =~ ^([0-9]+)x([0-9]+)$ ]] || { echo 'Invalid display geometry or gq slot' >&2; exit 1; }
+screen_width=$((10#${BASH_REMATCH[1]})); screen_height=$((10#${BASH_REMATCH[2]}))
+columns=$(((screen_width-140)/700)); (( columns > 0 )) || columns=1
+x=$((100+(10#$slot % columns)*700)); y=$((100+(10#$slot / columns)*460))
+(( x+640 <= screen_width && y+360 <= screen_height )) || { echo 'Assigned window does not fit the desktop' >&2; exit 1; }
+export TEMPEST_WINDOW_POS="$x,$y"
+command -v ffmpeg >/dev/null
+command -v ffprobe >/dev/null
+"$python" -X faulthandler -B -I - "$source/scripts" "$live" "$task" "$archive" "$output" "$candidate" <<'LIVE_R1_RUN'
+from copy import deepcopy
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+from types import SimpleNamespace
+scripts, runtime, task, archive, output, candidate = map(Path, sys.argv[1:])
+sys.path.insert(0, str(scripts))
+import nav_live as live
+from nav_dagger4_round import final_report
+baseline = Path('/mnt/shared/gothic-ai/nav-live/baseline')
+finished = live.read_json(baseline / 'complete.json')
+suite_path = Path(finished['suite_path'])
+if not suite_path.is_file() and suite_path.is_relative_to(runtime):
+    suite_path = Path('/mnt/shared/gothic-ai/archive/nav-live-20261031') / suite_path.relative_to(runtime)
+original = live.read_json(suite_path)
+if live.sha256(suite_path) != finished['suite_sha256'] or not finished['qualified_subset_complete']:
+    raise ValueError('Frozen baseline completion does not match its final qualified suite')
+suite = deepcopy(original)
+before = {case['id']:(live.behavioral_case(case),case['seeds']) for case in live.suite_cases(original)}
+output.mkdir(parents=True, exist_ok=True)
+for name in ('teacher', 'HD', 'it35', 'bc4'):
+    destination = output / name
+    destination.mkdir(exist_ok=True)
+    subprocess.run(['rsync', '-rt', '--no-links', str(baseline / name) + '/', str(destination) + '/'], check=True)
+    for path in destination.rglob('summary.json'):
+        value = live.read_json(path)
+        value.setdefault('base_fingerprint', None)
+        live.write_json(path, value)
+for name, filename in (('save','save.sav'),('roads','places.json'),('familiar','familiar.bin'),('links','accepted-links.txt')):
+    previous = Path(suite['inputs'][name])
+    fallback = Path('/mnt/shared/gothic-ai/archive/nav-demos-v5-20261030/input') / filename
+    source_input = previous if previous.is_file() else fallback
+    if live.sha256(source_input) != finished['input_sha256'][name]:
+        raise ValueError(f'Frozen live input differs: {name}')
+    target = output / 'input' / filename
+    target.parent.mkdir(exist_ok=True)
+    shutil.copy2(source_input, target)
+    suite['inputs'][name] = str(target)
+models = output / 'models'
+specifications = (
+    (candidate, models / 'dagger4-r1/policy.navbc', live.sha256(candidate)),
+    (archive / 'input/hd/policy.navbc', models / 'hd-run/policy.navbc', finished['weights'][0]),
+    (Path('/mnt/shared/gothic-ai/archive/nav-ppo/run/iter-000035/update/policy.navbc'), models / 'iter-000035/update/policy.navbc', finished['weights'][1]),
+    (Path('/mnt/shared/gothic-ai/nav-bc4/bc4/policy.navbc'), models / 'bc4/policy.navbc', finished['bc4_sha256']))
+for source_weight, destination, expected in specifications:
+    if live.sha256(source_weight) != expected:
+        raise ValueError(f'Frozen comparison policy differs: {source_weight}')
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_weight, destination)
+suite['bc4_weights'] = str(specifications[-1][1])
+pins = archive / 'round1/live-binaries'
+def relocate(value):
+    if isinstance(value, dict):
+        for key, item in list(value.items()):
+            if key == 'evaluation_binary':
+                binary = pins / item['sha256'] / 'Gothic2Notr'
+                if live.sha256(binary) != item['sha256']:
+                    raise ValueError('Reconstructed case binary differs')
+                item['path'] = str(binary)
+            elif key == 'teacher_reference':
+                if Path(item).is_relative_to(baseline / 'teacher'):
+                    value[key] = str(output / 'teacher' / Path(item).relative_to(baseline / 'teacher'))
+            else:
+                relocate(item)
+    elif isinstance(value, list):
+        for item in value:
+            relocate(item)
+relocate(suite)
+for placement in suite['teacher_qualification']['placements']:
+    previous = Path(placement['output'])
+    if previous.is_relative_to(baseline / 'teacher'):
+        placement['output'] = str(output / 'teacher' / previous.relative_to(baseline / 'teacher'))
+suite.pop('qualified_suite_sha256', None)
+frozen = output / 'qualified-suite.json'
+live.write_json(frozen, suite)
+cases = live.suite_cases(suite)
+if before != {case['id']:(live.behavioral_case(case),case['seeds']) for case in cases}:
+    raise ValueError('Live R1 must preserve every frozen case and seed')
+eligible = live.eligible_cases(suite, cases)
+if len(eligible) != 11 or sum(len(case['seeds']) for case in eligible) != 27:
+    raise ValueError('Frozen eligible subset must contain eleven places and 27 seed episodes')
+weights = ','.join(str(row[1]) for row in specifications[:3])
+policies, bc4 = live.models(weights, suite)
+args = SimpleNamespace(suite=frozen, runtime=runtime, output=output,
+    binary=Path(suite['evaluation_binary']['path']), inputs=dict(suite['inputs'],cache=str(runtime / 'navmesh-cache')),
+    input_sha256={name:live.sha256(suite['inputs'][name]) for name in ('save','roads','familiar','links')})
+references = {value['id']:value for value in suite['teacher_qualification']['placements']}
+for case in eligible:
+    directory = live.teacher_directory(args, case)
+    if (references[case['id']]['output'] != str(directory) or not live.raw_complete(directory)
+            or not live.processed(directory) or live.read_json(directory / 'identity.json')['actual'] != live.actual_inputs(args,case,None,case['seeds'][0])
+            or (case.get('teacher_qualification_required',True) and not live.teacher_outcome(args,case)['passed'])):
+        raise ValueError(f'Frozen teacher reference cannot be reused: {case["id"]}')
+planned = list(live.runs(eligible, policies, bc4))
+missing = [(case,model,seed) for case,model,seed in planned if not live.completed_run(args,case,model,seed)]
+if len(planned) != 90 or len(missing) != 27 or any(model['name'] != 'dagger4-r1' for _,model,_ in missing):
+    raise ValueError('Live preflight requires exactly 27 new R1 runs and all 63 baseline runs reusable')
+live.check_space(output)
+print(json.dumps(dict(event='dagger4_live_reuse_ready', eligible_places=11,new_r1=27,reused=63,
+    requested=33, frozen_single_seed_routine_variants=3)), flush=True)
+result = live.main(['baseline','--suite',str(frozen),'--runtime',str(runtime),'--output',str(output),'--weights',weights,'--shard','-1'])
+if result != 0:
+    raise ValueError(f'Live R1 returned {result}')
+complete = live.read_json(output / 'complete.json')
+if (not complete['qualified_subset_complete'] or complete['completed'] != 90 or complete['expected'] != 90
+        or complete['reused_runs'] != 63 or complete['newly_completed_runs'] != 27
+        or any(not live.completed_run(args,case,model,seed) for case,model,seed in planned)):
+    raise ValueError('Live R1 did not finish exactly 27 new and 63 reused episodes')
+final_report(task,live_output=output)
+if not live.cleanup(runtime,output):
+    raise ValueError('Live R1 cleanup refused its completed identities')
+for name in ('.venv','tmp','hot-cache','validation-cache','base-cache','base-store','build'):
+    directory = task / name
+    if directory.exists():
+        shutil.rmtree(directory)
+print(json.dumps(dict(event='dagger4_live_complete',new_r1=27,reused=63,expected=90,output=str(output))),flush=True)
+LIVE_R1_RUN
+LIVE_R1_PHASE
+  "$ROOT/scripts/gq" submit --class batch --threads 16 --cpu-quota 1200% --mem 12G --max 2h \
+    --display --display-shared --archive "$log_dir" --name 'nav dagger4 R1 frozen live continuation' -- \
+    python3 -X faulthandler -I "$source/scripts/nav_job.py" --max-seconds 7200 -- bash "$source/live-r1.sh" "$phase"
+  exit
+fi
 if [[ "$stage" == train-r1 ]]; then
   ssh ryzen "bash -s -- '$task' '$archive'" <<'TRAIN_INPUTS'
 set -euo pipefail

@@ -320,7 +320,7 @@ def test_resume_does_not_reuse_greedy_recording_as_sample(tmp_path, existing):
         assert drive.indices(args, [pair]) == []
 
 
-def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
+def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path, monkeypatch):
     """Exercise the packed trace reader and both graphics on the same tiny run."""
     import shutil
     import subprocess
@@ -380,7 +380,13 @@ def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
     rotated = dict(decisions[0], yaw_deg=90)
     world = live._world_map(memory, maps["near"], rotated, [0, 0], 1, (100, 100))
     assert world.getpixel((50, 80))[:3] == tuple(live.CLASS_COLORS[2])
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "b" * 64)
+    assert live.summarize(root, metadata, decisions)["base_fingerprint"] is None
+    episode = json.loads((root / "episode.json").read_text())
+    episode["base_fingerprint"] = "a" * 64
+    (root / "episode.json").write_text(json.dumps(episode))
     report = live.render_run(root)
+    assert report["base_fingerprint"] == "a" * 64
     assert report["decision_count"] == 12 and report["observation_frames"] == 3
     assert report["standing_seconds"] == pytest.approx(.2)
     assert report["circling_seconds"] == pytest.approx(.2)

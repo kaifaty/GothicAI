@@ -325,6 +325,78 @@ def finish_report(task, gate):
     emit("dagger4_round1_report_written", report=str(ARCHIVE / f"reports/{REPORT}/README.md"))
 
 
+def paired_report_difference(left, right, metric):
+    """Compare identical episode cohorts, clustering their seeds by route."""
+    import numpy as np
+    if metric not in ("arrival", "elapsed_s", "idle", "follow", "falls", "episodes_with_falls",
+                      "harmful_fall", "water", "swimming", "unattributed_damage"):
+        raise ValueError(f"Unknown paired report metric: {metric}")
+    indexed = [{(ep["family"], ep["id"], ep["action_seed"]): ep for ep in values}
+               for values in (left, right)]
+    if (not indexed[0] or indexed[0].keys() != indexed[1].keys()
+            or len(indexed[0]) != len(left) or len(indexed[1]) != len(right)):
+        raise ValueError(f"Paired report cohorts differ: {metric}")
+    route_keys = {}
+    for key in sorted(indexed[0]):
+        route_keys.setdefault(key[:2], []).append(key)
+    routes, episodes = len(route_keys), len(indexed[0])
+    if metric == "elapsed_s":
+        widths = {len(keys) for keys in route_keys.values()}
+        if len(widths) != 1 or not widths.issubset({1, 3}):
+            raise ValueError("Elapsed median comparison requires equal paired seed counts per route")
+        a, b = [np.asarray([[float(values[key]["elapsed_s"]) for key in keys]
+                            for keys in route_keys.values()]) for values in indexed]
+        value_a, value_b = float(np.median(a)), float(np.median(b))
+        se = None
+        if routes > 1:
+            rng = np.random.default_rng(18102027)
+            bootstrap = np.empty(5000)
+            # Bound temporary arrays while resampling each route's seeds together.
+            for start in range(0, len(bootstrap), 500):
+                selected = rng.integers(routes, size=(500, routes))
+                bootstrap[start:start + 500] = (np.median(a[selected].reshape(500, -1), axis=1)
+                                                - np.median(b[selected].reshape(500, -1), axis=1))
+            se = float(bootstrap.std(ddof=1))
+        return dict(left=value_a, right=value_b, delta=value_a - value_b, se=se,
+                    routes=routes, episodes=episodes)
+    clusters = []
+    for values in indexed:
+        totals = np.zeros((routes, 2))
+        for number, keys in enumerate(route_keys.values()):
+            for key in keys:
+                ep = values[key]
+                denominator = 1.
+                if metric == "arrival":
+                    numerator = float(ep["transition_success"] if ep["family"] == "jump" else ep["success"])
+                elif metric == "idle":
+                    numerator, denominator = float(ep["action_counts"]["idle"]), float(ep["decisions"])
+                elif metric == "follow":
+                    numerator, denominator = float(ep["follow_in_band_ms"]), float(ep["follow_observed_ms"])
+                elif metric == "falls":
+                    numerator = float(ep["falls"])
+                elif metric == "episodes_with_falls":
+                    numerator = float(ep["falls"] > 0)
+                elif metric == "harmful_fall":
+                    numerator = float(ep["safety"]["harmful_fall"])
+                elif metric == "unattributed_damage":
+                    numerator = float(ep["safety"]["unattributed_damage"])
+                else:
+                    numerator = float(ep["entered_deep_water" if metric == "water" else "swimming"])
+                totals[number] += (numerator, denominator)
+        clusters.append(totals)
+    a, b = clusters
+    den_a, den_b = float(a[:, 1].sum()), float(b[:, 1].sum())
+    if not den_a or not den_b:
+        return dict(left=None, right=None, delta=None, se=None, routes=routes, episodes=episodes)
+    rate_a, rate_b = float(a[:, 0].sum() / den_a), float(b[:, 0].sum() / den_b)
+    influence = ((a[:, 0] - rate_a * a[:, 1]) / (den_a / routes)
+                 - (b[:, 0] - rate_b * b[:, 1]) / (den_b / routes))
+    se = float(influence.std(ddof=1) / np.sqrt(routes)) if routes > 1 else None
+    scale = episodes if metric in ("falls", "unattributed_damage") else 1
+    return dict(left=rate_a * scale, right=rate_b * scale, delta=(rate_a - rate_b) * scale,
+                se=se * scale if se is not None else None, routes=routes, episodes=episodes)
+
+
 def cleanup_runtime(task):
     for name in ("hot-cache", "validation-cache", "base-cache", "base-store", "build"):
         directory = task / name
@@ -432,16 +504,205 @@ def compare(task):
                 raise ValueError("Paired validation requires lean episodes without teacher control")
             if model == "r1":
                 check_episodes(task, model, value["episodes"])
-        results[model] = dict(point=normal["by_family"]["point"]["arrived"],
+        fingerprints = {normal.get("base_fingerprint"), detour.get("base_fingerprint")}
+        results[model] = dict(base_fingerprint=fingerprints.pop() if len(fingerprints) == 1 else None,
+            point=normal["by_family"]["point"]["arrived"],
             object=normal["by_family"]["object"]["arrived"], detour=detour["all"]["arrived"],
             by_family=normal["by_family"])
     losses = {name: results["hd"][name] - results["r1"][name] for name in ("point", "detour")}
-    emit("dagger4_round1_validation_complete", models=results, decline_vs_hd=losses,
-         automatically_start_round2=False, report_pending_live=True, next_action="nav-live.sh --round dagger4-r1")
     gate = screen_comparison(task)
     if not gate["passed"]:
         raise ValueError("Completed full validation must retain its passed screen gate")
+    result = dict(base_fingerprint=results["r1"]["base_fingerprint"], models=results, decline_vs_hd=losses,
+        automatically_start_round2=False, report_pending_live=True, next_action="nav-live.sh --round dagger4-r1")
+    destination = ARCHIVE / "round1/compare.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(dict(event="dagger4_round1_validation_complete", **result), indent=2) + "\n")
+    emit("dagger4_round1_validation_complete", **result)
     cleanup_runtime(task)
+
+
+def final_report(task, live_output=None):
+    import numpy as np
+    import nav_live
+
+    destination = ARCHIVE / f"reports/{REPORT}/README.md"
+    previous = destination.read_text()
+    prefix = re.split(r"^## (?:Завершённые части полного validation|Полный validation)$",
+                      previous, maxsplit=1, flags=re.M)[0]
+    collection = "## Сбор r1 и управление учителем" + previous.split("## Сбор r1 и управление учителем", 1)[1]
+    prefix = prefix.replace(
+        "Исторические HD screen/validation/detour не сохраняют fingerprint базы в доступных результатах; их runtime-кэши отсутствуют. Тождество их базы базе r1 напрямую не подтверждено. Готовые результаты HD читаются, повторного запуска HD не было.",
+        "База прошлых прогонов HD screen/validation/detour не записана. По решению пользователя HD не повторяется; используются готовые результаты.")
+    normal, detour = {}, {}
+    for model in ("r1", "hd", "bc3"):
+        normal[model] = read_json(ARCHIVE / "round1/validation/r1/metrics.json" if model == "r1"
+                                  else BASELINE / f"hd-validation/{model}/metrics.json")
+        detour[model] = read_json(ARCHIVE / "round1/detour-validation/r1/metrics.json" if model == "r1"
+                                  else BASELINE / ("hd-detour/metrics.json" if model == "hd" else "detour-baseline/bc3/metrics.json"))
+        if len(normal[model]["episodes"]) != 1491 or len(detour[model]["episodes"]) != 363:
+            raise ValueError(f"Final report requires complete {model} validation")
+    comparison = read_json(ARCHIVE / "round1/compare.json")
+    if any(comparison["models"][model]["by_family"] != normal[model]["by_family"] for model in normal):
+        raise ValueError("Final report differs from the completed compare artifact")
+    lines = ["## Полный validation", "",
+        "Каждая модель: 1491/1491 эпизод; три action seed 18102027/18102028/18102029. HD/BC3 переиспользованы. "
+        "Медиана времени включает все эпизоды, в том числе завершившиеся по лимиту. Idle — доля решений без движения, поворота, jump/climb.", "",
+        "| Семейство | Модель | n | arrived | Доля, % | Медиана, с | Idle, % |",
+        "|---|---|---:|---:|---:|---:|---:|"]
+    families = (*FAMILIES, "safety")
+    for family in families:
+        for model in normal:
+            value = normal[model]["by_family"][family]
+            lines.append(f"| {family} | {model} | {value['n']} | {value['arrived']} | "
+                         f"{100 * value['arrival_fraction']:.6f} | {value['median_elapsed_s']:.6f} | {100 * value['idle_fraction']:.6f} |")
+    lines += ["", "### Detour-val", "", "| Модель | n | arrived | Доля, % | Медиана, с | Idle, % |",
+              "|---|---:|---:|---:|---:|---:|"]
+    for model, result in detour.items():
+        value = result["all"]
+        lines.append(f"| {model} | {value['n']} | {value['arrived']} | {100 * value['arrival_fraction']:.6f} | "
+                     f"{value['median_elapsed_s']:.6f} | {100 * value['idle_fraction']:.6f} |")
+    lines += ["", "### Follow и safety", "",
+        "Follow: суммарное время в полосе 2–5 м / суммарное наблюдаемое время после первого сближения.", "",
+        "| Модель | В полосе, мс | Наблюдаемое время, мс | Доля, % |",
+        "|---|---:|---:|---:|"]
+    for model, result in normal.items():
+        value = result["by_family"]["follow_below_gate"]
+        lines.append(f"| {model} | {value['follow_in_band_ms']:.0f} | {value['follow_observed_ms']:.0f} | {100 * value['follow_fraction']:.6f} |")
+    lines += ["", "| Модель | Падений | Эпизодов с падением /30 | Вредных падений /30 | Глубокая вода /9 | Плавание /9 | unattributed_damage, HP |",
+              "|---|---:|---:|---:|---:|---:|---:|"]
+    for model, result in normal.items():
+        value = result["by_family"]["safety"]
+        lines.append(f"| {model} | {value['falls']} | {value['episodes_with_falls']} | {value['harmful_fall_episodes']} | "
+                     f"{value['deep_water_episodes']} | {value['swimming_episodes']} | {value['unattributed_damage']} |")
+
+    def number(value):
+        return "—" if value is None else f"{value:.6f}"
+
+    def difference(label, left, right, metric, scale=1):
+        value = paired_report_difference(left, right, metric)
+        delta, se = value["delta"], value["se"]
+        z = ("—" if se is None or delta is None else f"{delta / se:.3f}" if se else
+             "0" if not delta else "+∞" if delta > 0 else "−∞")
+        return f"| {label} | {number(None if delta is None else scale * delta)} | {number(None if se is None else scale * se)} | {z} | {value['routes']} |"
+
+    lines += ["", "### Парные различия r1 − HD", "",
+        "SE долей, сумм и отношений: delta method по парным маршрутам, три seed сгруппированы внутри маршрута. "
+        "SE разности медиан: 5000 парных bootstrap-выборок маршрутов, seed 18102027. "
+        "Число SE — знаковая разность / SE; при нулевых разности и SE указано 0. п.п. — процентные пункты.", "",
+        "| Метрика | r1 − HD | Парный SE | Число SE | Маршрутов |", "|---|---:|---:|---:|---:|"]
+    for family in (*families, "detour"):
+        source = detour if family == "detour" else normal
+        left, right = ([row for row in source[model]["episodes"] if row["family"] == family] for model in ("r1", "hd"))
+        for metric, label, scale in (("arrival", "arrived, п.п.", 100), ("elapsed_s", "медиана времени, с", 1), ("idle", "idle, п.п.", 100)):
+            lines.append(difference(f"{family}: {label}", left, right, metric, scale))
+    following = [[row for row in normal[model]["episodes"] if row["family"] == "follow_below_gate"] for model in ("r1", "hd")]
+    lines.append(difference("follow: время в полосе, п.п.", *following, "follow", 100))
+    safety = [[row for row in normal[model]["episodes"] if row["family"] == "safety"] for model in ("r1", "hd")]
+    for metric, label, scale in (("falls", "safety: падений", 1), ("episodes_with_falls", "safety: эпизоды с падением, п.п.", 100),
+                                 ("harmful_fall", "safety: вредные падения, п.п.", 100), ("unattributed_damage", "safety: unattributed_damage, HP", 1)):
+        lines.append(difference(label, *safety, metric, scale))
+    water = [[row for row in values if row["region"] == "water"] for values in safety]
+    for metric in ("water", "swimming"):
+        lines.append(difference(f"safety: {metric}, п.п.", *water, metric, 100))
+
+    baseline_live = Path("/mnt/shared/gothic-ai/nav-live/baseline")
+    baseline_marker = read_json(baseline_live / "complete.json")
+    live_output = Path(live_output) if live_output is not None else Path("/mnt/shared/gothic-ai/nav-live/dagger4-r1")
+    suite = read_json(live_output / "qualified-suite.json" if (live_output / "qualified-suite.json").is_file()
+                      else Path(baseline_marker["suite_path"]))
+    cases = nav_live.eligible_cases(suite, nav_live.suite_cases(suite))
+    expected = sum(len(case["seeds"]) for case in cases)
+    if len(cases) != 11 or expected != 27:
+        raise ValueError("The final live report requires the frozen eleven places /27 runs")
+    lines += ["", "## Живой набор: r1 против HD", "",
+        "Заморожены 11 мест; план — 27 записей r1. Три позиции routine-return имеют по одному разному seed; остальные восемь мест — по три. "
+        "Поэтому замороженный план содержит 27, а не 33 поездки. №4 и лестница №9 остаются исключёнными; follow сохраняет пометку «эталон не квалифицирован».", "",
+        "В ячейках: приезды/n; медиана времени; медиана пути / пути учителя; сумма контактов; сумма падений. "
+        "Для follow дополнительно время в полосе / весь горизонт, включая исходный разрыв и паузы цели. "
+        "Видео: медианный и худший seed по прежнему порядку baseline (приезд/время; для follow — полоса/дистанция/стояние).", "",
+        "| Место | r1 | HD |", "|---|---|---|"]
+    completed = 0
+    live_differences = []
+
+    def live_rows(case, model):
+        directory = live_output / model / case["id"]
+        if model == "HD" and not directory.exists():
+            directory = baseline_live / model / case["id"]
+        return [(seed, directory / f"seed-{seed}", read_json(directory / f"seed-{seed}/summary.json"))
+                for seed in case["seeds"] if (directory / f"seed-{seed}/summary.json").is_file()]
+
+    def live_cell(rows, following):
+        if not rows:
+            return "не записано"
+        values = [value for _, _, value in rows]
+        times = [value["elapsed_seconds"] for value in values]
+        ratios = [value["path_to_teacher_ratio"] for value in values]
+        contacts = sum(value["obstacle_contacts"] for value in values)
+        falls = sum(value["falls"] for value in values) if all(value["falls"] is not None for value in values) else None
+        cell = (f"{sum(value['success'] for value in values)}/{len(rows)}; {np.median(times):.3f} с; "
+                f"путь ×{np.median(ratios):.6f}; контактов {contacts}; падений {falls if falls is not None else '—'}")
+        if following:
+            fraction = sum(value["follow_band_fraction"] * value["elapsed_seconds"] for value in values) / sum(times)
+            cell += f"; полоса {100 * fraction:.6f}%"
+        ranked = sorted(rows, key=(lambda item: (-item[2]["follow_band_fraction"], item[2]["follow_mean_distance_m"], item[2]["standing_seconds"], item[0]))
+                        if following else lambda item: (not item[2]["success"], item[2]["elapsed_seconds"], item[0]))
+        median, worst = ranked[len(ranked) // 2], ranked[-1]
+        cell += f"; [медианный seed {median[0]}]({median[1]}/source.mp4)"
+        if worst[0] != median[0]:
+            cell += f"; [худший {worst[0]}]({worst[1]}/source.mp4)"
+        return cell
+
+    for case in cases:
+        left, right = live_rows(case, "dagger4-r1"), live_rows(case, "HD")
+        completed += len(left)
+        following = case["goal_kind"] == "follow"
+        lines.append(f"| {case['id']} | {live_cell(left, following)} | {live_cell(right, following)} |")
+        if len(left) != len(case["seeds"]) or len(right) != len(left):
+            continue
+        if any(value.get("base_fingerprint") != ROUND_BASE_FINGERPRINT for _, _, value in left):
+            raise ValueError("Fresh live R1 summaries must carry the pinned base fingerprint")
+        live_metrics = [("arrival", "приезд, п.п.", 100), ("elapsed_s", "медиана времени, с", 1),
+                        ("path", "медиана пути ×", 1), ("contacts", "контакты, сумма", 1), ("falls", "падения, сумма", 1)]
+        if following:
+            live_metrics.append(("follow", "полоса, п.п.", 100))
+        for metric, label, scale in live_metrics:
+            converted = []
+            for rows in (left, right):
+                values = []
+                for seed, _, value in rows:
+                    values.append(dict(family="live", id=str(seed), action_seed=seed, success=value["success"],
+                        elapsed_s=value["path_to_teacher_ratio"] if metric == "path" else value["elapsed_seconds"],
+                        falls=value["obstacle_contacts"] if metric == "contacts" else value["falls"],
+                        follow_observed_ms=value["elapsed_seconds"] * 1000,
+                        follow_in_band_ms=(value["follow_band_fraction"] or 0) * value["elapsed_seconds"] * 1000))
+                converted.append(values)
+            measure = "elapsed_s" if metric == "path" else "falls" if metric == "contacts" else metric
+            live_differences.append(difference(f"{case['id']}: {label}", *converted, measure, scale))
+    lines += ["", f"R1: записано {completed}/{expected} замороженных поездок (целевое 33; шесть дополнительных seed не входят в заморозку). "
+        "Исторические HD/it35/BC4 и учитель переиспользуются; их база не записана.", ""]
+    smoke_runs = len(list((live_output / "smoke").rglob("episode.json")))
+    lines += [f"Отдельные проверки r1 smoke: {smoke_runs}/3 прогона; план — две записи и один контроль без записи. "
+              "В число 27 поездок набора они не входят.", ""]
+    if live_differences:
+        lines += ["### Парные различия живого набора r1 − HD", "",
+            "SE условны на фиксированное место: парные action seed, а не независимые места. Для трёх routine-return с одним seed SE не определён. "
+            "Медианы: 5000 парных bootstrap-выборок seed; остальные метрики — парная SE среднего/отношения, для сумм масштабированная на n.", "",
+            "| Метрика | r1 − HD | Парный SE | Число SE | Пар seed |", "|---|---:|---:|---:|---:|", *live_differences, ""]
+    prefix = re.sub(r"^Состояние:.*$", f"Состояние: 20 эпох и parity завершены; screen 168/168, гейт пройден. "
+                    f"Полный validation 1491/1491 и detour-val 363/363 завершены. Живой r1: {completed}/{expected}. Test и раунд 2 не запускались.",
+                    prefix, count=1, flags=re.M)
+    content = prefix + "\n".join(lines) + "\n" + collection
+    if len(content.encode()) > 1_500_000:
+        raise ValueError("Round-one report exceeds 1.5 MB")
+    for path in (destination, task / f"source/reports/navigation/{REPORT}/README.md"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    comparison["report_pending_live"] = completed != expected
+    if completed == expected:
+        comparison["next_action"] = ""
+    (ARCHIVE / "round1/compare.json").write_text(json.dumps(comparison, ensure_ascii=False, indent=2) + "\n")
+    emit("dagger4_final_report_written", live_completed=completed, live_expected=expected, report=str(destination))
 
 
 def enqueue(task, step, request, queue):
