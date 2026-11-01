@@ -57,7 +57,11 @@ async def accept(purse):
     await purse.deals.accept(deal.id, deal.version)
 
 
-@pytest.mark.parametrize("words", [None, (), ("Что мне теперь делать?",), ("Я долго шёл",), ("Долгий путь",)])
+@pytest.mark.parametrize(
+    "words",
+    [None, (), ("Что мне теперь делать?",), ("Я долго шёл",), ("Долгий путь",), ("Стой, сколько стоит меч?",),
+     ("Мы взаимно уважаем друг друга",), ("Да.",)],
+)
 async def test_gold_requires_request_before_window(purse, words):
     args = {"npc_gives": gold(30)}
     kwargs = {} if words is None else {"hero_words": words}
@@ -91,6 +95,13 @@ async def test_gold_requires_request_before_window(purse, words):
         "долгов",
         "долгами",
         "долгах",
+        # 2026-11-01 play: «Ксардас, займи, пожалуйста» as speech recognition wrote it, then the sums
+        "Ксардас, заимибо, пожалуйста.",
+        "Не, не, давай, 200.",
+        "Дай двести",
+        "сотню",
+        "полсотни",
+        "пятьдесят",
     ],
 )
 async def test_money_stems_and_debt_forms_are_requests(purse, word):

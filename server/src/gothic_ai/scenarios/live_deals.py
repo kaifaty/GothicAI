@@ -17,6 +17,10 @@ from .lies import amends_storylet
 from .live import LiveSuite
 from .npc_life import lead_scenario, meet_scenario
 
+SCENARIOS = {
+    "live_deals": ("LIVE", None),
+}
+
 if TYPE_CHECKING:
     from ..amends import Amends
     from ..bounty import Bounty

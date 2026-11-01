@@ -21,6 +21,8 @@ class ParticleFx;
 class PackedMesh;
 class gtime;
 class ChunkResidency;
+class ObjVisual;
+struct ChunkId;
 namespace asset { struct WorldMesh; }
 
 class WorldView {
@@ -30,6 +32,7 @@ class WorldView {
     ~WorldView();
 
     void startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs);
+    void startVobStreaming(ChunkResidency& residency);
     void setTextureResidency(ChunkResidency* residency) { visuals.setTextureResidency(residency); }
     void prepareLandscapeWork();
     void finishLandscapeUpdate();
@@ -57,6 +60,7 @@ class WorldView {
     void setHiZ(const Tempest::Texture2d& hiZ);
     void setSceneImages(const Tempest::Texture2d& clr, const Tempest::Texture2d& depthAux, const Tempest::ZBuffer& depthNative);
     void setWindEnabled(bool enabled, uint64_t period);
+    void setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs);
     void setClothWind(bool enabled, float scale);
     void setOriginalClothMesh(const PackedMesh& mesh);
     void setOriginalClothVisible(bool visible);
@@ -75,10 +79,11 @@ class WorldView {
     void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
     void drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
 
     MeshObjects::Mesh   addView      (std::string_view visual, int32_t headTex, int32_t teethTex, int32_t bodyColor);
-    MeshObjects::Mesh   addView      (const ProtoMesh* visual);
+    MeshObjects::Mesh   addView      (const ProtoMesh* visual, int32_t material = 0);
     MeshObjects::Mesh   addItmView   (std::string_view visual, int32_t material);
     MeshObjects::Mesh   addAtachView (const ProtoMesh::Attach& visual, const int32_t version);
     MeshObjects::Mesh   addStaticView(const ProtoMesh* visual, bool staticDraw = false);
@@ -111,6 +116,12 @@ class WorldView {
     std::unique_ptr<Landscape> originalCloth;
     struct LandscapeStreaming;
     std::unique_ptr<LandscapeStreaming> streaming;
+    struct VobStreaming;
+    std::shared_ptr<VobStreaming> vobStreaming;
+    void addVob(ObjVisual& visual, ChunkId id);
+    void removeVob(ObjVisual& visual, bool release = true);
+    void moveVob(ObjVisual& visual, ChunkId id);
+    void replaceVob(ObjVisual& previous, ObjVisual& next);
 
     bool needToUpdateCmd(uint8_t frameId) const;
     void invalidateCmd();
@@ -118,4 +129,6 @@ class WorldView {
   friend class LightGroup::Light;
   friend class PfxEmitter;
   friend class TrlObjects;
+  friend class ObjVisual;
+  friend struct MeshGltfTest;
   };

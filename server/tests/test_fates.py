@@ -1,15 +1,23 @@
 """Chronicle data follows save forks without losing alternate deeds or revealing secrets."""
 
+import asyncio
 import json
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
 from gothic_ai import fates as fates_module
 from gothic_ai.chronicle import Chronicle
+from gothic_ai.fatecard import FALLBACK, FateCards
 from gothic_ai.fates import Fates, collect_fates
+from gothic_ai.llm import ToolCall
+from gothic_ai.llm.fake import FakeBackend, FakeStep
+from gothic_ai.llm.off import OffBackend
 from gothic_ai.memory import MemoryStore
+from gothic_ai.protocol import FateEnd
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import _until
 
@@ -228,3 +236,173 @@ async def test_chronicle_get_always_answers_even_disabled_empty_or_without_sessi
             assert fake.received == [{"type": "chronicle", "req": "empty", "fate": [], "others": []}]
         finally:
             await fates.close()
+
+
+@asynccontextmanager
+async def fate_world(store, backend, *, enabled=True):
+    fake = FakeGame(branch="A")
+    async with connected(fake) as link:
+        chronicle = Chronicle(link, store)
+        cards = FateCards(link, chronicle, backend, enabled=enabled)
+        try:
+            yield fake, chronicle, cards
+        finally:
+            await cards.close()
+
+
+def fate_answer(**changes):
+    return {"title": "Сдержавший слово", "text": "Герой вернул Лобарту золото.",
+            "best": ["first", "third"], **changes}
+
+
+def fate_responses(fake):
+    return [m for m in fake.received if m["type"] == "fate_card"]
+
+
+async def test_fate_end_model_card_repeats_and_early_load_starts_a_new_ending(store):
+    shared = record(store, fact="crime", victim_name="Лобарт", witnesses=["SECRET"])
+    for id in ("first", "second", "third", "fourth"):
+        award(store, id)
+    record(store, fact="feat_epilogue", feat="first", name="Лобарт", text="Позже Лобарт узнал правду.")
+    record(store, fact="feat_epilogue_shown", feat="first")
+    record(store, fact="feat_epilogue", feat="second", name="Тайный", text="HIDDEN_EPILOGUE")
+    for n in range(45):
+        record(store, fact="visited", place=f"PLACE_{n}", day=8)
+    record(store, fact="npc_intent", name="Тайный", plan="HIDDEN_PLAN")
+    backend = FakeBackend(script=[FakeStep(tool_calls=[ToolCall(
+        "write_fate", fate_answer(best=["third", "first"]),
+    )]), FakeStep(tool_calls=[ToolCall("write_fate", fate_answer(best=[]))])], delay=0)
+    async with fate_world(store, backend) as (fake, chronicle, _):
+        fake.vars["KAPITEL"] = 4
+        fake.day = 12
+        # Concurrent requests share the same in-flight model call and each get one response.
+        for req in ("one", "two"):
+            await fake.send(type="fate_end", req=req, kind="death", killer="WOLF", name="Волк")
+        await _until(lambda: len(fate_responses(fake)) == 2)
+        assert [m["req"] for m in fate_responses(fake)] == ["one", "two"]
+        card = fate_responses(fake)[0]
+        assert (card["title"], card["text"], ids_of_dicts(card["feats"])) == (
+            fate_answer()["title"], fate_answer()["text"], ["first", "third"],
+        )
+        assert (card["chapter"], card["day"], card["count"], card["off"]) == (4, 12, 4, False)
+        [ending] = chronicle.facts("fate_end")
+        assert ending == {"fact": "fate_end", "kind": "death", "killer": "WOLF", "name": "Волк",
+                          **fate_answer(best=["third", "first"]), "chapter": 4, "day": 12,
+                          "fallback": False}
+        assert len(backend.calls) == 1 and backend.cache_keys == ["chronicler"]
+        context = json.loads(backend.calls[0][1][0].content)
+        assert len(context["facts"]) == 40 and context["facts"][0]["place"] == "PLACE_5"
+        assert context["kind"] == "death" and context["name"] == "Волк"
+        assert context["feats"][0]["epilogue"] == "Позже Лобарт узнал правду."
+        assert context["feats"][1]["epilogue"] == ""
+        assert "HIDDEN_PLAN" not in json.dumps(context) and "SECRET" not in json.dumps(context)
+        await fake.send(type="fate_end", req="repeat", kind="finale")
+        await _until(lambda: len(fate_responses(fake)) == 3)
+        assert len(backend.calls) == 1 and len(chronicle.facts("fate_end")) == 1
+        assert fate_responses(fake)[-1]["title"] == card["title"]
+        await fake.send(type="session", branch="early", parent="A", parent_seq=shared, reason="load")
+        await _until(lambda: chronicle.branch == "early")
+        await fake.send(type="fate_end", req="new-fate", kind="finale")
+        await _until(lambda: len(fate_responses(fake)) == 4)
+        assert len(backend.calls) == 2
+        assert fate_responses(fake)[-1]["feats"] == []
+        assert chronicle.facts("fate_end")[0]["kind"] == "finale"
+
+
+def ids_of_dicts(feats):
+    return [f["id"] for f in feats]
+
+
+@pytest.mark.parametrize("bad_text", [
+    "Герой встретил Диего.", "Я вернул золото.", "На моём пути было золото.",
+])
+async def test_fate_end_retries_invalid_name_or_person_then_records_fallback(store, bad_text):
+    record(store, fact="npc_intent", name="Диего", plan="SECRET")
+    for id in ("first", "second", "third", "fourth"):
+        award(store, id)
+    backend = FakeBackend(tool_calls=[ToolCall("write_fate", fate_answer(text=bad_text))], delay=0)
+    async with fate_world(store, backend) as (fake, chronicle, _):
+        await fake.send(type="fate_end", req="bad", kind="death")
+        await _until(lambda: bool(fate_responses(fake)))
+        [card] = fate_responses(fake)
+        assert (card["req"], card["title"], card["text"]) == ("bad", *FALLBACK["death"])
+        assert ids_of_dicts(card["feats"]) == ["second", "third", "fourth"]
+        assert len(backend.calls) == 2
+        assert len(backend.calls[-1][1]) == 2
+        assert chronicle.facts("fate_end")[0]["fallback"] is True
+
+
+@pytest.mark.parametrize("kind", ["death", "wrath", "finale"])
+async def test_fate_end_without_model_uses_exact_fallback(store, kind):
+    async with fate_world(store, OffBackend()) as (fake, chronicle, _):
+        await fake.send(type="fate_end", req=kind, kind=kind)
+        await _until(lambda: bool(fate_responses(fake)))
+        [card] = fate_responses(fake)
+        assert (card["title"], card["text"]) == FALLBACK[kind]
+        assert card["req"] == kind and card["feats"] == []
+        assert chronicle.facts("fate_end")[0]["fallback"] is True
+
+
+async def test_fate_end_model_runtime_error_still_sends_one_card(store, monkeypatch):
+    backend = FakeBackend(delay=0)
+
+    async def failed_stream(**kwargs):
+        raise RuntimeError("model unavailable")
+        yield
+
+    monkeypatch.setattr(backend, "stream", failed_stream)
+    async with fate_world(store, backend) as (fake, chronicle, _):
+        await fake.send(type="fate_end", req="error", kind="wrath")
+        await _until(lambda: bool(fate_responses(fake)))
+        [card] = fate_responses(fake)
+        assert card["req"] == "error" and (card["title"], card["text"]) == FALLBACK["wrath"]
+        assert chronicle.facts("fate_end")[0]["fallback"] is True
+
+
+async def test_disabled_fate_card_sends_off_without_clock_model_or_fact(store):
+    backend = FakeBackend(delay=0)
+    async with fate_world(store, backend, enabled=False) as (fake, chronicle, _):
+        await fake.send(type="fate_end", req="off", kind="finale")
+        await _until(lambda: bool(fate_responses(fake)))
+        assert fake.received == [{"type": "fate_card", "req": "off", "off": True, "title": "",
+                                  "text": "", "feats": [], "chapter": 1, "day": 0, "count": 0}]
+        assert not backend.calls and not chronicle.facts("fate_end")
+
+
+async def test_fate_card_timeout_covers_both_attempts_with_fake_model_and_clock(store, monkeypatch):
+    loop = asyncio.get_running_loop()
+    clock = loop.time
+    offset = 0
+    cancelled = False
+    calls = 0
+    backend = FakeBackend(delay=0)
+
+    async def stalled_retry(**kwargs):
+        nonlocal offset, cancelled, calls
+        calls += 1
+        if calls == 1:
+            offset += 12
+            yield ToolCall("write_fate", fate_answer(text="Я был здесь."))
+        else:
+            # The second attempt has only eight seconds left in the shared budget.
+            offset += 8.01
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled = True
+
+    monkeypatch.setattr(backend, "stream", stalled_retry)
+    async with fate_world(store, backend) as (_, chronicle, cards):
+        sent = []
+        async def send(command):
+            sent.append(command)
+        monkeypatch.setattr(cards.link, "send", send)
+        monkeypatch.setattr(cards.link, "story_state", AsyncMock(return_value={"day": 9, "vars": {}}))
+        monkeypatch.setattr(loop, "time", lambda: clock() + offset)
+        started = loop.time()
+        await cards._answer(FateEnd(type="fate_end", req="timeout", kind="death"), "A")
+        elapsed = loop.time() - started
+        assert 20 <= elapsed <= 21 and calls == 2 and cancelled
+        [card] = [command for command in sent if command.type == "fate_card"]
+        assert card.req == "timeout" and (card.title, card.text) == FALLBACK["death"]
+        assert chronicle.facts("fate_end")[0]["fallback"] is True

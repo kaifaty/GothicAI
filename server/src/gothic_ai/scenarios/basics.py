@@ -62,6 +62,22 @@ from .common import (
 )
 from .responses_server import ResponsesServer, reply
 
+SCENARIOS = {
+    "m0": ("OFF", {"save": False, "timeout": 240}),
+    "m1": ("GIVEN", {"save": False, "timeout": 240}),
+    "m2": ("GIVEN", {"save": False, "timeout": 240}),
+    "m3": ("GIVEN", {"save": False, "timeout": 240}),
+    "m4": ("OFF", {"save": False, "timeout": 240}),
+    "m5": ("GIVEN", {"save": False, "timeout": 240}),
+    "m5b": ("OFF", {"save": False, "timeout": 240}),
+    "m5c": ("GIVEN", {"save": False, "timeout": 240}),
+    "m5e": ("GIVEN", {"save": False, "timeout": 240}),
+    "m6": ("OFF", {"save": False, "timeout": 240}),
+    "svm_lines": ("OFF", {"save": False, "timeout": 240}),
+    "tts": ("GIVEN", {"save": False, "timeout": 240}),
+    "websocket": ("OFF", {"save": True, "timeout": 240}),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 
 MOOD_REPLY = (

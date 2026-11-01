@@ -369,6 +369,7 @@ void Renderer::prepareUniforms(WorldView& wview) {
   wview.setHiZ(textureCast<const Texture2d&>(hiz.hiZ));
   wview.setGbuffer(textureCast<const Texture2d&>(gbufDiffuse), textureCast<const Texture2d&>(gbufNormal));
   wview.setSceneImages(textureCast<const Texture2d&>(sceneOpaque), textureCast<const Texture2d&>(sceneDepth), zbuffer);
+  wview.setFog(sky.fogLut3D, sky.fogLut3DMs);
   wview.setWindEnabled(settings.zWindEnabled, settings.windPeriod);
   if(auto* world = Gothic::inst().world())
     wview.setClothWind(world->physic()->clothEnabled(),world->physic()->cloth().windScale());
@@ -735,9 +736,26 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Sun&Moon");
   drawSunMoon(cmd, wview);
+  // Multiply darkens what lies behind it, mostly a surface it is a decal on: the fog pass of that depth goes over it.
+  cmd.setDebugMarker("Multiply");
+  wview.drawMultiply(cmd, fId);
+  waterTiming.finish();
+
+  // Reflections and fog go under the other translucent surfaces: those don't write depth, and the fog pass
+  // reads the depth of what lies behind them. They take the fog of their own depth.
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
+  drawReflections(cmd, wview);
+  if(!camera.isInWater()) {
+    FrameProfile::Scope fogTiming(FrameProfile::Zone::EncodePost);
+    cmd.setDebugMarker("Fog");
+    drawFog(cmd, wview);
+    }
+
+  FrameProfile::Scope translucentTiming(FrameProfile::Zone::EncodeWater);
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Translucent");
   wview.drawTranslucent(cmd, fId);
-  waterTiming.finish();
+  translucentTiming.finish();
 
   //drawHashDbg(sceneLinear, cmd, wview);
   drawProbesDbg(cmd, wview);
@@ -751,15 +769,11 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   drawLightsHud(cmd, wview);
 
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
-  drawReflections(cmd, wview);
   drawGizmo(cmd, wview);
   FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
   if(camera.isInWater()) {
     cmd.setDebugMarker("Underwater");
     drawUnderwater(cmd, wview);
-    } else {
-    cmd.setDebugMarker("Fog");
-    drawFog(cmd, wview);
     }
 
   auto& tonemapTarget = upscale.input.isEmpty() ? result : upscale.input;

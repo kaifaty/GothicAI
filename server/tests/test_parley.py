@@ -799,6 +799,20 @@ async def test_bandit_needs_a_cause_to_fight_a_companion_and_keeps_the_chosen_ta
         assert not any(op.get("do") == "attack" for msg in fake.story for op in msg.get("effects", []))
 
 
+async def test_disabled_hail_keeps_the_lease_and_negotiation_rules(monkeypatch):
+    async with world() as (_, link, dialogue, _, parley):
+        approaches, turns = hail_body(monkeypatch, dialogue, parley)
+        parley.hail = False
+        sent = verdicts(monkeypatch, link)
+        await parley._held(held(), parley._generation)
+        assert [(s.to, s.ms) for s in sent] == [("parley", LEASE_MS)]
+        assert not parley._pending_hails and not approaches and not turns
+        conv = dialogue.conversations[BRAGO]
+        assert dialogue._set_intent(conv, FIGHT, link.snapshots[BRAGO]).status == "rejected"
+        await demand(dialogue, parley)
+        assert parley.ultimatum(BRAGO)["status"] == "active"
+
+
 async def test_no_cause_leases_before_a_slow_approach_and_hails_the_leader_once(monkeypatch):
     async with world() as (_, link, dialogue, chronicle, parley):
         approaches, turns = hail_body(monkeypatch, dialogue, parley)
@@ -1052,6 +1066,17 @@ async def test_important_dialog_stays_native_until_story_patches_disable_it(monk
         await parley.patches.apply({"op": "enable", "node": node.id})
         await parley._held(held(key="native-again"), parley._generation)
         assert sent[-1].to == "scripts"
+
+
+async def test_an_added_dialog_on_the_branch_keeps_the_bandit_negotiable():
+    # 2026-11-01 play: an amends dialog (add_node, its node a dict) broke every later turn of Brago's band
+    async with world() as (_, link, _, chronicle, parley):
+        node = Node("DIA_BANDIT_WARN", "dialog", BRAGO, "", [], set(), important=True)
+        parley.graph = StoryGraph({node.id: node}, {}, {}, {}, {})
+        parley.patches = StoryPatches(link, chronicle.memory)
+        await parley.patches.apply({"op": "disable", "node": node.id})
+        await parley.patches.apply({"op": "add_node", "node": {"id": "DIR_AMENDS_X_1", "npc": BRAGO}})
+        assert parley.negotiable(BRAGO) and parley.situation(BRAGO) is not None
 
 
 @pytest.fixture(scope="module")

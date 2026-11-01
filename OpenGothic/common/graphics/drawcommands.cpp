@@ -146,6 +146,11 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     cmd.setBinding(L_GDepth,   *scene.sceneDepth, Sampler::nearest (ClampMode::MirroredRepeat));
     }
 
+  if(v==SceneGlobals::V_Main && Material::isFogRequired(cx.alpha)) {
+    cmd.setBinding(L_FogLut,   *scene.fogLut,   Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setBinding(L_FogLutMs, *scene.fogLutMs, Sampler::bilinear(ClampMode::ClampToEdge));
+    }
+
   if(v==SceneGlobals::V_Vsm) {
     cmd.setBinding(L_CmdOffsets, views[v].indirectCmd);
     cmd.setBinding(L_VsmPages,   *scene.vsmPageList);

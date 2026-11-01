@@ -2,15 +2,35 @@
 
 #include <Tempest/Vec>
 #include <cstdint>
+#include <string_view>
 
 namespace MeleeImpact {
   enum class Weapon : uint8_t { Fist, OneHand, TwoHand };
+  enum class HeavyHit : uint8_t { None, TwoHanded, Downward, Posture };
+  enum class ArmorClass : uint8_t { Light, Medium, Heavy };
+  enum class BeastSize : uint8_t { Small, Medium, Huge };
+  enum class BackstabKind : uint8_t { None, Unaware, Sleeping, Stunned };
+
+  float backstabAngle(float targetFacingDeg, float attackerBearingDeg);
+  bool backstabRecentHit(uint64_t nowMs, uint64_t lastHitMs);
+  BackstabKind backstabKind(float angleDeg, int32_t sneakTalent, bool sleeping, bool stunned, bool aware);
+  float backstabMultiplier(BackstabKind kind, bool hugeBeast, float stunBonus);
+
+  HeavyHit heavyHit(Weapon weapon, const Tempest::Vec3& velocityCmS, float postureIncrease);
+  ArmorClass armorClass(int32_t edgeProtection);
+  float armorThresholdScale(ArmorClass armor);
+  BeastSize beastSize(float bodyMassKg);
+  bool beastCanAccumulatePosture(float bodyMassKg);
+  uint64_t stunDuration(std::string_view reason);
 
   // World contact velocity is in cm/s; the returned impulse is in N s.
   Tempest::Vec3 impulse(Weapon weapon, const Tempest::Vec3& velocityCmS, float surfaceAngleDeg);
+  // Unarmed beasts strike with 10% of their body mass at 5 m/s, capped at 60 N s.
+  float beastImpulse(float bodyMassKg);
   // Knockdown threshold multiplier from the attacker's weapon hit chance (percent) and strength
   // against the defender's best weapon hit chance: 1.248 for two 60% masters of strength 60.
   float skillThresholdScale(int32_t attackerHitChance, int32_t attackerStrength, int32_t defenderHitChance);
+  float beastSkillThresholdScale(int32_t defenderHitChance);
   float postureThresholdScale();
   float postureIncrease(float impulseNs, float bodyMassKg, float thresholdScale = 1.f, float balanceScale = 1.f);
 

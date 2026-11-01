@@ -2385,6 +2385,11 @@ class DialogueManager:
             await self._speak(
                 conv, trigger, kind, relevant, overlay=overlay, tools=tools, body=body, to=to, act=act
             )
+        except Exception as err:
+            # a bug, not the model: logged now (conv.reply keeps the task), and the chat does not keep
+            # "<npc> думает..." for good
+            log.exception("%s: the %s turn failed", conv.npc, kind)
+            await self._status(conv, "error", f"сбой сервера ({type(err).__name__})")
         finally:
             if self.floor is not None:
                 self.floor.done(conv.npc)
@@ -2441,13 +2446,13 @@ class DialogueManager:
             sound = await first if first is not None else ""
             if react and full is not None:  # the answer: the conversational model's, on the whole situation
                 situation_text, _, sight = await full
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, Exception) as err:
             for task in (first, full):
                 if task is not None:
                     task.cancel()
             if first is not None:
                 await asyncio.gather(first, return_exceptions=True)
-            trace.close("cancelled")
+            trace.close("cancelled" if isinstance(err, asyncio.CancelledError) else "error")
             raise
         if sound:
             situation_text += SOUND_SAID.format(sound)
@@ -2530,6 +2535,11 @@ class DialogueManager:
                 raise
             self._commit(conv, trigger, state.text, kind, state.to)  # the npc remembers what it already said
             trace.close("cancelled")
+            raise
+        except Exception:
+            if state.text:  # what the hero heard is remembered; _turn says the rest
+                self._commit(conv, trigger, state.text, kind, state.to)
+            trace.close("error")
             raise
         finally:
             conv.acting = False
@@ -2750,6 +2760,8 @@ class DialogueManager:
                     await asyncio.wait_for(ext.prepare(conv.npc), PREPARE_S)
                 except (GameError, TimeoutError) as err:
                     log.warning("%s: %s not ready: %s", conv.npc, type(ext).__name__, err)
+                except Exception:
+                    log.exception("%s: %s prepare failed", conv.npc, type(ext).__name__)
         snap = self.link.snapshots.get(conv.npc)
         sight = self.sight(conv.npc, snap) if self.sight is not None else None
         situation_text = npc_tools.render_situation(snap, conv.intent, sight, brief=brief)
@@ -2757,7 +2769,12 @@ class DialogueManager:
             situation_text += "\n" + balance
         if not brief:
             for ext in self.extensions:
-                if extra := ext.situation(conv.npc):
+                try:
+                    extra = ext.situation(conv.npc)
+                except Exception:  # one extension's bug must not silence the npc: it answers without it
+                    log.exception("%s: %s situation failed", conv.npc, type(ext).__name__)
+                    continue
+                if extra:
                     situation_text += "\n" + extra
         if not brief and self.fights_hero(conv.npc):
             situation_text += "\n" + FIGHTS_HERO
@@ -2807,41 +2824,46 @@ class DialogueManager:
                     allowed=None if quick else [t.name for t in state.tools],
                     cache_key=conv.npc,
                 )
-                async for event in with_deadlines(events, first_s=first_s, idle_s=idle_s, name=llm.name):
-                    if isinstance(event, Done):
-                        done = event
-                    if not isinstance(event, TextDelta):
-                        continue
-                    text = event.text
-                    if quick:
-                        written += text
-                        if (end := paragraph_end(written)) is not None:
-                            text = text[: max(0, end - (len(written) - len(text)))]  # this chunk's part
-                            done = Done(written[:end], (Message("assistant", written[:end]),))
-                    now = time.monotonic()
-                    if not speak:
+                # closed here, in the turn's task: a `break` would leave the quick model's slot to the loop's
+                # finalizer, in another context
+                async with aclosing(
+                    with_deadlines(events, first_s=first_s, idle_s=idle_s, name=llm.name)
+                ) as answer:
+                    async for event in answer:
+                        if isinstance(event, Done):
+                            done = event
+                        if not isinstance(event, TextDelta):
+                            continue
+                        text = event.text
+                        if quick:
+                            written += text
+                            if (end := paragraph_end(written)) is not None:
+                                text = text[: max(0, end - (len(written) - len(text)))]  # this chunk's part
+                                done = Done(written[:end], (Message("assistant", written[:end]),))
+                        now = time.monotonic()
+                        if not speak:
+                            first = first if first is not None else now - started
+                            continue  # the quick model said the npc's line: these words stay unsaid
+                        if first is None and state.relevant is not None and not state.relevant():
+                            raise StaleTurn
                         first = first if first is not None else now - started
-                        continue  # the quick model said the npc's line: these words stay unsaid
-                    if first is None and state.relevant is not None and not state.relevant():
-                        raise StaleTurn
-                    first = first if first is not None else now - started
-                    if state.first_delta is None:
-                        state.first_delta = now - state.started
-                    pieces = state.spoken(
-                        state.moods.feed(text),
-                        {t.name for t in self._request_tools([*npc_tools.TOOLS, *state.tools])},
-                        conv.npc,
-                    )
-                    # The chat shows checked words as they arrive, before their subtitle lines.
-                    if (
-                        now - state.shown_at >= CHAT_TEXT_EVERY
-                        and (shown := to_game_text(state.text)) != state.shown
-                    ):
-                        state.shown, state.shown_at = shown, now
-                        await self.link.send(ChatTextCmd(npc=conv.npc, reply=state.reply, text=shown))
-                    await self._feed_lines(conv, state, pieces)
-                    if quick and done is not None:
-                        break  # the line is over: the stream is closed, the server stops writing
+                        if state.first_delta is None:
+                            state.first_delta = now - state.started
+                        pieces = state.spoken(
+                            state.moods.feed(text),
+                            {t.name for t in self._request_tools([*npc_tools.TOOLS, *state.tools])},
+                            conv.npc,
+                        )
+                        # The chat shows checked words as they arrive, before their subtitle lines.
+                        if (
+                            now - state.shown_at >= CHAT_TEXT_EVERY
+                            and (shown := to_game_text(state.text)) != state.shown
+                        ):
+                            state.shown, state.shown_at = shown, now
+                            await self.link.send(ChatTextCmd(npc=conv.npc, reply=state.reply, text=shown))
+                        await self._feed_lines(conv, state, pieces)
+                        if quick and done is not None:
+                            break  # the line is over: the stream is closed, the server stops writing
             except LLMError:
                 if (
                     speak and first is not None

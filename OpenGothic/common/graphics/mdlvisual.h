@@ -18,6 +18,7 @@ class Serialize;
 class ObjVisual;
 class Npc;
 class Item;
+class WorldView;
 namespace TestBench { bool ragdollBodyDrawable(const Npc& npc); }
 
 class MdlVisual final {
@@ -43,6 +44,9 @@ class MdlVisual final {
     Tempest::Vec2                  headRotation() const;
     void                           setYTranslationEnable(bool e);
     void                           setVisualBody(World& owner, MeshObjects::Mesh&& body);
+    void                           setVisualBody(WorldView& owner, MeshObjects::Mesh&& body);
+    void                           clearVisualBody();
+    size_t                         bodyNodesCount() const;
     void                           setVisualBody(Npc& npc, MeshObjects::Mesh&& h, MeshObjects::Mesh&& body, int32_t version);
     void                           syncAttaches();
     const Skeleton*                visualSkeleton() const;
@@ -64,7 +68,7 @@ class MdlVisual final {
     // the shot leaves from there)
     void                           dropAmmo();
     bool                           hasAmmoShown() const { return !ammunition.view.isEmpty(); }
-    void                           setSlotItem   (MeshObjects::Mesh&& itm,  std::string_view bone);
+    void                           setSlotItem   (MeshObjects::Mesh&& itm,  std::string_view bone, int32_t material = 0);
     void                           setStateItem  (MeshObjects::Mesh&& itm,  std::string_view bone);
     void                           clearSlotItem (std::string_view bone);
     bool                           setFightMode  (asset::MdsFightMode mode);
@@ -221,7 +225,10 @@ class MdlVisual final {
       View             view;
       std::string_view bone;
       };
-    using MeshAttach = Attach<MeshObjects::Mesh>;
+    struct MeshAttach : Attach<MeshObjects::Mesh> {
+      const ProtoMesh* deferredProto = nullptr;
+      int32_t deferredMaterial = 0;
+      };
     using PfxAttach  = Attach<Effect>;
 
     struct PfxSlot {
@@ -265,6 +272,7 @@ class MdlVisual final {
     Tempest::Vec3                 textureOwnerPosition;
     bool                          textureOwnerKnown = false, textureOwnerSpatial = false;
     MeshObjects::Mesh              view;
+    bool                           bodyDetached = false;
 
     MeshAttach                     head, sword, bow, shield;
     LipSync                        mouth;
@@ -299,5 +307,6 @@ class MdlVisual final {
     std::vector<Tempest::Matrix4x4> renderedPose;
     std::vector<uint8_t>           renderedMask;
     friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
+    friend struct MeshGltfTest;
   };
 

@@ -27,6 +27,10 @@ from .common import (
 )
 from .crimes import HOUSE
 
+SCENARIOS = {
+    "crime_talk": ("GIVEN", {"save": True, "timeout": 600}),
+}
+
 if TYPE_CHECKING:
     from ..chests import ChestDesk
     from ..chronicle import Chronicle

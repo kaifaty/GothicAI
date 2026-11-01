@@ -12,7 +12,7 @@ from gothic_ai.journal import Journal
 from gothic_ai.llm.fake import FakeBackend
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.talk import TalkDesk
-from gothic_ai.voice import MIC_DENIED, AsrClient, VoiceInput
+from gothic_ai.voice import LAUGH, MIC_DENIED, AsrClient, VoiceInput, laughter
 from tests.fake_game import FakeGame, connected
 from tests.test_dialogue import XARDAS, _until
 
@@ -99,6 +99,48 @@ async def test_push_to_talk_anywhere_becomes_the_heros_phrase_to_whom_he_looks_a
         assert (player["kind"], player["text"], player["via"]) == ("player", "Дай мне зелье", "voice")
         assert player["name"] == "Ксардас" and "asr" in player and player["latency_s"] >= 0
         assert player["by"] == "focus"
+
+
+@pytest.mark.parametrize(
+    ("text", "laughs"),
+    [
+        ("Ха-ха-ха-ха.", True),  # Inworld on the hero's laughter, 2026-11-01
+        ("Ха-ха-ха.", True),
+        ("Ахаха!", True),
+        ("Хи-хи", True),
+        ("Хе-хе-хе", True),
+        ("Гы-гы.", True),
+        ("Ха!", False),
+        ("Ах.", False),
+        ("Ага.", False),
+        ("Уэ.", False),
+        ("Ха-ха, ну ты лошара.", False),
+        ("Хорошо.", False),
+        ("", False),
+    ],
+)
+def test_laughter_is_laughter_alone(text, laughs):
+    assert laughter(text) is laughs
+
+
+async def test_laughter_is_said_as_a_laugh_not_as_words():
+    fake = FakeGame()
+    llm = FakeBackend("Чего ржёшь?", delay=0)
+    entries: list[dict] = []
+    async with fake_asr("Ха-ха-ха.") as (url, _), connected(fake) as link:
+        journal = Journal(entries.append)
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), journal=journal)
+        talk = TalkDesk(link, dialogue)
+        voice = VoiceInput(link, talk.hear, FakeSource(speech()), AsrClient(url), journal=journal)
+        await fake.roster(XARDAS_NEAR)
+        await fake.send(type="ptt_start", focus=XARDAS)
+        await _until(lambda: voice.active is not None)
+        await fake.send(type="ptt_stop")
+        await _until(lambda: fake.said == ["Чего ржёшь?"])
+
+        assert fake.transcripts == [LAUGH]
+        assert llm.calls[-1][1][-1].content == LAUGH
+        assert (entries[0]["text"], entries[0]["heard"]) == (LAUGH, "Ха-ха-ха.")
 
 
 async def test_short_tap_is_cancelled_without_recognition():

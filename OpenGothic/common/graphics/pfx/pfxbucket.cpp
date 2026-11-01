@@ -786,8 +786,15 @@ void PfxBucket::drawShadow(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
     }
   }
 
+void PfxBucket::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
+  for(auto i:{Material::Multiply, Material::Multiply2}) {
+    drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false);
+    drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true);
+    }
+  }
+
 void PfxBucket::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene, uint8_t fId) {
-  for(auto i:{/*Material::Water, */Material::Multiply, Material::Multiply2, Material::Transparent, Material::AdditiveLight, Material::Ghost}) {
+  for(auto i:{/*Material::Water, */Material::Transparent, Material::AdditiveLight, Material::Ghost}) {
     drawCommon(cmd, scene, item[fId],    SceneGlobals::V_Main, i, false);
     drawCommon(cmd, scene, itemTrl[fId], SceneGlobals::V_Main, i, true);
     }
@@ -843,6 +850,11 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   if(view==SceneGlobals::V_Main && mat.isSceneInfoRequired()) {
     cmd.setBinding(L_SceneClr, *scene.sceneColor, Sampler::bilinear(ClampMode::MirroredRepeat));
     cmd.setBinding(L_GDepth,   *scene.sceneDepth, Sampler::nearest (ClampMode::MirroredRepeat));
+    }
+
+  if(view==SceneGlobals::V_Main && mat.isFogRequired()) {
+    cmd.setBinding(L_FogLut,   *scene.fogLut,   Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setBinding(L_FogLutMs, *scene.fogLutMs, Sampler::bilinear(ClampMode::ClampToEdge));
     }
 
   cmd.setBinding(L_Scene, scene.uboGlobal[view]);

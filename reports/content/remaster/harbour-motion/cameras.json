@@ -254,6 +254,44 @@
    }
   },
   {
+   "name": "hole",
+   "eye": [
+    261,
+    1707,
+    -2428
+   ],
+   "target": [
+    2859,
+    507,
+    -2300
+   ],
+   "times": [
+    "day",
+    "night"
+   ],
+   "motion": true,
+   "note": "the hole in the roof of HAFEN04 from 30 m above the west quay, looking down into its mouth: the throat of the plume that the ridge hides from huts-north"
+  },
+  {
+   "name": "backlit",
+   "eye": [
+    4805,
+    325,
+    -4054
+   ],
+   "target": [
+    4005,
+    507,
+    -4000
+   ],
+   "times": [
+    "day",
+    "night"
+   ],
+   "motion": true,
+   "note": "the plume of HAFEN06 from the street 8 m east, against the sky towards the noon sun (33 degrees off the line of sight)"
+  },
+  {
    "name": "overhead",
    "eye": [
     -1800,

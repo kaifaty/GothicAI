@@ -91,7 +91,8 @@ Material::Material(const asset::VisualDecal& decal)
   }
 
 Material::Material(const Def::ParticleEffect& src) {
-  tex = Resources::loadTexture(src.vis_name_s,false,false);
+  // content/materials first, as for a mesh: an own particle texture comes with the content
+  tex = Resources::loadMaterialAlbedo(src.vis_name_s);
   loadFrames(src.vis_name_s, src.vis_tex_ani_fps);
 
   //TODO: visTexAniIsLooping
@@ -152,6 +153,12 @@ bool Material::isShadowmapRequired(AlphaFunc alpha) {
 
 bool Material::isTextureInShadowPass(AlphaFunc alpha) {
   return (alpha==Material::AlphaTest);
+  }
+
+bool Material::isFogRequired(AlphaFunc alpha) {
+  // drawn after the fog pass: they take the fog of their own depth.
+  // Multiply stays under the fog pass: blending can't add the haze in front of it.
+  return alpha==Material::Transparent || alpha==Material::AdditiveLight || alpha==Material::Ghost;
   }
 
 bool Material::isTesselated(AlphaFunc alpha) {

@@ -35,6 +35,10 @@ from .common import (
 )
 from .crimes import HOUSE
 
+SCENARIOS = {
+    "crime_director": ("GIVEN", {"save": True, "timeout": 900}),
+}
+
 if TYPE_CHECKING:
     from ..amends import Amends
     from ..bodies import Bodies
@@ -49,6 +53,7 @@ if TYPE_CHECKING:
     from ..social import Rumors
     from ..storyguard import StoryGuard
     from ..talk import TalkDesk
+    from .live import LiveCase
 
 log = logging.getLogger(__name__)
 GOLD = "ITMI_GOLD"
@@ -125,6 +130,7 @@ async def crime_director(
     perception: PerceptionDesk,
     initiative: InitiativeDesk | None = None,
     slot: int = 7,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Three branches of save 1 with declared story, deal and compensation decisions.
 
@@ -134,7 +140,7 @@ async def crime_director(
     """
     results: dict[str, str] = {}
     facts = service.chronicle.facts
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     original_gate, original_stage = rumors.gate, rumors.stage
     original_reflexes = talk.reflexes
     meeting = False
@@ -471,6 +477,28 @@ async def crime_director(
         occasion = await deed(cid)
         if occasion is None:
             return _logged(results)
+        if live is not None:
+            from .story import play_book_chain
+
+            outcome = await director.decide(occasion)
+            quests = [director.book.all()[qid] for qid in (outcome or {}).get("quests", [])
+                      if qid in director.book.all()]
+            before_hero, before_owner = await has(item.item), await has(item.item, LOBART)
+            passage = await play_book_chain(link, director.book, quests) if quests else {}
+            await director.book.settle(LOBART)
+            returned = bool(quests) and all(director.book.progress(q.id).state == "done" for q in quests)
+            returned = (returned and await has(item.item) < before_hero
+                        and await has(item.item, LOBART) > before_owner)
+            live.finish(
+                "success" if (outcome or {}).get("fact") == "line" and returned
+                and all(value.startswith("done") for value in passage.values()) else "failure",
+                evidence={"crime": crime, "decision": outcome, "passage": passage,
+                          "quests": [q.id for q in quests], "returned": returned,
+                          "rejected": facts("line_rejected") + facts("chain_rejected")},
+            )
+            return _logged(results)
+
+        assert off is not None
         off.given(
             "дано: шоураннер предлагает Лобарту линию возврата пропавшей вещи",
             who=SHOWRUNNER,

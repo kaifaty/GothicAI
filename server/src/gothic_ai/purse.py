@@ -15,10 +15,18 @@ if TYPE_CHECKING:
     from .deals import Deal, Debt
     from .dialogue import Conversation
 
+# over the hero's words with ё as е and й as и: speech recognition writes «займи» as «заимибо»
 _MONEY = re.compile(
-    r"\b(?:золот|монет|денег|деньг|денеж|деньж|грош|кошел|материальн|одолж|займ|заем|взайм|ссуд)"
+    r"\b(?:золот|монет|денег|деньг|денеж|деньж|грош|кошел|материальн|одолж|заим|заем|взаимы|ссуд)"
     r"|\b(?:долг|долга|долгу|долгом|долги|долгов|долгами|долгах)\b"
+    # a sum named: «давай, 200», «дай двести»
+    r"|\b(?:\d{2,}|сто|сотн\w*|полсотн\w*|двест\w*|двухсот\w*|трист\w*|трехсот\w*|четырест\w*"
+    r"|пятьсот\w*|пятисот\w*|пятьдесят\w*|пятидесят\w*|тысяч\w*)\b"
 )
+
+
+def _asks_money(words: str) -> bool:
+    return _MONEY.search(words.lower().replace("ё", "е").replace("й", "и")) is not None
 
 
 def meeting_words(conv: Conversation) -> tuple[str, ...]:
@@ -65,7 +73,7 @@ class Purse:
         if (
             given > 0
             and limits["asked"]
-            and not any(_MONEY.search(words.lower().replace("ё", "е")) for words in hero_words)
+            and not any(_asks_money(words) for words in hero_words)
         ):
             return "Отклонено: герой не просил у тебя денег, а сам ты их не предлагаешь."
         later = _gold(x.give for x in deal.later)

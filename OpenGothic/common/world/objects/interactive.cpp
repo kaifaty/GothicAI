@@ -572,8 +572,8 @@ Inventory &Interactive::inventory()  {
   return invent;
   }
 
-void Interactive::setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot) {
-  visual.setSlotItem(std::move(itm),slot);
+void Interactive::setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot, int32_t material) {
+  visual.setSlotItem(std::move(itm),slot,material);
   }
 
 uint32_t Interactive::stateMask() const {

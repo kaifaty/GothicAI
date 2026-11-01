@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from ..trace import TraceWriter
 
-Outcome = Literal["success", "failure", "no_decision", "observed"]
+Outcome = Literal["success", "failure", "no_decision", "observed", "skipped"]
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,27 @@ class CaseSpec:
 
 
 CASE_SPECS = {
+    "live_npc": (
+        CaseSpec("wrath_tip", "Xardas takes unforgivable offense by insult three and kills the hero", 6),
+        CaseSpec("calm_bandit", "Observe whether the attacking bandit calms down or continues", 2),
+        CaseSpec("cave_unnamed", "Cavalorn chooses XARDAS_BANDITS and enters the unnamed cave", 2),
+        CaseSpec("errand_tell", "Observe Lobart's plan to tell someone, its time, or refusal", 2),
+        CaseSpec("spare_bandit", "Observe mercy, refusal, or killing with damaged trust", 2),
+        CaseSpec("initiative_debt", "Lobart approaches and proposes a repay deal after the promise", 2),
+        CaseSpec("knows_danger", "Observe the answer about nearby danger", 1),
+        CaseSpec("fame_recognized", "Observe whether the NPC recognizes the hero's fame", 1),
+        CaseSpec("rescue_call", "Observe the shepherd's words and reaction to the wolf", 2),
+    ),
+    "live_director": (
+        CaseSpec("repair_handover", "The director's validated repair lets the quest finish", 3),
+        CaseSpec("authored_quest", "A validated authored quest is built and played to completion", 3),
+        CaseSpec("character_cast", "A validated character and quest are built and played to completion", 6),
+        CaseSpec("chain_built", "A validated chain is built and played to completion", 6),
+        CaseSpec("crime_line", "A blame line for the theft is canon-approved and built", 3),
+        CaseSpec("crime_return", "A return line is built and played to completion", 3),
+        CaseSpec("amends_storylet", "A lie rumor opens a storylet with a fine within the limits", 3),
+        CaseSpec("feat_award", "The chronicler awards a feat using Brago's actual killing as proof", 2),
+    ),
     "live_deals": (
         CaseSpec("money_unasked", "Xardas offers no gold during 20 seconds without a request", 1),
         CaseSpec("money_asked", "Xardas proposes an accepted gold deal within his purse", 2),
@@ -111,11 +132,25 @@ class LiveCase:
     _end: dict[Path, int] | None = None
 
     def finish(self, outcome: Outcome, *, evidence: dict[str, Any] | None = None) -> None:
-        if outcome not in {"success", "failure", "no_decision", "observed"}:
+        if outcome not in {"success", "failure", "no_decision", "observed", "skipped"}:
             raise ValueError(f"invalid live outcome {outcome!r}")
         self.outcome = outcome
         if evidence is not None:
             self.evidence.update(evidence)
+
+    def skip(self, reason: str) -> None:
+        self.finish("skipped", evidence={"skip_reason": reason})
+
+    async def wait_turn(self, dialogue, npc: str, text: str, timeout: float = 90) -> bool:
+        from .common import _until
+
+        def completed() -> bool:
+            conv = dialogue.conversations.get(npc)
+            return bool(self.turns(npc, text)) and not dialogue.speaking(npc) and (
+                conv is None or not conv.actions
+            )
+
+        return await _until(completed, timeout)
 
     def _turns(self) -> list[tuple[Path, dict[str, Any]]]:
         turns = []
@@ -289,7 +324,8 @@ def summarize(out: Path, suite: str, runs: int, codes: list[int], only: str | No
                 "failures": counts["failure"],
                 "no_decision": counts["no_decision"],
                 "observed": observed,
-                "setup_errors": runs - played,
+                "skipped": counts["skipped"],
+                "setup_errors": runs - played - counts["skipped"],
                 "requests": requests,
                 "mean_requests": requests / len(records) if records else 0,
                 "decisions": {
@@ -324,14 +360,14 @@ def write_report(out: Path, report: dict[str, Any]) -> None:
         f"Runs: {report['runs']}. Requests: {report['requests']}.",
         "",
         "| Case | Expected | Successes / attempts | Rate | Failures | No decision "
-        "| Observed | Requests / mean |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Observed | Skipped / пропущен | Requests / mean |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for case in report["cases"]:
         rate = f"{case['success_rate']:.1%}" if case["success_rate"] is not None else "observation"
         lines.append(
             f"| {case['name']} | {case['expected']} | {case['successes']}/{case['attempts']} | {rate} | "
-            f"{case['failures']} | {case['no_decision']} | {case['observed']} | "
+            f"{case['failures']} | {case['no_decision']} | {case['observed']} | {case['skipped']} | "
             f"{case['requests']} / {case['mean_requests']:.2f} |"
         )
     lines += ["", "```sh", report["command"], "```"]
@@ -358,6 +394,11 @@ def write_report(out: Path, report: dict[str, Any]) -> None:
         for case in attempt["cases"]:
             if case.get("setup_error"):
                 lines.append(f"  {case['name']}: {case['setup_error']}")
+            if case.get("evidence"):
+                lines += [
+                    "", f"### {case['name']}: {case['outcome']}", "", "```json",
+                    json.dumps(case["evidence"], ensure_ascii=False, indent=2), "```",
+                ]
     (out / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

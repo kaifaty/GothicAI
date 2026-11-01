@@ -118,6 +118,7 @@ class Resources final {
     static const Tempest::Texture2d& fallbackTexture();
     static const Tempest::Texture2d& fallbackBlack();
     static auto                      fallbackImage() -> const Tempest::StorageImage&;
+    static auto                      fallbackImage3d() -> const Tempest::StorageImage&;
     static Tempest::Texture2d        loadTextureUncached(std::string_view name, bool forceMips = false);
     static const Tempest::Texture2d* loadTexture(std::string_view name, bool forceMips = false, bool pinned = true);
     static const Tempest::Texture2d* loadTexture(Tempest::Color color);
@@ -281,6 +282,7 @@ class Resources final {
       void validate(const std::vector<std::pair<std::string,uintmax_t>>& mounted);
       };
     BaseIndex baseTextures, baseMeshes, baseZen, baseModels, baseFonts;
+    std::map<std::string,std::filesystem::path> contentModels;
     ProgramData::Index basePrograms;
     OutputUnits::Index baseOutputUnits;
     AudioData::Index baseAudio;
@@ -295,7 +297,10 @@ class Resources final {
     std::thread videoWorker;
     static std::filesystem::path baseDir();
     void indexBaseContent();
+    void indexContentModels();
     static std::filesystem::path baseModelFile(std::string_view name);
+    template<class T>
+    static bool loadModelRecord(std::string_view name, T& out, T (*read)(const std::filesystem::path&));
     static bool loadHierarchyData(std::string_view name, asset::ModelHierarchy& out);
     static bool loadModelMeshData(std::string_view name, asset::ModelMesh& out);
     static bool loadModelData(std::string_view name, asset::Model& out);
@@ -363,7 +368,7 @@ class Resources final {
     Tempest::VertexBuffer<Vertex> sphere(int passCount, float R);
 
     Tempest::Texture2d fallback, fbZero;
-    Tempest::StorageImage fbImg;
+    Tempest::StorageImage fbImg, fbImg3d;
 
     using BindK  = std::tuple<const Skeleton*,const ProtoMesh*>;
     using FontK  = std::tuple<const std::string,FontType,float>;

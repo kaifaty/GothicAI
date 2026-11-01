@@ -1,7 +1,7 @@
 """Inworld Realtime TTS-2 by API key (`INWORLD_API_KEY`, the Base64 key from the Inworld portal).
 
-An npc's voice is designed once from its description (Voice Design), published to the workspace's
-voice library and remembered in a local file, so every line of that npc has the same voice. A voice
+An npc's voice is reused from the workspace by name and description/language hash, or designed once
+(Voice Design), published and remembered locally, so every machine uses the same voice. A voice
 with a `sample` is cloned from that recording instead (Instant Voice Cloning), and remembered the same
 way: the shorts' English dub speaks in the user's own voice, or in an npc's Russian voice. A library
 voice can be used instead: `voice=Dmitry` for every npc, or a request's `preset`; its description then
@@ -85,6 +85,8 @@ class InworldTTS:
         )
         self._designing = asyncio.Lock()
         self._cloning = asyncio.Lock()
+        self._listing = asyncio.Lock()
+        self._workspace_voices: list[dict[str, Any]] | None = None
         self._used = 0.0  # time.monotonic() of the last request's start or end
         self._keeper: asyncio.Task[None] | None = None
 
@@ -212,31 +214,44 @@ class InworldTTS:
                 return str(entry["voice_id"])
             if not voice.description:
                 raise TtsError(f"inworld: voice {voice.id!r} has no description to design it from")
-            design = await self._call(
-                "POST",
-                "/voices/v1/voices:design",
-                json={
-                    "languageCode": self.language,
-                    "designPrompt": voice.description[:1000],
-                    "previewText": preview_text(self.language),
-                    "voiceDesignConfig": {"numberOfSamples": 1},
-                },
-            )
-            try:
-                preview = design["previewVoices"][0]["voiceId"]
-            except (KeyError, IndexError, TypeError) as err:
-                raise TtsError(f"inworld: voice design returned no voice: {design}") from err
-            published = await self._call(
-                "POST",
-                f"/voices/v1/voices/{preview}:publish",
-                json={
-                    "displayName": f"gothic-ai {voice.id}",
-                    "description": voice.description[:500],
-                    "tags": ["gothic-ai"],
-                },
-            )
-            voice_id = str(published.get("voiceId") or preview)
-            log.info("inworld: designed voice %s for %s", voice_id, voice.id)
+            name = f"gothic-ai {voice.id}"
+            tag = design_tag(self.language, voice.description)
+            for candidate in await self._workspace() or []:
+                if (candidate.get("displayName") == name and tag in candidate.get("tags", [])
+                        and candidate.get("voiceId")):
+                    voice_id = str(candidate["voiceId"])
+                    break
+            else:
+                design = await self._call(
+                    "POST",
+                    "/voices/v1/voices:design",
+                    json={
+                        "languageCode": self.language,
+                        "designPrompt": voice.description[:1000],
+                        "previewText": preview_text(self.language),
+                        "voiceDesignConfig": {"numberOfSamples": 1},
+                    },
+                )
+                try:
+                    preview = design["previewVoices"][0]["voiceId"]
+                except (KeyError, IndexError, TypeError) as err:
+                    raise TtsError(f"inworld: voice design returned no voice: {design}") from err
+                tags = ["gothic-ai", tag]
+                published = await self._call(
+                    "POST",
+                    f"/voices/v1/voices/{preview}:publish",
+                    json={
+                        "displayName": name,
+                        "description": voice.description[:500],
+                        "tags": tags,
+                    },
+                )
+                voice_id = str(published.get("voiceId") or preview)
+                log.info("inworld: designed voice %s for %s", voice_id, voice.id)
+                if self._workspace_voices is not None:
+                    self._workspace_voices.append({
+                        **published, "voiceId": voice_id, "displayName": name, "tags": tags,
+                    })
             entries = self._load()
             entries[voice.id] = {
                 "voice_id": voice_id,
@@ -250,16 +265,95 @@ class InworldTTS:
         """Prepare a cloned library voice without synthesizing a line."""
         return await self._cloned(voice)
 
-    def cached_clone(self, voice: Voice) -> str | None:
+    def cached_clone(self, voice: Voice, digest: str | None = None) -> str | None:
         """Look up a matching sample without contacting Inworld; call from a worker thread."""
         entry = self._load().get(voice.id, {})
         if entry.get("voice_id") and entry.get("sample"):
-            digest = hashlib.sha1(Path(voice.sample).read_bytes()).hexdigest()[:16]
+            if digest is None:
+                digest = hashlib.sha1(Path(voice.sample).read_bytes()).hexdigest()[:16]
             if entry["sample"] == digest:
                 return str(entry["voice_id"])
         return None
 
+    async def _workspace(self) -> list[dict[str, Any]] | None:
+        """Read the entire owned library once; a failed read can be retried on the next call."""
+        async with self._listing:
+            if self._workspace_voices is not None:
+                return self._workspace_voices
+            voices = []
+            params = {
+                "filter": 'owned="true" AND tags:"gothic-ai"',
+                "pageSize": "2000",
+                "orderBy": "created_at asc",
+            }
+            try:
+                while True:
+                    page = await self._call("GET", "/voices/v1/voices", params=params)
+                    voices.extend(page.get("voices", []))
+                    if not (token := page.get("nextPageToken")):
+                        break
+                    params["pageToken"] = token
+            except (TtsError, ValueError, TypeError) as err:
+                log.warning("inworld: workspace voice list unavailable: %s", err)
+                return None
+            self._workspace_voices = voices
+            return voices
+
+    async def workspace_clone(self, voice: Voice, digest: str) -> str | None:
+        """Find the oldest clone with this exact name and sample, and remember it locally."""
+        voices = await self._workspace()
+        for entry in voices or []:
+            if (entry.get("displayName") == f"gothic-ai {voice.id}"
+                    and f"sample-{digest}" in entry.get("tags", []) and entry.get("voiceId")):
+                voice_id = str(entry["voiceId"])
+                entries = self._load()
+                entries[voice.id] = {
+                    "voice_id": voice_id,
+                    "sample": digest,
+                    "description": voice.description,
+                    "language": str(entry.get("languageCode", "")),
+                }
+                self._save(entries)
+                return voice_id
+        return None
+
+    async def tag_cached_voices(self) -> tuple[int, int, int]:
+        """Tag cached clones and designs; return tagged, already tagged and missing counts."""
+        voices = await self._workspace()
+        if voices is None:
+            raise TtsError("inworld: cannot read workspace voices to tag cached voices")
+        by_id = {entry["voiceId"]: entry for entry in voices}
+        tagged = already_tagged = missing = 0
+        for key, cached in self._load().items():
+            if not cached.get("voice_id"):
+                continue
+            if cached.get("sample"):
+                tag = f"sample-{cached['sample']}"
+            elif cached.get("description") and cached.get("language"):
+                tag = design_tag(cached["language"], cached["description"])
+            else:
+                continue
+            voice = by_id.get(cached["voice_id"])
+            if voice is None:
+                log.warning("inworld: cached voice %s is missing from the workspace", key)
+                missing += 1
+                continue
+            tags = voice.get("tags", [])
+            if tag in tags:
+                already_tagged += 1
+                continue
+            await self._call(
+                "PATCH", f"/voices/v1/voices/{cached['voice_id']}",
+                params={"updateMask": "tags"}, json={"tags": [*tags, tag]},
+            )
+            voice["tags"] = [*tags, tag]
+            tagged += 1
+        return tagged, already_tagged, missing
+
     async def _cloned(self, voice: Voice) -> str:
+        return (await self.clone_with_source(voice))[0]
+
+    async def clone_with_source(self, voice: Voice) -> tuple[str, str]:
         """The library voice cloned from `voice.sample` (made on its first line, again when the recording
         changes). Inworld detects the recording's language; the lines are said in the provider's
         `language`, so a Russian recording speaks English. Its best length is 10-30 s."""
@@ -270,15 +364,17 @@ class InworldTTS:
         digest = hashlib.sha1(audio).hexdigest()[:16]
         entry = self._load().get(voice.id, {})
         if entry.get("sample") == digest and entry.get("voice_id"):
-            return str(entry["voice_id"])
+            return str(entry["voice_id"]), "cache"
         async with self._cloning:
             entry = self._load().get(voice.id, {})
             if entry.get("sample") == digest and entry.get("voice_id"):
-                return str(entry["voice_id"])
+                return str(entry["voice_id"]), "cache"
+            if voice_id := await self.workspace_clone(voice, digest):
+                return voice_id, "workspace"
             body: dict[str, Any] = {
                 "displayName": f"gothic-ai {voice.id}",
                 "voiceSamples": [{"audioData": base64.b64encode(audio).decode()}],
-                "tags": ["gothic-ai"],
+                "tags": ["gothic-ai", f"sample-{digest}"],
                 "audioProcessingConfig": {"removeBackgroundNoise": False},  # the samples are clean
             }
             if voice.description:
@@ -317,7 +413,11 @@ class InworldTTS:
                 "language": str(cloned["voice"].get("languageCode", "")),  # the sample's
             }
             self._save(entries)
-            return voice_id
+            if self._workspace_voices is not None:
+                self._workspace_voices.append({
+                    **cloned["voice"], "displayName": body["displayName"], "tags": body["tags"],
+                })
+            return voice_id, "cloned"
 
     async def _call(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         resp = await self._request(method, path, **kwargs)
@@ -353,8 +453,12 @@ class InworldTTS:
 
     def _forget(self, key: str) -> None:
         entries = self._load()
-        if entries.pop(key, None) is not None:
+        if (forgotten := entries.pop(key, None)) is not None:
             self._save(entries)
+            if self._workspace_voices is not None:
+                self._workspace_voices = [
+                    voice for voice in self._workspace_voices if voice.get("voiceId") != forgotten["voice_id"]
+                ]
 
     async def aclose(self) -> None:
         if self._keeper is not None:
@@ -362,6 +466,11 @@ class InworldTTS:
             await asyncio.gather(self._keeper, return_exceptions=True)
             self._keeper = None
         await self._client.aclose()
+
+
+def design_tag(language: str, description: str) -> str:
+    digest = hashlib.sha1(f"{language}\n{description}".encode()).hexdigest()[:16]
+    return f"design-{digest}"
 
 
 def preview_text(language: str) -> str:

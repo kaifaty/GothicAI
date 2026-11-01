@@ -61,6 +61,7 @@ from .dialogue import REACT_HINT, SVM_HINT, DialogueManager
 from .director import Director
 from .errands import Errands
 from .executor import Intent
+from .fatecard import FateCards
 from .fates import Fates
 from .feat_art import DEFAULT_ROOT, Artist
 from .feats import Feats
@@ -265,6 +266,7 @@ class ServerState:
         self.showrunner: Showrunner | None = None
         self.feats: Feats | None = None
         self.fates: Fates | None = None
+        self.fate_cards: FateCards | None = None
         self.feat_challenges: Challenges | None = None
         self.vanilla: VanillaQuests | None = None
         self.gates: Gates | None = None
@@ -1004,32 +1006,36 @@ async def serve(args: argparse.Namespace) -> int:
         state.chronicle = Chronicle(link, memory)
         feat_image_root = None
         if not args.no_feats and (
-            args.scenario in {None, "feats"}
+            args.scenario in {None, "feats", "live_director"}
             or (args.scenario == "lie" and args.llm == "off")
             or (args.scenario == "vanilla_line_live" and os.environ.get("GOTHIC_FORCE_CHALLENGE") == "1")
         ):
             artist = None
-            if not args.no_feat_images and args.scenario in {None, "feats"}:
-                if args.scenario == "feats":
+            if not args.no_feat_images and args.scenario in {None, "feats", "live_director"}:
+                if args.scenario in {"feats", "live_director"}:
                     feat_image_root = TemporaryDirectory(prefix="feat-images-")
                     artist = ScenarioArtist(Path(feat_image_root.name), codex="scenario")
                 else:
                     artist = Artist()
             state.feats = Feats(
                 link, state.chronicle, llm, journal=journal, places=place_book,
-                gather_s=1 if args.scenario == "feats" else 20,
+                gather_s=1 if args.scenario in {"feats", "live_director"} else 20,
                 artist=artist,
                 fame=not args.no_feat_fame,
                 hero_distance=lambda npc: (
                     state.talk.people[npc].distance if npc in state.talk.people else None
                 ),
-                image_wait_s=30 if args.scenario == "feats" else 150,
+                image_wait_s=30 if args.scenario in {"feats", "live_director"} else 150,
             )
             state.talk.on_phrase.append(lambda to, text: state.feats.hero_talk(to.id) if to else None)
         state.fates = Fates(
             link, state.chronicle, enabled=not args.no_feats,
             art_root=state.feats.artist.root if state.feats is not None
             and state.feats.artist is not None else DEFAULT_ROOT,
+        )
+        state.fate_cards = FateCards(
+            link, state.chronicle, llm, enabled=state.feats is not None and not args.no_fate_card,
+            art_root=state.fates.art_root,
         )
         if not args.no_crimes:
             state.crimes = Crimes(
@@ -1093,6 +1099,9 @@ async def serve(args: argparse.Namespace) -> int:
                 link, state.dialogue, state.chronicle,
                 perception=perception, companion=orders.companion, places=place_book, lead=state.talk.lead,
                 bodies=state.bodies, talk=state.talk, graph=graph, patches=state.story,
+                hail=args.llm != "off" or args.scenario is None or args.scenario in {
+                    "bandit_parley", "bandit_bounty", "road_bandits", "companion",
+                },
             )
             orders.parley_quiet = state.parley.quiet
             state.dialogue.extensions.append(state.parley)
@@ -1370,12 +1379,16 @@ async def serve(args: argparse.Namespace) -> int:
                 journal=journal,
             )
             # Off scenarios own model calls, except those exercising these queues themselves.
-            if args.llm != "off" or args.scenario is None or args.scenario in {"repair", "own_repair"}:
+            if args.scenario not in {"live_npc", "live_director"} and (
+                args.llm != "off" or args.scenario is None or args.scenario in {"repair", "own_repair"}
+            ):
                 directing.append(asyncio.create_task(state.director.run()))
             directing.append(asyncio.create_task(state.vanilla.run()))
-            if args.llm != "off" or args.scenario is None or args.scenario in {
-                "amends", "amends_deal", "crime_director",
-            }:
+            if args.scenario not in {"live_npc", "live_director"} and (
+                args.llm != "off" or args.scenario is None or args.scenario in {
+                    "amends", "amends_deal", "crime_director",
+                }
+            ):
                 directing.append(asyncio.create_task(state.amends.run()))
         elif graph is not None and state.crimes is not None:
             # A victim's rule-driven demand remains available without background story authoring.
@@ -1542,6 +1555,8 @@ async def serve(args: argparse.Namespace) -> int:
                 await state.feats.close()
             if state.fates is not None:
                 await state.fates.close()
+            if state.fate_cards is not None:
+                await state.fate_cards.close()
             if state.feat_challenges is not None:
                 state.feat_challenges.close()
             if feat_image_root is not None:
@@ -1812,6 +1827,19 @@ async def serve(args: argparse.Namespace) -> int:
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario crime_meet: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "live_npc":
+                results = await scenarios.live_npc(link, state)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario live_npc: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "live_director":
+                assert place_book is not None and args.trace_dir is not None
+                results = await scenarios.live_director(
+                    link, state, place_book, journal, str(Path(args.trace_dir).parent),
+                )
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario live_director: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "live_deals":
                 assert state.dialogue is not None and state.talk is not None and state.deals is not None
@@ -3267,6 +3295,8 @@ def main() -> None:
             "humiliate",
             "surrender_live",
             "live_lies",
+            "live_npc",
+            "live_director",
             "live_deals",
             "orders",
             "fight_reactions_wolf",
@@ -3460,6 +3490,9 @@ def main() -> None:
         "--no-feats",
         action="store_true",
         help="disable the chronicler's feats (enabled by default outside scenarios and in feats)",
+    )
+    p.add_argument(
+        "--no-fate-card", action="store_true", help="disable the final fate card",
     )
     p.add_argument(
         "--no-feat-challenges",

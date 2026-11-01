@@ -219,6 +219,15 @@ void SceneGlobals::setHiZ(const Tempest::Texture2d& t) {
   hiZ = &t;
   }
 
+void SceneGlobals::setFog(const Tempest::StorageImage* lut, const Tempest::StorageImage* lutMs) {
+  // lut: in-scattering and transmittance; or lut: single scattering and lutMs: multi-scattering and transmittance
+  const bool none = (lut==nullptr || lut->isEmpty());
+  const bool sep  = (!none && lutMs!=nullptr && !lutMs->isEmpty());
+  fogLut   = none ? &Resources::fallbackImage3d() : lut;
+  fogLutMs = sep  ? lutMs : fogLut;
+  uboGlobalCpu.fogQuality = none ? 0 : (sep ? 2 : 1);
+  }
+
 void SceneGlobals::setShadowMap(const Tempest::Texture2d* tex[]) {
   for(size_t i=0; i<Resources::ShadowLayers; ++i)
     shadowMap[i] = tex[i];

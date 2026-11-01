@@ -405,7 +405,8 @@ def compose(name: str, parts: list[str]) -> dict:
     for part, part_index in indexes.items():
         for texture, entry in part_index.items():
             for channel in ('albedo', 'normal', 'orm'):
-                take(part, 'materials', Path(entry[channel]))
+                if channel in entry:  # a particle texture has only an albedo
+                    take(part, 'materials', Path(entry[channel]))
             index[texture] = entry
         for visual, entry in meshes[part].items():
             take(part, 'meshes', Path(entry['glb']))

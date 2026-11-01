@@ -29,6 +29,7 @@ LANGUAGES = frozenset(
     "ar yue zh cs da nl en fil fi fr de el hi hu id it ja ko mk ms fa pl pt ro ru es sv th tr vi".split()
 )
 PROMPT_PUNCTUATION = frozenset(" .,'():!?;-")
+CHUNK = RATE // 10  # samples per audio frame of a whole recording
 
 
 def _prompts(hints: list[str] | None) -> tuple[str, ...]:
@@ -94,8 +95,9 @@ class InworldRealtime:
     async def transcribe(self, audio: np.ndarray, lang: str) -> Transcript:
         stream = await self.open_stream(lang)
         try:
-            for i in range(0, len(audio), RATE):
-                await stream.feed(audio[i : i + RATE])
+            # Microphone-sized pieces: a phrase of one 1 s piece before `endTurn` never gets a final.
+            for i in range(0, len(audio), CHUNK):
+                await stream.feed(audio[i : i + CHUNK])
             return await stream.finish()
         except BaseException:
             await stream.cancel()

@@ -25,6 +25,13 @@ from ..game import GameError, GameLink
 from ..protocol import Session, TriggerFired
 from .common import _logged, _m5b_player_weapon, _save_or_fail, wait_message
 
+SCENARIOS = {
+    "memprobe": ("OFF", {
+        "save": False, "timeout": 1200,
+        "env": {"MEMPROBE_CYCLES": "8", "MEMPROBE_PHASES": "wave,save,load,spawn,teleport"},
+    }),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 REFUGE = "NW_XARDAS_TOWER_VALLEY_01"
 ARENA = "NW_XARDAS_GOBBO_02"

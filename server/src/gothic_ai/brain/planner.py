@@ -283,7 +283,7 @@ class NpcPlanner:
         self.routines: dict[str, RoutineSlot] = {}
         # how much the moment calls for the npc's own words: (npc, level, the reaction applied or None,
         # flight); told every level, the listener decides (`escalate_level`, or more when it already spoke)
-        self.on_escalate: Callable[[str, float, Decision | None, Flight], None] | None = None
+        self.on_escalate: Callable[[str, float, Decision | None, Flight], bool | None] | None = None
         # a reason not to apply a sure choice now, or None (initiative.py: one walk-up at a time)
         self.allow: Callable[[NpcRecord, str], str | None] | None = None
         # takes approach_talk over: walks the npc up and lets it speak; without it the applier walks it

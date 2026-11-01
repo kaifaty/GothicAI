@@ -12,7 +12,7 @@ spec.loader.exec_module(report)
 STAMINA_COUNTS = ("stamina_spent", "attack_stamina_spends", "jumpback_stamina_spends",
                   "stamina_refusal_spells", "exhaustions", "exhausted_time_s")
 PARRY_COUNTS = ("parries", "guards", "guard_breaks", "parade_whiffs", "guard_stamina_spent",
-                "stuns", "stuns_parried", "stuns_guard_break", "stunned_time_s", "stun_refusal_spells")
+                "stuns", "stuns_parried", "stuns_guard_break", "stuns_posture", "stunned_time_s", "stun_refusal_spells")
 
 
 def event(phase, time, role="primary", **fields):
@@ -186,11 +186,11 @@ def test_parry_outcomes_stun_intervals_aggregate_timings_and_legacy_metrics(tmp_
     primary, opponent = (first["fighters"][role] for role in report.ROLES)
     assert {key: primary[key] for key in PARRY_COUNTS} == {
         "parries": 2, "guards": 2, "guard_breaks": 1, "parade_whiffs": 1, "guard_stamina_spent": 18,
-        "stuns": 2, "stuns_parried": 1, "stuns_guard_break": 1, "stunned_time_s": 6, "stun_refusal_spells": 2,
+        "stuns": 2, "stuns_parried": 1, "stuns_guard_break": 1, "stuns_posture": 0, "stunned_time_s": 6, "stun_refusal_spells": 2,
     }
     assert {key: opponent[key] for key in PARRY_COUNTS} == {
         "parries": 1, "guards": 1, "guard_breaks": 1, "parade_whiffs": 2, "guard_stamina_spent": 13,
-        "stuns": 2, "stuns_parried": 1, "stuns_guard_break": 1, "stunned_time_s": 3, "stun_refusal_spells": 2,
+        "stuns": 2, "stuns_parried": 1, "stuns_guard_break": 1, "stuns_posture": 0, "stunned_time_s": 3, "stun_refusal_spells": 2,
     }
     assert primary["parade_ms"] == [0, 120, 185, 250]
     assert opponent["parade_ms"] == [60, 180, 249, 300]
@@ -216,7 +216,7 @@ def test_parry_outcomes_stun_intervals_aggregate_timings_and_legacy_metrics(tmp_
     result = report.aggregate("vanilla", "native", "1h", [first, second])
     assert {key: result["combat"][key] for key in PARRY_COUNTS} == {
         "parries": 3, "guards": 4, "guard_breaks": 2, "parade_whiffs": 3, "guard_stamina_spent": 36,
-        "stuns": 4, "stuns_parried": 2, "stuns_guard_break": 2, "stunned_time_s": 9, "stun_refusal_spells": 4,
+        "stuns": 4, "stuns_parried": 2, "stuns_guard_break": 2, "stuns_posture": 0, "stunned_time_s": 9, "stun_refusal_spells": 4,
     }
     for own in (result["combat"], *(result["fighters"][role] for role in report.ROLES)):
         for key in PARRY_COUNTS:
@@ -239,6 +239,22 @@ def test_parry_outcomes_stun_intervals_aggregate_timings_and_legacy_metrics(tmp_
     for key in (*PARRY_COUNTS, "parry_fraction", "stunned_time_fraction",
                 *("parade_ms."+key for key in result["combat"]["parade_ms"])):
         assert f"| {key} |" in text
+
+    posture = episode(tmp_path/"posture", [
+        event("stun_start", 2000, reason="posture", duration_ms=1500),
+        event("stun_end", 3500, reason="timeout"),
+        event("stun_start", 4000, reason="unknown_future_reason", duration_ms=1000),
+        event("stun_end", 5000, reason="timeout"),
+    ])
+    assert posture["fighters"]["primary"]["stuns"] == 2
+    assert posture["fighters"]["primary"]["stuns_posture"] == 1
+    assert posture["fighters"]["primary"]["stunned_time_s"] == pytest.approx(2.5)
+    combined = report.aggregate("vanilla", "native", "1h", [posture, no_defence])
+    assert combined["combat"]["stuns_posture"] == 1
+    assert combined["combat"]["per_duel"]["stuns_posture"] == pytest.approx(.5)
+    assert combined["fighters"]["primary"]["per_duel"]["stuns_posture"] == pytest.approx(.5)
+    assert combined["fighters"]["opponent"]["per_duel"]["stuns_posture"] == 0
+    assert "| stuns_posture | 1 | 0.500 | 0.500 | 0.000 |" in report.markdown([combined])
 
 
 @pytest.mark.parametrize("stunned_field", [False, True], ids=["old-journal", "disabled-parry"])

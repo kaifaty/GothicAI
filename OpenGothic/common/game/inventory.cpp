@@ -821,7 +821,7 @@ void Inventory::moveItem(Npc& owner, Inventory& invNpc, Interactive& mobsi) {
   auto& slot  = invNpc.mdlSlots.back();
 
   auto  vbody  = world.addView(slot.item->handle());
-  mobsi.setSlotItem(std::move(vbody), zsSlot);
+  mobsi.setSlotItem(std::move(vbody), zsSlot, slot.item->handle().material);
 
   mobsi.inventory().mdlSlots.resize(1);
   MdlSlot& sl = mobsi.inventory().mdlSlots.back();

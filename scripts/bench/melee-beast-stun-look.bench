@@ -1,0 +1,115 @@
+# Beast stun look (melee_beast_poise): a wolf (small), a snapper and a shadowbeast (medium) come at the hero in their
+# own combat and lose their balance (`stun ... posture`, 1.5 s): their own stumble back stretched to ~700 ms with the
+# trunk and head giving way, then their stumble forward to the end. Side shots through the stun; the look is judged by
+# Claude from the shots.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local
+seed 73013
+cheat god
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+corner right go 0
+turn 180
+wait 600
+
+watch player
+clear 3000
+insert Wolf
+put WOLF 200 0
+stats npc WOLF hp 100000 hpmax 100000
+wait 400
+fight WOLF player
+wait 200
+freeze WOLF
+freeze WOLF
+state WOLF ZS_MM_ATTACK NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+freeze WOLF off
+cam two WOLF 300 20 1
+wait 1200
+rec wolf-stun
+stun WOLF posture
+shot wolf-000
+wait 150
+shot wolf-150
+wait 200
+shot wolf-350
+wait 250
+shot wolf-600
+wait 300
+shot wolf-900
+wait 300
+shot wolf-1200
+wait 300
+shot wolf-1500
+wait 800
+stop
+cam game
+
+watch player
+clear 3000
+insert Snapper
+put SNAPPER 200 0
+stats npc SNAPPER hp 100000 hpmax 100000
+wait 400
+fight SNAPPER player
+wait 200
+freeze SNAPPER
+freeze SNAPPER
+state SNAPPER ZS_MM_ATTACK NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+freeze SNAPPER off
+cam two SNAPPER 300 20 1
+wait 1200
+rec snapper-stun
+stun SNAPPER posture
+shot snapper-000
+wait 150
+shot snapper-150
+wait 200
+shot snapper-350
+wait 250
+shot snapper-600
+wait 300
+shot snapper-900
+wait 300
+shot snapper-1200
+wait 300
+shot snapper-1500
+wait 800
+stop
+cam game
+
+watch player
+clear 3000
+insert Shadowbeast
+put SHADOWBEAST 260 0
+stats npc SHADOWBEAST hp 100000 hpmax 100000
+wait 400
+fight SHADOWBEAST player
+wait 200
+freeze SHADOWBEAST
+freeze SHADOWBEAST
+state SHADOWBEAST ZS_MM_ATTACK NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+freeze SHADOWBEAST off
+cam two SHADOWBEAST 650 60 1
+wait 1200
+rec shadow-stun
+stun SHADOWBEAST posture
+shot shadow-000
+wait 150
+shot shadow-150
+wait 200
+shot shadow-350
+wait 250
+shot shadow-600
+wait 300
+shot shadow-900
+wait 300
+shot shadow-1200
+wait 300
+shot shadow-1500
+wait 800
+stop
+cam game

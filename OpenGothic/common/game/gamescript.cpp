@@ -3494,6 +3494,8 @@ void GameScript::snd_play3d(std::shared_ptr<zenkit::INpc> npcRef, std::string_vi
   }
 
 void GameScript::exitsession() {
+  if(auto& take = Gothic::inst().takeGameEnd; take && take("finale"))
+    return;
   owner.exitSession();
   }
 

@@ -39,6 +39,7 @@ MELEE_DOWN_TACTICS sets GAME melee_down_tactics in every series (0 or 1).
 MELEE_HITSTOP sets GAME melee_hitstop in every series (0 or 1).
 MELEE_PARRY sets GAME melee_parry in every series (0 or 1).
 MELEE_PARRY_AI sets GAME melee_parry_ai in every series (0 or 1).
+MELEE_STAGGER sets GAME melee_stagger in every series (0 or 1).
 MELEE_STAMINA sets GAME melee_stamina in every series (0 or 1).
 USAGE
 }
@@ -80,7 +81,7 @@ done
 remote_script() {
   local remote_args='' remote_env='' arg key
   for arg in "$@"; do printf -v remote_args '%s %q' "$remote_args" "$arg"; done
-  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA MELEE_PARRY MELEE_PARRY_AI; do
+  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA MELEE_PARRY MELEE_PARRY_AI MELEE_STAGGER; do
     if [[ -n "${!key:-}" ]]; then printf -v remote_env '%s %q' "$remote_env" "$key=${!key}"; fi
   done
   {
@@ -186,6 +187,9 @@ for name in "${series[@]}"; do
   fi
   if [[ -n "${MELEE_PARRY_AI:-}" ]]; then
     scale_env+=("MELEE_PARRY_AI=$MELEE_PARRY_AI")
+  fi
+  if [[ -n "${MELEE_STAGGER:-}" ]]; then
+    scale_env+=("MELEE_STAGGER=$MELEE_STAGGER")
   fi
   cp "$task_root/provenance/source-commit.txt" "$task_root/provenance/source.patch" \
      "$task_root/provenance/runner.sha256" "$out/"

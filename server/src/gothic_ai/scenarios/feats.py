@@ -14,7 +14,7 @@ from ..feats import CACHE_KEY, WRITE, Feats
 from ..game import GameError, GameLink
 from ..journal import Journal
 from ..llm import ToolCall
-from ..protocol import ChronicleGet, FeatToastCmd, GameMessage, Session
+from ..protocol import ChronicleGet, FateCardCmd, FateEnd, FeatToastCmd, GameMessage, Session
 from ..social import Rumors
 from ..talk import TalkDesk
 from .common import (
@@ -28,6 +28,12 @@ from .common import (
     prepare_npc_pose,
     wait_message,
 )
+from .live import LiveCase
+
+SCENARIOS = {
+    "feats": ("GIVEN", {"save": False, "timeout": 240}),
+    "feat_fame": ("GIVEN", {"save": False, "timeout": 420}),
+}
 
 
 class ScenarioArtist(feat_art.Artist):
@@ -38,9 +44,11 @@ class ScenarioArtist(feat_art.Artist):
 
 async def feat_fame(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, rumors: Rumors,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Read fame in a witness, a hearer and an uninformed control's situations."""
-    model_off(dialogue)
+    if live is None:
+        model_off(dialogue)
     results: dict[str, str] = {}
     chronicle = rumors.chronicle
     witness = "NONE_100_XARDAS"
@@ -64,7 +72,8 @@ async def feat_fame(
         await link.wait_world()
         if link.session is None:
             await wait_message(link, Session, timeout=10)
-        if not check("new_game", link.session is not None and link.session.parent is None
+        if not check("new_game", link.session is not None
+                     and (live is not None or link.session.parent is None)
                      and not chronicle.facts("feat"), "fresh branch without feats"):
             return _logged(results)
         await link.debug("player_goto", waypoint=arena)
@@ -81,7 +90,7 @@ async def feat_fame(
             "chapter": int(at.get("vars", {}).get("KAPITEL") or 1),
             **{key: at[key] for key in ("day", "hour", "minute")},
         }
-        log.info("given: дано: подвиг известен Ксардасу и Лобарту, Хильда о нём не знает")
+        log.info("fixture: Xardas and Lobart know the feat; Hilda does not")
         chronicle.record(feat)
         chronicle.record({
             "fact": "feat_fame", "feat": feat["id"], "title": feat["title"],
@@ -121,8 +130,19 @@ async def feat_fame(
             check(f"fame_prompt_{role}", shown == int(known)
                   and (not known or feat["title"] in situation and feat["text"] in situation),
                   f"npc={npc}, fame_blocks={shown}")
+            if live is not None:
+                text = f"{snap.npc.name}, ты слышал о моих подвигах?"
+                talk.hear(text, npc, {"via": "scenario"})
+                await live.wait_turn(dialogue, npc, text)
+                live.evidence.setdefault("roles", []).append({
+                    "role": role, "npc": npc, "knows": known, "calls": live.calls(npc),
+                })
+                talk.end("scenario")
+                await _until(lambda npc=npc: npc not in talk.attached, 30)
             if not await place(npc, park):
                 return _logged(results)
+        if live is not None:
+            live.finish("observed", evidence={"feat": feat})
         return _logged(results)
     except (GameError, TimeoutError, RuntimeError) as error:
         check("error", False, str(error) or type(error).__name__)
@@ -133,10 +153,11 @@ async def feat_fame(
 
 async def feats(
     link: GameLink, chronicler: Feats, journal: Journal, dialogue: DialogueManager, slot: int = 8,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Check a native kill's toast, fame and rollback with a given chronicler verdict."""
-    off = model_off(dialogue)
-    if chronicler.model.llm is not off:
+    off = model_off(dialogue) if live is None else None
+    if off is not None and chronicler.model.llm is not off:
         raise RuntimeError("chronicler must use the shared scenario backend")
     results: dict[str, str] = {}
 
@@ -158,11 +179,14 @@ async def feats(
         "reason": "Герой впервые убил человека.",
     }
     reason = "дано: летописец признаёт подвиг «Первый приговор»"
-    off.given(reason, who=CACHE_KEY, calls=[ToolCall(WRITE, answer)])
+    if off is not None:
+        off.given(reason, who=CACHE_KEY, calls=[ToolCall(WRITE, answer)])
     original_sink, send = journal.sink, link.send
     toasts: list[FeatToastCmd] = []
     chronicle_asks: list[float] = []  # the diary's copy follows each toast (chronicle_get, v55)
     toasted_at: dict[str, float] = {}
+    fate_ends: list[FateEnd] = []  # the hero's death asks for the final card (fate_end, v56)
+    fate_cards: list[FateCardCmd] = []
     entries: list[dict[str, Any]] = []
     loading: asyncio.Task[Session] | None = None
 
@@ -181,6 +205,8 @@ async def feats(
         if isinstance(cmd, FeatToastCmd):
             toasts.append(cmd)
             toasted_at[cmd.feat] = time.monotonic()
+        if isinstance(cmd, FateCardCmd):
+            fate_cards.append(cmd)
 
     def keep(entry: dict[str, Any]) -> None:
         entries.append(entry)
@@ -190,6 +216,8 @@ async def feats(
     def asked(msg: GameMessage) -> None:
         if isinstance(msg, ChronicleGet):
             chronicle_asks.append(time.monotonic())
+        if isinstance(msg, FateEnd):
+            fate_ends.append(msg)
 
     link.listeners.append(asked)
     chronicle.on_entry.append(record)
@@ -214,6 +242,12 @@ async def feats(
 
         await link.debug("kill", instance=victim, by="PLAYER")
         if not check("hero_deed", await _until(lambda: trigger is not None, 10), f"npc={victim}"):
+            return _logged(results)
+        if live is not None:
+            settled = await _until(
+                lambda: chronicler._work is None or chronicler._work.done(), 120,
+            )
+            _record_live_feat(live, chronicle.entries(), chronicler.feats, victim, settled)
             return _logged(results)
         if not await _until(lambda: bool(chronicler.feats), 60):
             raise RuntimeError("given feat did not reach the chronicle within 60 s")
@@ -254,6 +288,22 @@ async def feats(
         calls = off.used.count(reason) + sum(f"who={CACHE_KEY}," in error for error in off.attempts)
         check("one_analysis_per_kill", calls == 1, f"analyses={calls}, kills=1")
 
+        # The hero's death ends this fate: the game asks for the final card after he lies a moment, the
+        # scenario's model is off, so the card is the fallback with the feat of this branch.
+        await link.debug("kill", npc="PLAYER", by="NONE_100_XARDAS")
+        await _until(lambda: bool(fate_cards), 30)
+        ends = [(e.kind, e.killer) for e in fate_ends]
+        check("fate_end", ends == [("death", "NONE_100_XARDAS")], f"fate_end={ends}")
+        card = fate_cards[0] if fate_cards else None
+        check(
+            "fate_card", card is not None and not card.off and card.title == "Конец пути"
+            and [f.id for f in card.feats] == [award["id"]] and card.count == 1,
+            card.model_dump(include={"off", "title", "count"}) | {"feats": [f.id for f in card.feats]}
+            if card is not None else "no fate_card",
+        )
+        check("fate_fact", [f.get("kind") for f in chronicle.facts("fate_end")] == ["death"],
+              f"fate_end facts={chronicle.facts('fate_end')}")
+
         loading = asyncio.create_task(wait_message(link, Session, lambda msg: msg.reason == "load", 120))
         await asyncio.sleep(0)
         await link.debug("load", slot)
@@ -269,6 +319,7 @@ async def feats(
               f"images={chronicle.facts('feat_image')}")
         check("fame_rollback", not chronicle.facts("feat_fame"),
               f"fame={chronicle.facts('feat_fame')}")
+        check("fate_rollback", not chronicle.facts("fate_end"), f"fate_end={chronicle.facts('fate_end')}")
         check("image_retained", image_dir.is_dir() and icon.is_file(), str(image_dir))
         return _logged(results)
     except (GameError, TimeoutError, RuntimeError) as error:
@@ -282,3 +333,21 @@ async def feats(
         link.send = send  # type: ignore[method-assign]
         link.listeners.remove(asked)
         chronicle.on_entry.remove(record)
+
+
+def _record_live_feat(
+    live: LiveCase, entries: list[tuple[int, Fact]], awards: list[Fact], victim: str, settled: bool,
+) -> None:
+    kills = {seq for seq, fact in entries if (
+        fact.get("fact") == "died" and fact.get("npc") == victim and fact.get("killer") == "PLAYER"
+    ) or (
+        fact.get("fact") == "crime" and fact.get("kind") == "murder" and fact.get("victim") == victim
+    )}
+    correct = bool(awards) and all(
+        bool(award.get("evidence")) and set(award["evidence"]) <= kills for award in awards
+    )
+    live.finish(
+        "success" if correct else "failure" if awards else "no_decision",
+        evidence={"victim": victim, "kill_sequences": sorted(kills), "awards": awards,
+                  "settled": settled},
+    )

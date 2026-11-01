@@ -146,6 +146,13 @@ async def test_inworld_config_auth_and_binary_audio(inworld_server) -> None:
     assert messages[-1] == (0, {"endTurn": {}})
 
 
+async def test_inworld_whole_recording_goes_in_tenth_second_frames(inworld_server) -> None:
+    server = inworld_server
+    result = await server.provider().transcribe(tone(0.95), "ru")
+    assert result.text == "Кавалорн."
+    assert [len(frame) for frame in server.audio[0]] == [3200] * 9 + [1600]
+
+
 async def test_inworld_reuses_connection_for_matching_hints(inworld_server) -> None:
     server = inworld_server
     provider = server.provider()

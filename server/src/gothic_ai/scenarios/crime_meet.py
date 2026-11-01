@@ -27,6 +27,10 @@ from .common import (
 )
 from .crimes import HOUSE
 
+SCENARIOS = {
+    "crime_meet": ("GIVEN", {"save": True, "timeout": 600}),
+}
+
 if TYPE_CHECKING:
     from ..amends import Amends, Proposal, Storylet
     from ..crime_meet import CrimeMeet

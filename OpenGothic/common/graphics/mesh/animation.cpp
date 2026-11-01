@@ -91,6 +91,8 @@ Animation::Animation(asset::ModelScript& p, std::string_view name, const bool ig
   }
 
 const Animation::Sequence* Animation::sequence(std::string_view name) const {
+  if(name.empty())
+    return nullptr;
   if(sqHot!=nullptr && sqHot->name==name)
     return sqHot;
   auto it = std::lower_bound(sequences.begin(),sequences.end(),name,[](const Sequence& s,std::string_view n){

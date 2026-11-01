@@ -47,12 +47,29 @@ The run fails if either route does not finish or either pass lacks metrics. Use 
 host, resolution and content overrides for later comparisons; `OPENGOTHIC_STREAMING=0`
 disables the manager and deliberately cannot produce this residency measurement.
 
+Run comparison series in alternating order (OFF, ON, OFF, ON), with at least two runs
+per side on the same host. Judge `run` and `fly` with `perf_report.py series`: it compares
+the median per-run p99 and accepts ON − OFF <= max(1 ms, OFF p99 max − min), so the
+measurement's own OFF spread sets the allowance when it exceeds the configured tolerance.
+It prints the per-run values and verdicts and writes `series.md` / `series.json` to `--out`
+(the last `--on` directory by default); exit code 0 means both passes pass, 1 means a failure,
+and 2 means invalid arguments.
+
+```bash
+python3 scripts/perf_report.py series --off /path/off-1 /path/off-2 \
+  --on /path/on-1 /path/on-2 --tolerance-ms 1.0 --out /path/series
+```
+
 `BENCH_HOST=local OPENGOTHIC_STREAMING=0 scripts/bench.sh streaming-shots` and the same
 command with `OPENGOTHIC_STREAMING=1` capture `perf-market.png`, `perf-harbour.png` and
 `perf-forest.png` from the first viewpoints of those performance scenarios. `streaming wait`
 yields a frame for camera/residency updates, then waits until the publication queue is empty
 and all desired Near/Far chunks are published (default timeout 60000 real milliseconds).
-The disabled-streaming path is already ready. Claude compares the resulting frames on Mac.
+The wait also includes static vob views. The disabled-streaming path is already ready.
+`streaming-shots` ends with `perf-market-teleport.png`: after one update beyond the city's Far
+range, it captures the first frame back in the market without waiting for Far publication.
+Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claude compares
+the resulting frames on Mac.
 
 ## Frame profile
 
@@ -480,7 +497,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `talk <npc\|nearest> <ms>` | the npc and the hero talk to each other that long (no words): they look at each other |
 | `freeze <npc\|nearest> [off]` | the npc leaves what it does and stands still, like a body the AI server attaches |
 | `ani <npc\|nearest\|player> <name>` | it plays that animation, as `play_ani` does (`T_STAND_2_PEE` goes on to its loop `S_PEE`) |
-| `heropose kneel\|none` | the hero kneels as after a surrender (`player_pose`), or gets up |
+| `heropose kneel\|none\|check` | the hero kneels as after a surrender (`player_pose`), or gets up. After `heropose kneel` and `wait 2500`, `check` exercises actual mouse rotation through a movement tick (keeps kneeling and turns 15 degrees), then `ptt_start` (keeps kneeling), then `Forward` (ends kneeling). Success writes `heropose check passed` and the engine writes `[ai] hero pose kneel ends: key Forward` to `game.log`; the bridge must be enabled, no server connection is needed |
 | `place <dist> <angle>`, `orbit <deg> <ms>` | the hero stands around the watched npc (angle from its facing, 0 in front) or goes around it; not where no ground is found (inside a rock: it would fall through the world) |
 | `gazeinfo` | gaze state of the watched npc to `bench.log`: why it looks, at whom |
 | `lean on\|off` | the lean into turns and on slopes |
@@ -582,7 +599,9 @@ AI is `npc line <npc>: <text>` in `bench.log`, `npc line <npc> -> <to>: <text>` 
 by its distance to the hero: such a line is never heard), and an `output` event.
 
 Environment of `scripts/bench.sh`: `GOTHIC_DIR`, `SAVE` (default: `save_slot_1.sav` of the main
-checkout), `NO_BUILD=1`, `TIMEOUT` (seconds, default 300), `KEEP=1`, `OPENGOTHIC_TEXTURES` (sharper
+checkout), `WORLD` (a fresh game in that world instead), `GOTHIC_INTRO=1` (the game starts with
+`-nointro` by default, as in e2e: no new-game intro and no script videos; Marvin `playvideo` still
+plays), `NO_BUILD=1`, `TIMEOUT` (seconds, default 300), `KEEP=1`, `OPENGOTHIC_TEXTURES` (sharper
 textures; by default those of `scripts/hd-textures.sh` when they have been made, as the launcher does;
 empty: the game's own), `SOUND` and `MUSIC` (volumes 0..1, default 0; with `TEMPEST_AUDIO_LOOPBACK=48000` a
 segment's sound goes into `<segment>.wav`).

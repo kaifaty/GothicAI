@@ -25,6 +25,34 @@ constexpr float StanceRate  = 6.f;                   // 1/s: crouching, leaning 
 constexpr float HeadOverHips = 70.f;                 // cm: leaning out tilts the trunk from the hips
 constexpr float CantRate     = 10.f;                 // 1/s: the bow canted, straightened (a quick shot)
 
+const char* playerPoseEndReason(KeyCodec::Action a) {
+  switch(a) {
+    case KeyCodec::Forward:       return "key Forward";
+    case KeyCodec::Back:          return "key Back";
+    case KeyCodec::Left:          return "key Left";
+    case KeyCodec::Right:         return "key Right";
+    case KeyCodec::RotateL:       return "key RotateL";
+    case KeyCodec::RotateR:       return "key RotateR";
+    case KeyCodec::Jump:          return "key Jump";
+    case KeyCodec::ActionGeneric: return "key ActionGeneric";
+    case KeyCodec::ActionLeft:    return "key ActionLeft";
+    case KeyCodec::ActionRight:   return "key ActionRight";
+    case KeyCodec::Parade:        return "key Parade";
+    case KeyCodec::Weapon:        return "key Weapon";
+    case KeyCodec::WeaponMele:    return "key WeaponMele";
+    case KeyCodec::WeaponBow:     return "key WeaponBow";
+    case KeyCodec::WeaponMage3:   return "key WeaponMage3";
+    case KeyCodec::WeaponMage4:   return "key WeaponMage4";
+    case KeyCodec::WeaponMage5:   return "key WeaponMage5";
+    case KeyCodec::WeaponMage6:   return "key WeaponMage6";
+    case KeyCodec::WeaponMage7:   return "key WeaponMage7";
+    case KeyCodec::WeaponMage8:   return "key WeaponMage8";
+    case KeyCodec::WeaponMage9:   return "key WeaponMage9";
+    case KeyCodec::WeaponMage10:  return "key WeaponMage10";
+    default:                     return nullptr;
+    }
+  }
+
 // a critically damped spring moves v toward goal, smooth seconds (about half the time it takes): it eases
 // in and out, no jerks when the goal jumps; vel is its speed
 float springTo(float v, float goal, float& vel, float smooth, float dt) {
@@ -110,12 +138,9 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
     }
 
   handleMovementAction(KeyCodec::ActionMapping{a,mapping}, true);
-  if(pl!=nullptr && (a==Action::Forward || a==Action::Back || a==Action::Left || a==Action::Right ||
-                    a==Action::RotateL || a==Action::RotateR || a==Action::Jump ||
-                    a==Action::ActionGeneric || a==Action::ActionLeft || a==Action::ActionRight ||
-                    a==Action::Parade || a==Action::Weapon || a==Action::WeaponMele ||
-                    a==Action::WeaponBow || (a>=Action::WeaponMage3 && a<=Action::WeaponMage10)))
-    pl->setPlayerPose(false);
+  if(pl!=nullptr)
+    if(auto* reason = playerPoseEndReason(a))
+      pl->setPlayerPose(false,reason);
 
   if(pl!=nullptr && !pl->spellFrozen() && pl->interactive()!=nullptr && c!=nullptr && !c->isFree()) {
     auto inter = pl->interactive();
@@ -322,11 +347,6 @@ bool PlayerControl::isPressed(KeyCodec::Action a) const {
   }
 
 void PlayerControl::onRotateMouse(float dAngleX, float dAngleY) {
-  if(dAngleX!=0.f) {
-    if(auto* w = Gothic::inst().world())
-      if(auto* pl = w->player())
-        pl->setPlayerPose(false);
-    }
   rotMouse  += dAngleX;
   rotMouseY += dAngleY;
   }
@@ -726,10 +746,17 @@ bool PlayerControl::tickMove(uint64_t dt) {
     return true;
     }
 
-  if(movement.forwardBackward.any() || movement.strafeRightLeft.any() || movement.turnRightLeft.any() ||
-     ctrl[Action::ActionGeneric] || ctrl[Action::Jump])
-    pl->setPlayerPose(false);
+  if(movement.forwardBackward.any())
+    pl->setPlayerPose(false,movement.forwardBackward.value()>0.f ? "key Forward" : "key Back");
+  else if(movement.strafeRightLeft.any())
+    pl->setPlayerPose(false,movement.strafeRightLeft.value()>0.f ? "key Right" : "key Left");
+  else if(movement.turnRightLeft.any())
+    pl->setPlayerPose(false,movement.turnRightLeft.value()>0.f ? "key RotateR" : "key RotateL");
+  else if(ctrl[Action::ActionGeneric] || ctrl[Action::Jump])
+    pl->setPlayerPose(false,ctrl[Action::ActionGeneric] ? "key ActionGeneric" : "key Jump");
   if(pl->tickPlayerPose()) {
+    pl->setDirection(pl->rotation()+rotMouse);
+    rotMouse = rotMouseY = 0;
     runAngleDest = 0;
     return true;
     }

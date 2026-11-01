@@ -17,9 +17,6 @@ const float mieAbsorptionBase      = 4.40  / 1e6;
 // NOTE: Ozone does not contribute to scattering; it only absorbs light.
 const vec3  ozoneAbsorptionBase    = vec3(0.650, 1.881, .085) / 1e6;
 
-const float dFogMin = 0;
-const float dFogMax = 0.9999;
-
 float miePhase(float cosTheta) {
   const float scale = 3.0/(8.0*M_PI);
 

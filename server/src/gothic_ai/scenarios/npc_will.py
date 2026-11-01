@@ -25,6 +25,10 @@ from .common import (
     wait_npc_visibility,
 )
 
+SCENARIOS = {
+    "npc_will": ("OFF", {"save": True, "timeout": 240}),
+}
+
 if TYPE_CHECKING:
     from ..chests import ChestDesk
     from ..dialogue import DialogueManager

@@ -19,7 +19,8 @@ Step B2: one word at a time. The conversation has one floor (`Floor`, dialogue.p
   before it have their text ready (not their sound): it answers with their words in mind, and each next
   voice adds a second or two, not four. Its lines are heard after theirs;
 - **three voices to a phrase of the hero's** (`MAX_VOICES`): a fourth says nothing. The round ends with
-  his next phrase, or once nobody has spoken for `ROUND_GAP_S` (a fight's shouts go on);
+  his next phrase, or once nobody has spoken for `ROUND_GAP_S` (a fight's shouts go on). Urgent mercy
+  turns take an extra voice: the round's limit must not take away a chance to surrender;
 - **the hero's voice cuts all**: whoever speaks stops, whoever waits says nothing. Seats asked while he
   speaks wait for his phrase: the one he speaks to comes first.
 
@@ -270,8 +271,10 @@ class GroupTalk:
         )
         if e is None or at is None:
             return  # not in a round of the hero's (a cut turn: he has spoken again)
-        if len([s for s in self.seats if not s.dropped]) >= MAX_VOICES:
-            waiting = [s for s in self.seats[at + 1 :] if not s.dropped and not s.ready]
+        if len([s for s in self.seats if not s.dropped and s.kind != "mercy"]) >= MAX_VOICES:
+            waiting = [
+                s for s in self.seats[at + 1 :] if not s.dropped and not s.ready and s.kind != "mercy"
+            ]
             if not waiting:
                 log.info("%s: no voice left to answer %s", to, speaker)
                 return
@@ -337,7 +340,9 @@ class GroupTalk:
             await asyncio.sleep(POLL_S)
         if self._quiet():
             self._new_round()
-        if len([s for s in self.seats if not s.dropped]) >= MAX_VOICES:
+        if kind != "mercy" and len(
+            [s for s in self.seats if not s.dropped and s.kind != "mercy"]
+        ) >= MAX_VOICES:
             log.info("%s: no voice left for it in this round (%s)", npc, ", ".join(s.npc for s in self.seats))
             return False
         seat = Seat(npc, self.clock(), id=next(self._ids), kind=kind)

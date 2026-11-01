@@ -28,6 +28,13 @@ from .common import (
     model_off,
 )
 
+SCENARIOS = {
+    "broken": ("GIVEN", {
+        "save": True, "timeout": 240,
+        "env": {"OPENGOTHIC_FRACTURE": "~/.local/share/gothic-ai/fracture"},
+    }),
+}
+
 log = logging.getLogger(__name__)
 
 

@@ -80,7 +80,11 @@ class Chronicle:
         return [fact for _, fact in self.entries(kind)]
 
     def entries(self, kind: str | None = None) -> list[tuple[int, Fact]]:
-        """The branch's facts with their save sequence numbers, oldest first, optionally by kind."""
+        """The branch's facts with their save sequence numbers, oldest first, optionally by kind.
+
+        Defeat counts are daily snapshots: keep their history in the log for save rollback, but expose
+        only the latest count for each victim and day.
+        """
         if self.branch is None:
             return []
         if self._cached != self.branch:
@@ -91,7 +95,12 @@ class Chronicle:
             self._all.append((seq, f))
             self._by_kind.setdefault(f.get("fact"), []).append((seq, f))
             self._seq = seq
-        return list(self._all) if kind is None else list(self._by_kind.get(kind, ()))
+        entries = list(self._all) if kind is None else list(self._by_kind.get(kind, ()))
+        if kind in {None, "defeated"}:
+            latest = {(f["npc"], f["day"]): seq for seq, f in self._by_kind.get("defeated", ())}
+            entries = [(seq, f) for seq, f in entries
+                       if f.get("fact") != "defeated" or latest[f["npc"], f["day"]] == seq]
+        return entries
 
     def killed(self, tag: str, by: str | None = None) -> int:
         """How many of the tag died (by `by`, e.g. PLAYER), as written down."""

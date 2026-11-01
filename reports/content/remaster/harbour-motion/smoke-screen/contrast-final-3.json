@@ -1,0 +1,116 @@
+{
+ "huts:wide": {
+  "harbour-motion-3": {
+   "mean_abs": 3.861,
+   "vis8": 0.109,
+   "p98": 53.627,
+   "max+": 63.73,
+   "max-": -96.052,
+   "sky": 1.189,
+   "sky_vis": 0.042,
+   "tree": 36.068,
+   "tree_vis": 0.777,
+   "roof": 2.004,
+   "roof_vis": 0.139,
+   "rgb": [
+    73,
+    74,
+    78
+   ]
+  }
+ },
+ "huts-night:wide": {
+  "harbour-motion-3": {
+   "mean_abs": 1.922,
+   "vis8": 0.095,
+   "p98": 22.742,
+   "max+": 31.849,
+   "max-": -17.903,
+   "sky": 0.444,
+   "sky_vis": 0.024,
+   "roof": 4.452,
+   "roof_vis": 0.22,
+   "rgb": [
+    27,
+    24,
+    62
+   ]
+  }
+ },
+ "huts-north:wide": {
+  "harbour-motion-3": {
+   "mean_abs": 18.82,
+   "vis8": 0.558,
+   "p98": 45.862,
+   "max+": 48.722,
+   "max-": -21.32,
+   "sky": 25.529,
+   "sky_vis": 0.756,
+   "tree": 0.384,
+   "tree_vis": 0.024,
+   "roof": 0.021,
+   "roof_vis": 0.005,
+   "rgb": [
+    74,
+    84,
+    101
+   ]
+  }
+ },
+ "huts-north-night:wide": {
+  "harbour-motion-3": {
+   "mean_abs": 8.397,
+   "vis8": 0.472,
+   "p98": 19.901,
+   "max+": 23.955,
+   "max-": -46.399,
+   "sky": 11.523,
+   "sky_vis": 0.65,
+   "roof": 0.521,
+   "roof_vis": 0.026,
+   "rgb": [
+    28,
+    26,
+    65
+   ]
+  }
+ },
+ "overhead:wide": {
+  "harbour-motion-3": {
+   "mean_abs": 1.355,
+   "vis8": 0.058,
+   "p98": 21.419,
+   "max+": 56.694,
+   "max-": -77.428,
+   "sky": 0.161,
+   "sky_vis": 0.005,
+   "tree": 0.413,
+   "tree_vis": 0.012,
+   "roof": 0.956,
+   "roof_vis": 0.078,
+   "rgb": [
+    79,
+    79,
+    83
+   ]
+  }
+ },
+ "overhead-night:wide": {
+  "harbour-motion-3": {
+   "mean_abs": 1.471,
+   "vis8": 0.075,
+   "p98": 20.736,
+   "max+": 29.458,
+   "max-": -70.754,
+   "sky": 0.024,
+   "sky_vis": 0.001,
+   "roof": 1.439,
+   "roof_vis": 0.08,
+   "rgb": [
+    29,
+    26,
+    64
+   ]
+  }
+ }
+}

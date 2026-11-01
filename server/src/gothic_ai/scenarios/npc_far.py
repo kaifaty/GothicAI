@@ -23,6 +23,10 @@ from .common import (
     wait_message,
 )
 
+SCENARIOS = {
+    "npc_far": ("OFF", {"save": True, "timeout": 720}),
+}
+
 if TYPE_CHECKING:
     from ..chests import ChestDesk
     from ..dialogue import DialogueManager

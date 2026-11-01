@@ -10,6 +10,10 @@ from ..game import GameError, GameLink
 from ..protocol import HeroDeed, Session
 from .common import HILDA, LOBART, _logged, _save, _until, _until_async, wait_message
 
+SCENARIOS = {
+    "crimes": ("OFF", {"save": True, "timeout": 420}),
+}
+
 if TYPE_CHECKING:
     from ..crimes import Crimes
 
