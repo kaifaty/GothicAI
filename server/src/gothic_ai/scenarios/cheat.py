@@ -32,6 +32,10 @@ from .common import (
     wait_message,
 )
 
+SCENARIOS = {
+    "cheat": ("GIVEN", {"save": True, "timeout": 720}),
+}
+
 if TYPE_CHECKING:
     from ..chronicle import Chronicle
     from ..crimes import Crimes

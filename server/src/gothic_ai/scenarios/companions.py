@@ -50,6 +50,20 @@ from .common import (
 )
 from .live import LiveCase
 
+SCENARIOS = {
+    "calm": ("GIVEN", {"save": False, "timeout": 240}),
+    "companion": ("GIVEN", {"save": False, "timeout": 240}),
+    "neural": ("OFF", {"save": False, "timeout": 240}),
+    "neural-companion": ("OFF", {"save": False, "timeout": 240}),
+    "neural-group": ("OFF", {"save": False, "timeout": 240}),
+    "neural-talk": ("GIVEN", {"save": False, "timeout": 240}),
+    "orders": ("GIVEN", {"save": False, "timeout": 360}),
+    "rescue": ("GIVEN", {"save": False, "timeout": 240}),
+    "rescue_self": ("GIVEN", {"save": False, "timeout": 240}),
+    "wolf": ("OFF", {"save": False, "timeout": 240}),
+    "wolf_load": ("OFF", {"save": False, "timeout": 240}),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 
 

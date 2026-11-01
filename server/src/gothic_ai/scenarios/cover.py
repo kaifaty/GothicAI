@@ -30,6 +30,11 @@ from .common import (
     wait_message,
 )
 
+SCENARIOS = {
+    "cover": ("GIVEN", {"save": True, "timeout": 720}),
+    "cover_subject": ("GIVEN", {"save": True, "timeout": 720}),
+}
+
 if TYPE_CHECKING:
     from ..crimes import Crimes
     from ..deals import Deals

@@ -44,6 +44,19 @@ from .common import (
 )
 from .live import LiveCase
 
+SCENARIOS = {
+    "amends": ("GIVEN", {"save": True, "timeout": 240}),
+    "amends_deal": ("GIVEN", {"save": True, "timeout": 240}),
+    "lie": ("GIVEN", {"save": True, "timeout": 240}),
+    "rumor": ("GIVEN", {"save": True, "timeout": 240}),
+    "vcheck": ("GIVEN", {"save": True, "timeout": 240}),
+    "vgive": ("GIVEN", {"save": False, "timeout": 240}),
+    "vlie": ("GIVEN", {"save": True, "timeout": 240}),
+    "vspare": ("GIVEN", {"save": False, "timeout": 900}),
+    "witness": ("GIVEN", {"save": True, "timeout": 240}),
+    "wrath": ("GIVEN", {"save": False, "timeout": 240}),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 
 

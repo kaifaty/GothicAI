@@ -32,6 +32,10 @@ from .common import (
 )
 from .npc_deeds import CHEST, HOUSE, ROAD
 
+SCENARIOS = {
+    "npc_director": ("GIVEN", {"save": True, "timeout": 720}),
+}
+
 if TYPE_CHECKING:
     from ..chests import ChestDesk
     from ..dialogue import DialogueManager

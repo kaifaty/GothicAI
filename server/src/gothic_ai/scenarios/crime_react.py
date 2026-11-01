@@ -22,6 +22,10 @@ from ..protocol import (
 from .common import HILDA, LOBART, _logged, _save, _until, _until_async, wait_message
 from .crimes import HOUSE
 
+SCENARIOS = {
+    "crime_react": ("OFF", {"save": True, "timeout": 420}),
+}
+
 if TYPE_CHECKING:
     from ..crime_react import CrimeReact
     from ..crimes import Crimes

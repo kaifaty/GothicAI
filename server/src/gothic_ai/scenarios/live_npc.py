@@ -16,6 +16,10 @@ from .live import LiveSuite
 from .npc_life import errand_scenario, initiative_scenario
 from .perception import cave_scenario, knows_scenario
 
+SCENARIOS = {
+    "live_npc": ("LIVE", None),
+}
+
 if TYPE_CHECKING:
     from ..cli import ServerState
 
