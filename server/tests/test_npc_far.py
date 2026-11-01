@@ -14,7 +14,7 @@ from gothic_ai.game import GameDisconnected, GameError
 from gothic_ai.memory import MemoryStore
 from gothic_ai.npc_crimes import NpcCrimes
 from gothic_ai.npc_far import FarWorld, _combatant
-from gothic_ai.npc_far_fight import Coefficients, Combatant, hit_damage, resolve
+from gothic_ai.npc_far_fight import TIME_LIMIT_S, Coefficients, Combatant, hit_damage, resolve
 from gothic_ai.protocol import NpcRoster, NpcView, Session, Snapshot
 from gothic_ai.social import Social
 from tests.test_npc_crimes import NpcLink
@@ -33,6 +33,7 @@ def fight_stats(*, hp=200, strength=60, protection=30, weapon=30, flags=0,
 
 STRONG = fight_stats()
 WEAK = fight_stats(hp=40, strength=15, protection=0, weapon=0)
+DURABLE = fight_stats(hp=10000, strength=5, protection=100, weapon=0)
 
 
 def person(npc: str, pos: float, *, guild: int = 12, state: str = "ZS_STAND",
@@ -60,10 +61,11 @@ class FarLink(NpcLink):
         self.after_eval: Callable[[], None] | None = None
         self.after_effect: Callable[[], None] | None = None
         self.effect_error: Exception | None = None
-        self.knockout_error: Exception | None = None
-        self.knockout_applies = True
-        self.knockout_attempts: list[tuple[str, list[dict[str, Any]], bool]] = []
+        self.fight_error: Exception | None = None
+        self.fight_applies = True
+        self.fight_attempts: list[tuple[str, list[dict[str, Any]], bool]] = []
         self.down: set[str] = set()
+        self.hp: dict[str, int] = {}
         self.readback_error: Exception | None = None
 
     async def story_state(self, **args: Any) -> dict[str, Any]:
@@ -87,21 +89,30 @@ class FarLink(NpcLink):
             if self.readback_error is not None:
                 raise self.readback_error
             return [1, 1] if npc in self.down else [40, 0]
+        if len(exprs) == 2 and all(expr[:1] == ["field"] for expr in exprs):
+            if self.readback_error is not None:
+                raise self.readback_error
+            return [self.hp[expr[1][1]] for expr in exprs]
         return self.values[:len(exprs)]
 
     async def story_effect(self, npc: str, effects: list[dict[str, Any]], *, check=False) -> None:
-        if effects[0]["do"] == "knockout":
-            self.knockout_attempts.append((npc, effects, check))
-            if (isinstance(self.knockout_error, GameError)
-                    and not isinstance(self.knockout_error, GameDisconnected)):
-                raise self.knockout_error
-            if self.knockout_applies:
-                self.down.add(npc)
+        effect = effects[0]
+        if effect["do"] in {"knockout", "wound"}:
+            self.fight_attempts.append((npc, effects, check))
+            if (isinstance(self.fight_error, GameError)
+                    and not isinstance(self.fight_error, GameDisconnected)):
+                raise self.fight_error
+            if self.fight_applies:
+                if effect["do"] == "knockout":
+                    self.down.add(npc)
+                else:
+                    self.hp[npc] = max(1, self.values[1] - effect["loss"])
+                    self.hp[effect["by"]] = max(1, self.values[49] - effect["by_loss"])
                 self.effects.append((npc, effects, check))
             if self.after_effect is not None:
                 self.after_effect()
-            if self.knockout_error is not None:
-                raise self.knockout_error
+            if self.fight_error is not None:
+                raise self.fight_error
             return
         if self.effect_error is not None:
             raise self.effect_error
@@ -302,8 +313,65 @@ async def test_far_fight_missing_goods_partial_return_and_attack(world, kind, go
     assert len(world.link.effects) == 1 + int(returned > 0)
 
 
-@pytest.mark.parametrize("during", ["eval", "knockout", "give"])
+async def test_far_timeout_wounds_both_before_facts_without_returning_goods(world):
+    world.link.values = [*DURABLE, *DURABLE, 3]
+    world.link.after_effect = lambda: world.chronicle.facts() == [] or pytest.fail(
+        "Distant fight facts preceded the effect",
+    )
+    result = await world.far.fight(crime(), OWNER, 0)
+    expected = resolve(result["act"], _combatant(OWNER, DURABLE), _combatant(THIEF, DURABLE),
+                       Coefficients(0.4, 0.5, 1.0))
+    assert (result["outcome"], result["reason"], result["model"], result["winner"]) == (
+        "timeout", "deadline", "hits_v1", None,
+    )
+    assert result["far"] and result["returned"] == 0 and result["duration_s"] == 120
+    assert (result["loss"], result["by_loss"], result["hits"], result["p_win"],
+            result["p_timeout"]) == (expected.loss, expected.by_loss, expected.hits, 0, 1)
+    assert world.link.effects == [(OWNER, [{
+        "do": "wound", "by": THIEF, "loss": expected.loss, "by_loss": expected.by_loss,
+    }], True)]
+    assert world.link.hp == {OWNER: DURABLE[1] - expected.loss,
+                             THIEF: DURABLE[1] - expected.by_loss}
+    assert not world.link.down and not world.chronicle.facts("npc_crime_restitution")
+    assert await world.far.fight(crime(), OWNER, 0) == result
+    assert len(world.link.fight_attempts) == 1
+    assert len(world.chronicle.facts("npc_crime_defense")) == 1
+
+
+@pytest.mark.parametrize("offsets", [(0, 0), (1, 0), (0, 1)])
+async def test_unknown_wound_requires_both_expected_hp_and_never_sends_twice(world, offsets):
+    world.link.values = [*DURABLE, *DURABLE, 3]
+    world.link.fight_error = TimeoutError("lost response")
+
+    def change_hp():
+        for npc, offset in zip((OWNER, THIEF), offsets, strict=True):
+            world.link.hp[npc] += offset
+
+    world.link.after_effect = change_hp
+    if any(offsets):
+        with pytest.raises(TimeoutError, match="lost response"):
+            await world.far.fight(crime(), OWNER, 0)
+        assert world.chronicle.facts() == []
+        with pytest.raises(GameError, match="cannot be replayed"):
+            await world.far.fight(crime(), OWNER, 0)
+        assert world.chronicle.facts() == []
+        for npc, offset in zip((OWNER, THIEF), offsets, strict=True):
+            world.link.hp[npc] -= offset
+    result = await world.far.fight(crime(), OWNER, 0)
+    assert result["outcome"] == "timeout"
+    assert await world.far.fight(crime(), OWNER, 0) == result
+    assert len(world.link.fight_attempts) == 1
+    assert len(world.chronicle.facts("npc_crime_defense")) == 1
+    assert world.link.evaluations[1] == (OWNER, [
+        ["field", ["inst", OWNER], "ATTRIBUTE", 0],
+        ["field", ["inst", THIEF], "ATTRIBUTE", 0],
+    ])
+
+
+@pytest.mark.parametrize("during", ["eval", "knockout", "give", "wound"])
 async def test_loading_during_far_fight_never_writes_old_world_facts(world, during):
+    if during == "wound":
+        world.link.values = [*DURABLE, *DURABLE, 3]
     def load() -> None:
         world.will._generation += 1
         world.link.receive(Session(type="session", branch="B"))
@@ -366,14 +434,17 @@ async def test_settled_case_cannot_start_another_far_fight(world):
     assert world.chronicle.facts("npc_crime_defense") == []
 
 
-async def test_knockout_rejection_records_no_facts_and_next_tick_sees_near_body(world):
+@pytest.mark.parametrize("timeout", [False, True])
+async def test_fight_rejection_records_no_facts_and_next_tick_sees_near_body(world, timeout):
+    if timeout:
+        world.link.values = [*DURABLE, *DURABLE, 3]
     before = list(world.chronicle.facts())
-    world.link.knockout_error = GameError("inside simulation")
+    world.link.fight_error = GameError("inside simulation")
     with pytest.raises(GameError, match="inside simulation"):
         await world.far.fight(crime(), OWNER, 0)
     assert world.chronicle.facts() == before
     assert world.link.effects == []
-    assert len(world.link.knockout_attempts) == 1
+    assert len(world.link.fight_attempts) == 1
     world.link.runtime[THIEF]["pos"] = [100, 0, 0]
     world.will._now += 1
     assert not await world.far.far(THIEF, 0)
@@ -382,8 +453,8 @@ async def test_knockout_rejection_records_no_facts_and_next_tick_sees_near_body(
 @pytest.mark.parametrize("applied", [True, False])
 @pytest.mark.parametrize("error", [TimeoutError, ConnectionError, GameDisconnected])
 async def test_unknown_knockout_is_read_back_and_never_sent_again(world, applied, error):
-    world.link.knockout_error = error("lost response")
-    world.link.knockout_applies = applied
+    world.link.fight_error = error("lost response")
+    world.link.fight_applies = applied
     if not applied:
         with pytest.raises(error, match="lost response"):
             await world.far.fight(crime(), OWNER, 0)
@@ -396,7 +467,7 @@ async def test_unknown_knockout_is_read_back_and_never_sent_again(world, applied
     result = await world.far.fight(crime(), OWNER, 0)
     assert result["outcome"] == "reclaimed"
     assert await world.far.fight(crime(), OWNER, 0) == result
-    assert len(world.link.knockout_attempts) == 1
+    assert len(world.link.fight_attempts) == 1
     assert len(world.chronicle.facts("npc_crime_defense")) == 1
     assert len(world.chronicle.facts("npc_crime_restitution")) == 1
     assert world.link.evaluations[1] == (THIEF, [
@@ -405,8 +476,11 @@ async def test_unknown_knockout_is_read_back_and_never_sent_again(world, applied
     ])
 
 
-async def test_retry_after_unavailable_knockout_readback_only_checks_body(world):
-    world.link.knockout_error = TimeoutError()
+@pytest.mark.parametrize("timeout", [False, True])
+async def test_retry_after_unavailable_fight_readback_only_checks_body(world, timeout):
+    if timeout:
+        world.link.values = [*DURABLE, *DURABLE, 3]
+    world.link.fight_error = TimeoutError()
     world.link.readback_error = ConnectionError()
     with pytest.raises(ConnectionError):
         await world.far.fight(crime(), OWNER, 0)
@@ -415,13 +489,16 @@ async def test_retry_after_unavailable_knockout_readback_only_checks_body(world)
     result, repeated = await asyncio.gather(
         world.far.fight(crime(), OWNER, 0), world.far.fight(crime(), OWNER, 0),
     )
-    assert result == repeated and result["outcome"] == "reclaimed"
-    assert len(world.link.knockout_attempts) == 1
+    assert result == repeated and result["outcome"] == ("timeout" if timeout else "reclaimed")
+    assert len(world.link.fight_attempts) == 1
     assert len(world.chronicle.facts("npc_crime_defense")) == 1
 
 
-async def test_loading_during_knockout_readback_drops_old_world_facts(world):
-    world.link.knockout_error = TimeoutError()
+@pytest.mark.parametrize("timeout", [False, True])
+async def test_loading_during_fight_readback_drops_old_world_facts(world, timeout):
+    if timeout:
+        world.link.values = [*DURABLE, *DURABLE, 3]
+    world.link.fight_error = TimeoutError()
 
     def load_during_readback():
         if len(world.link.evaluations) == 2:
@@ -523,7 +600,25 @@ def test_far_fight_armed_veteran_beats_unarmed_weakling():
     culprit = Combatant("WEAKLING", 40, 15, (0,) * 8, 1, (0,) * 8, 0, 0)
     result = resolve("far:unequal-case:VETERAN:reclaim:WEAKLING:", fighter, culprit,
                      Coefficients(0.4, 0.5, 1.0))
+    assert result.winner == fighter.name
+    assert result.duration_s < TIME_LIMIT_S
     assert result.p_win >= 0.95
+    assert result.p_timeout == 0
+
+
+def test_far_fight_durable_mirrors_time_out_with_both_losses_and_repeatable_act():
+    fighter = Combatant("FIGHTER", 10000, 15, (0,) * 8, 1, (100,) * 8, 0, 0)
+    culprit = replace(fighter, name="CULPRIT")
+    coefficients = Coefficients(0.4, 0.5, 1.0)
+    act = "far:durable-case:FIGHTER:reclaim:CULPRIT:"
+    result = resolve(act, fighter, culprit, coefficients)
+    assert result.winner is None
+    assert result.duration_s == TIME_LIMIT_S == 120
+    assert result.loss == result.hits[culprit.name] * 5 > 0
+    assert result.by_loss == result.hits[fighter.name] * 5 > 0
+    assert result.p_win == 0
+    assert result.p_timeout == 1
+    assert resolve(act, fighter, culprit, coefficients) == result
 
 
 @pytest.mark.parametrize("change", [

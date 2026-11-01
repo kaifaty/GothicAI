@@ -302,6 +302,25 @@ async def test_reclaimed_true_hero_words_count_as_true_claim_once(system):
     assert not s.chronicle.facts("caught")
 
 
+@pytest.mark.parametrize("far", [False, True])
+async def test_timeout_keeps_belief_unproved_before_and_after_loading(system, far):
+    s = system
+    crime = npc_case(s)
+    await accuse(s, crime["id"])
+    belief = s.blame.active(LOBART, crime["id"])
+    s.chronicle.record({
+        "fact": "npc_crime_defense", "crime": crime["id"], "culprit": THIEF,
+        "blamed": belief["id"], "fighter": LOBART, "outcome": "timeout", "reason": "deadline",
+        **({"far": True} if far else {}),
+    })
+    await drain(s)
+    s.link.receive(Session(type="session", branch="A"))
+    await drain(s)
+    assert s.blame.active(LOBART, crime["id"]) == belief
+    assert not s.chronicle.facts("blame_refuted")
+    assert not s.chronicle.facts("claim") and not s.chronicle.facts("caught")
+
+
 async def test_true_belief_missing_goods_does_not_catch_a_true_statement(system):
     s = system
     crime = npc_case(s)
