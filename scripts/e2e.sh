@@ -13,8 +13,9 @@
 #       MEMPROBE_PHASES=wave,save,load,spawn,teleport, MEMPROBE_CYCLES=8; no model, no body URL
 #   crime_meet: save 1, native home eviction and a brave victim's Amends approach/payment;
 #       LLM=chatgpt runs only the short compensation scene with the real model
-#   crime_ally: new game, no SAVE, LLM=fake; Brago attacks the following Cavalorn, the hero knocks him
-#       down and finishes him; murder and crime_side remain in the chronicle and Cavalorn answers
+#   crime_ally: given: Brago attacks the following Cavalorn; Cavalorn stays silent after the murder.
+#       New game, no SAVE; LLM=off via auto. The hero knocks Brago down and finishes him;
+#       murder and crime_side remain in the chronicle.
 #   bandit_parley: given: Brago attacks without cause, demands 100 gold, grants four hours of peace,
 #       then attacks on drawn weapons; his mate tries attacking during the truce. New game, no SAVE;
 #       Y pays 100 gold for four hours of peace with the cave gang, including 1015; no attack for 20 s,
@@ -176,21 +177,18 @@
 #   crimes: hero deeds and engine witnesses (docs/crime.md, layer 1), no model on Lobart's farm:
 #       SAVE=save_slot_1.sav; TIMEOUT=420. Theft, chest, unowned item, attack, sheep, both pocket
 #       outcomes, then save/load and a clean branch. Native script reactions remain enabled.
-#   crime_talk: crime knowledge and speech (docs/crime.md, layer 2), on Lobart's farm/save_slot_1.sav.
-#       LLM=fake: Hilda's theft rumor, testimony/catch_lie, accepted silence, chest suspicion/concern.
-#       LLM=chatgpt: only the first scene; records Lobart's actual prompt, reply and catch_lie outcome.
-#       TIMEOUT=600. Native theft perceptions stay enabled; Hilda's fight is reset after her sighting.
-#   trace_crime: one reply catches lies by fresh fence debris and Hilda's theft testimony, then save/load.
-#       LLM=fake; SAVE=save_slot_1.sav. Native theft perceptions stay enabled; checks mixed evidence,
-#       both accepted catch_lie calls, crime knowledge and trust without treating debris as authorship proof.
-#   cover: Hilda sees a real theft, sells cover through the deal key, and lies to Lobart. Her С row cannot
-#       catch the hero; Vino's real sighting exposes her. Save/load keeps the cover and one exposed fact.
-#       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt runs only the one cover request to Hilda,
-#       logs her exact reply and proposal/refusal, then exits. Fear is checked by the server unit tests.
-#   cover_subject: the same native cover/exposure, then Lobart's cover rumor reaches an acquaintance
-#       shared with Hilda (prefer Vatras). Its model reads the people block and both witness warnings;
-#       hero trust is unchanged by the rumor. Save/load restores knowledge and the rumor once.
-#       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720.
+#   crime_talk: given: Lobart asks Hilda and catches the lie from her testimony; Hilda offers silence.
+#       Testimony is a given line. Checks crime knowledge, accepted silence and chest suspicion/concern.
+#       LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=600. Native theft perceptions stay enabled.
+#   trace_crime: given: Lobart asks Hilda, then catches two lies in one turn from fresh fence debris
+#       and her given testimony. Checks accepted evidence, knowledge, trust and save/load.
+#       LLM=off via auto; SAVE=save_slot_1.sav; debris never proves theft authorship.
+#   cover: given: Hilda sells cover for 5 gold; Lobart asks Hilda and Vino, then catches the lie
+#       from the second source. Testimony lines are given; Hilda's covered row is rejected as proof.
+#       Checks payment, exposure and save/load; LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=720.
+#   cover_subject: given: the cover decisions above; a third asker asks Hilda without a verdict.
+#       Checks the rumor about Hilda, unchanged hero trust and witness warnings by reading the situation
+#       without a model turn, then save/load; LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=720.
 #   cheat: Hilda sells silence after a native theft but tells Lobart; dishonest Lobart keeps a later
 #       payment, Vino hears, then honesty 4 pays. Save/load preserves intentions and single outcomes.
 #       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt scripts only the later-payment setup,
@@ -218,7 +216,8 @@
 #       LLM=fake: unseen chest theft and its return quest, Hilda's initiative and paid silence,
 #       Lobart's learned grievance and Amends payment. LLM=chatgpt: witnessed theft goes to the
 #       real showrunner; records its line premise or none reason. TIMEOUT=900.
-#   crime_law: community law (docs/crime.md, layer 3), LLM=fake; SAVE=save_slot_1.sav, TIMEOUT=420.
+#   crime_law: given: Matteo offers silence for the second theft; community law otherwise uses no model.
+#       LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=420.
 #       Matteo witnesses a native theft; Andre stays locked until the next day, charges 50 through
 #       his native voiced dialog and accepts payment. Matteo still remembers. A second theft with
 #       an accepted silence deal never reaches Andre. Native theft perceptions stay enabled.

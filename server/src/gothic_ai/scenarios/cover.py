@@ -6,28 +6,26 @@ import asyncio
 import logging
 import math
 import re
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..brain.reflex import Reflexes
 from ..deals import GOLD
 from ..game import GameError, GameLink
-from ..llm import LLMEvent, Message, ToolCall
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import ToolCall
 from ..protocol import Session
 from ..trace import read as read_trace
 from .common import (
     HILDA,
     LOBART,
     VINO,
-    ClaimScript,
     FixedDecider,
     WitnessReaction,
     _logged,
     _save,
     _until,
     _until_async,
+    model_off,
     prepare_theft_witness,
     wait_message,
 )
@@ -66,22 +64,20 @@ async def cover_scenario(
     subject: bool = False,
     people: PeopleKnowledge | None = None,
 ) -> dict[str, str]:
-    """Fake: buy cover with Y, reject its evidence, catch the same words through Vino, save/load.
+    """Given cover and witness decisions, check payment, evidence, exposure and save/load.
 
-    Live: the same real theft, then one request to Hilda. Her response and cover proposal (or refusal)
-    are logged verbatim. A refusal is a valid result; the scenario never changes her character or prompt.
-    Only the fake branch stages Vino's independent observation and the later investigation.
-    `subject` continues through the NPC rumor, its witness warnings and save/load (fake only).
+    `subject` continues through the NPC rumor and witness warnings, reading the assembled situation
+    without an extra model turn.
     """
+    off = model_off(dialogue)
     results: dict[str, str] = {}
-    original_llm, original_reflexes = dialogue.llm, talk.reflexes
+    original_reflexes = talk.reflexes
     original_gate, original_stage = rumors.gate, rumors.stage
-    fake = isinstance(original_llm, FakeBackend)
     chronicle, directory = service.chronicle, Path(log_dir)
     facts = chronicle.facts
     participants = {LOBART, HILDA, VINO}
-    if subject and (not fake or people is None):
-        return _logged({"subject_setup": "failed (cover_subject needs LLM=fake and people knowledge)"})
+    if subject and people is None:
+        return _logged({"subject_setup": "failed (cover_subject needs people knowledge)"})
 
     def check(name: str, ok: bool, detail: object) -> bool:
         results[name] = f"{'done' if ok else 'failed'} ({detail})"
@@ -164,6 +160,7 @@ async def cover_scenario(
         await link.wait_world()
         if link.session is None:
             await wait_message(link, Session, timeout=10)
+        log.info("given: дано: решающая модель оставляет NPC слушать героя")
         talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
         rumors.gate, rumors.stage = lambda *_: False, None
         await link.debug("player_hp", hp=5000)
@@ -250,30 +247,19 @@ async def cover_scenario(
         hero_gold = int(await link.evaluate(["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", GOLD]]) or 0)
         if hero_gold < 100:
             await link.story_effect(HILDA, [{"do": "give", "item": GOLD, "count": 100 - hero_gold}])
-        if fake:
-            dialogue.llm = ClaimScript(
-                [
-                    (
-                        REQUEST,
-                        FakeStep(
-                            "Пять золотых — и я тебя прикрою.",
-                            [
-                                ToolCall(
-                                    "propose_deal",
-                                    {
-                                        "hero_gives": [{"item": GOLD, "count": 5}],
-                                        "cover": {"crime": cid, "day": day + 1, "vouch": VOUCH},
-                                    },
-                                )
-                            ],
-                        ),
-                    )
-                ],
-                [],
-                "Договорились.",
-                only="Хильда",
-            )
-        previous = {r["id"] for r in turns(HILDA)}
+        off.given(
+            "дано: Хильда продаёт прикрытие за пять золотых",
+            who=HILDA, when=REQUEST,
+            calls=[ToolCall("propose_deal", {
+                "hero_gives": [{"item": GOLD, "count": 5}],
+                "cover": {"crime": cid, "day": day + 1, "vouch": VOUCH},
+            })],
+        )
+        off.silent("дано: Хильда молчит (прикрытие предложено)", who=HILDA, when=REQUEST)
+        off.silent(
+            "дано: Хильда молчит (сделка прикрытия состоялась)",
+            who=HILDA, when="сделка состоялась",
+        )
         await link.debug(
             "type",
             text=(
@@ -281,41 +267,9 @@ async def cover_scenario(
                 "скажи, что я был с тобой. Что хочешь взамен?"
             ),
         )
-        finished = await _until(
-            lambda: any(
-                r["id"] not in previous and REQUEST in r.get("trigger", {}).get("text", "")
-                for r in turns(HILDA)
-            ),
-            180 if not fake else 45,
-        )
+        await _until(lambda: HILDA in deals.open, 45)
         await settled()
-        deal_turns = [
-            r
-            for r in turns(HILDA)
-            if r["id"] not in previous and REQUEST in r.get("trigger", {}).get("text", "")
-        ]
-        conv = dialogue.conversations.get(HILDA)
-        quotes = [e.content for e in conv.memory.entries if e.role == "assistant"] if conv else []
-        quote = quotes[-1] if quotes else ""
         deal = deals.open.get(HILDA)
-        log.info("cover %s response: %s", "scripted" if fake else "live", quote)
-        log.info("cover %s proposal: %s", "scripted" if fake else "live", deal.terms() if deal else "none")
-        if not check(
-            "deal_answer",
-            finished and bool(quote) and any(row.get("status") == "completed" for row in deal_turns),
-            quote,
-        ):
-            return _logged(results)
-        if not fake:
-            cover_calls = [
-                call
-                for row in deal_turns
-                for step in row.get("steps", [])
-                for call in step.get("calls", [])
-                if call.get("name") == "propose_deal" and call.get("arguments", {}).get("cover")
-            ]
-            check("live_cover", True, {"offered": bool(cover_calls), "calls": cover_calls, "quote": quote})
-            return _logged(results)
         window = await link.deal_window() or {}
         if not check(
             "cover_window",
@@ -372,65 +326,44 @@ async def cover_scenario(
         if not check("ask_near", ready, preparation):
             return _logged(results)
 
-        class EvidenceScript:
-            name = "cover-evidence-script"
-
-            def __init__(self, witness: str, name: str, asker: str = LOBART, judge: bool = True) -> None:
-                self.witness, self.wname = witness, name
-                self.asker, self.judge = asker, judge
-                self.asked = False
-                self.evidence: list[dict[str, Any]] = []
-                self.questions: list[str] = []
-
-            async def stream(self, **kw: Any) -> AsyncIterator[LLMEvent]:
-                last = kw["messages"][-1]
-                text = last.content if isinstance(last, Message) else ""
-                prompt = "\n".join(
-                    m.content for m in kw["messages"] if isinstance(m, Message) and m.role == "developer"
-                )
-                npc = kw.get("cache_key")
-                step = FakeStep(
-                    VOUCH if npc == HILDA else "Я видел его утром на ферме." if npc == VINO else "Я запомню."
-                )
-                if npc == self.asker and isinstance(last, Message):
-                    if DENIAL in text and not self.asked and "Ответ:" not in text:
-                        self.asked = True
-                        self.questions.append(prompt)
-                        step = FakeStep(
-                            f"Спрошу у {self.wname}.",
-                            [ToolCall("ask_witness", {"who": self.wname, "said": DENIAL})],
-                        )
-                    elif "Ответ:" in text:
-                        sid = next(
-                            (
-                                s
-                                for s in re.findall(r"^- (С\d+):", prompt, re.MULTILINE)
-                                if (t := witnesses.told(self.asker, s)) and t.witness == self.witness
-                            ),
-                            "",
-                        )
-                        self.evidence.append({"sid": sid, "prompt": prompt})
-                        step = (
-                            FakeStep(
-                                "Проверим твоё алиби.",
-                                [ToolCall("catch_lie", {"said": DENIAL, "seen": sid})],
-                            )
-                            if self.judge else FakeStep("Учту, кто это говорит.")
-                        )
-                async for event in FakeBackend(script=[step], delay=0).stream(**kw):
-                    yield event
-
         async def investigate(
             who: str, name: str, *, asker: str = LOBART, judge: bool = True,
-        ) -> tuple[EvidenceScript, list[dict[str, Any]]]:
-            script = EvidenceScript(who, name, asker, judge)
-            dialogue.llm = script  # type: ignore[assignment]
+        ) -> tuple[str, str, list[dict[str, Any]]]:
             prior = {r["id"] for r in turns(asker)}
-            await witnesses.prepare(asker)
             asker_name = talk.people[asker].name
+            question = await dialogue.situation(asker, asker_name)
+            off.given(
+                f"дано: {asker_name} спрашивает свидетеля {name}",
+                who=asker, when=DENIAL,
+                calls=[ToolCall("ask_witness", {"who": name, "said": DENIAL})],
+            )
+            off.silent(
+                f"дано: {asker_name} молчит (вопрос свидетелю передан)", who=asker, when=DENIAL,
+            )
+            off.given(
+                f"дано: реплика свидетеля {name}", who=who, when="спрашивает тебя",
+                line=VOUCH if who == HILDA else "Я видел его утром на ферме.",
+            )
+            if judge:
+                off.given(
+                    f"дано: {asker_name} уличает героя по показанию {name}",
+                    who=asker, when="Ответ:",
+                    calls=[ToolCall("catch_lie", {"said": DENIAL, "seen": "С1"})],
+                )
+            off.silent(
+                f"дано: {asker_name} молчит (показание {name} получено)",
+                who=asker, when="Ответ:",
+            )
             await link.debug("type", text=f"{asker_name}, {DENIAL}. Спроси у {name}.")
-            await _until(lambda: bool(script.evidence), 90)
+            await _until(
+                lambda: any(
+                    row["id"] not in prior and "Ответ:" in row.get("trigger", {}).get("text", "")
+                    for row in turns(asker)
+                ),
+                90,
+            )
             await settled()
+            evidence = await dialogue.situation(asker, asker_name)
             calls = [
                 c
                 for r in turns(asker)
@@ -439,9 +372,9 @@ async def cover_scenario(
                 for c in step.get("calls", [])
                 if c.get("name") == "catch_lie"
             ]
-            return script, calls
+            return question, evidence, calls
 
-        script, calls = await investigate(HILDA, "Хильда")
+        _, evidence, calls = await investigate(HILDA, "Хильда")
         testimony = next(
             (f for f in reversed(facts("testimony")) if f.get("npc") == LOBART and f.get("witness") == HILDA),
             None,
@@ -460,8 +393,7 @@ async def cover_scenario(
             return _logged(results)
         lines = [
             line
-            for row in script.evidence
-            for line in row["prompt"].splitlines()
+            for line in evidence.splitlines()
             if re.match(r"- С\d+:", line)
         ]
         check("vouch_row", any("Хильда говорит:" in line and VOUCH in line for line in lines), lines)
@@ -473,7 +405,9 @@ async def cover_scenario(
             calls,
         ):
             return _logged(results)
-        _, calls = await investigate(VINO, "Вино")
+        # Keep this testimony newer than Hilda's so its real evidence row is deterministically С1.
+        await link.debug("time", hour=9, minute=10)
+        _, _, calls = await investigate(VINO, "Вино")
         caught = [f for f in facts("caught") if f.get("npc") == LOBART and f.get("title") == DENIAL]
         if not check(
             "caught_second_source",
@@ -583,17 +517,15 @@ async def cover_scenario(
                 {"third": third, "roster": talk.people.get(third)},
             ):
                 return _logged(results)
-            script, _ = await investigate(HILDA, "Хильда", asker=third, judge=False)
+            question, evidence, _ = await investigate(HILDA, "Хильда", asker=third, judge=False)
             warning = people.warning(third, HILDA)
-            question = "\n".join(script.questions)
             testimony_rows = [
-                line for row in script.evidence for line in row["prompt"].splitlines()
-                if re.match(r"- С\d+:", line)
+                line for line in evidence.splitlines() if re.match(r"- С\d+:", line)
             ]
             check(
                 "subject_model_context",
-                bool(script.questions) and knowledge in question,
-                {"calls": len(script.questions), "knowledge": knowledge},
+                knowledge in question,
+                {"knowledge": knowledge},
             )
             check(
                 "subject_candidate_warning",
@@ -703,7 +635,8 @@ async def cover_scenario(
             ),
             reloaded,
         )
-        _, repeated = await investigate(VINO, "Вино")
+        await link.debug("time", hour=12, minute=10)
+        _, _, repeated = await investigate(VINO, "Вино")
         check(
             "no_duplicate_exposed",
             len(repeated) == 1
@@ -714,7 +647,7 @@ async def cover_scenario(
         )
         return _logged(results)
     finally:
-        dialogue.llm, talk.reflexes = original_llm, original_reflexes
+        talk.reflexes = original_reflexes
         rumors.gate, rumors.stage = original_gate, original_stage
 
 

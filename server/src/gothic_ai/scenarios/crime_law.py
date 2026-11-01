@@ -11,15 +11,14 @@ from ..brain.reflex import Reflexes
 from ..crime_law_graph import law_var
 from ..game import GameError, GameLink
 from ..llm import ToolCall
-from ..llm.fake import FakeBackend, FakeStep
 from ..protocol import DialogChosen, Session
 from .common import (
-    ClaimScript,
     FixedDecider,
     _logged,
     _save,
     _until,
     _until_async,
+    model_off,
     prepare_npc_parking,
     prepare_npc_pose,
     prepare_street_theft_witness,
@@ -57,12 +56,13 @@ async def crime_law(
 
     Only the scene is staged: nearby people wait elsewhere, and Matteo's rule-based theft reaction ends
     after he has actually witnessed it. Random rumor meetings are disabled so the first scene tests
-    the deadline itself. The second scene accepts an ordinary scripted silence deal before it.
+    the deadline itself. The second scene accepts a given silence deal before it.
     """
+    off = model_off(dialogue)
     results: dict[str, str] = {}
     facts = service.chronicle.facts
     chosen: list[DialogChosen] = []
-    original_llm, original_reflexes = dialogue.llm, talk.reflexes
+    original_reflexes = talk.reflexes
     original_gate, original_stage = rumors.gate, rumors.stage
 
     def check(name: str, ok: bool, detail: object = "") -> bool:
@@ -186,11 +186,10 @@ async def crime_law(
         chosen.clear()
         return check("silence_branch", not facts("crime") and not facts("crime_known"))
 
-    if not isinstance(dialogue.llm, FakeBackend):
-        return _logged({"scripted_model": "failed (crime_law requires LLM=fake)"})
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     rumors.gate, rumors.stage = lambda *_args: False, None
     link.listeners.append(record)
@@ -307,28 +306,16 @@ async def crime_law(
         if not check("silence_talk_ready", await _until(lambda: CITY_OWNER in talk.people, 15)):
             return _logged(results)
         name = service.names(CITY_OWNER)
-        dialogue.llm = ClaimScript(
-            said=[
-                (
-                    "молчи",
-                    FakeStep(
-                        "Ладно, об этом кубке никому ни слова.",
-                        [
-                            ToolCall(
-                                "propose_deal",
-                                {"npc_gives": [], "hero_gives": [], "silence": [f"crime:{cid}"]},
-                            )
-                        ],
-                    ),
-                )
-            ],
-            told=[],
-            default="Договорились.",
-            only=name,
+        off.given(
+            "дано: Маттео предлагает молчание о краже", who=CITY_OWNER, when="молчи",
+            calls=[ToolCall(
+                "propose_deal", {"npc_gives": [], "hero_gives": [], "silence": [f"crime:{cid}"]},
+            )],
         )
+        off.silent("дано: Маттео молчит (предложение молчания передано)", who=CITY_OWNER, when="молчи")
+        off.silent("дано: Маттео молчит (сделка состоялась)", who=CITY_OWNER, when="сделка состоялась")
         await link.debug("type", text=f"{name}, молчи об этом кубке. Договорились?")
-        if not check("silence_offered", await _until(lambda: CITY_OWNER in deals.open, 30)):
-            return _logged(results)
+        await _until(lambda: CITY_OWNER in deals.open, 30)
         await asyncio.sleep(1.2)
         pressed = await link.press_deal()
         accepted = await _until(
@@ -348,6 +335,6 @@ async def crime_law(
         )
         return _logged(results)
     finally:
-        dialogue.llm, talk.reflexes = original_llm, original_reflexes
+        talk.reflexes = original_reflexes
         rumors.gate, rumors.stage = original_gate, original_stage
         link.listeners.remove(record)

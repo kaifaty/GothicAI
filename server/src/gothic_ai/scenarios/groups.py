@@ -46,6 +46,12 @@ OFF = {
 }
 
 GIVEN = {
+    "crime_ally",
+    "crime_law",
+    "crime_talk",
+    "trace_crime",
+    "cover",
+    "cover_subject",
     "deal",
     "contract",
     "debt",
