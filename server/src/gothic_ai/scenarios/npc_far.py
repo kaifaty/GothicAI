@@ -1,4 +1,4 @@
-"""Off-screen NPC harm on save 1: natural routines, cards and clocks start every deed."""
+"""Distant theft and native far-fight outcomes on save 1."""
 
 from __future__ import annotations
 
@@ -57,6 +57,8 @@ async def npc_far(
     routines place Hilda in the house and Lobart outside. After the transfer Lobart really opens
     his chest, as in npc_will; an actual view supplies his suspicion, never the crime's hidden truth.
     Lobart belongs to GIL_OUT, so community guard enforcement is deliberately module coverage.
+    The fight branch declares attribution, courage and a meeting; npc_will starts reclaim itself.
+    After that only the real bridge and native scripts change the combatants.
     """
     results: dict[str, str] = {}
     crimes, rumors, people = will.npc_crimes, will.rumors, will.people
@@ -84,6 +86,7 @@ async def npc_far(
             entry: dict[str, Any] = {"before": await bodies(), "boundary": boundary}
             if boundary:
                 # Delay the real command after the model decision, never replace its reply.
+                entry["decision"] = entry["before"]
                 await link.debug("teleport", near=LOBART, distance=1000)
                 entry["entered"] = await _until_async(
                     lambda: link.snapshot(LOBART, fresh=True),
@@ -95,6 +98,11 @@ async def npc_far(
         if isinstance(command, NpcActCmd | StoryEffectCmd):
             sent.append(command)
         await send(command)
+        if isinstance(command, StoryEffectCmd) and command.req in knockouts and boundary:
+            entry = knockouts[command.req]
+            await _until(lambda: "reply" in entry, 5)
+            # Read under the rules tick's lock, before a later tick can start a near fight.
+            entry["after"] = await bodies()
 
     def cards(*, greed: bool = False, courage: int = 2) -> None:
         prepared = {
@@ -231,9 +239,11 @@ async def npc_far(
         if not check("boundary_attempt", refused is not None, knockouts):
             return
         assert refused is not None
-        after = await bodies()
+        after = refused["after"]
         reply = refused.get("reply", {})
-        check("boundary_rejected", refused.get("entered") and not reply.get("ok", True)
+        check("boundary_rejected", refused.get("entered") and all(
+            b["hero_cm"] > 3000 for b in refused["decision"].values()
+        ) and not reply.get("ok", True)
               and str(reply.get("error", "")).startswith("knockout: inside simulation"), reply)
         check("boundary_unchanged", all(
             all(after[n][key] == refused["before"][n][key]
@@ -271,14 +281,16 @@ async def npc_far(
                                 and f.get("act") == "fight" and f.get("far") is True
                                 for f in facts("npc_will")), facts("npc_will"))
         check("fight_far_humans", all(world.human(n) and before[n]["hero_cm"] > 3000
-                                     for n in (HILDA, LOBART)), before)
+                                     for n in (HILDA, LOBART))
+              and math.dist(before[HILDA]["pos"], before[LOBART]["pos"]) <= 1500, before)
         check("loser_down", after[loser]["hp"] == 1 and after[loser]["unconscious"] != 0
               and after[loser]["state"] == "ZS_UNCONSCIOUS" and after[loser]["body"] == "down",
               after[loser])
         weapon = before[loser]["weapon"]
         dropped = effect["reply"].get("value", {}).get("dropped")
         check("loser_weapon", (
-            dropped == weapon and after[loser]["inventory"].get(weapon, 0)
+            dropped == weapon and after[loser]["weapon"] is None
+            and after[loser]["inventory"].get(weapon, 0)
             == before[loser]["inventory"].get(weapon, 0) - 1
             and any(i["item"] == weapon and i["distance"] <= 200 for i in after[loser]["ground"])
         ) if weapon else dropped is None and after[loser]["items"] == before[loser]["items"],
@@ -296,21 +308,22 @@ async def npc_far(
         healing = await link.story_eval(loser, [
             ["var", p] for p in ("HP_ESSENZ", "HP_EXTRAKT", "HP_ELIXIER")
         ])
-        # Wall time is a lower bound on native time here; do not jump the game clock (it heals NPCs).
-        await asyncio.sleep(max(0, 25 - (time.monotonic() - effect["replied_at"])))
-        far = await bodies()
-        elapsed = time.monotonic() - effect["replied_at"]
-        check("recovery_far", elapsed >= 25 and all(far[n]["hero_cm"] > 3000 for n in far),
-              {"elapsed_s": round(elapsed, 3), "bodies": far})
-        await link.debug("teleport", near=loser, distance=1000)
 
         async def recovered() -> dict[str, Any]:
             return (await bodies())[loser]
 
+        # Wait without jumping the game clock: a clock jump heals NPCs independently of potions.
+        await asyncio.sleep(max(0, 25 - (time.monotonic() - effect["replied_at"])))
         await _until_async(recovered, lambda b: b["body"] == "stand"
                            and not b["unconscious"] and b["state"] != "ZS_HEALSELF", 15)
+        far = await bodies()
+        elapsed = time.monotonic() - effect["replied_at"]
+        check("recovery_far", elapsed >= 25 and all(far[n]["hero_cm"] > 3000 for n in far)
+              and far[loser]["body"] == "stand" and not far[loser]["unconscious"],
+              {"elapsed_s": round(elapsed, 3), "bodies": far})
+        await link.debug("teleport", near=loser, distance=1000)
         recovered_body = await recovered()
-        consumed = [before[loser]["inventory"].get(p, 0) - recovered_body["inventory"].get(p, 0)
+        consumed = [after[loser]["inventory"].get(p, 0) - recovered_body["inventory"].get(p, 0)
                     for p in POTIONS]
         check("approach_recovered", recovered_body["hero_cm"] < 3000
               and recovered_body["body"] == "stand" and not recovered_body["unconscious"],
@@ -320,7 +333,7 @@ async def npc_far(
               and recovered_body["hp"] - 1 == sum(c * h for c, h in zip(consumed, healing, strict=True)),
               {"hp": recovered_body["hp"], "consumed": consumed, "healing": healing})
 
-        kinds = {"npc_crime_defense", "npc_crime_restitution", "npc_crime_reaction", "npc_will",
+        kinds = {"npc_crime_defense", "npc_crime_restitution", "npc_crime_reaction", "npc_motive", "npc_will",
                  "npc_will_outcome", "npc_crime", "blamed"}
         kept = [f for f in facts() if f.get("fact") in kinds]
         saved = await _save(link, slot)
@@ -336,6 +349,7 @@ async def npc_far(
             await will.tick()
             await asyncio.sleep(1)
         check("fight_not_repeated", [f for f in facts() if f.get("fact") in kinds] == kept
+              and not (await bodies())[loser]["unconscious"]
               and not any(isinstance(c, StoryEffectCmd) and any(e.get("do") == "knockout"
                           for e in c.effects) or isinstance(c, NpcActCmd) and c.action == "fight"
                           for c in sent[sent_at:]), sent[sent_at:])
