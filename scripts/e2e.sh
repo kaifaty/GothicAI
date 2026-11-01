@@ -140,7 +140,7 @@
 #   feat_fame: given: fame facts are written directly. Read witness/hearer/control situations without
 #       a model turn; check fame propagation. Group 2, LLM=off via auto; new game, no SAVE; TIMEOUT=420.
 #   repair: given: the director proposes dead Lobart (validator rejects), then Hilda. Finish the turnip
-#       quest after Lobart dies; check repair and payment. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
+#       quest after Lobart dies; check repair and payment. Group 2, LLM=off via auto; new game, no SAVE.
 #   authored: given: the author proposes a quest using the first reference item and place.
 #       Accept, find, save/load, return and get paid. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   own: script symbols of our own (docs/director.md, stage 2, layer 1): a story variable, an npc of the
