@@ -1263,7 +1263,7 @@ async def amends_storylet(
         await link.debug("player_goto", to=ANDRE, distance=250)
         if not await _until(lambda: ANDRE in talk.people and talk.people[ANDRE].distance <= 600, 20):
             return _logged({"roster": f"failed ({ANDRE} is not near the hero)"})
-        request = f"{talk.people[ANDRE].name}, прости меня за враньё. Чем мне загладить вину?"
+        request = f"{talk.people[ANDRE].name}, прости меня за вранье. Чем мне загладить вину?"
         await link.debug("type", text=request)
         effects_settled = await _until(
             lambda: bool(live.turns(ANDRE, request)) and (
