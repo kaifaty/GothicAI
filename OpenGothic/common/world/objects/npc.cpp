@@ -182,7 +182,8 @@ struct Npc::MeleeShadow final {
   struct Contact final {
     MeleeBladeContact hit;
     std::string target, bone, result = "shadow";
-    float multiplier = 0;
+    float multiplier = 0, stunBonus = 1;
+    bool superArmor = false;
     int32_t damage = 0;
     };
   std::vector<Window> windows;
@@ -2304,6 +2305,8 @@ void Npc::consumeMeleeContacts() {
     const bool block = !target->meleeKnockdown && !target->isMeleeStunned() && target->fghAlgo.isInFocusAngle(*target,*this) && targetPose.isDefence(owner.tickCount());
     entry.result = block ? "blocked" : (dodge ? "evaded" : "hit");
     if(!block && !dodge) {
+      entry.stunBonus = target->meleeStunBonus(*this);
+      entry.superArmor = target->hasMeleeSuperArmor();
       // The sampled MAN peak is fixed per animation/window, not learned from outcomes.
       entry.multiplier = DamageCalculator::meleeMultiplier(hit.speedCmS,swing.window->peakCmS*.7f,
                                                           hit.bladeFraction,hit.surfaceAngleDeg,swing.targetsHit++);
@@ -2450,6 +2453,8 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
       physical += ',';
     physical += "{\"result\":" + TestBench::bodyJson(entry.result) +
                 ",\"multiplier\":" + std::to_string(entry.multiplier) + ",\"damage\":" + std::to_string(entry.damage) +
+                ",\"stun_bonus\":" + std::to_string(entry.stunBonus) +
+                ",\"super_armor\":" + (entry.superArmor ? "true" : "false") +
                 ",\"target\":" + entry.target +
                 ",\"part\":" + TestBench::bodyJson(HitZones::name(HitZones::Zone(contact.zone))) +
                 ",\"bone\":" + std::to_string(contact.bone) + ",\"bone_name\":" + TestBench::bodyJson(entry.bone) +
@@ -4942,9 +4947,28 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
   const auto impulse = meleeImpulse(attacker,contact);
   // Weapon skill is the progression of knockdowns: trained hitters knock down sooner, trained fighters stand longer.
   const float skillScale = meleePostureSkillScale(attacker);
-  bool knocked = false;
-  if(canAccumulateMeleePosture(Gothic::physicsFlags().meleePosture,blocked,meleeKnockdown,isDown()) &&
-     meleePosture.hit(impulse.length(),physicsMass(),owner.tickCount(),skillScale)) {
+  const bool stagger = Gothic::physicsFlags().meleeStagger;
+  const auto* armor = invent.currentArmor();
+  const float armorScale = stagger && armor!=nullptr ?
+      MeleeImpact::armorThresholdScale(MeleeImpact::armorClass(armor->handle().protection[PROT_EDGE])) : 1.f;
+  const float thresholdScale = skillScale*armorScale;
+  const bool stunned = isMeleeStunned();
+  const auto heavy = MeleeImpact::heavyHit(mode==WeaponState::W2H ? MeleeImpact::Weapon::TwoHand :
+                                         mode==WeaponState::W1H ? MeleeImpact::Weapon::OneHand : MeleeImpact::Weapon::Fist,
+                                         contact ? contact->velocityCmS : Vec3(),
+                                         MeleeImpact::postureIncrease(impulse.length(),physicsMass(),thresholdScale,
+                                                                     MeleeImpact::postureThresholdScale()));
+  const bool heavyOnStaggered = stagger && stunned && meleeStunReason=="posture" && heavy!=MeleeImpact::HeavyHit::None;
+  bool knocked = false, staggered = false;
+  const bool eligible = canAccumulateMeleePosture(true,blocked,meleeKnockdown,isDown());
+  const bool full = eligible && (!stagger || !stunned) &&
+                    meleePosture.hit(impulse.length(),physicsMass(),owner.tickCount(),thresholdScale);
+  if(full && stagger) {
+    startMeleeStun(attacker,"posture");
+    meleePosture.value = 0;
+    staggered = isMeleeStunned();
+    }
+  if(eligible && ((full && !stagger) || heavyOnStaggered)) {
     setInteraction(nullptr,true);
     attachToPoint(nullptr);
     updateRagdollQuestAnchor();
@@ -4989,12 +5013,19 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
                    ",\"attacker\":"+meleeShadowWho(&attacker)+",\"target\":"+who+
                    ",\"impulse_ns\":"+std::to_string(impulse.length())+
                    ",\"skill_threshold_scale\":"+std::to_string(skillScale)+
+                   ",\"armor_threshold_scale\":"+std::to_string(armorScale)+
                    ",\"zone\":"+TestBench::bodyJson(contact ? HitZones::name(HitZones::Zone(contact->zone)) : std::string_view("body"))+
                    ",\"before\":"+std::to_string(before)+",\"after\":"+std::to_string(meleePosture.value)+
                    ",\"blocked\":"+(blocked ? "true" : "false")+",\"knockdown\":"+(knocked ? "true" : "false")+"}");
+  if(staggered)
+    writeMeleePosture("{\"event\":\"stagger\",\"tick_ms\":"+std::to_string(owner.tickCount())+
+                     ",\"attacker\":"+meleeShadowWho(&attacker)+",\"target\":"+who+"}");
+  const char* heavyReason = heavy==MeleeImpact::HeavyHit::TwoHanded ? "two_handed" :
+                            heavy==MeleeImpact::HeavyHit::Downward ? "downward" : "posture";
   if(knocked)
     writeMeleePosture("{\"event\":\"knockdown\",\"tick_ms\":"+std::to_string(meleeFallTick)+
-                     ",\"fall_ms\":"+std::to_string(meleeFallTick)+",\"target\":"+who+"}");
+                     ",\"fall_ms\":"+std::to_string(meleeFallTick)+",\"target\":"+who+
+                     (heavyOnStaggered ? ",\"cause\":\"heavy_on_staggered\",\"heavy\":"+TestBench::bodyJson(heavyReason) : "")+"}");
   }
 
 bool Npc::tickMeleePosture(uint64_t dt) {
@@ -5091,6 +5122,7 @@ void Npc::takeDamage(Npc &other, const Bullet* b, bool ignoreDefence, float mele
                         std::string("\"damage_kind\":") + TestBench::bodyJson(b==nullptr ? "melee" : "ranged") +
                         ",\"blocked\":" + (isBlock && b==nullptr ? "true" : "false") +
                         ",\"jumped_back\":" + (isJumpb && b==nullptr ? "true" : "false") +
+                        ",\"stun_bonus\":" + std::to_string(b==nullptr && !isBlock && !isJumpb ? meleeStunBonus(other) : 1.f) +
                         ",\"parade_ms\":" + (parade ? std::to_string(owner.tickCount()-parade->origin) : "null"),pose.animNames());
 
   lastHit = &other;
@@ -5132,6 +5164,8 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
   const bool traceKnockdownBefore = meleeKnockdown;
   const auto traceAttackerAnimation = TestBench::bodyTracing() ? other.visual.pose().animNames() : std::string();
   const float postureBefore = meleePosture.value;
+  const float stunBonus = !isSpell && b==nullptr ? meleeStunBonus(other) : 1.f;
+  const bool superArmor = hasMeleeSuperArmor();
   float a  = angleDir(other.x-x,other.z-z);
   float da = a-angle;
   if(std::cos(da*M_PI/180.0)<0)
@@ -5171,8 +5205,8 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     }
 
   hitResult = DamageCalculator::damageValue(other,*this,b,isSpell,dmg,bMask);
-  if(contact!=nullptr && hitResult.hasHit && !hitResult.invincible)
-    hitResult.value = int32_t(std::lround(float(hitResult.value)*meleeScale));
+  if((contact!=nullptr || stunBonus!=1.f) && hitResult.hasHit && !hitResult.invincible)
+    hitResult.value = int32_t(std::lround(float(hitResult.value)*meleeScale*stunBonus));
   if(hitResult.hasHit && !isSpell && b!=nullptr)
     queueArrowPhysics(*b);
   const auto traceDamage = [&] {
@@ -5185,6 +5219,8 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
                           "\"damage_kind\":" + TestBench::bodyJson(isSpell ? "spell" : (b==nullptr ? "melee" : "ranged")) +
                           ",\"hp_before\":" + std::to_string(traceHpBefore) + ",\"hp_after\":" +
                           std::to_string(attribute(ATR_HITPOINTS)) + ",\"net\":" + std::to_string(hitResult.value) +
+                          ",\"stun_bonus\":" + std::to_string(stunBonus) +
+                          ",\"super_armor\":" + (superArmor ? "true" : "false") +
                           ",\"has_hit\":" + (hitResult.hasHit ? "true" : "false") +
                           ",\"melee_knockdown_before\":" + (traceKnockdownBefore ? "true" : "false") +
                           ",\"attacker_animation\":" + TestBench::bodyJson(traceAttackerAnimation) +
@@ -5220,7 +5256,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
   if(hitResult.hasHit && !benchStill && !meleeKnockdown) {
     auto state   = bodyStateMasked();
     bool stumble = false;
-    if(interactive()==nullptr && ((state&BS_FLAG_INTERRUPTABLE)!=BS_NONE || state==BS_RUN || state==BS_NONE)) {
+    if(!superArmor && interactive()==nullptr && ((state&BS_FLAG_INTERRUPTABLE)!=BS_NONE || state==BS_RUN || state==BS_NONE)) {
       //NONE/RUN requires for monsters like waran
       const bool noInter = (hnpc->bodystate_interruptable_override!=0);
       if(!noInter) {
@@ -5634,6 +5670,7 @@ void Npc::tick(uint64_t dt) {
     setAnim(AnimationSolver::Idle);
 
   if(isMeleeStunned()) {
+    tickMeleeStunLook();
     waitForMeleeStamina(dt);
     return;
     }
@@ -7431,8 +7468,45 @@ bool Npc::isStaminaExhausted() const {
   return hasStamina() && meleeStamina.exhausted;
   }
 
+float Npc::meleeStunBonus(const Npc& attacker) const {
+  const auto ws = attacker.weaponState();
+  return Gothic::physicsFlags().meleeStagger && isHuman() && attacker.isHuman() && isMeleeStunned() &&
+         (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H) ? 1.5f : 1.f;
+  }
+
+bool Npc::hasMeleeSuperArmor() const {
+  if(!Gothic::physicsFlags().meleeStagger || !isHuman() || isDown() || meleeKnockdown || isMeleeStunned() ||
+     (weaponState()!=WeaponState::W2H && !meleeDownStrike))
+    return false;
+  const auto* item = invent.activeWeapon();
+  if(item==nullptr)
+    return false;
+  const auto* mesh = Resources::loadMesh(item->handle().visual);
+  if(mesh==nullptr || mesh->bbox()[0].x>=-4.f)
+    throw std::runtime_error("Melee super armor requires a weapon mesh extending along local -X");
+  const float length = -mesh->bbox()[0].x;
+  const auto extent = mesh->bbox()[1]-mesh->bbox()[0];
+  const bool normalY = extent.y<=extent.z;
+  const auto now = owner.tickCount();
+  for(const auto& layer:visual.pose().combatLayers(now)) {
+    if(!layer.sequence->isAttackAnim() && !(meleeDownStrike && isFinishSequence(*layer.sequence)))
+      continue;
+    cacheMeleeShadowWindows(layer.sequence,length,normalY);
+    const MeleeShadow::Window* selected = nullptr;
+    const auto combo = uint32_t(visual.pose().comboLength());
+    for(const auto& window:meleeShadow->windows)
+      if(window.sequence==layer.sequence && window.length==length && window.normalY==normalY &&
+         (selected==nullptr || (window.index<=combo && window.index>selected->index)))
+        selected = &window;
+    if(selected && double(layer.time-layer.start)<=selected->endMs)
+      return true;
+    }
+  return false;
+  }
+
 bool Npc::isMeleeStunned() const {
-  return Gothic::physicsFlags().meleeParry && owner.tickCount()<meleeStunUntil;
+  const bool enabled = meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger : Gothic::physicsFlags().meleeParry;
+  return enabled && owner.tickCount()<meleeStunUntil;
   }
 
 bool Npc::allowMeleeStunAction(std::string_view action) {
@@ -7445,10 +7519,12 @@ bool Npc::allowMeleeStunAction(std::string_view action) {
   }
 
 void Npc::startMeleeStun(Npc& by, std::string_view reason) {
-  if(!Gothic::physicsFlags().meleeParry || !isHuman() || isDown() || meleeKnockdown || isMeleeStunned())
+  const bool enabled = reason=="posture" ? Gothic::physicsFlags().meleeStagger : Gothic::physicsFlags().meleeParry;
+  if(!enabled || !isHuman() || isDown() || meleeKnockdown || isMeleeStunned())
     return;
   endMeleeStun("timeout");
-  meleeStunUntil = owner.tickCount()+MeleeParry::StunDuration;
+  meleeStunReason = reason;
+  meleeStunUntil = owner.tickCount()+MeleeImpact::stunDuration(reason);
   stopMeleeSwing();
   clearGoTo();
   mvAlgo.clearSpeed();
@@ -7456,14 +7532,18 @@ void Npc::startMeleeStun(Npc& by, std::string_view reason) {
   if(TestBench::bodyTracing())
     TestBench::bodyEvent(*this,&by,"stun_start",owner.tickCount(),
                         "\"reason\":"+TestBench::bodyJson(reason)+
-                        ",\"duration_ms\":"+std::to_string(MeleeParry::StunDuration));
+                        ",\"duration_ms\":"+std::to_string(MeleeImpact::stunDuration(reason)));
   }
 
 void Npc::meleeStunLook(const Npc& by) {
   // The blow was stopped and thrown back: the original stagger back, slowed to carry most of the
   // stun, the upper body giving way from the one who stopped it and the weapon arm thrown back
   // on the living rig, its motors bringing it into the stagger. T_STUMBLEB lasts 360 ms.
+  // Balance lost (posture) is the heavier one over 1.5 s: the trunk gives way lower and the chest
+  // is thrown back with the arm, then a second beat (tickMeleeStunLook) catches it forward.
+  const bool  posture      = meleeStunReason=="posture";
   constexpr float staggerSpeed = 0.5f;
+  meleeStunBeat = !posture;
   if(auto seq = setAnimAngGet(Anim::StumbleB))
     visual.setLayerSpeed(seq,staggerSpeed,owner.tickCount());
   Vec3 away = position()-by.position();
@@ -7471,24 +7551,45 @@ void Npc::meleeStunLook(const Npc& by) {
   away = away.length()>1e-3f ? Vec3::normalize(away) : Vec3(-std::cos(rotationRad()),0,-std::sin(rotationRad()));
   Flinch::Hit hit;
   hit.dir      = away;
-  hit.height   = 0.85f;
-  hit.twist    = 0.4f; // the weapon hand goes back first and turns the trunk after it
-  hit.strength = 0.6f;
+  hit.height   = posture ? 0.55f : 0.85f;
+  hit.twist    = posture ? 0.25f : 0.4f; // the weapon hand goes back first and turns the trunk after it
+  hit.strength = posture ? 0.85f : 0.6f;
   flinch(hit);
   if(!Gothic::physicsFlags().meleeReactions || !living)
-    return;
-  const size_t bone = visual.pose().findNode("BIP01 R FOREARM");
-  if(bone>=visual.pose().boneCount())
     return;
   const auto  ws       = weaponState();
   const float momentum = ws==WeaponState::W2H ? 30.f : (ws==WeaponState::W1H ? 22.f : 12.f);
   const Vec3  impulse  = Vec3::normalize(away+Vec3(0,0.3f,0))*(momentum*0.25f);
-  arrowImpacts.push_back({bone,visual.mapBone(bone),impulse,0.55f,by.handlePtr(),true,2.f});
+  const size_t arm = visual.pose().findNode("BIP01 R FOREARM");
+  if(arm<visual.pose().boneCount())
+    arrowImpacts.push_back({arm,visual.mapBone(arm),impulse,0.55f,by.handlePtr(),true,2.f});
+  const size_t chest = posture ? visual.pose().findNode("BIP01 SPINE2") : size_t(-1);
+  if(chest<visual.pose().boneCount())
+    arrowImpacts.push_back({chest,visual.mapBone(chest),Vec3::normalize(away)*(momentum*0.3f),0.5f,by.handlePtr(),true,1.5f});
+  }
+
+void Npc::tickMeleeStunLook() {
+  // Balance lost, second beat: the stagger back runs out (730 ms) and the body lurches forward
+  // to catch itself (the original stagger from behind, slowed), instead of standing frozen in
+  // the end of the first one for the rest of the stun.
+  if(meleeStunBeat || meleeStunReason!="posture")
+    return;
+  const auto now   = owner.tickCount();
+  const auto start = meleeStunUntil-MeleeImpact::stunDuration("posture");
+  if(now<start+700)
+    return;
+  meleeStunBeat = true;
+  constexpr float recoverSpeed = 0.6f;
+  if(auto seq = setAnimAngGet(Anim::StumbleA))
+    visual.setLayerSpeed(seq,recoverSpeed,now);
   }
 
 void Npc::endMeleeStun(std::string_view reason) {
   if(meleeStunUntil==0)
     return;
+  if(meleeStunReason=="posture")
+    meleePosture.recover(owner.tickCount());
+  meleeStunReason.clear();
   meleeStunUntil = 0;
   if(TestBench::bodyTracing())
     TestBench::bodyEvent(*this,currentTarget,"stun_end",owner.tickCount(),
@@ -7500,13 +7601,13 @@ void Npc::tickMeleeParry() {
   if(!Gothic::physicsFlags().meleeParryAi || !Gothic::physicsFlags().meleeParry ||
      currentTarget==nullptr || isDown() || meleeKnockdown || isMeleeStunned())
     meleeParadeTiming.reset();
+  const bool stunEnabled = meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger : Gothic::physicsFlags().meleeParry;
+  if(meleeStunUntil!=0 && (!stunEnabled || now>=meleeStunUntil))
+    endMeleeStun(stunEnabled ? "timeout" : "reset");
   if(!Gothic::physicsFlags().meleeParry) {
-    endMeleeStun("reset");
     meleeParadeOrigin.reset();
     return;
     }
-  if(meleeStunUntil!=0 && now>=meleeStunUntil)
-    endMeleeStun("timeout");
   if(!isHuman() || isDown() || meleeKnockdown)
     return;
   const auto layer = meleeParadeLayer(visual.pose(),now);

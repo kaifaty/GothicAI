@@ -981,9 +981,14 @@ class Npc final {
     bool                          allowMeleeStunAction(std::string_view action);
     void                          endMeleeStun(std::string_view reason);
     void                          meleeStunLook(const Npc& by);
+    void                          tickMeleeStunLook();
     void                          tickMeleeParry();
     void                          applyMeleeParry(Npc& attacker, const MeleeBladeContact* contact);
     float                         meleePostureSkillScale(const Npc& attacker) const;
+    bool                          hasMeleeSuperArmor() const;
+    float                         meleeStunBonus(const Npc& attacker) const;
+    std::string                   meleeStunReason;
+    bool                          meleeStunBeat = true; // the second beat of a lost balance is played
     uint64_t                      meleeStunUntil = 0;
     std::optional<uint64_t>        meleeParadeOrigin;
     uint64_t                      meleeParadeEnd = 0;

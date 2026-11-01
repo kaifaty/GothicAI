@@ -13,7 +13,7 @@ import statistics
 ROLES = ("primary", "opponent")
 FINISH = ("T_1HSFINISH", "T_2HSFINISH")
 PARRY_COUNTS = ("parries", "guards", "guard_breaks", "parade_whiffs", "guard_stamina_spent",
-                "stuns", "stuns_parried", "stuns_guard_break", "stunned_time_s", "stun_refusal_spells")
+                "stuns", "stuns_parried", "stuns_guard_break", "stuns_posture", "stunned_time_s", "stun_refusal_spells")
 
 
 def read_rows(path: Path) -> list[dict]:
@@ -271,7 +271,9 @@ def episode_metrics(folder: Path, episode: dict, shared: dict, variant: str) -> 
                     parry["guard_stamina_spent"] += row["cost"]
             elif phase == "stun_start":
                 parry["stuns"] += 1
-                parry["stuns_"+row["reason"]] += 1
+                reason = row.get("reason")
+                if reason in ("parried", "guard_break", "posture"):
+                    parry["stuns_"+reason] += 1
                 if stunned_since is None:
                     stunned_since = row["t_game"]
                 refusing = False
@@ -580,7 +582,7 @@ def markdown(series: list[dict]) -> str:
                     "repeat_knockdowns_within_10s_after_getup", "prone_hits", "prone_damage", "overhead_started", "overhead_hits",
                     "stamina_spent", "attack_stamina_spends", "jumpback_stamina_spends", "stamina_refusal_spells",
                     "exhaustions", "exhausted_time_s", "parries", "guards", "guard_breaks", "parade_whiffs",
-                    "guard_stamina_spent", "stuns", "stuns_parried", "stuns_guard_break", "stunned_time_s", "stun_refusal_spells"):
+                    "guard_stamina_spent", "stuns", "stuns_parried", "stuns_guard_break", "stuns_posture", "stunned_time_s", "stun_refusal_spells"):
             lines.append(f"| {key} | {fmt(row['combat'][key])} | {fmt(row['combat']['per_duel'][key])} | "
                          f"{fmt(row['fighters']['primary']['per_duel'][key])} | {fmt(row['fighters']['opponent']['per_duel'][key])} |")
         for key in ("hit_fraction", "damage_per_hit", "damage_per_s", "prone_damage_fraction",
@@ -644,7 +646,7 @@ def main() -> int:
                   "parries": "Parry, guard, guard_break and parade_whiff events count outcomes for the defending actor; eventless episodes contribute zero when any series episode has parry/guard/stun events, otherwise unavailable",
                   "guard_stamina_spent": "Sum of guard costs only; excludes parry, guard_break and parade_whiff costs",
                   "parry_fraction": "Parries divided by parries plus guards",
-                  "stuns": "Count of stun_start events for the stunned actor, split by parried and guard_break reasons",
+                  "stuns": "Count of all stun_start events for the stunned actor, with separate counts for parried, guard_break and posture reasons",
                   "stunned_time_s": "Time from stun_start until stun_end or duel end, in game seconds; overlapping starts do not double count time",
                   "stunned_time_fraction": "Summed stunned fighter seconds divided by summed duel duration; both fighters together can exceed 1",
                   "stun_refusal_spells": "One fighter's consecutive stun_refused events within a stun count as one spell; stun_start and stun_end reset the series",

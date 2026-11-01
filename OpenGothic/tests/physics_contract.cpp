@@ -4765,6 +4765,35 @@ namespace {
     require(!Npc::canAccumulateMeleePosture(true,false,true,false),"a knockdown must not accumulate another knockdown");
     require(!Npc::canAccumulateMeleePosture(true,false,false,true),"death or unconsciousness must retain the old path");
 
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::TwoHand,{0,0,0},0)==MeleeImpact::HeavyHit::TwoHanded,
+            "a two-handed weapon must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{80,-60,0},0)==MeleeImpact::HeavyHit::Downward,
+            "a downward velocity fraction of 0.6 must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{std::sqrt(10000.f-59.f*59.f),-59,0},0)==MeleeImpact::HeavyHit::None,
+            "a downward velocity fraction of 0.59 must not qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{0,0,0},40.f)==MeleeImpact::HeavyHit::Posture,
+            "a posture increase of 40 must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{0,0,0},39.9f)==MeleeImpact::HeavyHit::None,
+            "a posture increase of 39.9 must not qualify as a heavy hit");
+    require(MeleeImpact::armorClass(39)==MeleeImpact::ArmorClass::Light,
+            "edge protection below 40 must be light armor");
+    require(MeleeImpact::armorClass(40)==MeleeImpact::ArmorClass::Medium &&
+            MeleeImpact::armorClass(79)==MeleeImpact::ArmorClass::Medium,
+            "edge protection from 40 through 79 must be medium armor");
+    require(MeleeImpact::armorClass(80)==MeleeImpact::ArmorClass::Heavy,
+            "edge protection from 80 must be heavy armor");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::armorClass(0)),1.f,.0001f,
+                "no armor must retain the posture threshold");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Light),1.f,.0001f,
+                "light armor must retain the posture threshold");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Medium),1.15f,.0001f,
+                "medium armor must multiply the posture threshold by 1.15");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Heavy),1.3f,.0001f,
+                "heavy armor must multiply the posture threshold by 1.3");
+    require(MeleeImpact::stunDuration("parried")==1000 && MeleeImpact::stunDuration("guard_break")==1000 &&
+            MeleeImpact::stunDuration("posture")==1500,
+            "parry and guard-break stuns must last 1000 ms and posture stuns 1500 ms");
+
     {
       // Tip heights of T_2HSFINISH and T_1HSFINISH at 30 fps, sampled in the game: the stroke down
       // starts at the top it falls from (not the higher wind-up before the swing round the side)

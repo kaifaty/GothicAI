@@ -2,9 +2,17 @@
 
 #include <Tempest/Vec>
 #include <cstdint>
+#include <string_view>
 
 namespace MeleeImpact {
   enum class Weapon : uint8_t { Fist, OneHand, TwoHand };
+  enum class HeavyHit : uint8_t { None, TwoHanded, Downward, Posture };
+  enum class ArmorClass : uint8_t { Light, Medium, Heavy };
+
+  HeavyHit heavyHit(Weapon weapon, const Tempest::Vec3& velocityCmS, float postureIncrease);
+  ArmorClass armorClass(int32_t edgeProtection);
+  float armorThresholdScale(ArmorClass armor);
+  uint64_t stunDuration(std::string_view reason);
 
   // World contact velocity is in cm/s; the returned impulse is in N s.
   Tempest::Vec3 impulse(Weapon weapon, const Tempest::Vec3& velocityCmS, float surfaceAngleDeg);
