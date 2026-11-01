@@ -269,10 +269,11 @@
 
 | Что | Как |
 |---|---|
+| Тесты изменённых файлов | `python3 scripts/check.py plan` — выбор по диффу от `origin/main` и правило для каждого файла; `run` — прямой уровень на этой машине, `run --all` — полный. CI `.github/workflows/tests.yml` гоняет полный уровень на каждом PR, итог — проверка `tests` |
 | pytest одного модуля | `cd server && uv run pytest tests/test_<модуль>.py -q`; на Ryzen — `scripts/ryzen.sh pytest tests/test_<модуль>.py` |
 | Строгие схемы всех инструментов сервера | `cd server && uv run pytest tests/test_tool_schemas.py -q`; обход модулей `gothic_ai`, проверка всех вложенных объектов |
 | Живой набор вручную | `SUITE=haggle RUNS=3 LLM=chatgpt scripts/e2e-live.sh`; [случаи и зачёт](e2e.md#живая-группа); вне автоматической регрессии, тратит квоту подписки |
-| Автоматическая регрессия e2e | `scripts/e2e-regression.sh` — все `OFF` + `GIVEN`; `[имена…]` выбирает часть; `HOST=mac GAME_BIN=…` — по одному на Mac; отчёты `OUT/regression.md` и `.json`; один раз перед PR при правке движка или общего кода разговора |
+| Автоматическая регрессия e2e | `scripts/e2e-regression.sh` — все `OFF` + `GIVEN`; `[имена…]` выбирает часть; `HOST=mac GAME_BIN=…` — по одному на Mac; отчёты `OUT/regression.md` и `.json`; по просьбе пользователя |
 | Один сценарий e2e | `SCENARIO=<имя> scripts/ryzen.sh e2e`; на Mac — `SCENARIO=<имя> scripts/e2e.sh` |
 | SIGKILL игры при загрузке e2e на Ryzen | До маркера `scenario <name>: checks started` — до четырёх запусков с отдельными логами; четыре убийства подряд дают код 76 и времена, [правила](ryzen.md#как-работает-сейчас) |
 | Частота кадров e2e | На Ryzen и Mac по умолчанию `E2E_MAX_FPS=30`; `0` снимает лимит, `60` задаёт 60 FPS. `OPENGOTHIC_FPS_LOG=1` включён в e2e по умолчанию; bench и живая игра не меняются. [Настройки](ryzen.md), [приёмка 12 сценариев](../reports/compute/2026-10-19-e2e-fps-cap/README.md) |
