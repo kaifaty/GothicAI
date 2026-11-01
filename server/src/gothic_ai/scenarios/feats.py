@@ -14,7 +14,7 @@ from ..feats import CACHE_KEY, WRITE, Feats
 from ..game import GameError, GameLink
 from ..journal import Journal
 from ..llm import ToolCall
-from ..protocol import ChronicleGet, FeatToastCmd, GameMessage, Session
+from ..protocol import ChronicleGet, FateCardCmd, FateEnd, FeatToastCmd, GameMessage, Session
 from ..social import Rumors
 from ..talk import TalkDesk
 from .common import (
@@ -185,6 +185,8 @@ async def feats(
     toasts: list[FeatToastCmd] = []
     chronicle_asks: list[float] = []  # the diary's copy follows each toast (chronicle_get, v55)
     toasted_at: dict[str, float] = {}
+    fate_ends: list[FateEnd] = []  # the hero's death asks for the final card (fate_end, v56)
+    fate_cards: list[FateCardCmd] = []
     entries: list[dict[str, Any]] = []
     loading: asyncio.Task[Session] | None = None
 
@@ -203,6 +205,8 @@ async def feats(
         if isinstance(cmd, FeatToastCmd):
             toasts.append(cmd)
             toasted_at[cmd.feat] = time.monotonic()
+        if isinstance(cmd, FateCardCmd):
+            fate_cards.append(cmd)
 
     def keep(entry: dict[str, Any]) -> None:
         entries.append(entry)
@@ -212,6 +216,8 @@ async def feats(
     def asked(msg: GameMessage) -> None:
         if isinstance(msg, ChronicleGet):
             chronicle_asks.append(time.monotonic())
+        if isinstance(msg, FateEnd):
+            fate_ends.append(msg)
 
     link.listeners.append(asked)
     chronicle.on_entry.append(record)
@@ -282,6 +288,22 @@ async def feats(
         calls = off.used.count(reason) + sum(f"who={CACHE_KEY}," in error for error in off.attempts)
         check("one_analysis_per_kill", calls == 1, f"analyses={calls}, kills=1")
 
+        # The hero's death ends this fate: the game asks for the final card after he lies a moment, the
+        # scenario's model is off, so the card is the fallback with the feat of this branch.
+        await link.debug("kill", npc="PLAYER", by="NONE_100_XARDAS")
+        await _until(lambda: bool(fate_cards), 30)
+        ends = [(e.kind, e.killer) for e in fate_ends]
+        check("fate_end", ends == [("death", "NONE_100_XARDAS")], f"fate_end={ends}")
+        card = fate_cards[0] if fate_cards else None
+        check(
+            "fate_card", card is not None and not card.off and card.title == "Конец пути"
+            and [f.id for f in card.feats] == [award["id"]] and card.count == 1,
+            card.model_dump(include={"off", "title", "count"}) | {"feats": [f.id for f in card.feats]}
+            if card is not None else "no fate_card",
+        )
+        check("fate_fact", [f.get("kind") for f in chronicle.facts("fate_end")] == ["death"],
+              f"fate_end facts={chronicle.facts('fate_end')}")
+
         loading = asyncio.create_task(wait_message(link, Session, lambda msg: msg.reason == "load", 120))
         await asyncio.sleep(0)
         await link.debug("load", slot)
@@ -297,6 +319,7 @@ async def feats(
               f"images={chronicle.facts('feat_image')}")
         check("fame_rollback", not chronicle.facts("feat_fame"),
               f"fame={chronicle.facts('feat_fame')}")
+        check("fate_rollback", not chronicle.facts("fate_end"), f"fate_end={chronicle.facts('fate_end')}")
         check("image_retained", image_dir.is_dir() and icon.is_file(), str(image_dir))
         return _logged(results)
     except (GameError, TimeoutError, RuntimeError) as error:

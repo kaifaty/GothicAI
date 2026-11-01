@@ -1643,10 +1643,22 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     return;
     }
   if(cmd=="kill") {
-    // `npc`: that npc dies, killed by no one (a quest giver for the director's repairs).
+    // `npc`: that npc dies, killed by no one (a quest giver for the director's repairs); `npc` PLAYER: the hero
+    // dies, by the hand of `by` if given (the final card's death, docs/achievements.md).
     // `instance`: the living creature of that instance (WOLF) closest to an npc (`near`, default the player)
     // dies by the hand of `by` (default the player), the way a deadly hit ends it (Npc::takeDamage): in melee,
     // right in front of the killer; npc's around, the killer too, perceive it (ASSESSMURDER)
+    if(auto name = JsonRead::str(msg,"npc"); name=="PLAYER") {
+      if(pl==nullptr || pl->isDead()) {
+        sendResult(req,false,"no living hero");
+        return;
+        }
+      if(const auto byName = JsonRead::str(msg,"by"); !byName.empty())
+        pl->setLastHitBy(npcBySymbol(*world,byName));
+      pl->changeAttribute(ATR_HITPOINTS,-pl->attribute(ATR_HITPOINTSMAX)-1,false);
+      sendResult(req,pl->isDead(),"the hero did not die (immortal?)");
+      return;
+      }
     if(auto name = JsonRead::str(msg,"npc"); !name.empty()) {
       Npc* npc = npcBySymbol(*world,name);
       if(npc==nullptr || npc->isDead() || npc->isPlayer()) {
